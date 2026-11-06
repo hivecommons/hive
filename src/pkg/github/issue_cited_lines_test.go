@@ -37,13 +37,19 @@ func TestCitedRefsParsesPermalinks(t *testing.T) {
 		"also https://github.com/projectbluefin/testsuite/blob/" + citedOldSHA + "/scripts/vm_validation_plan.py#L108-L110\n" +
 		"elsewhere https://github.com/other/repo/blob/" + citedOldSHA + "/x.go#L1\n" +
 		"a branch link https://github.com/projectbluefin/testsuite/blob/main/README.md#L3\n" +
-		"a huge range https://github.com/projectbluefin/testsuite/blob/" + citedOldSHA + "/big.txt#L10-L500\n"
+		"a huge range https://github.com/projectbluefin/testsuite/blob/" + citedOldSHA + "/big.txt#L10-L500\n" +
+		"a UI permalink https://github.com/projectbluefin/testsuite/blob/" + citedOldSHA + "/docs/guide.md?plain=1#L42\n"
 	refs := citedRefs(body, "projectbluefin", "testsuite")
 	var got []string
 	for _, r := range refs {
 		got = append(got, r.display())
 	}
 	want := []string{citedFile + ":163", "scripts/vm_validation_plan.py:108-110", "big.txt:10-29"}
+	// The UI permalink is past the cap above; parse it on its own.
+	ui := citedRefs("https://github.com/projectbluefin/testsuite/blob/"+citedOldSHA+"/docs/guide.md?plain=1#L42", "projectbluefin", "testsuite")
+	if len(ui) != 1 || ui[0].path != "docs/guide.md" {
+		t.Fatalf("UI permalink path = %+v, want docs/guide.md without ?plain=1", ui)
+	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("refs = %v, want %v (same repo, pinned SHA, span capped, other repos and branch links ignored)", got, want)
 	}
@@ -97,7 +103,7 @@ func TestEnumerationRecordsCitedLinesGone(t *testing.T) {
 	issues := []wireIssue{
 		{Number: 1085, Title: "[reviewer] stale doc", User: wireUser{"hive[bot]"}, Labels: []wireLabel{{Name: "agent/reviewer"}}, Body: citedBody(org, repo, citedFile, 163), CreatedAt: hoursAgo(5)},
 		{Number: 1086, Title: "[reviewer] still true", User: wireUser{"hive[bot]"}, Labels: []wireLabel{{Name: "agent/reviewer"}}, Body: citedBody(org, repo, "scripts/orca_steps.py", 12), CreatedAt: hoursAgo(4)},
-		{Number: 1087, Title: "[reviewer] file deleted", User: wireUser{"hive[bot]"}, Labels: []wireLabel{{Name: "agent/reviewer"}}, Body: citedBody(org, repo, "scripts/gone.py", 3), CreatedAt: hoursAgo(3)},
+		{Number: 1087, Title: "[reviewer] file renamed on main", User: wireUser{"hive[bot]"}, Labels: []wireLabel{{Name: "agent/reviewer"}}, Body: citedBody(org, repo, "scripts/gone.py", 3), CreatedAt: hoursAgo(3)},
 		{Number: 1088, Title: "a person's", User: wireUser{"erin"}, Body: citedBody(org, repo, citedFile, 163), CreatedAt: hoursAgo(2)},
 		{Number: 1089, Title: "admitted finding", User: wireUser{"hive[bot]"}, Labels: []wireLabel{{Name: "agent/reviewer"}, {Name: "triage/accepted"}}, Body: citedBody(org, repo, citedFile, 163), CreatedAt: hoursAgo(1)},
 	}
@@ -127,7 +133,9 @@ func TestEnumerationRecordsCitedLinesGone(t *testing.T) {
 		return out
 	}
 	got := gone()
-	want := map[int]string{1085: citedFile + ":163", 1086: "", 1087: "scripts/gone.py:3", 1088: ""}
+	// #1087's file is gone from main: a rename or move keeps the lines
+	// somewhere, so it is not offered CLOSE.
+	want := map[int]string{1085: citedFile + ":163", 1086: "", 1087: "", 1088: ""}
 	for n, w := range want {
 		if got[n] != w {
 			t.Errorf("#%d CitedLinesGone = %q, want %q", n, got[n], w)
@@ -185,13 +193,76 @@ func TestCitedLinesGoneBudgetAndFailures(t *testing.T) {
 	if g := c.citedLinesGone(context.Background(), org, repo, finding(4), agent, &budget); g != citedFile+":163" {
 		t.Fatalf("after the failure = %q, want it re-checked", g)
 	}
-	// Cited lines too short to be evidence decide nothing.
+	// Cited lines too short to be evidence decide nothing, and settle: once
+	// read, later passes (even past the TTL) spend no budget and no read.
 	cr.mu.Lock()
 	cr.files[citedOldSHA+":short.go"] = fileWithLine(2, "}")
+	cr.files[":short.go"] = "rewritten"
 	cr.mu.Unlock()
 	short := citedIssue(5, "https://github.com/o/r/blob/"+citedOldSHA+"/short.go#L2")
 	if g := c.citedLinesGone(context.Background(), org, repo, short, agent, &budget); g != "" {
 		t.Fatalf("short evidence = %q, want unknown", g)
+	}
+	// A path the pinned commit does not have settles the same way.
+	missing := citedIssue(6, "https://github.com/o/r/blob/"+citedOldSHA+"/never.go#L9")
+	if g := c.citedLinesGone(context.Background(), org, repo, missing, agent, &budget); g != "" {
+		t.Fatalf("pinned 404 = %q, want unknown", g)
+	}
+	c.citedLines.mu.Lock()
+	for k, r := range c.citedLines.results {
+		r.at = r.at.Add(-2 * citedTTL)
+		c.citedLines.results[k] = r
+	}
+	c.citedLines.mu.Unlock()
+	reads, before := cr.reads, budget
+	for _, iss := range []*gh.Issue{short, missing} {
+		if g := c.citedLinesGone(context.Background(), org, repo, iss, agent, &budget); g != "" {
+			t.Fatalf("settled unknown = %q", g)
+		}
+	}
+	if cr.reads != reads || budget != before {
+		t.Fatalf("settled unknowns cost %d reads and %d budget, want none", cr.reads-reads, before-budget)
+	}
+	// The cache keeps the evidence lines, never a file.
+	for k, ev := range c.citedLines.evidence {
+		if len(ev) > citedMaxSpan {
+			t.Fatalf("evidence cache %s holds %d lines", k, len(ev))
+		}
+	}
+}
+
+// A file present at the pinned SHA and gone from main (a rename or move) is
+// unknown, not gone, and settled like one.
+func TestCitedLinesRenamedFileIsNotGone(t *testing.T) {
+	const org, repo = "o", "r"
+	cr := &citedRepo{files: map[string]string{
+		citedOldSHA + ":old/name.md": fileWithLine(4, "the cited sentence that moved with its file"),
+		":new/name.md":               fileWithLine(4, "the cited sentence that moved with its file"),
+	}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/"+org+"/"+repo+"/contents/", cr.handle)
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, org, []string{repo})
+	budget := 3
+	issue := citedIssue(1, "https://github.com/o/r/blob/"+citedOldSHA+"/old/name.md#L4")
+	if g := c.citedLinesGone(context.Background(), org, repo, issue, []string{"agent/reviewer"}, &budget); g != "" {
+		t.Fatalf("renamed file = %q, want not gone", g)
+	}
+	reads := cr.reads
+	if g := c.citedLinesGone(context.Background(), org, repo, issue, []string{"agent/reviewer"}, &budget); g != "" || cr.reads != reads {
+		t.Fatalf("second pass = %q with %d reads, want the cached answer", g, cr.reads-reads)
+	}
+}
+
+// The evidence cache is bounded.
+func TestCitedEvidenceCacheIsBounded(t *testing.T) {
+	c := &Client{}
+	for i := 0; i < citedMaxEvidenceEntries+10; i++ {
+		c.settleEvidence("o", "r", citedRef{path: "f" + strconv.Itoa(i), sha: citedOldSHA, first: 1, last: 1}, []string{"a line long enough to be evidence"})
+	}
+	if n := len(c.citedLines.evidence); n > citedMaxEvidenceEntries {
+		t.Fatalf("evidence entries = %d, want at most %d", n, citedMaxEvidenceEntries)
 	}
 }
 
@@ -213,5 +284,14 @@ func TestCitedLinesGoneNeedsEveryCitationGone(t *testing.T) {
 	budget := 3
 	if g := c.citedLinesGone(context.Background(), org, repo, citedIssue(1, body), []string{"agent/quality"}, &budget); g != "" {
 		t.Fatalf("one citation still on main: %q, want nothing", g)
+	}
+}
+
+// Evidence is a readable line: a brace is too short, a minified line too
+// long; both bound what the cache keeps.
+func TestCitedEvidenceLinesBounds(t *testing.T) {
+	content := strings.Join([]string{"}", "a line long enough to be evidence", strings.Repeat("x", citedMaxLine+1)}, "\n")
+	if got := citedEvidenceLines(content, 1, 3); len(got) != 1 || got[0] != "a line long enough to be evidence" {
+		t.Fatalf("evidence = %q, want only the readable line", got)
 	}
 }

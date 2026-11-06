@@ -41,6 +41,13 @@ const (
 	// per repository; the rest keep their cached result (or none) until a
 	// later pass.
 	citedMaxChecksPerRepo = 3
+	// citedMaxLine is the longest line kept as evidence: a minified or
+	// generated line is not a citation anyone reads, and it bounds what the
+	// evidence cache holds.
+	citedMaxLine = 400
+	// citedMaxEvidenceEntries bounds the pinned-evidence cache; when full it
+	// starts over (the entries are only an optimisation: each is one read).
+	citedMaxEvidenceEntries = 1024
 )
 
 // citedRef is one permalink citation.
@@ -79,7 +86,16 @@ func citedRefs(body, owner, repo string) []citedRef {
 		if last-first+1 > citedMaxSpan {
 			last = first + citedMaxSpan - 1
 		}
-		r := citedRef{path: m[4], sha: m[3], first: first, last: last}
+		path := m[4]
+		// GitHub's line permalinks on rendered files carry a query
+		// (`SKILL.md?plain=1#L163`); the path ends before it.
+		if i := strings.IndexByte(path, '?'); i >= 0 {
+			path = path[:i]
+		}
+		if path == "" {
+			continue
+		}
+		r := citedRef{path: path, sha: m[3], first: first, last: last}
 		if seen[r.sha+r.path+r.display()] {
 			continue
 		}
@@ -98,7 +114,7 @@ func citedEvidenceLines(content string, first, last int) []string {
 	lines := strings.Split(content, "\n")
 	var out []string
 	for i := first; i <= last && i <= len(lines); i++ {
-		if l := strings.TrimSpace(lines[i-1]); len(l) >= citedMinLine {
+		if l := strings.TrimSpace(lines[i-1]); len(l) >= citedMinLine && len(l) <= citedMaxLine {
 			out = append(out, l)
 		}
 	}
@@ -125,12 +141,36 @@ type citedResult struct {
 	gone string
 }
 
-// citedCache holds per-issue results and the immutable file contents read
-// at a pinned SHA.
+// citedCache holds per-issue results and the evidence lines read at a
+// pinned SHA. Pinned content cannot change, so its evidence (none, for a
+// path the pinned commit does not have or lines too short to count) is
+// settled once; only the lines are kept, never the file.
 type citedCache struct {
-	mu      sync.Mutex
-	results map[string]citedResult
-	atSHA   map[string]string
+	mu       sync.Mutex
+	results  map[string]citedResult
+	evidence map[string][]string
+}
+
+func citedEvidenceKey(owner, repo string, ref citedRef) string {
+	return owner + "/" + repo + "@" + ref.sha + ":" + ref.display()
+}
+
+// cachedEvidence returns the settled evidence for ref, and whether it is
+// settled.
+func (c *Client) cachedEvidence(owner, repo string, ref citedRef) ([]string, bool) {
+	c.citedLines.mu.Lock()
+	defer c.citedLines.mu.Unlock()
+	ev, ok := c.citedLines.evidence[citedEvidenceKey(owner, repo, ref)]
+	return ev, ok
+}
+
+func (c *Client) settleEvidence(owner, repo string, ref citedRef, ev []string) {
+	c.citedLines.mu.Lock()
+	defer c.citedLines.mu.Unlock()
+	if c.citedLines.evidence == nil || len(c.citedLines.evidence) >= citedMaxEvidenceEntries {
+		c.citedLines.evidence = map[string][]string{}
+	}
+	c.citedLines.evidence[citedEvidenceKey(owner, repo, ref)] = ev
 }
 
 var errCitedNotFound = errors.New("not found")
@@ -156,33 +196,35 @@ func (c *Client) readCitedFile(ctx context.Context, owner, repo, path, ref strin
 }
 
 // citedRefGone reports whether ref's evidence is gone from the default
-// branch. ok is false when it cannot tell: an unreadable file, or cited lines
-// too short to be evidence.
-func (c *Client) citedRefGone(ctx context.Context, owner, repo string, ref citedRef) (gone, ok bool) {
-	key := owner + "/" + repo + "@" + ref.sha + ":" + ref.path
-	c.citedLines.mu.Lock()
-	old, cached := c.citedLines.atSHA[key]
-	c.citedLines.mu.Unlock()
-	if !cached {
+// branch. settled is false only for a read that failed and may succeed on a
+// later pass. Everything else is a settled answer:
+//   - no evidence (the pinned commit has no such path, or the cited lines are
+//     too short or too long to count) is "not gone";
+//   - a file the default branch no longer has is "not gone" as well: a
+//     rename or move keeps the cited lines somewhere, and finding where would
+//     need a search the check does not spend;
+//   - otherwise the evidence is gone when none of its lines is a line of the
+//     default branch's file.
+func (c *Client) citedRefGone(ctx context.Context, owner, repo string, ref citedRef) (gone, settled bool) {
+	evidence, ok := c.cachedEvidence(owner, repo, ref)
+	if !ok {
 		content, err := c.readCitedFile(ctx, owner, repo, ref.path, ref.sha)
-		if err != nil {
+		switch {
+		case errors.Is(err, errCitedNotFound):
+			evidence = nil
+		case err != nil:
 			return false, false
+		default:
+			evidence = citedEvidenceLines(content, ref.first, ref.last)
 		}
-		old = content
-		c.citedLines.mu.Lock()
-		if c.citedLines.atSHA == nil {
-			c.citedLines.atSHA = map[string]string{}
-		}
-		c.citedLines.atSHA[key] = old
-		c.citedLines.mu.Unlock()
+		c.settleEvidence(owner, repo, ref, evidence)
 	}
-	evidence := citedEvidenceLines(old, ref.first, ref.last)
 	if len(evidence) == 0 {
-		return false, false
+		return false, true
 	}
 	main, err := c.readCitedFile(ctx, owner, repo, ref.path, "")
 	if errors.Is(err, errCitedNotFound) {
-		return true, true
+		return false, true
 	}
 	if err != nil {
 		return false, false
@@ -196,7 +238,7 @@ func (c *Client) citedRefGone(ctx context.Context, owner, repo string, ref cited
 // citedTTL; budget counts the refreshes left for this repository in this
 // pass, and a row past it keeps its cached result.
 func (c *Client) citedLinesGone(ctx context.Context, owner, repo string, issue *gh.Issue, labels []string, budget *int) string {
-	if issue == nil || !hasAgentRoleLabel(labels) {
+	if issue == nil || !hasAgentLaneLabel(labels) {
 		return ""
 	}
 	refs := citedRefs(issue.GetBody(), owner, repo)
@@ -210,6 +252,14 @@ func (c *Client) citedLinesGone(ctx context.Context, owner, repo string, issue *
 	if ok && time.Since(cached.at) < citedTTL {
 		return cached.gone
 	}
+	// A citation whose pinned evidence is already settled empty can never
+	// be gone, so neither can the issue: settle it without a read.
+	for _, ref := range refs {
+		if ev, settled := c.cachedEvidence(owner, repo, ref); settled && len(ev) == 0 {
+			c.storeCitedResult(key, "")
+			return ""
+		}
+	}
 	if budget == nil || *budget <= 0 {
 		if ok {
 			return cached.gone
@@ -219,8 +269,8 @@ func (c *Client) citedLinesGone(ctx context.Context, owner, repo string, issue *
 	*budget--
 	gone := ""
 	for _, ref := range refs {
-		isGone, known := c.citedRefGone(ctx, owner, repo, ref)
-		if !known {
+		isGone, settled := c.citedRefGone(ctx, owner, repo, ref)
+		if !settled {
 			// Unreadable: try again on a later pass, keep what was known.
 			if ok {
 				return cached.gone
@@ -235,20 +285,15 @@ func (c *Client) citedLinesGone(ctx context.Context, owner, repo string, issue *
 			gone = ref.display()
 		}
 	}
+	c.storeCitedResult(key, gone)
+	return gone
+}
+
+func (c *Client) storeCitedResult(key, gone string) {
 	c.citedLines.mu.Lock()
+	defer c.citedLines.mu.Unlock()
 	if c.citedLines.results == nil {
 		c.citedLines.results = map[string]citedResult{}
 	}
 	c.citedLines.results[key] = citedResult{at: time.Now(), gone: gone}
-	c.citedLines.mu.Unlock()
-	return gone
-}
-
-func hasAgentRoleLabel(labels []string) bool {
-	for _, l := range labels {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(l)), "agent/") {
-			return true
-		}
-	}
-	return false
 }
