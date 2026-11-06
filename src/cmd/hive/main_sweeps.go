@@ -1527,6 +1527,7 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 	approveEngine := automerge.New(ghClient, approveOpts)
 	result, err := ghClient.SweepIssueUnparkCommands(ctx, github.IssueUnparkSweepOptions{
 		PRApproveReply:       approveEngine.PRApproveReply,
+		PRReplyOptions:       true,
 		MaxActions:           github.DefaultIssueUnparkSweepMaxActions,
 		LabelDriven:          issueUnparkLabelDriven(cfg),
 		LabelApproval:        labelApprovalPolicyResolver(cfg),

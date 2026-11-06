@@ -160,6 +160,10 @@ type IssueUnparkSweepOptions struct {
 	// cannot use it (hivecommons/hive#13087). It must not merge or change
 	// labels. nil leaves PRs to the 085 decision path alone.
 	PRApproveReply func(context.Context, string, int, *gh.IssueComment) (string, error)
+	// PRReplyOptions keeps the "Your move" section of the hive status
+	// comment on PRs at 085 or 070 that wait on a person: the `/hive` replies
+	// that answer them (pr_reply_options.go). false writes no section.
+	PRReplyOptions bool
 	// MaxActions caps the issues written to in one pass. Zero means
 	// DefaultIssueUnparkSweepMaxActions.
 	MaxActions int
@@ -338,8 +342,12 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			return result, err
 		}
 		unparkedBefore := len(result.Unparked)
+		// waitingPRs are the PRs this pass saw at 085 or 070; the rest of
+		// the repo's PRs lose their "Your move" section after a full pass.
+		waitingPRs, fullPass := map[int]bool{}, true
 		for _, issue := range issues {
 			if result.actions() >= maxActions {
+				fullPass = false
 				break
 			}
 			if issue == nil {
@@ -383,7 +391,15 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 					continue
 				}
 				result.Seen++
+				waitingPRs[issue.GetNumber()] = true
 				acted, err := c.tryUnparkPullRequest(ctx, repo, owner, repoName, issue, cutoff, opts, result)
+				// After the command, so an approval it just read clears the
+				// section in the same pass. Never counted as an action.
+				if opts.PRReplyOptions {
+					if err := c.syncPRReplyOptions(ctx, repo, owner, repoName, issue, labels); err != nil && c.logger != nil {
+						c.logger.Warn("unpark sweep: PR reply options not updated", "repo", repo, "pr", issue.GetNumber(), "error", err)
+					}
+				}
 				if err != nil {
 					if c.logger != nil {
 						c.logger.Warn("unpark sweep skipped pull request", "repo", repo, "pr", issue.GetNumber(), "error", err)
@@ -435,6 +451,9 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 		// pass recorded its `/hive ack` and `/hive snooze` commands.
 		if c.stageArchived.has(strings.ToLower(owner + "/" + repoName)) {
 			continue
+		}
+		if fullPass && opts.PRReplyOptions {
+			c.clearLeftPRReplyOptions(ctx, repo, waitingPRs)
 		}
 		if _, err := c.SweepAttentionQueue(ctx, owner+"/"+repoName); err != nil && c.logger != nil {
 			c.logger.Warn("unpark sweep: attention queue pass incomplete", "repo", repo, "error", err)
