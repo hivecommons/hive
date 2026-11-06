@@ -69,6 +69,14 @@ type delegatedDecisionPlan struct {
 	// then says so and the primary button re-runs it.
 	Prior *time.Time `json:"prior,omitempty"`
 	Notes []string   `json:"notes,omitempty"`
+	// Saw is every fact the decision rules read, for the dialog's "What
+	// hive saw"; RulePlain and Rationale are the rule that decided and its
+	// whole reason; WhyNot is the ladder's ruled-out options with the fact
+	// that ruled each out. All four sit under Details.
+	Saw       []delegatedecision.Fact   `json:"saw,omitempty"`
+	RulePlain string                    `json:"rule_plain,omitempty"`
+	Rationale string                    `json:"rationale,omitempty"`
+	WhyNot    []delegatedecision.WhyNot `json:"why_not,omitempty"`
 }
 
 // delegatedPlanAlternativeLabel is the preview's merge button: the
@@ -230,7 +238,7 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 	if err != nil {
 		return nil, err
 	}
-	plan := &delegatedDecisionPlan{Repo: repoFull, Number: number, Type: itemType, Title: strings.TrimSpace(in.Title)}
+	plan := &delegatedDecisionPlan{Repo: repoFull, Number: number, Type: itemType, Title: strings.TrimSpace(in.Title), Saw: in.Facts()}
 	if in.Kind == delegatedecision.KindIssue {
 		if b := s.delegatedBlocker(ctx, repoFull, number, s.delegatedCommentTexts(ctx, repoFull, number)); b != nil && blocker.Kind(b.Kind) == blocker.CapabilityWorkflowsPermission {
 			held := len(holdLabels(in.Labels, s.delegateHiveID())) > 0
@@ -274,7 +282,8 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 	}
 	plan.Summary, plan.Consequences = delegatedPlanWording(in, d)
 	plan.Why = delegatedPlanWhy(in, d)
-	plan.Ladder = d.Ladder
+	plan.RulePlain, plan.Rationale = delegatedPlanRule(in, d, plan.Why)
+	plan.Ladder, plan.WhyNot = d.Ladder, d.Ladder.WhyNot()
 	plan.MergeableAsIs = delegatedPlanMergeableAsIs(in, d)
 	if plan.Alternatives == nil {
 		plan.Alternatives = delegatedPlanAlternatives(in, d, mergerRole)
