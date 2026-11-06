@@ -19,8 +19,13 @@ const (
 // cannot import pkg/dashboard — dashboard imports adminmcp to serve the admin
 // MCP endpoint — so the band-read tools carry their own copy of the valid
 // keys, in the fixed order the Overview endpoints already return bands[] in.
+//
+// The issues export has one band beyond issueBandOrder: "outside"
+// (overviewBandOutside), the open issues the scanner kept off the agent
+// queues. It comes back in bands[] with a count like the others, so it is a
+// band a caller can ask for.
 var (
-	issueBandKeys = []string{"ready", "in-progress", "agent-filed", "waiting", "done"}
+	issueBandKeys = []string{"ready", "in-progress", "agent-filed", "waiting", "done", "outside"}
 	prBandKeys    = []string{"waiting", "eligible", "blocked", "in-review", "open", "draft"}
 )
 
