@@ -370,8 +370,14 @@ func (p dashboardTaskMCPProvider) relatedWorkSnapshot(scope taskmcp.Scope) (task
 		if !strings.EqualFold(repo.Full, scope.Repo) && !strings.EqualFold(repo.Name, scope.Repo) {
 			continue
 		}
+		// A standby or fix-queue task is scoped the way its item spells the
+		// repository, which can be the bare name. The items below are given
+		// the row's full name, so the scope takes it too.
+		if repo.Full != "" {
+			scope.Repo = repo.Full
+		}
 		for _, raw := range repo.ActionableIssues {
-			item, ok := relatedItemFromRaw("issue", repo.Full, raw)
+			item, ok := relatedItemFromRaw("issue", repo, raw)
 			if !ok {
 				continue
 			}
@@ -382,17 +388,17 @@ func (p dashboardTaskMCPProvider) relatedWorkSnapshot(scope taskmcp.Scope) (task
 			candidates = append(candidates, item)
 		}
 		for _, raw := range repo.OpenPrs {
-			if item, ok := relatedItemFromRaw("pull_request", repo.Full, raw); ok {
+			if item, ok := relatedItemFromRaw("pull_request", repo, raw); ok {
 				candidates = append(candidates, item)
 			}
 		}
 		for _, raw := range repo.HeldIssues {
-			if item, ok := relatedItemFromRaw("issue", repo.Full, raw); ok {
+			if item, ok := relatedItemFromRaw("issue", repo, raw); ok {
 				candidates = append(candidates, item)
 			}
 		}
 		for _, raw := range repo.HeldPrs {
-			if item, ok := relatedItemFromRaw("pull_request", repo.Full, raw); ok {
+			if item, ok := relatedItemFromRaw("pull_request", repo, raw); ok {
 				candidates = append(candidates, item)
 			}
 		}
@@ -403,15 +409,25 @@ func (p dashboardTaskMCPProvider) relatedWorkSnapshot(scope taskmcp.Scope) (task
 	return scope, current, candidates
 }
 
-func relatedItemFromRaw(kind, fallbackRepo string, raw any) (taskmcp.RelatedItem, bool) {
+// relatedItemFromRaw reads one issue or pull request of row. The enumerator
+// stamps each item with its repository as project.repos spells it, which on
+// most hives is the bare name ("console"), while an issue task is scoped to
+// owner/repo. An item that carries the row's own name is therefore given the
+// row's full name, or it would never match the task's repository. An item
+// that names some other repository keeps that name and stays out of scope.
+func relatedItemFromRaw(kind string, row FrontendRepo, raw any) (taskmcp.RelatedItem, bool) {
 	var m map[string]any
 	b, err := json.Marshal(raw)
 	if err != nil || json.Unmarshal(b, &m) != nil {
 		return taskmcp.RelatedItem{}, false
 	}
+	itemRepo := stringFromMap(m, "repo", row.Full)
+	if row.Full != "" && strings.EqualFold(itemRepo, row.Name) {
+		itemRepo = row.Full
+	}
 	item := taskmcp.RelatedItem{
 		Kind:   kind,
-		Repo:   stringFromMap(m, "repo", fallbackRepo),
+		Repo:   itemRepo,
 		Number: intFromMap(m, "number"),
 		State:  stringFromMap(m, "state", "open"),
 		Author: stringFromMap(m, "author", ""),
