@@ -362,10 +362,14 @@ hand-applied return label) names the exact head the person saw; a new head
 is a new tree nobody has decided on, so the record is superseded and the
 reviewer's `decision_requested` question stands again. The one head change
 that does not supersede it is the hive's own `require_current_base` refresh:
-a merge commit authored by the App whose parents are the decided head and a
-commit on the base branch, and whose three-dot diff against the base is
-file-for-file (name, status, blob, line counts, patch) identical to the
-decided head's. Up to five such refreshes may stack before any gate reads
+a merge commit authored by the App, committed by GitHub (`web-flow`) or the
+App and carrying a signature GitHub verified, whose parents are the decided
+head and a commit on the base branch, and whose three-dot diff against the
+base is file-for-file (name, status, blob, line counts, patch) identical to
+the decided head's. An App login GitHub derived from an unsigned commit's
+author email does not count, and a compare that lists GitHub's 300-file cap
+cannot be verified, so neither carries
+([#16860](https://github.com/hivecommons/hive/issues/16860)). Up to five such refreshes may stack before any gate reads
 the PR: the carry walks the first-parent chain back from the new head and
 every hop must itself pass the same check, so two App merge-from-base
 commits in a row still carry while a content commit anywhere in the chain

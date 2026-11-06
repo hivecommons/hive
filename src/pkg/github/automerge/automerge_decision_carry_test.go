@@ -57,7 +57,7 @@ func (a *baseRefreshAPI) handler(t *testing.T) http.Handler {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha, "author": map[string]any{"login": a.mergeAuthor}, "committer": map[string]any{"login": "web-flow"},
-				"parents": []map[string]any{{"sha": a.oldHead}, {"sha": a.baseTip}}})
+				"commit": map[string]any{"verification": map[string]any{"verified": true}}, "parents": []map[string]any{{"sha": a.oldHead}, {"sha": a.baseTip}}})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/reviews"):
 			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/15649"):
