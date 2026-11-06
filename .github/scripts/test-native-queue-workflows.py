@@ -61,6 +61,19 @@ class NativeQueueWorkflows(unittest.TestCase):
         manifest = yaml.safe_load((ROOT / ".github/release-lines.yml").read_text())
         self.assertEqual(manifest["pinned"]["native-queue-policy.yml"], ["v6", "-v4"])
 
+    def test_owned_gate_retriggers_never_cancel_the_evidence_wait(self):
+        # Stage-label flips re-fire the PR-target run every few minutes; a
+        # cancelling concurrency group would never let the bounded evidence
+        # wait finish (#16942). Re-triggers must still run (a hold added after
+        # a green run must turn the check red) but must queue, not cancel.
+        data = workflow("native-queue-policy.yml")
+        events = data.get("on", data.get(True))
+        for action in ("edited", "labeled", "unlabeled"):
+            self.assertIn(action, events["pull_request_target"]["types"])
+        concurrency = data["concurrency"]
+        self.assertIn("github.event.pull_request.number", concurrency["group"])
+        self.assertIs(concurrency["cancel-in-progress"], False)
+
     def test_dependabot_runs_the_same_trusted_pr_verifier(self):
         verifier = workflow("pr-verifier.yml")
         events = verifier.get("on", verifier.get(True))
