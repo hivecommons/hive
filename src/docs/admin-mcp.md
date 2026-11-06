@@ -113,6 +113,9 @@ claude mcp add hive-admin \
 `POST /api/admin/mcp` is always registered on v6; there is no enable flag.
 
 - Stateless JSON-RPC 2.0: one request per POST, no SSE, no session id.
+- `ping` is answered with an empty result. A notification (any
+  `notifications/...` method) is acknowledged with `200` and
+  `{"jsonrpc":"2.0","result":{}}`, never with an error.
 - `GET` returns 405.
 - Request bodies are capped at 64 KiB.
 - Authenticate with `Authorization: Bearer <token>`. A `?token=` query
