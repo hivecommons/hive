@@ -66,7 +66,7 @@ func (c *Client) RecordOperatorIssueDecision(ctx context.Context, repo string, n
 	}
 	removed, err := c.clearIssueParkingLabels(ctx, owner, name, number, labels, actor, needsHuman.lift)
 	if err != nil {
-		return IssueUnparkEvent{}, err
+		return IssueUnparkEvent{}, c.rollbackOperatorDecision(ctx, repo, number, labels, removed, err)
 	}
 	decision = strings.TrimSpace(decision)
 	if decision == "" {
@@ -75,11 +75,33 @@ func (c *Client) RecordOperatorIssueDecision(ctx context.Context, repo string, n
 	body := renderUnparkAcceptedReplyFiltered(actor, decision, removed, hasIssueNeedsHumanLabel(labels), needsHuman, c.unparkIssueFilterNote(labels, removed)) +
 		"\n\n_Recorded from the hive dashboard._"
 	if err := c.postUnparkReply(ctx, owner, name, number, operatorDecisionMarkerID, body); err != nil {
-		return IssueUnparkEvent{}, err
+		return IssueUnparkEvent{}, c.rollbackOperatorDecision(ctx, repo, number, labels, removed, err)
 	}
 	event := IssueUnparkEvent{Repo: owner + "/" + name, Number: number, Actor: actor, Decision: decision}
 	if c.logger != nil {
 		c.logger.Info("issue un-parked by dashboard decision", "repo", event.Repo, "issue", number, "actor", actor, "decision", decision)
 	}
 	return event, nil
+}
+
+// rollbackOperatorDecision restores the park if an operator decision could
+// not be completed. Preserve an acknowledgement that predated this attempt.
+func (c *Client) rollbackOperatorDecision(ctx context.Context, repo string, number int, labels, removed []string, cause error) error {
+	restore := append([]string(nil), removed...)
+	for _, label := range c.parkingLabelsPresent(labels) {
+		if !labelPresent(restore, label) {
+			restore = append(restore, label)
+		}
+	}
+	if len(restore) > 0 {
+		if err := c.AddLabels(ctx, repo, number, restore); err != nil { // writeback:solicited rollback of the operator's decision
+			cause = fmt.Errorf("%w; restoring parking labels: %v", cause, err)
+		}
+	}
+	if !labelPresent(labels, HumanAckLabel) {
+		if err := c.RemoveLabel(ctx, repo, number, HumanAckLabel); err != nil { // writeback:solicited rollback of the operator's decision
+			cause = fmt.Errorf("%w; removing decision acknowledgement: %v", cause, err)
+		}
+	}
+	return cause
 }

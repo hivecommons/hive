@@ -1,0 +1,1 @@
+- Offer a workflows-capable lane for parked workflow changes instead of incorrectly asking operators to grant an existing App permission.

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/blocker"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 )
@@ -230,6 +231,21 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 		return nil, err
 	}
 	plan := &delegatedDecisionPlan{Repo: repoFull, Number: number, Type: itemType, Title: strings.TrimSpace(in.Title)}
+	if in.Kind == delegatedecision.KindIssue {
+		if b := s.delegatedBlocker(ctx, repoFull, number, s.delegatedCommentTexts(ctx, repoFull, number)); b != nil && blocker.Kind(b.Kind) == blocker.CapabilityWorkflowsPermission {
+			held := len(holdLabels(in.Labels, s.delegateHiveID())) > 0
+			if !held {
+				if lane, _ := s.workflowsHandoffState(ctx, repoFull, in.Labels); lane != "" {
+					plan.Would = string(delegatedecision.VerdictDirection)
+					plan.Rule = "workflows-handoff"
+					plan.Summary = "Hand the workflow change to `" + lane + "`."
+					plan.Why = "That lane can push workflow files in this repository."
+					plan.Consequences = []string{"Record the decision and unpark the issue.", "Route it to `" + lane + "` on the next scheduler pass."}
+					return plan, nil
+				}
+			}
+		}
+	}
 	var d delegatedecision.Decision
 	if out, ok := s.delegatedHumanMergeOutcome(repoFull, number, itemType, "", mergerRole, in, req); ok {
 		// The 090 shortcut: the plan is the shortcut's own answer, with

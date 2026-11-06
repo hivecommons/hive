@@ -518,8 +518,24 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 	// and write nothing (hivecommons/hive#15099).
 	if in.Kind == delegatedecision.KindIssue {
 		if b := s.delegatedBlocker(ctx, repoFull, number, s.delegatedCommentTexts(ctx, repoFull, number)); b != nil {
-			held := slices.Contains(in.Labels, delegatedecision.LabelHold)
-			res := blockerNoEffectResult(rowActionTarget(repoFull, rowActionTargetIssue, number), *b, held, s.blockerOptionsContext())
+			held := len(holdLabels(in.Labels, s.delegateHiveID())) > 0
+			bctx := s.blockerOptionsContext()
+			if blocker.Kind(b.Kind) == blocker.CapabilityWorkflowsPermission {
+				bctx.ParkingAgent = stageTrackerAgentLane(in.Labels)
+				bctx.WorkflowsLane, bctx.WorkflowsGranted = s.workflowsHandoffState(ctx, repoFull, in.Labels)
+				if lane := bctx.WorkflowsLane; !held && lane != "" {
+					text := "Hand the workflow change to `" + lane + "`, whose token can push workflow files."
+					d := delegatedecision.Decision{Verdict: delegatedecision.VerdictDirection, Rule: "workflows-handoff", Text: text, Rationale: text}
+					res, err := s.executeWorkflowsHandoff(ctx, repoFull, number, user, lane, in.Labels, true)
+					action := auditRepoItemDecisionDelegated
+					if err != nil {
+						action += "_failed"
+					}
+					s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "type", itemType, "rule", d.Rule, "lane", lane, "decision", text), "", repoFull, number)
+					return delegatedOutcome{Decision: &d, Result: &res, Err: err}
+				}
+			}
+			res := blockerNoEffectResult(rowActionTarget(repoFull, rowActionTargetIssue, number), *b, held, bctx)
 			d := delegatedecision.Decision{Verdict: delegatedecision.VerdictRefused, Rule: "blocker:" + b.Kind, Text: res.Outcome, Rationale: res.Outcome, KeepsPark: true}
 			notes := []string{"blocked: " + b.Short + "; nothing written"}
 			s.audit.LogRecord(user, auditRepoItemDecisionDelegated, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "type", itemType,

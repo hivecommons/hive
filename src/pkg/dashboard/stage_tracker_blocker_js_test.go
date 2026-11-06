@@ -57,6 +57,9 @@ const ro = stageTrackerBlockerActions(issue, { user: false, canHold: false, canH
 assert.strictEqual(ro.find(a => a.id === 'open:app-settings').enabled, true);
 assert.strictEqual(ro.find(a => a.id === 'blocker:wait').enabled, true);
 assert.strictEqual(ro.find(a => a.id === 'blocker:recheck').enabled, false);
+const handoffIssue = Object.assign({}, issue, { decision_needed: { options: [{ action: 'blocker:handoff', label: 'Hand to scanner', enabled: true }] } });
+assert.strictEqual(stageTrackerBlockerActions(handoffIssue, ctx)[0].enabled, true);
+assert.strictEqual(stageTrackerBlockerActions(handoffIssue, { user: false, canHold: false })[0].enabled, false);
 assert.strictEqual(ro.find(a => a.id === 'blocker:recheck').why, STAGE_TRACKER_WHY_WRITE);
 assert.strictEqual(stageTrackerBlockerOptionUrl(issue, 'open:app-settings'), appURL);
 assert.strictEqual(stageTrackerBlockerOptionUrl(issue, 'blocker:recheck'), '');
@@ -98,6 +101,10 @@ func TestStageTrackerBlockerRunsActions(t *testing.T) {
 let req = stageTrackerActionRequest(issue, 'blocker:recheck', {});
 assert.ok(req.url.endsWith('/blocker/recheck'), req.url);
 assert.deepStrictEqual(req.body, {});
+req = stageTrackerActionRequest(issue, 'blocker:handoff', {});
+assert.ok(req.url.endsWith('/blocker/handoff'), req.url);
+assert.deepStrictEqual(req.body, {});
+assert.strictEqual(stageTrackerActionRequest(Object.assign({}, issue, { kind: 'pr' }), 'blocker:handoff', {}), null);
 req = stageTrackerActionRequest(issue, 'blocker:close-partial', { comment: 'Closing as partially addressed.' });
 assert.ok(req.url.endsWith('/blocker/close-partial'), req.url);
 assert.strictEqual(req.body.comment, 'Closing as partially addressed.');

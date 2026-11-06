@@ -81,6 +81,7 @@ const (
 	decisionWhyPatchNotCapability   = "Nothing to prepare: this step is a person's to take"
 	decisionWhyRecheckNotCapability = "No App permission is involved"
 	decisionWhyNoAppSettings        = "The App settings page is not known for this installation"
+	blockerActionWorkflowsHandoff   = "blocker:handoff"
 )
 
 // blockerActionLabels is the SPA-facing label per action id, kept here so
@@ -103,27 +104,45 @@ func blockerActionLabel(action string, perm string) string {
 
 // blockerOptionsContext is what the option builder needs from the server.
 type blockerOptionsContext struct {
-	AppSettingsURL string
-	PatchFeasible  bool
-	PatchWhy       string
+	AppSettingsURL    string
+	PatchFeasible     bool
+	PatchWhy          string
+	WorkflowsLane     string
+	WorkflowsGranted  bool
+	WorkflowsSelfPush bool
+	ParkingAgent      string
 }
 
-// blockerDecisionOptions lists the popover's options for a blocked row, in
-// the order the owner asked for: (a) grant + re-check, (b) prepare the
-// patch, (c) mark partially-addressed and close, (d) keep waiting, then
-// the row's usual "Let hive decide" disabled with the reason, and hold.
+// blockerDecisionOptions lists the available remedies for a blocked row.
+// A workflows-capable lane takes priority over installation settings.
 func blockerDecisionOptions(b StageTrackerBlocker, held bool, ctx blockerOptionsContext) []StageTrackerDecisionOption {
 	var opts []StageTrackerDecisionOption
 	kind := blocker.Kind(b.Kind)
 	if b.Capability {
-		settings := decisionOption(blocker.ActionAppSettings, blockerActionLabel(blocker.ActionAppSettings, b.Permission), ctx.AppSettingsURL != "", decisionWhyNoAppSettings)
-		settings.URL = ctx.AppSettingsURL
-		settings.Consequence = "opens the App settings page in a new tab; the hive re-tries on its own once it sees `" + b.Permission + ": write`"
-		recheck := decisionOption(blocker.ActionRecheck, blockerActionLabel(blocker.ActionRecheck, b.Permission), true, "")
-		recheck.Consequence = "probes the installation now and releases every item blocked on `" + b.Permission + "` if it is granted"
-		patch := decisionOption(blocker.ActionPatch, blockerActionLabel(blocker.ActionPatch, b.Permission), ctx.PatchFeasible, nonEmpty(ctx.PatchWhy, decisionWhyPatchNoIdentity))
+		workflows := kind == blocker.CapabilityWorkflowsPermission
+		if workflows && ctx.WorkflowsLane != "" {
+			handoff := decisionOption(blockerActionWorkflowsHandoff, "Hand to `"+ctx.WorkflowsLane+"` (its token can push workflow files)", !held, decisionWhyHeld)
+			handoff.Consequence = "routes the issue to this lane on the next schedule"
+			opts = append(opts, handoff)
+		} else if !workflows || !ctx.WorkflowsGranted {
+			settings := decisionOption(blocker.ActionAppSettings, blockerActionLabel(blocker.ActionAppSettings, b.Permission), ctx.AppSettingsURL != "", decisionWhyNoAppSettings)
+			settings.URL = ctx.AppSettingsURL
+			settings.Consequence = "opens the App settings page in a new tab; the hive re-tries on its own once it sees `" + b.Permission + ": write`"
+			recheck := decisionOption(blocker.ActionRecheck, blockerActionLabel(blocker.ActionRecheck, b.Permission), true, "")
+			recheck.Consequence = "probes the installation now and releases every item blocked on `" + b.Permission + "` if it is granted"
+			if workflows {
+				settings.Consequence = "opens the App settings page in a new tab"
+				recheck.Consequence = "checks whether the installation has the permission; the issue stays parked until its token tier can push"
+			}
+			opts = append(opts, settings, recheck)
+		}
+		patchWhy := nonEmpty(ctx.PatchWhy, decisionWhyPatchNoIdentity)
+		if workflows && (ctx.WorkflowsLane != "" || ctx.WorkflowsGranted) {
+			patchWhy = "Hive has no human-authorised identity that may push workflow files; apply the change by hand"
+		}
+		patch := decisionOption(blocker.ActionPatch, blockerActionLabel(blocker.ActionPatch, b.Permission), ctx.PatchFeasible, patchWhy)
 		patch.Consequence = "the hive prepares the change for a person to push under their own identity"
-		opts = append(opts, settings, recheck, patch)
+		opts = append(opts, patch)
 	}
 	closePartial := decisionOption(blocker.ActionClosePartial, blockerActionLabel(blocker.ActionClosePartial, ""), !held, decisionWhyHeld)
 	closePartial.Consequence = "labels the issue partially-addressed, posts your note on what remains and closes it"
@@ -136,8 +155,18 @@ func blockerDecisionOptions(b StageTrackerBlocker, held bool, ctx blockerOptions
 		why = decisionWhyBlockerReasked
 	case b.Capability:
 		why = decisionWhyBlockerCapability
+		if kind == blocker.CapabilityWorkflowsPermission && ctx.WorkflowsGranted {
+			why = "No workflows-capable lane is available for this repository"
+			if ctx.WorkflowsSelfPush {
+				why = "The hive will re-check this blocker on its next sweep"
+			}
+		}
 	}
-	opts = append(opts, decisionOption(decisionActionDelegate, "Let hive decide", false, why), decisionHoldOption(held))
+	canDelegate := kind == blocker.CapabilityWorkflowsPermission && ctx.WorkflowsLane != "" && !held
+	if held && kind == blocker.CapabilityWorkflowsPermission && ctx.WorkflowsLane != "" {
+		why = decisionWhyHeld
+	}
+	opts = append(opts, decisionOption(decisionActionDelegate, "Let hive decide", canDelegate, why), decisionHoldOption(held))
 	return opts
 }
 
@@ -149,9 +178,22 @@ func decisionForBlocker(it StageTrackerItem, held bool, ctx blockerOptionsContex
 	if d.Since == nil {
 		d.Since = it.StageSince
 	}
-	d.Question = kind.CantDo() + " " + blockerQuestionTail(b)
-	d.Blocker = "Blocked · " + b.Short
-	if b.Detail != "" {
+	question := kind.CantDo()
+	short := b.Short
+	if kind == blocker.CapabilityWorkflowsPermission && (ctx.WorkflowsGranted || ctx.WorkflowsLane != "") {
+		short = "Workflow files need a capable lane"
+		question = "Hive cannot push this change with the parking lane's token."
+		if ctx.WorkflowsGranted {
+			question = "The App has `workflows: write`; " + nonEmpty(ctx.ParkingAgent, "the parking agent") + "'s token tier does not ask for it."
+			if ctx.WorkflowsSelfPush {
+				short = "Workflow permission re-check pending"
+				question = "The App and `" + ctx.ParkingAgent + "` can push workflow files; the hive will re-check this blocker on its next sweep."
+			}
+		}
+	}
+	d.Question = question + " " + blockerQuestionTail(b, ctx)
+	d.Blocker = "Blocked · " + short
+	if b.Detail != "" && !(kind == blocker.CapabilityWorkflowsPermission && ctx.WorkflowsGranted) {
 		d.Blocker += " — " + b.Detail
 	}
 	if b.Reapplied && kind != blocker.HumanOnlyReasked {
@@ -165,7 +207,21 @@ func decisionForBlocker(it StageTrackerItem, held bool, ctx blockerOptionsContex
 }
 
 // blockerQuestionTail is the "Options: …" sentence after CantDo.
-func blockerQuestionTail(b *StageTrackerBlocker) string {
+func blockerQuestionTail(b *StageTrackerBlocker, ctx blockerOptionsContext) string {
+	if blocker.Kind(b.Kind) == blocker.CapabilityWorkflowsPermission {
+		if ctx.WorkflowsLane != "" {
+			return "Options: (a) hand to `" + ctx.WorkflowsLane + "` (its token can push workflow files) · (b) hive prepares the patch for a person to push, where it can · (c) mark partially-addressed and close · (d) keep waiting."
+		}
+		if ctx.WorkflowsSelfPush {
+			return "The next sweep re-checks this blocker; the issue still needs its parked decision answered."
+		}
+		if ctx.WorkflowsGranted {
+			return "Options: (a) hive prepares the patch for a person to push, where it can · (b) mark partially-addressed and close · (c) keep waiting."
+		}
+	}
+	if blocker.Kind(b.Kind) == blocker.CapabilityWorkflowsPermission {
+		return "Options: (a) grant the App `workflows: write` and re-check permissions · (b) hive prepares the patch for a person to push, where it can · (c) mark partially-addressed and close · (d) keep waiting."
+	}
 	if b.Capability {
 		return "Options: (a) grant the App `" + b.Permission + ": write` — hive re-tries on its own once it sees the permission, or press Re-check permissions · (b) hive prepares the patch for a person to push, where it can · (c) mark partially-addressed and close · (d) keep waiting."
 	}
@@ -196,10 +252,13 @@ func blockerNoEffectResult(target RowActionTarget, b StageTrackerBlocker, held b
 	kind := blocker.Kind(b.Kind)
 	res := RowActionResult{Action: rowActionNoEffect, Target: target, Why: "blocker:" + b.Kind}
 	res.Outcome = kind.CantDo()
-	if b.Detail != "" {
+	if kind == blocker.CapabilityWorkflowsPermission && ctx.WorkflowsGranted {
+		res.Outcome = "The App has `workflows: write`; " + nonEmpty(ctx.ParkingAgent, "the parking agent") + "'s token tier does not ask for it."
+	}
+	if b.Detail != "" && !(kind == blocker.CapabilityWorkflowsPermission && ctx.WorkflowsGranted) {
 		res.Outcome += " (" + b.Detail + ")"
 	}
-	res.Next = blockerQuestionTail(&b)
+	res.Next = blockerQuestionTail(&b, ctx)
 	res.Options = blockerDecisionOptions(b, held, ctx)
 	return res
 }
@@ -271,9 +330,9 @@ var installationPermissionProbe = func(ctx context.Context, auth *ghpkg.AppAuth)
 	return auth.VerifyInstallation(ctx)
 }
 
-// handleRepoItemBlockerRecheck probes the installation's permissions and,
-// when the blocker's permission is granted, lifts every blocker of that
-// kind so the items return to the agent queue on the next pass.
+// handleRepoItemBlockerRecheck probes the installation's permissions.
+// A workflows grant alone cannot establish that the parking lane can push,
+// so workflows blockers stay parked until explicitly resolved.
 func (s *Server) handleRepoItemBlockerRecheck(w http.ResponseWriter, r *http.Request) {
 	owner, repoName, number, ok := s.parseRepoItemPath(w, r)
 	if !ok {
@@ -316,6 +375,16 @@ func (s *Server) handleRepoItemBlockerRecheck(w http.ResponseWriter, r *http.Req
 	resp := blockerRecheckResponse{OK: true, Repo: repoFull, Number: number, Permission: b.Permission}
 	if info.Granted(b.Permission, "write") {
 		resp.Granted = true
+		if blocker.Kind(b.Kind) == blocker.CapabilityWorkflowsPermission {
+			bctx := s.blockerOptionsContext()
+			bctx.WorkflowsGranted = true
+			resp.Result = blockerNoEffectResult(target, *b, false, bctx)
+			resp.Result.Outcome = "The App has `workflows: write`, but the parking agent's token tier may not request it; the blocker remains."
+			resp.Result.Next = "See the blocker card for available options, including a workflows-lane handoff when one is available."
+			s.audit.LogRecord(user, auditRepoItemBlockerRecheck, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "permission", b.Permission, "granted", "true", "released", "0"), "", repoFull, number)
+			jsonResponse(w, resp)
+			return
+		}
 		resp.Released = blockerLedger().ClearKind(blocker.Kind(b.Kind))
 		resp.Result = RowActionResult{Action: rowActionReleased, Target: target,
 			Outcome: fmt.Sprintf("The App now has `%s: write`; released %d item(s) blocked on it.", b.Permission, resp.Released),

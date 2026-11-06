@@ -140,8 +140,7 @@ func (c *Client) inheritDeferredDecisions(ctx context.Context, displayRepo, owne
 			continue
 		}
 		note := renderDecisionInheritedNote(from, removed)
-		// The note is unsolicited, so it consults the gate like the other
-		// decision-park comments; a refusal keeps the un-park and skips it.
+		// The note is unsolicited; a gate refusal keeps the un-park and skips it.
 		item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: labels, CreatedAt: issue.GetCreatedAt().Time})
 		if d := c.WritebackAllowed(owner+"/"+repo, item, writeback.KindNeedsDecisionComment, note); !d.Allowed {
 			if c.logger != nil {

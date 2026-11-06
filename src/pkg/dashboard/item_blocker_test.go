@@ -95,6 +95,49 @@ func TestDecisionForBlockerWorkflowsPermission(t *testing.T) {
 	}
 }
 
+func TestWorkflowBlockerOptionsAndQuestion(t *testing.T) {
+	b := StageTrackerBlocker{Kind: string(blocker.CapabilityWorkflowsPermission), Capability: true, Permission: "workflows"}
+	for _, tc := range []struct {
+		name, lane, first, question string
+		granted, settings, delegate bool
+	}{
+		{"capable lane", "scanner", blockerActionWorkflowsHandoff, "(a) hand to `scanner`", true, false, true},
+		{"granted without lane", "", blocker.ActionPatch, "(a) hive prepares the patch", true, false, false},
+		{"missing grant", "", blocker.ActionAppSettings, "(a) grant the App `workflows: write`", false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := blockerOptionsContext{WorkflowsLane: tc.lane, WorkflowsGranted: tc.granted, ParkingAgent: "sec-check", AppSettingsURL: "https://example.com"}
+			opts := blockerDecisionOptions(b, false, ctx)
+			if opts[0].Action != tc.first {
+				t.Fatalf("first option = %+v, want %s", opts[0], tc.first)
+			}
+			_, err := optionByActionErr(opts, blocker.ActionAppSettings)
+			if (err == nil) != tc.settings {
+				t.Fatalf("settings option: %v", err)
+			}
+			delegate, err := optionByActionErr(opts, decisionActionDelegate)
+			if err != nil || delegate.Enabled != tc.delegate {
+				t.Fatalf("delegate = %+v, %v", delegate, err)
+			}
+			if q := blockerQuestionTail(&b, ctx); !strings.Contains(q, tc.question) || (tc.granted && strings.Contains(q, "grant the App")) {
+				t.Fatalf("question tail = %q", q)
+			}
+			d := decisionForBlocker(StageTrackerItem{Blocker: &b}, false, ctx)
+			if tc.granted && (!strings.Contains(d.Question, "App has `workflows: write`") || !strings.Contains(d.Question, "sec-check") || strings.Contains(d.Question, "App has no")) {
+				t.Fatalf("question = %q", d.Question)
+			}
+			if tc.delegate {
+				held := blockerDecisionOptions(b, true, ctx)
+				handoff, _ := optionByActionErr(held, blockerActionWorkflowsHandoff)
+				delegate, _ := optionByActionErr(held, decisionActionDelegate)
+				if handoff.Enabled || delegate.Enabled {
+					t.Fatalf("held options: %+v", held)
+				}
+			}
+		})
+	}
+}
+
 func TestDecisionForBlockerLoopGuardDisablesDelegate(t *testing.T) {
 	l := swapBlockerLedger(t)
 	at := time.Date(2026, 10, 20, 18, 11, 0, 0, time.UTC)
@@ -273,7 +316,8 @@ func TestRepoItemBlockerRecheck(t *testing.T) {
 		t.Fatalf("capabilities = %+v", caps)
 	}
 
-	// Granted: every item blocked on that permission is released.
+	// Granted: a tier-limited workflow blocker must not be released merely
+	// because the installation has permission.
 	fakeInstallationProbe(t, map[string]string{"contents": "write", "workflows": "write"}, nil)
 	w = postBlockerAction(t, srv, "recheck", "writer")
 	if w.Code != http.StatusOK {
@@ -282,14 +326,11 @@ func TestRepoItemBlockerRecheck(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if !resp.Granted || resp.Released != 2 || resp.Result.Action != rowActionReleased {
+	if !resp.Granted || resp.Released != 0 || resp.Result.Action != rowActionNoEffect {
 		t.Fatalf("resp = %+v", resp)
 	}
-	if stageTrackerBlockerFor("testorg/testrepo", 7) != nil || stageTrackerBlockerFor("testorg/testrepo", 9) != nil {
-		t.Fatal("blockers survived the grant")
-	}
-	if caps := srv.capabilitiesStatus(); caps.BlockedItems != 0 || len(caps.Missing) != 0 {
-		t.Fatalf("capabilities after grant = %+v", caps)
+	if stageTrackerBlockerFor("testorg/testrepo", 7) == nil || stageTrackerBlockerFor("testorg/testrepo", 9) == nil {
+		t.Fatal("workflow blockers cleared without a capable lane handoff")
 	}
 	var audited int
 	for _, entry := range srv.GetAudit().Recent(20) {
@@ -358,5 +399,18 @@ func TestStatusPayloadCarriesCapabilities(t *testing.T) {
 	}
 	if got.Capabilities.BlockedItems != 1 || len(got.Capabilities.Missing) != 1 || got.Capabilities.Missing[0] != "workflows" || got.Capabilities.ByPermission["workflows"] != 1 {
 		t.Fatalf("status capabilities = %s", b)
+	}
+}
+
+func TestWorkflowBlockerParkingLaneCanPush(t *testing.T) {
+	b := StageTrackerBlocker{Kind: string(blocker.CapabilityWorkflowsPermission), Capability: true, Permission: "workflows"}
+	ctx := blockerOptionsContext{WorkflowsGranted: true, WorkflowsSelfPush: true, ParkingAgent: "scanner"}
+	d := decisionForBlocker(StageTrackerItem{Blocker: &b}, false, ctx)
+	if !strings.Contains(d.Question, "scanner") || !strings.Contains(d.Question, "next sweep") || strings.Contains(d.Question, "does not ask") {
+		t.Fatalf("question = %q", d.Question)
+	}
+	opt := decisionOptionByAction(t, d, decisionActionDelegate)
+	if opt.Enabled || !strings.Contains(opt.ReasonIfDisabled, "next sweep") {
+		t.Fatalf("delegate = %+v", opt)
 	}
 }

@@ -37150,13 +37150,34 @@
         }
       }
     },
+    "/api/repos/{owner}/{repo}/items/{number}/blocker/handoff": {
+      "post": {
+        "tags": ["Status"],
+        "summary": "Hand a workflows-blocked issue to a capable lane",
+        "description": "Requires a signed-in repository writer, an open parked issue without a hold, a workflows permission blocker, and an eligible lane with installation permission. Records the decision and routes the issue to that lane.",
+        "parameters": [
+          {"name": "owner", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "repo", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "number", "in": "path", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "Handoff recorded"},
+          "401": {"description": "GitHub user session required"},
+          "403": {"description": "Repository write access required"},
+          "404": {"description": "No blocker is recorded"},
+          "409": {"description": "Issue is held, not parked, or no capable lane is available"},
+          "502": {"description": "GitHub operation failed"},
+          "503": {"description": "GitHub client unavailable"}
+        }
+      }
+    },
     "/api/repos/{owner}/{repo}/items/{number}/blocker/recheck": {
       "post": {
         "tags": [
           "Status"
         ],
         "summary": "Re-check the GitHub App's permissions for an issue parked on a capability blocker",
-        "description": "Backs the *Re-check permissions* option on an issue the tracker shows as *Blocked · App lacks <permission> permission* (hivecommons/hive#15099). Probes the App installation's permissions now: when the missing permission (for example `workflows: write`) is granted, every ledger entry blocked on it is cleared, the issue is un-parked and the result reads `released`; otherwise the result is `no-effect` with the plain-words reason and the same options the popover lists. 404 when the item has no recorded blocker, 409 when its blocker is not a capability gap (a human-only step no permission grant clears), 502 when the installation lookup fails. Same authorisation as the hold toggle plus a signed-in GitHub user; audited as repo_item_blocker_recheck.",
+        "description": "Probes the App installation's permissions. For workflows blockers, a grant alone does not release the park; use the handoff action to select a capable lane. For other capability blockers, a granted permission clears matching ledger entries. Requires hold-toggle authorization and a signed-in GitHub user; audited as repo_item_blocker_recheck.",
         "parameters": [
           {
             "name": "owner",

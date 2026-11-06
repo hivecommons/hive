@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/blocker"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
@@ -80,6 +81,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	sentinelLabel := s.sentinelLabel()
 	bctx := s.blockerOptionsContext()
+	// Resolve the installation once per snapshot, and only when a workflow
+	// blocker is actually visible.
+	workflowPermissionChecked, workflowPermissionGranted := false, false
 	lookup := func(repo string, number int) (stagelabels.Record, bool) {
 		if store == nil {
 			return stagelabels.Record{}, false
@@ -366,7 +370,33 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if slices.Contains(it.Modifiers, modNeedsHuman) || it.Stage == stagelabels.IssueNeedsDecision.Number() {
 			it.Blocker = stageTrackerBlockerFor(repoName, issue.Number)
 		}
-		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, nil, sentinelLabel, now, bctx)
+		itemContext := bctx
+		if it.Blocker != nil && blocker.Kind(it.Blocker.Kind) == blocker.CapabilityWorkflowsPermission {
+			if !workflowPermissionChecked {
+				workflowPermissionChecked = true
+				if s.deps != nil && s.deps.GHAppAuth != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					info, err := installationPermissionProbe(ctx, s.deps.GHAppAuth)
+					cancel()
+					workflowPermissionGranted = err == nil && info.Granted("workflows", "write")
+				}
+			}
+			itemContext.WorkflowsGranted = workflowPermissionGranted
+			itemContext.ParkingAgent = stageTrackerAgentLane(issue.Labels)
+			if workflowPermissionGranted {
+				it.Blocker.Short = "Workflow token permission"
+			}
+			if itemContext.ParkingAgent == "" {
+				itemContext.ParkingAgent = issue.Lane
+			}
+			if workflowPermissionGranted && cfg != nil {
+				itemContext.WorkflowsLane = cfg.WorkflowsLaneFor(itemContext.ParkingAgent, qualifyRepo(repoName))
+				if agent, ok := cfg.Agents[itemContext.ParkingAgent]; ok && agent.Enabled && agent.ReplicaOf == "" && cfg.AgentServesRepo(itemContext.ParkingAgent, qualifyRepo(repoName)) {
+					itemContext.WorkflowsSelfPush = cfg.AgentPushesWorkflows(itemContext.ParkingAgent)
+				}
+			}
+		}
+		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, nil, sentinelLabel, now, itemContext)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
 		applyStageTrackerAdvisory(&it, advisory)
 		add(it)
