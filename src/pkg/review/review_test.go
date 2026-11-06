@@ -844,3 +844,27 @@ func TestAggregateReportsContributorSecurityHoldSurvivesSiblingChangeRequest(t *
 		t.Fatalf("hive-authored aggregate = %+v, want the fixer lane", got)
 	}
 }
+
+// The gate decides from ScopeEffectiveReports, so a security report whose raw
+// requires_human is downgraded because every finding is out-of-scope must not
+// back the contributor security hold for a sibling's requires_human
+// (hivecommons/hive#16865).
+func TestAggregateReportsContributorSecurityHoldIgnoresOutOfScopeOnlySecurityReport(t *testing.T) {
+	sec := baseReport(PerspectiveSecurity, VerdictRequiresHuman, outputschema.Finding{Title: "unrelated credential handling", Severity: outputschema.SeverityMedium, ReviewScope: "out-of-scope"})
+	sec.Summary = "A maintainer must confirm the credential choice."
+	plain := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman)
+	plain.Summary = "Unclear whether the groundwork should land before its consumer."
+	changes := baseReport(PerspectiveCorrectness, VerdictChangesRequested, outputschema.Finding{Title: "nil deref", Severity: outputschema.SeverityMedium, ReviewScope: "in-scope"})
+	got := AggregateReports([]PerspectiveReport{sec, plain, changes}, AggregateOptions{})
+	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.RequiresHuman {
+		t.Fatalf("change-request aggregate = %+v, want the fixer lane", got)
+	}
+	if strings.Contains(got.DecisionFinding, "security review withheld approval") {
+		t.Fatalf("DecisionFinding = %q, want no security hold from an out-of-scope-only report", got.DecisionFinding)
+	}
+
+	got = AggregateReports([]PerspectiveReport{sec, plain}, AggregateOptions{})
+	if strings.Contains(got.DecisionFinding, "security review withheld approval") {
+		t.Fatalf("bare aggregate DecisionFinding = %q, want no security hold from an out-of-scope-only report", got.DecisionFinding)
+	}
+}
