@@ -1,0 +1,1 @@
+- The watchdog's `agent credential failure` log line is now reported under the existing `agent_login_required` selfreport class instead of `unclassified_error_repeated`, so owners are pointed at re-authenticating the agent backend rather than a generic defect report ([#16861](https://github.com/hivecommons/hive/issues/16861)).
