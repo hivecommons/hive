@@ -114,6 +114,28 @@ func TestTrySweepContributorLanePRAdoptedByHiveAdmission(t *testing.T) {
 			wantReason: contributorLaneReasonAuthorAssociation,
 		},
 		{
+			// projectbluefin/utah#1091: the fixer's push undid the PR; even
+			// an author the lane trusts does not get that head merged.
+			name: "hive push that undoes the PR is refused for any author",
+			seed: func(store *stagelabels.Store, key string, now time.Time) {
+				inPlace(head)(store, key, now)
+				store.MarkAdoptionEscalated(key, head, stagelabels.LaneReasonAdoptionFixerReverts)
+			},
+			mutate:     func(fx *contributorLaneFixture) {},
+			autoMerge:  true,
+			wantReason: stagelabels.LaneReasonAdoptionFixerReverts,
+		},
+		{
+			name: "hive push not yet intent-checked waits",
+			seed: func(store *stagelabels.Store, key string, now time.Time) {
+				inPlace(oldHead)(store, key, now)
+				store.MarkHivePushedHead(key, head)
+			},
+			mutate:     func(fx *contributorLaneFixture) {},
+			autoMerge:  true,
+			wantReason: contributorLaneReasonAdoptionIntentPending,
+		},
+		{
 			name:       "no stage record falls back to author gates",
 			mutate:     untrusted,
 			autoMerge:  true,

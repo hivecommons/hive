@@ -780,6 +780,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			} else if issueDecisionDowngrade.Active {
 				commentBody = appendHiveDecisionTaken(commentBody, issueDecisionDowngrade.Question)
 			}
+			commentBody = c.adoptedAwaitingCINote(ctx, req.Repo, req.Number, commentBody)
 			if key := relayStatusNoteKey(commentBody); key != "" && (c.notificationsQuiet() || c.attentionPilot()) {
 				// A one-line state note (awaiting-ci, parking, already fixed)
 				// is a section of the item's status comment in quiet mode or
