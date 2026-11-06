@@ -18,7 +18,7 @@ The tools are:
 
 - `task_context()` for the scoped assignment, labels, lease age, hold and level gates, standby tier/lane policy, and PR-template policy slots.
 - `related_work()` returns cache-backed open or recently merged issues and pull requests in the scoped repo when they cite the leased issue, overlap known changed-file metadata, or are tagged as duplicate-sweep candidates. The default recency window is `hub.task_mcp_related_work_recency_days` with the built-in default from `config.DefaultTaskMCPRelatedWorkRecencyDays`.
-- `ci_health()` returns per-check cache-backed health from the dashboard snapshot: default-branch state, open-PR failure counts, last-green SHA slots, and cache staleness. Prow/tide approval waits such as missing `lgtm` or `approve` are normalized to `pending`, not failing.
+- `ci_health()` returns per-check cache-backed health from the dashboard snapshot: default-branch state, open-PR failure counts, last-green SHA slots, and cache staleness. The checks listed are the ones required for the task's repository (its `auto_merge.repos` override when it has one, otherwise the global `auto_merge.required_checks`), plus any check failing on its open PRs. Prow/tide approval waits such as missing `lgtm` or `approve` are normalized to `pending`, not failing.
 - `context_bundle()` for backends that prefer one call. Without arguments it returns the Phase 1 trio (`task_context`, `related_work`, `ci_health`) byte-for-byte compatible with existing callers. Phase 3 adds an optional `include: [...]` argument so callers can opt in to `repo_conventions`, `dependencies`, `history`, and `knowledge` without increasing the default response cap.
 
 Prompt-injection handling is structural: issue and PR text is only returned inside a fixed-schema `data` field. Tool descriptions and other free-text metadata never interpolate served GitHub text. Answers are scoped to the active task repo, capped, paginated, and read from Hive state/caches only; request handling must not call GitHub.
@@ -38,6 +38,8 @@ Remote contributor relays can opt in with `task_mcp.remote_enabled: true`. When 
   }
 }
 ```
+
+`mcp.url` is always an address of the assigning hive itself, because the relay sends the lease bearer to it. It is `dashboard.public_url` when that is set, otherwise the `hub.dashboard_url` of a hive whose hub link is on (`hub.enabled: true`). `hub.url` names the hosted hub the hive reports to, not the hive itself, and has a default on every hive, so it is never used. A `hub.dashboard_url` left on a hive whose hub link is off is ignored as stale. A hive with no address left sends no `mcp` block and mints no lease bearer: the contributor works the task without the task MCP, and the hive logs `task_assign carries no mcp block` at info level for each such task. Set `dashboard.public_url` to an origin contributors can reach to hand the task MCP out.
 
 The relay writes that block as the standard `mcpServers` JSON shape (`hive_task`) in its contributor config directory and as `.mcp.json` in the launched agent working directory. The token is not written to the debug task file. Existing dashboard/contribute authorization still works; the lease bearer is an additional remote credential and is accepted only while the server-side lease record still matches its id, hash, task, repo, contributor identity, stage, and expiry.
 

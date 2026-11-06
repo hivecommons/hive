@@ -133,7 +133,11 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 		if err != nil {
 			return nil, err
 		}
-		return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
+		// A Settings view is not a list to page: settings_read has no limit
+		// argument, so the row cap would cut a hive's 21st agent out of its
+		// governor settings with no way to ask for it. The text cap still
+		// bounds the answer.
+		return data, nil
 	}
 	path, ok := adminMCPReadPath(tool, args)
 	if !ok {

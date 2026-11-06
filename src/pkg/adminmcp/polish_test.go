@@ -3,6 +3,7 @@ package adminmcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -136,5 +137,89 @@ func TestWritesUnavailableReasonFailsFastBeforePreview(t *testing.T) {
 	text := callToolText(t, h, ToolExclusionCatalogue)
 	if !strings.Contains(text, `"writes_enabled":false`) || !strings.Contains(text, reason) {
 		t.Fatalf("catalogue = %.400s", text)
+	}
+}
+
+// The text cap cut the longest list first, by entry count. On a real
+// fleet_status (15 agents, 12 repos, 350 KB) that halved three small 15-entry
+// lists that freed a few KB, as well as the two lists that were over the cap.
+func TestTextCapCutsTheLargestListNotTheLongest(t *testing.T) {
+	small := func(n int) []any {
+		out := make([]any, n)
+		for i := range out {
+			out[i] = map[string]any{"name": fmt.Sprintf("agent-%02d", i), "cadence": "15m"}
+		}
+		return out
+	}
+	big := func(n, bytes int) []any {
+		out := make([]any, n)
+		for i := range out {
+			out[i] = map[string]any{"name": fmt.Sprintf("row-%02d", i), "detail": strings.Repeat("x", bytes)}
+		}
+		return out
+	}
+	// repos alone is over the cap; every other list is longer but tiny.
+	h := NewHandler(bigProvider{data: map[string]any{
+		"status":           "ok",
+		"repos":            big(12, 30*1024),
+		"cadenceMatrix":    small(15),
+		"configuredAgents": small(15),
+		"acmmPackAgents":   small(15),
+	}})
+	data := truncationMeta(t, callToolText(t, h, ToolFleetStatus))
+	for _, key := range []string{"cadenceMatrix", "configuredAgents", "acmmPackAgents"} {
+		if kept, _ := data[key].([]any); len(kept) != 15 {
+			t.Errorf("%s kept %d of 15 entries; a small list was cut though it could not bring the result under the cap", key, len(kept))
+		}
+		if _, cut := data[key+"_truncated"]; cut {
+			t.Errorf("%s is marked truncated", key)
+		}
+	}
+	if kept, _ := data["repos"].([]any); len(kept) == 0 || len(kept) >= 12 {
+		t.Fatalf("repos kept %d of 12", len(kept))
+	}
+	meta, _ := data["_admin_mcp"].(map[string]any)
+	fields, _ := meta["text_cap_truncated_fields"].([]any)
+	if len(fields) != 1 || fields[0] != "repos" {
+		t.Fatalf("text_cap_truncated_fields = %v, want [repos]", fields)
+	}
+}
+
+// Lists of equal size are cut in name order, so one result is not truncated
+// differently from call to call.
+func TestTextCapCutsEqualListsInAStableOrder(t *testing.T) {
+	rows := func() []any {
+		out := make([]any, 8)
+		for i := range out {
+			out[i] = map[string]any{"detail": strings.Repeat("y", 14*1024)}
+		}
+		return out
+	}
+	var first string
+	for i := 0; i < 20; i++ {
+		b, err := EncodeResult(map[string]any{"alpha": rows(), "beta": rows(), "gamma": rows()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first == "" {
+			first = string(b)
+			continue
+		}
+		if string(b) != first {
+			t.Fatalf("call %d truncated the same result differently", i)
+		}
+	}
+	var env struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(first), &env); err != nil {
+		t.Fatal(err)
+	}
+	// Three 112 KB lists: halving alpha and then beta is enough, so gamma
+	// is whole.
+	for key, want := range map[string]int{"alpha": 4, "beta": 4, "gamma": 8} {
+		if kept, _ := env.Data[key].([]any); len(kept) != want {
+			t.Errorf("%s kept %d entries, want %d", key, len(kept), want)
+		}
 	}
 }
