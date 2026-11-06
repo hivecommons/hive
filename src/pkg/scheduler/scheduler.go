@@ -46,6 +46,7 @@ type Scheduler struct {
 	questionAutocloser       QuestionAutocloser
 	lifecycle                timeline.Recorder
 	taskMCPURL               string
+	agentBackend             AgentBackendLookup
 	laneDepths               map[string]int
 	scanned                  bool
 	deferredKicks            map[string]func(string)
@@ -125,6 +126,9 @@ func New(cfg *config.Config, logger *slog.Logger) *Scheduler {
 	}
 }
 
+// SetTaskMCPURL records the task MCP endpoint hub-launched agents can really
+// use. The host leaves it empty when it cannot mint the per-launch token the
+// endpoint requires, and kicks then carry no task MCP pointer for any agent.
 func (s *Scheduler) SetTaskMCPURL(raw string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,6 +139,20 @@ func (s *Scheduler) hasTaskMCPURL() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return strings.TrimSpace(s.taskMCPURL) != ""
+}
+
+// AgentBackendLookup reports the backend an agent launches on once runtime
+// overrides are applied. ok is false when the runtime does not know the agent.
+type AgentBackendLookup func(agentName string) (backend string, ok bool)
+
+// SetAgentBackendLookup attaches the agent runtime's view of each agent's
+// backend, where a backend override (provider rotation, a restored switch)
+// wins over the configured one. Without it the scheduler reads the configured
+// backend only.
+func (s *Scheduler) SetAgentBackendLookup(fn AgentBackendLookup) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.agentBackend = fn
 }
 
 // SetGitHubPromptResolver attaches a resolver used to fetch an agent's kick

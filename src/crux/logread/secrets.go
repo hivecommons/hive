@@ -2,6 +2,7 @@ package logread
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"io/fs"
 	"net/url"
 	"os"
@@ -16,11 +17,11 @@ const SecretValueKind = "hive-secret-value"
 const secretValueMarker = "<redacted:" + SecretValueKind + ">"
 
 // SecretScrubber replaces this hive's own secret values in log text: each
-// value of at least MinSecretValueLen characters in its plain, URL-encoded and
-// base64 forms, the base64 forms at all three byte alignments so the value is
-// found inside a longer encoded string (an "Authorization: Basic" header
-// encoding user:value). It is one precompiled multi-value replacer, built in
-// process for one read; the values are never returned.
+// value of at least MinSecretValueLen characters in its plain, URL-encoded,
+// JSON-escaped and base64 forms, the base64 forms at all three byte alignments
+// so the value is found inside a longer encoded string (an "Authorization:
+// Basic" header encoding user:value). It is one precompiled multi-value
+// replacer, built in process for one read; the values are never returned.
 type SecretScrubber struct {
 	r *strings.Replacer
 }
@@ -78,11 +79,34 @@ func (s *SecretScrubber) Replace(text string) (string, int) {
 // secretForms returns the encodings of v that can appear in a log line.
 func secretForms(v string) []string {
 	forms := []string{v, url.QueryEscape(v), url.PathEscape(v)}
+	forms = append(forms, jsonEscapedForms(v)...)
 	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding} {
 		forms = append(forms, enc.EncodeToString([]byte(v)))
 		raw := enc.WithPadding(base64.NoPadding)
 		for k := 0; k < 3; k++ {
 			forms = append(forms, base64Fragment(raw, v, k))
+		}
+	}
+	return forms
+}
+
+// jsonEscapedForms returns v as it is written inside a JSON string, with and
+// without HTML escaping. The hive log and the request log are slog JSON and
+// the output sources store JSON records, so a value that holds a quote, a
+// backslash or a control character is on disk only in this form, and the
+// plain form never matches it.
+func jsonEscapedForms(v string) []string {
+	var forms []string
+	for _, escapeHTML := range []bool{false, true} {
+		var b strings.Builder
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(escapeHTML)
+		if err := enc.Encode(v); err != nil {
+			continue
+		}
+		quoted := strings.TrimSuffix(b.String(), "\n")
+		if len(quoted) >= 2 {
+			forms = append(forms, quoted[1:len(quoted)-1])
 		}
 	}
 	return forms

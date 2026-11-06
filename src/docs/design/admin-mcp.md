@@ -444,14 +444,17 @@ setting.
 - **Paging.** `next_cursor` pages backwards. It names a history file by its first line's time
   and digest plus a byte offset, so a rotation (rename, then compression) between two calls
   neither repeats nor skips a line; a cursor whose file has left retention returns
-  `status: cursor_expired`.
+  `status: cursor_expired`. The digest covers at most the first 64 KiB of that line, so a file
+  that opens with a longer record can be paged like any other.
 - **Scrubbing.** Each line is scrubbed at read time before filtering: private-key blocks
   (scrubbed with overlap across the read region, so a key split by a page or rotation boundary,
   or one with no END marker, is redacted to the end of the result), then one precompiled
   multi-value replacer over this hive's own secret values of at least 12 characters (the
   dashboard token, the terminal `user:token` login, the terminal key, secret file contents,
   and environment values whose names contain TOKEN, KEY, SECRET, PASSWORD, CREDENTIAL or
-  PASSPHRASE) in plain, URL-encoded and base64 forms at all three alignments, then every
+  PASSPHRASE) in plain, URL-encoded, JSON-escaped and base64 forms (base64 at all three
+  alignments; JSON-escaped because the logs are JSON, so a value holding a quote, a backslash
+  or a control character is on disk only in that form), then every
   `pkg/logscrub` category including `basic-auth`. `redactions[]` counts replacements by kind;
   a line that already held redaction-marker text on disk is flagged `pre_existing_marker`.
   Every result carries the fixed `untrusted_content` marker: log text is data, never

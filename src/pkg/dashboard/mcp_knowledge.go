@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -161,8 +162,26 @@ func (s *Server) publicKnowledgeTags() []string {
 	return tags
 }
 
-func publicKnowledgeURL(r *http.Request) string {
-	if r == nil || r.Host == "" {
+// publicKnowledgeURL is the address the owner copies from Settings to hand
+// to readers: dashboard.public_url when the operator set one, else the
+// X-Forwarded-Host or Host the request arrived with. A loopback host is used
+// only when the browser itself was on it (publicKnowledgeBrowserOnHost): the
+// Node proxy forwards with changeOrigin and no forwarded host, so a browser
+// that came through it arrives with the Go API's own 127.0.0.1 address as
+// Host. When the real address is unknown the URL is empty and the page shows
+// the path alone.
+func publicKnowledgeURL(publicURL string, r *http.Request) string {
+	if v := strings.TrimSpace(publicURL); v != "" {
+		return strings.TrimRight(v, "/") + publicKnowledgeMCPPath
+	}
+	if r == nil {
+		return ""
+	}
+	host := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0])
+	if host == "" {
+		host = r.Host
+	}
+	if host == "" || (publicKnowledgeLoopbackHost(host) && !publicKnowledgeBrowserOnHost(r, host)) {
 		return ""
 	}
 	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
@@ -176,7 +195,7 @@ func publicKnowledgeURL(r *http.Request) string {
 			scheme = "http"
 		}
 	}
-	return (&url.URL{Scheme: scheme, Host: r.Host, Path: publicKnowledgeMCPPath}).String()
+	return (&url.URL{Scheme: scheme, Host: host, Path: publicKnowledgeMCPPath}).String()
 }
 
 func (s *Server) publicKnowledgeSettingResponse(r *http.Request) publicKnowledgeSettingResponse {
@@ -184,12 +203,16 @@ func (s *Server) publicKnowledgeSettingResponse(r *http.Request) publicKnowledge
 	if tags == nil {
 		tags = []string{}
 	}
+	publicURL := ""
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		publicURL = s.deps.Config.Dashboard.PublicURL
+	}
 	return publicKnowledgeSettingResponse{
 		Enabled:  enabled,
 		Tags:     tags,
 		Source:   source,
 		Endpoint: publicKnowledgeMCPPath,
-		URL:      publicKnowledgeURL(r),
+		URL:      publicKnowledgeURL(publicURL, r),
 	}
 }
 
@@ -470,6 +493,16 @@ func (s *Server) handlePublicKnowledgeMCP(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
+	// The route takes GET (and so HEAD) as well as POST so that this can
+	// refuse it. Left to the mux, a GET matched Start()'s "GET /" and came back
+	// 404 from the static file server, where an MCP client that probes for an
+	// event stream expects 405. The mux still answers the other verbs 405
+	// itself; a method-less pattern is not an option, it conflicts with "GET /".
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, publicKnowledgeMaxBodyBytes+1))
 	if err != nil || len(body) > publicKnowledgeMaxBodyBytes {
 		writeJSONRPC(w, http.StatusRequestEntityTooLarge, jsonRPCResponse{JSONRPC: "2.0", ID: nullID, Error: &jsonRPCError{Code: jsonRPCInvalidRequest, Message: "request body too large"}})
@@ -562,9 +595,9 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 	switch params.Name {
 	case "knowledge_search":
 		var args struct {
-			Query string `json:"query"`
-			Type  string `json:"type"`
-			Limit int    `json:"limit"`
+			Query string      `json:"query"`
+			Type  string      `json:"type"`
+			Limit wholeNumber `json:"limit"`
 		}
 		if len(params.Arguments) > 0 {
 			if err := json.Unmarshal(params.Arguments, &args); err != nil {
@@ -578,7 +611,7 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 		if _, ok := publicKnowledgeTypes[args.Type]; !ok {
 			return toolError(fmt.Sprintf("type %q is not a public fact type", args.Type)), nil
 		}
-		limit := args.Limit
+		limit := int(args.Limit)
 		if limit <= 0 {
 			limit = publicKnowledgeDefaultLimit
 		}
@@ -606,9 +639,9 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 
 	case "knowledge_toc":
 		var args struct {
-			Type  string `json:"type"`
-			Repo  string `json:"repo"`
-			Limit int    `json:"limit"`
+			Type  string      `json:"type"`
+			Repo  string      `json:"repo"`
+			Limit wholeNumber `json:"limit"`
 		}
 		if len(params.Arguments) > 0 {
 			if err := json.Unmarshal(params.Arguments, &args); err != nil {
@@ -622,8 +655,13 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 		if args.Type != "" {
 			scope.Types = []string{args.Type}
 		}
+		if args.Type == "general" {
+			// An untyped fact is listed as "general" (tocEntry), so asking
+			// for that type has to match the empty type as well.
+			scope.Types = append(scope.Types, "")
+		}
 		all, _ := s.publicListing(tags)
-		toc := knowledge.BuildTOC(all, scope, args.Limit)
+		toc := knowledge.BuildTOC(all, scope, int(args.Limit))
 		// Source URLs are not part of the public projection.
 		for i := range toc.Entries {
 			toc.Entries[i].Source = ""
@@ -670,6 +708,31 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 	default:
 		return nil, &jsonRPCError{Code: jsonRPCInvalidParams, Message: "unknown tool: " + params.Name}
 	}
+}
+
+// wholeNumber is an integer tool argument. It also accepts the same value
+// written as a float (5.0, 1e1): the tool schemas declare limit an integer,
+// to JSON Schema 5.0 is one, and a client whose stack makes every number a
+// float sends that form. Decoding straight into an int refused it as invalid
+// arguments. A fractional or non-numeric value is still refused, and so is
+// one outside the 64-bit integer range, which an int never took either.
+type wholeNumber int
+
+// wholeNumberMax is what a larger whole value is stored as. Every limit is
+// clamped far below it, so the value keeps its meaning and the conversion
+// from float64 stays exact and in range on every platform.
+const wholeNumberMax = 1 << 30
+
+func (n *wholeNumber) UnmarshalJSON(b []byte) error {
+	var f float64
+	if err := json.Unmarshal(b, &f); err != nil {
+		return err
+	}
+	if f != math.Trunc(f) || math.Abs(f) >= 1<<63 {
+		return fmt.Errorf("%s is not a whole number", b)
+	}
+	*n = wholeNumber(math.Max(-wholeNumberMax, math.Min(wholeNumberMax, f)))
+	return nil
 }
 
 // publicTypeName normalises the empty type to "general" for comparisons.

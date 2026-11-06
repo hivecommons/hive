@@ -296,10 +296,14 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
                                  #   Prompt text only — it authorizes repos, it does
                                  #   NOT clone, mount, or provision anything on disk.
     task_mcp:
-      drop_stuffed_context: false # default false. When the hub gives this agent a
-                                  #   task MCP URL, render ISSUE_LIST/PR_LIST and
+      drop_stuffed_context: false # default false. When this agent has the hive-task
+                                  #   MCP server, render ISSUE_LIST/PR_LIST and
                                   #   MERGE_ELIGIBLE as repo#N refs only and rely on
                                   #   context_bundle / related_work for full context.
+                                  #   Only an agent launched as Claude Code has the
+                                  #   server (docs/design/task-mcp.md); on any other
+                                  #   backend the flag is ignored and the lists stay
+                                  #   complete.
     repos: [console]             # WHICH repos this agent serves. Omit (the default) for
                                  #   the whole hive. Naming repos makes the agent a
                                  #   specialist: it is only handed work on these, its

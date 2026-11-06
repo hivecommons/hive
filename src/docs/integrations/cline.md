@@ -190,8 +190,13 @@ Do not put credential JSON in a ConfigMap or CLI arguments.
   container/policy proxy is the security boundary, not Cline's data-dir feature.
 - Hive `tools` and `connections` policies cannot be faithfully translated to
   Cline's CLI. Such agent definitions are refused rather than silently dropping
-  their restrictions. OAuth provider entries are also refused: copying
-  single-use refresh tokens without a synchronization protocol is unsafe.
+  their restrictions. The `hive-task` connection Hive itself adds to every
+  agent for its own task MCP endpoint is not operator policy and does not
+  trigger the refusal; only Claude Code is handed that server at launch. A
+  `hive-task` connection that points anywhere else, or carries its own `auth`,
+  `env_name` or `options`, is refused like any other. OAuth provider entries
+  are also refused: copying single-use refresh tokens without a
+  synchronization protocol is unsafe.
 - Custom `launch_cmd` overrides are refused for Cline, including disposable
   sandbox kicks. Podman uses only the scoped selected-provider file capability;
   Jobs use only explicit Secret references. Per-UID workers and contributor
