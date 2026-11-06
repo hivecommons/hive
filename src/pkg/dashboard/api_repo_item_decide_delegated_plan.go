@@ -304,6 +304,23 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 	return plan, nil
 }
 
+// delegatedPlanOptionName names the chosen option for the plan sentence.
+// A reporter-authored option (Option.Untrusted) names itself by label alone
+// in the recorded decision, but the owner still needs to see what they are
+// approving: its summary is shown as a quoted, one-line preview of the
+// issue's own words, never as hive's description of the option.
+func delegatedPlanOptionName(o delegatedecision.Option) string {
+	name := strings.TrimSuffix(o.Name(), ".")
+	if !o.Untrusted {
+		return name
+	}
+	s := strings.TrimSuffix(strings.Join(strings.Fields(o.Summary), " "), ".")
+	if s == "" {
+		return name
+	}
+	return name + " (the issue's words: “" + s + "”)"
+}
+
 // delegatedPlanWording is the one decision sentence and the (at most
 // two) "then" items for the decision the hive would record. Operator
 // feedback on the preview (hivecommons/hive#15332's dialog: "this needs
@@ -340,7 +357,7 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 		// The issue offered a choice: the plan names the option, so
 		// approving never leaves the pick to the claiming agent
 		// (projectbluefin/utah#920).
-		return "Go with " + strings.TrimSuffix(d.Option.Name(), ".") + " — the option " + ref + " recommends — and let the hive build it.",
+		return "Go with " + delegatedPlanOptionName(*d.Option) + " — the option " + ref + " recommends — and let the hive build it.",
 			[]string{"Hive records option " + d.Option.Label + " as the decision and removes the needs-decision hold.", "An agent claims " + ref + " on the next cycle and builds option " + d.Option.Label + "."}
 	case d.Verdict == delegatedecision.VerdictApprove && in.Kind == delegatedecision.KindIssue:
 		// An issue has no commit to approve and nothing to merge

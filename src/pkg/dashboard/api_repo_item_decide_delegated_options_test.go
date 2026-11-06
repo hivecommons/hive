@@ -43,6 +43,25 @@ func TestDelegatedPlanWordingNamesTheOptionOrLeavesTheChoice(t *testing.T) {
 			t.Errorf("an issue with options must never read as a bare direction: %q", s)
 		}
 	}
+
+	// A reporter-authored option names itself by label alone in the recorded
+	// decision, but the preview still shows the owner what they approve: the
+	// issue's own words, quoted, on one line.
+	reporter := delegatedecision.Option{Label: "2", Summary: "A ujust\n  recipe.", Untrusted: true}
+	summary, next = delegatedPlanWording(in, delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove, Rule: delegatedecision.RuleRecommendedOption, Option: &reporter})
+	if want := "Go with option 2 (the issue's words: “A ujust recipe”) — the option #920 recommends — and let the hive build it."; summary != want {
+		t.Errorf("untrusted approve summary %q, want %q", summary, want)
+	}
+	if reporter.Name() != "option 2" {
+		t.Errorf("untrusted Name() = %q, want the label alone", reporter.Name())
+	}
+	if strings.Join(next, "|") != "Hive records option 2 as the decision and removes the needs-decision hold.|An agent claims #920 on the next cycle and builds option 2." {
+		t.Errorf("untrusted approve consequences %q", next)
+	}
+	empty := delegatedecision.Option{Label: "2", Untrusted: true}
+	if got, _ := delegatedPlanWording(in, delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove, Rule: delegatedecision.RuleRecommendedOption, Option: &empty}); !strings.HasPrefix(got, "Go with option 2 — ") {
+		t.Errorf("empty untrusted summary must add no quote: %q", got)
+	}
 }
 
 func TestDelegatedDecisionPlanForAnIssueWithOptions(t *testing.T) {

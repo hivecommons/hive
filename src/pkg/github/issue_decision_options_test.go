@@ -160,11 +160,28 @@ func TestIssueDecisionOptionsMarkReporterBodyUntrusted(t *testing.T) {
 		}
 	}
 
-	// A hive comment's options are the hive's own text, whoever filed the issue.
-	opts, _ := c.IssueDecisionOptions("Ship the debugging tools.", person, []*gh.IssueComment{ghComment("hive[bot]", utah920Park)})
-	for _, o := range opts {
-		if o.Untrusted {
-			t.Errorf("hive comment option %+v marked untrusted", o)
+	// A hive comment's options are the hive's own text, whoever filed the
+	// issue — numbered or lettered, and whether or not the comment was read
+	// with its html_url (provenance is not inferred from optionSource).
+	for _, park := range []string{utah920Park, dakotaStyleOptions} {
+		opts, _ := c.IssueDecisionOptions("Ship the debugging tools.", person, []*gh.IssueComment{ghComment("hive[bot]", park)})
+		if len(opts) < 2 {
+			t.Fatalf("no options read from hive comment %q", park)
 		}
+		for _, o := range opts {
+			if o.Untrusted {
+				t.Errorf("hive comment option %+v marked untrusted", o)
+			}
+			if o.Summary == "" {
+				t.Errorf("hive comment option %+v lost its summary", o)
+			}
+		}
+	}
+
+	// A hive comment's lettered options replace the reporter's body options
+	// and are trusted.
+	opts, _ := c.IssueDecisionOptions(dakotaStyleOptions, person, []*gh.IssueComment{ghComment("hive[bot]", "- **A.** hive a\n- **B.** hive b\n")})
+	if len(opts) != 2 || opts[0].Summary != "hive a" || opts[0].Untrusted || opts[1].Untrusted {
+		t.Errorf("hive comment did not replace reporter body options as trusted: %+v", opts)
 	}
 }

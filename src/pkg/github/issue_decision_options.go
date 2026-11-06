@@ -23,7 +23,7 @@ func (c *Client) IssueDecisionOptions(issueBody string, issueAuthor *gh.User, co
 	bodyUntrusted := !c.isHiveAccount(issueAuthor)
 	if len(m.options) >= 2 {
 		for _, l := range m.options {
-			options = append(options, delegatedecision.Option{Label: l, Summary: m.optionText[l], Untrusted: bodyUntrusted && m.optionSource == ""})
+			options = append(options, delegatedecision.Option{Label: l, Summary: m.optionText[l], Untrusted: bodyUntrusted && m.optionsFromBody})
 		}
 		return options, m.recommended
 	}

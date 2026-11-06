@@ -39,6 +39,10 @@ type unparkMenu struct {
 	// optionSource is the html_url of the hive comment the options came
 	// from; "" when they came from the issue body.
 	optionSource string
+	// optionsFromBody is true when options came from the issue body rather
+	// than a hive comment. It is the provenance signal, not optionSource:
+	// a comment read without its html_url still carries hive-authored text.
+	optionsFromBody bool
 	// recommended is the option the text recommends, or "" when none is named.
 	recommended string
 	// hasRecommendation is true when the issue states a recommendation.
@@ -61,6 +65,7 @@ type unparkMenu struct {
 // marker in its body; it is an owner step when it lists no options.
 func unparkMenuFromBody(issueBody string) unparkMenu {
 	m := unparkMenu{options: unparkOptionLabels(issueBody), optionText: unparkOptionTexts(issueBody)}
+	m.optionsFromBody = len(m.options) > 0
 	m.hasRecommendation = unparkMentionsRecommendation(issueBody)
 	if m.hasRecommendation {
 		m.recommended = unparkRecommendedOption(issueBody, m.options)
@@ -129,7 +134,7 @@ func (c *Client) unparkMenuFor(issueBody string, issueAuthor *gh.User, comments 
 			// go with it, so a later park starts from its own text.
 			ownerStep = false
 			m.releaseStep = nil
-			m.options, m.optionText, m.optionSource = nil, nil, ""
+			m.options, m.optionText, m.optionSource, m.optionsFromBody = nil, nil, "", false
 			m.hasRecommendation, recommendationSource = false, ""
 			continue
 		}
@@ -155,6 +160,7 @@ func (c *Client) unparkMenuFor(issueBody string, issueAuthor *gh.User, comments 
 			m.options = opts
 			m.optionText = unparkOptionTexts(body)
 			m.optionSource = cm.GetHTMLURL()
+			m.optionsFromBody = false
 		}
 		if unparkMentionsRecommendation(body) {
 			m.hasRecommendation, recommendationSource = true, body
