@@ -42,13 +42,45 @@ type sweepJob struct {
 	run      func(context.Context, *github.Client, *config.Config)
 }
 
+// sweepStartupSpread is the window the non-essential sweeps' first passes are
+// spread across after a start. All workers start in the same second; on a
+// cold ETag cache their first passes each listed every repo at once, all
+// judged against one API budget reading, and a restart spent much of the
+// hourly quota in minutes (2026-11-06). Spread out, later passes revalidate
+// lists earlier ones fetched (a 304 is free) and see the budget they left.
+const sweepStartupSpread = 5 * time.Minute
+
+// sweepFirstDelays is each job's first-pass offset after start: zero for
+// essential sweeps, evenly spaced inside sweepStartupSpread for the rest.
+// Only the first pass moves; later passes keep each job's interval.
+func sweepFirstDelays(jobs []sweepJob) []time.Duration {
+	delays := make([]time.Duration, len(jobs))
+	spread := 0
+	for _, job := range jobs {
+		if job.class != sweepEssential {
+			spread++
+		}
+	}
+	k := 0
+	for i, job := range jobs {
+		if job.class == sweepEssential {
+			continue
+		}
+		k++
+		delays[i] = sweepStartupSpread * time.Duration(k) / time.Duration(spread+1)
+	}
+	return delays
+}
+
 // runSweepWorker owns one job's state and timer. Its synchronous callback is
 // the single-flight: there can never be two passes of this sweep in flight.
 // Reset the heartbeat after IO so slow passes do not queue timer events.
 // The short heartbeat also observes shortened intervals after config reload.
-func runSweepWorker(ctx context.Context, job sweepJob, snapshot func() *config.Config, newTicker func(time.Duration) loopTicker, now func() time.Time, fire func(*config.Config, uint64)) {
+// The first pass waits firstDelay after start, never longer than one interval.
+func runSweepWorker(ctx context.Context, job sweepJob, firstDelay time.Duration, snapshot func() *config.Config, newTicker func(time.Duration) loopTicker, now func() time.Time, fire func(*config.Config, uint64)) {
 	ticker := newTicker(time.Second)
 	defer ticker.Stop()
+	started := now()
 	var last time.Time
 	var attempts uint64
 	for {
@@ -57,7 +89,8 @@ func runSweepWorker(ctx context.Context, job sweepJob, snapshot func() *config.C
 		}
 		if cfg := snapshot(); cfg != nil {
 			at := now()
-			if last.IsZero() || at.Sub(last) >= job.interval(cfg) {
+			interval := job.interval(cfg)
+			if last.IsZero() && at.Sub(started) >= min(firstDelay, interval) || !last.IsZero() && at.Sub(last) >= interval {
 				last = at
 				attempts++
 				fire(cfg, attempts)
@@ -158,11 +191,13 @@ func sweepBudgetSkipped(class sweepClass, decision evalBudgetDecision) bool {
 func (b *boot) startSweepWorkers() func() {
 	ctx, cancel := context.WithCancel(b.ctx)
 	var wg sync.WaitGroup
-	for _, job := range b.sweepJobs() {
+	jobs := b.sweepJobs()
+	firstDelays := sweepFirstDelays(jobs)
+	for i, job := range jobs {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runSweepWorker(ctx, job, b.sweepConfig.Load, func(d time.Duration) loopTicker { return realTicker{time.NewTicker(d)} }, time.Now, func(cfg *config.Config, attempt uint64) {
+			runSweepWorker(ctx, job, firstDelays[i], b.sweepConfig.Load, func(d time.Duration) loopTicker { return realTicker{time.NewTicker(d)} }, time.Now, func(cfg *config.Config, attempt uint64) {
 				gh := b.currentGitHubClient()
 				if gh == nil {
 					return
