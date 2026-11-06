@@ -506,6 +506,9 @@ type Client struct {
 	// it. nil hold disables the gate. Set by SetMergeReviewVerdictGate.
 	mergeReviewVerdictHold  ReviewVerdictHoldFunc
 	mergeReviewHoldReleaser func(login string) bool
+	// prReplyOptions tracks the PRs whose status comment carries the "Your
+	// move" section (pr_reply_options.go).
+	prReplyOptions prReplyOptions
 	// noPRParkChecks paces the issue stage sweep's look at stalled 010
 	// issues the hive may have answered without a PR (issue_no_pr_park.go).
 	noPRParkChecks noPRParkChecks
