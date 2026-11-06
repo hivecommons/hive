@@ -830,6 +830,11 @@ assert.deepEqual(kinds(model(own('SPEC', 'parked_needs_spec'), { hasPlan: true }
 assert.match(kinds(model(own('TRIAGE', 'agent_filed_unacknowledged')))[1], /approved-direction label, assigning a person, or closing/);
 assert.deepEqual(kinds(model(own('TRIAGE', 'agent_filed_unacknowledged'))).length, 2);
 assert.deepEqual(kinds(model(own('ADMIT', 'untrusted_reporter'))), [open, 'note:Add the label triage-ok to admit it.']);
+// The issue-filter ADMIT rows name the filter's labels in their reason; the
+// reporter-trust labels would be the wrong ones.
+assert.deepEqual(kinds(model(own('ADMIT', 'decided_not_admitted'))), [open]);
+assert.deepEqual(kinds(model(own('ADMIT', 'agent_finding_not_admitted'))), [open]);
+assert.deepEqual(kinds(model(own('ADMIT', 'person_issue_not_admitted'))), [open]);
 assert.match(kinds(model(own('INSPECT', 'sentinel_flagged')))[1], /Removing the sentinel-alert label after review releases it/);
 assert.deepEqual(kinds(model(own('CLOSE', 'reporter_confirmation_stale'))), [open, 'copy:/fixed']);
 assert.deepEqual(kinds(model(own('CLOSE', 'verified_done'))), [open]);

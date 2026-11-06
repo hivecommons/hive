@@ -233,7 +233,23 @@ repository (a lane scoped to other repositories with `repos:` is never chosen),
 the watcher adds `hive/workflows-lane` instead of the park label, appends a
 "Handed to `<lane>`" note and no owner-step marker, and the scheduler routes the
 issue to that lane. On `issue` the new issue is created at
-`stage/010-actionable` with the label.
+`stage/010-actionable` with the label. The hand-off is skipped (the park
+stands) when the App installation is known to lack `workflows: write`.
+
+A lane that can push workflow files itself is refused the park instead. When
+the parking lane runs at the trusted or merger tier (ISSUES_PRS_MERGE), whose
+token asks for the Workflows permission, and the App installation grants
+`workflows: write` (read at most every five minutes), the watcher parks
+nothing, adds no label, and appends a "Not parked: `<lane>`'s token can push
+`.github/workflows/`" note: the issue stays with that lane to push the change.
+If the installation lacks the permission, or cannot be read, the park stands. It
+also stands when the park quotes GitHub's own rejection of the push ("refusing to
+allow a GitHub App to create or update workflow … without `workflows`
+permission"): that is evidence, and the blocker it records is never released by
+the scheduled re-check. The quote counts as evidence only from a lane whose own
+token asks for the permission (or from a report with no `— hive:` trailer, such
+as a person pasting the error); a contributor-tier lane's quote shows only that
+its own token lacks it, so that blocker stays releasable.
 
 #### Withdrawing your own park
 
@@ -349,7 +365,13 @@ blocked sweep that follows each stage-label sync lifts the label and posts
 one `<!-- hive:unblocked -->` note once the tracked PR is merged or closed,
 and strips `help wanted` again should the org workflow re-add it while the
 PR is open. The review backlog applies the same parking itself when it files
-a finding whose file does not exist on the reviewed PR's base branch.
+a finding whose file does not exist on the reviewed PR's base branch. The
+review-backlog reconciler and the blocked sweep can both lift the same block;
+whichever runs second sees the first one's note for that PR (newer than the
+last blocked-on marker) and posts nothing. On an issue `project.issue_filter`
+does not admit (for example no `triage/accepted`), the note says
+"Unblocked — waiting for a maintainer to admit it" and names the label that
+admits it, instead of "actionable now" or "re-triaging".
 
 A posted comment is the agent's **start signal** on that issue only when it
 says work is starting. The hub records a 2h agent claim the first time the
@@ -793,6 +815,15 @@ Every consolidated result also carries `consolidated_reason`: `subject` (a
 canonical title match on a human-filed issue), `file_set` (an exact file-set
 twin) or `component:<path>` (a same-component fold on `<path>`), so the agent
 can tell a true twin from a shared-path fold.
+
+### Dedupe checklists never take a fold
+
+A dedupe-agent checklist (body carrying `<!-- hive:dedupe-checklist repo=… -->`)
+cites every path its pairs touch, so a path fold would bury the whole repo
+checklist in whichever finding shares one: projectbluefin/actions#543, a
+data-loss bug, received the repository's checklist as a "Folded finding". A
+checklist skips the same folds as a DAG child (below); an open issue with the
+exact same title is still reused.
 
 ### DAG children never take a fold
 

@@ -105,6 +105,8 @@ var glossary = []GlossaryEntry{
 		Detail: "The hive adopted this PR in place and owns its branch, so the reviewer's finding and any blocker go to the hive's own fixer — not back to the contributor and not to a person. No action is needed."},
 	{Slug: RuleAdoptedSecurityFinding, Kind: GlossaryRule, Plain: "the hive adopted this PR, but the security finding is a person's call",
 		Detail: "The hive adopted this PR in place, but the reviewer's finding is the security review's. That policy call is a person's: read the finding and reply /hive decision with the instruction for the hive's fixer, or close the PR."},
+	{Slug: RuleAdoptedPushRefused, Kind: GlossaryRule, Plain: "the hive adopted this PR but cannot push its branch",
+		Detail: "The hive adopted this PR, but it cannot push the branch: it recorded fork-rehome-refused, the fork allows no maintainer edits or the PR changes workflow files, or its fixer reported the push was refused. The author is offline, so a person pushes the fix or closes the PR."},
 	{Slug: RuleReturnToAuthor, Kind: GlossaryRule, Plain: "a person pushed this PR; the hive asked them, not adopted it",
 		Detail: "The PR was pushed by a person (author/human or one of this hive's owners), so the hive never adopts it. It told the author by name what to fix (rebase, sign-off, CI) and relayed the reviewer's question."},
 	{Slug: "owner-only", Kind: GlossaryRule, Plain: "only the hive owner can do this",

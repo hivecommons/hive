@@ -382,6 +382,8 @@ used to admit the PR:
 | `contributor-lane:no-claim` / `claim-*` / `author-association` / `no-linked-issue`, `untrusted-author-role`, `author-permission-missing` | human hand-off, **trust** cause → routed by the head's evidence (below); lands at `090-ready-for-human-merge` when the head is otherwise clean |
 | hand-offs (`not-app-authored`, `trusted-bot-lane`, `trusted-author:app-authored`, `contributor-lane:app-authored`), transient fetch errors, `base-refresh:merge-guard` (the lane skipped the PR because a merge to its destination was in flight) | no opinion — the owning lane decides; nothing is written. An App-authored PR is handed off by the trusted-author and contributor-lane tiers under their own reason; the self-authored lane owns it, and its `review-gate:no-review-bundle` is the stage's reason while the swarm has not reviewed the head ([#14482](https://github.com/hivecommons/hive/issues/14482)) |
 
+**Whose check run it is.** GitHub lists check runs per commit, and two PRs can share a head (a maintainer's in-repo copy of a fork PR). When a PR is evaluated, a red check run another PR produced on that head does not count against it. A run whose `pull_requests` names other PRs but not this one is dropped, and so is a run naming no PR (how GitHub reports a fork PR's runs) that ran for a different head: the Actions workflow run behind its check suite names the head repository and branch, so an in-repo copy pushed under the fork's branch name is still told apart; a suite from another app, with no workflow run, is judged on its head branch. projectbluefin/utah-packages#890 went to 072 for "Failing checks: Canary" on the fork PR #878's Canary run at the same SHA, before #890's own Canary had started. A lookup that fails keeps the run.
+
 When several lanes see the same PR the self-authored lane outranks the
 trusted-author lane, which outranks the contributor lane; the trusted-author
 lane's bare `untrusted-author-role` is a weak opinion the contributor lane
@@ -431,7 +433,7 @@ conflict reason and the contributor lane's soak — and
 | verdict changes_requested at the head, any red gating check, DCO sign-off missing, merge conflict (`conflicting` / `needs-rebase`) | `071-needs-author` (`author/human`) / `072-returned-to-contributor` (`author/clanker`); `070-fixing` when self-authored or `author/hive`. The 072 nudge lists every reason. Moving 085/090 → 071/072 is not a regression |
 | no verdict for this head yet, or nothing has reported on the head (just pushed) and the verdict is not already `requires_human` | `050-review-pending` — never 090 without a current-head approve |
 | verdict `requires_human` at the head (even on a fresh head nothing has reported on yet, [#13115](https://github.com/hivecommons/hive/issues/13115)), sentinel alert, hold-class label, no reviewer configured, or a non-trust human-only lane rule | `085-needs-decision` + one entry comment naming the decision ("Needs a decision, not a merge: a sentinel alert is open on this PR.") |
-| checks still running / unreadable, or the lane's soak not yet elapsed | `060-reviewed` (not 095: that stage means the lane has *admitted* the head, which a trust-blocked PR never is) |
+| checks still running / unreadable, a required check (branch protection or ruleset) with nothing reported on the head (a PR opened with `GITHUB_TOKEN` triggers no workflow; projectbluefin/utah#1074), or the lane's soak not yet elapsed | `060-reviewed` (not 095: that stage means the lane has *admitted* the head, which a trust-blocked PR never is) |
 | everything above clean and only trust in the way | `090-ready-for-human-merge` + one entry comment: "Ready for a human merge: verdict approved @abc1234, 55/55 checks green, DCO yes, soak 1h0m0s elapsed. Blocked only by `role/newcomer` (below require_tiers)." |
 
 The entry comments are posted once per stage visit (a flip 085 ↔ 090 is a
@@ -1048,7 +1050,26 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      admits it under the hive's own authority
      (`contributor-lane:adopted-by-hive`, `governor.labels.stage.adoption.auto_merge`,
      default `true`) without the original author's trust tier, so 074 moves
-     to 095/097 and merges instead of parking on a maintainer `/lgtm`. A later head keeps that ownership
+     to 095/097 and merges instead of parking on a maintainer `/lgtm`.
+     Each hive push is first checked against the PR's own change
+     (`automerge_adoption_intent.go`): the PR's diff against its base
+     (three-dot, so a merge of the base is not counted) must still carry at
+     least half of the lines the PR changed at the contributor's head the
+     adoption started from (`adopted_intent_head`; older records fall back to
+     the adopted head). Every push is judged against that head, so a push on
+     top of a refused one is refused too, and a chain of pushes cannot erode
+     the change below half. A push that undoes more is refused: the PR goes
+     to `stage/085-needs-decision` with reason `adoption-fixer-reverts-pr`
+     and one "Fixing CI would undo this PR's change" note per head, and the
+     contributor lane will not merge that head; stale-red recovery may re-run
+     its CI but never releases the refusal (projectbluefin/utah#1091: the
+     fixer re-added the 25 entries the PR removed). Until the check has
+     passed, the lane refuses the head as
+     `contributor-lane:adoption-intent-pending`, and the relay rewrites an
+     agent's `hive/awaiting-ci: … sweep will merge when green` note on a hive
+     push (recorded, or App-linked on GitHub) to say the check comes first;
+     an author's push keeps the note as written. A diff of 300 files or more
+     is not judged. A later head keeps that ownership
      only when the commit's GitHub-linked author/committer is the App bot
      (the stage store remembers SHAs that already passed that check; it is
      not a separate evidence source)

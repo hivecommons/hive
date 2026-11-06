@@ -86,9 +86,15 @@ type Record struct {
 	// contributor head the hive adopted, the superseding App PR's number
 	// (0 while the attempt is recorded but no PR exists) and when. One
 	// attempt per head.
-	AdoptedHead string    `json:"adopted_head,omitempty"`
-	AdoptedBy   int       `json:"adopted_by,omitempty"`
-	AdoptedAt   time.Time `json:"adopted_at,omitempty"`
+	AdoptedHead string `json:"adopted_head,omitempty"`
+	// AdoptedIntentHead is the contributor's head an in-place adoption
+	// started from. Every hive push is judged against the PR's diff at this
+	// head, never against the previous hive head, so a refused push cannot
+	// become the baseline for the next one and a chain of small cuts cannot
+	// erode the change (IntentBaseHead).
+	AdoptedIntentHead string    `json:"adopted_intent_head,omitempty"`
+	AdoptedBy         int       `json:"adopted_by,omitempty"`
+	AdoptedAt         time.Time `json:"adopted_at,omitempty"`
 	// AdoptCheckedAt is the last time the superseding PR's state was polled.
 	AdoptCheckedAt time.Time `json:"adopt_checked_at,omitempty"`
 	// SupersededBy / SupersededAt record that the superseding App PR merged
@@ -1427,6 +1433,16 @@ func (s *Store) HasHivePushEvidence(repo string) bool {
 	return false
 }
 
+// IntentBaseHead is the head whose PR diff a hive push on an in-place
+// adoption must keep: the contributor's head at adoption, or AdoptedHead for
+// a record written before AdoptedIntentHead existed.
+func (r Record) IntentBaseHead() string {
+	if r.AdoptedIntentHead != "" {
+		return r.AdoptedIntentHead
+	}
+	return r.AdoptedHead
+}
+
 // AdoptionLive reports whether the hive currently owns this PR (stage 074):
 // an in-place adoption that was not yielded, or a superseding adoption of
 // exactly this head. Adoption is an ownership state, not a CI state — it
@@ -1590,6 +1606,7 @@ func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
 		return
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, 0, now, now
+	r.AdoptedIntentHead = head
 	r.AdoptMode, r.AdoptReason = AdoptModeInPlace, reason
 	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
 	r.AdoptedHeadAt = now
@@ -2242,6 +2259,14 @@ const AdoptionReopenWindow = 24 * time.Hour
 // reopened because its close-first copy was closed unmerged, stayed red
 // across two heads, or could not be pushed: a person must decide.
 const LaneReasonAdoptionCopyFailed = "adoption-copy-failed"
+
+// LaneReasonAdoptionFixerReverts is the 085 reason for an in-place adopted
+// PR whose hive push undid most of the PR's own change: the net diff against
+// the base kept less than half of the lines the PR changed before the push
+// (projectbluefin/utah#1091, where the fixer re-added the 25 triage entries
+// the PR removed and announced a merge). Fixing CI that way would undo the
+// PR, so the author or a maintainer decides. It holds until the head moves.
+const LaneReasonAdoptionFixerReverts = "adoption-fixer-reverts-pr"
 
 // MarkSupersededClosedFirst records that the original was closed as soon
 // as superseding PR `by` existed (close-first supersession). The copy is

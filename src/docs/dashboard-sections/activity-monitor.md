@@ -382,7 +382,7 @@ A `blocked` issue with neither (a human-applied label) keeps the bare pill. This
 
 #### Blocked pill — capability gaps
 
-**Blocked pill — capability gaps** ([#15099](https://github.com/hivecommons/hive/issues/15099), [#16804](https://github.com/hivecommons/hive/issues/16804)). A workflows blocker distinguishes a missing App grant from a parking lane whose token cannot push workflow files. When the App grants `workflows: write` and a capable lane serves the repository, the card offers a hand-off and enables *Let hive decide* to route the issue to that lane. Otherwise it offers the applicable permission and human options. Re-checking permissions alone does not release a workflows blocker; the hand-off records the decision and clears the park. Other capability blockers retain their existing re-check behavior.
+**Blocked pill — capability gaps** ([#15099](https://github.com/hivecommons/hive/issues/15099), [#16804](https://github.com/hivecommons/hive/issues/16804)). A workflows blocker distinguishes a missing App grant from a parking lane whose token cannot push workflow files. When the App grants `workflows: write` and a capable lane serves the repository, the card offers a hand-off and enables *Let hive decide* to route the issue to that lane. Otherwise it offers the applicable permission and human options. Re-checking permissions alone does not release a workflows blocker; the hand-off records the decision and clears the park. Other capability blockers retain their existing re-check behavior. Fork PRs keep the blocker because the App cannot push workflow files to a fork. The un-park sweep also rechecks recorded blockers and routes eligible issues to the workflows lane.
 
 #### New row (`000-new`, the pre-stage state)
 

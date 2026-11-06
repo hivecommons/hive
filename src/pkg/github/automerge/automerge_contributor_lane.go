@@ -1405,6 +1405,11 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	if reason := c.closingContradictionGate(owner, repo, pr); reason != "" {
 		return contributorLaneEval{pr: pr}, reason, nil
 	}
+	// A hive push on an adopted PR merges only once it is known to keep the
+	// PR's own change (automerge_adoption_intent.go).
+	if reason := c.adoptionIntentGate(owner, repo, number, pr.GetHead().GetSHA()); reason != "" {
+		return contributorLaneEval{pr: pr}, reason, nil
+	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
 	headSHA := pr.GetHead().GetSHA()
 	eval := contributorLaneEval{pr: pr, author: author, headSHA: headSHA}

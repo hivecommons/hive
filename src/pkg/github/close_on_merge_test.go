@@ -218,7 +218,7 @@ func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 			_ = json.NewEncoder(w).Encode([]map[string]string{})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/42":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"number": 42, "title": "fix", "body": "Refs #7", "merged": true,
+				"number": 42, "title": "fix", "body": "Fixes #7", "merged": true,
 				"merged_at": "2026-10-09T12:00:00Z", "merge_commit_sha": "abcdef0123456789",
 				"user":      map[string]string{"login": "contributor"},
 				"merged_by": map[string]string{"login": "hive[bot]"},

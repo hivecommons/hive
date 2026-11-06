@@ -186,6 +186,13 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 			// before proving a new head is the hive's own base refresh.
 			n, _ := strconv.Atoi(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"))
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "base": map[string]any{"ref": "main"}})
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/branches/") && strings.HasSuffix(path, "/protection/required_status_checks"):
+			// The human-routing check digest reads the base branch's
+			// required checks: none here (an unprotected branch, no rules).
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Branch not protected"}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/rules/branches/"):
+			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/commits/"):
 			// No single-commit detail is seeded: a new head is never a base
 			// refresh here, so a recorded decision stays on its own head.

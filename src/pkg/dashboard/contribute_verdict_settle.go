@@ -298,6 +298,10 @@ func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string,
 	if err := h.server.deps.GHClient.AddLabels(ctx, repo, number, []string{label}); err != nil {
 		return err
 	}
+	// A verified already-done supersedes an earlier hive/verified-open, so
+	// the issue never wears both verdicts.
+	// Best-effort: the stage sweep settles a pair left behind.
+	_ = h.server.deps.GHClient.RemoveLabelsFresh(ctx, repo, number, ghpkg.VerifiedOpenLabel) // writeback:solicited the contributor's verified already-done verdict
 	if !closeIssue {
 		return nil
 	}

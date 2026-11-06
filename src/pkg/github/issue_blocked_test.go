@@ -1,13 +1,16 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 func TestBlockedOnMarkerRoundTrip(t *testing.T) {
@@ -266,6 +270,8 @@ func TestReconcileBlockedIssues(t *testing.T) {
 			_, _ = io.WriteString(w, `[{"event":"labeled","created_at":"2026-10-20T10:05:00Z","label":{"name":"blocked"},"actor":{"login":"`+testBot+`","type":"Bot"}}]`)
 		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/"):
 			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/80/labels":
+			_, _ = io.WriteString(w, `[{"name":"needs-human"}]`)
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/comments"):
 			var body struct {
 				Body string `json:"body"`
@@ -297,10 +303,10 @@ func TestReconcileBlockedIssues(t *testing.T) {
 			// review-backlog item (a blocked filing folded into an open twin,
 			// hivecommons/hive#13364) is a defect: lifted.
 			{Repo: "o/r", Number: 70, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked", ReviewBacklog: true},
-			// A contributor relay's blocked verdict: the task token makes the
-			// labeled actor the hive's own bot, but it is not a review-backlog
-			// item, so it stays for a human (hivecommons/hive#7924) and only
-			// loses `help wanted`.
+			// A contributor relay's blocked verdict that named nothing: the
+			// task token makes the labeled actor the hive's own bot. It is
+			// not lifted (the next relay would re-block it) but turned into
+			// a needs-human ask, and loses `help wanted`.
 			{Repo: "o/r", Number: 80, Labels: []string{"blocked", "help wanted"}, Bucket: workBucketFiltered, Reason: "blocked"},
 			// A review-backlog item GitHub still reports an open "blocked
 			// by" dependency on (#9839) stays blocked.
@@ -308,7 +314,7 @@ func TestReconcileBlockedIssues(t *testing.T) {
 		}},
 	}}
 	res := ReconcileBlockedIssues(context.Background(), c, result, nil)
-	if res.Items != 8 || res.Unblocked != 3 || res.Stripped != 3 || res.Errors != 1 {
+	if res.Items != 8 || res.Unblocked != 3 || res.AskedHuman != 1 || res.Stripped != 3 || res.Errors != 1 {
 		t.Fatalf("result = %+v", res)
 	}
 	mu.Lock()
@@ -327,7 +333,12 @@ func TestReconcileBlockedIssues(t *testing.T) {
 		"DELETE /repos/o/r/issues/70/labels/blocked",
 		"POST /repos/o/r/issues/70/comments",
 		"GET /repos/o/r/issues/80/comments",
+		"GET /repos/o/r/issues/80/timeline",
+		"POST /repos/o/r/issues/80/labels",
+		"DELETE /repos/o/r/issues/80/labels/blocked",
+		"POST /repos/o/r/issues/80/comments",
 		"DELETE /repos/o/r/issues/80/labels/help wanted",
+		"GET /repos/o/r/issues/60/timeline",
 		"GET /repos/o/r/issues/90/comments",
 	} {
 		if !strings.Contains(joined, want) {
@@ -340,12 +351,9 @@ func TestReconcileBlockedIssues(t *testing.T) {
 		"/repos/o/r/issues/50",
 		"DELETE /repos/o/r/issues/60/labels/blocked",
 		"GET /repos/o/r/issues/30/timeline",
-		// Neither a non-backlog issue nor an open native blocker spends a
-		// timeline read: the lift is ruled out before it.
-		"GET /repos/o/r/issues/60/timeline",
-		"GET /repos/o/r/issues/80/timeline",
-		"DELETE /repos/o/r/issues/80/labels/blocked",
-		"POST /repos/o/r/issues/80/comments",
+		// A person's marker-less block is read (to learn who applied it)
+		// but never converted; an open native blocker spends no read.
+		"POST /repos/o/r/issues/60/labels",
 		"GET /repos/o/r/issues/90/timeline",
 		"DELETE /repos/o/r/issues/90/labels/blocked",
 		"POST /repos/o/r/issues/90/comments",
@@ -505,6 +513,19 @@ func TestEnumerateActionableRecordsBlockedRecheckAfter(t *testing.T) {
 	}
 	if r := rows[3]; r.Bucket != workBucketFiltered || r.Reason != "blocked" || !r.ReviewBacklog || r.OpenBlockedBy != 2 {
 		t.Fatalf("backlog row = %+v", r)
+	}
+	// A blocked-on marker the sweep read from #2's comments names the
+	// row's blocker on the next enumeration (projectbluefin/finpilot#624).
+	noteBlockedOnSeen(repo, 2, "other/actions", 697)
+	t.Cleanup(func() { forgetBlockedOnSeen(repo, 2) })
+	result, err = c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	for _, row := range result.WorkDetailsByRepo[repo].Issues {
+		if row.Number == 2 && row.Reason != "blocked on other/actions#697" {
+			t.Fatalf("row reason after a comment marker = %q", row.Reason)
+		}
 	}
 }
 
@@ -941,41 +962,63 @@ func TestReconcileBlockedIssuesCommentMarkerOverridesBody(t *testing.T) {
 
 // A contributor relay's marker-less `blocked` carries the hive's own bot as
 // the labeled actor (the hub-minted task token). Lifting it put the issue
-// back in the ready band, the next agent re-hit the blocker and the relay
-// re-applied the label, every day. The sweep keeps it across passes; a
-// review-backlog item blocked without a marker (hivecommons/hive#13364) is
-// still lifted once, and one GitHub reports an open "blocked by" on stays.
-func TestSweepBlockedIssuesKeepsRelayMarkerlessBlock(t *testing.T) {
+// back in the ready band and the next relay re-blocked it, daily
+// (projectbluefin/utah#771); keeping it hid the issue from every inbox
+// (projectbluefin/testsuite#908). The sweep turns it into a needs-human ask,
+// once. Decision table:
+//
+//	#70 review-backlog, hive-applied, no marker  → lifted (hivecommons/hive#13364)
+//	#80 relay verdict, hive-applied, no marker   → needs-human ask
+//	#85 a person applied it, no marker           → left alone
+//	#90 open native "blocked by" link (backlog)  → left alone
+//	#92 open native "blocked by" link (relay)    → left alone
+//	#95 blocked-on marker in a comment (open PR) → left alone; the row names the PR
+func TestSweepBlockedIssuesAsksHumanOnRelayMarkerlessBlock(t *testing.T) {
 	var mu sync.Mutex
 	var calls []string
-	lifted := false
+	gone := map[int]bool{}
 	backlogBody := "Filed from an out-of-scope finding in the Hive review of PR #9.\n\n" + reviewBacklogFooter + "\n"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		mu.Lock()
 		calls = append(calls, r.Method+" "+r.URL.Path)
-		done := lifted
 		mu.Unlock()
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues" && strings.Contains(r.URL.RawQuery, "labels=blocked"):
 			items := []map[string]any{
-				{"number": 80, "state": "open", "labels": []any{map[string]any{"name": "blocked"}}, "body": "Upgrade the client once the upstream API ships."},
+				{"number": 85, "state": "open", "labels": []any{map[string]any{"name": "blocked"}}, "body": "Waiting on the vendor."},
 				{"number": 90, "state": "open", "labels": []any{map[string]any{"name": "blocked"}}, "body": backlogBody, "issue_dependencies_summary": map[string]any{"blocked_by": 1, "total_blocked_by": 1}},
+				{"number": 95, "state": "open", "labels": []any{map[string]any{"name": "blocked"}}, "body": "Needs the shared workflow fix."},
+				{"number": 92, "state": "open", "labels": []any{map[string]any{"name": "blocked"}}, "body": "Waits on the upstream issue.", "issue_dependencies_summary": map[string]any{"blocked_by": 1, "total_blocked_by": 1}},
 			}
-			if !done {
+			mu.Lock()
+			if !gone[70] {
 				items = append(items, map[string]any{"number": 70, "state": "open", "labels": []any{map[string]any{"name": "blocked"}}, "body": backlogBody})
 			}
+			if !gone[80] {
+				items = append(items, map[string]any{"number": 80, "state": "open", "labels": []any{map[string]any{"name": "blocked"}}, "body": "Upgrade the client once the upstream API ships."})
+			}
+			mu.Unlock()
 			_ = json.NewEncoder(w).Encode(items)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/95/comments":
+			_, _ = io.WriteString(w, `[{"id":3,"body":"`+BlockedOnMarker("other/actions", 697)+`\nblocked on the shared fix"}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/other/actions/pulls/697":
+			_, _ = io.WriteString(w, `{"number":697,"state":"open"}`)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
-			_, _ = io.WriteString(w, `[{"id":1,"body":"Blocked: the upstream API this needs is not released yet."}]`)
+			_, _ = io.WriteString(w, `[{"id":1,"body":"---\n🐝 **Hive Agent**: `+"`contributor`"+`"}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/85/timeline":
+			_, _ = io.WriteString(w, `[{"event":"labeled","created_at":"2026-10-27T20:38:49Z","label":{"name":"blocked"},"actor":{"login":"castrojo","type":"User"}}]`)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/timeline"):
-			_, _ = io.WriteString(w, `[{"event":"labeled","created_at":"2026-10-28T17:14:50Z","label":{"name":"blocked"},"actor":{"login":"`+testBot+`","type":"Bot"}}]`)
-		case r.Method == "DELETE" && r.URL.Path == "/repos/o/r/issues/70/labels/blocked":
+			_, _ = io.WriteString(w, `[{"event":"labeled","created_at":"2026-10-29T04:17:25Z","label":{"name":"blocked"},"actor":{"login":"`+testBot+`","type":"Bot"}}]`)
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/80/labels":
+			_, _ = io.WriteString(w, `[{"name":"needs-human"}]`)
+		case r.Method == "DELETE" && (r.URL.Path == "/repos/o/r/issues/70/labels/blocked" || r.URL.Path == "/repos/o/r/issues/80/labels/blocked"):
+			n, _ := strconv.Atoi(strings.Split(r.URL.Path, "/")[5])
 			mu.Lock()
-			lifted = true
+			gone[n] = true
 			mu.Unlock()
 			_, _ = io.WriteString(w, `[]`)
-		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/70/comments":
+		case r.Method == "POST" && (r.URL.Path == "/repos/o/r/issues/70/comments" || r.URL.Path == "/repos/o/r/issues/80/comments"):
 			_, _ = io.WriteString(w, `{"id":9}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -990,37 +1033,74 @@ func TestSweepBlockedIssuesKeepsRelayMarkerlessBlock(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pass %d: SweepBlockedIssues failed: %v", pass, err)
 		}
-		wantUnblocked := 0
+		want := 0
 		if pass == 1 {
-			wantUnblocked = 1
+			want = 1
 		}
-		if res.Unblocked != wantUnblocked || res.Errors != 0 {
-			t.Fatalf("pass %d: res = %+v, want Unblocked=%d Errors=0", pass, res, wantUnblocked)
+		if res.Unblocked != want || res.AskedHuman != want || res.Errors != 0 {
+			t.Fatalf("pass %d: res = %+v, want Unblocked=%d AskedHuman=%d Errors=0", pass, res, want, want)
 		}
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"GET /repos/o/r/issues/70/timeline",
 		"DELETE /repos/o/r/issues/70/labels/blocked",
-		"POST /repos/o/r/issues/70/comments",
+		"POST /repos/o/r/issues/80/labels",
+		"DELETE /repos/o/r/issues/80/labels/blocked",
+		"POST /repos/o/r/issues/80/comments",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing call %q in:\n%s", want, joined)
 		}
 	}
+	if strings.Index(joined, "POST /repos/o/r/issues/80/labels") > strings.Index(joined, "DELETE /repos/o/r/issues/80/labels/blocked") {
+		t.Errorf("needs-human must land before blocked comes off, or a failed add leaves the issue in the queue:\n%s", joined)
+	}
 	for _, never := range []string{
-		"DELETE /repos/o/r/issues/80/labels/blocked",
-		"POST /repos/o/r/issues/80/comments",
-		"GET /repos/o/r/issues/80/timeline",
-		"DELETE /repos/o/r/issues/90/labels/blocked",
-		"POST /repos/o/r/issues/90/comments",
-		"GET /repos/o/r/issues/90/timeline",
+		"DELETE /repos/o/r/issues/85/labels/blocked", "POST /repos/o/r/issues/85/labels",
+		"DELETE /repos/o/r/issues/90/labels/blocked", "POST /repos/o/r/issues/90/labels", "GET /repos/o/r/issues/90/timeline",
+		"DELETE /repos/o/r/issues/95/labels/blocked", "POST /repos/o/r/issues/95/labels", "GET /repos/o/r/issues/95/timeline",
+		"DELETE /repos/o/r/issues/92/labels/blocked", "POST /repos/o/r/issues/92/labels", "GET /repos/o/r/issues/92/timeline",
 	} {
 		if strings.Contains(joined, never) {
 			t.Errorf("unexpected call %q in:\n%s", never, joined)
 		}
+	}
+	if got := blockedFilterReasonFor("o/r", 95, "Needs the shared workflow fix."); got != "blocked on other/actions#697" {
+		t.Errorf("row reason for a comment marker = %q, want blocked on other/actions#697", got)
+	}
+	if got := blockedFilterReasonFor("o/r", 85, "Waiting on the vendor."); got != "blocked" {
+		t.Errorf("row reason with no marker = %q, want the bare label", got)
+	}
+}
+
+// The note says what was missing and both ways out.
+func TestBlockedMarkerlessAskNote(t *testing.T) {
+	for _, want := range []string{blockedUnblockedMarker, "named no issue or pull request", "`needs-human`", "hive:blocked-on pr=owner/repo#N", "blocked by"} {
+		if !strings.Contains(blockedMarkerlessAskNote, want) {
+			t.Errorf("note lacks %q:\n%s", want, blockedMarkerlessAskNote)
+		}
+	}
+}
+
+// unblockIssue forgets the comment marker it remembered.
+func TestUnblockForgetsCommentMarker(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[]`)
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	noteBlockedOnSeen("o/r", 7, "o/r", 3)
+	if got := blockedFilterReasonFor("O/R", 7, ""); got != "blocked on o/r#3" {
+		t.Fatalf("reason = %q", got)
+	}
+	if err := c.unblockIssue(context.Background(), "o/r", 7); err != nil {
+		t.Fatal(err)
+	}
+	if got := blockedFilterReasonFor("o/r", 7, ""); got != "blocked" {
+		t.Fatalf("reason after unblock = %q, want the bare label", got)
 	}
 }
 
@@ -1063,5 +1143,60 @@ func TestSweepBlockedIssues(t *testing.T) {
 	defer mu.Unlock()
 	if !unblocked {
 		t.Fatal("blocked label was not removed from issue 10")
+	}
+}
+
+// A writeback-gate refusal (a burst hold, a duplicate within same_item_ttl,
+// a paused repo) leaves the block as it is for a later sweep and says so in
+// the log instead of falling through silently.
+func TestSweepBlockedAskHeldByGateLogs(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues" && strings.Contains(r.URL.RawQuery, "labels=blocked"):
+			_, _ = io.WriteString(w, `[{"number":80,"state":"open","labels":[{"name":"blocked"}],"body":"Upgrade once upstream ships."}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/80":
+			_, _ = io.WriteString(w, `{"number":80,"state":"open","user":{"login":"`+testBot+`"},"labels":[{"name":"blocked"}]}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/80/comments":
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/80/timeline":
+			_, _ = io.WriteString(w, `[{"event":"labeled","created_at":"2026-10-29T04:17:25Z","label":{"name":"blocked"},"actor":{"login":"`+testBot+`","type":"Bot"}}]`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	c.appBotLogin = testBot
+	var logs bytes.Buffer
+	c.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	c.SetWritebackGate(writeback.New(writeback.Config{}, writeback.Deps{
+		RepoPause: func(string) (writeback.RepoPauseInfo, bool) {
+			return writeback.RepoPauseInfo{By: "owner", Reason: "freeze"}, true
+		},
+	}, ""))
+	res, err := c.SweepBlockedIssues(context.Background(), BlockedSweepOptions{Repos: []string{"o/r"}})
+	if err != nil {
+		t.Fatalf("SweepBlockedIssues: %v", err)
+	}
+	if res.AskedHuman != 0 || res.Unblocked != 0 {
+		t.Fatalf("res = %+v, want nothing converted while the gate refuses", res)
+	}
+	mu.Lock()
+	joined := strings.Join(calls, "\n")
+	mu.Unlock()
+	for _, never := range []string{"POST /repos/o/r/issues/80/labels", "DELETE /repos/o/r/issues/80/labels/blocked", "POST /repos/o/r/issues/80/comments"} {
+		if strings.Contains(joined, never) {
+			t.Errorf("unexpected call %q while the gate refuses:\n%s", never, joined)
+		}
+	}
+	if out := logs.String(); !strings.Contains(out, "needs-human ask held by writeback gate") || !strings.Contains(out, "issue=80") {
+		t.Fatalf("gate refusal not logged:\n%s", out)
 	}
 }

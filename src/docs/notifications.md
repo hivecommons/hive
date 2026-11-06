@@ -609,6 +609,7 @@ without a class. Review submissions and review requests are always counted as
 | `mergelane.(*RESTGitHub).CreateIssueComment` | `status` | passthrough wrapper; attributed to its caller |
 | `dashboard.(*ContributeWSHub).parkWrongBase` | `attention` |  |
 | `dashboard.(*ContributeWSHub).noteAlreadyDoneUnverified` | `attention` | asks a maintainer to verify an unsupported already-done claim |
+| `dashboard.(*ContributeWSHub).needsDecisionParkPost` | `attention` | the question a contributor's needs-decision park was left without |
 | `dashboard.(*Server).handleRepoItemReroute` | `attention` |  |
 | `dashboard.(*Server).handleReviewPipelineSendToHuman` | `attention` |  |
 | `dashboard.(*Server).reroutePickupLapsed` | `attention` |  |

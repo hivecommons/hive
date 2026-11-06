@@ -738,7 +738,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			// `resolve` a non-risk Hive engineering question is not parked,
 			// the comment records the decision and the owner-step marker is
 			// withheld so the unpark menu does not offer `/hive done`.
-			issueDecisionDowngrade = c.issueDecisionDowngradeForComment(req, body)
+			issueDecisionDowngrade = c.issueDecisionDowngradeForComment(ctx, req, body)
 			if !issueDecisionDowngrade.Active && len(req.BlockedBy) == 0 {
 				if n := c.askFoldTarget(ctx, req.Repo, req.Number, body); n > 0 {
 					req.BlockedBy, askFoldedInto = []int{n}, n
@@ -775,11 +775,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 		if err == nil && (withdraw == nil || !withdraw.posted) {
 			commentBody := issueOwnerStepBody(body, req.NeedsDecision && !issueDecisionDowngrade.Active, req.OwnerStep)
-			if issueDecisionDowngrade.Lane != "" {
+			if issueDecisionDowngrade.workflows() {
 				commentBody = appendWorkflowsHandoff(commentBody, issueDecisionDowngrade)
 			} else if issueDecisionDowngrade.Active {
 				commentBody = appendHiveDecisionTaken(commentBody, issueDecisionDowngrade.Question)
 			}
+			commentBody = c.adoptedAwaitingCINote(ctx, req.Repo, req.Number, commentBody)
 			if key := relayStatusNoteKey(commentBody); key != "" && (c.notificationsQuiet() || c.attentionPilot()) {
 				// A one-line state note (awaiting-ci, parking, already fixed)
 				// is a section of the item's status comment in quiet mode or
@@ -866,6 +867,17 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if err == nil && len(plainLabels) > 0 {
 			err = c.AddLabels(ctx, req.Repo, req.Number, plainLabels)
 		}
+		if err == nil && issueHasLabel(plainLabels, VerifiedOpenLabel) {
+			// The agent's verdict that the work is not finished supersedes
+			// the done labels: projectbluefin/testsuite#1023 wore
+			// hive/already-done next to a later hive/verified-open and the
+			// inbox offered to close it. Best-effort: the verdict landed, and
+			// the stage sweep settles a pair left behind
+			// (reconcileDoneVerdictLabels).
+			if rerr := c.RemoveLabelsFresh(ctx, req.Repo, req.Number, AlreadyDoneLabel, LikelyDoneLabel); rerr != nil && c.logger != nil { // writeback:solicited the agent's verified-open verdict
+				c.logger.Warn("issue-request watcher: removing done labels after verified-open failed; the stage sweep retries", "repo", req.Repo, "number", req.Number, "error", rerr)
+			}
+		}
 		if err == nil && unpark {
 			err = c.StageFacts().Unparked(ctx, c.IssueStageRef(req.Repo, req.Number), req.Agent)
 		}
@@ -927,7 +939,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 	default: // "issue"
 		var res CreateIssueResult
-		createLabels, createBody, d := c.issueCreateLabels(req, body)
+		createLabels, createBody, d := c.issueCreateLabels(ctx, req, body)
 		if d.Active {
 			issueDecisionDowngrade = d
 		}
@@ -1096,6 +1108,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	if issueDecisionDowngrade.Lane != "" {
 		c.recordWriteAudit(AuditActionAgentIssueDecisionResolved, meta, WriteTarget{Repo: req.Repo, Number: resp.Number},
 			"policy", "workflows-handoff", "lane", issueDecisionDowngrade.Lane)
+	} else if issueDecisionDowngrade.SelfPush {
+		c.recordWriteAudit(AuditActionAgentIssueDecisionResolved, meta, WriteTarget{Repo: req.Repo, Number: resp.Number},
+			"policy", "workflows-self-push", "lane", req.Agent)
 	} else if issueDecisionDowngrade.Active {
 		c.recordWriteAudit(AuditActionAgentIssueDecisionResolved, meta, WriteTarget{Repo: req.Repo, Number: resp.Number},
 			"policy", decisionpolicy.PolicyResolve, "question", issueDecisionDowngrade.Question)
@@ -1117,16 +1132,24 @@ type issueDecisionDowngrade struct {
 	// Lane is set when the park is a workflow-only change handed to the
 	// lane that can push it (workflowsHandoff), not a decision the hive took.
 	Lane string
+	// SelfPush is set when the parking lane's own token can push the
+	// workflow change and the installation grants it (workflowsHandoff):
+	// the park is refused and the issue stays with that lane.
+	SelfPush bool
 }
+
+// workflows reports a workflow-only park the relay did not park: handed to
+// another lane, or refused because the lane can push it itself.
+func (d issueDecisionDowngrade) workflows() bool { return d.Lane != "" || d.SelfPush }
 
 // A typed owner step (e.g. a release) proposes an action only a person
 // with owner credentials can take, so it is owner-only by construction and
 // never downgraded to a hive-taken decision, whatever the policy.
-func (c *Client) issueDecisionDowngradeForCreate(req IssueRequest, body string) issueDecisionDowngrade {
+func (c *Client) issueDecisionDowngradeForCreate(ctx context.Context, req IssueRequest, body string) issueDecisionDowngrade {
 	if !req.NeedsDecision || req.OwnerStep != nil || !hiveIssueRequestActor(req.Agent, req.Labels) {
 		return issueDecisionDowngrade{}
 	}
-	if d := c.workflowsHandoff(req.Agent, req.Repo, req.Title, body); d.Active {
+	if d := c.workflowsHandoff(ctx, req.Agent, req.Repo, req.Title, body); d.Active {
 		return d
 	}
 	return c.issueDecisionDowngrade(req.Title, body)
@@ -1135,11 +1158,11 @@ func (c *Client) issueDecisionDowngradeForCreate(req IssueRequest, body string) 
 // issueDecisionDowngradeForComment classifies a `comment --needs-decision`
 // park on an existing issue. A comment always carries its own text, so the
 // classification reads the comment body rather than the issue.
-func (c *Client) issueDecisionDowngradeForComment(req IssueRequest, body string) issueDecisionDowngrade {
+func (c *Client) issueDecisionDowngradeForComment(ctx context.Context, req IssueRequest, body string) issueDecisionDowngrade {
 	if !req.NeedsDecision || req.OwnerStep != nil || !hiveIssueRequestActor(req.Agent, req.Labels) {
 		return issueDecisionDowngrade{}
 	}
-	if d := c.workflowsHandoff(req.Agent, req.Repo, "", body); d.Active {
+	if d := c.workflowsHandoff(ctx, req.Agent, req.Repo, "", body); d.Active {
 		return d
 	}
 	return c.issueDecisionDowngrade("", body)
@@ -1230,16 +1253,18 @@ func hiveDecisionDowngradeNote(question string) string {
 // the hive takes the engineering decision itself — stage/010-actionable in
 // its place and the decision recorded in the body. The labels travel in
 // the create call; the stage engine owns them from the first sweep on.
-func (c *Client) issueCreateLabels(req IssueRequest, body string) (labels []string, createBody string, d issueDecisionDowngrade) {
+func (c *Client) issueCreateLabels(ctx context.Context, req IssueRequest, body string) (labels []string, createBody string, d issueDecisionDowngrade) {
 	labels, createBody = req.Labels, body
 	if !req.NeedsDecision {
 		return labels, createBody, d
 	}
-	if d = c.issueDecisionDowngradeForCreate(req, createBody); d.Active {
+	if d = c.issueDecisionDowngradeForCreate(ctx, req, createBody); d.Active {
 		labels = removeDecisionParkLabels(labels, c.needsDecisionLabel())
 		labels = appendLabelIfMissing(labels, stagelabels.Actionable.Label())
-		if d.Lane != "" {
-			labels = appendLabelIfMissing(labels, WorkflowsLaneLabel)
+		if d.workflows() {
+			if d.Lane != "" {
+				labels = appendLabelIfMissing(labels, WorkflowsLaneLabel)
+			}
 			createBody = appendWorkflowsHandoff(createBody, d)
 		} else {
 			createBody = appendHiveDecisionTaken(createBody, d.Question)
@@ -1422,6 +1447,10 @@ type CreateIssueResult struct {
 	// fold into: it cites the same files but not the same finding, so a new
 	// issue was created instead (#13906). 0 otherwise.
 	SameFileAs int
+	// SameFilePath is the path SameFileAs shares with this request when the
+	// match was on one component path; "" for an equal file set, where every
+	// cited path is shared.
+	SameFilePath string
 }
 
 // CreateIssueRequest is what every hive issue-create path hands the central
@@ -1444,7 +1473,7 @@ type CreateIssueRequest struct {
 	// SkipSharedPathFold suppresses the file-set, same-component and
 	// canonical-subject folds (#16065) for a request that declares DAG
 	// placement (--parent or --blocked-by): sibling children routinely share
-	// a path and a title stem. The create's idempotency claim keys on the
+	// a path and a title stem. createIssue sets it for a dedupe checklist too. The create's idempotency claim keys on the
 	// exact title rather than the canonical stem for the same reason. The
 	// exact-title and rejected-twin gates still apply.
 	SkipSharedPathFold bool
@@ -1524,6 +1553,14 @@ func (c *Client) CreateIssue(ctx context.Context, req CreateIssueRequest) (Creat
 // dashboard's ACMM gap issues) also turn it on.
 func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (CreateIssueResult, error) {
 	repo, title, body, consolidateOpen := req.Repo, req.Title, req.Body, req.ConsolidateOpen
+	// A dedupe checklist cites every path its pairs touch, so a path fold
+	// would bury the whole repo checklist in whichever finding shares one:
+	// projectbluefin/actions#543, a data-loss bug, received the repo's
+	// checklist as a "Folded finding" (10-24). It is filed on its own, like a
+	// declared DAG node; an exact-title twin is still reused.
+	if strings.Contains(body, dedupeChecklistMarkerPrefix) {
+		req.SkipSharedPathFold = true
+	}
 	originLabel := req.OriginLabel()
 	if originLabel == "" {
 		return CreateIssueResult{}, ErrOriginRequired
@@ -1661,6 +1698,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	// whichever merges first forces the other to rebase. Fold the finding into
 	// the existing issue so one PR handles both.
 	var sameFileAs int
+	var sameFilePath string
 	if fileSetTwin != nil && req.FoldMatch != nil && !req.FoldMatch(fileSetTwin.GetTitle(), fileSetTwin.GetBody()) {
 		sameFileAs, fileSetTwin = fileSetTwin.GetNumber(), nil
 	}
@@ -1712,7 +1750,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	}
 	if componentTwin != nil && req.FoldMatch != nil && !req.FoldMatch(componentTwin.GetTitle(), componentTwin.GetBody()) {
 		if sameFileAs == 0 {
-			sameFileAs = componentTwin.GetNumber()
+			sameFileAs, sameFilePath = componentTwin.GetNumber(), componentPath
 		}
 		componentTwin = nil
 	}
@@ -1804,11 +1842,11 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		}
 		c.logger.Info("CreateIssue: create replayed as already applied, reusing the journaled issue",
 			slog.String("repo", repoName), slog.Int("number", number))
-		return CreateIssueResult{Number: number, URL: res.Provenance, AlreadyExisted: true, SameFileAs: sameFileAs}, nil
+		return CreateIssueResult{Number: number, URL: res.Provenance, AlreadyExisted: true, SameFileAs: sameFileAs, SameFilePath: sameFilePath}, nil
 	}
 	c.logger.Info("CreateIssue: issue created as the App bot",
 		slog.String("repo", repoName), slog.Int("number", issue.GetNumber()))
-	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID(), SameFileAs: sameFileAs}, nil
+	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID(), SameFileAs: sameFileAs, SameFilePath: sameFilePath}, nil
 }
 
 // issueCreateUnknownTTL bounds how long an issue-create operation may sit

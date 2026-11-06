@@ -115,3 +115,36 @@ func TestAnsweredReviewHoldLookupUsesProjectOrg(t *testing.T) {
 		t.Fatal("an answer on another head must not count")
 	}
 }
+
+// projectbluefin/testsuite#1037: the decision answered the review on
+// 9c0ec3d for the hive's fixer, and the row read "the hive is fixing it" for
+// days while every push was refused. An answer the hive cannot carry out on
+// its branch stays with the person who gave it, with the reason.
+func TestAnsweredReviewOnUnpushableAdoptedBranchStaysYourTurn(t *testing.T) {
+	pr := withHead12329(hivePR11565("stage/074-adopted-by-hive"), "head-2")
+	asked := verdict12377(pr, "head-2", review.VerdictRequiresHuman)
+	answer := decisionAnswer(pr, "head-2", review.HumanChangeRequestKindChanges, ownershipNow11565.Add(-time.Hour))
+	for _, tc := range []struct {
+		name    string
+		refusal string
+	}{
+		{name: "pushable: waits on the hive"},
+		{name: "fork-rehome-refused: your turn", refusal: "the hive recorded that it cannot finish this fork PR on the fork's own branch (fork-rehome-refused)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := answeredEnv(t, []review.Aggregate{asked}, review.DispatchState{}, answer)
+			env.adoptedPushRefused = func(github.PullRequest) string { return tc.refusal }
+			got := decidePROwnership(pr, false, env)
+			if tc.refusal == "" {
+				if got.YourTurn || !strings.Contains(got.Reason, "the hive is fixing it") {
+					t.Fatalf("got %+v, want waiting on the hive", got)
+				}
+				return
+			}
+			checkOwnership11565(t, got, want11565{OwnershipVerbDecide, OwnershipReasonAdoptedPushRefused})
+			if strings.Contains(got.Reason, "the hive is fixing it") || !strings.Contains(got.Reason, "fork-rehome-refused") || !strings.Contains(got.Reason, "@Danathar answered") {
+				t.Fatalf("reason %q", got.Reason)
+			}
+		})
+	}
+}

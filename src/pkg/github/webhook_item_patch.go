@@ -86,7 +86,7 @@ func (c *Client) classifyWebhookIssue(repo string, issue *gh.Issue, blockedBy in
 		return sidelined("filtered", trackingFilterReason)
 	}
 	if hasBlockedLabel(labels) {
-		row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
+		row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReasonFor(repo, issue.GetNumber(), issue.GetBody()))
 		setBlockedRowFacts(&row, issue.GetBody(), blockedBy)
 		return WebhookItemPatch{Bucket: WebhookBucketSidelined, WorkIssue: &row}
 	}

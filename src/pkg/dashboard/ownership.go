@@ -74,6 +74,17 @@ const (
 	OwnershipReasonPersonPRNeedsHuman          = "person_pr_needs_human"
 	OwnershipReasonReviewRequiresHuman         = "review_requires_human"
 	OwnershipReasonStaleSafetyNet              = "stale_safety_net"
+	// The issue filter (project.issue_filter.require_labels) keeps these off
+	// every agent queue, so only a maintainer adding a required label lets
+	// them move: a decided issue, and an agent's finding where agents
+	// self-authorize (no TRIAGE row covers it).
+	OwnershipReasonDecidedNotAdmitted      = "decided_not_admitted"
+	OwnershipReasonAgentFindingNotAdmitted = "agent_finding_not_admitted"
+	OwnershipReasonPersonIssueNotAdmitted  = "person_issue_not_admitted"
+	// OwnershipReasonCitedLinesGone: an agent finding the issue filter
+	// refuses whose cited lines are gone from the default branch
+	// (RepoWorkIssue.CitedLinesGone).
+	OwnershipReasonCitedLinesGone = "cited_lines_gone"
 )
 
 // ownershipReasonVerbs is the fixed reason-code set with the one verb each
@@ -103,6 +114,10 @@ var ownershipReasonVerbs = map[string]string{
 	OwnershipReasonPersonPRNeedsHuman:          OwnershipVerbReview,
 	OwnershipReasonReviewRequiresHuman:         OwnershipVerbReview,
 	OwnershipReasonStaleSafetyNet:              OwnershipVerbReview,
+	OwnershipReasonDecidedNotAdmitted:          OwnershipVerbAdmit,
+	OwnershipReasonAgentFindingNotAdmitted:     OwnershipVerbAdmit,
+	OwnershipReasonPersonIssueNotAdmitted:      OwnershipVerbAdmit,
+	OwnershipReasonCitedLinesGone:              OwnershipVerbClose,
 }
 
 // OwnershipActionReleaseHold is the dashboard's existing release-hold action.
@@ -248,6 +263,10 @@ type ownershipEnv struct {
 	supersededPR          func(repo string, number int) (github.ReviewQueueSuperseded, bool)
 	repoLevel             func(repo string) int
 	selfAuthorizationHold func(repo string) bool
+	// adoptedPushRefused names why the hive cannot push a PR's branch
+	// (adopted_push.go); nil or "" lets a recorded answer read as the
+	// hive fixing it.
+	adoptedPushRefused    func(pr github.PullRequest) string
 	reviewerLaneAvailable func(repo string) bool
 	escalatedAt           func(repo string, number int) time.Time
 	// laneCanOpenPR reports whether the running agent serving a routed lane
@@ -278,6 +297,9 @@ type ownershipEnv struct {
 	// author in repo (automerge.Engine.MergeLaneTakesAuthor); nil turns the
 	// hand-merge rule off.
 	mergeLaneTakesAuthor func(repo, author string) bool
+	// admitLabels are project.issue_filter.require_labels: the labels that
+	// let an issue the filter refuses onto the agent queues.
+	admitLabels []string
 }
 
 func (e ownershipEnv) laneCanOpenPRFor(lane, repo string) bool {
@@ -302,6 +324,20 @@ func (e ownershipEnv) selfAuthorizationHoldFor(repo string) bool {
 		return e.hiveLevel < config.MaxACMMLevel
 	}
 	return e.selfAuthorizationHold(repo)
+}
+
+// admitPhrase names what admits an issue the filter refuses.
+func (e ownershipEnv) admitPhrase() string {
+	var named []string
+	for _, l := range e.admitLabels {
+		if l = strings.TrimSpace(l); l != "" {
+			named = append(named, "`"+l+"`")
+		}
+	}
+	if len(named) == 0 {
+		return "add an admission label to admit it"
+	}
+	return "add " + strings.Join(named, " or ") + " to admit it"
 }
 
 func (e ownershipEnv) releaseOnApproveFor(repo string) bool {
@@ -478,6 +514,9 @@ type issueOwnershipInput struct {
 	number       int
 	labels       []string
 	acknowledged bool
+	// authorIsHuman is the enumeration's reporter classification
+	// (RepoWorkIssue.AuthorIsHuman) for a non-actionable row.
+	authorIsHuman bool
 	// openLinkedPR is set when the issue has an open (unmerged) linked PR or
 	// open PR claim context.
 	openLinkedPR bool
@@ -494,6 +533,10 @@ type issueOwnershipInput struct {
 	hiveClosingPR int
 	createdAt     time.Time
 	updatedAt     time.Time
+
+	// citedLinesGone is RepoWorkIssue.CitedLinesGone for a non-actionable
+	// row.
+	citedLinesGone string
 
 	// lane is the lane the classifier routed the issue to.
 	lane string
@@ -600,9 +643,38 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 	if ownershipVerifiedDone(in, labels, env) {
 		return yourTurn(OwnershipReasonVerifiedDone, "Hive verified this is done but could not close it")
 	}
+	// (8b) an agent finding whose cited lines are gone from the default
+	// branch describes code main no longer has: close it rather than
+	// acknowledge or admit it (projectbluefin/testsuite#1085).
+	if in.citedLinesGone != "" {
+		return yourTurn(OwnershipReasonCitedLinesGone, "The cited lines no longer match main ("+in.citedLinesGone+") — close it, or admit it if the finding still holds")
+	}
 	// (9) agent-filed and unacknowledged while acknowledgment is required.
 	if role := issueAgentRole(in.labels); role != "" && !in.acknowledged && !labels[ownershipLabelApprovedDirection] && env.selfAuthorizationHoldFor(in.repo) {
 		return yourTurn(OwnershipReasonAgentFiledUnacknowledged, "Filed by agent "+role+" — acknowledge it or close it")
+	}
+	// (9b) refused by the issue filter: no lane will ever see it, so a
+	// decided issue (`/hive decision` and `/hive approve` apply
+	// approved-direction, not the filter's label), an agent's finding or a
+	// person's issue waits on a maintainer admitting it. Only the filter's
+	// own refusal counts: holds, exempt, tracking, blocked, park and
+	// reporter-confirmation rows and standing dashboards carry other
+	// buckets or reasons (client.go fetchIssues decides those first). projectbluefin/testsuite#1091 was
+	// approved at 20:31Z on 11-05; the un-park reply said "still outside the
+	// agent queue", and no inbox listed it.
+	if in.bucket == repoWorkBucketFiltered && in.bucketReason == github.IssueFilterReason {
+		if labels[ownershipLabelApprovedDirection] {
+			return yourTurn(OwnershipReasonDecidedNotAdmitted, "Decided, but the issue filter keeps it off the agent queue — "+env.admitPhrase())
+		}
+		if role := issueAgentRole(in.labels); role != "" {
+			return yourTurn(OwnershipReasonAgentFindingNotAdmitted, "Filed by agent "+role+"; the issue filter keeps it off the agent queue — "+env.admitPhrase()+", or close it if it no longer applies")
+		}
+		// A person's issue nobody has decided: the filter only ever lets it
+		// in by a maintainer's label. A bot's (not a standing dashboard,
+		// which never reaches this bucket) stays outside.
+		if in.authorIsHuman {
+			return yourTurn(OwnershipReasonPersonIssueNotAdmitted, "A person filed this; the issue filter keeps it off the agent queue — "+env.admitPhrase()+" so the hive works it, or close it")
+		}
 	}
 	// (11) otherwise not your turn; the safety net may still apply.
 	if issueSafetyNetCovers(in, labels, env) && env.stale(in.createdAt, in.updatedAt) {
@@ -907,8 +979,10 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				createdAt:       item.CreatedAt,
 				updatedAt:       item.UpdatedAt,
 				reporterGate:    item.ReporterConfirmationGate,
+				authorIsHuman:   item.AuthorIsHuman,
 				bucket:          item.Bucket,
 				bucketReason:    item.Reason,
+				citedLinesGone:  item.CitedLinesGone,
 				decisionBlocker: decisionBlockerFor(nonEmpty(item.Repo, repoName)+"#"+strconv.Itoa(item.Number), item.OpenBlockers, decisionParks, repoName),
 			}
 			in.hiveClosingPR = hiveClosingPRFor(*repo, repoName, item.Number)
@@ -989,6 +1063,7 @@ func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*crux.Process,
 		org = cfg.Project.Org
 	}
 	env.reviewSwarm.answer = decisionAnswerLookup(org)
+	env.adoptedPushRefused = adoptedPushRefusalFor(org)
 	if leased := hub.leasedWorkItems(now, org); len(leased) > 0 {
 		env.leased = func(repo string, number int) bool { return leased[leaseItemKey(org, repo, number)] }
 	}
@@ -1007,6 +1082,7 @@ func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*crux.Process,
 	}
 	env.unparkCommandsRefused = func(repo string) bool { return labelDrivenRefusesUnparkCommands(cfg, repo) }
 	env.releaseOnApprove = cfg.RepoReleaseOnApprove
+	env.admitLabels = cfg.Project.IssueFilter.RequireLabelsForNotice()
 	env.laneCanOpenPR = laneCanOpenPRAt(env, agentStatuses)
 	return env
 }

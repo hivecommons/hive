@@ -289,10 +289,17 @@ quietly:
   post error naming the remedy: enable Issues in the repo's **Settings >
   General > Features**, or point the hive at the upstream repo. This is not an
   App-permission problem; the App banner stays down.
-- **Someone closed the pinned issue.** The hive reopens the existing issue rather
+- **Someone closed the pinned issue.** When a bot (or the hive itself) closed it,
+  or GitHub does not say who did, the hive reopens the existing issue rather
   than filing a new one. Filing a new one splits the digest: the hive writes to
   the new issue while everyone subscribed to the old one watches a comment that
-  never changes again — which looks exactly like a wedged digest. If a repo
+  never changes again — which looks exactly like a wedged digest. When a
+  **person** closed it, that is a decision: the hive leaves it closed and files
+  a new advisory issue that opens with "This replaces #N, which X closed…",
+  says the hive does not reopen an issue a person closed, and names
+  `advisory.target: linear` (with `advisory.linear_issue`) as the way to keep
+  the digest off GitHub. To go back to the old issue, reopen it and close the
+  new one. If a repo
   already has several `🐝 Hive Advisory Report` issues from before this behavior,
   close the stale duplicates and keep the one the hive is currently updating (the
   one with the newest digest comment).

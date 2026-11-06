@@ -301,6 +301,12 @@ type Input struct {
 	// the contributor's (hivecommons/hive#15722: "send #15722 back to its
 	// author" on a PR the hive had adopted).
 	AdoptedByHive bool
+	// AdoptedPushRefused names why the hive cannot push the adopted PR's
+	// branch (fork-rehome-refused, a fork without maintainer edits or with
+	// a workflow-file diff, a recorded capability blocker); "" when it can.
+	// The fixer cannot carry out a direction then (projectbluefin/utah#919,
+	// projectbluefin/testsuite#1037).
+	AdoptedPushRefused string
 	// ReviewerRequiresHuman: the recorded park reason is the reviewer
 	// swarm's requires_human on the current head; ReviewerFinding is what
 	// the review found ("the reviewer marked this change high-risk"), and
@@ -796,6 +802,9 @@ func decidePR(in Input) Decision {
 const (
 	RuleAdoptedFixer           = "adopted-fixer"
 	RuleAdoptedSecurityFinding = "adopted-security-finding"
+	// RuleAdoptedPushRefused: the hive adopted the PR but cannot push its
+	// branch and the author is offline, so a person pushes or closes it.
+	RuleAdoptedPushRefused = "adopted-push-refused"
 )
 
 // decideAdoptedByHive is the adopted-in-place branch of decidePR. The hive
@@ -830,12 +839,34 @@ func decideAdoptedByHive(in Input, ref string) (Decision, bool) {
 	if len(fix) == 0 {
 		return Decision{}, false
 	}
+	if why := strings.TrimSpace(in.AdoptedPushRefused); why != "" {
+		return decideAdoptedPushRefused(in, ref, why, fix), true
+	}
 	text := "hive's fixer: " + strings.Join(fix, ", ") + " on " + ref + "; then it merges"
 	return Decision{
 		Verdict: VerdictDirection, Rule: RuleAdoptedFixer, Text: text,
 		Rationale: "the hive adopted " + ref + " in place and owns its branch, so the reviewer's finding is the hive's own fixer's to address — not the contributor's and not a person's (hivecommons/hive#15722)",
 		Actions:   []Action{decisionComment(text)},
 	}, true
+}
+
+// decideAdoptedPushRefused answers an adopted PR whose branch the hive
+// cannot push. A connected author can push it, so it goes back to them with
+// the fix list; otherwise only a person can, so the park stays with the one
+// who asked, with the reason.
+func decideAdoptedPushRefused(in Input, ref, why string, fix []string) Decision {
+	if in.ContributorOnline || in.ReworkPickedUp {
+		who := in.AuthorWord()
+		text := who + " is connected and the hive cannot push " + ref + " (" + why + "): " + strings.Join(fix, ", ") + " on " + ref + "; then it merges"
+		return Decision{
+			Verdict: VerdictDirection, Rule: RuleReturnToContributor, Text: text,
+			Rationale: "the hive adopted " + ref + " but cannot push its branch — " + why + " — and " + who + " is connected, so the fix list goes back to them",
+			Actions:   []Action{decisionComment(text)},
+		}
+	}
+	return recommendOnly(RuleAdoptedPushRefused,
+		"the hive adopted "+ref+" but cannot push its branch — "+why+" — so its fixer cannot carry out a direction, and "+in.OfflineWording(),
+		"a maintainer pushes the fix to "+ref+" ("+strings.Join(fix, ", ")+") or closes it; the hive cannot")
 }
 
 // RuleHiveSuperseder is the owner's superseder rule: "if a pr is superseded

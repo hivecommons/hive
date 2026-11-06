@@ -36940,6 +36940,116 @@
         }
       }
     },
+    "/api/close-on-merge/wrong-closes": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "List issues close-on-merge closed on a PR that left them open",
+        "description": "Owner only. Read-only report for maintainers (projectbluefin/utah-packages#490): issues the hive closed in the last ?days=N (default 30, 1-90) with \"Fixed by #N\" where PR #N only references the issue (Refs / Part of) or says it stays open, or where the issue carried hive/verified-open or hive/partially-addressed and the PR had no closing keyword for it. The scan reads GitHub on the installation token: it runs under a 60 s deadline, inspects at most 500 closed issues (truncated with a note past that) and caches each window's answer for 10 minutes (cached_at). GitHub's issue-list since filters on updated_at; the close time is checked locally. The hive reopens nothing; maintainers decide.",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90
+            },
+            "description": "Window in days (default 30)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Wrongly closed issues",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "since": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "days": {
+                      "type": "integer"
+                    },
+                    "complete": {
+                      "type": "boolean",
+                      "description": "false when a repository listing failed (error says which) or the scan was truncated"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "issue": {
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "pr": {
+                            "type": "integer",
+                            "description": "The merged PR the hive's \"Fixed by #N\" comment names"
+                          },
+                          "closed_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "enum": [
+                              "pr_leaves_issue_open",
+                              "issue_marked_open"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "inspected": {
+                      "type": "integer",
+                      "description": "Closed issues inspected in the window"
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "The 500-issue cap stopped the scan; items covers only what was inspected"
+                    },
+                    "note": {
+                      "type": "string",
+                      "description": "Present when truncated"
+                    },
+                    "cached_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Present when the answer came from the 10-minute cache"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "days out of range"
+          },
+          "503": {
+            "description": "GitHub client not configured"
+          },
+          "403": {
+            "description": "Not a verified owner"
+          }
+        }
+      }
+    },
     "/api/sentinel": {
       "get": {
         "tags": [

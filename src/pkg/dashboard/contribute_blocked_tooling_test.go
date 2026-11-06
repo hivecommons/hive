@@ -49,7 +49,6 @@ func TestBlockedVerdictToolingFailure_Classifier(t *testing.T) {
 		"waiting on projectbluefin/utah-packages to publish a factory image with the recipes",
 		"the upstream library has not released the API this needs",
 		"depends on hivecommons/hub#42 landing first",
-		"",
 	}
 	for _, reason := range external {
 		if isBlockedVerdictToolingFailure(reason) {
@@ -69,7 +68,7 @@ func TestBlockedVerdictToolingFailure_Classifier(t *testing.T) {
 }
 
 func TestBlockedVerdictToolingFailure_ReleaseCommentIsMarkedAndBounded(t *testing.T) {
-	long := strings.Repeat("§", noWorkReasonMaxLen*2)
+	long := "push rejected: " + strings.Repeat("§", noWorkReasonMaxLen*2)
 	body := toolingBlockedReleaseComment("mrbobbytables", long)
 	if !strings.HasPrefix(body, toolingBlockedReleaseMarker) {
 		t.Fatalf("release comment must start with the marker, got %q", body[:80])
@@ -83,6 +82,41 @@ func TestBlockedVerdictToolingFailure_ReleaseCommentIsMarkedAndBounded(t *testin
 	anon := toolingBlockedReleaseComment("", "")
 	if strings.Contains(anon, "@") || strings.Contains(anon, "Reported reason") {
 		t.Fatalf("anonymous, reasonless comment must omit the handle and the reason tail: %q", anon)
+	}
+}
+
+// projectbluefin/utah#1002 was labelled `blocked` 30 seconds after a relay
+// comment that was only the footer. A blocked verdict that says nothing is
+// booked idle and its label released, like a tooling failure.
+func TestBlockedVerdictReasonlessIsReleased(t *testing.T) {
+	for _, reason := range []string{
+		"",
+		"   \n\t",
+		"---\n🐝 **Hive Agent**: `contributor` | **SHA:** `aa24e6f`",
+		"<!-- hive:verdict -->\n---",
+		"…",
+	} {
+		if !isBlockedVerdictReasonless(reason) {
+			t.Errorf("isBlockedVerdictReasonless(%q) = false, want true", reason)
+		}
+		if v, ok := reclassifyToolingBlockedVerdict(completionVerdictBlocked, reason); !ok || v != completionVerdictIdle {
+			t.Errorf("reasonless blocked verdict %q: got (%q, %v), want idle", reason, v, ok)
+		}
+		if got := blockedReleaseMarker(reason); got != reasonlessBlockedReleaseMarker {
+			t.Errorf("marker for %q = %q", reason, got)
+		}
+	}
+	for _, reason := range []string{"waiting on #450", "#450", "---\nblocked until the factory publishes\n🐝 **Hive Agent**"} {
+		if isBlockedVerdictReasonless(reason) {
+			t.Errorf("isBlockedVerdictReasonless(%q) = true, want false", reason)
+		}
+	}
+	body := toolingBlockedReleaseComment("kylerankin", "---\n🐝 **Hive Agent**")
+	if !strings.HasPrefix(body, reasonlessBlockedReleaseMarker) || !strings.Contains(body, "gave no reason") || !strings.Contains(body, "@kylerankin") || strings.Contains(body, "Reported reason") {
+		t.Fatalf("reasonless release comment = %q", body)
+	}
+	if blockedReleaseMarker(toolingBlockedReason) != toolingBlockedReleaseMarker {
+		t.Fatal("a tooling reason keeps the tooling marker")
 	}
 }
 

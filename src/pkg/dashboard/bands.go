@@ -143,14 +143,44 @@ func uniqueLabels(labels, fallback []string) []string {
 	return out
 }
 
+// blockedNoReasonSignal is the band signal for `blocked` with nothing that
+// names the blocker; blockedReasonSignal replaces it when the row's reason
+// does (a blocked-on marker, or a recheck deadline).
+const blockedNoReasonSignal = "labelled blocked — the label records no reason; see the issue"
+
+// blockedReasonSignal names what a blocked row waits on from its enumeration
+// reason ("blocked on owner/repo#N", "blocked until <t>"); "" when the reason
+// is the bare label. projectbluefin/finpilot#624 and #390 carried markers and
+// still read "records no reason".
+func blockedReasonSignal(reason string) string {
+	if repo, pr, ok := github.ParseBlockedOnReason(reason); ok {
+		return fmt.Sprintf("blocked on %s#%d — lifted when it merges or closes", repo, pr)
+	}
+	if rest, ok := strings.CutPrefix(strings.TrimSpace(reason), "blocked until "); ok && rest != "" {
+		return "blocked until " + rest + " — re-checked then"
+	}
+	return ""
+}
+
 func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConfig, now time.Time, selfAuthorizationHoldActive ...func(string) bool) IssueBandInfo {
 	norm := normalizeIssueBandsConfig(cfg)
 	labels := labelSet(issue.Labels)
 	role := issueAgentRole(issue.Labels)
 	acknowledged := issue.HumanAcknowledged || labels["approved-direction"]
 	linked := issueLinkedPRState(issue)
-	done := issueDoneLabel(labels, norm.DoneLabels) || linked.merged || issueStageCovered(issue.Labels)
-	waiting := hasAnyLabel(labels, norm.WaitingLabels)
+	stageCovered := issueStageCovered(issue.Labels)
+	done := issueDoneLabel(labels, norm.DoneLabels) || linked.merged || stageCovered
+	// A hold pauses the issue for a person (the stage engine leaves it
+	// "Open · on hold", hivecommons/hive#13012), so it is parked, not
+	// unclaimed: projectbluefin/utah#551 wore `hold` in the ready band.
+	waiting := hasAnyLabel(labels, norm.WaitingLabels) || held
+	// hive/likely-done is a heuristic (a merged PR referenced the issue); a
+	// park on a person is the stronger, later word. projectbluefin/common#1328,
+	// an RFC parked on needs-decision, sat in "Confirm & close" for a month
+	// on a likely-done from a PR that only referenced it.
+	if done && waiting && !linked.merged && !stageCovered && onlyLikelyDone(labels, norm.DoneLabels) {
+		done = false
+	}
 	inProgress := len(issue.Assignees) > 0 || issueClaimed(issue.Labels) || linked.open
 	selfAuthorizationHeld := true
 	if len(selfAuthorizationHoldActive) > 0 && selfAuthorizationHoldActive[0] != nil {
@@ -177,7 +207,7 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	if open := slices.Compact(issue.OpenBlockers()); len(open) > 0 {
 		signals = append(signals, Signal{Glyph: "⛔", Label: "blocked by " + strings.Join(open, ", ")})
 	} else if labels["blocked"] {
-		signals = append(signals, Signal{Glyph: "⛔", Label: "labelled blocked — the label records no reason; see the issue"})
+		signals = append(signals, Signal{Glyph: "⛔", Label: blockedNoReasonSignal})
 	}
 	if labelsNeedDecision(labels) {
 		signals = append(signals, Signal{Glyph: "❓", Label: "needs decision"})
@@ -199,8 +229,13 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	}
 	if done {
 		label := "already done"
-		if linked.merged {
+		switch {
+		case linked.merged:
 			label = "merged PR references this issue"
+		case stageCovered && !issueDoneLabel(labels, norm.DoneLabels):
+			// stage/040 means an open PR covers it, not that it landed
+			// (projectbluefin/utah#12, #1075 read "already done").
+			label = "covered by an open PR (stage/040) — check it merged before closing"
 		}
 		signals = append(signals, Signal{Glyph: "✓", Label: label})
 	}
@@ -221,8 +256,11 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	chip := ""
 	if band == "waiting" {
 		chip = issueLabelChip(labels)
+		if chip == "" && held {
+			chip = "hold"
+		}
 	}
-	return IssueBandInfo{Band: band, Role: role, Acknowledged: acknowledged, Held: held, HoldReason: heldReason(issue.Labels, false, ""), Stale: stale, Signals: signals, Chip: chip}
+	return IssueBandInfo{Band: band, Role: role, Acknowledged: acknowledged, Held: held, HoldReason: heldReason(issue.Labels, false, "", nil), Stale: stale, Signals: signals, Chip: chip}
 }
 
 // issueLabelChip returns the chip word for the highest-precedence waiting
@@ -254,6 +292,21 @@ func issueDoneLabel(labels map[string]bool, doneLabels []string) bool {
 		}
 	}
 	return false
+}
+
+// onlyLikelyDone reports whether hive/likely-done is the only configured
+// done label the issue wears.
+func onlyLikelyDone(labels map[string]bool, doneLabels []string) bool {
+	if !labels[github.LikelyDoneLabel] {
+		return false
+	}
+	for _, label := range doneLabels {
+		lower := strings.ToLower(label)
+		if lower != github.LikelyDoneLabel && labels[lower] {
+			return false
+		}
+	}
+	return true
 }
 
 func issueLinkedPRState(github.Issue) linkedPRState { return linkedPRState{} }
@@ -339,7 +392,7 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 	if stale {
 		signals = append(signals, Signal{Glyph: "🕒", Label: fmt.Sprintf("stale: no activity > %dd", norm.StaleDays)})
 	}
-	return PRBandInfo{Band: band, Role: role, Held: held, HoldReason: heldReason(pr.Labels, pr.HiveAttributed, hiveID, pr.ReporterTrustReason), Stale: stale, Signals: signals}
+	return PRBandInfo{Band: band, Role: role, Held: held, HoldReason: heldReason(pr.Labels, pr.HiveAttributed, hiveID, pr.HoldSources, pr.ReporterTrustReason), Stale: stale, Signals: signals}
 }
 
 // prBandFlags reports the merge-state facts every PR band is chosen from.
@@ -467,9 +520,9 @@ func issueBandSpec(key string, cfg config.DashboardIssueBandsConfig) BandSpec {
 	case "agent-filed":
 		return BandSpec{Key: key, Label: "Needs triage", Short: "triage", Rule: "filed by an agent (agent/<role> label) with no approved-direction label, no human assignee, and self-authorization hold is on for the repo (ACMM < 6 or github.self_authorization_hold=true) — agents do not pick it up until it is labelled, assigned to a human, or closed. A human comment also acknowledges for #5117 but is not in the snapshot, so a commented-on proposal still shows here"}
 	case "waiting":
-		return BandSpec{Key: key, Label: "Parked", Short: "parked", Rule: "labelled " + strings.Join(norm.WaitingLabels, ", ") + " — parked: agents do not continue until the label is removed or the question it names is answered"}
+		return BandSpec{Key: key, Label: "Parked", Short: "parked", Rule: "labelled " + strings.Join(norm.WaitingLabels, ", ") + ", or held — parked: agents do not continue until the label is removed or the question it names is answered"}
 	case "done":
-		return BandSpec{Key: key, Label: "Confirm & close", Short: "close?", Rule: "an agent applied " + strings.Join(norm.DoneLabels, ", ") + " — the agent reports the work as landed, and the issue is still open"}
+		return BandSpec{Key: key, Label: "Confirm & close", Short: "close?", Rule: "an agent applied " + strings.Join(norm.DoneLabels, ", ") + " (hive/likely-done not on a parked issue) — the agent reports the work as landed, and the issue is still open"}
 	default:
 		return BandSpec{Key: "ready", Label: "Unclaimed", Short: "unclaimed", Rule: "no other band matched — nobody is assigned, nothing claimed it, and no human gate applies; this does not by itself mean agents will pick it up"}
 	}
@@ -692,23 +745,30 @@ func containsAnyHoldLabel(s string, needles []string) bool {
 	return false
 }
 
-func heldReason(labels []string, hiveAttributed bool, hiveID string, evidence ...string) string {
+// heldReason is the hold tooltip / hold_reason. It names a hold label only
+// when the item wears one: a PR held by its sentinel alert or a policy hold
+// alone was told to wait "until the hold label is removed" and that its
+// (absent) generic hold was "usually the ACMM level gate"
+// (projectbluefin/homebrew-tap#60, testsuite#1108). The ACMM sentence is kept
+// for a generic hold whose recorded sources are unknown or name the level
+// gate, not for one the holdguard or another gate set (utah-packages#878).
+func heldReason(labels []string, hiveAttributed bool, hiveID string, sources []string, evidence ...string) string {
 	held := holdLabels(labels, hiveID)
 	parts := make([]string, 0, 3)
-	labelText := ""
 	if len(held) > 0 {
 		quoted := make([]string, 0, len(held))
 		for _, label := range held {
 			quoted = append(quoted, "`"+label+"`")
 		}
-		labelText = " — label " + strings.Join(quoted, ", ")
+		parts = append(parts, "On hold — label "+strings.Join(quoted, ", ")+": agents will not act on this until the hold label is removed")
+	} else {
+		parts = append(parts, "On hold: agents will not act on this until what holds it is cleared")
 	}
-	parts = append(parts, "On hold"+labelText+": agents will not act on this until the hold label is removed")
 	if len(evidence) > 0 && evidence[0] != "" {
 		parts = append(parts, evidence[0]+", a maintainer must review this")
 		return strings.Join(parts, "; ")
 	}
-	if hiveAttributed {
+	if hiveAttributed && len(held) > 0 && (len(sources) == 0 || slices.Contains(sources, github.HoldSourceLevelGate)) {
 		parts = append(parts, "opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator")
 	}
 	for _, label := range labels {
