@@ -398,7 +398,10 @@ titles, as `tracker-filter.js` does), `stage`, `needs_human`, `on_hold` and `wai
 kind, decision question and options, linked items, blocker, hold, Sentinel state, merge gate,
 last operator action; `view=full` keeps every field, history and activity strips included.
 `recent=true` adds `recently_merged` and `recently_closed`, capped by `limit`. Pages are
-`limit` items from `offset`, with `next_offset` and `_admin_mcp.total` on a capped page.
+`limit` items from `offset`, with `next_offset` and `_admin_mcp.total` on a capped page. Before
+the board's first snapshot the endpoint answers `{"status":"initializing"}`, and the tool
+returns a `board_unavailable` refusal instead of an empty board; an item preview that cannot
+read the board says so (`on_board: "unknown"`) rather than reporting the item as absent.
 **`delegated_decision_status`** reads `GET .../items/{number}/decide-delegated`, the job a
 "Let hive decide" starts, so the outcome of `repository.item_delegate` can be read back.
 

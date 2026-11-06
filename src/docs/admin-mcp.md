@@ -400,6 +400,8 @@ capped at 256 KiB.
      box), `stage`, `needs_human`, `on_hold`, `waiting_on_you`.
    - `view` is `summary` or `full`; `recent` adds recently merged and closed
      items; `offset` pages.
+   - Before the monitor has built its first snapshot, it answers with a
+     `board_unavailable` refusal rather than an empty board. Retry shortly.
 4. **`log_sources`:** `hive` is the default. The others are `proxy`,
    `hive-output`, `litellm` and `requests` (see
    [design/admin-mcp.md](design/admin-mcp.md#output-and-request-log-sources)),

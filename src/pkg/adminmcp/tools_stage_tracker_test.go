@@ -411,9 +411,54 @@ func TestBoardReadFailureNeedsExplicitType(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	pv, err := previewOp(t, WriteOpRepositoryItemDelegate, itemArgs("projectbluefin/chairlift", 639, map[string]any{"type": "issue"}), p)
-	if err != nil || pv.Details["on_board"] != false {
-		t.Fatalf("explicit type: %+v err=%v", pv.Details, err)
+	if err != nil || pv.Details["on_board"] != "unknown" || !strings.Contains(strings.Join(pv.Effects, " "), "could not be read") {
+		t.Fatalf("explicit type: %+v %v err=%v", pv.Details, pv.Effects, err)
 	}
+}
+
+// Before its first snapshot the endpoint answers {"status":"initializing"}:
+// the read tool says so instead of reporting an empty board, and a preview
+// says the board could not be read instead of "not on the board".
+func TestStageTrackerNotBuiltYet(t *testing.T) {
+	got, err := StageTrackerReadResult(map[string]any{"status": "initializing"}, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := got.(RefusalData)
+	if !ok || r.Kind != RefusalKindBoardUnavailable || !strings.Contains(r.Reason, "initializing") {
+		t.Fatalf("result = %#v", got)
+	}
+	empty := readBoardFrom(t, map[string]any{"items": []any{}, "stages": []any{}}, map[string]any{})
+	if empty["matched"] != 0 {
+		t.Fatalf("a real empty board is still a board: %#v", empty)
+	}
+	p := initializingProvider{}
+	pv, err := previewOp(t, WriteOpRepositoryItemBlockerRecheck, itemArgs("projectbluefin/chairlift", 639, nil), p)
+	if err != nil || pv.Details["on_board"] != "unknown" {
+		t.Fatalf("preview = %+v err=%v", pv.Details, err)
+	}
+	if _, err := previewOp(t, WriteOpRepositoryItemDecision, itemArgs("projectbluefin/chairlift", 639, map[string]any{"decision": "approve"}), p); err == nil || !strings.Contains(err.Error(), "cannot be read") {
+		t.Fatalf("decision without type on an unreadable board: err = %v", err)
+	}
+}
+
+type initializingProvider struct{}
+
+func (initializingProvider) Read(_ context.Context, _ string, args map[string]any) (any, error) {
+	return StageTrackerReadResult(map[string]any{"status": "initializing"}, args)
+}
+
+func readBoardFrom(t *testing.T, data map[string]any, args map[string]any) map[string]any {
+	t.Helper()
+	got, err := StageTrackerReadResult(data, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v", got)
+	}
+	return out
 }
 
 func TestDelegatedDecisionStatusPath(t *testing.T) {

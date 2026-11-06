@@ -26,6 +26,10 @@ const (
 	stageTrackerPath             = "/api/stage-tracker"
 	stageTrackerDecisionMaxNotes = 4000
 
+	// RefusalKindBoardUnavailable is stage_tracker_read's answer while the
+	// Activity monitor has no snapshot to read.
+	RefusalKindBoardUnavailable = "board_unavailable"
+
 	WriteOpRepositoryRescan               = "repository.rescan"
 	WriteOpRepositoryItemAcceptTriage     = "repository.item_accept_triage"
 	WriteOpRepositoryItemNeedsHuman       = "repository.item_needs_human"
@@ -105,6 +109,15 @@ func StageTrackerReadResult(data any, args map[string]any) (any, error) {
 	body, ok := data.(map[string]any)
 	if !ok {
 		return CapResult(data, LimitFromArgs(args)), nil
+	}
+	// Before its first snapshot the endpoint answers {"status":"initializing"}
+	// with no items: that is "not built yet", never an empty board.
+	if _, hasItems := body["items"]; !hasItems {
+		status := stringField(body, "status")
+		if status == "" {
+			status = "unavailable"
+		}
+		return RefusalData{Type: "refusal", Operation: ToolStageTrackerRead, Kind: RefusalKindBoardUnavailable, Reason: "the Activity monitor is " + status + "; retry shortly"}, nil
 	}
 	offset, err := OffsetFromArgs(args)
 	if err != nil {
@@ -337,29 +350,45 @@ func itemRef(owner, repo string, number int) string {
 	return owner + "/" + repo + "#" + strconv.Itoa(number)
 }
 
+// boardRow is one item as a preview found it on the Activity monitor. read is
+// false when the board itself could not be read (no provider, an error, or
+// no snapshot yet), so a missing item is not mistaken for one that left.
+type boardRow struct {
+	item map[string]any
+	read bool
+}
+
 // stageTrackerItem reads one item off the Activity monitor for a preview: its
-// row (full view) when it is on the board, or nil.
-func stageTrackerItem(ctx context.Context, provider Provider, owner, repo string, number int) map[string]any {
+// row (full view) when it is on the board.
+func stageTrackerItem(ctx context.Context, provider Provider, owner, repo string, number int) boardRow {
 	if provider == nil {
-		return nil
+		return boardRow{}
 	}
 	data, err := provider.Read(ctx, ToolStageTrackerRead, map[string]any{"repo": owner + "/" + repo, "number": number, "view": stageTrackerViewFull, "limit": MaxResultLimit})
 	if err != nil {
-		return nil
+		return boardRow{}
 	}
-	body, _ := data.(map[string]any)
+	body, ok := data.(map[string]any)
+	if !ok {
+		return boardRow{}
+	}
 	items, _ := body["items"].([]any)
 	for _, raw := range items {
 		if item, ok := raw.(map[string]any); ok && strings.EqualFold(stringField(item, "repo"), owner+"/"+repo) && intField(item, "number") == number {
-			return item
+			return boardRow{item: item, read: true}
 		}
 	}
-	return nil
+	return boardRow{read: true}
 }
 
 // boardDetails is what a preview says about the item as the monitor shows it,
 // so the caller confirms against the state the operator would have seen.
-func boardDetails(item map[string]any, details map[string]any) []string {
+func boardDetails(row boardRow, details map[string]any) []string {
+	item := row.item
+	if !row.read {
+		details["on_board"] = "unknown"
+		return []string{"The Activity monitor could not be read just now, so this preview cannot show the item's current state; the hive still decides whether the request applies."}
+	}
 	if item == nil {
 		details["on_board"] = false
 		return []string{"This item is not on the Activity monitor now, so the dashboard would not offer this action on it; the hive still decides whether the request applies."}
@@ -385,7 +414,7 @@ func itemKind(args map[string]any, item map[string]any) (string, error) {
 	}
 	switch kind {
 	case "":
-		return "", fmt.Errorf("type is required (issue or pr) when the item is not on the Activity monitor")
+		return "", fmt.Errorf("type is required (issue or pr) when the item is not on the Activity monitor or the monitor cannot be read")
 	case "issue", "pr":
 		return kind, nil
 	}
@@ -428,11 +457,12 @@ func (itemAcceptTriageOp) PreviewWithProvider(ctx context.Context, args map[stri
 	}
 	target := itemRef(owner, repo, number)
 	details := map[string]any{"owner": owner, "repo": repo, "number": number}
-	item := stageTrackerItem(ctx, provider, owner, repo, number)
+	row := stageTrackerItem(ctx, provider, owner, repo, number)
+	item := row.item
 	if item != nil && stringField(item, "kind") == "pr" {
 		return WritePreview{}, fmt.Errorf("%s is a pull request; triage is accepted on issues only", target)
 	}
-	effects := append([]string{"The issue gets the triage-accepted label and loses needs-triage; the hive takes it on its next pass."}, boardDetails(item, details)...)
+	effects := append([]string{"The issue gets the triage-accepted label and loses needs-triage; the hive takes it on its next pass."}, boardDetails(row, details)...)
 	return WritePreview{Operation: WriteOpRepositoryItemAcceptTriage, Summary: "Accept triage on " + target, Target: target, Request: WriteRequest{Method: http.MethodPost, Path: itemPath(owner, repo, number, "accept-triage"), Body: map[string]any{}}, Effects: effects, WideningDisclosure: "No widening: this operation targets exactly one issue.", ConfirmationMessage: "Confirm accepting triage on " + target + ".", Details: details}, nil
 }
 
@@ -480,7 +510,8 @@ func (op itemBlockerOp) PreviewWithProvider(ctx context.Context, args map[string
 	}
 	target := itemRef(owner, repo, number)
 	details := map[string]any{"owner": owner, "repo": repo, "number": number}
-	item := stageTrackerItem(ctx, provider, owner, repo, number)
+	row := stageTrackerItem(ctx, provider, owner, repo, number)
+	item := row.item
 	if item != nil {
 		if stringField(item, "kind") == "pr" {
 			return WritePreview{}, fmt.Errorf("%s is a pull request; blocker actions apply to issues only", target)
@@ -489,7 +520,7 @@ func (op itemBlockerOp) PreviewWithProvider(ctx context.Context, args map[string
 			details["blocker"] = b
 		}
 	}
-	effects := append([]string{op.effect}, boardDetails(item, details)...)
+	effects := append([]string{op.effect}, boardDetails(row, details)...)
 	if op.danger {
 		details["danger"] = true
 	}
@@ -533,8 +564,8 @@ func (itemDecisionOp) PreviewWithProvider(ctx context.Context, args map[string]a
 		return WritePreview{}, fmt.Errorf("a direction decision needs the direction text in comment")
 	}
 	target := itemRef(owner, repo, number)
-	item := stageTrackerItem(ctx, provider, owner, repo, number)
-	kind, err := previewItemKind(args, item, provider)
+	row := stageTrackerItem(ctx, provider, owner, repo, number)
+	kind, err := previewItemKind(args, row.item, provider)
 	if err != nil {
 		return WritePreview{}, err
 	}
@@ -584,7 +615,7 @@ func (itemDecisionOp) PreviewWithProvider(ctx context.Context, args map[string]a
 	if danger {
 		details["danger"] = true
 	}
-	effects := append([]string{effect, "Recorded as your decision, attributed to your login."}, boardDetails(item, details)...)
+	effects := append([]string{effect, "Recorded as your decision, attributed to your login."}, boardDetails(row, details)...)
 	return WritePreview{Operation: WriteOpRepositoryItemDecision, Summary: "Decide " + decision + " on " + target, Target: target, Request: WriteRequest{Method: http.MethodPost, Path: itemPath(owner, repo, number, "decision"), Body: body}, Effects: effects, WideningDisclosure: "No widening: this operation targets exactly one repository item.", ConfirmationMessage: "Confirm deciding " + decision + " on " + target + ".", Details: details}, nil
 }
 
@@ -608,8 +639,8 @@ func (itemDelegateOp) PreviewWithProvider(ctx context.Context, args map[string]a
 		return WritePreview{}, err
 	}
 	target := itemRef(owner, repo, number)
-	item := stageTrackerItem(ctx, provider, owner, repo, number)
-	kind, err := previewItemKind(args, item, provider)
+	row := stageTrackerItem(ctx, provider, owner, repo, number)
+	kind, err := previewItemKind(args, row.item, provider)
 	if err != nil {
 		return WritePreview{}, err
 	}
@@ -617,9 +648,9 @@ func (itemDelegateOp) PreviewWithProvider(ctx context.Context, args map[string]a
 	// The row's own words for the park, as the dashboard sends them, so the
 	// decider sees what the operator saw; head keys the plan cache.
 	for _, k := range []string{"reason", "caption", "sentinel_reason"} {
-		body[k] = stringField(item, k)
+		body[k] = stringField(row.item, k)
 	}
-	if head := stringField(item, "head"); head != "" {
+	if head := stringField(row.item, "head"); head != "" {
 		body["head"] = head
 	}
 	if raw, ok := args["prs"].([]any); ok && len(raw) > 0 {
@@ -648,6 +679,6 @@ func (itemDelegateOp) PreviewWithProvider(ctx context.Context, args map[string]a
 		"Never merges: no_merge is set, so an approved pull request gets `/lgtm` + `/approve` (merge-eligible for the hive's merge sweep) rather than an Approve review queued for auto-merge.",
 		"Runs in the background; read delegated_decision_status for the outcome.",
 	}
-	effects = append(effects, boardDetails(item, details)...)
+	effects = append(effects, boardDetails(row, details)...)
 	return WritePreview{Operation: WriteOpRepositoryItemDelegate, Summary: "Let hive decide " + target, Target: target, Request: WriteRequest{Method: http.MethodPost, Path: itemPath(owner, repo, number, "decide-delegated"), Body: body}, Effects: effects, WideningDisclosure: "No widening: this operation targets one item (with prs, that issue's named pull requests).", ConfirmationMessage: "Confirm letting the hive decide " + target + ".", Details: details}, nil
 }

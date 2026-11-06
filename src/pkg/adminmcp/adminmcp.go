@@ -535,6 +535,17 @@ func (h *Handler) ConfirmWrite(ctx context.Context, args map[string]any) (any, e
 	if id == "" {
 		return nil, fmt.Errorf("confirmation_id is required")
 	}
+	// Refuse another caller's confirmation before taking it, so a mismatched
+	// confirm can neither burn it nor race its owner's confirm.
+	listed, err := h.PendingStore.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range listed {
+		if p.ID == id && p.Actor != h.Actor {
+			return nil, ErrConfirmationActor
+		}
+	}
 	pending, err := h.PendingStore.Take(ctx, id)
 	if err != nil {
 		return nil, err
@@ -543,11 +554,8 @@ func (h *Handler) ConfirmWrite(ctx context.Context, args map[string]any) (any, e
 		return nil, fmt.Errorf("confirmation belongs to hive %q, not %q", pending.Hive, h.HiveID)
 	}
 	if pending.Actor != h.Actor {
-		// Another caller's confirmation: put it back untouched, so a
-		// mismatched confirm cannot burn it, and refuse.
-		if err := h.PendingStore.Put(ctx, pending); err != nil {
-			return nil, err
-		}
+		// Unreachable unless the store changed between List and Take; the
+		// actor never changes, so a confirmation taken here was never ours.
 		return nil, ErrConfirmationActor
 	}
 	if !h.now().Before(pending.ExpiresAt) {
