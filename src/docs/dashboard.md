@@ -639,6 +639,8 @@ in exactly one band, while non-winning states remain as badges on the pill:
    labels still apply. When the only done evidence is `stage/040-covered-by-pr`
    (or a later mirrored PR stage), the ✓ signal reads `covered by an open PR
    (stage/040) — check it merged before closing`, not `already done`.
+   `hive/verified-open` and `hive/already-done` are not worn together for
+   long: the issue stage sweep keeps the later verdict and removes the other.
 
 Precedence is confirm & close → parked → claimed → needs triage → unclaimed,
 so a label that parks an issue beats an assignment and done beats all other display states.
@@ -837,6 +839,8 @@ hand-merge rule. `hive/verified-open` (the agent found
 the work unfinished) cancels `hive/likely-done` for rules (6) and (7) and for
 the safety net, so an issue carrying both is neither awaiting the reporter nor
 verified done; `hive/already-done` and `hive/covered-by-pr` are unaffected.
+An issue does not keep both `hive/verified-open` and `hive/already-done`: the
+issue stage sweep keeps the later verdict and removes the other.
 
 **Runs and the approval desk.** Two waits live outside GitHub, so no label
 records them. An active run the Runs tab shows as `waiting_on: human` makes the

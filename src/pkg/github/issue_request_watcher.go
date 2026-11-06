@@ -866,6 +866,17 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if err == nil && len(plainLabels) > 0 {
 			err = c.AddLabels(ctx, req.Repo, req.Number, plainLabels)
 		}
+		if err == nil && issueHasLabel(plainLabels, VerifiedOpenLabel) {
+			// The agent's verdict that the work is not finished supersedes
+			// the done labels: projectbluefin/testsuite#1023 wore
+			// hive/already-done next to a later hive/verified-open and the
+			// inbox offered to close it. Best-effort: the verdict landed, and
+			// the stage sweep settles a pair left behind
+			// (reconcileDoneVerdictLabels).
+			if rerr := c.RemoveLabelsFresh(ctx, req.Repo, req.Number, AlreadyDoneLabel, LikelyDoneLabel); rerr != nil && c.logger != nil { // writeback:solicited the agent's verified-open verdict
+				c.logger.Warn("issue-request watcher: removing done labels after verified-open failed; the stage sweep retries", "repo", req.Repo, "number", req.Number, "error", rerr)
+			}
+		}
 		if err == nil && unpark {
 			err = c.StageFacts().Unparked(ctx, c.IssueStageRef(req.Repo, req.Number), req.Agent)
 		}

@@ -26,8 +26,10 @@ import (
 // issueStageServer is a fake GitHub that records label writes and comments
 // and answers the label-family provisioning list with everything present.
 type issueStageServer struct {
-	srv      *httptest.Server
-	mu       sync.Mutex
+	srv *httptest.Server
+	mu  sync.Mutex
+	// events answers GET /issues/N/events (nil = none).
+	events   map[int][]map[string]any
 	added    map[int][]string
 	removed  map[int][]string
 	comments map[int]int
@@ -72,6 +74,18 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		path, _ := url.PathUnescape(r.URL.Path)
+		if r.Method == http.MethodGet && strings.HasSuffix(path, "/events") {
+			parts := strings.Split(strings.TrimSuffix(path, "/events"), "/")
+			n, _ := strconv.Atoi(parts[len(parts)-1])
+			s.mu.Lock()
+			evs := s.events[n]
+			s.mu.Unlock()
+			if evs == nil {
+				evs = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(evs)
+			return
+		}
 		if r.Method == http.MethodPost && path == "/graphql" {
 			var q struct {
 				Query     string `json:"query"`
