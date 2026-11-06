@@ -1461,6 +1461,8 @@ The one place a declaration DOES shape dispatch is the stage-072 contributor nud
 
 **What the relay advertises.** `relay_capabilities` carries `fix_pr_interrupt_v1` (understands the kind — without it the hub never interrupts, the PR gets the GitHub comment only, and queued fixes are still served at `ready` as ordinary tasks) and, when it can run a one-shot headless child beside the interactive pane, `parallel_sessions` with `max_parallel_fixes: N` — the relay's `HIVE_MAX_PARALLEL_FIXES` (default 1; `0` disables parallel fixes and forces preempt mode). The hub clamps `N` to `contribute.max_parallel_fixes` (default 2) and keeps at most that many fix tasks in flight per contributor; the rest wait server-side, oldest PR first, human changes-requested before CI-red.
 
+Set `HIVE_MAX_PARALLEL_FIXES=0` in `~/.config/hive/contributor.env` and restart the relay to disable parallel fixes. `HIVE_FIX_PR_TIMEOUT_MS` can be set in the same file. Values already supplied in the launcher environment take precedence over the file.
+
 **What the shipped relay does.**
 
 - `mode=spawn` with a free slot: `task_accepted`, then a headless child (`buildHeadlessArgv` for the configured backend, cwd `.hive-fix-<task_id>` under the workspace) runs the fix; exit 0 → `task_complete`, anything else → `task_failed` with the exit code, after `HIVE_FIX_PR_TIMEOUT_MS` (2h) the child is killed. `currentTask` is never touched: the primary lease keeps being renewed.
