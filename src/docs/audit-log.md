@@ -152,7 +152,7 @@ task's `repo` and issue/PR `target`.
 | `relay_task_accepted` | The relay's first `task_accepted` for the task it holds | `task` |
 | `relay_task_declined` | The relay declined an offered task in its preflight | `task`, `reason` |
 | `relay_token_minted` | An installation token was issued **or re-minted** for a task and sent to the relay (assignment, mid-task refresh, resume) | `task`, `expires_at`, `installation`, `scopes` |
-| `relay_mcp_lease_issued` / `relay_mcp_lease_revoked` | Reserved for the task-MCP lease lifecycle; the hub does not issue a task-MCP lease yet, so nothing writes these today | `task`, `expires_at` |
+| `relay_mcp_lease_issued` / `relay_mcp_lease_revoked` | Reserved for the task-MCP lease lifecycle; nothing writes these today. The hub does issue a task-MCP lease: with `task_mcp.remote_enabled` on and a public address (`dashboard.public_url`, or `hub.dashboard_url` on a hub), `task_assign` carries an `mcp` block with a lease token, and the token is revoked with the task lease. Neither step writes an audit row yet | `task`, `expires_at` |
 | `relay_task_completed` | `task_complete` was accepted for the held task | `task`, `pr_url` (only a PR the hub verified), `verdict`, `duration_s`, `model` as the relay reported it |
 | `relay_task_failed` | `task_failed` was accepted for the held task | `task`, `class` (the normalised failure kind: `environment`, `task` or `unspecified`), `duration_s` |
 | `relay_task_revoked` | The hub took a task back: operator requeue or yank, or a resume refused by the admission gate | `task`, `reason` |
