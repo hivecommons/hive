@@ -12,6 +12,8 @@
    - signed in, or the hive has neither a dashboard token nor a sign-in allowlist: **404**.
 
    Either way you do not need credentials, because an enabled endpoint asks for none. Confirm the URL and ask the owner whether sharing is on.
+
+   An enabled endpoint takes `POST` only. It answers a `GET` with **405**, because it has no event stream to open; that is not a sign that sharing is off.
 5. To stop using the connection, remove `bluefin-hive` from the client configuration you added (in Claude Code, `claude mcp remove bluefin-hive`). To stop publishing for everyone, the **owner** turns the sharing switch off; this takes effect without a restart.
 
 ## Publication reference
