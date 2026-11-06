@@ -656,9 +656,11 @@ func buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceH
 			"only after checking the PR is merged or the commit is on the default branch) "+
 			"and stop. If the remaining work is waiting on a maintainer-only design, "+
 			"policy, or approval decision, use the structured reason form "+
-			"'HIVE_VERDICT: no_work_needed — decision: <what needs deciding>' "+
+			"'HIVE_VERDICT: no_work_needed — decision: <the question the maintainer must answer>; recommended: <the option you would take, because why>' "+
 			"so hive applies the configured maintainer-decision label and keeps it out "+
-			"of the queue until a human removes that label. A repository's own "+
+			"of the queue until a human removes that label. Hive posts that question "+
+			"and recommendation on the issue when you leave no comment of your own, so "+
+			"write them for the maintainer. A repository's own "+
 			"spec/confirmation gate or a missing companion checkout is never such a "+
 			"decision (see above); hive re-dispatches a decision verdict that cites one. "+
 			// hivecommons/hive#7924: the blocked sentinel. utah#100 reached a

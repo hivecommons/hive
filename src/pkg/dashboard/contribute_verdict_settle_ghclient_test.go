@@ -35,6 +35,7 @@ type settleGHFixture struct {
 	existingComments []string
 	commentsListErr  bool
 	issueLabels      []string
+	labelsRemoved    []string
 }
 
 func (f *settleGHFixture) server(t *testing.T) *httptest.Server {
@@ -104,6 +105,15 @@ func (f *settleGHFixture) server(t *testing.T) *httptest.Server {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/7/labels/"):
+			name := strings.TrimPrefix(r.URL.Path, "/repos/o/r/issues/7/labels/")
+			for i, l := range f.issueLabels {
+				if strings.EqualFold(l, name) {
+					f.issueLabels = append(f.issueLabels[:i], f.issueLabels[i+1:]...)
+					f.labelsRemoved = append(f.labelsRemoved, name)
+					_ = json.NewEncoder(w).Encode([]map[string]any{})
+					return
+				}
+			}
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Not Found"})
 		default:
@@ -519,5 +529,21 @@ func TestVerdictSettleGH_ContextCancelledDuringVerifyIsUnverified(t *testing.T) 
 	}
 	if got := hub.settleIssueFromVerdictWithEvidence("o/r", 7, "see PR #41", "", nil, time.Now(), "ct"); got != "" {
 		t.Fatalf("non-already-done disposition = %q, want empty", got)
+	}
+}
+
+// projectbluefin/testsuite#1023: a verified already-done takes an earlier
+// hive/verified-open off, so the issue never wears both verdicts.
+func TestVerdictSettleGH_MarkAlreadyDone_RemovesVerifiedOpen(t *testing.T) {
+	fx := &settleGHFixture{issueLabels: []string{"kind/bug", ghpkg.VerifiedOpenLabel}}
+	hub, _ := settleGHHub(t, fx)
+	claim := ghpkg.IssueClaim{PRNumber: 41, PRURL: "https://github.com/o/r/pull/41", MergedPR: true}
+	if err := hub.markAlreadyDoneIssue(context.Background(), "o/r", 7, claim, "danathar", false); err != nil {
+		t.Fatalf("markAlreadyDoneIssue: %v", err)
+	}
+	fx.mu.Lock()
+	defer fx.mu.Unlock()
+	if len(fx.labelsRemoved) != 1 || fx.labelsRemoved[0] != ghpkg.VerifiedOpenLabel {
+		t.Fatalf("labels removed = %v, want hive/verified-open", fx.labelsRemoved)
 	}
 }
