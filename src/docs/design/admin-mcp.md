@@ -277,9 +277,11 @@ Three of task-mcp's disciplines apply unchanged, and for the same reasons:
 - **Hard caps.** Item counts and text sizes are bounded and truncation is disclosed, in the
   spirit of `MaxPageSize = 20` and `MaxTextBytes = 16 KiB`.
   The admin surface caps each result at `MaxTextBytes = 256 KiB` on both transports. An
-  oversized result is truncated, never turned into an error: the longest top-level lists are
-  shortened first (`<field>_truncated: true`), and a result that still does not fit becomes a
-  bounded `text_preview`; either way `_admin_mcp.truncated` is `true` with the original size.
+  oversized result is truncated, never turned into an error: the top-level list with the most
+  encoded bytes is halved first, then the next largest, until the result fits
+  (`<field>_truncated: true`; a long list of small entries is left whole when cutting it would
+  not help), and a result that still does not fit becomes a bounded `text_preview`; either way
+  `_admin_mcp.truncated` is `true` with the original size.
 
 To them the admin surface adds one the read-only sibling never needed: **no write happens on
 a single call.** Each write is previewed — reporting exactly what would change, on which
@@ -337,6 +339,8 @@ the usual `limit`.
 returned in full, even when `band` or `held` filters `rows[]` down, so a caller can map
 "Confirm & close" to `band=done` without knowing the `hive/*` label names. An unknown `band`
 gets the same `{"type":"refusal",...}` shape as `refuse_operation`, listing the valid keys.
+Every key `bands[]` can carry is a valid `band`: for issues that includes `outside`, the open
+issues the scanner kept off the agent queues, which the export adds after the donut's five.
 The tool never forwards `band`, `held`, `offset`, or `limit` to the Overview endpoint itself —
 that would compute `bands[]` counts and `rows[]` over only the already-filtered subset — so it
 fetches every band and row and filters/pages `rows[]` itself, disclosing `rows_truncated` and

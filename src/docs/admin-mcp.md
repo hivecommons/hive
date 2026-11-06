@@ -113,6 +113,9 @@ claude mcp add hive-admin \
 `POST /api/admin/mcp` is always registered on v6; there is no enable flag.
 
 - Stateless JSON-RPC 2.0: one request per POST, no SSE, no session id.
+- `ping` is answered with an empty result. A notification (any
+  `notifications/...` method) is acknowledged with `200` and
+  `{"jsonrpc":"2.0","result":{}}`, never with an error.
 - `GET` returns 405.
 - Request bodies are capped at 64 KiB.
 - Authenticate with `Authorization: Bearer <token>`. A `?token=` query
@@ -205,7 +208,7 @@ capped at 256 KiB.
 |------|---------|
 | `hive_status` | Hive status summary |
 | `fleet_status` | Fleet state; `systemResources` also carries the container's memory limit (`memLimit`, `unlimited` when none is set, with `memLimitBytes`) and out-of-memory kill count (`oomKillCount`), see [Start records, crash traces and out-of-memory evidence](#start-records-crash-traces-and-out-of-memory-evidence) |
-| `version_read` | Running build from `/api/version`: `currentCommit`, `branch`, `channel`, `commitsBehind`, `behind`; over stdio also `stdio_build` (`version`, `sha`, `short`, `branch`) and `skew` (true when the stdio and hub short SHAs are both known and differ); over HTTP also `last_seen_stdio_build` and `last_seen_stdio_at` alongside `hub_build` |
+| `version_read` | Running build from `/api/version`: `hash` and `short` (the running commit), `branch`, `channel`, `commitsBehind`, `behind`; over stdio also `stdio_build` (`version`, `sha`, `short`, `branch`) and `skew` (true when the stdio and hub short SHAs are both known and differ); over HTTP also `last_seen_stdio_build` and `last_seen_stdio_at` alongside `hub_build` |
 | `agents_list` | Agents |
 | `runs_list` | Runs |
 | `leases_list` | Leases |
@@ -234,13 +237,15 @@ section name, never a path. Each section is the endpoint that Settings tab
 reads, so the answer matches the page for the same caller: most sections need a
 verified owner, as the tabs do. Secret values are never returned. Settings name
 the environment variable, file or header that supplies a secret, and the answer
-is scrubbed like every other read.
+is scrubbed like every other read. `settings_read` takes no `limit`: a section
+is returned whole, however many agents or entries it lists, bounded only by the
+256 KiB text cap.
 
 - Global settings: `governor` (the default: modes, thresholds, labels, repos,
   budget, notifications, health, sensing, logging, security, features, hub,
   LiteLLM, watchdog, trajectory, classifier, release sentinel), `project`,
   `github_apps`, `authorized_users`, `dashboard`, `channels`, `escalation`,
-  `auto_merge`, `review`, `convergence`, `sla`, `advisor`, `advisory`, `replan`,
+  `auto_merge`, `review`, `convergence`, `sla`, `triggers`, `advisor`, `advisory`, `replan`,
   `question_autoclose`, `question_autoclose_schedule`, `fleet_report`,
   `work_source`, `project_observability`, `general_advanced`, `cadence_scope`,
   `threshold_scaling`, `backup`, `bob`, `inference_auth`, `gateways`,
@@ -264,8 +269,10 @@ Meta tools:
 - `exclusion_catalogue` lists what the admin MCP will never do, and why.
 - `refuse_operation` explains the refusal for a named operation.
 
-Write tools (`write_preview`, `write_confirm`) appear only when writes are on.
-On stdio, `select_hive` is also available.
+Write tools (`write_preview`, `write_confirm`) are always listed. When writes
+are off, or not available to the caller, their `metadata.preview.enabled` is
+`false` with a note saying why, and a call is refused. On stdio, `select_hive`
+is also available.
 
 ### Diagnostic reads
 

@@ -262,13 +262,22 @@ func (h *Handler) dispatch(r *http.Request, req rpcRequest) (any, *rpcError) {
 	switch req.Method {
 	case "initialize":
 		return map[string]any{"protocolVersion": ProtocolVersion, "serverInfo": map[string]string{"name": ServerName, "version": ServerVersion}, "capabilities": map[string]any{"tools": map[string]any{}}}, nil
-	case "notifications/initialized":
+	case "ping":
+		// MCP's liveness check: the receiver answers with an empty result.
 		return map[string]any{}, nil
 	case "tools/list":
 		return map[string]any{"tools": toolDefs(h.writesUsable(), h.WritesUnavailableReason)}, nil
 	case "tools/call":
 		return h.callTool(r.Context(), req.Params)
 	default:
+		// A notification expects no answer, and "method not found" is the
+		// wrong one: a client that sends notifications/cancelled after a
+		// tool call it gave up on would be told its message was an error.
+		// Every notification is acknowledged the way notifications/initialized
+		// always was.
+		if strings.HasPrefix(req.Method, "notifications/") {
+			return map[string]any{}, nil
+		}
 		return nil, &rpcError{Code: -32601, Message: "method not found"}
 	}
 }
@@ -339,7 +348,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 	defs := []struct{ name, desc string }{
 		{ToolHiveStatus, "Read this hive's dashboard status summary."},
 		{ToolFleetStatus, "Read this hive's fleet status, including repo and agent health rollups. systemResources also carries the container's memory limit (memLimit, \"unlimited\" when none is set) and its out-of-memory kill count (oomKillCount); a restart resets that count, and the starts log source keeps the reading taken before the previous run ended."},
-		{ToolVersionRead, "Read the build this hive is running (currentCommit, branch, channel, commitsBehind, behind) through the existing /api/version endpoint."},
+		{ToolVersionRead, "Read the build this hive is running (hash and short for the running commit, branch, channel, commitsBehind, behind) through the existing /api/version endpoint."},
 		{ToolAgentsList, "Read the capped list of agents known to this hive."},
 		{ToolRunsList, "Read the capped list of runs known to this hive."},
 		{ToolLeasesList, "Read active run leases through the existing runs surface."},
@@ -433,7 +442,7 @@ func inputSchema(name string) map[string]any {
 		props = advisorRecordsSchema()
 	case ToolIssuesByBand:
 		props["repo"] = map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."}
-		props["band"] = map[string]any{"type": "string", "enum": issueBandKeys}
+		props["band"] = map[string]any{"type": "string", "enum": issueBandKeys, "description": "A band key from bands[]. outside is the open issues the scanner kept off the agent queues; each such row's bucket says why."}
 		props["stale"] = map[string]any{"type": "boolean"}
 		props["held"] = map[string]any{"type": "boolean", "description": "Filter rows to held (held=true) or unheld (held=false) issues before the limit cap, so held rows are not silently dropped by it; unlike `repo`, this does not change bands[] counts."}
 		props["offset"] = map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page past the limit cap."}
