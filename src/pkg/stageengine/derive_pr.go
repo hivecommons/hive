@@ -242,16 +242,18 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 	if verdict.Reason != "" {
 		obs.Reason = verdict.Reason
 	}
-	if pass.Prior != nil {
-		prev := stagelabels.Record{Stage: pass.Prior.Stage, Reason: pass.Prior.Reason, ActivityHead: pass.Prior.ActivityHead}
-		if replacement, ok := PreserveNormalizedFixingStage(prev, true, obs, verdict); ok {
-			verdict = replacement
-			obs.Reason = replacement.Reason
-		}
-		if replacement, ok := PreserveStageOnStaleDecisionAnswer(prev, true, obs, verdict, pass.FixerExcluded); ok {
-			verdict = replacement
-			obs.Reason = replacement.Reason
-		}
+	var prev stagelabels.Record
+	hadPrev := pass.Prior != nil
+	if hadPrev {
+		prev = stagelabels.Record{Stage: pass.Prior.Stage, Reason: pass.Prior.Reason, ActivityHead: pass.Prior.ActivityHead}
+	}
+	if replacement, ok := PreserveNormalizedFixingStage(prev, hadPrev, obs, verdict); ok {
+		verdict = replacement
+		obs.Reason = replacement.Reason
+	}
+	if replacement, ok := PreserveStageOnStaleDecisionAnswer(prev, hadPrev, obs, verdict, pass.FixerExcluded); ok {
+		verdict = replacement
+		obs.Reason = replacement.Reason
 	}
 	var human *stagelabels.Route
 	if verdict.Human && !verdict.Terminal && verdict.Reason != prstage.ReasonSupersessionPending {
