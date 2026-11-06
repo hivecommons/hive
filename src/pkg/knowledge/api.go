@@ -911,8 +911,12 @@ func (k *KnowledgeAPI) FullFact(ctx context.Context, fact Fact) Fact {
 		return fact
 	}
 	for _, v := range k.vaults {
-		if full, err := v.ReadPage(fact.Slug); err == nil {
+		// A same-slug page from another layer must not supply the body.
+		if full, err := v.ReadPage(fact.Slug); err == nil && (fact.Layer == "" || full.Layer == fact.Layer) {
 			mergeFullFact(&fact, full)
+			if fact.Layer == "" {
+				fact.Layer = full.Layer
+			}
 			return fact
 		}
 	}

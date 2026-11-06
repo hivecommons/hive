@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -72,5 +73,52 @@ func TestFullFactFromWikiLayerFollowsThePageStatus(t *testing.T) {
 	}
 	if got := full.EffectiveState(); got != StateDeprecated {
 		t.Fatalf("FullFact returned the deprecated page's body with state %q", got)
+	}
+}
+
+// A same-slug page in a vault of another layer must not supply the body of a
+// fact listed under a different layer.
+func TestFullFactIgnoresVaultPageOfAnotherLayer(t *testing.T) {
+	dir := t.TempDir()
+	page := "---\ntitle: Note\nlayer: project\n---\n\nProject copy.\n"
+	if err := os.WriteFile(filepath.Join(dir, "note.md"), []byte(page), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	api := &KnowledgeAPI{config: KnowledgeConfig{Enabled: true, Engine: "file"}, logger: apiTestLogger()}
+	if err := api.ConnectVault(dir, "vault"); err != nil {
+		t.Fatal(err)
+	}
+	if got := api.FileStores()[0].ListPages(""); len(got) != 1 || got[0].Layer != LayerProject {
+		t.Fatalf("test setup: vault lists %#v, want one project-layer fact", got)
+	}
+
+	full := api.FullFact(context.Background(), Fact{Slug: "note", Layer: LayerPersonal, Body: "snippet"})
+	if full.Body != "snippet" || full.Layer != LayerPersonal {
+		t.Fatalf("FullFact took the %s vault page's body %q under the personal layer", LayerProject, full.Body)
+	}
+
+	full = api.FullFact(context.Background(), Fact{Slug: "note", Layer: LayerProject})
+	if full.Body != "Project copy." || full.Layer != LayerProject {
+		t.Fatalf("FullFact = %q in layer %q, want the project vault page", full.Body, full.Layer)
+	}
+}
+
+// A git source identifies its layer through its configuration; a page whose
+// frontmatter carries no layer must keep the configured one, as in listings.
+func TestFullFactFromGitSourceKeepsTheConfiguredLayer(t *testing.T) {
+	gs := makeReadyGitSource(t, LayerCommunity)
+	api := &KnowledgeAPI{config: KnowledgeConfig{Enabled: true}, gitSources: []*GitSource{gs}, logger: apiTestLogger()}
+
+	listed := api.SearchAllWithVaults(context.Background(), "", "", 0)
+	if len(listed) != 1 || listed[0].Layer != LayerCommunity {
+		t.Fatalf("test setup: git source lists %#v, want one community-layer fact", listed)
+	}
+
+	full := api.FullFact(context.Background(), listed[0])
+	if full.Layer != LayerCommunity {
+		t.Fatalf("FullFact reported layer %q for a page listed from the %s git source", full.Layer, LayerCommunity)
+	}
+	if !strings.Contains(full.Body, "Some guide content") {
+		t.Fatalf("FullFact body = %q, want the git source page body", full.Body)
 	}
 }
