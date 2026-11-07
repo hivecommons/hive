@@ -73,7 +73,10 @@ func stageTrackerReviewFallbackState(out *StageTrackerActivity, in stageTrackerR
 		switch ci {
 		case "running":
 			out.State, out.Caption = reviewStateWaitingCI, "Review · waiting for CI"
-			out.Detail = fmt.Sprintf("No review has started on %s: the reviewer is requested once CI reports on this commit.", sha7)
+			out.Detail = fmt.Sprintf("No review has started on %s: CI is still running, and once it reports this repo has no hive reviewer lane, so a person must review.", sha7)
+			if in.ReviewerLane {
+				out.Detail = fmt.Sprintf("No review has started on %s: the reviewer is requested once CI reports on this commit.", sha7)
+			}
 		case "done":
 			next := "needs reviewer"
 			out.Detail = fmt.Sprintf("CI has reported on %s and no reviewer has picked the head up; this repo has no hive reviewer lane, so a person must review.", sha7)
