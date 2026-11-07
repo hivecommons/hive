@@ -829,7 +829,7 @@
       const classifierBackend = String(sec.ioscanClassifierBackend || '').trim();
       const classifierControls = Object.prototype.hasOwnProperty.call(sec, 'ioscanClassifierBackend')
         ? `<div class="config-field" data-setting-key="ioscan.classifier.backend">
-          <label>Classifier backend ${settingHelpMark('ioscan', '', 'Classifier backend', `Model endpoint uses the governor's OpenAI-compatible gateway. claude, copilot and omp run the classifier through that CLI with every tool disabled, no MCP servers, no GitHub token and an empty working directory. When this is empty and no model endpoint is configured, boot uses the tool-less CLI the hive's agents run on. codex and gemini cannot run without tools and are refused at boot. Takes effect after a restart.`)}</label>
+          <label>Classifier backend ${settingHelpMark('ioscan', '', 'Classifier backend', `Model endpoint uses the governor's OpenAI-compatible gateway. claude, copilot and omp run the classifier through that CLI with every tool disabled, no MCP servers, no GitHub token and an empty working directory. When this is empty and no model endpoint is configured, boot uses the tool-less CLI the hive's agents run on. codex and gemini cannot run without tools and are refused. Saving here applies immediately; a model endpoint or hive.yaml change takes effect after a restart.`)}</label>
           <select data-change-action="markDirty" data-arg0="security" data-arg1="ioscanClassifierBackend" data-arg-types="s,s,v">
             <option value="" ${classifierBackend === '' ? 'selected' : ''}>model endpoint (HTTP)</option>
             <option value="claude" ${classifierBackend === 'claude' ? 'selected' : ''}>claude — tool-less CLI</option>
