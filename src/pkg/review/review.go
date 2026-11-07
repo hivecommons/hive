@@ -623,6 +623,15 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 			// person has the last word at the merge gate (090), where the
 			// untrusted-author merge is theirs. Twelve of hive's own PRs
 			// sat 3–21h on such questions.
+			if hasReject {
+				// The rule makes the question advisory, not a sibling
+				// perspective's reject: the head gets what the reject
+				// alone would give it (the reject check below). The
+				// question stays in Reasons.
+				agg.Verdict = VerdictReject
+				agg.CloseRecommended = true
+				return agg
+			}
 			return contributorHandsFreeAggregate(agg, opts, hasChanges || reportsHaveInScopeFinding(reports), maxFix, decisionQuestions)
 		} else if backed {
 			agg.DecisionFinding = finding
@@ -644,6 +653,9 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 				agg.Reasons = append(append([]string{}, agg.Reasons...), selfAuthoredDecisionAdvisory(decisionQuestions))
 				sortReasons(agg.Reasons)
 				return agg
+			}
+			if !hasRequiredCoverage(agg.Perspectives, opts) {
+				return incompleteForMissingCoverage(agg, opts)
 			}
 			agg.Verdict = VerdictApprove
 			agg.MergeEligible = true
@@ -717,6 +729,9 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 			return agg
 		}
 		if !riskEscalation && !hasChanges && selfAuthoredHumanWithoutRemediation && !selfAuthoredHumanWithConcreteRemediation && selfAuthoredResolvableRequiresHumanOnly(reports, opts) {
+			if !hasRequiredCoverage(agg.Perspectives, opts) {
+				return incompleteForMissingCoverage(agg, opts)
+			}
 			agg.Verdict = VerdictApprove
 			agg.MergeEligible = true
 			agg.RequiresHuman = false
@@ -1953,6 +1968,34 @@ func hasAllRequiredPerspectives(got map[Perspective]Verdict, maxPerPR, configure
 		}
 	}
 	return true
+}
+
+// hasRequiredCoverage reports whether every perspective the head is owed has
+// reported, whatever it said. hasAllRequiredPerspectives also needs each
+// verdict to be approve; the paths that read a requires_human as advisory
+// need only this half of it.
+func hasRequiredCoverage(got map[Perspective]Verdict, opts AggregateOptions) bool {
+	return len(got) >= requiredPerspectiveCount(opts.MaxPerspectivesPerPR, opts.Perspectives.Len())
+}
+
+// incompleteForMissingCoverage is the verdict of a head that would resolve
+// to an advisory approve but that a perspective it is owed never reported
+// on: a reviewer kick that died, or a rate-limited security review the relay
+// did not record (hivecommons/hive#16994). That perspective judged nothing,
+// so the head is still under review, as on the all-approve path: incomplete,
+// nobody is asked, and the planner re-asks only the missing perspectives
+// under pending_ttl / max_redispatch. Once they report, the same reports
+// resolve to the advisory approve.
+func incompleteForMissingCoverage(agg Aggregate, opts AggregateOptions) Aggregate {
+	agg.Verdict = VerdictIncomplete
+	agg.MergeEligible = false
+	agg.RequiresHuman = false
+	agg.FixCycle = false
+	agg.DecisionRequested = false
+	agg.DecisionQuestion = ""
+	agg.HumanSummaries = nil
+	agg.Reasons = []string{incompleteCoverageReason(agg.Perspectives, opts)}
+	return agg
 }
 
 // requiredPerspectiveCount is how many perspectives a head must hear from
