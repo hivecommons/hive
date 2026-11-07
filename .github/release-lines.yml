@@ -25,10 +25,21 @@
 # CUTTING A NEW RELEASE LINE: add the branch name to `release_lines` below AND
 # to every workflow listed under `pinned` AND to every list under `env_lists`.
 # The guard fails until all three are done — that is the whole point, so do not
-# "fix" it by only editing one side.
+# "fix" it by only editing one side. `release_lines` is ALSO the run-time
+# allow-list tagged-release.yml and promote-stable.yml check before serving
+# the branch they were started from (#9154): adding a line here is what lets it
+# mint vN.x.y tags and promote `stable`. The rest of the cut (docker.yml
+# channel rows, default branch, docs) is the checklist in
+# src/docs/release-line-guard.md.
 
-# The release lines CI is expected to cover.
-release_lines: [v4, v5]
+# The release lines CI is expected to cover. v6 was cut as a release line on
+# 2026-11-07: it mints `v6.x.y` tags, GitHub Releases and SBOMs through
+# tagged-release.yml like v5 does. Channel ownership did NOT move with it —
+# v5 still publishes `candidate` + `:latest` and owns `stable` (promoted from
+# the default branch by promote-stable.yml); v6 publishes `edge` + `v6-latest`
+# (its own docker.yml rows). See src/docs/release-line-guard.md, "Cutting a
+# new release line", and src/docs/releases.md.
+release_lines: [v4, v5, v6]
 
 # Workflows whose branch filters are pinned to the release lines.
 #
@@ -47,45 +58,45 @@ pinned:
   # sunset, and a PR targeting v2 runs the v2 merge-ref's workflows anyway,
   # where this file does not exist. Same excluded-not-backfilled reasoning as
   # docs-link-check.yml below.
-  # v6 is carried as an EXTRA on the workflows below rather than added to
-  # `release_lines`: it is a development line for the #7563 epic, not a
-  # supported release line with a GA bar. What it DOES need is the same PR
-  # gating as v4, because feature PRs target it directly (spine, mention
-  # triggers); without these extras a v6-base PR runs no Go build, test, or
-  # security lane at all. It is ALSO published — `v6-latest` and, once its own
-  # docker.yml rows say so, the `edge` channel (#7721 Phase 1) — which is the
-  # `env_lists` extra below, not a `release_lines` entry: publishing a line's
-  # image is a narrower commitment than covering it with every pinned lane.
-  changelog-fragment-guard.yml: [v5, v6]
+  # v6 used to be carried as an EXTRA on the PR-gating workflows below while
+  # it was the #7563 development line; since its cut (2026-11-07) it is a
+  # `release_lines` entry, so the extras are gone and every pinned lane that
+  # does not write down a `-v6` exclusion covers it.
+  changelog-fragment-guard.yml: []
   # Static analysis and vulnerability scanning for the Go module. Pinned to the
   # release lines and nothing else: a feature branch gets the same gate through
   # `pull_request`, and running it on every pushed branch would burn runner
   # minutes re-scanning code that has not reached a release line.
   # Added with the docs link checker (#5278), after the v2 line was sunset
-  # (#5030-era). It gates src/docs/ links on v4 only; v2 is excluded rather
-  # than back-filled, because the workflow never ran there and adding it
-  # would gate a line no longer taking doc changes.
+  # (#5030-era). It gates src/docs/ links on every release line (#9476): v6
+  # takes doc changes through feature PRs like the other lines, and without
+  # it a v6-base PR's broken doc links and stale code citations landed
+  # ungated. v2 was never back-filled: the workflow never ran there and the
+  # line is retired.
   docs-link-check.yml: []
-  # Post-merge DCO monitor for protected branch history. It intentionally
-  # watches v4 and v5 only: v4 is the source line whose Tide squash commits
-  # triggered #6312, and v5 is the sync target that inherits those commits.
-  dco-post-merge.yml: [v5]
-  # Push-scoped delta DCO gate (#6756). Same v4/v5 coverage and reasoning as
-  # dco-post-merge.yml above: v4 is the line whose pushes it audits, v5 the
-  # sync target inheriting them; v2 is sunset and takes no pushes.
-  dco-push-delta.yml: [v5]
-  # FOSSA license scanning runs on the active CNCF onboarding line only;
-  # v4 is feature-frozen and not being imported as the initial Hive Commons
-  # CNCF FOSSA project.
-  fossa.yml: [-v4]
-  # GitHub Actions Workflow triage compiles only on the active v5 line; older
-  # release lines do not carry the gh-aw automation surface.
-  gh-aw-compile.yml: [-v4]
+  # Post-merge DCO monitor for protected branch history. It watches every
+  # release line: v4 is the source line whose Tide squash commits triggered
+  # #6312, and v5 and v6 are the sync targets that inherit those commits.
+  dco-post-merge.yml: []
+  # Push-scoped delta DCO gate (#6756). Same coverage and reasoning as
+  # dco-post-merge.yml above: v4 is the line whose pushes it audits, v5 and
+  # v6 the sync targets inheriting them; v2 is sunset and takes no pushes.
+  dco-push-delta.yml: []
+  # FOSSA license scanning runs on the CNCF onboarding line only: the Hive
+  # Commons FOSSA project is imported from ONE branch, v5. v4 is
+  # feature-frozen; v6 inherits v5's dependency set through the top-ups and
+  # is not a second FOSSA project.
+  fossa.yml: [-v4, -v6]
+  # GitHub Actions Workflow triage compiles only on the default v5 line, where
+  # the gh-aw agentic workflows are registered; v4 does not carry the gh-aw
+  # automation surface and v6 only mirrors v5's compiled lock files.
+  gh-aw-compile.yml: [-v4, -v6]
   # Self-test for the hive-action-smoke dispatch workflow (#12964). Its push
   # trigger names v5 only: the smoke workflow is registered on v5 and does not
   # exist on the feature-frozen v4 line, so there is nothing there to test.
-  hive-action-smoke-tests.yml: [-v4]
-  go-security-analysis.yml: [v5, v6]
+  # v6 carries its own action unit gate (hive-action-tests.yml, v6 only).
+  hive-action-smoke-tests.yml: [-v4, -v6]
+  go-security-analysis.yml: []
   podman-arm64-lane.yml: []
   podman-contract.yml: []
   podman-rootful-lane.yml: []
@@ -118,46 +129,48 @@ pinned:
   # They react to PRs into, and pushes to, the lines that take feature PRs:
   # v5 (stable + candidate) and v6 (edge). v4 is feature-frozen and takes no
   # new PRs, so there is nothing there to order or refresh.
-  pr-overlap.yml: [v6, -v4]
-  pr-auto-update.yml: [v6, -v4]
-  pr-auto-update-test.yml: [v6, -v4]
+  pr-overlap.yml: [-v4]
+  pr-auto-update.yml: [-v4]
+  pr-auto-update-test.yml: [-v4]
   # Native queue admission is available on the active feature lines only.
   # This is CI coverage, not an opt-in or a queue rule for either branch.
-  native-queue-policy.yml: [v6, -v4]
-  testutil-guard.yml: [v5, v6]
-  v2-ci.yml: [v5, v6]
-  v2-tests.yml: [v5, v6]
+  native-queue-policy.yml: [-v4]
+  testutil-guard.yml: []
+  v2-ci.yml: []
+  v2-tests.yml: []
   # Automated v4 -> v5 forward-merge cadence (#7297). Its only branch filter is
   # the `workflow_run` trigger, which names the line whose RELEASES it reacts
   # to — v4, the source of every top-up. v2 is sunset and cuts no releases to
   # carry forward, and v5 is the merge TARGET rather than a trigger, so it is
-  # not a branch this workflow watches (on v5, where v5 is itself a release
-  # line, it must be excluded explicitly for the same reason).
-  v5-topup.yml: [-v5]
+  # not a branch this workflow watches (v5 and v6 are release lines too, so
+  # they must be excluded explicitly for the same reason — v6 reaches v4's
+  # releases through v5).
+  v5-topup.yml: [-v5, -v6]
   # Post-freeze intake gate for v4 (#7693, runbook §2). It watches PRs into
   # the ONE line the accepted freeze policy (#6346) applies to; v2 is sunset
   # and takes no PRs, and v5/v6 are exactly where non-critical work is sent.
-  v4-freeze-gate.yml: [-v5]
+  v4-freeze-gate.yml: [-v5, -v6]
   # Automated v5 -> v6 forward-merge cadence (#7563, Track 7). Its only branch
   # filter is the `push` trigger naming the line whose MOVEMENT it reacts to —
-  # v5, the source of every v6 top-up. v2 and v4 are excluded for the same
-  # reason as v5-topup.yml's exclusions: they are not the branch this workflow
-  # watches (v4 reaches v6 through v5), and v6 is the merge TARGET, not a
-  # trigger.
-  v6-topup.yml: [v5, -v4]
+  # v5, the source of every v6 top-up. v4 is excluded for the same reason as
+  # v5-topup.yml's exclusions: it is not the branch this workflow watches (v4
+  # reaches v6 through v5), and v6 is the merge TARGET, not a trigger.
+  v6-topup.yml: [-v4, -v6]
   # Publishes src/crux to hivecommons/crux (#14138). It watches the ONE line
   # the published module is cut from — v5, where the nested module lives and
   # where `crux/vX.Y.Z` tags are made. v4 is feature-frozen and has no
-  # src/crux; publishing from two lines would race on hivecommons/crux main.
-  crux-sync.yml: [-v4]
+  # src/crux; v6 carries a copy through the top-ups but publishing from two
+  # lines would race on hivecommons/crux main.
+  crux-sync.yml: [-v4, -v6]
   # Nightly + path-filtered Forgejo smoke (#14116). Its push/pull_request
-  # filters name v5 only: the forge.Merger it exercises lives on v5, and v4 is
-  # feature-frozen.
-  forgejo-smoke.yml: [-v4]
+  # filters name v5 only: it exercises the forge.Merger against a live Forgejo
+  # and one line's coverage is enough for a shared package — v6 inherits the
+  # package through the top-ups, and v4 is feature-frozen.
+  forgejo-smoke.yml: [-v4, -v6]
   # Publishes the headless Twitch streamer image (#15594) from v5 only: the
-  # dashboard's `?kiosk=1` mode it depends on lives on v5 and v4 is
-  # feature-frozen. The image is operator tooling, not a hive release channel.
-  stream-image.yml: [-v4]
+  # image is operator tooling, not a hive release channel, so it follows the
+  # default branch rather than every release line; v4 is feature-frozen.
+  stream-image.yml: [-v4, -v6]
 
 # Workflows that deliberately do NOT pin to the release lines. Each must keep a
 # wildcard branch filter; if one is ever narrowed to a fixed list, the guard
@@ -185,11 +198,10 @@ env_lists:
   # docker.yml's gate job: only long-lived branches push to GHCR. `mk` and `dd`
   # are standing experimental branches — not release lines, but branches a hive
   # can be assigned to, so they legitimately publish a `<branch>-latest` tag.
-  # `v6` is the #7563 development line, published so the `edge` channel can be
-  # re-based on it (#7721 Phase 1): `v6-latest` must exist before v6's own
-  # docker.yml publish rows can point `edge` at it. Every release branch that
-  # carries this list names v6 here, so the guard agrees across lines.
-  docker.yml LONG_LIVED: [mk, dd, v6]
+  # `v6` used to be an extra here while it was the #7563 development line
+  # (published so the `edge` channel could be re-based on it, #7721 Phase 1);
+  # since its cut it is a release line and covered without an extra.
+  docker.yml LONG_LIVED: [mk, dd]
 
 # MAINTAINER DECISION (#4405, answered by #8061 on 2026-09-21): `v2` is retired.
 # It was removed from `release_lines`, from every workflow that named it, and

@@ -62,9 +62,36 @@ and turns cutting `v5` into one edit that CI enforces.
 ## Cutting a new release line
 
 1. Add the branch name to `release_lines` in `.github/release-lines.yml`.
-2. Add it to the trigger block of every workflow listed under `pinned`.
+2. Add it to the trigger block of every workflow listed under `pinned`, or
+   write down a `-name` exclusion with the reason.
 3. Add it to every list under `env_lists` — today that is `docker.yml`'s
    `LONG_LIVED`, without which the new line builds but never publishes.
+4. Check the pieces the guard cannot see:
+   - `release_lines` is also the run-time allow-list `tagged-release.yml` and
+     `promote-stable.yml` consult (`check-release-lines.sh --is-release-line`,
+     #9154). Step 1 is what lets the new line mint `vN.x.y` tags; the first
+     tag on a line is always `vN.0.0` (`derive-release-version.sh`).
+   - The new line's own copies of `tagged-release.yml`, `promote-stable.yml`
+     and the manifest must carry the change — `workflow_dispatch` runs read
+     the workflow from the dispatched ref. Forward-merge (top-up) the cut to
+     the new line, or land it there directly.
+   - `workflow_run`/`schedule` only reach the default branch's copy. The
+     default copy's `relay` job dispatches `tagged-release.yml --ref <line>`
+     for a non-default release line's completed build; nothing else is
+     needed for the new line to release automatically.
+   - Channel ownership is per-branch in `docker.yml`'s three
+     `publish-image-tags.sh` rows (`RELEASE_BRANCH INCLUDE_LATEST CHANNELS`),
+     on that branch. Decide which channels the new line owns; `stable` is
+     promoted from the default branch only.
+   - `changelog.d/` on the new line is consumed whole by its first release.
+     Every fragment must pass `check-changelog-fragment.sh` — one malformed
+     fragment fails `compile-changelog.sh` and therefore the decide job.
+   - Docs that enumerate the lines: `src/docs/releases.md`,
+     `src/docs/release-channels.md`, this page.
+
+`v6` was cut this way on 2026-11-07 — `release_lines: [v4, v5, v6]`, with
+`v6` owning `edge` + `v6-latest` and `v5` keeping `candidate`, `:latest` and
+`stable`.
 
 Doing only step 1 fails the guard, naming each workflow that would not run on
 the new branch and each list that would not publish it. That is the
@@ -108,10 +135,11 @@ complete the same way: every list still naming it is reported as `unexpected`.
   The value takes the same `[extra]` / `[-excluded]` grammar; `mk` and `dd` are
   declared extras on `LONG_LIVED` — standing experimental branches that are not
   release lines but that a hive can be assigned to, so they legitimately publish
-  a tag — and so is `v6`, the development line the `edge` channel is re-based on
-  ([#7721](https://github.com/hivecommons/hive/issues/7721)): published, but not
-  a supported release line, so it is an extra here rather than a `release_lines`
-  entry. The value is read in any of the spellings a workflow env can take
+  a tag. `v6` was an extra here too while it was the development line the
+  `edge` channel is re-based on
+  ([#7721](https://github.com/hivecommons/hive/issues/7721)) — published, but
+  not yet a release line; since its cut it is a `release_lines` entry
+  instead. The value is read in any of the spellings a workflow env can take
   (`"v2 v4"`, unquoted, or `[v2, v4]`), with trailing comments ignored.
 - **That the env list is still there to check.** The variable must appear
   exactly once in the workflow. Zero occurrences means it was renamed or

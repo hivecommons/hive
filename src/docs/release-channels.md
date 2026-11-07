@@ -10,7 +10,7 @@ Registry (**GHCR**).
 |---|---|
 | `stable` | Newest build promoted as generally safe to run. |
 | `candidate` | A v5 build awaiting the observation/waiting period (“soak”) before stable promotion. |
-| `edge` | An active-development v6 build, with no soak period; not the newest v5 stable build. |
+| `edge` | The newest v6 build, with no soak period; not the newest v5 stable build. Since 2026-11-07 v6 is a release line, so the same digest also carries an immutable `v6.x.y` tag once cut. |
 
 > **Promotion policy:** the channels diverge by release line and maturity. Every green merge to **`v5`** retags **`candidate`** (and `:latest`); **`stable`** advances later by digest through the scheduled/manual stable-promotion workflow after the [stable soak and promotion policy](stable-soak-policy.md) passes. Merges to **`v6`** retag **`edge`**, so `edge` is an active-development v6 build, not a synonym for `stable`. **`v4`** is a maintenance line: its builds publish only `v4-latest` and short-SHA tags, no channel (#7721 Phase 1).
 
