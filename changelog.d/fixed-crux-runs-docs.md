@@ -1,0 +1,1 @@
+- `docs/crux-serve.md` and `docs/env-vars.md` now document `crux serve --runs-config` / `CRUX_RUNS_CONFIG` and the `/v1/runs` routes, and the work-services design doc reflects that S2 and S7 shipped (#17027, #17028).
