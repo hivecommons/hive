@@ -1,1 +1,0 @@
-- Hive Chat `/prs waiting on review` no longer lists pull requests whose review decision is changes requested; those wait on their author, not on a reviewer ([#14437](https://github.com/hivecommons/hive/issues/14437)).

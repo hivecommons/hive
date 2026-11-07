@@ -1,1 +1,0 @@
-- Add default-off, explicitly scoped integration orchestration with durable change intents, separate candidate observations, workflow-job accounting, and bounded admission above the existing preparation and GitHub queue authorities.

@@ -1,1 +1,0 @@
-- Merged-PR claim scan timeouts are now treated as transient and logged once per repo instead of a repeated warning on every tick (#16244)

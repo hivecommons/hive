@@ -1,1 +1,0 @@
-- Retire stale missing-required-check merge banners only after successful exact-current-head evidence, preserving required App identity and other PRs' unresolved blockers.

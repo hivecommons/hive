@@ -1,1 +1,0 @@
-- Retry CI-failure webhook kicks with bounded backoff when the owning agent is busy, then drain a bounded per-PR/check pending queue on governor evaluations; discard resolved signals when checks pass or PRs close.

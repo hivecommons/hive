@@ -1,1 +1,0 @@
-- A signed-commit reconciler compare that hits a 404 (missing head branch or invisible repository) is now classified as a persistent GitHub refusal, so it is counted, bounded and noted once instead of being retried uncounted every pass ([#16202](https://github.com/hivecommons/hive/issues/16202)).

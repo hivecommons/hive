@@ -1,1 +1,0 @@
-- The rootless Podman qualification probe now keeps its temporary image store under `/var/tmp` to avoid quota-limited `/tmp` storage and preserves image-pull diagnostics when a prerequisite fails.

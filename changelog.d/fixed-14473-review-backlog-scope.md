@@ -1,1 +1,0 @@
-- Review backlog findings in files untouched by the reviewed PR are actionable immediately instead of waiting for that PR to close or merge.

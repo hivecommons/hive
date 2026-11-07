@@ -1,1 +1,0 @@
-- Stop filing fleet runtime self-reports for the expected handoff after rebase attempts are exhausted, while retaining the local warning and diagnostics ([#16510](https://github.com/hivecommons/hive/issues/16510)).

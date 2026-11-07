@@ -1,1 +1,0 @@
-- Add experimental, opt-in Matrix Rain and Cascade displays at `?kiosk=1&view=matrix`, with pause, reduced-motion paging, source and freshness labels, and authorized line fetching; the normal tracker is unchanged (#15936, RFC #15862).

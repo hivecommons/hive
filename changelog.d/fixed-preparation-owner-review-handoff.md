@@ -1,1 +1,0 @@
-- Give an active base-preparation owner's current CI-green head bounded reviewer-slot priority, yielding to aged review waits between confirmed handoffs without changing review, merge, or resource gates.

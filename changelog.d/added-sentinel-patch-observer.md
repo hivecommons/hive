@@ -1,1 +1,0 @@
-- Sentinel sweep: optional bounded PatchObserver hook on the PR-patch fetch (#15933)
