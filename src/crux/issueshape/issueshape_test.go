@@ -168,3 +168,25 @@ func TestStripAgentPrefixAndSameTitle(t *testing.T) {
 		t.Fatal("different subjects must not match")
 	}
 }
+
+func TestSpekPublished(t *testing.T) {
+	marked := "## Goal\n\nAdd a refresh endpoint.\n\n<!-- spek:publish name=auth artifact_id=spk_1 target=github task=T2 -->"
+	if !SpekPublished(marked) {
+		t.Fatal("body with a valid spek:publish marker not reported as published")
+	}
+	if SpekPublished("## Goal\n\nAdd a refresh endpoint.") {
+		t.Fatal("plain body reported as spek-published")
+	}
+	if SpekPublished("<!-- spek:publish name=<name> artifact_id=<id> target=<t> -->") {
+		t.Fatal("unsubstituted marker template reported as spek-published")
+	}
+	// The marker itself is not an unfilled template placeholder: its content
+	// carries `=` so the angle-bracket scan skips it.
+	if ph, ok := UnsubstitutedTemplatePlaceholder(marked); ok {
+		t.Fatalf("marker flagged as placeholder %q", ph)
+	}
+	// A marker does not excuse a template left unfilled around it.
+	if _, ok := UnsubstitutedTemplatePlaceholder("<analysis>\n\n<!-- spek:publish name=a artifact_id=b target=github -->"); !ok {
+		t.Fatal("placeholder beside a marker must still be flagged")
+	}
+}

@@ -105,6 +105,17 @@ var linearReadRequirement = linearRequirement{MinMode: agent.ModeAdvisory}
 //     issue. That is how a PR-capable agent reports what it produced, so they
 //     sit at ModeIssuesAndPRs alongside PR creation.
 //
+//   - issueRelationCreate, projectCreate and projectUpdate are what an in-hive
+//     Spek needs to publish a finished spec as a parent plus children
+//     (hivecommons/spektacular#114): a Project (or a parent issue — that is
+//     plain issueCreate with parentId, already covered) for the RFC, child
+//     issueCreate per task, and `blockedBy` relations between children; the
+//     idempotent re-publish edits the parent in place with projectUpdate. They
+//     are the Linear analogues of GitHub's POST …/sub_issues and
+//     POST …/dependencies/blocked_by, so they sit at ModeIssuesOnly with no
+//     capability grant. Deliberately NOT included: issueRelationDelete,
+//     projectDelete, projectArchive — a published tree is only ever added to.
+//
 // Mutations NOT listed are denied, including every destructive one
 // (issueDelete, commentDelete, projectDelete, teamDelete, issueArchive) and
 // every administrative one (organizationInviteCreate, apiKeyCreate,
@@ -133,6 +144,11 @@ var linearMutations = map[string]linearRequirement{
 	"issueUpdate":      {MinMode: agent.ModeIssuesOnly},
 	"issueAddLabel":    {MinMode: agent.ModeIssuesOnly},
 	"issueRemoveLabel": {MinMode: agent.ModeIssuesOnly},
+
+	// Spek publish: RFC parent, children and their dependency edges.
+	"issueRelationCreate": {MinMode: agent.ModeIssuesOnly},
+	"projectCreate":       {MinMode: agent.ModeIssuesOnly},
+	"projectUpdate":       {MinMode: agent.ModeIssuesOnly},
 
 	// Linking produced artifacts (PRs, builds) onto an issue.
 	"attachmentCreate":          {MinMode: agent.ModeIssuesAndPRs},

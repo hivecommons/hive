@@ -203,6 +203,17 @@ var rules = []ProxyRule{
 	{PathPattern: regexp.MustCompile(`^(?:/api/v1)?/repos/[^/]+/[^/]+/issues/\d+/labels`), Method: "POST", MinMode: agent.ModeIssuesOnly},
 	{PathPattern: regexp.MustCompile(`^(?:/api/v4)?/projects/.+?/labels`), Method: "POST", MinMode: agent.ModeIssuesOnly},
 	{PathPattern: regexp.MustCompile(`^(?:/api/v1)?/repos/[^/]+/[^/]+/issues/\d+/labels`), Method: "DELETE", MinMode: agent.ModeIssuesOnly},
+	// Issue relations — the native sub-issue link (`hive-open-issue --parent`,
+	// POST …/issues/{n}/sub_issues) and the "blocked by" dependency
+	// (`hive-open-issue --blocked-by`, POST …/issues/{n}/dependencies/blocked_by).
+	// The hive's own relay files these from the owner UID and never crossed
+	// this table; an agent publishing a Spek RFC with children from inside a
+	// hive does (hivecommons/spektacular#114), and relating two issues it was
+	// already allowed to create is artifact production at the same tier.
+	// Exactly these two sub-routes: no PUT/PATCH reprioritisation, no DELETE
+	// unlink — a published tree is only ever added to.
+	{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues/\d+/sub_issues$`), Method: "POST", MinMode: agent.ModeIssuesOnly},
+	{PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues/\d+/dependencies/blocked_by$`), Method: "POST", MinMode: agent.ModeIssuesOnly},
 	// ── Read operations — ADVISORY and above ──
 	// Catch-all: any GET/HEAD/OPTIONS on any path.
 	{PathPattern: regexp.MustCompile(`.*`), Method: "GET", MinMode: agent.ModeAdvisory},
