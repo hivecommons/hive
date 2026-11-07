@@ -613,8 +613,11 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 
 	// Approving now ASSIGNS an available placeholder instead of just bumping
 	// quota for a manual provision. Pick the pool from the request's auth_method
-	// (private → the heartbeat-only cluster / GPU pool, otherwise → the hub-reachable cluster / public pool). If no
-	// placeholder is available in that pool, tell the admin to provision more.
+	// (private → the heartbeat-only cluster / GPU pool, otherwise → the hub-reachable cluster / public pool).
+	// The public preference is soft: when that pool is empty, Auto-pick falls
+	// back to any other registered non-GPU pool with a placeholder (see
+	// autoPickPlaceholder). Only when every eligible pool is empty does the
+	// admin get told to provision more.
 	pool := poolClusterForAuthMethod(pr.AuthMethod)
 	hiveID := strings.TrimSpace(approveBody.HiveID)
 	if hiveID != "" {
@@ -626,10 +629,19 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	} else {
-		hiveID = findAvailablePlaceholder(pool)
+		var pickedPool string
+		hiveID, pickedPool = s.autoPickPlaceholder(pool)
+		if hiveID != "" && pickedPool != pool {
+			s.logger.Info(fmt.Sprintf("approve: pool %s empty, falling back to %s", pool, pickedPool), "target", targetUsername, "hive", hiveID)
+			pool = pickedPool
+		}
 	}
 	if hiveID == "" {
-		http.Error(w, fmt.Sprintf(`{"error":"no available placeholder hive in pool %q — provision more placeholders"}`, pool), http.StatusConflict)
+		scope := ""
+		if pool != gpuClusterID {
+			scope = " or any other registered pool"
+		}
+		http.Error(w, fmt.Sprintf(`{"error":"no available placeholder hive in pool %q%s — provision more placeholders"}`, pool, scope), http.StatusConflict)
 		return
 	}
 
@@ -902,6 +914,69 @@ func findAvailablePlaceholder(clusterID string) string {
 		return h.ID
 	}
 	return ""
+}
+
+// autoPickPlaceholder implements Auto-pick for handleApproveProvision: it
+// returns the ID of an available placeholder and the pool it came from.
+//
+// The preferred pool is tried first. If it is empty AND the preference is
+// soft (the public/default pool), the pick falls back to any OTHER cluster
+// registered in clusters.json that has an available placeholder — ordered by
+// most available first, tie-broken by cluster ID, so the choice is
+// deterministic. Two pins stay hard and never fall back: a private request
+// stays on the GPU pool (its spokes are heartbeat-only and the pool is a
+// tenancy boundary), and the GPU pool is never used to satisfy a public
+// request. Returns ("", preferredPool) when no eligible pool has a
+// placeholder.
+func (s *HubServer) autoPickPlaceholder(preferredPool string) (hiveID, pool string) {
+	if id := findAvailablePlaceholder(preferredPool); id != "" {
+		return id, preferredPool
+	}
+	if preferredPool == gpuClusterID {
+		return "", preferredPool
+	}
+
+	type poolCount struct {
+		id    string
+		count int
+		first string
+	}
+	byPool := map[string]*poolCount{}
+	for _, h := range listSaaSHives() {
+		if h.Status != statusAvailable || !isHubAdmin(h.Owner) {
+			continue
+		}
+		cid := clusterIDForHive(&h)
+		if cid == preferredPool || cid == gpuClusterID {
+			continue
+		}
+		if _, registered := s.clusters[cid]; !registered {
+			continue
+		}
+		pc := byPool[cid]
+		if pc == nil {
+			pc = &poolCount{id: cid, first: h.ID}
+			byPool[cid] = pc
+		}
+		pc.count++
+		if h.ID < pc.first {
+			pc.first = h.ID
+		}
+	}
+	if len(byPool) == 0 {
+		return "", preferredPool
+	}
+	candidates := make([]*poolCount, 0, len(byPool))
+	for _, pc := range byPool {
+		candidates = append(candidates, pc)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].count != candidates[j].count {
+			return candidates[i].count > candidates[j].count
+		}
+		return candidates[i].id < candidates[j].id
+	})
+	return candidates[0].first, candidates[0].id
 }
 
 // AvailablePlaceholder is one row of the approve-picker dropdown: an available
