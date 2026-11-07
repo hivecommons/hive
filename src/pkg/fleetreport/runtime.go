@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/logscrub"
@@ -561,7 +562,7 @@ func NormalizeMessage(msg string) string {
 			}
 			b.WriteString("P")
 			i = j
-		case r == '"' || r == '\'' || r == '`':
+		case r == '"' || r == '`' || (r == '\'' && !midWordApostrophe(runes, i)):
 			j := i + 1
 			for j < len(runes) && runes[j] != r {
 				j++
@@ -580,6 +581,15 @@ func NormalizeMessage(msg string) string {
 		}
 	}
 	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// midWordApostrophe reports whether the apostrophe at i sits between two
+// letters ("agent's", "don't"). That is a contraction or possessive, not an
+// opening quote: treating it as one swallowed the rest of the message into a
+// single Q placeholder (#16969's scope read "… — the agentQ"), so unrelated
+// messages sharing a prefix collapsed into one fingerprint.
+func midWordApostrophe(runes []rune, i int) bool {
+	return i > 0 && i+1 < len(runes) && unicode.IsLetter(runes[i-1]) && unicode.IsLetter(runes[i+1])
 }
 
 func runOfHex(runes []rune, i int) int {
