@@ -53,6 +53,13 @@ func cliMemoryEnvPairs(agent *AgentProcess, backend string) []agentEnvPair {
 	return []agentEnvPair{{claudeDisableAutoMemoryEnv, "1", false}}
 }
 
+// codexConfigSeed applies every hive-owned pin to a $CODEX_HOME/config.toml:
+// the startup update check off, and the memories feature pinned to the
+// agents.cli_memory.auto_memory policy (hivecommons/hive#17032).
+func codexConfigSeed(existing []byte, autoMemory bool) []byte {
+	return codexConfigWithMemoriesPinned(codexConfigWithUpdateCheckDisabled(existing), autoMemory)
+}
+
 // codexConfigWithMemoriesPinned returns existing with `memories = <enabled>`
 // set inside the [features] table, adding the table at the end when absent
 // and replacing an existing memories line in place. Content outside that one

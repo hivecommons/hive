@@ -121,13 +121,6 @@ func (m *Manager) setupCodexHome(agent *AgentProcess) {
 
 const codexDisableUpdateCheckLine = "check_for_update_on_startup = false"
 
-// codexConfigSeed applies every hive-owned pin to a $CODEX_HOME/config.toml:
-// the startup update check off, and the memories feature pinned to the
-// agents.cli_memory.auto_memory policy (hivecommons/hive#17032).
-func codexConfigSeed(existing []byte, autoMemory bool) []byte {
-	return codexConfigWithMemoriesPinned(codexConfigWithUpdateCheckDisabled(existing), autoMemory)
-}
-
 func codexConfigWithUpdateCheckDisabled(existing []byte) []byte {
 	if len(existing) == 0 {
 		return []byte(codexDisableUpdateCheckLine + "\n")
