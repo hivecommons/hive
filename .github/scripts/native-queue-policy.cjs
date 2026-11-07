@@ -237,7 +237,7 @@ function isCosmeticLabelFlip({ eventName, payload }) {
 // A cosmetic flip skips the evidence wait but must not mint a fresh passing
 // required check: replay the latest completed `success` run of this check on
 // the head (rejecting one not from this workflow) and still read live PR
-// eligibility. Returns null when there is nothing to replay — no completed
+// eligibility and the POLICY_CHECKS evidence. Returns null when there is nothing to replay — no completed
 // run, or the latest one did not succeed (a failed, cancelled or timed-out
 // wait) — so the caller falls through to the full evidence wait instead of
 // pinning that earlier verdict onto every later stage-label flip.
@@ -259,6 +259,9 @@ async function replayLastVerdict({ github, context, currentCheckRunId }) {
   // a run of this workflow file on this event may be replayed.
   await assertActionsProvenance(github, repo, pr.number, pr.head.sha, prior, POLICY_CHECK_SOURCE, new Map());
   if (prior.conclusion !== 'success') return null;
+  // The prior success is only valid while the providers it validated are
+  // still green: one re-run red on this head must not be papered over.
+  await assertEvidence(github, repo, pr.number, pr.head.sha, POLICY_CHECKS);
   return `PR #${pr.number}: replayed ${POLICY_CHECK_NAME} run ${prior.id} (success) on ${pr.head.sha}`;
 }
 
