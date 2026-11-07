@@ -8,7 +8,7 @@ import (
 func IsReadOnly(tool string) bool {
 	t := strings.ToLower(strings.TrimSpace(tool))
 	switch t {
-	case "read", "glob", "grep", "read_file", "view_file", "list_dir",
+	case "read", "view", "glob", "grep", "read_file", "view_file", "list_dir",
 		"grep_search", "glob_search", "read_browser_page", "read_url_content",
 		"websearch", "web_search", "fetchurl", "fetch_url":
 		return true
@@ -99,11 +99,21 @@ func IsGitHubPROperation(tool string) bool {
 	return false
 }
 
-// IsLocalWrite reports whether tool modifies local files.
+// IsLocalWrite reports whether tool modifies local files. It spells the
+// write tools of Claude Code and Cline (write, edit, write_to_file,
+// replace_file_content, edit_file, notebookeditcell), Copilot CLI (create,
+// apply_patch) and the Codex/Anthropic editor tools (str_replace_editor,
+// str_replace_based_edit_tool, multi_edit, multiedit, write_file,
+// create_file). The scan lane's guardrail-path check does not depend on
+// this list — it holds every tool not classified read-only that names a
+// file — so a name missing here does not open a gap; the predicate is kept
+// exported for callers that want the narrower "known editor" question.
 func IsLocalWrite(tool string) bool {
 	t := strings.ToLower(strings.TrimSpace(tool))
 	switch t {
-	case "write", "edit", "write_to_file", "replace_file_content", "edit_file", "notebookeditcell":
+	case "write", "edit", "write_to_file", "replace_file_content", "edit_file", "notebookeditcell",
+		"create", "apply_patch", "str_replace_editor", "str_replace_based_edit_tool",
+		"multi_edit", "multiedit", "write_file", "create_file":
 		return true
 	}
 	return false
