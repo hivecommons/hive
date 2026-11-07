@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/kubejob"
 )
 
 const (
@@ -25,7 +28,11 @@ const (
 // text from the agent.
 func sandboxKickLogBody(runtime string, res SandboxKickResult, runErr error) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "runtime: %s\nexit_code: %d\ncommits: %d\n", runtime, res.Sandbox.ExitCode, res.CommitCount)
+	exitCode := strconv.Itoa(res.Sandbox.ExitCode)
+	if res.Sandbox.ExitCode == kubejob.ExitCodeUnknown {
+		exitCode = "unknown"
+	}
+	fmt.Fprintf(&b, "runtime: %s\nexit_code: %s\ncommits: %d\n", runtime, exitCode, res.CommitCount)
 	if res.Branch != "" {
 		fmt.Fprintf(&b, "branch: %s\n", res.Branch)
 	}

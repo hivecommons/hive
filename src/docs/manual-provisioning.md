@@ -1689,6 +1689,22 @@ provision. Two pools, one per method type:
 - **Hub-reachable-cluster** placeholders serve **public** methods — provisioned
   via the API (Path A) and left running at **`replicas: 1`**.
 
+**Auto-pick on approve.** When an admin approves a provision request without
+choosing a specific placeholder, the hub picks one from the pool matching the
+request's `auth_method`: `private` → the heartbeat-only/GPU pool, anything else
+→ the default hub-reachable pool (`hive-oke`). The **public preference is
+soft**: if the default pool has no `available` placeholder, Auto-pick falls back
+to any *other* cluster registered in `clusters.json` that has one — most
+available first, ties broken by cluster ID — and logs one line
+(`approve: pool hive-oke empty, falling back to lke648397`). Two pins stay
+**hard** and never fall back: a `private` request only ever draws from the GPU
+pool, and the GPU pool is never used to satisfy a public request. Clusters with
+placeholders on disk but no `clusters.json` entry are skipped. The admin's
+explicit pick in the approve modal is strict — if that placeholder is not
+available the approve returns `409`, regardless of capacity elsewhere.
+Only when every eligible pool is empty does Auto-pick return
+`409 no available placeholder hive in pool "hive-oke" or any other registered pool`.
+
 > **Gotcha — placeholder IDs are date + random suffix, NOT sequential integers.**
 > The live pool uses `hosted-available-<cluster>-<YYMMDD>-<suffix>`, where
 > `<suffix>` is a short unique token (4 lowercase base36 chars) — e.g.

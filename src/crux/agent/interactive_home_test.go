@@ -324,6 +324,147 @@ func TestSetupCopilotHome_RetiresLegacyBridgeAndIsolatesSessionState(t *testing.
 	}
 }
 
+// --- per-agent CLI homes: .claude / .gemini / .bob (hivecommons/hive#17031) --
+
+// Regression for hivecommons/hive#17031: ~/.claude, ~/.gemini and ~/.bob were
+// whole-directory bridges to the shared home, so Claude Code's auto-memory
+// (projects/<cwd>/memory/MEMORY.md), its transcripts and todos — and Gemini's
+// GEMINI.md and bob's chat recordings — were ONE physical tree for every
+// agent. Each must now be a real per-agent directory with only the login /
+// settings entries bridged.
+func TestSetupInteractiveHome_CLIHomesArePerAgentWithCredentialBridges(t *testing.T) {
+	shared := withSharedAgentHome(t)
+	m := interactiveHomeTestManager(t)
+	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
+	// Directory-shaped bridges only link when the shared target exists.
+	for _, d := range []string{
+		filepath.Join(shared, ".gemini", "antigravity-cli"),
+		filepath.Join(shared, ".bob", "settings"),
+	} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m.setupInteractiveHome(ap, "claude")
+
+	home := interactiveHomePath("scanner")
+	for _, spec := range perAgentCLIHomes {
+		dir := filepath.Join(home, spec.dir)
+		if info, err := os.Lstat(dir); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			t.Errorf("%s should be a real per-agent dir: info=%v err=%v", spec.dir, info, err)
+			continue
+		}
+		for _, name := range spec.bridges {
+			link := filepath.Join(dir, name)
+			target, err := os.Readlink(link)
+			if err != nil {
+				t.Errorf("%s/%s bridge missing: %v", spec.dir, name, err)
+				continue
+			}
+			if want := filepath.Join(shared, spec.dir, name); target != want {
+				t.Errorf("%s/%s -> %q, want %q", spec.dir, name, target, want)
+			}
+		}
+	}
+	// A memory write through the per-agent home lands in the per-agent tree,
+	// not the shared one.
+	mem := filepath.Join(home, ".claude", "projects", "-data-agents-scanner", "memory")
+	if err := os.MkdirAll(mem, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mem, "MEMORY.md"), []byte("# notes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(shared, ".claude", "projects")); !os.IsNotExist(err) {
+		t.Errorf("per-agent claude projects leaked into shared home (err=%v)", err)
+	}
+	// Nothing else inside .claude is bridged — todos/history stay per agent.
+	for _, name := range []string{"projects", "todos", "history.jsonl"} {
+		if info, err := os.Lstat(filepath.Join(home, ".claude", name)); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			t.Errorf(".claude/%s must not be a bridge", name)
+		}
+	}
+}
+
+func TestSetupPerAgentCLIHomes_RetiresLegacyBridgeAndKeepsSharedMemory(t *testing.T) {
+	shared := withSharedAgentHome(t)
+	m := interactiveHomeTestManager(t)
+	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
+	home := interactiveHomePath("scanner")
+
+	// Pre-#17031 layout: ~/.claude is a whole-directory bridge and the shared
+	// tree already holds another agent's MEMORY.md plus the login.
+	sharedMem := filepath.Join(shared, ".claude", "projects", "-data-agents-coder", "memory")
+	if err := os.MkdirAll(sharedMem, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedMem, "MEMORY.md"), []byte("# stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shared, ".claude", ".credentials.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{".claude", ".gemini", ".bob"} {
+		if err := os.Symlink(filepath.Join(shared, d), filepath.Join(home, d)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m.setupInteractiveHome(ap, "claude")
+
+	for _, d := range []string{".claude", ".gemini", ".bob"} {
+		if info, err := os.Lstat(filepath.Join(home, d)); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			t.Errorf("legacy %s bridge not retired: info=%v err=%v", d, info, err)
+		}
+	}
+	// The other agent's memory is NOT visible through this agent's home...
+	if _, err := os.Stat(filepath.Join(home, ".claude", "projects", "-data-agents-coder")); !os.IsNotExist(err) {
+		t.Errorf("shared memory leaked into per-agent .claude (err=%v)", err)
+	}
+	// ...but the shared store is left in place (operator data, see #17033).
+	if _, err := os.Stat(filepath.Join(sharedMem, "MEMORY.md")); err != nil {
+		t.Errorf("shared MEMORY.md was disturbed: %v", err)
+	}
+	// Login still reaches the shared credential.
+	if target, err := os.Readlink(filepath.Join(home, ".claude", ".credentials.json")); err != nil || target != filepath.Join(shared, ".claude", ".credentials.json") {
+		t.Errorf(".credentials.json bridge: target=%q err=%v", target, err)
+	}
+	// Directory-shaped bridges whose shared target is absent are deferred, not
+	// left dangling (a dangling dir symlink breaks the CLI's mkdir -p).
+	if _, err := os.Lstat(filepath.Join(home, ".bob", "settings")); !os.IsNotExist(err) {
+		t.Errorf(".bob/settings should not be a dangling bridge (err=%v)", err)
+	}
+	// Idempotent.
+	m.setupInteractiveHome(ap, "claude")
+	if info, err := os.Lstat(filepath.Join(home, ".claude")); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Errorf(".claude regressed to a bridge on re-provision: info=%v err=%v", info, err)
+	}
+}
+
+func TestSetupPerAgentCLIHomes_KeepsExistingRealDir(t *testing.T) {
+	withSharedAgentHome(t)
+	m := interactiveHomeTestManager(t)
+	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
+	home := interactiveHomePath("scanner")
+	live := filepath.Join(home, ".claude", "projects", "-data-agents-scanner", "memory", "MEMORY.md")
+	if err := os.MkdirAll(filepath.Dir(live), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte("# mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m.setupInteractiveHome(ap, "claude")
+
+	if got, err := os.ReadFile(live); err != nil || string(got) != "# mine" {
+		t.Errorf("live per-agent memory disturbed: %q err=%v", got, err)
+	}
+}
+
 func TestSetupAgentXDGDirs_KeepsExistingRealLocal(t *testing.T) {
 	withSharedAgentHome(t)
 	m := interactiveHomeTestManager(t)
@@ -354,7 +495,7 @@ func TestSetupInteractiveHome_IdempotentAndRepairsStaleLink(t *testing.T) {
 	home := interactiveHomePath("scanner")
 
 	// Sabotage one bridge with a wrong target, then re-provision.
-	stale := filepath.Join(home, ".claude")
+	stale := filepath.Join(home, ".config")
 	if err := os.Remove(stale); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +504,7 @@ func TestSetupInteractiveHome_IdempotentAndRepairsStaleLink(t *testing.T) {
 	}
 	m.setupInteractiveHome(ap, "claude")
 	target, err := os.Readlink(stale)
-	if err != nil || target != filepath.Join(shared, ".claude") {
+	if err != nil || target != filepath.Join(shared, ".config") {
 		t.Errorf("stale bridge not repaired: target=%q err=%v", target, err)
 	}
 }
@@ -374,7 +515,7 @@ func TestSetupInteractiveHome_NeverClobbersRealDir(t *testing.T) {
 	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
 
 	home := interactiveHomePath("scanner")
-	realDir := filepath.Join(home, ".claude")
+	realDir := filepath.Join(home, ".config")
 	if err := os.MkdirAll(realDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +528,7 @@ func TestSetupInteractiveHome_NeverClobbersRealDir(t *testing.T) {
 
 	info, err := os.Lstat(realDir)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		t.Fatalf("real .claude dir was clobbered: %v %v", info, err)
+		t.Fatalf("real .config dir was clobbered: %v %v", info, err)
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Errorf("marker lost: %v", err)

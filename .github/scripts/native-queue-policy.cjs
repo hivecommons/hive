@@ -23,6 +23,17 @@ const BLOCKED_LABEL = /^(hold|needs-human|release-in-progress|do-not-merge(?:\/.
 const MAX_QUEUE_PAGES = 10;
 const POLICY_CHECK_NAME = 'native-queue-policy';
 const POLICY_CHECK_SOURCE = ['native-queue-policy.yml', ['pull_request_target']];
+// Decision B on #17030: a v5→v6 forward-merge opened by v6-topup.yml carries
+// commits that already passed v5's DCO gate, and probot DCO cannot be repaired
+// PR-side. Only that exact shape may substitute prow's `dco` status.
+const FORWARD_MERGE = {
+  head: 'sync/v5-to-v6', base: 'v6', source: 'v5',
+  author: { login: 'github-actions[bot]', id: 41898282, type: 'Bot' },
+};
+const PROW = { login: 'kubestellar-prow[bot]', id: 208851060, context: 'dco' };
+// REST pull-request commit listing stops at 250; a longer list is unverifiable.
+const MAX_PR_COMMITS = 250;
+const PROBOT_DCO_PATH = 'DCO path: probot DCO (App 1861)';
 
 const closedNoop = (pr) => `PR #${pr.number} is closed; nothing to evaluate`;
 
@@ -148,15 +159,83 @@ async function assertActionsProvenance(github, repo, number, head, run, source, 
   }
 }
 
-async function assertEvidence(github, repo, number, head, checks) {
+async function reachableFrom(github, repo, branch, commit) {
+  const { data } = await github.rest.repos.compareCommitsWithBasehead({
+    ...repo, basehead: `${branch}...${commit}`,
+  });
+  return ['behind', 'identical'].includes(data.status);
+}
+
+// Returns null when the PR is not the top-up shape at all, otherwise whether
+// the narrow prow path applies and why. Any doubt keeps probot DCO required.
+async function forwardMergeDCOPath(github, repo, pr, head) {
+  const author = FORWARD_MERGE.author;
+  if (pr?.head?.ref !== FORWARD_MERGE.head || pr.base?.ref !== FORWARD_MERGE.base ||
+      pr.head.repo?.full_name !== `${repo.owner}/${repo.repo}` ||
+      pr.user?.login !== author.login || pr.user.id !== author.id || pr.user.type !== author.type) {
+    return null;
+  }
+  const commits = await github.paginate(github.rest.pulls.listCommits, {
+    ...repo, pull_number: pr.number, per_page: 100,
+  });
+  const fallback = why => ({ prow: false, path: `${PROBOT_DCO_PATH}; ${FORWARD_MERGE.head} fallback: ${why}` });
+  if (commits.length === 0 || commits.length >= MAX_PR_COMMITS) {
+    return fallback(`commit list unverifiable (${commits.length} commits)`);
+  }
+  for (const commit of commits) {
+    if (!SHA.test(commit.sha)) return fallback('malformed commit list');
+    // The tip is v6-topup.yml's own `--no-ff` merge of origin/v5 onto v6, so it
+    // is never on v5 itself: its parents must be v6 and v5 history exactly.
+    if (commit.sha === head) {
+      const [ours, theirs] = (commit.parents || []).map(p => p.sha);
+      if (commit.parents?.length !== 2 || !SHA.test(ours) || !SHA.test(theirs) ||
+          !await reachableFrom(github, repo, FORWARD_MERGE.base, ours) ||
+          !await reachableFrom(github, repo, FORWARD_MERGE.source, theirs)) {
+        return fallback(`head ${head} is not a merge of ${FORWARD_MERGE.source} into ${FORWARD_MERGE.base}`);
+      }
+    } else if (!await reachableFrom(github, repo, FORWARD_MERGE.source, commit.sha)) {
+      return fallback(`${commit.sha} is not reachable from ${FORWARD_MERGE.source}`);
+    }
+  }
+  if (!commits.some(c => c.sha === head)) return fallback(`head ${head} is not in the commit list`);
+  return {
+    prow: true,
+    path: `DCO path: prow ${PROW.context} for ${FORWARD_MERGE.source}-reachable ${FORWARD_MERGE.head} forward-merge (#17030)`,
+  };
+}
+
+async function assertProwDCO(github, repo, head) {
+  const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
+    ...repo, ref: head, per_page: 100,
+  });
+  // Any workflow token can post a `dco` status; only prow's own is evidence.
+  const status = statuses
+    .filter(s => s.context === PROW.context && s.creator?.login === PROW.login && s.creator.id === PROW.id)
+    .sort((a, b) => b.id - a.id)[0];
+  if (!status) throw new PendingEvidence(`Missing prow ${PROW.context} on ${head}`);
+  if (status.state === 'pending') throw new PendingEvidence(`prow ${PROW.context} is pending`);
+  if (status.state !== 'success') throw new Error(`prow ${PROW.context}: ${status.state}`);
+}
+
+async function assertEvidence(github, repo, number, head, checks, pr) {
+  const dco = Object.hasOwn(checks, 'DCO') ? await forwardMergeDCOPath(github, repo, pr, head) : null;
+  const required = { ...checks };
+  if (dco?.prow) delete required.DCO;
   const runs = await github.paginate(github.rest.checks.listForRef, {
     ...repo, ref: head, per_page: 100, filter: 'latest',
   });
   const workflows = new Map();
-  for (const { run, source } of evidenceForHead(runs, head, checks)) {
-    if (!source) continue; // Probot DCO is deliberately not impersonated.
-    await assertActionsProvenance(github, repo, number, head, run, source, workflows);
+  try {
+    for (const { run, source } of evidenceForHead(runs, head, required)) {
+      if (!source) continue; // Probot DCO is deliberately not impersonated.
+      await assertActionsProvenance(github, repo, number, head, run, source, workflows);
+    }
+    if (dco?.prow) await assertProwDCO(github, repo, head);
+  } catch (error) {
+    if (dco && !(error instanceof ProviderUnavailable)) error.message += ` [${dco.path}]`;
+    throw error;
   }
+  return dco?.path || PROBOT_DCO_PATH;
 }
 
 async function assertReviews(github, repo, number, head) {
@@ -237,10 +316,12 @@ function isCosmeticLabelFlip({ eventName, payload }) {
 // A cosmetic flip skips the evidence wait but must not mint a fresh passing
 // required check: replay the latest completed `success` run of this check on
 // the head (rejecting one not from this workflow) and still read live PR
-// eligibility. Returns null when there is nothing to replay — no completed
-// run, or the latest one did not succeed (a failed, cancelled or timed-out
-// wait) — so the caller falls through to the full evidence wait instead of
-// pinning that earlier verdict onto every later stage-label flip.
+// eligibility and the POLICY_CHECKS evidence. Returns null when there is
+// nothing to replay — no completed run, or the latest one did not succeed (a
+// failed, cancelled or timed-out wait), or a policy provider is missing,
+// still running or reporting UNKNOWN — so the caller falls through to the
+// full evidence wait instead of pinning that earlier verdict onto every later
+// stage-label flip.
 async function replayLastVerdict({ github, context, currentCheckRunId }) {
   const repo = context.repo;
   const event = context.payload.pull_request;
@@ -259,7 +340,21 @@ async function replayLastVerdict({ github, context, currentCheckRunId }) {
   // a run of this workflow file on this event may be replayed.
   await assertActionsProvenance(github, repo, pr.number, pr.head.sha, prior, POLICY_CHECK_SOURCE, new Map());
   if (prior.conclusion !== 'success') return null;
-  return `PR #${pr.number}: replayed ${POLICY_CHECK_NAME} run ${prior.id} (success) on ${pr.head.sha}`;
+  // The prior success is only valid while the providers it validated are
+  // still green: one re-run red on this head must not be papered over. A
+  // provider that is missing or still running is not a verdict either way;
+  // fall through so the caller runs the full polling wait instead of failing.
+  // A DCO enumeration UNKNOWN also falls through: the full wait re-raises it
+  // once and renders the runbook job summary, so operators see the same
+  // surface whichever event fired.
+  let path;
+  try {
+    path = await assertEvidence(github, repo, pr.number, pr.head.sha, POLICY_CHECKS, pr);
+  } catch (error) {
+    if (error instanceof PendingEvidence || error instanceof ProviderUnavailable) return null;
+    throw error;
+  }
+  return `PR #${pr.number}: replayed ${POLICY_CHECK_NAME} run ${prior.id} (success) on ${pr.head.sha}; ${path}`;
 }
 
 async function evaluateOnce({ github, context }) {
@@ -270,17 +365,18 @@ async function evaluateOnce({ github, context }) {
     // Post-merge label/comment edits re-fire this event; a closed PR has nothing to gate.
     if (pr.state === 'closed') return closedNoop(pr);
     assertEligible(pr, event.head.sha, event.base.ref);
-    await assertEvidence(github, repo, pr.number, pr.head.sha, POLICY_CHECKS);
+    const path = await assertEvidence(github, repo, pr.number, pr.head.sha, POLICY_CHECKS, pr);
     const { data: current } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
     if (current.state === 'closed') return closedNoop(current);
     assertEligible(current, event.head.sha, event.base.ref);
-    return `PR #${pr.number}: five existing policy providers succeeded on ${pr.head.sha}`;
+    return `PR #${pr.number}: five existing policy providers succeeded on ${pr.head.sha}; ${path}`;
   }
   if (context.eventName !== 'merge_group' || context.payload.action !== 'checks_requested') {
     throw new Error('Unsupported policy event');
   }
   const group = context.payload.merge_group;
   const members = await readQueue(github, repo, group);
+  const paths = [];
   for (const entry of members) {
     const { number, headRefOid: head } = entry.pullRequest;
     const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number });
@@ -292,7 +388,7 @@ async function evaluateOnce({ github, context }) {
       throw new Error(`#${number}: current PR head is not contained in the tested group`);
     }
     await assertReviews(github, repo, number, head);
-    await assertEvidence(github, repo, number, head, { ...POLICY_CHECKS, ...BUILD_CHECKS });
+    paths.push(`#${number} ${await assertEvidence(github, repo, number, head, { ...POLICY_CHECKS, ...BUILD_CHECKS }, pr)}`);
   }
   // Re-read both membership and mutable gates after all evidence reads. This
   // bounds TOCTOU, but GitHub/Hive reconciliation is not an atomic transaction.
@@ -309,14 +405,14 @@ async function evaluateOnce({ github, context }) {
     ...repo, ref: group.head_ref.slice('refs/'.length),
   });
   if (ref.object?.sha !== group.head_sha) throw new Error('Synthetic group ref moved');
-  return `Group ${group.head_sha}: validated all ${members.length} member heads`;
+  return `Group ${group.head_sha}: validated all ${members.length} member heads (${paths.join('; ')})`;
 }
 
 module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict, BLOCKED_LABEL,
-  ProviderUnavailable,
+  ProviderUnavailable, FORWARD_MERGE, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX, DCO_ENUMERATION_SUMMARY_FALLBACK,
   DCO_PROVIDER_UNAVAILABLE_TEXT, DCO_PROVIDER_RUNBOOK,
 };

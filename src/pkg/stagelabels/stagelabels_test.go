@@ -602,6 +602,65 @@ func TestStoreMarksForgetsAndSharedLoad(t *testing.T) {
 	}
 }
 
+func TestStoreMarkNudgedReason(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s := NewStore("", func() time.Time { return now })
+	s.MarkNudgedReason("missing", "check-failing:unit", 1, now) // unknown key: no-op
+	if _, ok := s.Get("missing"); ok {
+		t.Fatal("MarkNudgedReason created a record")
+	}
+	key := Key("acme/widget", 7)
+	s.Observe(key, ReturnedToContributor, "check-failing:unit")
+	s.MarkNudgedReason(key, "required-check-failing:unit (lint)", 1, now)
+	r, _ := s.Get(key)
+	if r.NudgeReason != "check-failing" || r.NudgeReasonCount != 1 || !r.NudgeReasonAt.Equal(now) {
+		t.Fatalf("after first: %+v", r)
+	}
+	// A head-only rewrite (n == 0) for the same class keeps the count and time.
+	s.MarkNudgedReason(key, "check-failing:e2e", 0, now.Add(time.Hour))
+	if r, _ = s.Get(key); r.NudgeReasonCount != 1 || !r.NudgeReasonAt.Equal(now) {
+		t.Fatalf("rewrite: %+v", r)
+	}
+	s.MarkNudgedReason(key, "check-failing:e2e", 2, now.Add(2*time.Hour))
+	if r, _ = s.Get(key); r.NudgeReasonCount != 2 || !r.NudgeReasonAt.Equal(now.Add(2*time.Hour)) {
+		t.Fatalf("second nudge: %+v", r)
+	}
+	// A different class restarts the count.
+	s.MarkNudgedReason(key, "changes-requested", 1, now.Add(3*time.Hour))
+	if r, _ = s.Get(key); r.NudgeReason != "changes-requested" || r.NudgeReasonCount != 1 || !r.NudgeReasonAt.Equal(now.Add(3*time.Hour)) {
+		t.Fatalf("new class: %+v", r)
+	}
+}
+
+func TestRecordNudgeStart(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	if got := (Record{}).NudgeStart(); !got.IsZero() {
+		t.Fatalf("never nudged: %v", got)
+	}
+	if got := (Record{NudgeCount: 1, LastNudgeAt: now}).NudgeStart(); !got.Equal(now) {
+		t.Fatalf("legacy record falls back to LastNudgeAt: %v", got)
+	}
+	if got := (Record{NudgeCount: 2, FirstNudgeAt: now, LastNudgeAt: now.Add(time.Hour)}).NudgeStart(); !got.Equal(now) {
+		t.Fatalf("FirstNudgeAt wins: %v", got)
+	}
+}
+
+func TestNudgeReasonSlug(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                               "unknown",
+		"   ":                            "unknown",
+		"check-failing:unit (lint)":      "check-failing",
+		"required-check-failing:unit":    "check-failing",
+		"Changes Requested by @Reviewer": "changes-requested-by--reviewer",
+		"--merge_conflict.v2--":          "merge_conflict.v2",
+		"(only parenthetical)":           "unknown",
+	} {
+		if got := NudgeReasonSlug(in); got != want {
+			t.Errorf("NudgeReasonSlug(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestStoreMarkNudged(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	s := NewStore("", func() time.Time { return now })

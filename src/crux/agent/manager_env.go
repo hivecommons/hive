@@ -405,6 +405,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		}
 		vars = append(vars, agentEnvPair{claudeAutoModeServerEnv, claudeAutoModeServerOff, false})
 	}
+	vars = append(vars, cliMemoryEnvPairs(agent, backend)...)
 	if m.copilotAuthToken != "" {
 		vars = append(vars, agentEnvPair{copilotTokenEnvVar, m.copilotAuthToken, true})
 	}

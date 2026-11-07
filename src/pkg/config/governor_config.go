@@ -672,8 +672,8 @@ type ContributorNudgeConfig struct {
 	// Enabled turns the nudge on. nil = true.
 	Enabled *bool `yaml:"enabled"`
 	// RenudgeInterval is how long after the first nudge the hive nudges once
-	// more (the documented cap is 2 nudges per head). Default: the stage's
-	// dwell (24h), i.e. the re-nudge coincides with stage/stalled.
+	// more (the documented cap is 2 nudges per PR and reason class). Unset
+	// defers to auto_merge.nudge_repeat_after (default 72h).
 	RenudgeInterval string `yaml:"renudge_interval,omitempty"`
 }
 
@@ -684,7 +684,7 @@ func (c ContributorNudgeConfig) IsEnabled() bool { return c.Enabled == nil || *c
 const DefaultPresenceWindow = 15 * time.Minute
 
 // EffectiveRenudgeInterval parses RenudgeInterval; unset/invalid returns 0
-// (the caller falls back to the stage dwell).
+// (the caller falls back to auto_merge.nudge_repeat_after).
 func (c ContributorNudgeConfig) EffectiveRenudgeInterval() time.Duration {
 	return parseDurationOr(c.RenudgeInterval, 0)
 }

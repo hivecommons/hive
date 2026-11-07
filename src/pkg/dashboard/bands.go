@@ -721,11 +721,7 @@ func issueStale(createdAt, updatedAt time.Time, staleDays int, now time.Time) bo
 }
 
 func holdLabels(labels []string, hiveID string) []string {
-	canonical := "hold"
-	if trimmed := strings.TrimSpace(hiveID); trimmed != "" {
-		canonical = "hive-pause/" + trimmed
-	}
-	canonical = strings.ToLower(canonical)
+	canonical := strings.ToLower(github.CanonicalHiveHoldLabel(hiveID))
 	out := make([]string, 0)
 	for _, label := range labels {
 		lower := strings.ToLower(label)

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -719,6 +721,78 @@ func TestHasHoldLabelWithExactCanonicalHivePause(t *testing.T) {
 	}
 	if HasHoldLabelWith([]string{"hive-pause/h1-extra"}, []string{canonical}) {
 		t.Fatal("canonical hive hold must be exact, not substring")
+	}
+}
+
+// TestCanonicalHiveHoldLabelFitsGitHubCap: GitHub refuses a label name over
+// 50 characters with 422, so a hosted hive id (40 chars) made the plain
+// hive-pause/<id> spelling impossible to create and Hold failed on every
+// item of that hive (hivecommons/hive#17037). The label stays exact,
+// unique per id and stable across calls.
+func TestCanonicalHiveHoldLabelFitsGitHubCap(t *testing.T) {
+	long := "hosted-available-oke-11-placeholder-r05x"
+	if len(HiveHoldLabelPrefix+long) <= githubLabelNameMaxLen {
+		t.Fatalf("fixture must exceed the cap: %d", len(HiveHoldLabelPrefix+long))
+	}
+	got := CanonicalHiveHoldLabel(long)
+	if len(got) > githubLabelNameMaxLen {
+		t.Fatalf("CanonicalHiveHoldLabel(%q) = %q (%d chars), exceeds GitHub's %d", long, got, len(got), githubLabelNameMaxLen)
+	}
+	if !strings.HasPrefix(got, HiveHoldLabelPrefix+"hosted-available-oke-11-") {
+		t.Fatalf("truncated label %q should keep the readable id prefix", got)
+	}
+	if got != CanonicalHiveHoldLabel(" "+long+" ") {
+		t.Fatal("label must be stable for the same id")
+	}
+	if other := CanonicalHiveHoldLabel(long[:len(long)-1] + "y"); other == got {
+		t.Fatalf("two ids with a shared long prefix collapsed onto %q", got)
+	}
+	if !HasHoldLabelWith([]string{got}, []string{got}) {
+		t.Fatal("the shortened label must still read as an exact hive hold")
+	}
+	if short := CanonicalHiveHoldLabel("h1"); short != "hive-pause/h1" {
+		t.Fatalf("a short id is unchanged: %q", short)
+	}
+	if hyph := CanonicalHiveHoldLabel("abcdefghij-abcdefghij-abcdefghij-xxxxxxxxxx"); strings.Contains(hyph, "--") {
+		t.Fatalf("a truncation ending on '-' must not double the separator: %q", hyph)
+	}
+}
+
+// TestEnsureIssueLabelReturnsNonAlreadyExists422: only GitHub's
+// already_exists 422 means the label is there; a "name is too long" 422
+// must come back to the caller, not be swallowed as success
+// (hivecommons/hive#17037).
+func TestEnsureIssueLabelReturnsNonAlreadyExists422(t *testing.T) {
+	var creates int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/labels/"):
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+			creates++
+			var body struct{ Name string }
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			if strings.HasPrefix(body.Name, "dup") {
+				_, _ = io.WriteString(w, `{"message":"Validation Failed","errors":[{"resource":"Label","code":"already_exists","field":"name"}]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"message":"Validation Failed","errors":[{"resource":"Label","code":"custom","field":"name","message":"name is too long (maximum is 50 characters)"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient("token", "o", []string{"r"}, slog.Default(), srv.URL)
+	if err := c.EnsureIssueLabel(context.Background(), "o/r", "dup-label", "8250df", "d"); err != nil {
+		t.Fatalf("already_exists must be success, got %v", err)
+	}
+	err := c.EnsureIssueLabel(context.Background(), "o/r", "hive-pause/hosted-available-oke-11-placeholder-r05x", "8250df", "d")
+	if err == nil || !strings.Contains(err.Error(), "name is too long") {
+		t.Fatalf("an over-long name must surface GitHub's reason, got %v", err)
+	}
+	if creates != 2 {
+		t.Fatalf("creates = %d, want 2", creates)
 	}
 }
 

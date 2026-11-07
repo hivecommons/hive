@@ -95,10 +95,19 @@ const maxBobSessionAge = 30 * 24 * time.Hour
 // given directory (typically /data/home/.bob or ~/.bob) and returns an
 // AggregateSummary. It walks tmp/*/chats/*.json looking for session recordings.
 func ScanBobSessionsWithLogger(bobHomeDir string, logger *slog.Logger) (*AggregateSummary, error) {
-	return scanBobSessions(bobHomeDir, logger)
+	return scanBobSessions(bobHomeDir, "", logger)
 }
 
-func scanBobSessions(bobHomeDir string, logger *slog.Logger) (*AggregateSummary, error) {
+// ScanBobSessionTree is ScanBobSessionsWithLogger for one tree whose owner is
+// already known: defaultAgent, when non-empty, is the agent whose per-agent
+// HOME holds bobHomeDir (hivecommons/hive#17031) and replaces the generic
+// "bob" fallback for recordings whose project hash is not in that tree's
+// trustedFolders.json.
+func ScanBobSessionTree(bobHomeDir, defaultAgent string, logger *slog.Logger) (*AggregateSummary, error) {
+	return scanBobSessions(bobHomeDir, defaultAgent, logger)
+}
+
+func scanBobSessions(bobHomeDir, defaultAgent string, logger *slog.Logger) (*AggregateSummary, error) {
 	agg := &AggregateSummary{
 		ByAgent:       make(map[string]int64),
 		ByModel:       make(map[string]int64),
@@ -211,7 +220,7 @@ func scanBobSessions(bobHomeDir string, logger *slog.Logger) (*AggregateSummary,
 		if projectHash == "" {
 			projectHash = extractBobProjectHash(path)
 		}
-		agentName := bobAgentName(projectHash, agentsByHash)
+		agentName := bobAgentName(projectHash, agentsByHash, defaultAgent)
 		agg.TotalTokens += total
 		agg.TotalMessages += messageCount
 		agg.SessionCount++
@@ -338,11 +347,18 @@ func hexLower(b []byte) string {
 	return string(out)
 }
 
-func bobAgentName(projectHash string, agentsByHash map[string]string) string {
+// bobUnknownAgent is the attribution for a recording whose project hash is
+// not trusted-folder-mapped and whose tree has no known owner.
+const bobUnknownAgent = "bob"
+
+func bobAgentName(projectHash string, agentsByHash map[string]string, defaultAgent string) string {
 	if agent := agentsByHash[strings.TrimSpace(projectHash)]; agent != "" {
 		return agent
 	}
-	return "bob"
+	if defaultAgent != "" {
+		return defaultAgent
+	}
+	return bobUnknownAgent
 }
 
 func extractBobProjectHash(path string) string {

@@ -124,6 +124,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDelegatedDone"),
 		jsFunc(t, html, "stageTrackerAwaitDelegated"),
 		jsFunc(t, html, "stageTrackerPatchItem"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_GATEWAY_ERROR"),
+		jsFunc(t, html, "stageTrackerActionError"),
 		jsFunc(t, html, "stageTrackerRunActions"),
 		// runRowAction: result toasts + acting rows (owner request).
 		jsConstLine(t, html, "STAGE_TRACKER_ACTION_NOOP"),
@@ -575,6 +577,40 @@ let refreshed = 0; function stageTrackerAfterActions() { refreshed++; }
 `)
 }
 
+// TestStageTrackerRowActionErrorNamesTheGateway: a failed row action reports
+// the hive's own error when the hive answered (the 424 the hold toggle
+// returns for a GitHub failure, hivecommons/hive#17037) and names the
+// gateway — status included — when a 502–504 carries the hosted Ingress's
+// placeholder body or no JSON at all, instead of the bare "hive unavailable"
+// that read as an outage while the hive was up.
+func TestStageTrackerRowActionErrorNamesTheGateway(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+`
+assert.strictEqual(stageTrackerActionError(424, { ok: false, error: 'GitHub add hold label failed: 422 Validation Failed' }), 'GitHub add hold label failed: 422 Validation Failed', 'the hive answered: its reason verbatim');
+assert.strictEqual(stageTrackerActionError(403, { error: 'write permission required' }), 'write permission required');
+assert.strictEqual(stageTrackerActionError(500, {}), 'HTTP 500', 'no body: the status');
+const gw = stageTrackerActionError(502, { ok: false, error: 'hive unavailable' });
+assert.ok(gw.startsWith('HTTP 502 from the gateway'), gw);
+assert.ok(!gw.includes('hive unavailable'), 'the placeholder is not repeated as if the hive said it');
+assert.ok(gw.includes('retry'), gw);
+assert.ok(stageTrackerActionError(503, {}).startsWith('HTTP 503 from the gateway'), 'a 503 with no JSON body is the gateway too');
+assert.strictEqual(stageTrackerActionError(502, { error: 'spoke said so' }), 'spoke said so', 'a 502 with a real body passes through');
+
+const i1 = { repo: 'o/r', kind: 'issue', number: 17004, url: 'u1' };
+const progress = [];
+global.fetch = async () => ({ ok: false, status: 502, json: async () => ({ ok: false, error: 'hive unavailable' }) });
+global.showToast = () => null; global.dismissToast = () => {};
+function stageTrackerProgressToast(label, n) { return { update() {}, done(msg, type) { progress.push('done:' + type + ':' + msg); } }; }
+function stageTrackerAfterActions() {}
+(async () => {
+  const res = await stageTrackerRunActions([i1], 'hold', {});
+  assert.strictEqual(res[0].ok, false);
+  assert.ok(res[0].error.startsWith('HTTP 502 from the gateway'), res[0].error);
+  assert.ok(progress[0].startsWith('done:error:Hold: 0/1 done. Failed: o/r#17004 — HTTP 502 from the gateway'), progress[0]);
+})().catch(e => { console.error(e); process.exit(1); });
+`)
+}
+
 // TestStageTrackerLetHiveDecide: "Let hive decide" is the first Decide…
 // entry on rows and in the selection bar, posts to the delegated-decision
 // endpoint with the row's park words, polls the job until it ends, reports
@@ -889,7 +925,6 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerPlanRequestKey"),
 		jsFunc(t, html, "stageTrackerDelegatePlanErrorText"),
 		jsFunc(t, html, "stageTrackerPostDelegatePlan"),
-		jsConstLine(t, html, "STAGE_TRACKER_PLAN_GATEWAY_ERROR"),
 		jsFunc(t, html, "stageTrackerDelegatePlanFailure"),
 		jsFunc(t, html, "stageTrackerPrefetchDelegatePlan"),
 		jsFunc(t, html, "stageTrackerFetchDelegatePlan"),

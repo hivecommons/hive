@@ -130,7 +130,7 @@ func (c *Engine) workflowFenceReleased(ctx context.Context, displayRepo, owner, 
 			verdictState = workflowApprovalVerdictAnswered
 		}
 	}
-	if hasCommentWithPrefix(comments, unauthorizedMarker(headSHA, unauthorizedStepMergeWorkflowPath)) {
+	if unauthorizedCommentCoversHead(comments, unauthorizedStepMergeWorkflowPath, headSHA) {
 		// A previous process already learnt the App cannot merge this head;
 		// re-arm the in-memory mark so the reason flips without another
 		// merge attempt.

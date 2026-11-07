@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/kubejob"
 	"github.com/hivecommons/hive/crux/outputschema"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
@@ -144,5 +145,41 @@ func TestBuildSandboxRunCarriesPRWithheld(t *testing.T) {
 	}
 	if !strings.HasPrefix(run.PRWithheld, "agent report status=failed: ") || len([]rune(run.PRWithheld)) > sandboxRunSummaryMax {
 		t.Errorf("PRWithheld = %q (len %d), want the bounded reason", run.PRWithheld, len([]rune(run.PRWithheld)))
+	}
+}
+
+func TestSandboxKickLogBodyUnknownExitCode(t *testing.T) {
+	res := SandboxKickResult{Sandbox: sandbox.Result{ExitCode: kubejob.ExitCodeUnknown}}
+	body := sandboxKickLogBody("job", res, nil)
+	if !strings.Contains(body, "exit_code: unknown\n") {
+		t.Errorf("unreadable-pod run must not render a guessed exit code:\n%s", body)
+	}
+}
+
+func TestSandboxPublishWithheldIgnoresUnknownExitCode(t *testing.T) {
+	unknown := SandboxKickResult{Sandbox: sandbox.Result{ExitCode: kubejob.ExitCodeUnknown}}
+	if got := sandboxPublishWithheld(unknown); got != "" {
+		t.Errorf("completed-without-code must not withhold the PR, got %q", got)
+	}
+	failed := SandboxKickResult{Sandbox: sandbox.Result{ExitCode: 3}}
+	if got := sandboxPublishWithheld(failed); got != "sandbox exited 3" {
+		t.Errorf("got %q, want sandbox exited 3", got)
+	}
+}
+
+func TestSandboxVerifyResultPassedUnknownExitCode(t *testing.T) {
+	// A Complete verify Job whose pod could not be read back carries no exit
+	// code and no error; that must not withhold the PR.
+	if !(SandboxVerifyResult{ExitCode: kubejob.ExitCodeUnknown}).Passed() {
+		t.Error("nil-error verify with unknown exit code must pass")
+	}
+	if (SandboxVerifyResult{ExitCode: kubejob.ExitCodeUnknown, Err: "boom"}).Passed() {
+		t.Error("unknown exit code with an error must not pass")
+	}
+	if (SandboxVerifyResult{ExitCode: kubejob.ExitCodeUnknown, TimedOut: true}).Passed() {
+		t.Error("unknown exit code after a timeout must not pass")
+	}
+	if (SandboxVerifyResult{ExitCode: 1}).Passed() {
+		t.Error("exit 1 must not pass")
 	}
 }

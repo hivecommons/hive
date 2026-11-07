@@ -13,6 +13,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	type plain Config
 	node := cloneYAMLNode(value)
 	var recycle SessionRecycleConfig
+	var cliMemory CLIMemoryConfig
 	if agents := mappingValueNode(&node, "agents"); agents != nil && agents.Kind == yaml.MappingNode {
 		for i := 0; i < len(agents.Content)-1; {
 			switch agents.Content[i].Value {
@@ -29,6 +30,11 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 					return fmt.Errorf("agents.session_recycle: %w", err)
 				}
 				agents.Content = append(agents.Content[:i], agents.Content[i+2:]...)
+			case "cli_memory":
+				if err := agents.Content[i+1].Decode(&cliMemory); err != nil {
+					return fmt.Errorf("agents.cli_memory: %w", err)
+				}
+				agents.Content = append(agents.Content[:i], agents.Content[i+2:]...)
 			default:
 				i += 2
 			}
@@ -43,6 +49,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.AgentsGitHubAPIHourlyCap = cap
 	c.AgentsGitHubAPIHourlyCapSet = capSet
 	c.AgentsSessionRecycle = recycle
+	c.AgentsCLIMemory = cliMemory
 	if governor := mappingValueNode(&node, "governor"); governor != nil {
 		if stall := mappingValueNode(governor, "merge_train_stall_warn_s"); stall != nil && stall.Tag != "!!null" {
 			c.Governor.mergeTrainStallWarnSet = true
@@ -53,7 +60,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 
 func marshalConfigYAMLWithAgentCap(c Config, out any) (any, error) {
 	explicitStallZero := c.Governor.mergeTrainStallWarnSet && c.Governor.MergeTrainStallWarnS == 0
-	if !c.AgentsGitHubAPIHourlyCapSet && c.AgentsSessionRecycle.IsZero() && !explicitStallZero {
+	if !c.AgentsGitHubAPIHourlyCapSet && c.AgentsSessionRecycle.IsZero() && c.AgentsCLIMemory.IsZero() && !explicitStallZero {
 		return out, nil
 	}
 	var node yaml.Node
@@ -92,6 +99,15 @@ func marshalConfigYAMLWithAgentCap(c Config, out any) (any, error) {
 		agents.Content = append(agents.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Value: "session_recycle"},
 			&recycleNode)
+	}
+	if !c.AgentsCLIMemory.IsZero() && agents.Kind == yaml.MappingNode {
+		var memNode yaml.Node
+		if err := memNode.Encode(c.AgentsCLIMemory); err != nil {
+			return nil, err
+		}
+		agents.Content = append(agents.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "cli_memory"},
+			&memNode)
 	}
 	return &node, nil
 }

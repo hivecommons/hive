@@ -343,6 +343,14 @@ func (h *sidecarHost) SetSandboxMutationBoundary(boundary effects.Boundary) {
 // the runtime's own process); trajectory events do not depend on it.
 func (h *sidecarHost) SetSpanStarter(crux.SpanStarter) { h.inProcessOnly("SetSpanStarter") }
 
+// SetKnowledgeAdviser is in-process-only in phase 1 of hivecommons/hive#17052:
+// the adviser searches the knowledge store that lives in the hive process.
+// A sidecar runtime runs without the mid-task advisor until a callback route
+// carries the scope → advice exchange.
+func (h *sidecarHost) SetKnowledgeAdviser(crux.KnowledgeAdviser) {
+	h.inProcessOnly("SetKnowledgeAdviser")
+}
+
 // SetInferenceRoute and ClearInferenceRoute are cruxhost.InferenceRouter:
 // the callback's end of SetInferenceCallbacks. A route that arrives before
 // boot has installed the closures is dropped and logged; the runtime's

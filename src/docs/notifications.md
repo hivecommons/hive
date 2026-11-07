@@ -697,7 +697,11 @@ issue gets the same card, written through the same single status writer
   reopened-after-merge (`issue-reopened`), a lapsed claim's stage regression
   (`stage-regressed`), the covering-PR stage note (`issue-pr-link`), the
   relay's one-line state notes — awaiting CI, parking, already fixed —
-  (`agent-note:<state>`), the decision-downgrade note left when a label
+  (`agent-note:<state>`), an agent's free-text relay comment whose only
+  marker is the identity footer's `<!-- hive:origin … -->`
+  (`agent-note:origin`, latest note; outside quiet mode these append to the
+  one `<!-- hive:origin-notes -->` comment per item instead, last 10 kept —
+  hivecommons/hive#17067), the decision-downgrade note left when a label
   change walks back an earlier maintainer decision
   (`issue-decision-downgrade`) and the blocker-settled note (`unblocked`,
   whatever `mode` says). Claim notes and the relay state notes already fold

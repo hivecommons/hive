@@ -625,9 +625,12 @@ overwritten on the next change, so do not edit these pages.
 Maps an agent name to the `layers`, `repos`, `types`, `tags` and
 `include_states` that agent's kick primer and agent-identified knowledge reads
 are restricted to. A missing agent or an empty field is unrestricted (the
-default). Unknown layer or lifecycle state names fail config load. See
+default). Listing `draft` in `include_states` additionally lets the agent's
+kicks carry the drafts it authored (`author:` frontmatter), marked `(draft)`.
+Unknown layer or lifecycle state names fail config load. See
 [Per-agent scopes](knowledge-toc.md#per-agent-scopes) for the intersection
-rules.
+rules, and [agent-knowledge-and-memory.md](agent-knowledge-and-memory.md) for
+how the scope is applied on the kick path end to end.
 
 ```yaml
 knowledge:
@@ -636,6 +639,54 @@ knowledge:
       layers: [project, org]
       repos: [hivecommons/hive]
 ```
+
+## Mid-task knowledge advisor (`knowledge.advisor`)
+
+The kick primer above runs once, when the kick is typed. The advisor
+(hivecommons/hive#17052) keeps watching after that: every poll tick it
+reads the scopes the agent's pane shows it working in — a directory prefix
+such as `src/crux/agent` from a `Read(...)`/`Edit ...` line, or a `gh pr` /
+`gh issue` / `gh run` command family — and the first time a scope appears
+that was not on screen when the kick landed, it asks the same `Primer`
+(under the same `knowledge.agent_scopes` restriction) for entries about it.
+Each hit is typed into the live session as one line, like a CI-poll nudge:
+
+```
+📚 Knowledge: Re-pin TRUSTED_SCRIPTS_TREE — Any src/scripts edit must … (full: https://…)
+```
+
+Rules, all enforced by the runtime (`crux/agent/knowledge_advisor.go`):
+
+- **Off by default.** `knowledge.advisor: true` turns it on; `knowledge.enabled`
+  must also be on. Flip it once your own hive has run it for a while.
+- **At most `knowledge.advisor_max_per_kick` lines per kick** (default 3),
+  with a two-minute cooldown between lines.
+- **Never an entry the kick already carried.** The primer records which
+  entries survived the byte cap; those are excluded, and a slug is typed at
+  most once per kick.
+- **Never into a tool call, never after the turn.** A line waits while a
+  shell command or tool is running; if the agent reaches an empty prompt
+  first, the pending advice is dropped (the next kick primes afresh). It is
+  also skipped while a human is attached to the pane and while a kick is
+  being typed.
+- **Per-agent opt-out:** `knowledge.advisor_exclude_agents: [scanner]`
+  matches an agent name or its replica family base name.
+- **Measurable.** Each delivery is recorded in the dashboard prompt history
+  with trigger `knowledge-advisor` and logged as
+  `knowledge advisor: delivered` with the agent and slug.
+
+```yaml
+knowledge:
+  enabled: true
+  advisor: true
+  advisor_max_per_kick: 3
+  advisor_exclude_agents: [scanner]
+```
+
+Phase 1 is a pure matcher with no model in the loop; the LLM-ranked variant
+(OMP's advisor agent as the model) is hivecommons/hive#17054. The advisor is
+wired only when the agent runtime runs in-process; the `crux serve` sidecar
+has no adviser in this phase.
 
 ## Open questions
 

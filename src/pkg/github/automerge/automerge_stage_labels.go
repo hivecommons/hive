@@ -52,8 +52,9 @@ type StageLabelPolicy struct {
 	// ContributorNudge turns the stage-072 nudge comment + relay interrupt
 	// on (governor.labels.stage.contributor_nudge.enabled, default true).
 	ContributorNudge bool
-	// RenudgeInterval is the delay before the single re-nudge; 0 uses the
-	// stage's dwell (the stall threshold).
+	// RenudgeInterval is the delay before the single re-nudge for a reason
+	// class that persists (auto_merge.nudge_repeat_after, default 72h);
+	// 0 never re-nudges.
 	RenudgeInterval time.Duration
 	// Adoption turns the stage-074 adoption on
 	// (governor.labels.stage.adoption.enabled, default true): a contributor
@@ -1640,7 +1641,8 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			} else if obs.Reason == stagelabels.LaneReasonHiveSignoffAttribution {
 				// A person owns the fix and nothing else will tell them:
-				// one comment per head with the exact commands.
+				// one comment per PR with the exact commands, rewritten
+				// in place on a new head (hivecommons/hive#17066).
 				n, err := c.nudgeSignoffAttribution(ctx, store, key, obs, now)
 				result.Comments += n
 				if err != nil && firstErr == nil {

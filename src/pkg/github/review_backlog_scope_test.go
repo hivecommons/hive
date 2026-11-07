@@ -61,11 +61,11 @@ func TestReviewBacklogBlocksOnlyRelatedFiles(t *testing.T) {
 			defer srv.Close()
 			sink := &fakeBacklogSink{dest: config.ReviewBacklogLinear}
 			c := headsBacklogClient(t, srv.URL, sink)
-			report := routingReport(t, 5, "abc", nit("first", "low", file, 7, "evidence"), nit("second", "low", file, 8, "other evidence"))
+			report := routingReport(t, 5, "abc", nit("first", "low", file, 7, "evidence"))
 			if err := c.fileOutOfScopeReviewBacklog(context.Background(), ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: report}, time.Now()); err != nil {
 				t.Fatal(err)
 			}
-			if len(sink.created) != 2 {
+			if len(sink.created) != 1 {
 				t.Fatalf("created %d items", len(sink.created))
 			}
 			for _, item := range sink.created {

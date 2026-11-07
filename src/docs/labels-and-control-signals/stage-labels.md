@@ -626,11 +626,14 @@ and name the rule; an open sentinel alert is named as a label a maintainer
 must clear first (projectbluefin/testsuite#1037). Only a head made solely of App-signed
 commits the hive never pushed — a person's own commit made with the App's
 identity — goes back to its author by kind under
-`hive-signoff-attribution`: `071` for a human, `072` for a clanker — never
+`hive-signoff-attribution`: `071` for a human, `072` for a contributor agent — never
 `070`, where nothing can act. The human
-gets one comment per head (`<!-- hive:signoff-attribution head=… -->`) with
+gets one comment per PR (`<!-- hive:signoff-attribution -->`) with
 the exact fix (`git commit --amend --reset-author -s && git push
 --force-with-lease`, or the `git rebase --exec` form for several commits);
+a new head rewrites that comment in place and appends an `updated …` line
+(history capped at five) instead of posting another copy
+([#17066](https://github.com/hivecommons/hive/issues/17066));
 the contributor agent's regular 072 nudge carries the same ask. An adoption cannot
 fix it by rewriting (the hive may not touch the contributor's authorship,
 and a supersede would carry the same head), and the hive's own in-place fix
@@ -808,15 +811,19 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
 [hive-merge.md](../hive-merge.md#stage-labels)):
 
 1. `stage/072-returned-to-contributor` and ONE `<!-- hive:contributor-nudge
-   head=<sha> n=<1|2> mode=<comment|queued|spawn|preempt> -->` comment
-   @-mentioning the author with the failing checks / review asks and "reply
-   here or push a new head". When the CI gate names no check (a base branch
-   with no required checks), the nudge lists the checks that are red on the
-   head instead of the gate's `check-failure` token. Re-posted only for a new head; re-nudged once
-   more after `governor.labels.stage.contributor_nudge.renudge_interval`
-   (default = the stage's 24h dwell, i.e. at `stage/stalled`), then no more
-   — **cap: 2 nudges per head**. `mode=` records how the relay side was
-   handled so the comment itself answers "did their agent get interrupted?".
+   reason=<slug> head=<sha> n=<1|2> mode=<comment|queued|spawn|preempt> -->`
+   comment per PR and reason class @-mentioning the author with the failing
+   checks / review asks and "reply here or push a new head". When the CI gate
+   names no check (a base branch with no required checks), the nudge lists
+   the checks that are red on the head instead of the gate's `check-failure`
+   token. A new head or a
+   changed reason **edits** that comment in place (no notification) rather
+   than posting another; re-nudged once more after
+   `governor.labels.stage.contributor_nudge.renudge_interval` (default =
+   `auto_merge.nudge_repeat_after`, 72h) if the same condition persists,
+   then no more — **cap: 2 nudges per PR + reason**. `mode=` records how
+   the relay side was handled so the comment itself answers "did their
+   agent get interrupted?".
    `governor.labels.stage.contributor_nudge.enabled: false` turns the
    comment and the relay task off; the stage label still moves.
 2. Relay contributors (the author has a contributor profile and a live relay

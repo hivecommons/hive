@@ -100,13 +100,13 @@ func (m *Manager) setupCodexHome(agent *AgentProcess) {
 	if readFailed {
 		// Preserve unknown existing content rather than overwrite it blindly.
 	} else if configBytes != nil || salvagedConfig != nil {
-		mergedConfig := codexConfigWithUpdateCheckDisabled(configBytes)
+		mergedConfig := codexConfigSeed(configBytes, agent.Config.CLIMemory.AutoMemoryEnabled())
 		if string(mergedConfig) != string(configBytes) || salvagedConfig != nil {
 			if err := writeFileAsUser(agentUser, configPath, mergedConfig); err != nil {
 				m.logger.Warn("failed to seed codex config", "agent", agent.Name, "dir", dir, "error", err)
 			}
 		}
-	} else if err := writeFileAsUser(agentUser, configPath, codexConfigWithUpdateCheckDisabled(nil)); err != nil {
+	} else if err := writeFileAsUser(agentUser, configPath, codexConfigSeed(nil, agent.Config.CLIMemory.AutoMemoryEnabled())); err != nil {
 		m.logger.Warn("failed to seed codex config", "agent", agent.Name, "dir", dir, "error", err)
 	}
 	// Bridge auth: symlink the per-agent auth.json to the shared login file so a

@@ -334,12 +334,33 @@ func HiveAgentDetector(filePath string) func(string) string {
 	}
 }
 
+// treeAgentDetector is HiveAgentDetector with the tree owner as the fallback
+// instead of the keyword guess: the path hint still wins when present (a
+// session started from another agent's work dir is attributed there).
+func treeAgentDetector(filePath, defaultAgent string) func(string) string {
+	return func(string) string {
+		if agent := AgentFromTmuxEnv(filePath); agent != "" {
+			return agent
+		}
+		return defaultAgent
+	}
+}
+
 // ScanClaudeSessionsWithPathDetection reads Claude Code's native session JSONL
 // files from the given projects directory (typically ~/.claude/projects),
 // using the file path to help determine which agent owns each session. It
 // scans all *.jsonl files in all subdirectories (project hashes), plus any
 // subagent files in */subagents/*.jsonl.
 func ScanClaudeSessionsWithPathDetection(projectsDir string) (*AggregateSummary, error) {
+	return ScanClaudeSessionTree(projectsDir, "")
+}
+
+// ScanClaudeSessionTree is ScanClaudeSessionsWithPathDetection for one tree
+// whose owner is already known: defaultAgent, when non-empty, is the agent
+// whose per-agent HOME holds projectsDir (hivecommons/hive#17031) and is used
+// whenever the project-directory name does not itself encode an agent work
+// dir, instead of the keyword guess from the first user message.
+func ScanClaudeSessionTree(projectsDir, defaultAgent string) (*AggregateSummary, error) {
 	agg := &AggregateSummary{
 		ByAgent:       make(map[string]int64),
 		ByModel:       make(map[string]int64),
@@ -375,6 +396,9 @@ func ScanClaudeSessionsWithPathDetection(projectsDir string) (*AggregateSummary,
 		}
 
 		detector := HiveAgentDetector(file)
+		if defaultAgent != "" {
+			detector = treeAgentDetector(file, defaultAgent)
+		}
 		summary, err := parseClaudeSessionFile(file, detector)
 		if err != nil || summary == nil || summary.TotalTokens == 0 {
 			continue

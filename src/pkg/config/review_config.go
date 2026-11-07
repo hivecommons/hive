@@ -479,6 +479,13 @@ type AutoMergeConfig struct {
 	// GitHub Actions check-runs have not registered yet. Non-positive values
 	// use DefaultAutoMergeMinHeadAge.
 	MinHeadAge time.Duration `yaml:"min_head_age,omitempty" json:"min_head_age,omitempty"`
+	// NudgeRepeatAfter is how long a contributor PR must stay red for the
+	// same reason class before the hive rewrites its one
+	// `hive:contributor-nudge` comment a second (and last) time
+	// (hivecommons/hive#17067). Default DefaultNudgeRepeatAfter (72h);
+	// governor.labels.stage.contributor_nudge.renudge_interval, when set,
+	// takes precedence for backwards compatibility.
+	NudgeRepeatAfter string `yaml:"nudge_repeat_after,omitempty" json:"nudge_repeat_after,omitempty"`
 	// RequiredChecks is the operator-declared list of status-check
 	// contexts/check-run names that the self-merge sweep's commitGreen must
 	// gate on, e.g. ["build-gate"]. This is the scope-free alternative to
@@ -642,6 +649,15 @@ func (m MergeTrainAutoMergeConfig) EffectiveMaxRebaseAttempts() int {
 		return DefaultMergeTrainMaxRebaseAttempts
 	}
 	return m.MaxRebaseAttempts
+}
+
+// DefaultNudgeRepeatAfter is auto_merge.nudge_repeat_after's default: a
+// contributor PR red for the same reason class is re-nudged once after 72h.
+const DefaultNudgeRepeatAfter = 72 * time.Hour
+
+// EffectiveNudgeRepeatAfter parses NudgeRepeatAfter (default 72h).
+func (a AutoMergeConfig) EffectiveNudgeRepeatAfter() time.Duration {
+	return parseDurationOr(a.NudgeRepeatAfter, DefaultNudgeRepeatAfter)
 }
 
 // CreditIssueAuthorsEnabled reports the auto_merge.credit_issue_authors

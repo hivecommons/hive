@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -265,7 +266,7 @@ func TestContributorLaneHeadRepoFallsBackToBase(t *testing.T) {
 // reports.
 func TestContributorLaneUnauthorizedWhenApproveForbidden(t *testing.T) {
 	wantReason := unauthorizedReasonPrefix + unauthorizedStepApproveWorkflowRuns
-	wantMarker := unauthorizedMarker("sha7", unauthorizedStepApproveWorkflowRuns)
+	wantMarker := unauthorizedMarker(unauthorizedStepApproveWorkflowRuns)
 	for _, tc := range []struct {
 		name string
 		// labelled pre-seeds hive:unauthorized and the marker comment on
@@ -288,7 +289,7 @@ func TestContributorLaneUnauthorizedWhenApproveForbidden(t *testing.T) {
 				fx.prComments = []map[string]any{{
 					"id":   5,
 					"user": map[string]string{"login": testHiveAppBotLogin},
-					"body": unauthorizedComment("sha7", unauthorizedStepApproveWorkflowRuns, unauthorizedPermissionActionsWrite, "do it"),
+					"body": unauthorizedComment("sha7", unauthorizedStepApproveWorkflowRuns, unauthorizedPermissionActionsWrite, "do it", unauthorizedAttempts{Count: 1, Heads: []string{"sha7"}}),
 				}}
 			}
 			api := newContributorLaneAPI(t, &fx)
@@ -432,19 +433,30 @@ func TestIsResourceNotAccessible(t *testing.T) {
 }
 
 func TestUnauthorizedCommentAndMarker(t *testing.T) {
-	marker := unauthorizedMarker("E3E9F5CABCDEF1234567", unauthorizedStepApproveWorkflowRuns)
-	if marker != "<!-- hive:unauthorized head=e3e9f5cabcdef1234567 step=approve-workflow-runs -->" {
+	marker := unauthorizedMarker(unauthorizedStepApproveWorkflowRuns)
+	if marker != "<!-- hive:unauthorized step=approve-workflow-runs -->" {
 		t.Fatalf("marker = %q", marker)
 	}
 	action := approveWorkflowRunsHumanAction("acme", "widget", "CI / Mutation (advisory)", []int64{40459320512, 40459320537})
-	body := unauthorizedComment("e3e9f5cabcdef1234567", unauthorizedStepApproveWorkflowRuns, unauthorizedPermissionActionsWrite, action)
-	for _, want := range []string{marker, "`actions: write`", "approve workflow runs", "e3e9f5cabcdef", "Approve and run", "40459320512, 40459320537", "CI / Mutation (advisory)", "Actions tab of acme/widget"} {
+	first := unauthorizedAttempts{Count: 1, Heads: []string{"e3e9f5cabcdef1234567"}}
+	body := unauthorizedComment("E3E9F5CABCDEF1234567", unauthorizedStepApproveWorkflowRuns, unauthorizedPermissionActionsWrite, action, first)
+	for _, want := range []string{marker, "`actions: write`", "approve workflow runs", "e3e9f5cabcdef", "Approve and run", "40459320512, 40459320537", "CI / Mutation (advisory)", "Actions tab of acme/widget", first.record()} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("comment lacks %q:\n%s", want, body)
 		}
 	}
 	if !strings.HasPrefix(body, marker+"\n") {
 		t.Fatalf("comment must start with the marker line:\n%s", body)
+	}
+	if strings.Contains(body, "Attempt ") {
+		t.Fatalf("first attempt must not count itself:\n%s", body)
+	}
+	if got := parseUnauthorizedAttempts(body); !reflect.DeepEqual(got, first) {
+		t.Fatalf("parse(first) = %+v, want %+v", got, first)
+	}
+	second := unauthorizedComment("ffff", unauthorizedStepApproveWorkflowRuns, unauthorizedPermissionActionsWrite, action, first.next("FFFF"))
+	if !strings.Contains(second, "<sub>Attempt 2: the same block hit heads `e3e9f5cabcde`, `ffff`.</sub>") || !strings.Contains(second, "for head `ffff`") {
+		t.Fatalf("second attempt:\n%s", second)
 	}
 	if got := unauthorizedReason(unauthorizedStepApproveWorkflowRuns); got != "unauthorized:approve-workflow-runs" {
 		t.Fatalf("reason = %q", got)
@@ -548,6 +560,176 @@ func TestContributorLaneApprovesHeldRunsWhenCIUnverifiedAndAllHeld(t *testing.T)
 			}
 			if fx.merges != 0 {
 				t.Fatalf("merges = %d, want 0", fx.merges)
+			}
+		})
+	}
+}
+
+func TestParseUnauthorizedAttempts(t *testing.T) {
+	step := unauthorizedStepRerunSharedCI
+	for _, tc := range []struct {
+		name  string
+		body  string
+		want  unauthorizedAttempts
+		match bool
+	}{
+		{
+			name:  "current form with record",
+			body:  unauthorizedMarker(step) + "\ntext\n" + unauthorizedAttempts{Count: 3, Heads: []string{"aaa", "bbb"}}.record() + "\n",
+			want:  unauthorizedAttempts{Count: 3, Heads: []string{"aaa", "bbb"}},
+			match: true,
+		},
+		{
+			name:  "legacy per-head marker counts as one attempt on that head",
+			body:  unauthorizedLegacyMarker("D61D907", step) + "\nThe hive's GitHub App lacks `actions: write`…",
+			want:  unauthorizedAttempts{Count: 1, Heads: []string{"d61d907"}},
+			match: true,
+		},
+		{
+			name:  "current marker without record is one unknown attempt",
+			body:  unauthorizedMarker(step) + "\ntext",
+			want:  unauthorizedAttempts{Count: 1},
+			match: true,
+		},
+		{
+			name:  "malformed count falls back to one",
+			body:  unauthorizedMarker(step) + "\n" + unauthorizedAttemptsPrefix + "x heads=aaa" + unauthorizedAttemptsSuffix,
+			want:  unauthorizedAttempts{Count: 1, Heads: []string{"aaa"}},
+			match: true,
+		},
+		{
+			name:  "other step does not match",
+			body:  unauthorizedMarker(unauthorizedStepApproveWorkflowRuns) + "\ntext",
+			want:  unauthorizedAttempts{Count: 1},
+			match: false,
+		},
+		{
+			name:  "legacy other step does not match",
+			body:  unauthorizedLegacyMarker("aaa", unauthorizedStepApproveWorkflowRuns) + "\ntext",
+			want:  unauthorizedAttempts{Count: 1, Heads: []string{"aaa"}},
+			match: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isUnauthorizedCommentFor(step)(tc.body); got != tc.match {
+				t.Fatalf("match = %v, want %v", got, tc.match)
+			}
+			if got := parseUnauthorizedAttempts(tc.body); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("parse = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUnauthorizedAttemptsNextCapsHeads(t *testing.T) {
+	a := unauthorizedAttempts{Count: 1, Heads: []string{"h1"}}
+	for i := 2; i <= 8; i++ {
+		a = a.next(fmt.Sprintf("H%d", i))
+	}
+	if a.Count != 8 || !reflect.DeepEqual(a.Heads, []string{"h4", "h5", "h6", "h7", "h8"}) {
+		t.Fatalf("after 8 attempts: %+v", a)
+	}
+	if !a.covers("H8") || a.covers("h1") {
+		t.Fatalf("covers: %+v", a)
+	}
+}
+
+// TestCommentUnauthorizedUpsertsPerStep pins hivecommons/hive#17066: the
+// hive:unauthorized note is one comment per PR and step. The same head is
+// a no-op, a new head edits the note with the attempt count, a legacy
+// per-head note is adopted rather than joined, and a different step gets
+// its own note.
+func TestCommentUnauthorizedUpsertsPerStep(t *testing.T) {
+	step := unauthorizedStepRerunSharedCI
+	for _, tc := range []struct {
+		name        string
+		existing    []map[string]any
+		heads       []string
+		wantPosts   int
+		wantEdits   int
+		wantAttempt int
+		wantLast    string
+	}{
+		{
+			name:        "same head twice posts once",
+			heads:       []string{"aaa", "aaa"},
+			wantPosts:   1,
+			wantEdits:   0,
+			wantAttempt: 1,
+		},
+		{
+			name:        "three heads post once and edit twice",
+			heads:       []string{"aaa", "bbb", "ccc"},
+			wantPosts:   1,
+			wantEdits:   2,
+			wantAttempt: 3,
+			wantLast:    "<sub>Attempt 3: the same block hit heads `aaa`, `bbb`, `ccc`.</sub>",
+		},
+		{
+			name: "legacy per-head note is adopted in place",
+			existing: []map[string]any{{
+				"id":   5,
+				"user": map[string]string{"login": testHiveAppBotLogin},
+				"body": unauthorizedLegacyMarker("aaa", step) + "\nold text",
+			}},
+			heads:       []string{"aaa", "bbb"},
+			wantPosts:   0,
+			wantEdits:   1,
+			wantAttempt: 2,
+			wantLast:    "<sub>Attempt 2: the same block hit heads `aaa`, `bbb`.</sub>",
+		},
+		{
+			name: "a stranger's marker is not edited",
+			existing: []map[string]any{{
+				"id":   5,
+				"user": map[string]string{"login": "mallory"},
+				"body": unauthorizedMarker(step) + "\nforged",
+			}},
+			heads:       []string{"aaa"},
+			wantPosts:   1,
+			wantEdits:   0,
+			wantAttempt: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.prComments = tc.existing
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			clock := &contributorLaneClock{at: time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)}
+			engine := newContributorLaneEngine(api.URL, defaultContributorLanePolicy(), clock, Options{})
+			for _, head := range tc.heads {
+				if err := engine.commentUnauthorized(context.Background(), "acme", "widget", 7, head, step, unauthorizedPermissionActionsWrite, "do it"); err != nil {
+					t.Fatalf("head %s: %v", head, err)
+				}
+			}
+			if fx.comments != tc.wantPosts || len(fx.commentEdits) != tc.wantEdits {
+				t.Fatalf("posts = %d edits = %d, want %d/%d\nedits: %q", fx.comments, len(fx.commentEdits), tc.wantPosts, tc.wantEdits, fx.commentEdits)
+			}
+			var notes []string
+			for _, c := range fx.prComments {
+				if body, _ := c["body"].(string); isUnauthorizedCommentFor(step)(body) && c["user"].(map[string]string)["login"] == testHiveAppBotLogin {
+					notes = append(notes, body)
+				}
+			}
+			if len(notes) != 1 {
+				t.Fatalf("own notes for step = %d, want 1: %q", len(notes), notes)
+			}
+			if got := parseUnauthorizedAttempts(notes[0]); got.Count != tc.wantAttempt {
+				t.Fatalf("attempts = %+v, want count %d", got, tc.wantAttempt)
+			}
+			if tc.wantLast != "" && !strings.Contains(notes[0], tc.wantLast) {
+				t.Fatalf("note lacks %q:\n%s", tc.wantLast, notes[0])
+			}
+			if !strings.HasPrefix(notes[0], unauthorizedMarker(step)+"\n") {
+				t.Fatalf("note not under the current marker:\n%s", notes[0])
+			}
+			// A different step is its own note.
+			if err := engine.commentUnauthorized(context.Background(), "acme", "widget", 7, "aaa", unauthorizedStepApproveWorkflowRuns, unauthorizedPermissionActionsWrite, "click"); err != nil {
+				t.Fatal(err)
+			}
+			if fx.comments != tc.wantPosts+1 {
+				t.Fatalf("other step did not post its own note: posts = %d", fx.comments)
 			}
 		})
 	}

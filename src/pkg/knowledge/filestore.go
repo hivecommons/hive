@@ -58,11 +58,13 @@ type filePage struct {
 	Path       string
 	ModTime    time.Time
 	Embedding  []float64
+	Scope      *FactScope
 
 	// Lifecycle frontmatter (#11102); see resolveLifecycleState for defaults.
 	State        LifecycleState
 	Supersedes   string
 	SupersededBy string
+	Author       string
 }
 
 // NewFileStore creates a store that indexes markdown files under rootDir.
@@ -211,6 +213,10 @@ func (s *FileStore) reindex() {
 		page.State = parsed.state
 		page.Supersedes = parsed.supersedes
 		page.SupersededBy = parsed.supersededBy
+		if !parsed.scope.IsZero() {
+			page.Scope = parsed.scope
+		}
+		page.Author = parsed.author
 		pages[slug] = page
 
 		return nil
@@ -543,6 +549,8 @@ type parsedObsidianFile struct {
 	state        LifecycleState
 	supersedes   string
 	supersededBy string
+	scope        *FactScope
+	author       string
 }
 
 var wikilinkRe = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
@@ -573,8 +581,33 @@ func parseObsidianFileDetailed(content string, fallbackTitle string) parsedObsid
 			frontmatter := content[4 : 4+endIdx]
 			parsed.body = strings.TrimSpace(content[4+endIdx+4:])
 
+			// The parser is line-oriented and trims indentation, so a nested
+			// `scope:` block is recognised by state: once "scope:" is seen, the
+			// keys paths/labels/lanes belong to it until the next unrelated key.
+			inScope := false
 			for _, line := range strings.Split(frontmatter, "\n") {
 				line = strings.TrimSpace(line)
+				if line == "scope:" {
+					inScope = true
+					if parsed.scope == nil {
+						parsed.scope = &FactScope{}
+					}
+					continue
+				}
+				if inScope {
+					if consumed := parsed.scope.setFromLine(line); consumed {
+						continue
+					}
+					if strings.HasPrefix(line, "- ") || line == "" {
+						// Block-list items are not supported inside scope:
+						// (documented); skip them rather than let them leak
+						// into tags.
+						continue
+					}
+					if strings.Contains(line, ":") {
+						inScope = false
+					}
+				}
 				if strings.HasPrefix(line, "title:") {
 					parsed.title = strings.TrimSpace(strings.TrimPrefix(line, "title:"))
 					parsed.title = strings.Trim(parsed.title, "\"'")
@@ -596,6 +629,10 @@ func parseObsidianFileDetailed(content string, fallbackTitle string) parsedObsid
 				}
 				if strings.HasPrefix(line, "superseded_by:") {
 					parsed.supersededBy = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "superseded_by:")), "\"'")
+				}
+				if strings.HasPrefix(line, "author:") || strings.HasPrefix(line, "owner:") {
+					_, value, _ := strings.Cut(line, ":")
+					parsed.author = strings.Trim(strings.TrimSpace(value), "\"'")
 				}
 				if strings.HasPrefix(line, "source:") {
 					parsed.source = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "source:")), "\"'")
@@ -691,8 +728,10 @@ func (p filePage) effectiveLayer() LayerType {
 // applyLifecycle copies the page's lifecycle and TOC metadata onto f, defaulting
 // legacy pages without a recorded state to approved.
 func (p filePage) applyLifecycle(f *Fact) {
+	f.Scope = p.Scope
 	f.Supersedes = p.Supersedes
 	f.SupersededBy = p.SupersededBy
+	f.Author = p.Author
 	f.State = resolveLifecycleState(p.State, p.Status, p.SupersededBy)
 	f.Updated = p.ModTime
 	f.BodySize = len(p.Body)

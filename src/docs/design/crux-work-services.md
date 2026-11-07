@@ -1,8 +1,7 @@
 # Crux work services: S1 pinned checkout (hivecommons/crux#114)
 
 Status: **S0 caller principals and S1 pinned checkout shipped in hive
-`src/crux` (v5).** S2 contained run and S7 minimum are in flight in a
-sibling change; everything else in the RFC is unscheduled. This records
+`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; everything else in the RFC is unscheduled. This records
 S1 *as implemented*, including where it is weaker than the RFC text.
 
 The RFC asks for "a working copy of this repo at this commit, owned by
@@ -143,11 +142,17 @@ a `.jsonl` index.
 - TTL sweeper (recorded, not enforced).
 - `--filter=blob:limit=` partial clones; the cap is post-hoc only.
 - A per-owner allowlist; one list per server.
-- Wiring `InUse` to live runs: that is S2's side of the seam.
+- Wiring `InUse` to live runs: that is S2's side of the seam; the S2 commit (#17014) did not wire it, so it remains an open follow-up.
 - `ssh://` and `http://` repositories; `git@` syntax.
 - Anything about the hivecommons/crux repository or the publish path:
   the service lives in hive `src/crux` and ships through the existing
   mirror unchanged.
+
+## Deferred runs routes
+
+The runs routes (`POST /v1/runs`, `GET /v1/runs/{id}`,
+`POST /v1/runs/{id}/cancel`) shipped in #17014. Restart and listing routes
+for runs are deferred and not scheduled.
 
 ## Package map
 

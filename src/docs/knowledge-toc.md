@@ -79,6 +79,15 @@ only when the agent scope lists that state (or leaves `include_states` empty)
 too. An agent scope therefore never admits a state the operator did not ask
 for.
 
+The kick primer makes one exception for an agent's own drafts (#17076). When
+an agent scope lists `draft` (or `all`) explicitly, a kick for that agent also
+carries draft entries whose `author:` (alias `owner:`) frontmatter matches the
+agent name, its base agent (for replicas) or an owner login from
+`dashboard.authorized_users`; they are rendered with a `(draft)` marker.
+Drafts by other authors, and drafts without an author, remain excluded, and an
+empty `include_states` does not opt in. TOC and entry reads are unaffected —
+they keep the intersection rule above.
+
 Config load rejects unknown layer names (`personal`, `project`, `org`,
 `community`) and unknown state names (`draft`, `approved`, `deprecated`,
 `superseded`, `all`). The scopes can also be read and replaced with
@@ -107,6 +116,44 @@ only unless `include_states` is set), and returns:
 
 The dashboard Knowledge section has an **Effective knowledge** panel with an
 agent picker that renders both lists and each exclusion reason.
+
+### Entry scope (`scope:` frontmatter)
+
+`knowledge.agent_scopes` says what an *agent* may see. An entry can also say
+where *it* applies, with a `scope:` block in its frontmatter
+(hivecommons/hive#17045):
+
+```yaml
+---
+title: Editing src/scripts/ requires re-pinning TRUSTED_SCRIPTS_TREE
+type: gotcha
+layer: project
+scope:
+  paths: [src/scripts/**, .github/scripts/integration-governance.cjs]
+  labels: [area/ci]
+  lanes: []
+---
+```
+
+- `paths` are repo-relative globs (`**` matches any number of segments),
+  `labels` are issue labels and `lanes` are base agent names; `labels` and
+  `lanes` compare case-insensitively. Inline lists only — the frontmatter
+  parser is line-oriented and block lists (`- item`) inside `scope:` are
+  skipped.
+- An entry **without** `scope:` behaves as before: keyword relevance plus the
+  agent's `knowledge.agent_scopes`.
+- An entry **with** `scope:` is surfaced in a kick only when at least one
+  declared dimension matches the kick — its lane, a label on one of the primed
+  issues, or a file path the caller knows. Dimensions are OR-ed; a dimension the
+  kick cannot evaluate (file paths are not known on the kick path) simply does
+  not match. Related facts pulled in by graph expansion are gated the same way.
+- The primer reports how many relevant entries the kick context excluded in the
+  `knowledge primed` log line (`scoped_out`) and in `PrimedKnowledge.ScopedOut`.
+
+The full read (`GET /api/knowledge/entry/{id}`) returns the entry's `scope`
+inside `fact`, so an operator can see why an entry does or does not reach a
+kick. The agent-level filter (`agent_scopes`) applies first; the entry's own
+scope can only narrow further.
 
 ### Prompt-size caps
 

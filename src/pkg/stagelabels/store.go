@@ -83,6 +83,15 @@ type Record struct {
 	// NudgeOnline records whether the author's relay was online at the first
 	// nudge for NudgeHead (selects the online vs offline grace).
 	NudgeOnline bool `json:"nudge_online,omitempty"`
+	// NudgeReason, NudgeReasonCount and NudgeReasonAt are the per-reason
+	// nudge ledger (hivecommons/hive#17067): the reason class the one
+	// nudge comment on the PR currently explains, how many nudges that
+	// class has had (cap 2, counted across heads) and when the last one
+	// went out. A new head red for the same class rewrites the comment
+	// without counting; a new class restarts the count.
+	NudgeReason      string    `json:"nudge_reason,omitempty"`
+	NudgeReasonCount int       `json:"nudge_reason_count,omitempty"`
+	NudgeReasonAt    time.Time `json:"nudge_reason_at,omitempty"`
 	// AdoptedHead / AdoptedBy / AdoptedAt record the stage-074 adoption: the
 	// contributor head the hive adopted, the superseding App PR's number
 	// (0 while the attempt is recorded but no PR exists) and when. One
@@ -1478,8 +1487,57 @@ func (s *Store) WithdrawNudge(key, head string) {
 	}
 	r.NudgeHead, r.NudgeCount, r.NudgeOnline = "", 0, false
 	r.LastNudgeAt, r.FirstNudgeAt = time.Time{}, time.Time{}
+	// The reason class goes too, so a head still red once the incident
+	// closes is owed a fresh first nudge rather than a capped repeat.
+	r.NudgeReason, r.NudgeReasonCount, r.NudgeReasonAt = "", 0, time.Time{}
 	s.items[key] = r
 	s.dirty = true
+}
+
+// MarkNudgedReason records that nudge number n for reason class reason was
+// posted (or the one nudge comment rewritten) at now. A different class
+// restarts the count at n; the same class keeps the larger of n and the
+// recorded count so a head-only rewrite (n == 0) never resets it.
+func (s *Store) MarkNudgedReason(key, reason string, n int, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	reason = NudgeReasonSlug(reason)
+	if r.NudgeReason != reason {
+		r.NudgeReason = reason
+		r.NudgeReasonCount = 0
+	}
+	if n > r.NudgeReasonCount {
+		r.NudgeReasonCount = n
+		r.NudgeReasonAt = now
+	}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// NudgeReasonSlug is the marker-safe reason class a contributor nudge is
+// keyed by: MentionCauseClass (so every red check is one "check-failing"
+// ask), lower-cased, with anything outside [a-z0-9._-] folded to '-';
+// an empty reason is "unknown".
+func NudgeReasonSlug(reason string) string {
+	class := strings.ToLower(MentionCauseClass(reason))
+	var b strings.Builder
+	for _, r := range class {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		return "unknown"
+	}
+	return slug
 }
 
 // Adoption modes (Record.AdoptMode).

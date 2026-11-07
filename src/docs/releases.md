@@ -1,53 +1,60 @@
 # Tagged releases
 
-Hive ships continuously — every merge to a release line (`v5` today) publishes moving image tags
+Hive ships continuously — every merge to a release line (`v5` and `v6` today) publishes moving image tags
 (`<branch>-latest`, the three channels, an immutable short-SHA tag; see
 [release channels](release-channels.md)) with no human step. This page covers
 the second, **additive** layer on top of that: immutable, semver-tagged
 releases (`v1.2.3`) with a git tag and a GitHub Release, cut automatically —
 no human ever pushes a tag or clicks "Draft a release" in the normal path.
 
-## Release lines and the v5 semver policy
+## Release lines and the per-line semver policy
 
-Hive has two active release lines, `v4` and `v5`, plus the `v6` development
-line. Since 2026-09-21 (#7721) **`v5` is the stable line** and **`v4` is the
-feature-frozen maintenance line**; each cuts its own semver tags:
+Hive has three release lines, `v4`, `v5` and `v6` — the `release_lines` list
+in `.github/release-lines.yml` is the single source of truth, and is also the
+run-time allow-list `tagged-release.yml` consults before serving a branch
+(#9154). Since 2026-09-21 (#7721) **`v5` is the stable line** and **`v4` is
+the feature-frozen maintenance line**; since 2026-11-07 **`v6` is a release
+line too** (it was the #7563 development line before that). Each cuts its own
+semver tags:
 
-- **`v5` cuts `v5.x.y` tags.** `tagged-release.yml` serves the release line
-  it was started from — `github.ref_name`, which is the default branch (`v5`)
-  for its `workflow_run` and `schedule` triggers — in its concurrency group
-  (`tagged-release-v5`), release PR base, and `docker.yml` dispatch, and
-  refuses at its first `decide` step unless that branch is under
-  `release_lines` in `.github/release-lines.yml` (#9154).
-  `derive-release-version.sh` bases the next
-  number on the line's own latest `v5.*` tag only, and the **first** tag on a
-  line is always `vN.0.0` regardless of the inferred bump — the human chose
-  the major when they cut the line. A `v4.*` tag never seeds a `v5` number,
-  and vice versa. The workflow names the line explicitly (`RELEASE_LINE`, set
-  from `github.ref_name`) because its checkout is a detached SHA; without that
-  variable on a detached checkout the script **refuses** to run rather than
-  falling back to the global latest tag — the fall-through that minted a
-  stray `v4.73.3` from `v5` on 2026-09-21 (deleted; see #7721).
+- **Every line cuts `vN.x.y` tags from its own branch.** `tagged-release.yml`
+  serves the branch it was started from (`RELEASE_LINE: ${{ github.ref_name }}`
+  — the default branch for `workflow_run`/`schedule`, the chosen ref for
+  `workflow_dispatch`) and refuses unless that branch is under
+  `release_lines`. `derive-release-version.sh` bases the next number on the
+  line's own latest `vN.*` tag only, and the **first** tag on a line is
+  always `vN.0.0` regardless of the inferred bump — the human chose the major
+  when they cut the line, so `v6`'s first release is `v6.0.0`. A `v4.*` tag
+  never seeds a `v5` number, and vice versa. The line is passed explicitly
+  because the checkout is a detached SHA; without that variable on a detached
+  checkout the script **refuses** to run rather than falling back to the
+  global latest tag — the fall-through that minted a stray `v4.73.3` from
+  `v5` on 2026-09-21 (deleted; see #7721).
+- **`v5` cuts `v5.x.y` tags** and, as the default branch, is the only line
+  that receives `workflow_run` and `schedule` events directly.
+- **`v6` cuts `v6.x.y` tags.** GitHub delivers `workflow_run` only to the
+  default branch's copy of the workflow, so the `v5` copy carries a `relay`
+  job: when `docker.yml` completes a push build on another declared release
+  line, it dispatches `tagged-release.yml --ref <line>`, and that line's own
+  copy takes the backstop path (resolve the tip, require published images,
+  derive, release) under its own `tagged-release-<line>` concurrency group.
+  The hourly schedule backstop stays default-branch only; a `v6` build that
+  was cancelled is picked up by its next completed build or by a manual
+  `gh workflow run tagged-release.yml --ref v6`.
 - **`v4` cuts `v4.x.y` tags** for the security and critical fixes it still
-  accepts under the freeze (#6346). Its copy of `tagged-release.yml` stays
+  accepts under the freeze (#6346). Its copy of `tagged-release.yml` is
   pinned to `v4` and labels its release PR `v4-freeze-exempt` so the required
   `freeze-gate` check lets the automated release commit land.
-- **`v6` publishes continuous images only** (`v6-latest`, short-SHA, `edge`);
-  no `v6.x` tag exists until that line is cut as a release line. It is not
-  under `release_lines` yet, so a `tagged-release.yml` or `promote-stable.yml`
-  dispatch from `v6` fails its release-line check instead of releasing or
-  promoting `v5`. The GA cut — `release_lines`, `docker.yml` channel rows on
-  `v5` and `v6` together, the default branch, and these docs — is the
-  checklist in [release-line-guard.md](release-line-guard.md#cutting-a-new-release-line);
-  after it, the same workflow files mint `v6.0.0` with no edit.
-- Channels are independent of tags: `stable`/`candidate`/`latest` follow v5
-  (`stable` by digest via `promote-stable.yml`), `edge` follows v6. See
-  [release-channels.md](release-channels.md) and the
-  [digest-verifiable rollback](release-rollback.md) runbook.
+- Channels are independent of tags and did **not** move with the `v6` cut:
+  `stable`/`candidate`/`latest` follow v5 (`stable` by digest via
+  `promote-stable.yml`, which only ever runs from the default branch), `edge`
+  and `v6-latest` follow v6, and a `v6.x.y` tag is an additional immutable
+  retag of the same digest. See [release-channels.md](release-channels.md)
+  and the [digest-verifiable rollback](release-rollback.md) runbook.
 
-The rest of this page describes the path as it runs on `v5`, the line it
-serves today; the `v4` copy differs only in the branch name and the exempt
-label.
+The rest of this page describes the path as it runs on `v5`; the `v6` copy is
+the same file reached through the relay, and the `v4` copy differs only in
+the branch name and the exempt label.
 
 ## What triggers a release
 
@@ -59,18 +66,36 @@ to create one. It never runs for `v2`, `mk`, `dd`, or a manual
 
 It also runs **hourly on a schedule**, as a backstop (#5318). The
 `workflow_run` trigger alone can silently lose a release opportunity: a
-`docker.yml` run that is *cancelled* never fires `workflow_run` at all, and a
-run that fires but finds `v5` already advanced stands down in favour of a
-successor that may itself stand down. Standing down is correct — the run's
-images were built from the older tree, so tagging would name content those
-images do not contain — but nothing used to come back for the abandoned work.
-The scheduled pass evaluates `v5`'s **current** tip, whose images have long
-since been published, so it retags an existing digest exactly as the normal
-path does. It refuses to act unless `docker.yml` has a *successful, completed*
-push run for that tip, so a cancelled or in-flight build never produces a tag
-with no digest behind it, and it is a no-op whenever `## Unreleased` is empty
-— which on a healthy repository is almost always. Deferrals are logged as
-warnings so a skipped opportunity is visible rather than silent.
+`docker.yml` run that is *cancelled* never fires `workflow_run` at all, and
+GitHub's concurrency queue holds at most one pending run per group, so on a
+busy branch most commits never complete a build. The scheduled pass walks
+`v5`'s recent history from the tip and considers the **newest commit that has
+a successful, completed publishing `docker.yml` run** — not necessarily the
+tip itself, which on a busy branch is rarely built yet. It retags that
+commit's existing digests exactly as the normal path does, so a cancelled or
+in-flight build never produces a tag with no digest behind it; if nothing
+recent is built it stands down green and dispatches `docker.yml` for the tip.
+It is a no-op whenever `## Unreleased` is empty — which on a healthy
+repository is almost always.
+
+**The tag names the commit the images were built from, not `v5`'s tip.** The
+release commit (compiled `CHANGELOG.md` plus the fragment deletions) is
+parented on the exact SHA `docker.yml` built, the `v<version>` tag points at
+that release commit, and the immutable image tags are retags of that SHA's
+digests. The release commit reaches `v5` through a merge-commit PR that is
+allowed to land on a tip that has moved on — the merge commit is not tagged,
+so commits that arrived after the built SHA are "after `v<version>`" in git
+exactly as they are in image terms. Until 2026-11 the workflow instead
+*deferred* whenever `v5` had advanced past the built SHA, expecting the
+successor run to release; with merges arriving faster than a multi-arch build
+no run ever saw an unmoved tip, every successor deferred again, and `v5` went
+from `v5.186.4` (2026-10-18) to ~1,700 untagged commits before the rule was
+changed. The two remaining deferrals — logged as warnings so a skipped
+opportunity is visible — are the cases where tagging the built SHA really
+would be wrong: the built SHA is no longer an ancestor of `v5`'s tip, or a
+release already landed *after* it (the newest `v5.*` tag is not an ancestor
+of the built SHA, so its fragments are already released and the derived
+version would collide).
 
 Before anything is decided, `src/scripts/compile-changelog.sh` folds any
 [`changelog.d/`](../../changelog.d/README.md) fragment files — the per-PR
@@ -179,7 +204,7 @@ errors loudly) rather than a silent pick — remove all but one.
 | `stable` | `promote-stable.yml`, digest promotion of the newest `v5` build that crossed the 24-hour line after the [stable soak gate](stable-soak-policy.md), while the hub stable auto-promotion toggle is playing | Yes — moving pointer |
 | `<branch>-latest` (`v4-latest`, `v5-latest`, `v6-latest`) | `docker.yml`, every merge to that branch | Yes — moving pointers |
 | `<7-hex-sha>` | `docker.yml`, every successful build | No — immutable, but not a *release* |
-| `v1.2.3` | `tagged-release.yml`, only when a release is cut | No — immutable, and **is** the release |
+| `v5.x.y`, `v6.x.y` | `tagged-release.yml` on that line, only when a release is cut | No — immutable, and **is** the release |
 
 `tagged-release.yml` never writes `stable`/`candidate`/`edge`. Channel promotion is a
 separate, deliberate policy described in
@@ -256,9 +281,14 @@ Concretely, per release:
    on that exact SHA. It then mirrors the verified result as a SHA-scoped
    `gate: success` commit status so a release PR can see it.
 6. The workflow opens a PR from the scratch branch into `v5` and merges it
-   through the SHA-keyed merge API, leaving branch protection fully enforced.
-   It deletes the scratch branch, then creates and pushes the `v<version>` tag
-   on the commit that landed on `v5`.
+   through the SHA-keyed merge API as a merge commit, leaving branch
+   protection fully enforced (a direct fast-forward push is tried first when
+   `v5` is still at the built SHA). If `v5` has moved on meanwhile the merge
+   is simply retried — the base having moved is not a reason to defer. It
+   deletes the scratch branch, then creates and pushes the `v<version>` tag
+   on the **release commit itself** (the built SHA plus the changelog), never
+   on the merge commit, so the tag's tree is exactly what the retagged images
+   were built from.
 7. A GitHub Release is created from the tag, with GitHub's auto-generated
    notes plus an SBOM callout, and the three SBOM files from step 4a attached
    as release assets.
@@ -510,7 +540,7 @@ three SBOM files, using the same `gh release create` asset-upload call.
   released tip (the hourly #5318 backstop), **step 5 emptied `Unreleased`**,
   so `derive-release-version.sh` returns `release=false`. It never chases
   its own tail — belt and suspenders.
-- `concurrency: { group: tagged-release-<line>, cancel-in-progress: false }`
+- `concurrency: { group: tagged-release-v5, cancel-in-progress: false }`
   serializes overlapping runs so two merges landing close together queue
   rather than race two tags for two different commits.
 - A re-run after a partial failure (for example, the images got retagged but
@@ -539,12 +569,15 @@ semver. `docker.yml`'s image-build jobs check out with `fetch-depth: 0` and
 with no ldflag at all (a bare local `go build`) still falls back to
 `0.0.0-dev`, never an empty string.
 
-For semver releases, `tagged-release.yml` dispatches `docker.yml` with both the
-exact merged release SHA and the exact tag (`VERSION=v5.x.y`). That keeps the
-retag model — the release job still tags and publishes the digest built for the
-merge commit — while making the binary self-report the release it is published
-as instead of the previous nearest tag. Branch and manual non-release builds
-leave `VERSION` empty and keep using `git describe`.
+For semver releases, `tagged-release.yml` dispatches `docker.yml` with the
+exact merged release SHA, and — only when `v5` was still at the built SHA, so
+the merge adds nothing but the changelog — the exact tag (`VERSION=v5.x.y`).
+That keeps the retag model while making the binary self-report the release it
+is published as instead of the previous nearest tag. When the release landed
+as a merge commit onto a tip that had moved on, the merge commit also carries
+newer work, so `VERSION` is left empty and `git describe` reports
+`v5.x.y-N-gSHA`, which is accurate. Branch and manual non-release builds leave
+`VERSION` empty likewise.
 
 ## What still blocks cutting a real release
 

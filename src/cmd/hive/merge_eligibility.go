@@ -130,7 +130,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			Dwell:                     stage.DwellOverrides(),
 			StalledRequireQuiet:       stage.Stalled.IsRequireQuiet(),
 			ContributorNudge:          stage.ContributorNudge.IsEnabled(),
-			RenudgeInterval:           stage.ContributorNudge.EffectiveRenudgeInterval(),
+			RenudgeInterval:           nudgeRepeatAfter(cfg),
 			Adoption:                  stage.Adoption.IsEnabled(),
 			GraceOnline:               stage.EffectiveContributorGraceOnline(),
 			GraceOffline:              stage.EffectiveContributorGraceOffline(),
@@ -1623,4 +1623,15 @@ func normalizedAutoMergeLabel(label string) string {
 		return label
 	}
 	return github.AutoMergeQueuedLabel
+}
+
+// nudgeRepeatAfter is the delay before the one contributor re-nudge:
+// governor.labels.stage.contributor_nudge.renudge_interval when set,
+// otherwise auto_merge.nudge_repeat_after (default 72h,
+// hivecommons/hive#17067).
+func nudgeRepeatAfter(cfg *config.Config) time.Duration {
+	if d := cfg.Governor.Labels.Stage.ContributorNudge.EffectiveRenudgeInterval(); d > 0 {
+		return d
+	}
+	return cfg.AutoMerge.EffectiveNudgeRepeatAfter()
 }

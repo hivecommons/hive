@@ -1,0 +1,382 @@
+# Draining CLI auto-memory into draft knowledge (#17033)
+
+Status: **design only.** Nothing described here is implemented yet. The three
+open questions in #17033 are decided below; the work is cut into three
+implementation children, listed in [Implementation plan](#implementation-plan).
+
+All citations are against `origin/v5` at `7a929356`. The CLI-memory isolation
+and disable work this design builds on (#17031, #17032) is in open PRs
+[#17039](https://github.com/hivecommons/hive/pull/17039) and
+[#17040](https://github.com/hivecommons/hive/pull/17040). Their symbols are
+named below without line numbers because they are not on `v5` yet.
+
+## The problem: a hidden, per-agent store
+
+Every coding CLI Hive drives keeps its own persistent memory across sessions:
+
+| CLI | Store | Written by |
+|---|---|---|
+| Claude Code | `~/.claude/projects/<project>/memory/MEMORY.md` plus sibling topic files | auto memory |
+| Codex | `$CODEX_HOME/memories`, `$CODEX_HOME/memories_v2` | the memories feature |
+| Gemini CLI | `~/.gemini/GEMINI.md` (the `save_memory` tool appends to it) | the model |
+| Copilot CLI | none on disk — Copilot Memory is stored on GitHub | — |
+
+Hive does not see what is in those stores. A one-off inference written on
+Tuesday comes back on every later session, it is not scoped, nobody reviews
+it, and until #17039 lands it is shared across agents: v5 bridges `~/.claude`,
+`~/.gemini` and `~/.codex` whole into the shared home
+(`src/crux/agent/interactive_home.go:68-71`).
+
+From the 2026-11-05 community meeting, quoted in #17033:
+
+> the CLIs' built-in memory "creates its own hidden bead storage … like 60% of
+> these should have been beads … is there a create-memory hook where instead
+> we could overload that for our CLIs and make it inject a bead instead? I
+> pulled them down locally, created them as beads, and turned that feature off
+> on the CLI."
+
+#17040 does the "turned that feature off" half. With `agents.cli_memory` it
+seeds each CLI's documented disable (`autoMemoryEnabled: false` for Claude
+Code, `[features] memories = false` for Codex). With `clear_on_kick` it wipes
+the agent's own store before each kick (`clearCLIMemoryLocked`, called from
+`deliverKickLocked`). This design does the "created them as beads" half: what
+a CLI writes to its memory store becomes a reviewable, scoped,
+lifecycle-managed knowledge entry instead of being lost or kept hidden.
+
+## The destination already exists
+
+Nothing new is needed on the read side.
+
+- **Lifecycle states.** Every fact is `draft`, `approved`, `deprecated` or
+  `superseded` (`src/pkg/knowledge/lifecycle.go:16-21`). Only `approved`
+  passes `lifecycleAllowed` unless a caller opts other states in
+  (`src/pkg/knowledge/lifecycle.go:88-98`). The kick primer filters with
+  `FilterByLifecycle` (`src/pkg/knowledge/primer.go:144`). See
+  [Knowledge lifecycle states](../knowledge-lifecycle.md).
+- **Per-agent scope.** `knowledge.agent_scopes`
+  (`src/pkg/config/knowledge_config.go:43-46`) binds an agent to layers,
+  repos, types, tags and admitted states. It is resolved for the kick primer in
+  `primeKnowledge` (`src/pkg/scheduler/kick_priming.go:256-305`). See
+  [Scoped knowledge table of contents](../knowledge-toc.md).
+- **A write path.** `POST /api/knowledge/create`
+  (`src/pkg/dashboard/api.go:389`, handler at
+  `src/pkg/dashboard/api_knowledge.go:577-610`) creates a fact from a
+  `CreateFactRequest` (`src/pkg/knowledge/api.go:293-300`) and audits it as
+  `knowledge_create_fact`. `bd kb` already talks to the dashboard API rather
+  than the local bead store ([Beads CLI](../beads-cli.md)).
+- **State changes and review.** `PUT /api/knowledge/entry/{id}/state` and
+  `hivectl knowledge state` move a local-channel fact between states with an
+  audit entry. `UpdateFactRequest` (`src/pkg/knowledge/api.go:335-344`)
+  already carries `tags` and `state`.
+- **The curator.** `knowledge.curator` (`KnowledgeCurator`,
+  `src/pkg/config/knowledge_config.go:269-289`) drives
+  `Promoter.AutoPromoteCandidates` (`src/pkg/knowledge/promote.go:127`) on a
+  schedule through `PromotionScheduler`
+  (`src/pkg/knowledge/curator_schedule.go:31`). It is opt-in and off by
+  default. See [Knowledge promotion configuration](../knowledge-curator.md).
+
+Two gaps on the write side remain, and phase 1 closes them:
+
+1. `bd create` has no `knowledge` type (`src/docs/beads-cli.md:11` lists the
+   types), and there is no `bd` verb that creates a fact.
+2. `CreateFactRequest` has no `state` field, so there is no way to create a
+   fact as `draft`. A fact with no `state:` frontmatter loads as `approved`, so
+   a drained entry written through today's create path would reach primers
+   immediately. That is the reason the field is required, not a nicety.
+
+What is missing is the **drain**: a step that moves what is in each store into
+`draft` facts, then empties the store.
+
+## Bead shape
+
+Each memory entry becomes one knowledge fact, created through the same verb
+the hook and the manager both use:
+
+```bash
+bd create --type knowledge --state draft \
+  --tag auto-memory --tag agent:<name> --tag cli:<claude|codex|gemini> \
+  --tag memhash:<16 hex> \
+  --title "<first line of the entry, ≤ 80 chars>" --body-file <entry>
+```
+
+- `bd create --type knowledge` is routed to `POST /api/knowledge/create` (as
+  `bd kb` is), not to the local bead store. That keeps facts in one place: the
+  vault the curator, the TOC and `hivectl knowledge state` already work on.
+- **Layer:** `project`, in the local vault channel, so the existing
+  `hivectl knowledge state` path (local channels only) can approve or discard
+  it. Type defaults to `pattern`, the existing create default.
+- **State:** always `draft`. The create path rejects `--tag auto-memory`
+  with any other state, so a caller cannot create an approved entry directly.
+- **Tags:** an allow-list, set only by the drain code and never parsed out of
+  the entry: `auto-memory`, `agent:<name>`, `cli:<backend>`, `memhash:<hex>`.
+  `<name>` must match the agent-name grammar and `<backend>` is one of the
+  three CLIs. Anything else is refused.
+- **Entry splitting.** Claude Code: one entry per topic file in the memory
+  directory, plus one per top-level bullet or `##` section of `MEMORY.md`
+  (the index lines that only link to a topic file are dropped). Gemini: one
+  entry per bullet under the `## Gemini Added Memories` heading of
+  `GEMINI.md`; the rest of the file is operator context and is never touched.
+  Codex: one entry per file under `memories/` and `memories_v2/` (the on-disk
+  format is not a stable contract, so files are taken whole).
+- **Content hash.** `memhash` is the first 16 hex characters of the SHA-256
+  of the normalised entry: LF line endings, trailing whitespace stripped,
+  runs of blank lines collapsed. The hash is over the body only, never the
+  title or the agent.
+- **Size cap.** An entry over 8 KiB is stored truncated with a visible
+  `[truncated by drain]` marker. The hash covers the full normalised entry.
+
+### Truncating the store
+
+The store is emptied only after every entry from that file has either created
+a fact or matched an existing one (see dedup below). Claude topic files are
+removed and `MEMORY.md` is truncated to zero bytes. The Gemini memories section
+is removed and the rest of `GEMINI.md` is kept. Codex files are removed.
+
+A file whose drain fails part-way is left untouched and retried on the next
+drain. That is safe because dedup makes the drain idempotent.
+
+Reads and the truncate follow the same rules as #17040's
+`cliMemoryStores`. Only stores private to the agent are drained; every path
+component is checked with `Lstat`, so a planted symlink is never followed. The
+truncate and remove run as the agent through the same `su-exec` path as
+`cliMemoryRemover`. A store that is still shared (a legacy whole-directory
+bridge, a UID 0 agent, `HIVE_SHARED_AGENT_HOME=1`) is **not** drained. It
+cannot be attributed to one agent, and truncating it would wipe other agents'
+memory. It is logged once per agent, exactly like `clear_on_kick`, and is left
+to the one-shot legacy migration in phase 3.
+
+## The drain, per CLI
+
+The drain logic lives in one Go package inside the Crux module
+(`src/crux/agent/memdrain`, beside `cli_memory.go`). It does not live in
+`src/pkg`: the agent manager that calls it is in `src/crux`, and the Crux
+outbound ratchet (`src/internal/testutil/crux_outbound_ratchet_test.go`)
+forbids new imports from Crux into `src/pkg`. The package talks to the
+knowledge store only over the dashboard API, the same way `bd` does, so it
+needs no `pkg/knowledge` import. A thin `hive memory-drain` subcommand wraps
+it for the Claude hook.
+
+### Claude Code: a `SessionEnd` hook
+
+Claude Code has a hook surface
+([hooks reference](https://code.claude.com/docs/en/hooks)), so its drain runs
+inside the session's own lifecycle rather than waiting for the next kick:
+
+- **`SessionEnd`** runs `hive memory-drain --cli claude --agent "$HIVE_AGENT"`
+  over `$HOME/.claude/projects/*/memory/`. The hook gets the session `cwd` on
+  stdin, which narrows the drain to that project's directory.
+- **`PostToolUse`** on `Write|Edit|MultiEdit` is optional and off by default.
+  Its command exits at once unless the tool's `file_path` is under
+  `~/.claude/projects/*/memory/`, so the cost on every other write is one
+  process spawn and a path compare. It exists for long-lived sessions that
+  rarely end. `SessionEnd` alone is the floor.
+- **Seeding.** The hooks are merged into the settings Hive already seeds. For
+  interactive agents that is `sharedClaudeSettingsFile`
+  (`src/crux/agent/claude_remote_control.go:44-46`), which #17039 keeps as a
+  per-agent bridge to one fleet file. For inference agents it is the two files
+  `ensureClaudeSettings` writes (`src/crux/agent/manager_homes.go:624`). The
+  merge goes through `seedJSONFile` (`src/crux/agent/manager_homes.go:582`),
+  so an operator's own `hooks` entries are kept and Hive adds its entry only
+  when it is absent. The command reads the agent from `HIVE_AGENT`, so one
+  fleet-wide entry serves every agent.
+- **Backstop.** A session killed hard does not run `SessionEnd`, so the
+  manager also drains Claude stores at kick time (below). Dedup makes the
+  double coverage free.
+
+### Codex, Gemini CLI: manager-side, at kick time
+
+Neither CLI documents a hook that fires on a memory write. The manager drains
+their stores itself at the same point #17040 clears them: inside
+`deliverKickLocked` (`src/crux/agent/manager_kick.go:242`), after
+`rotateKickLogOnKickLocked` (`src/crux/agent/manager_kick.go:271`) and
+**before** `clearCLIMemoryLocked`.
+
+- **Codex:** `$CODEX_HOME/memories` and `$CODEX_HOME/memories_v2`, the paths
+  `cliMemoryStores` already resolves for `codexBackend`.
+- **Gemini CLI:** the `## Gemini Added Memories` section of
+  `$HOME/.gemini/GEMINI.md`, the file `cliMemoryStores` already resolves.
+- **Claude Code:** the hook backstop described above, over the same
+  `projects/*/memory` paths.
+- **Copilot CLI:** nothing to drain. Copilot Memory is stored on GitHub, not on
+  disk, as #17040 records. `~/.copilot/session-state` holds transcripts, not
+  memory, and is out of scope. If Copilot CLI ships a local memory store, it
+  joins the table above.
+
+Ordering with `clear_on_kick`: drain first, then clear. If the drain fails
+(dashboard unreachable, knowledge disabled), the files are **moved** into a
+Hive-owned spool (`/data/knowledge/auto-memory-spool/<agent>/`) instead of
+being left in place. The clear still runs, so the kick still starts clean, and
+the next drain retries the spool first. Neither the drain nor the spool ever
+blocks a kick. Both are best-effort and logged, like `clearCLIMemoryLocked`.
+
+### Configuration
+
+One new key next to #17040's block, off by default:
+
+```yaml
+agents:
+  cli_memory:
+    auto_memory: false     # #17040
+    clear_on_kick: true    # #17040
+    drain: false           # this design: drain stores into draft knowledge
+    drain_on_write: false  # Claude PostToolUse hook (needs drain: true)
+```
+
+`drain` is useful mainly to operators who turn `auto_memory` back on, and to
+the one-shot migration of stores written before #17040. It needs
+`knowledge.enabled`. With knowledge off, the drain logs once and does nothing,
+and the store is left alone (or cleared, if `clear_on_kick` says so).
+
+## Decisions on the open questions
+
+#17033 left three questions open. They are decided here. The maintainer can
+override any of them on #17033 or on the phase that implements it.
+
+### 1. Dedup and merge across agents
+
+**Decision taken by hive:** dedup on the content hash at create time. Before
+creating, the drain looks up `memhash:<hex>` across **every** lifecycle state.
+
+- No match: create a new `draft`.
+- Match: no new fact is created. If the match lacks this agent's
+  `agent:<name>` tag, the drain adds it through `UpdateFactRequest.Tags`. A
+  second agent reaching the same inference becomes a second tag on the one
+  fact, not a second fact.
+- Match in `deprecated` or `superseded`: the tag is still added, but the state
+  is **not** reset. A discarded memory that a CLI writes again stays discarded.
+  Otherwise the drain would undo the reviewer's work every session.
+
+Semantic merge (two differently-worded entries that say the same thing) is
+**not** done by the drain. That is the reviewer's call, made with the existing
+`superseded_by` link.
+
+**Rationale.** An exact hash is deterministic, cheap and cannot merge two
+different claims by mistake. Hive's knowledge design already prefers
+deterministic steps over using one model to verify another
+([knowledge system](knowledge-system.md#context)). The `agent:` tag count is
+also a useful review signal: an entry three agents wrote on their own is worth
+reading first.
+
+### 2. The curator or a bespoke hook
+
+**Decision taken by hive:** the drain is a thin **ingest** step, a hook for
+Claude Code and the manager for the rest. It only ever creates `draft` facts
+and adds tags. The existing `knowledge.curator` remains the **sole promoter**;
+no second curator is built. Approval of a drained draft goes through the paths
+that already exist: `hivectl knowledge state <id> approved`,
+`PUT /api/knowledge/entry/{id}/state`, or the dashboard knowledge view.
+
+**Rationale.** The curator answers *what is worth promoting*; the drain only
+answers *where this text goes*. Running ingest through the curator would tie
+memory capture to `knowledge.curator.enabled`, which is off by default. It
+would also run on the curator's schedule rather than at session end, and would
+mix untrusted input into the only component allowed to raise trust. A
+second promoter would split review across two places. So the drain is
+ingest-only and the curator stays the only path to `approved`. `knowledge.curator`
+today only promotes facts between layers. Phase 3 makes sure it never selects
+an `auto-memory` draft.
+
+### 3. Prompt-injection posture
+
+**Decision taken by hive:** drained text is **untrusted, agent-written
+content**.
+
+- The body is stored verbatim as the fact body. It is never interpreted, so
+  nothing in it can set the title's provenance, the tags, the state, the layer
+  or the type. Frontmatter-looking lines in the body are escaped so they
+  cannot become frontmatter.
+- Tags come only from the allow-list above and are set by the drain code,
+  never parsed from the entry.
+- No `auto-memory` fact is rendered into any kick, primer, TOC entry an agent
+  reads, or public MCP response while it is `draft`. This holds even for an
+  agent whose `knowledge.agent_scopes` entry admits `draft` through
+  `include_states`. Phase 3 adds that hard exclusion to the primer and the
+  agent-identified TOC/entry reads. A human, or the curator's approval path,
+  must move the fact to `approved` first. Operator reads (`GET /api/knowledge`,
+  the dashboard) still show drafts so they can be reviewed.
+- The drain never runs the content and never follows links in it.
+
+**Rationale.** A memory file is written by a model that may have read
+attacker-controlled text (an issue body, a PR comment, a fetched page). If the
+drain auto-primed that text, a single poisoned session would become an
+instruction delivered to every later kick, across agents. That is worse than
+the per-agent store it replaces. Keeping it `draft` and unread until a reviewer
+approves it is the scoping asked for in #17033: "I don't want a developer agent
+working another ticket to pull that information in yet."
+
+## Relation to the knowledge-system design
+
+This resolves open question 5 of [knowledge-system.md](knowledge-system.md)
+("should `~/.claude/projects/*/memory/` be migrated into the wiki?"). The
+answer is yes: as `draft` knowledge facts, through the drain, after which the
+memory file is emptied. The destination is the project layer's local vault
+rather than a separate personal wiki, so the existing review and scope tooling
+applies.
+
+## Implementation plan
+
+Each phase is one child issue of #17033. Phases 2 and 3 are blocked by phase 1.
+Phase 1 depends on #17040 (it reuses `cliMemoryStores` and runs beside
+`clearCLIMemoryLocked`). Attribution to one agent depends on #17039 (per-agent
+CLI homes).
+
+### Phase 1 — drain library and manager-side drain (Codex, Gemini, Claude backstop)
+
+Child: #17056.
+
+- `CreateFactRequest` gains `state` (`draft` or `approved`, default unchanged).
+  `POST /api/knowledge/create` refuses `auto-memory`-tagged requests that are
+  not `draft`, and refuses tags outside the allow-list on those requests.
+- `bd create --type knowledge [--state] [--tag]…` routes to that endpoint.
+  Documented in [Beads CLI](../beads-cli.md).
+- `src/crux/agent/memdrain`: read a private store, split, normalise, hash, look
+  up `memhash` across all states, create the draft or add the `agent:` tag,
+  truncate after success, spool on failure.
+- `agents.cli_memory.drain` config key with the settings-parity entry.
+- Manager drain in `deliverKickLocked` before `clearCLIMemoryLocked`, for
+  Codex, Gemini and (as backstop) Claude Code stores.
+- Tests: splitting per CLI, hash stability, dedup-adds-tag, a discarded fact is
+  not revived, partial failure leaves the file, symlinked or shared stores are
+  skipped, spool and retry, kick never blocked.
+
+### Phase 2 — Claude Code `SessionEnd` and `PostToolUse` hooks
+
+Child: #17057.
+
+- `hive memory-drain` subcommand wrapping the phase-1 library (reads hook JSON
+  on stdin, `HIVE_AGENT` from the environment).
+- Seed `hooks.SessionEnd` (and `hooks.PostToolUse`, matcher
+  `Write|Edit|MultiEdit`, when `drain_on_write` is on) into the Hive-seeded
+  Claude settings through `seedJSONFile`, merge-only, and remove Hive's own
+  entry when `drain` is turned off.
+- Tests: seed and merge keep operator hooks, the hook exits fast on writes
+  outside the memory directory, end-to-end hook → draft fact → empty
+  `MEMORY.md`.
+
+### Phase 3 — review flow, draft exclusion, legacy migration, operator docs
+
+Child: #17058.
+
+- Hard-exclude `auto-memory` facts in `draft` from the kick primer,
+  agent-identified TOC and entry reads, and the public MCP, even when
+  `include_states` admits `draft`. Make sure `Promoter.AutoPromoteCandidates`
+  never selects them.
+- A dashboard knowledge filter for `auto-memory` drafts that shows the
+  `agent:` tags and approve and discard actions (backed by the existing state
+  API).
+- `hivectl knowledge drain-memory --legacy`: a one-shot, operator-run drain of
+  the shared `/data/home/.claude/projects/*/memory` store that #17039 leaves
+  behind. Tagged `agent:shared`, never truncated without `--truncate`.
+- Operator docs: an `agents.cli_memory.drain` section in the operator
+  reference, an "Auto-memory drafts" section in
+  [Knowledge lifecycle states](../knowledge-lifecycle.md), and the status line
+  in [the design index](README.md) moved to partly shipped or shipped.
+
+## References
+
+- #17033 — this design's issue.
+- #17031 / [#17039](https://github.com/hivecommons/hive/pull/17039) — per-agent CLI homes.
+- #17032 / [#17040](https://github.com/hivecommons/hive/pull/17040) — `agents.cli_memory`: disable auto-memory, clear on kick.
+- #11102 — knowledge lifecycle states.
+- [Knowledge system design](knowledge-system.md), [knowledge lifecycle](../knowledge-lifecycle.md),
+  [scoped knowledge TOC](../knowledge-toc.md), [knowledge curator](../knowledge-curator.md).

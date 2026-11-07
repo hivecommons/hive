@@ -169,6 +169,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Custom dashboard stylesheets](custom-stylesheets.md) — operator-supplied CSS for the dashboard and public snapshot.
 - [Branding a hive](branding.md) — persistent per-deployment name, mark, and colours via `<data>/branding/branding.json` and `custom.css` (`HIVE_BRANDING_JSON`/`HIVE_BRANDING_CSS`); distinct from the per-request `?style=` stylesheets above.
 - [Portable AgentDefinition format](../AGENT-DEFINITION.md) — standalone YAML schema for importing/exporting agent definitions.
+- [How Hive injects knowledge and memory into agents](agent-knowledge-and-memory.md) — the three context layers (Hive knowledge primer, CLI conversation, CLI persistent memory), the kick-primer path and its scoping/caps, why repo `AGENTS.md` is injected rather than read natively, which per-agent home directories are fleet-shared, and what survives a kick, `/clear`, pod restart or a new agent.
 - [Knowledge connectors](knowledge-connectors.md) — **Owner configuration:** connect, validate, and sync external document/wiki sources; includes scope and API reference.
 - [Knowledge curator](knowledge-curator.md) — configure fact extraction, sources, vaults, document imports, code maps, and retention.
 - [Knowledge confidence scoring](knowledge-confidence.md) — interpret confidence badges and score explanations.
