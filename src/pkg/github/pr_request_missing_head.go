@@ -2,9 +2,12 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
@@ -36,8 +39,8 @@ func (e *errMissingHead) Error() string {
 			e.repo, e.head)
 	}
 	return fmt.Sprintf(
-		"branch %q was never pushed to %s — the commits exist only in the agent's working copy. This is almost always a PUSH AUTHENTICATION failure, not a branch-creation problem: check (1) that the git credential helper is reachable from the agent's UID (`su -s /bin/sh hive-<agent> -c 'git config --get-regexp credential'` must list /usr/local/bin/git-credential-hive.sh; it is wired system-wide in /etc/gitconfig because agents do not share the dev user's $HOME — see hivecommons/hive#5343), and (2) that the agent's scoped token file ($HIVE_AGENT_TOKEN_CACHE) exists and is readable by that UID. Re-push the branch and this request succeeds on retry",
-		e.head, e.repo)
+		"branch %q is not on %s — the commits exist only in the agent's working copy, or were pushed under another name or to another remote. Check, in order: (1) the push's own outcome (hive-push-branch writes <request>.result.json under %s; a direct `git push` prints it in the agent's pane), (2) that the git credential helper is reachable from the agent's UID (`su -s /bin/sh hive-<agent> -c 'git config --get-regexp credential'` must list /usr/local/bin/git-credential-hive.sh; it is wired system-wide in /etc/gitconfig because agents do not share the dev user's $HOME — see hivecommons/hive#5343), and (3) that the agent's scoped token file ($HIVE_AGENT_TOKEN_CACHE) exists and is readable by that UID. Push the branch and this request succeeds on retry",
+		e.head, e.repo, PushBranchRequestDir)
 }
 
 // missingHeadReason renders an errMissingHead for the operator-facing surfaces
@@ -48,6 +51,74 @@ func missingHeadReason(err error) (string, bool) {
 		return "", false
 	}
 	return missing.Error(), true
+}
+
+// missingHeadRemoteRef names exactly what the watcher asked GitHub for when it
+// concluded the head is absent: the ref, on the repository, as the App sees it.
+// The agent may have pushed somewhere else (a fork, a differently named
+// branch); naming the ref checked lets an operator compare it with the push.
+func missingHeadRemoteRef(repo, head string) string {
+	return "refs/heads/" + strings.TrimPrefix(strings.TrimSpace(head), "refs/heads/") + " on github.com/" + strings.TrimSpace(repo)
+}
+
+// pushRelayOutcomeNone is the push outcome reported when the push relay
+// (hive-push-branch, PushBranchRequestDir) has no record of the branch: the
+// agent either ran `git push` itself — whose result the hive never saw — or
+// never pushed at all.
+const pushRelayOutcomeNone = "no push-relay record for this branch: the agent pushed directly (result not visible to the hive) or did not push"
+
+// pushRelayOutcome reports what the hive's own push relay saw for branch, so
+// the missing-head report states the push outcome rather than asserting one
+// (#16969 reported "the agent's push did not authenticate" for a branch that
+// arrived hours later). It reads only the relay's drop box: a queued request
+// still waiting for its tick, or the newest result file naming the branch.
+func pushRelayOutcome(dir, branch string) string {
+	branch = strings.TrimPrefix(strings.TrimSpace(branch), "refs/heads/")
+	if branch == "" {
+		return pushRelayOutcomeNone
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return pushRelayOutcomeNone
+	}
+	var (
+		queued  bool
+		newest  PushBranchResponse
+		haveRes bool
+	)
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		data, _, err := readUntrustedFile(filepath.Join(dir, name), requestMaxBytes)
+		if err != nil {
+			continue
+		}
+		if strings.HasSuffix(name, ".result.json") {
+			var res PushBranchResponse
+			if json.Unmarshal(data, &res) != nil || res.Branch != branch {
+				continue
+			}
+			if !haveRes || res.At > newest.At {
+				newest, haveRes = res, true
+			}
+			continue
+		}
+		var req PushBranchRequest
+		if json.Unmarshal(data, &req) == nil && strings.TrimPrefix(req.Branch, "refs/heads/") == branch {
+			queued = true
+		}
+	}
+	switch {
+	case queued:
+		return "push-relay request for this branch is still queued (not yet pushed)"
+	case haveRes && newest.OK:
+		return fmt.Sprintf("push-relay pushed %s as %s at %s", branch, newest.SHA, newest.At)
+	case haveRes:
+		return fmt.Sprintf("push-relay FAILED after %d attempt(s) at %s: %s", newest.Attempts, newest.At, newest.Error)
+	}
+	return pushRelayOutcomeNone
 }
 
 // diagnoseCompareFailure turns a base...head comparison failure into an
