@@ -42,6 +42,7 @@ A PR that edits anything under `src/scripts/` must re-pin …
 | `state` | Lifecycle (`approved`, `draft`, `deprecated`, `superseded`); only `approved` is primed by default. See [knowledge-lifecycle.md](knowledge-lifecycle.md). |
 | `tags` | Inline list. Always include `repo:<org>/<name>` — that is how `knowledge.agent_scopes.repos` recognises the entry's repository. |
 | `source` | Where the fact came from, so a reader can trace a moved `AGENTS.md` line to exactly one entry. |
+| `author` | Who wrote the entry — an agent name (`developer`) or a login (alias `owner`). A `draft` reaches a kick only for the agent that matches this and has opted into drafts; see [knowledge-toc.md](knowledge-toc.md#per-agent-scopes). |
 | `scope` | **Where the fact applies.** `paths` are repo-relative globs (`**` supported), `labels` are issue labels, `lanes` are base agent/lane names. An empty list means "no constraint on that dimension". |
 
 Rules of thumb:

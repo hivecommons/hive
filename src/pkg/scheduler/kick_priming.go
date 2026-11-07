@@ -306,6 +306,9 @@ func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue)
 	var scope *knowledge.TOCScope
 	if sc, ok := cfg.KnowledgeAgentScope(agentName); ok {
 		agentScope := knowledge.AgentScope(sc.Layers, sc.Repos, sc.Types, sc.Tags, sc.IncludeStates)
+		if knowledge.ListsDraft(sc.IncludeStates) {
+			agentScope.DraftAuthors = kickDraftAuthors(cfg, agentName)
+		}
 		scope = &agentScope
 	}
 	primed := primer.PrimeForKick(context.Background(), scope, kickContextFor(cfg, agentName, issues[:limit]), keywords)
@@ -336,6 +339,39 @@ func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue)
 			"omitted_bytes", omitted.Bytes, "cap_bytes", primed.MaxBytes)
 	}
 	return inj
+}
+
+// kickDraftAuthors lists the identities whose draft knowledge a kick for
+// agentName may carry once that agent's agent_scopes entry opts into drafts
+// (#17076): the agent itself, its base agent for a replica, and the hive's
+// owner logins, so an operator's hand-written draft reaches the agents they
+// opted in. Owner entries are stored as "alice" or "github:alice"; the
+// provider prefix is dropped so either form matches an author: line.
+func kickDraftAuthors(cfg *config.Config, agentName string) []string {
+	var out []string
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		for _, have := range out {
+			if strings.EqualFold(have, name) {
+				return
+			}
+		}
+		out = append(out, name)
+	}
+	add(agentName)
+	if cfg != nil {
+		add(cfg.BaseAgentName(agentName))
+		for _, login := range cfg.Dashboard.OwnerLogins() {
+			if _, bare, ok := strings.Cut(login, ":"); ok {
+				login = bare
+			}
+			add(login)
+		}
+	}
+	return out
 }
 
 // logKnowledgeInjection emits the one knowledge line per kick (#17049):

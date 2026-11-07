@@ -77,6 +77,15 @@ only when the agent scope lists that state (or leaves `include_states` empty)
 too. An agent scope therefore never admits a state the operator did not ask
 for.
 
+The kick primer makes one exception for an agent's own drafts (#17076). When
+an agent scope lists `draft` (or `all`) explicitly, a kick for that agent also
+carries draft entries whose `author:` (alias `owner:`) frontmatter matches the
+agent name, its base agent (for replicas) or an owner login from
+`dashboard.authorized_users`; they are rendered with a `(draft)` marker.
+Drafts by other authors, and drafts without an author, remain excluded, and an
+empty `include_states` does not opt in. TOC and entry reads are unaffected —
+they keep the intersection rule above.
+
 Config load rejects unknown layer names (`personal`, `project`, `org`,
 `community`) and unknown state names (`draft`, `approved`, `deprecated`,
 `superseded`, `all`). The scopes can also be read and replaced with

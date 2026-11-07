@@ -69,11 +69,18 @@ them through a git source, connector or code map
   `Primer.PrimeScoped` *after* the lifecycle filter and can only narrow; graph
   expansion never pulls in an out-of-scope fact. A replica inherits its base
   agent's entry (`Config.KnowledgeAgentScope`). No entry means unrestricted.
-- *By lifecycle:* kicks carry **approved facts only**. The kick primer is built
-  with no `IncludeStates` (`newKnowledgePrimer` in `src/cmd/hive/main.go`), so
-  `draft`, `deprecated` and `superseded` never reach a kick; `agent_scopes.
-  include_states` only widens API/TOC reads that already asked for those
-  states ([knowledge-lifecycle.md](knowledge-lifecycle.md)).
+- *By lifecycle:* kicks carry **approved facts only** by default. The kick
+  primer is built with no `IncludeStates` (`newKnowledgePrimer` in
+  `src/cmd/hive/main.go`), so `deprecated` and `superseded` never reach a kick
+  and `agent_scopes.include_states` only widens API/TOC reads that already
+  asked for those states ([knowledge-lifecycle.md](knowledge-lifecycle.md)).
+  The one kick-path exception is an agent's **own drafts** (#17076): when the
+  agent's `agent_scopes` entry lists `draft` (or `all`) in `include_states`,
+  drafts whose `author:` (or `owner:`) frontmatter is that agent, its base
+  agent or one of the hive's owner logins are primed too, each marked
+  `(draft)` in the kick (`kickDraftAuthors` in `kick_priming.go`,
+  `TOCScope.DraftAuthors`). Drafts by anyone else, and drafts with no author,
+  are still excluded.
 
 **Size caps** (all drop whole units, never clip, and leave a visible marker):
 
