@@ -529,6 +529,8 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `HIVE_COMMONS_STRATEGY` | No | `ranked` | Multi-hive routing strategy for The Commons. `ranked` keeps strict rank order and falls through only when a hive has no work; `spread` does rank-weighted rotation with periodic mixing; `neediest` scores subscribed hubs by `actionable_items` plus idle contributor capacity from `/api/contribute/status`. Read between tasks only. |
 | `HIVE_COMMONS_SPREAD_MIX_EVERY` | No | `7` | In `spread`, choose randomly from the weighted rank cycle every N completed/failed tasks. `0` disables random mixing. |
 | `HIVE_COMMONS_NEEDIEST_REFRESH_MS` | No | `60000` | In `neediest`, milliseconds between `/api/contribute/status` refreshes per subscribed hub. `0` disables the interval. |
+| `HIVE_MAX_PARALLEL_FIXES` | No | `1` (clamped to 0–16) | Maximum fix-pr sessions beside the interactive pane; `0` disables parallel fixes and forces preempt mode. The launcher environment takes precedence over `~/.config/hive/contributor.env`; restart the relay after changing it. |
+| `HIVE_FIX_PR_TIMEOUT_MS` | No | `7200000` (2h) | Milliseconds before a headless fix-pr child is killed and the task reported failed. Same precedence and file as `HIVE_MAX_PARALLEL_FIXES`. |
 | `AGENT_BACKEND` | No | `claude` | Contributor/agent CLI backend selector. |
 | `AGENT_MODEL` | No | backend default, or `GOOSE_MODEL` for Goose fallback | Contributor/agent model override. |
 | `HIVE_MLX_PYTHON` | For optional MLX when `python3` is not its native environment | `python3` | Native Apple Silicon Python 3.10+ virtualenv executable containing MLX/MLX-LM; metadata-only preflight never initializes the GPU. [MLX setup](contributor-relay.md#apple-mlx-local-inference). |

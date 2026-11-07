@@ -139,27 +139,14 @@ func redPRFixOwner(agent string) string {
 	return review.DefaultFixerAgent
 }
 
-// dependencyBots are forge bots whose PRs are dependency bumps, not hive fix
-// attempts. They carry the "[bot]" suffix that otherwise marks a PR as
-// agent-authored, but nothing in the hive opened them and no hive agent is
-// iterating on them, so a red one is not a fix loop to break: escalating it
-// only pages a human with "1 distinct fix attempts" about a crate bump that
-// renovate will rebase on its own. Mirrors the hub's default contribute
-// deny-authors list (config: hub.contribute_deny_authors). A bot PR that only a
-// person can unstick (a conflict the bot will not rebase, required CI that
-// stays red, a held or never-started required check) is handed to a person by
-// runDependencyBotConflictSweep (dependency_bot_conflicts.go), not the fix loop.
-var dependencyBots = map[string]bool{
-	"renovate[bot]":    true,
-	"dependabot[bot]":  true,
-	"mergeraptor[bot]": true,
-}
-
 // isHiveAgentAuthor reports whether a PR author is one of OUR agents — the
 // configured ai_author, the App bot identity agents author as, or another
-// bot account — excluding the dependency bots above. Shared by every fix-loop
-// path (staleness clock, reaper, escalation sweep) so they classify PRs
-// identically.
+// bot account — excluding the dependency bots (github.IsDependencyBotAuthor):
+// nothing in the hive opened those and no hive agent iterates on them, so a
+// red one is not a fix loop to break — escalating it only pages a human with
+// "1 distinct fix attempts" about a crate bump the bot rebases on its own.
+// Shared by every fix-loop path (staleness clock, reaper, escalation sweep)
+// so they classify PRs identically.
 func isHiveAgentAuthor(cfg *config.Config, author string) bool {
 	if author == "" {
 		return false
@@ -170,7 +157,7 @@ func isHiveAgentAuthor(cfg *config.Config, author string) bool {
 	if eff := cfg.EffectiveAIAuthor(); eff != "" && author == eff {
 		return true
 	}
-	return strings.HasSuffix(author, "[bot]") && !dependencyBots[author]
+	return strings.HasSuffix(author, "[bot]") && !github.IsDependencyBotAuthor(author)
 }
 
 // isIndependentCIControl reports whether a PR supplies human-authored evidence
@@ -2061,7 +2048,13 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	// governor.labels.stage policy as the PR one, read live.
 	client.SetIssueStageLabels(func() github.IssueStagePolicy {
 		p := stageLabelPolicyFunc(cfg)()
-		return github.IssueStagePolicy{Enabled: p.Enabled, Dwell: p.Dwell}
+		// The agent names scope the lapsed claimed-by sweep to this hive's
+		// own `hive/claimed-by-<agent>` labels.
+		agents := make([]string, 0, len(cfg.Agents))
+		for name := range cfg.Agents {
+			agents = append(agents, name)
+		}
+		return github.IssueStagePolicy{Enabled: p.Enabled, Dwell: p.Dwell, AgentNames: agents}
 	})
 	client.SetReviewCadenceLimits(
 		func() bool { return cfg.Review.CombinedPerspectives },

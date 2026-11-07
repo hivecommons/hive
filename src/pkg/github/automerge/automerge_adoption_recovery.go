@@ -218,6 +218,14 @@ func (c *Engine) recoverStaleRedAdoption(ctx context.Context, store *stagelabels
 	}
 	behind := cmp.GetBehindBy()
 	if behind > 0 {
+		if hgithub.DependencyBotBranch(obs.HeadRef, obs.Author) {
+			// The bot rebases its own branch; a hive merge commit would stop
+			// it doing so for good (projectbluefin/utah#1097).
+			out := adoptionRecoverySkipped("dependency-bot-branch")
+			c.info("adopted PR recovery", logArgs("reason", out.Reason, "base_sha", baseSHA, "behind_by", behind, "head_ref", obs.HeadRef, "author", obs.Author)...)
+			store.MarkAdoptionRecovery(key, obs.HeadSHA, baseSHA)
+			return out
+		}
 		if c.requireCurrentBaseFor(obs.Owner + "/" + obs.Repo) {
 			// Existing recovery evidence already proved that the new base
 			// clears this failure. This admits repair, never a merge: the

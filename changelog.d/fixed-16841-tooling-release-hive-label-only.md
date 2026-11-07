@@ -1,0 +1,1 @@
+- A tooling-failure blocked verdict now releases the `blocked` label only when the hive applied it; a human-applied `blocked` label is left in place ([#16841](https://github.com/hivecommons/hive/issues/16841)).

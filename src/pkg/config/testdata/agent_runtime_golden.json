@@ -150,6 +150,7 @@
     "pr_follow_up": {}
   },
   "Governor": {
+    "ci": {},
     "Modes": {
       "busy": {
         "Threshold": 16,

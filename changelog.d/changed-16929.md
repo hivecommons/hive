@@ -1,0 +1,1 @@
+- Dashboard: repository org-qualification in `buildReposWithForge` is now expressed once instead of in two duplicated blocks (#16929).

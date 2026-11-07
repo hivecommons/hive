@@ -98,7 +98,7 @@ func (s *Server) recordMergedSnapshots(snaps []github.WebhookItemSnapshot) {
 	if s == nil || len(snaps) == 0 {
 		return
 	}
-	now := time.Now()
+	now := mergedLedgerNow()
 	qualify := s.mergedRepoQualifier()
 	for _, snap := range snaps {
 		if !snap.IsPR || !snap.Merged || snap.Number <= 0 || snap.Repo == "" {

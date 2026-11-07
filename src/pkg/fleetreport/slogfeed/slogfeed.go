@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -254,15 +254,18 @@ func automergeMergeGuardSkip(r slog.Record) bool {
 	return reason == "base-refresh:merge-guard" && strings.Contains(err, "destination merge already in progress")
 }
 
-// failClosedStatus500 reports whether r is one of the two gates that fail
-// closed when GitHub answers the combined-status read with a 500: the
-// merge-eligible lane gate and the trusted-author automerge sweep skip. The PR
-// is retried next tick, so the transient 5xx is expected behaviour
-// (hivecommons/hive#15785, #15786). A 500 elsewhere stays reportable.
+// failClosedStatus500 reports whether r is one of the callers that fail closed
+// when GitHub answers the combined-status read with a 500: the merge-eligible
+// lane gate, the trusted-author and contributor-lane automerge sweep skips and
+// the stage-label check digest. The PR is retried next tick, so the transient
+// 5xx is expected behaviour (hivecommons/hive#15785, #15786, #16778, #16779).
+// A 500 elsewhere stays reportable.
 func failClosedStatus500(r slog.Record) bool {
 	switch strings.TrimSpace(r.Message) {
 	case "merge-eligible lane gate could not evaluate PR; leaving it listed",
-		"trusted-author automerge sweep skipped PR":
+		"trusted-author automerge sweep skipped PR",
+		"contributor-lane automerge sweep skipped PR",
+		"stage labels: check digest failed":
 	default:
 		return false
 	}
@@ -271,6 +274,29 @@ func failClosedStatus500(r slog.Record) bool {
 		if a.Key == "error" {
 			e := a.Value.String() + " "
 			match = strings.Contains(e, "/status") && strings.Contains(e, ": 500 ")
+			return false
+		}
+		return true
+	})
+	return match
+}
+
+// reviewRetryServerError reports whether r is the review-request watcher's
+// "review failed, will retry with backoff" warning caused by a GitHub 5xx on
+// the review POST. The retry with backoff is the designed behaviour and the
+// request is quarantined with an Error at the horizon, so a transient upstream
+// 5xx on the write is not a hive defect (hivecommons/hive#16844). 4xx and
+// non-5xx errors, and the quarantine Error, stay reportable.
+func reviewRetryServerError(r slog.Record) bool {
+	if strings.TrimSpace(r.Message) != "review-request watcher: review failed, will retry with backoff" {
+		return false
+	}
+	match := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" {
+			e := a.Value.String() + " "
+			match = (strings.Contains(e, "/reviews") || strings.Contains(e, "/pulls/")) &&
+				(strings.Contains(e, ": 500 ") || fleetreport.IsGitHubUpstreamUnavailable(e))
 			return false
 		}
 		return true
