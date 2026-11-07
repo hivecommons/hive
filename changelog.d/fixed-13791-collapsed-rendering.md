@@ -1,1 +1,0 @@
-- Collapsed dashboard sections skip rendering hidden content while preserving visible summaries, expand animations, and sparkline replay ([#13791](https://github.com/hivecommons/hive/issues/13791)).

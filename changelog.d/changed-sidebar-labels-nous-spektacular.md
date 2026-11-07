@@ -1,1 +1,0 @@
-- The dashboard sidebar now reads "Experiment Lab (nous)" and "Inception (spektacular)" so the engine behind each section is visible from the left menu; the section card titles follow the same wording.

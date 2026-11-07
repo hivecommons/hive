@@ -1,1 +1,0 @@
-- `crux/lanes` configuration validation now names the failing field and its allowed range, and duration fields accept strings such as `"30s"` or `"5m"` in addition to integer nanoseconds (#16387).

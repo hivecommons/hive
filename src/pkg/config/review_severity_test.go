@@ -24,6 +24,12 @@ func TestReviewSeverityBacklogDefaults(t *testing.T) {
 	if got := rc.Backlog.EffectiveMaxPerPRPerDay(); got != 10 {
 		t.Fatalf("max_per_pr_per_day default = %d", got)
 	}
+	if got := rc.Backlog.EffectiveMaxPerPR(); got != DefaultReviewBacklogMaxPerPR {
+		t.Fatalf("max_per_pr default = %d, want %d", got, DefaultReviewBacklogMaxPerPR)
+	}
+	if got := rc.Backlog.EffectiveMinSeverity(); got != "P2" {
+		t.Fatalf("min_severity default = %q, want P2", got)
+	}
 	if err := rc.Severity.Validate(); err != nil {
 		t.Fatalf("zero severity must validate: %v", err)
 	}
@@ -58,6 +64,11 @@ func TestReviewSeverityBacklogValidate(t *testing.T) {
 		{name: "unknown destination", backlog: ReviewBacklogConfig{Destination: "trello"}, wantErr: "review.backlog.destination"},
 		{name: "blank label", backlog: ReviewBacklogConfig{Labels: []string{"from-review", " "}}, wantErr: "review.backlog.labels[1]"},
 		{name: "negative cap", backlog: ReviewBacklogConfig{MaxPerPRPerDay: -1}, wantErr: "review.backlog.max_per_pr_per_day"},
+		{name: "negative lifetime cap", backlog: ReviewBacklogConfig{MaxPerPR: -1}, wantErr: "review.backlog.max_per_pr"},
+		{name: "min severity lower-case", backlog: ReviewBacklogConfig{MinSeverity: " p3 "}},
+		{name: "min severity P0", backlog: ReviewBacklogConfig{MinSeverity: "P0"}},
+		{name: "min severity P4", backlog: ReviewBacklogConfig{MinSeverity: "P4"}, wantErr: "review.backlog.min_severity"},
+		{name: "min severity word", backlog: ReviewBacklogConfig{MinSeverity: "low"}, wantErr: "review.backlog.min_severity"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,6 +84,31 @@ func TestReviewSeverityBacklogValidate(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("error = %v, want one naming %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestReviewBacklogEffectiveMaxPerPRAndMinSeverity(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		backlog ReviewBacklogConfig
+		wantCap int
+		wantMin string
+	}{
+		{name: "defaults", wantCap: DefaultReviewBacklogMaxPerPR, wantMin: DefaultReviewBacklogMinSeverity},
+		{name: "max_per_pr", backlog: ReviewBacklogConfig{MaxPerPR: 5}, wantCap: 5, wantMin: "P2"},
+		{name: "retired per-day alias keeps its size", backlog: ReviewBacklogConfig{MaxPerPRPerDay: 8}, wantCap: 8, wantMin: "P2"},
+		{name: "max_per_pr over alias", backlog: ReviewBacklogConfig{MaxPerPR: 2, MaxPerPRPerDay: 8}, wantCap: 2, wantMin: "P2"},
+		{name: "file everything", backlog: ReviewBacklogConfig{MinSeverity: "p3"}, wantCap: 3, wantMin: "P3"},
+		{name: "invalid falls back to default", backlog: ReviewBacklogConfig{MinSeverity: "P9"}, wantCap: 3, wantMin: "P2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.backlog.EffectiveMaxPerPR(); got != tc.wantCap {
+				t.Fatalf("EffectiveMaxPerPR = %d, want %d", got, tc.wantCap)
+			}
+			if got := tc.backlog.EffectiveMinSeverity(); got != tc.wantMin {
+				t.Fatalf("EffectiveMinSeverity = %q, want %q", got, tc.wantMin)
 			}
 		})
 	}

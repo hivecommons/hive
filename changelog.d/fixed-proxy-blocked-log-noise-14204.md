@@ -1,1 +1,0 @@
-- Repeated blocked proxy requests (e.g. Copilot-internal endpoints) are now logged once at WARN instead of on every attempt, ending false-positive self-reports (#14204)

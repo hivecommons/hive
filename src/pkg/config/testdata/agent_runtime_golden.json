@@ -547,7 +547,10 @@
       "MaxBytes": 0,
       "Repos": null
     },
-    "AgentScopes": null
+    "AgentScopes": null,
+    "Advisor": false,
+    "AdvisorMaxPerKick": 0,
+    "AdvisorExcludeAgents": null
   },
   "Hub": {
     "Enabled": false,

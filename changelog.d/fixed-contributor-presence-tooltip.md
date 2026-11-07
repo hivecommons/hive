@@ -1,1 +1,0 @@
-- Kept the Contributors sidebar count and cards on one roster snapshot, and replaced relay IDs in its online tooltip with GitHub usernames without repeated ClankeR labels.

@@ -1,1 +1,0 @@
-- Applying a pack no longer seeds its model id onto a kept hand-set non-gateway backend such as `codex`; the agent keeps its own model ([#13288](https://github.com/hivecommons/hive/issues/13288)).

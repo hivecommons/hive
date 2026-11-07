@@ -1,1 +1,0 @@
-- Add a fail-closed monthly outcomes publication wrapper and reviewed-PR cadence for owner-supplied, sanitized evidence aggregates; deployment source access and monthly input remain explicit operator prerequisites.

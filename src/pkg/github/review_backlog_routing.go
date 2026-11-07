@@ -349,11 +349,12 @@ func appendLabelOnce(labels []string, label string) []string {
 	return append(labels, label)
 }
 
-// reviewBacklogDailyCap is review.backlog.max_per_pr_per_day when routing is
-// configured, else the legacy per-PR cap.
-func reviewBacklogDailyCap(r ReviewBacklogRouting, routed bool, legacyCap int) int {
+// reviewBacklogPRCap is review.backlog.max_per_pr (per PR lifetime,
+// hivecommons/hive#17065) when routing is configured, else the legacy per-PR
+// cap.
+func reviewBacklogPRCap(r ReviewBacklogRouting, routed bool, legacyCap int) int {
 	if routed {
-		return r.Backlog.EffectiveMaxPerPRPerDay()
+		return r.Backlog.EffectiveMaxPerPR()
 	}
 	if legacyCap <= 0 {
 		return DefaultReviewBacklogIssueCap
@@ -392,6 +393,22 @@ func ReviewFindingBelowLine(f outputschema.Finding, blockAt string) bool {
 		return false
 	}
 	line, err := strconv.Atoi(strings.TrimPrefix(b, "P"))
+	if err != nil {
+		return false
+	}
+	return ReviewFindingPriority(f.Severity) > line
+}
+
+// ReviewFindingBelowMinSeverity reports whether f is below
+// review.backlog.min_severity (P0–P3): such a finding is listed in the PR's
+// Follow-ups comment instead of filed as an item (hivecommons/hive#17065).
+// An unrecognised minSeverity is treated as the default.
+func ReviewFindingBelowMinSeverity(f outputschema.Finding, minSeverity string) bool {
+	m, ok := config.NormalizeReviewBacklogMinSeverity(minSeverity)
+	if !ok {
+		m = config.DefaultReviewBacklogMinSeverity
+	}
+	line, err := strconv.Atoi(strings.TrimPrefix(m, "P"))
 	if err != nil {
 		return false
 	}
@@ -478,24 +495,6 @@ func (l *reviewBacklogLedger) setFingerprint(repo, fp string, rec reviewBacklogF
 		l.Fingerprints[key] = map[string]reviewBacklogFingerprintRecord{}
 	}
 	l.Fingerprints[key][fp] = rec
-}
-
-const reviewBacklogDayLayout = "2006-01-02"
-
-func reviewBacklogDayKey(prKey string, now time.Time) string {
-	return prKey + "@" + now.UTC().Format(reviewBacklogDayLayout)
-}
-
-// pruneDailyCounts drops per-day counters older than yesterday so the ledger
-// does not grow without bound.
-func (l *reviewBacklogLedger) pruneDailyCounts(now time.Time) {
-	cutoff := now.UTC().AddDate(0, 0, -1).Format(reviewBacklogDayLayout)
-	for k := range l.PRDailyCount {
-		i := strings.LastIndex(k, "@")
-		if i < 0 || k[i+1:] < cutoff {
-			delete(l.PRDailyCount, k)
-		}
-	}
 }
 
 func reviewPRURL(owner, repo string, number int) string {

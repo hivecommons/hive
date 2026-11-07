@@ -1,1 +1,0 @@
-- Downgrade expected GitHub rate-limit errors during PR claim label reconciliation to informational logs.

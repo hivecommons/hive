@@ -1,7 +1,9 @@
 package scheduler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -327,5 +329,122 @@ func TestInceptionVars_GreenfieldEmptyIdeaDoesNotFallBack(t *testing.T) {
 	idea, _, _, _, _, _ := s.inceptionVars()
 	if idea != "" {
 		t.Errorf("idea = %q, want empty: RepoURL fallback is brownfield-only", idea)
+	}
+}
+
+// --- remoteAgentsRepoRoot (GitHub fallback, #17090) ---
+
+type fakeAgentsMdFetcher struct {
+	body  string
+	err   error
+	calls int
+	last  [4]string
+}
+
+func (f *fakeAgentsMdFetcher) GetFileContentRef(_ context.Context, owner, repo, path, ref string) (string, error) {
+	f.calls++
+	f.last = [4]string{owner, repo, path, ref}
+	return f.body, f.err
+}
+
+func useTempRemoteAgentsMdDir(t *testing.T) {
+	t.Helper()
+	old := remoteAgentsMdDir
+	remoteAgentsMdDir = t.TempDir()
+	t.Cleanup(func() { remoteAgentsMdDir = old })
+}
+
+// With no local root and no fetcher wired the behaviour is unchanged: nothing.
+func TestAgentsRepoRoot_NoFetcherStaysEmpty(t *testing.T) {
+	useTempRemoteAgentsMdDir(t)
+	cfg := &config.Config{}
+	cfg.Project.Org = "hivecommons"
+	s := New(cfg, slog.Default())
+	if got := s.agentsRepoRoot("hive"); got != "" {
+		t.Errorf("agentsRepoRoot() = %q, want empty with no fetcher", got)
+	}
+}
+
+// A hosted spoke with no checkout gets the primary repo's AGENTS.md from the
+// forge's default branch, materialised so the existing priming path injects it,
+// and one fetch serves every kick inside the TTL.
+func TestAgentsRepoRoot_FetchesFromGitHubWhenNoLocalRoot(t *testing.T) {
+	useTempRemoteAgentsMdDir(t)
+	const body = "Always add a changelog.d fragment."
+	f := &fakeAgentsMdFetcher{body: body + "\n"}
+
+	cfg := &config.Config{}
+	cfg.Project.Org = "hivecommons"
+	cfg.Project.PrimaryRepo = "hive"
+	s := New(cfg, slog.Default())
+	s.SetAgentsMdFetcher(f)
+
+	root := s.agentsRepoRoot("hive")
+	if want := filepath.Join(remoteAgentsMdDir, "hivecommons", "hive"); root != want {
+		t.Fatalf("agentsRepoRoot() = %q, want %q", root, want)
+	}
+	if f.last != [4]string{"hivecommons", "hive", "AGENTS.md", ""} {
+		t.Errorf("fetched %v, want owner/repo AGENTS.md at the default branch", f.last)
+	}
+	if got := s.primeAgentsMd(root); !strings.Contains(got, body) {
+		t.Fatalf("fetched AGENTS.md did not reach the injection; got %q", got)
+	}
+
+	for i := 0; i < 3; i++ {
+		if again := s.agentsRepoRoot("hivecommons/hive"); again != root {
+			t.Fatalf("agentsRepoRoot() = %q on repeat, want cached %q", again, root)
+		}
+	}
+	if f.calls != 1 {
+		t.Errorf("fetch calls = %d, want 1 (served from cache inside the TTL)", f.calls)
+	}
+}
+
+// A repo without AGENTS.md (404) yields no root and is not re-asked inside
+// the TTL; a later failure keeps serving the last-known-good copy.
+func TestAgentsRepoRoot_RemoteMissAndLastKnownGood(t *testing.T) {
+	useTempRemoteAgentsMdDir(t)
+	f := &fakeAgentsMdFetcher{err: errors.New("404 Not Found")}
+	cfg := &config.Config{}
+	cfg.Project.Org = "hivecommons"
+	s := New(cfg, slog.Default())
+	s.SetAgentsMdFetcher(f)
+
+	if got := s.agentsRepoRoot("hive"); got != "" {
+		t.Fatalf("agentsRepoRoot() = %q, want empty on 404", got)
+	}
+	s.agentsRepoRoot("hive")
+	if f.calls != 1 {
+		t.Errorf("fetch calls = %d, want 1 (negative result cached)", f.calls)
+	}
+
+	// Expire the cache, succeed once, then fail: the good copy must survive.
+	s.remoteAgents = nil
+	f.err, f.body = nil, "rule\n"
+	root := s.agentsRepoRoot("hive")
+	if root == "" {
+		t.Fatal("agentsRepoRoot() empty after a successful fetch")
+	}
+	s.remoteAgents["hivecommons/hive"] = remoteAgentsMd{root: root, fetched: time.Now().Add(-2 * remoteAgentsMdTTL)}
+	f.err = errors.New("502 Bad Gateway")
+	if got := s.agentsRepoRoot("hive"); got != root {
+		t.Errorf("agentsRepoRoot() = %q after refresh failure, want last-known-good %q", got, root)
+	}
+}
+
+// A configured local root still wins over the forge: no fetch happens.
+func TestAgentsRepoRoot_LocalRootBeatsFetch(t *testing.T) {
+	useTempRemoteAgentsMdDir(t)
+	f := &fakeAgentsMdFetcher{body: "x"}
+	cfg := &config.Config{}
+	cfg.Project.Org = "hivecommons"
+	cfg.Project.CheckoutsDir = "/data/checkouts"
+	s := New(cfg, slog.Default())
+	s.SetAgentsMdFetcher(f)
+	if got, want := s.agentsRepoRoot("hive"), filepath.Join("/data/checkouts", "hive"); got != want {
+		t.Errorf("agentsRepoRoot() = %q, want %q", got, want)
+	}
+	if f.calls != 0 {
+		t.Errorf("fetch calls = %d, want 0 when a local root exists", f.calls)
 	}
 }

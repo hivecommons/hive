@@ -1,1 +1,0 @@
-- All hive:status comment writers go through one serialised writer with compare-and-retry and duplicate reconciliation, so concurrent writers no longer lose sections or create duplicate status comments (#16263).

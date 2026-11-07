@@ -1,1 +1,0 @@
-- Honor ntfy Retry-After deadlines and use bounded exponential cooldowns after HTTP 429 without a usable header, while Slack and Discord delivery continue independently.

@@ -1,1 +1,0 @@
-- Stop filing duplicate unclassified self-reports for the hub heartbeat's last-good cached stats fallback; retain local warnings and fleet reporting of collector timeouts, slow collectors, and heartbeat failures ([#16507](https://github.com/hivecommons/hive/issues/16507)).

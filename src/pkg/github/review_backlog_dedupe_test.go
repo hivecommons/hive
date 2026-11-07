@@ -110,7 +110,7 @@ func TestReviewBacklogOneItemPerFindingAcrossPerspectivesAndHeads(t *testing.T) 
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P1"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MaxPerPRPerDay: 10},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MaxPerPRPerDay: 10, MinSeverity: "P3"},
 			Sink:     sink,
 		}
 	})

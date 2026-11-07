@@ -1,1 +1,0 @@
-- Review-evidence bundle writes that fail with permission denied now warn once per path instead of repeating every poll; the evidence directory ownership still needs fixing on affected hosts (#13664).

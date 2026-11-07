@@ -1,1 +1,0 @@
-- Keep raw IOScan classifier errors, including private endpoint URLs and DNS details, in local logs rather than public selfreport diagnostics.

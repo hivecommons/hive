@@ -7,9 +7,10 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/crux/agentsmd"
+	"github.com/hivecommons/hive/crux/skillreg"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/knowledge"
-	"github.com/hivecommons/hive/crux/skillreg"
 )
 
 const maxIssuesToPrime = 5
@@ -18,7 +19,7 @@ const maxIssuesToPrime = 5
 // when the hive has none — in which case primeAgentsMd is a no-op, exactly as
 // before this was wired.
 //
-// Two sources, in order:
+// Three sources, in order:
 //
 //  1. project.checkouts_dir — the explicit one. An operator who mounts checkouts
 //     of the monitored repos points at the parent directory and each repo is
@@ -29,8 +30,12 @@ const maxIssuesToPrime = 5
 //     out of it), but it is a checkout of policies.repo, so it is used ONLY when
 //     that repo IS the repo being asked about. Otherwise it would inject the
 //     config repo's AGENTS.md into work on an unrelated repo.
+//  3. the forge — when neither local root is configured and a GitHub client is
+//     wired (SetAgentsMdFetcher), AGENTS.md is fetched from the repo's default
+//     branch and materialised under remoteAgentsMdDir (#17090). Hosted spokes
+//     keep no clones at all, so without this they never injected anything.
 //
-// Neither is checked for existence here: agentsmd.Parse tolerates a missing
+// Neither local root is checked for existence here: agentsmd.Parse tolerates a missing
 // directory or file and yields "", and primeAgentsMd logs which root came up
 // empty. One stat per kick to say the same thing earlier is not worth it.
 func (s *Scheduler) agentsRepoRoot(repo string) string {
@@ -44,7 +49,7 @@ func (s *Scheduler) agentsRepoRoot(repo string) string {
 		sameRepo(s.cfg.Policies.Repo, s.cfg.Project.Org, repo) {
 		return local
 	}
-	return ""
+	return s.remoteAgentsRepoRoot(repo)
 }
 
 // sameRepo reports whether a git source's repo field names org/repo. The source
@@ -250,16 +255,40 @@ func capSkills(skills []skillreg.Skill, capBytes int) (kept []skillreg.Skill, dr
 	return kept, dropped
 }
 
+// knowledgeInjection is what one kick received from the knowledge primer
+// (#17049): the rendered "# Relevant Knowledge" section and the numbers
+// behind it. Primed is false when the primer did not run at all (knowledge
+// disabled, no issues, no keywords), so a zero-byte result from a real query
+// is distinguishable from no query.
+type knowledgeInjection struct {
+	Section       string
+	Bytes         int
+	Entries       int
+	SkippedForCap int
+	CapBytes      int
+	Primed        bool
+}
+
 // primeKnowledge queries the wiki layers for facts relevant to the given issues
 // and returns a formatted section for injection into the kick message. The
 // facts are restricted to agentName's knowledge.agent_scopes entry, if any.
+// It logs the per-kick knowledge line itself; callers that also prepend an
+// AGENTS.md or skills block use primeKnowledgeStats and log once with those
+// sizes included.
 func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) string {
+	inj := s.primeKnowledgeStats(agentName, issues)
+	s.logKnowledgeInjection(agentName, inj, 0, 0)
+	return inj.Section
+}
+
+// primeKnowledgeStats is primeKnowledge without the summary log line.
+func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue) knowledgeInjection {
 	s.mu.RLock()
 	primer := s.primer
 	cfg := s.cfg
 	s.mu.RUnlock()
 	if primer == nil || len(issues) == 0 {
-		return ""
+		return knowledgeInjection{}
 	}
 
 	limit := maxIssuesToPrime
@@ -270,20 +299,28 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 	keywords := extractKeywords(issues[:limit])
 	if len(keywords) == 0 {
 		s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
-		return ""
+		return knowledgeInjection{}
 	}
 
 	s.logger.Info("knowledge primer: searching", "keywords", len(keywords), "sample", keywordSample(keywords))
 	var scope *knowledge.TOCScope
 	if sc, ok := cfg.KnowledgeAgentScope(agentName); ok {
 		agentScope := knowledge.AgentScope(sc.Layers, sc.Repos, sc.Types, sc.Tags, sc.IncludeStates)
+		if knowledge.ListsDraft(sc.IncludeStates) {
+			agentScope.DraftAuthors = kickDraftAuthors(cfg, agentName)
+		}
 		scope = &agentScope
 	}
-	primed := primer.PrimeScoped(context.Background(), scope, nil, keywords)
+	primed := primer.PrimeForKick(context.Background(), scope, kickContextFor(cfg, agentName, issues[:limit]), keywords)
 	result, omitted := primed.Render()
-	if result != "" {
-		s.logger.Info("knowledge primer: injecting facts into kick",
-			"facts", len(primed.Facts)-omitted.Facts, "chars", len(result))
+	s.primedSlugs.Store(agentName, primed.RenderedSlugs())
+	inj := knowledgeInjection{
+		Section:       result,
+		Bytes:         len(result),
+		Entries:       len(primed.Facts) - omitted.Facts,
+		SkippedForCap: omitted.Facts,
+		CapBytes:      primer.MaxBytes(),
+		Primed:        true,
 	}
 	if omitted.Any() {
 		// The render carries its own marker; this is the operator-side half so
@@ -301,7 +338,101 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 			"omitted_facts", omitted.Facts, "omitted_hints", omitted.Hints,
 			"omitted_bytes", omitted.Bytes, "cap_bytes", primed.MaxBytes)
 	}
-	return result
+	return inj
+}
+
+// kickDraftAuthors lists the identities whose draft knowledge a kick for
+// agentName may carry once that agent's agent_scopes entry opts into drafts
+// (#17076): the agent itself, its base agent for a replica, and the hive's
+// owner logins, so an operator's hand-written draft reaches the agents they
+// opted in. Owner entries are stored as "alice" or "github:alice"; the
+// provider prefix is dropped so either form matches an author: line.
+func kickDraftAuthors(cfg *config.Config, agentName string) []string {
+	var out []string
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		for _, have := range out {
+			if strings.EqualFold(have, name) {
+				return
+			}
+		}
+		out = append(out, name)
+	}
+	add(agentName)
+	if cfg != nil {
+		add(cfg.BaseAgentName(agentName))
+		for _, login := range cfg.Dashboard.OwnerLogins() {
+			if _, bare, ok := strings.Cut(login, ":"); ok {
+				login = bare
+			}
+			add(login)
+		}
+	}
+	return out
+}
+
+// logKnowledgeInjection emits the one knowledge line per kick (#17049):
+//
+//	knowledge: injected N bytes from M entries (skipped K for cap)
+//
+// with the primer cap and the sizes of the AGENTS.md and skills blocks that
+// share the kick, so the whole knowledge payload is readable from one line
+// next to "kick rendered". It is emitted even when N is 0 — a primed kick
+// that found nothing is a signal, not silence — but not when the primer did
+// not run (knowledge disabled or nothing to prime), which would otherwise
+// print a zero line on every kick of a hive that has no knowledge store.
+func (s *Scheduler) logKnowledgeInjection(agentName string, inj knowledgeInjection, agentsMdBytes, skillsBytes int) {
+	if s == nil || s.logger == nil || (!inj.Primed && agentsMdBytes == 0 && skillsBytes == 0) {
+		return
+	}
+	s.logger.Info(fmt.Sprintf("knowledge: injected %d bytes from %d entries (skipped %d for cap)",
+		inj.Bytes, inj.Entries, inj.SkippedForCap),
+		"agent", agentName,
+		"injected_bytes", inj.Bytes,
+		"entries", inj.Entries,
+		"skipped_for_cap", inj.SkippedForCap,
+		"cap_bytes", inj.CapBytes,
+		"primed", inj.Primed,
+		"agents_md_bytes", agentsMdBytes,
+		"skills_bytes", skillsBytes,
+	)
+}
+
+// KickPrimedSlugs returns the knowledge slugs the most recent kick message
+// built for agentName actually rendered in its `# Relevant Knowledge` block.
+// The mid-task advisor (#17052) uses it to never repeat what the kick carried;
+// facts the byte cap dropped are not in it and so stay eligible.
+func (s *Scheduler) KickPrimedSlugs(agentName string) []string {
+	v, ok := s.primedSlugs.Load(agentName)
+	if !ok {
+		return nil
+	}
+	slugs, _ := v.([]string)
+	return slugs
+}
+
+// kickContextFor is the kick context a scoped knowledge entry is matched
+// against (#17045): the base lane name (a replica resolves to the agent it
+// replicates) and the union of the primed issues' labels. File paths are not
+// known on the kick path, so entries scoped by paths alone wait for a caller
+// that has them.
+func kickContextFor(cfg *config.Config, agentName string, issues []github.Issue) knowledge.KickContext {
+	kc := knowledge.KickContext{Lane: cfg.BaseAgentName(agentName)}
+	seen := make(map[string]bool)
+	for _, issue := range issues {
+		for _, label := range issue.Labels {
+			lower := strings.ToLower(strings.TrimSpace(label))
+			if lower == "" || seen[lower] {
+				continue
+			}
+			seen[lower] = true
+			kc.Labels = append(kc.Labels, lower)
+		}
+	}
+	return kc
 }
 
 // extractKeywords pulls searchable terms from issue labels and titles.

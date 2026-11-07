@@ -1,1 +1,0 @@
-- Preserve pack-owned gateway models when runtime model overrides are lost and the gateway has no default model.

@@ -69,11 +69,18 @@ them through a git source, connector or code map
   `Primer.PrimeScoped` *after* the lifecycle filter and can only narrow; graph
   expansion never pulls in an out-of-scope fact. A replica inherits its base
   agent's entry (`Config.KnowledgeAgentScope`). No entry means unrestricted.
-- *By lifecycle:* kicks carry **approved facts only**. The kick primer is built
-  with no `IncludeStates` (`newKnowledgePrimer` in `src/cmd/hive/main.go`), so
-  `draft`, `deprecated` and `superseded` never reach a kick; `agent_scopes.
-  include_states` only widens API/TOC reads that already asked for those
-  states ([knowledge-lifecycle.md](knowledge-lifecycle.md)).
+- *By lifecycle:* kicks carry **approved facts only** by default. The kick
+  primer is built with no `IncludeStates` (`newKnowledgePrimer` in
+  `src/cmd/hive/main.go`), so `deprecated` and `superseded` never reach a kick
+  and `agent_scopes.include_states` only widens API/TOC reads that already
+  asked for those states ([knowledge-lifecycle.md](knowledge-lifecycle.md)).
+  The one kick-path exception is an agent's **own drafts** (#17076): when the
+  agent's `agent_scopes` entry lists `draft` (or `all`) in `include_states`,
+  drafts whose `author:` (or `owner:`) frontmatter is that agent, its base
+  agent or one of the hive's owner logins are primed too, each marked
+  `(draft)` in the kick (`kickDraftAuthors` in `kick_priming.go`,
+  `TOCScope.DraftAuthors`). Drafts by anyone else, and drafts with no author,
+  are still excluded.
 
 **Size caps** (all drop whole units, never clip, and leave a visible marker):
 
@@ -115,9 +122,10 @@ prepended the same way ([skills.md](skills.md)); the hive-wide house style
 precedes both ([house-style.md](house-style.md)).
 
 Two instruction files *are* read natively: a user-level
-`~/.claude/CLAUDE.md` / `~/.gemini/GEMINI.md` if one exists — and because
-those directories are fleet-shared today (next section), such a file applies
-to every Claude or Gemini agent on the hive.
+`~/.claude/CLAUDE.md` / `~/.gemini/GEMINI.md` if one exists. Since
+[#17031](https://github.com/hivecommons/hive/issues/17031) those files live in
+each agent's own `~/.claude` / `~/.gemini` (next section), so such a file
+applies to that agent only.
 
 ## 4. CLI memory and conversation: what Hive does and does not touch
 
@@ -134,15 +142,23 @@ conversation. `/clear` empties the chat; it does not touch anything on disk.
 - Per-UID agents get `HOME=/data/home/agents/<name>` (`AgentHome`,
   `interactiveHomePath`) with per-agent `XDG_DATA_HOME`/`XDG_STATE_HOME` under
   `~/.local` (`setupAgentXDGDirs`). `/data/home` is the persistent volume.
-- `interactiveHomeBridgeDirs` symlinks `.claude`, `.config`, `.codex`, `.bob`,
-  `.gemini` and `.cache` from every per-agent home to the **same** directories
-  under `/data/home`, so one login authenticates the fleet. Anything a CLI
-  keeps *inside* those directories is therefore fleet-shared and persistent.
-- Real per-agent directories with one narrow bridge: `~/.copilot` (only
-  `config.json` shared — `setupCopilotHome`, #9444), `~/.local`,
+- `interactiveHomeBridgeDirs` symlinks `.config`, `.codex` and `.cache` from
+  every per-agent home to the **same** directories under `/data/home`, so one
+  login authenticates the fleet. Those hold credentials/config and caches only.
+- Real per-agent directories with narrow, credential-only bridges inside them
+  (`perAgentCLIHomes`, [#17031](https://github.com/hivecommons/hive/issues/17031)):
+  `~/.claude` (only `.credentials.json` and `settings.json` shared —
+  `projects/` with transcripts and auto-memory, `todos/`, `history.jsonl` and a
+  user-level `CLAUDE.md` are per-agent), `~/.gemini` (only sign-in files,
+  `settings.json` and `antigravity-cli/` shared — `GEMINI.md` and `tmp/`
+  per-agent), `~/.bob` (only `settings.json` / `settings/` shared), `~/.copilot`
+  (only `config.json` shared, #9444). Also per-agent: `~/.local`,
   `.claude.json`, `.npm`, `.gitconfig` (#9478). Codex gets
   `CODEX_HOME=/data/home/.codex-<name>` with only `auth.json` symlinked to the
-  shared login (`setupCodexHome`, `codexHomePath`).
+  shared login (`setupCodexHome`, `codexHomePath`). Legacy whole-directory
+  symlinks are retired on the next launch; nothing under `/data/home` is
+  deleted — a pre-isolation `projects/*/memory` store is logged once for review.
+  The full table is in [agent-configuration.md](agent-configuration.md#per-agent-homes-what-is-shared-and-what-is-private).
 - `HIVE_SHARED_AGENT_HOME=1` forces the legacy single shared home for all.
 - Inference (API-routed) agents use throwaway homes under
   `/tmp/.claude-inference-home-<name>` that vanish with the pod.
@@ -151,11 +167,18 @@ conversation. `/clear` empties the chat; it does not touch anything on disk.
   transcripts, history and memory stay on the host. This is the one place
   memory is isolated by construction.
 
-**No memory handling.** Nothing in Hive sets a CLI's "disable auto-memory"
-option (`inferenceSettingsSeed` seeds permissions/onboarding/remote-control
-keys only), prunes a `memory/` directory, or clears memory on kick, `/clear`
-or restart. What each CLI remembers, it remembers across kicks and pod
-restarts, and — for the bridged directories — across agents.
+**Memory policy** (`agents.cli_memory`, `cli_memory.go`,
+[#17032](https://github.com/hivecommons/hive/issues/17032)). `auto_memory`
+defaults to **false**: Claude Code is launched with
+`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, Codex gets `[features] memories = false`
+in `$CODEX_HOME/config.toml`, Copilot CLI gets `"memory": false` in its
+per-agent `~/.copilot/settings.json`; Gemini has no equivalent switch.
+`clear_on_kick` (default false) removes this agent's
+`~/.claude/projects/*/memory/`, `$CODEX_HOME/memories*/` and
+`~/.gemini/GEMINI.md` before each non-resume kick, next to the `/clear`. Both
+keys can be overridden per agent. With both off, what each CLI remembers it
+remembers across kicks and pod restarts — but, since #17031, not across
+agents. See [agent-configuration.md](agent-configuration.md#cli-auto-memory-agentscli_memory).
 
 ### What persists across what
 
@@ -167,32 +190,32 @@ not visible.
 |---|---|---|---|---|
 | **Knowledge** (`# Relevant Knowledge`, AGENTS.md, skills) | re-selected for *this* kick's issues | n/a — re-injected next kick | ✓ vaults on `/data` | ✓ same stores, filtered by its own `agent_scopes` |
 | **Conversation** — all CLIs | ✗ (`/clear` first, unless `clear_on_kick: false` or a resume kick) | ✗ | ✗ (CLI relaunched) | ✗ |
-| **Claude Code memory** (`~/.claude/projects/<cwd-slug>/memory/`, `~/.claude/CLAUDE.md`, `history.jsonl`) | ✓ | ✓ | ✓ (`/data/home/.claude` is shared & persistent) | ✓ readable: the tree is fleet-shared; auto-memory is keyed by cwd `/data/agents/<name>` so files are per-agent by path, but `CLAUDE.md`/history are one copy |
-| **Codex memory** (`$CODEX_HOME`) | ✓ | ✓ | ✓ (`/data/home/.codex-<name>`) | ✗ per-agent dir; only `auth.json` shared |
+| **Claude Code memory** (`~/.claude/projects/-data-agents-<name>/memory/`, `~/.claude/CLAUDE.md`, `history.jsonl`) | ✓ unless `cli_memory.clear_on_kick` (and off by default: `auto_memory: false`) | ✓ | ✓ (`/data/home/agents/<name>/.claude` is persistent) | ✗ per-agent dir (#17031); only `.credentials.json` / `settings.json` shared. Before #17031 the whole tree was one bridged copy any agent could read or rewrite |
+| **Codex memory** (`$CODEX_HOME`) | ✓ unless `cli_memory.clear_on_kick` (off by default) | ✓ | ✓ (`/data/home/.codex-<name>`) | ✗ per-agent dir; only `auth.json` shared |
 | **Copilot CLI memory/sessions** (`~/.copilot`) | ✓ | ✓ | ✓ | ✗ per-agent dir (#9444); only `config.json` shared |
-| **Gemini memory** (`~/.gemini/GEMINI.md`, state) | ✓ | ✓ | ✓ | ✓ whole directory shared |
-| **Bob memory/settings** (`~/.bob`) | ✓ | ✓ | ✓ | ✓ whole directory shared |
+| **Gemini memory** (`~/.gemini/GEMINI.md`, state) | ✓ unless `cli_memory.clear_on_kick` | ✓ | ✓ | ✗ per-agent dir (#17031); only sign-in files, `settings.json`, `antigravity-cli/` shared |
+| **Bob memory/settings** (`~/.bob`) | ✓ | ✓ | ✓ | ✗ per-agent dir (#17031); only `settings.json` / `settings/` shared |
 
-The dashboard's cost accounting reads the shared Claude tree
-(`data.claude_sessions_dir`, default `/data/home/.claude/projects`, and
-attributes sessions by the `-data-agents-<name>` project slug —
-`src/pkg/tokens/claude_scanner.go`), which is why that tree is shared on
-purpose today.
+The dashboard's cost accounting reads `data.claude_sessions_dir` (default
+`/data/home/.claude/projects`) **and** every per-agent sibling
+`/data/home/agents/*/.claude/projects` (`ClaudeSessionTrees`,
+`src/pkg/tokens/agent_home_trees.go`), attributing each per-agent tree to its
+owner and falling back to the `-data-agents-<name>` project slug for the
+shared tree (`claude_scanner.go`); `bob_sessions_dir` and
+`copilot_sessions_dir` work the same way.
 
 ## Known gaps / in progress
 
 Do not treat the following as current behaviour; follow the links.
 
-- [#17031](https://github.com/hivecommons/hive/issues/17031) — Claude/Gemini/Bob
-  persistent memory is shared across every agent on a hive. Fix in flight:
-  [PR #17039](https://github.com/hivecommons/hive/pull/17039) makes `.claude`,
-  `.gemini` and `.bob` real per-agent directories with only credential/settings
-  entries bridged (the `setupCopilotHome` pattern) and teaches the token
-  collector to scan `/data/home/agents/*/.claude/projects`. Until it merges,
-  the table above stands.
-- [#17032](https://github.com/hivecommons/hive/issues/17032) — disable CLI
-  auto-memory by default and add a `clear_memory_on_kick` option alongside
-  `clear_on_kick`.
+- [#17031](https://github.com/hivecommons/hive/issues/17031) — fixed by
+  [PR #17039](https://github.com/hivecommons/hive/pull/17039) (per-agent
+  `.claude`/`.gemini`/`.bob`, described above). Hives upgraded from before it
+  still hold the old shared store under `/data/home/.claude/projects`; it is
+  left in place and logged once, remove or drain it by hand.
+- [#17032](https://github.com/hivecommons/hive/issues/17032) — done:
+  `agents.cli_memory.auto_memory` (default off) and
+  `agents.cli_memory.clear_on_kick`, described above.
 - [#17033](https://github.com/hivecommons/hive/issues/17033) — drain CLI
   auto-memory into beads/knowledge at session end instead of a hidden
   `MEMORY.md` (revives open question 5 of

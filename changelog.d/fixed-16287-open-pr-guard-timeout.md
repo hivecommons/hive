@@ -1,1 +1,0 @@
-- Open-PR guard bounds its listing deadline and backs off per repo after a failure, logging a classified reason once per window (#16287)

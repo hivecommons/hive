@@ -1,1 +1,0 @@
-- Fix the tracker holder tooltip to identify local claims as coming from the claim ledger.

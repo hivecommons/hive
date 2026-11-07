@@ -1,1 +1,0 @@
-- The advisory digest no longer logs a `WARN advisory: issue state lookup failed` on every sweep for a referenced issue that was deleted (HTTP 410). `IssueClosedAt` now treats 410 like 404 — a terminal "not found, not closed" answer rather than an error — so the finding stays open without repeated warnings (#13725).

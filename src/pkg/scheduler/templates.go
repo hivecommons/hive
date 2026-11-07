@@ -359,12 +359,14 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	if len(agentIssues) == 0 && actionable != nil && len(actionable.Issues.Items) > 0 {
 		agentIssues = actionable.Issues.Items
 	}
-	knowledgeSection := s.primeKnowledge(agentName, agentIssues)
+	knowledgeInj := s.primeKnowledgeStats(agentName, agentIssues)
+	knowledgeSection := knowledgeInj.Section
 
 	repoRoot := s.agentsRepoRoot(primaryRepo)
 
 	// Additive: prepend the repo's AGENTS.md instructions + requested skills to
-	// the injected knowledge, when a local checkout root is available. This is a
+	// the injected knowledge, when a checkout root is available — local, or the
+	// GitHub-fetched copy a hosted spoke falls back to (#17090). This is a
 	// guarded, single call point — it returns "" (and never errors) when no
 	// AGENTS.md exists, so it is a no-op for repos that don't use the convention.
 	//
@@ -378,7 +380,8 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	// agentsmd.ParseNearest for closest-wins nested AGENTS.md. That still has no
 	// caller — nothing on the kick path knows which FILE an agent will touch —
 	// so it stays deferred, unlike the checkout root, which is now threaded.
-	if agentsSection := s.primeAgentsMd(repoRoot); agentsSection != "" {
+	agentsSection := s.primeAgentsMd(repoRoot)
+	if agentsSection != "" {
 		knowledgeSection = agentsSection + "\n" + knowledgeSection
 	}
 
@@ -386,9 +389,11 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	// to definitions in the primary repo's AGENTS.md or adjacent skills/
 	// directory. The registry remains independently useful without a checkout;
 	// the fallback activates only when agentsRepoRoot found one above.
-	if skillsSection := s.primeSkills(agentName, repoRoot); skillsSection != "" {
+	skillsSection := s.primeSkills(agentName, repoRoot)
+	if skillsSection != "" {
 		knowledgeSection = skillsSection + "\n" + knowledgeSection
 	}
+	s.logKnowledgeInjection(agentName, knowledgeInj, len(agentsSection), len(skillsSection))
 
 	inceptionIdea, inceptionPhase, inceptionMode, inceptionAnswers, inceptionSlug, inceptionRepoURL := s.inceptionVars()
 

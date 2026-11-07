@@ -30,6 +30,8 @@ func TestReviewConfigPut_SeverityBacklog(t *testing.T) {
 		{map[string]any{"backlog": map[string]any{"destination": "trello"}}, "review.backlog.destination"},
 		{map[string]any{"backlog": map[string]any{"destination": "linear"}}, "review.backlog.destination"},
 		{map[string]any{"backlog": map[string]any{"max_per_pr_per_day": -1}}, "review.backlog.max_per_pr_per_day"},
+		{map[string]any{"backlog": map[string]any{"max_per_pr": -1}}, "review.backlog.max_per_pr"},
+		{map[string]any{"backlog": map[string]any{"min_severity": "P9"}}, "review.backlog.min_severity"},
 	}
 	for _, tc := range bad {
 		rec := doPut(s, "/api/config/review", tc.body)
@@ -56,12 +58,18 @@ func TestReviewConfigPut_SeverityBacklog(t *testing.T) {
 	}
 
 	s.deps.Config.Governor.WorkSource.Type = "linear"
-	if rec := doPut(s, "/api/config/review", map[string]any{"backlog": map[string]any{"destination": "linear", "linear_state": " Triage ", "labels": []string{"origin/reviewer", " ", "nit"}, "max_per_pr_per_day": 4}}); rec.Code != http.StatusOK {
+	if rec := doPut(s, "/api/config/review", map[string]any{"backlog": map[string]any{"destination": "linear", "linear_state": " Triage ", "labels": []string{"origin/reviewer", " ", "nit"}, "max_per_pr_per_day": 4, "max_per_pr": 5, "min_severity": " p1 "}}); rec.Code != http.StatusOK {
 		t.Fatalf("PUT backlog: %d: %s", rec.Code, rec.Body.String())
 	}
 	bl := s.deps.Config.Review.Backlog
-	if bl.Destination != "linear" || bl.LinearState != "Triage" || !reflect.DeepEqual(bl.Labels, []string{"origin/reviewer", "nit"}) || bl.MaxPerPRPerDay != 4 {
+	if bl.Destination != "linear" || bl.LinearState != "Triage" || !reflect.DeepEqual(bl.Labels, []string{"origin/reviewer", "nit"}) || bl.MaxPerPRPerDay != 4 || bl.MaxPerPR != 5 || bl.MinSeverity != "P1" {
 		t.Fatalf("backlog not stored: %+v", bl)
+	}
+	if rec := doPut(s, "/api/config/review", map[string]any{"backlog": map[string]any{"min_severity": ""}}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT backlog clear min_severity: %d: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.Review.Backlog.MinSeverity != "" {
+		t.Fatalf("empty min_severity must clear the override, got %q", s.deps.Config.Review.Backlog.MinSeverity)
 	}
 
 	if rec := doPut(s, "/api/config/review", map[string]any{"all_authors": true, "severity": map[string]any{}}); rec.Code != http.StatusOK {
@@ -112,6 +120,8 @@ func TestReviewSeverityBacklogSettingsStaticWiring(t *testing.T) {
 		"linear_state",
 		"jira_status",
 		"max_per_pr_per_day",
+		"max_per_pr",
+		"min_severity",
 	} {
 		if !strings.Contains(render, want) {
 			t.Errorf("renderReviewSeverityBacklog missing %q", want)

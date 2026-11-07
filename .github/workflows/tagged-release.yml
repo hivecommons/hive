@@ -33,19 +33,30 @@ name: Tagged Release
 # fragment deletions. An empty Unreleased with an empty changelog.d/ is still
 # the release=false no-op, so the IDEMPOTENCY loop below is unchanged.
 #
-# RACES (#5142, #5222): the gate-earning dance below takes minutes, and v5
-# can advance underneath it. Two rules keep that from starving releases or
-# painting red runs for normal traffic:
-#   - SUPERSESSION IS DEFERRAL, NOT FAILURE. If v5 has already advanced past
-#     this run's commit (precheck job), or advances mid-flight (the final
-#     step's PR merge becomes non-mergeable because the base moved), this run
-#     steps aside cleanly: the very merge that won triggered its own
-#     docker.yml run, whose completion triggers a fresh release run for the
-#     NEWER tip — and Unreleased is untouched, so that successor derives the
-#     same release. Retrying here on the old tip could never succeed anyway:
-#     the images were built from THIS commit, so rebasing the release commit
-#     onto the new tip would tag content the published images do not
-#     contain.
+# RACES (#5142, #5222, #17015 follow-up): the gate-earning dance below takes
+# minutes, and v5 can advance underneath it. Three rules keep that from
+# starving releases or painting red runs for normal traffic:
+#   - THE TAG NAMES THE COMMIT THE IMAGES WERE BUILT FROM, NOT v5's TIP. The
+#     release commit (compiled CHANGELOG.md + fragment deletions) is parented
+#     on the exact SHA docker.yml built, and the version tag points at THAT
+#     commit; the immutable image tags are retags of that SHA's digests. The
+#     release commit then reaches v5 through a merge-commit PR, which is
+#     allowed to land on a tip that has moved on — the merge commit is not
+#     tagged, so commits that arrived after the built SHA are simply "after
+#     vX.Y.Z" in git terms, exactly as they are in image terms. Until
+#     2026-11 the precheck instead DEFERRED whenever v5 had advanced past the
+#     built SHA, on the theory that the successor run would release. Under a
+#     sustained merge rate faster than a multi-arch build (~15 min) no run
+#     ever saw tip == built SHA, every successor deferred again, and v5 went
+#     from v5.186.4 (2026-10-18) to ~1,700 untagged commits. Deferral is now
+#     limited to the two cases where releasing really would be wrong:
+#       (a) the built SHA is NOT an ancestor of v5's tip (force-push, or a
+#           build of something that never landed) — nothing to tag;
+#       (b) a release already landed on v5 AFTER the built SHA (the newest
+#           v5.* tag is not an ancestor of it) — its fragments are already
+#           released and the derived version would collide.
+#     Supersession is still deferral, not failure, and Unreleased is
+#     untouched so nothing is dropped.
 #   - MERGEABILITY SETTLING IS RETRIED. A direct `git push` to v5 (the
 #     pre-#5222 approach) was retried on GH006 under the theory that branch
 #     protection just needed a few seconds to ingest the gate check-run's
@@ -114,35 +125,26 @@ name: Tagged Release
 # outright if it already exists (a re-run after a partial failure is a safe
 # no-op, not a duplicate release).
 # BACKSTOP (#5318): the workflow_run trigger alone cannot guarantee that a
-# release-worthy commit ever gets a release opportunity. Two ways one is lost
-# silently:
-#   - A docker.yml run that is CANCELLED never fires workflow_run at all. A
-#     multi-arch build takes ~10 minutes, so when merges arrive faster than
-#     that, most commits never complete one.
-#   - A run that DOES fire defers at `precheck` when v5 has already advanced,
-#     on the reasoning that the successor releases instead. That reasoning is
-#     sound per-run but has no terminating condition: under sustained merges
-#     every successor applies the same test and defers again.
-# #10863 adds a short post-publish merge hold: once precheck proves v5 is still
-# at the SHA whose docker.yml images are published, it posts a pending
-# `release-in-progress` status on that tip and temporarily adds
-# `do-not-merge/hold` to open v5 PRs. Hive's automerge sweep treats the status
-# as a short-lived repo-level hold; Tide and hive both respect the hold label.
-# This job clears both signals when the tag is pushed (or in cleanup on failure).
-# This keeps the race-safety checks below:
-# if v5 still advances during the hold, the release defers rather than tagging
-# images from the wrong tree.
-# Neither is a bug in the deferral itself — a superseded run genuinely must
-# not release, because its images were built from the old tree (see RACES).
-# The gap is that nothing ever comes back for the work left behind. The
-# schedule below is that "come back": it runs against v5's CURRENT tip. If
-# that exact tip's images are not published yet, it explicitly starts docker.yml
-# for v5 and exits green; the resulting workflow_run is then allowed to enter
-# this workflow and release if v5 is still at that published SHA. When a
-# workflow_run still defers because the branch moved, precheck re-arms the same
-# backstop by dispatching docker.yml for the new tip if no such run exists, so
-# recovery does not depend on GitHub delivering the next hourly cron. On a
-# healthy repo it is a no-op (Unreleased is empty => release=false).
+# release-worthy commit ever gets a release opportunity: a docker.yml run
+# that is CANCELLED never fires workflow_run at all, and GitHub's concurrency
+# queue holds at most one pending run per group, so under a merge burst most
+# commits never complete a build. The hourly schedule below is the "come
+# back" for that work. It considers the NEWEST commit on v5 that is an
+# ancestor of the current tip AND has a successful, completed publishing
+# docker.yml run — not necessarily the tip itself, which on a busy branch
+# is almost never built yet. If no built ancestor exists among the recent
+# commits it stands down green and dispatches docker.yml for the tip so the
+# next tick has something to release.
+# #10863 adds a short post-publish merge hold: once precheck accepts a built
+# SHA, it posts a pending `release-in-progress` status on that SHA and
+# temporarily adds `do-not-merge/hold` to open v5 PRs. Hive's automerge sweep
+# treats the status as a short-lived repo-level hold; Tide and hive both
+# respect the hold label. The hold keeps the release PR's merge quick; it is
+# no longer a correctness requirement, because a v5 that advances mid-flight
+# no longer makes the release defer (see RACES). This job clears both signals
+# when the tag is pushed (or in cleanup on failure).
+# On a healthy repo the backstop is a no-op (Unreleased is empty =>
+# release=false).
 #
 # DUAL-PUBLISH (kubestellar -> hivecommons org transfer): during the transfer
 # window every publish targets BOTH ghcr.io/kubestellar and
@@ -205,21 +207,51 @@ jobs:
       sha: ${{ steps.target.outputs.sha }}
     steps:
       # workflow_run carries the exact commit docker.yml built. The backstop
-      # has no such commit, so it resolves v5's tip — whose images are already
-      # published (its docker.yml run completed long before an hourly tick),
-      # which is what keeps the retag honest.
+      # has no such commit, so it walks v5's recent history from the tip and
+      # picks the NEWEST commit with a successful, completed publishing
+      # docker.yml run (push, or a v5 workflow_dispatch — #6380). On a busy
+      # branch the tip itself is almost never built yet; releasing its newest
+      # built ancestor is what keeps the retag honest without waiting for a
+      # quiet hour that may never come (see BACKSTOP). If nothing in the
+      # window is built, the tip is reported so the guard below stands down
+      # and primes docker.yml for it.
       - name: Resolve the commit to consider releasing
         id: target
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # How far back from the tip the backstop looks for a built commit.
+          # 100 commits is several hours of the busiest merge rate seen so
+          # far; a built commit older than that has had many hourly ticks.
+          BACKSTOP_WINDOW: ${{ vars.RELEASE_BACKSTOP_WINDOW || '100' }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
             sha="${{ github.event.workflow_run.head_sha }}"
             echo "Triggered by docker.yml on ${sha}."
           else
-            sha="$(gh api "repos/${{ github.repository }}/branches/v5" --jq .commit.sha)"
-            echo "Backstop (${{ github.event_name }}): considering v5 tip ${sha}."
+            tip="$(gh api "repos/${{ github.repository }}/branches/v5" --jq .commit.sha)"
+            # Newest 100 successful runs: more than the commit window below
+            # can need, without paginating through months of history.
+            built="$(gh api \
+              "repos/${{ github.repository }}/actions/workflows/docker.yml/runs?branch=v5&status=success&per_page=100" \
+              --jq '.workflow_runs[] | select(.event == "push" or (.event == "workflow_dispatch" and .head_branch == "v5")) | .head_sha' \
+              | sort -u)"
+            sha=""
+            while IFS= read -r candidate; do
+              [ -n "$candidate" ] || continue
+              if grep -qx "$candidate" <<<"$built"; then
+                sha="$candidate"
+                break
+              fi
+            done < <(gh api "repos/${{ github.repository }}/commits?sha=${tip}&per_page=${BACKSTOP_WINDOW}" --jq '.[].sha')
+            if [ -z "$sha" ]; then
+              echo "Backstop (${{ github.event_name }}): none of the newest ${BACKSTOP_WINDOW} commits on v5 has a successful publishing docker.yml run; considering tip ${tip} so the guard below can prime a build."
+              sha="$tip"
+            elif [ "$sha" = "$tip" ]; then
+              echo "Backstop (${{ github.event_name }}): v5 tip ${sha} is built; considering it."
+            else
+              echo "Backstop (${{ github.event_name }}): v5 tip is ${tip}; its newest built ancestor is ${sha} — considering that."
+            fi
           fi
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
@@ -283,23 +315,24 @@ jobs:
           RELEASE_LINE: v5
         run: src/scripts/derive-release-version.sh
 
-  # Cheap supersession check BEFORE the expensive release job (#5142): if v5
-  # already moved past the commit this run was triggered for, every minute
-  # spent here is wasted — the final push can only ever be rejected
-  # non-fast-forward — and worse, the `concurrency` group above serializes
-  # release runs, so a doomed run delays the successor that CAN release. One
-  # API call decides in seconds.
+  # Cheap eligibility check BEFORE the expensive release job (#5142): one or
+  # two API calls decide in seconds whether this run's built SHA can be
+  # tagged, so a run that cannot does not burn the `concurrency` slot a
+  # successor needs.
   #
-  # #5318: this job used to claim the successor was GUARANTEED to exist ("the
-  # merge that advanced v5 triggered docker.yml, whose completion triggers
-  # tagged-release.yml for that newer tip"). That guarantee does not hold — a
-  # cancelled docker.yml run fires no workflow_run at all, and a successor
-  # that does fire applies this same test and defers again. Deferring is still
-  # the right call for THIS run (its images were built from the old tree), so
-  # the fix is not to stop deferring; it is that the schedule trigger above
-  # now provides the terminating condition, and the deferral is logged as a
-  # ::warning:: rather than a ::notice:: so a lost opportunity is visible in
-  # the run list instead of silently disappearing.
+  # Until 2026-11 this job deferred whenever v5's tip != the built SHA. That
+  # rule had no terminating condition under sustained merges (every
+  # successor saw a moved tip and deferred too — #5318 added the hourly
+  # backstop, which applied the same test to the tip and stood down for the
+  # same reason), and it stalled tagging for three weeks. The release now
+  # names the BUILT commit (see RACES), so a moved tip is not a reason to
+  # defer. The two remaining deferrals are the cases where tagging the built
+  # SHA would be wrong:
+  #   (a) the built SHA is not an ancestor of v5's tip — nothing to release;
+  #   (b) a release already landed AFTER the built SHA — the fragments this
+  #       run compiled are already in a dated entry, and its derived version
+  #       would collide with the tag that release pushed.
+  # Both are logged as ::warning:: so a skipped opportunity stays visible.
   precheck:
     needs: decide
     if: needs.decide.outputs.release == 'true'
@@ -310,43 +343,76 @@ jobs:
       hold_sha: ${{ steps.tip.outputs.hold_sha }}
       held_prs: ${{ steps.tip.outputs.held_prs }}
     steps:
-      - name: Defer to the successor run if v5 already advanced
+      - name: Confirm the built commit is on v5 and newer than the last release
         id: tip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.decide.outputs.version }}
         run: |
           set -euo pipefail
           sha="${{ needs.decide.outputs.sha }}"
-          tip="$(gh api "repos/${{ github.repository }}/branches/v5" --jq .commit.sha)"
-          if [ "$tip" = "$sha" ]; then
-            echo "v5 is still at ${sha} — proceeding with the release."
-            gh api --method POST "repos/${{ github.repository }}/statuses/${sha}" \
-              -f state=pending \
-              -f context=release-in-progress \
-              -f description="Tagged Release is holding v5 merges for up to ${{ vars.RELEASE_MERGE_HOLD_SECONDS || '300' }}s"
-            gh label create "do-not-merge/hold" --color bfdadc --description "Temporarily blocks Tide/hive automerge" >/dev/null 2>&1 || true
-            held_prs=""
-            while IFS= read -r pr; do
-              [ -n "$pr" ] || continue
-              gh pr edit "$pr" --add-label "do-not-merge/hold"
-              held_prs="${held_prs}${held_prs:+,}${pr}"
-            done < <(gh pr list --base v5 --state open --limit 200 --json number,labels --jq '.[] | select(([.labels[].name] | index("do-not-merge/hold")) | not) | .number')
-            echo "Temporarily applied do-not-merge/hold to PRs: ${held_prs:-<none>}."
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-            echo "hold_sha=${sha}" >> "$GITHUB_OUTPUT"
-            echo "held_prs=${held_prs}" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::Release opportunity skipped for ${sha}: v5 is already at ${tip}. Deferring — this run's images were built from the older tree, so it must not tag. Unreleased is untouched, so nothing is dropped: either a successor run releases it, or the hourly backstop does. See the RACES note and the BACKSTOP note in this workflow's header (#5142/#5318)."
-            existing="$(gh api "repos/${{ github.repository }}/actions/workflows/docker.yml/runs?head_sha=${tip}&per_page=20" --jq '[.workflow_runs[] | select(.event == "push" or (.event == "workflow_dispatch" and .head_branch == "v5"))] | length')"
-            if [ "${existing:-0}" -eq 0 ]; then
-              gh workflow run docker.yml --ref v5 \
-                && echo "Re-armed docker.yml for current v5 tip ${tip}." \
-                || echo "::warning::could not dispatch docker.yml for ${tip}; waiting for the next scheduled tick."
-            else
-              echo "docker.yml already has ${existing} run(s) for current v5 tip ${tip}; not re-dispatching."
-            fi
+          repo="${{ github.repository }}"
+          tip="$(gh api "repos/${repo}/branches/v5" --jq .commit.sha)"
+
+          defer() {
+            echo "::warning::Release opportunity skipped for ${sha}: $1 Unreleased is untouched, so nothing is dropped: a later run releases whatever is still pending. See the RACES and BACKSTOP notes in this workflow's header."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          # (a) The built SHA must be reachable from v5's tip. compare/A...B
+          # reports B relative to A: "ahead" (tip has more commits on top of
+          # the built SHA) or "identical" both mean the built SHA is an
+          # ancestor; "behind"/"diverged" mean it is not on v5 any more.
+          if [ "$tip" = "$sha" ]; then
+            echo "v5 is still at the built commit ${sha}."
+          else
+            rel="$(gh api "repos/${repo}/compare/${sha}...${tip}" --jq .status)"
+            case "$rel" in
+              ahead) echo "v5 has advanced to ${tip}; the built commit ${sha} is an ancestor, so it is released as-built and the newer commits follow in the next release." ;;
+              identical) echo "v5 tip ${tip} is the built commit." ;;
+              *) defer "it is not an ancestor of v5's current tip ${tip} (compare status '${rel}'), so there is nothing on v5 to tag." ;;
+            esac
           fi
+
+          # (b) No release may have landed after the built SHA. The newest
+          # version tag's commit must be an ancestor of the built SHA; if it
+          # is not, a release was cut from a commit this build never saw and
+          # the fragments compiled here are already released. The derived
+          # version is the cheap first signal (the release job refuses an
+          # existing tag outright), and the ancestry check catches the same
+          # situation when the colliding release bumped differently.
+          if gh api "repos/${repo}/git/ref/tags/v${VERSION}" --jq .object.sha >/dev/null 2>&1; then
+            defer "v${VERSION} already exists — a release landed after this commit was built, so its fragments are already released."
+          fi
+          latest_tag="$(gh api --paginate "repos/${repo}/git/matching-refs/tags/v5." --jq '.[].ref' \
+            | sed 's#^refs/tags/##' | grep -E '^v5\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
+          if [ -n "$latest_tag" ]; then
+            rel="$(gh api "repos/${repo}/compare/${latest_tag}...${sha}" --jq .status)"
+            case "$rel" in
+              ahead) echo "Newest release ${latest_tag} is an ancestor of ${sha} — this release is newer than the last." ;;
+              *) defer "the newest release ${latest_tag} is not an ancestor of it (compare status '${rel}'); a release already landed after this commit was built." ;;
+            esac
+          fi
+
+          echo "Proceeding with the release of ${sha} as v${VERSION}."
+          gh api --method POST "repos/${repo}/statuses/${sha}" \
+            -f state=pending \
+            -f context=release-in-progress \
+            -f description="Tagged Release is holding v5 merges for up to ${{ vars.RELEASE_MERGE_HOLD_SECONDS || '300' }}s"
+          gh label create "do-not-merge/hold" --color bfdadc --description "Temporarily blocks Tide/hive automerge" >/dev/null 2>&1 || true
+          held_prs=""
+          while IFS= read -r pr; do
+            [ -n "$pr" ] || continue
+            gh pr edit "$pr" --add-label "do-not-merge/hold"
+            held_prs="${held_prs}${held_prs:+,}${pr}"
+          done < <(gh pr list --base v5 --state open --limit 200 --json number,labels --jq '.[] | select(([.labels[].name] | index("do-not-merge/hold")) | not) | .number')
+          echo "Temporarily applied do-not-merge/hold to PRs: ${held_prs:-<none>}."
+          {
+            echo "proceed=true"
+            echo "hold_sha=${sha}"
+            echo "held_prs=${held_prs}"
+          } >> "$GITHUB_OUTPUT"
 
   release:
     needs: [decide, precheck]
@@ -894,37 +960,39 @@ jobs:
             -f context=gate \
             -f description="docker.yml gate verified for automated release"
 
-          echo "Trying direct v5 push first (#10863); falling back to the release PR path if branch protection rejects it..."
+          # The release commit is parented on $SHA, the commit the images were
+          # built from. A direct push can only land it when v5 is still at
+          # $SHA (fast-forward); otherwise it reaches v5 as a merge commit via
+          # the PR path below. Either way the version tag names the release
+          # commit itself (see RACES), so a tip that has moved on is not a
+          # reason to stand down — it only decides which route the commit
+          # takes and whether the follow-up image build may self-report the
+          # tag (a merge commit that also carries newer v5 work must not).
           git fetch origin v5
           current_tip="$(git rev-parse origin/v5)"
-          if [ "$current_tip" != "$SHA" ]; then
-            echo "::warning::Release opportunity skipped for ${SHA}: v5 advanced to ${current_tip} before the direct push. Nothing was pushed; Unreleased is untouched."
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if direct_out="$(git push origin "HEAD:refs/heads/v5" 2>&1)"; then
-            echo "$direct_out"
-            release_sha="$commit_sha"
-            merged=true
-            echo "Direct push landed release commit ${release_sha} on v5; dispatching docker.yml for the release commit (#6380)..."
-            GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref v5 \
-              -f "release_sha=${release_sha}" \
-              -f "release_version=v${VERSION}"
+          tip_is_built=false
+          if [ "$current_tip" = "$SHA" ]; then
+            tip_is_built=true
+            echo "Trying direct v5 push first (#10863); falling back to the release PR path if branch protection rejects it..."
+            if direct_out="$(git push origin "HEAD:refs/heads/v5" 2>&1)"; then
+              echo "$direct_out"
+              release_sha="$commit_sha"
+              merged=true
+              echo "Direct push landed release commit ${release_sha} on v5; dispatching docker.yml for the release commit (#6380)..."
+              GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref v5 \
+                -f "release_sha=${release_sha}" \
+                -f "release_version=v${VERSION}"
+            else
+              echo "$direct_out"
+              if grep -qiE 'non-fast-forward|fetch first|stale info' <<<"$direct_out"; then
+                echo "v5 advanced during the direct push; continuing via the release PR path (merge commit)."
+                tip_is_built=false
+              else
+                echo "Direct push was rejected by branch protection (expected until the GitHub Actions app has a v5 bypass); falling back to the release PR path."
+              fi
+            fi
           else
-            echo "$direct_out"
-            if grep -qiE 'non-fast-forward|fetch first|stale info' <<<"$direct_out"; then
-              echo "::warning::Release opportunity skipped for ${SHA}: v5 advanced during the direct push. Nothing was pushed; Unreleased is untouched."
-              echo "pushed=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            git fetch origin v5
-            current_tip="$(git rev-parse origin/v5)"
-            if [ "$current_tip" != "$SHA" ]; then
-              echo "::warning::Release opportunity skipped for ${SHA}: v5 advanced to ${current_tip} while branch protection rejected the direct push. Nothing was pushed; Unreleased is untouched."
-              echo "pushed=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "Direct push was rejected by branch protection (expected until the GitHub Actions app has a v5 bypass); falling back to the release PR path."
+            echo "v5 is at ${current_tip}, past the built commit ${SHA}; landing the release commit through the PR path as a merge commit."
           fi
 
           if [ "$merged" != true ]; then
@@ -979,16 +1047,23 @@ jobs:
           #   or a genuinely-unsatisfied required check that is still
           #   settling): retried for a bounded window.
           #
-          #   non-fast-forward equivalents (base branch moved, merge
-          #   conflict, 409 head-SHA mismatch): v5 advanced mid-flight.
-          #   Retrying could never succeed — this release commit is parented
-          #   on the old tip, and rebasing it forward would tag source the
-          #   already-published images were not built from. Defer instead:
-          #   exit green with a notice, push nothing (tag included), and let
-          #   the successor run — triggered by the very merge that won — cut
-          #   the release from ITS tip. The `pushed` output gates the
-          #   GitHub-Release step below so a deferred run creates no release
-          #   object either.
+          #   409 "Base branch was modified": v5 advanced since GitHub last
+          #   computed this PR's mergeability. The PR is a MERGE-COMMIT merge
+          #   (v5 protection does not require an up-to-date head), so the
+          #   release commit still lands and the tag still names the release
+          #   commit, not the merge (see RACES): retried for the same bounded
+          #   window. Until 2026-11 this case deferred green and the tip
+          #   usually moved again before the successor got here.
+          #
+          #   409 "Head branch was modified": the `sha=` guard fired —
+          #   something rewrote the scratch branch under this run. Nothing
+          #   legitimate does that; hard-fail rather than tag a tree this run
+          #   did not build.
+          #
+          #   405 with the PR reported CONFLICTING: a commit after the built
+          #   SHA touched CHANGELOG.md or a fragment this release deletes.
+          #   Retrying cannot resolve a conflict; hard-fail with the PR
+          #   number so a human can rebase it.
           #
           #   anything else: hard-fail.
           # RELEASE_MERGE_WAIT_SECONDS is a production knob (default 5m);
@@ -1129,23 +1204,47 @@ jobs:
               # before tag work widens the ordering window; pass the API's exact
               # SHA because the v5 ref can advance before the build starts.
               echo "Dispatching docker.yml for merged release commit ${release_sha} on v5 (#6380)..."
-              GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref v5 \
-                -f "release_sha=${release_sha}" \
-                -f "release_version=v${VERSION}"
+              # The merge commit may carry v5 work that arrived after the
+              # built SHA; only let its image self-report the tag when v5
+              # was still at the built SHA, i.e. the merge adds nothing but
+              # the changelog (otherwise `git describe` yields vX.Y.Z-N-g…).
+              if [ "$tip_is_built" = true ]; then
+                GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref v5 \
+                  -f "release_sha=${release_sha}" \
+                  -f "release_version=v${VERSION}"
+              else
+                GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref v5 \
+                  -f "release_sha=${release_sha}"
+              fi
               break
             fi
             echo "$out"
             # 409 Conflict from this endpoint means either "Head branch was
             # modified" (the sha= guard fired) or "Base branch was modified" —
             # both are the base-moved case, not something a retry fixes.
-            if grep -qiE 'base branch was modified|head branch was modified|is out of date|HTTP 409' <<<"$out"; then
-              echo "::warning::Release opportunity skipped for ${SHA}: v5 advanced while this run was in flight — deferring (see the RACES note, #5142/#5222). Nothing was pushed; Unreleased is untouched, so either a successor run or the hourly backstop (#5318) releases it."
-              echo "pushed=false" >> "$GITHUB_OUTPUT"
-              exit 0
+            if grep -qiE 'head branch was modified' <<<"$out"; then
+              echo "::error::the release PR's head ${commit_sha} moved under this run (409 sha= guard) — refusing to merge a scratch branch this run did not build." >&2
+              exit 1
+            fi
+            if grep -qiE 'base branch was modified|is out of date|HTTP 409' <<<"$out"; then
+              # v5 moved since mergeability was computed; the merge-commit
+              # merge is still valid once GitHub recomputes it.
+              tip_is_built=false
+              if [ "$SECONDS" -lt "$deadline" ]; then
+                echo "v5 advanced while this run was in flight; the release lands as a merge commit on the new tip — retrying in ${merge_poll_seconds}s..."
+                sleep "$merge_poll_seconds"
+                continue
+              fi
+              echo "::error::PR #${pr_number} could not be merged within ${merge_wait_seconds}s: v5 kept advancing and GitHub never settled its mergeability." >&2
+              exit 1
             fi
             # 405 Method Not Allowed is GitHub's "not mergeable" for this
             # endpoint — including a required check that has not landed yet.
             if grep -qiE 'HTTP 405|not mergeable|required status check' <<<"$out"; then
+              if [ "$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.mergeable_state // ""' 2>/dev/null)" = dirty ]; then
+                echo "::error::PR #${pr_number} conflicts with v5: a commit after the built ${SHA} touched CHANGELOG.md or a changelog.d fragment this release consumes. Resolve the conflict on the release PR (or close it and let the next build release), then re-run." >&2
+                exit 1
+              fi
               required_state="$(required_checks_state "$pr_number" "$commit_sha")"
               if [ "$required_state" = failed ]; then
                 echo "::error::PR #${pr_number} has a failed required check on ${commit_sha}; closing the release PR instead of waiting out the deadline." >&2
@@ -1164,17 +1263,23 @@ jobs:
           done
           fi
 
-          # The merge landed a NEW commit on v5 (a merge commit, or the same
-          # tree via fast-forward depending on PR mergeability). Fetch it so
-          # the object exists locally, but tag the merge API's exact returned
-          # SHA rather than re-resolving a branch that another PR can advance
-          # between our merge and this fetch.
+          # The merge landed the release commit on v5 (directly, or under a
+          # merge commit the API returned as release_sha). The TAG names the
+          # release commit ${commit_sha} itself — parented on the built SHA,
+          # so its tree is exactly what the retagged images were built from
+          # plus the changelog (see RACES) — never the merge commit, which
+          # may also carry v5 work that arrived after the build. Confirm the
+          # release commit really is reachable from v5 before tagging.
           git fetch origin v5
           if ! git merge-base --is-ancestor "$release_sha" origin/v5; then
             echo "::error::merge API returned ${release_sha}, but it is not contained in fetched origin/v5; refusing to tag or dispatch it." >&2
             exit 1
           fi
-          git tag "v${VERSION}" "$release_sha"
+          if ! git merge-base --is-ancestor "$commit_sha" origin/v5; then
+            echo "::error::release commit ${commit_sha} is not contained in fetched origin/v5 after the merge; refusing to tag it." >&2
+            exit 1
+          fi
+          git tag "v${VERSION}" "$commit_sha"
           # Tag pushes have no protection race, only transient transport
           # failures — a plain bounded retry.
           for attempt in 1 2 3; do

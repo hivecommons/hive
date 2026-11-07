@@ -1,1 +1,0 @@
-- Avoid filing repeated-error fleet reports for sentinel skips caused by GitHub pacing, while retaining the local warnings and reporting other failures.

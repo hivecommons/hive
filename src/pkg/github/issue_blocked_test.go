@@ -336,15 +336,21 @@ func TestReviewBacklogFilesIntroducedAndTouchedItemsBlockedOnItsPR(t *testing.T)
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P2"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit", "help wanted"}},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit", "help wanted"}, MinSeverity: "P3"},
 		}
 	})
 	recs := captureAudit(c)
-	report := routingReport(t, 5, "abc",
+	// Two passes: findings from one pass that share a perspective collapse
+	// into one item (hivecommons/hive#17065), and this test wants each
+	// finding's own blocked note.
+	for _, finding := range []map[string]any{
 		nit("only-in-pr", "low", "pkg/new.go", 3, "introduced by the PR"),
-		nit("on-base", "low", "pkg/old.go", 4, "already there"))
-	if err := c.fileOutOfScopeReviewBacklog(context.Background(), ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: report}, time.Now()); err != nil {
-		t.Fatal(err)
+		nit("on-base", "low", "pkg/old.go", 4, "already there"),
+	} {
+		report := routingReport(t, 5, "abc", finding)
+		if err := c.fileOutOfScopeReviewBacklog(context.Background(), ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: report}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if len(issues) != 2 {
 		t.Fatalf("issues = %d, want 2", len(issues))
