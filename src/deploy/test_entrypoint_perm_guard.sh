@@ -571,6 +571,29 @@ case "$race_group_digit" in
          "mode is $race_mode — this is the dev-owned-0600 lockout from #9226" ;;
 esac
 
+# ── 13. The shared Claude settings.json is never opened to the group ────────
+# It carries hooks and apiKeyHelper, so a group-writable copy lets any agent
+# run a command in every other agent's Claude session (#17059). The sweeps
+# must leave it hive-owned and owner-write-only while still repairing its
+# siblings.
+SETTINGS="$HOMEDIR/.claude/settings.json"
+SIBLING="$HOMEDIR/.claude/sibling.json"
+for repair in hive_fix_tree_recent hive_fix_tree; do
+  printf '{}\n' > "$SETTINGS"
+  printf '{}\n' > "$SIBLING"
+  chmod 0644 "$SETTINGS" "$SIBLING"
+  sh -c 'set -e; . "$1"; '"$repair"' "$2" 10' sh "$WORK/guards.local.sh" "$HOMEDIR/.claude" >/dev/null 2>&1
+  settings_mode="$(stat -c '%a' "$SETTINGS" 2>/dev/null || stat -f '%Lp' "$SETTINGS")"
+  sibling_mode="$(stat -c '%a' "$SIBLING" 2>/dev/null || stat -f '%Lp' "$SIBLING")"
+  if [ "$settings_mode" = "644" ] && group_rw "$sibling_mode"; then
+    ok "$repair: shared .claude/settings.json stays 644 while its siblings are repaired"
+  else
+    bad "$repair: shared .claude/settings.json stays 644 while its siblings are repaired" \
+        "settings.json mode $settings_mode, sibling mode $sibling_mode"
+  fi
+done
+rm -f "$SETTINGS" "$SIBLING"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
