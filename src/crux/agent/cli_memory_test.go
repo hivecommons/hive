@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/crux/config"
 )
 
 func envValue(pairs []agentEnvPair, key string) (string, bool) {
