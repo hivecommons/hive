@@ -145,6 +145,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
+		MergeTrain *struct {
+			Enabled           *bool `json:"enabled"`
+			MaxRebaseAttempts *int  `json:"max_rebase_attempts"`
+		} `json:"merge_train"`
 		NativeMergeQueue     *nativeQueueSettingsPatch `json:"native_merge_queue"`
 		SelfAuthored         *bool                     `json:"self_authored"`
 		MaxMerges            *int                      `json:"max_merges"`
@@ -195,6 +199,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- validate before mutating anything ---
+	if body.MergeTrain != nil && body.MergeTrain.MaxRebaseAttempts != nil && *body.MergeTrain.MaxRebaseAttempts < 0 {
+		jsonError(w, "merge_train.max_rebase_attempts must be at least 0 (0 uses the default of 2)", http.StatusBadRequest)
+		return
+	}
 	nativeQueue, err := updateNativeQueueSettings(s.deps.Config.AutoMerge.NativeMergeQueue, body.NativeMergeQueue)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -305,6 +313,15 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	// --- apply ---
 	cfg := s.deps.Config
 	previousAutoMerge := cfg.AutoMerge
+	if body.MergeTrain != nil {
+		if body.MergeTrain.Enabled != nil {
+			v := *body.MergeTrain.Enabled
+			cfg.AutoMerge.MergeTrain.Enabled = &v
+		}
+		if body.MergeTrain.MaxRebaseAttempts != nil {
+			cfg.AutoMerge.MergeTrain.MaxRebaseAttempts = *body.MergeTrain.MaxRebaseAttempts
+		}
+	}
 	if body.NativeMergeQueue != nil {
 		cfg.AutoMerge.NativeMergeQueue = nativeQueue
 	}
@@ -413,10 +430,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after auto-merge update", "error", err)
-		if body.NativeMergeQueue != nil {
+		if body.NativeMergeQueue != nil || body.MergeTrain != nil {
 			cfg.AutoMerge = previousAutoMerge
 			syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
-			jsonError(w, "failed to persist native queue settings", http.StatusInternalServerError)
+			jsonError(w, "failed to persist auto-merge settings", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -505,6 +522,10 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"bot_takeover_enabled":         am.BotTakeover.IsEnabled(),
 		"require_current_base_default": am.CurrentBaseDefaultEnabled(),
 		"skip_current_base":            emptyIfNilStrings(am.SkipCurrentBase),
+		"merge_train": map[string]interface{}{
+			"enabled":             am.MergeTrain.IsEnabled(),
+			"max_rebase_attempts": am.MergeTrain.EffectiveMaxRebaseAttempts(),
+		},
 		"native_merge_queue": map[string]interface{}{
 			"enabled":                am.NativeMergeQueue.Enabled,
 			"repos":                  emptyIfNilStrings(am.NativeMergeQueue.Repos),

@@ -180,14 +180,14 @@ func (s *depBotConflictStore) saveLocked() {
 }
 
 // dependencyBotHandoffCandidate is the cheap, call-free half of selection: an
-// open, non-draft dependency-bot PR (dependencyBots) that is not already
+// open, non-draft dependency-bot PR (github.IsDependencyBotAuthor) that is not already
 // parked (needs-human, hold, do-not-merge). dependencyBotHandoffReason says
 // whether it needs a person.
 func dependencyBotHandoffCandidate(pr github.PullRequest) bool {
 	if pr.Draft || (pr.State != "" && !strings.EqualFold(pr.State, "open")) {
 		return false
 	}
-	if !dependencyBots[pr.Author] {
+	if !github.IsDependencyBotAuthor(pr.Author) {
 		return false
 	}
 	if escalation.HasNeedsHumanLabel(pr.Labels) || github.HasHoldLabel(pr.Labels) || hasLabel(pr.Labels, "do-not-merge") {
@@ -227,7 +227,7 @@ func dependencyBotConflictComment(base string) string {
 
 // runDependencyBotConflictSweep closes hivecommons/hive#11558 and #12379. A
 // dependency-bot PR is outside the fix-loop escalation sweep
-// (isHiveAgentAuthor excludes dependencyBots) and the hive never pushes to bot
+// (isHiveAgentAuthor excludes dependency bots) and the hive never pushes to bot
 // branches, so a bot PR stuck on something only a person can clear had
 // nobody saying so. Per pass this deterministic sweep hands such a PR to a
 // person with one comment naming the action and needs-human:

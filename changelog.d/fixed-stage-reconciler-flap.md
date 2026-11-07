@@ -1,0 +1,1 @@
+- Make review-verdict normalization independent of the previous PR stage and suppress same-head stage reversals for 15 minutes at the reconciler write boundary, preventing idle PRs from repeatedly restarting label-triggered CI ([#16880](https://github.com/hivecommons/hive/issues/16880)).

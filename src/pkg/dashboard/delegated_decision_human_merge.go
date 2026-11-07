@@ -48,7 +48,7 @@ func delegatedHumanMergeOptions(in delegatedecision.Input, number int, mergerRol
 	mergeNow := decisionOption(decisionActionMergeNow, decisionMergeNowLabel, mergerRole, decisionWhyMergerRole)
 	mergeNow.Consequence = "merges " + ref + " now via hive's identity, attributed to you"
 	queue := decisionOption(decisionActionQueueMerge, decisionQueueMergeLabel, mergerRole, decisionWhyMergerRole)
-	queue.Consequence = "records your approval; the hive's merge sweep merges " + ref + " on its next tick once CI is green and the head has soaked"
+	queue.Consequence = "records your approval; hive merges " + ref + " on its next merge pass once CI is green and the head has soaked"
 	direction := decisionOption(decisionActionDirection, "Send back for a new commit", in.HiveAuthored, "The hive did not open this PR, so it cannot carry a direction to its author; leave a changes-requested review on GitHub")
 	closeSup := decisionOption(decisionActionCloseSuperseded, "Close as superseded", true, "")
 	return []StageTrackerDecisionOption{queue, mergeNow, direction, closeSup}
@@ -214,7 +214,7 @@ func (s *Server) delegatedHumanMergeDecision(in delegatedecision.Input, req dele
 	case !mergerRole:
 		return delegatedecision.Decision{}, nil, false
 	}
-	text := "approve " + ref + ": review passed, CI green and mergeable — the hive's merge sweep merges it under its own number once the head has soaked"
+	text := "approve " + ref + ": review passed, CI green and mergeable — hive merges it under its own number on its next merge pass once the head has soaked"
 	return delegatedecision.Decision{
 		Verdict:   delegatedecision.VerdictApprove,
 		Rule:      delegatedHumanMergeApproveRule,

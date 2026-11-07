@@ -23,11 +23,41 @@ func (c *Engine) latestTrustedHumanChangesRequested(ctx context.Context, owner, 
 	return c.latestTrustedHumanReview(ctx, owner, repo, number, head, "CHANGES_REQUESTED")
 }
 
-// latestTrustedHumanReview reads all pages before selecting an opinion. An
-// older approval must never shadow a later change request or dismissal.
+// latestTrustedHumanReview is the newest standing trusted review in state
+// that binds to head (standingTrustedHumanReviews). A change request binds
+// to its commit; an approval binds to the content it approved, which a base
+// merge carries and a content push does not, whatever commit_id GitHub
+// reports (automerge_review_head_binding.go).
 func (c *Engine) latestTrustedHumanReview(ctx context.Context, owner, repo string, number int, head, state string) (*gh.PullRequestReview, bool) {
 	if c == nil || c.gh == nil || strings.TrimSpace(head) == "" {
 		return nil, false
+	}
+	reviews := c.standingTrustedHumanReviews(ctx, owner, repo, number)
+	if !strings.EqualFold(state, "APPROVED") {
+		found := newestReviewOnHead(reviews, state, head)
+		return found, found != nil
+	}
+	var found *gh.PullRequestReview
+	for _, rv := range reviews {
+		if !strings.EqualFold(rv.GetState(), state) || !c.reviewReachesHead(ctx, owner, repo, number, head, rv).ok {
+			continue
+		}
+		if found == nil || rv.GetSubmittedAt().After(found.GetSubmittedAt().Time) {
+			found = rv
+		}
+	}
+	return found, found != nil
+}
+
+// standingTrustedHumanReviews returns each trusted human's standing review:
+// the login's latest opinionated review (APPROVED / CHANGES_REQUESTED /
+// DISMISSED), kept only when the login is a person (not the App, not a bot)
+// isTrustedMerger says is configured and trusted. It reads all pages before
+// selecting, so an older approval never shadows a later change request or
+// dismissal. A read failure returns nothing.
+func (c *Engine) standingTrustedHumanReviews(ctx context.Context, owner, repo string, number int) []*gh.PullRequestReview {
+	if c == nil || c.gh == nil {
+		return nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -39,7 +69,7 @@ func (c *Engine) latestTrustedHumanReview(ctx context.Context, owner, repo strin
 		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
 			c.warn("automerge self lane could not read PR reviews for human changes_requested", "owner", owner, "repo", repo, "pr", number, "error", err)
-			return nil, false
+			return nil
 		}
 		seen = append(seen, reviews...)
 		for _, rv := range reviews {
@@ -58,19 +88,8 @@ func (c *Engine) latestTrustedHumanReview(ctx context.Context, owner, repo strin
 		opts.Page = resp.NextPage
 	}
 	c.noteStageReviews(owner, repo, number, seen)
-	approval := strings.EqualFold(state, "APPROVED")
-	var found *gh.PullRequestReview
+	var out []*gh.PullRequestReview
 	for login, rv := range latest {
-		if !strings.EqualFold(rv.GetState(), state) {
-			continue
-		}
-		// A change request binds to its commit; an approval binds to the
-		// content it approved, which a base merge carries and a content push
-		// does not, whatever commit_id GitHub reports
-		// (automerge_review_head_binding.go).
-		if !approval && strings.TrimSpace(rv.GetCommitID()) != strings.TrimSpace(head) {
-			continue
-		}
 		if c.isHiveAppReviewAuthor(rv) || strings.HasSuffix(login, "[bot]") {
 			continue
 		}
@@ -78,14 +97,24 @@ func (c *Engine) latestTrustedHumanReview(ctx context.Context, owner, repo strin
 		if !configured || !trusted {
 			continue
 		}
-		if approval && !c.reviewReachesHead(ctx, owner, repo, number, head, rv).ok {
+		out = append(out, rv)
+	}
+	return out
+}
+
+// newestReviewOnHead picks the most recently submitted review in state whose
+// commit is head; nil when none is.
+func newestReviewOnHead(reviews []*gh.PullRequestReview, state, head string) *gh.PullRequestReview {
+	var found *gh.PullRequestReview
+	for _, rv := range reviews {
+		if !strings.EqualFold(rv.GetState(), state) || strings.TrimSpace(rv.GetCommitID()) != strings.TrimSpace(head) {
 			continue
 		}
 		if found == nil || rv.GetSubmittedAt().After(found.GetSubmittedAt().Time) {
 			found = rv
 		}
 	}
-	return found, found != nil
+	return found
 }
 
 // humanChangesRequestedForHead reports whether a trusted maintainer has
