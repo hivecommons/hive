@@ -1,0 +1,1 @@
+- A claim's GitHub side effect (label, stage or ledger write) that kept timing out after its bounded retries logged `issue-claims: GitHub side effect failed` with no matching class, so the hive filed it as `unclassified_error_repeated`. It now lands under its own `issue_claim_effect_failed` class, with the underlying error still in the log line (hivecommons/hive#17069).
