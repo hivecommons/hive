@@ -646,8 +646,7 @@ func PreserveNeedsDecisionOnSameHead(prev stagelabels.Record, hadPrev bool, obs 
 		return stageVerdict{}, false
 	}
 	hasQuestion := (d.VerdictKnown && (d.Verdict.DecisionRequested || strings.TrimSpace(d.Verdict.DecisionQuestion) != "")) ||
-		prev.Reason == StageReasonDecisionRequested ||
-		strings.Contains(prev.Reason, "decision")
+		prev.Reason == StageReasonDecisionRequested
 	if !hasQuestion {
 		return stageVerdict{}, false
 	}

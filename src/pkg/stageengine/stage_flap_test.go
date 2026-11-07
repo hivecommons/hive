@@ -72,7 +72,7 @@ func TestPreserveNeedsDecisionOnSameHead(t *testing.T) {
 	}
 
 	// 1. Same head with decision question preserves 085 even when raw verdict would be fixing (070) or review-pending (050).
-	rawFixing := stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned, Reason: stagelabels.LaneReasonCheckFailingPrefix + "unit"}
+	rawFixing := stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned, Reason: "check-failing:unit"}
 	got, ok := PreserveNeedsDecisionOnSameHead(prev, true, obs, rawFixing)
 	if !ok || got.Stage != stagelabels.NeedsDecision || got.Reason != prev.Reason {
 		t.Fatalf("expected preserved 085, got %+v, ok=%v", got, ok)

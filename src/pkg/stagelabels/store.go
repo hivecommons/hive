@@ -593,7 +593,6 @@ type Store struct {
 	// dampener tracks recent stage transitions per (key, head) (#16974).
 	dampenerHead map[string]string
 	dampener     map[string][]dampenerMove
-	logger       *slog.Logger
 }
 
 // NewStore returns an empty in-memory store that persists to path ("" =
@@ -609,24 +608,6 @@ func NewStore(path string, now func() time.Time) *Store {
 		seenSaved:    map[string]time.Time{},
 		dampenerHead: map[string]string{},
 		dampener:     map[string][]dampenerMove{},
-	}
-}
-
-// SetLogger configures the logger used for dampener suppression diagnostics.
-func (s *Store) SetLogger(l *slog.Logger) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.logger = l
-}
-
-func (s *Store) logWarn(msg string, args ...any) {
-	if s != nil && s.logger != nil {
-		s.logger.Warn(msg, args...)
-	} else {
-		slog.Warn(msg, args...)
 	}
 }
 
@@ -781,7 +762,7 @@ func (s *Store) ObserveProgressHead(key, head string, stage Stage, reason string
 	// current label.
 	if had && prev.Stage != None && prev.Stage != stage && head != "" {
 		if s.isDampenedLocked(key, head, prev.Stage, stage, now) {
-			s.logWarn("stage transition suppressed by dampener",
+			slog.Warn("stage transition suppressed by dampener",
 				slog.String("key", key),
 				slog.String("head", head),
 				slog.String("from", prev.Stage.String()),
@@ -797,9 +778,6 @@ func (s *Store) ObserveProgressHead(key, head string, stage Stage, reason string
 	next.Stage = stage
 	next.Reason = reason
 	next.LastSeen = now
-	if head != "" {
-		next.ActivityHead = head
-	}
 	if !had || prev.Stage != stage {
 		next.EnteredAt = now
 		next.ReasonChangedAt = now
@@ -2431,13 +2409,6 @@ func (s *Store) recordDampenerTransitionLocked(key, head string, from, to Stage,
 		s.dampenerHead[key] = head
 	}
 	s.dampener[key] = append(s.dampener[key], dampenerMove{from: from, to: to, at: now})
-}
-
-// ResetDampener clears the transition dampener history for key.
-func (s *Store) ResetDampener(key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.resetDampenerLocked(key)
 }
 
 func (s *Store) resetDampenerLocked(key string) {
