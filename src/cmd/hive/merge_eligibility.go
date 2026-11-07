@@ -213,24 +213,42 @@ func contributorLaneReviewerConfigured(cfg *config.Config) bool {
 	return false
 }
 
+// contributorLaneReviewDispatched reports whether the review planner asks
+// reviewers for new heads at all. It mirrors planReviewDispatchWith's
+// answeredOnly rule: with review.require_approval or review.fan_out off the
+// planner hands out only maintainer-answered fix work, never a review.
+func contributorLaneReviewDispatched(cfg *config.Config) bool {
+	return cfg != nil && cfg.Review.RequireApproval && cfg.Review.FanOut
+}
+
 // contributorLaneVerdictFunc answers the contributor-lane reviewer gate from
 // the same durable review-verdicts.json the merge-eligibility gate reads
 // (review.Artifact.HasAggregateApproval). An unreadable artifact with a
-// reviewer configured fails closed: Configured=true, Approved=false.
+// reviewer configured fails closed: Configured=true, Approved=false. A head
+// with no aggregate on a hive that never dispatches the review swarm is
+// marked ReviewOff: no verdict is on its way, and the lane says so
+// (contributor-lane:review-off) instead of waiting at no-verdict forever.
 func contributorLaneVerdictFunc(cfg *config.Config, logger *slog.Logger) automerge.ContributorLaneVerdictFunc {
 	return func(repo string, number int, headSHA string) automerge.ContributorLaneVerdict {
 		if !contributorLaneReviewerConfigured(cfg) {
 			return automerge.ContributorLaneVerdict{}
 		}
+		reviewOff := !contributorLaneReviewDispatched(cfg)
 		artifact, err := review.LoadArtifact("")
 		if err != nil {
-			if logger != nil && !errors.Is(err, os.ErrNotExist) {
+			if errors.Is(err, os.ErrNotExist) {
+				// Nothing was ever reviewed: no verdict for this head either.
+				return automerge.ContributorLaneVerdict{Configured: true, ReviewOff: reviewOff}
+			}
+			if logger != nil {
 				logger.Warn("contributor-lane verdict gate: review-verdicts.json unavailable; failing closed", "error", err)
 			}
 			return automerge.ContributorLaneVerdict{Configured: true}
 		}
 		approved := artifact.HasAggregateApproval(repo, number, headSHA)
-		return contributorLaneVerdictFromArtifact(artifact, repo, number, headSHA, approved)
+		v := contributorLaneVerdictFromArtifact(artifact, repo, number, headSHA, approved)
+		v.ReviewOff = reviewOff && !approved && strings.TrimSpace(v.Verdict) == ""
+		return v
 	}
 }
 

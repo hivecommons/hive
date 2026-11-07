@@ -646,6 +646,8 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 		return ""
 	case reason == contributorLaneReasonReporterTrustHold:
 		return prstage.CauseReporterTrustHold
+	case reason == contributorLaneReasonReviewOff:
+		return prstage.CauseReviewOff
 	case reason == autoMergeReasonHumanMergePath, reason == autoMergeReasonHumanMergePathEvidence:
 		return prstage.CauseHumanMergePath
 	case reason == autoMergeReasonHumanMergeRequired:
