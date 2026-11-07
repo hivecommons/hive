@@ -627,7 +627,8 @@ Maps an agent name to the `layers`, `repos`, `types`, `tags` and
 are restricted to. A missing agent or an empty field is unrestricted (the
 default). Unknown layer or lifecycle state names fail config load. See
 [Per-agent scopes](knowledge-toc.md#per-agent-scopes) for the intersection
-rules.
+rules, and [agent-knowledge-and-memory.md](agent-knowledge-and-memory.md) for
+how the scope is applied on the kick path end to end.
 
 ```yaml
 knowledge:

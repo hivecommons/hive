@@ -236,6 +236,10 @@ every lane honours that statement as a written policy and skips the class.
 
 ## What to read next
 
+- [agent-knowledge-and-memory.md](agent-knowledge-and-memory.md) — where this
+  block sits in the whole kick (skills, AGENTS.md, `# Relevant Knowledge`), why
+  the CLI does not read the repo's `AGENTS.md` natively, and what `/clear`
+  does and does not reset.
 - [house-style.md](house-style.md) — the short, hive-wide *how to change things*
   section that precedes this block in every kick; a repo overrides it with a
   root `HIVE_STYLE.md`, read from the same checkout root.
