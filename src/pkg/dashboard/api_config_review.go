@@ -181,6 +181,8 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 			JiraStatus      *string   `json:"jira_status"`
 			Labels          *[]string `json:"labels"`
 			MaxPerPRPerDay  *int      `json:"max_per_pr_per_day"`
+			MaxPerPR        *int      `json:"max_per_pr"`
+			MinSeverity     *string   `json:"min_severity"`
 		} `json:"backlog"`
 		// ReviewerAutoscale is review.reviewers.autoscale
 		// (hivecommons/hive#14685). Pointer fields keep "absent means
@@ -358,6 +360,17 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if bl.MaxPerPRPerDay != nil {
 			backlog.MaxPerPRPerDay = *bl.MaxPerPRPerDay
+		}
+		if bl.MaxPerPR != nil {
+			backlog.MaxPerPR = *bl.MaxPerPR
+		}
+		if bl.MinSeverity != nil {
+			// Empty keeps "use the default" rather than pinning P2 into the file.
+			if v := strings.TrimSpace(*bl.MinSeverity); v == "" {
+				backlog.MinSeverity = ""
+			} else {
+				backlog.MinSeverity = strings.ToUpper(v)
+			}
 		}
 	}
 	if err := severity.Validate(); err != nil {
