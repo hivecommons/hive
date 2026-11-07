@@ -469,6 +469,15 @@ test('cosmetic flip falls through to the full wait while a policy provider is re
   }
 });
 
+test('cosmetic flip falls through to the full wait when the DCO provider reports UNKNOWN', async () => {
+  // The full wait re-raises ProviderUnavailable once and renders the runbook
+  // job summary; failing here would skip that operator-facing surface.
+  const f = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }]);
+  Object.assign(f.state.runs.get(sha(11)).find(r => r.name === 'DCO'),
+    { conclusion: 'failure', output: { summary: unavailableSummary } });
+  assert.equal(await replayLastVerdict(f), null);
+});
+
 test('cosmetic flip has nothing to replay without a prior success and falls through', async () => {
   // A failed, cancelled (timed-out) or absent prior run must not be pinned
   // onto every later stage-label flip: null sends the caller to the full wait.
