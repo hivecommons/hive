@@ -105,14 +105,18 @@ func nudgeComments(api *stageAPI) []string {
 	return out
 }
 
-// One nudge per head on entering 072, a second at the stall threshold, never
-// a third; a new head re-arms; leaving 072 resolves the sink entry.
-func TestContributorNudgeOncePerHeadThenAtStall(t *testing.T) {
+// One nudge comment per PR (hivecommons/hive#17067): posted on entering 072,
+// rewritten in place for a new head red for the same reason class and for a
+// changed class, rewritten once more as the repeat reminder after
+// RenudgeInterval, never a third time for the same class; leaving 072
+// resolves the sink entry.
+func TestContributorNudgeOncePerPRAndReason(t *testing.T) {
 	api, closeAPI := seededStageAPI(t)
 	defer closeAPI()
+	api.statefulComments = true
 	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
 	sink := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "spawn", Online: true}}
-	e := newNudgeEngine(t, apiURLOf(t, api), clock, sink, StageLabelPolicy{Enabled: true, ContributorNudge: true})
+	e := newNudgeEngine(t, apiURLOf(t, api), clock, sink, StageLabelPolicy{Enabled: true, ContributorNudge: true, RenudgeInterval: 72 * time.Hour})
 	ctx := context.Background()
 	observe := func(pr *gh.PullRequest, reason string) StageLabelResult {
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, reason, false, nil)
@@ -123,15 +127,22 @@ func TestContributorNudgeOncePerHeadThenAtStall(t *testing.T) {
 		}
 		return res
 	}
+	lastEdit := func() string {
+		if len(api.commentEdits) == 0 {
+			return ""
+		}
+		return api.commentEdits[len(api.commentEdits)-1]
+	}
+	in072 := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	stalled := append([]string{"stage/stalled"}, in072...)
 
 	res := observe(nudgePR(7, "aaa"), "check-failing:unit")
 	if got := nudgeComments(api); len(got) != 1 {
 		t.Fatalf("nudges=%d comments=%v", len(got), api.comments)
 	} else {
-		c := got[0]
-		for _, want := range []string{"head=aaa n=1 mode=spawn", "@mallory", "`unit`", "push a new head", "parallel fix session"} {
-			if !strings.Contains(c, want) {
-				t.Fatalf("comment missing %q:\n%s", want, c)
+		for _, want := range []string{"reason=check-failing head=aaa n=1 mode=spawn", "@mallory", "`unit`", "push a new head", "parallel fix session"} {
+			if !strings.Contains(got[0], want) {
+				t.Fatalf("comment missing %q:\n%s", want, got[0])
 			}
 		}
 	}
@@ -140,54 +151,92 @@ func TestContributorNudgeOncePerHeadThenAtStall(t *testing.T) {
 		t.Fatalf("res=%+v sink=%+v", res, sink.nudges)
 	}
 
-	// Same head, same stage, next cycles: idempotent.
+	// Same head, same class, next cycles: idempotent, even past the stall
+	// threshold (24h) — the repeat window is 72h.
 	api.reset()
-	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
 	clock.advance(time.Hour)
-	observe(nudgePR(7, "aaa", labels...), "check-failing:unit")
-	if api.writes() != 0 || len(sink.nudges) != 1 {
-		t.Fatalf("re-nudged early: comments=%v sink=%d", api.comments, len(sink.nudges))
+	observe(nudgePR(7, "aaa", in072...), "check-failing:unit")
+	if api.writes() != 0 || len(api.commentEdits) != 0 || len(sink.nudges) != 1 {
+		t.Fatalf("re-nudged early: comments=%v edits=%v sink=%d", api.comments, api.commentEdits, len(sink.nudges))
 	}
-
-	// Stall threshold (dwell 24h): stalled label + second nudge, no third.
 	clock.advance(23 * time.Hour)
-	observe(nudgePR(7, "aaa", labels...), "check-failing:unit")
-	if got := nudgeComments(api); len(got) != 1 || !strings.Contains(got[0], "n=2") || !strings.Contains(got[0], "last automatic reminder") {
-		t.Fatalf("stall nudge: %v", api.comments)
+	observe(nudgePR(7, "aaa", in072...), "check-failing:unit")
+	if len(nudgeComments(api)) != 0 || len(api.commentEdits) != 0 || len(sink.nudges) != 1 {
+		t.Fatalf("stall threshold nudged: comments=%v edits=%v", api.comments, api.commentEdits)
 	}
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
 		t.Fatalf("stalled label: %v", api.added)
 	}
-	if len(sink.nudges) != 2 || !sink.nudges[1].Stalled {
+
+	// New head, still red for the same class (another check): the one
+	// comment is rewritten, nothing new is posted, the relay is told, and
+	// the class count does not move.
+	api.reset()
+	clock.advance(time.Hour)
+	res = observe(nudgePR(7, "bbb", stalled...), "check-failing:lint")
+	if res.Comments != 0 || len(nudgeComments(api)) != 0 || len(api.commentEdits) != 1 {
+		t.Fatalf("new head same class: res=%+v comments=%v edits=%v", res, api.comments, api.commentEdits)
+	}
+	for _, want := range []string{"reason=check-failing head=bbb n=1 mode=spawn", "`lint`"} {
+		if !strings.Contains(lastEdit(), want) {
+			t.Fatalf("rewrite missing %q:\n%s", want, lastEdit())
+		}
+	}
+	if len(sink.nudges) != 2 || sink.nudges[1].Nudge != 1 || sink.nudges[1].Stalled {
+		t.Fatalf("sink=%+v", sink.nudges)
+	}
+	rec, _ := e.stageStore.Get(stageKey("acme", "widget", 7))
+	if rec.NudgeReason != "check-failing" || rec.NudgeReasonCount != 1 || rec.NudgeHead != "bbb" {
+		t.Fatalf("ledger %+v", rec)
+	}
+
+	// 72h after the class was first counted: the one repeat reminder, as a
+	// rewrite; then never again for this class.
+	api.reset()
+	clock.advance(48 * time.Hour)
+	observe(nudgePR(7, "bbb", stalled...), "check-failing:lint")
+	if len(nudgeComments(api)) != 0 || len(api.commentEdits) != 2 || !strings.Contains(lastEdit(), "reason=check-failing head=bbb n=2") || !strings.Contains(lastEdit(), "last automatic reminder") {
+		t.Fatalf("repeat nudge: comments=%v edits=%v", api.comments, api.commentEdits)
+	}
+	if len(sink.nudges) != 3 || !sink.nudges[2].Stalled || sink.nudges[2].Nudge != 2 {
 		t.Fatalf("sink=%+v", sink.nudges)
 	}
 	api.reset()
-	clock.advance(48 * time.Hour)
-	observe(nudgePR(7, "aaa", "stage/stalled", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
-	if len(nudgeComments(api)) != 0 || len(sink.nudges) != 2 {
-		t.Fatalf("third nudge posted: %v", api.comments)
+	clock.advance(96 * time.Hour)
+	observe(nudgePR(7, "bbb", stalled...), "check-failing:lint")
+	if len(nudgeComments(api)) != 0 || len(api.commentEdits) != 2 || len(sink.nudges) != 3 {
+		t.Fatalf("third nudge: comments=%v edits=%v sink=%d", api.comments, api.commentEdits, len(sink.nudges))
 	}
 
-	// Author pushes a new head that is still red: count restarts.
+	// A different class on a new head restarts the count — still as a
+	// rewrite of the same comment.
 	api.reset()
-	observe(nudgePR(7, "bbb", "stage/stalled", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "changes-requested")
-	if got := nudgeComments(api); len(got) != 1 || !strings.Contains(got[0], "head=bbb n=1") || !strings.Contains(got[0], "reviewer requested changes") {
-		t.Fatalf("new-head nudge: %v", api.comments)
+	res = observe(nudgePR(7, "ccc", stalled...), "changes-requested")
+	if res.Comments != 0 || len(nudgeComments(api)) != 0 || len(api.commentEdits) != 3 {
+		t.Fatalf("changed reason: res=%+v comments=%v edits=%v", res, api.comments, api.commentEdits)
 	}
-	if len(sink.nudges) != 3 || !sink.nudges[2].HumanChangesRequested {
+	for _, want := range []string{"reason=changes-requested head=ccc n=1", "reviewer requested changes"} {
+		if !strings.Contains(lastEdit(), want) {
+			t.Fatalf("rewrite missing %q:\n%s", want, lastEdit())
+		}
+	}
+	if len(sink.nudges) != 4 || !sink.nudges[3].HumanChangesRequested || sink.nudges[3].Nudge != 1 {
 		t.Fatalf("sink=%+v", sink.nudges)
 	}
 	if len(sink.resolved) != 0 {
 		t.Fatalf("resolved while still in 072: %v", sink.resolved)
 	}
+	if len(api.comments) != 0 {
+		t.Fatalf("a second nudge comment was posted: %v", api.comments)
+	}
 
 	// New head goes green and awaits review: leaves 072 → Resolve once.
 	api.reset()
-	observe(nudgePR(7, "ccc", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "required-check-missing:unit")
+	observe(nudgePR(7, "ddd", in072...), "required-check-missing:unit")
 	if !reflect.DeepEqual(sink.resolved, []int{7}) {
 		t.Fatalf("resolved=%v", sink.resolved)
 	}
-	observe(nudgePR(7, "ccc", "stage/050-review-pending", "role/contributor", "author/clanker"), "required-check-missing:unit")
+	observe(nudgePR(7, "ddd", "stage/050-review-pending", "role/contributor", "author/clanker"), "required-check-missing:unit")
 	if !reflect.DeepEqual(sink.resolved, []int{7}) {
 		t.Fatalf("resolve repeated: %v", sink.resolved)
 	}
@@ -230,6 +279,7 @@ func TestContributorNudgeTerminalDisabledAndNilSink(t *testing.T) {
 	}
 
 	api.reset()
+	api.statefulComments = true
 	e = newNudgeEngine(t, apiURLOf(t, api), clock, nil, StageLabelPolicy{Enabled: true, ContributorNudge: true, RenudgeInterval: time.Hour})
 	pr := nudgePR(9, "aaa")
 	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, "status-failure", false, nil)
@@ -239,15 +289,15 @@ func TestContributorNudgeTerminalDisabledAndNilSink(t *testing.T) {
 	if got := nudgeComments(api); len(got) != 1 || !strings.Contains(got[0], "mode=comment") || !strings.Contains(got[0], "`status-failure`") {
 		t.Fatalf("nil-sink nudge: %v", api.comments)
 	}
-	// RenudgeInterval overrides the dwell: second nudge after 1h, not 24h.
+	// RenudgeInterval times the repeat: rewritten (not re-posted) after 1h.
 	api.reset()
 	clock.advance(time.Hour)
 	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", nudgePR(9, "aaa", "stage/072-returned-to-contributor", "role/trusted", "author/clanker"), "status-failure", false, nil)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := nudgeComments(api); len(got) != 1 || !strings.Contains(got[0], "n=2") {
-		t.Fatalf("renudge interval: %v", api.comments)
+	if len(nudgeComments(api)) != 0 || len(api.commentEdits) != 1 || !strings.Contains(api.commentEdits[0], "reason=status-failure head=aaa n=2") {
+		t.Fatalf("renudge interval: comments=%v edits=%v", api.comments, api.commentEdits)
 	}
 	// A hive-authored PR (self lane → 070-fixing) is never nudged.
 	api.reset()
@@ -285,15 +335,39 @@ func TestNudgeDiagnosisAndDue(t *testing.T) {
 	if !reflect.DeepEqual(checks, []string{"links"}) {
 		t.Fatalf("red optional without detail: %v", checks)
 	}
+}
+
+func TestNudgeDue(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
-	if _, ok := nudgeDue(stagelabels.Record{}, "", time.Hour, now); ok {
-		t.Fatal("empty head due")
+	counted := stagelabels.Record{NudgeHead: "a", NudgeReason: "check-failing", NudgeReasonCount: 1, NudgeReasonAt: now.Add(-73 * time.Hour)}
+	cases := []struct {
+		name    string
+		rec     stagelabels.Record
+		head    string
+		reason  string
+		repeat  time.Duration
+		ordinal int
+		ok      bool
+	}{
+		{name: "empty head", rec: stagelabels.Record{}, head: "", reason: "check-failing:unit", repeat: time.Hour},
+		{name: "first nudge", rec: stagelabels.Record{}, head: "a", reason: "check-failing:unit", repeat: time.Hour, ordinal: 1, ok: true},
+		{name: "same head same class inside window", rec: counted, head: "a", reason: "check-failing:lint", repeat: 100 * time.Hour},
+		{name: "same head same class after window", rec: counted, head: "a", reason: "check-failing:lint", repeat: 72 * time.Hour, ordinal: 2, ok: true},
+		{name: "zero repeat never re-nudges", rec: counted, head: "a", reason: "check-failing:unit", repeat: 0},
+		{name: "zero NudgeReasonAt never re-nudges", rec: stagelabels.Record{NudgeHead: "a", NudgeReason: "check-failing", NudgeReasonCount: 1}, head: "a", reason: "check-failing:unit", repeat: time.Hour},
+		{name: "cap reached", rec: stagelabels.Record{NudgeHead: "a", NudgeReason: "check-failing", NudgeReasonCount: 2, NudgeReasonAt: now.Add(-200 * time.Hour)}, head: "a", reason: "check-failing:unit", repeat: time.Hour},
+		{name: "new head same class rewrites uncounted", rec: counted, head: "b", reason: "required-check-failing:lint", repeat: time.Hour, ordinal: 0, ok: true},
+		{name: "new head same class at cap still rewrites", rec: stagelabels.Record{NudgeHead: "a", NudgeReason: "check-failing", NudgeReasonCount: 2, NudgeReasonAt: now}, head: "b", reason: "check-failing:unit", repeat: time.Hour, ordinal: 0, ok: true},
+		{name: "changed class restarts", rec: counted, head: "a", reason: "conflicting", repeat: time.Hour, ordinal: 1, ok: true},
+		{name: "legacy record without class", rec: stagelabels.Record{NudgeHead: "a", NudgeCount: 2, LastNudgeAt: now}, head: "a", reason: "check-failing:unit", repeat: time.Hour, ordinal: 1, ok: true},
 	}
-	if n, ok := nudgeDue(stagelabels.Record{NudgeHead: "a", NudgeCount: 1, LastNudgeAt: now.Add(-time.Hour)}, "a", 0, now); ok || n != 0 {
-		t.Fatal("zero renudge interval should never re-nudge")
-	}
-	if n, ok := nudgeDue(stagelabels.Record{NudgeHead: "a", NudgeCount: 1}, "a", time.Hour, now); ok || n != 0 {
-		t.Fatal("zero LastNudgeAt re-nudged")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			n, ok := nudgeDue(tc.rec, tc.head, tc.reason, tc.repeat, now)
+			if n != tc.ordinal || ok != tc.ok {
+				t.Fatalf("nudgeDue = (%d, %v), want (%d, %v)", n, ok, tc.ordinal, tc.ok)
+			}
+		})
 	}
 }
 

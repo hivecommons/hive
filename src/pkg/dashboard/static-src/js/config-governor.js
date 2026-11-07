@@ -704,6 +704,9 @@
       const stageNudgeRenudge = (_configState.dirty.labels && _configState.dirty.labels.stage_nudge_renudge_interval !== undefined)
         ? _configState.dirty.labels.stage_nudge_renudge_interval
         : (_configState.data.stageNudgeRenudge || '');
+      const nudgeRepeatAfter = (_configState.dirty.labels && _configState.dirty.labels.nudge_repeat_after !== undefined)
+        ? _configState.dirty.labels.nudge_repeat_after
+        : (_configState.data.nudgeRepeatAfter || '');
       const stagePresenceWindow = (_configState.dirty.labels && _configState.dirty.labels.stage_presence_window !== undefined)
         ? _configState.dirty.labels.stage_presence_window
         : (_configState.data.stagePresenceWindow || '');
@@ -777,8 +780,13 @@
         <div class="config-toggle"><div class="config-toggle-switch ${stageNudgeOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_nudge_enabled"></div><span class="config-toggle-label">Contributor nudge on returned-to-contributor ${yamlHint('governor.labels.stage.contributor_nudge.enabled')} ${settingHelpMark('settings', 'labels', 'Contributor nudge', `When a contributor's PR enters stage/072-returned-to-contributor (red CI, changes requested, conflicts) the hive posts ONE @-mention comment per head with the failing checks / review asks and, for relay contributors, pushes a fix-pr task to their relay session (parallel sub-session when the relay advertises parallel_sessions, otherwise preempting the current task). Re-nudged once at the stall threshold; cap 2 per head. See docs/labels-and-control-signals.md.`)}</span></div>
         <div class="config-field">
           <label for="cfg-stage-nudge-renudge">Re-nudge interval ${yamlHint('governor.labels.stage.contributor_nudge.renudge_interval')}</label>
-          <input type="text" id="cfg-stage-nudge-renudge" value="${esc(stageNudgeRenudge)}" placeholder="24h (stage dwell)" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_nudge_renudge_interval" data-arg-types="s,s,w">
-          <div class="config-help">Go duration before the single re-nudge; empty = the returned-to-contributor dwell.</div>
+          <input type="text" id="cfg-stage-nudge-renudge" value="${esc(stageNudgeRenudge)}" placeholder="unset (uses re-nudge after)" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_nudge_renudge_interval" data-arg-types="s,s,w">
+          <div class="config-help">Legacy override: Go duration before the single re-nudge; empty defers to the re-nudge-after setting below.</div>
+        </div>
+        <div class="config-field">
+          <label for="cfg-nudge-repeat-after">Re-nudge after ${yamlHint('auto_merge.nudge_repeat_after')}</label>
+          <input type="text" id="cfg-nudge-repeat-after" value="${esc(nudgeRepeatAfter)}" placeholder="72h" data-change-action="markDirty" data-arg0="labels" data-arg1="nudge_repeat_after" data-arg-types="s,s,w">
+          <div class="config-help">How long a contributor PR must stay red for the same reason before its one <code>hive:contributor-nudge</code> comment is rewritten a second (and last) time; empty = 72h.</div>
         </div>
         <div class="config-field">
           <label for="cfg-stage-presence-window">Contributor presence window ${yamlHint('governor.labels.stage.presence_window')}</label>
