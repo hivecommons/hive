@@ -394,7 +394,7 @@ func TestSetupPerAgentCLIHomes_RetiresLegacyBridgeAndKeepsSharedMemory(t *testin
 	home := interactiveHomePath("scanner")
 
 	// Pre-#17031 layout: ~/.claude is a whole-directory bridge and the shared
-	// tree already holds a fleet-wide MEMORY.md plus the login.
+	// tree already holds another agent's MEMORY.md plus the login.
 	sharedMem := filepath.Join(shared, ".claude", "projects", "-data-agents-coder", "memory")
 	if err := os.MkdirAll(sharedMem, 0o755); err != nil {
 		t.Fatal(err)

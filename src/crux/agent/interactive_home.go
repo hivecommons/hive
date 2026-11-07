@@ -62,10 +62,12 @@ func sharedAgentHomeForced() bool {
 // state directories .copilot (hivecommons/hive#9444), .claude, .gemini and
 // .bob (hivecommons/hive#17031): each holds BOTH the fleet-shared login and
 // the CLI's per-session transcripts and persistent cross-session memory.
-// Bridging the whole directory made every agent's memory the SAME physical
-// file — Claude Code's ~/.claude/projects/<cwd>/memory/MEMORY.md was read
-// and rewritten by every claude agent on the hive, so one agent's false
-// inference became fleet-wide and a reviewer read the coder's notes. See
+// Bridging the whole directory put every agent's state in ONE tree that any
+// agent could read and rewrite: Claude Code's user-level ~/.claude/CLAUDE.md,
+// history.jsonl and todos/ were a single shared copy, and each agent's
+// auto-memory (~/.claude/projects/-data-agents-<name>/memory/MEMORY.md —
+// keyed by cwd, so per-agent by path) sat beside every other agent's,
+// writable by all of them (and by anything running as the shared uid). See
 // perAgentCLIHomes for the REAL per-agent directories with narrow,
 // credential-only bridges inside them.
 var interactiveHomeBridgeDirs = []string{
@@ -382,9 +384,10 @@ func (m *Manager) setupAgentXDGDirs(agentName, home string, uid int) {
 // keeps its per-run chat transcripts under .copilot/session-state, so every
 // agent's session-state tree was the SAME physical directory. .claude, .gemini
 // and .bob had the identical defect with higher stakes (hivecommons/hive#17031):
-// Claude Code's auto-memory (projects/<cwd>/memory/MEMORY.md) is loaded into
-// every session, so a shared ~/.claude meant one agent's one-off inference was
-// recalled by every other agent on the hive, forever (it lives on the PVC).
+// Claude Code's user-level CLAUDE.md, history.jsonl and todos/ were one
+// shared copy, and every agent's cwd-keyed auto-memory
+// (projects/-data-agents-<name>/memory/MEMORY.md) lived in a tree any other
+// agent could read or rewrite, forever (it lives on the PVC).
 //
 // Every step is best-effort and idempotent: a real directory that already
 // exists is kept (it may hold live per-agent state), only a SYMLINK is
