@@ -246,6 +246,18 @@ metadata, not a fabricated last-member PR event.
   this bridge does not turn its underlying implementation into a strict
   content validator. Dependabot runs that same trusted PR-target verifier
   rather than skipping it; skipped policy evidence is never exempted by actor.
+- One narrow exception replaces probot `DCO` (#17030): a PR whose head
+  branch is exactly `sync/v5-to-v6` in this repository, whose base is `v6`,
+  and which was opened by `github-actions[bot]` (the `v6-topup.yml`
+  identity). Every PR commit except the head must be reachable from `v5`
+  (compare API `v5...<sha>` is `behind`/`identical`), the head must be the
+  top-up's two-parent merge of `v5` history onto `v6` history, and the list
+  must stay under the REST 250-commit cap. Those commits already passed v5's
+  DCO gate and probot cannot be repaired PR-side, so the latest prow `dco`
+  commit status created by `kubestellar-prow[bot]` must be `success` instead;
+  a `dco` status from any other creator is ignored. Any unmet condition falls
+  back to requiring probot `DCO`. The check output names the DCO path taken
+  and, on fallback, why.
 - Draft/held PRs, changes requested, dismissed approvals and approvals on an
   old head fail closed. A `pull_request_target` run on an already closed or
   merged PR (re-fired by a post-merge label or comment edit) passes as a
@@ -390,7 +402,8 @@ handles rejected/broken heads; there is no second fixer or merge engine.
   history, admission reports **DCO provider unavailable / verdict UNKNOWN**
   and remains blocked. Follow the [provider diagnosis and recovery runbook](operator-reference/dco-provider-unavailable.md);
   a provider enumeration failure does not request a PR source change or permit
-  substitution of the lowercase prow `dco` status.
+  substitution of the lowercase prow `dco` status outside the narrow
+  `sync/v5-to-v6` forward-merge path above.
 - Inspect the PR's exact-head checks and the **group SHA** checks separately.
   A green member head does not establish green integration evidence.
   `native-queue-policy` logs the failing provider, provenance, membership,
