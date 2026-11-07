@@ -189,11 +189,27 @@ func (s *Service) Allowed(repo string) (rule string, err error) {
 		return "", fmt.Errorf("%w: repository %q: the checkout allowlist is empty", ErrForbidden, repo)
 	}
 	for _, p := range s.cfg.AllowedRepos {
-		if strings.HasPrefix(repo, p) {
+		if prefixMatches(repo, p) {
 			return p, nil
 		}
 	}
 	return "", fmt.Errorf("%w: repository %q matches none of the allowed prefixes %s", ErrForbidden, repo, strings.Join(s.cfg.AllowedRepos, ", "))
+}
+
+// prefixMatches reports whether repo falls under the allowlist prefix p.
+// A prefix that ends in "/" is a directory and admits everything beneath
+// it; any other prefix must be followed by a segment boundary ("/", the
+// ".git" suffix, or the end of the URL), so "https://h/org" does not admit
+// "https://h/org-evil/x" or "https://h.evil/x".
+func prefixMatches(repo, p string) bool {
+	rest, ok := strings.CutPrefix(repo, p)
+	if !ok {
+		return false
+	}
+	if strings.HasSuffix(p, "/") {
+		return true
+	}
+	return rest == "" || rest == ".git" || strings.HasPrefix(rest, "/")
 }
 
 // Create provisions a checkout for req, recorded as owned by req.Owner.
@@ -316,7 +332,12 @@ func (s *Service) validate(req Request) (Record, error) {
 }
 
 // parseRepo accepts an https:// or file:// URL without credentials, query or
-// fragment, so a token can never ride into a record.
+// fragment, so a token can never ride into a record. The path must already
+// be in canonical form — no ".", ".." or empty segments and no
+// percent-encoding — because Allowed compares the string the caller sent
+// while git (via libcurl, or literally for file://) resolves dot segments:
+// "https://h/allowed/../other/repo" would pass a prefix check for
+// "https://h/allowed/" and clone other/repo.
 func parseRepo(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "file") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -325,7 +346,25 @@ func parseRepo(raw string) (*url.URL, error) {
 	if (u.Scheme == "https" && u.Host == "") || (u.Scheme == "file" && u.Path == "") {
 		return nil, fmt.Errorf("%w: repo %q names no host or path", ErrBadRequest, raw)
 	}
+	if u.RawPath != "" || !canonicalPath(u.Path) {
+		return nil, fmt.Errorf("%w: repo path must be canonical — no \".\", \"..\" or empty segments and no percent-encoding (got %q)", ErrBadRequest, raw)
+	}
 	return u, nil
+}
+
+// canonicalPath reports whether p has no ".", ".." or empty segments. A
+// single trailing "/" is allowed.
+func canonicalPath(p string) bool {
+	p = strings.TrimSuffix(p, "/")
+	if p == "" {
+		return true
+	}
+	for _, seg := range strings.Split(strings.TrimPrefix(p, "/"), "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // sourceDir is the shared clone for (repo, owner).

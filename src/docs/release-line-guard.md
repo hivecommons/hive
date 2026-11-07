@@ -62,29 +62,71 @@ and turns cutting `v5` into one edit that CI enforces.
 ## Cutting a new release line
 
 1. Add the branch name to `release_lines` in `.github/release-lines.yml`.
-2. Add it to the trigger block of every workflow listed under `pinned`.
+2. Add it to the trigger block of every workflow listed under `pinned`, or
+   write down a `-name` exclusion with the reason.
 3. Add it to every list under `env_lists` — today that is `docker.yml`'s
    `LONG_LIVED`, without which the new line builds but never publishes.
+Those three steps are what the guard enforces. They are not the whole cut: a
+release line also cuts `vN.x.y` tags and, when it becomes the stable line,
+owns the `candidate`/`latest`/`stable` channels. The v4→v5 cut
+([#7721](https://github.com/hivecommons/hive/issues/7721)) did the rest by
+hand-editing the release workflows, and the edited copies were then carried
+onto `v6` still naming `v5`
+([#9154](https://github.com/hivecommons/hive/issues/9154)). The full cut, on
+the new line's branch unless noted:
 
-Doing only step 1 fails the guard, naming each workflow that would not run on
-the new branch and each list that would not publish it. That is the
-demonstration
-`src/scripts/test-release-lines-guard.sh` performs in CI, against the real
-workflow files:
-
-```
-FAIL: v2-ci.yml:5 branches: has [v2,v4], expected [v2,v4,v5] — missing: v5.
-      A release line named here but absent from the workflow means that
-      workflow does not run on it at all.
-FAIL: docker.yml:56 env LONG_LIVED: has [dd,mk,v2,v4], expected
-      [dd,mk,v2,v4,v5] — missing: v5. This list is not a trigger, so a release
-      line missing from it fails GREEN: the image still builds on that branch
-      and simply never publishes its <branch>-latest tag, leaving no image for
-      a hive to be assigned to.
-```
-
-The check is an equality in both directions, so *retiring* a line is proven
-complete the same way: every list still naming it is reported as `unexpected`.
+4. **Tag path — no edit.** `tagged-release.yml` and `promote-stable.yml` serve
+   the branch they were started from (`github.ref_name`) and refuse unless
+   that branch is under `release_lines`
+   (`src/scripts/check-release-lines.sh --is-release-line <branch>`). Step 1
+   is what turns them on for the new line; before it, a dispatch from that
+   branch fails at its first step instead of releasing or promoting another
+   line. The check reads the script and manifest from the workflow's own
+   ref, before the commit being released is checked out, and
+   `tagged-release.yml` accepts a `docker.yml` run only when it was a `push`
+   or `workflow_dispatch`, so a fork PR whose branch is named after a release
+   line cannot approve itself. `derive-release-version.sh` mints `vN.0.0` as
+   the first tag of a line on its own. Do **not** reintroduce a literal
+   branch name in either workflow.
+5. **Carry the cut to the new line's branch.** `workflow_dispatch` runs read
+   the workflow, the manifest and the scripts from the dispatched ref, so the
+   new line's own copies of `.github/release-lines.yml`,
+   `tagged-release.yml`, `promote-stable.yml` and `check-release-lines.sh`
+   must have the change too — forward-merge (top-up) it, or land it there
+   directly. Until then the new line's copy still refuses.
+6. **Non-default lines release through the relay.** `schedule` and
+   `workflow_run` triggers only fire from the repository's default branch, so
+   the hourly backstop and the hourly `stable` promotion follow it. The
+   default copy of `tagged-release.yml` carries a `relay` job: when
+   `docker.yml` completes a `push`/`workflow_dispatch` build on another
+   declared release line, it dispatches `tagged-release.yml --ref <line>`,
+   and that line's own copy takes the backstop path (resolve the tip, require
+   published images, compile fragments, derive, release). That is how `v6`
+   releases on every merge without being the default branch. A build that
+   was cancelled on a non-default line is picked up by its next completed
+   build or by a manual dispatch from that branch; the schedule does not
+   relay.
+7. **Channels — `docker.yml` on both branches, landed together.** Each
+   branch's copy names its own channels in the three `publish-image-tags.sh`
+   calls (`<branch> <include-latest> <channels>`) and the matching
+   `INCLUDE_LATEST` / `RELEASE_BRANCH` / `CHANNELS` env on the three
+   cross-org mirror steps. The stable line takes `true candidate` (candidate
+   plus `:latest`); flipping one branch without the other leaves two lines
+   retagging `candidate` and `:latest` on every merge. `stable` is promoted
+   from the default branch only, and `candidate` is one repository-wide tag,
+   so `promote-stable.yml` must not be dispatched from a line that does not
+   own it. Cutting a line as a *release* line and moving the *channels* to it
+   are separate decisions: `v6` was cut on 2026-11-07 keeping `edge` +
+   `v6-latest`, while `v5` kept `candidate`, `:latest` and `stable`.
+8. **The first release consumes the whole `changelog.d/` backlog.** A new
+   line's `## Unreleased` has never been emptied, so its first release
+   compiles every fragment it has accumulated. Every one must pass
+   `check-changelog-fragment.sh`: a single malformed fragment fails
+   `compile-changelog.sh` and therefore the decide job, and no tag is cut.
+9. **Docs.** Update [releases.md](releases.md#release-lines-and-the-per-line-semver-policy)
+   §Release lines, [release-channels.md](release-channels.md) (which branch
+   publishes which channel), the branch table in `CONTRIBUTING.md`, and the
+   line policy in `ROADMAP.md`.
 
 ## What it checks
 
@@ -108,10 +150,11 @@ complete the same way: every list still naming it is reported as `unexpected`.
   The value takes the same `[extra]` / `[-excluded]` grammar; `mk` and `dd` are
   declared extras on `LONG_LIVED` — standing experimental branches that are not
   release lines but that a hive can be assigned to, so they legitimately publish
-  a tag — and so is `v6`, the development line the `edge` channel is re-based on
-  ([#7721](https://github.com/hivecommons/hive/issues/7721)): published, but not
-  a supported release line, so it is an extra here rather than a `release_lines`
-  entry. The value is read in any of the spellings a workflow env can take
+  a tag. `v6` was an extra here too while it was the development line the
+  `edge` channel is re-based on
+  ([#7721](https://github.com/hivecommons/hive/issues/7721)) — published, but
+  not yet a release line; since its cut it is a `release_lines` entry
+  instead. The value is read in any of the spellings a workflow env can take
   (`"v2 v4"`, unquoted, or `[v2, v4]`), with trailing comments ignored.
 - **That the env list is still there to check.** The variable must appear
   exactly once in the workflow. Zero occurrences means it was renamed or
@@ -199,4 +242,5 @@ guard proves the edit is complete. See the note at the bottom of
 ```sh
 src/scripts/check-release-lines.sh          # assert the repository is in sync
 src/scripts/test-release-lines-guard.sh     # prove the checker still fails when it should
+src/scripts/check-release-lines.sh --is-release-line v6   # may the release workflows serve v6? (exit 0 = yes)
 ```

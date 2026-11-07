@@ -388,6 +388,10 @@
     const STAGE_TRACKER_MERGED_LIST_MAX = 20;
     const STAGE_TRACKER_MERGE_BANNER_MS = 30000;
     const STAGE_TRACKER_MERGE_BANNER_MAX = 5;
+    // On a phone (the .merge-banners ≤480px layout) only this many banners
+    // are visible at once; the older ones wait behind a "+N more" pill.
+    const STAGE_TRACKER_MERGE_BANNER_PHONE_MAX = 3;
+    const STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY = '(max-width: 480px)';
     function stageTrackerCelebrateSetting() {
       try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_KEY) !== '0'; } catch { return true; }
     }
@@ -1186,7 +1190,9 @@
       const merger = stageTrackerMergerText(b.merged_by);
       const paren = [b.lane || '', who, hm].filter(Boolean).join(', ');
       const num = stageTrackerMergeBannerNumber(b);
-      return { number: num, merger, head: `${num ? '#' + num + ' ' : ''}merged${merger ? ' by ' + merger : ''}${b.preview ? ' (test)' : ''}`, text: `${b.title || b.repo || ''}${paren ? ' (' + paren + ')' : ''}`.trim() };
+      const title = String(b.title || b.repo || '').trim();
+      const meta = paren ? '(' + paren + ')' : '';
+      return { number: num, merger, head: `${num ? '#' + num + ' ' : ''}merged${merger ? ' by ' + merger : ''}${b.preview ? ' (test)' : ''}`, title, meta, text: `${title}${meta ? ' ' + meta : ''}`.trim() };
     }
     // Stateful: a persistent banner, bottom right, for one merge — stays
     // until dismissed or stageTrackerMergeBannerMs() (twice the info toast
@@ -1212,19 +1218,60 @@
       el.className = 'merge-banner';
       el.setAttribute('role', 'status');
       if (b.rowKey) el.setAttribute('data-ham-row', b.rowKey);
-      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${t.merger ? ` by <span class="merge-banner-by">${esc(t.merger)}</span>` : ''}${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
+      // The banner itself is the dismiss target (a tap on a phone, a click
+      // anywhere on a desktop); its links carry data-stop so they still act.
+      el.setAttribute('data-action', 'hamBannerDismiss'); el.setAttribute('data-arg-types', 't');
+      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${t.merger ? ` by <span class="merge-banner-by">${esc(t.merger)}</span>` : ''}${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}"><span class="merge-banner-title">${esc(t.title)}</span>${t.meta ? ` <span class="merge-banner-meta">${esc(t.meta)}</span>` : ''}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener" data-action="hamBannerOpenLink" data-stop="1">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
-      while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) { toastCountdownCancel(box.children[0]); box.children[0].remove(); }
+      while (stageTrackerMergeBannerList(box).length > STAGE_TRACKER_MERGE_BANNER_MAX) { const oldest = stageTrackerMergeBannerList(box)[0]; toastCountdownCancel(oldest); oldest.remove(); }
+      stageTrackerMergeBannerLayout(box);
       toastCountdownBar(el, stageTrackerMergeBannerMs(), () => stageTrackerMergeBannerDismiss(el));
       return el;
     }
+    function stageTrackerMergeBannerList(box) {
+      return Array.prototype.filter.call(box.children, c => c.classList && c.classList.contains('merge-banner'));
+    }
+    function stageTrackerMergeBannerIsPhone() {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY).matches;
+    }
+    // Crossing the phone breakpoint (a rotation, a resized window) re-lays
+    // the stack so hidden banners come back or the pill appears.
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      const mq = window.matchMedia(STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY);
+      if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => stageTrackerMergeBannerLayout(document.getElementById('merge-banners')));
+    }
+    // Pure-ish: on a phone keep the newest PHONE_MAX banners visible and hide
+    // the older ones behind a "+N more" pill (which opens the Merged list);
+    // elsewhere every banner shows and the pill is absent. Re-run on every
+    // add and remove so the pill's count tracks the stack.
+    function stageTrackerMergeBannerLayout(box) {
+      if (!box) return;
+      const banners = stageTrackerMergeBannerList(box);
+      const cap = stageTrackerMergeBannerIsPhone() ? STAGE_TRACKER_MERGE_BANNER_PHONE_MAX : Infinity;
+      const hiddenCount = Math.max(0, banners.length - cap);
+      banners.forEach((el, i) => { if (i < hiddenCount) el.setAttribute('hidden', ''); else el.removeAttribute('hidden'); });
+      let more = box.querySelector('.merge-banner-more');
+      if (hiddenCount <= 0) { if (more) more.remove(); return; }
+      if (!more) {
+        more = document.createElement('button');
+        more.type = 'button'; more.className = 'merge-banner-more';
+        more.setAttribute('data-action', 'hamMergedOpen'); more.setAttribute('data-stop', '1');
+      }
+      more.textContent = `+${hiddenCount} more`;
+      more.setAttribute('aria-label', `${hiddenCount} more ${hiddenCount === 1 ? 'merge' : 'merges'} — open the Merged list`);
+      if (box.firstChild !== more) box.insertBefore(more, box.firstChild);
+    }
     function stageTrackerMergeBannerDismiss(el) {
       if (!el || !el.parentNode) return;
+      const box = el.parentNode;
       toastCountdownCancel(el);
-      if (stageTrackerReducedMotion()) { el.remove(); return; }
+      if (stageTrackerReducedMotion()) { el.remove(); stageTrackerMergeBannerLayout(box); return; }
       el.classList.add('merge-banner-out');
-      stageTrackerAfter(el, 'animationend', 180, () => el.remove());
+      stageTrackerAfter(el, 'animationend', 180, () => { el.remove(); stageTrackerMergeBannerLayout(box); });
     }
+    // "Open on GitHub" is a plain link; the data-action only exists so the
+    // click stops at the link and does not also dismiss the banner.
+    function hamBannerOpenLink() { return true; }
     function hamBannerDismiss(btn) {
       const el = btn && typeof btn.closest === 'function' ? btn.closest('.merge-banner') : null;
       stageTrackerMergeBannerDismiss(el);

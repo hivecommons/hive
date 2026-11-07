@@ -30,6 +30,7 @@ function makeDom() {
     removeChild(c) { this.children = this.children.filter(x => x !== c); c.parentNode = null; }
     remove() { if (this.parentNode) this.parentNode.removeChild(this); }
     setAttribute(k, v) { this.attrs[k] = String(v); }
+    removeAttribute(k) { delete this.attrs[k]; }
     getAttribute(k) { return this.attrs[k] === undefined ? null : this.attrs[k]; }
     addEventListener(n, fn) { (this.listeners[n] = this.listeners[n] || []).push(fn); }
     fire(n, e) { for (const fn of this.listeners[n] || []) fn(e || {}); }
@@ -64,6 +65,8 @@ const src = [
   'function stageTrackerAfter(el, ev, ms, fn) { fn(); }',
   `function stageTrackerMergeBannerMs() { return ${BANNER_MS}; }`,
   pick(/const STAGE_TRACKER_MERGE_BANNER_MAX = [^\n]*\n/, 'STAGE_TRACKER_MERGE_BANNER_MAX'),
+  pick(/const STAGE_TRACKER_MERGE_BANNER_PHONE_MAX = [^\n]*\n/, 'STAGE_TRACKER_MERGE_BANNER_PHONE_MAX'),
+  pick(/const STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY = [^\n]*\n/, 'STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY'),
   pick(/function toastCountdownBar\(el, ms, onExpire\) \{[\s\S]*?\n    \}\n/, 'toastCountdownBar'),
   pick(/function toastCountdownCancel\(el\) \{[\s\S]*?\n    \}\n/, 'toastCountdownCancel'),
   pick(/function stageTrackerMergeBannerNumber\(b\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerNumber'),
@@ -78,6 +81,9 @@ const src = [
   pick(/function stageTrackerMergedByOf\(key, d\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergedByOf'),
   pick(/function stageTrackerMergeBannerText\(b, nowMs\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerText'),
   pick(/function stageTrackerMergeBanner\(b\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBanner'),
+  pick(/function stageTrackerMergeBannerList\(box\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerList'),
+  pick(/function stageTrackerMergeBannerIsPhone\(\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerIsPhone'),
+  pick(/function stageTrackerMergeBannerLayout\(box\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerLayout'),
   pick(/function stageTrackerMergeBannerDismiss\(el\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerDismiss'),
   pick(/function hamBannerDismiss\(btn\) \{[\s\S]*?\n    \}\n/, 'hamBannerDismiss'),
 ].join('\n');
@@ -152,7 +158,7 @@ test('merge banners reuse tracker chips and preserve repo-scoped actions for col
     assert.ok(el.innerHTML.includes(chip + ' <span class="merge-banner-num">#528</span> merged'), 'exact existing chip markup');
     assert.strictEqual(el.getAttribute('data-ham-row'), rowKey);
     assert.ok(el.innerHTML.includes(`data-action="hamBannerShowRow" data-arg0="${rowKey}" data-stop="1">Show row`));
-    assert.ok(el.innerHTML.includes(`href="https://github.com/${repo}/pull/528" target="_blank" rel="noopener">Open on GitHub`));
+    assert.ok(el.innerHTML.includes(`href="https://github.com/${repo}/pull/528" target="_blank" rel="noopener" data-action="hamBannerOpenLink" data-stop="1">Open on GitHub`));
     assert.ok(el.innerHTML.includes('data-action="hamMergedOpen" data-stop="1">All merges'));
     const expected = d.merged.server.recent.find(e => e.repo === repo);
     assert.ok(el.innerHTML.includes(expected.title), 'metadata belongs to actual event repo');

@@ -12,7 +12,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/crux/config"
 )
@@ -186,5 +189,207 @@ func TestRemoteControlBridgeUsed(t *testing.T) {
 	writeSession(t, home, `{"hasCompletedOnboarding":true,"hasUsedRemoteControl":true}`)
 	if !m.remoteControlBridgeUsed(home) {
 		t.Fatal("session with hasUsedRemoteControl:true should report bridge used — this is the launch-time evidence log for #5607")
+	}
+}
+
+// --- hive-owned shared settings (#17059) -------------------------------------
+//
+// The shared settings.json carries hooks/apiKeyHelper, so it must be a regular
+// file owned by the hive and not writable by the agents group before any
+// claude launch reads it.
+
+const hookPayload = `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"touch /tmp/should-not-run"}]}]}}`
+
+func assertNoHooks(t *testing.T, path string) {
+	t.Helper()
+	if _, ok := readSettingsMap(t, path)["hooks"]; ok {
+		t.Fatalf("%s still carries the planted hooks key", path)
+	}
+}
+
+func assertNotAgentWritable(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("%s is %v, want a regular file", path, info.Mode())
+	}
+	if perm := info.Mode().Perm(); perm&0o022 != 0 {
+		t.Fatalf("%s mode = %v, want no group/other write", path, perm)
+	}
+}
+
+func TestEnsureClaudeRemoteControlDefault_ReplacesSymlinkedSettings(t *testing.T) {
+	path := withSharedClaudeDir(t)
+	planted := filepath.Join(t.TempDir(), "planted.json")
+	if err := os.WriteFile(planted, []byte(hookPayload), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(planted, path); err != nil {
+		t.Fatal(err)
+	}
+
+	quietManager().ensureClaudeRemoteControlDefault(rcTestAgent())
+
+	assertNotAgentWritable(t, path)
+	assertNoHooks(t, path)
+	assertRemoteControlOff(t, path)
+	rejected, err := os.Lstat(path + sharedClaudeSettingsRejectedSuffix)
+	if err != nil || rejected.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("swapped-in symlink should be kept aside as %s (err=%v)", sharedClaudeSettingsRejectedSuffix, err)
+	}
+	if data, _ := os.ReadFile(planted); string(data) != hookPayload {
+		t.Fatalf("symlink target was written through: %s", data)
+	}
+}
+
+func TestEnsureClaudeRemoteControlDefault_TightensGroupWritableSettings(t *testing.T) {
+	path := withSharedClaudeDir(t)
+	if err := os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	quietManager().ensureClaudeRemoteControlDefault(rcTestAgent())
+
+	assertNotAgentWritable(t, path)
+	if got := readSettingsMap(t, path)["theme"]; got != "dark" {
+		t.Fatalf("hive-owned settings were not kept: theme = %v", got)
+	}
+	if _, err := os.Lstat(path + sharedClaudeSettingsRejectedSuffix); !os.IsNotExist(err) {
+		t.Fatalf("a hive-owned file must be tightened in place, not rejected (err=%v)", err)
+	}
+}
+
+func TestEnsureClaudeRemoteControlDefault_SeededSettingsNotGroupWritable(t *testing.T) {
+	path := withSharedClaudeDir(t)
+	old := syscall.Umask(0)
+	t.Cleanup(func() { syscall.Umask(old) })
+
+	quietManager().ensureClaudeRemoteControlDefault(rcTestAgent())
+
+	assertNotAgentWritable(t, path)
+	assertRemoteControlOff(t, path)
+}
+
+func TestEnsureClaudeRemoteControlDefault_ReplacesForeignOwnedSettings(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("chowning the fixture to another uid requires root; the owner check is covered by TestUntrustedSharedClaudeSettingsReason")
+	}
+	path := withSharedClaudeDir(t)
+	if err := os.WriteFile(path, []byte(hookPayload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(path, foreignSettingsUID(), -1); err != nil {
+		t.Fatal(err)
+	}
+
+	quietManager().ensureClaudeRemoteControlDefault(rcTestAgent())
+
+	assertNotAgentWritable(t, path)
+	assertNoHooks(t, path)
+	assertRemoteControlOff(t, path)
+	if data, err := os.ReadFile(path + sharedClaudeSettingsRejectedSuffix); err != nil || string(data) != hookPayload {
+		t.Fatalf("foreign-owned settings should be kept aside for review (err=%v, data=%s)", err, data)
+	}
+}
+
+// foreignSettingsUID returns a uid that is neither root, the test's euid nor
+// DevUID — i.e. what an agent UID looks like to the owner check.
+func foreignSettingsUID() int {
+	uid := os.Geteuid() + 4242
+	for uid == DevUID || uid == 0 {
+		uid++
+	}
+	return uid
+}
+
+type fakeSettingsInfo struct {
+	mode os.FileMode
+	uid  uint32
+}
+
+func (f fakeSettingsInfo) Name() string       { return claudeSettingsFileName }
+func (f fakeSettingsInfo) Size() int64        { return 0 }
+func (f fakeSettingsInfo) Mode() os.FileMode  { return f.mode }
+func (f fakeSettingsInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeSettingsInfo) IsDir() bool        { return f.mode.IsDir() }
+func (f fakeSettingsInfo) Sys() any           { return &syscall.Stat_t{Uid: f.uid} }
+
+func TestUntrustedSharedClaudeSettingsReason(t *testing.T) {
+	self := uint32(os.Geteuid())
+	cases := []struct {
+		name    string
+		info    fakeSettingsInfo
+		trusted bool
+	}{
+		{"hive-owned regular file", fakeSettingsInfo{mode: 0o644, uid: self}, true},
+		{"root-owned regular file", fakeSettingsInfo{mode: 0o644, uid: 0}, true},
+		{"dev-owned regular file", fakeSettingsInfo{mode: 0o644, uid: uint32(DevUID)}, true},
+		{"agent-owned regular file", fakeSettingsInfo{mode: 0o644, uid: uint32(foreignSettingsUID())}, false},
+		{"symlink", fakeSettingsInfo{mode: os.ModeSymlink | 0o777, uid: self}, false},
+		{"directory", fakeSettingsInfo{mode: os.ModeDir | 0o755, uid: self}, false},
+	}
+	for _, tc := range cases {
+		reason := untrustedSharedClaudeSettingsReason(tc.info)
+		if (reason == "") != tc.trusted {
+			t.Errorf("%s: reason = %q, want trusted=%v", tc.name, reason, tc.trusted)
+		}
+	}
+	if reason := untrustedSharedClaudeSettingsReason(fakeSettingsInfo{mode: 0o644, uid: uint32(foreignSettingsUID())}); !strings.Contains(reason, "uid") {
+		t.Errorf("foreign-owner reason should name the uid, got %q", reason)
+	}
+}
+
+func TestIsSharedClaudeSettingsFile(t *testing.T) {
+	cases := map[string]bool{
+		"/data/home/.claude/settings.json":          true,
+		"/data/home/.claude/settings.json.rejected": false,
+		"/data/home/.claude/projects/settings.json": false,
+		"/data/home/.gemini/settings.json":          false,
+	}
+	for path, want := range cases {
+		if got := isSharedClaudeSettingsFile(path); got != want {
+			t.Errorf("isSharedClaudeSettingsFile(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
+// TestFixEntryLeavesSharedClaudeSettingsMode runs fixEntry as the watcher's
+// own uid (so its chmod arm is reachable) and checks the shared settings file
+// is not widened while a sibling in the same directory still is.
+func TestFixEntryLeavesSharedClaudeSettingsMode(t *testing.T) {
+	origDev, origNode := DevUID, NodeGID
+	DevUID, NodeGID = os.Getuid(), os.Getgid()
+	t.Cleanup(func() { DevUID, NodeGID = origDev, origNode })
+
+	dir := filepath.Join(t.TempDir(), claudeHomeDirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(dir, claudeSettingsFileName)
+	sibling := filepath.Join(dir, "sibling.json")
+	for _, p := range []string{settings, sibling} {
+		if err := os.WriteFile(p, []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		fi, err := os.Lstat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixEntry(p, fi, quietLogger())
+	}
+	if got := statMode(t, settings); got != 0o644 {
+		t.Errorf("shared settings.json mode = %v, want 0644 untouched", got)
+	}
+	if got := statMode(t, sibling); got&0o020 == 0 {
+		t.Errorf("sibling mode = %v; fixEntry's chmod arm was not exercised", got)
 	}
 }

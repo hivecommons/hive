@@ -16,7 +16,7 @@ plan (Now / Next / Later, item by item), see the
 | --- | --- | --- | --- |
 | v4 | `v4` | Maintenance line (feature-frozen; security/critical fixes only) | none — builds publish `v4-latest` and short-SHA tags only ([#7721](https://github.com/hivecommons/hive/issues/7721) Phase 1) |
 | v5 | `v5` (default) | Supported stable line since the 2026-09-21 cut-over | `stable`, `candidate`, `latest` |
-| v6 | `v6` | Active development, tracks v5 by forward-merge; the #7563 dashboard-optional tracks are merged on the branch (see [v6 section](#v6--dashboard-optional-operation-line-open)) | `edge` |
+| v6 | `v6` | Release line since 2026-11-07 (cuts `v6.x.y` tags, GitHub Releases and SBOMs from the branch; first tag `v6.0.0`); tracks v5 by forward-merge, and the #7563 dashboard-optional tracks are merged on the branch (see [v6 section](#v6--dashboard-optional-operation-line-open)) | `edge` (plus `v6-latest`); `stable`/`candidate`/`latest` stay on v5 |
 
 Operators select a line by pointing a hive at a
 [release channel](src/docs/release-channels.md) rather than a branch tag.

@@ -17,6 +17,9 @@
 # branch filter cannot: the variable can be renamed, or defined twice, leaving
 # an entry that asserts nothing while the guard still prints a line about it.
 #
+# Case 16 covers --is-release-line (#9154), the run-time allow-list the release
+# workflows consult: only `release_lines` qualifies, never an extra.
+#
 # Usage: src/scripts/test-release-lines-guard.sh
 set -uo pipefail
 
@@ -265,6 +268,37 @@ rm "${WFDIR}/envy.yml"
 expect 1 "an env_lists entry for a deleted workflow is caught" -- "$MANIFEST" "$WFDIR"
 expect_mentions "does not exist" "the deleted workflow is explained"
 write_env 'LONG_LIVED: "v2 v4 mk"'
+
+# ---------------------------------------------------------------------------
+# 16. --is-release-line (#9154): the run-time allow-list tagged-release.yml and
+#     promote-stable.yml consult before serving `github.ref_name`. Only
+#     `release_lines` qualifies. v6 is modelled as it stands before its GA
+#     cut — an extra on a pinned workflow AND on the push-policy list — and
+#     must still be refused: a branch CI builds and publishes is not a branch
+#     that cuts vN.x.y tags or owns `stable`. Refusing it is what stops a
+#     development line's dispatch from releasing, and adding it to
+#     `release_lines` is the single edit that turns its release path on.
+# ---------------------------------------------------------------------------
+QMANIFEST="${TMP}/query-manifest.yml"
+cat > "$QMANIFEST" <<'EOF'
+release_lines: [v4, v5]
+pinned:
+  flow-form.yml: [v6]
+env_lists:
+  envy.yml LONG_LIVED: [mk, v6]
+EOF
+expect 0 "a declared release line is accepted" -- --is-release-line v5 "$QMANIFEST"
+expect 0 "every declared release line is accepted, not just the last" -- --is-release-line v4 "$QMANIFEST"
+expect 1 "a pinned/env-list extra (pre-GA v6) is refused" -- --is-release-line v6 "$QMANIFEST"
+expect_mentions "v6 is not a release line" "the refusal names the branch"
+expect_mentions "v4,v5" "the refusal names the declared release lines"
+expect 1 "a standing experimental branch that publishes (mk) is refused" -- --is-release-line mk "$QMANIFEST"
+expect 1 "a feature branch is refused" -- --is-release-line feat/v5-thing "$QMANIFEST"
+expect 1 "a prefix of a release line is not a match" -- --is-release-line v "$QMANIFEST"
+expect 1 "an unreadable manifest refuses rather than allowing" -- --is-release-line v5 "${TMP}/no-such-manifest.yml"
+expect 2 "a missing branch argument is a usage error, not an allow" -- --is-release-line "" "$QMANIFEST"
+sed -E 's/^(release_lines: \[[^]]*)\]/\1, v6]/' "$QMANIFEST" > "${TMP}/query-cut-manifest.yml"
+expect 0 "the GA cut (adding v6 to release_lines) is what admits v6" -- --is-release-line v6 "${TMP}/query-cut-manifest.yml"
 
 echo
 if [[ $fail -ne 0 ]]; then

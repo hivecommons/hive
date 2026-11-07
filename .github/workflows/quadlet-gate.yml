@@ -62,6 +62,7 @@ on:
     branches:
       - v4
       - v5
+      - v6
   pull_request:
     paths:
       - '.github/workflows/quadlet-gate.yml'
@@ -70,6 +71,7 @@ on:
     branches:
       - v4
       - v5
+      - v6
   workflow_dispatch:
 
 permissions:

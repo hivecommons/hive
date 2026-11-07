@@ -293,10 +293,13 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 		time.Sleep(staleCheckDelay)
 	}
 
-	// Persistent CLI memory (hivecommons/hive#17032) is wiped before the
-	// conversation /clear below, and skipped on the same resume kicks: a
-	// resumed session is continuing prior work, not starting a fresh turn.
+	// Persistent CLI memory is drained into draft knowledge entries
+	// (hivecommons/hive#17033) and then wiped (hivecommons/hive#17032) before
+	// the conversation /clear below, and both are skipped on the same resume
+	// kicks: a resumed session is continuing prior work, not starting a
+	// fresh turn.
 	if !skipClear {
+		m.drainCLIMemoryForKick(agent, backend)
 		m.clearCLIMemoryForKick(agent, backend)
 	}
 	if agent.Config.ClearOnKick && !skipClear {

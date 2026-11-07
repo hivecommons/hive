@@ -460,7 +460,7 @@ func (m *Manager) warnSharedCLIMemoryOnce(spec perAgentCLIHome, shared string) {
 		if err != nil || len(matches) == 0 {
 			continue
 		}
-		m.sharedCLIMemoryWarnOnce.Do(func() {
+		m.cliMemory.warnOnce.Do(func() {
 			m.logger.Warn("shared CLI home still holds a persistent memory store that was shared by every agent; it is no longer read by per-agent homes and was left in place for review",
 				"dir", shared, "memory", matches, "see", "hivecommons/hive#17031")
 		})

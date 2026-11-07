@@ -1,0 +1,1 @@
+- Dashboard: on a phone (≤480px) merged banners and toasts span the viewport width with a two-line title, a mono lane/merger/time line, one links row, tap-anywhere dismiss and a "+N more" pill after the newest three; the Overview KPI label/subline no longer jump to a larger font under 720px (the #16613 override assumed `--fs-2xs` was undefined at `:root`).

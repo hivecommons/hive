@@ -718,7 +718,7 @@
        (just the ⟳ and the actor glyph). */
     .ham-seg.active .ham-seg-t.ham-queue-stalled { color: inherit; }
     .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
-    .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; position: relative; overflow: hidden; animation: merge-banner-in 220ms ease-out both; }
+    .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; position: relative; overflow: hidden; cursor: pointer; animation: merge-banner-in 220ms ease-out both; }
     .merge-banner .toast-bar { background: color-mix(in srgb, var(--green) 40%, transparent); }
     .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }
     .merge-banner-ico { color: var(--green); font-weight: var(--fw-bold); }
@@ -731,8 +731,37 @@
     .merge-banner-links button:hover, .merge-banner-links a:hover { text-decoration: underline; }
     .merge-banner-close { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: var(--fs-md); line-height: 1; padding: 0 var(--sp-1); }
     .merge-banner-close:hover { color: var(--text); }
+    /* The title and its "(lane, by, hh:mm)" tail are separate spans so the
+       phone layout below can stack them; on a desktop they read as one line. */
+    .merge-banner-more { display: none; }
+    .merge-banner[hidden] { display: none; }
     @keyframes merge-banner-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
     @keyframes merge-banner-out { from { opacity: 1; } to { opacity: 0; transform: translateY(6px); } }
+    /* Phone (hivecommons/hive: "the formatting for merged toasts on mobile
+       is terrible"): the stack spans the width above the home indicator,
+       the title wraps to two lines instead of an ellipsis at ~30 chars, the
+       lane/merger/time tail drops to its own small mono line, the three
+       links sit in one row, and the ≤768px `button { min-height: 44px }`
+       tap-target rule is undone for the inline repo chip and text links
+       (it drew the chip as a 33×44 block and dropped "Open on GitHub"
+       — an <a>, so exempt — out of line with its button neighbours).
+       Only the newest STAGE_TRACKER_MERGE_BANNER_PHONE_MAX banners show;
+       the rest sit behind a "+N more" pill that opens the Merged list.
+       A tap anywhere on a banner (outside its links) dismisses it. */
+    @media (max-width: 480px) {
+      .merge-banners { left: var(--sp-4); right: var(--sp-4); bottom: calc(var(--sp-4) + var(--safe-area-bottom)); max-width: none; gap: var(--sp-2); }
+      .merge-banner { gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); }
+      .merge-banner-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); }
+      .merge-banner .ham-repo-chip { min-height: 0; height: auto; line-height: 1.5; }
+      .merge-banner-text { white-space: normal; text-overflow: clip; }
+      .merge-banner-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+      .merge-banner-meta { display: block; margin-top: var(--sp-1); color: var(--text-faint); font-family: var(--font-mono); font-size: var(--fs-2xs); }
+      .merge-banner-links { flex-wrap: nowrap; gap: var(--sp-5); min-width: 0; }
+      .merge-banner-links button, .merge-banner-links a { min-height: 0; height: auto; display: inline-flex; align-items: center; padding: var(--sp-2) 0; white-space: nowrap; }
+      .merge-banner-close { min-height: 0; height: auto; width: var(--tap-target); min-width: var(--tap-target); margin: calc(-1 * var(--sp-2)) calc(-1 * var(--sp-2)) 0 0; display: inline-flex; align-items: center; justify-content: center; }
+      .merge-banner-more { display: inline-flex; align-self: flex-end; align-items: center; justify-content: center; min-height: 0; height: auto; padding: var(--sp-1) var(--sp-3); border: var(--line-width) solid var(--line); border-radius: var(--r-pill); background: var(--panel-strong); color: var(--muted); font: inherit; font-size: var(--fs-xs); box-shadow: var(--shadow-raised); cursor: pointer; pointer-events: auto; }
+      .merge-banner-more[hidden] { display: none; }
+    }
     @keyframes cue-cap-glow { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 55%, transparent); } 35% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 35%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }
     @keyframes cue-flight { 0% { opacity: 0; transform: translate(0, 0) scale(0.9); } 12% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.08), calc(var(--cue-dy, 0px) * 0.1)) scale(1.1); } 55% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.45 + 10px), calc(var(--cue-dy, 0px) * 0.62)) scale(1.05); } 100% { opacity: var(--cue-end-opacity, 0.25); transform: translate(var(--cue-dx, 0px), var(--cue-dy, 0px)) scale(0.7); } }
     @keyframes cue-flight-fade { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
