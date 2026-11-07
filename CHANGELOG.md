@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-07 (v5.189.0)
+
+### Added
+
+- An agent whose `knowledge.agent_scopes.<agent>.include_states` lists `draft` is now primed with the draft knowledge entries it authored (`author:`/`owner:` frontmatter matching the agent, its base agent or a hive owner login), each marked `(draft)` in the kick; every other kick stays approved-only ([#17076](https://github.com/hivecommons/hive/issues/17076)).
+
+### Fixed
+
+- `docs/crux-serve.md` and `docs/env-vars.md` now document `crux serve --runs-config` / `CRUX_RUNS_CONFIG` and the `/v1/runs` routes, and the work-services design doc reflects that S2 and S7 shipped (#17027, #17028).
+- A claim's GitHub side effect (label, stage or ledger write) that kept timing out after its bounded retries logged `issue-claims: GitHub side effect failed` with no matching class, so the hive filed it as `unclassified_error_repeated`. It now lands under its own `issue_claim_effect_failed` class, with the underlying error still in the log line (hivecommons/hive#17069).
+
 ## 2026-11-07 (v5.188.0)
 
 ### Added
