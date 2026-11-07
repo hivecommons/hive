@@ -71,10 +71,19 @@ while IFS= read -r f; do
   case "$first_line" in
     '- '*|'<!-- release:'*|'<!--release:'*) ;;
     *)
-      echo "::error file=$f::a fragment must start with a '- ' entry bullet (or a '<!-- release: ... -->' marker) — it IS the entry; the compiler owns the ### headings"
+      echo "::error file=$f::a fragment must start with a '- ' entry bullet (or a '<!-- release: major|minor|patch -->' marker) — it IS the entry; the compiler owns the ### headings"
       bad=1
       ;;
   esac
+  # A fragment persists until the next release consumes it, and a
+  # `<!-- release: none -->` marker is exactly what prevents that release — so
+  # one in a fragment vetoes every later merge, forever (#12928 stalled the
+  # release train for three weeks this way). Test-only/no-op changes want the
+  # `no-changelog` label and no fragment, not a none marker.
+  if grep -qE '<!-- *release: *none *-->' "$f"; then
+    echo "::error file=$f::'<!-- release: none -->' is not allowed in a fragment: fragments accumulate until a release is cut, so this marker would block every release until a human deletes it. Delete the fragment (and label the PR no-changelog) if the change is not user-visible; only major|minor|patch markers may ride in a fragment."
+    bad=1
+  fi
 done < "$work_dir"/fragments.txt
 if [ "$bad" -ne 0 ]; then
   exit 1
