@@ -382,13 +382,10 @@ type AgentProcess struct {
 	// SessionRSSMB is the last sampled RSS of the CLI process tree (MiB);
 	// SessionRecycles counts #14842 policy recycles; lastSessionRecycle
 	// enforces the per-agent backoff after one.
-	SessionRSSMB       int
-	SessionRecycles    int
-	lastSessionRecycle time.Time
-	// cliMemorySharedLogged records that clearCLIMemoryLocked already warned
-	// that this agent's CLI memory store is shared and was skipped (#17032),
-	// so the warning is not repeated on every kick.
-	cliMemorySharedLogged bool
+	SessionRSSMB          int
+	SessionRecycles       int
+	lastSessionRecycle    time.Time
+	cliMemorySharedLogged bool // clearCLIMemoryLocked already warned the store is shared (#17032)
 	// busyNoActivityRestartAt is when busyNoActivityStall last restarted this
 	// agent, and busyNoActivityRestarts how many times it has in the current
 	// episode. Both survive the restart's busy-visibility reset and clear on
