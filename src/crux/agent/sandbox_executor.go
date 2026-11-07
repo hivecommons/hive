@@ -130,8 +130,16 @@ type SandboxVerifyResult struct {
 	TimedOut bool
 }
 
-// Passed reports whether the command ran to completion with exit 0.
-func (v SandboxVerifyResult) Passed() bool { return v.Err == "" && v.ExitCode == 0 && !v.TimedOut }
+// Passed reports whether the command ran to completion with exit 0. A
+// launcher that returned no error but could not read the exit code back
+// (a Complete Job whose pod is already gone) counts as passed too: the
+// Job's own success condition is the fact, the missing code is not a failure.
+func (v SandboxVerifyResult) Passed() bool {
+	if v.Err != "" || v.TimedOut {
+		return false
+	}
+	return v.ExitCode == 0 || v.ExitCode == kubejob.ExitCodeUnknown
+}
 
 type SandboxExecutor struct {
 	Launcher    sandbox.Launcher

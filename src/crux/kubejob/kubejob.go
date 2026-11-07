@@ -225,46 +225,50 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 	done, waitErr := l.wait(ctx, jobPath)
 	// Collect whatever the pod produced BEFORE deciding anything: a timed-out
 	// or failed kick with no transcript is the worst outcome for an operator.
-	// After a timeout the caller's ctx is already dead, so the collection and
-	// the cleanup below run on a fresh, request-bounded context.
-	collectCtx := ctx
-	if ctx.Err() != nil {
-		var cancel context.CancelFunc
-		collectCtx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-		defer cancel()
+	// The caller's ctx may be dead already (kick timeout) or die between any
+	// two of these requests (cancel during log collection), so every step
+	// re-checks it and falls back to a fresh, request-bounded context.
+	// Otherwise a readable, Complete pod would report exitCodeUnknown merely
+	// because ctx was cancelled after the log was read.
+	var cancels []context.CancelFunc
+	defer func() {
+		for _, c := range cancels {
+			c()
+		}
+	}()
+	live := func() context.Context {
+		if ctx.Err() == nil {
+			return ctx
+		}
+		fresh, cancel := context.WithTimeout(context.Background(), requestTimeout)
+		cancels = append(cancels, cancel)
+		return fresh
 	}
-	pod, podErr := l.findPod(collectCtx, ns, name)
+	pod, podErr := l.findPod(live(), ns, name)
 	if podErr == nil && pod != "" {
-		res.Stdout = l.podLog(collectCtx, ns, pod)
-		res.ExitCode = l.podExitCode(collectCtx, ns, pod)
+		res.Stdout = l.podLog(live(), ns, pod)
+		res.ExitCode = l.podExitCode(live(), ns, pod)
 	} else {
 		res.ExitCode = exitCodeUnknown
 	}
 	if waitErr != nil {
 		// Context ended (kick timeout or cancel). The Job would otherwise
 		// keep running the workload on the accelerator node; stop it.
-		_ = l.delete(collectCtx, jobPath)
+		_ = l.delete(live(), jobPath)
 		return res, waitErr
 	}
 	if !done.succeeded {
 		res.Stderr = done.reason
 		return res, fmt.Errorf("kubejob: job %s failed: %s", name, done.reason)
 	}
-	if res.ExitCode == exitCodeUnknown {
-		// The Job reports Complete but the pod could not be read back
-		// (already GC'd, or RBAC on pods missing). The exit code stays
-		// exitCodeUnknown rather than a guessed 0; callers treat a nil error
-		// with an unknown code as completed-without-code.
-	}
-	// Collection may have expired the context even on success; use a fresh one
-	// for cleanup to ensure the finished Job is immediately removed.
-	deleteCtx := ctx
-	if ctx.Err() != nil {
-		var cancel context.CancelFunc
-		deleteCtx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-		defer cancel()
-	}
-	_ = l.delete(deleteCtx, jobPath)
+	// When the Job reports Complete but the pod could not be read back
+	// (already GC'd, or RBAC on pods missing), res.ExitCode stays
+	// exitCodeUnknown rather than a guessed 0; callers treat a nil error with
+	// an unknown code as completed-without-code.
+	//
+	// Collection may have expired the context even on success; the fresh
+	// context ensures the finished Job is still removed immediately.
+	_ = l.delete(live(), jobPath)
 	return res, nil
 }
 

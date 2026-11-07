@@ -166,3 +166,20 @@ func TestSandboxPublishWithheldIgnoresUnknownExitCode(t *testing.T) {
 		t.Errorf("got %q, want sandbox exited 3", got)
 	}
 }
+
+func TestSandboxVerifyResultPassedUnknownExitCode(t *testing.T) {
+	// A Complete verify Job whose pod could not be read back carries no exit
+	// code and no error; that must not withhold the PR.
+	if !(SandboxVerifyResult{ExitCode: kubejob.ExitCodeUnknown}).Passed() {
+		t.Error("nil-error verify with unknown exit code must pass")
+	}
+	if (SandboxVerifyResult{ExitCode: kubejob.ExitCodeUnknown, Err: "boom"}).Passed() {
+		t.Error("unknown exit code with an error must not pass")
+	}
+	if (SandboxVerifyResult{ExitCode: kubejob.ExitCodeUnknown, TimedOut: true}).Passed() {
+		t.Error("unknown exit code after a timeout must not pass")
+	}
+	if (SandboxVerifyResult{ExitCode: 1}).Passed() {
+		t.Error("exit 1 must not pass")
+	}
+}
