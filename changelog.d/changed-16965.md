@@ -1,0 +1,1 @@
+- docs: refresh Codex model snapshot provenance (#16965)

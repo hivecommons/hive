@@ -175,7 +175,10 @@ ownership: the hive follows the head only when GitHub links the commit to the
 App bot (the stage store only remembers SHAs that already passed that
 check); otherwise it hands the PR back as a contributor push
 (`governor.labels.stage.adoption.strict_attribution`, default on; first deploys
-without any repo evidence log and keep adoption). Push-capable App-authored
+without any repo evidence log and keep adoption) — unless an App bot or a
+person with write or higher on the repository, not the author, pushed it:
+that is a maintainer takeover and the adoption stands, with no nudge to the
+author. Push-capable App-authored
 agents use the App bot noreply email (keyed by the bot's GitHub user id, not
 the App id) for git commits so fixer pushes normally carry that GitHub linkage while their commit name/sign-off still names the
 lane. Once the hive's in-place head is green, reviewer-approved, DCO-clean
@@ -424,7 +427,7 @@ that level, the power the write-back exists to govern?
 | Path (code) | Trigger | What it writes | Target set | Gate kind → default |
 | --- | --- | --- | --- | --- |
 | Sentinel sweep + webhook (`pkg/github/sentinel_sweep.go`, `pkg/sentinel`) | 15-min reconcile; `pull_request` webhook | `<!-- hive-sentinel -->` "maintainer review required" comment + `sentinel-alert` label | every open PR in `project.repos`, human or bot | `sentinel` → L5 with opt-in label, L6 without; below: dashboard/API finding only |
-| Hold guard (`cmd/hive/main_helpers.go` hold-drift, `maintainHeldPRMergeability`) | each governor eval | "⚠️ Hold-gate mergeability" / drift comment, re-applied `hold` label, **branch push** merging base | every `hold`-labelled PR, incl. human prow-held ones | `hold_gate_notice` → hive-authored PRs only, L≥4; never foreign PRs |
+| Hold guard (`cmd/hive/main_helpers.go` hold-drift, `maintainHeldPRMergeability`) | each governor eval | "⚠️ Hold-gate mergeability" / drift comment, re-applied `hold` label, **branch push** merging base | every `hold`-labelled PR, incl. human prow-held ones; the base-merge push and conflict notice skip dependency-bot branches (`renovate/*` head, or a Renovate/Dependabot/Mergeraptor author), which the bot rebases itself | `hold_gate_notice` → hive-authored PRs only, L≥4; never foreign PRs |
 | Stage labeler (`pkg/github/stage_labeler.go`, `stage_writer.go`, `pkg/stagelabels`) | stage engine reconcile | `stage/NNN-*` add/remove, `hive:stage-needs-decision` comment, role/author labels | every tracked PR and issue | `stage_label`, `needs_decision_comment` → L5 + opt-in label on foreign PRs; issue stage labels follow the issue filter, not this gate |
 | Supersession sweep (`pr_supersession_sweep.go`, `_autoclose.go`, `_resolve.go`) | hourly sweep | supersession notice comment, `hive/superseded` close, `needs-human` label | contributor PRs overlapping a hive PR | `supersession_notice` → L5 + label; `supersession_close` → L6 + label |
 | Duplicate-fix sweep (`pr_duplicate_fix_sweep.go`, `open_pr_links.go`) | hourly sweep | `hive:duplicate-fix` comment, `has-open-pr` label, `hive/superseded` close | PR pairs fixing one issue | `duplicate_fix_notice` → L5 + label |

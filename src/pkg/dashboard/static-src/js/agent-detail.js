@@ -553,7 +553,7 @@
       const by = a.pausedBy || '';
       const at = a.pausedAt ? formatDashboardDateTime(a.pausedAt) : 'unknown';
       const ago = a.pausedAt ? pillAge(a.pausedAt) : '';
-      return `<span class="pause-info" title="${esc(pauseProvenanceLine(a))}">ℹ️<span class="pause-tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}</span></span>`;
+      return `<span class="config-info pause-info" tabindex="0" data-stop="1" aria-label="Pause details">ℹ️<span class="config-tooltip pause-tooltip" role="tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}<br><br>To lift the pause, an owner can select ▶ resume or ▶ start &amp; resume on the agent card. If the agent is disabled, enable it first.</span></span>`;
     }
 
     function subAgentModelsHtml(a) {

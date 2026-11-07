@@ -845,7 +845,9 @@ func mergeTrainFrontReason(g *mergeTrainGroup, state string, attempt, maxAttempt
 // a conflicting front is sent to the rebase resolver (bounded by the loop
 // guard) and parked as rebasing; past the guard it parks for a person.
 // handled=false hands a clean or behind front to the lane's normal path,
-// and a dirty one too when no resolver is wired.
+// and a dirty one too when no resolver is wired or the branch belongs to a
+// dependency bot (the bot resolves its own conflicts; a hive rebase push
+// would stop it rebasing the branch).
 func (c *Engine) mergeTrainFront(ctx context.Context, plan *mergeTrainPlan, pr *gh.PullRequest) (reason string, handled bool) {
 	if plan == nil || pr == nil {
 		return "", false
@@ -857,6 +859,9 @@ func (c *Engine) mergeTrainFront(ctx context.Context, plan *mergeTrainPlan, pr *
 	}
 	m := g.members[number]
 	if !mergeTrainDirty(m.MergeableState) {
+		return "", false
+	}
+	if c.leaveBaseSyncToDependencyBot(plan.displayRepo, plan.owner, plan.repo, pr, "merge-train-rebase") {
 		return "", false
 	}
 	policy := c.mergeTrainPolicyNow()
@@ -884,7 +889,8 @@ func (c *Engine) mergeTrainFront(ctx context.Context, plan *mergeTrainPlan, pr *
 // mergeTrainAfterFrontMerge runs right after a train's front merged: every
 // sibling is read back and, as GitHub now reports it, updated (behind) or
 // sent for a rebase (dirty, within the loop guard). A sibling GitHub has
-// not re-evaluated yet (unknown) is left to the next pass, which replans.
+// not re-evaluated yet (unknown) is left to the next pass, which replans,
+// and a dependency bot's branch is left to the bot.
 func (c *Engine) mergeTrainAfterFrontMerge(ctx context.Context, plan *mergeTrainPlan, front int) {
 	if plan == nil {
 		return
@@ -908,6 +914,9 @@ func (c *Engine) mergeTrainAfterFrontMerge(ctx context.Context, plan *mergeTrain
 		}
 		state := strings.ToLower(strings.TrimSpace(live.GetMergeableState()))
 		head := live.GetHead().GetSHA()
+		if (state == "behind" || mergeTrainDirty(state)) && c.leaveBaseSyncToDependencyBot(plan.displayRepo, plan.owner, plan.repo, live, "merge-train") {
+			continue
+		}
 		switch {
 		case state == "behind":
 			if c.requireCurrentBaseFor(plan.owner + "/" + plan.repo) {

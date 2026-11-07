@@ -582,13 +582,14 @@ func RequiresHumanStage(o stageObservation, rank int) (stageVerdict, bool) {
 	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: rank, Human: true, Reason: StageVerdictReason(o.Detail)}, true
 }
 
-func PreserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
-	if !hadPrev || prev.Stage != stagelabels.Fixing || prev.Reason != stagelabels.LaneReasonChangesRequested {
-		return stageVerdict{}, false
-	}
-	if prev.ActivityHead == "" || obs.HeadSHA == "" || prev.ActivityHead != obs.HeadSHA {
-		return stageVerdict{}, false
-	}
+// PreserveNormalizedFixingStage canonicalizes a raw human opinion using the
+// current review's remediation evidence. The previous record is deliberately
+// irrelevant: requiring a prior 070 made identical evidence select 070 or 085
+// depending on which sweep last wrote the record (#16880). Keep the parameters
+// for callers sharing the legacy pass API, but never use stage history as review
+// evidence. Explicit decisions and risk escalations remain human-owned through
+// NormalizeReviewVerdict.
+func PreserveNormalizedFixingStage(_ stagelabels.Record, _ bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
 	if verdict.Stage != stagelabels.NeedsDecision || verdict.Reason != StageReasonVerdictRequiresHuman {
 		return stageVerdict{}, false
 	}
@@ -600,7 +601,7 @@ func PreserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs st
 	if raw != "requires_human" || normalized != "changes_requested" {
 		return stageVerdict{}, false
 	}
-	return stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned, Reason: stagelabels.LaneReasonChangesRequested}, true
+	return stageVerdict{Stage: FixingStage(obs), Rank: stageRankOwned, Reason: stagelabels.LaneReasonChangesRequested}, true
 }
 
 // PreserveStageOnStaleDecisionAnswer keeps a PR parked at 085 when the only
@@ -621,6 +622,56 @@ func PreserveStageOnStaleDecisionAnswer(prev stagelabels.Record, hadPrev bool, o
 		return stageVerdict{}, false
 	}
 	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Reason: prev.Reason}, true
+}
+
+// PreserveNeedsDecisionOnSameHead keeps a PR parked at 085 when it was placed
+// on 085 for this head with a recorded decision question, until a human
+// reply, a new push, or an explicit /hive command. Checks re-running on the
+// same head (e.g. triggered by the hive's own label write) are not new
+// information (#16974).
+func PreserveNeedsDecisionOnSameHead(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
+	if !hadPrev || prev.Stage != stagelabels.NeedsDecision || verdict.Terminal {
+		return stageVerdict{}, false
+	}
+	head := strings.TrimSpace(obs.HeadSHA)
+	if head == "" {
+		return stageVerdict{}, false
+	}
+	if prev.ActivityHead == "" || !strings.EqualFold(prev.ActivityHead, head) {
+		return stageVerdict{}, false
+	}
+	d := NormalizeStageDetail(obs.Detail)
+	if TrustedHumanApprovedRequiresHuman(d, head) || TrustedHumanChangeRequested(d, head) ||
+		(d.VerdictKnown && d.Verdict.DecisionAnswered && strings.EqualFold(strings.TrimSpace(d.Verdict.DecisionAnsweredHead), head)) {
+		return stageVerdict{}, false
+	}
+	// An explicit `/hive decision approve` (admission) on this head is the
+	// human's answer: it releases the hold without waiting for the merge.
+	if prev.AdmittedHead != "" && strings.EqualFold(strings.TrimSpace(prev.AdmittedHead), head) {
+		return stageVerdict{}, false
+	}
+	var hasQuestion bool
+	if d.VerdictKnown {
+		// A re-review of the same head that came back approve or
+		// changes_requested is new information: nothing asks for a
+		// decision any more, so the raw verdict must win (090/070).
+		if !VerdictNeedsHuman(d) {
+			return stageVerdict{}, false
+		}
+		hasQuestion = d.Verdict.DecisionRequested || strings.TrimSpace(d.Verdict.DecisionQuestion) != ""
+	} else {
+		// No verdict for this head yet (e.g. the check re-ran because of
+		// the hive's own label write): the recorded question still stands.
+		hasQuestion = prev.Reason == StageReasonDecisionRequested
+	}
+	if !hasQuestion {
+		return stageVerdict{}, false
+	}
+	reason := prev.Reason
+	if reason == "" {
+		reason = StageReasonDecisionRequested
+	}
+	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: reason}, true
 }
 
 // AuthorSideDone reports whether the PR has nothing left for its author to

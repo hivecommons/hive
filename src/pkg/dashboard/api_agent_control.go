@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
@@ -450,7 +450,7 @@ func (s *Server) handleEffortSet(w http.ResponseWriter, r *http.Request) {
 	s.deps.Config.Agents[name] = agentCfg
 
 	// Sync into the agent process and persist, mirroring handleAgentConfigModels.
-	if err := s.deps.AgentMgr.UpdateConfig(name, agentCfg); err != nil {
+	if err := s.updateAgentProcessConfig(name, agentCfg); err != nil {
 		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
 	}
 	if err := s.saveConfig(); err != nil {

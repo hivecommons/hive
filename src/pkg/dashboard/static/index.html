@@ -929,7 +929,7 @@
       .oc-topbar-right { grid-column: auto; flex-wrap: wrap; }
       .widget-dl { display: none; }
       #oc-project-name { display: none; }
-      .oc-topbar .nav-chip--action .nav-chip__label,
+      .oc-topbar .nav-chip--action:not(#oc-drawer-toggle) .nav-chip__label,
       .oc-topbar .nav-chip--primary .nav-chip__label { display: none; }
       /* keep the pill one line so the right group wraps as a unit
          instead of being clipped at the viewport edge */
@@ -2403,9 +2403,8 @@
     .agent-card.off { border-left-color: color-mix(in srgb, var(--muted) 60%, var(--bg)); opacity: 0.6; }
     .agent-card.off .agent-state { color: color-mix(in srgb, var(--muted) 60%, var(--bg)); }
     .pause-badge { --component-status: var(--status-error); margin-left: var(--sp-2); vertical-align: middle; } /* pill recipe */
-    .pause-info { cursor: help; font-size: 0.7rem; margin-left: var(--sp-2); opacity: 0.8; position: relative; display: inline-block; }
-    .pause-info:hover .pause-tooltip { display: block; }
-    .pause-tooltip { display: none; position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%); background: var(--panel-strong); color: var(--text); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 10px; font-size: 0.7rem; white-space: nowrap; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+    .config-info.pause-info { cursor: help; font-size: 0.7rem; margin-left: var(--sp-2); opacity: 0.8; }
+    .config-tooltip-portal.pause-tooltip { max-width: calc(100vw - 16px); box-sizing: border-box; overflow-wrap: anywhere; }
     .off-badge { margin-left: var(--sp-2); vertical-align: middle; } /* pill recipe (default muted) */
     .on-demand-badge { --component-status: var(--status-info); margin-left: var(--sp-2); vertical-align: middle; } /* pill recipe */
 
@@ -12127,7 +12126,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const by = a.pausedBy || '';
       const at = a.pausedAt ? formatDashboardDateTime(a.pausedAt) : 'unknown';
       const ago = a.pausedAt ? pillAge(a.pausedAt) : '';
-      return `<span class="pause-info" title="${esc(pauseProvenanceLine(a))}">ℹ️<span class="pause-tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}</span></span>`;
+      return `<span class="config-info pause-info" tabindex="0" data-stop="1" aria-label="Pause details">ℹ️<span class="config-tooltip pause-tooltip" role="tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}<br><br>To lift the pause, an owner can select ▶ resume or ▶ start &amp; resume on the agent card. If the agent is disabled, enable it first.</span></span>`;
     }
 
     function subAgentModelsHtml(a) {
@@ -35433,8 +35432,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // using Codex with a ChatGPT account"), so codex must NOT fall through to
     // the copilot list. The server discovers the live catalog via
     // `codex app-server` model/list (per-CLI-version, baked into the binary);
-    // this is only the pre-discovery fallback. Snapshot of codex 0.165.0
-    // (live model/list capture, 2026-10-27; the 0.159.0 capture was #9804):
+    // this is only the pre-discovery fallback. Snapshot of codex 0.166.0 and
+    // 0.167.0 (live model/list captures, 2026-11-07; the 0.159.0 capture was #9804):
     // visible ids in picker order (GPT-6.1 Sol is the default; GPT-6.1 Terra
     // arrived in 0.165.0; GPT-6 Sol and Luna arrived in 0.156.1, #8417), then
     // hidden ids — hidden entries are still valid --model values. gpt-5.2 and
@@ -51767,20 +51766,17 @@ function burnAreaChart() {
       var at = rs.attempt || {};
       var aTone = 'muted', aIcon = 'ⓘ', aLabel = '';
       var hideAttemptRow = false;
-      var supersededNote = '';
+      var supersededSuccess = false;
       var targetShort = at.target ? versionShortSHA(at.target) : '';
       switch (at.state) {
         case 'succeeded':
           if (at.superseded && at.runningCommit) {
-            // The recorded upgrade landed but the hive has since been rolled to
-            // another commit: headline the running commit (the one the version
-            // menu shows) and age the RUNNING build, not the superseded
-            // attempt. The superseded note moves to the secondary line with
-            // its own timestamp so the two ages are never conflated.
+            // A later roll makes the old successful attempt history, not an
+            // actionable status. Show the running build and its own age.
+            supersededSuccess = true;
             aTone = 'muted'; aIcon = '↷';
             aLabel = 'Running <strong>' + escapeHtml(at.runningCommit) + '</strong>' +
               (at.rolledExternally ? ' <span class="text-muted">(rolled externally)</span>' : '');
-            supersededNote = targetShort ? 'Last spoke-side upgrade to ' + targetShort + ' superseded' : '';
             break;
           }
           aTone = 'success'; aIcon = '✅';
@@ -51817,7 +51813,7 @@ function burnAreaChart() {
       var attemptWhen = at.completedAt || at.at || '';
       var when = attemptWhen;
       var whenTitle = '';
-      if (supersededNote) {
+      if (supersededSuccess) {
         when = at.runningSince || '';
         if (when) whenTitle = 'running since ' + when;
       }
@@ -51825,18 +51821,9 @@ function burnAreaChart() {
       if (when) {
         whenHtml = ' · <span class="text-muted" title="' + escapeHtml(whenTitle || when) + '">' + escapeHtml(relativeAge(when)) + '</span>';
       }
-      var detail = at.detail || '';
+      var detail = supersededSuccess ? '' : (at.detail || '');
       if (targetShort && /hive is running/i.test(detail) && detail.toLowerCase().indexOf(targetShort.toLowerCase()) >= 0) detail = '';
       var detailHtml = detail ? '<div class="release-status-detail">' + escapeHtml(detail) + '</div>' : '';
-      if (supersededNote) {
-        // Secondary line: what the spoke upgrader last did, with its own age.
-        // Once that attempt predates the running build it is plain history.
-        var noteAge = attemptWhen ? relativeAge(attemptWhen) : '';
-        var noteOld = attemptWhen && when && Date.parse(attemptWhen) < Date.parse(when);
-        detailHtml = '<div class="release-status-detail' + (noteOld ? ' text-muted' : '') + '" title="' + escapeHtml(at.detail || '') + '">' +
-          escapeHtml(supersededNote) + (noteAge ? ' · <span title="' + escapeHtml(attemptWhen) + '">' + escapeHtml(noteAge) + '</span>' : '') +
-          '</div>';
-      }
 
       // --- Staleness warning: never present stale data as current truth. ---
       var staleHtml = '';
@@ -62170,10 +62157,10 @@ function burnAreaChart() {
                 </div>
               </div>
               <div class="config-field">
-                <label>Owner approval releases the workflow-path fence ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Owner approval releases the workflow-path fence', `When on (the default), a trusted merger's GitHub Approve review on the current head — or a dashboard /hive decision approve bound to it — lets the contributor lane merge a PR that edits .github/workflows/** or .github/actions/** itself once CI, soak and the other gates are clear. Approval on an earlier head does not count. Needs the App's Workflows: Read and write; without it the merge is refused, the PR is marked hive:unauthorized and parks at 090 for a person's Merge click. Off keeps every workflow-path PR a person's merge.`)}</label>
+                <label>Owner approval releases the workflow-path fence ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Owner approval releases the workflow-path fence', `When on (the default), a trusted merger's GitHub Approve review on the current head — or a dashboard /hive decision approve bound to it — lets the contributor lane merge a PR that edits .github/workflows/** or .github/actions/** itself once CI, soak and the other gates are clear. Approval on an earlier head does not count, except across the hive's own merge of the base branch that leaves the PR's diff unchanged. Needs the App's Workflows: Read and write; without it the merge is refused, the PR is marked hive:unauthorized and parks at 090 for a person's Merge click. Off keeps every workflow-path PR a person's merge.`)}</label>
                 <div class="config-toggle">
                   <div id="am-contributor-lane-owner-approval-workflow-fence" class="config-toggle-switch ${amContributorLaneWorkflowApproval ? 'on' : ''}" data-action="gh103" role="switch" aria-checked="${amContributorLaneWorkflowApproval ? 'true' : 'false'}"></div>
-                  <span class="config-toggle-label">Merge owner-approved workflow-file PRs ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Merge owner-approved workflow-file PRs', `YAML: auto_merge.contributor_lane.owner_approval_releases_workflow_fence. If you approved it, the hive merges it; a stale approval re-arms the fence on the next push.`)}</span>
+                  <span class="config-toggle-label">Merge owner-approved workflow-file PRs ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Merge owner-approved workflow-file PRs', `YAML: auto_merge.contributor_lane.owner_approval_releases_workflow_fence. If you approved it, the hive merges it; a stale approval re-arms the fence on the next push, but the hive's own update-branch keeps it.`)}</span>
                 </div>
               </div>
             </div>

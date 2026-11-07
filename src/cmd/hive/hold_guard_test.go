@@ -1137,7 +1137,7 @@ func TestEnforceHoldGuardOperatorApprovalCarriesOverHiveBaseRefresh(t *testing.T
 			fake.pulls = map[int]map[string]any{7: {"number": 7, "head": map[string]any{"sha": "m1"}, "base": map[string]any{"ref": "main"}}}
 			fake.commitBySHA = map[string]map[string]any{"m1": {
 				"sha": "m1", "author": map[string]any{"login": tc.mergeAuthor}, "committer": map[string]any{"login": "web-flow"},
-				"parents": []map[string]any{{"sha": "c1"}, {"sha": "b1"}},
+				"commit": map[string]any{"verification": map[string]any{"verified": true}}, "parents": []map[string]any{{"sha": "c1"}, {"sha": "b1"}},
 			}}
 			fake.compareResult = map[string]map[string]any{
 				"main...c1": {"status": "ahead", "merge_base_commit": map[string]any{"sha": "b0"}, "files": files("blob1")},

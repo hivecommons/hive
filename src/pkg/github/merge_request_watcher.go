@@ -423,9 +423,10 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 	// Human-merge paths (#11039): a PR touching a path listed in
-	// auto_merge.human_merge_paths for its repo is never merged by the App,
-	// whatever agent asks. A match is terminal (the request is refused, the
-	// PR gets `hold` and one marker comment); an unknown changed-file list on
+	// auto_merge.human_merge_paths for its repo requires a person, whatever
+	// agent asks, unless auto_merge.human_merge_pin_only is proven (#16265).
+	// A match is terminal (the request is refused, the PR gets `hold` and one
+	// marker comment); an unknown changed-file list on
 	// a configured repo fails closed through the bounded retry path. Checked
 	// before the optional branch-update so a refused PR receives no push.
 	if refusal, err := c.mergeRequestHumanMergePathRefusal(ctx, req); err != nil {
@@ -474,9 +475,15 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	}
 
 	// Optional branch-update-first (resolves "behind main"). A failure here is
-	// not fatal — the merge attempt below will surface the real blocker.
+	// not fatal — the merge attempt below will surface the real blocker. A
+	// dependency bot's branch is never updated: the bot rebases it itself,
+	// and a hive merge commit would stop it doing so (DependencyBotBranch).
 	if req.UpdateBranch {
-		if err := c.UpdateBranch(ctx, req.Repo, req.Number); err != nil {
+		headRef, author := destination.GetHead().GetRef(), SafeGetLogin(destination.GetUser())
+		if DependencyBotBranch(headRef, author) {
+			c.logger.Info("merge-request watcher: update-branch skipped; the branch belongs to a dependency bot (continuing to merge attempt)",
+				slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("head_ref", headRef), slog.String("author", author))
+		} else if err := c.UpdateBranch(ctx, req.Repo, req.Number); err != nil {
 			c.logger.Info("merge-request watcher: update-branch failed (continuing to merge attempt)",
 				slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", err.Error()))
 		}

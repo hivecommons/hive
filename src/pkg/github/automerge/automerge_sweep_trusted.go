@@ -135,7 +135,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			// state and not author work (hivecommons/hive#12607).
 			return AutoMergeSweepEvent{}, autoMergeReasonBehindBudgetExhausted, nil
 		}
-		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "behind", c.isForkPR(pr))
+		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "behind", pr)
 	}
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
 		return AutoMergeSweepEvent{}, "conflicting", nil
@@ -211,7 +211,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		if reviewReason := c.mergeReviewGate(ctx, displayRepo, owner, repo, lane, number, pr, evaluatedHeadSHA, priorApprover, priorChecked); reviewReason != "" {
 			return AutoMergeSweepEvent{}, reviewReason, nil
 		}
-		if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, evaluatedHeadSHA, branchUpdateAllowed, autoMergeReasonBehindBudgetExhausted, c.isForkPR(pr), stageLaneSelf); stop {
+		if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, evaluatedHeadSHA, branchUpdateAllowed, autoMergeReasonBehindBudgetExhausted, pr, stageLaneSelf); stop {
 			return ev, reason, err
 		}
 	}
@@ -293,7 +293,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			if !branchUpdateAllowed {
 				return AutoMergeSweepEvent{}, autoMergeReasonChecksExpected, nil
 			}
-			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "required-checks-expected", c.isForkPR(pr))
+			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "required-checks-expected", pr)
 		}
 		if refused := c.refusedMerge(attempt, err); refused != "" {
 			return AutoMergeSweepEvent{}, refused, nil
@@ -651,7 +651,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		if headSHA == "" {
 			return AutoMergeSweepEvent{}, "missing-head-sha", nil
 		}
-		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "behind", c.isForkPR(pr))
+		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "behind", pr)
 	}
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
 		return c.mergeForwardOrConflict(ctx, displayRepo, owner, repo, pr, number)
@@ -701,7 +701,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		if reviewReason := c.mergeReviewGate(ctx, displayRepo, owner, repo, stageLaneTrusted, number, pr, headSHA, priorApprover, priorChecked); reviewReason != "" {
 			return AutoMergeSweepEvent{}, reviewReason, nil
 		}
-		if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, true, "behind", c.isForkPR(pr), stageLaneTrusted); stop {
+		if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, true, "behind", pr, stageLaneTrusted); stop {
 			return ev, reason, err
 		}
 	}
@@ -753,7 +753,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	})
 	if err != nil {
 		if c.requiredChecksExpected(attempt, err) {
-			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", c.isForkPR(pr))
+			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", pr)
 		}
 		if refused := c.refusedMerge(attempt, err); refused != "" {
 			return AutoMergeSweepEvent{}, refused, nil
@@ -812,7 +812,37 @@ func (c *Engine) isForkPR(pr *gh.PullRequest) bool {
 	return headRepo != "" && baseRepo != "" && !strings.EqualFold(headRepo, baseRepo)
 }
 
-func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, reason string, fork bool) (AutoMergeSweepEvent, string, error) {
+// leaveBaseSyncToDependencyBot reports whether pr's head branch belongs to a
+// dependency bot (hgithub.DependencyBotBranch) and, if so, logs once per head
+// and step that the hive leaves the base sync to the bot. Every automerge
+// write that would put a hive commit on someone else's head to bring it up to
+// date — update-branch, merge-forward, a merge-train rebase request — asks
+// this first: Renovate stops rebasing a branch for good once another identity
+// has committed to it (projectbluefin/utah#1097), and under strict freshness
+// it rebases a behind branch itself. A nil PR is never a bot branch.
+func (c *Engine) leaveBaseSyncToDependencyBot(displayRepo, owner, repo string, pr *gh.PullRequest, step string) bool {
+	if pr == nil {
+		return false
+	}
+	headRef, author := pr.GetHead().GetRef(), hgithub.SafeGetLogin(pr.GetUser())
+	if !hgithub.DependencyBotBranch(headRef, author) {
+		return false
+	}
+	number, headSHA := pr.GetNumber(), pr.GetHead().GetSHA()
+	if c.markTerminalHoldLogged(owner, repo, number, headSHA, "dependency-bot:"+step) {
+		c.info("automerge: branch belongs to a dependency bot; leaving the base sync to the bot",
+			"repo", displayRepo, "pr", number, "head", headSHA, "head_ref", headRef, "author", author, "step", step)
+	}
+	return true
+}
+
+// updateBranchAndSkip merges the base into pr's head with GitHub's
+// update-branch. A dependency bot's branch is never updated: it holds as
+// "behind" until the bot rebases it.
+func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, reason string, pr *gh.PullRequest) (AutoMergeSweepEvent, string, error) {
+	if c.leaveBaseSyncToDependencyBot(displayRepo, owner, repo, pr, "update-branch") {
+		return AutoMergeSweepEvent{}, "behind", nil
+	}
 	if err := c.executeUpdateBranchEffect(ctx, owner, repo, number, headSHA, reason); err != nil {
 		if wait := preparationWaitReason(err); wait != "" {
 			return AutoMergeSweepEvent{}, wait, nil
@@ -820,7 +850,7 @@ func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, re
 		if c.requireCurrentBaseFor(owner+"/"+repo) && hgithub.IsUpdateBranchStaleHead(err) {
 			return AutoMergeSweepEvent{}, basePreparationPrefix + "snapshot-changed", nil
 		}
-		switch classifyUpdateBranchError(err, fork) {
+		switch classifyUpdateBranchError(err, c.isForkPR(pr)) {
 		case updateBranchUpToDate:
 			return AutoMergeSweepEvent{}, "check-pending", nil
 		case updateBranchForkNotEditable:

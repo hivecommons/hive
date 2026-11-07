@@ -130,16 +130,28 @@ func (n *Notifier) sendNtfy(title, message string, priority Priority) {
 	n.logger.Debug("ntfy sent", "title", title)
 }
 
-// ntfyRetryAfter accepts positive delta-seconds or a future HTTP date.
+// ntfyRetryAfter accepts positive delta-seconds or a future HTTP date. The
+// result is capped at ntfyRateLimitMaxFallback past now: the header comes
+// from the server (the public ntfy.sh by default) or anything on the path,
+// and the cooldown is never shortened, so an uncapped value would mute ntfy
+// until the process restarts.
 func ntfyRetryAfter(value string, now time.Time) (time.Time, bool) {
 	value = strings.TrimSpace(value)
+	ceiling := now.Add(ntfyRateLimitMaxFallback)
 	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds > 0 && seconds <= int64((1<<63-1)/time.Second) {
-		return now.Add(time.Duration(seconds) * time.Second), true
+		return minTime(now.Add(time.Duration(seconds)*time.Second), ceiling), true
 	}
 	if retryAt, err := http.ParseTime(value); err == nil && retryAt.After(now) {
-		return retryAt, true
+		return minTime(retryAt, ceiling), true
 	}
 	return time.Time{}, false
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 // logNtfyError deduplicates repeated ntfy errors within a window.

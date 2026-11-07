@@ -684,7 +684,16 @@ func buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBra
 			"this), leave ONE comment on the issue naming exactly what covers or blocks "+
 			"it — the open or merged PR, the commit, or the external dependency — so "+
 			"the finding survives on GitHub and the PR is cross-referenced to the "+
-			"issue; sign it the same way as a PR body. Never edit someone else's PR "+
+			"issue; sign it the same way as a PR body. "+
+			// projectbluefin/utah#10, #855: a blocked label with no marker
+			// was lifted as a defect and the issue re-verified nine times.
+			// The marker lets the blocked sweep hold it until the named
+			// issue closes (issue_blocked.go reconcileBlockedOnIssue).
+			"When you print blocked and what it waits on is a GitHub issue, put "+
+			"'<!-- hive:blocked-on issue=<owner>/<repo>#<number> -->' on the first "+
+			"line of that comment (for an open PR, 'pr=' instead of 'issue='), so "+
+			"hive keeps the label until that issue closes and then lifts it itself. "+
+			"Never edit someone else's PR "+
 			"body to add 'Fixes #N': if that PR's merge should close this issue, say so "+
 			"in a comment on the PR instead, noting that only a maintainer editing the "+
 			"body makes the merge close it. "+

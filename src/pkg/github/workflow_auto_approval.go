@@ -136,6 +136,20 @@ func (l *workflowApprovalLedger) claim(key workflowApprovalKey) bool {
 	return true
 }
 
+// release gives the head's pass back after a transient failure, so the next
+// sweep retries it. deniedCounted and permissionDenied are kept: a retry
+// neither re-counts denials nor forgets a recorded refusal.
+func (l *workflowApprovalLedger) release(key workflowApprovalKey) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	attempt, ok := l.attempts[key]
+	if !ok {
+		return
+	}
+	attempt.attempted = false
+	l.attempts[key] = attempt
+}
+
 func (l *workflowApprovalLedger) record(key workflowApprovalKey, runID int64, outcome string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -184,23 +198,25 @@ func (c *Client) workflowApprovalWithLedger(repo string, number int, head string
 // every gated run on the head, since the code under test is theirs.
 //
 // Trusting the App as triggering actor covers heads the App pushed itself
-// (its own PRs, rebases and review-fix commits). GitHub only holds fork
-// `pull_request` runs behind "Approve and run workflows", and the App
-// cannot push to a fork, so this never approves a contributor's head the
-// App merely pushed to: a same-repository branch is not gated, and a fork
-// head is always triggered by the fork owner. Trust is per head, not per
+// (its own PRs, rebases and review-fix commits), and only when the run's
+// head repository is the base repository (headInBase). The login alone
+// does not prove the push came from this hive: if the App is public, a
+// contributor can install it on their fork, and pushes from that
+// installation carry the same `<slug>[bot]` login. Fork heads therefore
+// never earn trust on the actor path. Trust is per head, not per
 // repository: a contributor PR later pushed by the App earns no trust for
 // the heads the contributor pushed.
-func workflowApprovalTrusted(author, actor, app string, admitted bool, actors []string) bool {
+func workflowApprovalTrusted(author, actor, app string, headInBase, admitted bool, actors []string) bool {
 	if admitted {
 		return true
 	}
-	for _, login := range []string{author, actor} {
+	for i, login := range []string{author, actor} {
 		login = strings.TrimSpace(login)
 		if login == "" {
 			continue
 		}
-		if app != "" && strings.EqualFold(login, app) {
+		isActor := i == 1
+		if app != "" && strings.EqualFold(login, app) && (!isActor || headInBase) {
 			return true
 		}
 		for _, trusted := range actors {
@@ -267,13 +283,15 @@ func (c *Client) workflowApprovalAdmitted(repo string, number int, head string) 
 }
 
 // splitTrustedWorkflowRuns partitions the approvable gated runs by policy.
-func (c *Client) splitTrustedWorkflowRuns(runs []*gh.WorkflowRun, number int, head, headRepo, author string, admitted bool, actors []string) (trusted, denied []*gh.WorkflowRun) {
+// baseRepo is the PR's own "owner/name".
+func (c *Client) splitTrustedWorkflowRuns(runs []*gh.WorkflowRun, number int, head, headRepo, baseRepo, author string, admitted bool, actors []string) (trusted, denied []*gh.WorkflowRun) {
 	app := c.AppBotLogin()
 	for _, run := range runs {
 		if !workflowRunApprovable(run, number, head, headRepo) {
 			continue
 		}
-		if workflowApprovalTrusted(author, workflowTriggeringActor(run), app, admitted, actors) {
+		headInBase := baseRepo != "" && strings.EqualFold(run.GetHeadRepository().GetFullName(), baseRepo)
+		if workflowApprovalTrusted(author, workflowTriggeringActor(run), app, headInBase, admitted, actors) {
 			trusted = append(trusted, run)
 		} else {
 			denied = append(denied, run)
@@ -285,7 +303,9 @@ func (c *Client) splitTrustedWorkflowRuns(runs []*gh.WorkflowRun, number int, he
 // SweepWorkflowApprovals approves gated workflow runs that EnrichCIStatus
 // found on the PRs' heads, when policy trusts them, at most once per PR
 // head. Call it right after EnrichCIStatus on the same slice. A 403/404 is
-// recorded once and surfaces as PermissionDenied instead of being retried.
+// recorded once and surfaces as PermissionDenied instead of being retried;
+// any other failure (5xx, network, rate limit, cancellation) gives the pass
+// back so the next sweep retries the head.
 func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, policy config.GovernorCIConfig) {
 	if c == nil || c.client == nil || !policy.AutoApproveWorkflowsEnabled() {
 		return
@@ -312,7 +332,7 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 		admitted := c.workflowApprovalAdmitted(key.repo, pr.Number, pr.HeadSHA)
 		// This first split only counts denials off the listing; its trusted
 		// set is discarded and recomputed after the fresh PR read below.
-		trusted, denied := c.splitTrustedWorkflowRuns(wa.runs, pr.Number, pr.HeadSHA, "", pr.Author, admitted, actors)
+		trusted, denied := c.splitTrustedWorkflowRuns(wa.runs, pr.Number, pr.HeadSHA, "", key.repo, pr.Author, admitted, actors)
 		if len(denied) > 0 && !previous.deniedCounted {
 			c.workflowApprovals.markDeniedCounted(key)
 			for _, run := range denied {
@@ -334,7 +354,7 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 		if c.workflowApprovalHeld(labels) || headRepo == "" {
 			continue
 		}
-		trusted, _ = c.splitTrustedWorkflowRuns(wa.runs, pr.Number, pr.HeadSHA, headRepo, fresh.GetUser().GetLogin(), admitted, actors)
+		trusted, _ = c.splitTrustedWorkflowRuns(wa.runs, pr.Number, pr.HeadSHA, headRepo, key.repo, fresh.GetUser().GetLogin(), admitted, actors)
 		if len(trusted) == 0 {
 			continue
 		}
@@ -344,11 +364,12 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 			continue
 		}
 		// Claim before the first POST: neither a concurrent cycle nor an
-		// unchanged head repeats the pass, even after a partial failure.
+		// unchanged head repeats the pass. Only a transient failure gives
+		// it back (below).
 		if !c.workflowApprovals.claim(key) {
 			continue
 		}
-		approved := false
+		approved, permissionRefused, transient := false, false, false
 		for _, run := range trusted {
 			err := c.approveWorkflowRun(ctx, owner, name, run.GetID())
 			if err == nil {
@@ -357,8 +378,8 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 				c.logger.Info("approved gated workflow run", "repo", key.repo, "pr", pr.Number, "head", pr.HeadSHA, "run_id", run.GetID(), "actor", workflowTriggeringActor(run))
 				continue
 			}
-			var apiErr *gh.ErrorResponse
-			if errors.As(err, &apiErr) && apiErr.Response != nil && (apiErr.Response.StatusCode == http.StatusForbidden || apiErr.Response.StatusCode == http.StatusNotFound) {
+			if workflowApprovalPermissionRefused(err) {
+				permissionRefused = true
 				c.workflowApprovals.record(key, run.GetID(), "permission_error")
 				c.logger.Warn("workflow approval refused; needs workflow approval on GitHub (App lacks actions: write?)", "repo", key.repo, "pr", pr.Number, "head", pr.HeadSHA, "run_id", run.GetID(), "error", err)
 				refused := *wa
@@ -368,13 +389,28 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 				pr.CIActivity = activity
 				break
 			}
-			c.logger.Warn("failed to approve gated workflow run", "repo", key.repo, "pr", pr.Number, "head", pr.HeadSHA, "run_id", run.GetID(), "error", err)
+			transient = true
+			c.logger.Warn("failed to approve gated workflow run; retrying next sweep", "repo", key.repo, "pr", pr.Number, "head", pr.HeadSHA, "run_id", run.GetID(), "error", err)
+		}
+		if transient && !permissionRefused {
+			c.workflowApprovals.release(key)
 		}
 		if approved {
 			// Let the next cycle observe the runs starting.
 			forgetWorkflowApproval(pr.Repo, pr.HeadSHA)
 		}
 	}
+}
+
+// workflowApprovalPermissionRefused reports whether an approve POST failed
+// because the token may not approve runs here: a plain 403/404 API error.
+// go-github types rate-limit 403s as *RateLimitError/*AbuseRateLimitError,
+// not *ErrorResponse, so those count as transient like 5xx, network errors
+// and cancellation.
+func workflowApprovalPermissionRefused(err error) bool {
+	var apiErr *gh.ErrorResponse
+	return errors.As(err, &apiErr) && apiErr.Response != nil &&
+		(apiErr.Response.StatusCode == http.StatusForbidden || apiErr.Response.StatusCode == http.StatusNotFound)
 }
 
 // approveWorkflowRun calls POST /repos/{o}/{r}/actions/runs/{id}/approve,
