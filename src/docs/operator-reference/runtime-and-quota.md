@@ -79,6 +79,49 @@ The sampled value is shown as **Session RSS** (with the session age and a
 `↻N` recycle count) in the agent detail panel. The log line is
 `agent session recycled` with `rss_mb`, `age` and `reason`.
 
+## Agent CLI auto-memory
+
+Claude Code, Codex and Gemini CLI each keep their own persistent memory
+across sessions, separate from the conversation `/clear` resets
+(`agents.<name>.clear_on_kick`). A hive agent is a lane worker that should
+start every kick from the kick prompt, its beads and the knowledge primer,
+not from an inference its CLI wrote down on an earlier kick, so the fleet
+policy turns that memory off by default:
+
+```yaml
+agents:
+  cli_memory:              # fleet-wide only; there is no per-agent override
+    auto_memory: false     # default: seed each CLI's documented "auto-memory off" setting
+    clear_on_kick: false   # true: remove the agent's own memory store before every kick
+```
+
+`auto_memory: false` is applied on every launch, merge-only: a value already
+present is left alone, so an operator's explicit setting wins.
+
+| CLI | Setting hive seeds | Memory store `clear_on_kick` removes |
+|---|---|---|
+| Claude Code (`claude` and inference backends) | `"autoMemoryEnabled": false` in the shared `/data/home/.claude/settings.json` (interactive agents) or the inference agent's `~/.claude/settings.json` and `--settings` file | `$HOME/.claude/projects/*/memory` |
+| Codex | `memories = false` in the `[features]` table of `$CODEX_HOME/config.toml` | `$CODEX_HOME/memories`, `$CODEX_HOME/memories_v2` |
+| Gemini CLI | none: it documents no switch, it edits `GEMINI.md` files | `$HOME/.gemini/GEMINI.md` |
+| Copilot CLI | none: Copilot Memory is stored on GitHub, not on disk; use `/memory off` or the account and repository settings | none |
+
+Setting `auto_memory: true` stops the seeding but does not remove a key an
+earlier launch already wrote; delete `autoMemoryEnabled` from the Claude
+settings file and `memories` from each `$CODEX_HOME/config.toml` to hand the
+choice back to the CLI defaults.
+
+`clear_on_kick` only removes a store inside a directory private to the
+agent, and runs the removal as the agent's own UID. A store reached through
+a symlink into shared state is skipped, so a clear never removes another
+agent's memory. The agent's HOME is shared when the agent runs as UID 0 or
+under `HIVE_SHARED_AGENT_HOME=1`. Its `~/.claude` and `~/.gemini` are shared
+while they are still symlinks to `/data/home`, which is today's layout for
+interactive agents. In those cases the log shows
+`cli_memory.clear_on_kick: not clearing a CLI memory store shared with other
+agents` once per agent. Codex homes and inference-agent homes are per-agent,
+so their stores are cleared. Each clear is logged as `cleared CLI memory
+before kick` with the removed `paths`.
+
 ## GitHub API quota
 
 Agents reach `api.github.com` through the Hive GitHub proxy, which injects the

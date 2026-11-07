@@ -135,6 +135,10 @@ type AgentRuntimeConfig struct {
 	// recycle policy (#14842). It is encoded under agents.session_recycle by
 	// Config's YAML hooks, like AgentsGitHubAPIHourlyCap.
 	AgentsSessionRecycle SessionRecycleConfig `yaml:"-" json:"-"`
+	// AgentsCLIMemory is the fleet CLI auto-memory policy (#17032), encoded
+	// under agents.cli_memory by Config's YAML hooks like
+	// AgentsSessionRecycle.
+	AgentsCLIMemory CLIMemoryConfig `yaml:"-" json:"-"`
 	// Backends is the spoke-wide backend allow/deny list (#11310), enforced
 	// at pack apply and by PUT /api/config/agent/{name}/models.
 	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
@@ -322,8 +326,13 @@ type AgentConfig struct {
 	// stamps the fleet block into nil pointers so the agent manager sees one
 	// resolved policy per agent.
 	SessionRecycle *SessionRecycleConfig `yaml:"session_recycle,omitempty" json:"session_recycle,omitempty"`
-	DisplayName    string                `yaml:"display_name" json:"display_name,omitempty"`
-	Description    string                `yaml:"description" json:"description,omitempty"`
+	// CLIMemory is the fleet agents.cli_memory policy as resolved for this
+	// agent (#17032). Never read from a per-agent block: EnabledAgents()
+	// stamps the fleet value onto every agent, because the CLI settings the
+	// policy seeds are shared across agents.
+	CLIMemory   CLIMemoryConfig `yaml:"-" json:"-"`
+	DisplayName string          `yaml:"display_name" json:"display_name,omitempty"`
+	Description string          `yaml:"description" json:"description,omitempty"`
 	// Bob holds bob-backend-only per-agent options. Empty is default-off.
 	Bob AgentBobConfig `yaml:"bob,omitempty" json:"bob,omitempty"`
 	// BobDisplayName is the legacy flat spelling for Bob.SessionLabel. It is

@@ -269,6 +269,10 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// input touches the pane, so each archived kick log is cleanly delimited
 	// (#4296). Must be the first thing this function does.
 	m.rotateKickLogOnKickLocked(agent)
+	// agents.cli_memory.clear_on_kick (#17032): drop the CLI's persistent
+	// memory before any input, for every backend path below, so the kick
+	// starts from the prompt rather than from what an earlier kick inferred.
+	m.clearCLIMemoryLocked(agent)
 
 	// The caller has already waited for input readiness. Codex can exit on
 	// Ctrl+C at that prompt, leaving the subsequent task to be executed by

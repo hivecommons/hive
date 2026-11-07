@@ -265,6 +265,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	type plain Config
 	node := cloneYAMLNode(value)
 	var recycle SessionRecycleConfig
+	var cliMemory CLIMemoryConfig
 	if agents := mappingValueNode(&node, "agents"); agents != nil && agents.Kind == yaml.MappingNode {
 		for i := 0; i < len(agents.Content)-1; {
 			switch agents.Content[i].Value {
@@ -281,6 +282,11 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 					return fmt.Errorf("agents.session_recycle: %w", err)
 				}
 				agents.Content = append(agents.Content[:i], agents.Content[i+2:]...)
+			case "cli_memory":
+				if err := agents.Content[i+1].Decode(&cliMemory); err != nil {
+					return fmt.Errorf("agents.cli_memory: %w", err)
+				}
+				agents.Content = append(agents.Content[:i], agents.Content[i+2:]...)
 			default:
 				i += 2
 			}
@@ -295,6 +301,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.AgentsGitHubAPIHourlyCap = cap
 	c.AgentsGitHubAPIHourlyCapSet = capSet
 	c.AgentsSessionRecycle = recycle
+	c.AgentsCLIMemory = cliMemory
 	if governor := mappingValueNode(&node, "governor"); governor != nil {
 		if stall := mappingValueNode(governor, "merge_train_stall_warn_s"); stall != nil && stall.Tag != "!!null" {
 			c.Governor.mergeTrainStallWarnSet = true
@@ -7210,13 +7217,23 @@ func (c Config) MarshalYAML() (interface{}, error) {
 			&yaml.Node{Kind: yaml.ScalarNode, Value: "session_recycle"},
 			&recycleNode)
 	}
+	if !c.AgentsCLIMemory.IsZero() && agents.Kind == yaml.MappingNode {
+		var memoryNode yaml.Node
+		if err := memoryNode.Encode(c.AgentsCLIMemory); err != nil {
+			return nil, err
+		}
+		agents.Content = append(agents.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "cli_memory"},
+			&memoryNode)
+	}
 	return &node, nil
 }
 
 // EnabledAgents returns the enabled agents with fleet-level defaults that
 // the agent manager needs resolved onto each definition: an agent without
 // its own session_recycle block carries the agents.session_recycle value
-// (#14842), so the manager never has to reach back into Config.
+// (#14842), and every agent carries the agents.cli_memory policy (#17032),
+// so the manager never has to reach back into Config.
 func (c *Config) EnabledAgents() map[string]AgentConfig {
 	result := make(map[string]AgentConfig)
 	for name, agent := range c.Agents {
@@ -7225,6 +7242,7 @@ func (c *Config) EnabledAgents() map[string]AgentConfig {
 				fleet := c.AgentsSessionRecycle
 				agent.SessionRecycle = &fleet
 			}
+			agent.CLIMemory = c.AgentsCLIMemory
 			result[name] = agent
 		}
 	}

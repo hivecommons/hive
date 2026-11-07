@@ -385,6 +385,10 @@ type AgentProcess struct {
 	SessionRSSMB       int
 	SessionRecycles    int
 	lastSessionRecycle time.Time
+	// cliMemorySharedLogged records that clearCLIMemoryLocked already warned
+	// that this agent's CLI memory store is shared and was skipped (#17032),
+	// so the warning is not repeated on every kick.
+	cliMemorySharedLogged bool
 	// busyNoActivityRestartAt is when busyNoActivityStall last restarted this
 	// agent, and busyNoActivityRestarts how many times it has in the current
 	// episode. Both survive the restart's busy-visibility reset and clear on

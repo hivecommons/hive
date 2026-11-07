@@ -85,6 +85,8 @@ The reference is organized into the sections below. Existing links to this page 
 - [Self-reported issues](operator-reference/runtime-and-quota.md#self-reported-issues)
 <a id="agent-cli-session-recycling"></a>
 - [Agent CLI session recycling](operator-reference/runtime-and-quota.md#agent-cli-session-recycling)
+<a id="agent-cli-auto-memory"></a>
+- [Agent CLI auto-memory](operator-reference/runtime-and-quota.md#agent-cli-auto-memory)
 <a id="github-api-quota"></a>
 - [GitHub API quota](operator-reference/runtime-and-quota.md#github-api-quota)
 <a id="webhook-driven-pr-cache-invalidation"></a>

@@ -115,6 +115,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if isInference {
 		binary = "claude"
 		m.ensureClaudeSettings(agent.Name, agent.UID)
+		m.ensureClaudeAutoMemoryDefault(agent, inferenceClaudeSettingsFiles(agent.Name)...)
 		if m.inferenceRouteCallback != nil {
 			// inference-model-passthrough: the model set here becomes the
 			// outbound OpenAI "model" field that the gateway checks for
@@ -131,6 +132,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	}
 	if backend == "claude" && !isInference {
 		m.ensureClaudeRemoteControlDefault(agent)
+		m.ensureClaudeAutoMemoryDefault(agent, sharedClaudeSettingsFile())
 	}
 
 	if agent.Config.CavemanMode != "" {

@@ -230,6 +230,9 @@ ioscan:
 # for known agent names. New/custom agents should set these fields explicitly.
 agents:
   # github_api_hourly_cap: 300            # Per-agent charged GitHub API responses/hour through the proxy; 0 disables.
+  # cli_memory:                           # Fleet-wide CLI auto-memory policy (no per-agent override).
+  #   auto_memory: false                  # false (default): seed each CLI's "auto-memory off" setting at launch.
+  #   clear_on_kick: false                # true: remove the agent's own CLI memory store before every kick.
   scanner:
     # id: scan-01                         # Stable internal key (defaults to YAML key)
     enabled: true
