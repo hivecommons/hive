@@ -3169,8 +3169,8 @@ type ContributorNudgeConfig struct {
 	// Enabled turns the nudge on. nil = true.
 	Enabled *bool `yaml:"enabled"`
 	// RenudgeInterval is how long after the first nudge the hive nudges once
-	// more (the documented cap is 2 nudges per head). Default: the stage's
-	// dwell (24h), i.e. the re-nudge coincides with stage/stalled.
+	// more (the documented cap is 2 nudges per PR and reason class). Unset
+	// defers to auto_merge.nudge_repeat_after (default 72h).
 	RenudgeInterval string `yaml:"renudge_interval,omitempty"`
 }
 
@@ -3181,7 +3181,7 @@ func (c ContributorNudgeConfig) IsEnabled() bool { return c.Enabled == nil || *c
 const DefaultPresenceWindow = 15 * time.Minute
 
 // EffectiveRenudgeInterval parses RenudgeInterval; unset/invalid returns 0
-// (the caller falls back to the stage dwell).
+// (the caller falls back to auto_merge.nudge_repeat_after).
 func (c ContributorNudgeConfig) EffectiveRenudgeInterval() time.Duration {
 	return parseDurationOr(c.RenudgeInterval, 0)
 }
@@ -8319,6 +8319,13 @@ type AutoMergeConfig struct {
 	// GitHub Actions check-runs have not registered yet. Non-positive values
 	// use DefaultAutoMergeMinHeadAge.
 	MinHeadAge time.Duration `yaml:"min_head_age,omitempty" json:"min_head_age,omitempty"`
+	// NudgeRepeatAfter is how long a contributor PR must stay red for the
+	// same reason class before the hive rewrites its one
+	// `hive:contributor-nudge` comment a second (and last) time
+	// (hivecommons/hive#17067). Default DefaultNudgeRepeatAfter (72h);
+	// governor.labels.stage.contributor_nudge.renudge_interval, when set,
+	// takes precedence for backwards compatibility.
+	NudgeRepeatAfter string `yaml:"nudge_repeat_after,omitempty" json:"nudge_repeat_after,omitempty"`
 	// RequiredChecks is the default operator-declared list of status-check
 	// contexts/check-run names that the self-merge sweep's commitGreen must
 	// gate on for repos without an auto_merge.repos.<repo>.required_checks
@@ -8603,6 +8610,15 @@ func (m MergeTrainAutoMergeConfig) EffectiveMaxRebaseAttempts() int {
 		return DefaultMergeTrainMaxRebaseAttempts
 	}
 	return m.MaxRebaseAttempts
+}
+
+// DefaultNudgeRepeatAfter is auto_merge.nudge_repeat_after's default: a
+// contributor PR red for the same reason class is re-nudged once after 72h.
+const DefaultNudgeRepeatAfter = 72 * time.Hour
+
+// EffectiveNudgeRepeatAfter parses NudgeRepeatAfter (default 72h).
+func (a AutoMergeConfig) EffectiveNudgeRepeatAfter() time.Duration {
+	return parseDurationOr(a.NudgeRepeatAfter, DefaultNudgeRepeatAfter)
 }
 
 // CreditIssueAuthorsEnabled reports the auto_merge.credit_issue_authors
