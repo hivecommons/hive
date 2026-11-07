@@ -602,6 +602,17 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 	// Approve needs no recommendation on a `blocked` park, where it means
 	// "the blocker is cleared" (hivecommons/hive#12376), or on an owner
 	// step, where it accepts the step the hive proposed.
+	// An owner step an accepted `/hive approve` already answered, parked
+	// again, is not answered by a second approve: it would un-park the
+	// issue only for the agent to park it once more.
+	if command.Kind == unparkCommandApprove && !(releasePolicy.enabled && menu.releaseStep != nil) && (!labelDriven || la.enabled) &&
+		menu.ownerStep && menu.approveAnswered {
+		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), unparkApproveAnsweredReply); err != nil {
+			return false, err
+		}
+		result.Replies++
+		return true, nil
+	}
 	if command.Kind == unparkCommandApprove && !(releasePolicy.enabled && menu.releaseStep != nil) && (!labelDriven || la.enabled) &&
 		!menu.ownerStep && menu.releaseStep == nil && !unparkTextsProposeOwnerStep(issue, comments) && !labelPresent(issueLabelNames(issue.Labels), issueBlockedLabel) {
 		decision, ok := menu.approveDecision()
@@ -1143,22 +1154,43 @@ func (c *Client) answeredUnparkCommentIDs(comments []*gh.IssueComment) map[int64
 		if cm == nil || !c.markerAuthorTrusted(cm.GetUser()) {
 			continue
 		}
-		body := cm.GetBody()
-		idx := strings.Index(body, unparkReplyMarkerPrefix)
-		if idx < 0 {
-			continue
-		}
-		rest := body[idx+len(unparkReplyMarkerPrefix):]
-		end := strings.Index(rest, " ")
-		if end < 0 {
-			continue
-		}
-		var id int64
-		if _, err := fmt.Sscanf(rest[:end], "%d", &id); err == nil && id > 0 {
+		if id := unparkReplyAnsweredID(cm.GetBody()); id > 0 {
 			answered[id] = true
 		}
 	}
 	return answered
+}
+
+// unparkReplyAnsweredID reads the comment ID a hive reply's marker names,
+// or 0 when body carries no well-formed reply marker.
+func unparkReplyAnsweredID(body string) int64 {
+	idx := strings.Index(body, unparkReplyMarkerPrefix)
+	if idx < 0 {
+		return 0
+	}
+	rest := body[idx+len(unparkReplyMarkerPrefix):]
+	end := strings.Index(rest, " ")
+	if end < 0 {
+		return 0
+	}
+	var id int64
+	if _, err := fmt.Sscanf(rest[:end], "%d", &id); err != nil || id <= 0 {
+		return 0
+	}
+	return id
+}
+
+// unparkReplyAnswersApprove reports whether the hive reply body answers a
+// `/hive approve` command: the comment its marker names, read from byID,
+// carries one. A reply whose command comment is not in byID (deleted, or
+// a dashboard release with no marker) does not count.
+func (c *Client) unparkReplyAnswersApprove(body string, byID map[int64]*gh.IssueComment) bool {
+	cm := byID[unparkReplyAnsweredID(body)]
+	if cm == nil || c.isHiveAccount(cm.GetUser()) {
+		return false
+	}
+	cmd, ok := parseUnparkCommand(cm.GetBody())
+	return ok && cmd.Kind == unparkCommandApprove
 }
 
 // unparkCandidateLimit bounds the permission lookups one issue can cost in a

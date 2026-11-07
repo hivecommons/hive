@@ -51,8 +51,9 @@ func TestUnparkNoticeMovesBelowAgentOwnerStep(t *testing.T) {
 	if len(posted) != 1 {
 		t.Fatalf("want one fresh notice below the owner step, got %v", rec.posted[12])
 	}
-	if !strings.Contains(posted[0], "> - `/hive done` →") {
-		t.Fatalf("the fresh notice should offer the owner step's /hive done, got %q", posted[0])
+	// The owner step asks for `/hive done`, so that is the recommended reply.
+	if !strings.Contains(posted[0], "> - **`/hive done` →") || strings.Contains(posted[0], "**`/hive approve`") {
+		t.Fatalf("the fresh notice should recommend the owner step's /hive done, got %q", posted[0])
 	}
 	if len(rec.deleted) != 1 || rec.deleted[0] != 61 {
 		t.Fatalf("the buried notice should be deleted, got %v", rec.deleted)
@@ -131,7 +132,7 @@ func TestUnparkNoticeMoveHonoursWritebackGate(t *testing.T) {
 	if len(rec.posted[18]) != 0 || len(rec.deleted) != 0 {
 		t.Fatalf("a refused gate must not move the notice: posted=%v deleted=%v", rec.posted[18], rec.deleted)
 	}
-	if body, ok := rec.edited[72]; !ok || !strings.Contains(body, "> - `/hive done` →") {
+	if body, ok := rec.edited[72]; !ok || !strings.Contains(body, "> - **`/hive done` →") {
 		t.Fatalf("the buried notice should still be edited in place, got %v", rec.edited)
 	}
 }

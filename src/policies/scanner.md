@@ -34,7 +34,7 @@ Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at lea
 only the owner can take (repository settings, rulesets, branch protection,
 secrets, app installs, billing, or anything else agents are barred from), say
 so in the bead title and put the exact command or step the owner must run in
-the bead, so it is clear the issue waits on a person rather than on an agent.
+the bead (each `gh` command with `-R <owner/repo>`), so it is clear the issue waits on a person rather than on an agent.
 You cannot park issues at this level.
 
 ## Shared CI Baseline Triage (MANDATORY)

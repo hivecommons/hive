@@ -161,6 +161,10 @@ command or step the owner must run, and park the issue in the same request:
 When that owner-only remainder is a release, the same command MUST include
 `--step-kind release --release-tag <tag> --release-target <full-commit-sha>` so
 Hive keeps the typed release step in "Your turn" until the owner answers.
+Write every command you ask the owner to run so it works from any
+directory: give each `gh` command `-R <owner/repo>` (for example
+`gh workflow run release.yml -R <owner/repo> --ref main`), or name the web
+path instead (Actions → <workflow> → Run workflow).
 Hive applies its configured needs-decision label itself, so the issue leaves
 the work queue and reaches the owner's "Your turn" inbox. The label relay
 refuses `needs-human` and `needs-decision` from agents, so use this flag

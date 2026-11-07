@@ -82,6 +82,15 @@ recommendation; the issue stays parked. On a `blocked` park and on an owner
 step `/hive approve` keeps its meaning (the blocker is cleared; accept the
 proposed step) and needs no recommendation.
 
+On an owner step, `/hive done` is the recommended reply when the owner-step
+text asks for it, or when an accepted `/hive approve` already answered the
+same step and an agent parked the issue again (approving cannot do a step only
+the owner can take). A step parked again after an accepted reply is read from
+its own text: the options and recommendation that reply answered do not carry
+over. On a step `/hive approve` already answered, the notice drops
+`/hive approve`, and a second `/hive approve` gets a reply pointing at
+`/hive done`; the issue stays parked (Danathar/goodreads-mcp#443).
+
 The notice is always the newest comment on a parked issue. While nothing newer
 is posted it is edited in place when the options change; once a later comment
 pushes it up the thread (an agent's new owner step, a question, a re-check
