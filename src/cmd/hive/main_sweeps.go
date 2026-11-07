@@ -2859,7 +2859,8 @@ func refreshReviewVerdictsForPRs(cfg *config.Config, prs []review.PullRequest, l
 	}
 	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items),
 		"elapsed", time.Since(started), "report_files_read", artifact.Collection.FilesRead,
-		"new_report_receipts", artifact.Collection.NewReports, "max_new_report_lag", artifact.Collection.MaxReportLag)
+		"new_report_receipts", artifact.Collection.NewReports, "max_new_report_lag", artifact.Collection.MaxReportLag,
+		"unreadable_reports_skipped", artifact.Collection.UnreadableSkipped)
 }
 
 // reviewModelStamps reads the dispatch state so a verdict whose report
