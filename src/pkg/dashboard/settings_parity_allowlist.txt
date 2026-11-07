@@ -119,6 +119,8 @@ agents.<key>.sandbox.runtime # TODO #11854
 agents.<key>.sandbox.timeout_s # TODO #11854
 agents.<key>.sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
 agents.<key>.sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
+agents.<key>.cli_memory.auto_memory # TODO #11854
+agents.<key>.cli_memory.clear_on_kick # TODO #11854
 agents.<key>.session_recycle.enabled # TODO #11854
 agents.<key>.session_recycle.max_age # TODO #11854
 agents.<key>.session_recycle.max_rss_mb # TODO #11854
@@ -147,6 +149,8 @@ agents.<key>.variables.<key>.scope # TODO #11854
 agents.<key>.variables.<key>.type # TODO #11854
 agents.<key>.variables.<key>.url # TODO #11854
 agents.<key>.variables.<key>.value # TODO #11854
+agents.cli_memory.auto_memory # TODO #11854
+agents.cli_memory.clear_on_kick # TODO #11854
 agents.github_api_hourly_cap # TODO #11854
 agents.session_recycle.enabled # TODO #11854
 agents.session_recycle.max_age # TODO #11854

@@ -7,6 +7,7 @@ type (
 	AgentConfig                = cruxconfig.AgentConfig
 	AgentRuntimeConfig         = cruxconfig.AgentRuntimeConfig
 	SessionRecycleConfig       = cruxconfig.SessionRecycleConfig
+	CLIMemoryConfig            = cruxconfig.CLIMemoryConfig
 	AgentRuntimeGovernorConfig = cruxconfig.AgentRuntimeGovernorConfig
 	AgentSandboxConfig         = cruxconfig.AgentSandboxConfig
 	AgentSandboxOverride       = cruxconfig.AgentSandboxOverride
