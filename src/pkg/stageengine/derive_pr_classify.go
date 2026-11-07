@@ -54,6 +54,7 @@ const (
 	contributorLaneReasonNoLinkedIssue     = prstage.ContributorLaneReasonNoLinkedIssue
 	contributorLaneReasonNoReviewer        = prstage.ContributorLaneReasonNoReviewer
 	contributorLaneReasonNoVerdict         = prstage.ContributorLaneReasonNoVerdict
+	contributorLaneReasonReviewOff         = prstage.ContributorLaneReasonReviewOff
 	contributorLaneReasonReporterTrustHold = prstage.ContributorLaneReasonReporterTrustHold
 	contributorLaneReasonSentinelBlocked   = prstage.ContributorLaneReasonSentinelBlocked
 	contributorLaneReasonSoaking           = prstage.ContributorLaneReasonSoaking
@@ -285,7 +286,8 @@ var stageAdmissionReasons = map[string]int{
 // 085), not merely a merge click.
 var stageNeedsHumanReasons = map[string]bool{
 	contributorLaneReasonWorkflowPath: true, contributorLaneReasonTestsRemoved: true,
-	contributorLaneReasonNoReviewer: true, contributorLaneReasonReporterTrustHold: true, contributorLaneReasonSentinelBlocked: true,
+	contributorLaneReasonNoReviewer: true, contributorLaneReasonReviewOff: true,
+	contributorLaneReasonReporterTrustHold: true, contributorLaneReasonSentinelBlocked: true,
 	contributorLaneReasonNoAppBotLogin: true, contributorLaneReasonFilesEvidence: true,
 	autoMergeReasonHumanMergePath: true, autoMergeReasonHumanMergePathEvidence: true,
 	autoMergeReasonIntentUnauthorized: true, autoMergeReasonIntentEvidence: true,

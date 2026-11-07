@@ -95,6 +95,7 @@ var securityHoldReasons = map[string]bool{
 // API refused). Only the operator can fix the hive, so 085 is right.
 var operatorFaultReasons = map[string]bool{
 	contributorLaneReasonNoReviewer:    true,
+	contributorLaneReasonReviewOff:     true,
 	contributorLaneReasonNoAppBotLogin: true,
 	contributorLaneReasonFilesEvidence: true,
 }
@@ -111,7 +112,7 @@ func TestContributorLaneCIReviewNeverParksOnAHuman(t *testing.T) {
 		contributorLaneReasonClaimAuthor, contributorLaneReasonClaimOtherHive, contributorLaneReasonClaimTier,
 		contributorLaneReasonClaimUnverified, contributorLaneReasonFilesEvidence, contributorLaneReasonNoAppBotLogin,
 		contributorLaneReasonNoAuthor, contributorLaneReasonNoClaim, contributorLaneReasonNoLinkedIssue,
-		contributorLaneReasonNoReviewer, contributorLaneReasonNoVerdict, contributorLaneReasonReporterTrustHold,
+		contributorLaneReasonNoReviewer, contributorLaneReasonNoVerdict, contributorLaneReasonReviewOff, contributorLaneReasonReporterTrustHold,
 		contributorLaneReasonSentinelBlocked, contributorLaneReasonSoaking + "(remaining=5m)", contributorLaneReasonTestsRemoved,
 		contributorLaneReasonWorkflowPath, "check-pending", "check-failing:unit", "conflicting", "",
 	}
@@ -135,5 +136,20 @@ func TestContributorLaneCIReviewNeverParksOnAHuman(t *testing.T) {
 				t.Errorf("reason %q verdict %s: 085 with no security finding and no security lane reason (%+v)", reason, name, v)
 			}
 		}
+	}
+}
+
+// The swarm-off stall (contributor-lane:review-off) is a person's: no
+// reviewer will ever be asked, so it parks at 085 with Human set, while a
+// plain no-verdict stays the review swarm's 050 (hive-wild-mole,
+// Danathar/sensi#681 sat at 050 "review swarm requested" with the swarm off).
+func TestContributorLaneReviewOffParksOnAPerson(t *testing.T) {
+	off := ClassifyStage(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonReviewOff, HeadSHA: goldenHead})
+	if off.Stage != stagelabels.NeedsDecision || !off.Human {
+		t.Fatalf("review-off = %+v, want 085 needs-decision owned by a person", off)
+	}
+	wait := ClassifyStage(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, HeadSHA: goldenHead})
+	if wait.Stage != stagelabels.ReviewPending || wait.Human {
+		t.Fatalf("no-verdict = %+v, want 050 review-pending", wait)
 	}
 }

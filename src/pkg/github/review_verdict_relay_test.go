@@ -113,7 +113,10 @@ func TestRecordReviewVerdictIsCollectable(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("want exactly one collectable report, got %v", matches)
 	}
-	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	// One perspective per PR (max_perspectives_per_pr: 1), so the one
+	// relayed report is full coverage: a hands-free approve needs every
+	// perspective the head is owed.
+	artifact, err := review.Collect(dir, review.AggregateOptions{MaxPerspectivesPerPR: 1})
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
@@ -201,7 +204,8 @@ func TestRecordReviewVerdictPromotesDecisionMarker(t *testing.T) {
 	if len(recorded) != 1 || recorded[0].Verdict != review.VerdictRequiresHuman || !recorded[0].DecisionRequested {
 		t.Fatalf("recorded = %+v, want promoted decision request", recorded)
 	}
-	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	// One perspective per PR, so the one report is full coverage.
+	artifact, err := review.Collect(dir, review.AggregateOptions{MaxPerspectivesPerPR: 1})
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}

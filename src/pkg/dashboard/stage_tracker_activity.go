@@ -454,6 +454,14 @@ func stageTrackerUnreportedChecksSentence(names []string) string {
 	return fmt.Sprintf("Required %s %s %s not reported for this head yet.", pluralVerb(len(names), "check", "checks"), strings.Join(quoted, ", "), pluralVerb(len(names), "has", "have"))
 }
 
+// stageTrackerReviewDispatched reports whether this hive's review planner
+// asks reviewers for new heads: review.require_approval and review.fan_out
+// both on (planReviewDispatchWith's answeredOnly rule). Without a config
+// the tracker keeps assuming it does.
+func stageTrackerReviewDispatched(cfg *config.Config) bool {
+	return cfg == nil || (cfg.Review.RequireApproval && cfg.Review.FanOut)
+}
+
 // stageTrackerExpectedPerspectives is the swarm's perspective set for this
 // hive: the configured list (built-ins when empty), falling back to the
 // built-ins when the configuration cannot be resolved.
@@ -531,11 +539,20 @@ func stageTrackerCountPerspectives(out *StageTrackerActivity, pr github.PullRequ
 // "unknown", which left review-pending rows with no lit chevron
 // (hivecommons/hive#16599). Without a head bundle or aggregate no
 // perspective has posted: done is 0, whatever earlier rounds left behind.
-func stageTrackerReviewPendingState(out *StageTrackerActivity, stage int, stageSince *time.Time) {
+//
+// reviewerLane is false when this hive dispatches no reviewer for the head
+// (no review-capable lane, or the review swarm off: review.require_approval
+// or review.fan_out). Then nothing is in progress unless a verdict has
+// posted anyway, and the row is left to stageTrackerReviewFallbackState,
+// which says a person must review instead of "0/5 · in progress" forever.
+func stageTrackerReviewPendingState(out *StageTrackerActivity, stage int, stageSince *time.Time, reviewerLane bool) {
 	if out == nil || out.State != "unknown" || stage != trackerNumberReviewPending {
 		return
 	}
 	bundleSeen := strings.Contains(out.Source, "verified-review-bundle")
+	if !reviewerLane && !bundleSeen {
+		return
+	}
 	if !bundleSeen {
 		out.PerspectivesDone = 0
 	}

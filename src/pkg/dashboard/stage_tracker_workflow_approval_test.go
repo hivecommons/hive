@@ -77,16 +77,21 @@ func TestStageTrackerReviewPendingState(t *testing.T) {
 		stage                int
 		wantState, wantCap   string
 		wantDone, wantActive int
+		noReviewerLane       bool
 	}{
-		{"no evidence at 050", StageTrackerActivity{State: "unknown", Source: "unavailable", PerspectivesDone: 5, PerspectivesTotal: 5}, 50, "reviewing", "Review 0/5 · in progress", 0, 1},
-		{"partial bundle at 050", StageTrackerActivity{State: "unknown", Source: "verified-review-bundle", PerspectivesDone: 1, PerspectivesTotal: 5}, 50, "reviewing", "Review 1/5 · in progress", 1, 1},
-		{"all posted, no aggregate", StageTrackerActivity{State: "unknown", Source: "verified-review-bundle", PerspectivesDone: 5, PerspectivesTotal: 5}, 50, "adjudicating", "Review 5/5 · verdicts in · aggregating", 5, 1},
-		{"not at 050", StageTrackerActivity{State: "unknown", Source: "unavailable", PerspectivesDone: 2, PerspectivesTotal: 5}, 30, "unknown", "", 2, 0},
-		{"settled verdict untouched", StageTrackerActivity{State: "approved", Caption: "Review approved", PerspectivesDone: 5, PerspectivesTotal: 5}, 50, "approved", "Review approved", 5, 0},
+		{"no evidence at 050", StageTrackerActivity{State: "unknown", Source: "unavailable", PerspectivesDone: 5, PerspectivesTotal: 5}, 50, "reviewing", "Review 0/5 · in progress", 0, 1, false},
+		{"partial bundle at 050", StageTrackerActivity{State: "unknown", Source: "verified-review-bundle", PerspectivesDone: 1, PerspectivesTotal: 5}, 50, "reviewing", "Review 1/5 · in progress", 1, 1, false},
+		{"all posted, no aggregate", StageTrackerActivity{State: "unknown", Source: "verified-review-bundle", PerspectivesDone: 5, PerspectivesTotal: 5}, 50, "adjudicating", "Review 5/5 · verdicts in · aggregating", 5, 1, false},
+		{"not at 050", StageTrackerActivity{State: "unknown", Source: "unavailable", PerspectivesDone: 2, PerspectivesTotal: 5}, 30, "unknown", "", 2, 0, false},
+		{"settled verdict untouched", StageTrackerActivity{State: "approved", Caption: "Review approved", PerspectivesDone: 5, PerspectivesTotal: 5}, 50, "approved", "Review approved", 5, 0, false},
+		// No reviewer is dispatched (review swarm off): nothing is in
+		// progress; the fallback states who must review.
+		{"no evidence, no reviewer lane", StageTrackerActivity{State: "unknown", Source: "unavailable", PerspectivesTotal: 5}, 50, "unknown", "", 0, 0, true},
+		{"partial bundle, no reviewer lane", StageTrackerActivity{State: "unknown", Source: "verified-review-bundle", PerspectivesDone: 1, PerspectivesTotal: 5}, 50, "reviewing", "Review 1/5 · in progress", 1, 1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := tc.in
-			stageTrackerReviewPendingState(&out, tc.stage, &now)
+			stageTrackerReviewPendingState(&out, tc.stage, &now, !tc.noReviewerLane)
 			if out.State != tc.wantState || out.PerspectivesDone != tc.wantDone || out.Active != (tc.wantActive == 1) {
 				t.Fatalf("got %+v", out)
 			}

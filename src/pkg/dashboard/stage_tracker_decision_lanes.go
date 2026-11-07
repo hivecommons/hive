@@ -200,7 +200,8 @@ func decisionLaneRule(base string) bool {
 	lower := strings.ToLower(strings.TrimSpace(base))
 	switch lower {
 	case stageengineprstage.ContributorLaneReasonWorkflowPath, stageengineprstage.ContributorLaneReasonTestsRemoved,
-		stageengineprstage.ContributorLaneReasonNoReviewer, stageengineprstage.ContributorLaneReasonReporterTrustHold,
+		stageengineprstage.ContributorLaneReasonNoReviewer, stageengineprstage.ContributorLaneReasonReviewOff,
+		stageengineprstage.ContributorLaneReasonReporterTrustHold,
 		stageengineprstage.ContributorLaneReasonNoAppBotLogin, stageengineprstage.ContributorLaneReasonFilesEvidence,
 		stageengineprstage.AutoMergeReasonHumanMergePath, stageengineprstage.AutoMergeReasonHumanMergePathEvidence,
 		stageengineprstage.AutoMergeReasonIntentUnauthorized, stageengineprstage.AutoMergeReasonIntentEvidence,
@@ -221,6 +222,8 @@ func decisionPlainReason(base string) string {
 		return "it removes tests"
 	case stageengineprstage.ContributorLaneReasonNoReviewer:
 		return "no reviewer is configured for this repo"
+	case stageengineprstage.ContributorLaneReasonReviewOff:
+		return "it needs a reviewer verdict and this hive's review swarm is off, so no reviewer will be asked"
 	case stageengineprstage.ContributorLaneReasonReporterTrustHold:
 		return "the hive held it for the trust level of the linked issue's reporter"
 	case stageengineprstage.ContributorLaneReasonNoAppBotLogin, stageengineprstage.AutoMergeReasonNoAppBotLogin:

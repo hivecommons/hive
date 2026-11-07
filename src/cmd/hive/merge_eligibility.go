@@ -213,24 +213,42 @@ func contributorLaneReviewerConfigured(cfg *config.Config) bool {
 	return false
 }
 
+// contributorLaneReviewDispatched reports whether the review planner asks
+// reviewers for new heads at all. It mirrors planReviewDispatchWith's
+// answeredOnly rule: with review.require_approval or review.fan_out off the
+// planner hands out only maintainer-answered fix work, never a review.
+func contributorLaneReviewDispatched(cfg *config.Config) bool {
+	return cfg != nil && cfg.Review.RequireApproval && cfg.Review.FanOut
+}
+
 // contributorLaneVerdictFunc answers the contributor-lane reviewer gate from
 // the same durable review-verdicts.json the merge-eligibility gate reads
 // (review.Artifact.HasAggregateApproval). An unreadable artifact with a
-// reviewer configured fails closed: Configured=true, Approved=false.
+// reviewer configured fails closed: Configured=true, Approved=false. A head
+// with no aggregate on a hive that never dispatches the review swarm is
+// marked ReviewOff: no verdict is on its way, and the lane says so
+// (contributor-lane:review-off) instead of waiting at no-verdict forever.
 func contributorLaneVerdictFunc(cfg *config.Config, logger *slog.Logger) automerge.ContributorLaneVerdictFunc {
 	return func(repo string, number int, headSHA string) automerge.ContributorLaneVerdict {
 		if !contributorLaneReviewerConfigured(cfg) {
 			return automerge.ContributorLaneVerdict{}
 		}
+		reviewOff := !contributorLaneReviewDispatched(cfg)
 		artifact, err := review.LoadArtifact("")
 		if err != nil {
-			if logger != nil && !errors.Is(err, os.ErrNotExist) {
+			if errors.Is(err, os.ErrNotExist) {
+				// Nothing was ever reviewed: no verdict for this head either.
+				return automerge.ContributorLaneVerdict{Configured: true, ReviewOff: reviewOff}
+			}
+			if logger != nil {
 				logger.Warn("contributor-lane verdict gate: review-verdicts.json unavailable; failing closed", "error", err)
 			}
 			return automerge.ContributorLaneVerdict{Configured: true}
 		}
 		approved := artifact.HasAggregateApproval(repo, number, headSHA)
-		return contributorLaneVerdictFromArtifact(artifact, repo, number, headSHA, approved)
+		v := contributorLaneVerdictFromArtifact(artifact, repo, number, headSHA, approved)
+		v.ReviewOff = reviewOff && !approved && strings.TrimSpace(v.Verdict) == ""
+		return v
 	}
 }
 
@@ -1331,6 +1349,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		requiredChecks:        requiredChecks,
 	}
 	seen := make(map[string]bool, len(candidates))
+	openPRs := make(map[string]bool, len(candidates))
 	for _, cand := range candidates {
 		pr := cand.pr
 		key := fmt.Sprintf("%s/%d", pr.Repo, pr.Number)
@@ -1342,6 +1361,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// the hold snapshot; both mean the same thing here.
 		held := cand.held || holdSet[key]
 		fullRepo := fullRepoName(pr.Repo, org)
+		openPRs[stagelabels.Key(fullRepo, pr.Number)] = true
 		prGates := gates
 		if cfg != nil {
 			if set, ok := cfg.AutoMerge.RequiredCheckSetForRepo(fullRepo); ok {
@@ -1507,6 +1527,17 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			failing = append(failing, row)
 			continue
 		case mergeBucketFailing:
+			if adopted {
+				// Parked at 085 on this head: the hive already told a person
+				// it has nothing to push, so the fixer is not kicked to
+				// re-triage the same red on every sweep.
+				if reason, parked := adoptedFixCIParked(fullRepo, pr.Number, pr.HeadSHA); parked {
+					if adoptedFixCIRoutes.first(fullRepo, pr.Number, parkedEpisode(pr.HeadSHA, reason)) {
+						logger.Info("adopted PR parked at needs-decision; fix-ci not routed", "repo", fullRepo, "number", pr.Number, "head", pr.HeadSHA, "reason", reason, "failing_checks", pr.FailingChecks)
+					}
+					continue
+				}
+			}
 			agent := prFixAgent(pr, prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)])
 			reroutedFrom := ""
 			if adopted {
@@ -1519,8 +1550,13 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			row.DeferredIncident = pr.SharedCIIncident
 			row.DeferredExternal = pr.ExternalCIDeferred
 			if adopted {
+				// The row stays listed (and queued for the 074 dwell) every
+				// sweep, but each red episode, its head plus failing checks,
+				// is routed and announced once.
 				markAdoptedFixerQueued(fullRepo, pr.Number, pr.HeadSHA, agent, cfg)
-				logger.Info("adopted PR routed to fixer", "repo", fullRepo, "number", pr.Number, "work", "fix-ci", "failing_checks", pr.FailingChecks, "fixer", agent, "sentinel_alert", row.SentinelAlert)
+				if adoptedFixCIRoutes.first(fullRepo, pr.Number, fixCIEpisode(pr.HeadSHA, pr.FailingChecks)) {
+					logger.Info("adopted PR routed to fixer", "repo", fullRepo, "number", pr.Number, "work", "fix-ci", "head", pr.HeadSHA, "failing_checks", pr.FailingChecks, "fixer", agent, "sentinel_alert", row.SentinelAlert)
+				}
 			}
 			failing = append(failing, row)
 			continue
@@ -1540,6 +1576,11 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			DCO:       dco,
 			HeadSHA:   pr.HeadSHA,
 		})
+	}
+
+	if len(openPRs) > 0 {
+		// An empty pass is more likely a failed read than every PR closing.
+		adoptedFixCIRoutes.retain(openPRs)
 	}
 
 	_ = os.MkdirAll("/var/run/hive-metrics", 0o755)

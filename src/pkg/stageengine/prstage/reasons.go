@@ -58,6 +58,7 @@ const (
 	ContributorLaneReasonNoReviewer        = "contributor-lane:no-reviewer"
 	ContributorLaneReasonNoVerdict         = "contributor-lane:no-verdict"
 	ContributorLaneReasonReporterTrustHold = "contributor-lane:reporter-trust-hold"
+	ContributorLaneReasonReviewOff         = "contributor-lane:review-off"
 	ContributorLaneReasonSentinelBlocked   = "contributor-lane:sentinel-blocked"
 	ContributorLaneReasonSoaking           = "contributor-lane:soaking"
 	ContributorLaneReasonTestsRemoved      = "contributor-lane:tests-removed"
