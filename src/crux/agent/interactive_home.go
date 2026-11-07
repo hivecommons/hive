@@ -275,6 +275,7 @@ func (m *Manager) setupInteractiveHome(agent *AgentProcess, backend string) {
 	m.retireSharedGitConfigBridge(agent.Name, home)
 	m.setupAgentXDGDirs(agent.Name, home, agent.UID)
 	m.setupPerAgentCLIHomes(agent.Name, home, agent.UID)
+	m.seedCopilotMemorySetting(agent, home)
 	m.seedClaudeSessionForAgent(agent, home)
 	m.tightenInteractiveHome(agent.Name, home, agent.UID)
 	m.sweepOrphanedClaudeTmp(agent.Name)
