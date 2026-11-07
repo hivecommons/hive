@@ -1,0 +1,1 @@
+- The agent proxy now applies its plain-HTTP destination policy to uninspected CONNECT and transparent-TLS tunnels as well, so all three egress legs dial only globally routable addresses; `HIVE_PROXY_ALLOW_PRIVATE_FORWARD=true` lifts it for every leg at once
