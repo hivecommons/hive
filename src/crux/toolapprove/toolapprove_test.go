@@ -309,6 +309,52 @@ func TestSecurityScannerGuardrailProtection(t *testing.T) {
 	}
 }
 
+// TestSecurityScannerGuardrailProtectionAnyWriteTool asserts the guardrail
+// path check does not depend on the tool's name: every tool not classified
+// read-only that names a guardrail file is denied at L6, whether or not
+// IsLocalWrite spells it — Copilot CLI and Codex editor tools and an unknown
+// name alike — while the read tools IsReadOnly spells stay auto-approved.
+func TestSecurityScannerGuardrailProtectionAnyWriteTool(t *testing.T) {
+	tools := []string{
+		"create", "apply_patch", "str_replace_editor", "str_replace_based_edit_tool",
+		"multi_edit", "write_file", "create_file", "some_agents_own_editor",
+	}
+	for _, tool := range tools {
+		req := ToolRequest{
+			Tool:      tool,
+			Arguments: map[string]any{"path": ".github/workflows/ci.yml", "content": "on: push"},
+		}
+		v := Resolve(context.Background(), req, 6, AgentIdentity{Name: "quality"}, nil)
+		if v.Decision != DecisionDeny {
+			t.Errorf("%s writing a guardrail path: decision = %q, want deny", tool, v.Decision)
+		}
+		if v.ScanResult == nil || !strings.Contains(v.ScanResult.Details, "guardrail-critical path") {
+			t.Errorf("%s: scan details %+v do not name the guardrail path", tool, v.ScanResult)
+		}
+
+		plain := ToolRequest{
+			Tool:      tool,
+			Arguments: map[string]any{"path": "src/main.go", "content": "package main"},
+		}
+		if v := Resolve(context.Background(), plain, 6, AgentIdentity{Name: "quality"}, nil); v.Decision != DecisionAutoApprove {
+			t.Errorf("%s writing src/main.go: decision = %q, want auto-approve", tool, v.Decision)
+		}
+	}
+
+	for _, tool := range []string{"read", "view", "grep", "glob"} {
+		req := ToolRequest{Tool: tool, Arguments: map[string]any{"path": ".github/workflows/ci.yml"}}
+		if v := Resolve(context.Background(), req, 6, AgentIdentity{Name: "quality"}, nil); v.Decision != DecisionAutoApprove {
+			t.Errorf("%s reading a guardrail path: decision = %q, want auto-approve", tool, v.Decision)
+		}
+	}
+
+	for _, tool := range []string{"create", "apply_patch", "str_replace_editor", "multi_edit", "write_file"} {
+		if !IsLocalWrite(tool) {
+			t.Errorf("IsLocalWrite(%q) = false, want true", tool)
+		}
+	}
+}
+
 // TestEvaluateAndAuditEmitsToAuditSink asserts audit log records tool approval verdicts.
 func TestEvaluateAndAuditEmitsToAuditSink(t *testing.T) {
 	sink := &fakeAuditSink{}
