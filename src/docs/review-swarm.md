@@ -402,7 +402,13 @@ naming, scope, sequencing, licensing, a failing optional check, a conflict
 clanker / adoption path as `changes_requested`; a bare question is
 advisory, the aggregate is `approve`, recorded as
 `no security finding — the PR keeps moving; a person has the last word at the merge gate; recorded as advisory: <question>`,
-and the PR moves on. At the merge gate the untrusted-author invariant
+and the PR moves on. That approve needs the same coverage as any other: if a
+perspective the head is owed has not reported (a reviewer kick that died, or
+a rate-limited security review the relay did not record), the aggregate is
+`incomplete` with `review coverage incomplete: missing <perspectives>`, and
+the planner asks for the missing ones under `pending_ttl` /
+`max_redispatch`. Without that, a head the security perspective never read
+could be merge-eligible. At the merge gate the untrusted-author invariant
 holds: a contributor the lane cannot vouch for parks at
 `stage/090-ready-for-human-merge` (`contributor-lane:claim-tier-untrusted`,
 `untrusted-author-role`, the human-merge rule) and waits for the operator's

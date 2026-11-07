@@ -64,12 +64,12 @@ func TestAggregateReportsMatrix(t *testing.T) {
 			r.DecisionQuestion = "@clubanderson should decide whether this workflow trigger change is acceptable."
 			return r
 		}()}, want: VerdictRequiresHuman, human: true},
-		{name: "unbacked decision request on a contributor PR is advisory", reps: []PerspectiveReport{func() PerspectiveReport {
+		{name: "unbacked decision request on a fully reviewed contributor PR is advisory", reps: withApprovingSiblings(func() PerspectiveReport {
 			r := baseReport(PerspectiveCorrectness, VerdictApprove)
 			r.DecisionRequested = true
 			r.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
 			return r
-		}()}, want: VerdictApprove, merge: true},
+		}()), want: VerdictApprove, merge: true},
 		{name: "reject recommends close", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictReject)}, want: VerdictReject, close: true},
 		{name: "fix cap requires human", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictChangesRequested)}, opts: AggregateOptions{FixAttempts: DefaultFixCycleCap}, want: VerdictRequiresHuman, human: true},
 		{name: "missing perspectives is incomplete, not a human hold", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove)}, want: VerdictIncomplete},
@@ -739,7 +739,9 @@ func TestAggregateReportsContributorDecisionNeedsBacking(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := AggregateReports([]PerspectiveReport{tt.rep}, tt.opts)
+			// The siblings approve so the head is fully reviewed: a hands-
+			// free approve needs the same coverage as any approve.
+			got := AggregateReports(withApprovingSiblings(tt.rep), tt.opts)
 			if got.Verdict != tt.want {
 				t.Fatalf("aggregate = %+v, want %s", got, tt.want)
 			}
@@ -775,7 +777,7 @@ func TestAggregateReportsContributorDecisionNeedsBacking(t *testing.T) {
 func TestAggregateReportsContributorRequiresHumanNeedsSecurityFinding(t *testing.T) {
 	plain := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman)
 	plain.Summary = "Unclear whether the groundwork should land before its consumer."
-	got := AggregateReports([]PerspectiveReport{plain}, AggregateOptions{})
+	got := AggregateReports(withApprovingSiblings(plain), AggregateOptions{})
 	if got.Verdict != VerdictApprove || got.RequiresHuman || !got.MergeEligible {
 		t.Fatalf("aggregate = %+v, want advisory approve", got)
 	}
