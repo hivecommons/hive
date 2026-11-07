@@ -92,6 +92,61 @@ func TestOperatorAdmissionDerivedFromHumanApproval(t *testing.T) {
 
 // Nothing admitted: a nil engine and an unknown head both answer "" and
 // the adoption refusal is a no-op.
+// An admitted head that is red for a reason the base clears is nobody's to
+// fix without this: the admission stands the hive down from adoption and a
+// fork author cannot re-run upstream workflows (hivecommons/hive#16718,
+// where the red head was the hive's own base refresh and the failing shard
+// was cancelled at setup). The stand-down holds, and the stale-red recovery
+// re-runs the failed jobs once per (head, base tip).
+func TestOperatorAdmissionRecoversStaleRedHead(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	h.observe(adoptPR(7, "aaa"), recoveryReason)
+	key := stageKey("acme", "widget", 7)
+	store := h.e.stageStoreOrShared()
+	if !store.NoteAdmission(key, "aaa", stagelabels.OperatorApprovalAdmission("octo"), h.clock.now()) {
+		t.Fatalf("NoteAdmission refused a known key")
+	}
+	h.adopt.compareBase = "base1"
+	h.adopt.baseChecks = map[string]string{"coverage": "success"}
+	h.adopt.failedRuns = []int64{41}
+	h.adopt.failedRunConclusion = "cancelled"
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+
+	h.api.reset()
+	h.clock.advance(5 * time.Hour)
+	h.observe(adoptPR(7, "aaa", labels...), recoveryReason)
+	rec, _ := store.Get(key)
+	if len(h.adopt.pulls) != 0 || rec.AdoptedHead != "" || rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedOperatorAdmission {
+		t.Fatalf("admission no longer stands the hive down: pulls=%d rec=%+v", len(h.adopt.pulls), rec)
+	}
+	if len(h.adopt.reruns) != 1 || h.adopt.reruns[0] != 41 || len(h.adopt.branchUpdates) != 0 {
+		t.Fatalf("admitted red head not re-run: reruns=%v updates=%v", h.adopt.reruns, h.adopt.branchUpdates)
+	}
+	if rec.AdoptRecoveryAttempt != "aaa@base1" || rec.AdoptRecoveryCount != 1 {
+		t.Fatalf("recovery attempt not recorded: %+v", rec)
+	}
+
+	// Still red on the same head and base tip: no second re-run.
+	h.api.reset()
+	h.clock.advance(time.Hour)
+	h.observe(adoptPR(7, "aaa", labels...), recoveryReason)
+	if len(h.adopt.reruns) != 1 {
+		t.Fatalf("recovery repeated on the same (head, base): %v", h.adopt.reruns)
+	}
+
+	// Check red on the base too: the failure is not a flake, nothing to re-run.
+	h.api.reset()
+	h.adopt.compareBase = "base2"
+	h.adopt.baseChecks = map[string]string{"coverage": "failure"}
+	h.clock.advance(time.Hour)
+	h.observe(adoptPR(7, "aaa", labels...), recoveryReason)
+	rec, _ = store.Get(key)
+	if len(h.adopt.reruns) != 1 || rec.AdoptRecoveryCount != 1 {
+		t.Fatalf("re-ran a failure the base shares: reruns=%v rec=%+v", h.adopt.reruns, rec)
+	}
+}
+
 func TestOperatorAdmissionAbsent(t *testing.T) {
 	var nilEngine *Engine
 	if got := nilEngine.operatorAdmission(context.Background(), "acme", "widget", 7, "aaa"); got != "" {
