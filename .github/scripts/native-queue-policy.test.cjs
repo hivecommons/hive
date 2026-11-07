@@ -453,6 +453,22 @@ test('cosmetic flip does not replay a success when a policy provider re-ran red 
   }
 });
 
+test('cosmetic flip falls through to the full wait while a policy provider is re-running or missing', async () => {
+  // PendingEvidence is not a verdict: returning null sends the caller to the
+  // polling wait instead of failing the check with no retry.
+  for (const name of Object.keys(POLICY_CHECKS)) {
+    for (const change of [{ status: 'queued', conclusion: null }, { status: 'in_progress', conclusion: null }]) {
+      const f = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }]);
+      Object.assign(f.state.runs.get(sha(11)).find(r => r.name === name), change);
+      assert.equal(await replayLastVerdict(f), null);
+    }
+    const f = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }]);
+    const runs = f.state.runs.get(sha(11));
+    runs.splice(runs.findIndex(r => r.name === name), 1);
+    assert.equal(await replayLastVerdict(f), null);
+  }
+});
+
 test('cosmetic flip has nothing to replay without a prior success and falls through', async () => {
   // A failed, cancelled (timed-out) or absent prior run must not be pinned
   // onto every later stage-label flip: null sends the caller to the full wait.
