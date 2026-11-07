@@ -68,6 +68,25 @@ func TestEnforceIssueShapeRejectsMalformedAndPreservesBody(t *testing.T) {
 			wantDeny: false,
 		},
 		{
+			// A Spek-published child (spektacular#114) carries a hidden
+			// provenance marker; the marker is not a template placeholder and
+			// the body is forwarded as written.
+			name:     "spek:publish marker is accepted",
+			method:   http.MethodPost,
+			path:     "https://api.github.com/repos/org/repo/issues",
+			body:     "{\"title\":\"Add refresh endpoint\",\"body\":\"## What\\n\\nAdd `POST /auth/refresh`.\\n\\n## Acceptance criteria\\n\\n- [ ] token rotates\\n\\n<!-- spek:publish name=auth artifact_id=spk_1 target=github task=T2 rfc=https://github.com/org/repo/issues/7 -->\"}",
+			wantDeny: false,
+		},
+		{
+			// The marker does not excuse an unfilled template around it.
+			name:        "spek:publish marker does not bypass placeholder check",
+			method:      http.MethodPost,
+			path:        "https://api.github.com/repos/org/repo/issues",
+			body:        "{\"title\":\"Add refresh endpoint\",\"body\":\"<what to build>\\n\\n<!-- spek:publish name=auth artifact_id=spk_1 target=github -->\"}",
+			wantDeny:    true,
+			errorSubstr: "unsubstituted template placeholder",
+		},
+		{
 			name:     "label sub-route is not shape-checked",
 			method:   http.MethodPost,
 			path:     "https://api.github.com/repos/org/repo/issues/12/labels",

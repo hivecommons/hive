@@ -35,6 +35,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/api"
+	"github.com/hivecommons/hive/crux/checkout"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/lanes"
 )
@@ -104,6 +105,9 @@ type Server struct {
 	// OperatorName names the principal behind the shared control token
 	// (CallerFrom); empty means DefaultOperatorName.
 	OperatorName string
+	// Checkouts, when set, serves the pinned-checkout work service
+	// (api.PathCheckouts); nil answers those routes 501.
+	Checkouts *checkout.Service
 
 	now     func() time.Time
 	started time.Time
@@ -161,6 +165,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+api.PathAgents+"/{name}/stop", s.handleStop)
 	mux.HandleFunc("GET "+api.PathEvents, s.handleEvents)
 	s.registerFamilies(mux)
+	s.registerCheckouts(mux)
 	return s.laneHandler(s.authenticate(mux))
 }
 
