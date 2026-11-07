@@ -1,42 +1,60 @@
 # Tagged releases
 
-Hive ships continuously — every merge to a release line (`v5` today) publishes moving image tags
+Hive ships continuously — every merge to a release line (`v5` and `v6` today) publishes moving image tags
 (`<branch>-latest`, the three channels, an immutable short-SHA tag; see
 [release channels](release-channels.md)) with no human step. This page covers
 the second, **additive** layer on top of that: immutable, semver-tagged
 releases (`v1.2.3`) with a git tag and a GitHub Release, cut automatically —
 no human ever pushes a tag or clicks "Draft a release" in the normal path.
 
-## Release lines and the v5 semver policy
+## Release lines and the per-line semver policy
 
-Hive has two active release lines, `v4` and `v5`, plus the `v6` development
-line. Since 2026-09-21 (#7721) **`v5` is the stable line** and **`v4` is the
-feature-frozen maintenance line**; each cuts its own semver tags:
+Hive has three release lines, `v4`, `v5` and `v6` — the `release_lines` list
+in `.github/release-lines.yml` is the single source of truth, and is also the
+run-time allow-list `tagged-release.yml` consults before serving a branch
+(#9154). Since 2026-09-21 (#7721) **`v5` is the stable line** and **`v4` is
+the feature-frozen maintenance line**; since 2026-11-07 **`v6` is a release
+line too** (it was the #7563 development line before that). Each cuts its own
+semver tags:
 
-- **`v5` cuts `v5.x.y` tags.** On the `v5` branch, `tagged-release.yml` is
-  pinned to `v5` (trigger, concurrency group `tagged-release-v5`, release PR
-  base, `docker.yml` dispatch). `derive-release-version.sh` bases the next
-  number on the line's own latest `v5.*` tag only, and the **first** tag on a
-  line is always `vN.0.0` regardless of the inferred bump — the human chose
-  the major when they cut the line. A `v4.*` tag never seeds a `v5` number,
-  and vice versa. The workflow names the line explicitly (`RELEASE_LINE: v5`
-  on the derive step) because its checkout is a detached SHA; without that
-  variable on a detached checkout the script **refuses** to run rather than
-  falling back to the global latest tag — the fall-through that minted a
-  stray `v4.73.3` from `v5` on 2026-09-21 (deleted; see #7721).
+- **Every line cuts `vN.x.y` tags from its own branch.** `tagged-release.yml`
+  serves the branch it was started from (`RELEASE_LINE: ${{ github.ref_name }}`
+  — the default branch for `workflow_run`/`schedule`, the chosen ref for
+  `workflow_dispatch`) and refuses unless that branch is under
+  `release_lines`. `derive-release-version.sh` bases the next number on the
+  line's own latest `vN.*` tag only, and the **first** tag on a line is
+  always `vN.0.0` regardless of the inferred bump — the human chose the major
+  when they cut the line, so `v6`'s first release is `v6.0.0`. A `v4.*` tag
+  never seeds a `v5` number, and vice versa. The line is passed explicitly
+  because the checkout is a detached SHA; without that variable on a detached
+  checkout the script **refuses** to run rather than falling back to the
+  global latest tag — the fall-through that minted a stray `v4.73.3` from
+  `v5` on 2026-09-21 (deleted; see #7721).
+- **`v5` cuts `v5.x.y` tags** and, as the default branch, is the only line
+  that receives `workflow_run` and `schedule` events directly.
+- **`v6` cuts `v6.x.y` tags.** GitHub delivers `workflow_run` only to the
+  default branch's copy of the workflow, so the `v5` copy carries a `relay`
+  job: when `docker.yml` completes a push build on another declared release
+  line, it dispatches `tagged-release.yml --ref <line>`, and that line's own
+  copy takes the backstop path (resolve the tip, require published images,
+  derive, release) under its own `tagged-release-<line>` concurrency group.
+  The hourly schedule backstop stays default-branch only; a `v6` build that
+  was cancelled is picked up by its next completed build or by a manual
+  `gh workflow run tagged-release.yml --ref v6`.
 - **`v4` cuts `v4.x.y` tags** for the security and critical fixes it still
-  accepts under the freeze (#6346). Its copy of `tagged-release.yml` stays
+  accepts under the freeze (#6346). Its copy of `tagged-release.yml` is
   pinned to `v4` and labels its release PR `v4-freeze-exempt` so the required
   `freeze-gate` check lets the automated release commit land.
-- **`v6` publishes continuous images only** (`v6-latest`, short-SHA, `edge`);
-  no `v6.x` tag exists until that line is cut as a release line.
-- Channels are independent of tags: `stable`/`candidate`/`latest` follow v5
-  (`stable` by digest via `promote-stable.yml`), `edge` follows v6. See
-  [release-channels.md](release-channels.md) and the
-  [digest-verifiable rollback](release-rollback.md) runbook.
+- Channels are independent of tags and did **not** move with the `v6` cut:
+  `stable`/`candidate`/`latest` follow v5 (`stable` by digest via
+  `promote-stable.yml`, which only ever runs from the default branch), `edge`
+  and `v6-latest` follow v6, and a `v6.x.y` tag is an additional immutable
+  retag of the same digest. See [release-channels.md](release-channels.md)
+  and the [digest-verifiable rollback](release-rollback.md) runbook.
 
-The rest of this page describes the path as it runs on `v5`; the `v4` copy
-differs only in the branch name and the exempt label.
+The rest of this page describes the path as it runs on `v5`; the `v6` copy is
+the same file reached through the relay, and the `v4` copy differs only in
+the branch name and the exempt label.
 
 ## What triggers a release
 
@@ -186,7 +204,7 @@ errors loudly) rather than a silent pick — remove all but one.
 | `stable` | `promote-stable.yml`, digest promotion of the newest `v5` build that crossed the 24-hour line after the [stable soak gate](stable-soak-policy.md), while the hub stable auto-promotion toggle is playing | Yes — moving pointer |
 | `<branch>-latest` (`v4-latest`, `v5-latest`, `v6-latest`) | `docker.yml`, every merge to that branch | Yes — moving pointers |
 | `<7-hex-sha>` | `docker.yml`, every successful build | No — immutable, but not a *release* |
-| `v1.2.3` | `tagged-release.yml`, only when a release is cut | No — immutable, and **is** the release |
+| `v5.x.y`, `v6.x.y` | `tagged-release.yml` on that line, only when a release is cut | No — immutable, and **is** the release |
 
 `tagged-release.yml` never writes `stable`/`candidate`/`edge`. Channel promotion is a
 separate, deliberate policy described in
