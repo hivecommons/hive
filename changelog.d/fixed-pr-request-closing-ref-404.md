@@ -1,0 +1,1 @@
+- pr-request watcher: a closing reference to an issue that does not exist in the target repository (404) now rejects the request as a permanent claim error instead of retrying with backoff forever (#17124).
