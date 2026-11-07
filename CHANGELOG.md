@@ -11,6 +11,34 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-07 (v5.189.0)
+
+### Added
+
+- An agent whose `knowledge.agent_scopes.<agent>.include_states` lists `draft` is now primed with the draft knowledge entries it authored (`author:`/`owner:` frontmatter matching the agent, its base agent or a hive owner login), each marked `(draft)` in the kick; every other kick stays approved-only ([#17076](https://github.com/hivecommons/hive/issues/17076)).
+
+### Fixed
+
+- `docs/crux-serve.md` and `docs/env-vars.md` now document `crux serve --runs-config` / `CRUX_RUNS_CONFIG` and the `/v1/runs` routes, and the work-services design doc reflects that S2 and S7 shipped (#17027, #17028).
+- A claim's GitHub side effect (label, stage or ledger write) that kept timing out after its bounded retries logged `issue-claims: GitHub side effect failed` with no matching class, so the hive filed it as `unclassified_error_repeated`. It now lands under its own `issue_claim_effect_failed` class, with the underlying error still in the log line (hivecommons/hive#17069).
+
+## 2026-11-07 (v5.188.0)
+
+### Added
+
+- New `agents.cli_memory` block (per-agent `cli_memory:` override): `auto_memory` (default false) pins Claude Code / Codex / Copilot CLI auto-memory off via `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, `[features] memories = false` and `"memory": false`; `clear_on_kick` wipes that agent's `~/.claude/projects/*/memory`, `$CODEX_HOME/memories*` and `~/.gemini/GEMINI.md` before each non-resume kick (hivecommons/hive#17032).
+- Mid-task knowledge advisor (opt-in `knowledge.advisor`, default off): when a running agent's work enters a scope that was not on screen at kick time, the matching knowledge entries the kick did not already carry are typed into its session as one `📚 Knowledge:` line each, capped per kick (`knowledge.advisor_max_per_kick`), never during a tool call, with per-agent opt-out (`knowledge.advisor_exclude_agents`) and a `knowledge-advisor` prompt-history trigger for measurement (#17052)
+- Knowledge entries can carry a `scope:` frontmatter block (`paths`, `labels`, `lanes`); the kick primer surfaces a scoped entry only when the kick's lane, issue labels or known file paths match, so repository facts are injected on demand instead of on every kick (#17045).
+
+### Changed
+
+- Review backlog: findings below the new `review.backlog.min_severity` (default `P2`) are no longer filed as issues but collected in one upserted `hive:review-followups` comment on the PR; the issue cap `review.backlog.max_per_pr` (default 3) now applies over the PR's lifetime instead of per day (`max_per_pr_per_day` is a retired alias); and new findings sharing a perspective are filed as one checklist item. Set `min_severity: P3` to file every finding as before (hivecommons/hive#17065).
+
+### Fixed
+
+- Hosted spokes now inject the primary repo's `AGENTS.md` into kicks: when neither `project.checkouts_dir` nor a matching `policies.local_dir` names a local checkout, the scheduler fetches `AGENTS.md` from the repo's default branch through the hive's GitHub client (15-minute cache, last-known-good on API failure, same injection cap) and materialises it under `/data/agentsmd-cache/<owner>/<repo>/` so the log shows `agentsmd: injecting repo instructions into kick` with that root ([#17090](https://github.com/hivecommons/hive/issues/17090)).
+- Tagged Release no longer stands down when `v5` advances past the commit `docker.yml` built. The version tag now names the release commit parented on that built SHA (the retagged images' exact tree plus the changelog), the release lands on `v5` as a merge commit even when the tip has moved, and the hourly backstop releases the newest built ancestor of the tip instead of requiring the tip itself; `docker.yml` push builds also get their own concurrency slot so a merge burst no longer cancels them. Under merges faster than a multi-arch build the old "defer to the successor" rule had no terminating condition and left `v5` untagged from `v5.186.4` (2026-10-18) onward.
+
 ## 2026-11-07 (v5.187.0)
 
 ### Added
@@ -221,7 +249,7 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 - `src/docs/security-model.md` is now the complete inventory of how hive keeps autonomous agents from doing damage: threat model, a control table (control → threat → file/ADR → how to verify), sections per layer from agent runtime isolation to human-in-the-loop, an honest gaps list, and an audit checklist for a running hive; linked from the docs index, documentation map and the root README security section (#13409).
 - A trusted maintainer's **changes requested** review on a hive-authored PR, or a `/hive decision <what to change>` comment on one parked at `stage/085-needs-decision`, now moves the PR to `stage/070-fixing` and kicks the author agent once per head with the text verbatim plus the swarm's outstanding findings; the self-authored automerge lane no longer merges over such a review, `/hive decision` on a PR the hive did not open gets an explanatory reply instead of silence, and the 085 entry comment names both actions (hivecommons/hive#13041, live case hivecommons/hive#12968).
 - Self-reports now notice clogged queues and repeated errors without a hand-placed hook: a `slog` tee (`pkg/fleetreport/slogfeed`) on the hive's root logger feeds every WARN/ERROR line into `unclassified_error_repeated` (5 identical normalised messages in 10 min; clears after 20 quiet minutes; benign i/o-timeout / context-cancel lines and messages already covered by an explicit class are skipped), and two new queue-health classes report work the hive is silently not doing — `issue_request_stuck` (an issue-request file that has failed ≥3 attempts or been retrying for ≥30 min; clears on completion/quarantine) and `effect_ledger_op_stuck` (a journaled external effect refused for reconciliation while Unknown/Planned for ≥30 min; clears when applied or reconciled). The dashboard's Fleet report card labels every runtime class in plain words. Motivated by eleven placeholder relay requests retried for six hours behind one Unknown ledger op that no self-report ever mentioned.
-- Self-report (`[selfreport] …`) issues now name the reporting hive by its display name and link to its dashboard: the evidence table gains `hive name` and `spoke` rows and each `Affected hives (N)` line renders `name (hive id) … — [open](url)`. Both travel as `hive_name` / `spoke_url` on the report and the hub relay, which overlays its own project name and vanity URL and fills them for older spokes; hub-less hives stay anonymous and render `—` (#13211).
+- Self-report (`[selfreport] …`) issues now name the reporting hive by its display name and link to its dashboard: the evidence table gains `hive name` and `spoke` rows and each `Affected hives (N)` line renders `name (hive id) … — open` as a link to the dashboard. Both travel as `hive_name` / `spoke_url` on the report and the hub relay, which overlays its own project name and vanity URL and fills them for older spokes; hub-less hives stay anonymous and render `—` (#13211).
 - Sentinel sweep: optional bounded PatchObserver hook on the PR-patch fetch (#15933)
 - Add owner-only Event triggers settings with scoped scanner first-seen issue presets, advanced CEL editing, validation, durable conflict-protected saves, and a direct link from agent Channels.
 - Settings now expose the prior-art gate's kinds, max_findings, max_parks_per_cycle and bot_close_ttl with validation.
