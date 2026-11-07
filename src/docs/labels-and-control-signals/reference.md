@@ -814,7 +814,7 @@ Same exempt behavior as `do-not-merge`; wins over required-label admission. Defa
 
 **Release or override.** Remove label or config entry
 
-**Configuration and implementation.** `governor.labels.exempt` (`src/pkg/config/governor_config.go:303-314`, where `LabelsConfig` appears; `src/pkg/config/defaults.go:365-371`)
+**Configuration and implementation.** `governor.labels.exempt` (`src/pkg/config/governor_config.go:317`, where `LabelsConfig` appears; `src/pkg/config/defaults.go:365-371`)
 
 #### `hive:unauthorized`
 
@@ -876,7 +876,7 @@ Queue label for human/owner merge action; the sweep also requires its normal aut
 
 **Release or override.** Remove label; head changes can de-queue
 
-**Configuration and implementation.** `governor.labels.automerge`, default `lgtm` (`src/pkg/config/governor_config.go:303-314`, where `LabelsConfig` appears; `src/pkg/config/dashboard_config.go:233`, where `DefaultAutoMergeLabel` appears; `src/pkg/github/automerge/automerge_sweep_loop.go:13-82`)
+**Configuration and implementation.** `governor.labels.automerge`, default `lgtm` (`src/pkg/config/governor_config.go:317-325`, where `LabelsConfig` appears; `src/pkg/config/dashboard_config.go:233`, where `DefaultAutoMergeLabel` appears; `src/pkg/github/automerge/automerge_sweep_loop.go:13-82`)
 
 #### `reviewer-passed`
 
