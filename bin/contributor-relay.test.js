@@ -2102,6 +2102,57 @@ test('omp container staging without a provider in AGENT_MODEL follows config.yml
   }
 });
 
+// A modelRoles selection naming a custom provider (a self-hosted llama.cpp
+// server with `auth: none`) only exists for omp if models.yml defines it, so
+// the container needs that file — but models.yml can also hold literal
+// apiKey/header secrets for any provider, so only the selected blocks travel.
+test('omp container staging ships models.yml narrowed to the selected custom providers', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-stage-'));
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    const agentDir = makeFakeOmpHome(hostOmp, { configYml: [
+      'modelRoles:',
+      '  default: local-flint/flint',
+      '  advisor: local-qwen/qwen3',
+      'advisor:',
+      '  enabled: true',
+      '',
+    ].join('\n') });
+    fs.writeFileSync(path.join(agentDir, 'models.yml'), [
+      'providers:',
+      '  local-flint:',
+      '    baseUrl: http://flint.internal/v1',
+      '    auth: none',
+      '    models:',
+      '      - id: flint',
+      '  gateway:',
+      '    baseUrl: https://gateway.example/v1',
+      '    apiKey: sk-gateway-literal-secret',
+      '  local-qwen:',
+      '    baseUrl: http://qwen.internal/v1',
+      '    auth: none',
+      '',
+    ].join('\n'));
+    const stage = path.join(tmpDir, 'stage', '.omp');
+    const report = ompBackend.stageOmp(hostOmp, stage, '');
+    const staged = fs.readFileSync(path.join(stage, 'agent', 'models.yml'), 'utf8');
+    assert.ok(staged.includes('local-flint:') && staged.includes('local-qwen:') && staged.includes('http://flint.internal/v1'),
+      `the selected custom providers must reach the container or omp falls back to another model:\n${staged}`);
+    assert.ok(!staged.includes('sk-gateway-literal-secret') && !staged.includes('gateway:'),
+      `an unselected provider's models.yml block (and its apiKey) must not be staged:\n${staged}`);
+    assert.strictEqual(fs.statSync(path.join(stage, 'agent', 'models.yml')).mode & 0o777, 0o600);
+    assert.deepStrictEqual(providersIn(path.join(stage, 'agent', 'agent.db')), [], 'no stored sign-in is selected, so none is staged');
+    // Keyless local providers need no stored sign-in: no "sign in" warning.
+    assert.ok(!report.warnings.some((w) => /credential|setup wizard/.test(w)), JSON.stringify(report.warnings));
+    // A models.yml the subset cannot split is refused, never shipped whole.
+    fs.writeFileSync(path.join(agentDir, 'models.yml'), 'providers: {gateway: {apiKey: sk-x}}\n');
+    assert.throws(() => ompBackend.stageOmp(hostOmp, path.join(tmpDir, 'stage-2', '.omp'), ''), /cannot narrow .*models\.yml/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('omp container staging narrows the store through the sqlite3 CLI when node:sqlite is unavailable', () => {
   if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
   const cli = require('child_process').spawnSync('sqlite3', ['-version'], { encoding: 'utf8' });

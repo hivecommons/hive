@@ -278,7 +278,7 @@ func TestAggregateReportsResolvesPermissionsTighteningDecision(t *testing.T) {
 	r.DecisionQuestion = "please confirm the workflow permissions narrowing (id-token: write moved to the job) is acceptable to merge"
 	r.Summary = "Permissions narrowed at workflow level; looks correct."
 
-	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+	got := AggregateReports(alongsideApprovals([]PerspectiveReport{r}), AggregateOptions{})
 
 	if got.Verdict != VerdictApprove || got.RequiresHuman || got.DecisionRequested || !got.MergeEligible {
 		t.Fatalf("aggregate = %+v, want approve resolved by policy", got)
@@ -328,7 +328,7 @@ func TestAggregateReportsPermissionsTighteningSummaryIsAdvisory(t *testing.T) {
 	r.PermissionsTighteningOnly = true
 	r.Summary = "Looks right; workflow permissions narrowed, nothing widened."
 
-	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+	got := AggregateReports(alongsideApprovals([]PerspectiveReport{r}), AggregateOptions{})
 
 	if got.Verdict != VerdictApprove || got.RequiresHuman {
 		t.Fatalf("aggregate = %+v, want advisory approve", got)

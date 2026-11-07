@@ -1059,7 +1059,13 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      `ci-failing.json` as its own (`"adopted": true`, `reachable_action:
      push`, conflicted rows included — ordinarily only hive-authored
      conflict PRs are listed) so the scanner's FIX-BEFORE-NEW kick rebases
-     and fixes CI **on the PR's branch**. No superseding PR, no `hive/adopt-<n>`
+     and fixes CI **on the PR's branch**. A red row is logged as
+     `adopted PR routed to fixer` once per red episode (its head plus its
+     set of failing checks), not on every sweep. Once the adoption parks at
+     085 `adoption-stalled:<reason>` on that head, the row leaves
+     `ci-failing.json` (one `fix-ci not routed` line names the reason)
+     until the head moves or the escalation is released.
+     No superseding PR, no `hive/adopt-<n>`
      branch — with one exception, the DCO re-home described below, which
      converts the in-place adoption into a supersession. The hive's own
      pushes keep the adoption and the stage stays
