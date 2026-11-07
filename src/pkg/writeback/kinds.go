@@ -50,7 +50,9 @@ const (
 	// grace period.
 	KindSupersessionClose Kind = "supersession_close"
 	// KindDuplicateFixNotice is the `<!-- hive:duplicate-fix -->` comment on
-	// the later of two PRs fixing one issue.
+	// the later of two PRs fixing one issue, and the
+	// `<!-- hive:create-pr-duplicate-guard -->` note on an issue whose
+	// agent's PR the overlapping-files guard refused.
 	KindDuplicateFixNotice Kind = "duplicate_fix_notice"
 	// KindReporterTrustHold is the reporter-trust notice and needs-human
 	// label on a PR whose linked issue reporter is untrusted.
