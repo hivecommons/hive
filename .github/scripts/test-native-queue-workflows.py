@@ -74,6 +74,25 @@ class NativeQueueWorkflows(unittest.TestCase):
         self.assertIn("github.event.pull_request.number", concurrency["group"])
         self.assertIs(concurrency["cancel-in-progress"], False)
 
+    def test_cosmetic_label_flips_skip_the_evidence_wait(self):
+        # Only labels matching the policy's BLOCKED_LABEL are read; any other
+        # labeled/unlabeled flip must skip the 22.5 min wait (#16945) while
+        # the job still concludes successfully.
+        steps = workflow("native-queue-policy.yml")["jobs"]["policy"]["steps"]
+        gate = next(s for s in steps
+                    if s.get("name") == "Replay last verdict for cosmetic label flips")
+        self.assertEqual(gate["id"], "label-flip")
+        self.assertIn("isCosmeticLabelFlip", gate["with"]["script"])
+        self.assertIn("replayLastVerdict", gate["with"]["script"])
+        # Nothing to replay (no prior success, or a transient API error) must
+        # fall through to the full wait rather than fail or fabricate a pass.
+        self.assertIn("replayed === null", gate["with"]["script"])
+        self.assertIn("isTransientAPIError(error)", gate["with"]["script"])
+        self.assertIn("cosmetic = false", gate["with"]["script"])
+        wait = next(s for s in steps if s.get("name", "").startswith("Validate exact-head evidence"))
+        self.assertIn("steps.label-flip.outputs.cosmetic != 'true'", wait["if"])
+        self.assertLess(steps.index(gate), steps.index(wait))
+
     def test_dependabot_runs_the_same_trusted_pr_verifier(self):
         verifier = workflow("pr-verifier.yml")
         events = verifier.get("on", verifier.get(True))
