@@ -118,6 +118,11 @@ func (c *Engine) checkAdoptedPushIntent(ctx context.Context, store *stagelabels.
 		c.warn("stage labels: adopted PR advanced by the hive; diff unreadable, intent check deferred", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "error", err)
 		return 0, nil
 	}
+	if intent.Reverts() && c.reviewApprovedFixerRevert(prev, obs.Owner, obs.Repo, obs.Number, obs.HeadSHA) {
+		c.info("stage labels: hive push drops most of the adopted PR's change, as its review asked; the reviewer approved this head", "repo", obs.Display, "pr", obs.Number, "intent_base", base, "head", obs.HeadSHA, "own_lines", intent.Own, "kept_lines", intent.Kept)
+		store.MarkAdoptedHead(key, obs.HeadSHA)
+		return 0, nil
+	}
 	if !intent.Reverts() {
 		if intent.Unjudged {
 			c.info("stage labels: adopted PR advanced by the hive; diff too large to judge intent", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA)
@@ -137,6 +142,50 @@ func (c *Engine) checkAdoptedPushIntent(ctx context.Context, store *stagelabels.
 	}
 	store.MarkAdoptedHead(key, obs.HeadSHA)
 	return n, nil
+}
+
+// adoptedForReview reports whether an in-place adoption of obs is taken
+// over for the review swarm's requested changes with CI not red
+// (Record.AdoptedForReview). A fix for review asks may rightly drop part of
+// the PR's change: on projectbluefin/utah-packages#943 the review asked that
+// the PR's two wontfix entries go back to pending, the hive's push did
+// exactly that, and the intent check parked it as a CI fix undoing the PR.
+func adoptedForReview(obs stageObservation) bool {
+	if adoptionWaitFor(obs).red {
+		return false
+	}
+	return obs.Reason == contributorLaneReasonChangesRequested || obs.Reason == stagelabels.LaneReasonChangesRequested || verdictBlocks(obs.Detail)
+}
+
+// reviewApprovedFixerRevert reports whether a hive push that drops most of
+// an adopted PR's change is still the hive's to merge: the adoption was for
+// the review swarm's requested changes (never for red CI, the utah#1091
+// shape) and the reviewer's verdict on this exact head is approve. The
+// reviewer then judged the narrowed diff and agreed with it; a CI-only fix
+// that undoes the PR stays refused, and no verdict yet means refused.
+func (c *Engine) reviewApprovedFixerRevert(rec stagelabels.Record, owner, repo string, number int, head string) bool {
+	if c == nil || head == "" || !rec.AdoptedInPlace() || !rec.AdoptedForReview {
+		return false
+	}
+	return c.contributorLaneVerdictFor(owner+"/"+repo, number, head).Approved
+}
+
+// releaseApprovedFixerRevert clears a fixer-reverts refusal on obs.HeadSHA
+// once reviewApprovedFixerRevert holds: the park is a verdict on the head's
+// content, and the reviewer's approve of that content, which arrives after
+// the push was judged, answers it. Without this the 085 park held until the
+// head moved, so a fix the review asked for and then approved still waited
+// on a person. Reports whether it released.
+func (c *Engine) releaseApprovedFixerRevert(store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record) bool {
+	if !rec.AdoptionEscalated(obs.HeadSHA) || rec.AdoptEscalatedReason != stagelabels.LaneReasonAdoptionFixerReverts {
+		return false
+	}
+	if !c.reviewApprovedFixerRevert(rec, obs.Owner, obs.Repo, obs.Number, obs.HeadSHA) {
+		return false
+	}
+	store.ClearAdoptionEscalation(key)
+	c.info("stage labels: fixer-reverts refusal released; the reviewer approved the head the review asked for", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA)
+	return true
 }
 
 // AdoptionFixerRevertsComment is the one note on a head whose hive push
@@ -178,5 +227,11 @@ func (c *Engine) adoptionIntentGate(owner, repo string, number int, headSHA stri
 	if !ok {
 		return ""
 	}
-	return adoptionIntentRefused(rec, headSHA)
+	reason := adoptionIntentRefused(rec, headSHA)
+	if reason == stagelabels.LaneReasonAdoptionFixerReverts && c.reviewApprovedFixerRevert(rec, owner, repo, number, headSHA) {
+		// The lane may run before the stage pass releases the park; the
+		// approve it is about to read admits the head either way.
+		return ""
+	}
+	return reason
 }

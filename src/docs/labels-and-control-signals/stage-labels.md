@@ -1083,7 +1083,16 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      and one "Fixing CI would undo this PR's change" note per head, and the
      contributor lane will not merge that head; stale-red recovery may re-run
      its CI but never releases the refusal (projectbluefin/utah#1091: the
-     fixer re-added the 25 entries the PR removed). Until the check has
+     fixer re-added the 25 entries the PR removed). One exception: when the
+     hive adopted the PR for the review swarm's requested changes with CI
+     not red (`adopted_for_review`), the review may have asked for part of
+     the change to go, so a refused push is taken once the reviewer's
+     verdict on that exact head is approve. The approve is read on every
+     sweep, so a park posted before the verdict arrived is released then,
+     with no second note (projectbluefin/utah-packages#943: the review asked
+     for both wontfix entries to stay pending, and the hive's push did
+     that). Any other verdict keeps the park, and an adoption for red CI
+     never takes this path, approve or not. Until the check has
      passed, the lane refuses the head as
      `contributor-lane:adoption-intent-pending`, and the relay rewrites an
      agent's `hive/awaiting-ci: … sweep will merge when green` note on a hive
