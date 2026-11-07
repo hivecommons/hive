@@ -97,9 +97,20 @@ func (p *Primer) Prime(ctx context.Context, filePaths []string, keywords []strin
 // applied on top of the primer's lifecycle filter, so it can only narrow what
 // the agent is shown, and graph expansion never pulls in an out-of-scope fact.
 func (p *Primer) PrimeScoped(ctx context.Context, scope *TOCScope, filePaths []string, keywords []string) *PrimedKnowledge {
+	return p.PrimeForKick(ctx, scope, KickContext{Paths: filePaths}, keywords)
+}
+
+// PrimeForKick is PrimeScoped with the kick's context (#17045): the lane, the
+// labels of the issues being primed and, when the caller knows them, the file
+// paths being touched. Facts that carry a `scope:` are kept only when the
+// context matches one of its dimensions (FactScope.Admits); unscoped facts are
+// selected by relevance exactly as before. kc.Paths also feed the search query,
+// as filePaths did in PrimeScoped. The count of relevant facts the context
+// excluded is reported in PrimedKnowledge.ScopedOut.
+func (p *Primer) PrimeForKick(ctx context.Context, scope *TOCScope, kc KickContext, keywords []string) *PrimedKnowledge {
 	start := time.Now()
 
-	query := buildQuery(filePaths, keywords)
+	query := buildQuery(kc.Paths, keywords)
 	if query == "" {
 		return &PrimedKnowledge{}
 	}
@@ -145,6 +156,7 @@ func (p *Primer) PrimeScoped(ctx context.Context, scope *TOCScope, filePaths []s
 	if scope != nil {
 		merged = scope.Filter(merged)
 	}
+	merged, scopedOut := FilterByKickContext(merged, kc)
 	reranked := p.rerankFisherRao(query, merged)
 	prioritized := p.applyPriority(reranked)
 
@@ -152,11 +164,12 @@ func (p *Primer) PrimeScoped(ctx context.Context, scope *TOCScope, filePaths []s
 		prioritized = prioritized[:p.config.MaxFacts]
 	}
 
-	prioritized = p.expandWithGraph(prioritized, scope)
+	prioritized = p.expandWithGraph(prioritized, scope, kc)
 
 	elapsed := time.Since(start).Milliseconds()
 	p.logger.Info("knowledge primed",
 		"facts", len(prioritized),
+		"scoped_out", scopedOut,
 		"http_layers", len(p.layers),
 		"file_stores", len(p.fileStores),
 		"graph", p.graphStore != nil,
@@ -182,6 +195,7 @@ func (p *Primer) PrimeScoped(ctx context.Context, scope *TOCScope, filePaths []s
 		Hints:     hints,
 		QueryTime: elapsed,
 		MaxBytes:  p.config.MaxBytes,
+		ScopedOut: scopedOut,
 	}
 }
 
@@ -275,8 +289,9 @@ const graphExpansionConfidenceDecay = 0.8
 
 // expandWithGraph performs one-hop traversal from each primed fact's slug,
 // pulling in related facts that aren't already in the result set. A non-nil
-// scope excludes related facts outside it.
-func (p *Primer) expandWithGraph(facts []Fact, scope *TOCScope) []Fact {
+// scope excludes related facts outside it, and a related fact's own `scope:`
+// must admit the kick context.
+func (p *Primer) expandWithGraph(facts []Fact, scope *TOCScope, kc KickContext) []Fact {
 	if p.graphStore == nil || len(facts) == 0 {
 		return facts
 	}
@@ -306,6 +321,9 @@ func (p *Primer) expandWithGraph(facts []Fact, scope *TOCScope) []Fact {
 						break
 					}
 					if scope != nil && !scope.InScope(*relFact) {
+						break
+					}
+					if !relFact.Scope.Admits(kc) {
 						break
 					}
 					relFact.Confidence *= graphExpansionConfidenceDecay

@@ -1,0 +1,1 @@
+- Knowledge entries can carry a `scope:` frontmatter block (`paths`, `labels`, `lanes`); the kick primer surfaces a scoped entry only when the kick's lane, issue labels or known file paths match, so repository facts are injected on demand instead of on every kick (#17045).

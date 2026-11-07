@@ -8,6 +8,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/agentsmd"
 	"github.com/hivecommons/hive/crux/skillreg"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
@@ -303,7 +304,7 @@ func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue)
 		agentScope := knowledge.AgentScope(sc.Layers, sc.Repos, sc.Types, sc.Tags, sc.IncludeStates)
 		scope = &agentScope
 	}
-	primed := primer.PrimeScoped(context.Background(), scope, nil, keywords)
+	primed := primer.PrimeForKick(context.Background(), scope, kickContextFor(cfg, agentName, issues[:limit]), keywords)
 	result, omitted := primed.Render()
 	s.primedSlugs.Store(agentName, primed.RenderedSlugs())
 	inj := knowledgeInjection{
@@ -371,6 +372,27 @@ func (s *Scheduler) KickPrimedSlugs(agentName string) []string {
 	}
 	slugs, _ := v.([]string)
 	return slugs
+}
+
+// kickContextFor is the kick context a scoped knowledge entry is matched
+// against (#17045): the base lane name (a replica resolves to the agent it
+// replicates) and the union of the primed issues' labels. File paths are not
+// known on the kick path, so entries scoped by paths alone wait for a caller
+// that has them.
+func kickContextFor(cfg *config.Config, agentName string, issues []github.Issue) knowledge.KickContext {
+	kc := knowledge.KickContext{Lane: cfg.BaseAgentName(agentName)}
+	seen := make(map[string]bool)
+	for _, issue := range issues {
+		for _, label := range issue.Labels {
+			lower := strings.ToLower(strings.TrimSpace(label))
+			if lower == "" || seen[lower] {
+				continue
+			}
+			seen[lower] = true
+			kc.Labels = append(kc.Labels, lower)
+		}
+	}
+	return kc
 }
 
 // extractKeywords pulls searchable terms from issue labels and titles.
