@@ -11,6 +11,30 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-07 (v5.190.0)
+
+### Added
+
+- `agents.cli_memory.drain_to_knowledge` (default off) converts each agent's CLI memory (Claude `MEMORY.md` + topic files, Codex `memories*`, Gemini `GEMINI.md`) into `state: draft` knowledge entries in the bead-synth vault before every kick and before `clear_on_kick` wipes the store — tagged `cli-memory`, `agent:<name>`, `cli:<name>`, `repo:` when derivable, deduplicated by content hash, never auto-approved; one `cli-memory: drained N facts …` log line per drain. Proposed by @gregoryhunt (#17033).
+- `v6` is now an official release line: `.github/release-lines.yml` lists `[v4, v5, v6]`, so `tagged-release.yml` mints `v6.x.y` tags (starting at `v6.0.0`), GitHub Releases, SBOMs and immutable image retags from the `v6` branch exactly as `v5` does; the default-branch copy of the workflow relays a completed `v6` build to `v6`'s own copy, since GitHub only delivers `workflow_run` to the default branch. Channel ownership is unchanged — `stable`/`candidate`/`:latest` follow `v5`, `edge`/`v6-latest` follow `v6`.
+
+### Changed
+
+- Contributor nudges are now one comment per PR and reason class, edited in place for a new head or changed reason, with a single re-nudge after `auto_merge.nudge_repeat_after` (default 72h); an agent's free-text relay comments fold into the `hive:status` card in quiet mode or one `hive:origin-notes` comment per item otherwise; a marker ratchet test caps unmarked bot comment emitters (hivecommons/hive#17067).
+
+### Fixed
+
+- The "Review · waiting for CI" detail no longer says a reviewer will be requested when the repo has no hive reviewer lane; it now says a person must review (hivecommons/hive#17095).
+- fix(crux): move buffer/output getters out of agent/manager.go to stay under the file-size ratchet (#17122)
+- The bob startup preflight now checks that the per-agent `~/.bob` (where bob writes its installation ID and chat recordings since per-agent homes landed) is writable, instead of probing the shared `/data/home/.bob` that only holds the bridged settings, so an unwritable state directory is reported against the directory bob actually uses (#17062).
+- Dashboard: on a phone (≤480px) merged banners and toasts span the viewport width with a two-line title, a mono lane/merger/time line, one links row, tap-anywhere dismiss and a "+N more" pill after the newest three; the Overview KPI label/subline no longer jump to a larger font under 720px (the #16613 override assumed `--fs-2xs` was undefined at `:root`).
+- The native-queue workflow contract test asserted `native-queue-policy.yml`'s release-lines pin as the literal `[v6, -v4]`; with v6 a `release_lines` entry the pin reads `[-v4]`, so the test now resolves the pin against `release_lines` and checks that v5 and v6 are covered.
+
+### Security
+
+- The shared Claude Code user settings file (`/data/home/.claude/settings.json`, which every interactive claude agent reads through its per-agent `~/.claude/settings.json` bridge) is now hive-owned and kept read-only to agent UIDs. Before each claude launch the manager checks that the file is a regular file owned by the hive; a symlink or a file owned by another uid is moved aside to `settings.json.rejected` and the file is re-seeded, and group/other write is removed from a hive-owned copy. The entrypoint sweeps and the permissions watcher no longer widen this file to group write. Settings keys such as `hooks` and `apiKeyHelper` run commands in every agent's session, so one agent can no longer change them for the rest of the fleet; operators who keep extra keys there (for example `enabledPlugins`) and find the file moved aside after upgrading can re-apply them from the rejected copy as the hive user (#17059).
+- The pinned-checkout service's repository allowlist now matches on URL segment boundaries and refuses non-canonical repository paths. Previously `CRUX_CHECKOUT_ALLOWLIST` was compared as a plain string prefix against the URL the caller sent, so `https://host/allowed/../other/repo` (which git resolves to `other/repo`), `file:///allowed/../../elsewhere`, and `https://host/allowed-evil/repo` all passed for an entry of `https://host/allowed`. Requests whose path contains `.`, `..`, empty or percent-encoded segments are now rejected as bad requests before any clone, and a prefix that does not end in `/` must be followed by `/`, `.git` or the end of the URL.
+
 ## 2026-11-07 (v5.189.0)
 
 ### Added
