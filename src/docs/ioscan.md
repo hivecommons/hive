@@ -152,9 +152,12 @@ with `classifier.backend` left empty, boot then runs the classifier through
 the tool-less CLI most of the hive's agents run on (the most common of
 `claude`/`copilot`/`omp` across `agents.*.backend`, ties by name), so such a hive
 needs no extra setting. The classifier is built at boot and rebuilt whenever
-an ioscan setting is saved in Settings → Security → Input Defense, so a new
-backend or fail mode saved there applies immediately; a model endpoint change
-or a direct `hive.yaml` edit takes effect after a restart.
+an ioscan setting is saved in Settings → Security → Input Defense or the ACMM
+level changes at runtime, so a new backend or fail mode saved there, or an
+L4↔L5 level change, applies immediately; a model endpoint change or a direct
+`hive.yaml` edit takes effect after a restart. The Security tab exposes
+`ioscan.fail_mode` (which the classifier inherits), not
+`classifier.fail_mode`; the alert names that dashboard key.
 
 **What still passes.** The classifier has a budget of 64 calls per scheduler
 pass (8 with a CLI backend, see below). Text beyond that budget is passed on with a `budget_exhausted` skip in
@@ -229,8 +232,9 @@ and `omp`.
   `daily_quota_exhausted` skip in the audit log, in either fail mode, just as
   for an exhausted per-pass budget, and the scheduler logs one WARN per UTC
   day. The count starts again at 00:00 UTC. Cache hits do not count.
-* The backend is chosen at boot and again on every Input Defense save in the
-  dashboard; a direct `hive.yaml` edit takes effect after a restart.
+* The backend is chosen at boot and again on every Input Defense save or
+  runtime ACMM level change in the dashboard; a direct `hive.yaml` edit takes
+  effect after a restart.
 
 **Cost.** One call per untrusted text per pass, cached by content, with an
 8,000-character cap per call. At the default model that is on the order of

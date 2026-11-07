@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
 type fakeClassifierSink struct {
@@ -438,6 +439,11 @@ func TestReinstallIoscanClassifier_AppliesDashboardChanges(t *testing.T) {
 	if !ok || !strings.Contains(msg, "apply immediately") || strings.Contains(msg, "Changes take effect after a restart") {
 		t.Fatalf("blocked-kick alert does not say dashboard changes apply immediately: %q", msg)
 	}
+	// The Security tab exposes ioscan.fail_mode, not classifier.fail_mode;
+	// the remediation names the key the operator can actually set there.
+	if !strings.Contains(msg, "ioscan.fail_mode to open") {
+		t.Fatalf("blocked-kick alert does not name the dashboard-visible ioscan.fail_mode key: %q", msg)
+	}
 
 	cfg.Ioscan.FailMode = "open"
 	reinstallIoscanClassifier(sink, alerts, cfg, logger, ioscanBootNow)
@@ -456,5 +462,52 @@ func TestReinstallIoscanClassifier_AppliesDashboardChanges(t *testing.T) {
 	}
 	if _, ok := alerts.blocked(); ok {
 		t.Fatal("working backend left the blocked-kick alert raised")
+	}
+}
+
+// A runtime ACMM level change rebuilds the classifier through the same hook
+// the request relays use. With a backend that cannot run, L4 is fail-open
+// (nothing installed) and L5 is fail-closed (the unavailable classifier is
+// installed so untrusted text is withheld); raising L4->L5 in the dashboard
+// must switch between them without a restart, and dropping back must undo
+// it. The hook must tolerate a boot with no scheduler.
+func TestOnACMMLevelChanged_ReinstallsIoscanClassifier(t *testing.T) {
+	t.Setenv(config.LiteLLMEndpointEnv, "")
+	cfg := ioscanBootConfig(4, "codex", "")
+	logger, _ := ioscanBootLogger()
+	b := &boot{cfg: cfg, logger: logger}
+	b.onACMMLevelChanged(4, 5) // no scheduler yet: must not panic
+
+	b.sched = scheduler.New(cfg, logger)
+	installIoscanClassifier(b.sched, b.ioscanAlerts(), cfg, logger, ioscanBootNow)
+	if _, _, installed := b.sched.IoscanHooksForTest(); installed {
+		t.Fatal("refused backend installed a classifier at fail-open L4")
+	}
+
+	l5 := 5
+	cfg.ACMMLevel = &l5
+	b.onACMMLevelChanged(4, 5)
+	if _, _, installed := b.sched.IoscanHooksForTest(); !installed {
+		t.Fatal("L4->L5 runtime change did not install the fail-closed unavailable classifier")
+	}
+
+	l4 := 4
+	cfg.ACMMLevel = &l4
+	b.onACMMLevelChanged(5, 4)
+	if _, _, installed := b.sched.IoscanHooksForTest(); installed {
+		t.Fatal("L5->L4 runtime change left the unavailable classifier withholding text")
+	}
+}
+
+// ioscanAlerts yields a nil interface, not a typed nil *dashboard.Server,
+// when the boot has no dashboard, so raiseIoscanClassifierAlert's nil check
+// holds.
+func TestBootIoscanAlerts_NilWithoutDashboard(t *testing.T) {
+	var b *boot
+	if b.ioscanAlerts() != nil {
+		t.Fatal("nil boot yielded a non-nil alerter")
+	}
+	if (&boot{}).ioscanAlerts() != nil {
+		t.Fatal("boot without a dashboard yielded a non-nil alerter")
 	}
 }

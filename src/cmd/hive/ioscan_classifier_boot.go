@@ -153,6 +153,30 @@ func reinstallIoscanClassifier(sched ioscanClassifierSink, alerts ioscanClassifi
 	}
 }
 
+// ioscanAlerts is the dashboard the ioscan classifier raises its blocked-kick
+// alert on, as a nil interface (not a typed nil) when there is no dashboard.
+func (b *boot) ioscanAlerts() ioscanClassifierAlerter {
+	if b == nil || b.dashSrv == nil {
+		return nil
+	}
+	return b.dashSrv
+}
+
+// reinstallIoscanClassifier rebuilds the scheduler's semantic classifier
+// from the live config: after an Input Defense save (#16973) and after a
+// runtime ACMM level change, since the level decides whether the classifier
+// is required and which fail mode applies. No-op before the scheduler exists.
+func (b *boot) reinstallIoscanClassifier() {
+	if b == nil || b.sched == nil || b.cfg == nil {
+		return
+	}
+	logger := b.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	reinstallIoscanClassifier(b.sched, b.ioscanAlerts(), b.cfg, logger, time.Now)
+}
+
 // ioscanClassifierSetRecorder notes whether installIoscanClassifier installed
 // a classifier.
 type ioscanClassifierSetRecorder struct {
@@ -231,7 +255,8 @@ func ioscanClassifierBlockedAlertMessage(acmmLevel int, cause error) string {
 	return fmt.Sprintf("ioscan semantic classifier is required at ACMM L%d but failed or is unavailable (%v). "+
 		"Kicks carrying untrusted text (issues, comments, PR bodies, reviews) can be withheld until this is fixed. "+
 		"Fix: configure a model endpoint (governor.trajectory or governor.litellm), set ioscan.classifier.backend to one of %s "+
-		"(Settings → Security → Input Defense), or accept scanning without the classifier with ioscan.classifier.fail_mode: open. "+
+		"(Settings → Security → Input Defense), or accept scanning without the classifier by setting ioscan.fail_mode to open "+
+		"(the Fail mode control in that tab; ioscan.classifier.fail_mode: open in hive.yaml overrides it for the classifier alone). "+
 		"Input Defense changes saved in Settings → Security apply immediately; a model endpoint or hive.yaml edit takes effect after the hive restarts.",
 		acmmLevel, cause, strings.Join(ioscan.ToollessBackends(), ", "))
 }

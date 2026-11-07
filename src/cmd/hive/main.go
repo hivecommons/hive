@@ -1277,16 +1277,7 @@ func (b *boot) wireBootClosures() {
 			ReInitFunc: func() {
 				initAgentConfigDrivenSystems(b.cfg)
 			},
-			IoscanConfigApplied: func() {
-				if b.sched == nil {
-					return
-				}
-				var alerts ioscanClassifierAlerter
-				if b.dashSrv != nil {
-					alerts = b.dashSrv
-				}
-				reinstallIoscanClassifier(b.sched, alerts, b.cfg, b.logger, time.Now)
-			},
+			IoscanConfigApplied: b.reinstallIoscanClassifier,
 			ReviewConfigApplied: func(rc config.ReviewConfig) {
 				if b.ghClient == nil {
 					return
@@ -2548,11 +2539,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			}
 		}
 	})
-	var ioscanAlerts ioscanClassifierAlerter
-	if b.dashSrv != nil {
-		ioscanAlerts = b.dashSrv
-	}
-	installIoscanClassifier(b.sched, ioscanAlerts, b.cfg, b.logger, time.Now)
+	installIoscanClassifier(b.sched, b.ioscanAlerts(), b.cfg, b.logger, time.Now)
 	b.agentMgr.SetSandboxAuditCallback(func(agentName, action, detail string) {
 		b.dashSrv.AuditLog(agentName, action, detail, agentName)
 		if action == "sandbox_broker_rejected" {
