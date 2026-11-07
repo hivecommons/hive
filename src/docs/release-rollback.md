@@ -25,7 +25,7 @@ immutable vs. moving" in [releases.md](releases.md)):
 | Reference | Written by | Notes |
 |---|---|---|
 | `ghcr.io/hivecommons/<image>:<7-hex-sha>` | `docker.yml`, every successful build of a release line | Retained for a bounded window: the scheduled GHCR prune deletes package versions whose only tags are short-SHA tags after **90 days** (`RETENTION_DAYS` in `.github/workflows/prune-ghcr*.yml`). Versions still carrying any moving tag are never pruned. |
-| `ghcr.io/hivecommons/<image>:v<X.Y.Z>` | `tagged-release.yml`, only when a release is cut | A retag of the short-SHA digest, byte-identical to it, not subject to the 90-day prune. `v4` line only today; see the [v5 semver policy](releases.md#release-lines-and-the-v5-semver-policy). |
+| `ghcr.io/hivecommons/<image>:v<X.Y.Z>` | `tagged-release.yml`, only when a release is cut | A retag of the short-SHA digest, byte-identical to it, not subject to the 90-day prune. `v5.x.y` and `v6.x.y` (and `v4.x.y` under the freeze); see the [per-line semver policy](releases.md#release-lines-and-the-per-line-semver-policy). |
 | `ghcr.io/hivecommons/<image>@sha256:<digest>` | You, in the deployment manifest | The digest form is what this runbook actually writes. A tag is how you *find* the digest; the digest is what you *pin*. |
 
 The three images are **separate build jobs** tagged with the same short SHA,

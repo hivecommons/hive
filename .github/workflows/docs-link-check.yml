@@ -38,6 +38,7 @@ on:
     branches:
       - v4
       - v5
+      - v6
     paths:
       - '*.md'
       - 'src/docs/**'
@@ -62,6 +63,7 @@ on:
     branches:
       - v4
       - v5
+      - v6
     paths:
       - '*.md'
       - 'src/docs/**'

@@ -5,6 +5,7 @@ on:
     branches:
       - v4
       - v5
+      - v6
   # The checker itself is in scope, not just the history it checks. Until this
   # filter was added, src/scripts/test-check-dco-trailers.sh existed but no
   # workflow ever ran it — a change to the checker (or to the waiver logic that
@@ -368,7 +369,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        branch: [v4, v5]
+        branch: [v4, v5, v6]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event_name != 'push' || github.ref == format('refs/heads/{0}', matrix.branch)
