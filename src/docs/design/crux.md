@@ -708,6 +708,7 @@ setter is added without one.
 | `SetLinearCredentialResolver`, `SetSandboxPushMinter`, `SetSandboxPRClient` | callback | `GET /v1/linear/credential`, `POST /v1/tokens`, `POST /v1/pulls` (stage 2) |
 | observers (`SetKickOutcomeObserver`, `SetPauseTransitionObserver`, `SetRelaunchObserver`, `SetPersistPauseCallback`, `SetRecordPromptCallback`, `SetSandboxAuditCallback`, `SetAuditSink`, `SetConditionReporter`) | event | the `/v1/events` stream (stage 3); conditions also `POST /v1/conditions` |
 | `SetSpanStarter` | in-process-only | a span is a Go value wrapping a call in one address space. The sidecar's manager starts spans on the OpenTelemetry global tracer (a no-op without an exporter in the runtime's process); trajectory events do not depend on it |
+| `SetKnowledgeAdviser` | in-process-only | the mid-task knowledge advisor (#17052) asks hive's `knowledge.Primer` on the poll tick for every new scope an agent enters; phase 1 keeps it in-process (the sidecar runs with no adviser, so the feature is off there) until a `/v1/knowledge/advise` capability is worth its round trip |
 
 No setter is served from a `runtime:` config key: every value is already
 resolved hive-side from the live config, so a reload reaches the runtime

@@ -338,12 +338,17 @@ func (c *Collector) scan() {
 	c.mergeClineUsage(agg)
 
 	if c.claudeSessionsDir != "" {
-		claudeAgg, err := ScanClaudeSessionsWithPathDetection(c.claudeSessionsDir)
-		if err != nil {
-			c.logger.Warn("claude session scan failed", "error", err)
-			diag.LastClaudeScanError = err.Error()
-		} else if claudeAgg != nil && claudeAgg.SessionCount > 0 {
-			MergeAggregates(agg, claudeAgg)
+		// Shared tree plus every per-agent ~/.claude/projects: since
+		// hivecommons/hive#17031 each agent's transcripts live under its own
+		// HOME, so the shared path alone would miss every new session.
+		for _, tree := range ClaudeSessionTrees(c.claudeSessionsDir) {
+			claudeAgg, err := ScanClaudeSessionTree(tree.Dir, tree.Agent)
+			if err != nil {
+				c.logger.Warn("claude session scan failed", "dir", tree.Dir, "error", err)
+				diag.LastClaudeScanError = err.Error()
+			} else if claudeAgg != nil && claudeAgg.SessionCount > 0 {
+				MergeAggregates(agg, claudeAgg)
+			}
 		}
 	}
 
@@ -369,18 +374,26 @@ func (c *Collector) scan() {
 	}
 
 	if c.bobSessionsDir != "" {
-		bobAgg, err := ScanBobSessionsWithLogger(c.bobSessionsDir, c.logger)
-		if err != nil {
-			c.logger.Warn("bob session scan failed", "error", err)
-			diag.LastBobScanError = err.Error()
-		} else if bobAgg != nil && bobAgg.SessionCount > 0 {
-			MergeAggregates(agg, bobAgg)
-		}
 		// Per-agent consecutive model-call failure streaks (#5577/#5338),
-		// derived from the same recordings this scan just walked. Always
-		// stored non-nil after a scan, so AgentErrorStreaks can distinguish
+		// derived from the same recordings this scan walks. Always stored
+		// non-nil after a scan, so AgentErrorStreaks can distinguish
 		// "measured, none failing" (empty) from "never scanned" (nil).
-		streaks := BobAgentErrorStreaks(c.bobSessionsDir, time.Now())
+		streaks := make(map[string]int)
+		now := time.Now()
+		for _, tree := range BobSessionTrees(c.bobSessionsDir) {
+			bobAgg, err := ScanBobSessionTree(tree.Dir, tree.Agent, c.logger)
+			if err != nil {
+				c.logger.Warn("bob session scan failed", "dir", tree.Dir, "error", err)
+				diag.LastBobScanError = err.Error()
+			} else if bobAgg != nil && bobAgg.SessionCount > 0 {
+				MergeAggregates(agg, bobAgg)
+			}
+			for agent, n := range BobAgentErrorStreaksForTree(tree.Dir, tree.Agent, now) {
+				if n > streaks[agent] {
+					streaks[agent] = n
+				}
+			}
+		}
 		c.mu.Lock()
 		c.errorStreaks = streaks
 		c.mu.Unlock()

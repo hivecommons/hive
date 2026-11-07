@@ -873,6 +873,14 @@ level=INFO msg="kick rendered" agent=scanner repo="" kick_bytes=58123 issues_tot
 
 `kick_bytes` is the prompt as typed (canary preamble included). When `issues_listed` / `prs_listed` sit well below the caps on every kick, lowering them changes nothing; when `*_total` is persistently far above `*_listed`, the backlog — not the cap — is the problem, and the overflow marker in the prompt already tells the agent the list is partial. Per-agent kicks share the same global caps; set them under **Settings → Repos → Kick prompt list caps** or in `governor.kick_limits`, with `0` meaning unlimited.
 
+**The knowledge share of a kick.** Next to `kick rendered`, each kick that was primed logs one knowledge line ([#17049](https://github.com/hivecommons/hive/issues/17049)):
+
+```
+level=INFO msg="knowledge: injected 3900 bytes from 7 entries (skipped 3 for cap)" agent=developer injected_bytes=3900 entries=7 skipped_for_cap=3 cap_bytes=4096 primed=true agents_md_bytes=1980 skills_bytes=0
+```
+
+`injected_bytes` / `entries` are the rendered `# Relevant Knowledge` block; `skipped_for_cap` counts relevant facts dropped whole because they did not fit `knowledge.primer.max_bytes` (`cap_bytes`); `agents_md_bytes` and `skills_bytes` are the repository `AGENTS.md` block and the requested-skills block that share the kick. A zero line (`primed=true`, 0 entries) means priming ran and found nothing relevant — the signal that the store lacks entries for that lane's work. The line is not emitted when knowledge is disabled or there was nothing to prime, so a hive without a knowledge store does not log a zero on every kick. Read it against `src/docs/knowledge-entries.md` when deciding whether a fact belongs in `AGENTS.md` (paid on every kick) or in a scoped entry (paid only when it matches).
+
 ### What consumes tokens while agents are paused
 
 Pausing agents (including the navbar fleet breaker) does not take the Hive instance down: the dashboard, governor scans, GitHub polling, token scanners, repo-cost collectors, telemetry/heartbeats, and provider-headroom probes can keep running. Those components should not make model calls by themselves. Model usage is expected from agent sessions reached through governor/manual/CEL/resume kicks; those kick paths share the same pause and budget gates. Knowledge priming reads configured knowledge stores and attaches facts to kicks; it does not independently call the model while every agent is paused. Provider-budget probes are the exception by design: after a provider spend-limit rebuff, Hive may release one kick after `governor.provider_budget.probe_interval_s` to test recovery.
