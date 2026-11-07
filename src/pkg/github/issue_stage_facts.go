@@ -101,7 +101,7 @@ func resolveIssueLabelFacts(in IssueStageInput, f *stageengine.Facts) {
 	if issueHasLabel(in.Labels, HumanAckLabel) {
 		is.ApprovedDirectionLabel = HumanAckLabel
 	}
-	is.UmbrellaLabel = issueUmbrellaLabel(in.Labels)
+	is.UmbrellaLabel = issueUmbrellaLabel(in.Labels, in.SpekUmbrella)
 	is.BlockedReason = ""
 	if hasBlockedLabel(in.Labels) {
 		is.BlockedReason = blockedStageReason(in)
