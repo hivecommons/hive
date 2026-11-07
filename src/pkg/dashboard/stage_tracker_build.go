@@ -1015,7 +1015,7 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "initializing"})
 		return
 	}
-	now := time.Now().UTC()
+	now := mergedLedgerNow().UTC()
 	body, etag, generatedAt, source := s.stageTrackerPayloadSource(r.Context(), status, now)
 	if body == nil {
 		if r.Context().Err() != nil {

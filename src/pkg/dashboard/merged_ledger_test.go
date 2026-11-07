@@ -314,6 +314,9 @@ func TestStageTrackerAPIMergedShape(t *testing.T) {
 	deps.GHClient = github.NewClientForTest(gh.URL, "acme", []string{"console"}, covBLogger())
 	s.deps = deps
 	isolateMergedLedger(t)
+	oldNow := mergedLedgerNow
+	mergedLedgerNow = func() time.Time { return now }
+	t.Cleanup(func() { mergedLedgerNow = oldNow })
 
 	get := func() map[string]json.RawMessage {
 		req := httptest.NewRequest(http.MethodGet, "/api/stage-tracker", nil)
@@ -356,7 +359,7 @@ func TestStageTrackerAPIMergedShape(t *testing.T) {
 	}
 
 	// Stamp "now", not now-1m: a seed on the previous calendar day fails the today==1 check in the first minute after midnight (#16963).
-	s.recordMergedSnapshots([]github.WebhookItemSnapshot{{Repo: "acme/console", Number: 102, IsPR: true, Merged: true, Title: "feat: soak done", URL: "https://github.com/acme/console/pull/102", MergedAt: time.Now(), MergedBy: "octocat"}})
+	s.recordMergedSnapshots([]github.WebhookItemSnapshot{{Repo: "acme/console", Number: 102, IsPR: true, Merged: true, Title: "feat: soak done", URL: "https://github.com/acme/console/pull/102", MergedAt: now, MergedBy: "octocat"}})
 	if err := json.Unmarshal(get()["merged"], &merged); err != nil {
 		t.Fatal(err)
 	}
