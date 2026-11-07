@@ -409,11 +409,16 @@ function replayFixture(priorRuns, labels = [], workflowOverride = {}) {
     check_suite: { id: 5000 + r.id },
     details_url: `https://github.com/acme/widget/actions/runs/${3000 + r.id}/job/1`, ...r,
   }));
-  f.github.rest.actions.getWorkflowRun = async ({ run_id: id }) => ({ data: {
+  const baseGetWorkflowRun = f.github.rest.actions.getWorkflowRun;
+  const basePaginate = f.github.paginate;
+  f.github.rest.actions.getWorkflowRun = async ({ run_id: id }) => (id < 3000 ? baseGetWorkflowRun({ run_id: id }) : { data: {
     id, check_suite_id: id + 2000, path: '.github/workflows/native-queue-policy.yml',
     event: 'pull_request_target', head_sha: head, ...workflowOverride,
   } });
   f.github.paginate = async (method, args) => {
+    // Policy provider evidence comes from the base fixture (all green).
+    if (method === 'jobs' && args.run_id < 3000) return basePaginate(method, args);
+    if (method === 'checks' && !args.check_name) return basePaginate(method, args);
     if (method === 'jobs') {
       const run = runs.find(r => 3000 + r.id === args.run_id);
       if (!run) return [];
@@ -438,6 +443,39 @@ test('cosmetic flip replays the latest completed success on the same head', asyn
   ]);
   assert.match(await replayLastVerdict(f), /run 7 \(success\)/);
   assert.equal(f.state.listed[0].ref, sha(11));
+});
+
+test('cosmetic flip does not replay a success when a policy provider re-ran red on the head', async () => {
+  for (const name of Object.keys(POLICY_CHECKS)) {
+    const f = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }]);
+    f.state.runs.get(sha(11)).find(r => r.name === name).conclusion = 'failure';
+    await assert.rejects(replayLastVerdict(f), new RegExp(`${name}: failure`));
+  }
+});
+
+test('cosmetic flip falls through to the full wait while a policy provider is re-running or missing', async () => {
+  // PendingEvidence is not a verdict: returning null sends the caller to the
+  // polling wait instead of failing the check with no retry.
+  for (const name of Object.keys(POLICY_CHECKS)) {
+    for (const change of [{ status: 'queued', conclusion: null }, { status: 'in_progress', conclusion: null }]) {
+      const f = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }]);
+      Object.assign(f.state.runs.get(sha(11)).find(r => r.name === name), change);
+      assert.equal(await replayLastVerdict(f), null);
+    }
+    const f = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }]);
+    const runs = f.state.runs.get(sha(11));
+    runs.splice(runs.findIndex(r => r.name === name), 1);
+    assert.equal(await replayLastVerdict(f), null);
+  }
+});
+
+test('cosmetic flip falls through to the full wait when the DCO provider reports UNKNOWN', async () => {
+  // The full wait re-raises ProviderUnavailable once and renders the runbook
+  // job summary; failing here would skip that operator-facing surface.
+  const f = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }]);
+  Object.assign(f.state.runs.get(sha(11)).find(r => r.name === 'DCO'),
+    { conclusion: 'failure', output: { summary: unavailableSummary } });
+  assert.equal(await replayLastVerdict(f), null);
 });
 
 test('cosmetic flip has nothing to replay without a prior success and falls through', async () => {
