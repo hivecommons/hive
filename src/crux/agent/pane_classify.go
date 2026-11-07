@@ -632,11 +632,11 @@ func paneShowsLoginPrompt(lines []string) bool {
 		if lineShowsUpstreamAuthorizationError(line) || paneShowsQuotaExhausted([]string{line}) {
 			continue
 		}
-		if lineHasLoginDirective(line) || ompLoginScreenLineRe.MatchString(line) {
+		if (lineHasLoginDirective(line) && !authHitIsSourceText(line, "/login")) || ompLoginScreenLineRe.MatchString(line) {
 			return true
 		}
 		for _, pat := range loginPromptPatterns {
-			if strings.Contains(line, pat) {
+			if strings.Contains(line, pat) && !authHitIsSourceText(line, pat) {
 				return true
 			}
 		}

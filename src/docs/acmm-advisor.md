@@ -18,7 +18,7 @@ The advisor evaluates a fixed set of six signals (`Signals` struct, `src/pkg/acm
 | `HoldCount` | Count of open PRs still carrying a `hold` label awaiting human review. |
 | `HasQualityAgent` | Whether an active quality/coverage agent is present in the config. |
 
-Levels run L1 (Assisted) through L6 (Autonomous), matching the level pack files and the dashboard's 1–6 bound (`src/pkg/acmmadvisor/acmmadvisor.go:34-42`). The advisor never proposes a target more than one level above the current level — advancement is always incremental (`levelStep = 1`, same file).
+Levels run L1 (Assisted) through L6 (Autonomous), matching the level [pack](acmm-policy-matrix.md#what-is-a-pack) files and the dashboard's 1–6 bound (`src/pkg/acmmadvisor/acmmadvisor.go:34-42`). The advisor never proposes a target more than one level above the current level — advancement is always incremental (`levelStep = 1`, same file).
 
 ### Where the live signals come from
 

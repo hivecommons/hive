@@ -80,6 +80,27 @@ func adoptionRecoveryCandidate(obs stageObservation, rec stagelabels.Record) boo
 	if rec.AdoptionEscalated(obs.HeadSHA) && rec.AdoptEscalatedReason == adoptionWorkflowRefusedReason {
 		return false
 	}
+	return staleRedRecoverable(obs)
+}
+
+// admittedRecoveryCandidate reports a contributor head a person admitted
+// (hivecommons/hive#15136) whose only blocker is red CI. The admission
+// makes the hive stand down from adoption, and a fork author cannot re-run
+// workflows in the upstream repository, so without this nobody owns a
+// shared-CI flake on that head: the hive would nudge the contributor to
+// push a new head for a failure that is not theirs (hivecommons/hive#16718,
+// where the red head was the hive's own base refresh).
+func admittedRecoveryCandidate(obs stageObservation) bool {
+	if obs.HeadSHA == "" {
+		return false
+	}
+	return staleRedRecoverable(obs)
+}
+
+// staleRedRecoverable reports the shared guards of both recovery
+// candidates: red CI is the lane's reason, and nothing else (hold label,
+// review blocker, shared-CI incident, red base, fork guard) defers it.
+func staleRedRecoverable(obs stageObservation) bool {
 	if adoptionBlocked(obs.Labels) != "" || verdictBlocks(obs.Detail) || verdictNeedsHuman(obs.Detail) {
 		return false
 	}
@@ -178,12 +199,28 @@ func (c *Engine) recoverStaleRedAdoption(ctx context.Context, store *stagelabels
 	if !adoptionRecoveryCandidate(obs, rec) {
 		return adoptionRecoverySkipped("not-a-candidate")
 	}
+	return c.recoverStaleRedHead(ctx, store, key, obs, rec, "adopted PR recovery")
+}
+
+// recoverStaleRedAdmittedHead runs where a person's admission makes the
+// adoption engine stand down from a red contributor head: the same
+// update-branch / re-run recovery, same one-attempt-per-(head, base tip)
+// and lifetime budget on the record. The stand-down itself is unchanged;
+// this only gives the flake an owner.
+func (c *Engine) recoverStaleRedAdmittedHead(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record) adoptionRecovery {
+	if !admittedRecoveryCandidate(obs) {
+		return adoptionRecoverySkipped("not-a-candidate")
+	}
+	return c.recoverStaleRedHead(ctx, store, key, obs, rec, "admitted head recovery")
+}
+
+func (c *Engine) recoverStaleRedHead(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, logMsg string) adoptionRecovery {
 	logArgs := func(extra ...any) []any {
 		return append([]any{"repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "base", obs.BaseRef, "lane_reason", nonEmpty(obs.Reason, obs.LaneReason)}, extra...)
 	}
 	if rec.AdoptRecoveryCount >= adoptionRecoveryMaxAttempts {
 		out := adoptionRecoverySkipped("attempts-exhausted")
-		c.info("adopted PR recovery", logArgs("reason", out.Reason, "attempts", rec.AdoptRecoveryCount)...)
+		c.info(logMsg, logArgs("reason", out.Reason, "attempts", rec.AdoptRecoveryCount)...)
 		return out
 	}
 	baseRef := strings.TrimSpace(obs.BaseRef)
@@ -193,7 +230,7 @@ func (c *Engine) recoverStaleRedAdoption(ctx context.Context, store *stagelabels
 	restCtx := hgithub.WithRESTCaller(ctx, "hive:adopted_recovery_compare")
 	cmp, _, err := c.gh.Repositories.CompareCommits(restCtx, obs.Owner, obs.Repo, baseRef, obs.HeadSHA, &gh.ListOptions{PerPage: 1})
 	if err != nil {
-		c.warn("adopted PR recovery", logArgs("reason", adoptionRecoverySkipPrefix+"compare-failed", "error", err)...)
+		c.warn(logMsg, logArgs("reason", adoptionRecoverySkipPrefix+"compare-failed", "error", err)...)
 		return adoptionRecoverySkipped("compare-failed")
 	}
 	baseSHA := cmp.GetBaseCommit().GetSHA()
@@ -207,13 +244,13 @@ func (c *Engine) recoverStaleRedAdoption(ctx context.Context, store *stagelabels
 	}
 	st, err := c.baseChecks(ctx, obs.Owner, obs.Repo, baseSHA)
 	if err != nil {
-		c.warn("adopted PR recovery", logArgs("reason", adoptionRecoverySkipPrefix+"base-checks-failed", "error", err)...)
+		c.warn(logMsg, logArgs("reason", adoptionRecoverySkipPrefix+"base-checks-failed", "error", err)...)
 		return adoptionRecoverySkipped("base-checks-failed")
 	}
 	failing := adoptionFailingCheck(nonEmpty(obs.Reason, obs.LaneReason))
 	if ok, skip := baseClearsFailure(st, failing); !ok {
 		out := adoptionRecoverySkipped(skip)
-		c.info("adopted PR recovery", logArgs("reason", out.Reason, "base_sha", baseSHA, "failing_check", failing)...)
+		c.info(logMsg, logArgs("reason", out.Reason, "base_sha", baseSHA, "failing_check", failing)...)
 		return out
 	}
 	behind := cmp.GetBehindBy()
@@ -222,7 +259,7 @@ func (c *Engine) recoverStaleRedAdoption(ctx context.Context, store *stagelabels
 			// The bot rebases its own branch; a hive merge commit would stop
 			// it doing so for good (projectbluefin/utah#1097).
 			out := adoptionRecoverySkipped("dependency-bot-branch")
-			c.info("adopted PR recovery", logArgs("reason", out.Reason, "base_sha", baseSHA, "behind_by", behind, "head_ref", obs.HeadRef, "author", obs.Author)...)
+			c.info(logMsg, logArgs("reason", out.Reason, "base_sha", baseSHA, "behind_by", behind, "head_ref", obs.HeadRef, "author", obs.Author)...)
 			store.MarkAdoptionRecovery(key, obs.HeadSHA, baseSHA)
 			return out
 		}
@@ -312,7 +349,10 @@ func (c *Engine) recoverByRerun(ctx context.Context, obs stageObservation, logAr
 }
 
 // latestFailedWorkflowRuns returns, per workflow, the newest run for sha
-// that completed as failure or timed_out.
+// that completed as failure, timed_out or cancelled. A cancelled run is
+// what a runner stall leaves behind (a job cancelled at setup after the
+// workflow timeout, hivecommons/hive#16718): the CI gate reads it as red,
+// and GitHub re-runs its cancelled jobs through the same endpoint.
 func (c *Engine) latestFailedWorkflowRuns(ctx context.Context, owner, repo, sha string) ([]*gh.WorkflowRun, error) {
 	opts := &gh.ListWorkflowRunsOptions{HeadSHA: sha, ListOptions: gh.ListOptions{PerPage: 100}}
 	latest := map[int64]*gh.WorkflowRun{}
@@ -344,7 +384,7 @@ func (c *Engine) latestFailedWorkflowRuns(ctx context.Context, owner, repo, sha 
 			continue
 		}
 		switch run.GetConclusion() {
-		case "failure", "timed_out":
+		case "failure", "timed_out", "cancelled":
 			out = append(out, run)
 		}
 	}

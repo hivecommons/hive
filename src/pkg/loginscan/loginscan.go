@@ -30,6 +30,8 @@ func CommandForBackend(backend string) string {
 		return "Run: gemini auth login"
 	case "goose":
 		return "Run: goose auth login"
+	case "codex":
+		return "Run: codex login"
 	default:
 		return "Run the login command for " + backend
 	}
@@ -300,8 +302,18 @@ func Scan(
 				"sightings", streak, "required", PauseMinSightings)
 			continue
 		case ActionPause:
+			// Determine the login instruction based on the agent's backend
+			loginCmd := CommandForBackend(backend)
+
+			// This WARN is what the fleet selfreport for class
+			// agent_login_required is built from (hivecommons/hive#16953):
+			// without the backend and the login hint the report cannot say
+			// WHICH provider the operator has to re-authenticate.
 			logger.Warn("login required detected",
 				"agent", name,
+				"backend", backend,
+				"login_hint", loginCmd,
+				"credential_valid", credentialValid,
 				"pattern", re.String(),
 				"sightings", streak,
 			)
@@ -325,9 +337,6 @@ func Scan(
 			} else {
 				dashSrv.AuditLog("system", "pause", "trigger=login-detector", name)
 			}
-
-			// Determine the login instruction based on the agent's backend
-			loginCmd := CommandForBackend(backend)
 
 			notifier.Send(
 				fmt.Sprintf("\U0001F511 Login required: %s", name),

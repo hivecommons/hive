@@ -562,8 +562,8 @@ type AutoMergeConfig struct {
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
 
 	// HumanMergePinOnly holds the opt-in pin-only exception, enforced by the
-	// automerge sweep and /approve gates via humanMergePinOnlyExempt (#16266);
-	// the hive-merge relay does not apply it yet (#16265).
+	// automerge sweep and /approve gates (#16266), and the hive-merge relay
+	// (#16265).
 	HumanMergePinOnly map[string]PinOnlyException `yaml:"human_merge_pin_only,omitempty" json:"human_merge_pin_only,omitempty"`
 	// Unset uses the default owner-merge rule; explicit empty lists disable
 	// their half of the title/label rule.

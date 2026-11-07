@@ -738,3 +738,27 @@ func TestDefaultAgentModeByRole(t *testing.T) {
 		}
 	}
 }
+
+func TestPaneShowsLoginPromptIgnoresSourceText(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"grep prefix directive", `src/crux/watchdog/classify.go:99:	"Please run /login",`, false},
+		{"quoted pattern", `	"Enter one-time code",`, false},
+		{"alternation", `rg 'credentialValid|Not logged in|agent_login_required'`, false},
+		{"table name", `var loginPromptPatterns = []string{ // Not logged in`, false},
+		{"device flow", "Enter one-time code: ABCD-1234", true},
+		{"login expired", "Login expired · Please run /login", true},
+		{"not logged in", "Not logged in", true},
+		{"device url", "Visit github.com/login/device", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := paneShowsLoginPrompt([]string{tc.line}); got != tc.want {
+				t.Fatalf("paneShowsLoginPrompt(%q) = %v, want %v", tc.line, got, tc.want)
+			}
+		})
+	}
+}

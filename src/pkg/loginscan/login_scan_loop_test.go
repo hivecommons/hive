@@ -1,9 +1,12 @@
 package loginscan
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/crux"
@@ -240,4 +243,40 @@ func indexBefore(values []string, first, second string) bool {
 		}
 	}
 	return firstIndex >= 0 && secondIndex >= 0 && firstIndex < secondIndex
+}
+
+// The "login required detected" WARN feeds the agent_login_required fleet
+// selfreport. hivecommons/hive#16953 was parked through two decision rounds
+// because the report could not say which backend had lost its login; the
+// record has to carry the backend and the operator's login hint.
+func TestScanLoginRequiredWarnNamesBackendAndLoginHint(t *testing.T) {
+	t.Parallel()
+
+	mgr := &fakeLoginScanManager{
+		statuses: map[string]*crux.Process{"supervisor": {State: crux.StateRunning}},
+		outputs:  map[string][]string{"supervisor": {"Please run /login"}},
+	}
+	sightings := NewSightingTracker()
+	sightings.Observe("supervisor", true)
+	cfg := loginScanLoopConfig([]string{`(?i)Please run /login`}, map[string]string{"supervisor": "claude"})
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	Scan(context.Background(), cfg, mgr, &fakeLoginScanNotifier{}, &fakeLoginScanAuditor{}, logger, sightings)
+
+	line := ""
+	for _, l := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(l, "login required detected") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("no 'login required detected' WARN in:\n%s", buf.String())
+	}
+	for _, want := range []string{"level=WARN", "agent=supervisor", "backend=claude", `login_hint="Run: claude login"`, "credential_valid=false", "sightings=2"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("WARN record missing %q:\n%s", want, line)
+		}
+	}
 }

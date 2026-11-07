@@ -151,3 +151,48 @@ func TestGovernorSecurityRejectsInvalidClassifierBackendValues(t *testing.T) {
 		})
 	}
 }
+
+// At L5 the ACMM pack defaults ioscan to fail-closed, so a dashboard save of
+// "open" must be stored as given and reported back as open, and every ioscan
+// save must reach IoscanConfigApplied so it applies without a restart
+// (#16973).
+func TestGovernorSecurityIoscanFailModeOpenSticksAtL5AndApplies(t *testing.T) {
+	s, deps := apiServer(t)
+	level := 5
+	deps.Config.ACMMLevel = &level
+	applied := 0
+	deps.IoscanConfigApplied = func() { applied++ }
+
+	sec := decodeJSON(t, doGet(s, "/api/config/governor"))["security"].(map[string]any)
+	if sec["ioscanFailMode"] != "closed" {
+		t.Fatalf("L5 default fail mode = %v, want closed", sec["ioscanFailMode"])
+	}
+
+	rec := doPut(s, "/api/config/governor/security", map[string]any{"ioscanFailMode": "open"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT security = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if deps.Config.Ioscan.FailMode != "open" {
+		t.Fatalf("stored fail mode = %q, want open", deps.Config.Ioscan.FailMode)
+	}
+	if deps.Config.Ioscan.ClassifierFailClosedAtLevel(level) {
+		t.Fatal("classifier still fail-closed after saving fail mode open")
+	}
+	sec = decodeJSON(t, doGet(s, "/api/config/governor"))["security"].(map[string]any)
+	if sec["ioscanFailMode"] != "open" {
+		t.Fatalf("fail mode reported back as %v after saving open", sec["ioscanFailMode"])
+	}
+	if applied != 1 {
+		t.Fatalf("IoscanConfigApplied calls after fail mode save = %d, want 1", applied)
+	}
+
+	rec = doPut(s, "/api/config/governor/security", map[string]any{"ioscanClassifierBackend": "copilot"})
+	if rec.Code != http.StatusOK || applied != 2 {
+		t.Fatalf("backend save: code=%d applied=%d, want 200 and 2", rec.Code, applied)
+	}
+
+	rec = doPut(s, "/api/config/governor/security", map[string]any{"reviewFanOut": true})
+	if rec.Code != http.StatusOK || applied != 2 {
+		t.Fatalf("non-ioscan save: code=%d applied=%d, want 200 and 2", rec.Code, applied)
+	}
+}

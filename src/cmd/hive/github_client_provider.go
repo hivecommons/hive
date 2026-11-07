@@ -110,11 +110,15 @@ func (b *boot) armRequestRelays(client *github.Client) bool {
 // onACMMLevelChanged re-arms request relays when the level crosses the
 // self-authored auto-merge boundary. The relay generation re-reads the current
 // ACMM verdict when it starts, so this turns a runtime L5↔L6 change into the
-// same safe hand-over used for GitHub App client rebuilds.
+// same safe hand-over used for GitHub App client rebuilds. It also rebuilds
+// the ioscan semantic classifier, whose enablement and fail mode follow the
+// level (required and fail-closed at L5+), so an L4↔L5 change in the
+// dashboard takes effect without a restart.
 func (b *boot) onACMMLevelChanged(prev, next int) {
 	if b == nil || b.cfg == nil {
 		return
 	}
+	b.reinstallIoscanClassifier()
 	before, after := b.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(&prev), b.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(&next)
 	if before == after {
 		return
