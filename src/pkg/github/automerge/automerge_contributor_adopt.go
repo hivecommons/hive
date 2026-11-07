@@ -924,6 +924,9 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 
 	if policy.AdoptInPlace && canPushInPlace && !dcoRehome {
 		store.MarkAdoptedInPlace(key, obs.HeadSHA, reason, now)
+		if adoptedForReview(obs) {
+			store.MarkAdoptedForReview(key, obs.HeadSHA)
+		}
 		c.recordContributorAbandon(ctx, obs, reason, 0, now)
 		body := AdoptionInPlaceComment(obs, policy.HiveID, reason, grace, rec.NudgeOnline) + adoptionFenceNote(fence)
 		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {

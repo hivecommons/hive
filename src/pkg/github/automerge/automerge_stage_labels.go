@@ -1264,6 +1264,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					firstErr = err
 				}
 				prevRec, _ = store.Get(key)
+				if c.releaseApprovedFixerRevert(store, key, obs, prevRec) {
+					prevRec, _ = store.Get(key)
+				}
 			}
 			if hadPrev && prevRec.AdoptionLive(obs.HeadSHA) && verdict.Stage.YieldsToAdoptionFor(pass.Route) {
 				// The hive owns this PR: whether the lane sees it red,
