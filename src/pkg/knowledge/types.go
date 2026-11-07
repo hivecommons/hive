@@ -307,6 +307,15 @@ type PrimedKnowledge struct {
 	// MaxBytes bounds the rendered prompt text (PrimerConfig.MaxBytes). Zero
 	// means DefaultPrimerMaxBytes.
 	MaxBytes int `json:"-"`
+	// rendered is the slugs Render kept, in render order, for the mid-task
+	// advisor's "never repeat what the kick carried" rule (#17052).
+	rendered []string
+}
+
+// RenderedSlugs returns the slugs of the facts the last Render kept — the
+// entries the kick actually carried, excluding those the byte cap dropped.
+func (pk *PrimedKnowledge) RenderedSlugs() []string {
+	return append([]string(nil), pk.rendered...)
 }
 
 // FormatForPrompt renders primed facts as markdown for injection into an agent's

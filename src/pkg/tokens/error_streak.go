@@ -73,6 +73,12 @@ type bobTurn struct {
 // result is always non-nil (an empty map means "measured, no streaks") so
 // callers can tell a clean fleet from a scan that never ran.
 func BobAgentErrorStreaks(bobHomeDir string, now time.Time) map[string]int {
+	return BobAgentErrorStreaksForTree(bobHomeDir, "", now)
+}
+
+// BobAgentErrorStreaksForTree is BobAgentErrorStreaks for one tree whose
+// owner is already known (see ScanBobSessionTree).
+func BobAgentErrorStreaksForTree(bobHomeDir, defaultAgent string, now time.Time) map[string]int {
 	out := make(map[string]int)
 	if bobHomeDir == "" {
 		return out
@@ -120,7 +126,7 @@ func BobAgentErrorStreaks(bobHomeDir string, now time.Time) map[string]int {
 		if projectHash == "" {
 			projectHash = extractBobProjectHash(path)
 		}
-		agentName := bobAgentName(projectHash, agentsByHash)
+		agentName := bobAgentName(projectHash, agentsByHash, defaultAgent)
 
 		rec := sessRec{agent: agentName, start: bobSessionFirstActive(sess)}
 		for i := range sess.Messages {

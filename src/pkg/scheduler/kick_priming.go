@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/crux/agentsmd"
+	"github.com/hivecommons/hive/crux/skillreg"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/knowledge"
-	"github.com/hivecommons/hive/crux/skillreg"
 )
 
 const maxIssuesToPrime = 5
@@ -250,16 +250,40 @@ func capSkills(skills []skillreg.Skill, capBytes int) (kept []skillreg.Skill, dr
 	return kept, dropped
 }
 
+// knowledgeInjection is what one kick received from the knowledge primer
+// (#17049): the rendered "# Relevant Knowledge" section and the numbers
+// behind it. Primed is false when the primer did not run at all (knowledge
+// disabled, no issues, no keywords), so a zero-byte result from a real query
+// is distinguishable from no query.
+type knowledgeInjection struct {
+	Section       string
+	Bytes         int
+	Entries       int
+	SkippedForCap int
+	CapBytes      int
+	Primed        bool
+}
+
 // primeKnowledge queries the wiki layers for facts relevant to the given issues
 // and returns a formatted section for injection into the kick message. The
 // facts are restricted to agentName's knowledge.agent_scopes entry, if any.
+// It logs the per-kick knowledge line itself; callers that also prepend an
+// AGENTS.md or skills block use primeKnowledgeStats and log once with those
+// sizes included.
 func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) string {
+	inj := s.primeKnowledgeStats(agentName, issues)
+	s.logKnowledgeInjection(agentName, inj, 0, 0)
+	return inj.Section
+}
+
+// primeKnowledgeStats is primeKnowledge without the summary log line.
+func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue) knowledgeInjection {
 	s.mu.RLock()
 	primer := s.primer
 	cfg := s.cfg
 	s.mu.RUnlock()
 	if primer == nil || len(issues) == 0 {
-		return ""
+		return knowledgeInjection{}
 	}
 
 	limit := maxIssuesToPrime
@@ -270,7 +294,7 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 	keywords := extractKeywords(issues[:limit])
 	if len(keywords) == 0 {
 		s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
-		return ""
+		return knowledgeInjection{}
 	}
 
 	s.logger.Info("knowledge primer: searching", "keywords", len(keywords), "sample", keywordSample(keywords))
@@ -281,9 +305,14 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 	}
 	primed := primer.PrimeScoped(context.Background(), scope, nil, keywords)
 	result, omitted := primed.Render()
-	if result != "" {
-		s.logger.Info("knowledge primer: injecting facts into kick",
-			"facts", len(primed.Facts)-omitted.Facts, "chars", len(result))
+	s.primedSlugs.Store(agentName, primed.RenderedSlugs())
+	inj := knowledgeInjection{
+		Section:       result,
+		Bytes:         len(result),
+		Entries:       len(primed.Facts) - omitted.Facts,
+		SkippedForCap: omitted.Facts,
+		CapBytes:      primer.MaxBytes(),
+		Primed:        true,
 	}
 	if omitted.Any() {
 		// The render carries its own marker; this is the operator-side half so
@@ -301,7 +330,47 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 			"omitted_facts", omitted.Facts, "omitted_hints", omitted.Hints,
 			"omitted_bytes", omitted.Bytes, "cap_bytes", primed.MaxBytes)
 	}
-	return result
+	return inj
+}
+
+// logKnowledgeInjection emits the one knowledge line per kick (#17049):
+//
+//	knowledge: injected N bytes from M entries (skipped K for cap)
+//
+// with the primer cap and the sizes of the AGENTS.md and skills blocks that
+// share the kick, so the whole knowledge payload is readable from one line
+// next to "kick rendered". It is emitted even when N is 0 — a primed kick
+// that found nothing is a signal, not silence — but not when the primer did
+// not run (knowledge disabled or nothing to prime), which would otherwise
+// print a zero line on every kick of a hive that has no knowledge store.
+func (s *Scheduler) logKnowledgeInjection(agentName string, inj knowledgeInjection, agentsMdBytes, skillsBytes int) {
+	if s == nil || s.logger == nil || (!inj.Primed && agentsMdBytes == 0 && skillsBytes == 0) {
+		return
+	}
+	s.logger.Info(fmt.Sprintf("knowledge: injected %d bytes from %d entries (skipped %d for cap)",
+		inj.Bytes, inj.Entries, inj.SkippedForCap),
+		"agent", agentName,
+		"injected_bytes", inj.Bytes,
+		"entries", inj.Entries,
+		"skipped_for_cap", inj.SkippedForCap,
+		"cap_bytes", inj.CapBytes,
+		"primed", inj.Primed,
+		"agents_md_bytes", agentsMdBytes,
+		"skills_bytes", skillsBytes,
+	)
+}
+
+// KickPrimedSlugs returns the knowledge slugs the most recent kick message
+// built for agentName actually rendered in its `# Relevant Knowledge` block.
+// The mid-task advisor (#17052) uses it to never repeat what the kick carried;
+// facts the byte cap dropped are not in it and so stay eligible.
+func (s *Scheduler) KickPrimedSlugs(agentName string) []string {
+	v, ok := s.primedSlugs.Load(agentName)
+	if !ok {
+		return nil
+	}
+	slugs, _ := v.([]string)
+	return slugs
 }
 
 // extractKeywords pulls searchable terms from issue labels and titles.

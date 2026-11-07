@@ -2247,7 +2247,7 @@ func TestApplyStageLabelsHiveBotSignoffOnHumanHeadNeedsAuthorWithInstructions(t 
 	if len(api.comments) != 1 {
 		t.Fatalf("comments %q", api.comments)
 	}
-	for _, want := range []string{SignoffAttributionMarkerPrefix + " head=sha -->", "@clubanderson", "`stage/071-needs-author`", "git commit --amend --reset-author -s && git push --force-with-lease", "git config user.email"} {
+	for _, want := range []string{SignoffAttributionMarker + "\n", "Current head: `sha`.", "@clubanderson", "`stage/071-needs-author`", "git commit --amend --reset-author -s && git push --force-with-lease", "git config user.email"} {
 		if !strings.Contains(api.comments[0], want) {
 			t.Fatalf("comment lacks %q:\n%s", want, api.comments[0])
 		}

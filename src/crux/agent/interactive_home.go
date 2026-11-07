@@ -43,14 +43,13 @@ func sharedAgentHomeForced() bool {
 // the dirs the entrypoint pre-creates group-writable and the permissions
 // watcher reconciles — sharing them is deliberate:
 //
-//   - .claude   — holds .credentials.json (the shared OAuth token) and
-//     settings.json. One login authenticates the fleet.
-//   - .config / .codex / .bob / .gemini — per-tool auth+config the fleet
-//     shared safely before this change (none are rewritten wholesale by
-//     rename the way .claude.json is). .config is also $XDG_CONFIG_HOME: gh's
-//     hosts.yml and goose's config.yaml (provider keys) live there, so it
-//     stays shared on purpose — it is credential/config state, not session
-//     state.
+//   - .config / .codex — per-tool auth+config the fleet shared safely before
+//     the per-agent layout (neither is rewritten wholesale by rename the way
+//     .claude.json is, and neither holds per-session or memory state: codex
+//     runs under a per-agent CODEX_HOME, see setupCodexHome). .config is also
+//     $XDG_CONFIG_HOME: gh's hosts.yml and goose's config.yaml (provider keys)
+//     live there, so it stays shared on purpose — it is credential/config
+//     state, not session state.
 //   - .cache — tool caches; per-agent copies would cold-start every cache on
 //     every new agent for no isolation benefit.
 //
@@ -59,14 +58,20 @@ func sharedAgentHomeForced() bool {
 // .npm (per-agent npm caches avoid the cross-UID EACCES collisions the shared
 // cache suffered — see installCavemanForAgent), .local (#6238 — the
 // $XDG_DATA_HOME / $XDG_STATE_HOME root; see setupAgentXDGDirs for why it is
-// a REAL per-agent directory with one narrow bridge inside it), and .copilot
-// (hivecommons/hive#9444 — bridging the whole directory shared
-// .copilot/session-state, the CLI's per-run chat transcripts, across every
-// per-UID agent: any agent's session directory became visible, and mtime-
-// newest, through every OTHER agent's symlinked home. See setupCopilotHome
-// for why it is a REAL per-agent directory with one narrow bridge inside it).
+// a REAL per-agent directory with one narrow bridge inside it), and the CLI
+// state directories .copilot (hivecommons/hive#9444), .claude, .gemini and
+// .bob (hivecommons/hive#17031): each holds BOTH the fleet-shared login and
+// the CLI's per-session transcripts and persistent cross-session memory.
+// Bridging the whole directory put every agent's state in ONE tree that any
+// agent could read and rewrite: Claude Code's user-level ~/.claude/CLAUDE.md,
+// history.jsonl and todos/ were a single shared copy, and each agent's
+// auto-memory (~/.claude/projects/-data-agents-<name>/memory/MEMORY.md —
+// keyed by cwd, so per-agent by path) sat beside every other agent's,
+// writable by all of them (and by anything running as the shared uid). See
+// perAgentCLIHomes for the REAL per-agent directories with narrow,
+// credential-only bridges inside them.
 var interactiveHomeBridgeDirs = []string{
-	".claude", ".config", ".codex", ".bob", ".gemini",
+	".config", ".codex",
 	".cache",
 }
 
@@ -76,6 +81,80 @@ var interactiveHomeBridgeDirs = []string{
 // authenticates the fleet" guarantee without also sharing
 // .copilot/session-state (hivecommons/hive#9444).
 const copilotConfigFileName = "config.json"
+
+// perAgentCLIHome describes one CLI state directory under $HOME that is a
+// REAL per-agent directory, with only the named entries bridged back to the
+// same path under sharedAgentHome. The bridge list is the allowlist: it names
+// exactly the login/settings files one operator sign-in must propagate to the
+// fleet, and nothing else — transcripts, todos, history and auto-memory stay
+// per agent (hivecommons/hive#17031). This is the contributor-container
+// posture (CLAUDE_STAGE_ALLOWLIST in the Justfile, hivecommons/hive#7836)
+// applied to the hive's own agents.
+type perAgentCLIHome struct {
+	// dir is the directory name under $HOME (".claude").
+	dir string
+	// bridges are the entries inside dir that symlink to the shared copy.
+	// Files are linked even when the shared target does not exist yet (the
+	// link goes live on first login, like interactiveHomeBridgeFiles);
+	// directories are linked only when the shared target exists, because a
+	// CLI's `mkdir -p` through a dangling directory symlink fails with EEXIST.
+	bridges []string
+	// memoryRel are the per-agent paths, relative to dir, that hold the
+	// CLI's persistent cross-session memory. Glob patterns are allowed.
+	// Used by the launch-time shared-memory warning and by the memory wipe.
+	memoryRel []string
+}
+
+// perAgentCLIHomes are the CLI state directories provisioned by
+// setupPerAgentCLIHomes. Order is irrelevant; each is independent.
+//
+//   - .claude — .credentials.json is the shared OAuth token and settings.json
+//     the fleet-wide user settings hive itself seeds (claude_remote_control.go,
+//     and the auto-memory pin). projects/ (transcripts AND
+//     projects/<cwd>/memory/), todos/, history.jsonl, session-env/,
+//     shell-snapshots/ and statsig/ are per agent.
+//   - .gemini — antigravity-cli/ holds agy's OAuth token and onboarding cache
+//     (the entrypoint pre-creates and guards it); settings.json,
+//     oauth_creds.json, google_accounts.json and installation_id are the
+//     Gemini CLI login/settings. GEMINI.md (the CLI's saved global memory) and
+//     tmp/ (checkpoints, session logs) are per agent.
+//   - .bob — settings.json (bobshell 1.x) and settings/ (bobshell 2.x) carry
+//     the auth-method/provider pins ensureBobAuthSettings asserts; they must
+//     stay one file so the pin reaches every bob agent. tmp/ (chat
+//     recordings), installation_id and trustedFolders.json are per agent.
+//   - .copilot — config.json only (hivecommons/hive#9444).
+var perAgentCLIHomes = []perAgentCLIHome{
+	{
+		dir:       claudeHomeDirName,
+		bridges:   []string{claudeCredentialsFileName, claudeSettingsFileName},
+		memoryRel: []string{filepath.Join("projects", "*", "memory")},
+	},
+	{
+		dir:       geminiHomeDirName,
+		bridges:   []string{"antigravity-cli", "settings.json", "oauth_creds.json", "google_accounts.json", "installation_id"},
+		memoryRel: []string{geminiMemoryFileName},
+	},
+	{
+		dir:     bobHomeDirName,
+		bridges: []string{"settings.json", "settings"},
+	},
+	{
+		dir:     copilotHomeDirName,
+		bridges: []string{copilotConfigFileName},
+	},
+}
+
+const (
+	claudeHomeDirName         = ".claude"
+	claudeCredentialsFileName = ".credentials.json"
+	claudeSettingsFileName    = "settings.json"
+	geminiHomeDirName         = ".gemini"
+	// geminiMemoryFileName is the Gemini CLI's global memory file, written by
+	// its save_memory tool / `/memory add` under ~/.gemini.
+	geminiMemoryFileName = "GEMINI.md"
+	bobHomeDirName       = ".bob"
+	copilotHomeDirName   = ".copilot"
+)
 
 // xdgDataHomeRel / xdgStateHomeRel are the XDG Base Directory defaults
 // relative to $HOME. They are exported EXPLICITLY (not left to the spec
@@ -195,7 +274,7 @@ func (m *Manager) setupInteractiveHome(agent *AgentProcess, backend string) {
 	m.bridgeInteractiveHome(agent.Name, home)
 	m.retireSharedGitConfigBridge(agent.Name, home)
 	m.setupAgentXDGDirs(agent.Name, home, agent.UID)
-	m.setupCopilotHome(agent.Name, home, agent.UID)
+	m.setupPerAgentCLIHomes(agent.Name, home, agent.UID)
 	m.seedClaudeSessionForAgent(agent, home)
 	m.tightenInteractiveHome(agent.Name, home, agent.UID)
 	m.sweepOrphanedClaudeTmp(agent.Name)
@@ -294,46 +373,98 @@ func (m *Manager) setupAgentXDGDirs(agentName, home string, uid int) {
 	}
 }
 
-// setupCopilotHome makes $HOME/.copilot a REAL per-agent directory, retiring
-// the legacy whole-directory symlink bridge to the shared /data/home/.copilot
-// when one is found, then re-bridging only config.json back into the shared
-// tree (hivecommons/hive#9444).
+// setupPerAgentCLIHomes provisions every perAgentCLIHomes entry: makes
+// $HOME/<dir> a REAL per-agent directory, retiring the legacy whole-directory
+// symlink bridge to the shared /data/home/<dir> when one is found, then
+// re-bridges only the named login/settings entries back into the shared tree.
 //
-// Before this, .copilot rode interactiveHomeBridgeDirs as a bare symlink —
-// same as .claude / .config — which is correct for a directory that holds
-// ONLY credential/config state, but Copilot CLI also keeps its per-run chat
-// transcripts under .copilot/session-state. Bridging the whole directory
-// therefore made every agent's session-state tree the SAME physical
-// directory: any agent's session, and its mtime, showed up while listing
-// ANY other agent's .copilot/session-state — exactly the cross-contamination
-// the issue reports (sec-check/quality sessions found under the scanner's
-// home). Only config.json (the fleet-shared token map read by
-// copilotConfigHasTokens / the auth probe) still needs to be shared; nothing
-// else under .copilot does.
-func (m *Manager) setupCopilotHome(agentName, home string, uid int) {
-	dir := filepath.Join(home, ".copilot")
+// The pattern was introduced for .copilot (hivecommons/hive#9444): before it,
+// .copilot rode interactiveHomeBridgeDirs as a bare symlink — correct for a
+// directory that holds ONLY credential/config state, but Copilot CLI also
+// keeps its per-run chat transcripts under .copilot/session-state, so every
+// agent's session-state tree was the SAME physical directory. .claude, .gemini
+// and .bob had the identical defect with higher stakes (hivecommons/hive#17031):
+// Claude Code's user-level CLAUDE.md, history.jsonl and todos/ were one
+// shared copy, and every agent's cwd-keyed auto-memory
+// (projects/-data-agents-<name>/memory/MEMORY.md) lived in a tree any other
+// agent could read or rewrite, forever (it lives on the PVC).
+//
+// Every step is best-effort and idempotent: a real directory that already
+// exists is kept (it may hold live per-agent state), only a SYMLINK is
+// replaced, and nothing under the shared tree is moved or deleted — a
+// pre-existing shared memory store is left in place and reported once.
+func (m *Manager) setupPerAgentCLIHomes(agentName, home string, uid int) {
+	for _, spec := range perAgentCLIHomes {
+		m.setupPerAgentCLIHome(agentName, home, uid, spec)
+	}
+}
+
+func (m *Manager) setupPerAgentCLIHome(agentName, home string, uid int, spec perAgentCLIHome) {
+	dir := filepath.Join(home, spec.dir)
+	shared := filepath.Join(sharedAgentHome, spec.dir)
 	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		// Legacy whole-directory bridge from before this fix. Removing the
-		// link touches nothing it pointed at (the shared session-state and
-		// config.json live on, reachable by every other agent's own link
-		// until they are re-provisioned too).
+		// Legacy whole-directory bridge. Removing the link touches nothing it
+		// pointed at (the shared state lives on, reachable by every other
+		// agent's own link until they are re-provisioned too).
 		if rerr := os.Remove(dir); rerr != nil {
-			m.logger.Warn("failed to retire legacy shared .copilot bridge; session-state stays shared for this agent",
+			m.logger.Warn("failed to retire legacy shared CLI home bridge; session state and memory stay shared for this agent",
 				"agent", agentName, "link", dir, "error", rerr)
 			return
 		}
-		m.logger.Info("retired legacy shared .copilot bridge in favour of a per-agent session-state dir",
-			"agent", agentName, "home", home)
+		m.logger.Info("retired legacy shared CLI home bridge in favour of a per-agent directory",
+			"agent", agentName, "dir", dir, "shared", shared)
+		m.warnSharedCLIMemoryOnce(spec, shared)
 	}
 	if err := mkdirAllNoFollow(sharedAgentHome, dir, interactiveHomeDirMode); err != nil {
-		m.logger.Warn("failed to create per-agent .copilot dir",
+		m.logger.Warn("failed to create per-agent CLI home dir",
 			"agent", agentName, "dir", dir, "error", err)
 		return
 	}
 	m.ownAgentDir(agentName, dir, uid)
-	m.bridgeHomeEntry(agentName,
-		filepath.Join(dir, copilotConfigFileName),
-		filepath.Join(sharedAgentHome, ".copilot", copilotConfigFileName))
+	for _, name := range spec.bridges {
+		link := filepath.Join(dir, name)
+		target := filepath.Join(shared, name)
+		if _, err := os.Stat(target); err != nil && isPerAgentCLIBridgeDir(spec.dir, name) {
+			// Absent target: a dangling FILE link goes live on first login; a
+			// dangling DIRECTORY link would make the CLI's own mkdir -p fail,
+			// so a directory-shaped bridge waits for the entrypoint to create it.
+			m.logger.Debug("shared CLI dir absent; per-agent bridge deferred",
+				"agent", agentName, "link", link, "target", target)
+			continue
+		}
+		m.bridgeHomeEntry(agentName, link, target)
+	}
+}
+
+// perAgentCLIBridgeDirs names the bridge entries that are directories (not
+// files) in the shared tree, so an absent target is deferred rather than
+// linked dangling. Keyed by "<dir>/<entry>".
+var perAgentCLIBridgeDirs = map[string]bool{
+	geminiHomeDirName + "/antigravity-cli": true,
+	bobHomeDirName + "/settings":           true,
+}
+
+func isPerAgentCLIBridgeDir(dir, entry string) bool {
+	return perAgentCLIBridgeDirs[dir+"/"+entry]
+}
+
+// warnSharedCLIMemoryOnce logs, once per process, that the shared CLI home
+// still holds a persistent memory store that every agent used to read and
+// write. The data is the operator's and is deliberately NOT deleted or moved;
+// the log names the path so the operator can review or drain it
+// (hivecommons/hive#17033) and then remove it by hand.
+func (m *Manager) warnSharedCLIMemoryOnce(spec perAgentCLIHome, shared string) {
+	for _, rel := range spec.memoryRel {
+		matches, err := filepath.Glob(filepath.Join(shared, filepath.FromSlash(rel)))
+		if err != nil || len(matches) == 0 {
+			continue
+		}
+		m.sharedCLIMemoryWarnOnce.Do(func() {
+			m.logger.Warn("shared CLI home still holds a persistent memory store that was shared by every agent; it is no longer read by per-agent homes and was left in place for review",
+				"dir", shared, "memory", matches, "see", "hivecommons/hive#17031")
+		})
+		return
+	}
 }
 
 // retireSharedGitConfigBridge removes the legacy ~/.gitconfig symlink that

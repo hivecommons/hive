@@ -72,6 +72,7 @@ func primerMaxBytes(n int) int {
 // reader of the kick knows the primer was bounded rather than exhaustive.
 func (pk *PrimedKnowledge) Render() (string, PrimerOmitted) {
 	var omitted PrimerOmitted
+	pk.rendered = nil
 	if len(pk.Facts) == 0 {
 		return "", omitted
 	}
@@ -109,6 +110,7 @@ func (pk *PrimedKnowledge) Render() (string, PrimerOmitted) {
 				headingWritten = true
 			}
 			b.WriteString(entry)
+			pk.rendered = append(pk.rendered, f.Slug)
 			remaining -= need
 		}
 	}
