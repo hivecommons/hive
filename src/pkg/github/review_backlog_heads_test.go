@@ -71,7 +71,7 @@ func headsBacklogClient(t *testing.T, srvURL string, sink *fakeBacklogSink) *Cli
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P2"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, Labels: []string{"followup"}},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, Labels: []string{"followup"}, MinSeverity: "P3"},
 			Sink:     sink,
 		}
 	})
@@ -239,7 +239,7 @@ func TestReconcileReviewBacklogBlocks(t *testing.T) {
 	sink := &fakeResolverSink{fakeBacklogSink: fakeBacklogSink{dest: config.ReviewBacklogLinear}}
 	c := reviewTestClient(t, srv.URL)
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
-		return ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear}, Sink: sink}
+		return ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MinSeverity: "P3"}, Sink: sink}
 	})
 	now := time.Now().UTC()
 	ledger := newReviewBacklogLedger()
@@ -336,7 +336,7 @@ func TestReconcileReviewBacklogBlocksSupersede(t *testing.T) {
 	sink := &fakeResolverSink{fakeBacklogSink: fakeBacklogSink{dest: config.ReviewBacklogLinear}}
 	c := reviewTestClient(t, srv.URL)
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
-		return ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear}, Sink: sink}
+		return ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MinSeverity: "P3"}, Sink: sink}
 	})
 	now := time.Now().UTC()
 	ledger := newReviewBacklogLedger()

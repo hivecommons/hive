@@ -65,6 +65,26 @@ type TOCScope struct {
 	// IncludeStates admits non-approved lifecycle states; approved entries are
 	// always visible.
 	IncludeStates []LifecycleState
+	// DraftAuthors lets the kick primer carry draft facts written by one of
+	// these identities even though the primer itself admits approved facts
+	// only (#17076). The scheduler sets it from the kicked agent's name, its
+	// base agent and the hive's owner logins when the agent's agent_scopes
+	// entry lists draft in include_states. TOC and API reads leave it empty.
+	DraftAuthors []string
+}
+
+// ListsDraft reports whether an include_states config list opts into drafts
+// explicitly, via "draft" or "all". An empty list does not: AgentScope treats
+// it as "defer to the request or primer", which never admits drafts on the
+// kick path.
+func ListsDraft(includeStates []string) bool {
+	for _, st := range includeStates {
+		st = strings.ToLower(strings.TrimSpace(st))
+		if st == string(StateDraft) || st == "all" {
+			return true
+		}
+	}
+	return false
 }
 
 // AgentScope builds the scope an agent is bound to by knowledge.agent_scopes

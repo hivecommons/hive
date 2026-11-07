@@ -1,1 +1,0 @@
-- close-on-merge no longer closes a pull request as a "fixed issue" when a merged sibling-repo PR mentions it (#14744).

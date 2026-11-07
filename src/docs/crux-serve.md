@@ -37,6 +37,7 @@ runtime and every agent must arrive as a definition on `POST /v1/agents`.
 | `--checkout-allow PREFIX,…`, `CRUX_CHECKOUT_ALLOWLIST` | repository URL prefixes `POST /v1/checkouts` may clone; unset means no checkout service ([design](design/crux-work-services.md)). |
 | `--checkout-dir PATH`, `CRUX_CHECKOUT_DIR` | where pinned checkouts live. Default `<workdir>/checkouts`. |
 | `--lanes-config PATH`, `CRUX_LANES_CONFIG` | opt into [durable event/work lanes](crux-lanes.md) on this same server, backed by NATS JetStream. Lane project credentials are separate from agent-control credentials. |
+| `--runs-config PATH`, `CRUX_RUNS_CONFIG` | contained-run configuration file that supplies the sandbox backend for `POST /v1/runs`. Without it the server still serves saved run records under `<workdir>/runs` (`GET /v1/runs/{id}`), and `POST /v1/runs` answers `501`; runs left in flight by an earlier process are marked unfinished at startup ([design](design/crux-work-services.md)). |
 | `--hive-callback ADDR`, `CRUX_HIVE_SOCKET` (+ `CRUX_HIVE_TOKEN`) | dial hive's callback endpoint (`crux/api/callback`) for the capabilities hive owns — scoped GitHub tokens, PR creation, Linear credentials, text/canary scanners, conditions — and feed the runtime's seams from it instead of leaving them nil. Health reports it under `hive_callback`; an unreachable endpoint raises the `hive_callback_unavailable` condition. (#14246) When the runtime is a manager it also polls hive's host policy from the same endpoint; see [Host policy from hive](#host-policy-from-hive-14138-stage-4). |
 
 `serve` does not use the per-work-dir control socket that a foreground
@@ -95,6 +96,7 @@ and [lane error codes and failure behavior](crux-lanes.md#bounds-and-failure-beh
 | `POST /v1/agents/{name}/stop` | | `Lifecycle.Stop` | `{"agent","process"}` |
 | `GET /v1/events` | | watcher + `Kicker.SetKickObserver` + the `crux.Host` observers | `text/event-stream` of `Event` records |
 | `POST /v1/checkouts`, `GET /v1/checkouts[?owner=]`, `GET`/`DELETE /v1/checkouts/{id}` | `{"repo","commit","owner"?,"branches"?,"max_bytes"?,"ttl"?}` | `checkout.Service` | Work service (S1): a worktree pinned at a full SHA, owned by the caller principal; `501` without `--checkout-allow`; [routes, codes and semantics](design/crux-work-services.md) |
+| `POST /v1/runs`, `GET /v1/runs/{id}`, `POST /v1/runs/{id}/cancel` | contained-run request (see `ContainedRunRequest` in `crux/api/runs.go`) | `runs.Service` | Work service (S2/S7): run an untrusted command in a sandbox and read the saved record whatever the process state; cancel after completion returns the result; `501` on `POST` without `--runs-config`; restart and listing routes are [deferred](design/crux-work-services.md#deferred-runs-routes) |
 | `GET /v1/lanes` and lane/group subroutes | Publish/recovery/receipt JSON; [request shapes](crux-lanes.md#public-http-and-go-api) | `lanes.Broker` | Opt-in only; lane-project credential and capability ACLs; JSON or `204`; [full routes and responses](crux-lanes.md#public-http-and-go-api) |
 
 ### Runtime families (#14138 stage 3)

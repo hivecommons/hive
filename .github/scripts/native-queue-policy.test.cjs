@@ -5,7 +5,7 @@ const {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict,
-  ProviderUnavailable,
+  ProviderUnavailable, FORWARD_MERGE, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX,
   DCO_ENUMERATION_SUMMARY_FALLBACK,
   DCO_PROVIDER_UNAVAILABLE_TEXT,
@@ -204,6 +204,99 @@ test('UNKNOWN reporting requires trusted exact-head completed DCO and the specif
   }
   assert.throws(() => evidenceForHead([{ ...dco, conclusion: 'failure' }], sha(11), { DCO: null }),
     error => !(error instanceof ProviderUnavailable) && error.message === 'DCO: failure');
+});
+
+// #17030: v6-topup.yml's PR whose probot DCO rejects a commit already on v5.
+function forwardMergeFixture() {
+  const f = fixture('pull_request_target');
+  Object.assign(f.state.prs[0], {
+    head: { sha: sha(11), ref: 'sync/v5-to-v6', repo: { full_name: 'acme/widget' } },
+    base: { ref: 'v6' }, user: { ...FORWARD_MERGE.author },
+  });
+  f.context.payload.pull_request = clone(f.state.prs[0]);
+  f.state.runs.get(sha(11)).find(r => r.name === 'DCO').conclusion = 'action_required';
+  // sha(201) is the v5 commit probot rejects; sha(11) is the top-up merge of
+  // v5 (sha(201)) onto v6 (sha(300)).
+  f.state.commits = [
+    { sha: sha(201), parents: [{ sha: sha(200) }] },
+    { sha: sha(11), parents: [{ sha: sha(300) }, { sha: sha(201) }] },
+  ];
+  f.state.reachable = new Set([`v5...${sha(201)}`, `v6...${sha(300)}`]);
+  f.state.statuses = [
+    { id: 1, context: 'dco', state: 'success', creator: { login: PROW.login, id: PROW.id } },
+  ];
+  f.github.rest.pulls.listCommits = 'commits';
+  f.github.rest.repos.listCommitStatusesForRef = 'statuses';
+  f.github.rest.repos.compareCommitsWithBasehead = async ({ basehead }) => {
+    f.state.seen.push(basehead);
+    return { data: { status: f.state.reachable.has(basehead) ? 'behind' : 'diverged' } };
+  };
+  const basePaginate = f.github.paginate;
+  f.github.paginate = async (method, args) => {
+    if (method === 'commits') return clone(f.state.commits);
+    if (method === 'statuses') return clone(f.state.statuses);
+    return basePaginate(method, args);
+  };
+  return f;
+}
+
+test('v5-reachable sync/v5-to-v6 forward-merge passes on prow dco without probot DCO', async () => {
+  const f = forwardMergeFixture();
+  assert.match(await evaluate(f),
+    /five existing policy providers succeeded.*DCO path: prow dco for v5-reachable sync\/v5-to-v6 forward-merge/);
+  assert.deepEqual(f.state.seen, [`v5...${sha(201)}`, `v6...${sha(300)}`, `v5...${sha(201)}`]);
+});
+
+test('one commit unreachable from v5 keeps the forward-merge on probot DCO', async () => {
+  const unreachable = forwardMergeFixture();
+  unreachable.state.reachable.delete(`v5...${sha(201)}`);
+  await assert.rejects(evaluate(unreachable), /DCO: action_required.*probot DCO.*not reachable from v5/);
+  const extra = forwardMergeFixture();
+  extra.state.commits.splice(1, 0, { sha: sha(202), parents: [{ sha: sha(201) }] });
+  await assert.rejects(evaluate(extra), new RegExp(`DCO: action_required.*${sha(202)} is not reachable from v5`));
+  for (const parents of [[{ sha: sha(201) }], [{ sha: sha(301) }, { sha: sha(201) }], [{ sha: sha(300) }, { sha: sha(202) }]]) {
+    const notMerge = forwardMergeFixture();
+    notMerge.state.commits[1].parents = parents;
+    await assert.rejects(evaluate(notMerge), /DCO: action_required.*is not a merge of v5 into v6/);
+  }
+  const truncated = forwardMergeFixture();
+  truncated.state.commits = Array.from({ length: 250 }, (_, i) => ({ sha: sha(1000 + i), parents: [] }));
+  await assert.rejects(evaluate(truncated), /DCO: action_required.*commit list unverifiable/);
+  // Probot DCO succeeding still admits through the unchanged path.
+  unreachable.state.runs.get(sha(11)).find(r => r.name === 'DCO').conclusion = 'success';
+  assert.match(await evaluate(unreachable), /DCO path: probot DCO \(App 1861\); sync\/v5-to-v6 fallback/);
+});
+
+test('another head branch, base, fork or author keeps requiring probot DCO', async () => {
+  for (const change of [
+    pr => { pr.head.ref = 'sync/v5-to-v6-extra'; },
+    pr => { pr.head.repo.full_name = 'fork/widget'; },
+    pr => { pr.user = { login: 'clubanderson', id: 1, type: 'User' }; },
+    pr => { pr.user.id = 1; },
+    pr => { pr.user.login = 'hivecommons-hive[bot]'; },
+  ]) {
+    const f = forwardMergeFixture();
+    change(f.state.prs[0]);
+    await assert.rejects(evaluate(f), error => error.message === 'DCO: action_required');
+    assert.equal(f.state.seen.length, 0);
+  }
+  const v5 = forwardMergeFixture();
+  v5.state.prs[0].base.ref = 'v5';
+  v5.context.payload.pull_request.base.ref = 'v5';
+  await assert.rejects(evaluate(v5), error => error.message === 'DCO: action_required');
+});
+
+test('forward-merge path fails without a successful prow-created dco status', async () => {
+  const failed = forwardMergeFixture();
+  failed.state.statuses.push({ id: 2, context: 'dco', state: 'failure', creator: { login: PROW.login, id: PROW.id } });
+  await assert.rejects(evaluate(failed), /prow dco: failure.*DCO path: prow dco/);
+  // Any workflow token can post a `dco` status; it never stands in for prow.
+  const forged = forwardMergeFixture();
+  forged.state.statuses = [{ id: 3, context: 'dco', state: 'success', creator: { login: 'github-actions[bot]', id: 41898282 } }];
+  await assert.rejects(evaluate(forged), error => error instanceof PendingEvidence && /Missing prow dco/.test(error.message));
+  const pending = forwardMergeFixture();
+  pending.state.statuses[0].state = 'pending';
+  await assert.rejects(evaluate(pending), error => error instanceof PendingEvidence);
 });
 
 test('draft, closed, held and moved-head/base PRs cannot pass', () => {

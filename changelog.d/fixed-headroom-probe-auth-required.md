@@ -1,1 +1,0 @@
-- A host with no codex account no longer warns "provider headroom probe failed" and gets flagged as a repeated unclassified error: the codex app-server's "account authentication required to read rate limits" refusal is now classified as `no_credentials` (headroom stays unknown/fail-open) and logged at info. Fixes #16078.

@@ -38,11 +38,11 @@ func claudeBypassConsentSeed() map[string]any {
 }
 
 // sharedClaudeSettingsFile is the userSettings file every interactive
-// claude-backend agent reads: the per-agent homes symlink ~/.claude to
-// sharedAgentHome/.claude (interactiveHomeBridgeDirs), so one file governs
-// the whole fleet.
+// claude-backend agent reads: each per-agent ~/.claude is a REAL directory
+// (perAgentCLIHomes) whose settings.json symlinks to
+// sharedAgentHome/.claude/settings.json, so one file governs the whole fleet.
 func sharedClaudeSettingsFile() string {
-	return filepath.Join(sharedAgentHome, ".claude", "settings.json")
+	return filepath.Join(sharedAgentHome, claudeHomeDirName, claudeSettingsFileName)
 }
 
 // ensureClaudeRemoteControlDefault re-asserts, before a claude-backend launch,

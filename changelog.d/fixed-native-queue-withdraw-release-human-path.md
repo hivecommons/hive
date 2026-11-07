@@ -1,1 +1,0 @@
-- Native merge queue withdrawal now also triggers on a release in progress and on a human-merge path, so a Hive-enqueued PR no longer keeps merging through GitHub's queue during a release freeze or after `human_merge_paths` changes (#15517).

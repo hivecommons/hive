@@ -1,1 +1,0 @@
-- The Commons contribution editor reports partial staging failures honestly, prevents overlapping batch actions, and explains runtime uncertainty, offering status, selection provenance and exclusion recovery.

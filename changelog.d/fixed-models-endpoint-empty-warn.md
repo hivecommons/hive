@@ -1,1 +1,0 @@
-- The dashboard no longer WARNs on every poll when an inference backend returns no models (once per backend per hour); the fleet report names the flapping case `models_endpoint_empty` (#16369)

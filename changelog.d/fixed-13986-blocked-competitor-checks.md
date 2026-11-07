@@ -1,1 +1,0 @@
-- A delegated decision no longer treats a competing contributor PR whose checks never ran or are still pending as mergeable ([#13986](https://github.com/hivecommons/hive/issues/13986)).

@@ -1,1 +1,0 @@
-- Fixed stale `src/pkg/` source citations in labels-and-control-signals.md and security-model.md that now point at `src/crux/` (#15318).

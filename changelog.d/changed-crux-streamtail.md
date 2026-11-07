@@ -1,1 +1,0 @@
-- crux: the follow-stream overlap rule shared by the CLI and the serve layer now lives in one `internal/streamtail` package instead of two copies.

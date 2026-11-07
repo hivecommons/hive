@@ -56,16 +56,22 @@ on:
         required: false
         type: string
 
-# Serialize Docker builds per branch so concurrent merges don't race. Do NOT
-# cancel in-progress builds: on a fast-merging release branch (v2 saw ~34 merges
-# in 2h), cancel-in-progress meant every build was killed by the next merge and
-# NONE ever completed, freezing <branch>-latest and blocking all deploys. With
-# cancel-in-progress:false the builds queue and each runs to completion. Each
-# completed build publishes an immutable SHA tag; publish-image-tags.sh uses a
-# per-tag workflow generation to advance moving tags without either starving
-# during a merge burst or regressing when queued runs execute out of order.
+# Concurrency. PR builds share a group per PR with cancel-in-progress, so a
+# force-push supersedes the previous build. PUSH builds (release lines and the
+# other long-lived branches) get a group of their own per run, i.e. they are
+# never cancelled and never queued behind each other. The earlier shape — one
+# group per branch with cancel-in-progress:false — was meant to make them
+# "queue and each run to completion", but GitHub's concurrency queue holds at
+# most ONE pending run per group: when a third push arrives, the pending
+# second run is CANCELLED (not queued) in favour of the newest. On a branch
+# merging every few minutes that cancelled most builds (runs 42400016149,
+# 42401056583, 42403292505 on 2026-11-07), so most commits never published
+# images and Tagged Release had nothing to tag. Parallel push builds are safe:
+# each completed build publishes an immutable SHA tag, and
+# publish-image-tags.sh uses a per-tag workflow generation (run number) to
+# advance moving tags without regressing when builds finish out of order.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'push' && github.run_id || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

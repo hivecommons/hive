@@ -1,1 +1,0 @@
-- Fix adopted contributor PRs so review changes-requested verdicts route to Hive-owned fixer retries instead of sitting behind stale no-verdict or maintainer-approval waits.

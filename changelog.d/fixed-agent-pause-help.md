@@ -1,1 +1,0 @@
-- Explain how to resume a paused agent in its dashboard pause details and keep the tooltip within the viewport.

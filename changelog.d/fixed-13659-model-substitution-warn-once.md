@@ -1,1 +1,0 @@
-- The copilot CLI model-substitution warning is logged once per agent session instead of on every poll, so it no longer surfaces as a repeated-error self-report (#13659).

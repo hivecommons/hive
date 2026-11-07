@@ -1,1 +1,0 @@
-- The code activity reader now accepts unchanged diff context lines (`op: ' '`) from a regions source and renders them in a neutral color with their space prefix, instead of dropping the whole region; the current published-checkpoint source still emits only `+`/`-` lines ([#16550](https://github.com/hivecommons/hive/issues/16550)).

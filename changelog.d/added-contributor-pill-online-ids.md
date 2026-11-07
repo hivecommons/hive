@@ -1,1 +1,0 @@
-- Show online ClankeR contributor IDs vertically in the Contributors sidebar count pill's hover and keyboard-focus tooltip.
