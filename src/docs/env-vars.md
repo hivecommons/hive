@@ -130,6 +130,7 @@ project capabilities, deployment requirements and recovery.
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
 | `CRUX_LANES_CONFIG` | No | none (durable lanes disabled) | Crux server's lane configuration file, used when `crux serve --lanes-config` is absent. An explicit flag takes precedence. Broker credentials and project tokens are referenced by environment variable name in that file, not embedded as secret values. |
+| `CRUX_RUNS_CONFIG` | No | none (no contained-run backend; saved run records are still served) | Crux server's contained-run configuration file, used when `crux serve --runs-config` is absent. An explicit flag takes precedence. |
 | `HIVE_LANES_ADDRESS` | No | none (participant disabled) | Opts the Hive process into a Crux API endpoint. This is the Crux server address, not the NATS broker URL. |
 | `HIVE_LANES_LANE` | Yes when `HIVE_LANES_ADDRESS` is set | none | Registered lane ID for the Hive participant. Missing lane, group or token logs an explicit configuration error and leaves participation disabled. |
 | `HIVE_LANES_GROUP` | Yes when `HIVE_LANES_ADDRESS` is set | none | Registered delivery-group ID for Hive's claim loop; the configured project must have that group's work capability. |
