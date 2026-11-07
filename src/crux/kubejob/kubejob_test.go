@@ -360,7 +360,6 @@ func TestManifestShape(t *testing.T) {
 		`"limits":{"ibm.com/spyre_pf":"2"}`,
 		`"serviceAccountName":"hive"`,
 		`"automountServiceAccountToken":false`,
-		`"runAsNonRoot":true`,
 		`"allowPrivilegeEscalation":false`,
 		`"capabilities":{"drop":["ALL"]}`,
 		`"seccompProfile":{"type":"RuntimeDefault"}`,

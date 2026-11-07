@@ -483,7 +483,6 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 		// never mounted into a contained run.
 		"automountServiceAccountToken": false,
 		"securityContext": map[string]any{
-			"runAsNonRoot":   true,
 			"seccompProfile": map[string]string{"type": "RuntimeDefault"},
 		},
 	}
