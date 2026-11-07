@@ -2957,3 +2957,78 @@ func TestApplyStageLabelsAnyAuthorAlreadyLandedKeptStillParks(t *testing.T) {
 		t.Fatalf("kept contributor PR must still reach 085: added=%v", api.added)
 	}
 }
+
+// hivecommons/hive#16974: check runs fired by the hive's own label write must
+// not be treated as new pending evidence pulling a PR off stage/085-needs-decision
+// to 050 or 070.
+func TestApplyStageLabelsNeedsDecisionStableAcrossPendingChecks(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	e.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true} }
+	e.contributorLanePolicy = func() ContributorLanePolicy { return ContributorLanePolicy{} }
+
+	const number = 16607
+	const head = "687f4cb"
+	verdict := ContributorLaneVerdict{
+		Configured:        true,
+		Verdict:           "requires_human",
+		DecisionRequested: true,
+		DecisionQuestion:  "@hanthor should confirm that the hive-merge relay may now App-merge trusted-author pin-only PRs",
+	}
+	e.contributorLaneVerdict = func(string, int, string) ContributorLaneVerdict { return verdict }
+
+	pending := false
+	e.checkSummary = func(context.Context, string, string, string) (hgithub.CommitChecksSummary, error) {
+		if pending {
+			return hgithub.CommitChecksSummary{Total: 3, Green: 1, Pending: 2, DCO: 1}, nil
+		}
+		return hgithub.CommitChecksSummary{Total: 3, Green: 3, Pending: 0, DCO: 1}, nil
+	}
+
+	ctx := context.Background()
+	pr := stagePR(number)
+	pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
+	pr.Head = &gh.PullRequestBranch{SHA: gh.Ptr(head)}
+	pr.Body = gh.Ptr("Closes #16265\nSupersedes #16456\n\n— hive: agent=scanner backend=copilot\n")
+
+	feedObservation := func(labels []string) {
+		pr.Labels = make([]*gh.Label, 0, len(labels))
+		for _, l := range labels {
+			pr.Labels = append(pr.Labels, &gh.Label{Name: gh.Ptr(l)})
+		}
+		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageRole("acme", "widget", number, stagelabels.RoleTrusted)
+		e.noteStageVerdict("acme", "widget", number, verdict)
+		e.noteStagePR("acme", "widget", number, pr)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Iteration 1: initial sweep places PR at 085.
+	feedObservation([]string{"stage/050-review-pending", "role/trusted", "author/hive"})
+	rec, ok := store.Get(stageKey("acme", "widget", number))
+	if !ok || rec.Stage != stagelabels.NeedsDecision {
+		t.Fatalf("iteration 1: expected 085, got %+v", rec)
+	}
+
+	// Iteration 2: label write fired workflows, toggling Checks.Pending to > 0.
+	pending = true
+	api.reset()
+	feedObservation([]string{"stage/085-needs-decision", "role/trusted", "author/hive"})
+
+	// Stage must remain NeedsDecision (085) with no flap to 050 or 070.
+	rec, ok = store.Get(stageKey("acme", "widget", number))
+	if !ok || rec.Stage != stagelabels.NeedsDecision {
+		t.Fatalf("iteration 2: expected 085 preserved across pending checks, got %+v", rec)
+	}
+	if api.writes() != 0 {
+		t.Fatalf("iteration 2: expected no label changes, got added=%v removed=%v", api.added, api.removed)
+	}
+}
