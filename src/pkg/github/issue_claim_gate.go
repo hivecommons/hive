@@ -70,13 +70,21 @@ func (c *Client) neverClaimLabelSet() []string {
 }
 
 // issueUmbrellaLabel returns the never-claim label labels carry under the
-// set SetNeverClaimLabels last installed (package default until then), or "".
-func issueUmbrellaLabel(labels []string) string {
+// set SetNeverClaimLabels last installed (package default until then),
+// claims.SpekUmbrellaMarker when spekUmbrella says the body marks a
+// Spek-published RFC, or "".
+func issueUmbrellaLabel(labels []string, spekUmbrella bool) string {
 	var never []string
 	if p := umbrellaLabels.Load(); p != nil {
 		never = *p
 	}
-	return claims.NeverClaimLabel(labels, never)
+	if label := claims.NeverClaimLabel(labels, never); label != "" {
+		return label
+	}
+	if spekUmbrella {
+		return claims.SpekUmbrellaMarker
+	}
+	return ""
 }
 
 // issueClaimParkLabel returns the park label that puts labels out of the
@@ -112,7 +120,9 @@ func (c *Client) issueClaimParkLabel(labels []string) string {
 //     agent escalation labels, the retired decision labels): a maintainer
 //     holds it, so nobody starts on it until the un-park;
 //   - an issue wearing a never-claim label (governor.claims.never_claim_labels,
-//     default `epic`): an umbrella issue is the list of work, not the work.
+//     default `epic`), or whose body carries the Spek publish marker with no
+//     `task=` (a Spek-published RFC, spektacular#114): an umbrella issue is
+//     the list of work, not the work.
 //
 // Lookup errors are returned so callers cannot mistake unknown labels for
 // permission to claim. Human claims do not use this gate. A producer about
@@ -163,7 +173,7 @@ func (c *Client) issueClaimGate(ctx context.Context, repo string, number int) (i
 	}
 	if label := c.issueClaimParkLabel(labels); label != "" {
 		res.reason = ClaimBlockReasonParkedPrefix + label
-	} else if label := claims.NeverClaimLabel(labels, c.neverClaimLabelSet()); label != "" {
+	} else if label := claims.NeverClaimReason(labels, c.neverClaimLabelSet(), issue.GetBody()); label != "" {
 		res.reason = ClaimBlockReasonNeverClaimPrefix + label
 	}
 	return res, nil

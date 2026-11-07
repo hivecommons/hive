@@ -139,9 +139,11 @@ func TestClarityGateSkipsIssuesItDoesNotJudge(t *testing.T) {
 	refs := kickedRefs(s, []github.Issue{
 		{Repo: "o/r", Number: 1, Title: "hive-filed", Body: "short"},
 		{Repo: "o/r", Number: 2, Title: "approved", Body: "short", AuthorIsHuman: true, Labels: []string{github.HumanAckLabel}},
+		// spektacular#114: a Spek-published child is already specified.
+		{Repo: "o/r", Number: 3, Title: "spek child", Body: "<!-- spek:publish name=n artifact_id=a target=github task=t1 -->", AuthorIsHuman: true},
 	})
-	if !slices.Contains(refs, "o/r#1") || !slices.Contains(refs, "o/r#2") {
-		t.Fatalf("refs = %v, want both", refs)
+	if !slices.Contains(refs, "o/r#1") || !slices.Contains(refs, "o/r#2") || !slices.Contains(refs, "o/r#3") {
+		t.Fatalf("refs = %v, want all three", refs)
 	}
 	if len(forge.comments) != 0 || len(forge.labels) != 0 {
 		t.Fatalf("gate acted on ungated issues: %v %v", forge.comments, forge.labels)
