@@ -1,0 +1,1 @@
+- Every primed kick now logs one `knowledge: injected N bytes from M entries (skipped K for cap)` line with the primer cap and the sizes of the AGENTS.md and skills blocks, so the knowledge share of a kick is measurable next to `kick rendered` (#17049).
