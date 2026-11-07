@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/internal/streamtail"
 )
 
 // subFlags builds a subcommand flag set that reports to stderr and never
@@ -130,40 +131,12 @@ func (e *Env) stream(ctx context.Context, rt crux.Runtime, name string, interval
 				fmt.Fprintf(e.Stderr, "crux: output %s: %v\n", name, err)
 				return
 			}
-			for _, line := range newTail(prev, cur) {
+			for _, line := range streamtail.Fresh(prev, cur) {
 				fmt.Fprintln(e.Stdout, line)
 			}
 			prev = cur
 		}
 	}
-}
-
-// newTail returns the lines of cur that were not already printed from prev,
-// treating both as windows onto the same append-only buffer: the longest
-// suffix of prev that is a prefix of cur is the overlap.
-func newTail(prev, cur []string) []string {
-	max := len(prev)
-	if len(cur) < max {
-		max = len(cur)
-	}
-	for k := max; k > 0; k-- {
-		if equalLines(prev[len(prev)-k:], cur[:k]) {
-			return cur[k:]
-		}
-	}
-	return cur
-}
-
-func equalLines(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // processRow is the ps projection of a crux.Process: the columns an operator

@@ -195,3 +195,70 @@ func TestProviderStagingRootAndRedactionFailures(t *testing.T) {
 		t.Fatal("nested or overlapping secret redaction failed")
 	}
 }
+
+func TestMountedProviderWorkerDenials(t *testing.T) {
+	root, workspace := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("HIVE_CLINE_CONFIG_DIR", "")
+	source := filepath.Join(root, "source")
+	credentials(t, source, providerConfig)
+	p, err := StageProviderFile(source, "openrouter/test", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	mounted, err := p.MountFile(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	narrowed, err := os.ReadFile(mounted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A denied provider file must never reach inference: the stub leaves a
+	// marker when launched, and none of the cases below may create it.
+	launched := filepath.Join(root, "launched")
+	binary := fakeCLI(t, "touch "+launched+`; cat >/dev/null; echo '{"type":"run_result","finishReason":"completed","text":"done"}'`)
+	write := func(path string, body []byte) string {
+		t.Helper()
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	inWorkspace := write(filepath.Join(workspace, "providers.json"), narrowed)
+	viaSymlink := filepath.Join(root, "outside-link")
+	if err := os.Symlink(inWorkspace, viaSymlink); err != nil {
+		t.Fatal(err)
+	}
+	unreadable := filepath.Join(root, "directory-not-file")
+	if err := os.Mkdir(unreadable, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, file, want string
+	}{
+		{"inside workspace", inWorkspace, "outside the Git workspace"},
+		{"symlink into workspace", viaSymlink, "outside the Git workspace"},
+		{"missing", filepath.Join(root, "missing"), "cannot resolve"},
+		{"unreadable", unreadable, "cannot read the mounted selected Cline provider"},
+		{"unsupported schema", write(filepath.Join(root, "schema.json"), []byte(`{"version":2}`)), "unsupported Cline providers.json schema"},
+		{"other provider only", write(filepath.Join(root, "other.json"), []byte(`{"version":1,"providers":{"other":{"settings":{"apiKey":"test-key"}}}}`)), "not configured"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			code := Run([]string{"--cline", binary, "--model", "openrouter/test", "--provider-file", tc.file,
+				"--cwd", workspace, "--state-dir", filepath.Join(root, "state")}, strings.NewReader("bounded task"), &out, &errOut)
+			if code != 1 || !strings.Contains(errOut.String(), tc.want) {
+				t.Fatalf("code %d, stderr %q", code, &errOut)
+			}
+			if strings.Contains(errOut.String(), "test-key") || strings.Contains(out.String(), "test-key") {
+				t.Fatal("denial leaked the provider credential")
+			}
+			if _, err := os.Stat(launched); !os.IsNotExist(err) {
+				t.Fatal("denied provider file still launched the Cline CLI")
+			}
+		})
+	}
+}

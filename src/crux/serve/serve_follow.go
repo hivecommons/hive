@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/api"
+	"github.com/hivecommons/hive/crux/internal/streamtail"
 )
 
 // followWindow is how many ring-buffer lines each follow poll asks for when
@@ -74,7 +75,7 @@ func (s *Server) followLogs(w http.ResponseWriter, r *http.Request, name string,
 				flusher.Flush()
 				return
 			}
-			if fresh := newTail(prev, cur); len(fresh) > 0 {
+			if fresh := streamtail.Fresh(prev, cur); len(fresh) > 0 {
 				if api.WriteEvent(w, api.EventLog, api.LogChunk{Agent: name, Lines: fresh}) != nil {
 					return
 				}

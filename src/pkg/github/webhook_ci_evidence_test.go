@@ -221,6 +221,12 @@ func TestWebhookCIRefetchListsHeadOnceAndRecordsListing(t *testing.T) {
 	t.Cleanup(resetPRDetailCacheForTest(clock.Now, 0))
 	t.Cleanup(resetWebhookTrackerForTest(clock.Now))
 	t.Cleanup(ResetCIEvidenceForTest(clock.Now))
+	// refetchHeadCI refuses to list while the process-wide REST budget is
+	// critical or the pacing window is engaged; isolate both from whatever
+	// earlier tests left behind.
+	resetRESTAccountingForTest(t, clock.now)
+	ResetRateLimitPacingForTest()
+	t.Cleanup(ResetRateLimitPacingForTest)
 	listings := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/org/repo/commits/sha-9/check-runs" {

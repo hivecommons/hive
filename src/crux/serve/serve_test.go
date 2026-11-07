@@ -1221,7 +1221,7 @@ func TestWriteJSONLogsEncodeFailures(t *testing.T) {
 
 func slogTo(w io.Writer) *slog.Logger { return slog.New(slog.NewTextHandler(w, nil)) }
 
-func TestIsTrueAndNewTail(t *testing.T) {
+func TestIsTrue(t *testing.T) {
 	for _, v := range []string{"1", "true", "YES", "on"} {
 		if !isTrue(v) {
 			t.Errorf("%q should be true", v)
@@ -1230,18 +1230,6 @@ func TestIsTrueAndNewTail(t *testing.T) {
 	for _, v := range []string{"", "0", "false", "maybe"} {
 		if isTrue(v) {
 			t.Errorf("%q should be false", v)
-		}
-	}
-	cases := []struct{ prev, cur, want []string }{
-		{nil, []string{"a"}, []string{"a"}},
-		{[]string{"a", "b"}, []string{"a", "b"}, nil},
-		{[]string{"a", "b"}, []string{"b", "c"}, []string{"c"}},
-		{[]string{"a", "b"}, []string{"x", "y"}, []string{"x", "y"}},
-		{[]string{"a", "b", "c"}, []string{"c"}, nil},
-	}
-	for _, c := range cases {
-		if got := newTail(c.prev, c.cur); strings.Join(got, ",") != strings.Join(c.want, ",") {
-			t.Errorf("newTail(%v,%v) = %v, want %v", c.prev, c.cur, got, c.want)
 		}
 	}
 }
