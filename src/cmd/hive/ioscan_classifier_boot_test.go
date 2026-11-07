@@ -421,3 +421,40 @@ func TestInstallIoscanClassifier_RuntimeUnavailableAlert(t *testing.T) {
 		t.Fatal("runtime alert remains after successful score")
 	}
 }
+
+// A dashboard save re-runs the install against the live config (#16973):
+// switching to fail-open drops the stale unavailable classifier and clears
+// the alert, and naming a tool-less backend installs it, with no restart.
+func TestReinstallIoscanClassifier_AppliesDashboardChanges(t *testing.T) {
+	sink := &fakeClassifierSink{}
+	alerts := &fakeClassifierAlerts{}
+	logger, _ := ioscanBootLogger()
+	cfg := ioscanBootConfigWithAgents(t, 6, "codex")
+	installIoscanClassifier(sink, alerts, cfg, logger, ioscanBootNow)
+	if _, ok := sink.classifier.(ioscan.UnavailableClassifier); !ok {
+		t.Fatalf("installed %T, want UnavailableClassifier", sink.classifier)
+	}
+	msg, ok := alerts.blocked()
+	if !ok || !strings.Contains(msg, "apply immediately") || strings.Contains(msg, "Changes take effect after a restart") {
+		t.Fatalf("blocked-kick alert does not say dashboard changes apply immediately: %q", msg)
+	}
+
+	cfg.Ioscan.FailMode = "open"
+	reinstallIoscanClassifier(sink, alerts, cfg, logger, ioscanBootNow)
+	if sink.classifier != nil {
+		t.Fatalf("fail-open save kept %T installed", sink.classifier)
+	}
+	if _, ok := alerts.blocked(); ok {
+		t.Fatal("fail-open save left the blocked-kick alert raised")
+	}
+
+	cfg.Ioscan.FailMode = ""
+	cfg.Ioscan.Classifier.Backend = "copilot"
+	reinstallIoscanClassifier(sink, alerts, cfg, logger, ioscanBootNow)
+	if _, ok := sink.classifier.(*ioscan.CachedClassifier); !ok {
+		t.Fatalf("backend save installed %T, want *ioscan.CachedClassifier", sink.classifier)
+	}
+	if _, ok := alerts.blocked(); ok {
+		t.Fatal("working backend left the blocked-kick alert raised")
+	}
+}

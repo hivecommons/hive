@@ -140,6 +140,31 @@ func installIoscanClassifier(sched ioscanClassifierSink, alerts ioscanClassifier
 	}
 }
 
+// reinstallIoscanClassifier re-runs installIoscanClassifier against the live
+// config after an Input Defense save, so a new backend or fail mode applies
+// without a restart (#16973). A run that installs nothing (classifier off, or
+// fail-open with no runnable classifier) drops the classifier an earlier run
+// installed, so a stale unavailable classifier cannot keep withholding text.
+func reinstallIoscanClassifier(sched ioscanClassifierSink, alerts ioscanClassifierAlerter, cfg *config.Config, logger *slog.Logger, now func() time.Time) {
+	rec := &ioscanClassifierSetRecorder{ioscanClassifierSink: sched}
+	installIoscanClassifier(rec, alerts, cfg, logger, now)
+	if !rec.set {
+		sched.SetClassifier(nil, ioscan.Thresholds{})
+	}
+}
+
+// ioscanClassifierSetRecorder notes whether installIoscanClassifier installed
+// a classifier.
+type ioscanClassifierSetRecorder struct {
+	ioscanClassifierSink
+	set bool
+}
+
+func (r *ioscanClassifierSetRecorder) SetClassifier(c ioscan.Classifier, t ioscan.Thresholds) {
+	r.set = true
+	r.ioscanClassifierSink.SetClassifier(c, t)
+}
+
 // ioscanClassifierFallbackBackend picks the subscription CLI the classifier
 // runs through when no backend is configured and no model endpoint is
 // resolved: the tool-less-capable backend most of the hive's agents run on,
@@ -207,7 +232,8 @@ func ioscanClassifierBlockedAlertMessage(acmmLevel int, cause error) string {
 		"Kicks carrying untrusted text (issues, comments, PR bodies, reviews) can be withheld until this is fixed. "+
 		"Fix: configure a model endpoint (governor.trajectory or governor.litellm), set ioscan.classifier.backend to one of %s "+
 		"(Settings → Security → Input Defense), or accept scanning without the classifier with ioscan.classifier.fail_mode: open. "+
-		"Changes take effect after a restart.", acmmLevel, cause, strings.Join(ioscan.ToollessBackends(), ", "))
+		"Input Defense changes saved in Settings → Security apply immediately; a model endpoint or hive.yaml edit takes effect after the hive restarts.",
+		acmmLevel, cause, strings.Join(ioscan.ToollessBackends(), ", "))
 }
 
 func raiseIoscanClassifierAlert(alerts ioscanClassifierAlerter, acmmLevel int, cause error) {
