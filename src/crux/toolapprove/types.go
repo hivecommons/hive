@@ -66,8 +66,73 @@ func (r ToolRequest) GetFilePath() string {
 				}
 			}
 		}
+		if paths := r.patchPaths(); len(paths) > 0 {
+			return paths[0]
+		}
 	}
 	return ""
+}
+
+// GetFilePaths returns every file path this request targets: the single
+// path GetFilePath finds, plus every path named in an apply_patch body.
+func (r ToolRequest) GetFilePaths() []string {
+	var paths []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			paths = append(paths, p)
+		}
+	}
+	if r.Target != "" {
+		add(r.Target)
+	} else if r.Arguments != nil {
+		for _, k := range []string{"file_path", "filePath", "path", "target", "filename", "file"} {
+			if s, ok := r.Arguments[k].(string); ok {
+				add(s)
+				break
+			}
+		}
+	}
+	for _, p := range r.patchPaths() {
+		add(p)
+	}
+	return paths
+}
+
+var patchPathHeaders = []string{"*** Update File:", "*** Add File:", "*** Delete File:", "*** Move to:"}
+
+// patchPaths parses the target paths out of an apply_patch body, which
+// carries them in its "*** Update File: <path>" style headers rather than in
+// a path argument.
+func (r ToolRequest) patchPaths() []string {
+	if r.Arguments == nil {
+		return nil
+	}
+	isPatchTool := strings.EqualFold(strings.TrimSpace(r.Tool), "apply_patch")
+	var paths []string
+	seen := map[string]bool{}
+	for _, k := range []string{"input", "patch"} {
+		body, ok := r.Arguments[k].(string)
+		if !ok || (!isPatchTool && !strings.HasPrefix(strings.TrimSpace(body), "*** Begin Patch")) {
+			continue
+		}
+		for _, line := range strings.Split(body, "\n") {
+			line = strings.TrimSpace(line)
+			for _, h := range patchPathHeaders {
+				if !strings.HasPrefix(line, h) {
+					continue
+				}
+				p := strings.TrimSpace(strings.TrimPrefix(line, h))
+				if p != "" && !seen[p] {
+					seen[p] = true
+					paths = append(paths, p)
+				}
+				break
+			}
+		}
+	}
+	return paths
 }
 
 // GetContent returns the text content or body payload associated with this request.
