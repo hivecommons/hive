@@ -61,8 +61,8 @@ func TestSignoffAttributionRewrite(t *testing.T) {
 	first := SignoffAttributionComment(nudge("eb40422ae63967eb7363a3f866e73121c58f2c1b", 8), stage, nil)
 	legacy := strings.Replace(first, SignoffAttributionMarker, SignoffAttributionMarkerPrefix+" head=eb40422ae63967eb7363a3f866e73121c58f2c1b -->", 1)
 	fiveDeep := first
-	for i := 1; i <= 5; i++ {
-		fiveDeep, _ = signoffAttributionRewrite(fiveDeep, nudge(fmt.Sprintf("%040d", i), 8), stage, 8, now.Add(time.Duration(i)*time.Minute))
+	for i := 1; i <= markerHistoryCap; i++ {
+		fiveDeep, _ = signoffAttributionRewrite(fiveDeep, nudge(strings.Repeat(fmt.Sprint(i), 40), 8), stage, 8, now.Add(time.Duration(i)*time.Minute))
 	}
 	for _, tc := range []struct {
 		name        string
