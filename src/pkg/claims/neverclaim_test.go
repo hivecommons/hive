@@ -26,3 +26,28 @@ func TestNeverClaimLabel(t *testing.T) {
 		})
 	}
 }
+
+func TestNeverClaimReason(t *testing.T) {
+	rfc := "<!-- spek:publish name=n artifact_id=a target=github -->"
+	child := "<!-- spek:publish name=n artifact_id=a target=github task=t1 -->"
+	cases := []struct {
+		name   string
+		labels []string
+		never  []string
+		body   string
+		want   string
+	}{
+		{"label wins over marker", []string{"Epic"}, nil, rfc, "Epic"},
+		{"spek rfc without label", []string{"enhancement"}, nil, rfc, SpekUmbrellaMarker},
+		{"spek rfc with gate disabled still umbrella", nil, []string{}, rfc, SpekUmbrellaMarker},
+		{"spek child is work", nil, nil, child, ""},
+		{"plain body", []string{"bug"}, nil, "no marker here", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NeverClaimReason(tc.labels, tc.never, tc.body); got != tc.want {
+				t.Fatalf("NeverClaimReason = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

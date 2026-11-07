@@ -145,7 +145,20 @@ decision:
 ```
 
 suppresses a release for this merge even if `Unreleased` has content (the
-entries stay queued for the next release that does fire). Or force a specific
+entries stay queued for the next release that does fire). Note the
+consequence under the fragment model: nothing but a release empties
+`Unreleased`, so a `none` marker placed there (by hand, in `CHANGELOG.md`)
+is a **release freeze** that lasts until a human removes it, not a one-merge
+skip — the decide job emits a `::warning::` annotation on every run while it
+is in force, and fails outright once the newest tag is older than
+`RELEASE_FREEZE_MAX_DAYS` (default 7; `0` disables) so a forgotten freeze
+turns red instead of looking like a healthy no-op. For the same reason the marker is **rejected in a
+`changelog.d/` fragment** by `check-changelog-fragment.sh` and
+`compile-changelog.sh`: a fragment lives until the release that consumes it,
+so a `none` fragment can never be consumed and vetoes every later merge
+(#12928 stalled v5 releases from 2026-10-19 to 2026-11-07 this way). A
+change that should not be mentioned wants no fragment and the
+`no-changelog` label. Or force a specific
 bump regardless of which headers are present:
 
 ```markdown

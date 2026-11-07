@@ -360,6 +360,49 @@ plus comments. Gitea/GitLab do not currently have `work_source` adapters in
 Hive (they are SCM/forge integrations only), so Spektacular design write-back
 does not target them until those adapters exist.
 
+## Publish hand-off
+
+Spek can also run the other way round: a finished spec or epic is
+**published** as an RFC plus child issues into the hive's work source — GitHub
+Issues, Jira or Linear — so Hive picks the children up from its normal queue
+whether Spek ran standalone or in-hive
+([spektacular#109](https://github.com/hivecommons/spektacular/issues/109),
+[spektacular#114](https://github.com/hivecommons/spektacular/issues/114)). No
+new input path is involved: the children are enumerated, staged and claimed
+exactly like human-filed items. What Spek adds is one hidden marker in every
+body it files:
+
+```
+<!-- spek:publish name=<name> artifact_id=<id> target=<github|jira|linear> [task=<id>] [rfc=<url>] -->
+```
+
+`name` and `artifact_id` identify the spek, `target` the work source. `task`
+is the plan task / member spec id and is present on every **child**; the
+**RFC** itself carries the marker without it. `rfc` is the RFC's URL. Values
+are bare tokens (optionally quoted) separated by whitespace; a marker missing
+`name`, `artifact_id` or a known `target` is malformed and is ignored as a
+whole, and `rfc` is kept only when it parses as an http(s) URL — nothing in
+the marker is echoed into a kick as free text. The parser is
+`pkg/spekmarker`.
+
+Hive reads the marker in four places, none of which needs configuration:
+
+| Behaviour | Where | Effect of the marker |
+|---|---|---|
+| Triage | `runs.triage` (below) | A marker-carrying item is **never** routed into a new `spec` run, whatever `spec_labels` or complexity tier it carries; it takes the direct-fix path as `run/fix` does (signal `marker:spek:publish`). `run/spec` still overrides. |
+| Clarity gate | `runs.triage.clarity_gate` | Not scored, the same way `approved-direction` is skipped: the item is already specified. |
+| Kick context | kick issue list | A child's line gains `↳ specified by Spek: RFC <url> (spek <name>, artifact <id>, task <id>) — build against the spek's acceptance criteria …` and the instruction that the PR body must say `Fixes #<child>`. |
+| Umbrella | `governor.claims.never_claim_labels`, `IsTrackerIssue` | A marker **without** `task=` is the RFC: it is treated like `epic` — refused by every automated claim producer (`never-claim label: spek:publish`), never staged 020/030 from a stray claim, and flagged `[TRACKER]` — even when the repo has no `epic` label. |
+
+Everything else in the handshake is unchanged and documented where it lives:
+enumeration and the hard-suppress labels ([labels-and-control-signals.md](labels-and-control-signals.md)),
+reporter trust (`issue_filter.reporter_trust`: publish as a trusted identity
+or expect the `triage/accepted` step), the prior-art gate (expected to fire on
+the RFC title, not the children), native sub-issue / blocked-by relations
+([hive-open-issue.md](hive-open-issue.md)) and the Jira / Linear source
+filters ([work-sources.md](work-sources.md)). The in-hive stage runner is not
+involved in a publish; a published issue is ordinary work.
+
 ## Triage
 
 The runs triage pass is separate from the Spek runner and is also OFF by
@@ -368,6 +411,9 @@ incoming actionable GitHub issue before a direct-fix kick:
 
 - `run/spec` always admits a `spec` run.
 - `run/fix` always leaves the issue on the normal direct-fix path.
+- An issue whose body carries the Spek publish marker (`<!-- spek:publish … -->`,
+  see [Publish hand-off](#publish-hand-off)) likewise stays on the direct-fix
+  path: it is already specified.
 - Complex issues, or issues carrying `spec_labels` (default `kind/feature`,
   `Epic`, `architecture discussion`), admit a `spec` run by creating the first
   stage lease. The lease is keyed as the run-stage work source expects: the
@@ -440,7 +486,8 @@ The sweep removes `needs-spec` and records the un-park on the stage engine, so
 the issue re-derives `stage/010-actionable` and re-enters the queue. Removing
 `needs-spec` by hand resumes it too. Either way the gate sees the marker and
 does not ask again, however the issue scores. Issues filed by Hive or an agent,
-issues already claimed and issues carrying `approved-direction` are not scored.
+issues already claimed, issues carrying `approved-direction` and Spek-published
+issues (body marker `<!-- spek:publish … -->`) are not scored.
 
 ```yaml
 runs:

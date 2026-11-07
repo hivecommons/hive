@@ -12,6 +12,8 @@ package issueshape
 import (
 	"regexp"
 	"strings"
+
+	"github.com/hivecommons/hive/crux/spekmarker"
 )
 
 var (
@@ -70,6 +72,19 @@ func UnsubstitutedTemplatePlaceholder(text string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// SpekPublished reports whether body carries a valid Spek publish marker
+// (`<!-- spek:publish name=… artifact_id=… target=… -->`, see package
+// spekmarker). Such a body was rendered from a finished spec by
+// hivecommons/spektacular, so the clarity gate treats it as already specified
+// — the same skip `approved-direction` grants — instead of parking it with
+// `needs-spec` (hivecommons/spektacular#114). It is a clarity-scoring
+// exemption only: the hard shape errors (UnsubstitutedTemplatePlaceholder,
+// BodyHasMisEscapedNewlines) still apply to a marked body, because a marker
+// pasted into an unfilled template proves nothing about the template.
+func SpekPublished(body string) bool {
+	return spekmarker.Has(body)
 }
 
 // BodyHasMisEscapedNewlines reports whether body is a single physical line

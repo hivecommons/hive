@@ -439,6 +439,7 @@ func TestIssueStageFor_TriageNeeded(t *testing.T) {
 		{"hive-filed + hive/verified-open", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{VerifiedOpenLabel}}, stagelabels.Actionable, ""},
 		{"hive-filed + approved-direction", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{HumanAckLabel}}, stagelabels.Actionable, ""},
 		{"hive-filed epic without a maintainer label is 010 (umbrella, claim not staged)", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{"Epic"}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.Actionable, ""},
+		{"spek-published RFC without an epic label is 010 (umbrella, claim not staged; spektacular#114)", IssueStageInput{AuthorKind: authorkind.Human, SpekUmbrella: true, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.Actionable, ""},
 		{"human-filed, no labels", IssueStageInput{AuthorKind: authorkind.Human}, stagelabels.Actionable, ""},
 		{"human-filed epic + verified-open (#12999)", IssueStageInput{AuthorKind: authorkind.Human, Labels: []string{"Epic", VerifiedOpenLabel}}, stagelabels.Actionable, ""},
 		{"unknown author is read as human", IssueStageInput{}, stagelabels.Actionable, ""},

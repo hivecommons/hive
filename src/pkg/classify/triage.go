@@ -8,7 +8,12 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/issueshape"
+	"github.com/hivecommons/hive/pkg/spekmarker"
 )
+
+// SpekPublishedSignal is the TriageDecision signal for an item carrying the
+// Spek publish marker (pkg/spekmarker): already specified, direct-fix path.
+const SpekPublishedSignal = "marker:spek:publish"
 
 type TriageVerdict string
 
@@ -44,6 +49,12 @@ func keywordTriage(issue github.Issue, c Classification, cfg config.TriageConfig
 	}
 	if hasLabel(labels, "run/fix") {
 		return triageDecision(TriageFix, "run/fix override label", "label:run/fix")
+	}
+	// A Spek-published item has already been specified: the RFC and its
+	// acceptance criteria exist, so it is never sent into another `spec`
+	// run, whatever labels or tier it carries (spektacular#114).
+	if m, ok := spekmarker.Parse(issue.Body); ok {
+		return triageDecision(TriageFix, "Spek-published item: already specified by spek "+m.Name, SpekPublishedSignal)
 	}
 	body := strings.TrimSpace(issue.Body)
 	if min := cfg.EffectiveMinBodyChars(); len(body) < min {

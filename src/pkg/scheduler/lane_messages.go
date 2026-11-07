@@ -56,6 +56,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 				tier, issue.ModelRec,
 				strings.Join(issue.Labels, ","),
 				title, tracker))
+			b.WriteString(spekPublishedContext(issue))
 			shown++
 		}
 	}

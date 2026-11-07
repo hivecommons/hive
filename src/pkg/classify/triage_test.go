@@ -8,6 +8,8 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 )
 
+const spekChildMarker = "<!-- spek:publish name=billing artifact_id=spk_1 target=github task=t2 rfc=https://github.com/acme/app/issues/9 -->"
+
 func TestTriageRules(t *testing.T) {
 	longBody := "This issue has enough detail to explain the requested behaviour, constraints, and expected outcome."
 	cases := []struct {
@@ -29,6 +31,13 @@ func TestTriageRules(t *testing.T) {
 		{"simple fixes", github.Issue{Body: longBody}, Classification{Tier: TierSimple}, config.TriageConfig{}, TriageFix, "tier:Simple"},
 		{"medium fixes", github.Issue{Body: longBody}, Classification{Tier: TierMedium}, config.TriageConfig{}, TriageFix, "tier:Medium"},
 		{"custom spec label", github.Issue{Labels: []string{"needs-design"}, Body: longBody}, Classification{Tier: TierMedium}, config.TriageConfig{SpecLabels: []string{"needs-design"}}, TriageSpec, "label:needs-design"},
+		// spektacular#114: a Spek-published child is already specified, so
+		// neither a spec label nor a Complex tier re-routes it into a spec run.
+		{"spek child beats spec label", github.Issue{Labels: []string{"kind/feature"}, Body: longBody + "\n" + spekChildMarker}, Classification{Tier: TierComplex}, config.TriageConfig{}, TriageFix, SpekPublishedSignal},
+		{"spek child beats short body", github.Issue{Body: spekChildMarker}, Classification{Tier: TierMedium}, config.TriageConfig{}, TriageFix, SpekPublishedSignal},
+		{"spek umbrella never specs", github.Issue{Labels: []string{"Epic"}, Body: longBody + "\n<!-- spek:publish name=n artifact_id=a target=github -->"}, Classification{Tier: TierComplex}, config.TriageConfig{}, TriageFix, SpekPublishedSignal},
+		{"run/spec still overrides spek marker", github.Issue{Labels: []string{"run/spec"}, Body: spekChildMarker}, Classification{Tier: TierSimple}, config.TriageConfig{}, TriageSpec, "label:run/spec"},
+		{"malformed spek marker is no marker", github.Issue{Labels: []string{"kind/feature"}, Body: longBody + "\n<!-- spek:publish name=n -->"}, Classification{Tier: TierMedium}, config.TriageConfig{}, TriageSpec, "label:kind/feature"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -549,3 +549,53 @@ func TestLinearAgentSessionUpdateReachableAtEveryTier(t *testing.T) {
 		t.Error("agentSessionUpdate + issueUpdate batch allowed at ADVISORY")
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spek publish (hivecommons/spektacular#114): an in-hive Spek files an RFC
+// parent, child issues and blockedBy edges through this gate. Each mutation
+// it needs sits at ISSUES_ONLY with the other issue-artifact writes, and the
+// destructive siblings stay absent from the allowlist.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestLinearSpekPublishMutationsRequireIssuesOnly(t *testing.T) {
+	queries := map[string]string{
+		"issueCreate with parentId": `mutation { issueCreate(input: {teamId: "t", title: "child", parentId: "rfc"}) { success } }`,
+		"issueRelationCreate":       `mutation { issueRelationCreate(input: {issueId: "a", relatedIssueId: "b", type: blocks}) { success } }`,
+		"projectCreate":             `mutation { projectCreate(input: {teamIds: ["t"], name: "RFC: auth"}) { success } }`,
+		"projectUpdate":             `mutation { projectUpdate(id: "p", input: {description: "v2"}) { success } }`,
+	}
+	for name, q := range queries {
+		t.Run(name, func(t *testing.T) {
+			if d := decide(agent.ModeAdvisory, q); d.Allowed {
+				t.Errorf("%s must be DENIED at ADVISORY", name)
+			}
+			if d := LinearGraphQLAllowed(agent.ModeAdvisory, agent.AgentCapabilities{Converse: true}, linearBody(q), false); d.Allowed {
+				t.Errorf("converse must NOT grant %s — publishing is artifact production", name)
+			}
+			for _, mode := range []agent.AgentMode{agent.ModeIssuesOnly, agent.ModeIssuesAndPRs, agent.ModeIssuesPRsMerge} {
+				if d := decide(mode, q); !d.Allowed {
+					t.Errorf("%s must be ALLOWED at %s, got reason %q", name, mode, d.Reason)
+				}
+			}
+		})
+	}
+}
+
+func TestLinearSpekPublishDestructiveSiblingsStayDenied(t *testing.T) {
+	for name, q := range map[string]string{
+		"issueRelationDelete": `mutation { issueRelationDelete(id: "r") { success } }`,
+		"projectDelete":       `mutation { projectDelete(id: "p") { success } }`,
+		"projectArchive":      `mutation { projectArchive(id: "p") { success } }`,
+	} {
+		for _, mode := range allModes {
+			if d := decide(mode, q); d.Allowed {
+				t.Errorf("%s must be DENIED at %s", name, mode)
+			}
+		}
+	}
+	// A batch that creates a relation AND deletes one is denied as a whole.
+	const batch = `mutation { issueRelationCreate(input: {issueId: "a", relatedIssueId: "b", type: blocks}) { success } issueRelationDelete(id: "r") { success } }`
+	if d := decide(agent.ModeIssuesPRsMerge, batch); d.Allowed {
+		t.Error("batch mixing an allowed publish mutation with a delete must be denied")
+	}
+}

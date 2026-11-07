@@ -15,7 +15,7 @@ import (
 
 // nonRuntimeVerbs are dispatch cases that do not operate on a runtime: serve
 // exposes one, help prints usage, cline-turn executes one pane-side worker.
-var nonRuntimeVerbs = map[string]bool{"serve": true, "help": true, "-h": true, "--help": true, "cline-turn": true}
+var nonRuntimeVerbs = map[string]bool{"serve": true, "help": true, "-h": true, "--help": true, "cline-turn": true, "checkout": true}
 
 func TestVerbsHaveRuntimeMethods(t *testing.T) {
 	rt := reflect.TypeOf((*crux.Runtime)(nil)).Elem()
