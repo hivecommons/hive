@@ -9,7 +9,7 @@ package automerge
 // sits at its previous reason (`required-check-missing:<ctx>`) looking like
 // CI is merely slow while the sweep WARNs every tick. The owner's decision is
 // to say so plainly instead of widening the App: the lane marks the PR
-// `unauthorized` — label hive:unauthorized, one comment per head naming the
+// `unauthorized` — label hive:unauthorized, one comment per step naming the
 // missing permission and the exact human step, reason `unauthorized:<step>`
 // so the stage engine parks it at 085 and the tracker's pill column shows
 // the word — and clears all of it in the same tick the step stops being
@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -41,9 +42,9 @@ const (
 	// label on first use so it does not appear in GitHub's random colour.
 	unauthorizedLabelColor       = "6e7781"
 	unauthorizedLabelDescription = "The hive's GitHub App lacks the permission for the next step; a maintainer must take it (see the hive:unauthorized comment)"
-	// unauthorizedMarkerPrefix tags the one comment per head; the marker
-	// carries the head and the step so a new push, or a different blocked
-	// step, gets a fresh note while the same head never gets two.
+	// unauthorizedMarkerPrefix tags the one comment per (PR, step); a
+	// different blocked step gets its own note while a new push rewrites
+	// the existing one with the attempt count.
 	unauthorizedMarkerPrefix = "<!-- hive:unauthorized"
 	// unauthorizedReasonPrefix is the lane reason the stage engine parks at 085.
 	unauthorizedReasonPrefix = prstage.StageReasonUnauthorizedPrefix
@@ -108,7 +109,7 @@ func (c *Engine) unauthorizedStep(owner, repo string, number int, headSHA string
 
 // markUnauthorized records that the lane's next step for this PR head needs
 // permission the App lacks. It adds the label when the PR does not wear it,
-// posts the comment once per (head, step), logs once per (head, step) at
+// upserts the one comment per (PR, step), logs once per (head, step) at
 // INFO, and returns the lane reason to report. Idempotent across ticks and
 // restarts: the label and the comment marker on the PR are the durable
 // state, the in-memory map only quiets the log. Label and comment failures
@@ -200,32 +201,164 @@ func (c *Engine) addUnauthorizedLabel(ctx context.Context, owner, repo string, n
 	return err
 }
 
-// unauthorizedMarker is the first line of the comment for a head and step.
-func unauthorizedMarker(headSHA, step string) string {
+// unauthorizedMarker is the first line of the comment for a step. One
+// comment per PR and step (hivecommons/hive#17066): a new head rewrites it
+// with the attempt count and the heads it covers instead of posting again.
+func unauthorizedMarker(step string) string {
+	return unauthorizedMarkerPrefix + " step=" + step + " -->"
+}
+
+// unauthorizedLegacyMarker is the per-head first line comments carried
+// before hivecommons/hive#17066; the upsert adopts the latest one.
+func unauthorizedLegacyMarker(headSHA, step string) string {
 	return unauthorizedMarkerPrefix + " head=" + strings.ToLower(headSHA) + " step=" + step + " -->"
 }
 
-// unauthorizedComment is the comment body: the marker, then the permission
-// the App lacks, the step it therefore cannot take, and what a person does.
-func unauthorizedComment(headSHA, step, permission, humanAction string) string {
-	return fmt.Sprintf("%s\nThe hive's GitHub App lacks `%s`, so it cannot %s for head `%s`. %s Hive will resume automatically once the step is done; this label and note clear themselves.",
-		unauthorizedMarker(headSHA, step), permission, strings.ReplaceAll(step, "-", " "), shortSHA(headSHA), strings.TrimSpace(humanAction))
+// unauthorizedAttemptsPrefix / unauthorizedAttemptsSuffix frame the hidden
+// line that records the attempt count and the heads the note covers:
+//
+//	<!-- hive:unauthorized-attempts n=3 heads=aaa,bbb,ccc -->
+const (
+	unauthorizedAttemptsPrefix = "<!-- hive:unauthorized-attempts n="
+	unauthorizedAttemptsSuffix = " -->"
+	// unauthorizedHeadsCap bounds the heads the note remembers; the
+	// attempt count keeps growing past it.
+	unauthorizedHeadsCap = markerHistoryCap
+)
+
+// unauthorizedAttempts is the state an existing note carries.
+type unauthorizedAttempts struct {
+	Count int
+	Heads []string
 }
 
-// commentUnauthorized posts the note once per (head, step): an existing
-// marker on the PR, or a prior effects claim, suppresses it.
+// isUnauthorizedCommentFor reports whether body is the hive:unauthorized
+// note for step, in either the current or the per-head legacy form.
+func isUnauthorizedCommentFor(step string) func(body string) bool {
+	marker := unauthorizedMarker(step)
+	suffix := " step=" + step + " -->"
+	return func(body string) bool {
+		first, _, _ := strings.Cut(body, "\n")
+		if first == marker {
+			return true
+		}
+		return strings.HasPrefix(first, unauthorizedMarkerPrefix+" head=") && strings.HasSuffix(first, suffix)
+	}
+}
+
+// parseUnauthorizedAttempts reads the attempt state from an existing note.
+// A legacy per-head note counts as one attempt on the head its marker
+// names; a note with no record counts as one attempt on no known head.
+func parseUnauthorizedAttempts(body string) unauthorizedAttempts {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, unauthorizedAttemptsPrefix) || !strings.HasSuffix(line, unauthorizedAttemptsSuffix) {
+			continue
+		}
+		fields := strings.Fields(strings.TrimSuffix(strings.TrimPrefix(line, unauthorizedAttemptsPrefix), unauthorizedAttemptsSuffix))
+		if len(fields) == 0 {
+			break
+		}
+		n, err := strconv.Atoi(fields[0])
+		if err != nil || n < 1 {
+			n = 1
+		}
+		out := unauthorizedAttempts{Count: n}
+		for _, f := range fields[1:] {
+			if heads, ok := strings.CutPrefix(f, "heads="); ok {
+				for _, h := range strings.Split(heads, ",") {
+					if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+						out.Heads = append(out.Heads, h)
+					}
+				}
+			}
+		}
+		return out
+	}
+	first, _, _ := strings.Cut(body, "\n")
+	if rest, ok := strings.CutPrefix(first, unauthorizedMarkerPrefix+" head="); ok {
+		head, _, _ := strings.Cut(rest, " ")
+		if head != "" {
+			return unauthorizedAttempts{Count: 1, Heads: []string{strings.ToLower(head)}}
+		}
+	}
+	return unauthorizedAttempts{Count: 1}
+}
+
+// covers reports whether the note already names headSHA.
+func (a unauthorizedAttempts) covers(headSHA string) bool {
+	return slices.Contains(a.Heads, strings.ToLower(headSHA))
+}
+
+// next is the state after one more attempt on headSHA: the count grows and
+// the head joins the remembered set (oldest dropped past the cap).
+func (a unauthorizedAttempts) next(headSHA string) unauthorizedAttempts {
+	heads := append(slices.Clone(a.Heads), strings.ToLower(headSHA))
+	if len(heads) > unauthorizedHeadsCap {
+		heads = heads[len(heads)-unauthorizedHeadsCap:]
+	}
+	return unauthorizedAttempts{Count: a.Count + 1, Heads: heads}
+}
+
+// record renders the hidden attempt line.
+func (a unauthorizedAttempts) record() string {
+	return unauthorizedAttemptsPrefix + strconv.Itoa(a.Count) + " heads=" + strings.Join(a.Heads, ",") + unauthorizedAttemptsSuffix
+}
+
+// unauthorizedComment is the comment body: the marker, then the permission
+// the App lacks, the step it therefore cannot take and what a person does,
+// then the attempt record. A first attempt shows no count; later ones say
+// how many heads have hit the same block.
+func unauthorizedComment(headSHA, step, permission, humanAction string, attempts unauthorizedAttempts) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\nThe hive's GitHub App lacks `%s`, so it cannot %s for head `%s`. %s Hive will resume automatically once the step is done; this label and note clear themselves.",
+		unauthorizedMarker(step), permission, strings.ReplaceAll(step, "-", " "), shortSHA(headSHA), strings.TrimSpace(humanAction))
+	if attempts.Count > 1 {
+		short := make([]string, 0, len(attempts.Heads))
+		for _, h := range attempts.Heads {
+			short = append(short, "`"+shortSHA(h)+"`")
+		}
+		fmt.Fprintf(&b, "\n\n<sub>Attempt %d: the same block hit heads %s.</sub>", attempts.Count, strings.Join(short, ", "))
+	}
+	b.WriteString("\n")
+	b.WriteString(attempts.record())
+	b.WriteString("\n")
+	return b.String()
+}
+
+// unauthorizedCommentCoversHead reports whether comments carry the hive's
+// note for step naming headSHA: a previous process already learnt the App
+// cannot take the step on this head.
+func unauthorizedCommentCoversHead(comments []*gh.IssueComment, step, headSHA string) bool {
+	match := isUnauthorizedCommentFor(step)
+	for _, comment := range comments {
+		if comment == nil || !match(comment.GetBody()) {
+			continue
+		}
+		if parseUnauthorizedAttempts(comment.GetBody()).covers(headSHA) {
+			return true
+		}
+	}
+	return false
+}
+
+// commentUnauthorized keeps one note per (PR, step): a note already naming
+// this head is left alone; a note for an earlier head is rewritten in place
+// with the attempt count; no note posts one through the effects claim.
 func (c *Engine) commentUnauthorized(ctx context.Context, owner, repo string, number int, headSHA, step, permission, humanAction string) error {
-	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	existing, err := c.findOwnMarkerComment(ctx, owner, repo, number, isUnauthorizedCommentFor(step))
 	if err != nil {
 		return err
 	}
-	marker := unauthorizedMarker(headSHA, step)
-	for _, comment := range comments {
-		if comment != nil && strings.HasPrefix(comment.GetBody(), marker) {
+	if existing != nil {
+		attempts := parseUnauthorizedAttempts(existing.GetBody())
+		if attempts.covers(headSHA) {
 			return nil
 		}
+		return c.editMarkerComment(ctx, owner, repo, existing.GetID(), unauthorizedComment(headSHA, step, permission, humanAction, attempts.next(headSHA)))
 	}
-	body := unauthorizedComment(headSHA, step, permission, humanAction)
+	marker := unauthorizedMarker(step)
+	body := unauthorizedComment(headSHA, step, permission, humanAction, unauthorizedAttempts{Count: 1, Heads: []string{strings.ToLower(headSHA)}})
 	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindIssueComment,
