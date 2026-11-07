@@ -305,6 +305,7 @@ func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue)
 	}
 	primed := primer.PrimeScoped(context.Background(), scope, nil, keywords)
 	result, omitted := primed.Render()
+	s.primedSlugs.Store(agentName, primed.RenderedSlugs())
 	inj := knowledgeInjection{
 		Section:       result,
 		Bytes:         len(result),
@@ -357,6 +358,19 @@ func (s *Scheduler) logKnowledgeInjection(agentName string, inj knowledgeInjecti
 		"agents_md_bytes", agentsMdBytes,
 		"skills_bytes", skillsBytes,
 	)
+}
+
+// KickPrimedSlugs returns the knowledge slugs the most recent kick message
+// built for agentName actually rendered in its `# Relevant Knowledge` block.
+// The mid-task advisor (#17052) uses it to never repeat what the kick carried;
+// facts the byte cap dropped are not in it and so stay eligible.
+func (s *Scheduler) KickPrimedSlugs(agentName string) []string {
+	v, ok := s.primedSlugs.Load(agentName)
+	if !ok {
+		return nil
+	}
+	slugs, _ := v.([]string)
+	return slugs
 }
 
 // extractKeywords pulls searchable terms from issue labels and titles.

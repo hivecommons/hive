@@ -3919,6 +3919,11 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// per-agent "Prompts" tab. Redaction and truncation happen inside the
 	// store, before anything is written to the PVC.
 	b.agentMgr.SetRecordPromptCallback(b.dashSrv.RecordPrompt)
+	// Mid-task knowledge advisor (#17052): the runtime asks this when an
+	// agent's pane first shows a scope its kick did not cover. Policy is read
+	// off the live config per call, so knowledge.advisor flips without a
+	// restart; the adviser itself is a no-op until SetPrimer has run.
+	b.agentMgr.SetKnowledgeAdviser(newKnowledgeAdviser(b))
 
 	// Feed agent lifecycle events (start, stop, launch FAILURE, backend/model
 	// change) into the durable audit store behind the dashboard's Audit Log.

@@ -325,7 +325,9 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			}
 
 			if !IsInferenceBackend(effectiveBackend(agent)) {
-				m.nudgeIfPollingCI(agent, output, m.captureVisiblePaneForAgent(agent))
+				visible := m.captureVisiblePaneForAgent(agent)
+				m.nudgeIfPollingCI(agent, output, visible)
+				m.adviseKnowledge(agent, output, visible)
 			}
 
 			// Detect copilot hung: if running long enough with no CLI prompt,
