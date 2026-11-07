@@ -162,6 +162,20 @@ func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, ui
 		filepath.Join(workDir, config.BobStateDirName),
 	}
 
+	// The per-agent home is provisioned by setupInteractiveHome INSIDE the
+	// launch, which runs after this preflight, so on a per-UID bob agent's
+	// very first launch $HOME does not exist yet. Walking up from a missing
+	// home lands on /data/home/agents, which is deliberately 0755 dev-owned
+	// (no agent writes there), and the group test then reports a bogus
+	// "chmod 2775 /data/home/agents" on every new agent. The home that is
+	// about to be created is agent-owned 0700, so its ~/.bob is writable by
+	// construction; only the workspace dir is worth probing in that shape.
+	if _, err := os.Stat(home); err != nil && os.IsNotExist(err) {
+		m.logger.Debug("bob home does not exist yet; skipping $HOME/.bob probes until the launch provisions it",
+			"agent", agentName, "home", home, "uid", uid)
+		probeDirs = probeDirs[2:]
+	}
+
 	for _, dir := range probeDirs {
 		info, err := os.Stat(dir)
 		if err != nil {
@@ -181,7 +195,7 @@ func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, ui
 							m.logger.Error("bob state dir does not exist and its parent is not writable by the agent UID; bob's first-run mkdir will fail with EACCES",
 								"agent", agentName, "dir", dir, "parent", parent,
 								"parent_mode", fs.FileMode(pMode).String(), "uid", uid,
-								"remedy", "chmod 2775 "+parent+" and ensure it is group-owned by node")
+								"remedy", bobStateDirRemedy(pInfo, parent, uid, "2775"))
 							unwritable = append(unwritable, dir)
 						}
 					}
@@ -207,11 +221,26 @@ func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, ui
 			m.logger.Error("bob state dir is not writable by the agent UID; bob will report \"error saving your latest settings changes\" and \"Failed to initialize logger\"",
 				"agent", agentName, "dir", dir,
 				"mode", fs.FileMode(mode).String(), "uid", uid,
-				"remedy", "chmod 770 "+dir+" and ensure it is group-owned by node")
+				"remedy", bobStateDirRemedy(info, dir, uid, "770"))
 			unwritable = append(unwritable, dir)
 		}
 	}
 	return unwritable
+}
+
+// bobStateDirRemedy returns the chmod an operator should run for a state dir
+// that bobStateDirWritableBy rejected. The advice must match the branch that
+// failed: a dir OWNED by the agent UID (bob's own ~/.bob) was judged by its
+// owner bits, so widening the group — the remedy for dev-owned dirs reached
+// through group `node` — would not fix it and would hand every agent UID on
+// the node write access to one agent's private state. groupMode is the mode
+// to prescribe for the dev-owned shape ("2775" for a parent, "770" for the
+// dir itself).
+func bobStateDirRemedy(info fs.FileInfo, dir string, uid int, groupMode string) string {
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) == uid {
+		return "chmod u+rwx " + dir + " (agent-owned; do not widen group access)"
+	}
+	return "chmod " + groupMode + " " + dir + " and ensure it is group-owned by node"
 }
 
 // bobStateDirWritableBy reports whether the agent UID can create or replace
