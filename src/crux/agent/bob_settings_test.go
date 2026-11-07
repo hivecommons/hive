@@ -674,3 +674,40 @@ func TestVerifyBobStateDirsWritableIgnoresNonDirectoryStatePath(t *testing.T) {
 		t.Errorf("verifyBobStateDirsWritable() = %v for non-directory state path, want advisory warning only", got)
 	}
 }
+
+// TestBobStateHomeIsPerAgentHome pins that the preflight probes the per-agent
+// ~/.bob bob actually writes to, not the shared /data/home/.bob.
+func TestBobStateHomeIsPerAgentHome(t *testing.T) {
+	t.Setenv("HIVE_SHARED_AGENT_HOME", "")
+	sharedRoot := t.TempDir()
+	orig := sharedAgentHome
+	sharedAgentHome = sharedRoot
+	t.Cleanup(func() { sharedAgentHome = orig })
+
+	got := bobStateHome("tester", 2004, bobBackend)
+	if want := interactiveHomePath("tester"); got != want {
+		t.Fatalf("bobStateHome() = %q, want per-agent home %q", got, want)
+	}
+	if got == bobSharedHome || got == sharedRoot {
+		t.Errorf("bobStateHome() = %q, must not be the shared home", got)
+	}
+
+	// An unwritable per-agent ~/.bob is reported against the per-agent dir.
+	agentBob := filepath.Dir(bobSettingsPath(got))
+	if err := os.MkdirAll(agentBob, 0o770); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(agentBob, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(agentBob, 0o770) })
+	workDir := t.TempDir()
+	if err := os.Chmod(workDir, 0o770); err != nil {
+		t.Fatalf("chmod workDir: %v", err)
+	}
+	m := &Manager{logger: discardLogger()}
+	unwritable := m.verifyBobStateDirsWritable("tester", got, workDir, 2004)
+	if len(unwritable) == 0 || unwritable[0] != agentBob {
+		t.Errorf("verifyBobStateDirsWritable() = %v, want first entry %s", unwritable, agentBob)
+	}
+}
