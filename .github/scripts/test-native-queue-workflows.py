@@ -97,6 +97,10 @@ class NativeQueueWorkflows(unittest.TestCase):
         verifier = workflow("pr-verifier.yml")
         events = verifier.get("on", verifier.get(True))
         self.assertIn("opened", events["pull_request_target"]["types"])
+        # Bot token pushes fire no pull_request_target event; label flips must
+        # re-run the required context on the current head (#17036).
+        for action in ("synchronize", "ready_for_review", "labeled", "unlabeled"):
+            self.assertIn(action, events["pull_request_target"]["types"])
         job = verifier["jobs"]["verify"]
         self.assertNotIn("if", job)
         self.assertEqual(job["name"], "verify PR contents")
