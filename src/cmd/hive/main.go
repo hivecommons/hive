@@ -3081,7 +3081,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			b.logger.Warn("failed to create bead-synth vault dir", "path", synthVaultPath, "error", err)
 		}
 		if b.knowledgeAPI != nil {
-			if connErr := b.knowledgeAPI.ConnectVault(synthVaultPath, "bead-synth-wiki"); connErr != nil {
+			if connErr := b.knowledgeAPI.ConnectVault(synthVaultPath, beadSynthVaultName); connErr != nil {
 				b.logger.Warn("failed to auto-connect bead-synth vault", "path", synthVaultPath, "error", connErr)
 			} else {
 				b.logger.Info("auto-connected bead-synth vault", "path", synthVaultPath)
@@ -3137,6 +3137,11 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			)
 		}
 	}
+
+	// CLI memory drain (hivecommons/hive#17033); opt-in, makes sure the
+	// bead-synth vault it writes drafts into is connected before the primer
+	// registers stores below.
+	b.installCLIMemoryDrainer()
 
 	// Generated repository code maps (#11106); opt-in, connects its vault
 	// before stores are registered with the primer below.
