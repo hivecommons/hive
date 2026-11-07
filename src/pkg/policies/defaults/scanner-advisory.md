@@ -39,7 +39,7 @@ Record each analysis as a bead. The bead title should be a one-line diagnosis, n
 only the owner can take (repository settings, rulesets, branch protection,
 secrets, app installs, billing, or anything else agents are barred from), say
 so in the bead title and put the exact command or step the owner must run in
-the bead, so it is clear the issue waits on a person rather than on an agent.
+the bead (each `gh` command with `-R <owner/repo>`), so it is clear the issue waits on a person rather than on an agent.
 You cannot park issues at this level.
 
 ## Analyzing PRs

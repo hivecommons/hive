@@ -55,6 +55,11 @@ func TestLanePoliciesParkOwnerOnlyHandOffs(t *testing.T) {
 	rule := []byte("**Park an existing issue when only the owner can finish it.**")
 	command := []byte("`hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision`")
 	releaseCommand := []byte("`--step-kind release --release-tag <tag> --release-target <full-commit-sha>`")
+	// A command handed to the owner must work outside a clone of the repo:
+	// `gh workflow run release.yml --ref main` without -R fails anywhere
+	// else (Danathar/goodreads-mcp#443).
+	repoFlag := []byte("`gh` command `-R <owner/repo>`")
+	beadRepoFlag := []byte("(each `gh` command with `-R <owner/repo>`)")
 
 	entries, err := fs.ReadDir(DefaultPolicies, "defaults")
 	if err != nil {
@@ -78,6 +83,8 @@ func TestLanePoliciesParkOwnerOnlyHandOffs(t *testing.T) {
 			// Lanes that cannot comment record the step in the bead instead.
 			if !bytes.Contains(data, []byte("**Owner-only steps.**")) {
 				t.Errorf("%s has no owner-only rule", e.Name())
+			} else if !bytes.Contains(data, beadRepoFlag) {
+				t.Errorf("%s does not ask for -R <owner/repo> on the owner's gh commands", e.Name())
 			}
 			continue
 		}
@@ -90,6 +97,9 @@ func TestLanePoliciesParkOwnerOnlyHandOffs(t *testing.T) {
 		}
 		if !bytes.Contains(data, rule) || !bytes.Contains(data, command) || !bytes.Contains(data, releaseCommand) {
 			t.Errorf("%s lacks the owner-only park rule naming %s and the typed release flags %s", e.Name(), command, releaseCommand)
+		}
+		if !bytes.Contains(data, repoFlag) {
+			t.Errorf("%s does not ask for -R <owner/repo> on the owner's gh commands", e.Name())
 		}
 	}
 	if checked == 0 {
