@@ -91,6 +91,9 @@ type contributorLaneFixture struct {
 	updates         int
 	lastComment     string
 	allComments     []string
+	// commentEdits records the bodies written by PATCH /issues/comments/ID,
+	// which also rewrites the matching prComments entry.
+	commentEdits []string
 	// checkCompletedAt, when set, is the completed_at the check-runs
 	// endpoint reports for sha7 (RFC 3339); empty omits the field.
 	checkCompletedAt string
@@ -474,6 +477,19 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				"body": payload.Body,
 			})
 			json.NewEncoder(w).Encode(map[string]any{"id": 1000 + fx.comments})
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/comments/"):
+			id, _ := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/issues/comments/"), 10, 64)
+			var payload struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			for _, c := range fx.prComments {
+				if cid, ok := c["id"]; ok && fmt.Sprint(cid) == strconv.FormatInt(id, 10) {
+					c["body"] = payload.Body
+				}
+			}
+			fx.commentEdits = append(fx.commentEdits, payload.Body)
+			json.NewEncoder(w).Encode(map[string]any{"id": id, "body": payload.Body})
 		case r.Method == http.MethodGet && otherPRCommentsNumber(r.URL.Path) > 0:
 			comments := fx.otherPRComments[otherPRCommentsNumber(r.URL.Path)]
 			if comments == nil {

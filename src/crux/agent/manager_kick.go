@@ -317,6 +317,12 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 		time.Sleep(staleCheckDelay)
 	}
 
+	// Persistent CLI memory (hivecommons/hive#17032) is wiped before the
+	// conversation /clear below, and skipped on the same resume kicks: a
+	// resumed session is continuing prior work, not starting a fresh turn.
+	if !skipClear {
+		m.clearCLIMemoryForKick(agent, backend)
+	}
 	if agent.Config.ClearOnKick && !skipClear {
 		if err := m.tmuxSendLiteralForAgent(agent, "/clear"); err != nil {
 			return m.kickDeliveryFailedLocked(agent, "send text", err)

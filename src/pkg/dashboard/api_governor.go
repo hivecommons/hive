@@ -164,8 +164,11 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"stageLabelsDwell":   formatStageDwell(cfg.Governor.Labels.Stage.Dwell),
 		// governor.labels.stage.contributor_nudge.* and presence_window
 		// (hivecommons/hive#12436): the stage-072 contributor nudge.
-		"stageNudgeEnabled":   cfg.Governor.Labels.Stage.ContributorNudge.IsEnabled(),
-		"stageNudgeRenudge":   cfg.Governor.Labels.Stage.ContributorNudge.RenudgeInterval,
+		"stageNudgeEnabled": cfg.Governor.Labels.Stage.ContributorNudge.IsEnabled(),
+		"stageNudgeRenudge": cfg.Governor.Labels.Stage.ContributorNudge.RenudgeInterval,
+		// auto_merge.nudge_repeat_after (hivecommons/hive#17067): the
+		// same-reason re-nudge window the legacy renudge_interval defers to.
+		"nudgeRepeatAfter":    cfg.AutoMerge.NudgeRepeatAfter,
 		"stagePresenceWindow": cfg.Governor.Labels.Stage.PresenceWindow,
 		// governor.labels.stage.adoption.enabled / contributor_grace_*: the
 		// stage-074 adoption of red contributor PRs.
@@ -809,6 +812,9 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		StageNudgeEnabled   *bool   `json:"stage_nudge_enabled"`
 		StageNudgeRenudge   *string `json:"stage_nudge_renudge_interval"`
 		StagePresenceWindow *string `json:"stage_presence_window"`
+		// NudgeRepeatAfter is auto_merge.nudge_repeat_after
+		// (hivecommons/hive#17067); a Go duration, empty restores 72h.
+		NudgeRepeatAfter *string `json:"nudge_repeat_after"`
 		// Stage-074 adoption: governor.labels.stage.adoption.enabled and
 		// governor.labels.stage.contributor_grace_online / _offline.
 		StageAdoptionEnabled *bool `json:"stage_adoption_enabled"`
@@ -917,6 +923,7 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	for name, v := range map[string]*string{
 		"stage_nudge_renudge_interval": body.StageNudgeRenudge,
+		"nudge_repeat_after":           body.NudgeRepeatAfter,
 		"stage_presence_window":        body.StagePresenceWindow,
 		"stage_grace_online":           body.StageGraceOnline,
 		"stage_grace_offline":          body.StageGraceOffline,
@@ -1026,6 +1033,9 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.StageNudgeRenudge != nil {
 		s.deps.Config.Governor.Labels.Stage.ContributorNudge.RenudgeInterval = strings.TrimSpace(*body.StageNudgeRenudge)
+	}
+	if body.NudgeRepeatAfter != nil {
+		s.deps.Config.AutoMerge.NudgeRepeatAfter = strings.TrimSpace(*body.NudgeRepeatAfter)
 	}
 	if body.StagePresenceWindow != nil {
 		s.deps.Config.Governor.Labels.Stage.PresenceWindow = strings.TrimSpace(*body.StagePresenceWindow)

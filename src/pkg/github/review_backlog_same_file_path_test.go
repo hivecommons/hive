@@ -69,7 +69,7 @@ func TestReviewBacklogSameFileNamesSharedPath(t *testing.T) {
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P2"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit"}},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit"}, MinSeverity: "P3"},
 		}
 	})
 	finding := nit("Tracking issue #490 already closed despite five outputs still pending", "low", "config/factory-build-backlog.toml", 12,

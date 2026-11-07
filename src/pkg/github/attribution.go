@@ -390,6 +390,34 @@ func HasAttributionTrailer(body string) bool {
 // footer may end with the origin marker (`<!-- hive:origin … -->`, #12539).
 var attributionIdentityFooter = regexp.MustCompile("\\n[ \\t]*---[ \\t]*\\n🐝 \\*\\*Hive Agent\\*\\*:(?: `[^`\\n]+`)?(?: \\| \\*\\*Instance:\\*\\* `[^`\\n]+`)? \\| \\*\\*SHA:\\*\\* `[^`\\n]+`[ \\t]*(?:\\n[ \\t]*<!-- " + OriginMarkerName + "[^>]*-->)?[ \\t\\n]*$")
 
+// OriginFooterNote reports whether body is an agent's free-text note whose
+// only machine marker is the identity footer's `<!-- hive:origin … -->`
+// (hivecommons/hive#17067): the footer is present and carries the origin
+// marker, and no other `<!-- hive…` marker (a verification, blocker or
+// status marker) claims the comment for a dedicated path. note is the body
+// with the footer removed and trimmed; a body that is nothing but the
+// footer is not a note.
+func OriginFooterNote(body string) (note string, ok bool) {
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	loc := attributionIdentityFooter.FindStringIndex(body)
+	if loc == nil {
+		return "", false
+	}
+	footer := body[loc[0]:loc[1]]
+	if !strings.Contains(footer, "<!-- "+OriginMarkerName) {
+		return "", false
+	}
+	rest := body[:loc[0]]
+	if strings.Count(body, "<!-- hive") != 1 {
+		return "", false
+	}
+	note = strings.TrimSpace(rest)
+	if note == "" {
+		return "", false
+	}
+	return note, true
+}
+
 // ParseAttributionTrailer extracts the launch metadata from the final visible
 // `— hive:` line in a PR body, optionally followed by Hive's identity footer.
 // Mentions of the template earlier in the body are deliberately ignored so

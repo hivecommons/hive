@@ -95,9 +95,10 @@ on; `governor.labels.stage.enabled: false` stops the reconciler,
 `governor.labels.stage.stalled.require_quiet: false` measures the dwell from
 stage entry instead of last activity (Settings → Labels). When a clanker
 PR enters
-`stage/072-returned-to-contributor` the hive posts one nudge comment per head
-(re-nudged once after `governor.labels.stage.contributor_nudge.renudge_interval`,
-default = the 24h dwell; cap 2) and, for a contributor whose relay heartbeat is
+`stage/072-returned-to-contributor` the hive keeps one nudge comment per PR
+and reason class, edited in place for a new head or changed reason (re-nudged
+once after `governor.labels.stage.contributor_nudge.renudge_interval`,
+default = `auto_merge.nudge_repeat_after`, 72h; cap 2 per reason) and, for a contributor whose relay heartbeat is
 within `governor.labels.stage.presence_window` (default 15m), pushes a `fix-pr`
 interrupt to their relay session, bounded by the per-contributor fix budget
 (`contribute.max_parallel_fixes` / `contribute.min_focus_window`).
@@ -885,6 +886,14 @@ level=INFO msg="kick rendered" agent=scanner repo="" kick_bytes=58123 issues_tot
 ```
 
 `kick_bytes` is the prompt as typed (canary preamble included). When `issues_listed` / `prs_listed` sit well below the caps on every kick, lowering them changes nothing; when `*_total` is persistently far above `*_listed`, the backlog — not the cap — is the problem, and the overflow marker in the prompt already tells the agent the list is partial. Per-agent kicks share the same global caps; set them under **Settings → Repos → Kick prompt list caps** or in `governor.kick_limits`, with `0` meaning unlimited.
+
+**The knowledge share of a kick.** Next to `kick rendered`, each kick that was primed logs one knowledge line ([#17049](https://github.com/hivecommons/hive/issues/17049)):
+
+```
+level=INFO msg="knowledge: injected 3900 bytes from 7 entries (skipped 3 for cap)" agent=developer injected_bytes=3900 entries=7 skipped_for_cap=3 cap_bytes=4096 primed=true agents_md_bytes=1980 skills_bytes=0
+```
+
+`injected_bytes` / `entries` are the rendered `# Relevant Knowledge` block; `skipped_for_cap` counts relevant facts dropped whole because they did not fit `knowledge.primer.max_bytes` (`cap_bytes`); `agents_md_bytes` and `skills_bytes` are the repository `AGENTS.md` block and the requested-skills block that share the kick. A zero line (`primed=true`, 0 entries) means priming ran and found nothing relevant — the signal that the store lacks entries for that lane's work. The line is not emitted when knowledge is disabled or there was nothing to prime, so a hive without a knowledge store does not log a zero on every kick. Read it against `src/docs/knowledge-entries.md` when deciding whether a fact belongs in `AGENTS.md` (paid on every kick) or in a scoped entry (paid only when it matches).
 
 ### What consumes tokens while agents are paused
 

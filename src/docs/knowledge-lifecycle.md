@@ -34,7 +34,9 @@ Remote wiki layers only carry a `status`, which is mapped the same way.
 
 - **Kick primers** include approved facts only. Set
   `knowledge.PrimerConfig.IncludeStates` (`include_states`) to admit other
-  states.
+  states. An agent whose `knowledge.agent_scopes` entry lists `draft` is also
+  primed with the drafts it (or the hive owner) authored, marked `(draft)`;
+  see [Per-agent scopes](knowledge-toc.md#per-agent-scopes).
 - **`GET /api/knowledge/search`** returns approved facts only unless the
   operator passes `include_states`, e.g. `include_states=deprecated,superseded`
   or `include_states=all`.

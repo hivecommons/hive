@@ -268,8 +268,12 @@ type Fact struct {
 	Layer            LayerType `json:"layer"`
 	Sources          []Source  `json:"sources,omitempty"`
 	Related          []string  `json:"related,omitempty"`
-	UsageCount       int       `json:"usage_count"`
-	LastUsed         time.Time `json:"last_used,omitempty"`
+	// Author is the entry's `author:` (or `owner:`) frontmatter: the agent or
+	// person who wrote it. The kick primer uses it to let a draft reach the
+	// agent that owns it (#17076); empty for sources that record no author.
+	Author     string    `json:"author,omitempty"`
+	UsageCount int       `json:"usage_count"`
+	LastUsed   time.Time `json:"last_used,omitempty"`
 
 	// State is the lifecycle state (draft, approved, deprecated, superseded).
 	// Empty means the fact predates lifecycle states; see EffectiveState.
@@ -281,6 +285,10 @@ type Fact struct {
 	Supersedes   string    `json:"supersedes,omitempty"`
 	SupersededBy string    `json:"superseded_by,omitempty"`
 	Phase        FactPhase `json:"phase,omitempty"`
+
+	// Scope says where the fact applies (the entry's `scope:` block,
+	// #17045). Nil means everywhere; see FactScope.Admits.
+	Scope *FactScope `json:"scope,omitempty"`
 
 	// Updated, BodySize and Origin feed the table of contents (#11103). They
 	// are populated by file-backed stores only and never serialized, so
@@ -309,6 +317,18 @@ type PrimedKnowledge struct {
 	// MaxBytes bounds the rendered prompt text (PrimerConfig.MaxBytes). Zero
 	// means DefaultPrimerMaxBytes.
 	MaxBytes int `json:"-"`
+	// rendered is the slugs Render kept, in render order, for the mid-task
+	// advisor's "never repeat what the kick carried" rule (#17052).
+	rendered []string
+	// ScopedOut counts relevant facts the kick context excluded because their
+	// scope (paths, labels, lanes) did not match (#17045).
+	ScopedOut int `json:"-"`
+}
+
+// RenderedSlugs returns the slugs of the facts the last Render kept — the
+// entries the kick actually carried, excluding those the byte cap dropped.
+func (pk *PrimedKnowledge) RenderedSlugs() []string {
+	return append([]string(nil), pk.rendered...)
 }
 
 // FormatForPrompt renders primed facts as markdown for injection into an agent's

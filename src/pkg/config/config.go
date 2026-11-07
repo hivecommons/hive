@@ -419,6 +419,10 @@ func (c *Config) EnabledAgents() map[string]AgentConfig {
 				fleet := c.AgentsSessionRecycle
 				agent.SessionRecycle = &fleet
 			}
+			if agent.CLIMemory == nil && !c.AgentsCLIMemory.IsZero() {
+				fleet := c.AgentsCLIMemory
+				agent.CLIMemory = &fleet
+			}
 			result[name] = agent
 		}
 	}

@@ -631,6 +631,25 @@ func (s *Server) handleRepoHoldPermission(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, map[string]any{"ok": true, "allowed": allowed})
 }
 
+// repoHoldDependencyStatus is the status a hold toggle answers when GitHub
+// (or the missing GitHub client) is what failed. It is deliberately not 502
+// or 503: the Ingress in front of a hosted hive intercepts both
+// (custom-http-errors "502,503", saas_provision.go) and replaces the body
+// with the generic "hive unavailable" page, which is how a GitHub 422 on
+// the hold label read as "the hive is down" (hivecommons/hive#17037). 424
+// passes through with the GitHub error the operator can act on.
+const repoHoldDependencyStatus = http.StatusFailedDependency
+
+// repoHoldGitHubError answers a hold toggle whose GitHub step failed with
+// the step and GitHub's reason, and logs the same so the spoke's log names
+// the failure the dashboard shows.
+func (s *Server) repoHoldGitHubError(w http.ResponseWriter, step, repoFull string, number int, label string, err error) {
+	if s.logger != nil {
+		s.logger.Warn("repo item hold: GitHub "+step+" failed", "repo", repoFull, "number", number, "label", label, "error", err)
+	}
+	jsonError(w, "GitHub "+step+" failed: "+err.Error(), repoHoldDependencyStatus)
+}
+
 func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 	owner, repoName, number, ok := s.parseRepoItemPath(w, r)
 	if !ok {
@@ -642,7 +661,7 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.deps == nil || s.deps.GHClient == nil {
-		jsonError(w, "GitHub client not configured", http.StatusServiceUnavailable)
+		jsonError(w, "GitHub client not configured", repoHoldDependencyStatus)
 		return
 	}
 	var body repoHoldRequest
@@ -659,24 +678,24 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 	var removed []string
 	if body.Held {
 		if err := s.deps.GHClient.EnsureIssueLabel(ctx, repoFull, canonical, "8250df", "Hive dashboard hold: agents will not act on this item until an operator removes this label."); err != nil {
-			jsonError(w, err.Error(), http.StatusBadGateway)
+			s.repoHoldGitHubError(w, "ensure hold label", repoFull, number, canonical, err)
 			return
 		}
 		if err := s.deps.GHClient.AddLabels(ctx, repoFull, number, []string{canonical}); err != nil {
-			jsonError(w, err.Error(), http.StatusBadGateway)
+			s.repoHoldGitHubError(w, "add hold label", repoFull, number, canonical, err)
 			return
 		}
 		s.auditFromRequest(r, "repo_item_hold_add", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "label", canonical), "")
 	} else {
 		labels, err := s.currentItemLabels(ctx, owner, repoName, number)
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusBadGateway)
+			s.repoHoldGitHubError(w, "read labels", repoFull, number, canonical, err)
 			return
 		}
 		removed = holdCausingLabels(labels, canonical)
 		for _, label := range removed {
 			if err := s.deps.GHClient.RemoveLabel(ctx, repoFull, number, label); err != nil {
-				jsonError(w, err.Error(), http.StatusBadGateway)
+				s.repoHoldGitHubError(w, "remove hold label", repoFull, number, label, err)
 				return
 			}
 		}

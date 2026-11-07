@@ -497,7 +497,9 @@ func TestReviewRequestWatcherFilesOutOfScopeBacklogOnce(t *testing.T) {
 			if !containsString(payload.Labels, reviewBacklogLabel) {
 				t.Errorf("created issue labels = %v, want %s", payload.Labels, reviewBacklogLabel)
 			}
-			if !strings.Contains(payload.Body, "PR: #5") || !strings.Contains(payload.Body, "Evidence: `pkg/old.go:") {
+			// Both fixture findings share the correctness perspective, so
+			// they collapse into one checklist item (hivecommons/hive#17065).
+			if !strings.Contains(payload.Body, "PR: #5") || !strings.Contains(payload.Body, "(`pkg/old.go:10`)") || !strings.Contains(payload.Body, "(`pkg/old.go:20`)") {
 				t.Errorf("created issue body did not link PR/evidence: %q", payload.Body)
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -508,7 +510,7 @@ func TestReviewRequestWatcherFilesOutOfScopeBacklogOnce(t *testing.T) {
 				Body string `json:"body"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&payload)
-			if !strings.Contains(payload.Body, reviewBacklogSummaryMarker) || !strings.Contains(payload.Body, "#101") || !strings.Contains(payload.Body, "#102") {
+			if !strings.Contains(payload.Body, reviewBacklogSummaryMarker) || !strings.Contains(payload.Body, "#101") || !strings.Contains(payload.Body, "2 follow-ups") {
 				t.Errorf("summary comment missing filed issues: %q", payload.Body)
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -533,8 +535,8 @@ func TestReviewRequestWatcherFilesOutOfScopeBacklogOnce(t *testing.T) {
 	if reviews != 2 {
 		t.Fatalf("reviews = %d, want 2 re-reviews", reviews)
 	}
-	if createdIssues != 2 {
-		t.Fatalf("created backlog issues = %d, want 2 with no duplicates on re-review", createdIssues)
+	if createdIssues != 1 {
+		t.Fatalf("created backlog issues = %d, want one collapsed item with no duplicates on re-review", createdIssues)
 	}
 	if prSummaryComments != 1 {
 		t.Fatalf("PR summary comments = %d, want one", prSummaryComments)
@@ -714,8 +716,8 @@ func TestReviewRequestWatcher_PerHeadBackstop(t *testing.T) {
 	if !resp.OK || resp.State != ReviewEventRecordVerdict || posts != 1 {
 		t.Fatalf("second review on the same head must record the verdict but post nothing: %+v posts=%d", resp, posts)
 	}
-	if createdIssues != 2 || prSummaryComments != 1 {
-		t.Fatalf("suppressed verdict should file capped backlog once: issues=%d summary=%d", createdIssues, prSummaryComments)
+	if createdIssues != 1 || prSummaryComments != 1 {
+		t.Fatalf("suppressed verdict should file the backlog once, both findings collapsed into one item: issues=%d summary=%d", createdIssues, prSummaryComments)
 	}
 	if !strings.Contains(resp.Note, "already carries 1 hive review") || !strings.Contains(resp.Note, "--revise") {
 		t.Fatalf("note must explain the cap and the way out: %q", resp.Note)

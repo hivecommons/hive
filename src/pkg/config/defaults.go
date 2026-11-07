@@ -493,6 +493,9 @@ func (c *Config) applyDefaults() {
 		if c.Knowledge.Primer.MaxBytes == 0 {
 			c.Knowledge.Primer.MaxBytes = defaultKnowledgeMaxBytes
 		}
+		if c.Knowledge.AdvisorMaxPerKick == 0 {
+			c.Knowledge.AdvisorMaxPerKick = DefaultKnowledgeAdvisorMaxPerKick
+		}
 		if c.Knowledge.Primer.MergeStrategy == "" {
 			c.Knowledge.Primer.MergeStrategy = DefaultKnowledgePrimerMergeStrategy
 		}

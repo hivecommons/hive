@@ -65,7 +65,7 @@ func TestReconcileReviewBacklogBlocksSelfVerifiesOnMerge(t *testing.T) {
 	sink := &fakeCloserSink{fakeResolverSink: fakeResolverSink{fakeBacklogSink: fakeBacklogSink{dest: config.ReviewBacklogLinear}}}
 	c := reviewTestClient(t, srv.URL)
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
-		return ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear}, Sink: sink}
+		return ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MinSeverity: "P3"}, Sink: sink}
 	})
 	ledger := newReviewBacklogLedger()
 	rec := func(key, file, title string) reviewBacklogFingerprintRecord {
@@ -139,7 +139,7 @@ func TestReconcileReviewBacklogBlocksLiftsWhenSinkCannotClose(t *testing.T) {
 	sink := &fakeResolverSink{fakeBacklogSink: fakeBacklogSink{dest: config.ReviewBacklogLinear}}
 	c := reviewTestClient(t, srv.URL)
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
-		return ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear}, Sink: sink}
+		return ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MinSeverity: "P3"}, Sink: sink}
 	})
 	ledger := newReviewBacklogLedger()
 	ledger.setFingerprint("o/r", "fp", reviewBacklogFingerprintRecord{Destination: config.ReviewBacklogLinear, ItemID: "id", ItemKey: "ENG-1", BlockedOnPR: 5, BlockState: reviewBacklogBlockBlocked, File: "pkg/deleted.go", Title: "Review backlog (style): prWarnOnce"})

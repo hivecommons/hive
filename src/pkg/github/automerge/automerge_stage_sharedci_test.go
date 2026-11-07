@@ -200,7 +200,7 @@ func TestApplyStageLabelsSharedCIIncidentWithdrawsEarlierNudge(t *testing.T) {
 		t.Fatalf("deferred: edits=%v, want the nudge edited once", api.commentEdits)
 	}
 	edit := api.commentEdits[0]
-	for _, want := range []string{ContributorNudgeMarkerPrefix + " head=aaa n=1 mode=queued -->", "<!-- hive:contributor-nudge-withdrawn -->", "**Withdrawn:**", "shared CI incident #17003", "once #17003 closes"} {
+	for _, want := range []string{ContributorNudgeMarkerPrefix + " reason=check-failure head=aaa n=1 mode=queued -->", "<!-- hive:contributor-nudge-withdrawn -->", "**Withdrawn:**", "shared CI incident #17003", "once #17003 closes"} {
 		if !strings.Contains(edit, want) {
 			t.Errorf("withdrawn nudge lacks %q:\n%s", want, edit)
 		}
@@ -225,7 +225,10 @@ func TestApplyStageLabelsSharedCIIncidentWithdrawsEarlierNudge(t *testing.T) {
 	open = 0
 	clock.at = clock.at.Add(time.Hour)
 	observe("stage/050-review-pending", "role/contributor", "author/clanker")
-	if got := nudgeComments(api); !hasAdded(api, "stage/072-returned-to-contributor") || len(got) != 1 || !strings.Contains(got[0], "n=1 ") {
+	// One nudge comment per PR: the withdrawn comment is rewritten into
+	// the fresh first nudge rather than a second one posted.
+	got := append(nudgeComments(api), api.commentEdits...)
+	if !hasAdded(api, "stage/072-returned-to-contributor") || len(got) != 1 || !strings.Contains(got[0], "n=1 ") || strings.Contains(got[0], "<!-- hive:contributor-nudge-withdrawn -->") {
 		t.Fatalf("after recovery: added=%v nudges=%v, want 072 and a fresh first nudge", api.added, got)
 	}
 }

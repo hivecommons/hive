@@ -510,7 +510,7 @@ func TestContributorLaneWorkflowFenceMergeUnauthorizedFallback(t *testing.T) {
 				fx.prComments = []map[string]any{{
 					"id":   5,
 					"user": map[string]string{"login": testHiveAppBotLogin},
-					"body": unauthorizedComment("sha7", unauthorizedStepMergeWorkflowPath, unauthorizedPermissionWorkflowsWrite, "click"),
+					"body": unauthorizedComment("sha7", unauthorizedStepMergeWorkflowPath, unauthorizedPermissionWorkflowsWrite, "click", unauthorizedAttempts{Count: 1, Heads: []string{"sha7"}}),
 				}}
 			}
 			api := newContributorLaneAPI(t, &fx)
@@ -555,7 +555,7 @@ func TestContributorLaneWorkflowFenceMergeUnauthorizedFallback(t *testing.T) {
 			if !slices.Contains(fx.labels, unauthorizedLabel) {
 				t.Fatalf("labels = %v, want %q", fx.labels, unauthorizedLabel)
 			}
-			marker := unauthorizedMarker("sha7", unauthorizedStepMergeWorkflowPath)
+			marker := unauthorizedMarker(unauthorizedStepMergeWorkflowPath)
 			unauthorizedComments := 0
 			for _, body := range fx.allComments {
 				if strings.HasPrefix(body, marker) {

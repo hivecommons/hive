@@ -92,6 +92,7 @@ on:
     branches:
       - v4
       - v5
+      - v6
   pull_request:
     paths:
       - '.github/workflows/podman-arm64-lane.yml'
@@ -100,6 +101,7 @@ on:
     branches:
       - v4
       - v5
+      - v6
   workflow_dispatch:
     inputs:
       image:

@@ -17,19 +17,35 @@ import (
 // Contributor nudge for stage/072-returned-to-contributor
 // (hivecommons/hive#12436).
 //
-// When a contributor's PR lands in stage 072 the hive posts ONE idempotent
-// comment @-mentioning the author with the concrete failing checks / review
-// asks and a "reply here or push a new head" line, and — through the
+// When a contributor's PR lands in stage 072 the hive posts ONE comment
+// @-mentioning the author with the concrete failing checks / review asks and
+// a "reply here or push a new head" line, and — through the
 // ContributorNudgeSink the dashboard hub implements — pushes the same
-// diagnosis to the author's relay session as a fix-pr task. It re-nudges once
-// more at the stall threshold and then stops: 2 nudges per head, re-armed
-// only when the author pushes a new head.
+// diagnosis to the author's relay session as a fix-pr task.
+//
+// The comment is one per PR (hivecommons/hive#17067): the marker names the
+// reason class it explains, and a new head red for the same class, or a
+// changed class, rewrites the hive's existing nudge comment in place rather
+// than posting another copy (the relay dispatch and the adoption-grace
+// ledger still see every head). While the same class persists the comment
+// is rewritten once more after policy.RenudgeInterval
+// (auto_merge.nudge_repeat_after, default 72h) as the last reminder, then
+// the hive stops: 2 nudges per PR and reason class.
 
 // ContributorNudgeMarkerPrefix opens the nudge comment's machine marker.
 const ContributorNudgeMarkerPrefix = "<!-- hive:contributor-nudge"
 
-// contributorNudgeCap is the documented maximum number of nudges per head.
+// contributorNudgeCap is the documented maximum number of nudges per PR
+// and reason class.
 const contributorNudgeCap = 2
+
+// ContributorNudgeMarker renders the marker that keys the one nudge comment
+// on a PR: `<!-- hive:contributor-nudge reason=<slug>` plus head, ordinal
+// and delivery mode. The upsert searches for ContributorNudgeMarkerPrefix
+// alone, so a changed reason slug still finds the comment.
+func ContributorNudgeMarker(reason, head string, nudge int, mode string) string {
+	return fmt.Sprintf("%s reason=%s head=%s n=%d mode=%s -->", ContributorNudgeMarkerPrefix, stagelabels.NudgeReasonSlug(reason), head, nudge, nonEmpty(mode, "comment"))
+}
 
 // ContributorNudge is the diagnosis handed to the sink for one PR in stage 072.
 type ContributorNudge struct {
@@ -54,9 +70,11 @@ type ContributorNudge struct {
 	// HumanChangesRequested is true when a human reviewer asked for changes
 	// (outranks CI-red in the contributor's fix queue).
 	HumanChangesRequested bool
-	// Nudge is 1 for the first nudge at this head, 2 for the stall re-nudge.
+	// Nudge is 1 for the first nudge for this reason class, 2 for the
+	// repeat re-nudge, and 0 for a head-only rewrite of the existing
+	// comment (the class is unchanged and already counted).
 	Nudge int
-	// Stalled is true when this nudge is the stall re-nudge.
+	// Stalled is true when this nudge is the repeat re-nudge.
 	Stalled bool
 }
 
@@ -199,11 +217,13 @@ func nudgeDiagnosisRouted(reason string, d stageDetail, route *stagelabels.Route
 }
 
 // ContributorNudgeComment renders the nudge comment. The marker carries the
-// head, the nudge ordinal and the delivery mode so a later pass can prove the
-// comment exists without a per-PR GET.
+// reason class, the head, the nudge ordinal and the delivery mode so a later
+// pass can prove the comment exists and what it explains without parsing
+// the prose.
 func ContributorNudgeComment(n ContributorNudge, out ContributorNudgeOutcome) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s head=%s n=%d mode=%s -->\n", ContributorNudgeMarkerPrefix, n.HeadSHA, n.Nudge, nonEmpty(out.Mode, "comment"))
+	b.WriteString(ContributorNudgeMarker(n.Reason, n.HeadSHA, n.Nudge, out.Mode))
+	b.WriteString("\n")
 	if n.Stalled {
 		fmt.Fprintf(&b, "@%s this PR has been waiting on you for a while (`%s`). ", n.Author, stagelabels.ReturnedToContributor.Label())
 	} else {
@@ -275,23 +295,30 @@ func nonEmpty(s, def string) string {
 	return s
 }
 
-// nudgeDue decides whether a nudge is owed for the record at this head: the
-// first on entering 072 with a new head, the second once renudge elapsed
-// (the stall threshold), never a third.
-func nudgeDue(rec stagelabels.Record, head string, renudge time.Duration, now time.Time) (ordinal int, ok bool) {
+// nudgeDue decides whether the nudge comment is owed a write for the record
+// at this head and reason: ordinal 1 when the reason class is new to the PR
+// (first nudge, or a changed reason rewriting the comment), 0 when a new
+// head is red for the class already explained (rewrite only, uncounted),
+// 2 once repeatAfter elapsed since the class was last counted — never a
+// third. Same head, same class, inside the window: nothing.
+func nudgeDue(rec stagelabels.Record, head, reason string, repeatAfter time.Duration, now time.Time) (ordinal int, ok bool) {
 	if head == "" {
 		return 0, false
 	}
-	if rec.NudgeHead != head {
+	slug := stagelabels.NudgeReasonSlug(reason)
+	if rec.NudgeReason != slug {
 		return 1, true
 	}
-	if rec.NudgeCount >= contributorNudgeCap {
+	if rec.NudgeHead != head {
+		return 0, true
+	}
+	if rec.NudgeReasonCount >= contributorNudgeCap {
 		return 0, false
 	}
-	if renudge <= 0 || rec.LastNudgeAt.IsZero() || now.Sub(rec.LastNudgeAt) < renudge {
+	if repeatAfter <= 0 || rec.NudgeReasonAt.IsZero() || now.Sub(rec.NudgeReasonAt) < repeatAfter {
 		return 0, false
 	}
-	return rec.NudgeCount + 1, true
+	return rec.NudgeReasonCount + 1, true
 }
 
 // nudgeContributor runs the stage-072 nudge for one observation. It returns
@@ -301,11 +328,7 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 	if !ok || obs.Author == "" {
 		return 0, nil
 	}
-	renudge := policy.RenudgeInterval
-	if renudge <= 0 {
-		renudge = stagelabels.Dwell(stagelabels.ReturnedToContributor, policy.Dwell)
-	}
-	ordinal, due := nudgeDue(rec, obs.HeadSHA, renudge, now)
+	ordinal, due := nudgeDue(rec, obs.HeadSHA, obs.Reason, policy.RenudgeInterval, now)
 	if !due {
 		return 0, nil
 	}
@@ -323,27 +346,49 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 			return 0, nil
 		}
 	}
+	// A head-only rewrite (ordinal 0) keeps the class's recorded count in
+	// the marker; the author pushed, so it is not the stall reminder.
+	shown := ordinal
+	if shown == 0 {
+		shown = max(rec.NudgeReasonCount, 1)
+	}
 	n := ContributorNudge{
 		Owner: obs.Owner, Repo: obs.Repo, Display: obs.Display, Number: obs.Number,
 		HeadSHA: obs.HeadSHA, Title: obs.Title, URL: obs.URL, Author: obs.Author, OpenedAt: obs.OpenedAt,
 		Reason: obs.Reason, FailingChecks: checks, ReviewAsks: asks, HumanChangesRequested: human,
-		Nudge: ordinal, Stalled: ordinal > 1,
+		Nudge: shown, Stalled: ordinal > 1,
 	}
 	var out ContributorNudgeOutcome
 	if c.contributorNudge != nil {
 		out = c.contributorNudge.Nudge(ctx, n)
 	}
 	body := ContributorNudgeComment(n, out)
-	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
-		c.warn("stage labels: contributor nudge failed", "repo", obs.Display, "pr", obs.Number, "error", err)
-		return 0, err
+	// One nudge comment per PR (hivecommons/hive#17067): the hive's
+	// existing comment carrying the marker is rewritten for a new head or
+	// a changed reason; an edit notifies nobody, the relay dispatch above
+	// is the interrupt.
+	posted := 0
+	if existing := c.findOwnEntryComment(ctx, obs, ContributorNudgeMarkerPrefix); existing != nil {
+		if existing.GetBody() != body {
+			if _, _, err := c.gh.Issues.EditComment(ctx, obs.Owner, obs.Repo, existing.GetID(), &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
+				c.warn("stage labels: contributor nudge edit failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+				return 0, err
+			}
+		}
+	} else {
+		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+			c.warn("stage labels: contributor nudge failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+			return 0, err
+		}
+		posted = 1
 	}
 	// "queued" only says the author has a relay registered here; the work
 	// sits in its queue whether or not that relay is connected. Counting it
 	// as online gave an offline clanker the 2h online grace (#15566).
-	store.MarkNudged(key, obs.HeadSHA, ordinal, out.Online || out.Mode == "spawn" || out.Mode == "preempt", now)
-	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "relay_failed", out.RelayFailed, "reason", obs.Reason)
-	return 1, nil
+	store.MarkNudged(key, obs.HeadSHA, max(ordinal, 1), out.Online || out.Mode == "spawn" || out.Mode == "preempt", now)
+	store.MarkNudgedReason(key, obs.Reason, ordinal, now)
+	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "posted", posted == 1, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "relay_failed", out.RelayFailed, "reason", obs.Reason)
+	return posted, nil
 }
 
 // withoutForkGuard drops the fork-guard checks from a nudge's failing
@@ -462,10 +507,14 @@ func (c *Engine) withdrawNudge(ctx context.Context, store *stagelabels.Store, ke
 		c.warn("stage labels: could not list comments to withdraw the contributor nudge", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return
 	}
-	prefix := ContributorNudgeMarkerPrefix + " head=" + obs.HeadSHA + " "
+	headField := " head=" + obs.HeadSHA + " "
 	edited := 0
 	for _, cm := range comments {
-		if !cm.Own || !strings.HasPrefix(cm.Body, prefix) || strings.Contains(cm.Body, nudgeWithdrawnMarker) {
+		// The marker carries the reason slug before the head
+		// (ContributorNudgeMarker), so match the prefix and the head field
+		// rather than one fixed spelling.
+		marker, _, _ := strings.Cut(cm.Body, "-->")
+		if !cm.Own || !strings.HasPrefix(cm.Body, ContributorNudgeMarkerPrefix+" ") || !strings.Contains(marker, headField) || strings.Contains(cm.Body, nudgeWithdrawnMarker) {
 			continue
 		}
 		// Rewrites the hive's own nudge; an edit notifies nobody.
@@ -486,50 +535,6 @@ func (c *Engine) resolveNudge(ctx context.Context, rec stagelabels.Record, had b
 		return
 	}
 	c.contributorNudge.Resolve(ctx, obs.Owner, obs.Repo, obs.Number)
-}
-
-// SignoffAttributionMarkerPrefix opens the one comment a human author gets
-// when their head is held for hive-signoff-attribution; the head keeps it
-// idempotent per push.
-const SignoffAttributionMarkerPrefix = "<!-- hive:signoff-attribution"
-
-// SignoffAttributionComment renders the author-facing comment for a human
-// PR parked at 071 on LaneReasonHiveSignoffAttribution: who owes the fix,
-// why no agent can do it, and the exact commands.
-func SignoffAttributionComment(n ContributorNudge, stage stagelabels.Stage) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s head=%s -->\n", SignoffAttributionMarkerPrefix, n.HeadSHA)
-	fmt.Fprintf(&b, "@%s this PR is back in your court (`%s`). ", n.Author, stage.Label())
-	b.WriteString("Its commits are signed off as the hive App rather than as you, so a squash merge would misattribute them and the sign-off attribution check stays red. No hive agent can rewrite a contributor's commits — the fix is yours:\n\n")
-	for _, a := range n.ReviewAsks {
-		fmt.Fprintf(&b, "- %s\n", a)
-	}
-	b.WriteString("\nOnce the new head lands, CI and the review swarm re-run automatically and the PR returns to the normal path.\n")
-	return b.String()
-}
-
-// nudgeSignoffAttribution posts SignoffAttributionComment once per head for
-// a non-clanker author (a clanker gets the regular 072 nudge, which carries
-// the same ask). It returns the number of comments posted.
-func (c *Engine) nudgeSignoffAttribution(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, now time.Time) (int, error) {
-	rec, ok := store.Get(key)
-	if !ok || obs.Author == "" || obs.HeadSHA == "" || rec.NudgeHead == obs.HeadSHA {
-		return 0, nil
-	}
-	_, asks, _ := nudgeDiagnosis(obs.Reason, obs.Detail)
-	n := ContributorNudge{
-		Owner: obs.Owner, Repo: obs.Repo, Display: obs.Display, Number: obs.Number,
-		HeadSHA: obs.HeadSHA, Title: obs.Title, URL: obs.URL, Author: obs.Author, OpenedAt: obs.OpenedAt,
-		Reason: obs.Reason, ReviewAsks: asks, Nudge: 1,
-	}
-	body := SignoffAttributionComment(n, fixingStage(obs))
-	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
-		c.warn("stage labels: sign-off attribution comment failed", "repo", obs.Display, "pr", obs.Number, "error", err)
-		return 0, err
-	}
-	store.MarkNudged(key, obs.HeadSHA, 1, false, now)
-	c.info("stage labels: author told to re-sign the head", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "squash_unsafe_hive", obs.Detail.DCOSquashUnsafeHive)
-	return 1, nil
 }
 
 // TrustedHuman071MarkerPrefix opens the one comment a trusted human author

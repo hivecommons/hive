@@ -101,3 +101,7 @@ Preserve the true merge ancestry of #16378. Splitting/rebasing the forward
 merge, adding empty commits, accepting the lowercase prow `dco` status, or
 weakening protection does not repair this provider failure. Until authoritative
 current-head DCO success exists, the correct admission outcome remains blocked.
+The only exception is the narrow `sync/v5-to-v6` forward-merge path in
+[native-merge-queue.md](../native-merge-queue.md#required-checks-and-provider-boundaries)
+(#17030), where every carried commit is already on `v5`; any other PR, or a
+top-up carrying a commit not reachable from `v5`, still needs App-1861 DCO.

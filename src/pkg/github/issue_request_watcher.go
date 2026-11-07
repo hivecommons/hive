@@ -790,6 +790,15 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				if err == nil && !created {
 					c.noteCommentSuppressed()
 				}
+			} else if note, ok := OriginFooterNote(commentBody); ok && req.BlockedOnPR == 0 {
+				// Free text whose only marker is the identity footer is an
+				// agent note: one upserted comment per item, or a status
+				// section in quiet mode (hivecommons/hive#17067).
+				var created bool
+				created, err = c.postOriginNote(ctx, req.Repo, req.Number, req.Agent, note, nowFn())
+				if err == nil && !created {
+					c.noteCommentSuppressed()
+				}
 			} else {
 				err = c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, commentBody)
 			}

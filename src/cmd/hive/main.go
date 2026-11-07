@@ -1520,6 +1520,15 @@ func (b *boot) bootGovernor() {
 		b.logger,
 	))
 
+	// Hosted spokes keep no checkout of their primary repo, so the two local
+	// roots agentsRepoRoot knows are empty there and AGENTS.md was never
+	// injected (hivecommons/hive#17090). Let the scheduler fetch it through the
+	// same App client when no local root exists. Guarded so a typed-nil
+	// *github.Client is never stored as a non-nil interface.
+	if b.ghClient != nil {
+		b.sched.SetAgentsMdFetcher(b.ghClient)
+	}
+
 	// Wire the whole-agent definition_source resolver so agents imported with
 	// "keep linked" re-fetch their portable AgentDefinition from the repo on
 	// reload/kick and re-apply its operator-safe fields (never security/seed-only
@@ -4156,6 +4165,11 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// per-agent "Prompts" tab. Redaction and truncation happen inside the
 	// store, before anything is written to the PVC.
 	b.agentMgr.SetRecordPromptCallback(b.dashSrv.RecordPrompt)
+	// Mid-task knowledge advisor (#17052): the runtime asks this when an
+	// agent's pane first shows a scope its kick did not cover. Policy is read
+	// off the live config per call, so knowledge.advisor flips without a
+	// restart; the adviser itself is a no-op until SetPrimer has run.
+	b.agentMgr.SetKnowledgeAdviser(newKnowledgeAdviser(b))
 
 	// Feed agent lifecycle events (start, stop, launch FAILURE, backend/model
 	// change) into the durable audit store behind the dashboard's Audit Log.

@@ -17,12 +17,19 @@
 # change. The API endpoint is evaluated against the required contexts for
 # that SHA instead. The step distinguishes three ways that merge can fail:
 #   not-yet-mergeable — HTTP 405: a required check has not landed / GitHub is
-#                    still settling: retry on a deadline, then hard-fail.
-#   base moved       — HTTP 409 (base OR head branch modified): v4 advanced
-#                    past the release SHA: defer GREEN with pushed=false,
-#                    because the successor run releases the newer merge and
-#                    retagging here would publish images built from a
-#                    different tree.
+#                    still settling: retry on a deadline, then hard-fail. A
+#                    405 whose PR is CONFLICTING (mergeable_state dirty) is
+#                    hard-failed at once: no retry resolves a conflict.
+#   base moved       — HTTP 409 "Base branch was modified": v5 advanced since
+#                    GitHub computed mergeability. Since the tag names the
+#                    RELEASE COMMIT (parented on the built SHA) rather than
+#                    the merge commit, a moved tip is no reason to defer: the
+#                    merge-commit PR is retried on the same deadline. (Until
+#                    2026-11 this deferred green, which under sustained
+#                    merges stalled tagging for three weeks.)
+#   head moved       — HTTP 409 "Head branch was modified": the `sha=` guard
+#                    fired; hard-fail, nothing legitimate rewrites the
+#                    scratch branch.
 #   anything else    — hard-fail immediately, no retry.
 #
 # Since #5356 the step first mirrors the already-verified docker.yml check-run
@@ -87,7 +94,8 @@ case "$1 $2 ${3:-}" in
   "rev-parse HEAD ")
     echo "deadbeefcafe0000000000000000000000000000"; exit 0 ;;
   "rev-parse origin/v5 ")
-    echo "deadbeefcafe"; exit 0 ;;
+    # RPR_TIP=moved simulates v5 having advanced past the built SHA.
+    if [ "${RPR_TIP:-built}" = moved ]; then echo "0123456789abcdef0123456789abcdef01234567"; else echo "deadbeefcafe"; fi; exit 0 ;;
   "fetch origin "*)
     exit 0 ;;
   "tag "*)
@@ -150,6 +158,15 @@ case "$args" in
       base_moved)
         echo "gh: Base branch was modified. Review and try the merge again. (HTTP 409)"
         exit 1 ;;
+      base_moved_then_ok)
+        if [ "$n" -le 2 ]; then
+          echo "gh: Base branch was modified. Review and try the merge again. (HTTP 409)"
+          exit 1
+        fi
+        echo '{"sha":"feedfacefeedfacefeedfacefeedfacefeedface","merged":true,"message":"Pull Request successfully merged"}'; exit 0 ;;
+      conflict)
+        echo "gh: Pull Request is not mergeable (HTTP 405)"
+        exit 1 ;;
       head_moved)
         echo "gh: Head branch was modified. Review and try the merge again. (HTTP 409)"
         exit 1 ;;
@@ -158,12 +175,30 @@ case "$args" in
         exit 1 ;;
     esac ;;
 esac
+case "$args" in
+  *"/pulls/9999"*)
+    # mergeable_state probe on a 405 (conflict detection).
+    # The step applies --jq '.mergeable_state', so answer with the bare value.
+    if [ "$RPR_SCENARIO" = conflict ]; then echo dirty; else echo blocked; fi
+    exit 0 ;;
+esac
 case "$1 $2" in
   "workflow run")
     echo dispatch >> "$state/timeline"
     case "$args" in
       *"docker.yml --ref v5"*"release_sha=feedfacefeedfacefeedfacefeedfacefeedface"*) ;;
       *) echo "STUBFAIL: release dispatch did not carry exact merge SHA: $args" >&2; exit 1 ;;
+    esac
+    # The merge commit may self-report the tag only when v5 was still at the
+    # built SHA; a merge onto a moved tip carries newer work and must not.
+    tip="${RPR_TIP:-built}"
+    # A 409 base-moved retry means v5 moved mid-flight, same as a moved tip.
+    [ "$RPR_SCENARIO" = base_moved_then_ok ] && tip=moved
+    case "${tip}:$args" in
+      built:*"release_version=v4.0.1"*) ;;
+      moved:*"release_version="*) echo "STUBFAIL: release_version passed although v5 had moved past the built SHA: $args" >&2; exit 1 ;;
+      moved:*) ;;
+      *) echo "STUBFAIL: release dispatch lacks release_version although v5 was at the built SHA: $args" >&2; exit 1 ;;
     esac
     if [ "$RPR_SCENARIO" = dispatch_fails ]; then
       echo "gh: failed to create workflow dispatch event (HTTP 422)" >&2
@@ -197,11 +232,11 @@ run_step() {
   # a prior case's gh_output/attempt counters into later assertions.
   st="$(mktemp -d "$tmp/state.XXXXXX")"
   : > "$st/out"
-  RPR_SCENARIO="$1" RPR_TAG_SCENARIO="${2:-ok}" RPR_STATE="$st" \
+  RPR_SCENARIO="$1" RPR_TAG_SCENARIO="${2:-ok}" RPR_STATE="$st" RPR_TIP="${RPR_TIP:-built}" \
     RELEASE_MERGE_WAIT_SECONDS="${3:-120}" RELEASE_MERGE_POLL_SECONDS=8 \
     VERSION="4.0.1" SHA="deadbeefcafe" GITHUB_OUTPUT="$st/gh_output" \
-    RELEASE_LINE="v5" \
     ACTIONS_TOKEN="actions-token-for-test" \
+    RELEASE_LINE="v5" \
     GITHUB_REPOSITORY="hivecommons/hive" \
     PATH="$tmp/bin:$PATH" bash "$tmp/push_line.sh" > "$st/out" 2>&1
   rc=$?
@@ -214,9 +249,9 @@ run_step ok
 [ "$rc" -eq 0 ] && note_ok "exit 0" || note_fail "exit $rc, want 0: $output"
 grep -q '^pushed=true$' <<<"$ghout" && note_ok "pushed=true" || note_fail "GITHUB_OUTPUT lacks pushed=true: $ghout"
 [ "$(cat "$st/tag" 2>/dev/null)" = 1 ] && note_ok "tag pushed once" || note_fail "tag not pushed exactly once"
-[ "$(cat "$st/tag_target" 2>/dev/null)" = feedfacefeedfacefeedfacefeedfacefeedface ] \
-  && note_ok "version tag targets merge API's exact release SHA" \
-  || note_fail "version tag did not target merge API SHA: $(cat "$st/tag_target" 2>/dev/null)"
+[ "$(cat "$st/tag_target" 2>/dev/null)" = deadbeefcafe0000000000000000000000000000 ] \
+  && note_ok "version tag targets the release commit (built tree + changelog), not the merge commit" \
+  || note_fail "version tag did not target the release commit: $(cat "$st/tag_target" 2>/dev/null)"
 [ "$(tr '\n' ' ' < "$st/timeline")" = "status pr merge dispatch status " ] \
   && note_ok "gate, PR, merge, exact-SHA dispatch, and hold-clear status are ordered" \
   || note_fail "unexpected status/PR/merge order: $(tr '\n' ' ' < "$st/timeline")"
@@ -277,23 +312,48 @@ run_step settle_forever ok 0
 grep -q '::error::' <<<"$output" && note_ok "::error:: emitted" || note_fail "no ::error:: on exhaustion: $output"
 [ -f "$st/tag" ] && note_fail "tag was pushed despite the merge failing" || note_ok "no tag pushed"
 
-echo "case: base branch moved defers green with pushed=false"
-run_step base_moved
-[ "$rc" -eq 0 ] && note_ok "exit 0 (deferral is not a failure)" || note_fail "exit $rc, want 0: $output"
-grep -q '^pushed=false$' <<<"$ghout" && note_ok "pushed=false" || note_fail "GITHUB_OUTPUT lacks pushed=false: $ghout"
-# #5318: a deferral is a SKIPPED RELEASE OPPORTUNITY and must surface as a
-# ::warning:: (visible in the run list and the job summary), not a ::notice::
-# that scrolls past unread. Assert the stronger annotation specifically.
-grep -q '::warning::' <<<"$output" && note_ok "::warning:: makes the skipped opportunity visible" || note_fail "deferral is not surfaced as a warning: $output"
-[ -f "$st/tag" ] && note_fail "tag was pushed for a release that deferred" || note_ok "no tag pushed"
-[ "$(cat "$st/merge")" = 1 ] && note_ok "no pointless retry of a lost race" || note_fail "base-moved was retried; it can never succeed without a rebase"
+echo "case: base branch moved is retried and the release still lands (tag names the release commit)"
+run_step base_moved_then_ok
+[ "$rc" -eq 0 ] && note_ok "exit 0" || note_fail "exit $rc, want 0: $output"
+[ "$(cat "$st/merge")" = 3 ] && note_ok "3 merge attempts" || note_fail "$(cat "$st/merge") attempts, want 3"
+grep -q '^pushed=true$' <<<"$ghout" && note_ok "pushed=true" || note_fail "GITHUB_OUTPUT lacks pushed=true: $ghout"
+grep -q 'pushed=false' <<<"$ghout" && note_fail "base-moved was still deferred — that is the 2026-10/11 three-week stall" || note_ok "no deferral on a moved base"
+[ "$(cat "$st/tag_target" 2>/dev/null)" = deadbeefcafe0000000000000000000000000000 ] \
+  && note_ok "tag still names the release commit after a merge-commit landing" \
+  || note_fail "tag target after base-moved retry: $(cat "$st/tag_target" 2>/dev/null)"
 
-echo "case: head branch moved also defers green (409 sha= guard)"
+echo "case: base branch moving past the deadline hard-fails (no silent deferral)"
+run_step base_moved ok 0
+[ "$rc" -ne 0 ] && note_ok "non-zero exit" || note_fail "exhausted base-moved retries must fail, got exit 0"
+grep -q 'pushed=' <<<"$ghout" && note_fail "wrote a pushed= output on exhaustion" || note_ok "no pushed= output"
+[ -f "$st/tag" ] && note_fail "tag was pushed although the merge never landed" || note_ok "no tag pushed"
+
+echo "case: head branch moved hard-fails (409 sha= guard)"
 run_step head_moved
-[ "$rc" -eq 0 ] && note_ok "exit 0 (deferral is not a failure)" || note_fail "exit $rc, want 0: $output"
-grep -q '^pushed=false$' <<<"$ghout" && note_ok "pushed=false" || note_fail "GITHUB_OUTPUT lacks pushed=false: $ghout"
-[ -f "$st/tag" ] && note_fail "tag was pushed for a release that deferred" || note_ok "no tag pushed"
-[ "$(cat "$st/merge")" = 1 ] && note_ok "no pointless retry of a lost race" || note_fail "head-moved was retried; it can never succeed"
+[ "$rc" -ne 0 ] && note_ok "non-zero exit" || note_fail "head-moved must fail closed, got exit $rc: $output"
+grep -q '::error::' <<<"$output" && note_ok "::error:: emitted" || note_fail "no ::error:: for head-moved: $output"
+[ -f "$st/tag" ] && note_fail "tag was pushed for a rewritten scratch branch" || note_ok "no tag pushed"
+[ "$(cat "$st/merge")" = 1 ] && note_ok "no pointless retry" || note_fail "head-moved was retried; it can never succeed"
+
+echo "case: conflicting release PR hard-fails at once"
+run_step conflict
+[ "$rc" -ne 0 ] && note_ok "non-zero exit" || note_fail "a CONFLICTING PR must fail, got exit 0"
+grep -q 'conflicts with v5' <<<"$output" && note_ok "conflict diagnosed" || note_fail "conflict diagnostic absent: $output"
+[ "$(cat "$st/merge")" = 1 ] && note_ok "not retried" || note_fail "$(cat "$st/merge") attempts, want 1"
+[ -f "$st/tag" ] && note_fail "tag pushed despite conflict" || note_ok "no tag pushed"
+
+echo "case: v5 already past the built SHA goes straight to the PR path and releases"
+RPR_TIP=moved run_step ok
+[ "$rc" -eq 0 ] && note_ok "exit 0" || note_fail "exit $rc, want 0: $output"
+grep -q '^pushed=true$' <<<"$ghout" && note_ok "pushed=true" || note_fail "GITHUB_OUTPUT lacks pushed=true: $ghout"
+grep -q 'past the built commit' <<<"$output" && note_ok "moved tip announced, not deferred" || note_fail "moved-tip path not taken: $output"
+grep -q 'Trying direct v5 push' <<<"$output" && note_fail "direct push attempted although it can only be non-fast-forward" || note_ok "direct push skipped"
+[ "$(tr '\n' ' ' < "$st/timeline")" = "status pr merge dispatch status " ] \
+  && note_ok "PR path ordered as usual" \
+  || note_fail "unexpected order on moved tip: $(tr '\n' ' ' < "$st/timeline")"
+[ "$(cat "$st/tag_target" 2>/dev/null)" = deadbeefcafe0000000000000000000000000000 ] \
+  && note_ok "tag names the release commit, not the merge onto the moved tip" \
+  || note_fail "tag target on moved tip: $(cat "$st/tag_target" 2>/dev/null)"
 
 echo "case: unrecognized merge failure hard-fails"
 run_step unknown
@@ -405,9 +465,9 @@ else:
     guard_run = guard.get("run") or ""
     # #6380: the exact-SHA docker.yml handoff is a workflow_dispatch run on v5,
     # not a push. The backstop may count that publishing run. #10866 also
-    # needs a backstop-primed workflow_dispatch docker run on the line to
-    # re-enter this workflow once the images exist; post-release handoffs are
-    # harmless because Unreleased is empty by then.
+    # needs a backstop-primed v5 workflow_dispatch docker run to re-enter this
+    # workflow once the images exist; post-release handoffs are harmless
+    # because Unreleased is empty by then.
     if '.event == \\"workflow_dispatch\\"' not in guard_run or '.head_branch == \\"${RELEASE_LINE}\\"' not in guard_run:
         bad("the backstop no longer accepts the release line's workflow_dispatch docker.yml publishing runs (#6380)")
     if 'gh workflow run docker.yml --ref "$RELEASE_LINE"' not in guard_run:

@@ -17,6 +17,7 @@ import (
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/internal/textutil"
+	"github.com/hivecommons/hive/crux/kubejob"
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/outputschema"
 	"github.com/hivecommons/hive/crux/pushbroker"
@@ -129,8 +130,16 @@ type SandboxVerifyResult struct {
 	TimedOut bool
 }
 
-// Passed reports whether the command ran to completion with exit 0.
-func (v SandboxVerifyResult) Passed() bool { return v.Err == "" && v.ExitCode == 0 && !v.TimedOut }
+// Passed reports whether the command ran to completion with exit 0. A
+// launcher that returned no error but could not read the exit code back
+// (a Complete Job whose pod is already gone) counts as passed too: the
+// Job's own success condition is the fact, the missing code is not a failure.
+func (v SandboxVerifyResult) Passed() bool {
+	if v.Err != "" || v.TimedOut {
+		return false
+	}
+	return v.ExitCode == 0 || v.ExitCode == kubejob.ExitCodeUnknown
+}
 
 type SandboxExecutor struct {
 	Launcher    sandbox.Launcher
@@ -622,7 +631,9 @@ func sandboxPublishWithheld(res SandboxKickResult) string {
 		}
 		return reason
 	}
-	if res.Sandbox.ExitCode != 0 {
+	// A completed Job whose pod could not be read has no exit code; that is
+	// not a failure, and the guessed 0 it used to carry was not a fact either.
+	if code := res.Sandbox.ExitCode; code != 0 && code != kubejob.ExitCodeUnknown {
 		return fmt.Sprintf("sandbox exited %d", res.Sandbox.ExitCode)
 	}
 	return ""

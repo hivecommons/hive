@@ -559,8 +559,9 @@ type Manager struct {
 	// rateLimitRelaunchMu guards lastRateLimitRelaunch, the fleet-wide clock
 	// that spaces rate-limit relaunches (rateLimitRelaunchFleetSpacing). Its
 	// own mutex: the pane pollers that consult it must not take m.mu.
-	rateLimitRelaunchMu   sync.Mutex
-	lastRateLimitRelaunch time.Time
+	rateLimitRelaunchMu     sync.Mutex
+	lastRateLimitRelaunch   time.Time
+	sharedCLIMemoryWarnOnce sync.Once // see warnSharedCLIMemoryOnce (hivecommons/hive#17031)
 
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
 	// the output-capture goroutines, and taking m.mu there risks startup
@@ -754,13 +755,13 @@ type Manager struct {
 	breakerPaused  map[string]bool
 
 	// recordPromptCallback, when set, persists the fully-expanded prompt text
-	// delivered to an agent so owners can review it later.
-	//
-	// Held as an atomic.Pointer rather than behind m.mu because the kick path
+	// delivered to an agent so owners can review it later. Held as an
+	// atomic.Pointer rather than behind m.mu because the kick path
 	// (deliverKickLocked) already holds m.mu when it fires this. m.mu is a
 	// non-reentrant RWMutex, so reading the callback under a second Lock there
 	// would deadlock the kick path.
 	recordPromptCallback atomic.Pointer[func(agent, trigger, prompt string)]
+	knowledgeAdvisor     atomic.Pointer[knowledgeAdvisor] // mid-task knowledge advisor (#17052); nil = off
 	// spanStarter, when set, opens the trace spans the runtime emits
 	// (SendKick's agent.send_kick). Same atomic.Pointer discipline as
 	// recordPromptCallback: read on paths that hold m.mu. Nil falls back to

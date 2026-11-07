@@ -158,6 +158,11 @@ func TestCreateRefusals(t *testing.T) {
 	repo, shas := fixtureRepo(t)
 	svc := newTestService(t, repo, nil)
 	ctx := context.Background()
+	// The allowlist admits the fixture's parent directory; the bypass cases
+	// below spell the same bare repo through paths that would clone it (or
+	// a sibling) while escaping a plain string-prefix comparison.
+	fixtureDir := filepath.Dir(strings.TrimPrefix(repo, "file://"))
+	allowedDir := "file://" + fixtureDir
 	ok := Request{Repo: repo, Commit: shas[0], Owner: "o"}
 	cases := []struct {
 		name string
@@ -178,6 +183,11 @@ func TestCreateRefusals(t *testing.T) {
 		{"credentials in url", func(r *Request) { r.Repo = "https://user:tok@github.com/org/name.git" }, ErrBadRequest, "credentials"},
 		{"query in url", func(r *Request) { r.Repo = "https://github.com/org/name.git?x=1" }, ErrBadRequest, "query"},
 		{"no host", func(r *Request) { r.Repo = "https:///name.git" }, ErrBadRequest, "no host"},
+		{"dot-dot segment", func(r *Request) { r.Repo = allowedDir + "/../" + filepath.Base(fixtureDir) + "/" + filepath.Base(repo) }, ErrBadRequest, "canonical"},
+		{"dot segment", func(r *Request) { r.Repo = allowedDir + "/./" + filepath.Base(repo) }, ErrBadRequest, "canonical"},
+		{"empty segment", func(r *Request) { r.Repo = allowedDir + "//" + filepath.Base(repo) }, ErrBadRequest, "canonical"},
+		{"percent-encoded segment", func(r *Request) { r.Repo = allowedDir + "/%2e%2e/" + filepath.Base(repo) }, ErrBadRequest, "canonical"},
+		{"mid-segment prefix", func(r *Request) { r.Repo = allowedDir + "-evil/" + filepath.Base(repo) }, ErrForbidden, "matches none of the allowed prefixes"},
 		{"off allowlist", func(r *Request) { r.Repo = "https://github.com/org/name.git" }, ErrForbidden, "matches none of the allowed prefixes"},
 		{"unknown commit", func(r *Request) { r.Commit = strings.Repeat("0", 40) }, ErrBadRequest, "could not be fetched"},
 	}
@@ -215,6 +225,9 @@ func TestNewValidatesConfig(t *testing.T) {
 	}
 	if _, err := New(Config{Dir: t.TempDir(), AllowedRepos: []string{"github.com/org/"}}); !errors.Is(err, ErrBadRequest) || !strings.Contains(err.Error(), "allowlist entry") {
 		t.Fatalf("New with bare prefix = %v", err)
+	}
+	if _, err := New(Config{Dir: t.TempDir(), AllowedRepos: []string{"https://github.com/org/../"}}); !errors.Is(err, ErrBadRequest) || !strings.Contains(err.Error(), "canonical") {
+		t.Fatalf("New with dot-dot prefix = %v", err)
 	}
 	svc, err := New(Config{Dir: t.TempDir(), AllowedRepos: []string{" https://github.com/org/ "}})
 	if err != nil || svc.cfg.AllowedRepos[0] != "https://github.com/org/" || svc.cfg.MaxCheckouts != DefaultMaxCheckouts {
@@ -470,4 +483,53 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestAllowedMatchesOnSegmentBoundary(t *testing.T) {
+	svc, err := New(Config{Dir: t.TempDir(), AllowedRepos: []string{"https://github.com/org", "https://host.example/dir/"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for repo, want := range map[string]bool{
+		"https://github.com/org":                true,
+		"https://github.com/org.git":            true,
+		"https://github.com/org/repo":           true,
+		"https://github.com/org/repo.git":       true,
+		"https://github.com/org-evil/repo":      false,
+		"https://github.com/organic/repo":       false,
+		"https://github.com/org.evil":           false,
+		"https://github.com.evil.example/org/x": false,
+		"https://host.example/dir/anything/x":   true,
+		"https://host.example/dir":              false,
+		"https://host.example/directory/x":      false,
+	} {
+		_, err := svc.Allowed(repo)
+		if got := err == nil; got != want {
+			t.Errorf("Allowed(%q) = %v, want allowed=%v", repo, err, want)
+		}
+	}
+}
+
+func TestParseRepoRequiresCanonicalPath(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"https://github.com/org/repo":          true,
+		"https://github.com/org/repo/":         true,
+		"https://github.com/org/":              true,
+		"file:///srv/repos/x.git":              true,
+		"https://github.com/org/../other/repo": false,
+		"https://github.com/org/./repo":        false,
+		"https://github.com/org//repo":         false,
+		"https://github.com/org/%2e%2e/repo":   false,
+		"https://github.com/org/re%2Fpo":       false,
+		"file:///srv/repos/../../etc/x.git":    false,
+		"file:///srv/repos/..":                 false,
+	} {
+		_, err := parseRepo(raw)
+		if got := err == nil; got != want {
+			t.Errorf("parseRepo(%q) = %v, want ok=%v", raw, err, want)
+		}
+		if err != nil && !errors.Is(err, ErrBadRequest) {
+			t.Errorf("parseRepo(%q) = %v, want ErrBadRequest", raw, err)
+		}
+	}
 }

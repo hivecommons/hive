@@ -17,14 +17,20 @@ import (
 )
 
 type Scheduler struct {
-	surgeDuration             func() (time.Duration, bool)
-	cfg                       *config.Config
-	primer                    *knowledge.Primer
-	inception                 *knowledge.InceptionEngine
-	lastActionable            *github.ActionableResult
-	logger                    *slog.Logger
-	primerCapLogged           sync.Map // agent|cap_bytes -> omitted fact count last logged at INFO
-	promptResolver            *promptsrc.Resolver
+	surgeDuration   func() (time.Duration, bool)
+	cfg             *config.Config
+	primer          *knowledge.Primer
+	inception       *knowledge.InceptionEngine
+	lastActionable  *github.ActionableResult
+	logger          *slog.Logger
+	primerCapLogged sync.Map // agent|cap_bytes -> omitted fact count last logged at INFO
+	primedSlugs     sync.Map // agent -> []string slugs the last kick's knowledge block rendered (#17052)
+	promptResolver  *promptsrc.Resolver
+	agentsMdFetcher AgentsMdFetcher
+	// remoteAgents caches the materialised AGENTS.md root per "owner/repo"
+	// for the GitHub fallback in remoteAgentsRepoRoot (#17090).
+	remoteAgents              map[string]remoteAgentsMd
+	remoteAgentsMu            sync.Mutex
 	auditFunc                 AuditFunc
 	advisoryFunc              AdvisoryFunc
 	classifierUnavailableFunc func(error)
