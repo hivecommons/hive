@@ -80,11 +80,10 @@ type Drainer struct {
 // the ones whose hash is not yet in the vault. Entries are always written
 // with `state: draft`; nothing in this package can produce another state.
 func (d *Drainer) Drain(req Request) Result {
-	res := Result{Store: d.Dir}
 	if d == nil || d.Dir == "" {
-		res.Errors = append(res.Errors, errors.New("cli-memory drain: no target directory"))
-		return res
+		return Result{Errors: []error{errors.New("cli-memory drain: no target directory")}}
 	}
+	res := Result{Store: d.Dir}
 	if err := os.MkdirAll(d.Dir, 0o755); err != nil {
 		res.Errors = append(res.Errors, fmt.Errorf("cli-memory drain: creating %s: %w", d.Dir, err))
 		return res
