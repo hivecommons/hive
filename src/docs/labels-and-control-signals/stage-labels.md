@@ -753,12 +753,17 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
 [hive-merge.md](../hive-merge.md#stage-labels)):
 
 1. `stage/072-returned-to-contributor` and ONE `<!-- hive:contributor-nudge
-   head=<sha> n=<1|2> mode=<comment|queued|spawn|preempt> -->` comment
-   @-mentioning the author with the failing checks / review asks and "reply
-   here or push a new head". Re-posted only for a new head; re-nudged once
-   more after `governor.labels.stage.contributor_nudge.renudge_interval`
-   (default = the stage's 24h dwell, i.e. at `stage/stalled`), then no more
-   — **cap: 2 nudges per head**. `mode=` records how the relay side was
+   reason=<slug> head=<sha> n=<1|2> mode=<comment|queued|spawn|preempt>
+   since=<time> repeat=<0|1> -->` comment per PR @-mentioning the author with
+   the failing checks / review asks and "reply here or push a new head". The
+   nudge is due once per head and once more after
+   `governor.labels.stage.contributor_nudge.renudge_interval` (default = the
+   stage's 24h dwell, i.e. at `stage/stalled`) — **cap: 2 nudges per head** —
+   but a due nudge edits the existing comment in place (a new head red for the
+   same reason, or a changed reason) instead of posting another copy
+   (hivecommons/hive#17067). While the same reason persists past
+   `auto_merge.nudge_repeat_after` (default 72h) the hive posts one fresh
+   re-nudge, then only edits. `mode=` records how the relay side was
    handled so the comment itself answers "did their agent get interrupted?".
    `governor.labels.stage.contributor_nudge.enabled: false` turns the
    comment and the relay task off; the stage label still moves.

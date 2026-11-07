@@ -55,6 +55,8 @@ type StageLabelPolicy struct {
 	// RenudgeInterval is the delay before the single re-nudge; 0 uses the
 	// stage's dwell (the stall threshold).
 	RenudgeInterval time.Duration
+	// NudgeRepeatAfter is auto_merge.nudge_repeat_after (hivecommons/hive#17067).
+	NudgeRepeatAfter time.Duration
 	// Adoption turns the stage-074 adoption on
 	// (governor.labels.stage.adoption.enabled, default true): a contributor
 	// PR still red after the grace is superseded by an App PR that preserves

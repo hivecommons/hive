@@ -9,6 +9,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/advisory"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -23,6 +24,13 @@ import (
 // diagnosis to the author's relay session as a fix-pr task. It re-nudges once
 // more at the stall threshold and then stops: 2 nudges per head, re-armed
 // only when the author pushes a new head.
+//
+// The GitHub side is one comment per PR (hivecommons/hive#17067): a nudge
+// that is due edits the hive's existing nudge comment in place when a new
+// head is red for the same reason or the reason changed, and a fresh comment
+// is posted again only once, after the same reason persisted for
+// auto_merge.nudge_repeat_after. The relay fix-pr dispatch and the adoption
+// grace ledger still run on every due nudge.
 
 // ContributorNudgeMarkerPrefix opens the nudge comment's machine marker.
 const ContributorNudgeMarkerPrefix = "<!-- hive:contributor-nudge"
@@ -196,11 +204,89 @@ func nudgeDiagnosisRouted(reason string, d stageDetail, route *stagelabels.Route
 }
 
 // ContributorNudgeComment renders the nudge comment. The marker carries the
-// head, the nudge ordinal and the delivery mode so a later pass can prove the
-// comment exists without a per-PR GET.
+// reason, the head, the nudge ordinal and the delivery mode so a later pass
+// can prove the comment exists without a per-PR GET.
 func ContributorNudgeComment(n ContributorNudge, out ContributorNudgeOutcome) string {
+	return contributorNudgeBody(n, out, contributorNudgeMarker{})
+}
+
+// contributorNudgeMarker is what the nudge comment's marker records beyond
+// the nudge itself (hivecommons/hive#17067).
+type contributorNudgeMarker struct {
+	// Reason is the reason slug the comment was rendered for.
+	Reason string
+	Head   string
+	// Since is when the hive first nudged for Reason on this PR; zero when
+	// unknown (a legacy marker).
+	Since time.Time
+	// Repeat is 1 once the single fresh re-nudge for Reason was posted.
+	Repeat int
+}
+
+// nudgeReasonSlug turns a lane reason into the marker's reason= token:
+// lower case, no spaces, nothing that could close the HTML comment.
+func nudgeReasonSlug(reason string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s head=%s n=%d mode=%s -->\n", ContributorNudgeMarkerPrefix, n.HeadSHA, n.Nudge, nonEmpty(out.Mode, "comment"))
+	for _, r := range strings.ToLower(strings.TrimSpace(reason)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == ':', r == '.', r == '_', r == '/':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	slug := b.String()
+	for strings.Contains(slug, "--") {
+		slug = strings.ReplaceAll(slug, "--", "-")
+	}
+	slug = strings.Trim(slug, "-")
+	if len(slug) > 80 {
+		slug = strings.TrimRight(slug[:80], "-")
+	}
+	if slug == "" {
+		return "unknown"
+	}
+	return slug
+}
+
+// parseContributorNudgeMarker reads the marker line opening body; legacy
+// per-head markers parse with an empty Reason.
+func parseContributorNudgeMarker(body string) (contributorNudgeMarker, bool) {
+	line, _, _ := strings.Cut(body, "\n")
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, ContributorNudgeMarkerPrefix+" ") || !strings.HasSuffix(line, "-->") {
+		return contributorNudgeMarker{}, false
+	}
+	var m contributorNudgeMarker
+	for _, field := range strings.Fields(strings.TrimSuffix(strings.TrimPrefix(line, ContributorNudgeMarkerPrefix), "-->")) {
+		key, value, _ := strings.Cut(field, "=")
+		switch key {
+		case "reason":
+			m.Reason = value
+		case "head":
+			m.Head = value
+		case "since":
+			if t, err := time.Parse(time.RFC3339, value); err == nil {
+				m.Since = t
+			}
+		case "repeat":
+			if value == "1" {
+				m.Repeat = 1
+			}
+		}
+	}
+	return m, true
+}
+
+// contributorNudgeBody renders the nudge comment with the upsert state in
+// its marker.
+func contributorNudgeBody(n ContributorNudge, out ContributorNudgeOutcome, m contributorNudgeMarker) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s reason=%s head=%s n=%d mode=%s", ContributorNudgeMarkerPrefix, nudgeReasonSlug(n.Reason), n.HeadSHA, n.Nudge, nonEmpty(out.Mode, "comment"))
+	if !m.Since.IsZero() {
+		fmt.Fprintf(&b, " since=%s repeat=%d", m.Since.UTC().Format(time.RFC3339), m.Repeat)
+	}
+	b.WriteString(" -->\n")
 	if n.Stalled {
 		fmt.Fprintf(&b, "@%s this PR has been waiting on you for a while (`%s`). ", n.Author, stagelabels.ReturnedToContributor.Label())
 	} else {
@@ -305,17 +391,78 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 	if c.contributorNudge != nil {
 		out = c.contributorNudge.Nudge(ctx, n)
 	}
-	body := ContributorNudgeComment(n, out)
-	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
-		c.warn("stage labels: contributor nudge failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+	posted, action, err := c.upsertContributorNudge(ctx, obs, n, out, policy, now)
+	if err != nil {
+		c.warn("stage labels: contributor nudge failed", "repo", obs.Display, "pr", obs.Number, "action", action, "error", err)
 		return 0, err
 	}
 	// "queued" only says the author has a relay registered here; the work
 	// sits in its queue whether or not that relay is connected. Counting it
 	// as online gave an offline clanker the 2h online grace (#15566).
 	store.MarkNudged(key, obs.HeadSHA, ordinal, out.Online || out.Mode == "spawn" || out.Mode == "preempt", now)
-	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "relay_failed", out.RelayFailed, "reason", obs.Reason)
-	return 1, nil
+	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "relay_failed", out.RelayFailed, "reason", obs.Reason, "comment", action)
+	return posted, nil
+}
+
+// upsertContributorNudge writes the GitHub side of a due nudge
+// (hivecommons/hive#17067): the first nudge on a PR posts the comment; a
+// later one edits the hive's latest nudge comment in place, whether the
+// head moved or the reason changed; and once the same reason has persisted
+// for auto_merge.nudge_repeat_after the hive posts one fresh re-nudge, then
+// only edits again. It returns the comments posted and what it did
+// ("posted", "repeated", "edited", "unchanged").
+func (c *Engine) upsertContributorNudge(ctx context.Context, obs stageObservation, n ContributorNudge, out ContributorNudgeOutcome, policy StageLabelPolicy, now time.Time) (int, string, error) {
+	repeatAfter := policy.NudgeRepeatAfter
+	if repeatAfter <= 0 {
+		repeatAfter = config.DefaultAutoMergeNudgeRepeatAfter
+	}
+	slug := nudgeReasonSlug(n.Reason)
+	existing, prev := c.latestOwnContributorNudge(ctx, obs)
+	next := contributorNudgeMarker{Reason: slug, Since: now}
+	action := "posted"
+	if existing != nil {
+		if prev.Reason == slug && !prev.Since.IsZero() {
+			next.Since, next.Repeat = prev.Since, prev.Repeat
+		}
+		if prev.Reason == slug && prev.Repeat == 0 && !prev.Since.IsZero() && now.Sub(prev.Since) >= repeatAfter {
+			next.Repeat = 1
+			existing = nil
+			action = "repeated"
+		}
+	}
+	body := contributorNudgeBody(n, out, next)
+	if existing != nil {
+		if body == existing.GetBody() {
+			return 0, "unchanged", nil
+		}
+		if err := c.editMarkerComment(ctx, obs.Owner, obs.Repo, existing.GetID(), body); err != nil {
+			return 0, "edited", err
+		}
+		return 0, "edited", nil
+	}
+	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		return 0, action, err
+	}
+	return 1, action, nil
+}
+
+// latestOwnContributorNudge returns the hive's most recent nudge comment on
+// the PR and its marker, or nil. A list failure reads as "none", so the
+// nudge is posted rather than lost.
+func (c *Engine) latestOwnContributorNudge(ctx context.Context, obs stageObservation) (*gh.IssueComment, contributorNudgeMarker) {
+	existing, err := c.findOwnMarkerComment(ctx, obs.Owner, obs.Repo, obs.Number, func(body string) bool {
+		_, ok := parseContributorNudgeMarker(body)
+		return ok
+	})
+	if err != nil {
+		c.warn("stage labels: could not list comments for the nudge upsert", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return nil, contributorNudgeMarker{}
+	}
+	if existing == nil {
+		return nil, contributorNudgeMarker{}
+	}
+	marker, _ := parseContributorNudgeMarker(existing.GetBody())
+	return existing, marker
 }
 
 // withoutForkGuard drops the fork-guard checks from a nudge's failing

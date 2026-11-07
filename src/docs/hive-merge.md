@@ -1236,9 +1236,11 @@ when the copy is closed without merging (`adopted_by_state` closed /
 closed-twice / copy-failed).
 
 A clanker PR entering `stage/072-returned-to-contributor` also triggers the
-contributor nudge: the sweep posts one `<!-- hive:contributor-nudge head=…
--->` comment per head naming the failing checks / review asks (re-nudged
-once at the stall threshold, cap 2) and hands the diagnosis to the contribute
+contributor nudge: the sweep keeps one `<!-- hive:contributor-nudge
+reason=… head=… -->` comment per PR naming the failing checks / review asks
+(due once per head and once more at the stall threshold, cap 2; a due nudge
+edits that comment in place, and a fresh one is posted only once, after the
+same reason persisted for `auto_merge.nudge_repeat_after`) and hands the diagnosis to the contribute
 hub, which — when the author's relay heartbeat is fresh — pushes a `fix-pr`
 interrupt task into their relay session (parallel sub-session or preempt,
 per the relay's declared capability) under a per-contributor fix budget;

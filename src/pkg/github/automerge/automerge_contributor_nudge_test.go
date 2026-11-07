@@ -443,3 +443,141 @@ func TestTrustedHuman071NoteNeutralisesCopiedMentions(t *testing.T) {
 		t.Fatalf("copied logins not kept readably: %s", got)
 	}
 }
+
+// hivecommons/hive#17067: the nudge rebounded to 34/day because every push
+// to a red clanker PR posted a fresh @author comment. The PR keeps one
+// nudge comment, edited in place for a new head or a changed reason; the
+// same reason persisting past nudge_repeat_after earns one fresh re-nudge,
+// then only edits. The relay dispatch still runs on every due nudge.
+func TestContributorNudgeUpsertsOnePerPRAndReason(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	api.statefulComments = true
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	sink := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "spawn", Online: true}}
+	e := newNudgeEngine(t, apiURLOf(t, api), clock, sink, StageLabelPolicy{Enabled: true, ContributorNudge: true, NudgeRepeatAfter: 72 * time.Hour})
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	observe := func(head, reason string, l ...string) StageLabelResult {
+		t.Helper()
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", nudgePR(7, head, l...), reason, false, nil)
+		e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+		res, err := e.ApplyStageLabels(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	lastEdit := func() string {
+		t.Helper()
+		if len(api.commentEdits) == 0 {
+			t.Fatal("no comment edit")
+		}
+		return api.commentEdits[len(api.commentEdits)-1]
+	}
+
+	if res := observe("aaa", "check-failing:unit"); res.Comments != 1 {
+		t.Fatalf("first nudge: res=%+v comments=%v", res, api.comments)
+	}
+	if got := nudgeComments(api); len(got) != 1 || !strings.HasPrefix(got[0], ContributorNudgeMarkerPrefix+" reason=check-failing:unit head=aaa n=1 mode=spawn since=2026-10-16T12:00:00Z repeat=0 -->\n@mallory") {
+		t.Fatalf("first nudge: %v", got)
+	}
+
+	// New head, same reason: the comment is edited, the relay still told.
+	clock.advance(time.Hour)
+	if res := observe("bbb", "check-failing:unit", labels...); res.Comments != 0 {
+		t.Fatalf("same reason new head posted: res=%+v", res)
+	}
+	if got := nudgeComments(api); len(got) != 1 || len(api.commentEdits) != 1 || !strings.Contains(lastEdit(), "reason=check-failing:unit head=bbb n=1 mode=spawn since=2026-10-16T12:00:00Z repeat=0 -->") {
+		t.Fatalf("same reason new head: comments=%v edits=%v", got, api.commentEdits)
+	}
+	if len(sink.nudges) != 2 || sink.nudges[1].HeadSHA != "bbb" {
+		t.Fatalf("relay dispatch changed: %+v", sink.nudges)
+	}
+
+	// The reason changes: edited in place, the reason clock restarts.
+	clock.advance(time.Hour)
+	observe("ccc", "check-failing:lint", labels...)
+	if got := nudgeComments(api); len(got) != 1 || len(api.commentEdits) != 2 || !strings.Contains(lastEdit(), "reason=check-failing:lint head=ccc n=1 mode=spawn since=2026-10-16T14:00:00Z repeat=0 -->") || !strings.Contains(lastEdit(), "`lint`") {
+		t.Fatalf("reason change: comments=%v edits=%v", got, api.commentEdits)
+	}
+
+	// The same reason persisted past nudge_repeat_after: one fresh re-nudge.
+	clock.advance(72 * time.Hour)
+	if res := observe("ddd", "check-failing:lint", labels...); res.Comments != 1 {
+		t.Fatalf("repeat nudge: res=%+v", res)
+	}
+	got := nudgeComments(api)
+	if len(got) != 2 || !strings.HasPrefix(got[1], ContributorNudgeMarkerPrefix+" reason=check-failing:lint head=ddd n=1 mode=spawn since=2026-10-16T14:00:00Z repeat=1 -->\n@mallory") || len(api.commentEdits) != 2 {
+		t.Fatalf("repeat nudge: comments=%v edits=%v", got, api.commentEdits)
+	}
+
+	// After the one re-nudge the hive only edits, however long it lasts.
+	clock.advance(96 * time.Hour)
+	if res := observe("eee", "check-failing:lint", labels...); res.Comments != 0 {
+		t.Fatalf("second repeat posted: res=%+v", res)
+	}
+	if got := nudgeComments(api); len(got) != 2 || len(api.commentEdits) != 3 || !strings.Contains(lastEdit(), "head=eee n=1 mode=spawn since=2026-10-16T14:00:00Z repeat=1 -->") {
+		t.Fatalf("after repeat: comments=%v edits=%v", got, api.commentEdits)
+	}
+	if len(sink.nudges) != 5 {
+		t.Fatalf("relay dispatches = %d, want one per due nudge (5)", len(sink.nudges))
+	}
+}
+
+// A legacy per-head nudge comment (no reason=) is adopted and rewritten in
+// place rather than joined by another copy.
+func TestContributorNudgeAdoptsLegacyComment(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	api.statefulComments = true
+	api.issueComments = map[int][]map[string]any{7: {
+		// Anyone can type the marker: a stranger's copy is never edited.
+		{"id": int64(76), "user": map[string]any{"login": "mallory"}, "body": ContributorNudgeMarkerPrefix + " head=old n=1 mode=comment -->\nspoof"},
+		{"id": int64(77), "user": map[string]any{"login": testHiveAppBotLogin}, "body": ContributorNudgeMarkerPrefix + " head=old n=1 mode=comment -->\n@mallory this PR is back in your court."},
+	}}
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	e := newNudgeEngine(t, apiURLOf(t, api), clock, &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "comment"}}, StageLabelPolicy{Enabled: true, ContributorNudge: true})
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", nudgePR(7, "aaa"), "check-failing:unit", false, nil)
+	e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	res, err := e.ApplyStageLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Comments != 0 || len(nudgeComments(api)) != 0 {
+		t.Fatalf("legacy nudge reposted: res=%+v comments=%v", res, api.comments)
+	}
+	if len(api.commentEdits) != 1 || !strings.HasPrefix(api.commentEdits[0], ContributorNudgeMarkerPrefix+" reason=check-failing:unit head=aaa n=1 mode=comment since=2026-10-16T12:00:00Z repeat=0 -->\n") {
+		t.Fatalf("legacy nudge edits: %v", api.commentEdits)
+	}
+}
+
+func TestNudgeReasonSlugAndMarker(t *testing.T) {
+	for in, want := range map[string]string{
+		"check-failing:unit":                     "check-failing:unit",
+		"Required-Check-Failing:CI / Build (go)": "required-check-failing:ci-/-build-go",
+		"  ":                                     "unknown",
+		"optional-check-failing:a-->b":           "optional-check-failing:a-b",
+		"conflicting":                            "conflicting",
+		strings.Repeat("x", 100):                 strings.Repeat("x", 80),
+		"label:needs-rebase":                     "label:needs-rebase",
+		"hive-signoff-attribution":               "hive-signoff-attribution",
+		"review-gate:awaiting <script>":          "review-gate:awaiting-script",
+	} {
+		if got := nudgeReasonSlug(in); got != want {
+			t.Fatalf("nudgeReasonSlug(%q) = %q, want %q", in, got, want)
+		}
+	}
+	since := time.Date(2026, 11, 5, 8, 0, 0, 0, time.UTC)
+	body := contributorNudgeBody(ContributorNudge{Author: "a", HeadSHA: "abc", Nudge: 2, Reason: "conflicting"}, ContributorNudgeOutcome{Mode: "queued"}, contributorNudgeMarker{Since: since, Repeat: 1})
+	m, ok := parseContributorNudgeMarker(body)
+	if !ok || m.Reason != "conflicting" || m.Head != "abc" || !m.Since.Equal(since) || m.Repeat != 1 {
+		t.Fatalf("round trip: %+v %v\n%s", m, ok, body)
+	}
+	legacy, ok := parseContributorNudgeMarker(ContributorNudgeMarkerPrefix + " head=abc n=1 mode=comment -->\nx")
+	if !ok || legacy.Reason != "" || legacy.Head != "abc" || !legacy.Since.IsZero() {
+		t.Fatalf("legacy: %+v %v", legacy, ok)
+	}
+	if _, ok := parseContributorNudgeMarker("x\n" + ContributorNudgeMarkerPrefix + " head=abc -->"); ok {
+		t.Fatal("marker not on the first line parsed")
+	}
+}

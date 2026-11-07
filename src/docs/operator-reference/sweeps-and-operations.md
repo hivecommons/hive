@@ -89,9 +89,12 @@ on; `governor.labels.stage.enabled: false` stops the reconciler,
 `governor.labels.stage.stalled.require_quiet: false` measures the dwell from
 stage entry instead of last activity (Settings → Labels). When a clanker
 PR enters
-`stage/072-returned-to-contributor` the hive posts one nudge comment per head
-(re-nudged once after `governor.labels.stage.contributor_nudge.renudge_interval`,
-default = the 24h dwell; cap 2) and, for a contributor whose relay heartbeat is
+`stage/072-returned-to-contributor` the hive nudges once per head
+(again once after `governor.labels.stage.contributor_nudge.renudge_interval`,
+default = the 24h dwell; cap 2) through one `hive:contributor-nudge` comment
+per PR that a new head or reason edits in place; a fresh comment is posted
+again only once, after the same reason persisted for `auto_merge.nudge_repeat_after`
+(default 72h). For a contributor whose relay heartbeat is
 within `governor.labels.stage.presence_window` (default 15m), pushes a `fix-pr`
 interrupt to their relay session, bounded by the per-contributor fix budget
 (`contribute.max_parallel_fixes` / `contribute.min_focus_window`).

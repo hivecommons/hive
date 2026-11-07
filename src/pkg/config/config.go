@@ -8322,6 +8322,12 @@ type AutoMergeConfig struct {
 	// GitHub Actions check-runs have not registered yet. Non-positive values
 	// use DefaultAutoMergeMinHeadAge.
 	MinHeadAge time.Duration `yaml:"min_head_age,omitempty" json:"min_head_age,omitempty"`
+	// NudgeRepeatAfter is how long the same stage-072 contributor-nudge
+	// reason must persist before the hive posts its single fresh re-nudge
+	// (hivecommons/hive#17067); until then, and after it, the PR's one nudge
+	// comment is edited in place. Non-positive values use
+	// DefaultAutoMergeNudgeRepeatAfter.
+	NudgeRepeatAfter time.Duration `yaml:"nudge_repeat_after,omitempty" json:"nudge_repeat_after,omitempty"`
 	// RequiredChecks is the default operator-declared list of status-check
 	// contexts/check-run names that the self-merge sweep's commitGreen must
 	// gate on for repos without an auto_merge.repos.<repo>.required_checks
@@ -8893,6 +8899,11 @@ func (c ContributorTierAutoMergeConfig) Validate() error {
 // when auto_merge.min_head_age is unset.
 const DefaultAutoMergeMinHeadAge = 3 * time.Minute
 
+// DefaultAutoMergeNudgeRepeatAfter is auto_merge.nudge_repeat_after's
+// default: one fresh contributor re-nudge after three days of the same
+// reason, then only in-place edits.
+const DefaultAutoMergeNudgeRepeatAfter = 72 * time.Hour
+
 // DefaultTrustedBotAuthors is the TrustedBotAuthors value when the operator
 // declares none. Only dependabot: its PRs are single-dependency bumps whose
 // safety is entirely established by the repo's own CI, which the sweep gates on.
@@ -9190,6 +9201,15 @@ func (a AutoMergeConfig) EffectiveMinHeadAge() time.Duration {
 		return a.MinHeadAge
 	}
 	return DefaultAutoMergeMinHeadAge
+}
+
+// EffectiveNudgeRepeatAfter returns NudgeRepeatAfter, or
+// DefaultAutoMergeNudgeRepeatAfter when it is unset or non-positive.
+func (a AutoMergeConfig) EffectiveNudgeRepeatAfter() time.Duration {
+	if a.NudgeRepeatAfter > 0 {
+		return a.NudgeRepeatAfter
+	}
+	return DefaultAutoMergeNudgeRepeatAfter
 }
 
 // SelfAuthoredEnabled reports whether the App-self-merge sweep is on for this
