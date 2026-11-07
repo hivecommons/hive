@@ -48,18 +48,36 @@ to create one. It never runs for `v2`, `mk`, `dd`, or a manual
 
 It also runs **hourly on a schedule**, as a backstop (#5318). The
 `workflow_run` trigger alone can silently lose a release opportunity: a
-`docker.yml` run that is *cancelled* never fires `workflow_run` at all, and a
-run that fires but finds `v5` already advanced stands down in favour of a
-successor that may itself stand down. Standing down is correct — the run's
-images were built from the older tree, so tagging would name content those
-images do not contain — but nothing used to come back for the abandoned work.
-The scheduled pass evaluates `v5`'s **current** tip, whose images have long
-since been published, so it retags an existing digest exactly as the normal
-path does. It refuses to act unless `docker.yml` has a *successful, completed*
-push run for that tip, so a cancelled or in-flight build never produces a tag
-with no digest behind it, and it is a no-op whenever `## Unreleased` is empty
-— which on a healthy repository is almost always. Deferrals are logged as
-warnings so a skipped opportunity is visible rather than silent.
+`docker.yml` run that is *cancelled* never fires `workflow_run` at all, and
+GitHub's concurrency queue holds at most one pending run per group, so on a
+busy branch most commits never complete a build. The scheduled pass walks
+`v5`'s recent history from the tip and considers the **newest commit that has
+a successful, completed publishing `docker.yml` run** — not necessarily the
+tip itself, which on a busy branch is rarely built yet. It retags that
+commit's existing digests exactly as the normal path does, so a cancelled or
+in-flight build never produces a tag with no digest behind it; if nothing
+recent is built it stands down green and dispatches `docker.yml` for the tip.
+It is a no-op whenever `## Unreleased` is empty — which on a healthy
+repository is almost always.
+
+**The tag names the commit the images were built from, not `v5`'s tip.** The
+release commit (compiled `CHANGELOG.md` plus the fragment deletions) is
+parented on the exact SHA `docker.yml` built, the `v<version>` tag points at
+that release commit, and the immutable image tags are retags of that SHA's
+digests. The release commit reaches `v5` through a merge-commit PR that is
+allowed to land on a tip that has moved on — the merge commit is not tagged,
+so commits that arrived after the built SHA are "after `v<version>`" in git
+exactly as they are in image terms. Until 2026-11 the workflow instead
+*deferred* whenever `v5` had advanced past the built SHA, expecting the
+successor run to release; with merges arriving faster than a multi-arch build
+no run ever saw an unmoved tip, every successor deferred again, and `v5` went
+from `v5.186.4` (2026-10-18) to ~1,700 untagged commits before the rule was
+changed. The two remaining deferrals — logged as warnings so a skipped
+opportunity is visible — are the cases where tagging the built SHA really
+would be wrong: the built SHA is no longer an ancestor of `v5`'s tip, or a
+release already landed *after* it (the newest `v5.*` tag is not an ancestor
+of the built SHA, so its fragments are already released and the derived
+version would collide).
 
 Before anything is decided, `src/scripts/compile-changelog.sh` folds any
 [`changelog.d/`](../../changelog.d/README.md) fragment files — the per-PR
@@ -245,9 +263,14 @@ Concretely, per release:
    on that exact SHA. It then mirrors the verified result as a SHA-scoped
    `gate: success` commit status so a release PR can see it.
 6. The workflow opens a PR from the scratch branch into `v5` and merges it
-   through the SHA-keyed merge API, leaving branch protection fully enforced.
-   It deletes the scratch branch, then creates and pushes the `v<version>` tag
-   on the commit that landed on `v5`.
+   through the SHA-keyed merge API as a merge commit, leaving branch
+   protection fully enforced (a direct fast-forward push is tried first when
+   `v5` is still at the built SHA). If `v5` has moved on meanwhile the merge
+   is simply retried — the base having moved is not a reason to defer. It
+   deletes the scratch branch, then creates and pushes the `v<version>` tag
+   on the **release commit itself** (the built SHA plus the changelog), never
+   on the merge commit, so the tag's tree is exactly what the retagged images
+   were built from.
 7. A GitHub Release is created from the tag, with GitHub's auto-generated
    notes plus an SBOM callout, and the three SBOM files from step 4a attached
    as release assets.
@@ -528,12 +551,15 @@ semver. `docker.yml`'s image-build jobs check out with `fetch-depth: 0` and
 with no ldflag at all (a bare local `go build`) still falls back to
 `0.0.0-dev`, never an empty string.
 
-For semver releases, `tagged-release.yml` dispatches `docker.yml` with both the
-exact merged release SHA and the exact tag (`VERSION=v5.x.y`). That keeps the
-retag model — the release job still tags and publishes the digest built for the
-merge commit — while making the binary self-report the release it is published
-as instead of the previous nearest tag. Branch and manual non-release builds
-leave `VERSION` empty and keep using `git describe`.
+For semver releases, `tagged-release.yml` dispatches `docker.yml` with the
+exact merged release SHA, and — only when `v5` was still at the built SHA, so
+the merge adds nothing but the changelog — the exact tag (`VERSION=v5.x.y`).
+That keeps the retag model while making the binary self-report the release it
+is published as instead of the previous nearest tag. When the release landed
+as a merge commit onto a tip that had moved on, the merge commit also carries
+newer work, so `VERSION` is left empty and `git describe` reports
+`v5.x.y-N-gSHA`, which is accurate. Branch and manual non-release builds leave
+`VERSION` empty likewise.
 
 ## What still blocks cutting a real release
 
