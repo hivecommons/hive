@@ -160,3 +160,55 @@ func TestRecordReviewVerdictKeepsReadPerspectivesAndDropsRateLimitedOnes(t *test
 		t.Fatalf("aggregate = %s (requires_human=%t merge_eligible=%t), want incomplete", got.Verdict, got.RequiresHuman, got.MergeEligible)
 	}
 }
+
+// The rate-limited security report is dropped (no verdict), and correctness
+// read the PR and asked a non-security question. On a contributor PR that
+// question alone is hands-free, but the head has had no security review:
+// it must read incomplete, never merge-eligible. Before the coverage check
+// the hands-free rule approved it.
+func TestRecordReviewVerdictDroppedSecurityLeavesHandsFreeHeadIncomplete(t *testing.T) {
+	const (
+		repo = "o/r"
+		num  = 8
+		head = "def456"
+	)
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	var pending []review.PendingReview
+	var elems []string
+	for _, p := range review.DefaultPerspectives {
+		pending = append(pending, review.PendingReview{Repo: repo, Number: num, HeadSHA: head, Perspective: p, Agent: "reviewer", Dispatched: time.Now().UTC()})
+		switch p {
+		case review.PerspectiveSecurity:
+			elems = append(elems, verdictJSONWithSummary(t, repo, num, p, "requires_human", head, rateLimitedSummaries1116[p]))
+		case review.PerspectiveCorrectness:
+			elems = append(elems, verdictJSONWithSummary(t, repo, num, p, "requires_human", head, "Read the diff; unclear whether this groundwork should land before its consumer."))
+		default:
+			elems = append(elems, verdictJSONWithSummary(t, repo, num, p, "approve", head, "Read the diff; fine."))
+		}
+	}
+	withVerdictDispatchState(t, review.DispatchState{Pending: pending})
+
+	recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: repo, Number: num, Agent: "reviewer", Report: "[" + strings.Join(elems, ",") + "]"}, dir)
+
+	if len(recorded) != len(review.DefaultPerspectives)-1 {
+		t.Fatalf("recorded %d verdicts, want every perspective but the unread security one", len(recorded))
+	}
+	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(artifact.Items) != 1 {
+		t.Fatalf("want one aggregate, got %+v", artifact.Items)
+	}
+	got := artifact.Items[0]
+	if _, ok := got.Perspectives[review.PerspectiveSecurity]; ok {
+		t.Fatalf("unread security perspective was counted: %v", got.Perspectives)
+	}
+	if got.MergeEligible || got.Verdict != review.VerdictIncomplete || got.RequiresHuman {
+		t.Fatalf("aggregate = %s (merge_eligible=%t requires_human=%t), want incomplete: the head has had no security review", got.Verdict, got.MergeEligible, got.RequiresHuman)
+	}
+	if !reasonsContain(got.Reasons, "review coverage incomplete: missing security") {
+		t.Fatalf("Reasons = %v, want the missing security perspective named", got.Reasons)
+	}
+}

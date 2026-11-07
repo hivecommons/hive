@@ -31,6 +31,14 @@
 // provider/model; otherwise the providers named by config.yml's modelRoles,
 // which is what omp itself will run when no model is passed.
 //
+// Custom providers — a self-hosted llama.cpp/vLLM/OpenAI-compatible server
+// with `auth: none`, a gateway — are defined in ~/.omp/agent/models.yml, not
+// in agent.db. Without that file in the stage, a modelRoles selection naming
+// such a provider does not exist inside the container and omp falls back to
+// some other model. models.yml can also carry literal `apiKey`/`headers`
+// secrets for every provider, so it is staged NARROWED the same way the
+// credential rows are: only the selected providers' blocks survive.
+//
 // A staged OAuth record is a COPY, and OAuth refresh tokens are single-use
 // (hivecommons/hive#7922): the first client to refresh gets a new refresh
 // token and the old one is revoked. So once omp inside the container has
@@ -65,6 +73,10 @@ const OMP_STAGED_AGENT_ENTRIES = Object.freeze([
   'models.db',
   'models.db-wal',
 ]);
+
+// omp reads models.yml, else models.yaml, from the agent dir. Staged narrowed
+// to the selected providers (narrowModelsYml), never copied whole.
+const OMP_MODELS_CONFIG_ENTRIES = Object.freeze(['models.yml', 'models.yaml']);
 
 const OMP_AUTH_TABLE = 'auth_credentials';
 
@@ -115,6 +127,96 @@ function configModelRoleProviders(configFile, opts = {}) {
     }
   }
   return [...providers].sort();
+}
+
+// unquoteYamlKey strips one level of matching quotes from a mapping key.
+function unquoteYamlKey(key) {
+  const m = /^(["'])(.*)\1$/.exec(key);
+  return m ? m[2] : key;
+}
+
+// splitModelsYml splits omp's models.yml into its `providers:` children with
+// a deliberately small YAML subset: block style only, one top-level
+// `providers:` mapping (the only top-level key omp's schema defines), each
+// provider a key at one consistent indent with its body indented deeper.
+// Returns { blocks: [{ id, lines }] } or throws when the file uses a shape
+// this cannot split safely (flow mappings, mixed indents) — the caller must
+// then refuse rather than ship every provider's secrets.
+function splitModelsYml(text) {
+  const blocks = [];
+  let section = '';
+  let childIndent = -1;
+  let current = null;
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.replace(/\r$/, '');
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) {
+      if (current) current.lines.push(line);
+      continue;
+    }
+    const indent = line.length - line.trimStart().length;
+    if (indent === 0) {
+      current = null;
+      if (/^providers:\s*(#.*)?$/.test(line)) { section = 'providers'; continue; }
+      if (/^providers:/.test(line)) throw new Error('models.yml `providers:` is not a block mapping');
+      if (trimmed === '---') continue;
+      // Any other top-level key is outside omp's schema; it is dropped.
+      section = 'other';
+      continue;
+    }
+    if (section !== 'providers') continue;
+    if (childIndent < 0) childIndent = indent;
+    if (indent === childIndent) {
+      const m = /^\s+("[^"]+"|'[^']+'|[^\s:#][^:#]*?)\s*:(\s|$)/.exec(line);
+      if (!m) throw new Error(`models.yml provider entry is not a mapping key: ${JSON.stringify(trimmed.slice(0, 40))}`);
+      current = { id: unquoteYamlKey(m[1]).toLowerCase(), lines: [line] };
+      blocks.push(current);
+      continue;
+    }
+    if (indent < childIndent || !current) throw new Error('models.yml `providers:` has inconsistent indentation');
+    current.lines.push(line);
+  }
+  for (const b of blocks) b.selfAuthed = providerBlockSelfAuthed(b.lines);
+  return { blocks };
+}
+
+// providerBlockSelfAuthed: does a models.yml provider block authenticate on
+// its own — `auth: none` (keyless local server) or a provider-level `apiKey`?
+// Field lines are the ones at the block's first body indent.
+function providerBlockSelfAuthed(lines) {
+  let fieldIndent = -1;
+  for (const line of lines.slice(1)) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    const indent = line.length - line.trimStart().length;
+    if (fieldIndent < 0) fieldIndent = indent;
+    if (indent !== fieldIndent) continue;
+    if (/^auth:\s*["']?none["']?\s*(#.*)?$/.test(trimmed)) return true;
+    if (/^apiKey:\s*\S/.test(trimmed)) return true;
+  }
+  return false;
+}
+
+// narrowModelsYml returns models.yml text holding only the provider blocks in
+// `keep` (lowercased ids), plus the ids kept. An empty kept set yields
+// `providers: {}`, which omp accepts.
+function narrowModelsYml(text, keep) {
+  const { blocks } = splitModelsYml(text);
+  const kept = blocks.filter((b) => keep.has(b.id));
+  if (kept.length === 0) return { text: 'providers: {}\n', providers: [] };
+  const body = kept.map((b) => b.lines.join('\n').replace(/\s+$/, '')).join('\n');
+  return { text: `providers:\n${body}\n`, providers: kept.map((b) => b.id).sort() };
+}
+
+// modelsYmlBlocks returns the provider blocks of the agent dir's models.yml
+// (else models.yaml); [] when absent or not splittable.
+function modelsYmlBlocks(agentDir) {
+  for (const entry of OMP_MODELS_CONFIG_ENTRIES) {
+    const file = path.join(agentDir, entry);
+    if (!fs.existsSync(file)) continue;
+    try { return splitModelsYml(fs.readFileSync(file, 'utf8')).blocks; } catch (_) { return []; }
+  }
+  return [];
 }
 
 // ── SQLite access ────────────────────────────────────────────────────────────
@@ -344,12 +446,20 @@ function describeOmpHost(ompDir, model) {
     storedProviders: [],
     keptProviders: [],
     disabledProviders: [],
+    configuredProviders: [],
     warnings: [],
   };
   if (!report.agentDirPresent) {
     report.warnings.push(`${agentDir} does not exist: omp has never been set up on this host, so container mode has nothing to stage and omp will open its setup wizard.`);
     return report;
   }
+  // Providers models.yml configures with their own auth (`auth: none` or an
+  // `apiKey`) need no agent.db row, so their absence there is not a missing
+  // sign-in.
+  const ymlBlocks = modelsYmlBlocks(agentDir);
+  report.configuredProviders = ymlBlocks.map((b) => b.id).sort();
+  const selfAuthed = new Set(ymlBlocks.filter((b) => b.selfAuthed).map((b) => b.id));
+  const needCredential = report.selection.providers.filter((p) => !selfAuthed.has(p));
   if (!report.credentialStorePresent) {
     report.warnings.push(`${dbFile} is missing: no provider is signed in on this host, so the container would start at omp's setup wizard.`);
     return report;
@@ -387,10 +497,12 @@ function describeOmpHost(ompDir, model) {
     report.warnings.push(`the ${d.provider} sign-in on this host is disabled — ${d.cause}. Run omp on the host and /login to ${d.provider} again; until then the container would start with no usable ${d.provider} credential.`);
   }
   if (report.storedProviders.length === 0) {
-    report.warnings.push('no provider credential is stored on this host; the container would start at omp\'s setup wizard.');
-  } else if (report.selection.source !== 'none' && report.keptProviders.length === 0) {
-    report.warnings.push(`no stored credential matches the selected provider(s) ${report.selection.providers.join(', ')}; stored: ${report.storedProviders.join(', ')}. Sign in to that provider on this host, or pick a signed-in one with AGENT_MODEL=provider/model.`);
-  } else if (report.selection.primaryProvider && !report.keptProviders.includes(report.selection.primaryProvider)) {
+    if (report.selection.source === 'none' || needCredential.length) {
+      report.warnings.push('no provider credential is stored on this host; the container would start at omp\'s setup wizard.');
+    }
+  } else if (report.selection.source !== 'none' && needCredential.length && !needCredential.some((p) => report.keptProviders.includes(p))) {
+    report.warnings.push(`no stored credential matches the selected provider(s) ${needCredential.join(', ')}; stored: ${report.storedProviders.join(', ')}. Sign in to that provider on this host, or pick a signed-in one with AGENT_MODEL=provider/model.`);
+  } else if (report.selection.primaryProvider && !selfAuthed.has(report.selection.primaryProvider) && !report.keptProviders.includes(report.selection.primaryProvider)) {
     report.warnings.push(`no stored credential matches the primary provider ${report.selection.primaryProvider}; stored: ${report.storedProviders.join(', ')}. Sign in to that provider on this host, or pick a signed-in one with AGENT_MODEL=provider/model.`);
   }
   if (report.selection.fuzzyModel) {
@@ -411,6 +523,11 @@ function describeLines(report) {
       : report.selection.source === 'model+config' ? 'AGENT_MODEL + config.yml modelRoles'
       : report.selection.source === 'config' ? 'config.yml modelRoles' : 'no selection, all kept';
     lines.push(`  container mode stages: ${report.keptProviders.length ? report.keptProviders.join(', ') : '(none)'} (selected by ${how})`);
+  }
+  if (report.configuredProviders.length) {
+    const keep = new Set(report.selection.providers);
+    const staged = report.selection.source === 'none' ? report.configuredProviders : report.configuredProviders.filter((p) => keep.has(p));
+    lines.push(`  models.yml providers: ${report.configuredProviders.join(', ')}; container mode stages: ${staged.length ? staged.join(', ') : '(none)'}`);
   }
   for (const w of report.warnings) lines.push(`  WARNING: ${w}`);
   return lines;
@@ -443,6 +560,24 @@ function stageOmp(ompDir, stageDir, model) {
     if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue;
     const dst = path.join(dstAgent, entry);
     fs.copyFileSync(src, dst);
+    fs.chmodSync(dst, 0o600);
+    report.staged.push(entry);
+  }
+  // models.yml/models.yaml: narrowed to the selected providers' blocks, like
+  // the credential rows, because the file can hold literal secrets for any
+  // provider. With no selection nothing is narrowed, as for agent.db.
+  for (const entry of OMP_MODELS_CONFIG_ENTRIES) {
+    const src = path.join(srcAgent, entry);
+    if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue;
+    const text = fs.readFileSync(src, 'utf8');
+    let out = text;
+    if (report.selection.source !== 'none') {
+      try { out = narrowModelsYml(text, new Set(report.selection.providers)).text; } catch (err) {
+        throw new Error(`cannot narrow ${src} to the selected providers (${err.message}); simplify it to block-style YAML or select its providers explicitly.`);
+      }
+    }
+    const dst = path.join(dstAgent, entry);
+    fs.writeFileSync(dst, out, { mode: 0o600 });
     fs.chmodSync(dst, 0o600);
     report.staged.push(entry);
   }
@@ -604,6 +739,7 @@ module.exports = {
   OMP_STAGED_AGENT_ENTRIES,
   parseOmpProvider,
   configModelRoleProviders,
+  narrowModelsYml,
   ompProviderSelection,
   describeOmpHost,
   describeLines,
