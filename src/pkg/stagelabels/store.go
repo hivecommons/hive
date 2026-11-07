@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -158,6 +159,14 @@ type Record struct {
 	// head: a mention is an email, and the same cause on a new head is the
 	// same ask.
 	MentionCause string `json:"mention_cause,omitempty"`
+	// ForkGuardChecks are the checks last seen refusing this PR only
+	// because it is from a fork (hgithub.PullRequest.ForkGuardChecks,
+	// hivecommons/hive#14273). They outlive the head: the policy answers
+	// only for the head the last CI-enriched enumeration saw, and a fork
+	// guard refuses every head of the PR, so the stage pass reads a later
+	// head red on nothing else as the same guard instead of handing it back
+	// to its author (projectbluefin/utah-packages#862, #869).
+	ForkGuardChecks []string `json:"fork_guard_checks,omitempty"`
 	// DCOHead, DCOTotal and DCOUnsigned cache the commit check for one head
 	// (hivecommons/hive#12542): how many non-merge commits the PR carried
 	// and how many lacked a Signed-off-by trailer. DCOUnsignedHive /
@@ -587,7 +596,22 @@ type Transition struct {
 	// Recovered is true when a prior regression cleared because the stage
 	// reached or passed the point it fell from.
 	Recovered bool
+	// Suppressed is true when the transition dampener refused this stage change.
+	Suppressed bool
 }
+
+// dampenerMove tracks one stage transition for dampening flaps per (key, head).
+type dampenerMove struct {
+	from Stage
+	to   Stage
+	at   time.Time
+}
+
+// transitionDampenerWindow is how long stage transitions are remembered by the dampener.
+const transitionDampenerWindow = 30 * time.Minute
+
+// transitionDampenerMaxFlaps is the maximum number of transitions allowed between two stages within transitionDampenerWindow.
+const transitionDampenerMaxFlaps = 3
 
 // Store is the persisted per-item stage memory. One Store is shared
 // process-wide (Shared) because the automerge sweep builds a fresh engine
@@ -602,6 +626,13 @@ type Store struct {
 	// from) the file; ObserveProgress dirties the store for a LastSeen-only
 	// move once the saved value is LastSeenPersistEvery old.
 	seenSaved map[string]time.Time
+
+	// dampener tracks recent stage transitions per (key, head) (#16974).
+	// The history is deliberately in-memory only and is not persisted with
+	// the Record: the window is a short 30 minutes, so a restart merely
+	// resets suppression and at worst allows a few extra flaps (#16978).
+	dampenerHead map[string]string
+	dampener     map[string][]dampenerMove
 }
 
 // NewStore returns an empty in-memory store that persists to path ("" =
@@ -610,7 +641,14 @@ func NewStore(path string, now func() time.Time) *Store {
 	if now == nil {
 		now = time.Now
 	}
-	return &Store{path: path, now: now, items: map[string]Record{}, seenSaved: map[string]time.Time{}}
+	return &Store{
+		path:         path,
+		now:          now,
+		items:        map[string]Record{},
+		seenSaved:    map[string]time.Time{},
+		dampenerHead: map[string]string{},
+		dampener:     map[string][]dampenerMove{},
+	}
 }
 
 // markSeenSaved notes the LastSeen the file now holds for every record.
@@ -722,7 +760,12 @@ func (s *Store) Get(key string) (Record, bool) {
 // transition. A None stage is terminal: the record is dropped and the
 // transition carries Prev so the caller can clear labels.
 func (s *Store) Observe(key string, stage Stage, reason string) Transition {
-	return s.ObserveProgress(key, stage, reason, false)
+	return s.ObserveProgressHead(key, "", stage, reason, false)
+}
+
+// ObserveHead is Observe with key's head SHA.
+func (s *Store) ObserveHead(key, head string, stage Stage, reason string) Transition {
+	return s.ObserveProgressHead(key, head, stage, reason, false)
 }
 
 // ObserveProgress is Observe with the caller's knowledge of WHY the stage
@@ -732,6 +775,13 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 // is progress books no regression and resolves one already open: the work
 // landed, so nothing was lost.
 func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress bool) Transition {
+	return s.ObserveProgressHead(key, "", stage, reason, progress)
+}
+
+// ObserveProgressHead is ObserveProgress with key's head SHA. The dampener
+// history it consults is in-memory only (see Store.dampener): a process
+// restart forgets it, which is acceptable given the 30-minute window.
+func (s *Store) ObserveProgressHead(key, head string, stage Stage, reason string, progress bool) Transition {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
@@ -744,6 +794,30 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 		}
 		return tr
 	}
+	head = strings.TrimSpace(head)
+	if head == "" && had {
+		head = strings.TrimSpace(prev.ActivityHead)
+	}
+	// Per-(repo, number, head) transition dampener (#16974): refuse to move
+	// between two stages more than 3 times within 30 minutes without a new
+	// head SHA or a human event, log the suppressed transition, and keep the
+	// current label. Moves into a repair stage (070/071/072) are never
+	// refused: suppressing "CI went red, back to fixing" would leave the
+	// record at a stage the merge train reads as ready.
+	if had && prev.Stage != None && prev.Stage != stage && head != "" && !AuthorBlocked(stage) {
+		if s.isDampenedLocked(key, head, prev.Stage, stage, now) {
+			slog.Warn("stage transition suppressed by dampener",
+				slog.String("key", key),
+				slog.String("head", head),
+				slog.String("from", prev.Stage.String()),
+				slog.String("to", stage.String()),
+				slog.String("reason", reason))
+			tr.Next = prev.Stage
+			tr.Changed = false
+			tr.Suppressed = true
+			return tr
+		}
+	}
 	next := prev
 	next.Stage = stage
 	next.Reason = reason
@@ -755,6 +829,9 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 		next.EntryCommented = false
 		tr.Changed = true
 		next.notePushStageChange(now)
+		if had && prev.Stage != None && head != "" {
+			s.recordDampenerTransitionLocked(key, head, prev.Stage, stage, now)
+		}
 	} else if ReasonClass(prev.Reason) != ReasonClass(reason) {
 		next.ReasonChangedAt = now
 	}
@@ -891,6 +968,11 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	case a.Digest != r.ActivityDigest:
 		changed = true
 	}
+	if (a.Comments >= 0 && a.Comments > r.ActivityComments) ||
+		(a.Reviews >= 0 && a.Reviews > r.ActivityReviews) ||
+		(a.Head != "" && r.ActivityHead != "" && a.Head != r.ActivityHead) {
+		s.resetDampenerLocked(key)
+	}
 	if changed && at.After(r.LastActivityAt) {
 		r.LastActivityAt = at
 	}
@@ -1020,6 +1102,7 @@ func (s *Store) NotePush(key, sha string, at time.Time) bool {
 	}
 	r.LastPushAt, r.LastPushSha = at, sha
 	s.items[key] = r
+	s.resetDampenerLocked(key)
 	s.dirty = true
 	return true
 }
@@ -1900,6 +1983,7 @@ func (s *Store) NoteAdmission(key, head, by string, now time.Time) bool {
 	}
 	r.AdmittedHead, r.AdmittedBy, r.AdmittedAt = head, by, now
 	s.items[key] = r
+	s.resetDampenerLocked(key)
 	s.dirty = true
 	return true
 }
@@ -1930,6 +2014,7 @@ func (s *Store) NoteAdoptionForced(key, login string, now time.Time) {
 	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = "", "", time.Time{}, "", ""
 	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
 	s.items[key] = r
+	s.resetDampenerLocked(key)
 	s.dirty = true
 }
 
@@ -1964,6 +2049,7 @@ func (s *Store) NoteReroute(key, head, login, by, reason string, now time.Time) 
 	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = login, by, now, reason, head
 	r.RerouteFallbackAt = time.Time{}
 	s.items[key] = r
+	s.resetDampenerLocked(key)
 	s.dirty = true
 }
 
@@ -2418,6 +2504,20 @@ func (s *Store) NoteAdoptDiffFence(key, reason string) {
 	s.dirty = true
 }
 
+// NoteForkGuard records the checks fresh evidence showed refusing the PR
+// only because it is from a fork, on an existing record.
+func (s *Store) NoteForkGuard(key string, checks []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || len(checks) == 0 || slices.Equal(r.ForkGuardChecks, checks) {
+		return
+	}
+	r.ForkGuardChecks = append([]string(nil), checks...)
+	s.items[key] = r
+	s.dirty = true
+}
+
 // SetCoveringPR records (or, with an empty prKey, clears) the covering PR
 // of an issue the store knows. A no-op for an unknown key.
 func (s *Store) SetCoveringPR(key, prKey string) {
@@ -2462,7 +2562,63 @@ func (s *Store) forgetStageLocked(key string, r Record) {
 	} else {
 		s.items[key] = Record{UnblockedAt: r.UnblockedAt, LastSeen: s.now()}
 	}
+	s.resetDampenerLocked(key)
+	delete(s.dampenerHead, key)
 	s.dirty = true
+}
+
+func (s *Store) isDampenedLocked(key, head string, from, to Stage, now time.Time) bool {
+	if s.dampener == nil {
+		s.dampener = make(map[string][]dampenerMove)
+	}
+	if s.dampenerHead == nil {
+		s.dampenerHead = make(map[string]string)
+	}
+	if head != "" {
+		if lastHead := s.dampenerHead[key]; lastHead != "" && !strings.EqualFold(lastHead, head) {
+			delete(s.dampener, key)
+			s.dampenerHead[key] = head
+			return false
+		}
+		s.dampenerHead[key] = head
+	}
+	history := s.dampener[key]
+	if len(history) == 0 {
+		return false
+	}
+	active := history[:0]
+	for _, m := range history {
+		if now.Sub(m.at) < transitionDampenerWindow {
+			active = append(active, m)
+		}
+	}
+	s.dampener[key] = active
+	count := 0
+	for _, m := range active {
+		if (m.from == from && m.to == to) || (m.from == to && m.to == from) {
+			count++
+		}
+	}
+	return count >= transitionDampenerMaxFlaps
+}
+
+func (s *Store) recordDampenerTransitionLocked(key, head string, from, to Stage, now time.Time) {
+	if s.dampener == nil {
+		s.dampener = make(map[string][]dampenerMove)
+	}
+	if s.dampenerHead == nil {
+		s.dampenerHead = make(map[string]string)
+	}
+	if head != "" {
+		s.dampenerHead[key] = head
+	}
+	s.dampener[key] = append(s.dampener[key], dampenerMove{from: from, to: to, at: now})
+}
+
+func (s *Store) resetDampenerLocked(key string) {
+	if s.dampener != nil {
+		delete(s.dampener, key)
+	}
 }
 
 // Prune drops records not seen for maxAge (closed items the sweep stopped
@@ -2484,6 +2640,8 @@ func (s *Store) Prune(maxAge time.Duration) int {
 		}
 		if r.LastSeen.Before(c) {
 			delete(s.items, k)
+			delete(s.dampener, k)
+			delete(s.dampenerHead, k)
 			n++
 		}
 	}

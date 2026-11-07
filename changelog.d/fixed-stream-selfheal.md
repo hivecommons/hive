@@ -1,0 +1,1 @@
+- Twitch streamer self-heals: a watchdog asks Twitch whether the channel is live and restarts ffmpeg (then the pod) when ingest drops silently; probes now follow the watchdog heartbeat and tolerate Twitch's post-drop key lock.

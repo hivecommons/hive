@@ -583,6 +583,7 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 	if len(obs.ForkGuardChecks) == 0 {
 		rec, ok := c.stageStoreOrShared().Get(stageKey(owner, repo, obs.Number))
 		obs.ForkGuardChecks = carriedForkGuard(rec, ok, obs)
+		obs.ForkGuardCarried = len(obs.ForkGuardChecks) > 0
 	}
 	c.stageTrackerOrShared().record(obs)
 }
@@ -908,6 +909,9 @@ func classifyStage(o stageObservation) stageVerdict    { return stageengine.Clas
 func preserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
 	return stageengine.PreserveNormalizedFixingStage(prev, hadPrev, obs, verdict)
 }
+func preserveNeedsDecisionOnSameHead(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
+	return stageengine.PreserveNeedsDecisionOnSameHead(prev, hadPrev, obs, verdict)
+}
 func hasLabelFold(labels []string, want string) bool { return stageengine.HasLabelFold(labels, want) }
 func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stageObservation) {
 	return stageengine.ResolveStage(list)
@@ -1030,6 +1034,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		result.Items++
 		c.foldHumanReturnLabel(ctx, store, list)
 		c.foldRecordedDecision(ctx, list)
+		c.foldForkGuard(ctx, tracker, store, list, now)
 		verdict, role, obs := resolveStage(list)
 		key := stageKey(obs.Owner, obs.Repo, obs.Number)
 		if verdict.Rank == stageRankNone {
@@ -1065,7 +1070,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		// Facts so the engine's DerivePR reproduces the stage written here.
 		pass := &stageengine.PRPassFacts{AuthorIsApp: normalizeBotLogin(obs.Author) == normalizeBotLogin(c.transport.AppBotLogin())}
 		if hadPrev {
-			pass.Prior = &stageengine.PriorStage{Stage: prevRec.Stage, Reason: prevRec.Reason, ActivityHead: prevRec.ActivityHead}
+			pass.Prior = &stageengine.PriorStage{Stage: prevRec.Stage, Reason: prevRec.Reason, ActivityHead: prevRec.ActivityHead, AdmittedHead: prevRec.AdmittedHead}
 		}
 		if replacement, ok := preserveNormalizedFixingStage(prevRec, hadPrev, obs, verdict); ok {
 			verdict = replacement
@@ -1075,6 +1080,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		var reauthored reauthorRecord
 		pass.FixerExcluded = fixerKnown && fixer.Excluded()
 		if replacement, ok := stageengine.PreserveStageOnStaleDecisionAnswer(prevRec, hadPrev, obs, verdict, pass.FixerExcluded); ok {
+			verdict = replacement
+			obs.Reason = replacement.Reason
+		}
+		if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok {
 			verdict = replacement
 			obs.Reason = replacement.Reason
 		}
@@ -1371,7 +1380,17 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
 				obs.Route = &route
 			}
-			tr = store.Observe(key, verdict.Stage, obs.Reason)
+			// Only re-park when the post-steps would leave 085: an adoption
+			// that cleared it, or a fresher 085 reason, must stand.
+			if verdict.Stage != stagelabels.NeedsDecision && !pass.AdoptionLive {
+				if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok {
+					verdict = replacement
+					obs.Reason = replacement.Reason
+					route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
+					obs.Route = &route
+				}
+			}
+			tr = store.ObserveHead(key, obs.HeadSHA, verdict.Stage, obs.Reason)
 			if reauthored.issue > 0 {
 				store.MarkReauthored(key, reauthored.issue, obs.HeadSHA, reauthored.attempts, now)
 				if reauthored.noted {
@@ -1400,6 +1419,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 			store.NoteActivity(key, act)
 			rec, _ := store.Get(key)
+			if tr.Suppressed {
+				verdict.Stage = rec.Stage
+				obs.Reason = rec.Reason
+			}
 			want = stagelabels.Desired{
 				Stage:       verdict.Stage,
 				Role:        role,

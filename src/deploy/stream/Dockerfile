@@ -42,8 +42,8 @@ RUN apt-get update \
  && install -d -o stream -g stream /run/stream
 
 COPY --from=authproxy /out/authproxy /usr/local/bin/authproxy
-COPY src/deploy/stream/entrypoint.sh src/deploy/stream/healthcheck.sh src/deploy/stream/public-safe-gate.sh /usr/local/bin/
-RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/healthcheck.sh /usr/local/bin/public-safe-gate.sh \
+COPY src/deploy/stream/entrypoint.sh src/deploy/stream/healthcheck.sh src/deploy/stream/public-safe-gate.sh src/deploy/stream/stream-watchdog.sh /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/healthcheck.sh /usr/local/bin/public-safe-gate.sh /usr/local/bin/stream-watchdog.sh \
  && chromium --version && ffmpeg -version | head -1 && Xvfb -help >/dev/null 2>&1 \
  && pulseaudio --version && ffmpeg -hide_banner -devices 2>/dev/null | grep -q pulse
 
@@ -52,5 +52,5 @@ ENV HOME=/home/stream RUN_DIR=/run/stream \
     DASHBOARD_PATH="/?kiosk=1#section-activity-monitor-section" \
     TWITCH_INGEST=rtmp://live.twitch.tv/app \
     VIDEO_SIZE=1920x1080 FPS=30 BITRATE=4500k RELOAD_EVERY=30m STREAM_AUDIO=pulse
-HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 CMD ["/usr/local/bin/healthcheck.sh"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=360s --retries=3 CMD ["/usr/local/bin/healthcheck.sh"]
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

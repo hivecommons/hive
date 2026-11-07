@@ -1,0 +1,1 @@
+- The `prow/lgtm` status warning comment is posted once per PR with its own live context instead of retrying on an expired one (#16753)

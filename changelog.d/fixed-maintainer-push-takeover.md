@@ -1,0 +1,1 @@
+- A new head on an in-place-adopted PR pushed by someone other than the author with write or higher on the repository, or by another App, no longer hands the PR back to the offline author or nudges them: the hive keeps the adoption. A push by the author, or by a read-only third party, still yields as before (projectbluefin/utah#919, projectbluefin/utah-packages#804, #812, #822).

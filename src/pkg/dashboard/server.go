@@ -4060,6 +4060,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	payload.Writeback = s.WritebackStatus()
 	payload.Hotspots = s.HotspotStatusBlock()
 	payload.Config = s.configHealthStatus()
+	if s.deps != nil {
+		payload.WorkflowApprovals = s.deps.GHClient.WorkflowApprovalsStatus()
+	}
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
 }
 
@@ -4090,6 +4093,9 @@ type statusWithWebhooks struct {
 	// CIFailureSignals is the webhook CI-failure signal store: retained
 	// signals, the last one, webhook-triggered kicks and unmatched heads.
 	CIFailureSignals github.CIFailureSignalsStatus `json:"ci_failure_signals"`
+	// WorkflowApprovals counts the hive's approvals of GitHub-gated
+	// workflow runs (hivecommons/hive#16603).
+	WorkflowApprovals github.WorkflowApprovalsStatus `json:"workflow_approvals"`
 	*EvalLoopStatus
 	// MatrixEnabled reports whether the Matrix block is active (enabled with
 	// at least one repo, see config.DashboardMatrixConfig.Active) so the header shows

@@ -40,15 +40,178 @@ func TestBlockedOnMarkerRoundTrip(t *testing.T) {
 	if got := blockedFilterReason("no marker"); got != "blocked" {
 		t.Fatalf("bare filter reason = %q", got)
 	}
-	r, n, ok := parseBlockedOnReason("blocked on hivecommons/hive#13092")
-	if !ok || r != "hivecommons/hive" || n != 13092 {
-		t.Fatalf("parseBlockedOnReason = %q %d %v", r, n, ok)
+	r, n, onIssue, ok := parseBlockedOnReason("blocked on hivecommons/hive#13092")
+	if !ok || onIssue || r != "hivecommons/hive" || n != 13092 {
+		t.Fatalf("parseBlockedOnReason = %q %d %v %v", r, n, onIssue, ok)
 	}
-	if _, _, ok := parseBlockedOnReason("blocked"); ok {
+	if _, _, _, ok := parseBlockedOnReason("blocked"); ok {
 		t.Fatal("bare reason parsed a PR")
 	}
 	if !IsBlockedIssueReason("blocked on o/r#1") || !IsBlockedIssueReason("blocked") || IsBlockedIssueReason("hold label") {
 		t.Fatal("IsBlockedIssueReason")
+	}
+}
+
+// The issue form of the marker, `<!-- hive:blocked-on issue=owner/repo#N -->`
+// (projectbluefin/utah#10, #855): it round-trips through the filtered reason
+// as "blocked on issue owner/repo#N", never reads as a PR, and a malformed
+// one is no marker at all.
+func TestBlockedOnIssueMarker(t *testing.T) {
+	const m = "<!-- hive:blocked-on issue=projectbluefin/utah-packages#42 -->"
+	repo, n, ok := parseBlockedOnIssueMarker("still blocked on the factory\n" + m)
+	if !ok || repo != "projectbluefin/utah-packages" || n != 42 {
+		t.Fatalf("parseBlockedOnIssueMarker = %q %d %v", repo, n, ok)
+	}
+	if _, _, ok := ParseBlockedOnMarker(m); ok {
+		t.Fatal("issue marker parsed as a PR marker")
+	}
+	if _, _, ok := parseBlockedOnIssueMarker(BlockedOnMarker("o/r", 5)); ok {
+		t.Fatal("PR marker parsed as an issue marker")
+	}
+	reason := blockedFilterReason("body\n" + m)
+	if reason != "blocked on issue projectbluefin/utah-packages#42" {
+		t.Fatalf("filter reason = %q", reason)
+	}
+	if !IsBlockedIssueReason(reason) {
+		t.Fatal("issue reason not recognised as blocked")
+	}
+	if r, n, onIssue, ok := parseBlockedOnReason(reason); !ok || !onIssue || r != "projectbluefin/utah-packages" || n != 42 {
+		t.Fatalf("parseBlockedOnReason(issue) = %q %d %v %v", r, n, onIssue, ok)
+	}
+	if _, _, ok := ParseBlockedOnReason(reason); ok {
+		t.Fatal("issue reason read as a blocking PR")
+	}
+	if got := blockedFilterReason(BlockedOnMarker("o/r", 5) + "\n" + m); got != "blocked on o/r#5" {
+		t.Fatalf("PR marker must win over the issue form: %q", got)
+	}
+	for _, bad := range []string{
+		"<!-- hive:blocked-on issue=factory -->",
+		"<!-- hive:blocked-on issue=o/r -->",
+		"<!-- hive:blocked-on issue=o/r#0 -->",
+		"<!-- hive:blocked-on issue=#7 -->",
+	} {
+		if _, _, ok := parseBlockedOnIssueMarker(bad); ok {
+			t.Errorf("malformed marker %q parsed", bad)
+		}
+		if got := blockedFilterReason(bad); got != "blocked" {
+			t.Errorf("malformed marker %q filter reason = %q", bad, got)
+		}
+	}
+}
+
+// projectbluefin/utah#10 and #855: a `blocked` set for an issue dependency
+// was lifted as marker-less and re-verified "still blocked" nine times. A
+// block whose marker names an open issue stays (only `help wanted` comes
+// off, whoever applied the label); a closed one lifts with one note; a
+// malformed issue marker falls back to the marker-less lift; a PR marker
+// still reads the PR.
+func TestReconcileBlockedIssuesBlockedOnIssue(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	var notes []string
+	hiveLabeled := `[{"event":"labeled","created_at":"2026-10-22T10:00:00Z","label":{"name":"blocked"},"actor":{"login":"` + testBot + `","type":"Bot"}}]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/100":
+			_, _ = io.WriteString(w, `{"number":100,"state":"open"}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/pkgs/issues/5":
+			_, _ = io.WriteString(w, `{"number":5,"state":"closed","closed_at":"2026-10-25T10:00:00Z"}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/2":
+			_, _ = io.WriteString(w, `{"number":2,"state":"open","base":{"ref":"v5"}}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/20/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"triage"},{"id":2,"body":"<!-- hive:blocked-on issue=o/pkgs#5 -->\nBlocked on o/pkgs#5"}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/30/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"<!-- hive:blocked-on issue=factory -->\nstill blocked on factory"}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/40/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"<!-- hive:blocked-on issue=o/r#100 -->\nstill blocked on factory"}]`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/timeline"):
+			_, _ = io.WriteString(w, hiveLabeled)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/30":
+			_, _ = io.WriteString(w, `{"number":30,"state":"open","title":"blocked on factory","labels":[{"name":"blocked"}]}`)
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/comments"):
+			var body struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			notes = append(notes, r.URL.Path+" "+body.Body)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":9}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	c.appBotLogin = testBot
+	result := &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{
+		"o/r": {Issues: []RepoWorkIssue{
+			// Body marker names an open issue: stays blocked.
+			{Repo: "o/r", Number: 10, Labels: []string{"blocked", "help wanted"}, Bucket: workBucketFiltered, Reason: "blocked on issue o/r#100"},
+			// Comment marker names a closed issue in another repo: lifted.
+			{Repo: "o/r", Number: 20, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked"},
+			// Malformed issue marker, hive-applied label: read as marker-less,
+			// which on v6 becomes a needs-human ask rather than a plain lift.
+			{Repo: "o/r", Number: 30, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked"},
+			// The utah#10 shape: hive-applied label, comment marker on an
+			// open issue: stays blocked, never read as marker-less.
+			{Repo: "o/r", Number: 40, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked"},
+			// PR marker unchanged: the PR is read, not the issue.
+			{Repo: "o/r", Number: 50, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#2"},
+		}},
+	}}
+	res := ReconcileBlockedIssues(context.Background(), c, result, nil)
+	if res.Items != 5 || res.Unblocked != 1 || res.AskedHuman != 1 || res.Stripped != 1 || res.Errors != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"GET /repos/o/r/issues/100",
+		"DELETE /repos/o/r/issues/10/labels/help wanted",
+		"GET /repos/o/pkgs/issues/5",
+		"DELETE /repos/o/r/issues/20/labels/blocked",
+		"GET /repos/o/r/issues/30/timeline",
+		"POST /repos/o/r/issues/30/labels",
+		"DELETE /repos/o/r/issues/30/labels/blocked",
+		"GET /repos/o/r/pulls/2",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing call %q in:\n%s", want, joined)
+		}
+	}
+	for _, never := range []string{
+		"DELETE /repos/o/r/issues/10/labels/blocked",
+		"GET /repos/o/r/issues/10/timeline",
+		"GET /repos/o/r/issues/20/timeline",
+		"DELETE /repos/o/r/issues/40/labels/blocked",
+		"GET /repos/o/r/issues/40/timeline",
+		"DELETE /repos/o/r/issues/50/labels/blocked",
+		"GET /repos/o/r/issues/2\n",
+		"GET /repos/o/r/pulls/100",
+	} {
+		if strings.Contains(joined+"\n", never) {
+			t.Errorf("unexpected call %q in:\n%s", never, joined)
+		}
+	}
+	notesJoined := strings.Join(notes, "\n")
+	if !strings.Contains(notesJoined, "/repos/o/r/issues/20/comments "+blockedUnblockedMarker+"\nUnblocked: o/pkgs#5 is closed.") {
+		t.Errorf("issue-closed note missing: %q", notesJoined)
+	}
+	if !strings.Contains(notesJoined, "/repos/o/r/issues/30/comments "+blockedMarkerlessAskNote) {
+		t.Errorf("marker-less note missing for the malformed marker: %q", notesJoined)
 	}
 }
 
@@ -470,7 +633,7 @@ func TestBlockedFilterReasonRecheckAfter(t *testing.T) {
 	if !IsBlockedIssueReason("blocked until 2026-10-21T21:20:00Z") {
 		t.Fatal("deadline reason not recognised as blocked")
 	}
-	if _, _, ok := parseBlockedOnReason("blocked until 2026-10-21T21:20:00Z"); ok {
+	if _, _, _, ok := parseBlockedOnReason("blocked until 2026-10-21T21:20:00Z"); ok {
 		t.Fatal("deadline reason parsed as a tracked PR")
 	}
 	stage, covered, reason := IssueStageFor(IssueStageInput{
@@ -1198,5 +1361,28 @@ func TestSweepBlockedAskHeldByGateLogs(t *testing.T) {
 	}
 	if out := logs.String(); !strings.Contains(out, "needs-human ask held by writeback gate") || !strings.Contains(out, "issue=80") {
 		t.Fatalf("gate refusal not logged:\n%s", out)
+	}
+}
+
+func TestBlockedOnIssueTarget(t *testing.T) {
+	cases := []struct {
+		name, body, reason string
+		repo               string
+		n                  int
+		ok                 bool
+	}{
+		{"marker", "x <!-- hive:blocked-on issue=acme/api#9 -->", "blocked", "acme/api", 9, true},
+		{"reason", "", "blocked on issue acme/api#9", "acme/api", 9, true},
+		{"pr marker is not an issue", BlockedOnMarker("acme/api", 9), "blocked", "", 0, false},
+		{"pr reason is not an issue", "", "blocked on acme/api#9", "", 0, false},
+		{"bare", "", "blocked", "", 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, n, ok := BlockedOnIssueTarget(tc.body, tc.reason)
+			if repo != tc.repo || n != tc.n || ok != tc.ok {
+				t.Fatalf("got %q %d %v", repo, n, ok)
+			}
+		})
 	}
 }

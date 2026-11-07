@@ -1,0 +1,1 @@
+- Dashboard: the Activity Monitor decision pills ("Let hive decide", "Approve and let hive merge", "Merge now as maintainer") no longer flash grey and unclickable on a page reload while the viewer's role is still loading; the tracker treats an unknown viewer as pending rather than read-only and repaints once auth resolves.

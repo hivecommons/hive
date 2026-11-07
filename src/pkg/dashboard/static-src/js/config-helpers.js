@@ -8,6 +8,11 @@
       if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
       if (el.hasAttribute('aria-checked')) el.setAttribute('aria-checked', isOn ? 'true' : 'false');
+      if (section === 'merge-train') {
+        el.setAttribute('aria-checked', String(isOn));
+        markDirtyMergeTrain(key, isOn);
+        return;
+      }
       if (section === 'native-queue') {
         el.setAttribute('aria-checked', String(isOn));
         markDirtyNativeQueue(key, isOn);
@@ -25,6 +30,11 @@
 
     function markBoolDirty(section, key, value) {
       markDirty(section, key, value === true || value === 'true');
+    }
+
+    function markDirtyMergeTrain(key, value) {
+      const staged = ((_configState.dirty || {})['auto-merge'] || {}).merge_train || {};
+      markDirty('auto-merge', 'merge_train', Object.assign({}, staged, { [key]: value }));
     }
 
     function markDirtyNativeQueue(key, value) {
