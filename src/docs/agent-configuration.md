@@ -317,6 +317,9 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
       max_rss_mb: 1536           #   policy: recycle this agent's CLI session (a normal
       max_age: 6h                #   restart) once idle at the prompt and over the RSS
       min_idle: 2m               #   or age budget; enabled: false turns it off
+    cli_memory:                  # optional override of the fleet agents.cli_memory
+      auto_memory: false         #   policy: CLI auto-memory (Claude MEMORY.md, Codex
+      clear_on_kick: false       #   memories, Copilot memory) off; wipe before each kick
     restart_strategy: immediate  # how to bring a dead session back
     beads_dir: /data/beads/scanner   # work-record (bead) storage; default per-agent
     replicas: 3                  # materialize scanner, scanner-2, scanner-3 (max 5)
@@ -627,6 +630,24 @@ Each per-UID agent runs with its own durable `HOME` under `/data/home/agents/<na
 | `.claude.json`, `.bash_history`, `.npm/`, `.local/`, `.gitconfig` | per-agent | **no** | contended session identity, shell history, npm cache, XDG data/state, git identity |
 
 Before [#17031](https://github.com/hivecommons/hive/issues/17031) `.claude`, `.gemini` and `.bob` were bridged whole, so every agent's CLI state sat in one tree that any agent could read and rewrite: the user-level `~/.claude/CLAUDE.md`, `history.jsonl` and `todos/` were a single shared copy, and each agent's cwd-keyed auto-memory (`projects/-data-agents-<name>/memory/MEMORY.md`, per-agent by path) was writable by every other agent and persisted on the PVC forever. Provisioning now retires those whole-directory bridges on the next launch, keeps only the login/settings entries above, and never deletes or moves anything under `/data/home`: a pre-existing shared memory store is left in place and logged once (`shared CLI home still holds a persistent memory store …`) so you can review or drain it ([#17033](https://github.com/hivecommons/hive/issues/17033)) before removing it by hand. The dashboard's token/cost scanners (`data.claude_sessions_dir`, `data.bob_sessions_dir`, `data.copilot_sessions_dir`) walk the shared path **and** every `/data/home/agents/*/…` sibling, attributing each per-agent tree to its owner, so cost accounting does not regress. `HIVE_SHARED_AGENT_HOME=1` restores the legacy single shared `HOME` for every agent (and with it the shared memory).
+
+### CLI auto-memory (`agents.cli_memory`)
+
+Subscription CLIs keep their own long-lived "memory" next to the transcripts: Claude Code's auto-memory (`~/.claude/projects/-data-agents-<name>/memory/MEMORY.md`), Codex memories (`$CODEX_HOME/memories/`), Copilot CLI's `memory` setting, and Gemini's `~/.gemini/GEMINI.md`. Hive agents already get their durable context from beads, the knowledge store, and the kick prompt, so a hidden per-CLI notebook mostly accumulates stale one-off inferences ([#17032](https://github.com/hivecommons/hive/issues/17032)). The `agents.cli_memory` block controls it fleet-wide, and each agent may override it with its own `cli_memory:` block:
+
+```yaml
+agents:
+  cli_memory:
+    auto_memory: false     # default false: pin every CLI's auto-memory feature off
+    clear_on_kick: false   # default false: true wipes this agent's memory stores before each kick
+```
+
+| Key | Default | Effect |
+|---|---|---|
+| `auto_memory` | `false` | When false hive pins the vendor switch off at launch: Claude Code gets `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in its environment ([docs](https://code.claude.com/docs/en/memory)); Codex gets `[features] memories = false` merged into `$CODEX_HOME/config.toml` ([docs](https://developers.openai.com/codex/memories)); Copilot CLI gets `"memory": false` in its per-agent `~/.copilot/settings.json` (`copilot help config`). `true` writes the opposite pin so an operator's own setting is never silently shadowed. Gemini CLI has no equivalent switch. |
+| `clear_on_kick` | `false` | Before every non-resume kick (next to the `/clear` sent by `clear_on_kick`), remove this agent's `~/.claude/projects/*/memory/`, `$CODEX_HOME/memories*/`, and `~/.gemini/GEMINI.md`. Only the per-agent home under `/data/home/agents/<name>` is touched; nothing under the shared `/data/home` is removed, and agents running with `HIVE_SHARED_AGENT_HOME=1` or as uid 0 are skipped. Copilot memory is server-side and has no local store. |
+
+Set `auto_memory: true` on a single agent to let it keep a private notebook while the rest of the fleet stays stateless between kicks. The two knobs are independent: `auto_memory: true` with `clear_on_kick: true` gives a memory that lives for exactly one kick.
 
 Every Model Gateway (and the bob backend) also accepts an optional `key_name` — a human-chosen LABEL for the configured key, e.g. `key_name: openrouter-prod-key`. It is safe-to-show metadata, not a secret: the dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set, so operators can tell keys apart without ever seeing the value. For gateway keys, the row and settings/status APIs also expose `keySHA256`, the lowercase SHA-256 of the exact effective key string Hive will inject through the inference proxy; this lets operators compare Hive with LiteLLM/OpenRouter key-hash displays without revealing the secret. Saving a replacement key refreshes live inference proxy routes for running agents, so the next kick uses the new key without an agent restart. See [`inference-backends.md`](../../docs/inference-backends.md) for a full YAML example.
 
