@@ -34,6 +34,8 @@ runtime and every agent must arrive as a definition on `POST /v1/agents`.
 | `--listen HOST:PORT` | also serve on TCP. **Refused without a token.** |
 | `--token T`, `CRUX_TOKEN` | bearer token every request must carry. When set it gates the socket too. |
 | `--operator-name NAME`, `CRUX_OPERATOR_NAME` | the name the control token's caller is recorded under on work-services routes (see [Caller principals](#caller-principals)). Default `operator`. |
+| `--checkout-allow PREFIX,…`, `CRUX_CHECKOUT_ALLOWLIST` | repository URL prefixes `POST /v1/checkouts` may clone; unset means no checkout service ([design](design/crux-work-services.md)). |
+| `--checkout-dir PATH`, `CRUX_CHECKOUT_DIR` | where pinned checkouts live. Default `<workdir>/checkouts`. |
 | `--lanes-config PATH`, `CRUX_LANES_CONFIG` | opt into [durable event/work lanes](crux-lanes.md) on this same server, backed by NATS JetStream. Lane project credentials are separate from agent-control credentials. |
 | `--hive-callback ADDR`, `CRUX_HIVE_SOCKET` (+ `CRUX_HIVE_TOKEN`) | dial hive's callback endpoint (`crux/api/callback`) for the capabilities hive owns — scoped GitHub tokens, PR creation, Linear credentials, text/canary scanners, conditions — and feed the runtime's seams from it instead of leaving them nil. Health reports it under `hive_callback`; an unreachable endpoint raises the `hive_callback_unavailable` condition. (#14246) When the runtime is a manager it also polls hive's host policy from the same endpoint; see [Host policy from hive](#host-policy-from-hive-14138-stage-4). |
 
@@ -92,6 +94,7 @@ and [lane error codes and failure behavior](crux-lanes.md#bounds-and-failure-beh
 | `POST /v1/agents/{name}/kick` | `{"message":…}` | `Kicker.SendKick` | `{"agent","process"}` |
 | `POST /v1/agents/{name}/stop` | | `Lifecycle.Stop` | `{"agent","process"}` |
 | `GET /v1/events` | | watcher + `Kicker.SetKickObserver` + the `crux.Host` observers | `text/event-stream` of `Event` records |
+| `POST /v1/checkouts`, `GET /v1/checkouts[?owner=]`, `GET`/`DELETE /v1/checkouts/{id}` | `{"repo","commit","owner"?,"branches"?,"max_bytes"?,"ttl"?}` | `checkout.Service` | Work service (S1): a worktree pinned at a full SHA, owned by the caller principal; `501` without `--checkout-allow`; [routes, codes and semantics](design/crux-work-services.md) |
 | `GET /v1/lanes` and lane/group subroutes | Publish/recovery/receipt JSON; [request shapes](crux-lanes.md#public-http-and-go-api) | `lanes.Broker` | Opt-in only; lane-project credential and capability ACLs; JSON or `204`; [full routes and responses](crux-lanes.md#public-http-and-go-api) |
 
 ### Runtime families (#14138 stage 3)
@@ -284,6 +287,9 @@ crux logs -n 50 --buffer fixer
 crux logs -f fixer                               # follow the ring buffer over SSE
 crux kick fixer "look at the failing build on main"
 crux stop fixer
+crux checkout add -repo https://github.com/hivecommons/hive -commit <40-hex sha>   # S1 pinned checkout, owned by the caller
+crux checkout list
+crux checkout rm chk_0123456789ab
 ```
 
 In remote mode nothing is built in this process: no runtime, no control
