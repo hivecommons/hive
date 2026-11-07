@@ -18,7 +18,7 @@ const maxIssuesToPrime = 5
 // when the hive has none — in which case primeAgentsMd is a no-op, exactly as
 // before this was wired.
 //
-// Two sources, in order:
+// Three sources, in order:
 //
 //  1. project.checkouts_dir — the explicit one. An operator who mounts checkouts
 //     of the monitored repos points at the parent directory and each repo is
@@ -29,8 +29,12 @@ const maxIssuesToPrime = 5
 //     out of it), but it is a checkout of policies.repo, so it is used ONLY when
 //     that repo IS the repo being asked about. Otherwise it would inject the
 //     config repo's AGENTS.md into work on an unrelated repo.
+//  3. the forge — when neither local root is configured and a GitHub client is
+//     wired (SetAgentsMdFetcher), AGENTS.md is fetched from the repo's default
+//     branch and materialised under remoteAgentsMdDir (#17090). Hosted spokes
+//     keep no clones at all, so without this they never injected anything.
 //
-// Neither is checked for existence here: agentsmd.Parse tolerates a missing
+// Neither local root is checked for existence here: agentsmd.Parse tolerates a missing
 // directory or file and yields "", and primeAgentsMd logs which root came up
 // empty. One stat per kick to say the same thing earlier is not worth it.
 func (s *Scheduler) agentsRepoRoot(repo string) string {
@@ -44,7 +48,7 @@ func (s *Scheduler) agentsRepoRoot(repo string) string {
 		sameRepo(s.cfg.Policies.Repo, s.cfg.Project.Org, repo) {
 		return local
 	}
-	return ""
+	return s.remoteAgentsRepoRoot(repo)
 }
 
 // sameRepo reports whether a git source's repo field names org/repo. The source

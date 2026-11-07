@@ -1489,6 +1489,15 @@ func (b *boot) bootGovernor() {
 		b.logger,
 	))
 
+	// Hosted spokes keep no checkout of their primary repo, so the two local
+	// roots agentsRepoRoot knows are empty there and AGENTS.md was never
+	// injected (hivecommons/hive#17090). Let the scheduler fetch it through the
+	// same App client when no local root exists. Guarded so a typed-nil
+	// *github.Client is never stored as a non-nil interface.
+	if b.ghClient != nil {
+		b.sched.SetAgentsMdFetcher(b.ghClient)
+	}
+
 	// Wire the whole-agent definition_source resolver so agents imported with
 	// "keep linked" re-fetch their portable AgentDefinition from the repo on
 	// reload/kick and re-apply its operator-safe fields (never security/seed-only
