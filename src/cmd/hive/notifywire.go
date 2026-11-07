@@ -35,6 +35,13 @@ func syncAutoMergePolicyToGitHubClient(cfg *config.Config, ghClient *github.Clie
 	ghClient.SetMergeRequestNoCIAllowedRepos(cfg.AutoMerge.NoCIOKSet())
 	// The merge-request relay refuses PRs touching these paths (#11039).
 	ghClient.SetHumanMergePaths(cfg.AutoMerge.HumanMergePaths)
+	pinOnly := make(map[string]github.PinOnlySpec)
+	for repo := range cfg.AutoMerge.HumanMergePinOnly {
+		if ex, enabled := cfg.AutoMerge.HumanMergePinOnlyFor(repo); enabled {
+			pinOnly[repo] = github.PinOnlySpec{Enabled: true, Paths: ex.Paths, Kinds: ex.Kinds, TrustedAuthors: ex.TrustedAuthors}
+		}
+	}
+	ghClient.SetHumanMergePinOnly(pinOnly)
 	ghClient.SetAutoMergeMinHeadAge(cfg.AutoMerge.EffectiveMinHeadAge())
 	return set, ok
 }
