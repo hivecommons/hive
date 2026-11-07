@@ -245,7 +245,7 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 	var prev stagelabels.Record
 	hadPrev := pass.Prior != nil
 	if hadPrev {
-		prev = stagelabels.Record{Stage: pass.Prior.Stage, Reason: pass.Prior.Reason, ActivityHead: pass.Prior.ActivityHead}
+		prev = stagelabels.Record{Stage: pass.Prior.Stage, Reason: pass.Prior.Reason, ActivityHead: pass.Prior.ActivityHead, AdmittedHead: pass.Prior.AdmittedHead}
 	}
 	if replacement, ok := PreserveNormalizedFixingStage(prev, hadPrev, obs, verdict); ok {
 		verdict = replacement

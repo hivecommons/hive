@@ -759,8 +759,10 @@ func (s *Store) ObserveProgressHead(key, head string, stage Stage, reason string
 	// Per-(repo, number, head) transition dampener (#16974): refuse to move
 	// between two stages more than 3 times within 30 minutes without a new
 	// head SHA or a human event, log the suppressed transition, and keep the
-	// current label.
-	if had && prev.Stage != None && prev.Stage != stage && head != "" {
+	// current label. Moves into a repair stage (070/071/072) are never
+	// refused: suppressing "CI went red, back to fixing" would leave the
+	// record at a stage the merge train reads as ready.
+	if had && prev.Stage != None && prev.Stage != stage && head != "" && !AuthorBlocked(stage) {
 		if s.isDampenedLocked(key, head, prev.Stage, stage, now) {
 			slog.Warn("stage transition suppressed by dampener",
 				slog.String("key", key),

@@ -645,8 +645,25 @@ func PreserveNeedsDecisionOnSameHead(prev stagelabels.Record, hadPrev bool, obs 
 		(d.VerdictKnown && d.Verdict.DecisionAnswered && strings.EqualFold(strings.TrimSpace(d.Verdict.DecisionAnsweredHead), head)) {
 		return stageVerdict{}, false
 	}
-	hasQuestion := (d.VerdictKnown && (d.Verdict.DecisionRequested || strings.TrimSpace(d.Verdict.DecisionQuestion) != "")) ||
-		prev.Reason == StageReasonDecisionRequested
+	// An explicit `/hive decision approve` (admission) on this head is the
+	// human's answer: it releases the hold without waiting for the merge.
+	if prev.AdmittedHead != "" && strings.EqualFold(strings.TrimSpace(prev.AdmittedHead), head) {
+		return stageVerdict{}, false
+	}
+	var hasQuestion bool
+	if d.VerdictKnown {
+		// A re-review of the same head that came back approve or
+		// changes_requested is new information: nothing asks for a
+		// decision any more, so the raw verdict must win (090/070).
+		if !VerdictNeedsHuman(d) {
+			return stageVerdict{}, false
+		}
+		hasQuestion = d.Verdict.DecisionRequested || strings.TrimSpace(d.Verdict.DecisionQuestion) != ""
+	} else {
+		// No verdict for this head yet (e.g. the check re-ran because of
+		// the hive's own label write): the recorded question still stands.
+		hasQuestion = prev.Reason == StageReasonDecisionRequested
+	}
 	if !hasQuestion {
 		return stageVerdict{}, false
 	}
