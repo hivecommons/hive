@@ -14,6 +14,12 @@ import (
 // and registered under; CLI-memory drafts land in the same store.
 const beadSynthVaultName = "bead-synth-wiki"
 
+// cliMemorySpoolDir keeps a copy of memory files whose facts could not all
+// be stored, per agent, so clear_on_kick does not lose them; the drainer
+// retries them on the agent's next drain (#17056). A var so tests can point
+// it at a temp dir.
+var cliMemorySpoolDir = "/data/knowledge/auto-memory-spool"
+
 // cliMemoryDrainEnabled reports whether any enabled agent drains its CLI
 // memory into the knowledge store (agents.cli_memory.drain_to_knowledge,
 // fleet-wide or per agent).
@@ -67,7 +73,7 @@ func (b *boot) installCLIMemoryDrainer() {
 	if layer == "" {
 		layer = knowledge.LayerPersonal
 	}
-	drainer := &climemory.Drainer{Dir: vaultPath, Store: b.knowledgeAPI.GetVaultStore(vaultPath), Layer: layer}
+	drainer := &climemory.Drainer{Dir: vaultPath, Store: b.knowledgeAPI.GetVaultStore(vaultPath), Layer: layer, SpoolDir: cliMemorySpoolDir}
 	cfg := b.cfg
 	host.SetCLIMemoryDrainer(func(req crux.CLIMemoryDrainRequest) crux.CLIMemoryDrainResult {
 		sources := make([]climemory.Source, 0, len(req.Sources))
@@ -80,6 +86,7 @@ func (b *boot) installCLIMemoryDrainer() {
 			Drained: res.Drained,
 			Dupes:   res.Dupes,
 			Skipped: res.Skipped,
+			Spooled: res.Spooled,
 			Err:     errors.Join(res.Errors...),
 		}
 	})
