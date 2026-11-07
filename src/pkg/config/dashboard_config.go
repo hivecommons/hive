@@ -569,9 +569,17 @@ func (c *Config) CIFailureKickCooldown() time.Duration {
 	return DefaultCIFailureKickCooldownS * time.Second
 }
 
-// MergeTrainStallWarn resolves governor.merge_train_stall_warn_s.
+// SetMergeTrainStallWarnS records an explicit value, including zero to
+// disable warnings.
+func (c *Config) SetMergeTrainStallWarnS(seconds int) {
+	c.Governor.MergeTrainStallWarnS = seconds
+	c.Governor.mergeTrainStallWarnSet = true
+}
+
+// MergeTrainStallWarn is the effective governor.merge_train_stall_warn_s as
+// a duration (default one hour; explicit zero disables warnings).
 func (c *Config) MergeTrainStallWarn() time.Duration {
-	if c != nil && c.Governor.MergeTrainStallWarnS > 0 {
+	if c != nil && (c.Governor.mergeTrainStallWarnSet || c.Governor.MergeTrainStallWarnS > 0) {
 		return time.Duration(c.Governor.MergeTrainStallWarnS) * time.Second
 	}
 	return DefaultMergeTrainStallWarnS * time.Second

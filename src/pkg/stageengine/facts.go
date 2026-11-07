@@ -343,6 +343,9 @@ type PriorStage struct {
 	Stage        stagelabels.Stage
 	Reason       string
 	ActivityHead string
+	// AdmittedHead is the head a trusted person admitted (`/hive decision
+	// approve`); it releases a same-head 085 hold (#16974).
+	AdmittedHead string
 }
 
 // ReviewFacts is THE "what counts as reviewed" fact (ADR-0025 Decision §6).

@@ -1,0 +1,1 @@
+- Expose conflict-aware merge train, rebase-attempt and stall-warning controls under Settings → Auto-merge → Merge train, including disabling stall warnings with zero seconds ([#16677](https://github.com/hivecommons/hive/issues/16677)).

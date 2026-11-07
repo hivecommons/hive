@@ -716,6 +716,11 @@ var benignSubstrings = []string{
 	// logs the classified error and withholds kicks; the reaction itself is
 	// not a defect (hivecommons/hive#15843).
 	"inference provider error detected, backing off kicks",
+	// The prose-only watchdog sends at most one action nudge per kick and
+	// counts it in ActionNudges. This notice records the recovery action,
+	// not its failure; repeated notices across kicks are not an unclassified
+	// runtime defect (#16795). Keep actual nudge failures reportable.
+	"inference agent answered kick with prose only, sending action nudge",
 	// Shutdown and per-request deadlines log cancellation on purpose.
 	"context canceled",
 	"context cancelled",
@@ -832,6 +837,7 @@ var rateLimitSubstrings = []string{
 	"429 too many requests",
 	"github pacing: request shed",
 	"github pacing: slot would miss request deadline",
+	"github rest budget below reserve ",
 	"rate-limit caution window is engaged",
 }
 

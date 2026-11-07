@@ -73,6 +73,19 @@ The new hover, verbatim (title line omitted):
 | `stageTrackerSelectionTriage` (`tracker-actions.js`) | selection bar lead button / bulk ⋯ menu entry, summary toast | — (no bulk Accept triage; one row at a time) | *Accept triage (4 selected)* / *Accept triage (2 of 4)* with the hint *skips the 2 not waiting on triage*; one toast *Accepted 4 issues* | `TestStageTrackerBulkAcceptTriage` |
 | Settings → Features → Auto-merge → "Merge only on current base" help (`renderGovFeatures`, `config-features.js`) and the Repos-tab override row / repo-card `current-base` chip ([#15335](https://github.com/hivecommons/hive/issues/15335)) | settingHelpMark popover, checkbox label, chip hover | — (new) | 56 (help), 5 (row label), 1 (chip) | `TestCurrentBaseSettingsMarkupNodeGuard` |
 
+
+## Merge train settings (hivecommons/hive#16677)
+
+These controls appear in **Settings → Auto-merge → Merge train**, immediately above Native GitHub merge queue (`renderGovFeatures`, `config-features.js`). Each label includes its YAML hint and a help popover.
+
+| Label | YAML key | Help text |
+|---|---|---|
+| Conflict-aware merge train | `auto_merge.merge_train.enabled` | Default on. Runs one front per overlap group so PRs changing the same files merge in order. False restores independent per-PR evaluation. |
+| Rebase attempts per front | `auto_merge.merge_train.max_rebase_attempts` | How many rebase-resolve requests one PR may make behind one front before it parks at stage/085 for a human decision. Default 2; 0 uses that default. |
+| Stall warning after | `governor.merge_train_stall_warn_s` | Seconds without progress before the Activity Monitor chip reads "Merge queue · stalled". Default 3600 seconds; 0 disables the warning. |
+
+`TestMergeTrainSettingsMarkup` holds the labels, help popovers, YAML hints and placement; `TestMergeTrainSettingsPatchRoundTrip` holds the saved values and audit actions.
+
 ## Totals
 
 | | Before | After |
