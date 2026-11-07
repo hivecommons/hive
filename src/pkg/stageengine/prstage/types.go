@@ -168,6 +168,12 @@ type Observation struct {
 	// because it is from a fork (StageLabelPolicy.ForkGuard); non-empty only
 	// when every failing check does.
 	ForkGuardChecks []string
+	// ForkGuardCarried marks ForkGuardChecks as carried from the PR's stage
+	// record onto a head the shared-CI index has not read yet (the lane's
+	// red check is one the guard refused before) rather than fresh evidence
+	// for this head; the stage sweep verifies it against the head's check
+	// digest before it refuses a nudge or an adoption on its strength.
+	ForkGuardCarried bool
 	// Hold is who set the `hold` label the PR wears and why, read by
 	// ApplyStageLabels from the label event and the hive's notice comment
 	// (hivecommons/hive#15020); nil when not held or unreadable.

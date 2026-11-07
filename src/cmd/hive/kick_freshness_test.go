@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/fleetreport/slogfeed"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -106,6 +108,41 @@ func TestFreshenKickMessages_DeferredReadLogsBelowWarn(t *testing.T) {
 				t.Fatalf("WARN logged = %v, want %v: %q", got, tc.wantWarn, log)
 			}
 		})
+	}
+}
+
+func TestFreshenKickMessages_FleetReportIncludesFailureCategories(t *testing.T) {
+	var diagnostics string
+	logger := slog.New(slogfeed.NewWithObserver(slog.NewTextHandler(io.Discard, nil),
+		func(class, _, _, detail string) {
+			if class == fleetreport.ClassKickFreshnessWithheld {
+				diagnostics = detail
+			}
+		}))
+	guard := github.IrreversibleGuard(func(_ context.Context, _ string, number int, _ bool) error {
+		switch number {
+		case 1:
+			return fmt.Errorf("private-repo#1: %w", github.ErrSnapshotStaleForDecision)
+		case 2:
+			return fmt.Errorf("private-repo#2: %w", github.ErrItemNotOpen)
+		case 3:
+			return github.ErrAPIBudgetCritical
+		default:
+			return errors.New("private endpoint failed")
+		}
+	})
+	out := freshenKickMessages(context.Background(), guard, nil,
+		freshKickMsgs([]string{"acme/private#1", "acme/private#2", "acme/private#3", "acme/private#4"}), logger)
+	if len(out) != 0 {
+		t.Fatalf("message not withheld: %+v", out)
+	}
+	for _, field := range []string{"stale=1", "closed=1", "deferred=1", "read_error=1"} {
+		if !strings.Contains(diagnostics, field) {
+			t.Errorf("fleet diagnostics missing %q: %q", field, diagnostics)
+		}
+	}
+	if strings.Contains(diagnostics, "private") {
+		t.Fatalf("fleet diagnostics exposed a ref or error: %q", diagnostics)
 	}
 }
 

@@ -304,7 +304,7 @@ func repoItemDecisionResultWith(repoFull string, number int, itemType, decision,
 	case repoItemDecisionQueueMerge:
 		out.Action = rowActionQueued
 		out.Outcome = "Your approval is recorded; `" + label + "` applied."
-		out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked."
+		out.Next = "Hive merges it on its next merge pass once CI is green and the head has soaked."
 	}
 	return out
 }
@@ -699,7 +699,7 @@ func renderRepoItemDecisionMergeComment(user, comment string) string {
 // renderRepoItemDecisionQueueNote is the note appended to the App's approval
 // review when the operator lets the hive merge.
 func renderRepoItemDecisionQueueNote(user, comment string) string {
-	note := fmt.Sprintf("Approved from the Hive dashboard by @%s as the owner decision on a Ready-for-human-merge pull request; the hive's merge sweep merges it on green CI.", strings.TrimSpace(user))
+	note := fmt.Sprintf("Approved from the Hive dashboard by @%s as the owner decision on a Ready-for-human-merge pull request; hive merges it on its next merge pass once CI is green.", strings.TrimSpace(user))
 	if c := strings.TrimSpace(comment); c != "" {
 		note += "\n\n> " + strings.ReplaceAll(c, "\n", "\n> ")
 	}
@@ -923,11 +923,11 @@ func repoItemApproveResult(out *RowActionResult, number int, facts repoItemAppro
 	}
 	switch {
 	case out.SentinelOpen:
-		out.Next = "The `" + repoItemSentinelLabelOrDefault(facts.SentinelLabel) + "` label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive's merge sweep will touch it."
+		out.Next = "The `" + repoItemSentinelLabelOrDefault(facts.SentinelLabel) + "` label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive's next merge pass will touch it."
 	case facts.Stage == stagelabels.ReadyForHumanMerge.Label():
 		out.Next = "Hive cannot merge this one (trust or role blocks it): use Approve and let hive merge, merge it now as maintainer, or merge it on GitHub yourself."
 	default:
-		out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked" + repoItemSoakNote(facts.SoakMinutes) + "."
+		out.Next = "Hive merges it on its next merge pass once CI is green and the head has soaked" + repoItemSoakNote(facts.SoakMinutes) + "."
 	}
 	if facts.Prow || facts.CommandsSkipped {
 		// Prow reads `/approve` only from OWNERS; the hive's account is not

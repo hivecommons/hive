@@ -533,7 +533,15 @@
         // already carries a why ("Ready for human merge · workflow files").
         const wordText = String(sg.detour ? sg.detour.text : (sg.short || ''));
         const reasonHtml = active && !sg.cap && humanReason && !gateWord && wordText.indexOf(' · ') < 0 && wordText.toLowerCase().indexOf(humanReason.toLowerCase()) < 0 ? `<span class="ham-human-reason"> · ${esc(humanReason)}</span>` : '';
-        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${esc(sg.detour.text)}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${holderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${holderHtml}${reasonHtml}</span>`);
+        // A lit "PR in progress" names who works the PR with their kind
+        // icon, the way "Waiting for @x" names its person (hive#16770): "PR in progress
+        // · @thatguywob" + robot. The name rides inside the clamped copy
+        // (truncates like every holder); the icon sits outside it. Nobody
+        // known keeps the bare word. Guarded: harnesses lift by name.
+        const progressActor = typeof stageTrackerPRProgressActor === 'function' && active && !sg.cap && sg.number === STAGE_TRACKER_PR_COLUMN && !sg.detour && !gateWord ? stageTrackerPRProgressActor(item, wordText) : null;
+        const progressHolderHtml = holderHtml || (progressActor ? `<span class="ham-holder"> · ${esc(progressActor.who)}</span>` : '');
+        const progressIco = progressActor && !actorIco && !holderIco ? stageTrackerIcon(progressActor.kind, 'ham-ico ham-actor-ico', 'Working the PR: ' + progressActor.kind + ' ' + progressActor.who) : '';
+        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${esc(sg.detour.text)}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${progressHolderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${progressHolderHtml}${reasonHtml}</span>`);
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.
@@ -543,7 +551,7 @@
         // the column is the row's history and wears the history mark.
         if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
         else if (active) {
-          const fullTip = [tip, gateCaption || (sg.detour ? sg.detour.text : sg.short), item.caption, item.reason,
+          const fullTip = [tip, gateCaption || (sg.detour ? sg.detour.text : sg.short + (progressActor ? ' · ' + progressActor.who : '')), item.caption, item.reason,
             item.head ? 'head ' + item.head : '',
             item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : ''].filter(Boolean).join(' · ');
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
@@ -551,7 +559,7 @@
           const text = decision ? stageTrackerDecisionTriggerHtml(decision, caption, fullTip) : caption;
           // Deferred to a running track: the icon alone (a decision trigger
           // keeps its button, since the popover lives in the word).
-          const content = waitingOnTracks && !sg.cap && !decision ? stageTrackerIcon(sg.number, 'ham-ico') : `${gateCue}${workIco}<span class="ham-chevron-copy">${text}</span>${actorIco || holderIco}`;
+          const content = waitingOnTracks && !sg.cap && !decision ? stageTrackerIcon(sg.number, 'ham-ico') : `${gateCue}${workIco}<span class="ham-chevron-copy">${text}</span>${actorIco || holderIco || progressIco}`;
           // A decision's dialog is its sole hover/focus detail surface.
           inner = decision ? `<span class="ham-chevron-info ham-chevron-decision">${content}</span>` : `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${content}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}</span></span>`;
         } else if (fixPushed) {

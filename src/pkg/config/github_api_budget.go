@@ -43,11 +43,17 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.AgentsGitHubAPIHourlyCap = cap
 	c.AgentsGitHubAPIHourlyCapSet = capSet
 	c.AgentsSessionRecycle = recycle
+	if governor := mappingValueNode(&node, "governor"); governor != nil {
+		if stall := mappingValueNode(governor, "merge_train_stall_warn_s"); stall != nil && stall.Tag != "!!null" {
+			c.Governor.mergeTrainStallWarnSet = true
+		}
+	}
 	return nil
 }
 
 func marshalConfigYAMLWithAgentCap(c Config, out any) (any, error) {
-	if !c.AgentsGitHubAPIHourlyCapSet && c.AgentsSessionRecycle.IsZero() {
+	explicitStallZero := c.Governor.mergeTrainStallWarnSet && c.Governor.MergeTrainStallWarnS == 0
+	if !c.AgentsGitHubAPIHourlyCapSet && c.AgentsSessionRecycle.IsZero() && !explicitStallZero {
 		return out, nil
 	}
 	var node yaml.Node
@@ -57,6 +63,15 @@ func marshalConfigYAMLWithAgentCap(c Config, out any) (any, error) {
 	root := mappingNode(&node)
 	if root == nil {
 		return out, nil
+	}
+	if explicitStallZero {
+		// omitempty drops the zero; an explicit "disabled" must survive a
+		// save (hivecommons/hive#16680).
+		if governor := mappingValueNode(root, "governor"); governor != nil {
+			governor.Content = append(governor.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "merge_train_stall_warn_s"},
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: "0"})
+		}
 	}
 	agents := mappingValueNode(root, "agents")
 	if agents == nil {
