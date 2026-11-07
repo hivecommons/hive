@@ -115,6 +115,24 @@ knowledge view or the vault directory and approve them through the normal
 lifecycle (`PUT /api/knowledge/entry/{id}/state`); nothing promotes them
 automatically.
 
+A drained draft reaches no agent while it is a draft, even for an agent whose
+`knowledge.agent_scopes` entry (or the primer's `include_states`) admits
+drafts: the kick primer, the knowledge advisor and every `?agent=` TOC, entry
+and effective read skip it, and the curator's auto-promotion never selects
+it. Review it under **🧠 Auto-memory drafts** in the dashboard's knowledge
+view, where an owner can **Approve** (primed from the next kick) or
+**Discard** (deprecated, never re-drafted); see
+[Auto-memory drafts](../knowledge-lifecycle.md#auto-memory-drafts).
+
+The shared `/data/home/.claude/projects/*/memory` store that predates
+per-agent CLI homes is not drained at kick time. Drain it once with
+`hivectl knowledge drain-memory --legacy` (owner-only, audited as
+`knowledge_drain_legacy_memory`): its facts become drafts tagged
+`agent:shared`, and the files stay as they are unless `--truncate` is given,
+which empties only files whose every fact is now in the vault. The
+`bead-synth-wiki` vault must be connected (bead stores configured or
+`drain_to_knowledge` on); otherwise the call returns 409.
+
 ## GitHub API quota
 
 Agents reach `api.github.com` through the Hive GitHub proxy, which injects the

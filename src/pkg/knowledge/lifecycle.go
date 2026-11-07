@@ -99,16 +99,28 @@ func lifecycleAllowed(st LifecycleState, include []LifecycleState) bool {
 
 // FilterByLifecycle keeps approved facts plus any facts whose effective state
 // is listed in include. With a nil/empty include only approved (current)
-// knowledge survives. Retained facts have State populated.
+// knowledge survives. Retained facts have State populated. It is the operator
+// read filter (GET /api/knowledge/search): a drained CLI-memory draft passes
+// it when include admits draft, so it can be reviewed.
 func FilterByLifecycle(facts []Fact, include []LifecycleState) []Fact {
-	return FilterByLifecycleFor(facts, include, nil)
+	out := make([]Fact, 0, len(facts))
+	for _, f := range facts {
+		st := f.EffectiveState()
+		if !lifecycleAllowed(st, include) {
+			continue
+		}
+		f.State = st
+		out = append(out, f)
+	}
+	return out
 }
 
 // FilterByLifecycleFor is FilterByLifecycle that additionally keeps draft
 // facts authored by one of draftAuthors (#17076). It is the kick-path filter:
 // the scheduler lists the kicked agent's identities when that agent's
 // knowledge.agent_scopes entry opts into drafts, so an agent is primed with
-// the drafts it wrote while every other draft is still excluded.
+// the drafts it wrote while every other draft is still excluded. A drained
+// CLI-memory draft never passes it (IsAutoMemoryDraft, #17058).
 func FilterByLifecycleFor(facts []Fact, include []LifecycleState, draftAuthors []string) []Fact {
 	out := make([]Fact, 0, len(facts))
 	for _, f := range facts {
@@ -123,8 +135,12 @@ func FilterByLifecycleFor(facts []Fact, include []LifecycleState, draftAuthors [
 }
 
 // lifecycleAllowedFor is lifecycleAllowed plus the author-matched draft rule
-// of FilterByLifecycleFor.
+// of FilterByLifecycleFor, minus drained CLI-memory drafts, which no include
+// list or author match admits on an agent path.
 func lifecycleAllowedFor(f Fact, st LifecycleState, include []LifecycleState, draftAuthors []string) bool {
+	if st == StateDraft && IsAutoMemory(f) {
+		return false
+	}
 	if lifecycleAllowed(st, include) {
 		return true
 	}

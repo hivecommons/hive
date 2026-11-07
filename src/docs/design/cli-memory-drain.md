@@ -372,6 +372,37 @@ Child: #17058.
   [Knowledge lifecycle states](../knowledge-lifecycle.md), and the status line
   in [the design index](README.md) moved to partly shipped or shipped.
 
+#### Phase 3 as shipped
+
+Where the shipped code differs from the plan above, the shipped code is
+authoritative. User-facing behaviour is documented in
+[Auto-memory drafts](../knowledge-lifecycle.md#auto-memory-drafts).
+
+- **Marker.** The drain shipped with the tag `cli-memory` and
+  `source: cli-memory` frontmatter, not `auto-memory`.
+  `knowledge.IsAutoMemory` accepts either marker. A fact is excluded when
+  its effective state is `draft`.
+- **Exclusion.** `FilterByLifecycleFor` (the kick primer and the knowledge
+  advisor) never admits an auto-memory draft. `TOCScope.HideAutoMemoryDrafts`
+  drops it from every scope `AgentScope` builds and from every `?agent=` TOC,
+  entry and effective read. The operator filter `FilterByLifecycle` and
+  operator TOC reads still list it. The public MCP was already approved-only.
+- **Review in the reserved vault.** Drained entries live in `bead-synth-wiki`,
+  which `PUT /api/knowledge/entry/{id}/state` used to refuse outright. It now
+  accepts entries whose frontmatter says `source: cli-memory`, because the
+  drain never rewrites an existing entry. The dashboard's **Discard** sets
+  `deprecated` rather than deleting, so the `memhash` keeps the fact from
+  being re-drafted.
+- **Auto-promotion.** `AutoPromoteCandidates` skips any page tagged
+  `cli-memory`, whatever its status.
+- **Legacy drain.** `hivectl knowledge drain-memory --legacy [--truncate]`
+  calls the owner-only `POST /api/knowledge/cli-memory/drain-legacy`, which runs
+  the phase-1 drainer in the hive process. With `--truncate` it empties only
+  the files whose every fact's `memhash` is now in the vault.
+- **Config key.** The operator reference documents the shipped key,
+  `agents.cli_memory.drain_to_knowledge`. There is no separate
+  `agents.cli_memory.drain`.
+
 ## References
 
 - #17033 — this design's issue.
