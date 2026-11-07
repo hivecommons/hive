@@ -50,6 +50,166 @@ func TestNormalizedFixingIsIndependentOfPreviousStage(t *testing.T) {
 	}
 }
 
+func TestPreserveNeedsDecisionOnSameHead(t *testing.T) {
+	head := "687f4cb"
+	obs := stageObservation{
+		Lane:    stageLaneSelf,
+		HeadSHA: head,
+		Detail: stageDetail{
+			VerdictKnown: true,
+			Verdict: ContributorLaneVerdict{
+				Configured:        true,
+				Verdict:           "requires_human",
+				DecisionRequested: true,
+				DecisionQuestion:  "@hanthor should confirm pin-only merge",
+			},
+		},
+	}
+	prev := stagelabels.Record{
+		Stage:        stagelabels.NeedsDecision,
+		Reason:       StageReasonDecisionRequested,
+		ActivityHead: head,
+	}
+
+	// 1. Same head with decision question preserves 085 even when raw verdict would be fixing (070) or review-pending (050).
+	rawFixing := stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned, Reason: "check-failing:unit"}
+	got, ok := PreserveNeedsDecisionOnSameHead(prev, true, obs, rawFixing)
+	if !ok || got.Stage != stagelabels.NeedsDecision || got.Reason != prev.Reason {
+		t.Fatalf("expected preserved 085, got %+v, ok=%v", got, ok)
+	}
+
+	rawPending := stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned, Reason: "required-check-pending:build"}
+	got, ok = PreserveNeedsDecisionOnSameHead(prev, true, obs, rawPending)
+	if !ok || got.Stage != stagelabels.NeedsDecision || got.Reason != prev.Reason {
+		t.Fatalf("expected preserved 085 from pending, got %+v, ok=%v", got, ok)
+	}
+
+	// 2. A new push clears preservation.
+	obsNewPush := obs
+	obsNewPush.HeadSHA = "newhead999"
+	if _, ok := PreserveNeedsDecisionOnSameHead(prev, true, obsNewPush, rawPending); ok {
+		t.Fatal("expected new push to clear preservation")
+	}
+
+	// 3. A human approval clears preservation.
+	obsApproved := obs
+	obsApproved.Detail.HumanApprover = "hanthor"
+	obsApproved.Detail.HumanApprovalHead = head
+	if _, ok := PreserveNeedsDecisionOnSameHead(prev, true, obsApproved, rawPending); ok {
+		t.Fatal("expected human approval to clear preservation")
+	}
+
+	// 4. A human change request clears preservation.
+	obsChanges := obs
+	obsChanges.Detail.HumanChangeRequester = "hanthor"
+	obsChanges.Detail.HumanChangeRequestHead = head
+	if _, ok := PreserveNeedsDecisionOnSameHead(prev, true, obsChanges, rawFixing); ok {
+		t.Fatal("expected human change request to clear preservation")
+	}
+
+	// 5. Terminal verdict clears preservation.
+	terminal := stageVerdict{Terminal: true, Stage: stagelabels.None}
+	if _, ok := PreserveNeedsDecisionOnSameHead(prev, true, obs, terminal); ok {
+		t.Fatal("expected terminal verdict to clear preservation")
+	}
+
+	// 6. A re-review of the same head that no longer asks for a decision
+	// releases the hold: approve must reach 090, changes_requested 070.
+	obsApprove := obs
+	obsApprove.Detail.Verdict = ContributorLaneVerdict{Configured: true, Verdict: "approve", Approved: true}
+	rawApproved := stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankOwned, Reason: "approved"}
+	if got, ok := PreserveNeedsDecisionOnSameHead(prev, true, obsApprove, rawApproved); ok {
+		t.Fatalf("expected same-head approve verdict to clear preservation, got %+v", got)
+	}
+	obsChangesVerdict := obs
+	obsChangesVerdict.Detail.Verdict = ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}
+	if got, ok := PreserveNeedsDecisionOnSameHead(prev, true, obsChangesVerdict, rawFixing); ok {
+		t.Fatalf("expected same-head changes_requested verdict to clear preservation, got %+v", got)
+	}
+
+	// 7. No verdict for this head yet (the check re-ran because of the
+	// hive's own label write): the recorded question still holds 085.
+	obsNoVerdict := obs
+	obsNoVerdict.Detail = stageDetail{}
+	got, ok = PreserveNeedsDecisionOnSameHead(prev, true, obsNoVerdict, rawPending)
+	if !ok || got.Stage != stagelabels.NeedsDecision || got.Reason != StageReasonDecisionRequested {
+		t.Fatalf("expected recorded question to preserve 085 without a verdict, got %+v, ok=%v", got, ok)
+	}
+	// … but only when the record says a decision was requested.
+	prevOther := prev
+	prevOther.Reason = StageReasonVerdictRequiresHuman
+	if got, ok := PreserveNeedsDecisionOnSameHead(prevOther, true, obsNoVerdict, rawPending); ok {
+		t.Fatalf("expected no preservation without a recorded question, got %+v", got)
+	}
+
+	// 8. An explicit /hive admission on the same head releases the hold.
+	prevAdmitted := prev
+	prevAdmitted.AdmittedHead = head
+	if got, ok := PreserveNeedsDecisionOnSameHead(prevAdmitted, true, obs, rawPending); ok {
+		t.Fatalf("expected same-head admission to clear preservation, got %+v", got)
+	}
+	prevAdmitted.AdmittedHead = "olderhead"
+	if _, ok := PreserveNeedsDecisionOnSameHead(prevAdmitted, true, obs, rawPending); !ok {
+		t.Fatal("expected an admission for another head to leave the hold in place")
+	}
+}
+
+// Store's per-head transition dampener refuses the 4th move between two
+// stages within 30 minutes; Reconcile must report that as a suppressed
+// transition at the previous stage and write nothing (#16974).
+func TestReconcilerReportsStoreDampenerSuppression(t *testing.T) {
+	now := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+	store := stagelabels.NewStore("", func() time.Time { return now })
+	writer := newFakeWriter()
+	stage := stagelabels.NeedsDecision
+	r := New(Options{Store: store, Writer: writer, Now: func() time.Time { return now },
+		PR: DeriverFunc(stagelabels.PRItem, func(Facts) Decision {
+			return Decision{Stage: stage, Reason: "decision-requested"}
+		}),
+	})
+	f := Facts{Ref: Ref{Owner: "acme", Repo: "widgets", Number: 42, Kind: stagelabels.PRItem}, Open: true,
+		PR: &PRFacts{HeadSHA: "head", Pass: &PRPassFacts{}}}
+	// Toggling the check summary is fresh evidence, so the reconciler's
+	// own write guard lets each reversal through; only the Store dampens.
+	sweep := func(want stagelabels.Stage) Transition {
+		now = now.Add(time.Minute)
+		stage = want
+		if want == stagelabels.Fixing {
+			f.PR.Checks = stagelabels.CheckSummary{Known: true, Total: 1, Red: []string{"unit"}}
+		} else {
+			f.PR.Checks = stagelabels.CheckSummary{Known: true, Total: 1, Green: 1}
+		}
+		tr, err := r.Reconcile(context.Background(), f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tr
+	}
+	store.ObserveHead(f.Ref.Key(), "head", stagelabels.Fixing, "check-failing:unit")
+	writer.labels[f.Ref.Key()] = []string{stagelabels.Fixing.Label()}
+	for i, want := range []stagelabels.Stage{stagelabels.NeedsDecision, stagelabels.Fixing, stagelabels.NeedsDecision} {
+		if tr := sweep(want); tr.Outcome.Suppressed || tr.To != want {
+			t.Fatalf("move %d: %+v", i, tr)
+		}
+	}
+	// Three moves of the {070, 085} pair are booked. Falling back into
+	// fixing is never dampened …
+	if tr := sweep(stagelabels.Fixing); tr.Outcome.Suppressed || tr.To != stagelabels.Fixing {
+		t.Fatalf("move into fixing: %+v", tr)
+	}
+	writes := writer.Writes
+	// … but the climb back to 085 is the pair's 5th move in five minutes.
+	tr := sweep(stagelabels.NeedsDecision)
+	if !tr.Outcome.Suppressed || tr.From != stagelabels.Fixing || tr.To != stagelabels.Fixing || tr.Outcome.Changed() {
+		t.Fatalf("dampened: %+v", tr)
+	}
+	if writer.Writes != writes {
+		t.Fatalf("writer applied a dampened transition: writes=%d, want %d", writer.Writes, writes)
+	}
+	if rec, _ := store.Get(f.Ref.Key()); rec.Stage != stagelabels.Fixing {
+		t.Fatalf("store=%s, want fixing", rec.Stage)
+	}
+}
 func TestRequiresHumanReconcilesToFixedPoint(t *testing.T) {
 	for _, decisionRequested := range []bool{false, true} {
 		obs := stageObservation{Owner: "acme", Repo: "widgets", Number: 42, Lane: stageLaneSelf, HeadSHA: "head", AuthorKind: authorkind.Hive,

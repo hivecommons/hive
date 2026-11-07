@@ -630,7 +630,7 @@ func (s *Scheduler) reposSection() string {
 	b.WriteString(fmt.Sprintf("## Project Repositories\n\nYour role covers these repositories, all on **%s** (this hive is single-host):\n", host))
 	for _, repo := range s.cfg.Project.Repos {
 		full := repo
-		if !strings.Contains(repo, "/") {
+		if s.cfg.Project.Org != "" && !strings.Contains(repo, "/") {
 			full = s.cfg.Project.Org + "/" + repo
 		}
 		b.WriteString(fmt.Sprintf("  %s/%s\n", strings.TrimRight(host, "/"), full))

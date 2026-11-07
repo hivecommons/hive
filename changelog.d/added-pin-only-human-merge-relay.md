@@ -1,0 +1,1 @@
+- The `hive-merge` relay now honours the `auto_merge.human_merge_pin_only` exception, with the same checks as the automerge sweep plus an exact requested-head match; anything short of a proven pin-only change by a trusted author stays held (#16265).

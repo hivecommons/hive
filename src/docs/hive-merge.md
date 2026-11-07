@@ -170,13 +170,12 @@ sweep lanes whatever the intent tier. If the changed-file list for a configured
 repo cannot be fetched completely, the merge is withheld (fail closed). See
 [operator-reference.md](operator-reference.md).
 
-**Pin-only policy (enforced by the automerge sweep and `/approve`; relay pending).**
+**Pin-only policy (enforced by the automerge sweep, `/approve`, and relay).**
 
 `auto_merge.human_merge_pin_only` provides the schema and conservative diff
 classifier for #16242 / #16262. **The automerge sweep lanes and `/approve`
-enforce it (#16266); the `hive-merge` relay does not yet** (#16265) and still
-requires the existing human-merge path policy. The native merge queue is entered
-only after a lane's human-merge-path gate, so queued PRs inherit the exception. A sweep lane
+(#16266) and the `hive-merge` relay (#16265) enforce it.** The native merge
+queue is entered only after a lane's human-merge-path gate, so queued PRs inherit the exception. A sweep lane
 does not hold a PR on its human-merge-path matches when the repo has an enabled
 entry, the PR author is in `trusted_authors` (case-insensitive login match),
 GitHub's reported changed-file count is present and equals the fetched list,
@@ -236,8 +235,10 @@ This classifier proves **syntax only**, not authenticated identity, exact-head
 binding, file-list completeness, semantic interpretation or review of upstream
 references. The sweep supplies the author (GitHub's PR author login), the
 verified-commit provenance of the head, file-list completeness and the
-upstream anchoring of each action SHA itself (#16399); the relay integration
-remains #16265;
+upstream anchoring of each action SHA itself (#16399). The relay applies
+the same checks through `Client.SetHumanMergePinOnly` (#16265) and additionally
+requires a nonempty requested head SHA matching the PR head before and after
+fetching files;
 attribution and safe hold release are tracked in #16269. None of the
 schema or classifier APIs grants permission to merge or clears a hold. Native
 required checks and producer bindings, freshness, current reviews, substantive
@@ -245,9 +246,9 @@ objections, unrelated holds and configured soak must remain independent gates.
 
 Operators stage the key in the controller's configured `hive.yaml` seed, not in
 the image repository (reload behaviour is documented in the operator reference
-linked above). On an image that contains #16266, reloading the seed enables
-the sweep and `/approve` exception at once; the `hive-merge` relay still
-ignores the key until #16265 lands, so relay merges keep holding matching PRs.
+linked above). On an image that contains #16266 and #16265, reloading the seed
+enables the sweep, `/approve`, and `hive-merge` relay exception at once. Non-GitHub
+forge relays retain the existing fail-closed human-merge-path policy.
 
 There is **no minimum deployable version enabling this lane yet**. Utah rollout
 and current-head positive/negative deployment evidence remain tracked by
@@ -257,8 +258,8 @@ projectbluefin/utah#1082 and #16242; projectbluefin/utah#1068 is not pre-authori
 `auto_merge.human_merge_pin_only`; see the
 [operator reference](operator-reference/README.md#human-merge-pin-only-rollout)
 for its configuration and deployment prerequisites. The schema/classifier
-(#16262), relay admission (#16265), and sweep admission (#16266, landed) are
-separate changes: this attribution change alone does **not** enable the exception.
+(#16262), relay admission (#16265), and sweep admission (#16266) are
+separate, landed changes: this attribution change alone does **not** enable the exception.
 New path-hold comments retain `<!-- hive-human-merge-path -->` and append
 `<!-- hive-human-merge-path-head: <40-character SHA> -->` only when Hive
 observes that exact head without a pre-existing hold. Legacy comments and
@@ -917,13 +918,29 @@ A PR merges through this tier only when all of the following hold:
   between the push and that sweep is judged stale and must be typed again
   (fail-closed by design,
   [#14754](https://github.com/hivecommons/hive/issues/14754)). Approval on an
-  earlier head never counts: a new push re-arms the fence and the 085 note
-  reads "awaiting owner approval … re-approve after a push". When released
-  the lane logs `workflow-path fence released by owner approval login=…
-  head=…`, leaves one `<!-- hive:workflow-approval head=… by=… -->` audit
-  comment per head, and the PR goes through every other gate below like any
-  other. Merging such a PR needs the App's **Workflows: Read and write**;
-  when GitHub refuses the merge for want of it the lane marks the PR
+  earlier head does not count: a new push re-arms the fence and the 085 note
+  reads "awaiting owner approval … re-approve after a push". The one
+  exception is the hive's own base refresh — the update-branch the lane runs
+  on a BEHIND PR under a strict up-to-date rule, or another merge of the
+  base branch GitHub verified as the App's (signed, committed by `web-flow`
+  or the App). When every commit between an approved head and
+  the current head is such a merge (at most five in a row) and the PR's
+  three-dot diff against the base is file-for-file what was approved, the
+  approval carries over and the lane logs `workflow-path fence approval
+  carried over hive base refresh login=… approved_head=… head=…`. The
+  earlier approval is read from a trusted merger's standing `APPROVED`
+  review, a dashboard approval marked for that head, or the hive's own audit
+  marker for it; the approver must still be trusted. A contributor commit
+  re-arms the fence even when it leaves the workflow files alone (the
+  existing head-bound rule), as do a rebase, a base merge pushed by anyone
+  but the App, and a base merge that changed a file the PR also changes.
+  When released the lane logs `workflow-path fence released by owner
+  approval login=… head=…`, leaves one `<!-- hive:workflow-approval head=…
+  by=… -->` audit comment per head (with `from=<approved head>` when the
+  approval carried over), and the PR goes through every other gate below
+  like any other. Merging such a PR needs the App's
+  **Workflows: Read and write**; when GitHub refuses the merge for want of
+  it the lane marks the PR
   `hive:unauthorized` (step `merge-workflow-path`), stops retrying that
   head, and the approved head parks at `090-ready-for-human-merge` for a
   person's **Merge** click as before. With the toggle off, or with no

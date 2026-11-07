@@ -498,7 +498,7 @@ func decisionActions(obs stageObservation, e stagelabels.Evidence) ([]string, bo
 	}
 	var actions []string
 	if obs.Reason == contributorLaneReasonWorkflowPath {
-		actions = append(actions, "A hive owner / trusted merger submits a GitHub **Approve** review on the current head (or approves from the Hive dashboard, which posts `/hive decision approve` on their behalf); that explicit approval releases the workflow-path fence and the lane merges on its next pass once CI, soak and the other gates are clear. Approval on an earlier head does not carry over: re-approve after a push.")
+		actions = append(actions, "A hive owner / trusted merger submits a GitHub **Approve** review on the current head (or approves from the Hive dashboard, which posts `/hive decision approve` on their behalf); that explicit approval releases the workflow-path fence and the lane merges on its next pass once CI, soak and the other gates are clear. Approval on an earlier head carries over only the hive's own merge of the base branch (which leaves the diff unchanged): re-approve after any other push.")
 	}
 	if len(e.ForkGuard) > 0 {
 		actions = append(actions, "A maintainer must push this branch to the repository (or approve the guarded run as the repository requires); the contributor cannot clear a fork guard by pushing to the fork, and the hive does not adopt it.")

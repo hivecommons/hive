@@ -385,9 +385,9 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	if err != nil {
 		return b.fail(res, err)
 	}
-	if loc := logscrub.TokenPattern.FindString(diff); loc != "" {
+	if category, found := logscrub.FindSecret(diff); found {
 		res.SecretRejected = true
-		return b.fail(res, errors.New("pushbroker: outgoing diff contains a token-like secret"))
+		return b.fail(res, fmt.Errorf("pushbroker: outgoing diff contains a %s-shaped secret", category))
 	}
 	token, err := b.Minter.MintPushToken(ctx, b.Repo)
 	if err != nil {
