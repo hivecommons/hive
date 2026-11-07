@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
@@ -109,16 +108,9 @@ type CopilotScanOptions struct {
 // copilotSessionStateRel is the Copilot CLI session-state path under a HOME.
 const copilotSessionStateRel = ".copilot/session-state"
 
-// copilotPerAgentHomesDirName is the directory under the shared HOME root that
-// holds the per-agent HOMEs (pkg/agent interactiveHomeRootName).
-const copilotPerAgentHomesDirName = "agents"
-
 // CopilotSessionTree is one Copilot session-state directory to scan plus the
 // agent that owns it ("" for the legacy shared directory).
-type CopilotSessionTree struct {
-	Dir   string
-	Agent string
-}
+type CopilotSessionTree = SessionTree
 
 // CopilotSessionTrees returns the configured shared session-state directory
 // plus every per-agent tree beside it. Since hivecommons/hive#9444 each
@@ -129,30 +121,7 @@ type CopilotSessionTree struct {
 // The per-agent trees are derived only when sharedDir has the canonical
 // <home>/.copilot/session-state shape.
 func CopilotSessionTrees(sharedDir string) []CopilotSessionTree {
-	if sharedDir == "" {
-		return nil
-	}
-	trees := []CopilotSessionTree{{Dir: sharedDir}}
-	rel := filepath.FromSlash(copilotSessionStateRel)
-	if !strings.HasSuffix(filepath.Clean(sharedDir), rel) {
-		return trees
-	}
-	home := strings.TrimSuffix(filepath.Clean(sharedDir), rel)
-	home = filepath.Clean(home)
-	matches, err := filepath.Glob(filepath.Join(home, copilotPerAgentHomesDirName, "*", rel))
-	if err != nil {
-		return trees
-	}
-	sort.Strings(matches)
-	for _, m := range matches {
-		agentHome := strings.TrimSuffix(m, string(filepath.Separator)+rel)
-		agent := filepath.Base(agentHome)
-		if agent == "" || agent == "." || strings.HasPrefix(agent, ".") {
-			continue
-		}
-		trees = append(trees, CopilotSessionTree{Dir: m, Agent: agent})
-	}
-	return trees
+	return perAgentSessionTrees(sharedDir, copilotSessionStateRel)
 }
 
 // ScanCopilotSessions reads Copilot CLI session files from one session-state

@@ -547,8 +547,9 @@ type Manager struct {
 	// rateLimitRelaunchMu guards lastRateLimitRelaunch, the fleet-wide clock
 	// that spaces rate-limit relaunches (rateLimitRelaunchFleetSpacing). Its
 	// own mutex: the pane pollers that consult it must not take m.mu.
-	rateLimitRelaunchMu   sync.Mutex
-	lastRateLimitRelaunch time.Time
+	rateLimitRelaunchMu     sync.Mutex
+	lastRateLimitRelaunch   time.Time
+	sharedCLIMemoryWarnOnce sync.Once // see warnSharedCLIMemoryOnce (hivecommons/hive#17031)
 
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
 	// the output-capture goroutines, and taking m.mu there risks startup

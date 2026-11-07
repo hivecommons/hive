@@ -7,9 +7,9 @@ Hive tracks token usage for local budgeting, dashboard cost estimates, and hub-l
 The collector starts from `data.metrics_dir` and rescans every 30 seconds. It merges:
 
 - Hive JSONL session files in `data.metrics_dir` (`*.jsonl`) using the flat `SessionEntry` schema.
-- Claude Code session JSONL under `data.claude_sessions_dir` when configured. It reads assistant `message.usage` blocks from recent files (30-day mtime window).
+- Claude Code session JSONL under `data.claude_sessions_dir` when configured, plus every per-agent `/data/home/agents/<name>/.claude/projects` beside it (each per-UID agent's `~/.claude` is a real directory since [#17031](https://github.com/hivecommons/hive/issues/17031)); sessions in a per-agent tree are attributed to that agent when the project directory name carries no work-dir hint. It reads assistant `message.usage` blocks from recent files (30-day mtime window).
 - Copilot CLI `events.jsonl` under `data.copilot_sessions_dir` when configured. It reads `session.shutdown.modelMetrics` and avoids double-counting sessions already captured live by the proxy.
-- Bob CLI chat recordings under `data.bob_sessions_dir` (default `/data/home/.bob`) when configured. It reads `tmp/*/chats/*.json`, maps Bob project hashes back to trusted agent folders, and records explicit `tokens` fields (falling back to content-size estimates only when a recording has no token data).
+- Bob CLI chat recordings under `data.bob_sessions_dir` (default `/data/home/.bob`) and every per-agent `/data/home/agents/<name>/.bob` beside it, when configured. It reads `tmp/*/chats/*.json`, maps Bob project hashes back to trusted agent folders (falling back to the owning agent of a per-agent tree), and records explicit `tokens` fields (falling back to content-size estimates only when a recording has no token data).
 - In the optional Claude Managed Agents hosted path, `pkg/tokens/managed_agents_ledger.go`
   writes `managed-agents-*.jsonl` after deduplicating vendor
   `span.model_request_end` IDs. Its `managed-agents-ledger.json` sidecar keeps
