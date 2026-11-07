@@ -1432,7 +1432,8 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			} else if obs.Reason == stagelabels.LaneReasonHiveSignoffAttribution {
 				// A person owns the fix and nothing else will tell them:
-				// one comment per head with the exact commands.
+				// one comment per PR with the exact commands, rewritten
+				// in place on a new head (hivecommons/hive#17066).
 				n, err := c.nudgeSignoffAttribution(ctx, store, key, obs, now)
 				result.Comments += n
 				if err != nil && firstErr == nil {

@@ -1,1 +1,0 @@
-- crux: `BreakerTrigger`, `PauseCausation` and `PauseTransitionEvent` are defined in the `crux` root (aliased by `crux/agent`) and `cmd/hive` names `ProjectContext` and `DefaultAgentMode` as `crux.<Name>`; the inbound boundary ratchet's `cmd/hive` row drops 22 → 12, and what remains is the in-process manager and its host wiring (refs #14138).

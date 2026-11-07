@@ -1,1 +1,0 @@
-- Fence preparation settlement against superseded head/base/review inputs and concurrent owner or attempt changes, preserving unresolved refresh ownership and fresh-review requirements without treating required-green as release authority.

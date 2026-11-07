@@ -1,1 +1,0 @@
-- Bound bead vault filenames (truncate + short hash) so long bead titles no longer fail ingest with ENAMETOOLONG (#13656).

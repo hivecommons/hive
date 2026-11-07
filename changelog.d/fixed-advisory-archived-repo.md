@@ -1,1 +1,0 @@
-- Advisory digest posts to archived (read-only) repositories are no longer retried every cycle or self-reported as failures (#13570)

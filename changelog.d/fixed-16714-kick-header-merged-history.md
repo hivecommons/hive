@@ -1,1 +1,0 @@
-- Kick headers now describe merged PR history reads as conditional on wrapper and tier permissions while preserving governor-supplied work and discovery restrictions ([#16714](https://github.com/hivecommons/hive/issues/16714)).

@@ -1,1 +1,0 @@
-- Bump golang.org/x/net to v0.62.0 in src/crux to clear GO-2026-6617/6612/6611/6603 (govulncheck red on hivecommons/crux main).

@@ -1,1 +1,0 @@
-- Crux: the ring's tests use their own `pkg/crux/testutil` helpers instead of `internal/testutil`, so the Crux outbound ratchet baseline is empty in test code too (#13536).

@@ -1,1 +1,0 @@
-- The dashboard topbar no longer shows an empty outlined pill between Settings and the health badge when every AI provider is usable: the hidden providers chip (`#oc-providers`) was still painted because the shared `.nav-chip` display rule outranked the `hidden` attribute. The chip now also carries a title/aria-label describing its state.

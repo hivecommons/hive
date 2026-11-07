@@ -1,1 +1,0 @@
-- Bump golang.org/x/net to v0.62.0 to clear GO-2026-6860 (govulncheck).

@@ -1,1 +1,0 @@
-- docs(releasesentinel): describe GitRetagger.git output via the Runner contract (#16161)

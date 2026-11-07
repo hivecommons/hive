@@ -23773,6 +23773,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       fetchStageTracker();
       fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
     }
+    // The body the hosted gateway substitutes for a 502/503 it intercepted
+    // (deploy/k8s/error-pages.yaml): it never came from the hive.
+    const STAGE_TRACKER_PLAN_GATEWAY_ERROR = 'hive unavailable';
+    // Pure: the message a failed row action reports. The hive's own error
+    // when it answered (the body of a 4xx — 403 "write permission
+    // required", 424 "GitHub add hold label failed: … 422 …"), the bare
+    // status when the body carried none. A 502–504 whose body is the
+    // gateway's placeholder (or no JSON at all) is named as such: the hive
+    // may well be up and its real reply was replaced on the way
+    // (hivecommons/hive#17037), so "hive unavailable" alone misled.
+    function stageTrackerActionError(status, data) {
+      data = data || {};
+      const gateway = status >= 502 && status <= 504 && (!data.error || data.error === STAGE_TRACKER_PLAN_GATEWAY_ERROR);
+      if (gateway) return 'HTTP ' + status + ' from the gateway — the hive\'s reply was replaced (it may be restarting, or the gateway hid an upstream error); retry, and check the hive log if it persists';
+      return data.error || ('HTTP ' + status);
+    }
     // Run one action over the items in order, one request each (a hive-wide
     // one once), reporting progress and the per-row outcome.
     async function stageTrackerRunActions(items, id, payload, rows) {
@@ -23797,7 +23813,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         try {
           const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
           let data = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+          if (!r.ok) throw new Error(stageTrackerActionError(r.status, data));
           if (id === 'accept-triage' && data.ok !== true) throw new Error(data.error || 'The server did not confirm the triage handoff');
           if (id === 'decide:close-issue' && data.status !== 'closed' && data.status !== 'refused') throw new Error(data.error || 'The server did not confirm that the issue closed');
           if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
@@ -24122,8 +24138,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // hint, retryable, hive, attempts, elapsed_ms; delegatedPlanFailure in
     // api_repo_item_decide_delegated_plan.go) when it answered, else what
     // the transport said. A 502/503 whose body is the hosted gateway's
-    // generic "hive unavailable" page never came from the hive at all.
-    const STAGE_TRACKER_PLAN_GATEWAY_ERROR = 'hive unavailable';
+    // generic "hive unavailable" page (STAGE_TRACKER_PLAN_GATEWAY_ERROR)
+    // never came from the hive at all.
     function stageTrackerDelegatePlanFailure(item, status, data) {
       data = data || {};
       const gateway = status >= 502 && status <= 504 && (!data.reason || data.error === STAGE_TRACKER_PLAN_GATEWAY_ERROR);
@@ -64909,6 +64925,7 @@ function burnAreaChart() {
       const dests = reviewBacklogDestinationsFor(ws);
       const dest = dests.some(o => o.value === bl.destination) ? bl.destination : 'github_issue';
       const labels = Array.isArray(bl.labels) ? bl.labels : ['origin/reviewer'];
+      const minSeverity = ['P0', 'P1', 'P2', 'P3'].includes(String(bl.min_severity || '').toUpperCase()) ? String(bl.min_severity).toUpperCase() : '';
       const presetBtns = REVIEW_SEVERITY_PRESETS.map(p => `<button type="button" class="hv-btn ${blockAt === p.blockAt ? 'btn-primary' : 'btn-secondary'} btn-sm btn-small" data-action="applyReviewSeverityPreset" data-arg0="${p.blockAt}" aria-pressed="${blockAt === p.blockAt ? 'true' : 'false'}"${dis}>${esc(p.label)}</button>`).join(' ');
       const toggle = (key, on, label, tip) => `<div class="config-toggle mt-3">
               <div class="config-toggle-switch ${on ? 'on' : ''}${canEdit ? '' : ' disabled'}" data-action="toggleReviewSeverityFlag" data-arg0="${key}" data-arg-types="s" role="switch" aria-checked="${on ? 'true' : 'false'}"></div>
@@ -64948,8 +64965,18 @@ function burnAreaChart() {
             <input type="text" id="review-backlog-labels" value="${esc(labels.join(', '))}" placeholder="origin/reviewer" data-change-action="markDirtyReviewBacklogLabels" data-arg-types="v"${dis}>
           </div>
           <div class="config-field mt-3">
-            <label>Max backlog items per PR per day ${settingHelpMark('review-swarm', 'blocking-line-reviewseverity-reviewbacklog', 'Max backlog items per PR per day', `review.backlog.max_per_pr_per_day: cap on items filed from one PR in a day. 0 or blank uses the default of 10.`)}</label>
-            <input type="number" id="review-backlog-max" min="0" value="${esc(String(bl.max_per_pr_per_day || ''))}" placeholder="10" data-change-action="markDirtyReviewBacklog" data-arg0="max_per_pr_per_day" data-arg-types="s,N"${dis}>
+            <label>Lowest severity filed as a backlog item ${settingHelpMark('review-swarm', 'blocking-line-reviewseverity-reviewbacklog', 'Lowest severity filed as a backlog item', `review.backlog.min_severity: findings at or above this priority become backlog items; anything below is listed in the PR&apos;s Follow-ups comment instead. Default P2 (P3 files everything).`)}</label>
+            <select id="review-backlog-min-severity" data-change-action="markDirtyReviewBacklog" data-arg0="min_severity" data-arg-types="s,v"${dis}>
+              ${[['', 'Default (P0–P2)'], ['P0', 'P0 only'], ['P1', 'P0–P1'], ['P2', 'P0–P2'], ['P3', 'P0–P3 (everything)']].map(([v, l]) => `<option value="${v}"${minSeverity === v ? ' selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field mt-3">
+            <label>Max backlog items per PR ${settingHelpMark('review-swarm', 'blocking-line-reviewseverity-reviewbacklog', 'Max backlog items per PR', `review.backlog.max_per_pr: cap on items filed or re-raised from one PR over its lifetime. 0 or blank uses the default of 3 (or the retired review.backlog.max_per_pr_per_day if still set).`)}</label>
+            <input type="number" id="review-backlog-max" min="0" value="${esc(String(bl.max_per_pr || ''))}" placeholder="3" data-change-action="markDirtyReviewBacklog" data-arg0="max_per_pr" data-arg-types="s,N"${dis}>
+          </div>
+          <div class="config-field mt-3">
+            <label>Max backlog items per PR per day (retired) ${settingHelpMark('review-swarm', 'blocking-line-reviewseverity-reviewbacklog', 'Max backlog items per PR per day (retired)', `review.backlog.max_per_pr_per_day: the retired per-day cap. Still read as the lifetime cap when max_per_pr is unset. 0 or blank means not set.`)}</label>
+            <input type="number" id="review-backlog-max-per-day" min="0" value="${esc(String(bl.max_per_pr_per_day || ''))}" placeholder="not set" data-change-action="markDirtyReviewBacklog" data-arg0="max_per_pr_per_day" data-arg-types="s,N"${dis}>
           </div>
         </div>`;
     }
@@ -64975,7 +65002,8 @@ function burnAreaChart() {
     }
     function markDirtyReviewBacklog(key, value) {
       const rv = reviewSeverityState();
-      if (key === 'max_per_pr_per_day') value = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+      if (key === 'max_per_pr_per_day' || key === 'max_per_pr') value = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+      if (key === 'min_severity') value = String(value || '').trim().toUpperCase();
       rv.backlog[key] = value;
       markDirty('review', 'backlog', Object.assign({}, (_configState.dirty.review || {}).backlog, { [key]: value }));
     }

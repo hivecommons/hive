@@ -1,1 +1,0 @@
-- crux: contained run service (`crux runs`) on top of the sandbox launcher (Podman + kubejob) with saved run state under `runstate/` and `/v1/runs` serve routes (RFC hivecommons/crux#114, S2 + S7 minimum).

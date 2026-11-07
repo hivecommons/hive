@@ -591,10 +591,11 @@ func TestAgentEnvPairs_BDDirFromBeadsDir(t *testing.T) {
 		t.Error("BD_DIR should be present when BeadsDir is configured")
 	}
 
-	// Count should be baseEnvVarCount + 1 for BD_DIR
-	const expectedWithBDDir = baseEnvVarCount + 1
+	// Count should be baseEnvVarCount + 1 for BD_DIR + 1 for the Claude CLI's
+	// CLAUDE_CODE_DISABLE_AUTO_MEMORY pin (hivecommons/hive#17032).
+	const expectedWithBDDir = baseEnvVarCount + 2
 	if len(pairs) != expectedWithBDDir {
-		t.Errorf("testEnvPairs() returned %d vars, want %d (base + BD_DIR)", len(pairs), expectedWithBDDir)
+		t.Errorf("testEnvPairs() returned %d vars, want %d (base + BD_DIR + auto-memory pin)", len(pairs), expectedWithBDDir)
 	}
 }
 

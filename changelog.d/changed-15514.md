@@ -1,1 +1,0 @@
-- Linked the HIVE_METRICS_TOKEN row in operator-reference.md to the ServiceMonitor setup and alert runbooks ([#15514](https://github.com/hivecommons/hive/issues/15514)).

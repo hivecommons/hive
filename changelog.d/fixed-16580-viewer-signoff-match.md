@@ -1,1 +1,0 @@
-- Activity Monitor: a sign-off question naming `@clubanderson-bot` or `@clubandersonx` no longer reads "needs your sign-off" to the viewer `clubanderson`; the viewer's handle is matched on a word boundary.

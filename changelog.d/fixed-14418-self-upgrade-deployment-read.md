@@ -1,1 +1,0 @@
-- Spoke image self-upgrades reuse a single Deployment read for container images and startup probe backfill, avoiding a redundant Kubernetes API GET ([#14418](https://github.com/hivecommons/hive/issues/14418)).

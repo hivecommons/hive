@@ -573,9 +573,12 @@ lands on a non-App-authored branch (`review.fix_human_prs` does not authorize
 one and the hive must not forge the author's `Signed-off-by`), so the PR
 goes back to its author by kind under `hive-signoff-attribution`: `071` for
 a human, `072` for a contributor agent — never `070`, where nothing can act. The human
-gets one comment per head (`<!-- hive:signoff-attribution head=… -->`) with
+gets one comment per PR (`<!-- hive:signoff-attribution -->`) with
 the exact fix (`git commit --amend --reset-author -s && git push
 --force-with-lease`, or the `git rebase --exec` form for several commits);
+a new head rewrites that comment in place and appends an `updated …` line
+(history capped at five) instead of posting another copy
+([#17066](https://github.com/hivecommons/hive/issues/17066));
 the contributor agent's regular 072 nudge carries the same ask. An adoption cannot
 fix it by rewriting (the hive may not touch the contributor's authorship,
 and a supersede would carry the same head), and the hive's own in-place fix

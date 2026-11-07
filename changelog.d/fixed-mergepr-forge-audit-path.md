@@ -1,1 +1,0 @@
-- Merges the GitHub forge adapter performs are now audited as `path=forge` instead of being attributed to the merge relay (`path=relay`), and the dashboard's PR throughput counts them as hive merges.

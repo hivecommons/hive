@@ -75,9 +75,40 @@ const (
 // ValidReviewBacklogDestinations lists the accepted destinations in UI order.
 var ValidReviewBacklogDestinations = []string{ReviewBacklogGitHubIssue, ReviewBacklogGitHubProject, ReviewBacklogLinear, ReviewBacklogJira}
 
-// DefaultReviewBacklogMaxPerPRPerDay caps backlog items filed per PR per day
-// when review.backlog.max_per_pr_per_day is unset.
+// DefaultReviewBacklogMaxPerPRPerDay is the retired per-day cap default,
+// kept so a config that still sets max_per_pr_per_day keeps loading; the
+// live cap is EffectiveMaxPerPR.
 const DefaultReviewBacklogMaxPerPRPerDay = 10
+
+// DefaultReviewBacklogMaxPerPR caps backlog items filed or re-raised from one
+// PR over its whole lifetime when review.backlog.max_per_pr is unset.
+const DefaultReviewBacklogMaxPerPR = 3
+
+// DefaultReviewBacklogMinSeverity is the lowest priority still filed as a
+// backlog item when review.backlog.min_severity is unset: P0–P2 become
+// items, P3 (low/info, e.g. docs-currency) is listed in the PR's Follow-ups
+// comment instead.
+const DefaultReviewBacklogMinSeverity = "P2"
+
+// ValidReviewBacklogMinSeverity lists the accepted review.backlog.min_severity
+// values; P3 files every finding (the pre-hivecommons/hive#17065 behaviour).
+var ValidReviewBacklogMinSeverity = []string{"P0", "P1", "P2", "P3"}
+
+// NormalizeReviewBacklogMinSeverity canonicalises min_severity ("" means the
+// default, case and surrounding whitespace ignored). ok is false for
+// anything else.
+func NormalizeReviewBacklogMinSeverity(v string) (string, bool) {
+	v = strings.ToUpper(strings.TrimSpace(v))
+	if v == "" {
+		return DefaultReviewBacklogMinSeverity, true
+	}
+	for _, p := range ValidReviewBacklogMinSeverity {
+		if v == p {
+			return v, true
+		}
+	}
+	return "", false
+}
 
 // ReviewBacklogConfig is `review.backlog` (hivecommons/hive#11088): where
 // below-the-line findings are filed. The review backlog filer in pkg/github
@@ -101,9 +132,17 @@ type ReviewBacklogConfig struct {
 	// the retired from-review, origin/review and origin/reviewer names are
 	// accepted and mapped to agent/reviewer.
 	Labels []string `yaml:"labels,omitempty" json:"labels,omitempty"`
-	// MaxPerPRPerDay caps backlog items filed per PR per day. 0 means
-	// DefaultReviewBacklogMaxPerPRPerDay.
+	// MaxPerPRPerDay is the retired per-day cap. Still read as MaxPerPR when
+	// that is unset, so an existing config keeps a cap of the same size.
 	MaxPerPRPerDay int `yaml:"max_per_pr_per_day,omitempty" json:"max_per_pr_per_day,omitempty"`
+	// MaxPerPR caps backlog items filed or re-raised from one PR over its
+	// lifetime. 0 means MaxPerPRPerDay if set, else
+	// DefaultReviewBacklogMaxPerPR.
+	MaxPerPR int `yaml:"max_per_pr,omitempty" json:"max_per_pr,omitempty"`
+	// MinSeverity is the lowest priority (P0–P3) still filed as a backlog
+	// item; findings below it are listed in the PR's Follow-ups comment
+	// instead. Empty means DefaultReviewBacklogMinSeverity.
+	MinSeverity string `yaml:"min_severity,omitempty" json:"min_severity,omitempty"`
 }
 
 // NormalizeReviewBacklogDestination canonicalises a destination ("" means
@@ -181,6 +220,29 @@ func (b ReviewBacklogConfig) EffectiveMaxPerPRPerDay() int {
 	return b.MaxPerPRPerDay
 }
 
+// EffectiveMaxPerPR returns the per-PR lifetime cap: max_per_pr, else the
+// retired max_per_pr_per_day when set, else DefaultReviewBacklogMaxPerPR.
+func (b ReviewBacklogConfig) EffectiveMaxPerPR() int {
+	if b.MaxPerPR > 0 {
+		return b.MaxPerPR
+	}
+	if b.MaxPerPRPerDay > 0 {
+		return b.MaxPerPRPerDay
+	}
+	return DefaultReviewBacklogMaxPerPR
+}
+
+// EffectiveMinSeverity returns min_severity with the default applied; an
+// invalid value also yields the default so a bad live edit never files
+// every finding.
+func (b ReviewBacklogConfig) EffectiveMinSeverity() string {
+	v, ok := NormalizeReviewBacklogMinSeverity(b.MinSeverity)
+	if !ok {
+		return DefaultReviewBacklogMinSeverity
+	}
+	return v
+}
+
 // Validate checks the backlog block, naming the offending field. A mismatch
 // between destination and the active work source is deliberately not an
 // error here: switching work source must never stop the hive from loading,
@@ -200,6 +262,12 @@ func (b ReviewBacklogConfig) Validate() error {
 	}
 	if b.MaxPerPRPerDay < 0 {
 		return fmt.Errorf("review.backlog.max_per_pr_per_day: must not be negative, got %d", b.MaxPerPRPerDay)
+	}
+	if b.MaxPerPR < 0 {
+		return fmt.Errorf("review.backlog.max_per_pr: must not be negative, got %d", b.MaxPerPR)
+	}
+	if _, ok := NormalizeReviewBacklogMinSeverity(b.MinSeverity); !ok {
+		return fmt.Errorf("review.backlog.min_severity: %q is not valid (must be %s, or empty)", b.MinSeverity, strings.Join(ValidReviewBacklogMinSeverity, ", "))
 	}
 	return nil
 }

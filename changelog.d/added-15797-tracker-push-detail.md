@@ -1,1 +1,0 @@
-- Stage tracker: the "pushed" pill on a CI / Review row now drops once the PR head moves past the pushed commit (hivecommons/hive#15797).

@@ -1,1 +1,0 @@
-- Carry contributor abandoned PR counts through spoke heartbeats and task-status pushes into the hub's merged leaderboard, treating older spokes as zero ([#15799](https://github.com/hivecommons/hive/issues/15799)).
