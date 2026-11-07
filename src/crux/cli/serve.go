@@ -12,6 +12,8 @@ import (
 	"github.com/hivecommons/hive/crux/checkout"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/lanes"
+	"github.com/hivecommons/hive/crux/runs"
+	"github.com/hivecommons/hive/crux/runstate"
 	"github.com/hivecommons/hive/crux/serve"
 	"github.com/nats-io/nats.go"
 )
@@ -40,12 +42,14 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 	fs.StringVar(&checkoutDir, "checkout-dir", "", "where pinned checkouts live (default $"+config.CheckoutDirEnvVar+", then <workdir>/"+checkout.DirName+")")
 	fs.StringVar(&operatorName, "operator-name", "", "name of the principal behind the control token on work-services routes (default $"+config.ServeOperatorNameEnvVar+", then "+serve.DefaultOperatorName+")")
 	fs.StringVar(&laneConfig, "lanes-config", "", "opt-in durable lane configuration file (default $CRUX_LANES_CONFIG)")
+	var runsConfig string
+	fs.StringVar(&runsConfig, "runs-config", "", "opt-in contained-run backend configuration file (default $"+runsConfigEnvVar+")")
 	fs.StringVar(&hiveAddr, "hive-callback", "", "hive capability endpoint to dial (default $"+callback.SocketEnvVar+"; none when unset)")
 	if code, ok := parseSub(fs, args); !ok {
 		return code
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(e.Stderr, "usage: crux serve [-socket PATH] [-listen HOST:PORT] [-token T] [-hive-callback ADDR] [-lanes-config PATH] [-operator-name NAME] [-checkout-allow PREFIXES] [-checkout-dir DIR]")
+		fmt.Fprintln(e.Stderr, "usage: crux serve [-socket PATH] [-listen HOST:PORT] [-token T] [-hive-callback ADDR] [-lanes-config PATH] [-operator-name NAME] [-checkout-allow PREFIXES] [-checkout-dir DIR] [-runs-config PATH]")
 		return ExitUsage
 	}
 	if cfg.Token == "" {
@@ -117,6 +121,12 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 		defer broker.Close()
 		srv.Lanes, srv.LaneAuth = broker, auth
 	}
+	runSvc, err := e.openRuns(opts.workDir, runsConfig)
+	if err != nil {
+		fmt.Fprintln(e.Stderr, "crux: runs:", err)
+		return ExitUsage
+	}
+	srv.Runs = runSvc
 	if hive != nil {
 		hive.install(ctx, rt, srv, e.Stdout)
 		hive.watchPolicy(ctx, rt, e.Stdout, e.Stderr)
@@ -147,4 +157,43 @@ func (e *Env) laneBrokerFailure(err error) int {
 	// Backend errors can contain addresses or credentials; only emit a typed category.
 	fmt.Fprintf(e.Stderr, "crux: lanes: cannot initialize durable broker (%s)\n", category)
 	return ExitError
+}
+
+// runsConfigEnvVar names the contained-run configuration file when
+// --runs-config is not given.
+const runsConfigEnvVar = "CRUX_RUNS_CONFIG"
+
+// openRuns builds the contained-run service. Saved records under
+// <workdir>/runs are always served, so a server with no backend configured
+// still answers `crux runs status`; the backend comes from the config file
+// when one is named. Records left in flight by an earlier process are
+// marked unfinished here, before the first request can observe them.
+func (e *Env) openRuns(workDir, path string) (*runs.Service, error) {
+	if path == "" {
+		path = os.Getenv(runsConfigEnvVar)
+	}
+	var cfg runs.Config
+	var backend *runs.Backend
+	if path != "" {
+		var err error
+		if cfg, err = runs.LoadConfig(path); err != nil {
+			return nil, err
+		}
+		if backend, err = runs.BackendFromConfig(cfg); err != nil {
+			return nil, err
+		}
+	}
+	store, err := runstate.Open(workDir)
+	if err != nil {
+		return nil, err
+	}
+	svc := runs.New(store, backend, cfg)
+	reconciled, err := svc.Reconcile()
+	if err != nil {
+		return nil, err
+	}
+	for _, rec := range reconciled {
+		fmt.Fprintf(e.Stderr, "crux: runs: %s was in flight at the last shutdown; marked unfinished\n", rec.ID)
+	}
+	return svc, nil
 }
