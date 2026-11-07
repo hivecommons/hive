@@ -267,8 +267,12 @@ type Fact struct {
 	Layer            LayerType `json:"layer"`
 	Sources          []Source  `json:"sources,omitempty"`
 	Related          []string  `json:"related,omitempty"`
-	UsageCount       int       `json:"usage_count"`
-	LastUsed         time.Time `json:"last_used,omitempty"`
+	// Author is the entry's `author:` (or `owner:`) frontmatter: the agent or
+	// person who wrote it. The kick primer uses it to let a draft reach the
+	// agent that owns it (#17076); empty for sources that record no author.
+	Author     string    `json:"author,omitempty"`
+	UsageCount int       `json:"usage_count"`
+	LastUsed   time.Time `json:"last_used,omitempty"`
 
 	// State is the lifecycle state (draft, approved, deprecated, superseded).
 	// Empty means the fact predates lifecycle states; see EffectiveState.

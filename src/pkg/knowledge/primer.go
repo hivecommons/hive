@@ -152,7 +152,13 @@ func (p *Primer) PrimeForKick(ctx context.Context, scope *TOCScope, kc KickConte
 
 	// Filter after the precedence merge so a higher-precedence layer that
 	// deprecates a slug hides it rather than surfacing a lower layer's copy.
-	merged := FilterByLifecycle(p.mergeWithPrecedence(allFacts), p.config.IncludeStates)
+	// An agent that opted into its own drafts (TOCScope.DraftAuthors, #17076)
+	// gets those on top of what the primer's lifecycle filter admits.
+	var draftAuthors []string
+	if scope != nil {
+		draftAuthors = scope.DraftAuthors
+	}
+	merged := FilterByLifecycleFor(p.mergeWithPrecedence(allFacts), p.config.IncludeStates, draftAuthors)
 	if scope != nil {
 		merged = scope.Filter(merged)
 	}
@@ -317,7 +323,11 @@ func (p *Primer) expandWithGraph(facts []Fact, scope *TOCScope, kc KickContext) 
 			for _, ls := range p.fileStores {
 				if relFact, err := ls.store.ReadPage(relSlug); err == nil {
 					relFact.Layer = ls.layerType
-					if !lifecycleAllowed(relFact.EffectiveState(), p.config.IncludeStates) {
+					var draftAuthors []string
+					if scope != nil {
+						draftAuthors = scope.DraftAuthors
+					}
+					if !lifecycleAllowedFor(*relFact, relFact.EffectiveState(), p.config.IncludeStates, draftAuthors) {
 						break
 					}
 					if scope != nil && !scope.InScope(*relFact) {
