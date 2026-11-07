@@ -112,6 +112,15 @@ type contributorLaneFixture struct {
 	baseRef  string
 	behindBy int // behind_by reported by compare/<baseRef>...sha7
 	compares int
+	// headCommit, when set, is what GET commits/sha7 serves — the parents
+	// and GitHub author the workflow-fence base-refresh carry reads; nil
+	// serves a one-parent commit by the PR author.
+	headCommit map[string]any
+	// compareFiles and compareMergeBase are the files and merge-base SHA
+	// compare/<baseRef>...<head> serves for each head, for the base-refresh
+	// carry; a head without files is answered as before.
+	compareFiles     map[string][]map[string]any
+	compareMergeBase map[string]string
 	// requiredContexts, when set with baseRef, is what branch protection
 	// declares as required_status_checks.contexts; empty keeps the branch
 	// unprotected. The status/check-runs routes only ever report ci/build,
@@ -407,7 +416,21 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []any{}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/"+baseRef+"...sha7":
 			fx.compares++
-			json.NewEncoder(w).Encode(map[string]any{"behind_by": fx.behindBy, "ahead_by": 1})
+			cmp := map[string]any{"behind_by": fx.behindBy, "ahead_by": 1}
+			if files, ok := fx.compareFiles["sha7"]; ok {
+				cmp["files"] = files
+				cmp["merge_base_commit"] = map[string]string{"sha": fx.compareMergeBase["sha7"]}
+			}
+			json.NewEncoder(w).Encode(cmp)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/compare/"+baseRef+"...") && fx.compareFiles[strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/compare/"+baseRef+"...")] != nil:
+			head := strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/compare/"+baseRef+"...")
+			json.NewEncoder(w).Encode(map[string]any{"files": fx.compareFiles[head], "merge_base_commit": map[string]string{"sha": fx.compareMergeBase[head]}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7":
+			commit := fx.headCommit
+			if commit == nil {
+				commit = map[string]any{"sha": "sha7", "parents": []map[string]string{{"sha": "sha6"}}, "author": map[string]string{"login": author}, "committer": map[string]string{"login": author}}
+			}
+			json.NewEncoder(w).Encode(commit)
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
 			fx.updates++
 			json.NewEncoder(w).Encode(map[string]any{"message": "Updating pull request branch."})

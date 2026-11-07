@@ -195,12 +195,19 @@ unverifiable claims, or `hive-decision-risk: high`. Set `escalate` to park
 every decision question at PR stage 085. Use actual holds or GitHub branch
 rules for a universal merge stop.
 
-#### Workflow approval, not App Actions-write permission
+#### Workflow approval
 
-For trusted same-repo bot/App/registry-trusted clanker PRs with
-`action_required` workflow runs, Hive posts `/ok-to-test` once per head.
-The repository's self-contained `hive-ok-to-test` workflow approves the runs
-using its own `GITHUB_TOKEN`; the App needs no Actions-write grant. If that
+By default (`governor.ci.auto_approve_workflows: true`) Hive approves
+`action_required` `pull_request` runs itself, once per PR head, with the
+App token: for Dependabot/Renovate/App-authored or -triggered runs and for
+heads a verified owner or merger admitted from the dashboard. This needs
+the App's **Actions: Read and write**; a `403` is recorded once as a
+`permission_error` and the CI caption says the run needs approval on
+GitHub. With the sweep set to `false` (or the grant missing), trusted
+same-repo bot/App/registry-trusted clanker PRs fall back to the
+`/ok-to-test` path: Hive posts the command once per head and the
+repository's self-contained `hive-ok-to-test` workflow approves the runs
+using its own `GITHUB_TOKEN`, with no App Actions-write grant. If that
 workflow is missing or `sentinel-alert` is present, Hive surfaces
 `workflow-approval-required:<ctx>` / PR stage 085 for human action.
 

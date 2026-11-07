@@ -353,6 +353,10 @@ func enforceHoldGuard(
 // runs first every tick, so this only ever sees a PR after its baseline is
 // pinned, and advancing a baseline that was never pinned would plant a wrong
 // one.
+//
+// Branches a dependency bot owns (github.DependencyBotBranch) are skipped too: the
+// bot rebases them itself, and a hive commit on the branch makes Renovate stop
+// rebasing it for good.
 func maintainHeldPRMergeability(
 	ctx context.Context,
 	ghClient *github.Client,
@@ -381,8 +385,16 @@ func maintainHeldPRMergeability(
 		if state != "behind" && state != "dirty" {
 			continue
 		}
-		// Own-only: upkeep of held PRs must pass the same write-back
-		// containment gate as its conflict notices.
+		if github.DependencyBotBranch(pr.HeadRef, pr.Author) {
+			logger.Debug("hold guard: held PR branch belongs to a dependency bot; leaving the base sync to the bot",
+				"repo", repo, "pr", pr.Number, "head_ref", pr.HeadRef, "author", pr.Author, "mergeable_state", state)
+			continue
+		}
+		// Own-only (writeback.KindHoldGateNotice): the merge-from-base push
+		// and the conflict notice are upkeep on the hive's OWN held PRs. A
+		// human's prow-held PR is not the hive's branch to push to or
+		// comment on (torch-spyre, 2026-10-28: 13 "Hold-gate mergeability"
+		// comments on maintainers' PRs).
 		if d := ghClient.WritebackAllowed(repo, ghClient.WritebackItemForPR(pr), writeback.KindHoldGateNotice, holdguard.ConflictCommentBody()); !d.Allowed {
 			logger.Debug("hold guard: held-PR mergeability upkeep kept off GitHub by write-back gate", "repo", repo, "pr", pr.Number, "reason", d.Reason)
 			continue

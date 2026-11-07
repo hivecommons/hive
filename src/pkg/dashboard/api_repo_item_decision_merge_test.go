@@ -69,7 +69,7 @@ func TestRepoItemDecisionQueueMergeApprovesForTheSweep(t *testing.T) {
 	if resp.Status != "queued-for-merge" || resp.Label != srv.deps.GHClient.AutoMergeLabel() {
 		t.Fatalf("response = %+v", resp)
 	}
-	if resp.Result == nil || resp.Result.Action != rowActionQueued || !strings.Contains(resp.Result.Next, "merge sweep") {
+	if resp.Result == nil || resp.Result.Action != rowActionQueued || !strings.Contains(resp.Result.Next, "next merge pass") {
 		t.Fatalf("result = %+v", resp.Result)
 	}
 	if len(mock.merges) != 0 {

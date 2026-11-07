@@ -131,7 +131,7 @@ func TestDelegatedGatherErrorNeverAnswers502ForGitHubRefusals(t *testing.T) {
 				t.Fatalf("%s answered %d, which the Ingress rewrites to \"hive unavailable\"", tc.name, status)
 			}
 			w := httptest.NewRecorder()
-			delegatedGatherError(w, tc.err, now)
+			writeDelegatedPlanFailure(w, delegatedPlanFailureFor(tc.err, "o", 1, 1, 0, "Hive Commons"))
 			if got := w.Header().Get("Retry-After"); (tc.retry > 0) != (got != "") {
 				t.Fatalf("Retry-After = %q for wait %v", got, tc.retry)
 			}
@@ -152,11 +152,12 @@ func TestStageTrackerDelegatePlanRateLimitMessage(t *testing.T) {
   global.fetch = async () => reply;
   const hdr = h => ({ get: k => (k in h ? h[k] : null) });
 
-  reply = { ok: false, status: 429, headers: hdr({ 'Retry-After': '1319' }), json: async () => ({ ok: false, error: 'GitHub API rate limit for this hive is exhausted; resets at 17:32Z' }) };
+  reply = { ok: false, status: 429, headers: hdr({ 'Retry-After': '1319' }), json: async () => ({ ok: false, error: 'GitHub API rate limit for this hive is exhausted; resets at 17:32Z', reason: 'github', retryable: true, attempts: 1, hive: 'Hive Commons' }) };
   let pl = await stageTrackerPostDelegatePlan(item, req, false);
   assert.strictEqual(pl.error, 'GitHub API rate limit for this hive is exhausted; resets at 17:32Z');
   const err = stageTrackerDelegatePlanErrorContent('projectbluefin/testsuite#1026', [pl]);
-  assert.ok(err.includes('Could not preview projectbluefin/testsuite#1026 (GitHub API rate limit for this hive is exhausted; resets at 17:32Z)'), err);
+  assert.ok(err.includes('Could not preview projectbluefin/testsuite#1026: Hive Commons could not read it from GitHub'), err);
+  assert.ok(err.includes('GitHub API rate limit for this hive is exhausted; resets at 17:32Z'), err);
   assert.ok(!err.includes('hive unavailable'), err);
 
   // A 429 whose message names no time: Retry-After does.

@@ -76,13 +76,17 @@ func (c *Engine) markMergeForwardOnce(key string) bool {
 // changed .github/workflows/ and the App lacks the workflows permission) is
 // reported as "workflow-permission" for that head, so a person brings the
 // branch up to date rather than a fix agent being sent to make the same
-// refused push. Every other case keeps the "conflicting" hold. It is
-// attempted once per head SHA.
+// refused push. Every other case — a dependency bot's branch included, which
+// the bot rebases itself — keeps the "conflicting" hold. It is attempted
+// once per head SHA.
 func (c *Engine) mergeForwardOrConflict(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int) (AutoMergeSweepEvent, string, error) {
 	if !c.mergeForwardTrustedHumanFor(owner+"/"+repo) || pr == nil || c.isForkPR(pr) {
 		return AutoMergeSweepEvent{}, "conflicting", nil
 	}
 	if authorkind.FromLabels(labelNames(pr.Labels), c.stagePolicy().AuthorKindLabels) != authorkind.Human {
+		return AutoMergeSweepEvent{}, "conflicting", nil
+	}
+	if c.leaveBaseSyncToDependencyBot(displayRepo, owner, repo, pr, "merge-forward") {
 		return AutoMergeSweepEvent{}, "conflicting", nil
 	}
 	headRef := strings.TrimSpace(pr.GetHead().GetRef())

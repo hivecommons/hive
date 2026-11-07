@@ -316,17 +316,21 @@ func (c *Engine) latestTrustedHumanApproval(ctx context.Context, owner, repo str
 	return login, ok
 }
 
-// latestTrustedHumanApprovalReach is latestTrustedHumanApproval plus whether
-// the approval reaches head only by being carried over base merges
-// (reviewReachesHead), so the fence comment can say so.
-func (c *Engine) latestTrustedHumanApprovalReach(ctx context.Context, owner, repo string, number int, head string) (string, bool, bool) {
+// latestTrustedHumanApprovalReach is latestTrustedHumanApproval plus the
+// commit the review approved when the approval reaches head only by being
+// carried over base merges (reviewReachesHead), "" when it approved head
+// itself, so the fence comment can say so.
+func (c *Engine) latestTrustedHumanApprovalReach(ctx context.Context, owner, repo string, number int, head string) (string, string, bool) {
 	rv, ok := c.latestTrustedHumanReview(ctx, owner, repo, number, head, "APPROVED")
 	if !ok {
-		return "", false, false
+		return "", "", false
 	}
 	login := strings.TrimSpace(hgithub.SafeGetLogin(rv.GetUser()))
 	c.noteStageTrustedHumanApproval(owner, repo, number, head, login)
-	return login, c.reviewReachesHead(ctx, owner, repo, number, head, rv).carried, true
+	if c.reviewReachesHead(ctx, owner, repo, number, head, rv).carried {
+		return login, strings.TrimSpace(rv.GetCommitID()), true
+	}
+	return login, "", true
 }
 
 func (c *Engine) trustedHumanApprovalForRequiresHuman(ctx context.Context, owner, repo string, number int, head string, verdict ContributorLaneVerdict) (string, bool) {

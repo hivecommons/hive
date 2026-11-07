@@ -1,0 +1,1 @@
+- Activity Monitor: a PR queued in the base preparation train whose current head is already approved now reads "Approved N/M · queued for base refresh behind PR #<front>" instead of "waiting for a verdict on the current head" (hivecommons/hive#16756).

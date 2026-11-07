@@ -161,8 +161,6 @@ auto_merge.human_merge_pin_only.<key>.trusted_authors[] # bounded pin-only human
 auto_merge.human_merge_title_prefixes[] # breaking-titled PRs wait for a human; yaml-only
 auto_merge.human_merge_labels[] # needs-owner-merge PRs wait for a human; yaml-only
 auto_merge.merge_forward_trusted_human[] # TODO #11854
-auto_merge.merge_train.enabled # conflict-aware merge train (#15117); yaml-only
-auto_merge.merge_train.max_rebase_attempts # merge train rebase loop guard (#15117); yaml-only
 auto_merge.native_merge_queue.enabled # native merge queue hand-off opt-in (#15198); yaml-only
 auto_merge.native_merge_queue.probe_ttl # merge-queue probe cache TTL (#15198); yaml-only
 auto_merge.native_merge_queue.repos[] # native merge queue per-repo allow-list (#15198); yaml-only
@@ -217,6 +215,8 @@ governor.budget.coins.<key>.budget # TODO #11854
 governor.budget.coins.<key>.label # TODO #11854
 governor.budget.coins.<key>.tokens_per_coin # TODO #11854
 governor.budget.coins.<key>.usd_per_coin # TODO #11854
+governor.ci.auto_approve_workflow_actors[] # trusted workflow-approval actors (#16603); yaml-only
+governor.ci.auto_approve_workflows # gated workflow auto-approval flag (#16603); yaml-only
 governor.ci_failure_kick_cooldown_s # webhook CI-failure kick cooldown (#15291); yaml-only
 governor.ci_failure_webhook_kick # webhook CI-failure kick flag (#15291); yaml-only
 governor.claims.contributor_flap_threshold # contributor flap cool-off (#13579); yaml-only

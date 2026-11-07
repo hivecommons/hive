@@ -207,10 +207,10 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 		case note("queued for auto-merge"):
 			out.Next = "Queued: the auto-merge engine merges per repository settings."
 		case note("/lgtm"):
-			out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked."
+			out.Next = "Hive merges it on its next merge pass once CI is green and the head has soaked."
 			out.Posted = append(out.Posted, "`/lgtm` posted", "`/approve` posted")
 		default:
-			out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked."
+			out.Next = "Hive merges it on its next merge pass once CI is green and the head has soaked."
 		}
 	}
 	if in.Kind == delegatedecision.KindPR && d.Verdict == delegatedecision.VerdictApprove && note("native approval durably recorded") {

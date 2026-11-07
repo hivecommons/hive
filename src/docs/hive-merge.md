@@ -404,10 +404,14 @@ hand-applied return label) names the exact head the person saw; a new head
 is a new tree nobody has decided on, so the record is superseded and the
 reviewer's `decision_requested` question stands again. The one head change
 that does not supersede it is the hive's own `require_current_base` refresh:
-a merge commit authored by the App whose parents are the decided head and a
-commit on the base branch, and whose three-dot diff against the base is
-file-for-file (name, status, blob, line counts, patch) identical to the
-decided head's. Up to five such refreshes may stack before any gate reads
+a merge commit authored by the App, committed by GitHub (`web-flow`) or the
+App and carrying a signature GitHub verified, whose parents are the decided
+head and a commit on the base branch, and whose three-dot diff against the
+base is file-for-file (name, status, blob, line counts, patch) identical to
+the decided head's. An App login GitHub derived from an unsigned commit's
+author email does not count, and a compare that lists GitHub's 300-file cap
+cannot be verified, so neither carries
+([#16860](https://github.com/hivecommons/hive/issues/16860)). Up to five such refreshes may stack before any gate reads
 the PR: the carry walks the first-parent chain back from the new head and
 every hop must itself pass the same check, so two App merge-from-base
 commits in a row still carry while a content commit anywhere in the chain
@@ -717,6 +721,21 @@ holds a behind head until the update lands. On current-base-gated repositories
 the separate preparation owner above refreshes the next admitted head, rather
 than refreshing every waiting sibling when a front merges.
 
+**Dependency-bot branches are the bot's to rebase.** A PR whose head ref is
+`renovate/*` or whose author is `renovate[bot]`, `dependabot[bot]` or
+`mergeraptor[bot]` never gets a hive commit merging its base: no lane
+update-branch, no current-base refresh, no merge-forward, no merge-train
+update or rebase request, no trusted-author fixer rebase, no adopted-PR
+recovery update and no `hive-merge --update-branch`. Renovate stops rebasing
+a branch for good once another identity has committed to it
+([projectbluefin/utah#1097](https://github.com/projectbluefin/utah/pull/1097)).
+A behind bot branch holds as `behind` (logged once per head as `leaving the
+base sync to the bot`) until the bot rebases it — Renovate does so on its own
+when the repository requires up-to-date branches, and resolves conflicts on
+its own. On a repository gated only by `require_current_base_default` (no
+GitHub up-to-date rule, so no bot rebase is coming) such a head merges as
+tested, like a head the App may not write.
+
 The train's order is **readiness first**. Each pass the lane sorts the
 members by what it last saw of their heads: a head at the merge gate —
 green, approved, soaking or waiting on a sweep — leads; a head the lane has
@@ -851,9 +870,12 @@ Every other gate below still applies to a registry-admitted PR. Set
 
 A registry-admitted author also gets their CI started. GitHub's fork-approval
 policy holds a first-time contributor's `pull_request` runs in
-`action_required`, and the hive otherwise never approves a human-authored
-lane's held runs (the `hive-ok-to-test` workflow approves same-repo heads
-only). hivecommons/docs#481 by a `trusted` registry contributor sat 17 hours
+`action_required`, and the hive otherwise approves a human-authored lane's
+held runs in only one other case: the gated-run approval sweep
+(`governor.ci.auto_approve_workflows`, default `true`, hivecommons/hive#16603)
+approves held runs for allowlisted actors (`auto_approve_workflow_actors`) and
+for a head a verified owner or merger admitted from the dashboard (the
+`hive-ok-to-test` workflow approves same-repo heads only). hivecommons/docs#481 by a `trusted` registry contributor sat 17 hours
 at `required-check-missing:Audit production dependencies` until an operator
 clicked "Approve and run". When the registry path admitted the author and the
 lane stops at `required-check-missing:<ctx>`, or at `ci-unverified` while
@@ -990,7 +1012,21 @@ A PR merges through this tier only when all of the following hold:
   reads "awaiting owner approval … re-approve after a push"; its **What to
   do** asks for that review (a `/hive approve` reply does not release the
   fence) and still lists a sentinel alert or hold label a person must clear
-  (projectbluefin/testsuite#1037). A typed `/hive decision approve` that
+  (projectbluefin/testsuite#1037). The one exception is the hive's own base
+  refresh — the update-branch the lane runs on a BEHIND PR under a strict
+  up-to-date rule, or another merge of the base branch GitHub verified as the
+  App's (signed, committed by `web-flow` or the App). When every commit
+  between an approved head and the current head is such a merge (at most
+  five in a row) and the PR's three-dot diff against the base is
+  file-for-file what was approved, the approval carries over and the lane
+  logs `workflow-path fence approval carried over hive base refresh login=…
+  approved_head=… head=…`. The earlier approval is read from a trusted
+  merger's standing `APPROVED` review, a dashboard approval marked for that
+  head, or the hive's own audit marker for it; the approver must still be
+  trusted. A contributor commit re-arms the fence even when it leaves the
+  workflow files alone (the existing head-bound rule), as do a rebase, a
+  base merge pushed by anyone but the App, and a base merge that changed a
+  file the PR also changes. A typed `/hive decision approve` that
   releases the fence while the swarm's `requires_human` verdict asks for a
   person is also recorded as the answer to that question on the head, as
   the dashboard's approval is, so the owner of their own PR (whom GitHub
@@ -1003,7 +1039,8 @@ A PR merges through this tier only when all of the following hold:
   ([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)). When released
   the lane logs `workflow-path fence released by owner approval login=…
   head=…`, leaves one `<!-- hive:workflow-approval head=… by=… -->` audit
-  comment per head, and the PR goes through every other gate below like any
+  comment per head (with `from=<approved head>` when the approval carried
+  over), and the PR goes through every other gate below like any
   other. The release covers the workflow fence only: a head that also deletes
   tests stops at `contributor-lane:tests-removed` (the next bullet) before any
   approval is read. Merging such a PR needs the App's **Workflows: Read and write**;
@@ -1288,7 +1325,8 @@ the head when it is behind (GitHub update-branch, which works on a fork the
 maintainers may edit) or re-runs the failed workflow jobs when it is current,
 at most once per (head, base tip) and three times per adoption, logged as
 `adopted PR recovery` with `reason=update-branch`, `rerun-failed-jobs` or
-`skipped:<why>`; an escalation already in place for that head is released
+`skipped:<why>` (`skipped:dependency-bot-branch` for a behind `renovate/*` or
+dependency-bot branch, which is never updated); an escalation already in place for that head is released
 (hivecommons/hive#14500). An adoption with nothing the hive can
 push past the dwell — after that recovery was tried and the head is still
 red — goes to `stage/085-needs-decision` as
@@ -1570,7 +1608,9 @@ lookup fails), the script prints an error naming the token-cache path and
 When set, the watcher syncs the PR branch with its base before attempting the
 merge (resolves the common "behind main" case). A failure to update the
 branch is not fatal — the merge attempt still proceeds and surfaces the real
-blocker.
+blocker. A dependency bot's branch (`renovate/*` head ref, or a Renovate,
+Dependabot or Mergeraptor author) is never updated: the watcher logs the skip
+and goes straight to the merge attempt, leaving the rebase to the bot.
 
 ## It is asynchronous, by design
 

@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -269,5 +272,114 @@ func TestSyncIssueStageLabels_HealsBackendClaimedBy(t *testing.T) {
 	}
 	if len(fake.removed[5])+len(fake.added[5]) != 0 {
 		t.Fatalf("issue 5: an agent's own label must not be touched: -%v +%v", fake.removed[5], fake.added[5])
+	}
+}
+
+// The issue reconciler takes this hive's agent claimed-by label off every
+// issue it sees with no live claim — parked ones included, where nothing
+// else ever did (projectbluefin/utah#10, #855: hive/claimed-by-scanner
+// weeks after the claim lapsed) — and never kicks or comments. A live
+// marker or ledger claim keeps it, so does an unreadable claim (fail
+// closed); human labels and another hive's agent label are never touched,
+// and an issue still wearing an in-progress stage is left to that sweep.
+func TestSyncIssueStageLabels_RemovesLapsedAgentClaimedBy(t *testing.T) {
+	now := stageNow()
+	marker := func(at, until time.Time) string {
+		return "<!-- hive:claim who=scanner kind=agent at=" + at.Format(time.RFC3339) + " until=" + until.Format(time.RFC3339) + " -->"
+	}
+	parked := []string{NeedsDecisionStageLabel, "hive/claimed-by-scanner"}
+	for _, tt := range []struct {
+		name        string
+		labels      []string
+		actionable  bool
+		bodies      []string
+		fetchFail   bool
+		ledgerLive  bool
+		wantRemoved string
+		wantRead    bool
+	}{
+		{name: "parked orphan, no marker, no ledger claim", labels: parked, wantRemoved: "hive/claimed-by-scanner", wantRead: true},
+		{name: "parked, marker lapsed", labels: parked, bodies: []string{marker(now.Add(-3*time.Hour), now.Add(-time.Hour))}, wantRemoved: "hive/claimed-by-scanner", wantRead: true},
+		{name: "parked, live marker", labels: parked, bodies: []string{marker(now.Add(-30*time.Minute), now.Add(time.Hour))}, wantRead: true},
+		{name: "parked, live ledger claim", labels: parked, ledgerLive: true, wantRead: true},
+		{name: "parked, comments unreadable", labels: parked, fetchFail: true, wantRead: true},
+		{name: "human labels", labels: []string{NeedsDecisionStageLabel, claims.ClaimedByHumanLabel, "hive/claimed-by-alice"}},
+		{name: "another hive's agent", labels: []string{NeedsDecisionStageLabel, "hive/claimed-by-architect"}},
+		{name: "in-progress stage left to its sweep", labels: []string{stagelabels.Claimed.Label(), "hive/claimed-by-scanner"}, actionable: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newIssueStageServer(t)
+			var reads atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
+					reads.Add(1)
+					if tt.fetchFail {
+						http.Error(w, "unavailable", http.StatusForbidden)
+						return
+					}
+					comments := []map[string]any{}
+					for _, body := range tt.bodies {
+						comments = append(comments, map[string]any{"body": body, "user": map[string]string{"login": "hive[bot]"}})
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(comments)
+					return
+				}
+				fake.srv.Config.Handler.ServeHTTP(w, r)
+			}))
+			t.Cleanup(srv.Close)
+			c := issueStageTestClient(t, srv, true)
+			c.appBotLogin = "hive[bot]"
+			c.SetIssueStageLabels(func() IssueStagePolicy {
+				return IssueStagePolicy{Enabled: true, AgentNames: []string{"scanner", "reviewer"}}
+			})
+			c.SetIssueClaimLedger(func(repo string, number int) (issueclaim.Claim, bool) {
+				if !tt.ledgerLive || repo != "acme/widgets" || number != 10 {
+					return issueclaim.Claim{}, false
+				}
+				return issueclaim.Claim{Identity: "scanner", Kind: string(claims.KindAgent), StartedAt: now.Add(-30 * time.Minute), ExpiresAt: now.Add(time.Hour)}, true
+			})
+			result := &ActionableResult{}
+			if tt.actionable {
+				result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 10, Labels: tt.labels, UpdatedAt: now.Add(-time.Hour)}})
+			} else {
+				result.WorkDetailsByRepo = map[string]RepoWorkDetails{"acme/widgets": {Issues: []RepoWorkIssue{
+					{Repo: "acme/widgets", Number: 10, Bucket: workBucketFiltered, Reason: NeedsDecisionStageLabel, Labels: tt.labels, UpdatedAt: now.Add(-time.Hour)},
+				}}}
+			}
+			res := syncSeeded(t, fake, c, result, stagelabels.NewStore("", stageNow), now)
+			want := 0
+			if tt.wantRemoved != "" {
+				want = 1
+			}
+			if res.ClaimedByLapsed != want {
+				t.Fatalf("ClaimedByLapsed = %d, want %d", res.ClaimedByLapsed, want)
+			}
+			// The actionable row's own stage write may read comments; the
+			// skip there is proven by the label staying put.
+			if got := reads.Load() > 0; !tt.actionable && got != tt.wantRead {
+				t.Fatalf("claim comments read = %v, want %v", got, tt.wantRead)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			var claimedBy []string
+			for _, l := range fake.removed[10] {
+				if claims.IsClaimedByLabel(l) {
+					claimedBy = append(claimedBy, l)
+				}
+			}
+			if strings.Join(claimedBy, ",") != tt.wantRemoved {
+				t.Fatalf("claimed-by labels removed %v, want %q", claimedBy, tt.wantRemoved)
+			}
+			if tt.actionable {
+				return
+			}
+			if fake.comments[10] != 0 {
+				t.Fatalf("posted %d comments, want none", fake.comments[10])
+			}
+			if len(result.Issues.Items) != 0 {
+				t.Fatalf("parked issue entered the actionable set: %+v", result.Issues.Items)
+			}
+		})
 	}
 }

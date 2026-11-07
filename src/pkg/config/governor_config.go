@@ -11,6 +11,8 @@ import (
 )
 
 type GovernorConfig struct {
+	// CI is governor.ci (hivecommons/hive#16603); see GovernorCIConfig.
+	CI                   GovernorCIConfig      `yaml:"ci,omitempty" json:"ci,omitempty"`
 	Modes                map[string]ModeConfig `yaml:"modes"`
 	EvalIntervalS        int                   `yaml:"eval_interval_s"`
 	EvalIntervalMaxS     int                   `yaml:"eval_interval_max_s,omitempty"`
@@ -27,10 +29,13 @@ type GovernorConfig struct {
 	// for a sweep. Cooldown bounds kicks per PR head (default 600 seconds).
 	CIFailureWebhookKick   *bool `yaml:"ci_failure_webhook_kick,omitempty"`
 	CIFailureKickCooldownS int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
-	// MergeTrainStallWarnS is the stalled-train warning threshold in seconds.
-	MergeTrainStallWarnS       int `yaml:"merge_train_stall_warn_s,omitempty"`
-	ConserveIntervalMultiplier int `yaml:"conserve_interval_multiplier,omitempty"`
-	OptionalSweepEveryNCycles  int `yaml:"optional_sweep_every_n_cycles,omitempty"`
+	// MergeTrainStallWarnS is the stalled-train warning threshold in seconds
+	// (default DefaultMergeTrainStallWarnS; explicit zero disables warnings;
+	// hivecommons/hive#15395).
+	MergeTrainStallWarnS       int  `yaml:"merge_train_stall_warn_s,omitempty"`
+	mergeTrainStallWarnSet     bool `yaml:"-" json:"-"`
+	ConserveIntervalMultiplier int  `yaml:"conserve_interval_multiplier,omitempty"`
+	OptionalSweepEveryNCycles  int  `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see
