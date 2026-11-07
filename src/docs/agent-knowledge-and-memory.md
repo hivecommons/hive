@@ -175,10 +175,33 @@ in `$CODEX_HOME/config.toml`, Copilot CLI gets `"memory": false` in its
 per-agent `~/.copilot/settings.json`; Gemini has no equivalent switch.
 `clear_on_kick` (default false) removes this agent's
 `~/.claude/projects/*/memory/`, `$CODEX_HOME/memories*/` and
-`~/.gemini/GEMINI.md` before each non-resume kick, next to the `/clear`. Both
-keys can be overridden per agent. With both off, what each CLI remembers it
-remembers across kicks and pod restarts — but, since #17031, not across
-agents. See [agent-configuration.md](agent-configuration.md#cli-auto-memory-agentscli_memory).
+`~/.gemini/GEMINI.md` before each non-resume kick, next to the `/clear`. All
+keys can be overridden per agent. With everything off, what each CLI
+remembers it remembers across kicks and pod restarts — but, since #17031, not
+across agents. See [agent-configuration.md](agent-configuration.md#cli-auto-memory-agentscli_memory).
+
+**Memory → knowledge drain** (`agents.cli_memory.drain_to_knowledge`,
+`src/crux/agent/cli_memory_drain.go`, `src/pkg/knowledge/climemory`,
+[#17033](https://github.com/hivecommons/hive/issues/17033)). Default false.
+When on, `deliverKickLocked` runs the drain before the wipe on every
+non-resume kick: the manager lists the agent's own stores (never a shared or
+symlinked one) and the hive converts them — Claude `MEMORY.md` plus its topic
+files, every `*.md` under Codex `memories*/`, the `## Gemini Added Memories`
+section of `GEMINI.md` — one bullet or paragraph per entry, into the
+`bead-synth-wiki` vault that the Primer already reads
+(`registerKnowledgeStores`, `src/cmd/hive/boot_knowledge_primer.go`). Each
+entry is written with `state: draft`, `source: cli-memory`, `agent: <name>`,
+`cli: <claude|codex|gemini>`, `repo: <org/repo>` when the Claude project slug
+ends in one of the agent's repos, and a `memhash` (SHA-256 of the normalised
+text) that makes the drain idempotent: a fact already in the vault, in any
+state and under any file name, counts as a duplicate. Because the Primer is
+approved-only by default (section 1), a drained fact is **not** injected into
+anyone's kick until an operator approves it through the normal lifecycle —
+that review step is the point: the CLI's one-off inference becomes a
+candidate, not a rule. One log line per drain:
+`cli-memory: drained N facts from <agent> into bead-synth-wiki (dupes K)`.
+The drain needs the in-process crux runtime; the sidecar runtime logs a
+warning and only wipes.
 
 ### What persists across what
 
@@ -190,10 +213,10 @@ not visible.
 |---|---|---|---|---|
 | **Knowledge** (`# Relevant Knowledge`, AGENTS.md, skills) | re-selected for *this* kick's issues | n/a — re-injected next kick | ✓ vaults on `/data` | ✓ same stores, filtered by its own `agent_scopes` |
 | **Conversation** — all CLIs | ✗ (`/clear` first, unless `clear_on_kick: false` or a resume kick) | ✗ | ✗ (CLI relaunched) | ✗ |
-| **Claude Code memory** (`~/.claude/projects/-data-agents-<name>/memory/`, `~/.claude/CLAUDE.md`, `history.jsonl`) | ✓ unless `cli_memory.clear_on_kick` (and off by default: `auto_memory: false`) | ✓ | ✓ (`/data/home/agents/<name>/.claude` is persistent) | ✗ per-agent dir (#17031); only `.credentials.json` / `settings.json` shared. Before #17031 the whole tree was one bridged copy any agent could read or rewrite |
-| **Codex memory** (`$CODEX_HOME`) | ✓ unless `cli_memory.clear_on_kick` (off by default) | ✓ | ✓ (`/data/home/.codex-<name>`) | ✗ per-agent dir; only `auth.json` shared |
+| **Claude Code memory** (`~/.claude/projects/-data-agents-<name>/memory/`, `~/.claude/CLAUDE.md`, `history.jsonl`) | ✓ unless `cli_memory.clear_on_kick` (and off by default: `auto_memory: false`); with `drain_to_knowledge` each fact lands as a draft knowledge entry first | ✓ | ✓ (`/data/home/agents/<name>/.claude` is persistent) | ✗ per-agent dir (#17031); only `.credentials.json` / `settings.json` shared. Before #17031 the whole tree was one bridged copy any agent could read or rewrite |
+| **Codex memory** (`$CODEX_HOME`) | ✓ unless `cli_memory.clear_on_kick` (off by default); drained first with `drain_to_knowledge` | ✓ | ✓ (`/data/home/.codex-<name>`) | ✗ per-agent dir; only `auth.json` shared |
 | **Copilot CLI memory/sessions** (`~/.copilot`) | ✓ | ✓ | ✓ | ✗ per-agent dir (#9444); only `config.json` shared |
-| **Gemini memory** (`~/.gemini/GEMINI.md`, state) | ✓ unless `cli_memory.clear_on_kick` | ✓ | ✓ | ✗ per-agent dir (#17031); only sign-in files, `settings.json`, `antigravity-cli/` shared |
+| **Gemini memory** (`~/.gemini/GEMINI.md`, state) | ✓ unless `cli_memory.clear_on_kick`; drained first with `drain_to_knowledge` | ✓ | ✓ | ✗ per-agent dir (#17031); only sign-in files, `settings.json`, `antigravity-cli/` shared |
 | **Bob memory/settings** (`~/.bob`) | ✓ | ✓ | ✓ | ✗ per-agent dir (#17031); only `settings.json` / `settings/` shared |
 
 The dashboard's cost accounting reads `data.claude_sessions_dir` (default
@@ -216,10 +239,12 @@ Do not treat the following as current behaviour; follow the links.
 - [#17032](https://github.com/hivecommons/hive/issues/17032) — done:
   `agents.cli_memory.auto_memory` (default off) and
   `agents.cli_memory.clear_on_kick`, described above.
-- [#17033](https://github.com/hivecommons/hive/issues/17033) — drain CLI
-  auto-memory into beads/knowledge at session end instead of a hidden
-  `MEMORY.md` (revives open question 5 of
-  [design/knowledge-system.md](design/knowledge-system.md)).
+- [#17033](https://github.com/hivecommons/hive/issues/17033) — done for the
+  kick-time drain: `agents.cli_memory.drain_to_knowledge`, described above.
+  Still open: a Claude Code `SessionEnd` hook that drains without waiting
+  for the next kick, and a one-shot drain of a pre-#17031 shared store
+  (sub-issues [#17057](https://github.com/hivecommons/hive/issues/17057),
+  [#17058](https://github.com/hivecommons/hive/issues/17058)).
 - Repo `AGENTS.md` injection still requires `project.checkouts_dir`; nearest-
   file (`ParseNearest`) targeting is deferred ([agents-md.md](agents-md.md)).
 

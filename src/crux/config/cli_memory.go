@@ -24,12 +24,19 @@ type CLIMemoryConfig struct {
 	// kick, alongside the /clear that resets the conversation, so each turn
 	// starts from the kick template and the shared knowledge system only.
 	ClearOnKick bool `yaml:"clear_on_kick,omitempty" json:"clear_on_kick,omitempty"`
+	// DrainToKnowledge converts what the CLI wrote to its memory store into
+	// draft knowledge entries before each kick (and before ClearOnKick wipes
+	// the store), so an inference the CLI kept for itself becomes a
+	// reviewable, scoped fact instead of a hidden per-agent notebook
+	// (hivecommons/hive#17033). Entries are deduplicated by content hash and
+	// never promoted automatically.
+	DrainToKnowledge bool `yaml:"drain_to_knowledge,omitempty" json:"drain_to_knowledge,omitempty"`
 }
 
 // IsZero reports whether no field was set, so an absent block encodes as
 // nothing and a per-agent nil pointer inherits the fleet value.
 func (c CLIMemoryConfig) IsZero() bool {
-	return c.AutoMemory == nil && !c.ClearOnKick
+	return c.AutoMemory == nil && !c.ClearOnKick && !c.DrainToKnowledge
 }
 
 // AutoMemoryEnabled reports whether the CLI may keep persistent memory. The
@@ -43,4 +50,11 @@ func (c *CLIMemoryConfig) AutoMemoryEnabled() bool {
 // kick. The receiver may be nil: the default is off.
 func (c *CLIMemoryConfig) ClearMemoryOnKick() bool {
 	return c != nil && c.ClearOnKick
+}
+
+// DrainMemoryToKnowledge reports whether the memory store is drained into
+// draft knowledge entries before each kick. The receiver may be nil: the
+// default is off.
+func (c *CLIMemoryConfig) DrainMemoryToKnowledge() bool {
+	return c != nil && c.DrainToKnowledge
 }

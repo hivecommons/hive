@@ -151,6 +151,7 @@ func ConfigLeaves(repoRoot string) ([]Leaf, error) {
 		Leaf{Path: "agents.session_recycle.min_idle", Type: "time.Duration"},
 		Leaf{Path: "agents.cli_memory.auto_memory", Type: "*bool"},
 		Leaf{Path: "agents.cli_memory.clear_on_kick", Type: "bool"},
+		Leaf{Path: "agents.cli_memory.drain_to_knowledge", Type: "bool"},
 	)
 	byPath := map[string]Leaf{}
 	for _, leaf := range leaves {
