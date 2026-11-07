@@ -36,10 +36,17 @@ deleting the fragments in the same release commit.
   need no fragment only if non-user-visible (routine refactors, dependency churn,
   or test-adjacent code like `testdata/` or non-`_test.go` test helpers) — put
   a `no-changelog` label on such PRs.
-- The `<!-- release: none|major|minor|patch -->` escape hatch
+- The `<!-- release: major|minor|patch -->` bump escape hatch
   (`src/docs/releases.md`) may ride in a fragment as its first line; it is
   compiled into `Unreleased` verbatim and honoured by
   `derive-release-version.sh` exactly as a hand-placed marker is.
+  **`<!-- release: none -->` is rejected in fragments** (by
+  `check-changelog-fragment.sh` at PR time and `compile-changelog.sh` at
+  release time): a fragment persists until the release that consumes it, and
+  `none` is what forbids that release, so a single such fragment freezes
+  every later merge until a human deletes it — [#12928](https://github.com/hivecommons/hive/pull/12928)
+  stalled releases for three weeks this way. A non-user-visible change wants
+  no fragment and the `no-changelog` label instead.
 
 Example — a complete fragment, `changelog.d/fixed-1234-relay-timeout.md`:
 
