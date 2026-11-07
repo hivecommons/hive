@@ -195,7 +195,9 @@ func contributorDecisionAdvisory(questions []string) string {
 // no security finding backs: to the fixer lane when the review left
 // something to fix (the clanker / adoption path is the mover), otherwise
 // to approve so the PR reaches the merge gate, where a person decides.
-// Either way nobody is asked while the PR is in CI/Review.
+// Approve needs every required perspective to have reported; short of that
+// the head is incomplete. Either way nobody is asked while the PR is in
+// CI/Review.
 func contributorHandsFreeAggregate(agg Aggregate, opts AggregateOptions, needsFix bool, maxFix int, advisory []string) Aggregate {
 	if needsFix {
 		if opts.FixAttempts >= maxFix {
@@ -213,9 +215,22 @@ func contributorHandsFreeAggregate(agg Aggregate, opts AggregateOptions, needsFi
 		agg.FixCycle = true
 		markRequiresHumanPerspectivesAsChangesRequested(&agg)
 	} else {
+		markRequiresHumanPerspectivesAsApprove(&agg)
+		if len(agg.Perspectives) < requiredPerspectiveCount(opts.MaxPerspectivesPerPR, opts.Perspectives.Len()) {
+			// An approve needs the coverage the all-approve path needs. A
+			// perspective that never reported (a dead kick, or a rate-
+			// limited security review the relay dropped, #16994) judged
+			// nothing, so the head is still under review: incomplete, and
+			// the planner asks for the missing perspectives.
+			agg.Verdict = VerdictIncomplete
+			agg.RequiresHuman = false
+			agg.DecisionRequested = false
+			agg.DecisionQuestion = ""
+			agg.Reasons = []string{incompleteCoverageReason(agg.Perspectives, opts)}
+			return agg
+		}
 		agg.Verdict = VerdictApprove
 		agg.MergeEligible = true
-		markRequiresHumanPerspectivesAsApprove(&agg)
 		agg.Reasons = nil
 	}
 	agg.RequiresHuman = false
