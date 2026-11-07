@@ -16,6 +16,20 @@ issues. The **KB** is the knowledge base of reusable facts; an **RFC** is a
 request for comments on a proposed design. For a first deployment's trust
 choices, start with [Securing your hive](securing-your-hive.md).
 
+## What is a pack?
+
+An ACMM **pack** is the bundle of settings hive applies for one ACMM level.
+Hive ships six, `level-1.yaml` through `level-6.yaml`
+(`src/pkg/config/packs/`, embedded in the binary), one per level. Each pack
+defines that level's agent roster, each agent's policy mode and kick template,
+the governor cadences, and the merge policy. Setting `acmm_level` (or
+`PUT /api/packs/level`) selects the pack, and applying it reconciles the
+hive's agents to match; see [Changing a hive's ACMM level](#changing-a-hives-acmm-level).
+Your explicit `backend:`, `model:`, and `enabled: false` settings win over
+pack values. "Pack" is a Hive term for implementing a level; the ACMM paper
+describes levels, not packs. For the full reconcile rules, see
+[ACMM levels: agent rosters as packs](agent-configuration.md#acmm-levels-agent-rosters-as-packs).
+
 ## Repository E2E detection
 
 The codebase evaluator's `acmm:prereq-e2e` prerequisite accepts the existing
