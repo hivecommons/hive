@@ -173,11 +173,13 @@ func (s *DefaultSecurityScanner) Scan(ctx context.Context, req ToolRequest) (Sca
 		}
 	}
 
-	// 3. Guardrail path protection. Any side-effectful tool that names a
-	// file is held to it, not just the IsLocalWrite allowlist: a write tool
-	// the allowlist does not spell (create, apply_patch, str_replace_editor,
-	// an agent's own name for it) must not reach the guardrail paths unseen.
-	if !IsReadOnly(req.Tool) {
+	// 3. Guardrail path protection. Every tool not classified read-only
+	// that names a file is held to it, not just the IsLocalWrite allowlist:
+	// a write tool the allowlist does not spell (create, apply_patch,
+	// str_replace_editor, an agent's own name for it) must not reach the
+	// guardrail paths unseen. The gate fails closed — a read tool IsReadOnly
+	// does not spell is denied on these paths until it is added there.
+	if req.IsSideEffectful() {
 		filePath := req.GetFilePath()
 		if filePath != "" && s.touchesGuardrailPath(filePath) {
 			violations = append(violations, fmt.Sprintf("tampering with guardrail-critical path: %q", filePath))

@@ -310,9 +310,10 @@ func TestSecurityScannerGuardrailProtection(t *testing.T) {
 }
 
 // TestSecurityScannerGuardrailProtectionAnyWriteTool asserts the guardrail
-// path check does not depend on the tool's name: every side-effectful tool
-// that names a guardrail file is denied at L6, whether or not IsLocalWrite
-// spells it — Copilot CLI and Codex editor tools and an unknown name alike.
+// path check does not depend on the tool's name: every tool not classified
+// read-only that names a guardrail file is denied at L6, whether or not
+// IsLocalWrite spells it — Copilot CLI and Codex editor tools and an unknown
+// name alike — while the read tools IsReadOnly spells stay auto-approved.
 func TestSecurityScannerGuardrailProtectionAnyWriteTool(t *testing.T) {
 	tools := []string{
 		"create", "apply_patch", "str_replace_editor", "str_replace_based_edit_tool",
@@ -340,7 +341,7 @@ func TestSecurityScannerGuardrailProtectionAnyWriteTool(t *testing.T) {
 		}
 	}
 
-	for _, tool := range []string{"read", "grep", "glob"} {
+	for _, tool := range []string{"read", "view", "grep", "glob"} {
 		req := ToolRequest{Tool: tool, Arguments: map[string]any{"path": ".github/workflows/ci.yml"}}
 		if v := Resolve(context.Background(), req, 6, AgentIdentity{Name: "quality"}, nil); v.Decision != DecisionAutoApprove {
 			t.Errorf("%s reading a guardrail path: decision = %q, want auto-approve", tool, v.Decision)
