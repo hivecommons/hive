@@ -18,7 +18,7 @@ choices, start with [Securing your hive](securing-your-hive.md).
 
 ## What is a pack?
 
-An ACMM **pack** is the bundle of settings hive applies for one ACMM level.
+An ACMM **pack** is the bundle of settings Hive applies for one ACMM level.
 Hive ships six, `level-1.yaml` through `level-6.yaml`
 (`src/pkg/config/packs/`, embedded in the binary), one per level. Each pack
 defines that level's agent roster, each agent's policy mode and kick template,
