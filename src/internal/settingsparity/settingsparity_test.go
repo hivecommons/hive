@@ -99,6 +99,7 @@ func TestConfigLeaves(t *testing.T) {
 		{Path: "agents.<key>.model", Type: "string"},
 		{Path: "agents.cli_memory.auto_memory", Type: "*bool"},
 		{Path: "agents.cli_memory.clear_on_kick", Type: "bool"},
+		{Path: "agents.cli_memory.drain_to_knowledge", Type: "bool"},
 		{Path: "agents.github_api_hourly_cap", Type: "int"},
 		{Path: "agents.session_recycle.enabled", Type: "*bool"},
 		{Path: "agents.session_recycle.max_age", Type: "time.Duration"},

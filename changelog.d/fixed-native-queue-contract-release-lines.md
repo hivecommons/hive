@@ -1,0 +1,1 @@
+- The native-queue workflow contract test asserted `native-queue-policy.yml`'s release-lines pin as the literal `[v6, -v4]`; with v6 a `release_lines` entry the pin reads `[-v4]`, so the test now resolves the pin against `release_lines` and checks that v5 and v6 are covered.

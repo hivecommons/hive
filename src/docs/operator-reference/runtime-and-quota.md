@@ -79,6 +79,42 @@ The sampled value is shown as **Session RSS** (with the session age and a
 `↻N` recycle count) in the agent detail panel. The log line is
 `agent session recycled` with `rss_mb`, `age` and `reason`.
 
+## Agent CLI memory
+
+Each subscription CLI keeps a private cross-session memory in the agent's
+home (Claude Code `~/.claude/projects/*/memory/`, Codex `$CODEX_HOME/memories*/`,
+Gemini `~/.gemini/GEMINI.md`; Copilot memory is server-side). The
+`agents.cli_memory` block, overridable per agent, decides what happens to it;
+the full table is in
+[agent-configuration.md](../agent-configuration.md#cli-auto-memory-agentscli_memory).
+
+```yaml
+agents:
+  cli_memory:                  # fleet default; each key may be overridden per agent
+    auto_memory: false         # pin the vendor auto-memory switch off (default)
+    clear_on_kick: false       # wipe the agent's memory stores before every non-resume kick
+    drain_to_knowledge: false  # first convert each memory fact into a draft knowledge entry
+  scanner:
+    cli_memory:
+      auto_memory: true        # this agent may take notes…
+      drain_to_knowledge: true # …which become drafts in bead-synth-wiki at the next kick
+      clear_on_kick: true      # …and the private store is then emptied
+```
+
+| Key | Default | Effect |
+|---|---|---|
+| `auto_memory` | `false` | Pins Claude Code (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`), Codex (`[features] memories = false`) and Copilot CLI (`"memory": false`) auto-memory off at launch; `true` pins it on. |
+| `clear_on_kick` | `false` | Removes the agent's own memory stores before each non-resume kick; shared homes (`HIVE_SHARED_AGENT_HOME=1`, uid 0) are never touched. |
+| `drain_to_knowledge` | `false` | Before the wipe, writes every memory bullet or paragraph as a `state: draft` entry into the `bead-synth-wiki` vault (`knowledge.bead_synthesizer.vault_path`), tagged `cli-memory`, `agent:<name>`, `cli:<name>` and `repo:<org/repo>` when derivable, deduplicated by content hash. Drafts are excluded from kicks until approved. |
+
+The drain logs one line per kick that found a store:
+`cli-memory: drained N facts from <agent> into bead-synth-wiki (dupes K)`
+with `drained`, `dupes`, `skipped` (over the 200-facts-per-drain cap; the
+rest drain on the next kick) and `sources`. Review drafts in the dashboard's
+knowledge view or the vault directory and approve them through the normal
+lifecycle (`PUT /api/knowledge/entry/{id}/state`); nothing promotes them
+automatically.
+
 ## GitHub API quota
 
 Agents reach `api.github.com` through the Hive GitHub proxy, which injects the

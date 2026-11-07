@@ -59,7 +59,13 @@ class NativeQueueWorkflows(unittest.TestCase):
                          "${{ github.event.merge_group.base_sha || format('refs/heads/{0}', github.event.pull_request.base.ref) }}")
         self.assertFalse(checkout["persist-credentials"])
         manifest = yaml.safe_load((ROOT / ".github/release-lines.yml").read_text())
-        self.assertEqual(manifest["pinned"]["native-queue-policy.yml"], ["v6", "-v4"])
+        # The admission gate covers the active feature lines (v5 and v6) and
+        # not feature-frozen v4, however the manifest spells that: v6 became a
+        # `release_lines` entry on 2026-11-07, so it is covered without an extra.
+        pinned = manifest["pinned"]["native-queue-policy.yml"]
+        covered = set(manifest["release_lines"]) | {p for p in pinned if not p.startswith("-")}
+        covered -= {p[1:] for p in pinned if p.startswith("-")}
+        self.assertEqual(sorted(covered), ["v5", "v6"])
 
     def test_owned_gate_retriggers_never_cancel_the_evidence_wait(self):
         # Stage-label flips re-fire the PR-target run every few minutes; a

@@ -39,13 +39,16 @@ func (b *boot) registerKnowledgeStores(p *knowledge.Primer) {
 			p.AddFileStore(gsc.Name, store, knowledge.LayerType(gsc.Layer))
 		}
 	}
-	if len(b.beadStores) > 0 {
+	// The bead-synth vault also receives CLI-memory drafts (#17033), so it is
+	// primed whenever either writer is on; the Primer's approved-only default
+	// keeps the drafts out of kicks.
+	if len(b.beadStores) > 0 || b.cliMemoryDrainEnabled() {
 		if store := api.GetVaultStore(b.beadSynthVaultPath()); store != nil {
 			layer := knowledge.LayerType(b.cfg.Knowledge.BeadSynthesizer.TargetLayer)
 			if layer == "" {
 				layer = knowledge.LayerPersonal
 			}
-			p.AddFileStore("bead-synth-wiki", store, layer)
+			p.AddFileStore(beadSynthVaultName, store, layer)
 			b.logger.Info("bead-synth vault registered with primer", "layer", layer)
 		}
 	}

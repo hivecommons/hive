@@ -1,0 +1,1 @@
+- The bob startup preflight now checks that the per-agent `~/.bob` (where bob writes its installation ID and chat recordings since per-agent homes landed) is writable, instead of probing the shared `/data/home/.bob` that only holds the bridged settings, so an unwritable state directory is reported against the directory bob actually uses (#17062).
