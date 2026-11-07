@@ -32,6 +32,17 @@ func TestAllowedByMode(t *testing.T) {
 		{"issues-only allows PATCH issue", agent.ModeIssuesOnly, "PATCH", "/repos/org/repo/issues/42", true},
 		{"issues-only allows comment", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues/42/comments", true},
 		{"issues-only allows label", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues/42/labels", true},
+		// Spek publishes an RFC with sub-issue children and "blocked by" edges
+		// through the proxy (spektacular#114): the same two writes
+		// hive-open-issue --parent / --blocked-by make, at the issue tier.
+		{"issues-only allows add sub-issue", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues/42/sub_issues", true},
+		{"issues-only allows add blocked-by", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues/42/dependencies/blocked_by", true},
+		{"advisory blocks add sub-issue", agent.ModeAdvisory, "POST", "/repos/org/repo/issues/42/sub_issues", false},
+		{"advisory blocks add blocked-by", agent.ModeAdvisory, "POST", "/repos/org/repo/issues/42/dependencies/blocked_by", false},
+		{"sub-issue unlink stays denied", agent.ModeIssuesPRsMerge, "DELETE", "/repos/org/repo/issues/42/sub_issue", false},
+		{"sub-issue reprioritise stays denied", agent.ModeIssuesPRsMerge, "PATCH", "/repos/org/repo/issues/42/sub_issues/priority", false},
+		{"blocked-by unlink stays denied", agent.ModeIssuesPRsMerge, "DELETE", "/repos/org/repo/issues/42/dependencies/blocked_by/7", false},
+		{"blocking side is not a write route", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/issues/42/dependencies/blocking", false},
 		{"issues-only blocks POST pulls", agent.ModeIssuesOnly, "POST", "/repos/org/repo/pulls", false},
 		{"issues-only blocks PATCH pull", agent.ModeIssuesOnly, "PATCH", "/repos/org/repo/pulls/42", false},
 		{"issues-only blocks PUT merge", agent.ModeIssuesOnly, "PUT", "/repos/org/repo/pulls/42/merge", false},
