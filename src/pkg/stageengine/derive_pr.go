@@ -317,10 +317,14 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 		obs.Reason = prstage.StageReasonUnauthorizedPrefix + pass.RecoveryUnauthorized
 		human = &stagelabels.Route{Stage: stagelabels.NeedsDecision}
 	}
-	if replacement, ok := PreserveNeedsDecisionOnSameHead(prev, hadPrev, obs, verdict); ok {
-		verdict = replacement
-		obs.Reason = replacement.Reason
-		human = &stagelabels.Route{Stage: stagelabels.NeedsDecision}
+	// Only re-park when the post-steps would leave 085: an adoption that
+	// cleared it, or a fresher 085 reason, must stand.
+	if verdict.Stage != stagelabels.NeedsDecision && !pass.AdoptionLive {
+		if replacement, ok := PreserveNeedsDecisionOnSameHead(prev, hadPrev, obs, verdict); ok {
+			verdict = replacement
+			obs.Reason = replacement.Reason
+			human = &stagelabels.Route{Stage: stagelabels.NeedsDecision}
+		}
 	}
 	d := Decision{
 		Stage:      verdict.Stage,

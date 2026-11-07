@@ -1184,11 +1184,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
 				obs.Route = &route
 			}
-			if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok {
-				verdict = replacement
-				obs.Reason = replacement.Reason
-				route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
-				pass.Route = &route
+			// Only re-park when the post-steps would leave 085: an adoption
+			// that cleared it, or a fresher 085 reason, must stand.
+			if verdict.Stage != stagelabels.NeedsDecision && !pass.AdoptionLive {
+				if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok {
+					verdict = replacement
+					obs.Reason = replacement.Reason
+					route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
+					obs.Route = &route
+				}
 			}
 			tr = store.ObserveHead(key, obs.HeadSHA, verdict.Stage, obs.Reason)
 			if reauthored.issue > 0 {
