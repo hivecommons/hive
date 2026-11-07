@@ -38,7 +38,7 @@ move procedures in the other guides should regenerate:
 - **`HIVE_HUB_SECRET`** — the hub's master secret, present in the spoke's own
   pod env. Every per-hive derived key (heartbeat bearer, session key, invite
   key, terminal key) is `HMAC(HIVE_HUB_SECRET, domain-string, HIVE_ID)` —
-  see `src/docs/env-vars.md:306-321` and, for the heartbeat bearer
+  see `src/docs/env-vars.md:472-475` and, for the heartbeat bearer
   specifically, `src/docs/heartbeat-bearer-cutover.md`:
 
   ```
