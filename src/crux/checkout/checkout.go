@@ -1,0 +1,426 @@
+// Package checkout is the pinned-checkout work service (hivecommons/crux#114
+// S1): "a working copy of this repo at this commit, owned by this caller,
+// capped, deletable". It builds on sandbox.WorktreeManager for the pinned
+// worktree and keeps one JSON record per checkout plus an append-only
+// index under Config.Dir, the way sandbox_run.go keeps run records.
+//
+// Trust is deny-by-default: a repository must match one of the configured
+// URL prefixes (the shape of Hive's nousdeps fetch allowlist, as a prefix
+// list) or it is refused before any clone is attempted. A commit must be a
+// full 40-hex SHA so the pin cannot move under the caller.
+//
+// The size cap is honest, not pre-emptive: git cannot bound a clone before
+// transferring it, so the clone and worktree are measured after they land
+// and removed when they exceed the cap (ErrTooLarge). When they cannot be
+// measured the checkout is removed and the call fails with ErrUnsupported
+// rather than delivering an uncapped copy.
+package checkout
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/hivecommons/hive/crux/sandbox"
+)
+
+const (
+	// DirName is the directory under the work dir that holds checkouts.
+	DirName = "checkouts"
+	// IndexName is the append-only create/delete history inside Dir.
+	IndexName = "index.jsonl"
+	// IDPrefix starts every checkout id.
+	IDPrefix = "chk_"
+	// DefaultMaxBytes is the size cap when a request names none: 5 GiB.
+	DefaultMaxBytes int64 = 5 << 30
+	// DefaultMaxCheckouts bounds live worktrees under Dir.
+	DefaultMaxCheckouts = 64
+	// MaxOwnerLen bounds the owner identifier.
+	MaxOwnerLen = 64
+	// commitHexLen is the length of a full SHA-1 commit id.
+	commitHexLen = 40
+	// idRandomBytes is the entropy behind an id (12 hex chars).
+	idRandomBytes = 6
+	// sourceDirName holds the per-(repo, owner) clones worktrees pin from.
+	sourceDirName = "src"
+	// worktreeStage is the sandbox.WorktreeSpec stage name; a checkout has
+	// one generation, so the worktree lands at runs/<id>/pin-1.
+	worktreeStage = "pin"
+	// recordMode and dirMode keep records readable by the runtime's uid only.
+	recordMode = 0o600
+	dirMode    = 0o700
+)
+
+// Sentinel errors; Service methods wrap them so callers map them to typed
+// API codes with errors.Is.
+var (
+	// ErrBadRequest is a malformed request (short SHA, bad URL, bad owner).
+	ErrBadRequest = errors.New("checkout: bad request")
+	// ErrForbidden is a repository off the allowlist or a caller that does
+	// not own the checkout.
+	ErrForbidden = errors.New("checkout: forbidden")
+	// ErrNotFound is an unknown checkout id.
+	ErrNotFound = errors.New("checkout: not found")
+	// ErrInUse is a delete while contained runs still use the checkout.
+	ErrInUse = errors.New("checkout: in use")
+	// ErrMismatch is a worktree whose HEAD is not the requested commit.
+	ErrMismatch = errors.New("checkout: commit mismatch")
+	// ErrTooLarge is a clone that exceeded max_bytes once measured.
+	ErrTooLarge = errors.New("checkout: exceeds size cap")
+	// ErrUnsupported is a cap the backend could not verify.
+	ErrUnsupported = errors.New("checkout: cannot enforce size cap")
+	// ErrGit is a git failure (clone, fetch, worktree).
+	ErrGit = errors.New("checkout: git")
+)
+
+var (
+	commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	ownerPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
+)
+
+// Runner executes one command in dir and returns its combined output; the
+// default runs it with os/exec. Tests substitute failures.
+type Runner func(ctx context.Context, dir string, name string, args ...string) ([]byte, error)
+
+// Config is the administrator-owned configuration of the service.
+type Config struct {
+	// Dir is where clones, worktrees and records live (DefaultDir).
+	Dir string
+	// AllowedRepos are URL prefixes a requested repo must start with. Empty
+	// denies every request.
+	AllowedRepos []string
+	// MaxCheckouts caps live worktrees; zero means DefaultMaxCheckouts.
+	MaxCheckouts int
+	// Git runs git; nil uses os/exec.
+	Git Runner
+	// Now is the clock; nil uses time.Now.
+	Now func() time.Time
+	// InUse reports whether contained runs still reference a checkout; the
+	// contained-run service wires it. Nil means never in use.
+	InUse func(id string) bool
+	// DiskUsage measures a tree in bytes; nil walks it.
+	DiskUsage func(path string) (int64, error)
+}
+
+// DefaultDir is Dir under the runtime's work dir.
+func DefaultDir(workDir string) string { return filepath.Join(workDir, DirName) }
+
+// Request is what a caller asks for.
+type Request struct {
+	Repo     string
+	Commit   string
+	Owner    string
+	Branches *bool
+	MaxBytes int64
+	TTL      time.Duration
+}
+
+// Record is one checkout as stored under Dir/<id>.json. It never carries
+// environment or credentials: the repo URL is refused if it embeds any.
+type Record struct {
+	ID        string     `json:"id"`
+	Path      string     `json:"path"`
+	Repo      string     `json:"repo"`
+	Commit    string     `json:"commit"`
+	Owner     string     `json:"owner"`
+	Branches  bool       `json:"branches"`
+	MaxBytes  int64      `json:"max_bytes"`
+	Bytes     int64      `json:"bytes"`
+	TTL       string     `json:"ttl,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// Source is the shared clone the worktree pins from.
+	Source string `json:"source"`
+}
+
+// Service creates, lists and deletes checkouts.
+type Service struct {
+	cfg   Config
+	trees sandbox.WorktreeManager
+	store *store
+}
+
+// New validates cfg and returns a Service. Dir is created on first use.
+func New(cfg Config) (*Service, error) {
+	if strings.TrimSpace(cfg.Dir) == "" {
+		return nil, fmt.Errorf("%w: dir is required", ErrBadRequest)
+	}
+	for i, p := range cfg.AllowedRepos {
+		p = strings.TrimSpace(p)
+		if _, err := parseRepo(p); err != nil {
+			return nil, fmt.Errorf("allowlist entry %q: %w", p, err)
+		}
+		cfg.AllowedRepos[i] = p
+	}
+	if cfg.MaxCheckouts <= 0 {
+		cfg.MaxCheckouts = DefaultMaxCheckouts
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.Git == nil {
+		cfg.Git = execRunner
+	}
+	if cfg.DiskUsage == nil {
+		cfg.DiskUsage = diskUsage
+	}
+	return &Service{cfg: cfg, trees: sandbox.WorktreeManager{Runner: cfg.Git}, store: &store{dir: cfg.Dir}}, nil
+}
+
+// InUse reports whether contained runs reference id (Config.InUse).
+func (s *Service) InUse(id string) bool {
+	return s.cfg.InUse != nil && s.cfg.InUse(id)
+}
+
+// Allowed reports whether repo is on the allowlist, naming the rule that
+// admitted it or an ErrForbidden explaining why none did.
+func (s *Service) Allowed(repo string) (rule string, err error) {
+	if len(s.cfg.AllowedRepos) == 0 {
+		return "", fmt.Errorf("%w: repository %q: the checkout allowlist is empty", ErrForbidden, repo)
+	}
+	for _, p := range s.cfg.AllowedRepos {
+		if strings.HasPrefix(repo, p) {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("%w: repository %q matches none of the allowed prefixes %s", ErrForbidden, repo, strings.Join(s.cfg.AllowedRepos, ", "))
+}
+
+// Create provisions a checkout for req, recorded as owned by req.Owner.
+func (s *Service) Create(ctx context.Context, req Request) (Record, error) {
+	rec, err := s.validate(req)
+	if err != nil {
+		return Record{}, err
+	}
+	if _, err := s.Allowed(rec.Repo); err != nil {
+		return Record{}, err
+	}
+	if err := os.MkdirAll(s.cfg.Dir, dirMode); err != nil {
+		return Record{}, err
+	}
+	rec.Source = s.sourceDir(rec.Repo, rec.Owner)
+	if err := s.ensureSource(ctx, rec); err != nil {
+		return Record{}, err
+	}
+	tree, err := s.trees.Add(ctx, sandbox.WorktreeSpec{
+		SourceRepo: rec.Source, WorkspaceDir: s.cfg.Dir, RunKey: rec.ID, Stage: worktreeStage, Generation: 1,
+		TargetRef: rec.Commit, MaxWorktrees: s.cfg.MaxCheckouts,
+	})
+	if err != nil {
+		return Record{}, fmt.Errorf("%w: %v", ErrGit, err)
+	}
+	rec.Path = tree.Path
+	if tree.SHA != rec.Commit {
+		_ = s.trees.Remove(ctx, rec.Source, rec.Path)
+		return Record{}, fmt.Errorf("%w: requested %s, worktree is at %s", ErrMismatch, rec.Commit, tree.SHA)
+	}
+	if err := s.enforceCap(&rec); err != nil {
+		_ = s.trees.Remove(ctx, rec.Source, rec.Path)
+		return Record{}, err
+	}
+	if err := s.store.put(rec); err != nil {
+		_ = s.trees.Remove(ctx, rec.Source, rec.Path)
+		return Record{}, err
+	}
+	return rec, s.store.appendIndex(indexEntry{Op: "create", ID: rec.ID, Owner: rec.Owner, Repo: rec.Repo, Commit: rec.Commit, At: rec.CreatedAt})
+}
+
+// Get returns the record for id.
+func (s *Service) Get(id string) (Record, error) { return s.store.get(id) }
+
+// List returns every record, or only owner's when owner is non-empty,
+// ordered by id.
+func (s *Service) List(owner string) ([]Record, error) {
+	all, err := s.store.list()
+	if err != nil {
+		return nil, err
+	}
+	if owner == "" {
+		return all, nil
+	}
+	out := all[:0]
+	for _, r := range all {
+		if r.Owner == owner {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// Delete removes the worktree and the record. by is who asked, for the
+// index; ownership is the caller's decision (see CanDelete).
+func (s *Service) Delete(ctx context.Context, id, by string) error {
+	rec, err := s.store.get(id)
+	if err != nil {
+		return err
+	}
+	if s.InUse(id) {
+		return fmt.Errorf("%w: checkout %s has live contained runs", ErrInUse, id)
+	}
+	if err := s.trees.Remove(ctx, rec.Source, rec.Path); err != nil {
+		return fmt.Errorf("%w: remove worktree: %v", ErrGit, err)
+	}
+	if err := s.store.remove(id); err != nil {
+		return err
+	}
+	return s.store.appendIndex(indexEntry{Op: "delete", ID: id, Owner: rec.Owner, Repo: rec.Repo, Commit: rec.Commit, At: s.cfg.Now().UTC(), By: by})
+}
+
+// CanDelete is the ownership rule: the owner or an operator.
+func CanDelete(rec Record, caller string, operator bool) bool {
+	return operator || (caller != "" && caller == rec.Owner)
+}
+
+// validate checks req and returns the record it will produce.
+func (s *Service) validate(req Request) (Record, error) {
+	repo := strings.TrimSpace(req.Repo)
+	if _, err := parseRepo(repo); err != nil {
+		return Record{}, err
+	}
+	commit := strings.ToLower(strings.TrimSpace(req.Commit))
+	if !commitPattern.MatchString(commit) {
+		return Record{}, fmt.Errorf("%w: commit must be a full %d-hex SHA, not a tag or branch (got %q)", ErrBadRequest, commitHexLen, req.Commit)
+	}
+	owner := strings.TrimSpace(req.Owner)
+	if owner == "" || len(owner) > MaxOwnerLen || !ownerPattern.MatchString(owner) {
+		return Record{}, fmt.Errorf("%w: owner must be a plain identifier of at most %d characters (got %q)", ErrBadRequest, MaxOwnerLen, req.Owner)
+	}
+	if req.MaxBytes < 0 || req.TTL < 0 {
+		return Record{}, fmt.Errorf("%w: max_bytes and ttl must not be negative", ErrBadRequest)
+	}
+	id, err := newID()
+	if err != nil {
+		return Record{}, err
+	}
+	now := s.cfg.Now().UTC()
+	rec := Record{ID: id, Repo: repo, Commit: commit, Owner: owner, Branches: req.Branches == nil || *req.Branches, MaxBytes: req.MaxBytes, CreatedAt: now}
+	if rec.MaxBytes == 0 {
+		rec.MaxBytes = DefaultMaxBytes
+	}
+	if req.TTL > 0 {
+		rec.TTL = req.TTL.String()
+		exp := now.Add(req.TTL)
+		rec.ExpiresAt = &exp
+	}
+	return rec, nil
+}
+
+// parseRepo accepts an https:// or file:// URL without credentials, query or
+// fragment, so a token can never ride into a record.
+func parseRepo(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "file") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, fmt.Errorf("%w: repo must be an https:// or file:// URL without credentials, query or fragment (got %q)", ErrBadRequest, raw)
+	}
+	if (u.Scheme == "https" && u.Host == "") || (u.Scheme == "file" && u.Path == "") {
+		return nil, fmt.Errorf("%w: repo %q names no host or path", ErrBadRequest, raw)
+	}
+	return u, nil
+}
+
+// sourceDir is the shared clone for (repo, owner).
+func (s *Service) sourceDir(repo, owner string) string {
+	sum := sha256.Sum256([]byte(repo))
+	return filepath.Join(s.cfg.Dir, sourceDirName, owner+"-"+hex.EncodeToString(sum[:6]))
+}
+
+// ensureSource clones rec.Repo into rec.Source once and makes sure
+// rec.Commit is present, fetching it when a reused clone lacks it.
+func (s *Service) ensureSource(ctx context.Context, rec Record) error {
+	if _, err := os.Stat(filepath.Join(rec.Source, ".git")); err != nil {
+		if err := os.MkdirAll(filepath.Dir(rec.Source), dirMode); err != nil {
+			return err
+		}
+		args := []string{"clone", "--no-checkout"}
+		if !rec.Branches {
+			args = append(args, "--single-branch")
+		}
+		args = append(args, "--", rec.Repo, rec.Source)
+		if out, err := s.cfg.Git(ctx, s.cfg.Dir, "git", args...); err != nil {
+			_ = os.RemoveAll(rec.Source)
+			return fmt.Errorf("%w: clone: %v: %s", ErrGit, err, strings.TrimSpace(string(out)))
+		}
+	}
+	if _, err := s.cfg.Git(ctx, rec.Source, "git", "cat-file", "-e", rec.Commit+"^{commit}"); err == nil {
+		return nil
+	}
+	if out, err := s.cfg.Git(ctx, rec.Source, "git", "fetch", "--quiet", "origin", rec.Commit); err != nil {
+		return fmt.Errorf("%w: commit %s is not in %s and could not be fetched: %s", ErrBadRequest, rec.Commit, rec.Repo, strings.TrimSpace(string(out)))
+	}
+	if _, err := s.cfg.Git(ctx, rec.Source, "git", "cat-file", "-e", rec.Commit+"^{commit}"); err != nil {
+		return fmt.Errorf("%w: commit %s is not in %s", ErrBadRequest, rec.Commit, rec.Repo)
+	}
+	return nil
+}
+
+// enforceCap measures the clone and the worktree after the fact and refuses
+// the checkout when they exceed rec.MaxBytes or cannot be measured.
+func (s *Service) enforceCap(rec *Record) error {
+	src, err := s.cfg.DiskUsage(rec.Source)
+	if err != nil {
+		return fmt.Errorf("%w: measuring %s: %v", ErrUnsupported, rec.Source, err)
+	}
+	tree, err := s.cfg.DiskUsage(rec.Path)
+	if err != nil {
+		return fmt.Errorf("%w: measuring %s: %v", ErrUnsupported, rec.Path, err)
+	}
+	rec.Bytes = src + tree
+	if rec.Bytes > rec.MaxBytes {
+		return fmt.Errorf("%w: clone and worktree measure %d bytes, cap is %d (the cap is checked after cloning; git cannot bound a clone in advance)", ErrTooLarge, rec.Bytes, rec.MaxBytes)
+	}
+	return nil
+}
+
+func newID() (string, error) {
+	b := make([]byte, idRandomBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return IDPrefix + hex.EncodeToString(b), nil
+}
+
+// ValidID reports whether id has the shape newID produces, so a path value
+// can never escape Dir.
+func ValidID(id string) bool {
+	rest, ok := strings.CutPrefix(id, IDPrefix)
+	if !ok || len(rest) != 2*idRandomBytes {
+		return false
+	}
+	_, err := hex.DecodeString(rest)
+	return err == nil
+}
+
+func execRunner(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	return cmd.CombinedOutput()
+}
+
+// diskUsage sums regular file sizes under path.
+func diskUsage(path string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type().IsRegular() {
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			total += info.Size()
+		}
+		return nil
+	})
+	return total, err
+}

@@ -1,0 +1,1 @@
+- Contributor PRs with hive attribution now pass the merge relay's trust gate before being listed merge-eligible; trust refusals appear separately with their reason and maintainer unblock options ([#16717](https://github.com/hivecommons/hive/issues/16717)).
