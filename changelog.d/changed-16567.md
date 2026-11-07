@@ -1,0 +1,1 @@
+- build(deps): bump ws from 8.21.3 to 8.22.1 in /src/proxy (#16567)
