@@ -389,6 +389,8 @@ func humanizeStageReason(reason string) string {
 		return "author's role is not trusted for unattended merge"
 	case "contributor-lane:no-verdict":
 		return noVerdictClause
+	case stageengineprstage.ContributorLaneReasonReviewOff:
+		return "needs a reviewer verdict, but this hive's review swarm is off, so none will be requested"
 	case "contributor-lane:no-claim":
 		return "no verified claim links this PR to an issue"
 	case "contributor-lane:claim-tier-untrusted":

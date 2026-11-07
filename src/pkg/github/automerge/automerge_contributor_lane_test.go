@@ -773,6 +773,31 @@ func TestTrySweepContributorLanePRSkipReasons(t *testing.T) {
 			wantReason: contributorLaneReasonNoVerdict,
 		},
 		{
+			// hive-wild-mole, 2026-11-07: a reviewer agent exists but the
+			// review swarm is off, so no verdict will ever come. no-verdict
+			// parked twelve PRs at 050 "review swarm requested" for good.
+			name: "review swarm off names the stall",
+			verdict: func(string, int, string) ContributorLaneVerdict {
+				return ContributorLaneVerdict{Configured: true, ReviewOff: true}
+			},
+			wantReason: contributorLaneReasonReviewOff,
+		},
+		{
+			name:   "review swarm off still merges when verdict not required",
+			policy: func(p *ContributorLanePolicy) { p.RequireReviewerVerdict = false },
+			verdict: func(string, int, string) ContributorLaneVerdict {
+				return ContributorLaneVerdict{Configured: true, ReviewOff: true}
+			},
+			wantMerges: 1,
+		},
+		{
+			name: "review swarm off keeps a recorded changes request",
+			verdict: func(string, int, string) ContributorLaneVerdict {
+				return ContributorLaneVerdict{Configured: true, ReviewOff: true, Verdict: "changes_requested"}
+			},
+			wantReason: contributorLaneReasonChangesRequested,
+		},
+		{
 			name:       "no reviewer configured skips",
 			verdict:    func(string, int, string) ContributorLaneVerdict { return ContributorLaneVerdict{} },
 			wantReason: contributorLaneReasonNoReviewer,
