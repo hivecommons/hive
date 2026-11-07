@@ -33,6 +33,7 @@ runtime and every agent must arrive as a definition on `POST /v1/agents`.
 | `--socket PATH`, `CRUX_SOCKET` | unix socket to serve on. Default `$XDG_RUNTIME_DIR/crux/crux.sock`, else `<tmp>/crux-<uid>/crux.sock`. The directory is created `0700`, the socket `0600`, and it is never reachable at that path with wider permissions (it is bound under a temporary name, chmod'ed, then renamed). A socket somebody already answers on is refused; a stale one is replaced. |
 | `--listen HOST:PORT` | also serve on TCP. **Refused without a token.** |
 | `--token T`, `CRUX_TOKEN` | bearer token every request must carry. When set it gates the socket too. |
+| `--operator-name NAME`, `CRUX_OPERATOR_NAME` | the name the control token's caller is recorded under on work-services routes (see [Caller principals](#caller-principals)). Default `operator`. |
 | `--lanes-config PATH`, `CRUX_LANES_CONFIG` | opt into [durable event/work lanes](crux-lanes.md) on this same server, backed by NATS JetStream. Lane project credentials are separate from agent-control credentials. |
 | `--hive-callback ADDR`, `CRUX_HIVE_SOCKET` (+ `CRUX_HIVE_TOKEN`) | dial hive's callback endpoint (`crux/api/callback`) for the capabilities hive owns — scoped GitHub tokens, PR creation, Linear credentials, text/canary scanners, conditions — and feed the runtime's seams from it instead of leaving them nil. Health reports it under `hive_callback`; an unreachable endpoint raises the `hive_callback_unavailable` condition. (#14246) When the runtime is a manager it also polls hive's host policy from the same endpoint; see [Host policy from hive](#host-policy-from-hive-14138-stage-4). |
 
@@ -54,6 +55,23 @@ runtime and every agent must arrive as a definition on `POST /v1/agents`.
   bits, or `Listen` refuses to place a socket in it; a pre-existing
   world-readable `<tmp>/crux-<uid>` is an error, not a trust.
 - Request bodies are capped at 1 MiB and unknown JSON fields are rejected.
+
+### Caller principals
+
+Every request that passes the auth gate carries a *principal* in its
+context, readable by a route handler with `serve.CallerFrom(ctx)`
+(hivecommons/crux#114, S0). It is the identity the work services record and
+enforce ownership by; nothing on the agent-RPC routes reads it.
+
+| Credential presented | Principal | Where accepted |
+|---|---|---|
+| the control token (`--token`/`CRUX_TOKEN`), or no token on a token-less server's own unix socket | `{"kind":"operator","name":"<--operator-name>"}` | every route |
+| a lane project credential (`--lanes-config` principals) | `{"kind":"project","name":"<project id>"}` | work-services routes only (families registered as such, e.g. `/v1/checkouts`); on every agent RPC it is still `401 unauthorized`, as before |
+| anything else | — | `401 unauthorized` |
+
+The operator may act on every record regardless of who owns it; a project
+principal only on its own. Lane routes (`/v1/lanes…`) keep their separate
+project-only gate and are not affected.
 
 ## The API
 
