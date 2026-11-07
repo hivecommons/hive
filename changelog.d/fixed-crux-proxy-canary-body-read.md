@@ -1,0 +1,1 @@
+- The crux proxy's canary scan of GitHub write bodies now refuses a request whose body could not be fully read, matching the Linear gate and the oversized-body path. Before, a read error consumed the body and still let the request through, so it reached GitHub empty and unscanned.
