@@ -281,6 +281,10 @@ type Fact struct {
 	SupersededBy string    `json:"superseded_by,omitempty"`
 	Phase        FactPhase `json:"phase,omitempty"`
 
+	// Scope says where the fact applies (the entry's `scope:` block,
+	// #17045). Nil means everywhere; see FactScope.Admits.
+	Scope *FactScope `json:"scope,omitempty"`
+
 	// Updated, BodySize and Origin feed the table of contents (#11103). They
 	// are populated by file-backed stores only and never serialized, so
 	// existing fact payloads are unchanged.
@@ -310,6 +314,9 @@ type PrimedKnowledge struct {
 	// rendered is the slugs Render kept, in render order, for the mid-task
 	// advisor's "never repeat what the kick carried" rule (#17052).
 	rendered []string
+	// ScopedOut counts relevant facts the kick context excluded because their
+	// scope (paths, labels, lanes) did not match (#17045).
+	ScopedOut int `json:"-"`
 }
 
 // RenderedSlugs returns the slugs of the facts the last Render kept — the

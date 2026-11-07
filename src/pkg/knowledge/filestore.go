@@ -57,6 +57,7 @@ type filePage struct {
 	Path       string
 	ModTime    time.Time
 	Embedding  []float64
+	Scope      *FactScope
 
 	// Lifecycle frontmatter (#11102); see resolveLifecycleState for defaults.
 	State        LifecycleState
@@ -209,6 +210,9 @@ func (s *FileStore) reindex() {
 		page.State = parsed.state
 		page.Supersedes = parsed.supersedes
 		page.SupersededBy = parsed.supersededBy
+		if !parsed.scope.IsZero() {
+			page.Scope = parsed.scope
+		}
 		pages[slug] = page
 
 		return nil
@@ -496,6 +500,7 @@ type parsedObsidianFile struct {
 	state        LifecycleState
 	supersedes   string
 	supersededBy string
+	scope        *FactScope
 }
 
 var wikilinkRe = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
@@ -526,8 +531,33 @@ func parseObsidianFileDetailed(content string, fallbackTitle string) parsedObsid
 			frontmatter := content[4 : 4+endIdx]
 			parsed.body = strings.TrimSpace(content[4+endIdx+4:])
 
+			// The parser is line-oriented and trims indentation, so a nested
+			// `scope:` block is recognised by state: once "scope:" is seen, the
+			// keys paths/labels/lanes belong to it until the next unrelated key.
+			inScope := false
 			for _, line := range strings.Split(frontmatter, "\n") {
 				line = strings.TrimSpace(line)
+				if line == "scope:" {
+					inScope = true
+					if parsed.scope == nil {
+						parsed.scope = &FactScope{}
+					}
+					continue
+				}
+				if inScope {
+					if consumed := parsed.scope.setFromLine(line); consumed {
+						continue
+					}
+					if strings.HasPrefix(line, "- ") || line == "" {
+						// Block-list items are not supported inside scope:
+						// (documented); skip them rather than let them leak
+						// into tags.
+						continue
+					}
+					if strings.Contains(line, ":") {
+						inScope = false
+					}
+				}
 				if strings.HasPrefix(line, "title:") {
 					parsed.title = strings.TrimSpace(strings.TrimPrefix(line, "title:"))
 					parsed.title = strings.Trim(parsed.title, "\"'")
@@ -644,6 +674,7 @@ func (p filePage) effectiveLayer() LayerType {
 // applyLifecycle copies the page's lifecycle and TOC metadata onto f, defaulting
 // legacy pages without a recorded state to approved.
 func (p filePage) applyLifecycle(f *Fact) {
+	f.Scope = p.Scope
 	f.Supersedes = p.Supersedes
 	f.SupersededBy = p.SupersededBy
 	f.State = resolveLifecycleState(p.State, p.Status, p.SupersededBy)
