@@ -365,6 +365,26 @@ type CollectionStats struct {
 	FilesRead    int
 	NewReports   int
 	MaxReportLag time.Duration
+	// UnreadableSkipped counts report files set aside because they only
+	// say a rate limit kept the reviewer from reading the PR
+	// (UnreadableReviewReason). They are not verdicts.
+	UnreadableSkipped int
+	// unreadable are those reports, kept so the merge can withdraw a stored
+	// verdict that rested on them alone.
+	unreadable []unreadableReport
+}
+
+// unreadableReport is a report file the collect set aside as no verdict.
+type unreadableReport struct {
+	Repo        string
+	Number      int
+	HeadSHA     string
+	Perspective Perspective
+	// HumanSummary is how an aggregate built from the report quotes it
+	// (humanSummaryReason); Finding is the security hold it would claim
+	// (IsSecuritySensitiveFinding), if any.
+	HumanSummary string
+	Finding      string
 }
 
 type Artifact struct {
@@ -603,6 +623,15 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 			// person has the last word at the merge gate (090), where the
 			// untrusted-author merge is theirs. Twelve of hive's own PRs
 			// sat 3–21h on such questions.
+			if hasReject {
+				// The rule makes the question advisory, not a sibling
+				// perspective's reject: the head gets what the reject
+				// alone would give it (the reject check below). The
+				// question stays in Reasons.
+				agg.Verdict = VerdictReject
+				agg.CloseRecommended = true
+				return agg
+			}
 			return contributorHandsFreeAggregate(agg, opts, hasChanges || reportsHaveInScopeFinding(reports), maxFix, decisionQuestions)
 		} else if backed {
 			agg.DecisionFinding = finding
@@ -624,6 +653,9 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 				agg.Reasons = append(append([]string{}, agg.Reasons...), selfAuthoredDecisionAdvisory(decisionQuestions))
 				sortReasons(agg.Reasons)
 				return agg
+			}
+			if !hasRequiredCoverage(agg.Perspectives, opts) {
+				return incompleteForMissingCoverage(agg, opts)
 			}
 			agg.Verdict = VerdictApprove
 			agg.MergeEligible = true
@@ -697,6 +729,9 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 			return agg
 		}
 		if !riskEscalation && !hasChanges && selfAuthoredHumanWithoutRemediation && !selfAuthoredHumanWithConcreteRemediation && selfAuthoredResolvableRequiresHumanOnly(reports, opts) {
+			if !hasRequiredCoverage(agg.Perspectives, opts) {
+				return incompleteForMissingCoverage(agg, opts)
+			}
 			agg.Verdict = VerdictApprove
 			agg.MergeEligible = true
 			agg.RequiresHuman = false
@@ -1454,6 +1489,19 @@ func collectForPRs(dir string, opts AggregateOptions, prs []PullRequest) (Artifa
 		if prs != nil && !targets[strings.ToLower(fmt.Sprintf("%s#%d", report.Repo, report.Number))] {
 			continue
 		}
+		if _, unread := UnreadableReviewReason(*report); unread {
+			// A rate limit kept this reviewer from reading the PR: that is
+			// no verdict. The relay no longer records such a report, but
+			// files written before it learned to skip them are still on
+			// disk, and read as a verdict they park the head at 085
+			// (projectbluefin/testsuite#1116). Set it aside as missing, so
+			// the head reads incomplete and the planner asks again.
+			stats.UnreadableSkipped++
+			stats.unreadable = append(stats.unreadable, unreadableReport{Repo: report.Repo, Number: report.Number,
+				HeadSHA: report.HeadSHA, Perspective: report.Perspective, HumanSummary: humanSummaryReason(*report),
+				Finding: unreadableFinding(*report, opts.SensitivePaths)})
+			continue
+		}
 		opts.ModelStamps.apply(report)
 		key := reviewKey(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
 		groups[key] = append(groups[key], *report)
@@ -1465,6 +1513,18 @@ func collectForPRs(dir string, opts AggregateOptions, prs []PullRequest) (Artifa
 	artifact := Artifact{GeneratedAt: time.Now().UTC(), Collection: stats}
 	for _, key := range sortedKeys(groups) {
 		agg := AggregateReports(groups[key], opts)
+		if agg.Verdict == VerdictApprove && len(unreadableForHead(stats.unreadable, agg.Repo, agg.Number, agg.HeadSHA)) > 0 &&
+			!hasAllRequiredPerspectives(agg.Perspectives, opts.MaxPerspectivesPerPR, opts.Perspectives.Len()) {
+			// A perspective set aside as unread is owed, not approved. The
+			// contributor rule resolves a requires_human with no security
+			// finding to approve whatever the coverage; with the security
+			// review the one that could not read, that would mark an
+			// unread head merge-eligible. Wait for the re-ask instead.
+			agg.Verdict = VerdictIncomplete
+			agg.MergeEligible = false
+			agg.Reasons = append(agg.Reasons, incompleteCoverageReason(agg.Perspectives, opts))
+			sortReasons(agg.Reasons)
+		}
 		agg.ReportReceipts = receipts[key]
 		artifact.Items = append(artifact.Items, agg)
 	}
@@ -1630,6 +1690,22 @@ func mergeCollected(fresh Artifact, dir, path string, now time.Time) (Artifact, 
 		}
 	}
 
+	if len(fresh.Collection.unreadable) > 0 {
+		kept := order[:0]
+		for _, key := range order {
+			if prior := merged[key]; !prior.RecordedAt.After(now) && verdictRestsOnUnreadable(prior, fresh.Collection.unreadable) {
+				// The stored requires_human came only from reports that
+				// were never verdicts. Withdraw it, so the fresh collect
+				// (incomplete, or nothing yet) stands for this head and
+				// the missing perspectives are asked again.
+				delete(merged, key)
+				continue
+			}
+			kept = append(kept, key)
+		}
+		order = kept
+	}
+
 	for _, item := range fresh.Items {
 		item.RecordedAt = now
 		item.FirstRecordedAt = now
@@ -1688,6 +1764,70 @@ func mergeCollected(fresh Artifact, dir, path string, now time.Time) (Artifact, 
 	// into a partial aggregate.
 	_, _ = PruneReports(dir, VerdictRetention, now)
 	return artifact, nil
+}
+
+// verdictRestsOnUnreadable reports whether a stored aggregate is a
+// requires_human that only the unreadable reports set aside by this collect
+// produced: every perspective it holds at requires_human, and every human
+// summary it carries, belongs to one of them. Anything else a person may
+// need to see keeps it: a decision question, an in-scope finding, a fix
+// cycle that ran out, or a DecisionFinding that is not one of those reports'
+// own (on #1116 it was "the security review withheld approval: Delta not
+// readable (GitHub API 429 cap …)", the unread security report). So does any requires_human perspective or summary the unreadable
+// reports do not account for, such as one from a report no longer on disk.
+func verdictRestsOnUnreadable(prior Aggregate, unread []unreadableReport) bool {
+	if prior.Verdict != VerdictRequiresHuman || prior.DecisionRequested || FixCycleCapReached(prior) || len(prior.HumanSummaries) == 0 {
+		return false
+	}
+	for _, f := range prior.Findings {
+		if InScopeFinding(f.Finding) {
+			return false
+		}
+	}
+	perspectives := map[Perspective]bool{}
+	summaries := map[string]bool{}
+	finding := strings.TrimSpace(prior.DecisionFinding)
+	findingExplained := finding == ""
+	for _, u := range unreadableForHead(unread, prior.Repo, prior.Number, prior.HeadSHA) {
+		perspectives[u.Perspective] = true
+		summaries[u.HumanSummary] = true
+		if u.Finding != "" && u.Finding == finding {
+			findingExplained = true
+		}
+	}
+	if len(perspectives) == 0 || !findingExplained {
+		return false
+	}
+	for p, v := range prior.Perspectives {
+		if v == VerdictRequiresHuman && !perspectives[p] {
+			return false
+		}
+	}
+	for _, s := range prior.HumanSummaries {
+		if !summaries[s] {
+			return false
+		}
+	}
+	return true
+}
+
+// unreadableFinding is the security hold an aggregate would have claimed from
+// r: the security perspective withholding approval reads as a finding,
+// whatever it said.
+func unreadableFinding(r PerspectiveReport, sensitivePaths []string) string {
+	finding, _ := IsSecuritySensitiveFinding(r, SecuritySensitivePaths(sensitivePaths))
+	return strings.TrimSpace(finding)
+}
+
+// unreadableForHead returns the set-aside reports for one PR head.
+func unreadableForHead(unread []unreadableReport, repo string, number int, headSHA string) []unreadableReport {
+	var out []unreadableReport
+	for _, u := range unread {
+		if u.Number == number && strings.EqualFold(strings.TrimSpace(u.Repo), strings.TrimSpace(repo)) && SameHeadSHA(u.HeadSHA, headSHA) {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 // PruneReports removes review-report-*.json files in dir whose modification
@@ -1828,6 +1968,34 @@ func hasAllRequiredPerspectives(got map[Perspective]Verdict, maxPerPR, configure
 		}
 	}
 	return true
+}
+
+// hasRequiredCoverage reports whether every perspective the head is owed has
+// reported, whatever it said. hasAllRequiredPerspectives also needs each
+// verdict to be approve; the paths that read a requires_human as advisory
+// need only this half of it.
+func hasRequiredCoverage(got map[Perspective]Verdict, opts AggregateOptions) bool {
+	return len(got) >= requiredPerspectiveCount(opts.MaxPerspectivesPerPR, opts.Perspectives.Len())
+}
+
+// incompleteForMissingCoverage is the verdict of a head that would resolve
+// to an advisory approve but that a perspective it is owed never reported
+// on: a reviewer kick that died, or a rate-limited security review the relay
+// did not record (hivecommons/hive#16994). That perspective judged nothing,
+// so the head is still under review, as on the all-approve path: incomplete,
+// nobody is asked, and the planner re-asks only the missing perspectives
+// under pending_ttl / max_redispatch. Once they report, the same reports
+// resolve to the advisory approve.
+func incompleteForMissingCoverage(agg Aggregate, opts AggregateOptions) Aggregate {
+	agg.Verdict = VerdictIncomplete
+	agg.MergeEligible = false
+	agg.RequiresHuman = false
+	agg.FixCycle = false
+	agg.DecisionRequested = false
+	agg.DecisionQuestion = ""
+	agg.HumanSummaries = nil
+	agg.Reasons = []string{incompleteCoverageReason(agg.Perspectives, opts)}
+	return agg
 }
 
 // requiredPerspectiveCount is how many perspectives a head must hear from

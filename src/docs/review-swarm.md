@@ -97,7 +97,7 @@ Aggregation rules are deterministic:
 3. Any explicit `requires_human` yields `requires_human`.
 4. Any `changes_requested` enters a fix cycle while below the fix cap.
 5. Every perspective in the hive's configured set approving (or, under `max_perspectives_per_pr`, every perspective the PR was eligible to receive) yields a merge-eligible aggregate.
-6. Every delivered perspective approving while some the PR is owed have not reported yields `incomplete`: not merge-eligible, not a human hold, with a reason naming the missing perspectives (`review coverage incomplete: missing docs-currency`). An incomplete head stays in the dispatcher: only the missing perspectives are re-asked (under `pending_ttl` / `max_redispatch`), never the ones whose reports already exist. The exception is a head that already holds a settled non-approve verdict (`requires_human`, `changes_requested` or `reject`): an incomplete re-review of the same head does not replace it. The artifact keeps the prior decision, its findings or question and its `recorded_at`, so the dispatcher never sees `incomplete` for that head — a `requires_human` head keeps taking the human-hold path and stays at 085, and a `changes_requested` or `reject` head stays on the fix path (rather than dropping back to 050 to re-ask the missing perspectives) until a complete replacement review lands. When the stale entries expire under `pending_ttl`, the whole perspective set is asked again for that head, not just the missing ones (hivecommons/hive#12878). Before this state existed a reviewer kick that died after its peers had reported left the head on a `requires_human` hold that no re-dispatch could clear (hivecommons/hive#12045).
+6. Every delivered perspective approving while some the PR is owed have not reported yields `incomplete`: not merge-eligible, not a human hold, with a reason naming the missing perspectives (`review coverage incomplete: missing docs-currency`). An incomplete head stays in the dispatcher: only the missing perspectives are re-asked (under `pending_ttl` / `max_redispatch`), never the ones whose reports already exist. The exception is a head that already holds a settled non-approve verdict (`requires_human`, `changes_requested` or `reject`): an incomplete re-review of the same head does not replace it. The artifact keeps the prior decision, its findings or question and its `recorded_at`, so the dispatcher never sees `incomplete` for that head — a `requires_human` head keeps taking the human-hold path and stays at 085, and a `changes_requested` or `reject` head stays on the fix path (rather than dropping back to 050 to re-ask the missing perspectives) until a complete replacement review lands. When the stale entries expire under `pending_ttl`, the whole perspective set is asked again for that head, not just the missing ones (hivecommons/hive#12878). Before this state existed a reviewer kick that died after its peers had reported left the head on a `requires_human` hold that no re-dispatch could clear (hivecommons/hive#12045). The one stored `requires_human` an incomplete collect does withdraw is one that rate-limited "could not read" reports alone produced (see *A review the reviewer could not read because of a rate limit is no verdict* below).
 7. Any other non-unanimous result requires human review.
 
 One exception to rules 2–3: on a **hive superseding PR** (the App's own PR declaring `Supersedes #N`, `PerspectiveReport.hive_superseding`) a `requires_human` — security-sensitive included — becomes `changes_requested` and enters the fix cycle, because the owner's rule is that such PRs auto-merge with no operator decision; only the fix cap, a `reject`, or the stage engine's hard stops (sentinel, hold, red CI, unresolvable conflict) hand it to a person. `auto_merge.hive_superseding.auto_merge: false` turns this off. See [hive-merge.md](hive-merge.md#hive-authored-superseding-prs-auto-merge).
@@ -316,7 +316,14 @@ recorded on the approving aggregate as
 (Before [#13020](https://github.com/hivecommons/hive/pull/13020) the policy
 only resolved questions matching a short allowlist of non-risk words, so a
 green agent PR whose linked issue had already specified the default still
-parked for a person.) The risk classes are:
+parked for a person.) That approve, like the advisory approve of a bare
+non-risk `requires_human` (`self-authored non-risk requires_human recorded
+as advisory`), needs every perspective the head is owed to have reported.
+If one has not (a reviewer kick that died, or a rate-limited security
+review the relay did not record), the aggregate is `incomplete` with
+`review coverage incomplete: missing <perspectives>`, and the planner asks
+for the missing ones under `pending_ttl` / `max_redispatch`. Once they
+report, the same question resolves as advisory. The risk classes are:
 
 | Class | Escalates when the question names … |
 |---|---|
@@ -396,13 +403,26 @@ went to its author at `stage/072-returned-to-contributor` for a PR-body
 edit while the security review's App-credential question waited on a
 maintainer).
 
+The rule makes a question advisory, not another perspective's `reject`. A
+contributor PR where one perspective rejects and another asks a
+non-security question gets the verdict the reject alone gives it: `reject`,
+which holds the PR for a person (the question stays in the aggregate's
+reasons). Before, the question's advisory approve also swallowed the
+reject, and the head was merge-eligible.
+
 Everything else the review raises — ordinary nits and findings, a duplicate,
 naming, scope, sequencing, licensing, a failing optional check, a conflict
 — never asks a person during CI/Review: a finding goes back to the
 clanker / adoption path as `changes_requested`; a bare question is
 advisory, the aggregate is `approve`, recorded as
 `no security finding — the PR keeps moving; a person has the last word at the merge gate; recorded as advisory: <question>`,
-and the PR moves on. At the merge gate the untrusted-author invariant
+and the PR moves on. That approve needs the same coverage as any other: if a
+perspective the head is owed has not reported (a reviewer kick that died, or
+a rate-limited security review the relay did not record), the aggregate is
+`incomplete` with `review coverage incomplete: missing <perspectives>`, and
+the planner asks for the missing ones under `pending_ttl` /
+`max_redispatch`. Without that, a head the security perspective never read
+could be merge-eligible. At the merge gate the untrusted-author invariant
 holds: a contributor the lane cannot vouch for parks at
 `stage/090-ready-for-human-merge` (`contributor-lane:claim-tier-untrusted`,
 `untrusted-author-role`, the human-merge rule) and waits for the operator's
@@ -584,6 +604,8 @@ The retry is bounded. Once a head's expiry count reaches `max_redispatch` (defau
 Expiry also covers a head whose aggregate is `incomplete`: the delivered perspectives are taken off the pending list (their reports exist) and only the undelivered ones expire and re-dispatch, against the same per-head budget.
 
 **A review the reviewer could not read because of a rate limit is no verdict.** The read instruction tells a reviewer that could not read the diff to return `requires_human` and say so. When the only reason is a rate limit — an HTTP 429, GitHub's rate limit, or the hive proxy's per-agent cap (`agents.github_api_hourly_cap`) — the relay does not record that report (`review.UnreadableReviewReason`, `src/pkg/review/unreadable.go`). It must be `requires_human`, carry no in-scope finding, no `hive-decision-risk: high` marker and no explicit decision question (`<!-- hive-verdict: needs-decision -->`, since a reviewer that asks the owner something read enough to ask it), and its summary must say both that the change was not read and that a rate limit was the cause. The perspective's pending entry stays open, expires after `pending_ttl` like any kick that posted nothing, and is asked again, so no person is asked and no security hold is claimed. Other perspectives in the same combined review that did read the PR are recorded as usual, and the head reads as `incomplete` until the re-asked ones report. The review-request watcher logs `unreadable review not recorded as a verdict`. Any review comment the reviewer already posted saying it could not read the PR stays on the PR with no verdict behind it, and the re-asked reviewer may post another. A `requires_human` for any other reason, such as a diff too large to read, still parks the PR. Before this, the five `could not read … HTTP 429` reports on projectbluefin/testsuite#1116 parked it at 085 as "the security review withheld approval".
+
+**The same rule applies to report files already on disk.** A report written before the relay learned to skip these is still read by every verdict collect, so the collect applies the same check (`UnreadableReviewReason`) and sets such a file aside as missing; the refresh log line counts them as `unreadable_reports_skipped`. A stored `requires_human` for that head is withdrawn when those set-aside reports alone produced it: every perspective it holds at `requires_human`, and every human summary and security hold it quotes, must come from one of them, and it must carry no decision question, no in-scope finding and no exhausted fix cycle. The head then reads `incomplete` (or has no verdict yet), and the planner asks the missing perspectives again on the normal path, under `pending_ttl` and `max_redispatch`, not on every sweep. While a set-aside perspective is owed, the head is never `approve`: the contributor rule's hands-free approve waits for full coverage instead. A stored hold that anything else backs, including a real report no longer on disk, stays as it is (rule 6 above). On projectbluefin/testsuite#1116 the five pre-upgrade files kept the head at 085 hours after the upgrade until this check.
 
 The PR review queue (`GET /api/review/queue`) shows this state on unreviewed items: `pending_since` (first dispatch for the current head still pending) and `redispatch_count`, plus a reason such as `review dispatched 32m ago, no verdict yet (re-dispatched 2x after expiry)` or `review dispatch exhausted: …; waiting on a human` after the generic `not reviewed at this head` line.
 
