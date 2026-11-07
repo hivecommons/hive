@@ -9,9 +9,11 @@ import (
 )
 
 func TestKickContextFor(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"developer":   {},
-		"developer-2": {ReplicaOf: "developer"},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"developer":   {},
+			"developer-2": {ReplicaOf: "developer"},
+		},
 	}}
 	tests := []struct {
 		name       string
