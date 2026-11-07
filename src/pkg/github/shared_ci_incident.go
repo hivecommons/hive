@@ -35,19 +35,30 @@ func newestSharedCIMarker(texts []string) int {
 // incident marker (hivecommons/hive#10528) and the external-CI marker
 // (hivecommons/hive#11609). One listing serves both. ok is false when the
 // comments cannot be read; the PR then stays listed.
-func (c *Client) redPRCommentTexts(ctx context.Context, pr *PullRequest) (texts []string, ok bool) {
+//
+// hiveTexts are the bodies the hive's own accounts wrote. The transient-CI
+// marker is read from those alone: it re-runs the failed jobs and holds the
+// fix loop until they finish, so a comment from anyone else must not be able
+// to spend Actions minutes or pause repairs (hivecommons/hive#17002 review).
+// A hive that cannot name its own accounts falls back to every body, as the
+// other hive-authorship checks do.
+func (c *Client) redPRCommentTexts(ctx context.Context, pr *PullRequest) (texts, hiveTexts []string, ok bool) {
 	owner, repo := c.splitRepo(pr.Repo)
 	ctx = WithRESTCaller(ctx, "hive:shared_ci_incident")
 	comments, err := c.listIssueComments(ctx, owner, repo, pr.Number)
 	if err != nil {
 		c.logger.Debug("CI deferral marker lookup failed; PR stays in the repair list", "repo", pr.Repo, "pr", pr.Number, "error", err)
-		return nil, false
+		return nil, nil, false
 	}
 	texts = make([]string, 0, len(comments))
+	ownOnly := c.knowsOwnAccounts()
 	for _, comment := range comments {
 		texts = append(texts, comment.GetBody())
+		if !ownOnly || c.isHiveAccount(comment.GetUser()) {
+			hiveTexts = append(hiveTexts, comment.GetBody())
+		}
 	}
-	return texts, true
+	return texts, hiveTexts, true
 }
 
 // openSharedCIIncident returns the shared-CI incident a red PR has already
