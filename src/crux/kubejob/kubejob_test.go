@@ -219,7 +219,7 @@ func TestRunContextTimeoutDeletesTheJob(t *testing.T) {
 	}
 }
 
-func TestRunCompleteWithNoPodStillSucceeds(t *testing.T) {
+func TestRunCompleteWithNoPodKeepsExitCodeUnknown(t *testing.T) {
 	api := newFakeAPI()
 	api.statuses = []string{statusComplete}
 	api.noPod = true
@@ -230,8 +230,8 @@ func TestRunCompleteWithNoPodStillSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.ExitCode != 0 || res.Stdout != "" {
-		t.Errorf("result = %+v, want exit 0 (Complete) and no log", res)
+	if res.ExitCode != exitCodeUnknown || res.Stdout != "" {
+		t.Errorf("result = %+v, want unknown exit code (Complete, pod unreadable) and no log", res)
 	}
 }
 
@@ -359,6 +359,11 @@ func TestManifestShape(t *testing.T) {
 		`"tolerations":[{"effect":"NoSchedule","key":"spyre","operator":"Exists"}]`,
 		`"limits":{"ibm.com/spyre_pf":"2"}`,
 		`"serviceAccountName":"hive"`,
+		`"automountServiceAccountToken":false`,
+		`"runAsNonRoot":true`,
+		`"allowPrivilegeEscalation":false`,
+		`"capabilities":{"drop":["ALL"]}`,
+		`"seccompProfile":{"type":"RuntimeDefault"}`,
 		`"envFrom":[{"secretRef":{"name":"artifact-registry"}}]`,
 		`"claimName":"hive-data"`,
 		`"subPath":"agents/sandbox/deps-123"`,

@@ -17,6 +17,7 @@ import (
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/internal/textutil"
+	"github.com/hivecommons/hive/crux/kubejob"
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/outputschema"
 	"github.com/hivecommons/hive/crux/pushbroker"
@@ -590,7 +591,9 @@ func sandboxPublishWithheld(res SandboxKickResult) string {
 		}
 		return reason
 	}
-	if res.Sandbox.ExitCode != 0 {
+	// A completed Job whose pod could not be read has no exit code; that is
+	// not a failure, and the guessed 0 it used to carry was not a fact either.
+	if code := res.Sandbox.ExitCode; code != 0 && code != kubejob.ExitCodeUnknown {
 		return fmt.Sprintf("sandbox exited %d", res.Sandbox.ExitCode)
 	}
 	return ""

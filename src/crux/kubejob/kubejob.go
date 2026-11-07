@@ -251,9 +251,10 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 		return res, fmt.Errorf("kubejob: job %s failed: %s", name, done.reason)
 	}
 	if res.ExitCode == exitCodeUnknown {
-		// The Job reports Complete, so the container exited 0 even though the
-		// pod could not be read back (already GC'd, or RBAC on pods missing).
-		res.ExitCode = 0
+		// The Job reports Complete but the pod could not be read back
+		// (already GC'd, or RBAC on pods missing). The exit code stays
+		// exitCodeUnknown rather than a guessed 0; callers treat a nil error
+		// with an unknown code as completed-without-code.
 	}
 	// Collection may have expired the context even on success; use a fresh one
 	// for cleanup to ensure the finished Job is immediately removed.
@@ -454,6 +455,13 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 	}
 
 	container := map[string]any{
+		// The workspace PVC and the agent's home need to stay writable, so the
+		// root filesystem is deliberately not made read-only.
+		"securityContext": map[string]any{
+			"allowPrivilegeEscalation": false,
+			"capabilities":             map[string]any{"drop": []string{"ALL"}},
+			"seccompProfile":           map[string]string{"type": "RuntimeDefault"},
+		},
 		"name":         containerName,
 		"image":        spec.Image,
 		"workingDir":   workdir,
@@ -471,6 +479,13 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 		"restartPolicy": restartNever,
 		"containers":    []map[string]any{container},
 		"volumes":       volumes,
+		// Nothing in the kick pod calls the Kubernetes API, so the SA token is
+		// never mounted into a contained run.
+		"automountServiceAccountToken": false,
+		"securityContext": map[string]any{
+			"runAsNonRoot":   true,
+			"seccompProfile": map[string]string{"type": "RuntimeDefault"},
+		},
 	}
 	if len(l.Options.NodeSelector) > 0 {
 		podSpec["nodeSelector"] = l.Options.NodeSelector
