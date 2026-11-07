@@ -20,6 +20,7 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
         baseRefOid
         updatedAt
         isDraft
+        maintainerCanModify
         mergeable
         mergeStateStatus
         reviewDecision
@@ -80,13 +81,17 @@ type graphQLPRBatchResponse struct {
 }
 
 type graphQLPRBatchNode struct {
-	Number           int       `json:"number"`
-	HeadRefOID       string    `json:"headRefOid"`
-	BaseRefOID       string    `json:"baseRefOid"`
-	UpdatedAt        time.Time `json:"updatedAt"`
-	IsDraft          bool      `json:"isDraft"`
-	Mergeable        string    `json:"mergeable"`
-	MergeStateStatus string    `json:"mergeStateStatus"`
+	Number     int       `json:"number"`
+	HeadRefOID string    `json:"headRefOid"`
+	BaseRefOID string    `json:"baseRefOid"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+	IsDraft    bool      `json:"isDraft"`
+	// MaintainerCanModify is "allow edits by maintainers". The stored
+	// detail stands in for a REST GET, so leaving it out read every fork PR
+	// as one the hive cannot push to (projectbluefin/gutenprint-printer-app#196).
+	MaintainerCanModify bool   `json:"maintainerCanModify"`
+	Mergeable           string `json:"mergeable"`
+	MergeStateStatus    string `json:"mergeStateStatus"`
 	reviewDecisionNode
 	Labels struct {
 		Nodes []struct {
@@ -250,16 +255,17 @@ func (c *Client) storeGraphQLPRBatchNode(repo string, n graphQLPRBatchNode) {
 	state := graphQLMergeStateStatusToREST(n.MergeStateStatus)
 	mergeable := graphQLMergeable(n.Mergeable)
 	pr := &gh.PullRequest{
-		Number:         gh.Ptr(n.Number),
-		State:          gh.Ptr("open"),
-		Title:          gh.Ptr(n.Title),
-		UpdatedAt:      &gh.Timestamp{Time: n.UpdatedAt},
-		User:           &gh.User{Login: gh.Ptr(n.Author.Login)},
-		Draft:          gh.Ptr(n.IsDraft),
-		Mergeable:      mergeable,
-		MergeableState: gh.Ptr(state),
-		Head:           &gh.PullRequestBranch{SHA: gh.Ptr(n.HeadRefOID), Ref: gh.Ptr(n.HeadRefName)},
-		Base:           &gh.PullRequestBranch{SHA: gh.Ptr(n.BaseRefOID), Ref: gh.Ptr(n.BaseRefName)},
+		Number:              gh.Ptr(n.Number),
+		State:               gh.Ptr("open"),
+		Title:               gh.Ptr(n.Title),
+		UpdatedAt:           &gh.Timestamp{Time: n.UpdatedAt},
+		User:                &gh.User{Login: gh.Ptr(n.Author.Login)},
+		Draft:               gh.Ptr(n.IsDraft),
+		MaintainerCanModify: gh.Ptr(n.MaintainerCanModify),
+		Mergeable:           mergeable,
+		MergeableState:      gh.Ptr(state),
+		Head:                &gh.PullRequestBranch{SHA: gh.Ptr(n.HeadRefOID), Ref: gh.Ptr(n.HeadRefName)},
+		Base:                &gh.PullRequestBranch{SHA: gh.Ptr(n.BaseRefOID), Ref: gh.Ptr(n.BaseRefName)},
 	}
 	for _, l := range n.Labels.Nodes {
 		if strings.TrimSpace(l.Name) != "" {
