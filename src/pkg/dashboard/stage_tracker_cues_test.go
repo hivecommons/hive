@@ -321,6 +321,8 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_MS"),
 		"function stageTrackerMergeBannerMs() { return STAGE_TRACKER_MERGE_BANNER_MS; }",
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_PHONE_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY"),
 		jsConstLine(t, html, "STAGE_TRACKER_SOUND_MAX_PLAYS"),
 		jsFunc(t, html, "stageTrackerCelebrateSetting"),
 		jsFunc(t, html, "stageTrackerSetCelebrate"),
@@ -375,7 +377,11 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "toastCountdownBar"),
 		jsFunc(t, html, "toastCountdownCancel"),
 		jsFunc(t, html, "stageTrackerMergeBanner"),
+		jsFunc(t, html, "stageTrackerMergeBannerList"),
+		jsFunc(t, html, "stageTrackerMergeBannerIsPhone"),
+		jsFunc(t, html, "stageTrackerMergeBannerLayout"),
 		jsFunc(t, html, "stageTrackerMergeBannerDismiss"),
+		jsFunc(t, html, "hamBannerOpenLink"),
 		jsFunc(t, html, "hamBannerDismiss"),
 		jsFunc(t, html, "hamBannerShowRow"),
 		jsFunc(t, html, "stageTrackerEventLineInject"),
@@ -430,10 +436,11 @@ function el(tag, attrs) {
     insertBefore(c, ref) { c.parentNode = e; const i = ref ? e.children.indexOf(ref) : -1; if (i < 0) e.children.push(c); else e.children.splice(i, 0, c); return c; },
     replaceWith(n) { if (!e.parentNode) return; const p = e.parentNode; p.children.splice(p.children.indexOf(e), 1, n); n.parentNode = p; e.parentNode = null; },
     remove() { if (e.parentNode) e.parentNode.children = e.parentNode.children.filter(c => c !== e); e.parentNode = null; },
-    getAttribute(k) { return k in e.attrs ? e.attrs[k] : null; }, setAttribute(k, v) { e.attrs[k] = String(v); },
+    getAttribute(k) { return k in e.attrs ? e.attrs[k] : null; }, setAttribute(k, v) { e.attrs[k] = String(v); }, removeAttribute(k) { delete e.attrs[k]; },
     addEventListener(n, fn) { e._ev[n] = fn; }, removeEventListener(n) { delete e._ev[n]; },
     getBoundingClientRect() { return e.rect || { left: 0, top: 0, width: 10, height: 10 }; },
     get outerHTML() { return '<div class="' + e.className + '"></div>'; },
+    get firstChild() { return e.children[0] || null; },
     querySelector(sel) { return e.querySelectorAll(sel)[0] || null; },
     querySelectorAll(sel) { const out = []; const unesc = v => v.replace(/\\(.)/g, '$1'); const m = sel.match(/^\[([\w-]+)="(.*)"\]$/); const word = sel.match(/^\[([\w-]+)~="(.*)"\]\[data-ham-key\]$/); const cls = sel.match(/^\.([\w-]+)/); const capOfRow = sel === '.ham-row[data-ham-key] .ham-seg.cap'; const walk = n => { for (const c of n.children) { if (capOfRow) { if (c.classList.contains('cap') && c.closest('.ham-row') && c.closest('.ham-row').classList.contains('ham-row')) out.push(c); } else if (m && c.attrs[m[1]] === unesc(m[2])) out.push(c); else if (word && c.attrs['data-ham-key'] != null && String(c.attrs[word[1]] || '').split(' ').includes(unesc(word[2]))) out.push(c); else if (!m && !word && cls && c.classList.contains(cls[1]) && (!sel.includes('[data-at]') || c.attrs['data-at'] != null)) out.push(c); walk(c); } }; walk(e); return out; },
     closest(sel) { let n = e; while (n) { if (n.attrs && n.attrs['data-ham-key'] != null) return n; n = n.parentNode; } return null; },
@@ -696,6 +703,32 @@ const before = banners.children.length; assert.ok(before > 0);
 const closeBtn = el('button'); banners.children[0].appendChild(closeBtn); closeBtn.closest = () => banners.children[0];
 hamBannerDismiss(closeBtn); tick(180 * 1.5 + 1);
 assert.strictEqual(banners.children.length, before - 1, 'dismissed');
+// The banner body is itself the dismiss target (a tap on a phone); the title
+// and its "(lane, by, hh:mm)" tail are separate spans so the phone CSS can
+// stack them, while the full line still rides the title attribute.
+while (banners.children.length) banners.children[0].remove();
+const split = stageTrackerMergeBanner({ key: 'o/r/pr#40', repo: 'o/r', number: 40, title: 'fix: forty', merged_by: 'clubanderson', lane: 'review', at: 0 });
+assert.strictEqual(split.attrs['data-action'], 'hamBannerDismiss'); assert.strictEqual(split.attrs['data-arg-types'], 't');
+assert.ok(split.innerHTML.includes('<span class="merge-banner-title">fix: forty</span> <span class="merge-banner-meta">(review, by @clubanderson, '), split.innerHTML);
+assert.ok(split.innerHTML.includes('title="fix: forty (review, by @clubanderson, '), split.innerHTML);
+assert.ok(split.innerHTML.includes('data-action="hamBannerOpenLink" data-stop="1">Open on GitHub</a>'), 'the link stops the tap from also dismissing: ' + split.innerHTML);
+split.remove();
+// Phone (≤480px): only the newest STAGE_TRACKER_MERGE_BANNER_PHONE_MAX banners
+// show; the older ones hide behind a "+N more" pill that opens the Merged
+// list, and the pill tracks dismissals. A desktop never hides or shows a pill.
+window.matchMedia = q => ({ matches: q === STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY });
+const phone = []; for (let i = 0; i < STAGE_TRACKER_MERGE_BANNER_MAX; i++) phone.push(stageTrackerMergeBanner({ key: 'o/r/pr#5' + i, repo: 'o/r', number: 50 + i, at: 0 }));
+const shown = () => phone.filter(b => b.parentNode && !('hidden' in b.attrs)); const hid = () => phone.filter(b => b.parentNode && 'hidden' in b.attrs);
+assert.strictEqual(shown().length, STAGE_TRACKER_MERGE_BANNER_PHONE_MAX, 'phone shows the newest three'); assert.strictEqual(hid().length, STAGE_TRACKER_MERGE_BANNER_MAX - STAGE_TRACKER_MERGE_BANNER_PHONE_MAX);
+assert.deepStrictEqual(hid().map(b => phone.indexOf(b)), [0, 1], 'the oldest are the hidden ones');
+let more = banners.querySelector('.merge-banner-more'); assert.ok(more, 'a +N more pill'); assert.strictEqual(more.textContent, '+2 more'); assert.strictEqual(more.attrs['data-action'], 'hamMergedOpen');
+assert.strictEqual(banners.children[0], more, 'the pill leads the stack'); assert.strictEqual(stageTrackerMergeBannerList(banners).length, STAGE_TRACKER_MERGE_BANNER_MAX, 'the pill is not counted as a banner');
+stageTrackerMergeBannerDismiss(phone[4]); tick(180 * 1.5 + 1);
+assert.strictEqual(shown().length, STAGE_TRACKER_MERGE_BANNER_PHONE_MAX, 'a dismissal reveals the next oldest'); assert.strictEqual(banners.querySelector('.merge-banner-more').textContent, '+1 more');
+stageTrackerMergeBannerDismiss(phone[3]); tick(180 * 1.5 + 1);
+assert.strictEqual(hid().length, 0); assert.strictEqual(banners.querySelector('.merge-banner-more'), null, 'no pill once everything fits');
+delete window.matchMedia;
+stageTrackerMergeBannerLayout(banners); assert.strictEqual(hid().length, 0, 'a desktop hides nothing');
 console.log('ok');
 `)
 }
