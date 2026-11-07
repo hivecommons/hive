@@ -1044,3 +1044,19 @@ func TestReviewRetryServerErrorLogsWithoutFleetReport(t *testing.T) {
 		})
 	}
 }
+
+// #17103: the stage dampener suppressing a flap is designed behaviour.
+func TestStageDampenerSuppressionLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for i := 0; i < 12; i++ {
+		logger.Warn("stage transition suppressed by dampener",
+			"key", "hivecommons/hive#17073", "head", "abc", "from", "071-needs-author",
+			"to", "050-review-pending", "reason", "base-refresh:queued-behind#17048")
+	}
+	if len(*seen) != 0 {
+		t.Errorf("produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 12 {
+		t.Errorf("wrapped handler saw %d records, want 12", n)
+	}
+}
