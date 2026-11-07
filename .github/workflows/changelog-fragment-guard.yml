@@ -58,8 +58,12 @@ permissions:
   # same-repo PR branches; pull-requests: write posts the sticky guidance
   # comment. Both are read-only on fork PRs and those steps are skipped there.
   # No PR code is executed in this workflow — only git, grep and echo run.
+  # actions: write lets the autofix dispatch pr-verifier.yml on the head it
+  # pushed with github.token, the one event shape that token may fire
+  # (#17036).
   contents: write
   pull-requests: write
+  actions: write
 
 # Only a new push may cancel a running guard: the superseded run is on the
 # old head SHA, where nothing merges anyway. Label events must NOT cancel —
@@ -117,11 +121,16 @@ jobs:
           # Full history so the merge base with the target branch exists
           # locally and the three-dot diff below is computable.
           fetch-depth: 0
-          # The autofix push uses TOPUP_PUSH_TOKEN when set (a push made with
-          # that PAT re-runs the PR checks, so the guard goes green on its
-          # own); with GITHUB_TOKEN the push lands but does not trigger new
-          # runs — the next push or a maintainer re-run picks it up. Same
-          # optional-PAT convention as cli-pin-bump.yml / v5-topup.yml.
+          # The autofix push uses TOPUP_PUSH_TOKEN when set: a push made with
+          # that PAT fires `pull_request` AND `pull_request_target` runs, so
+          # every check re-reports on the new head. With github.token the
+          # push lands and fires the `pull_request` runs, but NO
+          # `pull_request_target` run (observed on #16567's b9cd4bac: eleven
+          # pull_request runs with actor=github-actions[bot], no PR Verifier).
+          # Dependabot-triggered runs see no Actions secrets, so Dependabot PRs
+          # (#16567) always take the github.token path; the dispatch step
+          # after the push re-runs pr-verifier for them. Same optional-PAT
+          # convention as cli-pin-bump.yml / v5-topup.yml / notice-autofix.yml.
           token: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
 
       - name: Code changes must carry a changelog.d fragment (or no-changelog)
@@ -240,15 +249,46 @@ jobs:
           Signed-off-by: ${PR_AUTHOR_LOGIN} <${author_email}>"
           # --force-with-lease against the SHA this run evaluated: never
           # clobber a push the author made while this job ran.
-          # Neither the TOPUP_PUSH_TOKEN push (fires `pull_request` only) nor
-          # a github.token push (fires nothing) triggers `pull_request_target`
-          # workflows, so pr-verifier (a required context) relies on its
-          # labeled/unlabeled types to catch up on the new head (#17036).
+          # When this push was made with github.token it fires no
+          # `pull_request_target` run, so pr-verifier (a required context)
+          # would stay "expected"; the step below re-triggers it (#17036).
           if git push --force-with-lease="refs/heads/${HEAD_REF}:${HEAD_SHA}" origin "HEAD:refs/heads/${HEAD_REF}"; then
             echo "pushed=true" >> "$GITHUB_OUTPUT"
             echo "fragment=$f" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::could not push the generated fragment (branch moved or token lacks push); leaving guidance comment instead"
+          fi
+
+      # Deterministically re-run pr-verifier on the head just pushed (#17036).
+      # On #16567 the autofix push landed 47s after the last prow label and
+      # nothing relabelled the PR for three days, so pr-verifier's new
+      # labeled/unlabeled types alone had no producer. When the push used
+      # TOPUP_PUSH_TOKEN it already fired `pull_request_target` and nothing
+      # more is needed. When it used github.token, the only events that token
+      # may trigger are workflow_dispatch and repository_dispatch, so dispatch
+      # pr-verifier.yml on the PR branch: the run's check lands on the branch
+      # tip, which is the head just pushed. The autofix only pushes to
+      # same-repo branches, so this never dispatches a fork's workflow file.
+      - name: Dispatch pr-verifier on the autofix head (github.token push)
+        if: ${{ steps.autofix.outputs.pushed == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAS_PUSH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN != '' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_PUSH_TOKEN" = "true" ]; then
+            echo "Pushed with TOPUP_PUSH_TOKEN — the push itself fired pull_request_target; nothing to dispatch."
+            exit 0
+          fi
+          if gh workflow run pr-verifier.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF" -f "pr_number=${PR_NUMBER}"; then
+            echo "dispatched pr-verifier.yml on ${HEAD_REF} for #${PR_NUMBER}"
+          else
+            # Most likely the branch's pr-verifier.yml predates the
+            # workflow_dispatch trigger (HTTP 422): a rebase onto the base
+            # branch fixes it, and the rebase push fires everything anyway.
+            echo "::warning::could not dispatch pr-verifier.yml on ${HEAD_REF}; the required 'verify PR contents' context stays expected on the new head until a push, a non-github.token label flip, or a close/reopen (#17036). Rebasing onto the base branch resolves it."
           fi
 
       # Whatever the autofix did, tell the author once (one sticky comment,

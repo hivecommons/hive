@@ -97,8 +97,8 @@ class NativeQueueWorkflows(unittest.TestCase):
         verifier = workflow("pr-verifier.yml")
         events = verifier.get("on", verifier.get(True))
         self.assertIn("opened", events["pull_request_target"]["types"])
-        # Bot token pushes fire no pull_request_target event; label flips must
-        # re-run the required context on the current head (#17036).
+        # A github.token push fires no pull_request_target event; App/PAT label
+        # flips must re-run the required context on the current head (#17036).
         for action in ("synchronize", "ready_for_review", "labeled", "unlabeled"):
             self.assertIn(action, events["pull_request_target"]["types"])
         job = verifier["jobs"]["verify"]
@@ -107,6 +107,42 @@ class NativeQueueWorkflows(unittest.TestCase):
         verify_step = next(step for step in job["steps"]
                            if step.get("name") == "Verifier action")
         self.assertIn("docker run --rm", verify_step["run"])
+
+    def test_autofix_push_deterministically_redispatches_the_verifier(self):
+        # #16567: the autofix push landed after the last prow label and no
+        # label event followed for three days, so labeled/unlabeled alone has
+        # no producer. workflow_dispatch is one of the two events a
+        # github.token may trigger; the guard dispatches pr-verifier on the
+        # PR branch so the check lands on the pushed head (#17036).
+        verifier = workflow("pr-verifier.yml")
+        events = verifier.get("on", verifier.get(True))
+        self.assertIn("pr_number", events["workflow_dispatch"]["inputs"])
+        self.assertTrue(events["workflow_dispatch"]["inputs"]["pr_number"]["required"])
+        self.assertIn("inputs.pr_number", verifier["concurrency"]["group"])
+        steps = verifier["jobs"]["verify"]["steps"]
+        hydrate = next(s for s in steps if s.get("id") == "dispatch_event")
+        self.assertEqual(hydrate["if"], "github.event_name == 'workflow_dispatch'")
+        # Never verify a fork's PR or a commit that is no longer the PR head.
+        self.assertIn("only same-repo PRs may be dispatched", hydrate["run"])
+        self.assertIn('echo "stale=true"', hydrate["run"])
+        verify_step = next(s for s in steps if s.get("id") == "verifier")
+        self.assertIn("steps.dispatch_event.outputs.stale != 'true'", verify_step["if"])
+        self.assertIn("steps.dispatch_event.outputs.event_path", verify_step["env"]["VERIFIER_EVENT_PATH"])
+        self.assertIn('-v "$VERIFIER_EVENT_PATH:/github/event.json:ro"', verify_step["run"])
+
+        guard = workflow("changelog-fragment-guard.yml")
+        self.assertEqual(guard["permissions"]["actions"], "write")
+        gsteps = guard["jobs"]["changelog-fragment-guard"]["steps"]
+        autofix = next(s for s in gsteps if s.get("id") == "autofix")
+        dispatch = next(s for s in gsteps if "Dispatch pr-verifier" in s.get("name", ""))
+        self.assertLess(gsteps.index(autofix), gsteps.index(dispatch))
+        self.assertIn("steps.autofix.outputs.pushed == 'true'", dispatch["if"])
+        # A PAT push already fires pull_request_target: dispatch only on the
+        # github.token path, and dispatch the PR branch so the check lands on
+        # the pushed head.
+        self.assertEqual(dispatch["env"]["HAS_PUSH_TOKEN"], "${{ secrets.TOPUP_PUSH_TOKEN != '' }}")
+        self.assertIn('[ "$HAS_PUSH_TOKEN" = "true" ]', dispatch["run"])
+        self.assertIn('gh workflow run pr-verifier.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF" -f "pr_number=${PR_NUMBER}"', dispatch["run"])
 
     def test_gosec_concurrency_fits_the_runner_cpu_limit(self):
         # gosec defaults -concurrency to runtime.NumCPU(), which inside a
