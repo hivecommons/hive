@@ -115,7 +115,26 @@ if [[ ${#markers[@]} -eq 1 ]]; then
 fi
 
 if [[ "$override" == "none" ]]; then
+  # A ::warning:: rather than a plain echo: this skip is a human-placed
+  # freeze, and a freeze nobody remembers placing looks exactly like a
+  # healthy no-op run (#12928 held releases for three weeks that way). Once
+  # the freeze has outlived RELEASE_FREEZE_MAX_DAYS (default 7) since the
+  # newest tag, fail the decide job outright so the stall turns red.
+  echo "::warning::CHANGELOG.md Unreleased section carries <!-- release: none -->; releases are frozen until that marker is removed."
   echo "Unreleased section carries <!-- release: none -->; skipping this merge by explicit human override."
+  max_days="${RELEASE_FREEZE_MAX_DAYS:-7}"
+  newest_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null | sort -V | tail -1 || true)"
+  if [[ -n "$newest_tag" && "$max_days" -gt 0 ]]; then
+    tag_epoch="$(git log -1 --format=%ct "${newest_tag}^{commit}" 2>/dev/null || echo 0)"
+    if [[ "$tag_epoch" -gt 0 ]]; then
+      age_days=$(( ( $(date +%s) - tag_epoch ) / 86400 ))
+      if [[ "$age_days" -gt "$max_days" ]]; then
+        echo "::error::<!-- release: none --> has suppressed releases for ${age_days} days (newest tag ${newest_tag}; limit RELEASE_FREEZE_MAX_DAYS=${max_days}). Remove the marker from CHANGELOG.md's Unreleased section, or raise RELEASE_FREEZE_MAX_DAYS if the freeze is deliberate." >&2
+        emit release false
+        exit 1
+      fi
+    fi
+  fi
   emit release false
   exit 0
 fi
@@ -151,7 +170,12 @@ else
   # declared with the explicit `<!-- release: major -->` marker. Crossing a
   # release line stays a human decision, which is what it already is
   # everywhere else in this repo.
-  if printf '%s\n' "$unreleased" | grep -qE '^### Added[[:space:]]*$'; then
+  # No `grep -q` here: under `set -o pipefail` a -q grep exits on the first
+  # match and the printf feeding it dies of SIGPIPE once the body outgrows
+  # the pipe buffer (~64 KiB), turning a found `### Added` into pipeline
+  # failure => a silent patch. Seen live on the 1,369-fragment backlog
+  # compiled after #12928. Let grep read to EOF instead.
+  if printf '%s\n' "$unreleased" | grep -E '^### Added[[:space:]]*$' >/dev/null; then
     bump=minor
   else
     bump=patch

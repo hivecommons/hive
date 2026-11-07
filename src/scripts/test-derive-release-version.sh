@@ -75,6 +75,22 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Case 3b: a very large Unreleased body (well past the ~64 KiB pipe buffer)
+# with `### Added` near the top must still infer minor. A `grep -q` in the
+# inference pipeline exits on first match, the feeding printf takes SIGPIPE,
+# and pipefail turned that into "no Added => patch" on the 1,369-fragment
+# backlog compiled after #12928.
+# ---------------------------------------------------------------------------
+big_body=$'## Unreleased\n\n### Added\n\n- first feature\n\n### Fixed\n\n'
+big_body+="$(yes '- a long fixed entry line that pads the section well past the pipe buffer size so the test is meaningful.' | head -n 4000)"$'\n'
+out=$(run "$big_body" v1.2.3)
+if [[ "$(get "$out" release)" == "true" && "$(get "$out" version)" == "1.3.0" ]]; then
+  note_ok "### Added in a >64KiB Unreleased body still infers minor (no SIGPIPE/pipefail regression)"
+else
+  note_fail "expected 1.3.0 from a large Added-carrying section, got: $(printf '%s' "$out" | tail -3)"
+fi
+
+# ---------------------------------------------------------------------------
 # Case 4: ### Security present is release-worthy but does not cut a new
 # release line by itself, so Added still controls the minor bump.
 # ---------------------------------------------------------------------------
@@ -95,6 +111,35 @@ if [[ "$(get "$out" release)" == "false" ]]; then
 else
   note_fail "expected release=false with release:none marker, got: $out"
 fi
+
+# ---------------------------------------------------------------------------
+# Case 5b: a release:none freeze that has outlived RELEASE_FREEZE_MAX_DAYS
+# since the newest tag fails the decide job loudly (#12928: three silent
+# weeks). Same marker on a fresh tag (case 5) stays a quiet release=false;
+# RELEASE_FREEZE_MAX_DAYS=0 disables the age check.
+# ---------------------------------------------------------------------------
+old_epoch=$(( $(date +%s) - 30 * 86400 ))
+GIT_AUTHOR_DATE="@${old_epoch} +0000" GIT_COMMITTER_DATE="@${old_epoch} +0000" \
+  git -C "$repo" commit -q --allow-empty -m "old release point"
+git -C "$repo" tag -d $(git -C "$repo" tag -l 'v*') >/dev/null 2>&1 || true
+git -C "$repo" tag -f v2.0.0 >/dev/null 2>&1
+printf '%s' $'## Unreleased\n\n<!-- release: none -->\n\n### Added\n\n- frozen\n' > "$repo/CHANGELOG.md"
+if out=$( cd "$repo" && GITHUB_OUTPUT="" bash "$derive" CHANGELOG.md 2>&1 ); then
+  note_fail "a 30-day release:none freeze must fail the decide job, got exit 0: $out"
+elif printf '%s' "$out" | grep -q '::error::.*release: none.*30 days'; then
+  note_ok "release:none freeze older than RELEASE_FREEZE_MAX_DAYS fails loudly with its age"
+else
+  note_fail "expected a ::error:: naming the freeze age, got: $out"
+fi
+if out=$( cd "$repo" && GITHUB_OUTPUT="" RELEASE_FREEZE_MAX_DAYS=0 bash "$derive" CHANGELOG.md 2>&1 ) \
+   && [[ "$(get "$out" release)" == "false" ]]; then
+  note_ok "RELEASE_FREEZE_MAX_DAYS=0 disables the freeze-age check"
+else
+  note_fail "expected a quiet release=false with the age check disabled, got: $out"
+fi
+# Later cases tag the current commit; leave it dated now again.
+git -C "$repo" commit -q --allow-empty -m "back to now"
+git -C "$repo" tag -d $(git -C "$repo" tag -l 'v*') >/dev/null 2>&1 || true
 
 # ---------------------------------------------------------------------------
 # Case 6: escape hatch forces a bump type regardless of headers present.
