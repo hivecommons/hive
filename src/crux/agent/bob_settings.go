@@ -439,3 +439,10 @@ func setBobV2AutoUpdateDisabled(settings map[string]any) bool {
 	shell[config.BobV2AutoUpdateKey] = false
 	return true
 }
+
+// bobStateHome is the HOME bob writes its installation_id and tmp/ chat
+// recordings under. Since per-agent homes it is not the shared bobSharedHome,
+// which holds only the bridged settings.
+func bobStateHome(agentName string, uid int, backend string) string {
+	return AgentHome(agentName, uid, backend)
+}

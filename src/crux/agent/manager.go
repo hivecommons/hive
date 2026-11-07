@@ -1656,10 +1656,3 @@ func (m *Manager) bobPreflightUnlocked(agent *AgentProcess) {
 	m.verifyBobKeyReadable(agent.Name, m.bobKeyFilePath(), agent.UID)
 	_ = m.verifyBobStateDirsWritable(agent.Name, bobStateHome(agent.Name, agent.UID, backend), m.workDir+"/"+agent.Name, agent.UID)
 }
-
-// bobStateHome is the HOME bob writes its installation_id and tmp/ chat
-// recordings under. Since per-agent homes it is not the shared bobSharedHome,
-// which holds only the bridged settings.
-func bobStateHome(agentName string, uid int, backend string) string {
-	return AgentHome(agentName, uid, backend)
-}
