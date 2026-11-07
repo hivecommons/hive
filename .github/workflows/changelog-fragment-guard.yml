@@ -240,9 +240,10 @@ jobs:
           Signed-off-by: ${PR_AUTHOR_LOGIN} <${author_email}>"
           # --force-with-lease against the SHA this run evaluated: never
           # clobber a push the author made while this job ran.
-          # This token push does not fire `pull_request_target` workflows, so
-          # pr-verifier (a required context) relies on its labeled/unlabeled
-          # types to catch up on the new head (#17036).
+          # Neither the TOPUP_PUSH_TOKEN push (fires `pull_request` only) nor
+          # a github.token push (fires nothing) triggers `pull_request_target`
+          # workflows, so pr-verifier (a required context) relies on its
+          # labeled/unlabeled types to catch up on the new head (#17036).
           if git push --force-with-lease="refs/heads/${HEAD_REF}:${HEAD_SHA}" origin "HEAD:refs/heads/${HEAD_REF}"; then
             echo "pushed=true" >> "$GITHUB_OUTPUT"
             echo "fragment=$f" >> "$GITHUB_OUTPUT"

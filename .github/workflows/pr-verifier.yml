@@ -1,10 +1,11 @@
 name: PR Verifier
 
 # REQUIRED CONTEXT on v5: `verify PR contents` must report on the final head
-# of every PR. A push made with the workflow token (e.g. changelog-fragment-
-# guard's autofix, or any other github.token push) fires `pull_request`
-# workflows but NOT `pull_request_target` ones, so without help this context
-# stays "expected" forever and the PR is BLOCKED (#16567, #17036).
+# of every PR. changelog-fragment-guard's autofix push (made with the
+# TOPUP_PUSH_TOKEN PAT) fired `pull_request` workflows but NOT
+# `pull_request_target` ones on #16567, and a plain github.token push fires
+# nothing at all, so without help this context stays "expected" forever and
+# the PR is BLOCKED (#16567, #17036).
 # `labeled`/`unlabeled` (and `ready_for_review`) are listed, mirroring
 # native-queue-policy.yml, so the prow/hive label flips that follow a bot push
 # (made with App tokens, which do fire this event) re-run the verifier on the
