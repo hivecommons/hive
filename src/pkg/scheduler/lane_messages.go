@@ -226,9 +226,9 @@ func (s *Scheduler) ghAuthInstructions() string {
       --body "<body citing the issue>" --issues <N>
   --body-file <path> is accepted in place of --body, exactly as gh accepts it.
   Title convention (the repo's required "PR Type" check reads the first
-  character): ✨ feature, 🐛 fix, 📖 docs, 📝 proposal, ⚠️ breaking, 🌱 chore/other.
-  A docs PR is "📖 docs: …" — 📝 is for proposals only, and the hive corrects an
-  emoji that contradicts the type ("📝 docs:" → "📖 docs:") when it opens the PR.
+  character): ✨ feature, 🐛 fix, 📖 docs/proposal, ⚠️ breaking, 🌱 chore/other.
+  A docs PR is "📖 docs: …" and a proposal is "📖 proposal: …"; the hive corrects
+  an emoji that contradicts the type ("📝 proposal:" → "📖 proposal:") when it opens the PR.
   Pass --issues <N> naming the issue this PR is for whenever the work started
   from an issue: the hive verifies the body actually references that issue and
   refuses the request otherwise, and it always refuses an empty body.

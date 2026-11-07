@@ -44,13 +44,14 @@ func NormalizePRTitle(title string) string {
 
 // The PR-title emoji convention (CONTRIBUTING.md, AGENTS.md): one emoji
 // per change kind, checked by the repository's `PR Type` gate. 📖 is
-// documentation and 📝 is a proposal — hivecommons/hive#13131 opened a docs
-// PR as "📝 docs: …" and failed the gate on exactly that swap.
+// documentation and proposals alike (the gate accepts only the kubebuilder
+// set ⚠ ✨ 🐛 📖 🚀 🌱, so 📝 fails it, hivecommons/hive#17105);
+// hivecommons/hive#13131 opened a docs PR as "📝 docs: …" and failed too.
 const (
 	PRTitleEmojiFeature  = "✨"
 	PRTitleEmojiFix      = "🐛"
 	PRTitleEmojiDocs     = "📖"
-	PRTitleEmojiProposal = "📝"
+	PRTitleEmojiProposal = "📖"
 	PRTitleEmojiBreaking = "⚠️"
 	PRTitleEmojiOther    = "🌱"
 )
