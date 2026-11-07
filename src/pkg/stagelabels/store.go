@@ -1456,6 +1456,25 @@ func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) 
 	s.dirty = true
 }
 
+// WithdrawNudge forgets the stage-072 nudges recorded for head: the hand-back
+// they announced was withdrawn because the red turned out to be a shared CI
+// incident or the base branch's, not the head's (hivecommons/hive#17003). A
+// later return to 072 on the same head then posts a fresh first nudge, and
+// the stall and adoption graces count from it rather than from the
+// withdrawn one. A record whose nudges were for another head is unchanged.
+func (s *Store) WithdrawNudge(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.NudgeHead != head {
+		return
+	}
+	r.NudgeHead, r.NudgeCount, r.NudgeOnline = "", 0, false
+	r.LastNudgeAt, r.FirstNudgeAt = time.Time{}, time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
 // Adoption modes (Record.AdoptMode).
 const (
 	AdoptModeSupersede = "supersede"

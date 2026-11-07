@@ -1405,6 +1405,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 			if verdict.Stage != stagelabels.ReturnedToContributor && verdict.Stage != stagelabels.NeedsAuthor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
+				c.withdrawNudge(ctx, store, key, obs)
 			}
 			act := stageActivity(obs, verdict.Stage)
 			if !act.WaitingOnHive && verdict.Stage == stagelabels.ReviewPending && pass.Route != nil && pass.Route.Checks.Known && pass.Route.Checks.Pending > 0 {

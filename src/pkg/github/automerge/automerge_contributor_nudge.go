@@ -310,6 +310,8 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 		return 0, nil
 	}
 	checks, asks, human := nudgeDiagnosisRouted(obs.Reason, obs.Detail, obs.Route)
+	// Name the checks first, so a fork guard among them is dropped below.
+	checks = c.nameBareCIChecks(ctx, obs, checks)
 	// A fork guard is a maintainer's to clear (hivecommons/hive#14273): the
 	// author is never asked to fix it, and a head red on nothing else is not
 	// nudged at all — no nudge, no adoption grace
@@ -357,6 +359,124 @@ func withoutForkGuard(checks, guard []string) []string {
 		}
 	}
 	return out
+}
+
+// bareCIToken reports a failing-check entry that is the CI gate's own token
+// ("check-failure", "status-error") rather than a check's name. The gate
+// names no check when the base branch requires none (EvaluateCommitCI with
+// a known-empty required set), so the nudge listed `check-failure` instead
+// of the check that failed.
+func bareCIToken(entry string) bool {
+	rest, ok := strings.CutPrefix(entry, "check-")
+	if !ok {
+		rest, ok = strings.CutPrefix(entry, "status-")
+	}
+	if !ok {
+		return false
+	}
+	switch rest {
+	case "failure", "error", "timed_out", "cancelled", "action_required", "startup_failure", "stale":
+		return true
+	}
+	return false
+}
+
+// nameBareCIChecks replaces the CI gate's bare tokens in checks with the
+// names of the checks that are red on the head. It reads the head's check
+// digest only when a bare token is present, and keeps checks as they are
+// when the digest cannot be read or names nothing.
+func (c *Engine) nameBareCIChecks(ctx context.Context, obs stageObservation, checks []string) []string {
+	if !slices.ContainsFunc(checks, bareCIToken) || obs.HeadSHA == "" {
+		return checks
+	}
+	sum, err := c.summarizeChecks(ctx, obs.Owner, obs.Repo, obs.HeadSHA, func() map[string]bool { return nil })
+	if err != nil || len(sum.Red) == 0 {
+		return checks
+	}
+	out := make([]string, 0, len(checks)+len(sum.Red))
+	for _, name := range checks {
+		if !bareCIToken(name) {
+			out = append(out, name)
+		}
+	}
+	for _, name := range sum.Red {
+		if !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// nudgeWithdrawnMarker follows the nudge marker on a nudge that was
+// withdrawn, so the withdrawal edits each comment once.
+const nudgeWithdrawnMarker = "<!-- hive:contributor-nudge-withdrawn -->"
+
+// nudgeWithdrawReason reports a recorded reason that says the head's red is
+// not the head's: an open shared-CI incident, or checks that are red on the
+// base branch too. Both keep the PR out of 072 (SharedCIDeferredStage,
+// BaseBranchRedStage), so a nudge already posted for the head is wrong.
+func nudgeWithdrawReason(reason string) bool {
+	return strings.HasPrefix(reason, stageReasonSharedCIIncident) || strings.HasPrefix(reason, stageReasonBaseBranchRed)
+}
+
+// WithdrawnNudgeComment renders the edit that replaces a nudge once its red
+// is recognised as a shared incident's or the base branch's. It keeps the
+// original marker line and drops the @-mention: an edit notifies nobody,
+// and the correction is for whoever reads the thread.
+func WithdrawnNudgeComment(previous, reason string) string {
+	marker, _, _ := strings.Cut(previous, "\n")
+	var b strings.Builder
+	b.WriteString(marker + "\n" + nudgeWithdrawnMarker + "\n")
+	b.WriteString("**Withdrawn:** this PR is not back in your court after all. ")
+	if n, ok := strings.CutPrefix(reason, stageReasonSharedCIIncident); ok {
+		fmt.Fprintf(&b, "The failing check is part of shared CI incident #%s, which affects other PRs too; this change did not break it. ", n)
+		fmt.Fprintf(&b, "There is nothing to fix here: the PR is back on the normal path, and the hive re-runs the failed checks once #%s closes.\n", n)
+		return b.String()
+	}
+	checks := strings.Split(strings.TrimPrefix(reason, stageReasonBaseBranchRed), ",")
+	for i, name := range checks {
+		checks[i] = "`" + strings.TrimSpace(name) + "`"
+	}
+	fmt.Fprintf(&b, "The failing checks (%s) are red on the base branch too; this change did not break them. ", strings.Join(checks, ", "))
+	b.WriteString("There is nothing to fix here: the PR is back on the normal path, and the hive checks it again once the base branch is green.\n")
+	return b.String()
+}
+
+// withdrawNudge edits this head's 072 nudge comments in place once the
+// stage pass reads the head's red as a shared CI incident or the base
+// branch's (nudgeWithdrawReason), and forgets the nudge so a genuine return
+// to 072 on the same head is nudged afresh. The nudge goes out the moment a
+// PR enters 072, and the scanner's incident marker can land minutes later:
+// without this the PR left 072 but the thread kept saying "the hive will not
+// merge it until the head changes" (hivecommons/hive#17003). The record is
+// only cleared once every comment is edited, so a failed read or edit is
+// retried on the next pass.
+func (c *Engine) withdrawNudge(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation) {
+	rec, ok := store.Get(key)
+	if !ok || obs.HeadSHA == "" || rec.NudgeCount == 0 || rec.NudgeHead != obs.HeadSHA || !nudgeWithdrawReason(obs.Reason) {
+		return
+	}
+	f := &engineStatusForge{e: c, owner: obs.Owner, repo: obs.Repo, number: obs.Number}
+	comments, err := f.ListComments(ctx)
+	if err != nil {
+		c.warn("stage labels: could not list comments to withdraw the contributor nudge", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return
+	}
+	prefix := ContributorNudgeMarkerPrefix + " head=" + obs.HeadSHA + " "
+	edited := 0
+	for _, cm := range comments {
+		if !cm.Own || !strings.HasPrefix(cm.Body, prefix) || strings.Contains(cm.Body, nudgeWithdrawnMarker) {
+			continue
+		}
+		// Rewrites the hive's own nudge; an edit notifies nobody.
+		if err := f.EditComment(ctx, cm.ID, WithdrawnNudgeComment(cm.Body, obs.Reason)); err != nil {
+			c.warn("stage labels: contributor nudge withdrawal failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+			return
+		}
+		edited++
+	}
+	store.WithdrawNudge(key, obs.HeadSHA)
+	c.info("stage labels: contributor nudge withdrawn", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", obs.Reason, "comments_edited", edited)
 }
 
 // resolveNudge tells the sink a PR that was in stage 072 last cycle has
