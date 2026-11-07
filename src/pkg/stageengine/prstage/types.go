@@ -218,6 +218,12 @@ type ReviewVerdict struct {
 	// Approved is true when the aggregate verdict for the head is approve and
 	// merge-eligible.
 	Approved bool
+	// ReviewOff is true when no verdict for the head exists and none can
+	// come: a reviewer agent is configured, but this hive does not dispatch
+	// the review swarm (review.require_approval or review.fan_out is off).
+	// The lane then skips with contributor-lane:review-off instead of
+	// contributor-lane:no-verdict, which reads as a review on its way.
+	ReviewOff bool
 	// Verdict is the aggregate verdict for routing, if any.
 	Verdict           string
 	DecisionRequested bool

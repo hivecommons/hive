@@ -57,6 +57,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	resp.NeedsHumanLabels = needsHumanPresetLabels(cfg, status.HiveID)
 	expectedPerspectives := stageTrackerExpectedPerspectives(cfg)
+	// A Review track only waits on "the hive reviewer" when this hive's
+	// planner dispatches one; with the swarm off it says a person reviews.
+	reviewerLane := len(expectedPerspectives) > 0 && stageTrackerReviewDispatched(cfg)
 	verifier, verifierErr := s.reviewEvidenceVerifier()
 	var evidenceVerifier *github.ReviewEvidenceVerifier
 	if verifierErr == nil {
@@ -512,8 +515,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		it.ReviewActivity = stageTrackerReviewActivity(activityPR, bundle, currentAggregate, dispatchState, status, now)
 		stageTrackerCountPerspectives(it.ReviewActivity, activityPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
-		stageTrackerReviewPendingState(it.ReviewActivity, it.Stage, it.StageSince)
-		stageTrackerReviewFallbackState(it.ReviewActivity, stageTrackerReviewFallbackInputsFor(&it, pr, len(expectedPerspectives) > 0))
+		stageTrackerReviewPendingState(it.ReviewActivity, it.Stage, it.StageSince, reviewerLane)
+		stageTrackerReviewFallbackState(it.ReviewActivity, stageTrackerReviewFallbackInputsFor(&it, pr, reviewerLane))
 		stageTrackerLeadApproveForSignOff(&it)
 		if stageTrackerClaimantStage(it.Kind, it.Stage) {
 			var worker *stageTrackerWorker
@@ -589,8 +592,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			it.ReviewActivity = stageTrackerReviewActivity(currentPR, bundle, currentAggregate, dispatchState, status, now)
 			stageTrackerCountPerspectives(it.ReviewActivity, currentPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
-			stageTrackerReviewPendingState(it.ReviewActivity, it.Stage, it.StageSince)
-			stageTrackerReviewFallbackState(it.ReviewActivity, stageTrackerReviewFallbackInputsFor(it, currentPR, len(expectedPerspectives) > 0))
+			stageTrackerReviewPendingState(it.ReviewActivity, it.Stage, it.StageSince, reviewerLane)
+			stageTrackerReviewFallbackState(it.ReviewActivity, stageTrackerReviewFallbackInputsFor(it, currentPR, reviewerLane))
 		}
 		activityItem.CIActivity, activityItem.ReviewActivity = it.CIActivity, it.ReviewActivity
 		stageTrackerApplyCodeActivity(&activityItem, dispatchState, status, now)

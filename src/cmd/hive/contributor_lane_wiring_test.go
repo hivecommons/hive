@@ -101,6 +101,47 @@ func TestContributorLaneVerdictFunc(t *testing.T) {
 	}
 }
 
+// A reviewer agent with the review swarm off (review.require_approval or
+// review.fan_out unset) never produces a verdict: the planner only plans
+// maintainer-answered heads. The gate must say so (ReviewOff) instead of
+// reading as a verdict on its way (hive-wild-mole, Danathar/sensi#681).
+func TestContributorLaneVerdictFuncReviewSwarmOff(t *testing.T) {
+	orig := review.ReviewVerdictsPath
+	review.ReviewVerdictsPath = filepath.Join(t.TempDir(), "verdicts", review.ReviewVerdictsFile)
+	defer func() { review.ReviewVerdictsPath = orig }()
+
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"reviewer": {Enabled: true, Role: "reviewer"}}}}
+	if v := contributorLaneVerdictFunc(cfg, nil)("acme/widget", 7, "sha7"); !v.Configured || v.Approved || !v.ReviewOff {
+		t.Fatalf("swarm off, no artifact: %+v, want Configured and ReviewOff", v)
+	}
+	artifact := review.Artifact{Items: []review.Aggregate{
+		{Repo: "acme/widget", Number: 8, HeadSHA: "sha8", Verdict: review.VerdictChangesRequested},
+	}}
+	if err := review.WriteArtifact(review.ReviewVerdictsPath, artifact); err != nil {
+		t.Fatal(err)
+	}
+	if v := contributorLaneVerdictFunc(cfg, nil)("acme/widget", 7, "sha7"); !v.ReviewOff {
+		t.Fatalf("swarm off, unreviewed head: %+v, want ReviewOff", v)
+	}
+	if v := contributorLaneVerdictFunc(cfg, nil)("acme/widget", 8, "sha8"); v.ReviewOff || v.Verdict != string(review.VerdictChangesRequested) {
+		t.Fatalf("swarm off, recorded verdict: %+v, want the verdict and no ReviewOff", v)
+	}
+	for _, tc := range []struct {
+		name                    string
+		requireApproval, fanOut bool
+		wantOff                 bool
+	}{
+		{"fan_out alone", false, true, true},
+		{"require_approval alone", true, false, true},
+		{"both on", true, true, false},
+	} {
+		cfg.Review.RequireApproval, cfg.Review.FanOut = tc.requireApproval, tc.fanOut
+		if v := contributorLaneVerdictFunc(cfg, nil)("acme/widget", 7, "sha7"); v.ReviewOff != tc.wantOff {
+			t.Fatalf("%s: ReviewOff = %v, want %v", tc.name, v.ReviewOff, tc.wantOff)
+		}
+	}
+}
+
 func TestContributorLaneVerdictFromArtifactNormalizesLegacyRequiresHuman(t *testing.T) {
 	artifact := review.Artifact{Items: []review.Aggregate{{
 		Repo:           "acme/widget",

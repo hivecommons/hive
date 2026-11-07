@@ -1058,7 +1058,12 @@ A PR merges through this tier only when all of the following hold:
   the tier never merges unreviewed), and `review-verdicts.json` records an
   approving aggregate verdict for the current head
   (`require_reviewer_verdict`, default `true`). Missing or failing verdicts
-  skip with `contributor-lane:no-verdict`. A `requires_human` verdict a
+  skip with `contributor-lane:no-verdict`. On a hive whose review swarm is
+  off (`review.require_approval` or `review.fan_out` unset), no reviewer is
+  ever asked, so a head with no verdict skips with
+  `contributor-lane:review-off` instead and parks at
+  `085-needs-decision`: a person merges it, or the owner turns the swarm on
+  or `require_reviewer_verdict` off. A `requires_human` verdict a
   trusted merger answered on the head clears this gate; on a PR no diff
   fence trips, the lane itself records a trusted merger's typed
   `/hive decision approve` posted after the head as that answer (the same

@@ -18,6 +18,9 @@ const (
 	CauseHumanMergeRequired   = "breaking change — owner merges"
 	CauseIntentUnauthorized   = "the merge intent could not be authorized"
 	CauseApprovalDeskWithheld = "the approval desk withheld this merge"
+	// CauseReviewOff: the contributor lane wants a reviewer verdict the hive
+	// will never ask for (contributor-lane:review-off).
+	CauseReviewOff = "the contributor lane needs a reviewer verdict (`auto_merge.contributor_lane.require_reviewer_verdict`), but this hive does not dispatch the review swarm (`review.require_approval` and `review.fan_out` must both be on), so no verdict will come for this head; a person merges it, or the owner turns the review swarm on or the verdict requirement off"
 	// CauseWorkflowPathManual is the workflow-path fence read as a rule a
 	// person merges around.
 	CauseWorkflowPathManual = "the PR edits CI workflow / action files, which the lane never merges unattended"

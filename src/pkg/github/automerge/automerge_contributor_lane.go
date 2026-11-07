@@ -50,7 +50,9 @@ package automerge
 //     other tiers use;
 //   - a reviewer agent is configured, and its verdict for the head approves
 //     (unless require_reviewer_verdict is off). With no reviewer agent the
-//     tier skips rather than merging unreviewed;
+//     tier skips rather than merging unreviewed; with the review swarm off
+//     (no verdict will ever be requested) it skips as contributor-lane:
+//     review-off, a person's call, rather than no-verdict;
 //   - the head has been unchanged and green for the configured soak;
 //   - the head SHA is re-verified immediately before the squash merge.
 
@@ -93,6 +95,7 @@ const (
 	contributorLaneReasonClaimOtherHive    = prstage.ContributorLaneReasonClaimOtherHive
 	contributorLaneReasonNoLinkedIssue     = prstage.ContributorLaneReasonNoLinkedIssue
 	contributorLaneReasonNoVerdict         = prstage.ContributorLaneReasonNoVerdict
+	contributorLaneReasonReviewOff         = prstage.ContributorLaneReasonReviewOff
 	contributorLaneReasonSoaking           = prstage.ContributorLaneReasonSoaking
 	contributorLaneReasonSentinelBlocked   = prstage.ContributorLaneReasonSentinelBlocked
 	contributorLaneReasonReporterTrustHold = prstage.ContributorLaneReasonReporterTrustHold
@@ -1597,6 +1600,11 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		if !humanApproved {
 			if verdictBlocks(stageDetail{Verdict: verdict, VerdictKnown: true}) {
 				return eval, contributorLaneReasonChangesRequested, nil
+			}
+			if verdict.ReviewOff {
+				// No reviewer will be asked for this head: no-verdict would
+				// park it at 050 "review swarm requested" indefinitely.
+				return eval, contributorLaneReasonReviewOff, nil
 			}
 			return eval, contributorLaneReasonNoVerdict, nil
 		}
