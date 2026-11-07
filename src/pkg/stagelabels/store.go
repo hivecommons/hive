@@ -591,6 +591,9 @@ type Store struct {
 	seenSaved map[string]time.Time
 
 	// dampener tracks recent stage transitions per (key, head) (#16974).
+	// The history is deliberately in-memory only and is not persisted with
+	// the Record: the window is a short 30 minutes, so a restart merely
+	// resets suppression and at worst allows a few extra flaps (#16978).
 	dampenerHead map[string]string
 	dampener     map[string][]dampenerMove
 }
@@ -738,7 +741,9 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 	return s.ObserveProgressHead(key, "", stage, reason, progress)
 }
 
-// ObserveProgressHead is ObserveProgress with key's head SHA.
+// ObserveProgressHead is ObserveProgress with key's head SHA. The dampener
+// history it consults is in-memory only (see Store.dampener): a process
+// restart forgets it, which is acceptable given the 30-minute window.
 func (s *Store) ObserveProgressHead(key, head string, stage Stage, reason string, progress bool) Transition {
 	s.mu.Lock()
 	defer s.mu.Unlock()
