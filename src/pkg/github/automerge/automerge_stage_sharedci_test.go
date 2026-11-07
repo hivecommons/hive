@@ -2,11 +2,13 @@ package automerge
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -149,4 +151,143 @@ func hasAdded(api *stageAPI, label string) bool {
 		}
 	}
 	return false
+}
+
+// A clanker PR nudged at 072 before the scanner deferred its red to a
+// shared-CI incident has that nudge edited in place to say it was
+// withdrawn, once, with nothing new posted; the head's nudge is forgotten,
+// so a head still red after the incident closes is nudged afresh. Seen on
+// hivecommons/hive#16993: nudged at 15:21 for `native-queue-policy`, deferred
+// to incident #17003 at 15:31, and the nudge kept saying "the hive will not
+// merge it until the head changes".
+func TestApplyStageLabelsSharedCIIncidentWithdrawsEarlierNudge(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	api.statefulComments = true
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 7, 15, 21, 0, 0, time.UTC)}
+	sink := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "queued"}}
+	open := 0
+	policy := StageLabelPolicy{Enabled: true, ContributorNudge: true, StalledRequireQuiet: true}
+	policy.SharedCIIncident = func(string, int, string) int { return open }
+	e := newNudgeEngine(t, apiURLOf(t, api), clock, sink, policy)
+	ctx := context.Background()
+	key := stageKey("acme", "widget", 7)
+	observe := func(labels ...string) {
+		t.Helper()
+		api.reset()
+		api.mu.Lock()
+		api.commentEdits = nil
+		api.mu.Unlock()
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", nudgePR(7, "aaa", labels...), "check-failure", false, nil)
+		e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	observe()
+	if !hasAdded(api, "stage/072-returned-to-contributor") || len(nudgeComments(api)) != 1 {
+		t.Fatalf("red head: added=%v comments=%v, want 072 and one nudge", api.added, api.comments)
+	}
+
+	open = 17003
+	clock.at = clock.at.Add(10 * time.Minute)
+	observe("stage/072-returned-to-contributor", "role/contributor", "author/clanker")
+	if !hasAdded(api, "stage/050-review-pending") || len(api.comments) != 0 {
+		t.Fatalf("deferred: added=%v comments=%v, want 050 and nothing posted", api.added, api.comments)
+	}
+	if len(api.commentEdits) != 1 {
+		t.Fatalf("deferred: edits=%v, want the nudge edited once", api.commentEdits)
+	}
+	edit := api.commentEdits[0]
+	for _, want := range []string{ContributorNudgeMarkerPrefix + " head=aaa n=1 mode=queued -->", "<!-- hive:contributor-nudge-withdrawn -->", "**Withdrawn:**", "shared CI incident #17003", "once #17003 closes"} {
+		if !strings.Contains(edit, want) {
+			t.Errorf("withdrawn nudge lacks %q:\n%s", want, edit)
+		}
+	}
+	for _, gone := range []string{"@mallory", "until the head changes"} {
+		if strings.Contains(edit, gone) {
+			t.Errorf("withdrawn nudge still says %q:\n%s", gone, edit)
+		}
+	}
+	if rec, _ := e.stageStoreOrShared().Get(key); rec.NudgeHead != "" || rec.NudgeCount != 0 {
+		t.Fatalf("nudge not forgotten: head=%q count=%d", rec.NudgeHead, rec.NudgeCount)
+	}
+
+	clock.at = clock.at.Add(time.Hour)
+	observe("stage/050-review-pending", "role/contributor", "author/clanker")
+	if len(api.commentEdits) != 0 || len(api.comments) != 0 {
+		t.Fatalf("second deferred pass: edits=%v comments=%v, want none", api.commentEdits, api.comments)
+	}
+
+	// The incident closed and the re-run left the head red: the author's
+	// now, with a fresh first nudge rather than silence.
+	open = 0
+	clock.at = clock.at.Add(time.Hour)
+	observe("stage/050-review-pending", "role/contributor", "author/clanker")
+	if got := nudgeComments(api); !hasAdded(api, "stage/072-returned-to-contributor") || len(got) != 1 || !strings.Contains(got[0], "n=1 ") {
+		t.Fatalf("after recovery: added=%v nudges=%v, want 072 and a fresh first nudge", api.added, got)
+	}
+}
+
+// The withdrawal text for a base-branch red names the checks.
+func TestWithdrawnNudgeCommentBaseBranchRed(t *testing.T) {
+	prev := ContributorNudgeMarkerPrefix + " head=aaa n=1 mode=comment -->\n@mallory this PR is back in your court."
+	got := WithdrawnNudgeComment(prev, stageReasonBaseBranchRed+"build,lint")
+	if !strings.HasPrefix(got, ContributorNudgeMarkerPrefix+" head=aaa n=1 mode=comment -->\n"+nudgeWithdrawnMarker+"\n") {
+		t.Fatalf("marker lines not kept:\n%s", got)
+	}
+	for _, want := range []string{"(`build`, `lint`) are red on the base branch too", "once the base branch is green"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "@mallory") {
+		t.Errorf("withdrawal keeps the mention:\n%s", got)
+	}
+}
+
+// When the CI gate's reason is its bare `check-failure` token (a base branch
+// with no required checks), the nudge names the checks red on the head.
+func TestContributorNudgeNamesChecksForBareCIToken(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 7, 15, 21, 0, 0, time.UTC)}
+	sink := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "queued"}}
+	policy := StageLabelPolicy{Enabled: true, ContributorNudge: true, StalledRequireQuiet: true}
+	e := newNudgeEngine(t, apiURLOf(t, api), clock, sink, policy)
+	var asked []string
+	e.checkSummary = func(_ context.Context, owner, repo, sha string) (hgithub.CommitChecksSummary, error) {
+		asked = append(asked, owner+"/"+repo+"@"+sha)
+		return hgithub.CommitChecksSummary{Total: 3, Green: 1, Red: []string{"native-queue-policy", "unit"}}, nil
+	}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", nudgePR(7, "aaa"), "check-failure", false, nil)
+	e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := nudgeComments(api)
+	if len(got) != 1 {
+		t.Fatalf("nudges=%v, want one", got)
+	}
+	if !strings.Contains(got[0], "- `native-queue-policy`\n- `unit`\n") || strings.Contains(got[0], "`check-failure`") {
+		t.Fatalf("nudge does not name the red checks:\n%s", got[0])
+	}
+	if !slices.Contains(asked, "acme/widget@aaa") {
+		t.Fatalf("check digest asked %v, want acme/widget@aaa", asked)
+	}
+	if len(sink.nudges) != 1 || !slices.Equal(sink.nudges[0].FailingChecks, []string{"native-queue-policy", "unit"}) {
+		t.Fatalf("relay task checks = %v", sink.nudges)
+	}
+}
+
+func TestBareCIToken(t *testing.T) {
+	for entry, want := range map[string]bool{
+		"check-failure": true, "status-error": true, "check-timed_out": true,
+		"check-failing:unit": false, "native-queue-policy": false, "check-links": false, "check-pending": false,
+	} {
+		if got := bareCIToken(entry); got != want {
+			t.Errorf("bareCIToken(%q) = %v, want %v", entry, got, want)
+		}
+	}
 }
