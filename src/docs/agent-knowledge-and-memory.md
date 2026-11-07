@@ -160,11 +160,18 @@ conversation. `/clear` empties the chat; it does not touch anything on disk.
   transcripts, history and memory stay on the host. This is the one place
   memory is isolated by construction.
 
-**No memory handling.** Nothing in Hive sets a CLI's "disable auto-memory"
-option (`inferenceSettingsSeed` seeds permissions/onboarding/remote-control
-keys only), prunes a `memory/` directory, or clears memory on kick, `/clear`
-or restart. What each CLI remembers, it remembers across kicks and pod
-restarts — but, since #17031, not across agents.
+**Memory policy** (`agents.cli_memory`, `cli_memory.go`,
+[#17032](https://github.com/hivecommons/hive/issues/17032)). `auto_memory`
+defaults to **false**: Claude Code is launched with
+`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, Codex gets `[features] memories = false`
+in `$CODEX_HOME/config.toml`, Copilot CLI gets `"memory": false` in its
+per-agent `~/.copilot/settings.json`; Gemini has no equivalent switch.
+`clear_on_kick` (default false) removes this agent's
+`~/.claude/projects/*/memory/`, `$CODEX_HOME/memories*/` and
+`~/.gemini/GEMINI.md` before each non-resume kick, next to the `/clear`. Both
+keys can be overridden per agent. With both off, what each CLI remembers it
+remembers across kicks and pod restarts — but, since #17031, not across
+agents. See [agent-configuration.md](agent-configuration.md#cli-auto-memory-agentscli_memory).
 
 ### What persists across what
 
@@ -176,10 +183,10 @@ not visible.
 |---|---|---|---|---|
 | **Knowledge** (`# Relevant Knowledge`, AGENTS.md, skills) | re-selected for *this* kick's issues | n/a — re-injected next kick | ✓ vaults on `/data` | ✓ same stores, filtered by its own `agent_scopes` |
 | **Conversation** — all CLIs | ✗ (`/clear` first, unless `clear_on_kick: false` or a resume kick) | ✗ | ✗ (CLI relaunched) | ✗ |
-| **Claude Code memory** (`~/.claude/projects/-data-agents-<name>/memory/`, `~/.claude/CLAUDE.md`, `history.jsonl`) | ✓ | ✓ | ✓ (`/data/home/agents/<name>/.claude` is persistent) | ✗ per-agent dir (#17031); only `.credentials.json` / `settings.json` shared. Before #17031 the whole tree was one bridged copy any agent could read or rewrite |
-| **Codex memory** (`$CODEX_HOME`) | ✓ | ✓ | ✓ (`/data/home/.codex-<name>`) | ✗ per-agent dir; only `auth.json` shared |
+| **Claude Code memory** (`~/.claude/projects/-data-agents-<name>/memory/`, `~/.claude/CLAUDE.md`, `history.jsonl`) | ✓ unless `cli_memory.clear_on_kick` (and off by default: `auto_memory: false`) | ✓ | ✓ (`/data/home/agents/<name>/.claude` is persistent) | ✗ per-agent dir (#17031); only `.credentials.json` / `settings.json` shared. Before #17031 the whole tree was one bridged copy any agent could read or rewrite |
+| **Codex memory** (`$CODEX_HOME`) | ✓ unless `cli_memory.clear_on_kick` (off by default) | ✓ | ✓ (`/data/home/.codex-<name>`) | ✗ per-agent dir; only `auth.json` shared |
 | **Copilot CLI memory/sessions** (`~/.copilot`) | ✓ | ✓ | ✓ | ✗ per-agent dir (#9444); only `config.json` shared |
-| **Gemini memory** (`~/.gemini/GEMINI.md`, state) | ✓ | ✓ | ✓ | ✗ per-agent dir (#17031); only sign-in files, `settings.json`, `antigravity-cli/` shared |
+| **Gemini memory** (`~/.gemini/GEMINI.md`, state) | ✓ unless `cli_memory.clear_on_kick` | ✓ | ✓ | ✗ per-agent dir (#17031); only sign-in files, `settings.json`, `antigravity-cli/` shared |
 | **Bob memory/settings** (`~/.bob`) | ✓ | ✓ | ✓ | ✗ per-agent dir (#17031); only `settings.json` / `settings/` shared |
 
 The dashboard's cost accounting reads `data.claude_sessions_dir` (default
@@ -199,9 +206,9 @@ Do not treat the following as current behaviour; follow the links.
   `.claude`/`.gemini`/`.bob`, described above). Hives upgraded from before it
   still hold the old shared store under `/data/home/.claude/projects`; it is
   left in place and logged once, remove or drain it by hand.
-- [#17032](https://github.com/hivecommons/hive/issues/17032) — disable CLI
-  auto-memory by default and add a `clear_memory_on_kick` option alongside
-  `clear_on_kick`.
+- [#17032](https://github.com/hivecommons/hive/issues/17032) — done:
+  `agents.cli_memory.auto_memory` (default off) and
+  `agents.cli_memory.clear_on_kick`, described above.
 - [#17033](https://github.com/hivecommons/hive/issues/17033) — drain CLI
   auto-memory into beads/knowledge at session end instead of a hidden
   `MEMORY.md` (revives open question 5 of
