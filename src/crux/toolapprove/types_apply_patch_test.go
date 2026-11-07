@@ -1,7 +1,9 @@
 package toolapprove
 
 import (
+	"context"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +29,39 @@ func TestToolRequestApplyPatchPaths(t *testing.T) {
 			}
 			if got := tt.req.GetFilePaths(); !reflect.DeepEqual(got, tt.wantAll) {
 				t.Errorf("GetFilePaths() = %v, want %v", got, tt.wantAll)
+			}
+		})
+	}
+}
+
+// TestSecurityScanner_ApplyPatchGuardrailAnyPosition drives Scan with a
+// multi-file apply_patch so a guardrail path that is not the first header
+// still fails the scan (#16979).
+func TestSecurityScanner_ApplyPatchGuardrailAnyPosition(t *testing.T) {
+	scanner := NewDefaultSecurityScanner()
+	tests := []struct {
+		name       string
+		patch      string
+		wantPassed bool
+		wantPath   string
+	}{
+		{"guardrail path second", "*** Begin Patch\n*** Update File: src/a.go\n@@\n-x\n+y\n*** Add File: OWNERS\n+a\n*** End Patch", false, `"OWNERS"`},
+		{"guardrail path last via move", "*** Begin Patch\n*** Update File: src/a.go\n*** Update File: src/b.go\n*** Move to: policies/p.yaml\n*** End Patch", false, `"policies/p.yaml"`},
+		{"guardrail path first", "*** Begin Patch\n*** Update File: hive.yaml\n*** Update File: src/a.go\n*** End Patch", false, `"hive.yaml"`},
+		{"no guardrail paths", "*** Begin Patch\n*** Update File: src/a.go\n*** Add File: src/b.go\n*** End Patch", true, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ToolRequest{Tool: "apply_patch", Arguments: map[string]any{"input": tt.patch}}
+			res, err := scanner.Scan(context.Background(), req)
+			if err != nil {
+				t.Fatalf("scanner error: %v", err)
+			}
+			if res.Passed != tt.wantPassed {
+				t.Fatalf("Passed = %v, want %v (violations: %v)", res.Passed, tt.wantPassed, res.Violations)
+			}
+			if tt.wantPath != "" && !strings.Contains(res.Details, tt.wantPath) {
+				t.Errorf("Details %q does not name %s", res.Details, tt.wantPath)
 			}
 		})
 	}
