@@ -2748,10 +2748,10 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			prs[i].CIActivity.WorkflowApproval = c.workflowApprovalWithLedger(prs[i].Repo, prs[i].Number, prs[i].HeadSHA, c.workflowRunsAwaitingApproval(ctx, prs[i].Repo, prs[i].HeadSHA))
 		}
 		if prs[i].CIStatus == "failure" {
-			if texts, ok := c.redPRCommentTexts(ctx, &prs[i]); ok {
+			if texts, hiveTexts, ok := c.redPRCommentTexts(ctx, &prs[i]); ok {
 				prs[i].SharedCIIncident = c.openSharedCIIncident(ctx, &prs[i], texts, incidents)
 				prs[i].ExternalCIDeferred = externalCIDeferred(texts, prs[i].HeadSHA, prs[i].FailingCheckRunIDs)
-				prs[i].TransientCITriaged = transientCITriaged(texts, prs[i].HeadSHA, prs[i].FailingCheckRunIDs)
+				prs[i].TransientCITriaged = transientCITriaged(hiveTexts, prs[i].HeadSHA, prs[i].FailingCheckRunIDs)
 			}
 		}
 		facts.attach(ctx, &prs[i], reported)

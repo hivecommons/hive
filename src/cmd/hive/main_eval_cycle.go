@@ -798,7 +798,23 @@ func runEvalCycle(
 	// re-engagement budget only for kicks that were accepted. Composes with the
 	// merge watcher (#2): both go through the same per-red-SHA cap, so the same
 	// PR is never double-dispatched within a red-SHA's budget.
-	reapStuckRedPRs(cfg, actionable, escalatedPRs, agentKicker{mgr: agentMgr},
+	//
+	// A head an agent triaged as transient infrastructure (hive-ci-transient
+	// markers) is re-run once here instead: the reaper and the merge watcher
+	// hold their fix kicks while that re-run is owed
+	// (projectbluefin/common#1647).
+	reapSkip := escalatedPRs
+	if ghClient != nil {
+		var audit func(string, int, string)
+		if dashSrv != nil {
+			audit = func(repo string, number int, detail string) {
+				dashSrv.AuditLogRecord("system", "transient-ci-rerun", detail, "", repo, number)
+			}
+		}
+		reran := rerunTransientTriagedPRs(ctx, cfg, ghClient, actionable, escalatedPRs, audit, logger)
+		reapSkip = reaperSkipAfterRerun(escalatedPRs, reran)
+	}
+	reapStuckRedPRs(cfg, actionable, reapSkip, agentKicker{mgr: agentMgr},
 		agentAvailability(cfg, agentMgr), logger)
 
 	// Release sentinel (hivecommons/hive#9585), opt-in and default OFF: when
