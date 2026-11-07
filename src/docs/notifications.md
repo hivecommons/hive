@@ -623,6 +623,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).commentOnHumanFiledTwin` | `attention` |  |
 | `github.(*Client).createIssue` | `attention` |  |
 | `github.(*Client).handleOneIssueRequest` | `attention` |  |
+| `github.(*Client).noteDuplicateGuardOnIssues` | `attention` | tells the blocked agent's issue that its branch was not opened as a PR because another hive agent's open PR edits an overlapping set of files; write-back gate consulted first |
 | `github.(*Client).parkClankerRequestedPR` | `attention` |  |
 | `github.(*Client).parkUnansweredNoPRIssue` | `attention` | the park note on a stalled 010 issue the hive answered without a PR |
 | `github.(*Client).redirectToExistingPR` | `attention` |  |

@@ -93,9 +93,16 @@ type Record struct {
 	// head, never against the previous hive head, so a refused push cannot
 	// become the baseline for the next one and a chain of small cuts cannot
 	// erode the change (IntentBaseHead).
-	AdoptedIntentHead string    `json:"adopted_intent_head,omitempty"`
-	AdoptedBy         int       `json:"adopted_by,omitempty"`
-	AdoptedAt         time.Time `json:"adopted_at,omitempty"`
+	AdoptedIntentHead string `json:"adopted_intent_head,omitempty"`
+	// AdoptedForReview says an in-place adoption took the PR over for the
+	// review swarm's requested changes, with CI not red. Such a fix may
+	// rightly drop part of the PR's change (the review asked for it), so a
+	// hive push the intent check refuses is released once the reviewer
+	// approves that exact head (hivecommons/hive#16816 follow-up,
+	// projectbluefin/utah-packages#943). An adoption for red CI never sets it.
+	AdoptedForReview bool      `json:"adopted_for_review,omitempty"`
+	AdoptedBy        int       `json:"adopted_by,omitempty"`
+	AdoptedAt        time.Time `json:"adopted_at,omitempty"`
 	// AdoptCheckedAt is the last time the superseding PR's state was polled.
 	AdoptCheckedAt time.Time `json:"adopt_checked_at,omitempty"`
 	// SupersededBy / SupersededAt record that the superseding App PR merged
@@ -1456,6 +1463,25 @@ func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) 
 	s.dirty = true
 }
 
+// WithdrawNudge forgets the stage-072 nudges recorded for head: the hand-back
+// they announced was withdrawn because the red turned out to be a shared CI
+// incident or the base branch's, not the head's (hivecommons/hive#17003). A
+// later return to 072 on the same head then posts a fresh first nudge, and
+// the stall and adoption graces count from it rather than from the
+// withdrawn one. A record whose nudges were for another head is unchanged.
+func (s *Store) WithdrawNudge(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.NudgeHead != head {
+		return
+	}
+	r.NudgeHead, r.NudgeCount, r.NudgeOnline = "", 0, false
+	r.LastNudgeAt, r.FirstNudgeAt = time.Time{}, time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
 // Adoption modes (Record.AdoptMode).
 const (
 	AdoptModeSupersede = "supersede"
@@ -1693,10 +1719,24 @@ func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
 		return
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, 0, now, now
-	r.AdoptedIntentHead = head
+	r.AdoptedIntentHead, r.AdoptedForReview = head, false
 	r.AdoptMode, r.AdoptReason = AdoptModeInPlace, reason
 	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
 	r.AdoptedHeadAt = now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkAdoptedForReview records that the live in-place adoption of head was
+// taken for the review swarm's requested changes (Record.AdoptedForReview).
+func (s *Store) MarkAdoptedForReview(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || !r.AdoptedInPlace() || r.AdoptedIntentHead != head {
+		return
+	}
+	r.AdoptedForReview = true
 	s.items[key] = r
 	s.dirty = true
 }

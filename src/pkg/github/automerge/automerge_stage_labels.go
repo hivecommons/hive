@@ -1264,6 +1264,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					firstErr = err
 				}
 				prevRec, _ = store.Get(key)
+				if c.releaseApprovedFixerRevert(store, key, obs, prevRec) {
+					prevRec, _ = store.Get(key)
+				}
 			}
 			if hadPrev && prevRec.AdoptionLive(obs.HeadSHA) && verdict.Stage.YieldsToAdoptionFor(pass.Route) {
 				// The hive owns this PR: whether the lane sees it red,
@@ -1405,6 +1408,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 			if verdict.Stage != stagelabels.ReturnedToContributor && verdict.Stage != stagelabels.NeedsAuthor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
+				c.withdrawNudge(ctx, store, key, obs)
 			}
 			act := stageActivity(obs, verdict.Stage)
 			if !act.WaitingOnHive && verdict.Stage == stagelabels.ReviewPending && pass.Route != nil && pass.Route.Checks.Known && pass.Route.Checks.Pending > 0 {

@@ -294,6 +294,12 @@ someone re-runs it. The shared-CI rerun sweep
   head gets no comment. At most 10 PRs are re-run per pass; each re-run is
   logged as `shared-ci rerun repo=… pr=… incident=#…` and audited as
   `shared-ci-rerun`.
+- Until that comment lands, the PR still counts as deferred to the incident
+  for up to 30 minutes after the close: the head is red only because the
+  failed jobs have not run again yet, so the stage pass does not hand it
+  back to its author (072) and the kick builders do not list it for repair
+  in that window. A "not planned" close gets no re-run and releases the PR
+  at once.
 - It is an unstick step (`shared_ci_rerun` in `api_budget.unstick_steps`): it
   keeps running in `conserve` and is shed only in `critical`.
 

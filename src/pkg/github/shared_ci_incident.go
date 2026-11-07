@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // sharedCIMarkerRE matches the hidden marker a fix lane stamps on the single
@@ -61,6 +63,24 @@ func (c *Client) redPRCommentTexts(ctx context.Context, pr *PullRequest) (texts,
 	return texts, hiveTexts, true
 }
 
+// sharedCIRerunAwaitGrace is how long after a [shared-ci] incident closes a
+// PR deferred to it stays deferred while it waits for SweepSharedCIReruns
+// to re-run its failed jobs. The sweep runs every 15 minutes
+// (cmd/hive sharedCIRerunInterval); between the close and that re-run the
+// head is still red only because of the incident, so handing it back to
+// its author then posted a "the hive will not merge it until the head
+// changes" nudge for a check the hive was about to re-run.
+const sharedCIRerunAwaitGrace = 30 * time.Minute
+
+// sharedCIIncidentState is one incident issue's state as one enrichment pass
+// read it.
+type sharedCIIncidentState struct {
+	open bool
+	// awaitingRerun is set for an incident closed as completed within
+	// sharedCIRerunAwaitGrace: the rerun sweep has not had its turn yet.
+	awaitingRerun bool
+}
+
 // openSharedCIIncident returns the shared-CI incident a red PR has already
 // been deferred to, when that incident issue is still open; otherwise 0
 // (hivecommons/hive#10528). texts are the PR's comment bodies, oldest first.
@@ -68,12 +88,18 @@ func (c *Client) redPRCommentTexts(ctx context.Context, pr *PullRequest) (texts,
 // kick builders keep it out of their repair lists; once the incident closes
 // the marker is stale and the PR is listed again.
 //
+// An incident closed as completed in the last sharedCIRerunAwaitGrace still
+// defers the PR until the rerun sweep has stamped its
+// `<!-- hive-shared-ci-rerun-<n> -->` marker: the red is the incident's
+// until the failed jobs have run again on the repaired base. A
+// not-planned close gets no re-run, so it releases the PR at once.
+//
 // Every lookup failure returns 0: listing a deferred PR costs one redundant
 // triage, hiding a PR that is not deferred stalls it, so the error side is
-// the listed side. states memoizes incident-open lookups for one enrichment
+// the listed side. states memoizes incident lookups for one enrichment
 // pass, keyed "owner/repo#n", so N PRs deferred to one incident cost one
 // issue GET.
-func (c *Client) openSharedCIIncident(ctx context.Context, pr *PullRequest, texts []string, states map[string]bool) int {
+func (c *Client) openSharedCIIncident(ctx context.Context, pr *PullRequest, texts []string, states map[string]sharedCIIncidentState) int {
 	incident := newestSharedCIMarker(texts)
 	if incident == 0 {
 		return 0
@@ -81,18 +107,38 @@ func (c *Client) openSharedCIIncident(ctx context.Context, pr *PullRequest, text
 	owner, repo := c.splitRepo(pr.Repo)
 	ctx = WithRESTCaller(ctx, "hive:shared_ci_incident")
 	key := fmt.Sprintf("%s/%s#%d", owner, repo, incident)
-	open, known := states[key]
+	state, known := states[key]
 	if !known {
 		issue, _, err := c.client.Issues.Get(ctx, owner, repo, incident)
 		if err != nil {
 			c.logger.Debug("shared-CI incident state lookup failed; PR stays in the repair list", "repo", pr.Repo, "pr", pr.Number, "incident", incident, "error", err)
 			return 0
 		}
-		open = issue.GetState() == "open"
-		states[key] = open
+		state.open = issue.GetState() == "open"
+		if !state.open && issue.ClosedAt != nil && !strings.EqualFold(issue.GetStateReason(), "not_planned") {
+			state.awaitingRerun = time.Since(issue.GetClosedAt().Time) < sharedCIRerunAwaitGrace
+		}
+		states[key] = state
 	}
-	if !open {
-		return 0
+	if state.open {
+		return incident
 	}
-	return incident
+	if state.awaitingRerun && !sharedCIRerunStamped(texts, incident) {
+		return incident
+	}
+	return 0
+}
+
+// sharedCIRerunStamped reports whether the rerun sweep has already re-run
+// this PR's failed jobs for incident (its `<!-- hive-shared-ci-rerun-<n> -->`
+// marker is in texts).
+func sharedCIRerunStamped(texts []string, incident int) bool {
+	for _, text := range texts {
+		for _, m := range sharedCIRerunMarkerRE.FindAllStringSubmatch(text, -1) {
+			if n, err := strconv.Atoi(m[1]); err == nil && n == incident {
+				return true
+			}
+		}
+	}
+	return false
 }

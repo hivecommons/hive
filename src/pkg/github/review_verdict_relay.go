@@ -111,6 +111,18 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 			report.RedundantOf = redundantOf
 		}
 		report.PermissionsTighteningOnly = tightening
+		if reason, unread := review.UnreadableReviewReason(report); unread {
+			// A rate limit kept the reviewer from reading the PR: that is
+			// no verdict, not a requires_human. Nothing is recorded, so no
+			// person is asked and no security hold is claimed; the dispatch
+			// row stays open, expires after review.pending_ttl, and the
+			// planner asks again (projectbluefin/testsuite#1116).
+			c.logger.Info("review-request watcher: unreadable review not recorded as a verdict; the perspective is re-asked after the pending TTL",
+				slog.String("repo", req.Repo), slog.Int("number", req.Number),
+				slog.String("perspective", string(report.Perspective)),
+				slog.String("agent", req.Agent), slog.String("reason", reason))
+			continue
+		}
 		if written, ok, dispatched := c.writeOneVerdict(ctx, req, report, dir, prHead, prSnapshot); ok {
 			recorded = append(recorded, written)
 			wake = wake || dispatched

@@ -1134,9 +1134,11 @@ type PullRequest struct {
 	HeadTree string `json:"head_tree,omitempty"`
 	// SharedCIIncident is the open [shared-ci] incident issue (same repo)
 	// that the newest `<!-- hive-shared-ci-<n> -->` marker on this red PR
-	// defers it to; 0 when the PR carries no marker, the incident is closed,
-	// or the lookup failed. Kick builders keep such a PR out of their repair
-	// lists until the incident closes (hivecommons/hive#10528).
+	// defers it to; 0 when the PR carries no marker, the incident is closed
+	// (and the PR's failed jobs were re-run, or the close is older than the
+	// re-run grace), or the lookup failed. Kick builders keep such a PR out
+	// of their repair lists until the incident closes and its checks are
+	// re-run (hivecommons/hive#10528).
 	SharedCIIncident int `json:"shared_ci_incident,omitempty"`
 	// ExternalCIDeferred reports that every failing check run on this red
 	// PR's current head carries a
@@ -2736,7 +2738,7 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 		return
 	}
 	facts := newProtectionCollector(c)
-	incidents := map[string]bool{}
+	incidents := map[string]sharedCIIncidentState{}
 	for i := range prs {
 		reported := c.enrichPRCI(ctx, &prs[i])
 		// Unreported checks may be workflow runs waiting on GitHub's

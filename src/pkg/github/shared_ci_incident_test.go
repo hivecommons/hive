@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestNewestSharedCIMarker(t *testing.T) {
@@ -35,6 +36,17 @@ func TestNewestSharedCIMarker(t *testing.T) {
 // counts issue GETs per incident.
 func sharedCIServer(t *testing.T, comments map[int][]string, incidentState map[int]string) (*httptest.Server, map[int]int, *sync.Mutex) {
 	t.Helper()
+	incidents := map[int]map[string]any{}
+	for n, state := range incidentState {
+		incidents[n] = map[string]any{"state": state}
+	}
+	return sharedCIServerIssues(t, comments, incidents)
+}
+
+// sharedCIServerIssues is sharedCIServer with each incident issue's full
+// payload (state, closed_at, state_reason).
+func sharedCIServerIssues(t *testing.T, comments map[int][]string, incidentIssues map[int]map[string]any) (*httptest.Server, map[int]int, *sync.Mutex) {
+	t.Helper()
 	commentsRE := regexp.MustCompile(`^/repos/org/repo/issues/(\d+)/comments$`)
 	issueRE := regexp.MustCompile(`^/repos/org/repo/issues/(\d+)$`)
 	var mu sync.Mutex
@@ -51,7 +63,7 @@ func sharedCIServer(t *testing.T, comments map[int][]string, incidentState map[i
 		}
 		if m := issueRE.FindStringSubmatch(r.URL.Path); m != nil {
 			n, _ := strconv.Atoi(m[1])
-			state, ok := incidentState[n]
+			fields, ok := incidentIssues[n]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
 				return
@@ -59,7 +71,11 @@ func sharedCIServer(t *testing.T, comments map[int][]string, incidentState map[i
 			mu.Lock()
 			issueGets[n]++
 			mu.Unlock()
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": state})
+			out := map[string]any{"number": n}
+			for k, v := range fields {
+				out[k] = v
+			}
+			_ = json.NewEncoder(w).Encode(out)
 			return
 		}
 		if regexp.MustCompile(`/commits/[^/]+/check-runs$`).MatchString(r.URL.Path) {
@@ -112,6 +128,48 @@ func TestEnrichCIStatus_SharedCIIncidentOnlyWhileIncidentOpen(t *testing.T) {
 	defer mu.Unlock()
 	if issueGets[500] != 1 || issueGets[600] != 1 {
 		t.Errorf("incident state must be fetched once per incident per pass, got %v", issueGets)
+	}
+}
+
+// An incident closed as completed moments ago keeps its PRs deferred until
+// the rerun sweep has re-run them (its rerun marker): until then the head is
+// red only because the failed jobs have not run again on the repaired base,
+// and handing it back to its author then posted a "will not merge until the
+// head changes" nudge (hivecommons/hive#17003). An old close, a not-planned
+// close (no re-run comes) or a re-run already stamped releases the PR.
+func TestEnrichCIStatus_SharedCIIncidentHeldUntilRerunAfterClose(t *testing.T) {
+	recent := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)
+	old := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
+	srv, issueGets, mu := sharedCIServerIssues(t, map[int][]string{
+		1: {"<!-- hive-shared-ci-700 -->"},
+		2: {"<!-- hive-shared-ci-700 -->", "Re-ran the failed jobs.\n<!-- hive-shared-ci-rerun-700 -->"},
+		3: {"<!-- hive-shared-ci-701 -->"},
+		4: {"<!-- hive-shared-ci-702 -->"},
+		5: {"<!-- hive-shared-ci-700 -->", "<!-- hive-shared-ci-rerun-650 -->"},
+	}, map[int]map[string]any{
+		700: {"state": "closed", "state_reason": "completed", "closed_at": recent},
+		701: {"state": "closed", "state_reason": "completed", "closed_at": old},
+		702: {"state": "closed", "state_reason": "not_planned", "closed_at": recent},
+	})
+	c := newTestClient(t, srv, "org", []string{"repo"})
+	prs := []PullRequest{
+		{Repo: "org/repo", Number: 1, HeadSHA: "a1"},
+		{Repo: "org/repo", Number: 2, HeadSHA: "a2"},
+		{Repo: "org/repo", Number: 3, HeadSHA: "a3"},
+		{Repo: "org/repo", Number: 4, HeadSHA: "a4"},
+		{Repo: "org/repo", Number: 5, HeadSHA: "a5"},
+	}
+	c.EnrichCIStatus(context.Background(), prs)
+	want := map[int]int{1: 700, 2: 0, 3: 0, 4: 0, 5: 700}
+	for _, pr := range prs {
+		if pr.SharedCIIncident != want[pr.Number] {
+			t.Errorf("PR %d SharedCIIncident = %d, want %d", pr.Number, pr.SharedCIIncident, want[pr.Number])
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if issueGets[700] != 1 {
+		t.Errorf("incident 700 fetched %d times in one pass, want 1", issueGets[700])
 	}
 }
 
