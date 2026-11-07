@@ -51,6 +51,17 @@ func TestFindSecretSkipsHeuristicShapesAndPlaceholders(t *testing.T) {
 	}
 }
 
+// A skipped match must not end the search for its pattern: a digitless
+// placeholder earlier in the text (README prose, a fixture) must not hide a
+// real token of the same shape that follows it.
+func TestFindSecretSkippedMatchDoesNotHideLaterMatch(t *testing.T) {
+	text := "example xox" + "b-abcdefghijklmnop then real " + fakeSlackBotToken
+	category, found := FindSecret(text)
+	if !found || category != "slack-token" {
+		t.Fatalf("FindSecret(%q) = (%q, %v), want (\"slack-token\", true)", text, category, found)
+	}
+}
+
 // Every heuristic pattern FindSecret skips must still be masked by
 // ScrubString, so marking a shape heuristic never weakens log scrubbing.
 func TestHeuristicShapesStillScrubbed(t *testing.T) {
