@@ -132,6 +132,27 @@ func paneMatchesAny(pane string, patterns []string) bool {
 	return false
 }
 
+// authScreenTailLines bounds where a real login prompt is looked for: it sits
+// at the bottom of the pane, while source/grep output scrolls through above.
+const authScreenTailLines = 15
+
+// paneShowsAuthScreen reports whether the tail of the pane carries an auth
+// pattern outside source/grep output (#17006).
+func paneShowsAuthScreen(pane string) bool {
+	lines := strings.Split(strings.TrimRight(pane, " \t\r\n"), "\n")
+	if len(lines) > authScreenTailLines {
+		lines = lines[len(lines)-authScreenTailLines:]
+	}
+	for _, line := range lines {
+		for _, p := range authScreenPatterns {
+			if strings.Contains(line, p) && !authHitIsSourceText(line, p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // looksLikeShellPrompt reports whether the last non-empty line of the pane is
 // a bare shell prompt (short line ending in a prompt character).
 func looksLikeShellPrompt(pane string) bool {
@@ -197,7 +218,7 @@ func Classify(obs Observation, now time.Time, s Settings) Classification {
 		}
 		return Classification{ClassNoSession, "tmux session missing"}
 	}
-	if obs.ShowsLoginPrompt || paneMatchesAny(obs.Pane, authScreenPatterns) {
+	if obs.ShowsLoginPrompt || paneShowsAuthScreen(obs.Pane) {
 		// Boot grace covers login chrome too. Interactive CLIs paint a login
 		// screen DURING their startup auth handshake even when the seeded
 		// credential is about to be accepted -- the pane poller already

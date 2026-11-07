@@ -74,6 +74,7 @@ type adoptAPI struct {
 	baseChecks          map[string]string
 	failBaseChecks      bool
 	failedRuns          []int64
+	failedRunConclusion string // conclusion of failedRuns; "" means failure
 	updateBranchStatus  int
 	updateBranchMessage string
 	branchUpdates       []string
@@ -324,7 +325,7 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		sha := r.URL.Query().Get("head_sha")
 		runs := []map[string]any{}
 		for _, id := range a.failedRuns {
-			runs = append(runs, map[string]any{"id": id, "workflow_id": id, "run_number": 1, "run_attempt": 1, "head_sha": sha, "status": "completed", "conclusion": "failure"})
+			runs = append(runs, map[string]any{"id": id, "workflow_id": id, "run_number": 1, "run_attempt": 1, "head_sha": sha, "status": "completed", "conclusion": nonEmpty(a.failedRunConclusion, "failure")})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "workflow_runs": runs})
 		return true

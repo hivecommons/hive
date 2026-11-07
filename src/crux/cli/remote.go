@@ -51,6 +51,8 @@ func (e *Env) remote(ctx context.Context, opts globalOptions, name string, args 
 		return e.remoteKick(ctx, c, args)
 	case "stop":
 		return e.remoteStop(ctx, c, args)
+	case "checkout":
+		return e.remoteCheckout(ctx, c, args)
 	default:
 		fmt.Fprintf(e.Stderr, "crux: %q is not available with --server; it runs where the runtime is\n", name)
 		return ExitUsage

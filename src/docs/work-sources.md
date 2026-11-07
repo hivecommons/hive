@@ -108,6 +108,17 @@ GitHub repository. See [Forges: GitLab, Gitea and
 Forgejo](integrations/forges.md) for the operation list and what runs through
 the adapters today, and [Forge setup](forge-app-setup.md) for the reasons.
 
+## Spek-published RFCs and children
+
+Spek (hivecommons/spektacular) can publish a finished spec as an RFC plus
+child issues into any of the sources above. Nothing source-specific is needed:
+the children are read like any other item, provided they pass the source's own
+filters (`require_labels`, `hold_labels`, `teams[].repo` / `states`,
+`project_keys` / `jql`). The hidden `<!-- spek:publish … -->` marker in each
+body keeps a child on the direct-fix path, skips the clarity score, carries the
+RFC link into the kick and marks the RFC itself as an umbrella Hive never
+claims; see [spektacular.md → Publish hand-off](spektacular.md#publish-hand-off).
+
 ## Run stages (`run_stages: true`)
 
 <details>

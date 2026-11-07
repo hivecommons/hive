@@ -27,6 +27,7 @@ import (
 	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/redmain"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/spekmarker"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/writeback"
@@ -167,8 +168,9 @@ type Client struct {
 	mergePolicyMu             sync.RWMutex
 	allowUnprotectedBaseRepos map[string]bool
 	noCIAllowedRepos          map[string]bool
-	humanMergePaths           map[string][]string // auto_merge.human_merge_paths; see SetHumanMergePaths
-	sentinelHeads             sentinelHeadsSeen   // head SHAs the sentinel sweep already evaluated
+	humanMergePaths           map[string][]string    // auto_merge.human_merge_paths; see SetHumanMergePaths
+	humanMergePinOnly         map[string]PinOnlySpec // guarded by mergePolicyMu
+	sentinelHeads             sentinelHeadsSeen      // head SHAs the sentinel sweep already evaluated
 	autoMergeMinHeadAge       time.Duration
 	mergeAlertMu              sync.Mutex
 	mergeAlertSink            MergeFailureAlertSink
@@ -4271,7 +4273,10 @@ func IsTrackerIssue(title string, labels []string, body string) bool {
 	if len(trackerTaskListRe.FindAllString(body, trackerTaskListMin)) >= trackerTaskListMin {
 		return true
 	}
-	return false
+	// A Spek-published RFC (spektacular#114) is the umbrella by
+	// construction: its publish marker carries no `task=`, and its children
+	// are the work.
+	return spekmarker.IsUmbrella(body)
 }
 
 func isTracker(title string, labels []string, body string) bool {

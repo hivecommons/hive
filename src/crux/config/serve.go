@@ -25,6 +25,17 @@ const (
 	// ServeTokenEnvVar is the bearer token the server requires and the client
 	// presents. A TCP listener refuses to start without one.
 	ServeTokenEnvVar = "CRUX_TOKEN"
+	// ServeOperatorNameEnvVar names the principal the control token stands
+	// for on the work-services routes (serve.CallerFrom); the server
+	// defaults it when unset.
+	ServeOperatorNameEnvVar = "CRUX_OPERATOR_NAME"
+	// CheckoutAllowlistEnvVar is the comma-separated list of repository URL
+	// prefixes the pinned-checkout work service may clone; unset or empty
+	// leaves the service off (every request is refused).
+	CheckoutAllowlistEnvVar = "CRUX_CHECKOUT_ALLOWLIST"
+	// CheckoutDirEnvVar overrides where pinned checkouts live (default
+	// <work dir>/checkouts).
+	CheckoutDirEnvVar = "CRUX_CHECKOUT_DIR"
 	// ServeSocketName is the socket file name under ServeSocketDir.
 	ServeSocketName = "crux.sock"
 	// ServeSocketDirName is the per-user directory under $XDG_RUNTIME_DIR or

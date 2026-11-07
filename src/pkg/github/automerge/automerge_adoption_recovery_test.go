@@ -52,6 +52,15 @@ func TestAdoptedStaleRedRecovery(t *testing.T) {
 			wantReruns: 2, wantStage: stagelabels.AdoptedByHive, wantAttempt: "aaa@base1",
 		},
 		{
+			name: "a cancelled run (runner stall) is re-run like a failed one",
+			setup: func(a *adoptAPI) {
+				a.baseChecks = map[string]string{"coverage": "success"}
+				a.failedRuns = []int64{41}
+				a.failedRunConclusion = "cancelled"
+			},
+			wantReruns: 1, wantStage: stagelabels.AdoptedByHive, wantAttempt: "aaa@base1",
+		},
+		{
 			name: "base does not run the check but is fully green: still recoverable",
 			setup: func(a *adoptAPI) {
 				a.compareBehind = 3

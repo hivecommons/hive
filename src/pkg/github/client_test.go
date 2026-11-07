@@ -872,6 +872,10 @@ func TestIsTrackerFromBodyTaskList(t *testing.T) {
 		{"bare prose mentions are not a task list", prose, false},
 		{"a checklist without issue refs is not a tracker", checklistNoRefs, false},
 		{"empty body", "", false},
+		// spektacular#114: the Spek-published RFC carries the publish marker
+		// with no task=; its children carry task= and stay claimable.
+		{"spek-published RFC is the umbrella", "RFC body\n<!-- spek:publish name=n artifact_id=a target=github -->", true},
+		{"spek-published child is work", "child body\n<!-- spek:publish name=n artifact_id=a target=github task=t1 -->", false},
 	}
 	for _, tt := range tests {
 		if got := isTracker("feature: something", nil, tt.body); got != tt.want {

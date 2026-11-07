@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/crux/api/callback"
+	"github.com/hivecommons/hive/crux/checkout"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/lanes"
 	"github.com/hivecommons/hive/crux/serve"
@@ -33,13 +34,18 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 	fs.StringVar(&cfg.Token, "token", "", "bearer token every request must carry (default $"+config.ServeTokenEnvVar+")")
 	var hiveAddr string
 	var laneConfig string
+	var operatorName string
+	var checkoutAllow, checkoutDir string
+	fs.StringVar(&checkoutAllow, "checkout-allow", "", "comma-separated repo URL prefixes the pinned-checkout service may clone (default $"+config.CheckoutAllowlistEnvVar+"; none disables the service)")
+	fs.StringVar(&checkoutDir, "checkout-dir", "", "where pinned checkouts live (default $"+config.CheckoutDirEnvVar+", then <workdir>/"+checkout.DirName+")")
+	fs.StringVar(&operatorName, "operator-name", "", "name of the principal behind the control token on work-services routes (default $"+config.ServeOperatorNameEnvVar+", then "+serve.DefaultOperatorName+")")
 	fs.StringVar(&laneConfig, "lanes-config", "", "opt-in durable lane configuration file (default $CRUX_LANES_CONFIG)")
 	fs.StringVar(&hiveAddr, "hive-callback", "", "hive capability endpoint to dial (default $"+callback.SocketEnvVar+"; none when unset)")
 	if code, ok := parseSub(fs, args); !ok {
 		return code
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(e.Stderr, "usage: crux serve [-socket PATH] [-listen HOST:PORT] [-token T] [-hive-callback ADDR] [-lanes-config PATH]")
+		fmt.Fprintln(e.Stderr, "usage: crux serve [-socket PATH] [-listen HOST:PORT] [-token T] [-hive-callback ADDR] [-lanes-config PATH] [-operator-name NAME] [-checkout-allow PREFIXES] [-checkout-dir DIR]")
 		return ExitUsage
 	}
 	if cfg.Token == "" {
@@ -70,6 +76,16 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 
 	srv := serve.New(rt)
 	srv.Token = cfg.Token
+	if operatorName == "" {
+		operatorName = os.Getenv(config.ServeOperatorNameEnvVar)
+	}
+	srv.OperatorName = operatorName
+	if checkouts, err := newCheckoutService(checkoutAllow, checkoutDir, opts.workDir); err != nil {
+		fmt.Fprintln(e.Stderr, "crux: checkouts:", err)
+		return ExitUsage
+	} else if checkouts != nil {
+		srv.Checkouts = checkouts
+	}
 	srv.Logger = slog.New(slog.NewTextHandler(e.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	if laneConfig == "" {
 		laneConfig = os.Getenv("CRUX_LANES_CONFIG")

@@ -140,6 +140,55 @@ func installIoscanClassifier(sched ioscanClassifierSink, alerts ioscanClassifier
 	}
 }
 
+// reinstallIoscanClassifier re-runs installIoscanClassifier against the live
+// config after an Input Defense save, so a new backend or fail mode applies
+// without a restart (#16973). A run that installs nothing (classifier off, or
+// fail-open with no runnable classifier) drops the classifier an earlier run
+// installed, so a stale unavailable classifier cannot keep withholding text.
+func reinstallIoscanClassifier(sched ioscanClassifierSink, alerts ioscanClassifierAlerter, cfg *config.Config, logger *slog.Logger, now func() time.Time) {
+	rec := &ioscanClassifierSetRecorder{ioscanClassifierSink: sched}
+	installIoscanClassifier(rec, alerts, cfg, logger, now)
+	if !rec.set {
+		sched.SetClassifier(nil, ioscan.Thresholds{})
+	}
+}
+
+// ioscanAlerts is the dashboard the ioscan classifier raises its blocked-kick
+// alert on, as a nil interface (not a typed nil) when there is no dashboard.
+func (b *boot) ioscanAlerts() ioscanClassifierAlerter {
+	if b == nil || b.dashSrv == nil {
+		return nil
+	}
+	return b.dashSrv
+}
+
+// reinstallIoscanClassifier rebuilds the scheduler's semantic classifier
+// from the live config: after an Input Defense save (#16973) and after a
+// runtime ACMM level change, since the level decides whether the classifier
+// is required and which fail mode applies. No-op before the scheduler exists.
+func (b *boot) reinstallIoscanClassifier() {
+	if b == nil || b.sched == nil || b.cfg == nil {
+		return
+	}
+	logger := b.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	reinstallIoscanClassifier(b.sched, b.ioscanAlerts(), b.cfg, logger, time.Now)
+}
+
+// ioscanClassifierSetRecorder notes whether installIoscanClassifier installed
+// a classifier.
+type ioscanClassifierSetRecorder struct {
+	ioscanClassifierSink
+	set bool
+}
+
+func (r *ioscanClassifierSetRecorder) SetClassifier(c ioscan.Classifier, t ioscan.Thresholds) {
+	r.set = true
+	r.ioscanClassifierSink.SetClassifier(c, t)
+}
+
 // ioscanClassifierFallbackBackend picks the subscription CLI the classifier
 // runs through when no backend is configured and no model endpoint is
 // resolved: the tool-less-capable backend most of the hive's agents run on,
@@ -206,8 +255,10 @@ func ioscanClassifierBlockedAlertMessage(acmmLevel int, cause error) string {
 	return fmt.Sprintf("ioscan semantic classifier is required at ACMM L%d but failed or is unavailable (%v). "+
 		"Kicks carrying untrusted text (issues, comments, PR bodies, reviews) can be withheld until this is fixed. "+
 		"Fix: configure a model endpoint (governor.trajectory or governor.litellm), set ioscan.classifier.backend to one of %s "+
-		"(Settings → Security → Input Defense), or accept scanning without the classifier with ioscan.classifier.fail_mode: open. "+
-		"Changes take effect after a restart.", acmmLevel, cause, strings.Join(ioscan.ToollessBackends(), ", "))
+		"(Settings → Security → Input Defense), or accept scanning without the classifier by setting ioscan.fail_mode to open "+
+		"(the Fail mode control in that tab; ioscan.classifier.fail_mode: open in hive.yaml overrides it for the classifier alone). "+
+		"Input Defense changes saved in Settings → Security apply immediately; a model endpoint or hive.yaml edit takes effect after the hive restarts.",
+		acmmLevel, cause, strings.Join(ioscan.ToollessBackends(), ", "))
 }
 
 func raiseIoscanClassifierAlert(alerts ioscanClassifierAlerter, acmmLevel int, cause error) {
