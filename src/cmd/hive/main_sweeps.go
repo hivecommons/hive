@@ -123,6 +123,7 @@ func escalationObservation(cfg *config.Config, pr github.PullRequest, owners map
 		FailingChecks:      pr.FailingChecks,
 		Agent:              owners[escalation.Key(repo, pr.Number)],
 		IndependentControl: isIndependentCIControl(cfg, pr),
+		TransientTriaged:   red && pr.TransientCITriaged,
 	}
 }
 
@@ -373,8 +374,17 @@ func redPRFixKick(o escalation.Observation, rerouted bool) string {
 	fmt.Fprintf(&b, "  gh pr checkout %d --repo %s → fix → git commit -s → git push\n", o.Number, o.Repo)
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR.\n")
 	b.WriteString("After the push, STOP: do not watch, poll, or sleep on CI (no gh run watch/view loops).\n")
-	b.WriteString("The automerge sweep merges the PR once it is green; if the failure is infrastructure\n")
-	b.WriteString("(runner lost, no space left, checks still queued) leave one comment and end the turn.\n")
+	b.WriteString("The automerge sweep merges the PR once it is green; if checks are still queued, end the turn.\n")
+	// An infra verdict must reach the hive as a marker, not prose: four
+	// "infrastructure, not this change" comments on projectbluefin/common#1647
+	// were invisible to the fix loop, which kicked again until the PR
+	// escalated, and a lane then pushed an empty "retrigger CI" commit.
+	b.WriteString("If the failure is infrastructure, not this change (runner lost, no space left, a package\n")
+	b.WriteString("mirror or download dropping the connection): do NOT push anything — no empty, no-op or\n")
+	b.WriteString("\"retrigger CI\" commit; a push re-arms review fences and can dismiss approvals. Leave ONE\n")
+	fmt.Fprintf(&b, "comment with the evidence that ends with the transient_marker printed by\n  hive-baseline-check.sh %s '<failing check>' %d --json\n", o.Repo, o.Number)
+	b.WriteString("(one per failing check), then end the turn. Once every failing check carries one, Hive\n")
+	b.WriteString("re-runs the failed jobs itself, once.\n")
 	if o.HeadSHA != "" {
 		fmt.Fprintf(&b, "\nhead: %s\n", o.HeadSHA)
 	}
@@ -449,6 +459,17 @@ func deliverReEngagement(
 	available func(string) bool,
 	logger *slog.Logger,
 ) bool {
+	if store.TransientRerunOwed(o.Repo, o.Number, headSHA) {
+		// An agent already triaged this head's failure as infrastructure;
+		// a fix kick could only produce the same comment again and spend
+		// the budget that escalates the PR (projectbluefin/common#1647).
+		// rerunTransientTriagedPRs re-runs the failed jobs instead.
+		if logger != nil {
+			logger.Debug("re-engagement held: failure triaged as transient, hive re-runs the failed jobs",
+				"repo", o.Repo, "pr", o.Number)
+		}
+		return false
+	}
 	fixer := resolveRedPRFixer(cfg, o.Agent, available)
 	if fixer == "" {
 		// Nobody can be asked right now. Charging budget here is what escalated

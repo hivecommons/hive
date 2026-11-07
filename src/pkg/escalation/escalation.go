@@ -199,6 +199,15 @@ type Entry struct {
 	// RunWaitEscalatedGen records the run generation whose human wait timeout
 	// already paged a human. It makes run-wait escalation once-per-generation.
 	RunWaitEscalatedGen uint64 `json:"run_wait_escalated_gen,omitempty"`
+
+	// TransientTriagedSHA is the red head on which every failing check run
+	// carries a `hive-ci-transient` triage marker (Observation.
+	// TransientTriaged), as of the last ObserveRed pass; "" otherwise.
+	// TransientRerunSHA is the head whose failed jobs the hive already
+	// re-ran because of such a triage. Together they make the re-run once
+	// per head and hold fix kicks while it is owed (transient_rerun.go).
+	TransientTriagedSHA string `json:"transient_triaged_sha,omitempty"`
+	TransientRerunSHA   string `json:"transient_rerun_sha,omitempty"`
 }
 
 // Store is the on-PVC attempt ledger. All methods are safe for concurrent use.
@@ -303,6 +312,12 @@ type Observation struct {
 	// SharedCIIncident is the open [shared-ci] incident the PR is deferred
 	// to, 0 when none; named in the hold comment.
 	SharedCIIncident int
+	// TransientTriaged reports that every failing check run on this head
+	// carries an agent's `hive-ci-transient` marker for this head and run
+	// (github.PullRequest.TransientCITriaged): the failure was diagnosed as
+	// infrastructure, not this change. The fix loop re-runs the failed jobs
+	// once instead of kicking a fixer (transient_rerun.go).
+	TransientTriaged bool
 }
 
 // MarkSharedFailures classifies each red observation's failing checks as
@@ -599,6 +614,9 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 			e.RedSHAs = nil
 			e.ReEngagements = 0
 			e.LastReEngagedAt = time.Time{}
+			// A person returned the PR to the lane: a fresh transient
+			// triage on the same head earns one more re-run.
+			e.TransientRerunSHA = ""
 			e.UpdatedAt = s.now()
 		}
 
@@ -683,6 +701,7 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 			e.RedSHAs = nil
 			e.RedTrees = nil
 			e.ReEngagements = 0
+			e.TransientRerunSHA = ""
 			// Remember WHAT the reviewer left on the branch and WHEN, so a
 			// later re-escalation can hand the human the reviewer's context
 			// instead of a bare label (#5617 item 3). Keyed on the SHA so a
@@ -1088,6 +1107,7 @@ func (s *Store) ObserveRed(obs []Observation) {
 				e.FirstRedAt = time.Time{}
 				e.ReEngagements = 0
 				e.LastReEngagedAt = time.Time{}
+				e.TransientTriagedSHA = ""
 			}
 			continue
 		}
@@ -1112,6 +1132,10 @@ func (s *Store) ObserveRed(obs []Observation) {
 		}
 		if o.Excerpt != "" {
 			e.LastExcerpt = o.Excerpt
+		}
+		e.TransientTriagedSHA = ""
+		if o.TransientTriaged {
+			e.TransientTriagedSHA = o.HeadSHA
 		}
 		e.UpdatedAt = now
 	}

@@ -16,8 +16,14 @@ ADJUDICATION CONTRACT — for EACH PR above, deliver EXACTLY ONE verdict:
      d. After completing the mandatory audit below, return it to the automated lane and mark your pass:
         gh pr edit <number> --remove-label needs-human --add-label ${REVIEWER_PASSED_LABEL}
   2. DE-ESCALATE — the failure was environmental (base-branch regression since
-     fixed, infra flake): rebase the branch on its base, push, complete the
-     mandatory audit below, then
+     fixed, infra flake). If the branch is behind its base, rebase it on the
+     base and push. If it is current, push NOTHING: no empty, no-op or
+     "retrigger CI" commit (a push re-arms review fences and can dismiss
+     approvals). Re-run the failed jobs with gh run rerun <run-id> --failed,
+     or, if you cannot, leave one PR comment that ends with the transient_marker
+     hive-baseline-check.sh <owner/repo> '<check>' <number> --json prints for
+     each failing check, so Hive re-runs them. Then complete the mandatory
+     audit below, then
         gh pr edit <number> --remove-label needs-human --add-label ${REVIEWER_PASSED_LABEL}
   3. RECOMMEND-CLOSE — duplicate, superseded, or irreparably lossy: complete the
      mandatory audit below using its recommend-close review body, then mark the

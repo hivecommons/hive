@@ -50,6 +50,20 @@ cadence window. The staleness clock starts when CI SETTLES — a head red on one
 check while others are still running is not yet stuck. The escalation comment
 quotes the number of kicks actually delivered.
 
+### Re-run, do not re-dispatch, a transient-triaged head
+
+A fix kick cannot repair an infrastructure failure. When every failing check
+run on a hive-authored PR's head carries an agent's `hive-ci-transient` triage
+marker, the eval cycle re-runs that head's failed jobs once
+(`rerun-failed-jobs`, through the write-back gate as `ci_rerun`), and the
+reaper and merge watcher send no fix kick and charge no budget while that
+re-run is owed. The re-run gives the checks new run ids, so the markers go
+stale on their own: a head still red afterwards is back in the ordinary loop
+above. The re-run is recorded per head in the ledger; a person or the reviewer
+lane returning an escalated PR to the lane allows one more. Before this,
+projectbluefin/common#1647 spent all six kicks on one head whose agent had
+answered each one with "infrastructure, not this change".
+
 ### Exclude independently confirmed shared failures
 
 Shared CI breakage is not a fix attempt. A check is shared only when it fails
