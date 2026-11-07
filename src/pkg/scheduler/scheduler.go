@@ -23,6 +23,7 @@ type Scheduler struct {
 	lastActionable            *github.ActionableResult
 	logger                    *slog.Logger
 	primerCapLogged           sync.Map // agent|cap_bytes -> omitted fact count last logged at INFO
+	primedSlugs               sync.Map // agent -> []string slugs the last kick's knowledge block rendered (#17052)
 	promptResolver            *promptsrc.Resolver
 	auditFunc                 AuditFunc
 	advisoryFunc              AdvisoryFunc

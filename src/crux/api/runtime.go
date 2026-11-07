@@ -827,5 +827,6 @@ var HostSetters = map[string]HostSetter{
 	"SetConditionReporter":       {HostSetterEvent, EventCondition + ", " + hostViaConditions},
 
 	// In-process only.
-	"SetSpanStarter": {HostSetterInProcessOnly, "OpenTelemetry global tracer in the runtime process; trajectory events are independent of spans"},
+	"SetSpanStarter":      {HostSetterInProcessOnly, "OpenTelemetry global tracer in the runtime process; trajectory events are independent of spans"},
+	"SetKnowledgeAdviser": {HostSetterInProcessOnly, "the knowledge store lives in the hive process; a sidecar runtime runs without the mid-task knowledge advisor (hivecommons/hive#17052 phase 1)"},
 }

@@ -730,6 +730,7 @@ type Manager struct {
 	// non-reentrant RWMutex, so reading the callback under a second Lock there
 	// would deadlock the kick path.
 	recordPromptCallback atomic.Pointer[func(agent, trigger, prompt string)]
+	knowledgeAdvisor     atomic.Pointer[knowledgeAdvisor] // mid-task knowledge advisor (#17052); nil = off
 	// spanStarter, when set, opens the trace spans the runtime emits
 	// (SendKick's agent.send_kick). Same atomic.Pointer discipline as
 	// recordPromptCallback: read on paths that hold m.mu. Nil falls back to

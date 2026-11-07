@@ -968,6 +968,9 @@ func (r *Recorder) SetDeadSessionRecoveryOwner(ownedElsewhere bool) {
 	r.record("SetDeadSessionRecoveryOwner", ownedElsewhere)
 }
 func (r *Recorder) SetSpanStarter(fn crux.SpanStarter) { r.record("SetSpanStarter", fn != nil) }
+func (r *Recorder) SetKnowledgeAdviser(adviser crux.KnowledgeAdviser) {
+	r.record("SetKnowledgeAdviser", adviser != nil)
+}
 
 func (r *Recorder) SetKickOutcomeObserver(fn func(agentName string, outcome crux.KickOutcome)) {
 	r.record("SetKickOutcomeObserver", fn != nil)
