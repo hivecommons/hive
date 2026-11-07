@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/spekmarker"
 )
 
 // ClarityGateMarker tags the clarity gate's question comment. Its presence
@@ -107,7 +108,9 @@ func (s *Scheduler) applyClarityGate(issues []github.Issue) []github.Issue {
 
 // clarityGated reports whether the gate judges issue at all: an unclaimed
 // GitHub issue a person filed, with no `approved-direction` from a
-// maintainer. Hive- and agent-filed issues have nobody to answer questions.
+// maintainer and no Spek publish marker (a Spek-published item is already
+// specified; spektacular#114). Hive- and agent-filed issues have nobody to
+// answer questions.
 func clarityGated(issue github.Issue) bool {
 	if issue.Repo == "" || issue.Number <= 0 || !issue.AuthorIsHuman {
 		return false
@@ -116,6 +119,9 @@ func clarityGated(issue github.Issue) bool {
 		return false
 	}
 	if strings.TrimSpace(issue.ClaimedBy) != "" {
+		return false
+	}
+	if spekmarker.Has(issue.Body) {
 		return false
 	}
 	return !issueHasLabel(issue, github.HumanAckLabel)

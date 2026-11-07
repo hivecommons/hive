@@ -69,6 +69,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/prstatus"
+	"github.com/hivecommons/hive/pkg/spekmarker"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -181,6 +182,10 @@ type IssueStageInput struct {
 	// DelegatesWork mirrors the watcher's unchecked issue-task predicate.
 	// Unlike Children, it includes body-only delegation without ledger entries.
 	DelegatesWork bool
+	// SpekUmbrella is set when the body carries the Spek publish marker with
+	// no `task=`: the issue is a Spek-published RFC (spektacular#114), an
+	// umbrella like `epic`, so a claim on it is never staged.
+	SpekUmbrella bool
 	// Held is set for an issue the enumeration put in the Hold list
 	// (Client.isHeld: the hive's hold-label matcher, including the
 	// configured hive-pause/<id> label). IssueStageFor also reads the
@@ -328,7 +333,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
-		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees})
+		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), SpekUmbrella: spekmarker.IsUmbrella(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees})
 	}
 	// Held issues leave the pipeline at enumeration (Hold list, no
 	// work-detail row). They still have to be walked so a stage label
