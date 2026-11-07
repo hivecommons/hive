@@ -13,6 +13,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/dupsweep"
 	"github.com/hivecommons/hive/pkg/prstatus"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // Duplicate reasons reported in CreatePRResult.DuplicateReason.
@@ -20,8 +21,9 @@ const (
 	// DuplicateReasonClosesIssue: an open PR already carries Closes/Fixes for
 	// an issue this PR also closes.
 	DuplicateReasonClosesIssue = "closes-issue"
-	// DuplicateReasonOverlappingFiles: an open App-bot PR edits an overlapping
-	// file set (identical, or one set contained in the other).
+	// DuplicateReasonOverlappingFiles: an open PR this hive's own App bot (or
+	// another configured hive bot) opened edits an overlapping file set
+	// (identical, or one set contained in the other).
 	DuplicateReasonOverlappingFiles = "overlapping-files"
 	// DuplicateReasonMergedFix: a merged PR on the same base already closed an
 	// issue this PR also closes.
@@ -147,13 +149,25 @@ func (c *Client) findDuplicatePR(ctx context.Context, owner, repo, head, base, b
 }
 
 // findOverlappingBotPR runs the dupsweep file-set clustering synchronously over
-// head's changed files and each open App-bot PR's. Overlap means identical sets
-// or one set contained in the other (the #1434 ⊃ #1413 shape); a single shared
-// path is not enough, because that is where the false positives live.
+// head's changed files and each open hive-agent PR's. Overlap means identical
+// sets or one set contained in the other (the #1434 ⊃ #1413 shape); a single
+// shared path is not enough, because that is where the false positives live.
+//
+// Only PRs this hive's agents opened count: the App bot's own login plus any
+// github.additional_bot_logins (hiveBotLogins). The guard exists so two agents
+// do not race each other on one change. Any other bot, such as Renovate,
+// Dependabot or a custom-named dependency App (mergeraptor[bot] on
+// projectbluefin), is not another agent: a one-line digest bump in a file a
+// refactor also edits is contained in the refactor's file set, and treating
+// it as the home for the refactor dropped the agent's work onto a PR nobody
+// will continue (projectbluefin/server#637). A client with no hive bot login
+// (PAT auth, nothing configured) has no agent PRs to recognise, so the check
+// does not run.
 func (c *Client) findOverlappingBotPR(ctx context.Context, owner, repo, head, base string, candidates []*gh.PullRequest) (*duplicateFinding, error) {
+	hiveBots := c.hiveBotLogins()
 	var bots []*gh.PullRequest
 	for _, pr := range candidates {
-		if !strings.HasSuffix(pr.GetUser().GetLogin(), "[bot]") {
+		if !isHiveBotLogin(hiveBots, pr.GetUser().GetLogin()) {
 			continue
 		}
 		if reason := c.unmergeableLabelReason(pr); reason != "" {
@@ -310,5 +324,67 @@ func (c *Client) redirectToExistingPR(ctx context.Context, owner, repo, head str
 	if err := c.CreateIssueComment(ctx, owner+"/"+repo, f.pr.GetNumber(), duplicateGuardComment(f, head)); err != nil {
 		c.logger.Warn("duplicate guard: could not post the redirect comment",
 			slog.String("repo", repo), slog.Int("number", f.pr.GetNumber()), slog.String("error", err.Error()))
+	}
+}
+
+// duplicateGuardIssueNote is the note left on an issue whose agent's PR the
+// overlapping-files check refused. It names the branch, so the work can be
+// found, and the PR that blocked it.
+func duplicateGuardIssueNote(agent, head string, blocking int) string {
+	who := "A hive agent"
+	if agent = strings.TrimSpace(agent); agent != "" {
+		who = "Hive agent `" + agent + "`"
+	}
+	return fmt.Sprintf("%s\n%s pushed work for this issue on branch `%s`, but no pull request was opened for it: "+
+		"open PR #%d, from another hive agent, edits an overlapping set of files. The branch is still on the remote. "+
+		"Continue the work on #%d, or request the PR again once #%d has merged or closed.",
+		duplicateGuardMarker, who, head, blocking, blocking, blocking)
+}
+
+// noteDuplicateGuardOnIssues tells the issues a refused PR request was for
+// that the agent's branch did not become a PR, and why. The redirect on the
+// blocking PR (redirectToExistingPR) reaches that PR's watchers; this note
+// reaches the people following the blocked work. Only the overlapping-files
+// refusal needs it: the blocking PR shares files with the request, not
+// issues, so nothing on the issue would otherwise say the work stalled.
+//
+// Best-effort like the redirect: the refusal is the enforcement. Each write
+// consults the write-back gate first; with the attention pilot on the note
+// is a section of the issue's status card, otherwise one marked comment per
+// head, never stacked on a retry.
+func (c *Client) noteDuplicateGuardOnIssues(ctx context.Context, req PRRequest, blocking int, issues []int) {
+	for _, n := range issues {
+		if n <= 0 || n == blocking {
+			continue
+		}
+		body := duplicateGuardIssueNote(req.Agent, req.Head, blocking)
+		item, err := c.WritebackItemForNumber(ctx, req.Repo, n)
+		if err != nil {
+			c.logger.Warn("duplicate guard: could not read the blocked issue, skipping its note",
+				slog.String("repo", req.Repo), slog.Int("issue", n), slog.String("error", err.Error()))
+			continue
+		}
+		if d := c.WritebackAllowed(req.Repo, item, writeback.KindDuplicateFixNotice, body); !d.Allowed {
+			c.logger.Info("duplicate guard: write-back policy withheld the note on the blocked issue",
+				slog.String("repo", req.Repo), slog.Int("issue", n), slog.String("reason", d.Reason))
+			continue
+		}
+		_, err = c.PostIssueNote(ctx, req.Repo, n, prstatus.KeyDuplicateGuard, body, func(ctx context.Context) error {
+			owner, name := c.splitRepo(req.Repo)
+			comments, err := c.listIssueComments(ctx, owner, name, n)
+			if err != nil {
+				return err
+			}
+			for _, cm := range comments {
+				if strings.Contains(cm.GetBody(), duplicateGuardMarker) && strings.Contains(cm.GetBody(), "`"+req.Head+"`") {
+					return nil
+				}
+			}
+			return c.CreateIssueComment(ctx, req.Repo, n, body) // writeback:gated — WritebackAllowed consulted above
+		})
+		if err != nil {
+			c.logger.Warn("duplicate guard: could not leave the note on the blocked issue",
+				slog.String("repo", req.Repo), slog.Int("issue", n), slog.String("error", err.Error()))
+		}
 	}
 }

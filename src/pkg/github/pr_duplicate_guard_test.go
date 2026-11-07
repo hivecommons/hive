@@ -50,6 +50,9 @@ type guardServer struct {
 	created  int
 	comments int
 	edits    int
+	// commentPaths records the path of every comment POST, so a test can
+	// tell a note on an issue from the redirect on the existing PR.
+	commentPaths []string
 }
 
 func (g *guardServer) start(t *testing.T) *httptest.Server {
@@ -165,6 +168,8 @@ func (g *guardServer) start(t *testing.T) *httptest.Server {
 				out = append(out, map[string]any{"id": i + 1, "body": body, "user": map[string]any{"login": "hive-app[bot]", "type": "Bot"}})
 			}
 			enc(w, out)
+		case r.Method == "GET" && strings.HasPrefix(path, "/repos/o/r/labels/"):
+			enc(w, map[string]any{"name": "x"})
 		case r.Method == "GET" && strings.Contains(path, "/issues/"):
 			var num int
 			fmt.Sscanf(strings.TrimPrefix(path, "/repos/o/r/issues/"), "%d", &num)
@@ -178,6 +183,7 @@ func (g *guardServer) start(t *testing.T) *httptest.Server {
 		case r.Method == "POST" && strings.HasSuffix(path, "/comments"):
 			g.mu.Lock()
 			g.comments++
+			g.commentPaths = append(g.commentPaths, path)
 			g.mu.Unlock()
 			_, _ = io.WriteString(w, `{"id":1}`)
 		case r.Method == "PATCH" && strings.Contains(path, "/issues/comments/"):
@@ -384,6 +390,7 @@ func TestCreatePR_DuplicateGuard(t *testing.T) {
 			g := tt.g
 			srv := g.start(t)
 			c := NewClientForTest(srv.URL, "o", nil, prTestLogger())
+			c.SetAppBotLogin(bot)
 			c.SetHoldLabels(tt.holdLabels)
 			res, err := c.CreatePR(context.Background(), "o/r", "new-branch", "main", "title", tt.body)
 			if err != nil {
@@ -425,6 +432,7 @@ func TestCreatePR_DuplicateGuardRetryableFailuresFailClosed(t *testing.T) {
 			}
 			srv := g.start(t)
 			c := NewClientForTest(srv.URL, "o", nil, prTestLogger())
+			c.SetAppBotLogin("hive[bot]")
 			_, err := c.CreatePR(context.Background(), "o/r", "new-branch", "main", "title", "Closes #42")
 			// The open-PR list is shared with the duplicate-tree guard, which
 			// may report the failure first; either way the request stays queued.
@@ -470,6 +478,7 @@ func TestCreatePR_DuplicateGuardSkipsUnreadableCandidate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := tc.g.start(t)
 			c := NewClientForTest(srv.URL, "o", nil, prTestLogger())
+			c.SetAppBotLogin("hive[bot]")
 			res, err := c.CreatePR(context.Background(), "o/r", "new-branch", "main", "title", "no keyword")
 			if err != nil {
 				t.Fatalf("CreatePR: %v", err)
@@ -498,6 +507,7 @@ func TestCreatePR_DuplicateGuardStopsAtCandidateCap(t *testing.T) {
 	g.open = append(g.open, guardPR{Number: 1999, Ref: "b1999", User: bot, Files: []string{"dup.go"}})
 	srv := g.start(t)
 	c := NewClientForTest(srv.URL, "o", nil, prTestLogger())
+	c.SetAppBotLogin("hive[bot]")
 	res, err := c.CreatePR(context.Background(), "o/r", "new-branch", "main", "title", "no keyword")
 	if err != nil {
 		t.Fatalf("CreatePR: %v", err)
