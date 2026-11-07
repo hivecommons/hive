@@ -44,17 +44,31 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const { isCosmeticLabelFlip, replayLastVerdict } = require('./.github/scripts/native-queue-policy.cjs');
-            const cosmetic = isCosmeticLabelFlip(context);
-            core.setOutput('cosmetic', String(cosmetic));
+            const { isCosmeticLabelFlip, replayLastVerdict, isTransientAPIError } = require('./.github/scripts/native-queue-policy.cjs');
+            let cosmetic = isCosmeticLabelFlip(context);
             if (cosmetic) {
               core.info('Label "' + context.payload.label.name + '" is not read by the policy; replaying the last completed verdict instead of waiting for evidence.');
               try {
-                core.info(await replayLastVerdict({github, context}));
+                const replayed = await replayLastVerdict({github, context});
+                if (replayed === null) {
+                  // No prior success on this head (never evaluated, or the last
+                  // wait failed/timed out): run the authoritative wait instead of
+                  // pinning that verdict onto every later cosmetic flip.
+                  core.info('No successful native-queue-policy run on this head to replay; running the full evidence wait.');
+                  cosmetic = false;
+                } else {
+                  core.info(replayed);
+                }
               } catch (error) {
-                core.setFailed(error.message);
+                if (isTransientAPIError(error)) {
+                  core.info('GitHub API ' + error.status + ' while replaying; running the full evidence wait (which retries) instead.');
+                  cosmetic = false;
+                } else {
+                  core.setFailed(error.message);
+                }
               }
             }
+            core.setOutput('cosmetic', String(cosmetic));
       - name: Validate exact-head evidence (bounded wait for PR providers)
         if: steps.label-flip.outputs.cosmetic != 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0

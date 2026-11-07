@@ -235,8 +235,12 @@ function isCosmeticLabelFlip({ eventName, payload }) {
 }
 
 // A cosmetic flip skips the evidence wait but must not mint a fresh passing
-// required check: replay the latest completed run of this check on the head
-// (fail closed when none, not success, or not from this workflow) and still read live PR eligibility.
+// required check: replay the latest completed `success` run of this check on
+// the head (rejecting one not from this workflow) and still read live PR
+// eligibility. Returns null when there is nothing to replay — no completed
+// run, or the latest one did not succeed (a failed, cancelled or timed-out
+// wait) — so the caller falls through to the full evidence wait instead of
+// pinning that earlier verdict onto every later stage-label flip.
 async function replayLastVerdict({ github, context, currentCheckRunId }) {
   const repo = context.repo;
   const event = context.payload.pull_request;
@@ -250,13 +254,11 @@ async function replayLastVerdict({ github, context, currentCheckRunId }) {
     .filter(r => r.name === POLICY_CHECK_NAME && r.status === 'completed' &&
       r.head_sha === pr.head.sha && r.app?.id === ACTIONS_APP_ID && r.id !== currentCheckRunId)
     .sort((a, b) => b.id - a.id)[0];
-  if (!prior) throw new Error(`No completed ${POLICY_CHECK_NAME} run on ${pr.head.sha} to replay`);
+  if (!prior) return null;
   // A same-named job from any other workflow shares the Actions App id; only
   // a run of this workflow file on this event may be replayed.
   await assertActionsProvenance(github, repo, pr.number, pr.head.sha, prior, POLICY_CHECK_SOURCE, new Map());
-  if (prior.conclusion !== 'success') {
-    throw new Error(`Replaying ${POLICY_CHECK_NAME} run ${prior.id} on ${pr.head.sha}: ${prior.conclusion}`);
-  }
+  if (prior.conclusion !== 'success') return null;
   return `PR #${pr.number}: replayed ${POLICY_CHECK_NAME} run ${prior.id} (success) on ${pr.head.sha}`;
 }
 

@@ -440,17 +440,23 @@ test('cosmetic flip replays the latest completed success on the same head', asyn
   assert.equal(f.state.listed[0].ref, sha(11));
 });
 
-test('cosmetic flip replays a prior failure and fails closed without a completed run', async () => {
-  await assert.rejects(replayLastVerdict(replayFixture([
+test('cosmetic flip has nothing to replay without a prior success and falls through', async () => {
+  // A failed, cancelled (timed-out) or absent prior run must not be pinned
+  // onto every later stage-label flip: null sends the caller to the full wait.
+  assert.equal(await replayLastVerdict(replayFixture([
     { id: 5, status: 'completed', conclusion: 'success' },
     { id: 7, status: 'completed', conclusion: 'failure' },
-  ])), /run 7.*failure/);
-  await assert.rejects(replayLastVerdict(replayFixture([
+  ])), null);
+  assert.equal(await replayLastVerdict(replayFixture([
+    { id: 5, status: 'completed', conclusion: 'success' },
+    { id: 7, status: 'completed', conclusion: 'cancelled' },
+  ])), null);
+  assert.equal(await replayLastVerdict(replayFixture([
     { id: 9, status: 'in_progress', conclusion: null },
-  ])), /No completed/);
-  await assert.rejects(replayLastVerdict(replayFixture([])), /No completed/);
+  ])), null);
+  assert.equal(await replayLastVerdict(replayFixture([])), null);
   const own = replayFixture([{ id: 8, status: 'completed', conclusion: 'success' }]);
-  await assert.rejects(replayLastVerdict({ ...own, currentCheckRunId: 8 }), /No completed/);
+  assert.equal(await replayLastVerdict({ ...own, currentCheckRunId: 8 }), null);
 });
 
 test('cosmetic flip still honours a live hold even after a prior success', async () => {
@@ -462,9 +468,9 @@ test('replay ignores runs with a different name, head_sha or app id', async () =
   for (const change of [
     { name: 'other-check' }, { head_sha: sha(99) }, { app: { id: DCO_APP_ID } }, { app: undefined },
   ]) {
-    await assert.rejects(
-      replayLastVerdict(replayFixture([{ id: 7, status: 'completed', conclusion: 'success', ...change }])),
-      /No completed/);
+    assert.equal(
+      await replayLastVerdict(replayFixture([{ id: 7, status: 'completed', conclusion: 'success', ...change }])),
+      null);
   }
 });
 

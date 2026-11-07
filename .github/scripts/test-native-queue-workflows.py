@@ -84,6 +84,11 @@ class NativeQueueWorkflows(unittest.TestCase):
         self.assertEqual(gate["id"], "label-flip")
         self.assertIn("isCosmeticLabelFlip", gate["with"]["script"])
         self.assertIn("replayLastVerdict", gate["with"]["script"])
+        # Nothing to replay (no prior success, or a transient API error) must
+        # fall through to the full wait rather than fail or fabricate a pass.
+        self.assertIn("replayed === null", gate["with"]["script"])
+        self.assertIn("isTransientAPIError(error)", gate["with"]["script"])
+        self.assertIn("cosmetic = false", gate["with"]["script"])
         wait = next(s for s in steps if s.get("name", "").startswith("Validate exact-head evidence"))
         self.assertIn("steps.label-flip.outputs.cosmetic != 'true'", wait["if"])
         self.assertLess(steps.index(gate), steps.index(wait))
