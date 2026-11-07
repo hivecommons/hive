@@ -709,8 +709,22 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// reconciler keeps them while the PR is open (the PR's own stage is
 	// narrated in the issue's stage reason, never written as its label).
 	covered, partial := c.prCoveredIssues(req.Repo, body, req.IssueN)
-	c.clearInProgressForPR(ctx, req.Repo, res.Number, covered)
-	c.addressInProgressForPR(ctx, req.Repo, res.Number, partial)
+	if res.DuplicateReason == DuplicateReasonOverlappingFiles {
+		// The guard pointed at a PR that shares files with this request, not
+		// issues: it does not cover them, so they are not staged under it
+		// (projectbluefin/server#638 sat at 040 under an unrelated digest
+		// bump until the reconciler noticed). The issues are told instead
+		// and the refusal is logged at WARN, because the agent's own
+		// hive-open-pr call returned before this ran and never sees it.
+		blocked := append(append([]int(nil), covered...), partial...)
+		c.logger.Warn("pr-request watcher: no PR opened — another hive agent's open PR edits an overlapping set of files; the branch stays on the remote",
+			slog.String("repo", req.Repo), slog.String("head", req.Head), slog.String("agent", req.Agent),
+			slog.Int("blocking_pr", res.Number), slog.Any("issues", blocked))
+		c.noteDuplicateGuardOnIssues(ctx, req, res.Number, blocked)
+	} else {
+		c.clearInProgressForPR(ctx, req.Repo, res.Number, covered)
+		c.addressInProgressForPR(ctx, req.Repo, res.Number, partial)
+	}
 	c.recordWriteAudit(AuditActionAgentPRCreated, meta,
 		WriteTarget{Repo: req.Repo, Number: res.Number},
 		"author", res.Author,
