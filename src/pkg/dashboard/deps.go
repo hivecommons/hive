@@ -145,6 +145,11 @@ type Dependencies struct {
 	// OnACMMLevelChanged is called after an in-process runtime level change
 	// has been persisted/applied. Nil means no live component needs to react.
 	OnACMMLevelChanged func(prev, next int)
+	// IoscanConfigApplied is called after PUT /api/config/governor/security
+	// has changed an ioscan setting, so the owner of the scheduler can rebuild
+	// the semantic classifier from the new values without a restart. Nil means
+	// nothing caches.
+	IoscanConfigApplied func()
 	// ReviewConfigApplied is called after PUT /api/config/review has mutated
 	// Config.Review, so the owner of any component that caches review
 	// settings at boot (the GitHub client's revise allowlist and perspective
