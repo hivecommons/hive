@@ -55,11 +55,11 @@ hub read that store and nothing else (`stageStoreOrShared`,
    (`src/pkg/github/automerge/automerge_stage_labels.go:365`), observations are
    sorted by `stageLanePrecedence` (self 3 > trusted 2 > contributor 1,
    `src/pkg/github/automerge/automerge_stage_labels.go:177`), each is classified
-   by `ClassifyStage` (`src/pkg/stageengine/derive_pr_classify.go:261`)
+   by `ClassifyStage` (`src/pkg/stageengine/derive_pr_classify.go:342`)
    into a ranked opinion (`prstage.RankNone..prstage.RankOwned`,
    `src/pkg/stageengine/prstage/types.go:145-148`), and
    `ResolveStage` picks the winner
-   (`src/pkg/stageengine/derive_pr_classify.go:454`). These PR helpers now
+   (`src/pkg/stageengine/derive_pr_classify.go:718`). These PR helpers now
    live in the engine (#13779); automerge keeps only gathering-side previews. Shared concepts —
    parking (045/085, `needs-human`, hold labels), author kind (070/071/072),
    adoption (074), terminal states, `origin/*` — are modelled twice with

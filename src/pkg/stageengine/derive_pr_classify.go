@@ -350,6 +350,14 @@ func ClassifyStage(o stageObservation) stageVerdict {
 	if reason != "closed" && reason != "gone" && reason != "label-removed" && HasLabelFold(o.Labels, prstage.SupersessionPendingLabel) && HasLabelFold(o.Labels, NeedsHumanLabel) && !HasLabelFold(o.Labels, "hive/keep-open") {
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: prstage.ReasonSupersessionPending}
 	}
+	if reason == prstage.StageReasonBaseRefreshMergeGuard {
+		// The lane could not take the destination-merge lock, so it never
+		// looked at the PR. Lanes return that refusal with its error; read
+		// through the errored branch below, an approved head became a weak
+		// 080 that replaced a standing 085 on the same red head and seated
+		// it at a merge train's front (projectbluefin/utah-packages#917).
+		return stageVerdict{}
+	}
 	if o.Err {
 		// The lane tripped before deciding. If every author-side gate is
 		// already satisfied the PR is waiting on the hive, not the author.
