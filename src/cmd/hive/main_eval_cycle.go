@@ -550,6 +550,9 @@ func runEvalCycle(
 		attribute.String("hive.id", cfg.HiveID),
 		attribute.Int(tracing.AttrHiveACMMLevel, inferACMMLevel(cfg)))
 	defer span.End()
+	// GitHub calls this cycle makes are "hive:eval_cycle" in
+	// /api/gh-rate-limits unless a step below names itself more narrowly.
+	ctx = github.WithRESTCaller(ctx, "hive:eval_cycle")
 
 	// A hive running without GitHub credentials (placeholder app_id, or a real
 	// App whose key could not be read) has nothing to enumerate. Return before
@@ -611,7 +614,7 @@ func runEvalCycle(
 			"stale", actionable.Stale())
 	} else {
 		enumCtx, enumSpan := tracing.StartSpan(ctx, "governor.enumerate_actionable")
-		fresh, err := ghClient.EnumerateActionable(enumCtx)
+		fresh, err := ghClient.EnumerateActionable(github.WithRESTCaller(enumCtx, "hive:enumerate_actionable"))
 		enumSpan.End()
 		var ok bool
 		actionable, ok = actionableAfterGitHubEnumerate(cfg, fresh, err, logger)
@@ -691,12 +694,12 @@ func runEvalCycle(
 	// another. Backed by a PVC ledger so it survives those restarts, and fails
 	// closed (keeps the last known claims) when the GitHub API is unavailable.
 	if !budgetDecision.SkipOptional {
-		applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
+		applyDuplicatePRGuard(github.WithRESTCaller(ctx, "hive:duplicate_pr_guard"), cfg, ghClient, actionable, logger)
 	}
 	// Every cycle, cached ones included: heal issue stage records the
 	// claim ledger says an open PR covers but the store still holds below
 	// 040 (a claim release written over the cover between reconcile passes).
-	reconcileLedgerCoverRecords(ctx, cfg, ghClient, actionable, logger)
+	reconcileLedgerCoverRecords(github.WithRESTCaller(ctx, "hive:ledger_cover"), cfg, ghClient, actionable, logger)
 
 	// PR review queue (#9590): stamp each PR's rank, priority and reasons
 	// onto the snapshot so last-actionable.json carries them next to
@@ -731,7 +734,7 @@ func runEvalCycle(
 
 	escalatedPRs := map[string]bool{}
 	if !budgetDecision.SkipUnstick {
-		escalatedPRs = runEscalationSweep(ctx, cfg, governorForge(cfg, ghClient, logger), actionable, notifier, dashSrv, logger)
+		escalatedPRs = runEscalationSweep(github.WithRESTCaller(ctx, "hive:escalation_sweep"), cfg, governorForge(cfg, ghClient, logger), actionable, notifier, dashSrv, logger)
 		runDependencyBotConflictSweep(ctx, cfg, governorForge(cfg, ghClient, logger), ghClient, actionable, logger)
 	}
 	runWaitEscalationSweep(cfg, dashSrv, logger)
@@ -758,7 +761,7 @@ func runEvalCycle(
 		}
 		return cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, level)
 	}
-	holdDriftPRs := enforceHoldGuard(ctx, cfg, ghClient, governorForge(cfg, ghClient, logger), actionable, logger, selfAuthorizationHoldEnabled)
+	holdDriftPRs := enforceHoldGuard(github.WithRESTCaller(ctx, "hive:hold_guard"), cfg, ghClient, governorForge(cfg, ghClient, logger), actionable, logger, selfAuthorizationHoldEnabled)
 
 	// The per-PR verdicts come back so the dashboard's PR pills can be
 	// painted from the sweep's own classification rather than a looser
@@ -785,7 +788,7 @@ func runEvalCycle(
 	// PR this hive opened back into the CLI session that authored it, while
 	// that session is still live. Anything it cannot resume stays on the
 	// fix-before-new path above, unchanged.
-	routePRFollowUps(ctx, cfg, ghClient, actionable, escalatedPRs, agentMgr, logger)
+	routePRFollowUps(github.WithRESTCaller(ctx, "hive:pr_follow_ups"), cfg, ghClient, actionable, escalatedPRs, agentMgr, logger)
 
 	// Stuck-PR reaper (backstop): DELIVER a targeted FIX-BEFORE-NEW kick for any
 	// hive-authored PR that is red on a required check AND stale (its red head
@@ -860,8 +863,8 @@ func runEvalCycle(
 				"skipped", shaResult.Skipped,
 			)
 		}
-		runHardSuppressReconcile(ctx, cfg, ghClient, logger)
-		runParkRecheck(ctx, cfg, ghClient, logger)
+		runHardSuppressReconcile(github.WithRESTCaller(ctx, "hive:hard_suppress_reconcile"), cfg, ghClient, logger)
+		runParkRecheck(github.WithRESTCaller(ctx, "hive:park_recheck"), cfg, ghClient, logger)
 	}
 
 	// Refresh budget spend from lifetime token totals before Evaluate so

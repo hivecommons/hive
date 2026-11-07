@@ -325,11 +325,13 @@ func (c *Client) listIssueComments(ctx context.Context, owner, repo string, numb
 }
 
 // listIssueCommentsSince lists comments updated at or after since; a zero
-// since lists every comment.
+// since lists every comment. The since sent is rounded down to the hour
+// (cacheableSince), so callers may get a few older comments and must keep
+// filtering on their own cutoff.
 func (c *Client) listIssueCommentsSince(ctx context.Context, owner, repo string, number int, since time.Time) ([]*gh.IssueComment, error) {
 	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
 	if !since.IsZero() {
-		opts.Since = gh.Ptr(since)
+		opts.Since = gh.Ptr(cacheableSince(since))
 	}
 	var all []*gh.IssueComment
 	for {

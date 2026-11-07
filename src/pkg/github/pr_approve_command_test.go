@@ -38,8 +38,9 @@ func TestSweepPRApproveReplies(t *testing.T) {
 			json.NewEncoder(w).Encode([]*gh.Issue{{Number: gh.Ptr(7), Comments: gh.Ptr(len(comments)), UpdatedAt: &gh.Timestamp{Time: now}, PullRequestLinks: &gh.PullRequestLinks{URL: gh.Ptr("pr")}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/org/repo/issues/7/comments":
 			commentReads++
-			// Only comments updated since the cutoff are requested.
-			if since, err := time.Parse(time.RFC3339, r.URL.Query().Get("since")); err != nil || since.Before(now.Add(-7*24*time.Hour-time.Minute)) || since.After(now.Add(-7*24*time.Hour+time.Minute)) {
+			// Only comments updated since the cutoff, rounded down to the
+			// hour so repeat passes stay cacheable, are requested.
+			if since, err := time.Parse(time.RFC3339, r.URL.Query().Get("since")); err != nil || since.Before(now.Add(-7*24*time.Hour-time.Hour)) || since.After(now.Add(-7*24*time.Hour)) || !since.Equal(since.Truncate(time.Hour)) {
 				t.Errorf("since=%q err=%v", r.URL.Query().Get("since"), err)
 			}
 			if listFailed {

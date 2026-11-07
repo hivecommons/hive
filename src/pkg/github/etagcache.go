@@ -173,6 +173,30 @@ func etagCacheKey(req *http.Request) string {
 	return hex.EncodeToString(sum[:8]) + " " + req.Header.Get("Accept") + " " + req.URL.String()
 }
 
+// cacheableSinceGranularity is how far down a list query's since is rounded.
+const cacheableSinceGranularity = time.Hour
+
+// cacheableSince rounds the since of a GitHub list query down to the hour (in
+// UTC), so every pass inside that hour asks for the same URL.
+//
+// The ETag cache above is keyed on the full URL, query included. A sweep that
+// builds its since from time.Now() on every pass ("comments updated in the
+// last 7 days") changes the URL on every call, so the cache never matches and
+// every pass is charged in full. In 50 minutes on the knuckle hive
+// (2026-11-07) the hive's own issue-comment lists were charged 1357 times in
+// 2776 and its issue lists 1012 times in 1399, while its pull-request lists
+// and review reads came back as free 304s 83% and 91% of the time.
+//
+// Rounding only ever moves since earlier, by less than an hour, so the list
+// is a superset of what was asked for and nothing is missed. Callers keep
+// filtering on their exact cutoff. A zero since (no filter) stays zero.
+func cacheableSince(since time.Time) time.Time {
+	if since.IsZero() {
+		return since
+	}
+	return since.UTC().Truncate(cacheableSinceGranularity)
+}
+
 // etagCacheable reports whether the request may be served conditionally: a
 // plain GET with no conditional or range semantics of its own.
 func etagCacheable(req *http.Request) bool {

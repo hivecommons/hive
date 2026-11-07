@@ -204,6 +204,8 @@ type IssueUnparkSweepOptions struct {
 	// ClosedAudit, when set, is called once per parked issue a maintainer's
 	// `/fixed` closed (hivecommons/dibs#459).
 	ClosedAudit func(IssueUnparkEvent)
+	// Now overrides the clock in tests.
+	Now func() time.Time
 }
 
 // PullRequestDecisionEvent records one `/hive decision` on a hive-authored
@@ -315,7 +317,14 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 	if opts.HumanChangeRequests != nil {
 		c.ReconcileSelfDecisionChangeRequests(opts.HumanChangeRequests)
 	}
-	cutoff := time.Now().Add(-unparkCommandScanWindow)
+	now := time.Now()
+	if opts.Now != nil {
+		now = opts.Now()
+	}
+	// Exact cutoff for every eligibility check; the comment lists built from
+	// it round their since down to the hour so repeat passes stay cacheable
+	// (cacheableSince).
+	cutoff := now.Add(-unparkCommandScanWindow)
 
 	for _, repo := range c.getRepos() {
 		if result.actions() >= maxActions {

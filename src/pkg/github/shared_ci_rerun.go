@@ -178,7 +178,7 @@ func (c *Client) recentlyClosedSharedCIIncidents(ctx context.Context, owner, rep
 		State:       "closed",
 		Sort:        "updated",
 		Direction:   "desc",
-		Since:       since,
+		Since:       cacheableSince(since), // the closed_at filter below keeps the exact since
 		ListOptions: gh.ListOptions{PerPage: 100},
 	}
 	out := map[int]bool{}

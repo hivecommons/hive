@@ -42,6 +42,14 @@ type sweepJob struct {
 	run      func(context.Context, *github.Client, *config.Config)
 }
 
+// runTagged runs the job with its GitHub REST calls attributed to
+// "hive:<name>" in /api/gh-rate-limits. Calls a sweep already tags more
+// narrowly keep their own name; before this, every untagged call from every
+// sweep was reported as plain "hive".
+func (j sweepJob) runTagged(ctx context.Context, gh *github.Client, cfg *config.Config) {
+	j.run(github.WithRESTCaller(ctx, "hive:"+j.name), gh, cfg)
+}
+
 // sweepStartupSpread is the window the non-essential sweeps' first passes are
 // spread across after a start. All workers start in the same second; on a
 // cold ETag cache their first passes each listed every repo at once, all
@@ -214,7 +222,7 @@ func (b *boot) startSweepWorkers() func() {
 				if skipped {
 					return
 				}
-				job.run(ctx, gh, cfg)
+				job.runTagged(ctx, gh, cfg)
 				if b.dashSrv != nil {
 					b.dashSrv.RecordSweepCadence(job.name, started, job.interval(cfg), true, false)
 				}

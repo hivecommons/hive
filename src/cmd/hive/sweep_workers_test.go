@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -248,4 +250,35 @@ func TestSweepFirstDelaysSpreadNonEssential(t *testing.T) {
 		}
 		prev = d
 	}
+}
+
+// A sweep worker's GitHub calls are attributed to "hive:<job name>" in REST
+// accounting (/api/gh-rate-limits), not the undifferentiated "hive" that hid
+// ~4,400 calls an hour on the knuckle hive. The timeline read stands in for
+// any untagged call a sweep makes.
+func TestSweepJobRunTaggedAttributesRESTCalls(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/repos/testorg/widget/issues/1/timeline" {
+			t.Errorf("unexpected operation: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	ghClient := github.NewClientForTest(srv.URL, "testorg", []string{"widget"}, sweepTestLogger(nil))
+	job := sweepJob{name: "p34_caller_probe", run: func(ctx context.Context, gh *github.Client, _ *config.Config) {
+		if _, err := gh.IssueTimelineSince(ctx, "widget", 1, time.Time{}); err != nil {
+			t.Errorf("timeline read: %v", err)
+		}
+	}}
+	job.runTagged(context.Background(), ghClient, &config.Config{})
+
+	for _, c := range github.RESTTopConsumers(1000) {
+		if c.Caller == "hive:p34_caller_probe" && c.Endpoint == "/repos/{owner}/{repo}/issues/{number}/timeline" && c.Requests >= 1 {
+			return
+		}
+	}
+	t.Fatalf("REST accounting has no hive:p34_caller_probe timeline row: %+v", github.RESTTopConsumers(1000))
 }
