@@ -322,6 +322,7 @@ func (mc *MetricsCollector) collect(ctx context.Context) {
 	// Dashboard metrics are housekeeping against the pacer: they stand down
 	// for the governor's enumeration while a caution window is engaged.
 	ctx = ghpkg.WithPacingClass(ctx, ghpkg.PacingLow)
+	ctx = ghpkg.WithRESTCaller(ctx, "hive:metrics_collector")
 	metrics := make(map[string]any)
 
 	outreach := mc.collectOutreach(ctx)

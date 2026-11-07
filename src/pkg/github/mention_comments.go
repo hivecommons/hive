@@ -19,6 +19,7 @@ func (c *Client) ListMentionComments(ctx context.Context, repo string, since tim
 	if c == nil || c.client == nil {
 		return nil, ErrNoGitHubClient
 	}
+	ctx = WithRESTCaller(ctx, "hive:mention_poll")
 	owner, repoName := c.splitRepo(repo)
 	var out []mention.Event
 	issueComments, err := c.listMentionIssueComments(ctx, owner, repoName, since)

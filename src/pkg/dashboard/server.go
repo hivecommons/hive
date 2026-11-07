@@ -2838,7 +2838,16 @@ async function poll(interval,flowId){
 </script></body></html>`
 
 func (s *Server) Handler() http.Handler {
-	return s.withRequestLog(s.noIndex(s.authenticatedMux()))
+	return s.withRequestLog(s.noIndex(withDashboardRESTCaller(s.authenticatedMux())))
+}
+
+// withDashboardRESTCaller attributes the GitHub REST calls a dashboard request
+// makes to "hive:dashboard_api" in /api/gh-rate-limits instead of plain
+// "hive". A handler that tags its calls more narrowly keeps its own name.
+func withDashboardRESTCaller(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(github.WithRESTCaller(r.Context(), "hive:dashboard_api")))
+	})
 }
 
 func (s *Server) roleEnforcement(next http.Handler) http.Handler {

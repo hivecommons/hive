@@ -290,7 +290,7 @@ func (c *Client) StartIssueRequestWatcher(ctx context.Context, authz IssueReques
 				if ctx.Err() != nil {
 					return
 				}
-				c.processIssueRequestsInDir(ctx, nowFn, dir)
+				c.processIssueRequestsInDir(WithRESTCaller(ctx, "hive:issue_request_watcher"), nowFn, dir)
 			}
 		}
 	}()
@@ -2284,7 +2284,7 @@ func (c *Client) countClosedSiblingsBy(ctx context.Context, owner, repo, botLogi
 		Creator:     botLogin,
 		Sort:        "updated",
 		Direction:   "desc",
-		Since:       cutoff,
+		Since:       cacheableSince(cutoff), // the closed_at filter below keeps the exact cutoff
 		ListOptions: gh.ListOptions{PerPage: 100},
 	}
 	for page := 1; page <= sameComponentClosedMaxPages; page++ {

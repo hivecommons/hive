@@ -53,7 +53,7 @@ func (b *boot) applyGitHubClientForgeState(client *github.Client) {
 			ctx = context.Background()
 		}
 		go func() {
-			if err := store.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			if err := store.Run(github.WithRESTCaller(ctx, "hive:forgestate")); err != nil && !errors.Is(err, context.Canceled) {
 				b.logger.Error("forgestate: reconcile loop stopped", "error", err)
 			}
 		}()

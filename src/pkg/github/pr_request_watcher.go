@@ -300,7 +300,7 @@ func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAutho
 				if ctx.Err() != nil {
 					return
 				}
-				c.processPRRequestsInDir(ctx, nowFn, dir)
+				c.processPRRequestsInDir(WithRESTCaller(ctx, "hive:pr_request_watcher"), nowFn, dir)
 				// Same goroutine as the open path, so the two never rewrite
 				// one branch concurrently (#9364). Throttled internally and
 				// a no-op unless github.app_signed_commits is on.
