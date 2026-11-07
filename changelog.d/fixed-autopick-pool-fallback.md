@@ -1,0 +1,1 @@
+- hub: Auto-pick on "Approve provision" now falls back to any other registered non-GPU pool (most available first, tie-break by cluster ID) when the request's preferred pool has no available placeholder, instead of returning 409 while capacity exists elsewhere; private requests stay pinned to the GPU pool and an admin's explicit placeholder choice remains strict.
