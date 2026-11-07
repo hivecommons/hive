@@ -316,7 +316,14 @@ recorded on the approving aggregate as
 (Before [#13020](https://github.com/hivecommons/hive/pull/13020) the policy
 only resolved questions matching a short allowlist of non-risk words, so a
 green agent PR whose linked issue had already specified the default still
-parked for a person.) The risk classes are:
+parked for a person.) That approve, like the advisory approve of a bare
+non-risk `requires_human` (`self-authored non-risk requires_human recorded
+as advisory`), needs every perspective the head is owed to have reported.
+If one has not (a reviewer kick that died, or a rate-limited security
+review the relay did not record), the aggregate is `incomplete` with
+`review coverage incomplete: missing <perspectives>`, and the planner asks
+for the missing ones under `pending_ttl` / `max_redispatch`. Once they
+report, the same question resolves as advisory. The risk classes are:
 
 | Class | Escalates when the question names … |
 |---|---|
@@ -395,6 +402,13 @@ review for the person who decides
 went to its author at `stage/072-returned-to-contributor` for a PR-body
 edit while the security review's App-credential question waited on a
 maintainer).
+
+The rule makes a question advisory, not another perspective's `reject`. A
+contributor PR where one perspective rejects and another asks a
+non-security question gets the verdict the reject alone gives it: `reject`,
+which holds the PR for a person (the question stays in the aggregate's
+reasons). Before, the question's advisory approve also swallowed the
+reject, and the head was merge-eligible.
 
 Everything else the review raises — ordinary nits and findings, a duplicate,
 naming, scope, sequencing, licensing, a failing optional check, a conflict

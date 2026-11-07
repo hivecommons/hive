@@ -123,7 +123,9 @@ func TestAggregateReportsResolvesNonRiskHiveAuthoredDecisionQuestions(t *testing
 			r.DecisionRequested = true
 			r.DecisionQuestion = question
 
-			got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+			// Every perspective reported: the advisory approve needs full
+			// coverage (approve_needs_coverage_test.go).
+			got := AggregateReports(alongsideApprovals([]PerspectiveReport{r}), AggregateOptions{})
 
 			if got.Verdict != VerdictApprove || !got.MergeEligible || got.RequiresHuman || got.DecisionRequested {
 				t.Fatalf("aggregate = %+v, want resolved approve", got)
@@ -437,7 +439,7 @@ func TestAggregateReportsAdvisesSelfAuthoredNonRiskHumanWithoutRemediation(t *te
 	r.HiveAuthored = true
 	r.Summary = "This sequencing question is low stakes but worth noting for maintainers."
 
-	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+	got := AggregateReports(alongsideApprovals([]PerspectiveReport{r}), AggregateOptions{})
 
 	if got.Verdict != VerdictApprove || !got.MergeEligible || got.RequiresHuman {
 		t.Fatalf("aggregate = %+v, want advisory approval", got)
