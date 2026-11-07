@@ -94,28 +94,26 @@ func TestReviewBacklogTargetFallsBackToGitHubWithReviewerAgentLabel(t *testing.T
 	}
 }
 
-func TestReviewBacklogDailyCapAndPrune(t *testing.T) {
-	if got := reviewBacklogDailyCap(ReviewBacklogRouting{}, false, 0); got != DefaultReviewBacklogIssueCap {
-		t.Fatalf("unrouted cap = %d, want legacy default %d", got, DefaultReviewBacklogIssueCap)
-	}
-	if got := reviewBacklogDailyCap(ReviewBacklogRouting{}, false, 5); got != 5 {
-		t.Fatalf("unrouted cap = %d, want legacy 5", got)
-	}
-	if got := reviewBacklogDailyCap(ReviewBacklogRouting{}, true, 5); got != config.DefaultReviewBacklogMaxPerPRPerDay {
-		t.Fatalf("routed default cap = %d, want %d", got, config.DefaultReviewBacklogMaxPerPRPerDay)
-	}
-	if got := reviewBacklogDailyCap(ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{MaxPerPRPerDay: 4}}, true, 5); got != 4 {
-		t.Fatalf("routed cap = %d, want 4", got)
-	}
-	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
-	l := newReviewBacklogLedger()
-	l.PRDailyCount["o/r#5@2026-10-01"] = 3
-	l.PRDailyCount["o/r#5@2026-10-08"] = 2
-	l.PRDailyCount[reviewBacklogDayKey("o/r#5", now)] = 1
-	l.PRDailyCount["garbage"] = 1
-	l.pruneDailyCounts(now)
-	if len(l.PRDailyCount) != 2 || l.PRDailyCount["o/r#5@2026-10-08"] != 2 || l.PRDailyCount["o/r#5@2026-10-09"] != 1 {
-		t.Fatalf("pruned counts = %v, want yesterday and today only", l.PRDailyCount)
+func TestReviewBacklogPRCap(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		routing ReviewBacklogRouting
+		routed  bool
+		legacy  int
+		want    int
+	}{
+		{name: "unrouted default", want: DefaultReviewBacklogIssueCap},
+		{name: "unrouted legacy", legacy: 5, want: 5},
+		{name: "routed default", routed: true, legacy: 5, want: config.DefaultReviewBacklogMaxPerPR},
+		{name: "routed max_per_pr", routing: ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{MaxPerPR: 4}}, routed: true, legacy: 5, want: 4},
+		{name: "routed retired per-day alias", routing: ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{MaxPerPRPerDay: 7}}, routed: true, want: 7},
+		{name: "max_per_pr wins over alias", routing: ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{MaxPerPR: 2, MaxPerPRPerDay: 7}}, routed: true, want: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := reviewBacklogPRCap(tc.routing, tc.routed, tc.legacy); got != tc.want {
+				t.Fatalf("cap = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -233,7 +231,7 @@ func prCommentServer(t *testing.T, bodies map[int][]string) *httptest.Server {
 	return srv
 }
 
-func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndDailyCap(t *testing.T) {
+func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndPRCap(t *testing.T) {
 	withReviewBacklogState(t)
 	comments := map[int][]string{}
 	srv := prCommentServer(t, comments)
@@ -243,7 +241,7 @@ func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndDailyCap(t *testing.T) 
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P1"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, Labels: []string{"nit"}, MaxPerPRPerDay: 2},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, Labels: []string{"nit"}, MaxPerPR: 2, MinSeverity: "P3"},
 			Sink:     sink,
 		}
 	})
@@ -254,15 +252,13 @@ func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndDailyCap(t *testing.T) 
 	pr5 := routingReport(t, 5, "abc",
 		nit("unused variable", "medium", "pkg/a.go", 7, "x is assigned and never read"),
 		nit("blocking bug", "high", "pkg/a.go", 9, "this blocks and must not be filed"),
-		nit("typo in comment", "low", "pkg/b.go", 3, "receive should be receive"),
-		nit("naming", "info", "pkg/c.go", 4, "prefer camelCase"),
 		map[string]any{"title": "no evidence", "severity": "low", "summary": "uncited", "review_scope": "in-scope"},
 	)
 	if err := c.fileOutOfScopeReviewBacklog(ctx, ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: pr5}, day1); err != nil {
 		t.Fatalf("file PR 5: %v", err)
 	}
-	if len(sink.created) != 2 {
-		t.Fatalf("created = %d, want 2 (daily cap) below-line items", len(sink.created))
+	if len(sink.created) != 1 {
+		t.Fatalf("created = %d, want 1 below-line item", len(sink.created))
 	}
 	first := sink.created[0]
 	if first.Repo != "o/r" || first.Title != "[reviewer] Review backlog (correctness): unused variable" || strings.Join(first.Labels, ",") != "nit,blocked" {
@@ -289,16 +285,51 @@ func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndDailyCap(t *testing.T) 
 			t.Errorf("filed a blocking or uncited finding: %q", item.Title)
 		}
 	}
-	if len(comments[5]) != 1 || !strings.Contains(comments[5][0], "ENG-1") || !strings.Contains(comments[5][0], "ENG-2") {
-		t.Fatalf("PR 5 summary comments = %v, want one listing ENG-1 and ENG-2", comments[5])
+	if len(comments[5]) != 1 || !strings.Contains(comments[5][0], "ENG-1") {
+		t.Fatalf("PR 5 summary comments = %v, want one listing ENG-1", comments[5])
 	}
 	batch := assertTypedWrite(t, *recs, AuditActionReviewBacklogBatchRouted, "o/r", 5, 1)
-	for _, want := range []string{"destination=linear", "filed=2", "updated=0", "capped=1"} {
+	for _, want := range []string{"destination=linear", "filed=1", "updated=0", "capped=0"} {
 		if !strings.Contains(batch.Detail, want) {
 			t.Errorf("batch detail %q missing %q", batch.Detail, want)
 		}
 	}
 	assertTypedWrite(t, *recs, AuditActionReviewBacklogIssueFiled, "", 0, 0)
+
+	// A later head adds two P3 nits from the same perspective: one
+	// collapsed item with a checklist, not two (hivecommons/hive#17065).
+	pr5b := routingReport(t, 5, "abd",
+		nit("unused variable", "medium", "pkg/a.go", 7, "x is assigned and never read"),
+		nit("typo in comment", "low", "pkg/b.go", 3, "receive should be receive"),
+		nit("naming", "info", "pkg/c.go", 4, "prefer camelCase"),
+	)
+	if err := c.fileOutOfScopeReviewBacklog(ctx, ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: pr5b}, day1.Add(time.Hour)); err != nil {
+		t.Fatalf("file PR 5 head abd: %v", err)
+	}
+	if len(sink.created) != 2 {
+		t.Fatalf("created = %d, want the two nits collapsed into one item", len(sink.created))
+	}
+	group := sink.created[1]
+	if group.Title != "[reviewer] Review backlog (correctness): o/r#5 — 2 follow-ups" {
+		t.Fatalf("collapsed title = %q", group.Title)
+	}
+	for _, want := range []string{"- [ ] **typo in comment** — low (P3) (`pkg/b.go:3`)", "- [ ] **naming** — info (P3) (`pkg/c.go:4`)", "https://github.com/o/r/blob/abd/pkg/b.go#L3", "prefer camelCase", "2 correctness findings collapsed into one item"} {
+		if !strings.Contains(group.Body, want) {
+			t.Errorf("collapsed body missing %q:\n%s", want, group.Body)
+		}
+	}
+	// The cap is per PR lifetime: a third pass, even a day later, files
+	// nothing new.
+	pr5c := routingReport(t, 5, "abe", nit("shadowed err", "medium", "pkg/d.go", 2, "err is shadowed"))
+	if err := c.fileOutOfScopeReviewBacklog(ctx, ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: pr5c}, day1.Add(48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.created) != 2 {
+		t.Fatalf("per-PR cap reset: created = %d, want still 2", len(sink.created))
+	}
+	if len(comments[5]) != 1 {
+		t.Fatalf("PR 5 summary comments = %d, want still one", len(comments[5]))
+	}
 
 	// PR 6 re-raises the first finding: reflowed text, other line, other head.
 	pr6 := routingReport(t, 6, "def",
@@ -336,22 +367,18 @@ func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndDailyCap(t *testing.T) 
 	if !ok || fmt.Sprint(rec.PRs) != "[5 6]" || rec.Destination != config.ReviewBacklogLinear || rec.ItemKey != "ENG-1" {
 		t.Fatalf("fingerprint record = %+v ok=%v, want PRs [5 6] on linear ENG-1", rec, ok)
 	}
-
-	// Same day, PR 5 again: still capped. Next day: the capped finding files.
-	if err := c.fileOutOfScopeReviewBacklog(ctx, ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: pr5}, day1.Add(time.Hour)); err != nil {
-		t.Fatal(err)
+	// Both collapsed findings map to the collapsed item.
+	for _, f := range []outputschema.Finding{
+		{Title: "typo in comment", File: "pkg/b.go", Summary: "receive should be receive"},
+		{Title: "naming", File: "pkg/c.go", Summary: "prefer camelCase"},
+	} {
+		rec, ok := ledger.fingerprint("o/r", ReviewFindingFingerprint(f))
+		if !ok || rec.ItemKey != "ENG-2" {
+			t.Fatalf("%s: fingerprint record = %+v ok=%v, want ENG-2", f.Title, rec, ok)
+		}
 	}
-	if len(sink.created) != 2 {
-		t.Fatalf("same-day re-review created past the cap: %d", len(sink.created))
-	}
-	if err := c.fileOutOfScopeReviewBacklog(ctx, ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: pr5}, day1.Add(24*time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.created) != 3 || !strings.Contains(sink.created[2].Title, "naming") {
-		t.Fatalf("next day: created = %d, want the capped finding filed", len(sink.created))
-	}
-	if len(comments[5]) != 1 {
-		t.Fatalf("PR 5 summary comments = %d, want still one", len(comments[5]))
+	if got := ledger.PRItemCount[ReviewLinkKey("o/r", 5)]; got != 2 {
+		t.Fatalf("PR 5 lifetime count = %d, want 2", got)
 	}
 }
 
@@ -367,7 +394,7 @@ func TestReviewBacklogNoBlockingLineLeavesInScopeFindingsAlone(t *testing.T) {
 	backlogBelow := false
 	c.SetReviewBacklog(func() (bool, int) { return false, 3 })
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
-		return ReviewBacklogRouting{Severity: config.ReviewSeverityConfig{BlockAt: "P1", BacklogBelow: &backlogBelow}, Sink: sink}
+		return ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{MinSeverity: "P3"}, Severity: config.ReviewSeverityConfig{BlockAt: "P1", BacklogBelow: &backlogBelow}, Sink: sink}
 	})
 	if err := c.fileOutOfScopeReviewBacklog(context.Background(), ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: report}, time.Now()); err != nil {
 		t.Fatal(err)
@@ -384,7 +411,7 @@ func TestReviewBacklogCreateErrors(t *testing.T) {
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P2"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogJira},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogJira, MinSeverity: "P3"},
 			Sink:     sink,
 		}
 	})
@@ -443,7 +470,7 @@ func TestReviewBacklogGitHubIssueDestinationOverHTTP(t *testing.T) {
 		// linear is not active, so the fallback GitHub issue sink is used.
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P2"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, Labels: []string{"nit"}},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, Labels: []string{"nit"}, MinSeverity: "P3"},
 		}
 	})
 	recs := captureAudit(c)
@@ -494,7 +521,7 @@ func TestReviewBacklogRefilesWhenLedgerItemClosed(t *testing.T) {
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P1"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MaxPerPRPerDay: 5},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MaxPerPRPerDay: 5, MinSeverity: "P3"},
 			Sink:     sink,
 		}
 	})
@@ -535,7 +562,7 @@ func TestReviewBacklogStateProbeErrorAppendsAndSamePRSkipsProbe(t *testing.T) {
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P1"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MaxPerPRPerDay: 5},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MaxPerPRPerDay: 5, MinSeverity: "P3"},
 			Sink:     sink,
 		}
 	})
@@ -658,7 +685,7 @@ func TestReviewBacklogGitHubSinkFoldsIntoOpenAgentTwin(t *testing.T) {
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P2"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit"}},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit"}, MinSeverity: "P3"},
 		}
 	})
 	finding := nit("nit", "low", "pkg/a.go", 3, "minor")
@@ -708,7 +735,7 @@ func TestReviewBacklogFoldedTwinKeepsFullFinding(t *testing.T) {
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P1"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, Labels: []string{"nit"}, MaxPerPRPerDay: 5},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, Labels: []string{"nit"}, MaxPerPRPerDay: 5, MinSeverity: "P3"},
 			Sink:     sink,
 		}
 	})
@@ -835,7 +862,7 @@ func TestReviewBacklogGitHubSinkReusedTwinDoesNotInheritBlocked(t *testing.T) {
 	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 		return ReviewBacklogRouting{
 			Severity: config.ReviewSeverityConfig{BlockAt: "P2"},
-			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit", "help wanted"}},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit", "help wanted"}, MinSeverity: "P3"},
 		}
 	})
 	recs := captureAudit(c)
@@ -928,7 +955,7 @@ func TestReviewBacklogGitHubSinkFilesSeparatelyForSameFileDifferentFinding(t *te
 			c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 				return ReviewBacklogRouting{
 					Severity: config.ReviewSeverityConfig{BlockAt: "P2"},
-					Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit"}},
+					Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit"}, MinSeverity: "P3"},
 				}
 			})
 			finding := nit("nit", "low", "pkg/a.go", 3, "minor")
