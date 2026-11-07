@@ -316,7 +316,7 @@ func renderKnowledgeAdvice(adv crux.KnowledgeAdvice) string {
 	var b strings.Builder
 	b.WriteString("📚 Knowledge: ")
 	b.WriteString(oneLine(adv.Title))
-	if summary := truncateStr(oneLine(adv.Summary), knowledgeAdvisorMaxSummary); summary != "" {
+	if summary := headRunes(oneLine(adv.Summary), knowledgeAdvisorMaxSummary); summary != "" {
 		b.WriteString(" — ")
 		b.WriteString(summary)
 	}
@@ -326,4 +326,14 @@ func renderKnowledgeAdvice(adv crux.KnowledgeAdvice) string {
 		b.WriteString(")")
 	}
 	return b.String()
+}
+
+// headRunes keeps s within n runes, ellipsis included, so the typed line's
+// body never exceeds the documented cap.
+func headRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return strings.TrimSpace(string(r[:n-1])) + "…"
 }

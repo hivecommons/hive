@@ -148,7 +148,7 @@ func TestRenderKnowledgeAdvice(t *testing.T) {
 		t.Error("line must be a single line")
 	}
 	body := strings.TrimSuffix(strings.TrimPrefix(line, "📚 Knowledge: Re-pin TRUSTED_SCRIPTS_TREE — "), " (full: knowledge entry scripts-tree)")
-	if n := len([]rune(body)); n > knowledgeAdvisorMaxSummary+1 {
+	if n := len([]rune(body)); n > knowledgeAdvisorMaxSummary {
 		t.Errorf("summary is %d runes, cap %d", n, knowledgeAdvisorMaxSummary)
 	}
 	if got := renderKnowledgeAdvice(crux.KnowledgeAdvice{Title: "T"}); got != "📚 Knowledge: T" {

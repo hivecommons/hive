@@ -723,9 +723,8 @@ type Manager struct {
 	breakerPaused  map[string]bool
 
 	// recordPromptCallback, when set, persists the fully-expanded prompt text
-	// delivered to an agent so owners can review it later.
-	//
-	// Held as an atomic.Pointer rather than behind m.mu because the kick path
+	// delivered to an agent so owners can review it later. Held as an
+	// atomic.Pointer rather than behind m.mu because the kick path
 	// (deliverKickLocked) already holds m.mu when it fires this. m.mu is a
 	// non-reentrant RWMutex, so reading the callback under a second Lock there
 	// would deadlock the kick path.
