@@ -479,6 +479,32 @@
       renderIssuesDisabledBanner({ issuesDisabledRepos: _lastIssuesDisabledRepos });
     }
 
+    // The code scanning sweep's notices (/api/status code_scanning): a repo
+    // whose alerts the GitHub App cannot read (it lacks "Code scanning
+    // alerts: Read") or that has no code scanning analysis. The sweep backs
+    // off from such a repo; the row links to the repo's Security tab.
+    function renderCodeScanningBanner(data) {
+      var banner = document.getElementById('code-scanning-banner');
+      if (!banner) return;
+      var repos = (data && data.code_scanning && data.code_scanning.repos) || [];
+      var shown = repos.filter(function(r) { return r && r.repo && r.notice; });
+      var list = document.getElementById('code-scanning-banner-list');
+      if (!shown.length || !list) {
+        banner.setAttribute('hidden', '');
+        banner.style.display = 'none';
+        if (list) list.innerHTML = '';
+        return;
+      }
+      list.innerHTML = shown.map(function(r) {
+        return '<div class="issues-disabled-row">'
+          + '<span class="issues-disabled-msg"><strong>' + escapeHtml(r.repo) + '</strong>: ' + escapeHtml(r.notice)
+          + ' <a href="' + escapeHtml(r.security_url || '') + '" target="_blank" rel="noopener">Security tab</a></span>'
+          + '</div>';
+      }).join('');
+      banner.removeAttribute('hidden');
+      banner.style.cssText = 'display:flex !important';
+    }
+
     var _hubBannerColorMap = {
       /* banner copy stays neutral (--text); the semantic color lives in the tint/border */
       green: {bg: 'rgba(22,163,74,0.12)', border: 'rgba(22,163,74,0.3)', color: 'var(--text)'},

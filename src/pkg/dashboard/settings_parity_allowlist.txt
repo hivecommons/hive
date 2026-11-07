@@ -182,6 +182,17 @@ chat.grounded_answers.model # TODO #14412
 classification.review_bots.logins[] # TODO #11854
 classification.review_bots.max_attempts_per_thread # TODO #11854
 classification.review_bots.resolve_after_fix # TODO #11854
+code_scanning.enabled # opt-in code scanning sweep; yaml-only, see docs/code-scanning.md
+code_scanning.exclude_rules[] # opt-in code scanning sweep; yaml-only, see docs/code-scanning.md
+code_scanning.include_tools[] # opt-in code scanning sweep; yaml-only, see docs/code-scanning.md
+code_scanning.interval # opt-in code scanning sweep; yaml-only, see docs/code-scanning.md
+code_scanning.max_new_issues_per_run # opt-in code scanning sweep; yaml-only, see docs/code-scanning.md
+code_scanning.min_severity # opt-in code scanning sweep; yaml-only, see docs/code-scanning.md
+code_scanning.repos.<key>.enabled # opt-in code scanning sweep; yaml-only, see docs/code-scanning.md
+code_scanning.repos.<key>.exclude_rules[] # opt-in code scanning sweep; yaml-only, see docs/code-scanning.md
+code_scanning.repos.<key>.include_tools[] # opt-in code scanning sweep; yaml-only, see docs/code-scanning.md
+code_scanning.repos.<key>.max_new_issues_per_run # opt-in code scanning sweep; yaml-only, see docs/code-scanning.md
+code_scanning.repos.<key>.min_severity # opt-in code scanning sweep; yaml-only, see docs/code-scanning.md
 compliance.frameworks[] # TODO #11854
 data.nous_dir # TODO #11854
 contribute.token_idle_max # TODO #11854

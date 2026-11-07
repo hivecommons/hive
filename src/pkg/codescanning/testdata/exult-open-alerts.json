@@ -1,0 +1,3105 @@
+[
+  {
+    "number": 1,
+    "html_url": "https://github.com/example/exult/security/code-scanning/1",
+    "state": "open",
+    "rule": {
+      "id": "cpp/use-after-free",
+      "name": "cpp/use-after-free",
+      "severity": "warning",
+      "security_severity_level": "critical",
+      "description": "Potential use after free",
+      "tags": [
+        "external/cwe/cwe-416",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Memory may have been previously freed by delete.\nMemory may have been previously freed by delete."
+      },
+      "location": {
+        "path": "shapes/items.h",
+        "start_line": 267,
+        "end_line": 267
+      }
+    }
+  },
+  {
+    "number": 2,
+    "html_url": "https://github.com/example/exult/security/code-scanning/2",
+    "state": "open",
+    "rule": {
+      "id": "cpp/overflowing-snprintf",
+      "name": "cpp/overflowing-snprintf",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Potentially overflowing call to snprintf",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-253",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "The size argument of this snprintf call is derived from its return value, which may exceed the size of the buffer and overflow."
+      },
+      "location": {
+        "path": "shapes/u7drag.cc",
+        "start_line": 209,
+        "end_line": 209
+      }
+    }
+  },
+  {
+    "number": 3,
+    "html_url": "https://github.com/example/exult/security/code-scanning/3",
+    "state": "open",
+    "rule": {
+      "id": "cpp/integer-multiplication-cast-to-long",
+      "name": "cpp/integer-multiplication-cast-to-long",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Multiplication result converted to larger type",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-192",
+        "external/cwe/cwe-197",
+        "external/cwe/cwe-681",
+        "reliability",
+        "security",
+        "types"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Multiplication result may overflow 'int' before it is converted to 'unsigned long'."
+      },
+      "location": {
+        "path": "gamemap.cc",
+        "start_line": 1726,
+        "end_line": 1726
+      }
+    }
+  },
+  {
+    "number": 4,
+    "html_url": "https://github.com/example/exult/security/code-scanning/4",
+    "state": "open",
+    "rule": {
+      "id": "cpp/integer-multiplication-cast-to-long",
+      "name": "cpp/integer-multiplication-cast-to-long",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Multiplication result converted to larger type",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-192",
+        "external/cwe/cwe-197",
+        "external/cwe/cwe-681",
+        "reliability",
+        "security",
+        "types"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Multiplication result may overflow 'int' before it is converted to 'unsigned long'."
+      },
+      "location": {
+        "path": "gamemap.cc",
+        "start_line": 1727,
+        "end_line": 1727
+      }
+    }
+  },
+  {
+    "number": 5,
+    "html_url": "https://github.com/example/exult/security/code-scanning/5",
+    "state": "open",
+    "rule": {
+      "id": "cpp/integer-multiplication-cast-to-long",
+      "name": "cpp/integer-multiplication-cast-to-long",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Multiplication result converted to larger type",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-192",
+        "external/cwe/cwe-197",
+        "external/cwe/cwe-681",
+        "reliability",
+        "security",
+        "types"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Multiplication result may overflow 'int' before it is converted to 'unsigned long'."
+      },
+      "location": {
+        "path": "gamemap.cc",
+        "start_line": 1728,
+        "end_line": 1728
+      }
+    }
+  },
+  {
+    "number": 6,
+    "html_url": "https://github.com/example/exult/security/code-scanning/6",
+    "state": "open",
+    "rule": {
+      "id": "cpp/integer-multiplication-cast-to-long",
+      "name": "cpp/integer-multiplication-cast-to-long",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Multiplication result converted to larger type",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-192",
+        "external/cwe/cwe-197",
+        "external/cwe/cwe-681",
+        "reliability",
+        "security",
+        "types"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Multiplication result may overflow 'int' before it is converted to 'unsigned long'."
+      },
+      "location": {
+        "path": "npcnear.cc",
+        "start_line": 74,
+        "end_line": 74
+      }
+    }
+  },
+  {
+    "number": 7,
+    "html_url": "https://github.com/example/exult/security/code-scanning/7",
+    "state": "open",
+    "rule": {
+      "id": "cpp/integer-multiplication-cast-to-long",
+      "name": "cpp/integer-multiplication-cast-to-long",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Multiplication result converted to larger type",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-192",
+        "external/cwe/cwe-197",
+        "external/cwe/cwe-681",
+        "reliability",
+        "security",
+        "types"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Multiplication result may overflow 'int' before it is converted to 'size_t'."
+      },
+      "location": {
+        "path": "tools/shp2pcx.cc",
+        "start_line": 236,
+        "end_line": 236
+      }
+    }
+  },
+  {
+    "number": 8,
+    "html_url": "https://github.com/example/exult/security/code-scanning/8",
+    "state": "open",
+    "rule": {
+      "id": "cpp/integer-multiplication-cast-to-long",
+      "name": "cpp/integer-multiplication-cast-to-long",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Multiplication result converted to larger type",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-192",
+        "external/cwe/cwe-197",
+        "external/cwe/cwe-681",
+        "reliability",
+        "security",
+        "types"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Multiplication result may overflow 'int' before it is converted to 'size_t'."
+      },
+      "location": {
+        "path": "tools/shp2pcx.cc",
+        "start_line": 322,
+        "end_line": 322
+      }
+    }
+  },
+  {
+    "number": 9,
+    "html_url": "https://github.com/example/exult/security/code-scanning/9",
+    "state": "open",
+    "rule": {
+      "id": "cpp/integer-multiplication-cast-to-long",
+      "name": "cpp/integer-multiplication-cast-to-long",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Multiplication result converted to larger type",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-192",
+        "external/cwe/cwe-197",
+        "external/cwe/cwe-681",
+        "reliability",
+        "security",
+        "types"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Multiplication result may overflow 'int' before it is converted to 'size_t'."
+      },
+      "location": {
+        "path": "tools/gimp_plugin/u7shp.cc",
+        "start_line": 554,
+        "end_line": 554
+      }
+    }
+  },
+  {
+    "number": 10,
+    "html_url": "https://github.com/example/exult/security/code-scanning/10",
+    "state": "open",
+    "rule": {
+      "id": "cpp/integer-multiplication-cast-to-long",
+      "name": "cpp/integer-multiplication-cast-to-long",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Multiplication result converted to larger type",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-192",
+        "external/cwe/cwe-197",
+        "external/cwe/cwe-681",
+        "reliability",
+        "security",
+        "types"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Multiplication result may overflow 'int' before it is converted to 'size_t'."
+      },
+      "location": {
+        "path": "tools/gimp_plugin/u7shp.cc",
+        "start_line": 464,
+        "end_line": 464
+      }
+    }
+  },
+  {
+    "number": 11,
+    "html_url": "https://github.com/example/exult/security/code-scanning/11",
+    "state": "open",
+    "rule": {
+      "id": "cpp/integer-multiplication-cast-to-long",
+      "name": "cpp/integer-multiplication-cast-to-long",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Multiplication result converted to larger type",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-192",
+        "external/cwe/cwe-197",
+        "external/cwe/cwe-681",
+        "reliability",
+        "security",
+        "types"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Multiplication result may overflow 'int' before it is converted to 'long'."
+      },
+      "location": {
+        "path": "usecode/intrinsics.cc",
+        "start_line": 136,
+        "end_line": 136
+      }
+    }
+  },
+  {
+    "number": 12,
+    "html_url": "https://github.com/example/exult/security/code-scanning/12",
+    "state": "open",
+    "rule": {
+      "id": "cpp/missing-check-scanf",
+      "name": "cpp/missing-check-scanf",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Missing return-value check for a 'scanf'-like function",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-252",
+        "external/cwe/cwe-253",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This variable is read, but may not have been written. It should be guarded by a check that the call to sscanf returns at least 1."
+      },
+      "location": {
+        "path": "gumps/Notebook_gump.cc",
+        "start_line": 925,
+        "end_line": 925
+      }
+    }
+  },
+  {
+    "number": 13,
+    "html_url": "https://github.com/example/exult/security/code-scanning/13",
+    "state": "open",
+    "rule": {
+      "id": "cpp/missing-check-scanf",
+      "name": "cpp/missing-check-scanf",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Missing return-value check for a 'scanf'-like function",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-252",
+        "external/cwe/cwe-253",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This variable is read, but may not have been written. It should be guarded by a check that the call to sscanf returns at least 2."
+      },
+      "location": {
+        "path": "gumps/Notebook_gump.cc",
+        "start_line": 925,
+        "end_line": 925
+      }
+    }
+  },
+  {
+    "number": 14,
+    "html_url": "https://github.com/example/exult/security/code-scanning/14",
+    "state": "open",
+    "rule": {
+      "id": "cpp/missing-check-scanf",
+      "name": "cpp/missing-check-scanf",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Missing return-value check for a 'scanf'-like function",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-252",
+        "external/cwe/cwe-253",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This variable is read, but may not have been written. It should be guarded by a check that the call to sscanf returns at least 3."
+      },
+      "location": {
+        "path": "gumps/Notebook_gump.cc",
+        "start_line": 925,
+        "end_line": 925
+      }
+    }
+  },
+  {
+    "number": 15,
+    "html_url": "https://github.com/example/exult/security/code-scanning/15",
+    "state": "open",
+    "rule": {
+      "id": "cpp/missing-check-scanf",
+      "name": "cpp/missing-check-scanf",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Missing return-value check for a 'scanf'-like function",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-252",
+        "external/cwe/cwe-253",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This variable is read, but may not have been written. It should be guarded by a check that the call to sscanf returns at least 1."
+      },
+      "location": {
+        "path": "gumps/Notebook_gump.cc",
+        "start_line": 932,
+        "end_line": 932
+      }
+    }
+  },
+  {
+    "number": 16,
+    "html_url": "https://github.com/example/exult/security/code-scanning/16",
+    "state": "open",
+    "rule": {
+      "id": "cpp/missing-check-scanf",
+      "name": "cpp/missing-check-scanf",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Missing return-value check for a 'scanf'-like function",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-252",
+        "external/cwe/cwe-253",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This variable is read, but may not have been written. It should be guarded by a check that the call to sscanf returns at least 2."
+      },
+      "location": {
+        "path": "gumps/Notebook_gump.cc",
+        "start_line": 932,
+        "end_line": 932
+      }
+    }
+  },
+  {
+    "number": 17,
+    "html_url": "https://github.com/example/exult/security/code-scanning/17",
+    "state": "open",
+    "rule": {
+      "id": "cpp/missing-check-scanf",
+      "name": "cpp/missing-check-scanf",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Missing return-value check for a 'scanf'-like function",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-252",
+        "external/cwe/cwe-253",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This variable is read, but may not have been written. It should be guarded by a check that the call to sscanf returns at least 1."
+      },
+      "location": {
+        "path": "gumps/Notebook_gump.cc",
+        "start_line": 943,
+        "end_line": 943
+      }
+    }
+  },
+  {
+    "number": 18,
+    "html_url": "https://github.com/example/exult/security/code-scanning/18",
+    "state": "open",
+    "rule": {
+      "id": "cpp/missing-check-scanf",
+      "name": "cpp/missing-check-scanf",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Missing return-value check for a 'scanf'-like function",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-252",
+        "external/cwe/cwe-253",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This variable is read, but may not have been written. It should be guarded by a check that the call to sscanf returns at least 1.\nThis variable is read, but may not have been written. It should be guarded by a check that the call to sscanf returns at least 1."
+      },
+      "location": {
+        "path": "tools/rip.cc",
+        "start_line": 125,
+        "end_line": 125
+      }
+    }
+  },
+  {
+    "number": 19,
+    "html_url": "https://github.com/example/exult/security/code-scanning/19",
+    "state": "open",
+    "rule": {
+      "id": "cpp/missing-check-scanf",
+      "name": "cpp/missing-check-scanf",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Missing return-value check for a 'scanf'-like function",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-252",
+        "external/cwe/cwe-253",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This variable is read, but may not have been written. It should be guarded by a check that the call to fscanf returns at least 2."
+      },
+      "location": {
+        "path": "tools/mockup/main.c",
+        "start_line": 154,
+        "end_line": 154
+      }
+    }
+  },
+  {
+    "number": 20,
+    "html_url": "https://github.com/example/exult/security/code-scanning/20",
+    "state": "open",
+    "rule": {
+      "id": "cpp/incorrect-not-operator-usage",
+      "name": "cpp/incorrect-not-operator-usage",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Incorrect 'not' operator usage",
+      "tags": [
+        "external/cwe/cwe-480",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Usage of a logical not (!) expression as a bitwise operator."
+      },
+      "location": {
+        "path": "shapes/shapeinf.h",
+        "start_line": 759,
+        "end_line": 759
+      }
+    }
+  },
+  {
+    "number": 21,
+    "html_url": "https://github.com/example/exult/security/code-scanning/21",
+    "state": "open",
+    "rule": {
+      "id": "cpp/incorrect-not-operator-usage",
+      "name": "cpp/incorrect-not-operator-usage",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Incorrect 'not' operator usage",
+      "tags": [
+        "external/cwe/cwe-480",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Usage of a logical not (!) expression as a bitwise operator."
+      },
+      "location": {
+        "path": "shapes/shapeinf.h",
+        "start_line": 755,
+        "end_line": 755
+      }
+    }
+  },
+  {
+    "number": 22,
+    "html_url": "https://github.com/example/exult/security/code-scanning/22",
+    "state": "open",
+    "rule": {
+      "id": "cpp/unsafe-strcat",
+      "name": "cpp/unsafe-strcat",
+      "severity": "warning",
+      "security_severity_level": "critical",
+      "description": "Potentially unsafe use of strcat",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-120",
+        "external/cwe/cwe-251",
+        "external/cwe/cwe-676",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Always check the size of the source buffer when using strcat."
+      },
+      "location": {
+        "path": "audio/midi_drivers/timidity/timidity_common.cpp",
+        "start_line": 155,
+        "end_line": 155
+      }
+    }
+  },
+  {
+    "number": 23,
+    "html_url": "https://github.com/example/exult/security/code-scanning/23",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "files/zip/zip.cc",
+        "start_line": 282,
+        "end_line": 282
+      }
+    }
+  },
+  {
+    "number": 24,
+    "html_url": "https://github.com/example/exult/security/code-scanning/24",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "shapes/pngio.cc",
+        "start_line": 427,
+        "end_line": 427
+      }
+    }
+  },
+  {
+    "number": 25,
+    "html_url": "https://github.com/example/exult/security/code-scanning/25",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "shapes/pngio.cc",
+        "start_line": 234,
+        "end_line": 234
+      }
+    }
+  },
+  {
+    "number": 26,
+    "html_url": "https://github.com/example/exult/security/code-scanning/26",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "tools/rip.cc",
+        "start_line": 97,
+        "end_line": 97
+      }
+    }
+  },
+  {
+    "number": 27,
+    "html_url": "https://github.com/example/exult/security/code-scanning/27",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "tools/rip.cc",
+        "start_line": 134,
+        "end_line": 134
+      }
+    }
+  },
+  {
+    "number": 28,
+    "html_url": "https://github.com/example/exult/security/code-scanning/28",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "tools/rip.cc",
+        "start_line": 24,
+        "end_line": 24
+      }
+    }
+  },
+  {
+    "number": 29,
+    "html_url": "https://github.com/example/exult/security/code-scanning/29",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "tools/shp2pcx.cc",
+        "start_line": 409,
+        "end_line": 409
+      }
+    }
+  },
+  {
+    "number": 30,
+    "html_url": "https://github.com/example/exult/security/code-scanning/30",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "tools/splitshp.cc",
+        "start_line": 208,
+        "end_line": 208
+      }
+    }
+  },
+  {
+    "number": 31,
+    "html_url": "https://github.com/example/exult/security/code-scanning/31",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "tools/splitshp.cc",
+        "start_line": 147,
+        "end_line": 147
+      }
+    }
+  },
+  {
+    "number": 32,
+    "html_url": "https://github.com/example/exult/security/code-scanning/32",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "tools/splitshp.cc",
+        "start_line": 168,
+        "end_line": 168
+      }
+    }
+  },
+  {
+    "number": 33,
+    "html_url": "https://github.com/example/exult/security/code-scanning/33",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "tools/mockup/main.c",
+        "start_line": 195,
+        "end_line": 195
+      }
+    }
+  },
+  {
+    "number": 34,
+    "html_url": "https://github.com/example/exult/security/code-scanning/34",
+    "state": "open",
+    "rule": {
+      "id": "cpp/world-writable-file-creation",
+      "name": "cpp/world-writable-file-creation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "File created without restricting permissions",
+      "tags": [
+        "external/cwe/cwe-732",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "A file may be created here with mode 0666, which would make it world-writable."
+      },
+      "location": {
+        "path": "tools/wuc.cc",
+        "start_line": 201,
+        "end_line": 201
+      }
+    }
+  },
+  {
+    "number": 35,
+    "html_url": "https://github.com/example/exult/security/code-scanning/35",
+    "state": "open",
+    "rule": {
+      "id": "cpp/uncontrolled-process-operation",
+      "name": "cpp/uncontrolled-process-operation",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled process operation",
+      "tags": [
+        "external/cwe/cwe-073",
+        "external/cwe/cwe-078",
+        "external/cwe/cwe-114",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "The value of this argument may come from string read by fgets and is being passed to dlopen.\nThe value of this argument may come from a command-line argument and is being passed to dlopen."
+      },
+      "location": {
+        "path": "tools/smooth/plugin.c",
+        "start_line": 44,
+        "end_line": 44
+      }
+    }
+  },
+  {
+    "number": 36,
+    "html_url": "https://github.com/example/exult/security/code-scanning/36",
+    "state": "open",
+    "rule": {
+      "id": "cpp/uncontrolled-allocation-size",
+      "name": "cpp/uncontrolled-allocation-size",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Uncontrolled allocation size",
+      "tags": [
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-789",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This allocation size is derived from user input (string read by fread) and could allocate arbitrary amounts of memory."
+      },
+      "location": {
+        "path": "audio/midi_drivers/timidity/timidity_filter.cpp",
+        "start_line": 206,
+        "end_line": 206
+      }
+    }
+  },
+  {
+    "number": 37,
+    "html_url": "https://github.com/example/exult/security/code-scanning/37",
+    "state": "open",
+    "rule": {
+      "id": "cpp/uncontrolled-allocation-size",
+      "name": "cpp/uncontrolled-allocation-size",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Uncontrolled allocation size",
+      "tags": [
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-789",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This allocation size is derived from user input (string read by fread) and could allocate arbitrary amounts of memory."
+      },
+      "location": {
+        "path": "audio/midi_drivers/timidity/timidity_instrum.cpp",
+        "start_line": 242,
+        "end_line": 242
+      }
+    }
+  },
+  {
+    "number": 38,
+    "html_url": "https://github.com/example/exult/security/code-scanning/38",
+    "state": "open",
+    "rule": {
+      "id": "cpp/uncontrolled-allocation-size",
+      "name": "cpp/uncontrolled-allocation-size",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Uncontrolled allocation size",
+      "tags": [
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-789",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This allocation size is derived from user input (string read by fread) and could allocate arbitrary amounts of memory."
+      },
+      "location": {
+        "path": "audio/midi_drivers/timidity/timidity_instrum.cpp",
+        "start_line": 414,
+        "end_line": 414
+      }
+    }
+  },
+  {
+    "number": 39,
+    "html_url": "https://github.com/example/exult/security/code-scanning/39",
+    "state": "open",
+    "rule": {
+      "id": "cpp/uncontrolled-allocation-size",
+      "name": "cpp/uncontrolled-allocation-size",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Uncontrolled allocation size",
+      "tags": [
+        "external/cwe/cwe-190",
+        "external/cwe/cwe-789",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This allocation size is derived from user input (string read by fread) and could allocate arbitrary amounts of memory."
+      },
+      "location": {
+        "path": "audio/midi_drivers/timidity/timidity_instrum.cpp",
+        "start_line": 430,
+        "end_line": 430
+      }
+    }
+  },
+  {
+    "number": 40,
+    "html_url": "https://github.com/example/exult/security/code-scanning/40",
+    "state": "open",
+    "rule": {
+      "id": "cpp/potentially-dangerous-function",
+      "name": "cpp/potentially-dangerous-function",
+      "severity": "warning",
+      "security_severity_level": "critical",
+      "description": "Use of potentially dangerous function",
+      "tags": [
+        "external/cwe/cwe-676",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Call to 'localtime' is potentially dangerous."
+      },
+      "location": {
+        "path": "gamedat.cc",
+        "start_line": 483,
+        "end_line": 483
+      }
+    }
+  },
+  {
+    "number": 41,
+    "html_url": "https://github.com/example/exult/security/code-scanning/41",
+    "state": "open",
+    "rule": {
+      "id": "cpp/potentially-dangerous-function",
+      "name": "cpp/potentially-dangerous-function",
+      "severity": "warning",
+      "security_severity_level": "critical",
+      "description": "Use of potentially dangerous function",
+      "tags": [
+        "external/cwe/cwe-676",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Call to 'localtime' is potentially dangerous."
+      },
+      "location": {
+        "path": "gumps/Newfile_gump.cc",
+        "start_line": 1068,
+        "end_line": 1068
+      }
+    }
+  },
+  {
+    "number": 42,
+    "html_url": "https://github.com/example/exult/security/code-scanning/42",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (string read by fgets) and then passed to Timidity_Pentagram::try_to_open(name), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (an environment variable) and then passed to Timidity_Pentagram::try_to_open(name), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Timidity_Pentagram::try_to_open(name), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Timidity_Pentagram::try_to_open(name), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Timidity_Pentagram::try_to_open(name), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "audio/midi_drivers/timidity/timidity_common.cpp",
+        "start_line": 127,
+        "end_line": 127
+      }
+    }
+  },
+  {
+    "number": 43,
+    "html_url": "https://github.com/example/exult/security/code-scanning/43",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (string read by fgets) and then passed to Timidity_Pentagram::try_to_open(name), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (an environment variable) and then passed to Timidity_Pentagram::try_to_open(name), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Timidity_Pentagram::try_to_open(name), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Timidity_Pentagram::try_to_open(name), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Timidity_Pentagram::try_to_open(name), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "audio/midi_drivers/timidity/timidity_common.cpp",
+        "start_line": 157,
+        "end_line": 157
+      }
+    }
+  },
+  {
+    "number": 44,
+    "html_url": "https://github.com/example/exult/security/code-scanning/44",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (an environment variable) and then passed to fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "exult.cc",
+        "start_line": 2829,
+        "end_line": 2829
+      }
+    }
+  },
+  {
+    "number": 45,
+    "html_url": "https://github.com/example/exult/security/code-scanning/45",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (an environment variable) and then passed to zipOpen(pathname), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to zipOpen(pathname), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to zipOpen(pathname), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to zipOpen(pathname), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "gamedat.cc",
+        "start_line": 1194,
+        "end_line": 1194
+      }
+    }
+  },
+  {
+    "number": 46,
+    "html_url": "https://github.com/example/exult/security/code-scanning/46",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (an environment variable) and then passed to Shape_chooser::export_png(fname), which calls Shape_chooser::export_png(fname), which calls Export_png8(pngname), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Shape_chooser::export_png(fname), which calls Shape_chooser::export_png(fname), which calls Export_png8(pngname), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Shape_chooser::export_png(fname), which calls Shape_chooser::export_png(fname), which calls Export_png8(pngname), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Shape_chooser::export_png(fname), which calls Shape_chooser::export_png(fname), which calls Export_png8(pngname), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "mapedit/shapelst.cc",
+        "start_line": 878,
+        "end_line": 878
+      }
+    }
+  },
+  {
+    "number": 47,
+    "html_url": "https://github.com/example/exult/security/code-scanning/47",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (an environment variable) and then passed to Shape_chooser::export_tiled_png(fname), which calls Shape_chooser::export_png(fname), which calls Export_png8(pngname), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Shape_chooser::export_tiled_png(fname), which calls Shape_chooser::export_png(fname), which calls Export_png8(pngname), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Shape_chooser::export_tiled_png(fname), which calls Shape_chooser::export_png(fname), which calls Export_png8(pngname), which calls fopen(__filename).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Shape_chooser::export_tiled_png(fname), which calls Shape_chooser::export_png(fname), which calls Export_png8(pngname), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "mapedit/shapelst.cc",
+        "start_line": 891,
+        "end_line": 891
+      }
+    }
+  },
+  {
+    "number": 48,
+    "html_url": "https://github.com/example/exult/security/code-scanning/48",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/aseprite_plugin/exult_shp.cc",
+        "start_line": 381,
+        "end_line": 381
+      }
+    }
+  },
+  {
+    "number": 49,
+    "html_url": "https://github.com/example/exult/security/code-scanning/49",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/aseprite_plugin/exult_shp.cc",
+        "start_line": 443,
+        "end_line": 443
+      }
+    }
+  },
+  {
+    "number": 50,
+    "html_url": "https://github.com/example/exult/security/code-scanning/50",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to open(__file)."
+      },
+      "location": {
+        "path": "tools/aseprite_plugin/exult_shp.cc",
+        "start_line": 336,
+        "end_line": 336
+      }
+    }
+  },
+  {
+    "number": 51,
+    "html_url": "https://github.com/example/exult/security/code-scanning/51",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to open(__file)."
+      },
+      "location": {
+        "path": "tools/aseprite_plugin/exult_shp.cc",
+        "start_line": 138,
+        "end_line": 138
+      }
+    }
+  },
+  {
+    "number": 52,
+    "html_url": "https://github.com/example/exult/security/code-scanning/52",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (string read by fread) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/compiler/uclex.cc",
+        "start_line": 1051,
+        "end_line": 1051
+      }
+    }
+  },
+  {
+    "number": 53,
+    "html_url": "https://github.com/example/exult/security/code-scanning/53",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (an environment variable) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/compiler/uclex.cc",
+        "start_line": 1058,
+        "end_line": 1058
+      }
+    }
+  },
+  {
+    "number": 54,
+    "html_url": "https://github.com/example/exult/security/code-scanning/54",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (string read by fread) and then passed to Uc_location::register_source(path), which calls std::basic_ifstream<char, char_traits<char>>::basic_ifstream(__s).\nThis argument to a file access function is derived from user input (string read by fread) and then passed to Uc_location::register_source(path), which calls std::basic_ifstream<char, char_traits<char>>::basic_ifstream(__s), which calls std::basic_ifstream<char, char_traits<char>>::open(__s).\nThis argument to a file access function is derived from user input (string read by fread) and then passed to Uc_location::register_source(path), which calls std::basic_ifstream<char, char_traits<char>>::basic_ifstream(__s), which calls std::basic_ifstream<char, char_traits<char>>::open(__s), which calls std::basic_filebuf<char, char_traits<char>>::open(__s).\nThis argument to a file access function is derived from user input (an environment variable) and then passed to Uc_location::register_source(path), which calls std::basic_ifstream<char, char_traits<char>>::basic_ifstream(__s).\nThis argument to a file access function is derived from user input (an environment variable) and then passed to Uc_location::register_source(path), which calls std::basic_ifstream<char, char_traits<char>>::basic_ifstream(__s), which calls std::basic_ifstream<char, char_traits<char>>::open(__s).\nThis argument to a file access function is derived from user input (an environment variable) and then passed to Uc_location::register_source(path), which calls std::basic_ifstream<char, char_traits<char>>::basic_ifstream(__s), which calls std::basic_ifstream<char, char_traits<char>>::open(__s), which calls std::basic_filebuf<char, char_traits<char>>::open(__s)."
+      },
+      "location": {
+        "path": "tools/compiler/uclex.cc",
+        "start_line": 1075,
+        "end_line": 1075
+      }
+    }
+  },
+  {
+    "number": 55,
+    "html_url": "https://github.com/example/exult/security/code-scanning/55",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to std::basic_ofstream<char, char_traits<char>>::basic_ofstream(__s).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to std::basic_ofstream<char, char_traits<char>>::basic_ofstream(__s), which calls std::basic_ofstream<char, char_traits<char>>::open(__s).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to std::basic_ofstream<char, char_traits<char>>::basic_ofstream(__s), which calls std::basic_ofstream<char, char_traits<char>>::open(__s), which calls std::basic_filebuf<char, char_traits<char>>::open(__s)."
+      },
+      "location": {
+        "path": "tools/compiler/ucmain.cc",
+        "start_line": 285,
+        "end_line": 285
+      }
+    }
+  },
+  {
+    "number": 56,
+    "html_url": "https://github.com/example/exult/security/code-scanning/56",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/compiler/ucmain.cc",
+        "start_line": 226,
+        "end_line": 226
+      }
+    }
+  },
+  {
+    "number": 57,
+    "html_url": "https://github.com/example/exult/security/code-scanning/57",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to Uc_location::register_source(path), which calls std::basic_ifstream<char, char_traits<char>>::basic_ifstream(__s).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Uc_location::register_source(path), which calls std::basic_ifstream<char, char_traits<char>>::basic_ifstream(__s), which calls std::basic_ifstream<char, char_traits<char>>::open(__s).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to Uc_location::register_source(path), which calls std::basic_ifstream<char, char_traits<char>>::basic_ifstream(__s), which calls std::basic_ifstream<char, char_traits<char>>::open(__s), which calls std::basic_filebuf<char, char_traits<char>>::open(__s)."
+      },
+      "location": {
+        "path": "tools/compiler/ucmain.cc",
+        "start_line": 250,
+        "end_line": 250
+      }
+    }
+  },
+  {
+    "number": 58,
+    "html_url": "https://github.com/example/exult/security/code-scanning/58",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (string read by fread) and then passed to fopen(__filename).\nThis argument to a file access function is derived from user input (string read by fread) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/rip.cc",
+        "start_line": 134,
+        "end_line": 134
+      }
+    }
+  },
+  {
+    "number": 59,
+    "html_url": "https://github.com/example/exult/security/code-scanning/59",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (string read by fread) and then passed to fopen(__filename).\nThis argument to a file access function is derived from user input (string read by fread) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/rip.cc",
+        "start_line": 159,
+        "end_line": 159
+      }
+    }
+  },
+  {
+    "number": 60,
+    "html_url": "https://github.com/example/exult/security/code-scanning/60",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (string read by fgets) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/rip.cc",
+        "start_line": 39,
+        "end_line": 39
+      }
+    }
+  },
+  {
+    "number": 61,
+    "html_url": "https://github.com/example/exult/security/code-scanning/61",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to load_shape(filename), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/shp2pcx.cc",
+        "start_line": 463,
+        "end_line": 463
+      }
+    }
+  },
+  {
+    "number": 62,
+    "html_url": "https://github.com/example/exult/security/code-scanning/62",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to load_palette(filename), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/shp2pcx.cc",
+        "start_line": 467,
+        "end_line": 467
+      }
+    }
+  },
+  {
+    "number": 63,
+    "html_url": "https://github.com/example/exult/security/code-scanning/63",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to save_image(filename), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/shp2pcx.cc",
+        "start_line": 477,
+        "end_line": 477
+      }
+    }
+  },
+  {
+    "number": 64,
+    "html_url": "https://github.com/example/exult/security/code-scanning/64",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to open_config(configfile), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/smooth/smooth.c",
+        "start_line": 94,
+        "end_line": 94
+      }
+    }
+  },
+  {
+    "number": 65,
+    "html_url": "https://github.com/example/exult/security/code-scanning/65",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to merge_frames(shapefile), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/splitshp.cc",
+        "start_line": 303,
+        "end_line": 303
+      }
+    }
+  },
+  {
+    "number": 66,
+    "html_url": "https://github.com/example/exult/security/code-scanning/66",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to split_shape(filename), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/splitshp.cc",
+        "start_line": 305,
+        "end_line": 305
+      }
+    }
+  },
+  {
+    "number": 67,
+    "html_url": "https://github.com/example/exult/security/code-scanning/67",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/mockup/main.c",
+        "start_line": 124,
+        "end_line": 124
+      }
+    }
+  },
+  {
+    "number": 68,
+    "html_url": "https://github.com/example/exult/security/code-scanning/68",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to std::basic_ofstream<char, char_traits<char>>::open(__s).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to std::basic_ofstream<char, char_traits<char>>::open(__s), which calls std::basic_filebuf<char, char_traits<char>>::open(__s)."
+      },
+      "location": {
+        "path": "tools/ucxt/head2data.cc",
+        "start_line": 88,
+        "end_line": 88
+      }
+    }
+  },
+  {
+    "number": 69,
+    "html_url": "https://github.com/example/exult/security/code-scanning/69",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to std::basic_ofstream<char, char_traits<char>>::open(__s).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to std::basic_ofstream<char, char_traits<char>>::open(__s), which calls std::basic_filebuf<char, char_traits<char>>::open(__s)."
+      },
+      "location": {
+        "path": "tools/ucxt/head2data.cc",
+        "start_line": 65,
+        "end_line": 65
+      }
+    }
+  },
+  {
+    "number": 70,
+    "html_url": "https://github.com/example/exult/security/code-scanning/70",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to std::basic_ofstream<char, char_traits<char>>::open(__s).\nThis argument to a file access function is derived from user input (a command-line argument) and then passed to std::basic_ofstream<char, char_traits<char>>::open(__s), which calls std::basic_filebuf<char, char_traits<char>>::open(__s)."
+      },
+      "location": {
+        "path": "tools/ucxt/head2data.cc",
+        "start_line": 44,
+        "end_line": 44
+      }
+    }
+  },
+  {
+    "number": 71,
+    "html_url": "https://github.com/example/exult/security/code-scanning/71",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to (unnamed namespace)::Write_thumbnail(filename), which calls Export_png32(pngname), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/exult_shp_thumbnailer.cc",
+        "start_line": 250,
+        "end_line": 250
+      }
+    }
+  },
+  {
+    "number": 72,
+    "html_url": "https://github.com/example/exult/security/code-scanning/72",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to (unnamed namespace)::Write_thumbnail(filename), which calls Export_png32(pngname), which calls fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/exult_shp_thumbnailer.cc",
+        "start_line": 260,
+        "end_line": 260
+      }
+    }
+  },
+  {
+    "number": 73,
+    "html_url": "https://github.com/example/exult/security/code-scanning/73",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/wuc.cc",
+        "start_line": 197,
+        "end_line": 197
+      }
+    }
+  },
+  {
+    "number": 74,
+    "html_url": "https://github.com/example/exult/security/code-scanning/74",
+    "state": "open",
+    "rule": {
+      "id": "cpp/path-injection",
+      "name": "cpp/path-injection",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Uncontrolled data used in path expression",
+      "tags": [
+        "external/cwe/cwe-022",
+        "external/cwe/cwe-023",
+        "external/cwe/cwe-036",
+        "external/cwe/cwe-073",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This argument to a file access function is derived from user input (a command-line argument) and then passed to fopen(__filename)."
+      },
+      "location": {
+        "path": "tools/wuc.cc",
+        "start_line": 201,
+        "end_line": 201
+      }
+    }
+  },
+  {
+    "number": 75,
+    "html_url": "https://github.com/example/exult/security/code-scanning/75",
+    "state": "open",
+    "rule": {
+      "id": "cpp/incorrect-allocation-error-handling",
+      "name": "cpp/incorrect-allocation-error-handling",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Incorrect allocation-error handling",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-252",
+        "external/cwe/cwe-570",
+        "external/cwe/cwe-755",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This allocation cannot return null. This check is unnecessary."
+      },
+      "location": {
+        "path": "files/zip/zip.cc",
+        "start_line": 138,
+        "end_line": 138
+      }
+    }
+  },
+  {
+    "number": 76,
+    "html_url": "https://github.com/example/exult/security/code-scanning/76",
+    "state": "open",
+    "rule": {
+      "id": "cpp/incorrect-allocation-error-handling",
+      "name": "cpp/incorrect-allocation-error-handling",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Incorrect allocation-error handling",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-252",
+        "external/cwe/cwe-570",
+        "external/cwe/cwe-755",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This allocation cannot return null. This check is unnecessary."
+      },
+      "location": {
+        "path": "tools/compiler/ucparse.cc",
+        "start_line": 8304,
+        "end_line": 8304
+      }
+    }
+  },
+  {
+    "number": 77,
+    "html_url": "https://github.com/example/exult/security/code-scanning/77",
+    "state": "open",
+    "rule": {
+      "id": "cpp/incorrect-allocation-error-handling",
+      "name": "cpp/incorrect-allocation-error-handling",
+      "severity": "warning",
+      "security_severity_level": "high",
+      "description": "Incorrect allocation-error handling",
+      "tags": [
+        "correctness",
+        "external/cwe/cwe-252",
+        "external/cwe/cwe-570",
+        "external/cwe/cwe-755",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This allocation cannot return null. This check is unnecessary."
+      },
+      "location": {
+        "path": "tools/compiler/ucparse.cc",
+        "start_line": 8315,
+        "end_line": 8315
+      }
+    }
+  },
+  {
+    "number": 78,
+    "html_url": "https://github.com/example/exult/security/code-scanning/78",
+    "state": "open",
+    "rule": {
+      "id": "cpp/unbounded-write",
+      "name": "cpp/unbounded-write",
+      "severity": "error",
+      "security_severity_level": "critical",
+      "description": "Unbounded write",
+      "tags": [
+        "external/cwe/cwe-120",
+        "external/cwe/cwe-787",
+        "external/cwe/cwe-805",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This 'call to strcpy' with input from string read by fgets may overflow the destination.\nThis 'call to strcpy' with input from an environment variable may overflow the destination.\nThis 'call to strcpy' with input from a command-line argument may overflow the destination.\nThis 'call to strcpy' with input from a command-line argument may overflow the destination.\nThis 'call to strcpy' with input from a command-line argument may overflow the destination."
+      },
+      "location": {
+        "path": "audio/midi_drivers/timidity/timidity_common.cpp",
+        "start_line": 226,
+        "end_line": 226
+      }
+    }
+  },
+  {
+    "number": 79,
+    "html_url": "https://github.com/example/exult/security/code-scanning/79",
+    "state": "open",
+    "rule": {
+      "id": "cpp/unbounded-write",
+      "name": "cpp/unbounded-write",
+      "severity": "error",
+      "security_severity_level": "critical",
+      "description": "Unbounded write",
+      "tags": [
+        "external/cwe/cwe-120",
+        "external/cwe/cwe-787",
+        "external/cwe/cwe-805",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This 'call to strcat' with input from string read by fgets may overflow the destination.\nThis 'call to strcat' with input from an environment variable may overflow the destination.\nThis 'call to strcat' with input from a command-line argument may overflow the destination.\nThis 'call to strcat' with input from a command-line argument may overflow the destination.\nThis 'call to strcat' with input from a command-line argument may overflow the destination."
+      },
+      "location": {
+        "path": "audio/midi_drivers/timidity/timidity_common.cpp",
+        "start_line": 155,
+        "end_line": 155
+      }
+    }
+  },
+  {
+    "number": 80,
+    "html_url": "https://github.com/example/exult/security/code-scanning/80",
+    "state": "open",
+    "rule": {
+      "id": "cpp/unbounded-write",
+      "name": "cpp/unbounded-write",
+      "severity": "error",
+      "security_severity_level": "critical",
+      "description": "Unbounded write",
+      "tags": [
+        "external/cwe/cwe-120",
+        "external/cwe/cwe-787",
+        "external/cwe/cwe-805",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This 'call to strcpy' with input from string read by fgets may overflow the destination.\nThis 'call to strcpy' with input from an environment variable may overflow the destination.\nThis 'call to strcpy' with input from a command-line argument may overflow the destination.\nThis 'call to strcpy' with input from a command-line argument may overflow the destination.\nThis 'call to strcpy' with input from a command-line argument may overflow the destination."
+      },
+      "location": {
+        "path": "audio/midi_drivers/timidity/timidity_instrum.cpp",
+        "start_line": 189,
+        "end_line": 189
+      }
+    }
+  },
+  {
+    "number": 81,
+    "html_url": "https://github.com/example/exult/security/code-scanning/81",
+    "state": "open",
+    "rule": {
+      "id": "cpp/unbounded-write",
+      "name": "cpp/unbounded-write",
+      "severity": "error",
+      "security_severity_level": "critical",
+      "description": "Unbounded write",
+      "tags": [
+        "external/cwe/cwe-120",
+        "external/cwe/cwe-787",
+        "external/cwe/cwe-805",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This 'call to strcpy' with input from string read by fgets may overflow the destination.\nThis 'call to strcpy' with input from an environment variable may overflow the destination.\nThis 'call to strcpy' with input from a command-line argument may overflow the destination.\nThis 'call to strcpy' with input from a command-line argument may overflow the destination.\nThis 'call to strcpy' with input from a command-line argument may overflow the destination."
+      },
+      "location": {
+        "path": "audio/midi_drivers/timidity/timidity.cpp",
+        "start_line": 183,
+        "end_line": 183
+      }
+    }
+  },
+  {
+    "number": 82,
+    "html_url": "https://github.com/example/exult/security/code-scanning/82",
+    "state": "open",
+    "rule": {
+      "id": "cpp/unbounded-write",
+      "name": "cpp/unbounded-write",
+      "severity": "error",
+      "security_severity_level": "critical",
+      "description": "Unbounded write",
+      "tags": [
+        "external/cwe/cwe-120",
+        "external/cwe/cwe-787",
+        "external/cwe/cwe-805",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This 'call to strcpy' with input from string read by fread may overflow the destination."
+      },
+      "location": {
+        "path": "tools/rip.cc",
+        "start_line": 127,
+        "end_line": 127
+      }
+    }
+  },
+  {
+    "number": 83,
+    "html_url": "https://github.com/example/exult/security/code-scanning/83",
+    "state": "open",
+    "rule": {
+      "id": "cpp/unbounded-write",
+      "name": "cpp/unbounded-write",
+      "severity": "error",
+      "security_severity_level": "critical",
+      "description": "Unbounded write",
+      "tags": [
+        "external/cwe/cwe-120",
+        "external/cwe/cwe-787",
+        "external/cwe/cwe-805",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This 'call to strcpy' with input from a command-line argument may overflow the destination."
+      },
+      "location": {
+        "path": "tools/splitshp.cc",
+        "start_line": 122,
+        "end_line": 122
+      }
+    }
+  },
+  {
+    "number": 84,
+    "html_url": "https://github.com/example/exult/security/code-scanning/84",
+    "state": "open",
+    "rule": {
+      "id": "cpp/unbounded-write",
+      "name": "cpp/unbounded-write",
+      "severity": "error",
+      "security_severity_level": "critical",
+      "description": "Unbounded write",
+      "tags": [
+        "external/cwe/cwe-120",
+        "external/cwe/cwe-787",
+        "external/cwe/cwe-805",
+        "reliability",
+        "security"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "This 'fscanf string argument' with input from a command-line argument may overflow the destination."
+      },
+      "location": {
+        "path": "tools/mockup/main.c",
+        "start_line": 151,
+        "end_line": 151
+      }
+    }
+  },
+  {
+    "number": 232,
+    "html_url": "https://github.com/example/exult/security/code-scanning/232",
+    "state": "open",
+    "rule": {
+      "id": "cpp/redefined-default-parameter",
+      "name": "cpp/redefined-default-parameter",
+      "severity": "error",
+      "description": "Redefined default parameter",
+      "tags": [
+        "external/jsf",
+        "maintainability",
+        "readability"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Parameter ammo_shape redefines its default value to 0 from the inherited default value -1 (in Game_object).\nThe default value will be resolved statically, not by dispatch, so this can cause confusion."
+      },
+      "location": {
+        "path": "actors.h",
+        "start_line": 522,
+        "end_line": 522
+      }
+    }
+  },
+  {
+    "number": 233,
+    "html_url": "https://github.com/example/exult/security/code-scanning/233",
+    "state": "open",
+    "rule": {
+      "id": "cpp/redefined-default-parameter",
+      "name": "cpp/redefined-default-parameter",
+      "severity": "error",
+      "description": "Redefined default parameter",
+      "tags": [
+        "external/jsf",
+        "maintainability",
+        "readability"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Parameter weapon_shape redefines its default value to 0 from the inherited default value -1 (in Game_object).\nThe default value will be resolved statically, not by dispatch, so this can cause confusion."
+      },
+      "location": {
+        "path": "actors.h",
+        "start_line": 960,
+        "end_line": 960
+      }
+    }
+  },
+  {
+    "number": 234,
+    "html_url": "https://github.com/example/exult/security/code-scanning/234",
+    "state": "open",
+    "rule": {
+      "id": "cpp/redefined-default-parameter",
+      "name": "cpp/redefined-default-parameter",
+      "severity": "error",
+      "description": "Redefined default parameter",
+      "tags": [
+        "external/jsf",
+        "maintainability",
+        "readability"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Parameter ammo_shape redefines its default value to 0 from the inherited default value -1 (in Game_object).\nThe default value will be resolved statically, not by dispatch, so this can cause confusion."
+      },
+      "location": {
+        "path": "actors.h",
+        "start_line": 960,
+        "end_line": 960
+      }
+    }
+  },
+  {
+    "number": 658,
+    "html_url": "https://github.com/example/exult/security/code-scanning/658",
+    "state": "open",
+    "rule": {
+      "id": "cpp/rule-of-two",
+      "name": "cpp/rule-of-two",
+      "severity": "warning",
+      "description": "Inconsistent definition of copy constructor and assignment ('Rule of Two')",
+      "tags": [
+        "correctness",
+        "language-features",
+        "quality",
+        "reliability"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "No matching copy assignment operator in class Combo. It is good practice to match a copy constructor with a copy assignment operator."
+      },
+      "location": {
+        "path": "mapedit/combo.cc",
+        "start_line": 271,
+        "end_line": 271
+      }
+    }
+  },
+  {
+    "number": 659,
+    "html_url": "https://github.com/example/exult/security/code-scanning/659",
+    "state": "open",
+    "rule": {
+      "id": "cpp/rule-of-two",
+      "name": "cpp/rule-of-two",
+      "severity": "warning",
+      "description": "Inconsistent definition of copy constructor and assignment ('Rule of Two')",
+      "tags": [
+        "correctness",
+        "language-features",
+        "quality",
+        "reliability"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "No matching copy assignment operator in class Shape_spec. It is good practice to match a copy constructor with a copy assignment operator."
+      },
+      "location": {
+        "path": "tools/ipack.cc",
+        "start_line": 77,
+        "end_line": 77
+      }
+    }
+  },
+  {
+    "number": 694,
+    "html_url": "https://github.com/example/exult/security/code-scanning/694",
+    "state": "open",
+    "rule": {
+      "id": "cpp/long-switch",
+      "name": "cpp/long-switch",
+      "severity": "note",
+      "description": "Long switch case",
+      "tags": [
+        "maintainability",
+        "readability"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Switch has at least one case that is too long: 5 (42 lines)."
+      },
+      "location": {
+        "path": "usecode/ucdisasm.cc",
+        "start_line": 228,
+        "end_line": 272
+      }
+    }
+  },
+  {
+    "number": 695,
+    "html_url": "https://github.com/example/exult/security/code-scanning/695",
+    "state": "open",
+    "rule": {
+      "id": "cpp/long-switch",
+      "name": "cpp/long-switch",
+      "severity": "note",
+      "description": "Long switch case",
+      "tags": [
+        "maintainability",
+        "readability"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Switch has at least one case that is too long: repeat2 (34 lines).\nSwitch has at least one case that is too long: usecode (41 lines)."
+      },
+      "location": {
+        "path": "usecode/ucsched.cc",
+        "start_line": 371,
+        "end_line": 715
+      }
+    }
+  },
+  {
+    "number": 696,
+    "html_url": "https://github.com/example/exult/security/code-scanning/696",
+    "state": "open",
+    "rule": {
+      "id": "cpp/long-switch",
+      "name": "cpp/long-switch",
+      "severity": "note",
+      "description": "Long switch case",
+      "tags": [
+        "maintainability",
+        "readability"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Switch has at least one case that is too long: UC_AIDXTHV (61 lines).\nSwitch has at least one case that is too long: UC_LOOPTOPTHV32 (164 lines).\nSwitch has at least one case that is too long: UC_POPFVAR (59 lines).\nSwitch has at least one case that is too long: UC_POPARRTHV (53 lines).\nSwitch has at least one case that is too long: UC_DBGFUNC32 (79 lines)."
+      },
+      "location": {
+        "path": "usecode/ucinternal.cc",
+        "start_line": 2106,
+        "end_line": 3121
+      }
+    }
+  },
+  {
+    "number": 697,
+    "html_url": "https://github.com/example/exult/security/code-scanning/697",
+    "state": "open",
+    "rule": {
+      "id": "cpp/use-of-goto",
+      "name": "cpp/use-of-goto",
+      "severity": "warning",
+      "description": "Use of goto",
+      "tags": [
+        "complexity",
+        "language-features",
+        "maintainability",
+        "quality",
+        "readability"
+      ]
+    },
+    "tool": {
+      "name": "CodeQL"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/master",
+      "commit_sha": "3254511f2d05a8052a0659004b8dc325469e74ef",
+      "message": {
+        "text": "Multiple forward and backward goto statements may make function yyparse hard to understand."
+      },
+      "location": {
+        "path": "tools/compiler/ucparse.cc",
+        "start_line": 3879,
+        "end_line": 3879
+      }
+    }
+  }
+]

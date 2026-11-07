@@ -534,6 +534,7 @@
       renderRepoTargetBanner(data);
       renderOnboardingGuideChip(data);
       renderIssuesDisabledBanner(data);
+      renderCodeScanningBanner(data);
       refreshWelcomeAutoChecks(data);
       renderHubBanner(data.hubBanner);
       maybePlanningIntro(data);

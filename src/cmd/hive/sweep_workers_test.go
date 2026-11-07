@@ -282,3 +282,36 @@ func TestSweepJobRunTaggedAttributesRESTCalls(t *testing.T) {
 	}
 	t.Fatalf("REST accounting has no hive:p34_caller_probe timeline row: %+v", github.RESTTopConsumers(1000))
 }
+
+// The code scanning sweep (code_scanning) is an optional sweep: it gets a
+// staggered first pass, runs on its own configurable interval (hourly by
+// default), and is shed whenever the GitHub API budget is not normal.
+func TestCodeScanningSweepJobIsOptionalStaggeredAndHourly(t *testing.T) {
+	b := &boot{}
+	jobs := b.sweepJobs()
+	delays := sweepFirstDelays(jobs)
+	for i, job := range jobs {
+		if job.name != "code_scanning" {
+			continue
+		}
+		if job.class != sweepOptional {
+			t.Fatalf("code_scanning class %v, want optional", job.class)
+		}
+		if delays[i] <= 0 || delays[i] >= sweepStartupSpread {
+			t.Fatalf("code_scanning first pass at %s, want inside the startup spread", delays[i])
+		}
+		cfg := &config.Config{}
+		if got := job.interval(cfg); got != time.Hour {
+			t.Fatalf("default interval %s, want 1h", got)
+		}
+		cfg.CodeScanning.Interval = 3 * time.Hour
+		if got := job.interval(cfg); got != 3*time.Hour {
+			t.Fatalf("configured interval %s, want 3h", got)
+		}
+		if !sweepBudgetSkipped(job.class, decideEvalBudgetWork(github.APIBudgetConserve, 1, 1)) {
+			t.Fatal("code_scanning runs in conserve mode")
+		}
+		return
+	}
+	t.Fatal("no code_scanning sweep job")
+}
