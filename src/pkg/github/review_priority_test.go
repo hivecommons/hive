@@ -24,6 +24,7 @@ func TestClassifyReviewClass(t *testing.T) {
 		{"architect prefix", "[architect] refactor: drop dead snapshot dir", nil, ReviewClassRefactorDocs},
 		{"refactor word", "refactor: collapse duplicate status builders", nil, ReviewClassRefactorDocs},
 		{"docs emoji", "📖 docs: explain exit 77 netfilter", nil, ReviewClassRefactorDocs},
+		{"legacy proposal emoji", "📝 RFC: agent memory tiers", nil, ReviewClassRefactorDocs},
 		{"docs word", "docs: explain exit 77 netfilter", nil, ReviewClassRefactorDocs},
 		{"docker is not docs", "docker: bump base image", nil, ReviewClassUnknown},
 		{"strategist prefix", "[strategist] planning: propose triage policy", nil, ReviewClassRefactorDocs},
