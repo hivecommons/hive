@@ -103,6 +103,48 @@ func TestRerunTransientTriagedPRs_OncePerHeadThenFixLoopResumes(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#17002 review: the reaper runs right after the re-run step,
+// in the same cycle and on the same snapshot, where the head still reads red
+// and stale and the re-run is no longer owed. With no earlier kick (the agent
+// stamped the marker in its own session), no cooldown stands in the way, so
+// the cycle that re-ran the jobs must not also kick a fixer.
+func TestRerunTransientTriagedPRs_SameCycleDrawsNoFixKick(t *testing.T) {
+	sameCycle := func(t *testing.T, skip func(escalated, reran map[string]bool) map[string]bool) int {
+		t.Helper()
+		_, clock := newTestEscalationStore(t)
+		cfg := escalationTestConfig()
+		actionable := actionableWith(transientRedPR())
+		recordRedStaleness(cfg, actionable)
+		*clock = clock.Add(escalation.RedPRStaleAfter + time.Minute)
+		rerunner := &fakeTransientRerunner{out: github.TransientCIRerunOutcome{Settled: true, RunIDs: []int64{42}}}
+		escalated := map[string]bool{}
+		reran := rerunTransientTriagedPRs(context.Background(), cfg, rerunner, actionable, escalated, nil, discardLogger())
+		if len(rerunner.calls) != 1 || !reran["acme/widgets#7"] {
+			t.Fatalf("re-run calls = %d, reran = %v; want the head re-run and reported", len(rerunner.calls), reran)
+		}
+		kicker := &fakeKicker{}
+		reapStuckRedPRs(cfg, actionable, skip(escalated, reran), kicker, nil, discardLogger())
+		return len(kicker.kicks)
+	}
+	if got := sameCycle(t, func(escalated, _ map[string]bool) map[string]bool { return escalated }); got != 1 {
+		t.Fatalf("test premise: reaping with the escalated set alone kicks the re-run head (got %d kicks, want 1)", got)
+	}
+	if got := sameCycle(t, reaperSkipAfterRerun); got != 0 {
+		t.Fatalf("the cycle that re-ran the jobs also sent %d fix kicks, want 0", got)
+	}
+
+	// A skipped re-run (no failed runs) is not reported: the fix loop resumes.
+	_, clock := newTestEscalationStore(t)
+	cfg := escalationTestConfig()
+	actionable := actionableWith(transientRedPR())
+	recordRedStaleness(cfg, actionable)
+	*clock = clock.Add(escalation.RedPRStaleAfter + time.Minute)
+	skipped := &fakeTransientRerunner{out: github.TransientCIRerunOutcome{Settled: true, Skipped: "no-failed-runs"}}
+	if reran := rerunTransientTriagedPRs(context.Background(), cfg, skipped, actionable, map[string]bool{}, nil, discardLogger()); len(reran) != 0 {
+		t.Fatalf("a skipped re-run was reported as re-ran: %v", reran)
+	}
+}
+
 func TestRerunTransientTriagedPRs_Skips(t *testing.T) {
 	t.Run("escalated PR is a person's", func(t *testing.T) {
 		newTestEscalationStore(t)

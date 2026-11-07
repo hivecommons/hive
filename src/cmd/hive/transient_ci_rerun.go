@@ -33,6 +33,14 @@ type transientCIRerunner interface {
 // ledger) and before reapStuckRedPRs, whose kicks deliverReEngagement holds
 // while a re-run is owed. audit, when non-nil, receives one line per PR the
 // hive re-ran.
+//
+// It returns the escalation keys of the PRs whose failed jobs it re-ran this
+// pass. The reaper runs next in the same cycle, on the same snapshot, where
+// those PRs still read red and stale, and the re-run is no longer owed; the
+// caller skips them there (reaperSkipAfterRerun) so a re-run and a fix kick
+// never go out together for one head (hivecommons/hive#17002 review). A PR
+// whose re-run was skipped (no failed runs, re-run forbidden) is not
+// returned: the fix loop resumes on it, as intended.
 func rerunTransientTriagedPRs(
 	ctx context.Context,
 	cfg *config.Config,
@@ -41,12 +49,13 @@ func rerunTransientTriagedPRs(
 	escalatedPRs map[string]bool,
 	audit func(repo string, number int, detail string),
 	logger *slog.Logger,
-) int {
+) map[string]bool {
 	if cfg == nil || cfg.Escalation.Disabled || rerunner == nil || actionable == nil {
-		return 0
+		return nil
 	}
 	store := getEscalationStore()
 	attempted := 0
+	var reran map[string]bool
 	for _, pr := range actionable.PRs.Items {
 		if attempted >= transientCIRerunMaxPerPass {
 			break
@@ -90,6 +99,27 @@ func rerunTransientTriagedPRs(
 			audit(o.Repo, o.Number, fmt.Sprintf("repo=%s, pr=%d, head=%s, runs=%d, reason=transient CI triage",
 				o.Repo, o.Number, o.HeadSHA, len(outcome.RunIDs)))
 		}
+		if reran == nil {
+			reran = map[string]bool{}
+		}
+		reran[key] = true
 	}
-	return attempted
+	return reran
+}
+
+// reaperSkipAfterRerun is the set the reaper skips this cycle: the escalated
+// PRs, plus the PRs whose failed jobs rerunTransientTriagedPRs just re-ran.
+// escalated is returned unchanged when nothing was re-ran.
+func reaperSkipAfterRerun(escalated, reran map[string]bool) map[string]bool {
+	if len(reran) == 0 {
+		return escalated
+	}
+	skip := make(map[string]bool, len(escalated)+len(reran))
+	for k, v := range escalated {
+		skip[k] = v
+	}
+	for k := range reran {
+		skip[k] = true
+	}
+	return skip
 }

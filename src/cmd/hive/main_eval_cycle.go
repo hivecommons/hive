@@ -803,6 +803,7 @@ func runEvalCycle(
 	// markers) is re-run once here instead: the reaper and the merge watcher
 	// hold their fix kicks while that re-run is owed
 	// (projectbluefin/common#1647).
+	reapSkip := escalatedPRs
 	if ghClient != nil {
 		var audit func(string, int, string)
 		if dashSrv != nil {
@@ -810,9 +811,10 @@ func runEvalCycle(
 				dashSrv.AuditLogRecord("system", "transient-ci-rerun", detail, "", repo, number)
 			}
 		}
-		rerunTransientTriagedPRs(ctx, cfg, ghClient, actionable, escalatedPRs, audit, logger)
+		reran := rerunTransientTriagedPRs(ctx, cfg, ghClient, actionable, escalatedPRs, audit, logger)
+		reapSkip = reaperSkipAfterRerun(escalatedPRs, reran)
 	}
-	reapStuckRedPRs(cfg, actionable, escalatedPRs, agentKicker{mgr: agentMgr},
+	reapStuckRedPRs(cfg, actionable, reapSkip, agentKicker{mgr: agentMgr},
 		agentAvailability(cfg, agentMgr), logger)
 
 	// Release sentinel (hivecommons/hive#9585), opt-in and default OFF: when

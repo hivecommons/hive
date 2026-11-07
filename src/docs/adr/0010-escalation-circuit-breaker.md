@@ -59,7 +59,12 @@ marker, the eval cycle re-runs that head's failed jobs once
 reaper and merge watcher send no fix kick and charge no budget while that
 re-run is owed. Only markers in the hive's own comments count, because a
 marker now causes a write: a comment from anyone else cannot spend Actions
-minutes or pause the fix loop. The re-run gives the checks new run ids, so the markers go
+minutes or pause the fix loop. (A hive that cannot name any of its own
+accounts, meaning no App login, `ai_author` or bot login configured and `/user`
+unreachable, falls back to reading every comment, as the other
+hive-authorship checks do.) The cycle that re-runs a head's jobs sends
+it no fix kick either: the reaper, which runs next on the same snapshot,
+skips the PRs just re-run. The re-run gives the checks new run ids, so the markers go
 stale on their own: a head still red afterwards is back in the ordinary loop
 above. The re-run is recorded per head in the ledger; a person or the reviewer
 lane returning an escalated PR to the lane allows one more. Before this,
