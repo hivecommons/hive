@@ -327,8 +327,3 @@ func renderKnowledgeAdvice(adv crux.KnowledgeAdvice) string {
 	}
 	return b.String()
 }
-
-// oneLine collapses whitespace runs, including newlines, to single spaces.
-func oneLine(s string) string {
-	return strings.Join(strings.Fields(s), " ")
-}
