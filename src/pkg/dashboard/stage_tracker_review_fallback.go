@@ -45,10 +45,11 @@ func stageTrackerReviewFallbackInputsFor(it *StageTrackerItem, pr github.PullReq
 // after the verdict, dispatch and review-pending derivations with the
 // concrete statement the data supports, in this order: the PR is closed or
 // merged (review is moot), it is a draft (review not requested), CI on the
-// head has not finished (the reviewer waits for it), CI is done but no
-// reviewer started (who is next), or nothing at all has been fetched for
-// the head — the one case that may still read as no data, and it says the
-// next poll refreshes it (hivecommons/hive#16661).
+// head has not finished (the reviewer waits if a hive reviewer lane exists,
+// else a person must review), CI is done but no reviewer started (who is
+// next), or nothing at all has been fetched for the head — the one case
+// that may still read as no data, and it says the next poll refreshes it
+// (hivecommons/hive#16661).
 func stageTrackerReviewFallbackState(out *StageTrackerActivity, in stageTrackerReviewFallbackInputs) {
 	if out == nil || out.State != "unknown" {
 		return
