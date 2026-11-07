@@ -11,6 +11,34 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-07 (v5.189.0)
+
+### Added
+
+- An agent whose `knowledge.agent_scopes.<agent>.include_states` lists `draft` is now primed with the draft knowledge entries it authored (`author:`/`owner:` frontmatter matching the agent, its base agent or a hive owner login), each marked `(draft)` in the kick; every other kick stays approved-only ([#17076](https://github.com/hivecommons/hive/issues/17076)).
+
+### Fixed
+
+- `docs/crux-serve.md` and `docs/env-vars.md` now document `crux serve --runs-config` / `CRUX_RUNS_CONFIG` and the `/v1/runs` routes, and the work-services design doc reflects that S2 and S7 shipped (#17027, #17028).
+- A claim's GitHub side effect (label, stage or ledger write) that kept timing out after its bounded retries logged `issue-claims: GitHub side effect failed` with no matching class, so the hive filed it as `unclassified_error_repeated`. It now lands under its own `issue_claim_effect_failed` class, with the underlying error still in the log line (hivecommons/hive#17069).
+
+## 2026-11-07 (v5.188.0)
+
+### Added
+
+- New `agents.cli_memory` block (per-agent `cli_memory:` override): `auto_memory` (default false) pins Claude Code / Codex / Copilot CLI auto-memory off via `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, `[features] memories = false` and `"memory": false`; `clear_on_kick` wipes that agent's `~/.claude/projects/*/memory`, `$CODEX_HOME/memories*` and `~/.gemini/GEMINI.md` before each non-resume kick (hivecommons/hive#17032).
+- Mid-task knowledge advisor (opt-in `knowledge.advisor`, default off): when a running agent's work enters a scope that was not on screen at kick time, the matching knowledge entries the kick did not already carry are typed into its session as one `📚 Knowledge:` line each, capped per kick (`knowledge.advisor_max_per_kick`), never during a tool call, with per-agent opt-out (`knowledge.advisor_exclude_agents`) and a `knowledge-advisor` prompt-history trigger for measurement (#17052)
+- Knowledge entries can carry a `scope:` frontmatter block (`paths`, `labels`, `lanes`); the kick primer surfaces a scoped entry only when the kick's lane, issue labels or known file paths match, so repository facts are injected on demand instead of on every kick (#17045).
+
+### Changed
+
+- Review backlog: findings below the new `review.backlog.min_severity` (default `P2`) are no longer filed as issues but collected in one upserted `hive:review-followups` comment on the PR; the issue cap `review.backlog.max_per_pr` (default 3) now applies over the PR's lifetime instead of per day (`max_per_pr_per_day` is a retired alias); and new findings sharing a perspective are filed as one checklist item. Set `min_severity: P3` to file every finding as before (hivecommons/hive#17065).
+
+### Fixed
+
+- Hosted spokes now inject the primary repo's `AGENTS.md` into kicks: when neither `project.checkouts_dir` nor a matching `policies.local_dir` names a local checkout, the scheduler fetches `AGENTS.md` from the repo's default branch through the hive's GitHub client (15-minute cache, last-known-good on API failure, same injection cap) and materialises it under `/data/agentsmd-cache/<owner>/<repo>/` so the log shows `agentsmd: injecting repo instructions into kick` with that root ([#17090](https://github.com/hivecommons/hive/issues/17090)).
+- Tagged Release no longer stands down when `v5` advances past the commit `docker.yml` built. The version tag now names the release commit parented on that built SHA (the retagged images' exact tree plus the changelog), the release lands on `v5` as a merge commit even when the tip has moved, and the hourly backstop releases the newest built ancestor of the tip instead of requiring the tip itself; `docker.yml` push builds also get their own concurrency slot so a merge burst no longer cancels them. Under merges faster than a multi-arch build the old "defer to the successor" rule had no terminating condition and left `v5` untagged from `v5.186.4` (2026-10-18) onward.
+
 ## 2026-11-07 (v5.187.0)
 
 ### Added

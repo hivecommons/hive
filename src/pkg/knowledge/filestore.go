@@ -63,6 +63,7 @@ type filePage struct {
 	State        LifecycleState
 	Supersedes   string
 	SupersededBy string
+	Author       string
 }
 
 // NewFileStore creates a store that indexes markdown files under rootDir.
@@ -213,6 +214,7 @@ func (s *FileStore) reindex() {
 		if !parsed.scope.IsZero() {
 			page.Scope = parsed.scope
 		}
+		page.Author = parsed.author
 		pages[slug] = page
 
 		return nil
@@ -501,6 +503,7 @@ type parsedObsidianFile struct {
 	supersedes   string
 	supersededBy string
 	scope        *FactScope
+	author       string
 }
 
 var wikilinkRe = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
@@ -579,6 +582,10 @@ func parseObsidianFileDetailed(content string, fallbackTitle string) parsedObsid
 				}
 				if strings.HasPrefix(line, "superseded_by:") {
 					parsed.supersededBy = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "superseded_by:")), "\"'")
+				}
+				if strings.HasPrefix(line, "author:") || strings.HasPrefix(line, "owner:") {
+					_, value, _ := strings.Cut(line, ":")
+					parsed.author = strings.Trim(strings.TrimSpace(value), "\"'")
 				}
 				if strings.HasPrefix(line, "source:") {
 					parsed.source = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "source:")), "\"'")
@@ -677,6 +684,7 @@ func (p filePage) applyLifecycle(f *Fact) {
 	f.Scope = p.Scope
 	f.Supersedes = p.Supersedes
 	f.SupersededBy = p.SupersededBy
+	f.Author = p.Author
 	f.State = resolveLifecycleState(p.State, p.Status, p.SupersededBy)
 	f.Updated = p.ModTime
 	f.BodySize = len(p.Body)

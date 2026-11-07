@@ -625,7 +625,9 @@ overwritten on the next change, so do not edit these pages.
 Maps an agent name to the `layers`, `repos`, `types`, `tags` and
 `include_states` that agent's kick primer and agent-identified knowledge reads
 are restricted to. A missing agent or an empty field is unrestricted (the
-default). Unknown layer or lifecycle state names fail config load. See
+default). Listing `draft` in `include_states` additionally lets the agent's
+kicks carry the drafts it authored (`author:` frontmatter), marked `(draft)`.
+Unknown layer or lifecycle state names fail config load. See
 [Per-agent scopes](knowledge-toc.md#per-agent-scopes) for the intersection
 rules, and [agent-knowledge-and-memory.md](agent-knowledge-and-memory.md) for
 how the scope is applied on the kick path end to end.

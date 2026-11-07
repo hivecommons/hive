@@ -146,11 +146,15 @@ func (pk *PrimedKnowledge) Render() (string, PrimerOmitted) {
 	return b.String(), omitted
 }
 
-// renderPrimerFact renders one fact as a list entry: title, optional
-// confidence and source, then the body indented beneath it.
+// renderPrimerFact renders one fact as a list entry: title, a "(draft)"
+// marker for uncurated facts (#17076), optional confidence and source, then
+// the body indented beneath it.
 func renderPrimerFact(f Fact) string {
 	var b strings.Builder
 	b.WriteString("- **" + f.Title + "**")
+	if f.EffectiveState() == StateDraft {
+		b.WriteString(" (draft)")
+	}
 	if f.ConfidenceScored && f.Confidence < 1.0 {
 		b.WriteString(" (confidence: " + formatConfidence(f.Confidence) + ")")
 	}
