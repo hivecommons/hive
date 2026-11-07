@@ -13,6 +13,7 @@ func TestCommandForBackend(t *testing.T) {
 		{"copilot", "Run: copilot auth login"},
 		{"gemini", "Run: gemini auth login"},
 		{"goose", "Run: goose auth login"},
+		{"codex", "Run: codex login"},
 		{"unknown-backend", "Run the login command for unknown-backend"},
 		{"", "Run the login command for "},
 	}

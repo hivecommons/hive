@@ -1,0 +1,1 @@
+The `agent_login_required` selfreport now names the backend that lost its login: the login scanner's `login required detected` record carries `backend`, `login_hint` (the CLI's login command) and `credential_valid`, so the operator knows which provider to re-authenticate on which agent instead of being told only the agent name (#16953). `codex` gets a login hint (`codex login`).
