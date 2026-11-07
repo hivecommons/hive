@@ -79,6 +79,12 @@ type IssueStagePolicy struct {
 	Enabled bool
 	// Dwell overrides the stage table's expected dwell per stage slug.
 	Dwell map[string]time.Duration
+	// AgentNames are this hive's agent names. A `hive/claimed-by-<agent>`
+	// label naming one of them is removed once the issue carries no live
+	// claim (removeLapsedClaimedByLabels); any other claimed-by label —
+	// the generic human one, a retired per-login one, another hive's
+	// agent — is never touched by that sweep.
+	AgentNames []string
 }
 
 // SetIssueStageLabels installs the live policy resolver. Nil disables.
@@ -113,6 +119,10 @@ type IssueStageResult struct {
 	// `hive/claimed-by-*` labels rewritten to the holder's label (see
 	// healBackendClaimedByLabels).
 	ClaimedByHealed int
+	// ClaimedByLapsed counts this hive's agent `hive/claimed-by-<agent>`
+	// labels removed from issues with no live claim (see
+	// removeLapsedClaimedByLabels).
+	ClaimedByLapsed int
 	// LegacyDecisionMigrated counts issues whose retired needs-decision /
 	// needs-direction label came off after stage/045 was confirmed on them;
 	// NeedsDecisionRestaged counts issues moved from the pre-045
@@ -182,6 +192,11 @@ type IssueStageInput struct {
 	// Carried through to the stage engine's AuthorFacts; the 010/015
 	// derivation does not read it.
 	AuthorKind authorkind.Kind
+	// UpdatedAt and Assignees are the enumeration's Issue fields of the same
+	// name (zero for a held item): the claim read keys its comment cache on
+	// UpdatedAt and infers an assignee claim from Assignees.
+	UpdatedAt time.Time
+	Assignees []string
 }
 
 // issueUntriaged reports whether an actionable issue derives
@@ -313,7 +328,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
-		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body)})
+		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees})
 	}
 	// Held issues leave the pipeline at enumeration (Hold list, no
 	// work-detail row). They still have to be walked so a stage label
@@ -336,7 +351,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 			if row.Number <= 0 {
 				continue
 			}
-			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: forgeIssueLabels(row.Labels, row.ClaimContext), Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children})
+			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: forgeIssueLabels(row.Labels, row.ClaimContext), Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children, UpdatedAt: row.UpdatedAt, Assignees: row.Assignees})
 		}
 	}
 	return out
@@ -442,6 +457,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			legacyCarriers[in.Repo]++
 		}
 		res.ClaimedByHealed += healBackendClaimedByLabels(ctx, client, in, logger)
+		res.ClaimedByLapsed += removeLapsedClaimedByLabels(ctx, client, in, policy.AgentNames, now, logger)
 		// A decomposed parent is waiting on its children, not on itself
 		// (hivecommons/hive#12857): all closed → close it; any open → it
 		// keeps its stage but is never marked stalled.

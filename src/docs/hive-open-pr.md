@@ -368,26 +368,37 @@ recognise it.
 The branch is not implicated at all. Fix the App installation — see
 [GitHub App setup](github-app-setup.md).
 
-**2. The repository is visible but the head ref is genuinely absent.** This is
-the push-authentication case, and the error says so:
+**2. The repository is visible but the head ref is genuinely absent.** The
+branch is not where the watcher looked, and the error says what it checked:
 
-> branch `<branch>` was never pushed to `<owner>/<repo>` — the commits exist only in the agent's working copy. This is almost always a PUSH AUTHENTICATION failure, not a branch-creation problem
+> branch `<branch>` is not on `<owner>/<repo>` — the commits exist only in the agent's working copy, or were pushed under another name or to another remote
 
-It names the two causes to check, in order:
+It names the three things to check, in order:
 
-1. **The git credential helper is not reachable from the agent's UID.**
+1. **The push's own outcome.** A `hive-push-branch` relay push leaves
+   `<request>.result.json` under `/var/run/hive-metrics/push-requests`; a
+   direct `git push` printed its result in the agent's pane. The watcher's
+   log line (below) already carries the relay's record as `push_outcome`.
+2. **The git credential helper is not reachable from the agent's UID.**
    `su -s /bin/sh hive-<agent> -c 'git config --get-regexp credential'` must
    list `/usr/local/bin/git-credential-hive.sh`. It is wired system-wide in
    `/etc/gitconfig` precisely because agents do not share the dev user's
    `$HOME`.
-2. **The agent's scoped token file is absent or unreadable by that UID.** The
+3. **The agent's scoped token file is absent or unreadable by that UID.** The
    path is in `$HIVE_AGENT_TOKEN_CACHE`. Check readability only — never print
    its contents.
 
 This stays a **retryable** error rather than a policy rejection: once the agent
 pushes the branch, the same request becomes valid and succeeds on retry. That
-is exactly what the bounded retry is for, so fix the credential problem and let
-the queued request land — you do not need to re-issue it.
+is exactly what the bounded retry is for, so fix the push problem and let the
+queued request land — you do not need to re-issue it.
+
+`hive-open-pr` itself warns at request time when the head is not known to be
+on the remote ([#16969](https://github.com/hivecommons/hive/issues/16969)): it
+checks the checkout's remote-tracking ref and, failing that, one
+`git ls-remote` of the exact ref. The warning names the branch, the remote and
+the push step; the request is still written, because a relay push may be in
+flight. Set `HIVE_OPEN_PR_SKIP_REMOTE_CHECK=1` to silence it.
 
 **3. The head ref exists, so the 404 was about something else.** Usually the
 base:
@@ -409,8 +420,16 @@ since the agent's session ended healthy:
 kubectl -n hive logs deploy/hive | grep 'pr-request watcher'
 ```
 
-Look for `head branch is not on the remote — the agent's push did not
-authenticate`, which carries `repo`, `head`, `agent`, and the full `diagnosis`.
+Look for `head branch is not on the remote`, which carries `repo`, `head`,
+`checked` (the exact ref and repository the watcher asked GitHub for),
+`push_outcome` (what the push relay recorded for that branch — queued, pushed
+as `<sha>`, failed with the git error, or no record because the agent pushed
+directly), `attempt`, `agent`, and the full `diagnosis`. It is logged **once
+per request**: retries of the same request log `head branch still not on the
+remote, retrying` at INFO, and the eventual success logs `request succeeded
+on retry` ([#16969](https://github.com/hivecommons/hive/issues/16969) — a
+single unpushed branch used to re-log at ERROR every retry and file a fleet
+self-report before the branch arrived).
 
 For the broader symptom — an agent that completed a session with no branch and
 no PR, and how to tell a credential-helper failure from a mid-task token

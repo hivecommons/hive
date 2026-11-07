@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // hivecommons/hive#11775 / #11776: a contributor's agent could not push to its
@@ -246,5 +248,61 @@ func TestBlockedVerdictToolingFailure_GenuineBlockedUntouched(t *testing.T) {
 	}
 	if len(fx.calls) != 0 {
 		t.Fatalf("no release may happen for a genuine blocked verdict, got %v", fx.calls)
+	}
+}
+
+// A human-applied `blocked` must survive a tooling-failure verdict; only the
+// label the hive applied itself is released.
+func TestReleaseToolingBlockedLabel_OnlyHiveAppliedLabel(t *testing.T) {
+	cases := []struct {
+		name       string
+		timeline   string
+		wantDelete bool
+	}{
+		{"hive bot applied", `[{"event":"labeled","created_at":"2026-10-20T10:00:00Z","label":{"name":"blocked"},"actor":{"login":"hive-app[bot]","type":"Bot"}}]`, true},
+		{"human applied", `[{"event":"labeled","created_at":"2026-10-20T10:00:00Z","label":{"name":"blocked"},"actor":{"login":"maintainer","type":"User"}}]`, false},
+		{"human re-applied after bot", `[{"event":"labeled","created_at":"2026-10-20T10:00:00Z","label":{"name":"blocked"},"actor":{"login":"hive-app[bot]","type":"Bot"}},{"event":"labeled","created_at":"2026-10-20T11:00:00Z","label":{"name":"blocked"},"actor":{"login":"maintainer","type":"User"}}]`, false},
+		{"no labeled event", `[]`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var calls []string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				mu.Lock()
+				calls = append(calls, r.Method+" "+r.URL.Path)
+				mu.Unlock()
+				switch {
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/5/timeline":
+					_, _ = fmt.Fprint(w, tc.timeline)
+				case r.Method == "GET":
+					_, _ = fmt.Fprint(w, `[]`)
+				default:
+					_, _ = fmt.Fprint(w, `{}`)
+				}
+			}))
+			defer ts.Close()
+
+			hub, s := covK2Hub(t)
+			client := ghpkg.NewClientForTest(ts.URL, "o", []string{"r"}, covBLogger())
+			client.SetAppBotLogin("hive-app[bot]")
+			s.deps.GHClient = client
+
+			if err := hub.releaseToolingBlockedLabel(context.Background(), "o/r", 5, "u", "r"); err != nil {
+				t.Fatalf("release: %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			deleted := false
+			for _, c := range calls {
+				if strings.HasPrefix(c, "DELETE ") || strings.HasPrefix(c, "POST ") {
+					deleted = true
+				}
+			}
+			if deleted != tc.wantDelete {
+				t.Fatalf("mutating calls = %v, want label removal %v", calls, tc.wantDelete)
+			}
+		})
 	}
 }

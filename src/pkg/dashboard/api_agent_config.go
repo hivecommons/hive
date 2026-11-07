@@ -13,10 +13,25 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/resolve"
 )
+
+// updateAgentProcessConfig refreshes a runtime config copy when one is expected
+// to exist. Reconciliation deliberately omits disabled and ACMM-gated agents;
+// editing their persisted config must not report a missing process as a fault.
+// Still update an inactive agent's existing copy (for example after ApplyPack),
+// and preserve errors for unexpectedly missing active agents.
+func (s *Server) updateAgentProcessConfig(name string, cfg config.AgentConfig) error {
+	if !cfg.Enabled || !crux.AgentAvailableAtACMMLevel(name, s.deps.AgentMgr.GetACMMLevel()) {
+		if _, err := s.deps.AgentMgr.GetStatus(name); err != nil {
+			return nil
+		}
+	}
+	return s.deps.AgentMgr.UpdateConfig(name, cfg)
+}
 
 // defaultLaunchCmdForBackend renders the launch command shown for an agent
 // with no launch_cmd of its own. An empty model omits --model entirely
@@ -824,7 +839,7 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	// Sync the updated config into the agent process so that status builders
 	// (which read from AgentProcess.Config, not the global config map) reflect
 	// changes like display_name immediately.
-	if err := s.deps.AgentMgr.UpdateConfig(name, agentCfg); err != nil {
+	if err := s.updateAgentProcessConfig(name, agentCfg); err != nil {
 		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
 	}
 
@@ -1023,7 +1038,7 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 
 	// Sync updated backend/model into the agent process so status builders
 	// reflect the change without requiring a restart.
-	if err := s.deps.AgentMgr.UpdateConfig(name, agentCfg); err != nil {
+	if err := s.updateAgentProcessConfig(name, agentCfg); err != nil {
 		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
 	}
 

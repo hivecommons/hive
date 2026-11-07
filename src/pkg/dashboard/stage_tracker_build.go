@@ -562,6 +562,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		stageTrackerApplyRemediation(&activityItem, dispatchState, status, stageTrackerFixerAgent(cfg), now)
 		it.CodeActivity, it.Remediation, it.ReviewActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.Remediation, activityItem.ReviewActivity, activityItem.DisplayColumn, activityItem.Caption
 		stageTrackerApplyReworkOwedBy(it)
+		stageTrackerApplyTrainQueuedCaption(it)
 	}
 	stageTrackerApplyReauthor(resp.Items, store, status.GitHubBaseURL, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
@@ -1014,7 +1015,7 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "initializing"})
 		return
 	}
-	now := time.Now().UTC()
+	now := mergedLedgerNow().UTC()
 	body, etag, generatedAt, source := s.stageTrackerPayloadSource(r.Context(), status, now)
 	if body == nil {
 		if r.Context().Err() != nil {

@@ -121,6 +121,14 @@ func (h *ContributeWSHub) releaseToolingBlockedLabel(ctx context.Context, repo s
 		return ghpkg.ErrNoGitHubClient
 	}
 	client := h.server.deps.GHClient
+	ours, err := client.BlockedLabelAppliedByHive(ctx, repo, number)
+	if err != nil {
+		return err
+	}
+	if !ours {
+		// A human-applied `blocked` is theirs to lift.
+		return nil
+	}
 	if err := client.RemoveLabel(ctx, repo, number, blockedWorkflowLabel); err != nil {
 		return err
 	}

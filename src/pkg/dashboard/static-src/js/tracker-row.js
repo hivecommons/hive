@@ -279,6 +279,40 @@
       const src = STAGE_TRACKER_CLAIMANT_SOURCE[c.source] || c.source || '';
       return 'Held by: ' + who + since + (src ? ' (' + src + ')' : '');
     }
+    // Who works a lit "PR in progress" chevron (word is the chevron's bare
+    // word; any other word → null), named the way "Waiting for @x" names
+    // its person: `{ who: '@login', kind }` with kind one of the
+    // actor icons (hive / clanker / human). The recorded holder (claimant)
+    // leads, then the server's stage_actor login, then the PR's author (for
+    // an issue drawn through its one covering PR, that PR's author). Null
+    // when nobody is known — a bot author or an unlabelled one — so the
+    // chevron keeps the bare word; it never guesses a kind from a login.
+    const STAGE_TRACKER_PR_PROGRESS_WORD = 'PR in progress';
+    const STAGE_TRACKER_PR_PROGRESS_KINDS = ['hive', 'clanker', 'human'];
+    function stageTrackerPRProgressActor(item, word) {
+      if (String(word) !== STAGE_TRACKER_PR_PROGRESS_WORD) return null;
+      const c = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
+      if (c) {
+        const who = stageTrackerClaimantShort(c);
+        return who ? { who, kind: stageTrackerClaimantIconKind(c) } : null;
+      }
+      const sa = stageTrackerStageActor(item);
+      const kindOf = k => k === 'maintainer' ? 'human' : String(k || '');
+      if (sa && sa.login && STAGE_TRACKER_PR_PROGRESS_KINDS.indexOf(kindOf(sa.kind)) >= 0) return { who: '@' + String(sa.login).replace(/^@/, ''), kind: kindOf(sa.kind) };
+      // An issue's own author filed the issue; only a PR row, or the one
+      // covering PR an issue is drawn through, has a PR author to name.
+      if (!item) return null;
+      let src = null;
+      if (item.kind === 'pr' && !item.via_pr) src = item;
+      else if (item.via_pr && Array.isArray(item.linked_prs)) {
+        const here = item.linked_prs.filter(lp => lp && (!Number(lp.drawn_under) || Number(lp.drawn_under) === (Number(item.number) || 0)));
+        if (here.length === 1) src = here[0];
+      }
+      const author = String((src && src.author) || '').trim().replace(/^@/, '');
+      const kind = kindOf(src && src.author_kind);
+      return author && STAGE_TRACKER_PR_PROGRESS_KINDS.indexOf(kind) >= 0 ? { who: '@' + author, kind } : null;
+    }
+
     // The Fixing column word when nobody is fixing: a bot-authored PR the
     // hive does not touch, or an unowned red PR, reads as its state in
     // plain words instead of an active "Fixing" (hivecommons/docs#500).

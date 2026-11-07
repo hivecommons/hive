@@ -107,7 +107,10 @@ if grep -qF "CONTRIBUTOR_IMAGE=$OWNER_IMG" "$WORK/github_env"; then
 else
   bad "the fork's own image was not pinned" "GITHUB_ENV: $(cat "$WORK/github_env")"
 fi
-if printf '%s' "$out" | grep -q '::warning'; then
+# Here-strings, not `printf | grep -q`: under pipefail, grep -q exiting on the
+# match leaves printf's remaining line-buffered writes with EPIPE and the
+# pipeline fails even though the warning WAS there (hive#16873 runtime-tests).
+if grep -q '::warning' <<<"$out"; then
   bad "a fork testing its OWN image still emitted the fallback warning" "$out"
 else
   ok "no fallback warning when the owner's image is pullable"
@@ -132,7 +135,7 @@ if grep -qF "CONTRIBUTOR_IMAGE=$UPSTREAM_IMG" "$WORK/github_env"; then
 else
   bad "the fallback did not pin the upstream image" "GITHUB_ENV: $(cat "$WORK/github_env")"
 fi
-if printf '%s' "$out" | grep -q '::warning'; then
+if grep -q '::warning' <<<"$out"; then
   ok "the fallback is announced as a workflow warning"
 else
   bad "the fallback was silent" "a lane testing upstream's CLIs must say so: $out"

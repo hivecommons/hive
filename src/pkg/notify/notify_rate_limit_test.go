@@ -33,6 +33,11 @@ func TestSendNtfyRateLimitCooldown(t *testing.T) {
 		{name: "negative", retryAfter: "-1", wantDelay: time.Minute},
 		{name: "overflow", retryAfter: "9223372036854775807", wantDelay: time.Minute},
 		{name: "past date", retryAfter: time.Now().Add(-time.Hour).UTC().Format(http.TimeFormat), wantDelay: time.Minute},
+		// A valid but oversized header must not out-live the fallback ceiling:
+		// otherwise one 429 from the (public, by default) server mutes ntfy
+		// until the process restarts.
+		{name: "seconds capped", retryAfter: "86400", wantDelay: ntfyRateLimitMaxFallback},
+		{name: "date capped", retryAfter: time.Now().Add(48 * time.Hour).UTC().Format(http.TimeFormat), wantDelay: ntfyRateLimitMaxFallback},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var requests atomic.Int32

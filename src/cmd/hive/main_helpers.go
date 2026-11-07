@@ -327,6 +327,10 @@ func enforceHoldGuard(
 // runs first every tick, so this only ever sees a PR after its baseline is
 // pinned, and advancing a baseline that was never pinned would plant a wrong
 // one.
+//
+// Branches a dependency bot owns (github.DependencyBotBranch) are skipped too: the
+// bot rebases them itself, and a hive commit on the branch makes Renovate stop
+// rebasing it for good.
 func maintainHeldPRMergeability(
 	ctx context.Context,
 	ghClient *github.Client,
@@ -348,6 +352,11 @@ func maintainHeldPRMergeability(
 		}
 		state := strings.ToLower(pr.MergeableState)
 		if state != "behind" && state != "dirty" {
+			continue
+		}
+		if github.DependencyBotBranch(pr.HeadRef, pr.Author) {
+			logger.Debug("hold guard: held PR branch belongs to a dependency bot; leaving the base sync to the bot",
+				"repo", repo, "pr", pr.Number, "head_ref", pr.HeadRef, "author", pr.Author, "mergeable_state", state)
 			continue
 		}
 		// Own-only (writeback.KindHoldGateNotice): the merge-from-base push

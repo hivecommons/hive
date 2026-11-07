@@ -74,6 +74,18 @@ func (t *retryTracker) noteFailure(path string, now time.Time) bool {
 	return now.Sub(st.firstTry) > requestRetryMaxAge
 }
 
+// attempts reports how many failed attempts path has accumulated so far
+// (zero when it has never failed). It lets a caller tell the first sighting
+// of a failure apart from its retries before noteFailure records this one.
+func (t *retryTracker) attempts(path string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if st := t.m[path]; st != nil {
+		return st.attempts
+	}
+	return 0
+}
+
 // clear drops the tracked state for path (request consumed or quarantined).
 func (t *retryTracker) clear(path string) {
 	t.mu.Lock()

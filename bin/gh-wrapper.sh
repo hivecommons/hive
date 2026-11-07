@@ -565,6 +565,33 @@ _extract_author() {
   return 1
 }
 
+# `gh pr list` asking for MERGED pull requests only. Nothing merged is work to
+# pick, so the enumeration gate below has nothing to protect there, and the
+# same set is already readable to every agent through an authorless
+# `gh search prs --merged` or a GET of `repos/<owner>/<repo>/pulls`. What only
+# `gh pr list` gives is the `--json` shape a repo's own scripts read: Danathar's
+# weekly agent audit pipes `gh pr list --state merged --json ...` into
+# scripts/ai-audit-report.mjs, and ci-maintainer, refused that one command,
+# parked "open the run summary and say which PR it flags" for the owner
+# (Danathar/dns-failover#152, Danathar/openaudible-autoupdate#169). The last
+# --state wins, as in gh. A --search query is refused here: it reaches the
+# search API, where its own is:/state: qualifiers could reach open PRs.
+_pr_list_merged_only() {
+  [[ "$subcmd" = "pr" && "$action" = "list" ]] || return 1
+  local i a state=""
+  for ((i=0; i<${#args[@]}; i++)); do
+    a="${args[$i]}"
+    case "$a" in
+      --search|--search=*|-S|-S?*) return 1 ;;
+      --state=*) state="${a#--state=}" ;;
+      -s=*) state="${a#-s=}" ;;
+      --state|-s) state="${args[$((i+1))]:-}" ;;
+      -s?*) state="${a#-s}" ;;
+    esac
+  done
+  [[ "$(_lower "$state")" = "merged" ]]
+}
+
 # Resolve the authenticated GitHub login. Initialize the cache internally so a
 # caller-controlled environment cannot seed a trusted identity (#3982).
 #
@@ -697,6 +724,8 @@ if [ "$_gh_author_scoped" = true ]; then
     # enumeration ban for staff agents is stated in their prompt, not enforced
     # by this branch, and widening the --author check must not quietly move it.
     :
+  elif _pr_list_merged_only; then
+    : # Merged PRs only: history, not a work queue (see _pr_list_merged_only).
   else
     # Root-caused in a live hive (2026-08-20): agents read this two-line
     # message as "all gh $subcmd commands are blocked" and silently skipped
@@ -708,7 +737,12 @@ if [ "$_gh_author_scoped" = true ]; then
     # and point at whichever work-queue snapshot actually exists here.
     _actionable_hint="/var/run/hive-metrics/actionable.json"
     [ -f /data/last-actionable.json ] && _actionable_hint="/data/last-actionable.json"
-    _deny enumeration_disabled "gh $subcmd list is disabled for agents — ONLY listing/enumeration is blocked, writes like 'gh issue create' and 'hive-open-pr' are still ALLOWED; for the pre-filtered queue run 'cat ${_actionable_hint}' (a shell command, not a workspace file-read tool)."
+    #
+    # The message also names the reads that still work. Without them an agent
+    # took "listing is blocked" to mean it could not look up merged PRs at all,
+    # and parked a red audit-trail check for the owner instead of diagnosing it
+    # (Danathar/dns-failover#152).
+    _deny enumeration_disabled "gh $subcmd list is disabled for agents — ONLY listing/enumeration is blocked, writes like 'gh issue create' and 'hive-open-pr' are still ALLOWED; for the pre-filtered queue run 'cat ${_actionable_hint}' (a shell command, not a workspace file-read tool). Reads that still work: 'gh pr list --state merged' (merged PRs only, any --json fields, no --search), 'gh search prs|issues --repo <owner/repo> <terms>' without --author, 'gh api repos/<owner/repo>/pulls?state=closed' (GET), and 'gh pr view' / 'gh issue view <n>'."
   fi
 fi
 

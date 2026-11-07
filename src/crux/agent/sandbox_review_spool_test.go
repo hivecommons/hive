@@ -260,12 +260,32 @@ func TestJobRuntimeKickRegistersReviewSpoolUnderWorkDir(t *testing.T) {
 		Job: &config.SandboxJobConfig{WorkspaceClaim: "hive-data"}})
 	m.setSandboxJobLauncherFactoryForTest(func(config.SandboxJobConfig) sandbox.Launcher { return launcher })
 	m.setSandboxRunnerForTest(&sandboxFakeRunner{})
+	persisted := make(chan error, 1)
+	m.mu.Lock()
+	m.sandboxRunPersister = func(dir string, entry SandboxRunHistoryEntry) error {
+		err := persistSandboxRun(dir, entry)
+		persisted <- err
+		return err
+	}
+	m.mu.Unlock()
 	if err := m.Start(context.Background(), "reviewer"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := m.SendKick("reviewer", "review #7 on the card"); err != nil {
 		t.Fatalf("SendKick: %v", err)
 	}
+	// Idle is published before the kick's deferred work-dir writes. Join
+	// persistence even if an assertion fails, before TempDir removes workDir.
+	t.Cleanup(func() {
+		select {
+		case err := <-persisted:
+			if err != nil {
+				t.Errorf("persist sandbox run: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("sandbox run persistence did not finish before cleanup")
+		}
+	})
 	waitIdle(t, m, "reviewer")
 
 	launcher.mu.Lock()

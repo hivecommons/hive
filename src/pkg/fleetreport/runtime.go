@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/logscrub"
@@ -200,7 +201,7 @@ var Classes = map[string]ClassSpec{
 	ClassSHAPollCommitMsgUnavail:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"sha poll: commit message fetch non-200"}},
 	ClassKickFreshnessWithheld:      {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"kick withheld: every ref failed the freshness check"}},
 	ClassModelsEndpointEmpty:        {Component: "dashboard", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"no models found from any endpoint"}},
-	ClassAgentLoginRequired:         {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"login required detected"}},
+	ClassAgentLoginRequired:         {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"login required detected", "watchdog: agent credential failure"}},
 	ClassPRRequestHeadUnpushed:      {Component: "github-relay", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"head branch is not on the remote"}},
 	ClassIOScanClassifierUnavail:    {Component: "inference-gateway", Severity: "medium", MinCount: 1, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"ioscan classifier failed closed", "ioscan classifier failed open", "ioscan fail-closed blocked kick", "ioscan fail-closed blocked held-pr coordination kick"}},
 	ClassGitHubFetchTransient:       {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"channel commit date: fetch failed"}},
@@ -561,7 +562,7 @@ func NormalizeMessage(msg string) string {
 			}
 			b.WriteString("P")
 			i = j
-		case r == '"' || r == '\'' || r == '`':
+		case r == '"' || r == '`' || (r == '\'' && !midWordApostrophe(runes, i)):
 			j := i + 1
 			for j < len(runes) && runes[j] != r {
 				j++
@@ -580,6 +581,15 @@ func NormalizeMessage(msg string) string {
 		}
 	}
 	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// midWordApostrophe reports whether the apostrophe at i sits between two
+// letters ("agent's", "don't"). That is a contraction or possessive, not an
+// opening quote: treating it as one swallowed the rest of the message into a
+// single Q placeholder (#16969's scope read "… — the agentQ"), so unrelated
+// messages sharing a prefix collapsed into one fingerprint.
+func midWordApostrophe(runes []rune, i int) bool {
+	return i > 0 && i+1 < len(runes) && unicode.IsLetter(runes[i-1]) && unicode.IsLetter(runes[i+1])
 }
 
 func runOfHex(runes []rune, i int) int {

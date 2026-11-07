@@ -832,7 +832,7 @@ agents:
 
 ## ACMM levels: agent rosters as packs
 
-You don't have to design a roster. Hive ships six **ACMM packs** (`level-1.yaml` … `level-6.yaml`, embedded in the binary and forkable) that pair a curated agent roster with governor cadences and a merge policy:
+You don't have to design a roster. Hive ships six **ACMM packs** (see [What is a pack?](acmm-policy-matrix.md#what-is-a-pack); `level-1.yaml` … `level-6.yaml`, embedded in the binary and forkable) that pair a curated agent roster with governor cadences and a merge policy:
 
 | Level | Name | Posture |
 |---|---|---|

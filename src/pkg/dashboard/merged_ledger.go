@@ -40,6 +40,10 @@ import (
 // mergedLedgerPath is where the ledger persists; tests point it elsewhere.
 var mergedLedgerPath = "/data/merged-ledger.json"
 
+// mergedLedgerNow is the clock for recording merges and for the stage
+// tracker's "today" boundary; tests pin it so both share one instant.
+var mergedLedgerNow = time.Now
+
 const (
 	// mergedLedgerRetention bounds how long an entry stays listed. The
 	// 30-day window the API reports needs 30; 90 matches the audit log's

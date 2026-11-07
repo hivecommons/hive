@@ -168,6 +168,12 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 		// so the forced-egress redirect exempts this proxy-originated dial.
 		upstream, err := p.dialTunnelUpstream(host)
 		if err != nil {
+			var denied *plainForwardDenied
+			if errors.As(err, &denied) && denied.reason != plainForwardReasonLoopback {
+				p.logger.Warn("proxy: transparent tunnel refused — destination is not globally routable",
+					"agent", agentName, "host", host, "target", denied.target, "class", denied.reason)
+				p.countViolation(agentName)
+			}
 			return
 		}
 		defer func() { _ = upstream.Close() }()
@@ -268,12 +274,15 @@ func (p *GitHubProxy) attributeTransparentConn(conn net.Conn) string {
 
 // dialTunnelUpstream opens the raw TCP leg of a non-inspected transparent
 // tunnel. The socket is SO_MARKed so the forced-egress redirect exempts this
-// proxy-originated dial. tunnelDial, when set, overrides it (tests).
+// proxy-originated dial, and the destination is guarded like every other
+// uninspected egress leg (see plain_forward_guard.go): the host here comes
+// from the client's SNI, which names whatever the client chose. tunnelDial,
+// when set, overrides it (tests).
 func (p *GitHubProxy) dialTunnelUpstream(host string) (net.Conn, error) {
 	if p.tunnelDial != nil {
 		return p.tunnelDial(host)
 	}
-	return markDialer(transparentProxyTimeout).Dial("tcp", host+":443")
+	return p.tunnelDialer(transparentProxyTimeout).Dial("tcp", host+":443")
 }
 
 const tlsClientHelloMaxSize = 4096
@@ -598,9 +607,17 @@ func (p *GitHubProxy) logClientRead(msg string, err error, attrs ...any) {
 func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 	const tunnelDialTimeout = 10 * time.Second
 	// SO_MARK the socket so the forced-egress redirect exempts this
-	// proxy-originated tunnel dial (CONNECT targets include :443).
-	upstream, err := markDialer(tunnelDialTimeout).Dial("tcp", r.Host)
+	// proxy-originated tunnel dial (CONNECT targets include :443). The dialer
+	// is destination-guarded like the plain forward path: a CONNECT names an
+	// arbitrary host:port, and without the guard it was a raw TCP tunnel from
+	// the proxy's uid to the cloud metadata service or the cluster estate.
+	upstream, err := p.tunnelDialer(tunnelDialTimeout).Dial("tcp", r.Host)
 	if err != nil {
+		var denied *plainForwardDenied
+		if errors.As(err, &denied) {
+			p.refuseTunnel(conn, r, p.identifyAgentFromConn(conn, r), denied)
+			return
+		}
 		p.logger.Warn("proxy: CONNECT dial failed", "host", r.Host, "error", err)
 		_, _ = fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\nconnection failed\n")
 		return
@@ -610,6 +627,24 @@ func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 	_, _ = fmt.Fprintf(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
 
 	relayTunnel(conn, upstream)
+}
+
+// refuseTunnel answers a CONNECT whose destination the guard barred, with the
+// same loopback-vs-estate split as refusePlainForward: loopback is a client
+// that ignored NO_PROXY and is logged at Debug without a violation; every
+// other class is counted against the caller.
+func (p *GitHubProxy) refuseTunnel(conn net.Conn, r *http.Request, agentName string, denied *plainForwardDenied) {
+	if denied.reason == plainForwardReasonLoopback {
+		p.logger.Debug("proxy: CONNECT to loopback refused (clients must bypass the proxy for loopback; NO_PROXY)",
+			"agent", agentName, "host", r.Host, "target", denied.target)
+	} else {
+		p.logger.Warn("proxy: CONNECT refused — destination is not globally routable",
+			"agent", agentName, "host", r.Host, "target", denied.target, "class", denied.reason)
+		p.countViolation(agentName)
+	}
+	_, _ = fmt.Fprintf(conn, "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"+
+		"the hive proxy does not tunnel to %s addresses (%s); set %s=true to allow it\n",
+		denied.reason, denied.target, plainForwardAllowPrivateEnv)
 }
 
 // forwardPlainDirect handles non-CONNECT (plain HTTP) requests on a raw

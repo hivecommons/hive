@@ -415,7 +415,14 @@ hive_ensure_agent_user() {
 # hive_collect_agent_names <config> prints, one per line and sorted, every agent
 # name that needs a per-agent user, private token group and token cache file:
 # the config's agents (map keys or list items), the copies its `replicas:`
-# settings create, and, when HIVE_LEVEL is set, the ACMM pack agents.
+# settings create, and, when an ACMM level is in force, the ACMM pack agents.
+#
+# ACMM packs (#16803): the runtime applies a pack at boot from the config's
+# acmm_level, the level persisted in /data/hive-state.json, or HIVE_LEVEL
+# (planACMMBoot), and the pack apply creates agents such as strategist that
+# need not be in the config yet. Keying the pack lookup on HIVE_LEVEL alone
+# left those agents without a pre-created token cache whenever the level came
+# from the config or persisted state, so their scoped token was unreadable.
 #
 # Replicas (#13166): config.ExpandAgentReplicas derives <agent>-2 ..
 # <agent>-N in memory and MarshalYAML strips them on save, so they never
@@ -440,7 +447,7 @@ hive_ensure_agent_user() {
 # DefaultReviewerAutoscaleMax / MaxAgentReplicas.
 hive_collect_agent_names() {
   HIVE_COLLECT_CONFIG="$1" python3 - <<'PY'
-import glob, os, yaml
+import glob, json, os, yaml
 
 MAX_REPLICAS = 5  # config.MaxAgentReplicas
 AUTOSCALE_DEFAULT_MAX = 4  # config.DefaultReviewerAutoscaleMax
@@ -521,6 +528,18 @@ def head_names(name, spec):
         out += ['%s-%s-%d' % (name, alias, i) for i in range(1, n + 1)]
     return out
 
+# Mirrors planACMMBoot: any of HIVE_LEVEL, the config's acmm_level or the
+# persisted level makes the runtime apply a pack at boot.
+def acmm_level_set(cfg):
+    if os.environ.get('HIVE_LEVEL', '') or cfg.get('acmm_level'):
+        return True
+    try:
+        with open(os.environ.get('HIVE_STATE_FILE', '/data/hive-state.json')) as sf:
+            state = json.load(sf)
+        return isinstance(state, dict) and bool(state.get('acmm_level'))
+    except Exception:
+        return False
+
 names = set()
 with open(os.environ['HIVE_COLLECT_CONFIG']) as f:
     cfg = yaml.safe_load(f) or {}
@@ -535,9 +554,11 @@ for name, spec in agent_specs.items():
     names.add(name)
     names.update(replica_names(name, spec, lane_max if name == lane else 0))
     names.update(head_names(name, spec))
-# Also check pack YAML if HIVE_LEVEL is set
-if os.environ.get('HIVE_LEVEL', ''):
-    for p in glob.glob('/opt/hive/packs/level-*.yaml') + glob.glob('/data/packs/level-*.yaml'):
+
+# Also check pack YAML when an ACMM level is in force
+if acmm_level_set(cfg):
+    pack_dirs = os.environ.get('HIVE_PACK_DIRS', '/opt/hive/packs /data/packs').split()
+    for p in [f for d in pack_dirs for f in glob.glob(os.path.join(d, 'level-*.yaml'))]:
         try:
             with open(p) as pf:
                 pack = yaml.safe_load(pf) or {}

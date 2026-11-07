@@ -10,8 +10,9 @@ const delim = "---"
 // document. If no front-matter block is present, front-matter is "" and the
 // whole content is returned as rest.
 func Split(content string) (fm, rest string) {
-	// Front-matter must be at the very top; tolerate a leading newline only.
-	trimmed := strings.TrimLeft(content, "\r\n")
+	// Front-matter must be at the very top; tolerate a leading UTF-8 BOM and newline only.
+	trimmed := strings.TrimPrefix(content, "\uFEFF")
+	trimmed = strings.TrimLeft(trimmed, "\r\n")
 	lines := strings.Split(trimmed, "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != delim {
 		return "", content

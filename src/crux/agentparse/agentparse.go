@@ -14,6 +14,7 @@ package agentparse
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -128,13 +129,20 @@ func NumberedListRe() *regexp.Regexp { return numberedListRe }
 //  2. Must-have features — the 2-3 things it must do
 //     - Language: what language?
 //
-// The captured label is matched against categories (substring match); when
-// none match, fallbackCategory is used. The remaining text becomes the Title.
+// The captured label is matched against categories (substring match), preferring
+// the longest matching keyword, then lexicographically first on ties. When none
+// match, fallbackCategory is used. The remaining text becomes the Title.
 // Items are de-duplicated by category+title. This is the generic form of
 // inception's parseNumberedQuestions.
 func ParseNumberedList(lines []string, categories map[string]bool, fallbackCategory string) []Item {
 	var items []Item
 	seen := make(map[string]bool)
+
+	keywords := make([]string, 0, len(categories))
+	for kw := range categories {
+		keywords = append(keywords, kw)
+	}
+	sort.Strings(keywords)
 
 	for _, line := range lines {
 		m := numberedListRe.FindStringSubmatch(line)
@@ -149,10 +157,9 @@ func ParseNumberedList(lines []string, categories map[string]bool, fallbackCateg
 		}
 
 		cat := ""
-		for kw := range categories {
-			if strings.Contains(label, kw) {
+		for _, kw := range keywords {
+			if len(kw) > len(cat) && strings.Contains(label, kw) {
 				cat = kw
-				break
 			}
 		}
 		if cat == "" {

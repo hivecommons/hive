@@ -86,6 +86,33 @@ commit_has_trailer() {
     grep -Fqx "$trailer"
 }
 
+# warn_if_head_not_on_remote tells the agent, at request time, when the branch
+# it is asking a PR for is not known to be on the remote (#16969). The watcher
+# cannot open a PR for a branch GitHub does not have; it retries for 24h, so
+# a push that never landed surfaces only as a fleet self-report hours later.
+# Evidence is the checkout's own remote-tracking ref (written by a successful
+# `git push`, no network) and, failing that, one `git ls-remote` of the exact
+# ref. It never refuses: a hive-push-branch relay push may still be in flight,
+# and the queued request lands on retry once the branch arrives.
+warn_if_head_not_on_remote() {
+  head="$1"
+  [ -n "${HIVE_OPEN_PR_SKIP_REMOTE_CHECK:-}" ] && return 0
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  remote="$(git config --get "branch.${head}.remote" 2>/dev/null || true)"
+  [ -n "$remote" ] || remote=origin
+  git remote get-url "$remote" >/dev/null 2>&1 || return 0
+  if git rev-parse --verify --quiet "refs/remotes/${remote}/${head}" >/dev/null 2>&1; then
+    return 0
+  fi
+  rc=0
+  GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code --heads "$remote" "refs/heads/${head}" >/dev/null 2>&1 || rc=$?
+  # 2 is ls-remote's definitive "no such ref"; anything else (auth, network)
+  # is not evidence either way, so stay quiet rather than cry wolf.
+  [ "$rc" -eq 2 ] || return 0
+  echo "hive-open-pr: WARN: branch '${head}' is NOT on remote '${remote}' ($(git remote get-url "$remote" 2>/dev/null)) — the hive cannot open a PR for a branch GitHub does not have." >&2
+  echo "hive-open-pr: WARN: push it first (git push -u ${remote} ${head}, or hive-push-branch --repo ${REPO:-<owner/repo>}) and check the push's own output; the request below stays queued and succeeds on retry once the branch arrives." >&2
+}
+
 check_issue_author_coauthors() {
   repo="$1"
   body="$2"
@@ -213,6 +240,7 @@ if [ -z "$REPO" ] || [ -z "$HEAD" ] || [ -z "$TITLE" ]; then
 fi
 
 check_issue_author_coauthors "$REPO" "$BODY"
+warn_if_head_not_on_remote "$HEAD"
 
 # Identify the requesting agent. Prefer the UID map (the watcher re-derives the
 # owner from the FILE's UID anyway, so this is informational + a nicer log line);

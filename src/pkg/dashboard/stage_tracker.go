@@ -581,6 +581,10 @@ type StageTrackerItem struct {
 	// (scheduler.partitionBlockedIssues). Without it a sequenced sub-issue
 	// read as plain Actionable nobody was picking up (hivecommons/hive#14765);
 	// the row wears the `blocked` modifier and the caption names the wait.
+	// A `blocked` issue parked on another issue by the hive's
+	// `<!-- hive:blocked-on issue=owner/repo#N -->` marker (or the
+	// enumeration's "blocked on issue owner/repo#N" reason) joins the same
+	// list (stageTrackerBlockedOnIssue); it has no blocked_on_pr.
 	BlockedOn []string `json:"blocked_on,omitempty"`
 	// BlockedOnPR names the pull request a `blocked` issue waits on, from
 	// the `<!-- hive:blocked-on pr=owner/repo#N -->` marker the review-

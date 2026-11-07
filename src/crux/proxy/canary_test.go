@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -137,6 +138,46 @@ func TestInspectCanaryEgressBlocksOversizedBodies(t *testing.T) {
 	}
 	if len(r.seen) != 0 {
 		t.Fatalf("oversized body was handed to the scanner")
+	}
+}
+
+// brokenBody fails partway through the read, the way a client that drops the
+// connection mid-request does.
+type brokenBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *brokenBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if err == io.EOF {
+		return n, errors.New("unexpected EOF")
+	}
+	return n, err
+}
+
+func (b *brokenBody) Close() error { b.closed = true; return nil }
+
+func TestInspectCanaryEgressDeniesUnreadableBodies(t *testing.T) {
+	r := newFakeCanaryScanner()
+	p := &GitHubProxy{logger: slog.Default()}
+	p.SetCanaryScanner(true, false, r, nil)
+	body := &brokenBody{Reader: strings.NewReader(`{"body":"partial`)}
+	req, _ := http.NewRequest(http.MethodPost, "https://api.github.com/repos/org/repo/issues/1/comments", nil)
+	req.Body = body
+	reason, deny, detected := p.inspectCanaryEgress("scanner", req)
+	if !detected || !deny || !strings.Contains(reason, "unreadable") {
+		t.Fatalf("got detected=%v deny=%v reason=%q, want fail-closed block", detected, deny, reason)
+	}
+	if len(r.seen) != 0 {
+		t.Fatalf("unreadable body was handed to the scanner")
+	}
+	if !body.closed {
+		t.Fatalf("original body was not closed")
+	}
+	rest, err := io.ReadAll(req.Body)
+	if err != nil || string(rest) != `{"body":"partial` {
+		t.Fatalf("request body was not restored: %q, %v", rest, err)
 	}
 }
 

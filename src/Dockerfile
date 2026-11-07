@@ -316,7 +316,7 @@ RUN timeout 120s npm install -g --ignore-scripts --no-fund --no-audit \
 # dashboard's codex model discovery (`codex app-server` model/list — pure
 # local stdio, no network, unaffected by the proxy CA) falls back to the
 # static list, and non-codex backends are unaffected.
-ARG CODEX_VERSION=0.166.0
+ARG CODEX_VERSION=0.167.0
 ARG CLINE_VERSION=3.0.74
 # npm can briefly advertise AWS SDK versions before all registry replicas serve
 # them. Wait at most three minutes between attempts and revalidate metadata.
@@ -334,7 +334,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.318
+ARG CLAUDE_CODE_VERSION=2.1.319
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -403,9 +403,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=18.16.0
-ARG OMP_SHA256_AMD64=6498ed785bab00d2926e0387e0ec02362d6d45f1c3d0d1b57c1618b7f95c9264
-ARG OMP_SHA256_ARM64=c2be1ea85ce17c4270854b57efff2a7ea1d5a03c7557fd08721f2b9bb32698de
+ARG OMP_VERSION=18.18.0
+ARG OMP_SHA256_AMD64=ec271e0d7df4c0f57acb6a7a28f8585d46bd050bcef8494f6d33db8a6c0dfbba
+ARG OMP_SHA256_ARM64=b394bfbf7c0e0ba82e01913defb5fadf14a6ea5a71ee05348070ab5e40187144
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \

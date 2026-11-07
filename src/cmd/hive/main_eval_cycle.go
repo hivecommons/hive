@@ -581,6 +581,13 @@ func runEvalCycle(
 	}
 
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)
+	// Approve workflow runs GitHub holds behind its approve-workflows gate
+	// on trusted heads (hivecommons/hive#16603). An optional step: shed with
+	// the other enrichment steps, while EnrichCIStatus keeps the gate and any
+	// recorded permission refusal visible.
+	if !budgetDecision.SkipOptional {
+		ghClient.SweepWorkflowApprovals(ctx, actionable.PRs.Items, cfg.Governor.CI)
+	}
 	// Held PRs need CI status too, or a red held PR can never be repaired:
 	// the hold label kept it out of PRs.Items, so nothing ever learned it was
 	// red and no agent was ever told to fix it (hivecommons/hive#7438). This

@@ -81,6 +81,17 @@ func (c *Engine) adoptionRefusedByAdmission(ctx context.Context, store *stagelab
 	}
 	store.NoteAdoptionBlocked(key, obs.HeadSHA, stagelabels.AdoptBlockedOperatorAdmission, now)
 	c.info("stage labels: adoption due but a person admitted this head; not adopting", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "admitted_by", stagelabels.OperatorApprovalAdmission(login))
+	// Standing down must not strand the head: a fork author cannot re-run
+	// upstream workflows, and the admission keeps the hive from adopting,
+	// so a shared-CI flake on the admitted head (often the hive's own base
+	// refresh) has no owner. The adopted-PR recovery — update-branch when
+	// behind, else re-run the failed jobs, once per (head, base tip) — runs
+	// here too (hivecommons/hive#16718).
+	if rec, ok := store.Get(key); ok {
+		if recovery := c.recoverStaleRedAdmittedHead(ctx, store, key, obs, rec); recovery.Attempted {
+			c.info("stage labels: admitted head is red for a reason the base clears; recovering instead of waiting on the author", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "admitted_by", stagelabels.OperatorApprovalAdmission(login), "recovery", recovery.Reason)
+		}
+	}
 	return true
 }
 

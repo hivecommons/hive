@@ -738,6 +738,7 @@ func TestUpdateMaxContextLenStaleGuard(t *testing.T) {
 
 func TestHandleConnCONNECTNonGitHub(t *testing.T) {
 	p := newTestProxy()
+	p.allowPrivateForward = true // the tunnel target under test is a loopback listener
 
 	// Start a mock TCP server to tunnel to
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -957,6 +958,7 @@ func TestExtractTextFromContentInvalid(t *testing.T) {
 
 func TestHandleConnectDirectNonGitHub(t *testing.T) {
 	p := newTestProxy()
+	p.allowPrivateForward = true // the tunnel target under test is a loopback listener
 	p.inference = newInferenceRouter()
 
 	// Create a local TCP server to tunnel to

@@ -7,7 +7,13 @@
 1. **If you only want to read:** ask the owner for the public knowledge URL. You do not need a Hive account or owner controls. If you own the hive, first use [Owner switch](#owner-switch) to enable sharing and choose any tag filter.
 2. Choose one example under [Client configuration](#client-configuration). Replace `https://hive.example.org/mcp/knowledge` with the owner's URL. `hive.example.org` is a placeholder, and `bluefin-hive` is an arbitrary name stored in your own client, not a required hive identifier.
 3. Ask the client to call `knowledge_search` with `{"query":"bluetooth"}`, or use the curl example. A successful tool result contains `query`, `count`, and `results`. For example, `{"query":"bluetooth","count":0,"results":[]}` is a successful search with no matching public notes, not a connection failure. Matches contain the public fact fields listed below. MCP clients may wrap that JSON in a tool-result content block.
-4. A disabled endpoint returns **404**. Confirm the URL and owner setting before troubleshooting credentials; this endpoint needs none.
+4. A disabled endpoint is closed, like any other private address of the hive. What you see depends on whether you are signed in to that hive:
+   - not signed in: **401** and the hive's sign-in page (on a hosted hive, a redirect to the hub's sign-in);
+   - signed in, or the hive has neither a dashboard token nor a sign-in allowlist: **404**.
+
+   Either way you do not need credentials, because an enabled endpoint asks for none. Confirm the URL and ask the owner whether sharing is on.
+
+   An enabled endpoint takes `POST` only. It answers a `GET` with **405**, because it has no event stream to open; that is not a sign that sharing is off.
 5. To stop using the connection, remove `bluefin-hive` from the client configuration you added (in Claude Code, `claude mcp remove bluefin-hive`). To stop publishing for everyone, the **owner** turns the sharing switch off; this takes effect without a restart.
 
 ## Publication reference
@@ -38,7 +44,7 @@ legacy env-only behavior remains unchanged.
 
 | Variable | Effect |
 |---|---|
-| `HIVE_PUBLIC_KNOWLEDGE=1` (`true`/`yes`/`on`) | Enables `POST /mcp/knowledge`. Unset or anything else → the path returns **404**, even to the owner. |
+| `HIVE_PUBLIC_KNOWLEDGE=1` (`true`/`yes`/`on`) | Enables `POST /mcp/knowledge`. Unset or anything else → the path is closed: **404**, even to the owner, and **401** to a caller who is not signed in on a hive that requires sign-in. |
 | `HIVE_PUBLIC_KNOWLEDGE_TAGS=linux,troubleshooting` | Optional. Only facts carrying at least one listed tag are served. |
 
 Both the dashboard setting and env fallback are resolved on every request, so
@@ -129,7 +135,9 @@ On hosted hives the hub's nginx `auth_request` gate waves `/mcp/knowledge`
 through (same mechanism as `/api/knowledge/export`, #8294) so an agent with
 no browser session is not bounced to the login page. This opens nothing by
 itself: the spoke re-checks the dashboard setting (or
-`HIVE_PUBLIC_KNOWLEDGE` when no setting exists) and 404s when it is off.
+`HIVE_PUBLIC_KNOWLEDGE` when no setting exists) and keeps the path closed when
+it is off. A caller with no session then gets the spoke's 401, which the hub's
+gate turns into its sign-in redirect.
 
 Here a *spoke* is the individual hive behind the shared hub, and a *distro* is an operating-system distribution whose assistant might consume its public notes. Reverse-proxy details matter to the hosting operator, not to an anonymous client connecting with the public URL.
 

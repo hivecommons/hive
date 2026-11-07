@@ -233,6 +233,28 @@ func TestWriteMergeEligible_UntrustedConflictIsNotHiveRebaseWork(t *testing.T) {
 	}
 }
 
+// projectbluefin/utah#1097: a dirty Renovate branch is never the fixer's
+// rebase work, even under a trusted author's identity — the bot resolves
+// its own conflicts, and a hive push would stop it rebasing the branch for
+// good. The same PR on an ordinary branch is (TestWriteMergeEligible_
+// TrustedAuthorConflictGetsRebaseKickWithLoopGuard).
+func TestWriteMergeEligible_TrustedDependencyBotConflictIsNotHiveRebaseWork(t *testing.T) {
+	useMemoryRebaseAttempts(t)
+	cfg := trustedAuthorRebaseConfig()
+	pr := github.PullRequest{Number: 15091, Repo: "hive", Author: "clubanderson", HeadSHA: "fff6666",
+		HeadRef: "renovate/go-deps", HeadRepo: "hivecommons/hive", BaseRef: "v5",
+		Mergeable: github.MergeableNo, MergeableState: "dirty", CIStatus: "pending", Labels: []string{"needs-rebase"}}
+	_, failing := runWriteMergeEligible(t, []github.PullRequest{pr}, mergeEligibleInputs{org: "hivecommons", cfg: cfg})
+	if len(failing) != 0 {
+		t.Fatalf("ci_failing = %+v, want nothing for a dependency bot's conflict", failing)
+	}
+	pr.HeadRef = "feat/x"
+	_, failing = runWriteMergeEligible(t, []github.PullRequest{pr}, mergeEligibleInputs{org: "hivecommons", cfg: cfg})
+	if len(failing) != 1 || !failing[0].TrustedAuthor {
+		t.Fatalf("ci_failing = %+v, want the ordinary branch listed as trusted-author rebase work", failing)
+	}
+}
+
 // sweepRebaseLogged runs one writeMergeEligible sweep at now and returns the
 // ci-failing rows and the number of "routed to fixer for rebase" lines.
 func sweepRebaseLogged(t *testing.T, prs []github.PullRequest, now time.Time) ([]failingEntry, int) {

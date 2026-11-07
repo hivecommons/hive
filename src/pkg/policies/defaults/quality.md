@@ -120,7 +120,7 @@ ${ISSUE_LIST}
 ACTIONABLE PRs:
 ${PR_LIST}
 
-⛔ The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n>` only on supplied GitHub issue numbers.
+⛔ The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n>` only on supplied GitHub issue numbers. For merged PR history only, `gh pr list --state merged` (no `--search` or `-S`) may be used only when the wrapper permits it for your tier; this does not authorize open-work discovery. If refused, do not retry or bypass the restriction.
 
 ## Gate Check Before Filing (MANDATORY)
 
