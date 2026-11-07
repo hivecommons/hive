@@ -209,6 +209,11 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 			}
 		}
 		return e.local(ctx, opts, name, args)
+	case "runs":
+		// The contained-run family lives on a `crux serve`; there is no
+		// in-process form, so the verb is only reachable with --server.
+		fmt.Fprintln(e.Stderr, "crux: runs needs --server ADDR (or CRUX_SERVER); contained runs execute on a crux serve")
+		return ExitUsage
 	case "help", "-h", "--help":
 		fs := flag.NewFlagSet("crux", flag.ContinueOnError)
 		e.usage(fs)
@@ -339,6 +344,8 @@ Commands (each maps onto crux.Runtime):
                                   runtime that spawned it, not run by hand
   cline-turn                      one bounded Cline CLI turn (stdin prompt);
                                   --model provider/model, --check for preflight
+  runs start|status|cancel        contained command runs on a crux serve
+                                  (--server only; 'crux runs help' for flags)
 
 Work services (no runtime; hivecommons/crux#114):
   checkout add|rm|list            pinned checkouts under <workdir>/checkouts
