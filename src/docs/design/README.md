@@ -200,6 +200,16 @@ that status is the thing to check before treating a page as current behaviour:
   server-side allowlisted label write. Credits RFC #6239 and records the
   Discord intents/partials trap before implementation.
 
+- [Nous → Spek: the winning experiment as a `spek-new` source](nous-spek-source.md)
+  — **proposed / design only, no Hive change.** #17020: what the external Nous
+  framework leaves on disk for a winning candidate (`best_found.json`,
+  `meta_findings.json` `deployment_recommendation`, findings, bundle
+  `code_changes`), what Hive reads of it (two files at boot, a ledger
+  vocabulary the framework's rows don't share), and what `spek-new` accepts (a
+  `sources[].uri`). Proposes a straw-man artifact and publishing it as a GitHub
+  issue so `spek-new` can start from the link, and lists the questions the Nous
+  team has to answer.
+
 - [`hive tui` — a terminal dashboard for Hive](tui.md) — **shipped (v1).** The
   design record for the k9s-style terminal client tracked in #4907: scope, the
   fixed architecture decisions, the default 2x2 pane layout, the keybinding
