@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -3433,10 +3434,34 @@ func (c *Client) ensureLabel(ctx context.Context, owner, repo, name string) erro
 		Color:       gh.Ptr("8250df"),
 		Description: gh.Ptr("Approved by a Hive merger/owner for auto-merge on green CI"),
 	})
-	if ghErr, ok := err.(*gh.ErrorResponse); ok && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
+	if labelAlreadyExists(err) {
 		return nil
 	}
 	return err
+}
+
+// labelAlreadyExists reports whether a CreateLabel error is GitHub's 422
+// for a label that already exists (a concurrent creator won the race): the
+// desired end state holds and the caller may proceed. Any other 422 — "name
+// is too long", "name is invalid" — is a real failure: the label was not
+// created, the AddLabels that follows will fail too, and swallowing it
+// here hid the reason from the dashboard (hivecommons/hive#17037). A 422
+// without an error list is kept as "already exists" for GitHub-compatible
+// forges that omit it.
+func labelAlreadyExists(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	if len(ghErr.Errors) == 0 {
+		return true
+	}
+	for _, e := range ghErr.Errors {
+		if e.Code == "already_exists" {
+			return true
+		}
+	}
+	return false
 }
 
 // EnsureIssueLabel creates an issue label if it does not already exist.
@@ -3475,7 +3500,7 @@ func (c *Client) EnsureIssueLabel(ctx context.Context, repo, name, color, descri
 		Color:       gh.Ptr(color),
 		Description: gh.Ptr(clampLabelDescription(description)),
 	})
-	if ghErr, ok := err.(*gh.ErrorResponse); ok && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
+	if labelAlreadyExists(err) {
 		return nil
 	}
 	return err
@@ -3732,7 +3757,7 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 	for _, label := range extraHoldLabels {
 		label = strings.ToLower(strings.TrimSpace(label))
 		if label != "" {
-			if strings.HasPrefix(label, "hive-pause/") {
+			if strings.HasPrefix(label, HiveHoldLabelPrefix) {
 				exactHoldLabels = append(exactHoldLabels, label)
 			} else {
 				holdLabels = append(holdLabels, label)
@@ -3757,7 +3782,7 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 			}
 		}
 		for _, exact := range exactHoldLabels {
-			if strings.HasPrefix(exact, "hive-pause/") {
+			if strings.HasPrefix(exact, HiveHoldLabelPrefix) {
 				if strings.EqualFold(strings.TrimSpace(label), exact) {
 					return true
 				}
@@ -3779,6 +3804,32 @@ func isProvenanceLabel(lower string) bool {
 
 func isHeld(labels []string) bool { return HasHoldLabel(labels) }
 
+// HiveHoldLabelPrefix is the prefix of the per-hive dashboard hold label
+// (CanonicalHiveHoldLabel). Readers that recognise the label by prefix
+// (HasHoldLabelWith, IssueStageFor, the duplicate guard) key off it.
+const HiveHoldLabelPrefix = "hive-pause/"
+
+// githubLabelNameMaxLen is GitHub's cap on a label name: POST
+// /repos/{o}/{r}/labels answers 422 "name is too long (maximum is 50
+// characters)" above it.
+const githubLabelNameMaxLen = 50
+
+// hiveHoldLabelHashLen is the hex length of the FNV-1a digest appended to a
+// truncated hive id so two hives whose ids share a long prefix never collide
+// on the same hold label.
+const hiveHoldLabelHashLen = 8
+
+// CanonicalHiveHoldLabel is the exact label the dashboard Hold button writes
+// and every hold reader matches exactly: hive-pause/<hive-id>, or "hold" for
+// a hive without an id.
+//
+// The result always fits GitHub's 50-character label-name cap. A hosted hive
+// id such as hosted-available-oke-11-placeholder-r05x (40 chars) makes the
+// plain spelling 51 chars; GitHub rejects creating it with 422, so Hold on
+// that hive could never write its label and the dashboard reported "hive
+// unavailable" (hivecommons/hive#17037). Over the cap the id is truncated
+// and suffixed with a short hash of the full id, so the name stays unique
+// per hive and stable across restarts.
 func CanonicalHiveHoldLabel(hiveID string) string {
 	hiveID = strings.TrimSpace(hiveID)
 	if hiveID == "" {
@@ -3787,7 +3838,15 @@ func CanonicalHiveHoldLabel(hiveID string) string {
 	// Avoid "hold" in this hive-scoped spelling: generic hold labels are
 	// substring-matched for backwards compatibility, while this label must be
 	// matched exactly so hive/<id> can stay provenance-only.
-	return "hive-pause/" + hiveID
+	label := HiveHoldLabelPrefix + hiveID
+	if len(label) <= githubLabelNameMaxLen {
+		return label
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(hiveID))
+	digest := fmt.Sprintf("%08x", h.Sum32())[:hiveHoldLabelHashLen]
+	keep := githubLabelNameMaxLen - len(HiveHoldLabelPrefix) - 1 - hiveHoldLabelHashLen
+	return HiveHoldLabelPrefix + strings.TrimRight(hiveID[:keep], "-") + "-" + digest
 }
 
 // HiveProvenanceLabel is the retired hive/<hive-id> label

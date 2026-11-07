@@ -1421,6 +1421,22 @@
       fetchStageTracker();
       fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
     }
+    // The body the hosted gateway substitutes for a 502/503 it intercepted
+    // (deploy/k8s/error-pages.yaml): it never came from the hive.
+    const STAGE_TRACKER_PLAN_GATEWAY_ERROR = 'hive unavailable';
+    // Pure: the message a failed row action reports. The hive's own error
+    // when it answered (the body of a 4xx — 403 "write permission
+    // required", 424 "GitHub add hold label failed: … 422 …"), the bare
+    // status when the body carried none. A 502–504 whose body is the
+    // gateway's placeholder (or no JSON at all) is named as such: the hive
+    // may well be up and its real reply was replaced on the way
+    // (hivecommons/hive#17037), so "hive unavailable" alone misled.
+    function stageTrackerActionError(status, data) {
+      data = data || {};
+      const gateway = status >= 502 && status <= 504 && (!data.error || data.error === STAGE_TRACKER_PLAN_GATEWAY_ERROR);
+      if (gateway) return 'HTTP ' + status + ' from the gateway — the hive\'s reply was replaced (it may be restarting, or the gateway hid an upstream error); retry, and check the hive log if it persists';
+      return data.error || ('HTTP ' + status);
+    }
     // Run one action over the items in order, one request each (a hive-wide
     // one once), reporting progress and the per-row outcome.
     async function stageTrackerRunActions(items, id, payload, rows) {
@@ -1445,7 +1461,7 @@
         try {
           const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
           let data = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+          if (!r.ok) throw new Error(stageTrackerActionError(r.status, data));
           if (id === 'accept-triage' && data.ok !== true) throw new Error(data.error || 'The server did not confirm the triage handoff');
           if (id === 'decide:close-issue' && data.status !== 'closed' && data.status !== 'refused') throw new Error(data.error || 'The server did not confirm that the issue closed');
           if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
@@ -1770,8 +1786,8 @@
     // hint, retryable, hive, attempts, elapsed_ms; delegatedPlanFailure in
     // api_repo_item_decide_delegated_plan.go) when it answered, else what
     // the transport said. A 502/503 whose body is the hosted gateway's
-    // generic "hive unavailable" page never came from the hive at all.
-    const STAGE_TRACKER_PLAN_GATEWAY_ERROR = 'hive unavailable';
+    // generic "hive unavailable" page (STAGE_TRACKER_PLAN_GATEWAY_ERROR)
+    // never came from the hive at all.
     function stageTrackerDelegatePlanFailure(item, status, data) {
       data = data || {};
       const gateway = status >= 502 && status <= 504 && (!data.reason || data.error === STAGE_TRACKER_PLAN_GATEWAY_ERROR);
