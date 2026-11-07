@@ -38,20 +38,25 @@ type secretPattern struct {
 	category string
 	regexp   *regexp.Regexp
 	skip     func(string) bool
+	// heuristic marks a shape that also matches placeholders and test
+	// fixtures (sk-test-key, Bearer sometoken…). ScrubString masks these in
+	// logs, where a false positive costs nothing; FindSecret skips them,
+	// because refusing a push on one blocks legitimate work.
+	heuristic bool
 }
 
 var secretPatterns = []secretPattern{
 	{category: "hive-canary", regexp: regexp.MustCompile(`HIVE-CANARY-[A-Fa-f0-9]{48}`)},
 	{category: "github-token", regexp: regexp.MustCompile(githubTokenPattern)},
 	{category: "jwt", regexp: regexp.MustCompile(jwtPattern)},
-	{category: "api-key", regexp: regexp.MustCompile(apiKeyPattern)},
+	{category: "api-key", regexp: regexp.MustCompile(apiKeyPattern), heuristic: true},
 	{category: "slack-webhook-url", regexp: regexp.MustCompile(slackWebhookURLPattern)},
 	{category: "discord-webhook-url", regexp: regexp.MustCompile(discordWebhookURLPattern)},
 	{category: "slack-token", regexp: regexp.MustCompile(slackTokenPattern), skip: lacksASCIIDigit},
 	{category: "slack-app-token", regexp: regexp.MustCompile(slackAppTokenPattern), skip: lacksASCIIDigit},
 	{category: "aws-access-key", regexp: regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`)},
-	{category: "basic-auth", regexp: regexp.MustCompile(basicAuthPattern)},
-	{category: "bearer-token", regexp: regexp.MustCompile(bearerTokenPattern), skip: regexp.MustCompile(bearerPlaceholderPattern).MatchString},
+	{category: "basic-auth", regexp: regexp.MustCompile(basicAuthPattern), heuristic: true},
+	{category: "bearer-token", regexp: regexp.MustCompile(bearerTokenPattern), skip: regexp.MustCompile(bearerPlaceholderPattern).MatchString, heuristic: true},
 	{category: "private-key", regexp: regexp.MustCompile(`(?s)-----BEGIN\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----.*?-----END\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----`)},
 	{category: "encrypted-private-key", regexp: regexp.MustCompile(`(?s)-----BEGIN\s+ENCRYPTED\s+PRIVATE\s+KEY-----.*?-----END\s+ENCRYPTED\s+PRIVATE\s+KEY-----`)},
 	{category: "pgp-private-key", regexp: regexp.MustCompile(`(?s)-----BEGIN\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----.*?-----END\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----`)},
@@ -166,6 +171,28 @@ func scrubString(s string, counts map[string]int, opts []Option) string {
 		})
 	}
 	return s
+}
+
+// FindSecret reports the category of the first exact-shape credential in s:
+// the hive canary marker, GitHub tokens, JWTs, AWS access keys, Slack and
+// Discord webhook URLs, Slack tokens and private-key blocks — every
+// secretPatterns entry that is not heuristic, in table order, honouring each
+// pattern's skip. It is the gate for text that is about to leave the estate
+// (pushbroker's outgoing diff); ScrubString remains the broader masker for
+// logs. The value is never returned, only its category.
+func FindSecret(s string) (category string, found bool) {
+	for _, p := range secretPatterns {
+		if p.heuristic {
+			continue
+		}
+		for _, match := range p.regexp.FindAllString(s, -1) {
+			if p.skip != nil && p.skip(match) {
+				continue
+			}
+			return p.category, true
+		}
+	}
+	return "", false
 }
 
 func lacksASCIIDigit(s string) bool {

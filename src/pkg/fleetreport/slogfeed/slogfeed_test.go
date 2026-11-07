@@ -89,6 +89,30 @@ func TestRebaseAttemptsExhaustedLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #16795: a routine prose-only recovery notice must remain visible locally
+// without feeding the generic repeated-error tracker, even across many kicks.
+func TestActionNudgeLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "inference agent answered kick with prose only, sending action nudge"
+	for i := 1; i <= 10; i++ {
+		logger.Warn(msg, "name", "reviewer", "minutes_since_kick", 7,
+			"total_action_nudges", i)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("routine action nudges produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Fatalf("wrapped handler saw %d records, want 10", n)
+	}
+	if !strings.Contains(out.String(), msg) || !strings.Contains(out.String(), `"total_action_nudges":10`) {
+		t.Fatal("local logs lost the warning or its diagnostics")
+	}
+	logger.Error("inference action nudge delivery failed", "error", "unexpected failure")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("action nudge failure must remain reportable: %+v", *seen)
+	}
+}
+
 func TestHandlerWithAttrsCarriesBoundAttrsIntoDiagnostics(t *testing.T) {
 	logger, seen, _ := newFeed(t)
 	logger.With("agent", "quality").WithGroup("req").Warn("ledger write failed", "path", "/data/x.json")
@@ -632,6 +656,8 @@ func TestGitHubRateLimitStormLogsWithoutFleetReport(t *testing.T) {
 		{15109, "advisory: path existence check failed", []any{"path", "a/b.sh", "repo", "common", "error", `checking o/common/a/b.sh@abc: Get "https://api.github.com/repos/o/common/contents/a/b.sh?ref=abc"` + shed}},
 		{0, "failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 429 Too Many Requests"}},
 		{0, "failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 403 API rate limit of 5000 still exceeded until 2026-10-28 17:42:28 -0400 EDT, not making remote request."}},
+		{16784, "issue activity fetch skipped", []any{"repo", "xfce-linux", "error", "github REST budget below reserve 500; skipping issue activity for xfce-linux"}},
+		{16784, "CI trail fetch skipped", []any{"error", "github REST budget below reserve 500; skipping CI trail for org/repo#1"}},
 	}
 	for _, tc := range cases {
 		logger, seen, out := newFeed(t)
@@ -650,8 +676,9 @@ func TestGitHubRateLimitStormLogsWithoutFleetReport(t *testing.T) {
 	// including a plain 403 permission refusal.
 	logger, seen, _ := newFeed(t)
 	logger.Warn("failed to fetch check runs", "error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 403 Resource not accessible by integration")
-	logger.Warn("stage labels: check digest failed", "error", "GET https://api.github.com/repos/o/r/commits/abc/status: 500 Internal Server Error")
-	if len(*seen) != 2 {
+	logger.Warn("stage labels: check digest failed", "error", "GET https://api.github.com/repos/o/r/commits/abc/status: 403 Resource not accessible by integration")
+	logger.Warn("issue activity fetch skipped", "repo", "xfce-linux", "error", "listing issues: 403 Resource not accessible by integration")
+	if len(*seen) != 3 {
 		t.Fatalf("non-rate-limit failures must remain reportable: %+v", *seen)
 	}
 }
@@ -692,7 +719,7 @@ func TestGitHubUpstreamUnavailableLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
-// #15785, #15786: fail-closed gates hitting a GitHub 500 on the status read
+// #15785, #15786, #16778: fail-closed gates hitting a GitHub 500 on the status read
 // are expected and retried, so they are not reported as unclassified.
 func TestFailClosedStatus500LogsWithoutFleetReport(t *testing.T) {
 	const statusErr = "GET https://api.github.com/repos/o/r/commits/abc/status?per_page=100: 500  []"
@@ -702,6 +729,8 @@ func TestFailClosedStatus500LogsWithoutFleetReport(t *testing.T) {
 	}{
 		{"merge-eligible lane gate could not evaluate PR; leaving it listed", []any{"repo", "o/r", "number", 3929, "error", "o/r#3929 lane evidence unavailable (status-check; fail closed): " + statusErr}},
 		{"trusted-author automerge sweep skipped PR", []any{"repo", "hive", "pr", 15763, "reason", "release-hold-check", "error", statusErr}},
+		{"contributor-lane automerge sweep skipped PR", []any{"repo", "flatpak-index", "pr", 216, "reason", "status-check", "error", statusErr}},
+		{"stage labels: check digest failed", []any{"repo", "hive", "pr", 797, "error", statusErr}},
 	}
 	for _, tc := range cases {
 		logger, seen, out := newFeed(t)
@@ -719,7 +748,9 @@ func TestFailClosedStatus500LogsWithoutFleetReport(t *testing.T) {
 	logger, seen, _ := newFeed(t)
 	logger.Warn("trusted-author automerge sweep skipped PR", "error", "GET https://api.github.com/repos/o/r/pulls/1: 404 Not Found")
 	logger.Warn("merge-eligible lane gate could not evaluate PR; leaving it listed", "error", "boom")
-	if len(*seen) != 2 {
+	logger.Warn("contributor-lane automerge sweep skipped PR", "reason", "status-check", "error", "GET https://api.github.com/repos/o/r/commits/abc/status: 403 Forbidden")
+	logger.Warn("contributor-lane automerge sweep skipped PR", "reason", "fetch-pr", "error", "GET https://api.github.com/repos/o/r/pulls/216: 500 Internal Server Error")
+	if len(*seen) != 4 {
 		t.Fatalf("other failures must remain reportable: %+v", *seen)
 	}
 }
@@ -996,5 +1027,44 @@ func TestInferenceBlockedStallLogsWithoutFleetReport(t *testing.T) {
 	logger.Warn("watchdog: agent not producing", "agent", "dedupe", "detail", "no production evidence for 2h0m0s")
 	if len(*seen) != 1 {
 		t.Fatalf("other stalls must remain reportable: %+v", *seen)
+	}
+}
+
+// #16844: a GitHub 5xx on the review POST is retried with backoff by design.
+func TestReviewRetryServerErrorLogsWithoutFleetReport(t *testing.T) {
+	const msg = "review-request watcher: review failed, will retry with backoff"
+	errOf := func(code string) string {
+		return "effect outcome uncertain, reconciliation required: POST https://api.github.com/repos/hivecommons/hive/pulls/16830/reviews: " + code + "  []"
+	}
+	cases := []struct {
+		name string
+		msg  string
+		err  string
+		want int
+	}{
+		{"500", msg, errOf("500"), 0},
+		{"502", msg, errOf("502"), 0},
+		{"503", msg, errOf("503"), 0},
+		{"403", msg, errOf("403"), 8},
+		{"422", msg, errOf("422"), 8},
+		{"non-http error", msg, "boom", 8},
+		{"other message", "review-request watcher: review quarantined", errOf("500"), 8},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, seen, out := newFeed(t)
+			for i := 0; i < 8; i++ {
+				logger.Warn(tc.msg, "repo", "hivecommons/hive", "number", 16830, "error", tc.err)
+			}
+			if tc.want == 0 && len(*seen) != 0 {
+				t.Errorf("produced observations: %+v", *seen)
+			}
+			if tc.want != 0 && len(*seen) == 0 {
+				t.Errorf("must remain reportable")
+			}
+			if n := strings.Count(out.String(), "\n"); n != 8 {
+				t.Errorf("wrapped handler saw %d records, want 8", n)
+			}
+		})
 	}
 }

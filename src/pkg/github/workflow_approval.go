@@ -15,11 +15,19 @@ import (
 // runs create no check runs, so from the check-run listing alone the required
 // checks simply look unreported; this is the evidence that they are in fact
 // waiting on a person clicking Approve (hivecommons/hive#16599).
+//
+// PermissionDenied is set once the hive tried to approve the runs itself and
+// GitHub refused for want of `actions: write`, so the click is a person's
+// (hivecommons/hive#16603).
 type PRWorkflowApproval struct {
-	Pending    int        `json:"pending"`
-	RunIDs     []int64    `json:"run_ids,omitempty"`
-	Actor      string     `json:"actor,omitempty"`
-	ObservedAt *time.Time `json:"observed_at,omitempty"`
+	Pending          int        `json:"pending"`
+	RunIDs           []int64    `json:"run_ids,omitempty"`
+	Actor            string     `json:"actor,omitempty"`
+	ObservedAt       *time.Time `json:"observed_at,omitempty"`
+	PermissionDenied bool       `json:"permission_denied,omitempty"`
+	// runs are the gated runs themselves, read-only, for the auto-approval
+	// decision (triggering actor, event, head repository).
+	runs []*gh.WorkflowRun
 }
 
 // WorkflowApprovalStatus is the workflow-run status GitHub reports while a
@@ -108,6 +116,7 @@ func workflowApprovalFromRuns(runs []*gh.WorkflowRun, now time.Time) *PRWorkflow
 			out = &PRWorkflowApproval{ObservedAt: &at}
 		}
 		out.Pending++
+		out.runs = append(out.runs, run)
 		if id := run.GetID(); id != 0 {
 			out.RunIDs = append(out.RunIDs, id)
 		}

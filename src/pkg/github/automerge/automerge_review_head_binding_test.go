@@ -136,8 +136,8 @@ func TestApprovalBindsToApprovedContent(t *testing.T) {
 					c.headSightings.Sight("acme/widget", map[int]string{7: sha}, mustParseTime(t, at))
 				}
 			}
-			login, carried, ok := c.latestTrustedHumanApprovalReach(context.Background(), "acme", "widget", 7, tc.head)
-			if ok != tc.wantOK || carried != tc.wantCarried {
+			login, carriedFrom, ok := c.latestTrustedHumanApprovalReach(context.Background(), "acme", "widget", 7, tc.head)
+			if carried := carriedFrom != ""; ok != tc.wantOK || carried != tc.wantCarried {
 				t.Fatalf("approval = %q carried=%v ok=%v, want ok=%v carried=%v", login, carried, ok, tc.wantOK, tc.wantCarried)
 			}
 		})
@@ -164,11 +164,11 @@ func TestApprovalBindingIsMemoised(t *testing.T) {
 }
 
 func TestWorkflowApprovalCommentSaysCarried(t *testing.T) {
-	carried := workflowApprovalComment("9d8ceabe7d2a", "Danathar", workflowApprovalVerdictNone, true)
-	if !strings.Contains(carried, "carried over a base merge") || !strings.Contains(carried, "PR diff unchanged") || strings.Contains(carried, "approved head `") {
+	carried := workflowApprovalComment("9d8ceabe7d2a", workflowApproval{Login: "Danathar", CarriedFrom: "1234567890ab"}, workflowApprovalVerdictNone)
+	if !strings.Contains(carried, "from=1234567890ab -->") || !strings.Contains(carried, "approved head `1234567890ab`") || !strings.Contains(carried, "diff is unchanged") || strings.Contains(carried, "approved head `9d8ceabe7d2a`") {
 		t.Fatalf("carried comment:\n%s", carried)
 	}
-	if plain := workflowApprovalComment("9d8ceabe7d2a", "Danathar", workflowApprovalVerdictNone, false); !strings.Contains(plain, "approved head `9d8ceabe7d2a`") || strings.Contains(plain, "carried") {
+	if plain := workflowApprovalComment("9d8ceabe7d2a", workflowApproval{Login: "Danathar"}, workflowApprovalVerdictNone); !strings.Contains(plain, "approved head `9d8ceabe7d2a`") || strings.Contains(plain, "from=") {
 		t.Fatalf("plain comment:\n%s", plain)
 	}
 }

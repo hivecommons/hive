@@ -1,13 +1,19 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -438,5 +444,92 @@ func TestDelegatedPlanPendingCIIsNotRed(t *testing.T) {
 	}
 	if delegatedPlanMergeableAsIs(in, d) {
 		t.Fatal("a head with checks still running is not mergeable as it is")
+	}
+}
+
+// hivecommons/hive#16776: the owner's "Let hive decide" preview failed with
+// "hive unavailable" several times a day. The plan answered every failure
+// — a PR merged since the row loaded, an intermittent GitHub 500 on
+// check-runs — as 502, and the hosted Ingress intercepts 502/503 and swaps
+// the body for its generic outage page. The plan now retries a transient
+// GitHub failure, and a failure it cannot recover from is a 4xx carrying
+// the reason, so the dialog can say what happened and what to do.
+func TestDelegatedPlanRetriesTransientGitHubFailure(t *testing.T) {
+	prev := delegatedPlanRetrySleep
+	var slept []time.Duration
+	delegatedPlanRetrySleep = func(_ context.Context, d time.Duration) error { slept = append(slept, d); return nil }
+	t.Cleanup(func() { delegatedPlanRetrySleep = prev })
+
+	mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", prLabels: []string{"stage/085-needs-decision", "needs-human"}, checkRunsFailures: 1}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegatedPlan(t, srv, 8, "writer", `{"type":"pr"}`, map[string]string{"X-Hive-Role": "merger"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("one GitHub 500 must be retried, got code=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(slept) != 1 || slept[0] != delegatedPlanRetryBackoff || mock.checkRunsCalls != 2 {
+		t.Fatalf("slept=%v check-runs calls=%d", slept, mock.checkRunsCalls)
+	}
+
+	// Past the retry budget the failure is reported — as 424, never 502,
+	// with the reason, the attempt count and a hint.
+	slept = nil
+	mock2 := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", prLabels: []string{"stage/085-needs-decision", "needs-human"}, checkRunsFailures: delegatedPlanRetries + 5}
+	srv2 := newDelegatedServer(t, mock2)
+	w = postDelegatedPlan(t, srv2, 8, "writer", `{"type":"pr"}`, map[string]string{"X-Hive-Role": "merger"})
+	if w.Code != http.StatusFailedDependency {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var f delegatedPlanFailure
+	if err := json.Unmarshal(w.Body.Bytes(), &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.OK || f.Reason != delegatedPlanReasonGitHub || !f.Retryable || f.Attempts != delegatedPlanRetries+1 || !strings.Contains(f.Error, "check-runs") || !strings.Contains(f.Hint, "Retry") {
+		t.Fatalf("failure = %+v", f)
+	}
+	if len(slept) != delegatedPlanRetries || slept[1] != 2*delegatedPlanRetryBackoff {
+		t.Fatalf("slept=%v", slept)
+	}
+}
+
+func TestDelegatedPlanNotOpenIsConflictNotBadGateway(t *testing.T) {
+	mock := &repoItemDecisionMock{issueState: "closed", issueLabels: []string{"stage/045-needs-decision"}}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegatedPlan(t, srv, 7, "writer", `{"type":"issue"}`, nil)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var f delegatedPlanFailure
+	if err := json.Unmarshal(w.Body.Bytes(), &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.OK || f.Reason != delegatedPlanReasonNotOpen || f.Retryable || f.Error != "testorg/testrepo#7 is not open" || !strings.Contains(f.Hint, "closed on GitHub") || !strings.Contains(f.Hint, "Refresh") {
+		t.Fatalf("failure = %+v", f)
+	}
+}
+
+// delegatedPlanFailureFor never picks a status the hosted Ingress
+// intercepts (502, 503): that is how the real reason went missing.
+func TestDelegatedPlanFailureStatusesAreNeverIntercepted(t *testing.T) {
+	ghErr := &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusInternalServerError, Request: &http.Request{Method: "GET", URL: &url.URL{Path: "/x"}}}}
+	cases := []struct {
+		err       error
+		status    int
+		reason    string
+		retryable bool
+	}{
+		{&delegatedItemNotOpenError{Ref: "o/r#1", State: "closed"}, http.StatusConflict, delegatedPlanReasonNotOpen, false},
+		{errDelegatedPlanNoGitHub, http.StatusFailedDependency, delegatedPlanReasonConfig, false},
+		{fmt.Errorf("reading checks: %w", ghErr), http.StatusFailedDependency, delegatedPlanReasonGitHub, true},
+		{fmt.Errorf("reading: %w", &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusNotFound, Request: &http.Request{Method: "GET", URL: &url.URL{Path: "/x"}}}}), http.StatusFailedDependency, delegatedPlanReasonGitHub, false},
+		{errors.New("something else"), http.StatusFailedDependency, delegatedPlanReasonPlan, true},
+	}
+	for _, tc := range cases {
+		f := delegatedPlanFailureFor(tc.err, "o/r", 1, 3, 4*time.Second, "Hive Commons")
+		if f.status == http.StatusBadGateway || f.status == http.StatusServiceUnavailable {
+			t.Errorf("%v: status %d is intercepted by the hosted Ingress", tc.err, f.status)
+		}
+		if f.status != tc.status || f.Reason != tc.reason || f.Retryable != tc.retryable || f.Hive != "Hive Commons" || f.Hint == "" || f.OK {
+			t.Errorf("%v: failure = %+v", tc.err, f)
+		}
 	}
 }

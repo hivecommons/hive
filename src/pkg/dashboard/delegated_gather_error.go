@@ -3,10 +3,8 @@ package dashboard
 import (
 	"context"
 	"errors"
-	"math"
 	"net"
 	"net/http"
-	"strconv"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
@@ -18,20 +16,14 @@ import (
 // wait at least a minute.
 const delegatedGatherRetryFallback = time.Minute
 
-// delegatedGatherError answers a "Let hive decide" request whose live read
-// of the item failed. On a hosted hive the Ingress swaps every 502 and 503
-// for its canned "hive unavailable" body (custom-http-errors, see
-// pkg/hub/saas_provision.go), so an error GitHub explained must not use
-// them: projectbluefin's previews all read "(hive unavailable)" for half an
-// hour while the hive was up and its App was out of quota.
-func delegatedGatherError(w http.ResponseWriter, err error, now time.Time) {
-	status, msg, retry := delegatedGatherErrorStatus(err, now)
-	if retry > 0 {
-		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retry.Seconds()))))
-	}
-	jsonError(w, msg, status)
-}
-
+// delegatedGatherErrorStatus is how a "Let hive decide" request whose live
+// read of the item failed is answered (writeDelegatedPlanFailure). On a
+// hosted hive the Ingress swaps every 502 and 503 for its canned "hive
+// unavailable" body (custom-http-errors, see pkg/hub/saas_provision.go), so
+// an error GitHub explained must not use them: projectbluefin's previews
+// all read "(hive unavailable)" for half an hour while the hive was up and
+// its App was out of quota.
+//
 // delegatedGatherErrorStatus maps a gather error to its answer: a GitHub
 // rate limit (primary, secondary, or a request the pacer shed while one is
 // in force) is 429 with the wait and the time it lifts; any other answer

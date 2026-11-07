@@ -1738,3 +1738,164 @@ func TestStoreMarkSupersededAndPollDue(t *testing.T) {
 		t.Fatal("MarkSuperseded accepted PR 0")
 	}
 }
+
+func TestTransitionDampenerRefusesFrequentFlapsBetweenTwoStages(t *testing.T) {
+	now := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+	clock := now
+	s := NewStore("", func() time.Time { return clock })
+	key := Key("acme/widget", 123)
+	head := "687f4cb"
+
+	// Initial entry: NeedsDecision.
+	tr0 := s.ObserveHead(key, head, NeedsDecision, "initial")
+	if !tr0.Changed || tr0.Suppressed {
+		t.Fatalf("initial entry = %+v", tr0)
+	}
+
+	// Move 1: NeedsDecision -> Fixing.
+	clock = clock.Add(time.Minute)
+	tr1 := s.ObserveHead(key, head, Fixing, "ci-pending")
+	if !tr1.Changed || tr1.Suppressed || tr1.Next != Fixing {
+		t.Fatalf("move 1 = %+v", tr1)
+	}
+
+	// Move 2: Fixing -> NeedsDecision.
+	clock = clock.Add(time.Minute)
+	tr2 := s.ObserveHead(key, head, NeedsDecision, "verdict")
+	if !tr2.Changed || tr2.Suppressed || tr2.Next != NeedsDecision {
+		t.Fatalf("move 2 = %+v", tr2)
+	}
+
+	// Move 3: NeedsDecision -> Fixing.
+	clock = clock.Add(time.Minute)
+	tr3 := s.ObserveHead(key, head, Fixing, "ci-pending")
+	if !tr3.Changed || tr3.Suppressed || tr3.Next != Fixing {
+		t.Fatalf("move 3 = %+v", tr3)
+	}
+
+	// Move 4: Fixing -> NeedsDecision (4th move between {Fixing, NeedsDecision} in 4m). Must be suppressed!
+	clock = clock.Add(time.Minute)
+	tr4 := s.ObserveHead(key, head, NeedsDecision, "verdict")
+	if tr4.Changed || !tr4.Suppressed || tr4.Next != Fixing {
+		t.Fatalf("move 4 must be suppressed: %+v", tr4)
+	}
+	rec, _ := s.Get(key)
+	if rec.Stage != Fixing {
+		t.Fatalf("stage should remain Fixing after suppression, got %v", rec.Stage)
+	}
+
+	// A new head resets the dampener.
+	clock = clock.Add(time.Minute)
+	tr5 := s.ObserveHead(key, "newhead456", NeedsDecision, "new-push")
+	if !tr5.Changed || tr5.Suppressed || tr5.Next != NeedsDecision {
+		t.Fatalf("new head move must be allowed: %+v", tr5)
+	}
+	rec, _ = s.Get(key)
+	if rec.Stage != NeedsDecision {
+		t.Fatalf("stage should move to NeedsDecision on new head, got %v", rec.Stage)
+	}
+}
+
+// A same-head fall back into a repair stage (070/071/072) is never
+// dampened: refusing "CI went red, back to fixing" would leave the record
+// at a stage the merge train treats as ready.
+func TestTransitionDampenerNeverSuppressesMovesIntoRepairStages(t *testing.T) {
+	for _, repair := range []Stage{Fixing, NeedsAuthor, ReturnedToContributor} {
+		t.Run(repair.String(), func(t *testing.T) {
+			clock := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+			s := NewStore("", func() time.Time { return clock })
+			key := Key("acme/widget", 123)
+			head := "687f4cb"
+			s.ObserveHead(key, head, AwaitingMergeAdmission, "initial")
+			for i := 0; i < 6; i++ {
+				clock = clock.Add(time.Minute)
+				tr := s.ObserveHead(key, head, repair, "check-failing:unit")
+				// Once the climb back is refused the record already sits
+				// at repair, so later falls are no-ops rather than moves.
+				if tr.Suppressed || tr.Next != repair || (i < 2 && !tr.Changed) {
+					t.Fatalf("round %d: move into %s must be allowed: %+v", i, repair, tr)
+				}
+				clock = clock.Add(time.Minute)
+				tr = s.ObserveHead(key, head, AwaitingMergeAdmission, "checks-green")
+				// Round 0 books 080->070->080 (2 moves), round 1's fall into
+				// 070 is the 3rd: the 4th move of the pair is refused.
+				if i >= 1 {
+					if !tr.Suppressed || tr.Changed {
+						t.Fatalf("round %d: move back to 080 should be dampened: %+v", i, tr)
+					}
+					continue
+				}
+				if tr.Suppressed || !tr.Changed {
+					t.Fatalf("round %d: move back to 080 = %+v", i, tr)
+				}
+			}
+			if rec, _ := s.Get(key); rec.Stage != repair {
+				t.Fatalf("stage = %s, want %s", rec.Stage, repair)
+			}
+		})
+	}
+}
+
+func TestTransitionDampenerResetOnHumanEvent(t *testing.T) {
+	now := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+	clock := now
+	s := NewStore("", func() time.Time { return clock })
+	key := Key("acme/widget", 123)
+	head := "687f4cb"
+
+	s.ObserveHead(key, head, NeedsDecision, "initial")
+	s.NoteActivity(key, Activity{Head: head, Comments: 1, Reviews: 0})
+
+	// 3 transitions.
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, Fixing, "ci-pending")
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, NeedsDecision, "verdict")
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, Fixing, "ci-pending")
+
+	// 4th is suppressed.
+	clock = clock.Add(time.Minute)
+	tr := s.ObserveHead(key, head, NeedsDecision, "verdict")
+	if !tr.Suppressed {
+		t.Fatalf("expected suppressed move: %+v", tr)
+	}
+
+	// Human event: new comment arrives.
+	s.NoteActivity(key, Activity{Head: head, Comments: 2, Reviews: 0})
+
+	// Move is now allowed because human event reset the dampener.
+	tr = s.ObserveHead(key, head, NeedsDecision, "human-responded")
+	if tr.Suppressed || !tr.Changed || tr.Next != NeedsDecision {
+		t.Fatalf("move after human event must be allowed: %+v", tr)
+	}
+}
+
+func TestTransitionDampenerExpiresAfterWindow(t *testing.T) {
+	now := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+	clock := now
+	s := NewStore("", func() time.Time { return clock })
+	key := Key("acme/widget", 123)
+	head := "687f4cb"
+
+	s.ObserveHead(key, head, NeedsDecision, "initial")
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, Fixing, "ci-pending")
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, NeedsDecision, "verdict")
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, Fixing, "ci-pending")
+
+	// 4th move within 4m is suppressed.
+	tr := s.ObserveHead(key, head, NeedsDecision, "verdict")
+	if !tr.Suppressed {
+		t.Fatalf("expected suppressed move: %+v", tr)
+	}
+
+	// Advance time past the 30-minute window from the earlier moves.
+	clock = clock.Add(31 * time.Minute)
+	tr = s.ObserveHead(key, head, NeedsDecision, "verdict")
+	if tr.Suppressed || !tr.Changed || tr.Next != NeedsDecision {
+		t.Fatalf("move after window expiry must be allowed: %+v", tr)
+	}
+}

@@ -133,14 +133,14 @@ func TestUpdateBranchSkipsForkGuardedHead(t *testing.T) {
 	e := newNudgeEngine(t, srv.URL+"/", clock, nil, policy)
 	ctx := context.Background()
 
-	_, reason, err := e.updateBranchAndSkip(ctx, "acme/widget", "acme", "widget", 862, "guarded", "base1", "behind", true)
+	_, reason, err := e.updateBranchAndSkip(ctx, "acme/widget", "acme", "widget", 862, "guarded", "base1", "behind", currentBaseTestPR(true, "feature", "alice", "behind"))
 	if err != nil || reason != "required-check-failing:Canary" || len(updates) != 0 {
 		t.Fatalf("fork-guarded head: reason=%q err=%v updates=%v, want no update", reason, err, updates)
 	}
-	if _, _, err := e.updateBranchAndSkip(ctx, "acme/widget", "acme", "widget", 862, "plain", "base1", "behind", true); err != nil || len(updates) != 1 {
+	if _, _, err := e.updateBranchAndSkip(ctx, "acme/widget", "acme", "widget", 862, "plain", "base1", "behind", currentBaseTestPR(true, "feature", "alice", "behind")); err != nil || len(updates) != 1 {
 		t.Fatalf("unguarded fork head: err=%v updates=%v, want one update", err, updates)
 	}
-	if _, _, err := e.updateBranchAndSkip(ctx, "acme/widget", "acme", "widget", 862, "guarded", "base1", "behind", false); err != nil || len(updates) != 2 {
+	if _, _, err := e.updateBranchAndSkip(ctx, "acme/widget", "acme", "widget", 862, "guarded", "base1", "behind", currentBaseTestPR(false, "feature", "alice", "behind")); err != nil || len(updates) != 2 {
 		t.Fatalf("same-repo head: err=%v updates=%v, want an update", err, updates)
 	}
 }

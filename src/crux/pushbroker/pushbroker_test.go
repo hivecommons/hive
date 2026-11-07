@@ -73,6 +73,51 @@ func TestBrokerRejectsTokenLikeSecretInOutgoingDiff(t *testing.T) {
 	}
 }
 
+// TestBrokerRejectsEveryExactShapeSecretInOutgoingDiff covers the shapes the
+// gate missed while it consulted only logscrub.TokenPattern: a committed AWS
+// key, private-key block or planted canary used to be brokered and published.
+func TestBrokerRejectsEveryExactShapeSecretInOutgoingDiff(t *testing.T) {
+	cases := []struct {
+		name, content, category string
+	}{
+		{"github-token", "token=ghp_abcdefghijklmnopqrstuvwxyz\n", "github-token"},
+		{"hive-canary", "marker: HIVE-CANARY-0123456789abcdef0123456789abcdef0123456789abcdef\n", "hive-canary"},
+		{"aws-access-key", "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n", "aws-access-key"},
+		// Assembled at runtime so the literal never resembles a real credential to repository scanners.
+		{"slack-webhook-url", "url: https://hooks.slack.com/" + "services/T00000000/B00000000/" + "abcdefghijklmnopqrstuvwx\n", "slack-webhook-url"},
+		{"private-key", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\n", "private-key"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			writeCommit(t, dir, "leak.txt", tc.content)
+			res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}}).Run(context.Background())
+			if err == nil {
+				t.Fatal("expected secret rejection")
+			}
+			if !res.SecretRejected {
+				t.Fatalf("SecretRejected=false, err=%v", err)
+			}
+			if want := "contains a " + tc.category + "-shaped secret"; !strings.Contains(err.Error(), want) {
+				t.Fatalf("err=%q, want it to name %q", err, want)
+			}
+		})
+	}
+}
+
+// Heuristic shapes (sk-… keys, Bearer …, Basic …) stay out of the push gate:
+// they match fixtures and documentation, and refusing a push on one would
+// block legitimate work. ScrubString still masks them in logs.
+func TestBrokerAllowsHeuristicSecretShapesInOutgoingDiff(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "fixture_test.go", "const key = \"sk-test-fixture-key\"\nconst hdr = \"Authorization: Bearer fixturetoken1234567890\"\n")
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil || res.SecretRejected || !res.Pushed {
+		t.Fatalf("heuristic shapes must not gate the push: err=%v res=%+v", err, res)
+	}
+}
+
 func TestBrokerRejectsProtectedPaths(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, ".github/workflows/ci.yaml", "name: ci\n")

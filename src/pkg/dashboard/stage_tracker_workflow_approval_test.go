@@ -34,6 +34,9 @@ func TestStageTrackerCIActivityWorkflowApproval(t *testing.T) {
 		{"gated", &github.PRWorkflowApproval{Pending: 10, RunIDs: []int64{1}, Actor: "dependabot[bot]", ObservedAt: &seen},
 			"workflow-approval-required:10", "CI waiting · 10 workflow runs need approval on GitHub", "dependabot[bot]"},
 		{"single gated run", &github.PRWorkflowApproval{Pending: 1}, "workflow-approval-required:1", "CI waiting · 1 workflow run needs approval on GitHub", ""},
+		// The hive's own approval was refused (no actions: write): the
+		// caption says the click is a person's (hivecommons/hive#16603).
+		{"approval refused", &github.PRWorkflowApproval{Pending: 3, PermissionDenied: true}, "workflow-approval-required:3", "CI waiting · needs workflow approval on GitHub", ""},
 		{"no gate", nil, "build", "hasn't reported for this head yet", ""},
 		{"empty record", &github.PRWorkflowApproval{}, "build", "hasn't reported for this head yet", ""},
 	} {
