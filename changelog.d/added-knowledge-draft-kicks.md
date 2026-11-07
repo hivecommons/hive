@@ -1,1 +1,0 @@
-- An agent whose `knowledge.agent_scopes.<agent>.include_states` lists `draft` is now primed with the draft knowledge entries it authored (`author:`/`owner:` frontmatter matching the agent, its base agent or a hive owner login), each marked `(draft)` in the kick; every other kick stays approved-only ([#17076](https://github.com/hivecommons/hive/issues/17076)).
