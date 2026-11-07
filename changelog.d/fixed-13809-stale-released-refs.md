@@ -1,1 +1,0 @@
-- Hide the `refs` chip after a red, stale pull request releases its issue back to actionable work.

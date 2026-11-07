@@ -1,1 +1,0 @@
-- Dashboard cost-recording staleness check now normalizes model ids the same way the token price table does (provider prefixes, dash collapsing, Bedrock and dated suffixes), removing false stale alarms for configured models ([#13503](https://github.com/hivecommons/hive/issues/13503)).

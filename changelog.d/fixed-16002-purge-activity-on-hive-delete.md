@@ -1,1 +1,0 @@
-- Removing a hive from the hub registry now also drops its in-memory activity digest instead of keeping it for up to 24 hours (#16002).

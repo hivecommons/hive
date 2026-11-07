@@ -1,1 +1,0 @@
-- Dashboard topbar: the ≡ drawer toggle is no longer clipped off the left edge on phones, and on ≤360px-wide screens the 🐛/⚙ chips collapse into the account menu (which gains a Settings entry) instead of overflowing the row.

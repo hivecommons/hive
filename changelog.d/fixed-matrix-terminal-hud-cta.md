@@ -1,1 +1,0 @@
-- Matrix kiosk: the freshness HUD and get-started CTA now stay pinned above the canvas in every effect, including `mx.effect=terminal`, and typed rows stop above the HUD band.

@@ -1,1 +1,0 @@
-- Expected per-agent GitHub hourly cap and soft-budget warnings no longer open repeated-error fleet self-reports; quota enforcement and diagnostic logs remain unchanged (#14346).

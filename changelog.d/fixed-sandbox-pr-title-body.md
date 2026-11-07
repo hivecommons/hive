@@ -1,1 +1,0 @@
-- Sandbox PRs now take their title/body from `.hive/pr-title.txt` / `.hive/pr-body.md` in the workspace (or the HEAD commit) instead of a fixed placeholder that referenced hive's own tracker

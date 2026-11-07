@@ -1,1 +1,0 @@
-- Reviewed row now counts reviews submitted after a PR's first read and reviews by deleted accounts (as unknown) (#16119, #16123)

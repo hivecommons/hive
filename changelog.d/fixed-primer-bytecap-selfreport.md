@@ -1,1 +1,0 @@
-- fleet report: the knowledge primer's byte-cap warning is an operator configuration signal, not a repeated runtime defect, and no longer files an `unclassified_error_repeated` self-report (#14173).

@@ -1,1 +1,0 @@
-- The automerge sweep now treats a 405 "review requesting changes" ruleset refusal like the other permanent review refusals, so a blocked PR is parked and remembered instead of logging a merge-failed WARN and retrying every sweep ([#14717](https://github.com/hivecommons/hive/issues/14717)).

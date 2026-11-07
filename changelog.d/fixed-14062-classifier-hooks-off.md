@@ -1,1 +1,0 @@
-- The tool-less `claude` classifier backend now passes `--settings '{"disableAllHooks":true}'`, so hooks in the host's `~/.claude/settings.json` do not run in the classifier session ([#14062](https://github.com/hivecommons/hive/issues/14062)).

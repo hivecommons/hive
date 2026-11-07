@@ -1,1 +1,0 @@
-- The Crux publish script no longer deletes `runbooks/` in `hivecommons/crux` on every sync

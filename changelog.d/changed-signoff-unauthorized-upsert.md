@@ -1,1 +1,0 @@
-- `hive:signoff-attribution` and `hive:unauthorized` notes are now one comment per PR (per blocked step for `unauthorized`), edited in place with a capped update history / attempt count when a new head hits the same block, instead of a fresh copy per push (hivecommons/hive#17066).

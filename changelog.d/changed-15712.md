@@ -1,1 +1,0 @@
-- refactor: split src/docs/labels-and-control-signals.md into per-section pages (#15712)

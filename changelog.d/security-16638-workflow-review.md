@@ -1,1 +1,0 @@
-- Require human policy sign-off for reviewer questions on workflow and action edits, including same-repository PRs.

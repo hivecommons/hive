@@ -1,1 +1,0 @@
-- Fix reviews stalled by removing a configured review perspective while heads are running.

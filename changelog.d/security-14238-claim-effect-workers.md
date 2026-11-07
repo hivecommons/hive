@@ -1,1 +1,0 @@
-- Limit GitHub claim-effect processing to one worker per active issue so claim/release churn no longer accumulates waiting goroutines; queued effects still run in order without dropping release cleanup.
