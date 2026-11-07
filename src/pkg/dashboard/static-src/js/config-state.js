@@ -72,7 +72,7 @@
     // row carrying data-setting-key (webstatic TestSettingsSearchIndexResolvesToControls).
     // `lazy: true` marks controls that a tab fills in after its own fetch.
     const SETTINGS_SEARCH_STATIC_HITS = [
-      { tab: 'General', section: 'Governor', label: 'Maturity Level', key: 'acmm_level', text: 'ACMM maturity level agent packs advisory fully autonomous' },
+      { tab: 'General', section: 'Governor', label: 'Maturity Level', key: 'acmm_level', text: 'ACMM maturity level agent packs advisory autonomous' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Experiment Lab (nous)', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab nous dashboard feature experimental planner sidebar section' },
       { tab: 'Features', section: 'Experimental', label: 'Nous / Experiment Lab', key: 'nous.dispatcher', text: 'nous experiment lab experimenter dispatcher inline sdk gate poll fetch allowlist artifact repository branch path sync interval nous.dispatcher nous.gate_poll_seconds nous.fetch_allowlist nous.artifact_repo.repo nous.artifact_repo.branch nous.artifact_repo.path nous.artifact_repo.sync_interval_seconds observations budget nous.observations.enabled nous.observations.max_per_week' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },

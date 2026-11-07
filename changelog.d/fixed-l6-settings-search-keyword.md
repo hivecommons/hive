@@ -1,0 +1,1 @@
+- The Settings search keywords for the Maturity Level control no longer include the old L6 name "fully autonomous". L6 is labelled **Autonomous** everywhere else, and searching Settings for "autonomous" still finds the control.
