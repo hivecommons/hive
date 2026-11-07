@@ -579,9 +579,11 @@ type contributorClaimMatch struct {
 	// OperatorLogin is set when a person's Approve admitted the head
 	// (hivecommons/hive#15136, operatorAdmission).
 	OperatorLogin string
-	// ObservedTier is the raw tier the lane saw for the author (registry
-	// profile or this hive's claim marker), admitted or not. It feeds the
-	// author/* stage label; admission itself still goes through Reason.
+	// ObservedTier is the tier the lane saw for the author (registry
+	// profile, this hive's claim marker, or "trusted" when the clean
+	// merged-history ratchet promotes them), admitted or not, and whatever
+	// route admitted the head. It feeds the role/* stage label; admission
+	// itself still goes through Reason.
 	ObservedTier string
 }
 
@@ -663,11 +665,17 @@ func (c *Engine) admittedRegistryTier(author string, policy ContributorLanePolic
 // its skip reasons exactly as before.
 func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *gh.PullRequest, policy ContributorLanePolicy) (contributorClaimMatch, error) {
 	author := hgithub.SafeGetLogin(pr.GetUser())
+	// The adoption and operator routes admit a HEAD (the hive's own push, a
+	// person's Approve), not the author, so they return before the
+	// merged-history ratchet runs. The role label still shows the author's
+	// own standing, never the raw registry tier: a hive merge of main that a
+	// person's approval was carried onto flipped an auto-promoted maintainer
+	// from role/trusted to role/newcomer (projectbluefin/utah#1132).
 	if headSHA := pr.GetHead().GetSHA(); c.adoptedHeadOwnedByHive(owner, repo, pr.GetNumber(), headSHA) {
-		return contributorClaimMatch{AdoptedHead: headSHA, ObservedTier: c.observedRegistryTier(author)}, nil
+		return contributorClaimMatch{AdoptedHead: headSHA, ObservedTier: c.authorStandingTier(ctx, owner, repo, author, policy)}, nil
 	}
 	if login := c.operatorAdmission(ctx, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()); login != "" {
-		return contributorClaimMatch{OperatorLogin: login, ObservedTier: c.observedRegistryTier(author)}, nil
+		return contributorClaimMatch{OperatorLogin: login, ObservedTier: c.authorStandingTier(ctx, owner, repo, author, policy)}, nil
 	}
 	if tier := c.admittedRegistryTier(author, policy); tier != "" {
 		return contributorClaimMatch{RegistryTier: tier, ObservedTier: tier}, nil
@@ -676,7 +684,7 @@ func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *g
 	if match.ObservedTier == "" {
 		match.ObservedTier = c.observedRegistryTier(author)
 	}
-	if err == nil && match.Reason != "" && policy.AutoPromoteAfterMergedPR > 0 && !contributorRegistryTierRevoked(c.observedRegistryTier(author)) && !strings.HasSuffix(strings.ToLower(author), "[bot]") && (c.transport == nil || !strings.EqualFold(author, c.transport.AppBotLogin())) {
+	if err == nil && match.Reason != "" && c.autoPromotionEligible(author, policy) {
 		history, promoteErr := c.contributorCleanMergedHistory(ctx, owner, repo, author, policy.AutoPromoteAfterMergedPR, policy.hiveWideAutoPromotion())
 		if promoteErr != nil {
 			return contributorClaimMatch{Reason: "contributor-lane:auto-promote-history"}, promoteErr
@@ -736,6 +744,42 @@ func (c *Engine) observedRegistryTier(author string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(tier))
+}
+
+// autoPromotionEligible reports whether the clean-merged-PR ratchet may run
+// for author: it is configured, the operator has not revoked the author,
+// and the author is neither a bot nor this hive's App.
+func (c *Engine) autoPromotionEligible(author string, policy ContributorLanePolicy) bool {
+	if policy.AutoPromoteAfterMergedPR <= 0 || strings.TrimSpace(author) == "" {
+		return false
+	}
+	if contributorRegistryTierRevoked(c.observedRegistryTier(author)) || strings.HasSuffix(strings.ToLower(author), "[bot]") {
+		return false
+	}
+	return c.transport == nil || !strings.EqualFold(author, c.transport.AppBotLogin())
+}
+
+// authorStandingTier is the tier the role label shows for a PR the lane
+// admitted by a head-scoped route (in-place adoption, a person's Approve).
+// It is the author's registry tier, or "trusted" when that tier is below
+// require_tiers and the author's clean merged history would auto-promote
+// them, which is what the author's own route would have recorded. Nothing
+// about the head (who pushed it, who approved it) enters. A history read
+// that fails keeps the registry tier and never fails the admission.
+func (c *Engine) authorStandingTier(ctx context.Context, owner, repo, author string, policy ContributorLanePolicy) string {
+	tier := c.observedRegistryTier(author)
+	if (tier != "" && policy.RequireTiers[tier]) || !c.autoPromotionEligible(author, policy) {
+		return tier
+	}
+	history, err := c.contributorCleanMergedHistory(ctx, owner, repo, author, policy.AutoPromoteAfterMergedPR, policy.hiveWideAutoPromotion())
+	if err != nil {
+		c.debug("contributor-lane: author standing read failed; role keeps the registry tier", "repo", owner+"/"+repo, "author", author, "error", err)
+		return tier
+	}
+	if history.Clean {
+		return "trusted"
+	}
+	return tier
 }
 
 // contributorRegistryTierRevoked reports whether the registry tier is the
