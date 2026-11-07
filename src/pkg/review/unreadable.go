@@ -48,6 +48,9 @@ var rateLimitCauseRe = regexp.MustCompile(`(?i)(?:\b429\b|too many requests|rate
 // It is deliberately narrow. The report must:
 //   - be requires_human (an approve or changes_requested is a judgement);
 //   - not carry the reviewer's explicit high-risk marker;
+//   - not ask a decision question (the needs-decision marker): a reviewer
+//     that asks the owner something read enough to ask it, even when the
+//     PR it read is about rate limits;
 //   - raise no in-scope finding (a finding means it read something);
 //   - say, in its summary or decision question, both that it could not read
 //     the change and that a rate limit was the cause.
@@ -55,7 +58,7 @@ var rateLimitCauseRe = regexp.MustCompile(`(?i)(?:\b429\b|too many requests|rate
 // A requires_human for a diff that is too large, or for any other reason
 // than a rate limit, still parks the PR as before.
 func UnreadableReviewReason(r PerspectiveReport) (string, bool) {
-	if r.Verdict != VerdictRequiresHuman || r.DecisionRiskHigh {
+	if r.Verdict != VerdictRequiresHuman || r.DecisionRiskHigh || r.DecisionRequested {
 		return "", false
 	}
 	for _, f := range r.Findings {

@@ -69,6 +69,18 @@ func TestUnreadableReviewReasonLeavesRealHoldsAlone(t *testing.T) {
 	if _, ok := UnreadableReviewReason(marked); ok {
 		t.Error("the reviewer's explicit high-risk marker was overridden")
 	}
+	// hivecommons/hive#16994 review: a reviewer that read a PR about rate
+	// limiting and asks the owner a question uses both kinds of words.
+	asked := unreadableTestReport(PerspectiveCorrectness, VerdictRequiresHuman,
+		"I could not review the retry budget against production numbers; @owner should decide whether the hourly cap may be bypassed here.", nil)
+	if _, ok := UnreadableReviewReason(asked); !ok {
+		t.Fatal("test premise: without the decision marker this wording reads as unreadable")
+	}
+	asked.DecisionRequested = true
+	asked.DecisionQuestion = "May the hourly cap be bypassed for this retry path?"
+	if _, ok := UnreadableReviewReason(asked); ok {
+		t.Error("an explicit decision question was dropped as an unreadable review")
+	}
 	outOfScope := unreadableTestReport(PerspectiveSecurity, VerdictRequiresHuman, unread,
 		[]outputschema.Finding{{Title: "pre-existing", Severity: outputschema.SeverityLow, ReviewScope: "out-of-scope"}})
 	if _, ok := UnreadableReviewReason(outOfScope); !ok {
