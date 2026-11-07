@@ -296,3 +296,54 @@ func TestTerminalEnrichmentRestartReplaysUnprocessedRecentHistory(t *testing.T) 
 		t.Fatalf("restart did not replay the real historical timestamp: %+v", observed)
 	}
 }
+
+// Historical accounting is deferrable work. On the projectbluefin hive
+// (2026-11-07) a restart replayed ~200 settled PRs at eight per ten seconds,
+// about 400 REST calls, while the core budget was already in conserve and
+// then critical. The worker must wait for normal mode, keep its queue, and
+// make no GitHub request until then.
+func TestTerminalEnrichmentPausesOutsideNormalAPIBudget(t *testing.T) {
+	resetRESTAccountingForTest(t, time.Now())
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "torch-spyre", []string{"spyre-inference"}, testLogger())
+	c.SetAPIBudgetThresholds(800, 250)
+	setCore := func(remaining int) {
+		c.rateLimits.mu.Lock()
+		c.rateLimits.windows = map[string]rateLimitWindow{githubCoreRateLimitResource: {
+			limit: 7000, remaining: remaining, reset: time.Now().Add(30 * time.Minute), observedAt: time.Now(),
+		}}
+		c.rateLimits.mu.Unlock()
+	}
+	deferTerminalTasks(c)
+	var reviewed, observed atomic.Int32
+	c.SetPRReviewObservedHook(func(PRReviewObservation) { reviewed.Add(1) })
+	c.SetPRTerminalObservedHook(func(PRTerminalObservation) { observed.Add(1) })
+	at := time.Now()
+	c.observeTerminalPR(context.Background(), historicalTask(1, at))
+	c.observeTerminalPR(context.Background(), historicalTask(2, at))
+
+	for _, remaining := range []int{675, 214} { // conserve, then critical
+		setCore(remaining)
+		c.enrichTerminalPRBatch(context.Background(), terminalEnrichmentTestTimeout, terminalEnrichmentBatch)
+		if got := requests.Load(); got != 0 {
+			t.Fatalf("remaining=%d: historical enrichment made %d GitHub requests outside normal budget mode", remaining, got)
+		}
+		if observed.Load() != 0 || len(c.prTerminalEnrichment.pending) != 2 {
+			t.Fatalf("remaining=%d: paused enrichment consumed accounting: observed=%d pending=%d",
+				remaining, observed.Load(), len(c.prTerminalEnrichment.pending))
+		}
+	}
+
+	setCore(6000)
+	c.enrichTerminalPRBatch(context.Background(), terminalEnrichmentTestTimeout, terminalEnrichmentBatch)
+	if observed.Load() != 2 || len(c.prTerminalEnrichment.pending) != 0 || requests.Load() == 0 {
+		t.Fatalf("enrichment did not resume in normal mode: observed=%d pending=%d requests=%d",
+			observed.Load(), len(c.prTerminalEnrichment.pending), requests.Load())
+	}
+}

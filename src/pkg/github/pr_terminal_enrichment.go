@@ -54,6 +54,9 @@ type terminalEnrichmentState struct {
 	pending  map[string]terminalEnrichmentTask
 	sequence uint64
 	retries  retryTracker
+	// budgetPaused records that the last batch was skipped for the GitHub
+	// API budget, so the pause and the resume are each logged once.
+	budgetPaused bool
 }
 
 // StartPRTerminalEnrichment isolates historical accounting from current-work
@@ -165,6 +168,9 @@ func (c *Client) enrichTerminalPR(ctx context.Context, task terminalEnrichmentTa
 }
 
 func (c *Client) enrichTerminalPRBatch(ctx context.Context, budget time.Duration, limit int) {
+	if !c.terminalEnrichmentBudgetAllows() {
+		return
+	}
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
@@ -212,4 +218,32 @@ func (c *Client) enrichTerminalPRBatch(ctx context.Context, budget time.Duration
 			"processed", processed, "failed", failed, "deferred", pending,
 			"duration", time.Since(started), "budget", budget, "limit", limit)
 	}
+}
+
+// terminalEnrichmentBudgetAllows reports whether historical PR accounting may
+// spend GitHub calls now. It is the most deferrable REST work the hive does:
+// nothing plans, claims or dispatches from it. So, like the eval loop's
+// enrichment steps, it runs only in normal API budget mode. In conserve and
+// critical the queue is kept, coalesced as usual, and drained once the budget
+// is back to normal. After a restart the 72-hour settle replay re-queues
+// every recent merged or closed PR (about two calls each), and on the
+// projectbluefin hive on 2026-11-07 that replay spent ~400 calls while the
+// budget was already below the conserve threshold.
+func (c *Client) terminalEnrichmentBudgetAllows() bool {
+	mode, snap := c.APIBudgetMode()
+	s := &c.prTerminalEnrichment
+	s.mu.Lock()
+	wasPaused := s.budgetPaused
+	s.budgetPaused = mode != APIBudgetNormal
+	pending := len(s.pending)
+	s.mu.Unlock()
+	if c.logger != nil && wasPaused != (mode != APIBudgetNormal) {
+		if wasPaused {
+			c.logger.Info("historical PR enrichment resumed: GitHub API budget back to normal", "pending", pending)
+		} else {
+			c.logger.Info("historical PR enrichment paused for GitHub API budget",
+				"mode", mode.String(), "remaining", snap.Remaining, "pending", pending)
+		}
+	}
+	return mode == APIBudgetNormal
 }
