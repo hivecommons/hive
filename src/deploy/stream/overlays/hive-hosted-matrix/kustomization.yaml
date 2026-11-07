@@ -35,6 +35,9 @@ patches:
       - op: replace
         path: /data/STREAM_AUDIO
         value: silent
+      - op: replace
+        path: /data/TWITCH_CHANNEL_LOGIN
+        value: hivecommonsmatrix
   - target:
       kind: Deployment
       name: hive-stream

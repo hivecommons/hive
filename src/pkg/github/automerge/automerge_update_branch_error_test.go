@@ -103,7 +103,7 @@ func TestUpdateBranchAndSkipWorkflowPermission(t *testing.T) {
 			defer srv.Close()
 
 			c := newAutoMergeSweepClient(srv.URL)
-			event, reason, err := c.updateBranchAndSkip(context.Background(), "acme/widget", "acme", "widget", 7, head, "sha-base", "behind", tc.fork)
+			event, reason, err := c.updateBranchAndSkip(context.Background(), "acme/widget", "acme", "widget", 7, head, "sha-base", "behind", currentBaseTestPR(tc.fork, "feature", "alice", "behind"))
 			if reason != tc.wantReason || (err != nil) != tc.wantErr {
 				t.Fatalf("reason, err = %q, %v; want %q, wantErr %v", reason, err, tc.wantReason, tc.wantErr)
 			}
@@ -171,7 +171,7 @@ func TestUpdateBranchAndSkipWorkflowRefusalNotRetried(t *testing.T) {
 			c := newAutoMergeSweepClient(srv.URL)
 			tick := func(step, head, base string, wantUpdates int) {
 				t.Helper()
-				_, reason, err := c.updateBranchAndSkip(context.Background(), "acme/widget", "acme", "widget", 7, head, base, "behind", tc.fork)
+				_, reason, err := c.updateBranchAndSkip(context.Background(), "acme/widget", "acme", "widget", 7, head, base, "behind", currentBaseTestPR(tc.fork, "feature", "alice", "behind"))
 				if reason != tc.wantReason || err != nil {
 					t.Fatalf("%s: reason, err = %q, %v; want %q", step, reason, err, tc.wantReason)
 				}
@@ -200,7 +200,7 @@ func TestUpdateBranchAndSkipRetriesOtherRefusals(t *testing.T) {
 	defer srv.Close()
 	c := newAutoMergeSweepClient(srv.URL)
 	for i := 1; i <= 2; i++ {
-		if _, reason, err := c.updateBranchAndSkip(context.Background(), "acme/widget", "acme", "widget", 7, head, "sha-base", "behind", true); reason != autoMergeReasonForkNotEditable || err != nil {
+		if _, reason, err := c.updateBranchAndSkip(context.Background(), "acme/widget", "acme", "widget", 7, head, "sha-base", "behind", currentBaseTestPR(true, "feature", "alice", "behind")); reason != autoMergeReasonForkNotEditable || err != nil {
 			t.Fatalf("tick %d: reason, err = %q, %v; want %q", i, reason, err, autoMergeReasonForkNotEditable)
 		}
 		if got := updates(); got != i {
@@ -242,7 +242,7 @@ func TestCurrentBaseGateWorkflowRefusalKeyedOnBaseTip(t *testing.T) {
 	c.requireCurrentBase = func(string) bool { return true }
 	sweep := func(step string, wantUpdates int) {
 		t.Helper()
-		_, reason, stop, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 7, "main", head, true, "behind", true)
+		_, reason, stop, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 7, "main", head, true, "behind", currentBaseTestPR(true, "feature", "alice", "behind"))
 		if !stop || reason != autoMergeReasonForkWorkflowUpdate || err != nil {
 			t.Fatalf("%s: stop, reason, err = %v, %q, %v; want true, %q", step, stop, reason, err, autoMergeReasonForkWorkflowUpdate)
 		}

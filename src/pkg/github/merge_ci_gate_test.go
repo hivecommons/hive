@@ -24,6 +24,7 @@ type ciFixture struct {
 	author      string
 	authorType  string
 	headRepo    string
+	headRef     string
 	baseRepo    string
 	statuses    []ciStatus
 	checks      []ciCheck
@@ -114,7 +115,7 @@ func (f *ciFixture) serveCI(w http.ResponseWriter, r *http.Request) bool {
 			"number": n,
 			"state":  "open",
 			"user":   map[string]any{"login": author, "type": authorType},
-			"head":   map[string]any{"sha": head, "repo": map[string]any{"full_name": headRepo}},
+			"head":   map[string]any{"sha": head, "ref": f.headRef, "repo": map[string]any{"full_name": headRepo}},
 			"base":   map[string]any{"ref": "main", "repo": map[string]any{"full_name": baseRepo}},
 		}
 		if f.updatedAt != "" {

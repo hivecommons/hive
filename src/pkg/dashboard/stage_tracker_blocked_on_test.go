@@ -186,3 +186,25 @@ func TestRefreshSelfEditedItemPatchesRowLikeAWebhook(t *testing.T) {
 		t.Fatalf("guards armed a timer: %d", timers.count())
 	}
 }
+
+func TestStageTrackerBlockedOnIssueCaption(t *testing.T) {
+	now := time.Date(2026, 10, 28, 13, 18, 0, 0, time.UTC)
+	s := newTestServer()
+	filed := now.Add(-7 * time.Hour)
+	status := minimalPayload()
+	status.Repos = []FrontendRepo{{
+		Name: "hive", Full: "hivecommons/hive",
+		NonActionableIssues: []any{
+			github.RepoWorkIssue{Repo: "hivecommons/hive", Number: 16900, Title: "Review backlog: a", Labels: []string{"agent/reviewer", "blocked"}, CreatedAt: filed, Bucket: "filtered", Reason: "blocked on issue hivecommons/hive#16850"},
+		},
+	}}
+	s.UpdateStatus(status)
+	tr := s.buildStageTracker(status, nil, now)
+	it := trackerItem(t, tr, "issue", 16900)
+	if it.BlockedOnPR != nil || len(it.BlockedOn) != 1 || it.BlockedOn[0] != "hivecommons/hive#16850" {
+		t.Fatalf("blocked_on = %v pr = %+v", it.BlockedOn, it.BlockedOnPR)
+	}
+	if !hasMod(it, modBlocked) || it.Caption != "Blocked on issue #16850 — lifts when it closes" {
+		t.Fatalf("mods=%v caption=%q", it.Modifiers, it.Caption)
+	}
+}

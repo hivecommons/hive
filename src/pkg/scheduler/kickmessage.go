@@ -626,7 +626,7 @@ func (s *Scheduler) buildAgentMessageFor(agentName, repo string, includeRepos bo
 	}
 }
 
-const governorWorkSourceRule = "The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n> --comments` only on supplied GitHub issue numbers, so you read each issue with its comments. Prefer the compact form `hive-gh pr view <n>` / `hive-gh pr checks <n>` / `hive-gh issue view <n>` (fixed --json projection that keeps labels, author, head SHA, merge state, review decision and check conclusions; issue comments still come from `gh issue view <n> --comments`); add `--full` only when you need the complete record."
+const governorWorkSourceRule = "The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n> --comments` only on supplied GitHub issue numbers, so you read each issue with its comments. For merged PR history only, `gh pr list --state merged` (no `--search` or `-S`) may be used only when the wrapper permits it for your tier; this does not authorize open-work discovery. If refused, do not retry or bypass the restriction. Prefer the compact form `hive-gh pr view <n>` / `hive-gh pr checks <n>` / `hive-gh issue view <n>` (fixed --json projection that keeps labels, author, head SHA, merge state, review decision and check conclusions; issue comments still come from `gh issue view <n> --comments`); add `--full` only when you need the complete record."
 
 func addGovernorWorkSourceRule(message string) string {
 	if message == "" || strings.Contains(message, governorWorkSourceRule) {
@@ -672,7 +672,7 @@ func (s *Scheduler) reposSection() string {
 	b.WriteString(fmt.Sprintf("## Project Repositories\n\nYour role covers these repositories, all on **%s** (this hive is single-host):\n", host))
 	for _, repo := range s.cfg.Project.Repos {
 		full := repo
-		if !strings.Contains(repo, "/") {
+		if s.cfg.Project.Org != "" && !strings.Contains(repo, "/") {
 			full = s.cfg.Project.Org + "/" + repo
 		}
 		b.WriteString(fmt.Sprintf("  %s/%s\n", strings.TrimRight(host, "/"), full))

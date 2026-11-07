@@ -1,0 +1,1 @@
+- An unconfigured ioscan classifier (no model endpoint) now logs a one-time "not configured" warning instead of the fleet-reported "failed open" runtime error; genuine backend errors still warn as before ([#16748](https://github.com/hivecommons/hive/issues/16748)).

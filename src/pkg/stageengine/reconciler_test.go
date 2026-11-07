@@ -457,3 +457,43 @@ func TestReconcileRecordsSuppressedLabels(t *testing.T) {
 		t.Fatalf("landed write left labels_suppressed set: %+v", rec)
 	}
 }
+
+// TestReconcileDampenerSuppressionSkipsWriter: when the store's transition
+// dampener refuses a move, Reconcile reports the previous stage as both
+// From and To, marks the outcome suppressed, and never reaches the writer.
+func TestReconcileDampenerSuppressionSkipsWriter(t *testing.T) {
+	ctx := context.Background()
+	w := newFakeWriter()
+	r, _, store := newTestReconciler(t, ModeEnforce, w)
+	f := prFacts(16981, "pending")
+	key := f.Ref.Key()
+	head := f.PR.HeadSHA
+
+	// Three moves between 050 and 095 on one head arm the dampener; the
+	// record ends at 095, so the derived 050 would be the fourth.
+	store.ObserveHead(key, head, stagelabels.ReviewPending, "pending")
+	store.ObserveHead(key, head, stagelabels.MergeQueue, "soaking")
+	store.ObserveHead(key, head, stagelabels.ReviewPending, "pending")
+	store.ObserveHead(key, head, stagelabels.MergeQueue, "soaking")
+	prev, _ := store.Get(key)
+	if prev.Stage != stagelabels.MergeQueue {
+		t.Fatalf("setup: stage = %s, want %s", prev.Stage, stagelabels.MergeQueue)
+	}
+
+	tr, err := r.Reconcile(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.Outcome.Suppressed {
+		t.Fatalf("Outcome.Suppressed = false, want true: %+v", tr)
+	}
+	if tr.From != prev.Stage || tr.To != prev.Stage {
+		t.Fatalf("From/To = %s/%s, want both %s", tr.From, tr.To, prev.Stage)
+	}
+	if w.Writes != 0 || len(w.stageLabels(f.Ref)) != 0 {
+		t.Fatalf("writer applied a label change: writes=%d labels=%v", w.Writes, w.labels)
+	}
+	if rec, _ := store.Get(key); rec.Stage != prev.Stage {
+		t.Fatalf("record stage = %s, want %s", rec.Stage, prev.Stage)
+	}
+}
