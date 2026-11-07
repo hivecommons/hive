@@ -355,7 +355,8 @@ func TestStageTrackerAPIMergedShape(t *testing.T) {
 		}
 	}
 
-	s.recordMergedSnapshots([]github.WebhookItemSnapshot{{Repo: "acme/console", Number: 102, IsPR: true, Merged: true, Title: "feat: soak done", URL: "https://github.com/acme/console/pull/102", MergedAt: time.Now().Add(-time.Minute), MergedBy: "octocat"}})
+	// Stamp "now", not now-1m: a seed on the previous calendar day fails the today==1 check in the first minute after midnight (#16963).
+	s.recordMergedSnapshots([]github.WebhookItemSnapshot{{Repo: "acme/console", Number: 102, IsPR: true, Merged: true, Title: "feat: soak done", URL: "https://github.com/acme/console/pull/102", MergedAt: time.Now(), MergedBy: "octocat"}})
 	if err := json.Unmarshal(get()["merged"], &merged); err != nil {
 		t.Fatal(err)
 	}
