@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/hivecommons/hive/crux/config"
 )
@@ -21,6 +22,11 @@ const (
 	// bobKeyOtherReadBit is `o+r`. Also sufficient for the agent to read, but
 	// it means the secret is world-readable, which is worth flagging.
 	bobKeyOtherReadBit fs.FileMode = 0o004
+	// bobStateOwnerWriteBit / bobStateOwnerExecBit are `u+w` / `u+x` — what
+	// decides access when the agent UID itself OWNS the directory, as it does
+	// for the per-agent ~/.bob that bob's own mkdirSync creates (0755/0700).
+	bobStateOwnerWriteBit fs.FileMode = 0o200
+	bobStateOwnerExecBit  fs.FileMode = 0o100
 	// bobStateGroupWriteBit is `g+w` — the bit that lets an agent UID create
 	// or replace files inside a dev:node-owned bob state directory.
 	bobStateGroupWriteBit fs.FileMode = 0o020
@@ -171,7 +177,7 @@ func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, ui
 				if parent := nearestExistingDir(filepath.Dir(dir)); parent != "" {
 					if pInfo, pErr := os.Stat(parent); pErr == nil {
 						pMode := pInfo.Mode().Perm()
-						if pMode&bobStateGroupWriteBit == 0 || pMode&bobKeyGroupExecBit == 0 {
+						if !bobStateDirWritableBy(pInfo, uid) {
 							m.logger.Error("bob state dir does not exist and its parent is not writable by the agent UID; bob's first-run mkdir will fail with EACCES",
 								"agent", agentName, "dir", dir, "parent", parent,
 								"parent_mode", fs.FileMode(pMode).String(), "uid", uid,
@@ -197,7 +203,7 @@ func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, ui
 		// or replace a file inside. Write alone is not enough — without
 		// execute the path cannot be traversed to open the file by name.
 		mode := info.Mode().Perm()
-		if mode&bobStateGroupWriteBit == 0 || mode&bobKeyGroupExecBit == 0 {
+		if !bobStateDirWritableBy(info, uid) {
 			m.logger.Error("bob state dir is not writable by the agent UID; bob will report \"error saving your latest settings changes\" and \"Failed to initialize logger\"",
 				"agent", agentName, "dir", dir,
 				"mode", fs.FileMode(mode).String(), "uid", uid,
@@ -206,6 +212,26 @@ func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, ui
 		}
 	}
 	return unwritable
+}
+
+// bobStateDirWritableBy reports whether the agent UID can create or replace
+// files inside the directory described by info.
+//
+// Two ownership shapes reach this probe. Dev-owned dirs (the shared home, the
+// per-agent workspace) are reached through group `node`, so group write+execute
+// decides. The per-agent ~/.bob is different: bob creates it itself, AS THE
+// AGENT UID, with mkdirSync (0755 or 0700), and no permissions-watcher root
+// widens it. Testing that dir for group bits flags it as unwritable on every
+// launch after first run even though its owner can write to it just fine, so
+// when the directory is owned by the agent UID the owner bits decide instead.
+// Write alone is never enough — without execute the path cannot be traversed
+// to open the file by name.
+func bobStateDirWritableBy(info fs.FileInfo, uid int) bool {
+	mode := info.Mode().Perm()
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) == uid {
+		return mode&bobStateOwnerWriteBit != 0 && mode&bobStateOwnerExecBit != 0
+	}
+	return mode&bobStateGroupWriteBit != 0 && mode&bobKeyGroupExecBit != 0
 }
 
 // ensureBobAuthSettings makes hive the owner of bob's auth-selection settings.
