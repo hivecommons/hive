@@ -399,17 +399,33 @@ test('isCosmeticLabelFlip is true only for unread labels on label events', () =>
   assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'labeled')), false);
 });
 
-function replayFixture(priorRuns, labels = []) {
+function replayFixture(priorRuns, labels = [], workflowOverride = {}) {
   const f = fixture('pull_request_target');
   f.state.prs[0].labels = labels;
   const head = sha(11);
   f.state.listed = [];
+  const runs = clone(priorRuns).map(r => ({
+    name: 'native-queue-policy', head_sha: head, app: { id: ACTIONS_APP_ID },
+    check_suite: { id: 5000 + r.id },
+    details_url: `https://github.com/acme/widget/actions/runs/${3000 + r.id}/job/1`, ...r,
+  }));
+  f.github.rest.actions.getWorkflowRun = async ({ run_id: id }) => ({ data: {
+    id, check_suite_id: id + 2000, path: '.github/workflows/native-queue-policy.yml',
+    event: 'pull_request_target', head_sha: head, ...workflowOverride,
+  } });
   f.github.paginate = async (method, args) => {
+    if (method === 'jobs') {
+      const run = runs.find(r => 3000 + r.id === args.run_id);
+      if (!run) return [];
+      return [{
+        id: 200000 + run.id, run_id: args.run_id, name: run.name, head_sha: head,
+        check_run_url: `https://api.github.com/repos/acme/widget/check-runs/${run.id}`,
+        status: 'completed', conclusion: run.conclusion,
+      }];
+    }
     assert.equal(method, 'checks');
     f.state.listed.push(args);
-    return clone(priorRuns).map(r => ({
-      name: 'native-queue-policy', head_sha: head, app: { id: ACTIONS_APP_ID }, ...r,
-    }));
+    return clone(runs);
   };
   return f;
 }
@@ -440,4 +456,32 @@ test('cosmetic flip replays a prior failure and fails closed without a completed
 test('cosmetic flip still honours a live hold even after a prior success', async () => {
   const f = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }], [{ name: 'hold' }]);
   await assert.rejects(replayLastVerdict(f), /held/);
+});
+
+test('replay ignores runs with a different name, head_sha or app id', async () => {
+  for (const change of [
+    { name: 'other-check' }, { head_sha: sha(99) }, { app: { id: DCO_APP_ID } }, { app: undefined },
+  ]) {
+    await assert.rejects(
+      replayLastVerdict(replayFixture([{ id: 7, status: 'completed', conclusion: 'success', ...change }])),
+      /No completed/);
+  }
+});
+
+test('replay rejects a same-named success run from another workflow', async () => {
+  const run = { id: 7, status: 'completed', conclusion: 'success' };
+  for (const override of [
+    { path: '.github/workflows/forged.yml' },
+    { event: 'pull_request' },
+    { head_sha: sha(99) },
+    { check_suite_id: 1 },
+  ]) {
+    await assert.rejects(replayLastVerdict(replayFixture([run], [], override)), /Unexpected workflow|identity mismatch/);
+  }
+  await assert.rejects(replayLastVerdict(replayFixture([
+    { ...run, details_url: 'https://example.com/acme/widget/actions/runs/3007/job/1' },
+  ])), /Invalid Actions provenance/);
+  await assert.rejects(replayLastVerdict(replayFixture([
+    { ...run, details_url: 'https://github.com/acme/widget/actions/runs/3008/job/1' },
+  ])), /Unexpected workflow|identity mismatch/);
 });

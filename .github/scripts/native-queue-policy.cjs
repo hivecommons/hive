@@ -22,6 +22,7 @@ const SHA = /^[a-f0-9]{40}$/;
 const BLOCKED_LABEL = /^(hold|needs-human|release-in-progress|do-not-merge(?:\/.*)?)$/i;
 const MAX_QUEUE_PAGES = 10;
 const POLICY_CHECK_NAME = 'native-queue-policy';
+const POLICY_CHECK_SOURCE = ['native-queue-policy.yml', ['pull_request_target']];
 
 const closedNoop = (pr) => `PR #${pr.number} is closed; nothing to evaluate`;
 
@@ -112,6 +113,41 @@ function evidenceForHead(runs, head, checks) {
   });
 }
 
+// Every Actions workflow shares one App id, so a same-named check run proves
+// nothing: bind it to the expected workflow file, event, head, suite and job.
+async function assertActionsProvenance(github, repo, number, head, run, source, workflows) {
+  const url = new URL(run.details_url);
+  const prefix = `/${repo.owner}/${repo.repo}/actions/runs/`;
+  const id = url.pathname.startsWith(prefix) && url.pathname.slice(prefix.length).split('/')[0];
+  if (url.hostname !== 'github.com' || !/^[0-9]+$/.test(id)) {
+    throw new Error(`Invalid Actions provenance for ${run.name}`);
+  }
+  const runID = Number(id);
+  if (!workflows.has(runID)) {
+    const { data: workflow } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: runID });
+    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+      ...repo, run_id: runID, per_page: 100, filter: 'latest',
+    });
+    workflows.set(runID, { workflow, jobs });
+  }
+  const { workflow, jobs } = workflows.get(runID);
+  const [file, events] = source;
+  if (workflow.path !== `.github/workflows/${file}` || !events.includes(workflow.event) ||
+      workflow.head_sha !== head || workflow.id !== runID) {
+    throw new Error(`Unexpected workflow/event/head for ${run.name} on #${number}`);
+  }
+  // details_url is only a locator. The API-owned suite and job identities
+  // must independently bind this exact check run to the expected workflow.
+  const checkURL = `https://api.github.com/repos/${repo.owner}/${repo.repo}/check-runs/${run.id}`;
+  if (!Number.isSafeInteger(run.check_suite?.id) ||
+      run.check_suite.id !== workflow.check_suite_id ||
+      !jobs.some(job => job.run_id === runID && job.name === run.name &&
+        job.head_sha === head && job.check_run_url === checkURL &&
+        job.status === 'completed' && job.conclusion === run.conclusion)) {
+    throw new Error(`Check suite/job identity mismatch for ${run.name} on #${number}`);
+  }
+}
+
 async function assertEvidence(github, repo, number, head, checks) {
   const runs = await github.paginate(github.rest.checks.listForRef, {
     ...repo, ref: head, per_page: 100, filter: 'latest',
@@ -119,36 +155,7 @@ async function assertEvidence(github, repo, number, head, checks) {
   const workflows = new Map();
   for (const { run, source } of evidenceForHead(runs, head, checks)) {
     if (!source) continue; // Probot DCO is deliberately not impersonated.
-    const url = new URL(run.details_url);
-    const prefix = `/${repo.owner}/${repo.repo}/actions/runs/`;
-    const id = url.pathname.startsWith(prefix) && url.pathname.slice(prefix.length).split('/')[0];
-    if (url.hostname !== 'github.com' || !/^[0-9]+$/.test(id)) {
-      throw new Error(`Invalid Actions provenance for ${run.name}`);
-    }
-    const runID = Number(id);
-    if (!workflows.has(runID)) {
-      const { data: workflow } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: runID });
-      const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-        ...repo, run_id: runID, per_page: 100, filter: 'latest',
-      });
-      workflows.set(runID, { workflow, jobs });
-    }
-    const { workflow, jobs } = workflows.get(runID);
-    const [file, events] = source;
-    if (workflow.path !== `.github/workflows/${file}` || !events.includes(workflow.event) ||
-        workflow.head_sha !== head || workflow.id !== runID) {
-      throw new Error(`Unexpected workflow/event/head for ${run.name} on #${number}`);
-    }
-    // details_url is only a locator. The API-owned suite and job identities
-    // must independently bind this exact check run to the expected workflow.
-    const checkURL = `https://api.github.com/repos/${repo.owner}/${repo.repo}/check-runs/${run.id}`;
-    if (!Number.isSafeInteger(run.check_suite?.id) ||
-        run.check_suite.id !== workflow.check_suite_id ||
-        !jobs.some(job => job.run_id === runID && job.name === run.name &&
-          job.head_sha === head && job.check_run_url === checkURL &&
-          job.status === 'completed' && job.conclusion === run.conclusion)) {
-      throw new Error(`Check suite/job identity mismatch for ${run.name} on #${number}`);
-    }
+    await assertActionsProvenance(github, repo, number, head, run, source, workflows);
   }
 }
 
@@ -229,7 +236,7 @@ function isCosmeticLabelFlip({ eventName, payload }) {
 
 // A cosmetic flip skips the evidence wait but must not mint a fresh passing
 // required check: replay the latest completed run of this check on the head
-// (fail closed when none or not success) and still read live PR eligibility.
+// (fail closed when none, not success, or not from this workflow) and still read live PR eligibility.
 async function replayLastVerdict({ github, context, currentCheckRunId }) {
   const repo = context.repo;
   const event = context.payload.pull_request;
@@ -244,6 +251,9 @@ async function replayLastVerdict({ github, context, currentCheckRunId }) {
       r.head_sha === pr.head.sha && r.app?.id === ACTIONS_APP_ID && r.id !== currentCheckRunId)
     .sort((a, b) => b.id - a.id)[0];
   if (!prior) throw new Error(`No completed ${POLICY_CHECK_NAME} run on ${pr.head.sha} to replay`);
+  // A same-named job from any other workflow shares the Actions App id; only
+  // a run of this workflow file on this event may be replayed.
+  await assertActionsProvenance(github, repo, pr.number, pr.head.sha, prior, POLICY_CHECK_SOURCE, new Map());
   if (prior.conclusion !== 'success') {
     throw new Error(`Replaying ${POLICY_CHECK_NAME} run ${prior.id} on ${pr.head.sha}: ${prior.conclusion}`);
   }
