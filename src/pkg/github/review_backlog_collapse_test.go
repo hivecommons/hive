@@ -154,7 +154,6 @@ func TestRenderReviewFollowUpsComment(t *testing.T) {
 // marker comment can be created once and then edited in place.
 type followUpsCommentServer struct {
 	bodies  []string
-	posts   int
 	patches int
 }
 
@@ -178,7 +177,6 @@ func (s *followUpsCommentServer) handler(t *testing.T) http.HandlerFunc {
 			}
 			_ = json.NewDecoder(r.Body).Decode(&payload)
 			s.bodies = append(s.bodies, payload.Body)
-			s.posts++
 			fmt.Fprintf(w, `{"id":%d}`, len(s.bodies))
 		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/comments/"):
 			var id int
@@ -212,7 +210,9 @@ func TestReviewBacklogHoldsFindingsBelowMinSeverityInOneComment(t *testing.T) {
 		wantHeld    bool
 	}{
 		{name: "default P2 holds the P3 nits", wantItems: 1, wantHeld: true},
-		{name: "P3 files everything", minSeverity: "P3", wantItems: 2},
+		// All three share the correctness perspective, so filing them
+		// yields one collapsed item, not three.
+		{name: "P3 files everything", minSeverity: "P3", wantItems: 1},
 		{name: "P1 holds the medium too", minSeverity: "P1", wantItems: 0, wantHeld: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -242,6 +242,11 @@ func TestReviewBacklogHoldsFindingsBelowMinSeverityInOneComment(t *testing.T) {
 			}
 			if len(sink.created) != tc.wantItems {
 				t.Fatalf("created = %d, want %d: %+v", len(sink.created), tc.wantItems, sink.created)
+			}
+			if tc.minSeverity == "P3" {
+				if got := sink.created[0].Title; !strings.HasSuffix(got, "o/r#5 — 3 follow-ups") {
+					t.Fatalf("P3 must file every finding, collapsed: title = %q", got)
+				}
 			}
 			var followUps []string
 			for _, b := range server.bodies {
@@ -277,10 +282,23 @@ func TestReviewBacklogHoldsFindingsBelowMinSeverityInOneComment(t *testing.T) {
 			if err := c.fileOutOfScopeReviewBacklog(ctx, ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: again}, now.Add(time.Hour)); err != nil {
 				t.Fatal(err)
 			}
-			if server.posts != 1 || server.patches != 1 {
-				t.Fatalf("posts=%d patches=%d, want one create then one edit", server.posts, server.patches)
+			// The PR's once-per-PR backlog summary is also a POST; the
+			// Follow-ups comment itself is created once and then edited.
+			var followUpPosts int
+			for _, b := range server.bodies {
+				if strings.Contains(b, reviewFollowUpsCommentMarker) {
+					followUpPosts++
+				}
 			}
-			body := server.bodies[0]
+			if followUpPosts != 1 || server.patches != 1 {
+				t.Fatalf("follow-ups comments=%d patches=%d, want one create then one edit", followUpPosts, server.patches)
+			}
+			body := followUps[0]
+			for _, b := range server.bodies {
+				if strings.Contains(b, reviewFollowUpsCommentMarker) {
+					body = b
+				}
+			}
 			for _, want := range []string{"stale example", "naming", "typo (`pkg/b.go:9`)"} {
 				if !strings.Contains(body, want) {
 					t.Errorf("edited follow-ups comment missing %q:\n%s", want, body)

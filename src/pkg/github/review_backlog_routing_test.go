@@ -344,10 +344,16 @@ func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndPRCap(t *testing.T) {
 	if len(sink.created) != 2 {
 		t.Fatalf("re-raise created a new item: %d items", len(sink.created))
 	}
-	if len(sink.appends) != 1 {
-		t.Fatalf("appends = %d, want one update of the existing item", len(sink.appends))
+	// Head abd re-reported "unused variable", so ENG-1 carries one
+	// still-present note (bounded per head, not by the cap); PR 6's
+	// re-raise is the only other update.
+	if len(sink.appends) != 2 {
+		t.Fatalf("appends = %d, want one still-present note and one re-raise", len(sink.appends))
 	}
-	up := sink.appends[0]
+	if !strings.Contains(sink.appends[0].comment, reviewBacklogStillPresentMarker) || sink.appends[0].ref.Key != "ENG-1" {
+		t.Fatalf("first append = %+v, want a still-present note on ENG-1", sink.appends[0])
+	}
+	up := sink.appends[1]
 	if up.ref.ID != "id-1" || up.ref.Key != "ENG-1" {
 		t.Fatalf("updated %+v, want ENG-1", up.ref)
 	}
