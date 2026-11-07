@@ -50,6 +50,70 @@ func TestNormalizedFixingIsIndependentOfPreviousStage(t *testing.T) {
 	}
 }
 
+func TestPreserveNeedsDecisionOnSameHead(t *testing.T) {
+	head := "687f4cb"
+	obs := stageObservation{
+		Lane:    stageLaneSelf,
+		HeadSHA: head,
+		Detail: stageDetail{
+			VerdictKnown: true,
+			Verdict: ContributorLaneVerdict{
+				Configured:        true,
+				Verdict:           "requires_human",
+				DecisionRequested: true,
+				DecisionQuestion:  "@hanthor should confirm pin-only merge",
+			},
+		},
+	}
+	prev := stagelabels.Record{
+		Stage:        stagelabels.NeedsDecision,
+		Reason:       StageReasonDecisionRequested,
+		ActivityHead: head,
+	}
+
+	// 1. Same head with decision question preserves 085 even when raw verdict would be fixing (070) or review-pending (050).
+	rawFixing := stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned, Reason: stagelabels.LaneReasonCheckFailingPrefix + "unit"}
+	got, ok := PreserveNeedsDecisionOnSameHead(prev, true, obs, rawFixing)
+	if !ok || got.Stage != stagelabels.NeedsDecision || got.Reason != prev.Reason {
+		t.Fatalf("expected preserved 085, got %+v, ok=%v", got, ok)
+	}
+
+	rawPending := stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned, Reason: "required-check-pending:build"}
+	got, ok = PreserveNeedsDecisionOnSameHead(prev, true, obs, rawPending)
+	if !ok || got.Stage != stagelabels.NeedsDecision || got.Reason != prev.Reason {
+		t.Fatalf("expected preserved 085 from pending, got %+v, ok=%v", got, ok)
+	}
+
+	// 2. A new push clears preservation.
+	obsNewPush := obs
+	obsNewPush.HeadSHA = "newhead999"
+	if _, ok := PreserveNeedsDecisionOnSameHead(prev, true, obsNewPush, rawPending); ok {
+		t.Fatal("expected new push to clear preservation")
+	}
+
+	// 3. A human approval clears preservation.
+	obsApproved := obs
+	obsApproved.Detail.HumanApprover = "hanthor"
+	obsApproved.Detail.HumanApprovalHead = head
+	if _, ok := PreserveNeedsDecisionOnSameHead(prev, true, obsApproved, rawPending); ok {
+		t.Fatal("expected human approval to clear preservation")
+	}
+
+	// 4. A human change request clears preservation.
+	obsChanges := obs
+	obsChanges.Detail.HumanChangeRequester = "hanthor"
+	obsChanges.Detail.HumanChangeRequestHead = head
+	if _, ok := PreserveNeedsDecisionOnSameHead(prev, true, obsChanges, rawFixing); ok {
+		t.Fatal("expected human change request to clear preservation")
+	}
+
+	// 5. Terminal verdict clears preservation.
+	terminal := stageVerdict{Terminal: true, Stage: stagelabels.None}
+	if _, ok := PreserveNeedsDecisionOnSameHead(prev, true, obs, terminal); ok {
+		t.Fatal("expected terminal verdict to clear preservation")
+	}
+}
+
 func TestRequiresHumanReconcilesToFixedPoint(t *testing.T) {
 	for _, decisionRequested := range []bool{false, true} {
 		obs := stageObservation{Owner: "acme", Repo: "widgets", Number: 42, Lane: stageLaneSelf, HeadSHA: "head", AuthorKind: authorkind.Hive,

@@ -1608,3 +1608,124 @@ func TestStoreMarkSupersededAndPollDue(t *testing.T) {
 		t.Fatal("MarkSuperseded accepted PR 0")
 	}
 }
+
+func TestTransitionDampenerRefusesFrequentFlapsBetweenTwoStages(t *testing.T) {
+	now := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+	clock := now
+	s := NewStore("", func() time.Time { return clock })
+	key := Key("acme/widget", 123)
+	head := "687f4cb"
+
+	// Initial entry: Fixing.
+	tr0 := s.ObserveHead(key, head, Fixing, "initial")
+	if !tr0.Changed || tr0.Suppressed {
+		t.Fatalf("initial entry = %+v", tr0)
+	}
+
+	// Move 1: Fixing -> NeedsDecision.
+	clock = clock.Add(time.Minute)
+	tr1 := s.ObserveHead(key, head, NeedsDecision, "verdict")
+	if !tr1.Changed || tr1.Suppressed || tr1.Next != NeedsDecision {
+		t.Fatalf("move 1 = %+v", tr1)
+	}
+
+	// Move 2: NeedsDecision -> Fixing.
+	clock = clock.Add(time.Minute)
+	tr2 := s.ObserveHead(key, head, Fixing, "ci-pending")
+	if !tr2.Changed || tr2.Suppressed || tr2.Next != Fixing {
+		t.Fatalf("move 2 = %+v", tr2)
+	}
+
+	// Move 3: Fixing -> NeedsDecision.
+	clock = clock.Add(time.Minute)
+	tr3 := s.ObserveHead(key, head, NeedsDecision, "verdict")
+	if !tr3.Changed || tr3.Suppressed || tr3.Next != NeedsDecision {
+		t.Fatalf("move 3 = %+v", tr3)
+	}
+
+	// Move 4: NeedsDecision -> Fixing (4th move between {Fixing, NeedsDecision} in 4m). Must be suppressed!
+	clock = clock.Add(time.Minute)
+	tr4 := s.ObserveHead(key, head, Fixing, "ci-pending")
+	if tr4.Changed || !tr4.Suppressed || tr4.Next != NeedsDecision {
+		t.Fatalf("move 4 must be suppressed: %+v", tr4)
+	}
+	rec, _ := s.Get(key)
+	if rec.Stage != NeedsDecision {
+		t.Fatalf("stage should remain NeedsDecision after suppression, got %v", rec.Stage)
+	}
+
+	// A new head resets the dampener.
+	clock = clock.Add(time.Minute)
+	tr5 := s.ObserveHead(key, "newhead456", Fixing, "new-push")
+	if !tr5.Changed || tr5.Suppressed || tr5.Next != Fixing {
+		t.Fatalf("new head move must be allowed: %+v", tr5)
+	}
+	rec, _ = s.Get(key)
+	if rec.Stage != Fixing {
+		t.Fatalf("stage should move to Fixing on new head, got %v", rec.Stage)
+	}
+}
+
+func TestTransitionDampenerResetOnHumanEvent(t *testing.T) {
+	now := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+	clock := now
+	s := NewStore("", func() time.Time { return clock })
+	key := Key("acme/widget", 123)
+	head := "687f4cb"
+
+	s.ObserveHead(key, head, Fixing, "initial")
+	s.NoteActivity(key, Activity{Head: head, Comments: 1, Reviews: 0})
+
+	// 3 transitions.
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, NeedsDecision, "verdict")
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, Fixing, "ci-pending")
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, NeedsDecision, "verdict")
+
+	// 4th is suppressed.
+	clock = clock.Add(time.Minute)
+	tr := s.ObserveHead(key, head, Fixing, "ci-pending")
+	if !tr.Suppressed {
+		t.Fatalf("expected suppressed move: %+v", tr)
+	}
+
+	// Human event: new comment arrives.
+	s.NoteActivity(key, Activity{Head: head, Comments: 2, Reviews: 0})
+
+	// Move is now allowed because human event reset the dampener.
+	tr = s.ObserveHead(key, head, Fixing, "human-responded")
+	if tr.Suppressed || !tr.Changed || tr.Next != Fixing {
+		t.Fatalf("move after human event must be allowed: %+v", tr)
+	}
+}
+
+func TestTransitionDampenerExpiresAfterWindow(t *testing.T) {
+	now := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+	clock := now
+	s := NewStore("", func() time.Time { return clock })
+	key := Key("acme/widget", 123)
+	head := "687f4cb"
+
+	s.ObserveHead(key, head, Fixing, "initial")
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, NeedsDecision, "verdict")
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, Fixing, "ci-pending")
+	clock = clock.Add(time.Minute)
+	s.ObserveHead(key, head, NeedsDecision, "verdict")
+
+	// 4th move within 4m is suppressed.
+	tr := s.ObserveHead(key, head, Fixing, "ci-pending")
+	if !tr.Suppressed {
+		t.Fatalf("expected suppressed move: %+v", tr)
+	}
+
+	// Advance time past the 30-minute window from the earlier moves.
+	clock = clock.Add(31 * time.Minute)
+	tr = s.ObserveHead(key, head, Fixing, "ci-pending")
+	if tr.Suppressed || !tr.Changed || tr.Next != Fixing {
+		t.Fatalf("move after window expiry must be allowed: %+v", tr)
+	}
+}

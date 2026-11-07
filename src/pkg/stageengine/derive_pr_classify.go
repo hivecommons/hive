@@ -624,6 +624,40 @@ func PreserveStageOnStaleDecisionAnswer(prev stagelabels.Record, hadPrev bool, o
 	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Reason: prev.Reason}, true
 }
 
+// PreserveNeedsDecisionOnSameHead keeps a PR parked at 085 when it was placed
+// on 085 for this head with a recorded decision question, until a human
+// reply, a new push, or an explicit /hive command. Checks re-running on the
+// same head (e.g. triggered by the hive's own label write) are not new
+// information (#16974).
+func PreserveNeedsDecisionOnSameHead(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
+	if !hadPrev || prev.Stage != stagelabels.NeedsDecision || verdict.Terminal {
+		return stageVerdict{}, false
+	}
+	head := strings.TrimSpace(obs.HeadSHA)
+	if head == "" {
+		return stageVerdict{}, false
+	}
+	if prev.ActivityHead == "" || !strings.EqualFold(prev.ActivityHead, head) {
+		return stageVerdict{}, false
+	}
+	d := NormalizeStageDetail(obs.Detail)
+	if TrustedHumanApprovedRequiresHuman(d, head) || TrustedHumanChangeRequested(d, head) ||
+		(d.VerdictKnown && d.Verdict.DecisionAnswered && strings.EqualFold(strings.TrimSpace(d.Verdict.DecisionAnsweredHead), head)) {
+		return stageVerdict{}, false
+	}
+	hasQuestion := (d.VerdictKnown && (d.Verdict.DecisionRequested || strings.TrimSpace(d.Verdict.DecisionQuestion) != "")) ||
+		prev.Reason == StageReasonDecisionRequested ||
+		strings.Contains(prev.Reason, "decision")
+	if !hasQuestion {
+		return stageVerdict{}, false
+	}
+	reason := prev.Reason
+	if reason == "" {
+		reason = StageReasonDecisionRequested
+	}
+	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: reason}, true
+}
+
 // AuthorSideDone reports whether the PR has nothing left for its author to
 // do: the reviewer verdict for this head is approve and the lane's reason
 // is not a CI state.

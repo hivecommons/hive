@@ -776,6 +776,9 @@ func classifyStage(o stageObservation) stageVerdict    { return stageengine.Clas
 func preserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
 	return stageengine.PreserveNormalizedFixingStage(prev, hadPrev, obs, verdict)
 }
+func preserveNeedsDecisionOnSameHead(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
+	return stageengine.PreserveNeedsDecisionOnSameHead(prev, hadPrev, obs, verdict)
+}
 func hasLabelFold(labels []string, want string) bool { return stageengine.HasLabelFold(labels, want) }
 func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stageObservation) {
 	return stageengine.ResolveStage(list)
@@ -937,6 +940,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		var reauthored reauthorRecord
 		pass.FixerExcluded = fixerKnown && fixer.Excluded()
 		if replacement, ok := stageengine.PreserveStageOnStaleDecisionAnswer(prevRec, hadPrev, obs, verdict, pass.FixerExcluded); ok {
+			verdict = replacement
+			obs.Reason = replacement.Reason
+		}
+		if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok {
 			verdict = replacement
 			obs.Reason = replacement.Reason
 		}
@@ -1177,7 +1184,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
 				obs.Route = &route
 			}
-			tr = store.Observe(key, verdict.Stage, obs.Reason)
+			if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok {
+				verdict = replacement
+				obs.Reason = replacement.Reason
+				route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
+				pass.Route = &route
+			}
+			tr = store.ObserveHead(key, obs.HeadSHA, verdict.Stage, obs.Reason)
 			if reauthored.issue > 0 {
 				store.MarkReauthored(key, reauthored.issue, obs.HeadSHA, reauthored.attempts, now)
 				if reauthored.noted {
@@ -1206,6 +1219,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 			store.NoteActivity(key, act)
 			rec, _ := store.Get(key)
+			if tr.Suppressed {
+				verdict.Stage = rec.Stage
+				obs.Reason = rec.Reason
+			}
 			want = stagelabels.Desired{
 				Stage:       verdict.Stage,
 				Role:        role,
