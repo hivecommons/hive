@@ -21,6 +21,32 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$HOOK_DIR" "$HOME_DIR"
+mkdir -p "${HOME_DIR}/.config/hive" "${WORK_DIR}/stub-bin"
+cat >"${WORK_DIR}/stub-bin/node" <<'STUB'
+#!/usr/bin/env bash
+printf 'max=%s timeout=%s\n' "${HIVE_MAX_PARALLEL_FIXES-unset}" "${HIVE_FIX_PR_TIMEOUT_MS-unset}"
+STUB
+chmod +x "${WORK_DIR}/stub-bin/node"
+run_fix_env() {
+  env -i PATH="${WORK_DIR}/stub-bin:${CORE_PATH}" HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN=test-token \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_PRE_AGENT_HOOK='node contributor-relay.js' \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
+    "$@" bash "${ROOT_DIR}/bin/contributor-agent.sh"
+}
+cat >"${HOME_DIR}/.config/hive/contributor.env" <<'CONFIG'
+HIVE_MAX_PARALLEL_FIXES=0
+HIVE_FIX_PR_TIMEOUT_MS=1234
+CONFIG
+output="$(run_fix_env)"
+[[ "$output" == *"max=0 timeout=1234"* ]] || { echo "config fix settings not exported: $output" >&2; exit 1; }
+output="$(run_fix_env HIVE_MAX_PARALLEL_FIXES=2 HIVE_FIX_PR_TIMEOUT_MS=5678)"
+[[ "$output" == *"max=2 timeout=5678"* ]] || { echo "environment fix settings not preserved: $output" >&2; exit 1; }
+rm "${HOME_DIR}/.config/hive/contributor.env"
+output="$(run_fix_env)"
+[[ "$output" == *"max=unset timeout=unset"* ]] || { echo "absent fix settings unexpectedly exported: $output" >&2; exit 1; }
+
 
 cat >"${HOOK_DIR}/10-backend-override.sh" <<'HOOK'
 backend_binary() {

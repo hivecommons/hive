@@ -162,7 +162,16 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 		tr.Anomaly = a
 		r.recordAnomaly(f.Ref, tr.From, tr.To, d.Reason, a)
 	}
-	r.opts.Store.ObserveProgress(key, d.Stage, d.Reason, d.Progress)
+	head := ""
+	if f.PR != nil {
+		head = f.PR.HeadSHA
+	}
+	storeTr := r.opts.Store.ObserveProgressHead(key, head, d.Stage, d.Reason, d.Progress)
+	if storeTr.Suppressed {
+		tr.From, tr.To, tr.Reason = prev.Stage, prev.Stage, prev.Reason
+		tr.Outcome.Suppressed = true
+		return tr, nil
+	}
 	noteCoveringPR(r.opts.Store, key, f, d.Stage)
 
 	out, err := r.opts.Writer.Apply(ctx, f.Ref, f.Labels, d.Desired())

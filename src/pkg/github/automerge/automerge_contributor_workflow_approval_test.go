@@ -278,7 +278,7 @@ func TestContributorLaneWorkflowFenceMarkerOncePerHead(t *testing.T) {
 	fx := validContributorFixture()
 	fx.files = workflowPathFiles()
 	fx.reviews = []map[string]any{ownerApprovedReview("clubanderson", "sha7")}
-	fx.prComments = []map[string]any{{"id": 5, "user": map[string]string{"login": testHiveAppBotLogin}, "body": workflowApprovalComment("sha7", "clubanderson")}}
+	fx.prComments = []map[string]any{{"id": 5, "user": map[string]string{"login": testHiveAppBotLogin}, "body": workflowApprovalComment("sha7", workflowFenceGrant{login: "clubanderson"})}}
 	api := newContributorLaneAPI(t, &fx)
 	defer api.Close()
 	policy := defaultContributorLanePolicy()
@@ -296,6 +296,170 @@ func TestContributorLaneWorkflowFenceMarkerOncePerHead(t *testing.T) {
 	for _, body := range fx.allComments {
 		if strings.HasPrefix(body, workflowApprovalMarkerPrefix) {
 			t.Fatalf("marker re-posted for an already-marked head: %v", fx.allComments)
+		}
+	}
+}
+
+// An approval on an earlier head carries over the hive's own base refresh —
+// an App-authored merge of the base branch that leaves the PR's three-dot
+// diff exactly as approved — so the update-branch a strict up-to-date rule
+// forces does not re-arm the workflow-path fence (projectbluefin/utah#1111).
+// Any other head change keeps the existing head-bound rule: the fence is
+// re-armed until the new head is approved, whether or not the new commit
+// touches the workflow files.
+func TestContributorLaneWorkflowFenceApprovalCarriesOverHiveBaseRefresh(t *testing.T) {
+	const approvedHead, baseTip = "sha6", "base9"
+	workflowDiff := func(blob string) []map[string]any {
+		return []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified", "sha": blob, "additions": 3, "deletions": 1, "changes": 4, "patch": "@@ -1 +1,3 @@\n-old\n+new\n+steps\n+run"}}
+	}
+	// The App's update-branch merge as GitHub returns it: attributed to the
+	// App, committed and signed by web-flow (CommitIsVerifiedAppMerge).
+	baseMerge := func(author, committer string, verified bool) map[string]any {
+		return map[string]any{"sha": "sha7", "parents": []map[string]string{{"sha": approvedHead}, {"sha": baseTip}}, "author": map[string]string{"login": author}, "committer": map[string]string{"login": committer},
+			"commit": map[string]any{"verification": map[string]any{"verified": verified}}}
+	}
+	hiveBaseMerge := baseMerge(testHiveAppBotLogin, "web-flow", true)
+	approvedReview := []map[string]any{ownerApprovedReview("clubanderson", approvedHead)}
+	for _, tc := range []struct {
+		name        string
+		reviews     []map[string]any
+		comments    []map[string]any
+		headCommit  map[string]any
+		currentDiff []map[string]any
+		wantReason  string
+		wantMarker  string
+	}{
+		{
+			name:        "review on the approved head carries over the hive's base merge",
+			reviews:     approvedReview,
+			headCommit:  hiveBaseMerge,
+			currentDiff: workflowDiff("blobA"),
+			wantMarker:  "<!-- hive:workflow-approval head=sha7 by=clubanderson from=sha6 -->",
+		},
+		{
+			name:        "the hive's audit marker for the approved head carries over the base merge",
+			comments:    []map[string]any{{"id": 5, "user": map[string]string{"login": testHiveAppBotLogin}, "body": workflowApprovalComment(approvedHead, workflowFenceGrant{login: "clubanderson"})}},
+			headCommit:  hiveBaseMerge,
+			currentDiff: workflowDiff("blobA"),
+			wantMarker:  "<!-- hive:workflow-approval head=sha7 by=clubanderson from=sha6 -->",
+		},
+		{
+			name:        "dashboard approval marked for the approved head carries over the base merge",
+			comments:    []map[string]any{dashboardApproveComment(5, "clubanderson", approvedHead, "")},
+			headCommit:  hiveBaseMerge,
+			currentDiff: workflowDiff("blobA"),
+			wantMarker:  "<!-- hive:workflow-approval head=sha7 by=clubanderson from=sha6 -->",
+		},
+		{
+			name:        "a new commit changing the workflow file re-arms the fence",
+			reviews:     approvedReview,
+			currentDiff: workflowDiff("blobB"),
+			wantReason:  contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:        "a new commit leaving the workflow files alone still re-arms the fence",
+			reviews:     approvedReview,
+			currentDiff: append(workflowDiff("blobA"), map[string]any{"filename": "pkg/widget/widget.go", "status": "modified", "sha": "blobW", "additions": 1, "deletions": 0, "changes": 1}),
+			wantReason:  contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:        "a base merge that changed the workflow diff re-arms the fence",
+			reviews:     approvedReview,
+			headCommit:  hiveBaseMerge,
+			currentDiff: workflowDiff("blobB"),
+			wantReason:  contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:        "a base merge pushed by the contributor re-arms the fence",
+			reviews:     approvedReview,
+			headCommit:  baseMerge(contributorLaneTestAuthor, "web-flow", true),
+			currentDiff: workflowDiff("blobA"),
+			wantReason:  contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:        "an App-attributed base merge GitHub did not verify re-arms the fence",
+			reviews:     approvedReview,
+			headCommit:  baseMerge(testHiveAppBotLogin, contributorLaneTestAuthor, false),
+			currentDiff: workflowDiff("blobA"),
+			wantReason:  contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:        "an audit marker forged by someone other than the App carries nothing",
+			comments:    []map[string]any{{"id": 5, "user": map[string]string{"login": contributorLaneTestAuthor}, "body": workflowApprovalComment(approvedHead, workflowFenceGrant{login: "clubanderson"})}},
+			headCommit:  hiveBaseMerge,
+			currentDiff: workflowDiff("blobA"),
+			wantReason:  contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:        "an approval by a login no longer trusted carries nothing",
+			reviews:     []map[string]any{ownerApprovedReview("passerby", approvedHead)},
+			headCommit:  hiveBaseMerge,
+			currentDiff: workflowDiff("blobA"),
+			wantReason:  contributorLaneReasonWorkflowPath,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.files = workflowPathFiles()
+			fx.reviews = tc.reviews
+			fx.prComments = tc.comments
+			fx.headCommit = tc.headCommit
+			fx.compareFiles = map[string][]map[string]any{approvedHead: workflowDiff("blobA"), "sha7": tc.currentDiff}
+			fx.compareMergeBase = map[string]string{approvedHead: "base1", "sha7": baseTip}
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			policy.OwnerApprovalReleasesWorkflowFence = true
+			clock := &contributorLaneClock{at: mustParseTime(t, "2026-10-27T13:00:00Z")}
+			engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+			engine.SetMergerAuthorizer(func(login string) bool { return strings.EqualFold(login, "clubanderson") })
+			_, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantMerges := 0
+			if tc.wantReason == "" {
+				wantMerges = 1
+			}
+			if reason != tc.wantReason || fx.merges != wantMerges {
+				t.Fatalf("reason=%q merges=%d, want %q/%d (comments=%v)", reason, fx.merges, tc.wantReason, wantMerges, fx.allComments)
+			}
+			var markers []string
+			for _, body := range fx.allComments {
+				if strings.HasPrefix(body, workflowApprovalMarkerPrefix) {
+					markers = append(markers, body)
+				}
+			}
+			if tc.wantMarker == "" {
+				if len(markers) != 0 {
+					t.Fatalf("unexpected workflow-approval marker: %v", markers)
+				}
+				return
+			}
+			if len(markers) != 1 || !strings.HasPrefix(markers[0], tc.wantMarker) {
+				t.Fatalf("workflow-approval markers = %v, want one with prefix %q", markers, tc.wantMarker)
+			}
+		})
+	}
+}
+
+// The audit marker round-trips: the carry reads the head and approver back
+// off the hive's own comment, carried or not.
+func TestParseWorkflowApprovalMarker(t *testing.T) {
+	for _, tc := range []struct {
+		body       string
+		head, by   string
+		wantParsed bool
+	}{
+		{body: workflowApprovalComment("ABC123", workflowFenceGrant{login: "ClubAnderson"}), head: "abc123", by: "clubanderson", wantParsed: true},
+		{body: workflowApprovalComment("def456", workflowFenceGrant{login: "clubanderson", carriedFrom: "abc123"}), head: "def456", by: "clubanderson", wantParsed: true},
+		{body: "<!-- hive:workflow-approval head=abc123 -->"},
+		{body: "<!-- hive:workflow-approvals head=abc123 by=x -->"},
+		{body: "> " + workflowApprovalComment("abc123", workflowFenceGrant{login: "clubanderson"})},
+	} {
+		head, by, ok := parseWorkflowApprovalMarker(tc.body)
+		if ok != tc.wantParsed || head != tc.head || by != tc.by {
+			t.Fatalf("parseWorkflowApprovalMarker(%q) = %q, %q, %v; want %q, %q, %v", tc.body, head, by, ok, tc.head, tc.by, tc.wantParsed)
 		}
 	}
 }
