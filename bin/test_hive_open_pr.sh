@@ -144,7 +144,7 @@ check "--body-file body reaches the request" \
 reset_reqs
 
 check_exit "--body-file - reads stdin" 0 \
-  bash -c 'printf "stdin body" | "$@"' _ env HIVE_AGENT=a3 HIVE_OPEN_PR_REQ_DIR="$REQ_DIR" \
+  bash -c 'printf "stdin body" | "$@"' _ env HIVE_AGENT=a3 HIVE_OPEN_PR_REQ_DIR="$REQ_DIR" HIVE_OPEN_PR_SKIP_REMOTE_CHECK=1 \
     bash "$MODIFIED_SCRIPT" --repo o/r --title T --head h --body-file -
 REQ="$(find_req a3)"
 check "stdin body reaches the request" "stdin body" "$(json_field "$REQ" body)"
@@ -371,6 +371,36 @@ if [ -n "$REQ" ] && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "
 else
   check "fallback handoff request is valid JSON" "valid JSON at \$REQ" "missing or unparseable: $REQ"
 fi
+reset_reqs
+
+# --- Section 10: head-on-remote preflight (#16969) ---
+echo ""
+echo "--- head-on-remote preflight ---"
+
+BARE="$TMPDIR_ROOT/remote.git"
+git init --quiet --bare "$BARE"
+PUSHED_REPO="$TMPDIR_ROOT/pushed"
+git clone --quiet "$BARE" "$PUSHED_REPO" 2>/dev/null
+( cd "$PUSHED_REPO" && git checkout --quiet -b pushed/branch 2>/dev/null && touch f && git add f &&
+  git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit --quiet -m seed &&
+  git push --quiet -u origin pushed/branch 2>/dev/null &&
+  git checkout --quiet -b local/only && touch g && git add g &&
+  git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit --quiet -m local )
+
+STDERR_OUT="$( (cd "$PUSHED_REPO" && env HIVE_AGENT=a10 HIVE_OPEN_PR_REQ_DIR="$REQ_DIR"   bash "$MODIFIED_SCRIPT" --repo o/r --head pushed/branch --title T --body B) 2>&1 >/dev/null )"
+check "pushed branch produces no warning" "" "$STDERR_OUT"
+reset_reqs
+
+STDERR_OUT="$( (cd "$PUSHED_REPO" && env HIVE_AGENT=a10 HIVE_OPEN_PR_REQ_DIR="$REQ_DIR"   bash "$MODIFIED_SCRIPT" --repo o/r --head local/only --title T --body B) 2>&1 >/dev/null )"
+case "$STDERR_OUT" in
+  *"branch 'local/only' is NOT on remote 'origin'"*"hive-push-branch --repo o/r"*) check "unpushed branch warns and names branch, remote and the push step" ok ok;;
+  *) check "unpushed branch warns and names branch, remote and the push step" "warning naming local/only, origin and hive-push-branch" "$STDERR_OUT";;
+esac
+check_exit "unpushed branch still queues the request (watcher retries once it lands)" 0   test -n "$(find_req a10)"
+reset_reqs
+
+STDERR_OUT="$( (cd "$PUSHED_REPO" && env HIVE_AGENT=a10 HIVE_OPEN_PR_REQ_DIR="$REQ_DIR" HIVE_OPEN_PR_SKIP_REMOTE_CHECK=1   bash "$MODIFIED_SCRIPT" --repo o/r --head local/only --title T --body B) 2>&1 >/dev/null )"
+check "HIVE_OPEN_PR_SKIP_REMOTE_CHECK silences the preflight" "" "$STDERR_OUT"
 reset_reqs
 
 # --- Summary ---

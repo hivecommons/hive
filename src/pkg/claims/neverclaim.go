@@ -1,6 +1,10 @@
 package claims
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/hivecommons/hive/pkg/spekmarker"
+)
 
 // Never-claim labels: an issue wearing one is not a unit of agent work, so no
 // automated claim producer — the relay `claim` request, the start-signal seam,
@@ -35,6 +39,23 @@ func NeverClaimLabel(labels, never []string) string {
 				return trimmed
 			}
 		}
+	}
+	return ""
+}
+
+// SpekUmbrellaMarker is the never-claim "label" reported for an issue whose
+// body carries the Spek publish marker with no `task=` — the RFC itself.
+const SpekUmbrellaMarker = "spek:publish"
+
+// NeverClaimReason is NeverClaimLabel extended with the body: it returns the
+// never-claim label the issue wears, else SpekUmbrellaMarker when body marks
+// the issue as a Spek-published RFC, else "".
+func NeverClaimReason(labels, never []string, body string) string {
+	if label := NeverClaimLabel(labels, never); label != "" {
+		return label
+	}
+	if spekmarker.IsUmbrella(body) {
+		return SpekUmbrellaMarker
 	}
 	return ""
 }

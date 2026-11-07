@@ -118,6 +118,7 @@ and Linear tables gate. Defaults equal today's verdicts:
 | `issue.edit` | `PATCH …/issues/{n}` | (default bucket) | `ModeIssuesOnly` |
 | `issue.comment` | `POST …/issues/{n}/comments` | conversational fields (`converseMutations`) | `ModeIssuesOnly` or `converse` |
 | `label.add` | `POST …/issues/{n}/labels` | (default bucket) | `ModeIssuesOnly` |
+| `issue.relate` | `POST …/issues/{n}/sub_issues`, `POST …/issues/{n}/dependencies/blocked_by` (Linear: `issueRelationCreate`, `projectCreate`, `projectUpdate`, `issueCreate` with `parentId`) | (default bucket) | `ModeIssuesOnly` — what an in-hive Spek publish needs to file an RFC with sub-issue children and "blocked by" edges ([spektacular#114](https://github.com/hivecommons/spektacular/issues/114)); unlink/delete/archive siblings stay denied |
 | `pr.create` | `POST …/pulls` | `createPullRequest` | **`relay(hive-open-pr)`** |
 | `pr.edit` | `PATCH …/pulls/{n}` | `markPullRequestReadyForReview`, `convertPullRequestToDraft` | `ModeIssuesAndPRs` |
 | `pr.review` | `POST …/pulls/{n}/reviews` | `addPullRequestReview`, `submitPullRequestReview` | `ModeIssuesAndPRs` or `converse` |

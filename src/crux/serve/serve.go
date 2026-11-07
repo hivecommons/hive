@@ -35,8 +35,10 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/api"
+	"github.com/hivecommons/hive/crux/checkout"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/lanes"
+	"github.com/hivecommons/hive/crux/runs"
 )
 
 const (
@@ -101,6 +103,16 @@ type Server struct {
 	// lane surface. They confer no agent-control permissions.
 	Lanes    *lanes.Broker
 	LaneAuth *lanes.Authenticator
+	// OperatorName names the principal behind the shared control token
+	// (CallerFrom); empty means DefaultOperatorName.
+	OperatorName string
+	// Checkouts, when set, serves the pinned-checkout work service
+	// (api.PathCheckouts); nil answers those routes 501.
+	Checkouts *checkout.Service
+
+	// Runs, when set, serves the contained-run family (RFC crux#114 S2 +
+	// S7); nil answers those routes with not_supported.
+	Runs *runs.Service
 
 	now     func() time.Time
 	started time.Time
@@ -109,6 +121,9 @@ type Server struct {
 	subscribers map[chan api.Event]struct{}
 	lastStates  map[string]string
 	background  []string
+	// workServices lists the route prefixes project principals may call;
+	// see workService.
+	workServices []string
 }
 
 // New returns a Server for rt with the defaults filled in.
@@ -155,6 +170,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+api.PathAgents+"/{name}/stop", s.handleStop)
 	mux.HandleFunc("GET "+api.PathEvents, s.handleEvents)
 	s.registerFamilies(mux)
+	s.registerCheckouts(mux)
+	s.registerRuns(mux)
 	return s.laneHandler(s.authenticate(mux))
 }
 
@@ -166,13 +183,21 @@ var agentNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 // authenticate is the fail-closed gate: when the server has no token, only
 // a request Serve tagged as arriving on the unix socket is allowed, so a
 // Handler mounted elsewhere (any TCP listener, tagged or not) is refused;
-// when the server has a token, every request must present it.
+// when the server has a token, every request must present it. Whoever
+// passes is attached to the request as a Principal (CallerFrom): the
+// control token is the operator, and a lane project credential is a
+// project principal on work-services routes only — on agent RPCs it is
+// refused as before.
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		network, _ := r.Context().Value(networkKey).(string)
 		token, _ := strings.CutPrefix(r.Header.Get("Authorization"), bearerPrefix)
-		if _, projectToken := s.LaneAuth.Project(token); projectToken {
-			s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "project credentials cannot access agent RPCs")
+		if project, projectToken := s.LaneAuth.Project(token); projectToken {
+			if !s.isWorkService(r.URL.Path) {
+				s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "project credentials cannot access agent RPCs")
+				return
+			}
+			next.ServeHTTP(w, withCaller(r, Principal{Kind: KindProject, Name: project}))
 			return
 		}
 		if s.Token == "" {
@@ -180,7 +205,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "this server has no bearer token; only unix-socket requests are accepted")
 				return
 			}
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, withCaller(r, s.operator()))
 			return
 		}
 		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), bearerPrefix)
@@ -189,7 +214,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "missing or invalid bearer token")
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, withCaller(r, s.operator()))
 	})
 }
 

@@ -54,9 +54,10 @@ func TestContentGateReportsUnpushedBranchAsAuthFailure(t *testing.T) {
 		t.Fatal("a missing head ref must be an error")
 	}
 
-	// The whole point: the operator must be pointed at credentials.
+	// The whole point: the operator must be pointed at the push's own
+	// outcome first, then at credentials — never at branch creation.
 	got := err.Error()
-	for _, want := range []string{"never pushed", "PUSH AUTHENTICATION", "git-credential-hive.sh", "HIVE_AGENT_TOKEN_CACHE"} {
+	for _, want := range []string{"is not on o/r", "result.json", "git-credential-hive.sh", "HIVE_AGENT_TOKEN_CACHE"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("diagnosis does not mention %q:\n%s", want, got)
 		}
@@ -94,8 +95,8 @@ func TestClaimsGateReportsUnpushedBranchAsAuthFailure(t *testing.T) {
 	}
 	if reason, ok := missingHeadReason(err); !ok {
 		t.Errorf("claims gate did not diagnose the unpushed branch: %v", err)
-	} else if !strings.Contains(reason, "PUSH AUTHENTICATION") {
-		t.Errorf("claims-gate diagnosis is not the push-auth one: %s", reason)
+	} else if !strings.Contains(reason, "git-credential-hive.sh") {
+		t.Errorf("claims-gate diagnosis is not the unpushed-branch one: %s", reason)
 	}
 }
 
@@ -115,7 +116,7 @@ func TestInvisibleRepoIsNotReportedAsAPushFailure(t *testing.T) {
 	if !strings.Contains(got, "cannot see that repository") {
 		t.Errorf("invisible repo not diagnosed:\n%s", got)
 	}
-	if strings.Contains(got, "PUSH AUTHENTICATION") {
+	if strings.Contains(got, "git-credential-hive.sh") {
 		t.Errorf("invisible repo was mislabelled as a push failure:\n%s", got)
 	}
 }
@@ -134,7 +135,7 @@ func TestExistingHeadRefDoesNotClaimAPushFailure(t *testing.T) {
 		t.Fatal("a 404 comparison must be an error")
 	}
 	got := err.Error()
-	if strings.Contains(got, "PUSH AUTHENTICATION") {
+	if strings.Contains(got, "git-credential-hive.sh") {
 		t.Errorf("a present head ref was blamed on push auth:\n%s", got)
 	}
 	if !strings.Contains(got, "base branch") {

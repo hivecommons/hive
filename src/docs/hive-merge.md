@@ -170,13 +170,12 @@ sweep lanes whatever the intent tier. If the changed-file list for a configured
 repo cannot be fetched completely, the merge is withheld (fail closed). See
 [operator-reference.md](operator-reference.md).
 
-**Pin-only policy (enforced by the automerge sweep and `/approve`; relay pending).**
+**Pin-only policy (enforced by the automerge sweep, `/approve`, and relay).**
 
 `auto_merge.human_merge_pin_only` provides the schema and conservative diff
 classifier for #16242 / #16262. **The automerge sweep lanes and `/approve`
-enforce it (#16266); the `hive-merge` relay does not yet** (#16265) and still
-requires the existing human-merge path policy. The native merge queue is entered
-only after a lane's human-merge-path gate, so queued PRs inherit the exception. A sweep lane
+(#16266) and the `hive-merge` relay (#16265) enforce it.** The native merge
+queue is entered only after a lane's human-merge-path gate, so queued PRs inherit the exception. A sweep lane
 does not hold a PR on its human-merge-path matches when the repo has an enabled
 entry, the PR author is in `trusted_authors` (case-insensitive login match),
 GitHub's reported changed-file count is present and equals the fetched list,
@@ -236,8 +235,10 @@ This classifier proves **syntax only**, not authenticated identity, exact-head
 binding, file-list completeness, semantic interpretation or review of upstream
 references. The sweep supplies the author (GitHub's PR author login), the
 verified-commit provenance of the head, file-list completeness and the
-upstream anchoring of each action SHA itself (#16399); the relay integration
-remains #16265;
+upstream anchoring of each action SHA itself (#16399). The relay applies
+the same checks through `Client.SetHumanMergePinOnly` (#16265) and additionally
+requires a nonempty requested head SHA matching the PR head before and after
+fetching files;
 attribution and safe hold release are tracked in #16269. None of the
 schema or classifier APIs grants permission to merge or clears a hold. Native
 required checks and producer bindings, freshness, current reviews, substantive
@@ -245,9 +246,9 @@ objections, unrelated holds and configured soak must remain independent gates.
 
 Operators stage the key in the controller's configured `hive.yaml` seed, not in
 the image repository (reload behaviour is documented in the operator reference
-linked above). On an image that contains #16266, reloading the seed enables
-the sweep and `/approve` exception at once; the `hive-merge` relay still
-ignores the key until #16265 lands, so relay merges keep holding matching PRs.
+linked above). On an image that contains #16266 and #16265, reloading the seed
+enables the sweep, `/approve`, and `hive-merge` relay exception at once. Non-GitHub
+forge relays retain the existing fail-closed human-merge-path policy.
 
 There is **no minimum deployable version enabling this lane yet**. Utah rollout
 and current-head positive/negative deployment evidence remain tracked by
@@ -257,8 +258,8 @@ projectbluefin/utah#1082 and #16242; projectbluefin/utah#1068 is not pre-authori
 `auto_merge.human_merge_pin_only`; see the
 [operator reference](operator-reference/README.md#human-merge-pin-only-rollout)
 for its configuration and deployment prerequisites. The schema/classifier
-(#16262), relay admission (#16265), and sweep admission (#16266, landed) are
-separate changes: this attribution change alone does **not** enable the exception.
+(#16262), relay admission (#16265), and sweep admission (#16266) are
+separate, landed changes: this attribution change alone does **not** enable the exception.
 New path-hold comments retain `<!-- hive-human-merge-path -->` and append
 `<!-- hive-human-merge-path-head: <40-character SHA> -->` only when Hive
 observes that exact head without a pre-existing hold. Legacy comments and

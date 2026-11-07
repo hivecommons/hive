@@ -198,9 +198,10 @@ type GitHubProxy struct {
 
 	// allowPrivateForward snapshots HIVE_PROXY_ALLOW_PRIVATE_FORWARD at
 	// construction (a boot-time deployment choice like proxyAdvisoryOK). The
-	// zero value keeps the plain-HTTP forward guard ON: non-routable
-	// destinations (loopback, link-local/metadata, RFC 1918, CGNAT, multicast)
-	// are refused on the plain path. See plain_forward_guard.go.
+	// zero value keeps the destination guard ON: non-routable destinations
+	// (loopback, link-local/metadata, RFC 1918, CGNAT, multicast) are refused
+	// on the plain-HTTP forward path and on uninspected CONNECT/transparent
+	// tunnels. See plain_forward_guard.go.
 	allowPrivateForward bool
 
 	// injectGHAuth snapshots config.ProxyInjectGHAuth() at construction (#1861,
@@ -365,7 +366,7 @@ func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logg
 	// dial the private estate on an agent's behalf.
 	allowPrivateForward := plainForwardAllowPrivate()
 	if allowPrivateForward {
-		logger.Warn("proxy: plain-HTTP forwards to non-routable destinations are ALLOWED — agents can reach loopback, link-local (cloud metadata) and private-network services through this proxy",
+		logger.Warn("proxy: plain-HTTP forwards and uninspected tunnels to non-routable destinations are ALLOWED — agents can reach loopback, link-local (cloud metadata) and private-network services through this proxy",
 			"env", plainForwardAllowPrivateEnv)
 	}
 

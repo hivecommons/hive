@@ -187,6 +187,30 @@ func TestIssueClaimBlockReasonNeverClaimLabelsConfigured(t *testing.T) {
 	}
 }
 
+// spektacular#114: a Spek-published RFC (publish marker, no task=) is an
+// umbrella like `epic` even in a repo without that label; its children
+// (task= set) are claimable.
+func TestIssueClaimBlockReasonSpekUmbrella(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"rfc without epic label refused", "RFC\n<!-- spek:publish name=n artifact_id=a target=github rfc=https://x.test/1 -->", ClaimBlockReasonNeverClaimPrefix + "spek:publish"},
+		{"child admitted", "child\n<!-- spek:publish name=n artifact_id=a target=github task=t1 -->", ""},
+		{"malformed marker admitted", "<!-- spek:publish name=n -->", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"number":42,"labels":[{"name":"enhancement"}],"body":%q}`, tc.body)
+			}))
+			defer srv.Close()
+			got, err := issueTestClient(t, srv.URL).IssueClaimBlockReason(context.Background(), "o/r", 42)
+			if err != nil || got != tc.want {
+				t.Fatalf("reason = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
 // The `claim` relay request on an epic or a parked issue is refused before
 // any write, and reports no start signal.
 func TestIssueRequestWatcher_ClaimRefusesEpicAndParked(t *testing.T) {

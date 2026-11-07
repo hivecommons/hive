@@ -267,7 +267,13 @@ func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (
 		_ = req.Body.Close()
 	}
 	if err != nil {
-		return "", false, false
+		// Fail closed, as enforceLinear does: a body we could not fully read
+		// is a body we could not scan, and the original body is already
+		// consumed, so letting the request through would forward it empty.
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		req.ContentLength = int64(len(body))
+		p.logger.Warn("ioscan canary scan: request body read failed — denying", "agent", agentName, "path", req.URL.Path)
+		return "ioscan canary scan body unreadable", true, true
 	}
 	if len(body) > maxGitHubWriteBodyScan {
 		return "ioscan canary scan body too large", true, true

@@ -153,11 +153,10 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		cfg.Ioscan.Enabled = &v
 	}
 	if body.IoscanFailMode != nil {
-		mode := strings.ToLower(strings.TrimSpace(*body.IoscanFailMode))
-		if mode == "open" {
-			mode = ""
-		}
-		cfg.Ioscan.FailMode = mode
+		// "open" is stored as given: an empty fail_mode follows the ACMM
+		// pack, which is closed at L5+, so the operator's choice would be
+		// silently lost there (#16973).
+		cfg.Ioscan.FailMode = strings.ToLower(strings.TrimSpace(*body.IoscanFailMode))
 	}
 	if body.IoscanClassifierBackend != nil {
 		cfg.Ioscan.Classifier.Backend = strings.TrimSpace(*body.IoscanClassifierBackend)
@@ -270,6 +269,11 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after security update", "error", err)
+	}
+	ioscanChanged := body.IoscanEnabled != nil || body.IoscanFailMode != nil || body.IoscanClassifierBackend != nil ||
+		body.IoscanClassifierCLIBudgetPerEval != nil || body.IoscanClassifierCLIDailyQuota != nil
+	if ioscanChanged && s.deps.IoscanConfigApplied != nil {
+		s.deps.IoscanConfigApplied()
 	}
 	s.auditFromRequest(r, "config_governor_security", auditDetail("section", "security"), "")
 	s.refreshAndPersist()

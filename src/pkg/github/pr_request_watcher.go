@@ -703,7 +703,14 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		"duplicate_reason", res.DuplicateReason)
 	c.writePRResult(path, resp)
 	// Success (or reuse of an existing PR) — consume the request so it isn't
-	// reprocessed.
+	// reprocessed. A request that had failed before succeeding is the retry
+	// policy working; say so, so the ERROR that opened the story has a
+	// matching close in the same log.
+	if failed := c.prRetries.attempts(path); failed > 0 {
+		c.logger.Info("pr-request watcher: request succeeded on retry",
+			slog.String("repo", req.Repo), slog.String("head", req.Head),
+			slog.Int("failed_attempts", failed), slog.Int("number", res.Number))
+	}
 	_ = os.Remove(path)
 	c.prRetries.clear(path)
 	if res.IsDuplicate() {
@@ -733,11 +740,29 @@ func (c *Client) failPRRequest(path string, req PRRequest, err error, nowFn func
 	// points away from its cause. Log it at ERROR on its own line — this is
 	// work an agent already completed and cannot publish, and it is invisible
 	// in the fleet view because the agent's session ended healthy.
+	//
+	// Once per request, not once per retry (#16969): the retry exists so a
+	// late push still lands, and re-logging the same request at ERROR every
+	// tick turned ONE unpushed branch into a "5 in 10m" fleet report before
+	// the branch arrived. Retries stay at INFO (below the fleet feed) so the
+	// fleet report fires only when distinct requests fail the same way. The
+	// message states what the watcher checked and what it saw — the ref, the
+	// repository, and the push relay's own record — not an inferred cause.
 	reason, missingHead := missingHeadReason(err)
 	if missingHead {
-		c.logger.Error("pr-request watcher: head branch is not on the remote — the agent's push did not authenticate",
+		attempt := c.prRetries.attempts(path) + 1
+		attrs := []any{
 			slog.String("repo", req.Repo), slog.String("head", req.Head),
-			slog.String("agent", req.Agent), slog.String("diagnosis", reason))
+			slog.String("checked", missingHeadRemoteRef(req.Repo, req.Head)),
+			slog.String("push_outcome", pushRelayOutcome(pushBranchRequestDir(), req.Head)),
+			slog.Int("attempt", attempt),
+			slog.String("agent", req.Agent), slog.String("diagnosis", reason),
+		}
+		if attempt == 1 {
+			c.logger.Error("pr-request watcher: head branch is not on the remote", attrs...)
+		} else {
+			c.logger.Info("pr-request watcher: head branch still not on the remote, retrying", attrs...)
+		}
 	}
 	if c.prRetries.noteFailure(path, nowFn()) {
 		_ = os.Rename(path, path+".failed")

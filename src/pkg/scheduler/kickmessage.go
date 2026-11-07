@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/promptsrc"
+	"github.com/hivecommons/hive/pkg/spekmarker"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
 )
@@ -68,6 +69,34 @@ func (s *Scheduler) upstreamPortLabels() []string {
 		labels = append(labels, label)
 	}
 	return labels
+}
+
+// spekPublishedContext is the Spek hand-off block for an issue carrying the
+// publish marker (pkg/spekmarker, spektacular#114): the RFC link and the spek
+// name/artifact id, so the fixer builds against the spek's acceptance
+// criteria and links its PR to this child with a closing keyword. Values are
+// the parsed marker's own — the RFC URL only survives parsing as http(s) —
+// never free text from the body. Empty for every other issue.
+func spekPublishedContext(issue github.Issue) string {
+	m, ok := spekmarker.Parse(issue.Body)
+	if !ok {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("    ↳ specified by Spek: ")
+	if m.RFC != "" {
+		b.WriteString("RFC " + m.RFC + " ")
+	}
+	fmt.Fprintf(&b, "(spek %s, artifact %s", m.Name, m.ArtifactID)
+	if m.Task != "" {
+		b.WriteString(", task " + m.Task)
+	}
+	b.WriteString(") — build against the spek's acceptance criteria for this slice; do not re-spec it")
+	if issue.Number > 0 {
+		fmt.Fprintf(&b, "; the PR body must say `Fixes #%d`", issue.Number)
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 func hasAnyIssueLabel(labels []string, want []string) bool {
@@ -142,6 +171,7 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 		if diff := s.upstreamPortDiffURL(issue); diff != "" {
 			b.WriteString(fmt.Sprintf("    ↳ upstream patch: %s — read it first, then port the change to this fork by hand; do not cherry-pick across repos\n", diff))
 		}
+		b.WriteString(spekPublishedContext(issue))
 		if hasIssueLabel(issue.Labels, stagelabels.LabelReauthored) {
 			// The hive closed its own earlier PR for this issue after its
 			// fixer gave up; the fresh PR is this kick's to open.

@@ -224,8 +224,12 @@ Agent-side calls to `api.linear.app` go through the ACMM proxy
 (`pkg/proxy/linear_rules.go`, merged in #4522): a deny-by-default GraphQL
 mutation allowlist where `agentActivityCreate`/`agentSessionUpdate` are
 reachable at every tier (they carry the 10-second session invariant),
-`issueUpdate`/`commentCreate` require ISSUES_ONLY, and anything unknown or
-unparseable is denied. The control-plane client in `pkg/linearagent` (webhook
+`issueUpdate`/`commentCreate` require ISSUES_ONLY, the mutations an in-hive
+Spek publish makes (`issueCreate` with `parentId`, `issueRelationCreate` for
+`blockedBy`, `projectCreate`/`projectUpdate` for the RFC parent) also sit at
+ISSUES_ONLY, and anything unknown or unparseable is denied — including the
+destructive siblings (`issueRelationDelete`, `projectDelete`,
+`projectArchive`). The control-plane client in `pkg/linearagent` (webhook
 ack, identity query, token refresh) runs in the hive process itself, not
 through the agent proxy.
 

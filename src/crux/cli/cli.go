@@ -196,6 +196,12 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 			return ExitUsage
 		}
 		return cline.Run(args, os.Stdin, e.Stdout, e.Stderr)
+	case "checkout":
+		if remote {
+			fmt.Fprintln(e.Stderr, "crux: checkout is not available over the control socket")
+			return ExitUsage
+		}
+		return e.cmdCheckout(ctx, opts, args)
 	case "ps", "logs", "kick", "stop":
 		if !remote && !opts.local {
 			if code, ok := e.forward(ctx, opts, append([]string{name}, args...)); ok {
@@ -203,6 +209,11 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 			}
 		}
 		return e.local(ctx, opts, name, args)
+	case "runs":
+		// The contained-run family lives on a `crux serve`; there is no
+		// in-process form, so the verb is only reachable with --server.
+		fmt.Fprintln(e.Stderr, "crux: runs needs --server ADDR (or CRUX_SERVER); contained runs execute on a crux serve")
+		return ExitUsage
 	case "help", "-h", "--help":
 		fs := flag.NewFlagSet("crux", flag.ContinueOnError)
 		e.usage(fs)
@@ -333,12 +344,19 @@ Commands (each maps onto crux.Runtime):
                                   runtime that spawned it, not run by hand
   cline-turn                      one bounded Cline CLI turn (stdin prompt);
                                   --model provider/model, --check for preflight
+  runs start|status|cancel        contained command runs on a crux serve
+                                  (--server only; 'crux runs help' for flags)
+
+Work services (no runtime; hivecommons/crux#114):
+  checkout add|rm|list            pinned checkouts under <workdir>/checkouts
+                                  (add -repo URL -commit SHA; -allow PREFIXES or
+                                  $CRUX_CHECKOUT_ALLOWLIST gates which repos)
 
 While 'crux run' is in the foreground it serves <workdir>/crux.sock; ps, logs,
 kick and stop use that socket when present so they act on the live runtime.
 'crux serve' is the API server other harnesses drive (crux/api, crux/serve).
-With --server ADDR (or CRUX_SERVER set) run, ps, logs, kick and stop drive that
-server over the API instead of an in-process runtime; --token / CRUX_TOKEN
+With --server ADDR (or CRUX_SERVER set) run, ps, logs, kick, stop and checkout
+drive that server over the API instead of an in-process runtime; --token / CRUX_TOKEN
 carries its bearer token, and 'logs -f' follows the agent's output. 'serve'
 itself always runs locally, whatever CRUX_SERVER says.
 

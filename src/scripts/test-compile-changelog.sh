@@ -188,6 +188,40 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Case 5b: `<!-- release: none -->` in a fragment is rejected (#12928). The
+# fragment survives until a release consumes it, and the marker forbids that
+# release — so one fragment would freeze every later merge. A bump marker
+# (`patch`) in a fragment stays legal and still compiles verbatim.
+# ---------------------------------------------------------------------------
+dir=$(new_case 5b)
+printf -- '<!-- release: none -->\n- a test-only tweak that should have been a no-changelog label.\n' > "$dir/changelog.d/changed-11-none.md"
+printf -- '- a real fix ([#12](https://example.invalid/12)).\n' > "$dir/changelog.d/fixed-12-real.md"
+if ( cd "$dir" && bash "$compile" CHANGELOG.md changelog.d ) > "$tmp/case5b.out" 2>&1; then
+  note_fail "a fragment carrying '<!-- release: none -->' must be rejected"
+else
+  if grep -q 'release: none' "$tmp/case5b.out" && [[ -f "$dir/changelog.d/fixed-12-real.md" ]]; then
+    note_ok "a fragment carrying '<!-- release: none -->' is rejected loudly, with every fragment left on disk"
+  else
+    note_fail "rejection of a none-marker fragment must name the marker and leave fragments untouched: $(cat "$tmp/case5b.out")"
+  fi
+fi
+
+dir=$(new_case 5c)
+git init -q "$dir"
+git -C "$dir" config user.email test@example.com
+git -C "$dir" config user.name "Test"
+git -C "$dir" -c commit.gpgsign=false commit -q --allow-empty -m init
+git -C "$dir" tag v1.0.0
+printf -- '<!-- release: patch -->\n- an added thing that must only bump patch.\n' > "$dir/changelog.d/added-13-patch.md"
+if ( cd "$dir" && bash "$compile" CHANGELOG.md changelog.d ) > "$tmp/case5c.out" 2>&1 \
+   && grep -q '<!-- release: patch -->' "$dir/CHANGELOG.md" \
+   && [[ "$(cd "$dir" && GITHUB_OUTPUT="" bash "$derive" CHANGELOG.md | grep -E '^(release|bump|version)=' | tr '\n' ' ')" == "release=true version=1.0.1 bump=patch " ]]; then
+  note_ok "a bump marker in a fragment still compiles and still forces the bump"
+else
+  note_fail "a '<!-- release: patch -->' fragment must remain legal: $(cat "$tmp/case5c.out")"
+fi
+
+# ---------------------------------------------------------------------------
 # Case 6: fenced prose that mentions `## Unreleased` must not be treated as
 # the target section. This pins the #5918/#5939 bug class for both the
 # existence check and the insertion transformer.

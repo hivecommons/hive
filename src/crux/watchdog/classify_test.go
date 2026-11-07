@@ -200,3 +200,29 @@ func TestLooksLikeShellPromptSkipsTrailingBlanks(t *testing.T) {
 		t.Fatal("empty pane is not a shell prompt")
 	}
 }
+
+func TestPaneShowsAuthScreenIgnoresSourceText(t *testing.T) {
+	filler := strings.Repeat("working\n", authScreenTailLines)
+	cases := []struct {
+		name string
+		pane string
+		want bool
+	}{
+		{"grep prefix", "classify.go:99: \"Please run /login\",", false},
+		{"quoted literal", "  \"Login expired\",", false},
+		{"backtick literal", "see `Sign in to continue` here", false},
+		{"regex alternation", "rg 'credentialValid|Login expired|Run /login'", false},
+		{"table name", "var authScreenPatterns = []string{ Login expired", false},
+		{"login expired chrome", "● Login expired · Please run /login", true},
+		{"sign in", "Sign in to continue", true},
+		{"scrolled out of tail", "Sign in to continue\n" + filler, false},
+		{"real prompt under old output", filler + "Login expired · Please run /login\n", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := paneShowsAuthScreen(tc.pane); got != tc.want {
+				t.Fatalf("paneShowsAuthScreen() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
