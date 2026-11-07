@@ -365,7 +365,8 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	repoRoot := s.agentsRepoRoot(primaryRepo)
 
 	// Additive: prepend the repo's AGENTS.md instructions + requested skills to
-	// the injected knowledge, when a local checkout root is available. This is a
+	// the injected knowledge, when a checkout root is available — local, or the
+	// GitHub-fetched copy a hosted spoke falls back to (#17090). This is a
 	// guarded, single call point — it returns "" (and never errors) when no
 	// AGENTS.md exists, so it is a no-op for repos that don't use the convention.
 	//
