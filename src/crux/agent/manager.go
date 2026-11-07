@@ -1654,5 +1654,5 @@ func (m *Manager) bobPreflightUnlocked(agent *AgentProcess) {
 	// across the agent fleet.
 	m.ensureBobAuthSettings(agent.Name, bobSharedHome)
 	m.verifyBobKeyReadable(agent.Name, m.bobKeyFilePath(), agent.UID)
-	_ = m.verifyBobStateDirsWritable(agent.Name, bobSharedHome, m.workDir+"/"+agent.Name, agent.UID)
+	_ = m.verifyBobStateDirsWritable(agent.Name, bobStateHome(agent.Name, agent.UID, backend), m.workDir+"/"+agent.Name, agent.UID)
 }
