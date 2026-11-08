@@ -54,11 +54,9 @@ func (f *createClaimFake) server(t *testing.T) *httptest.Server {
 				_, _ = io.WriteString(w, `{"message":"label add refused"}`)
 				return
 			}
-			var in struct {
-				Labels []string `json:"labels"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&in)
-			f.labelAdds = append(f.labelAdds, in.Labels...)
+			var added []string
+			_ = json.NewDecoder(r.Body).Decode(&added)
+			f.labelAdds = append(f.labelAdds, added...)
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/99/labels/help"):
 			f.helpRemoved++
