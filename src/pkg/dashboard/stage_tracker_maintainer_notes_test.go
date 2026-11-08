@@ -23,6 +23,8 @@ func TestStageTrackerMaintainerNotesWiring(t *testing.T) {
 		`class="hv-btn btn-secondary ham-notes-submit" data-action="hamNoteAdd"`,
 		`class="ham-note-del" data-action="hamNoteDelete"`,
 		`fetch('/api/notes', { method: 'POST'`,
+		`if (id === 'notes') {`,
+		`#activity-monitor-section .ham-notes-btn:not(.ham-notes-has) { display: none; }`,
 		`fetch('/api/notes/' + encodeURIComponent(id), { method: 'DELETE' })`,
 		`source.addEventListener('maintainer-notes', (e) => {`,
 		`lines.push(nn + ' maintainer note' + (nn === 1 ? '' : 's') + ' (private to this hive)')`,
@@ -57,7 +59,9 @@ func TestStageTrackerMaintainerNotesRenderNode(t *testing.T) {
 		jsFunc(t, html, "hamNotesFor"),
 		jsFunc(t, html, "hamNotesCount"),
 		jsFunc(t, html, "hamNotesCtx"),
+		jsFunc(t, html, "hamNotesPhoneTier"),
 		jsFunc(t, html, "stageTrackerNotesButtonHtml"),
+		jsFunc(t, html, "stageTrackerNotesMenuItem"),
 		jsFunc(t, html, "stageTrackerNoteHtml"),
 		jsFunc(t, html, "stageTrackerNotesPanelHtml"),
 		`
@@ -93,6 +97,15 @@ b = stageTrackerNotesButtonHtml(item, hamNotesCtx(item));
 assert.ok(b.includes('class="ham-notes-btn ham-notes-has"'), 'has-class: ' + b);
 assert.ok(b.includes('<span class="ham-notes-count">2</span>'), 'badge 2: ' + b);
 assert.ok(b.includes('2 maintainer notes.'), 'tooltip count: ' + b);
+
+// The ⋯ menu entry carries the count; a phone card without notes draws
+// no badge at all (the menu is the way in there).
+assert.strictEqual(stageTrackerNotesMenuItem(item).label, 'Maintainer notes (2)\u2026');
+assert.strictEqual(stageTrackerNotesMenuItem(pr).id, 'notes');
+global.matchMedia = () => ({ matches: true });
+assert.strictEqual(stageTrackerNotesButtonHtml({ repo: 'hivecommons/hive', number: 99 }, hamNotesCtx(item)), '', 'phone: unnoted row has no badge');
+assert.ok(stageTrackerNotesButtonHtml(item, hamNotesCtx(item)).includes('ham-notes-count'), 'phone: noted row keeps its badge');
+delete global.matchMedia;
 
 // Closed: no panel. Open: list + composer; alice deletes hers only.
 assert.strictEqual(stageTrackerNotesPanelHtml(item, hamNotesCtx(item)), '');
