@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v6.3.0)
+
+### Added
+
+- crux: agent step service, the sixth work service of the Crux work-services RFC ([hivecommons/crux#114](https://github.com/hivecommons/crux/issues/114) S6). `POST /v1/runs` with `"profile": "agent"` now opens a step session — a contained run that provisions its checkout and waits — and `POST /v1/runs/{id}/steps` runs one agent step inside it: a `claude`, `codex` or `process` backend reads the prompt in the sandbox and its JSON answer is checked against the request's `output_schema`, with bounded re-asks on a mismatch, a per-attempt timeout, tool and turn limits where the backend can enforce them, and a recorded `unsupported` refusal where it cannot. Each step is logged in the S4 command log, announced as a `step` turn signal, and read back with `GET /v1/runs/{id}/steps[/{n}]` or `crux --server … step run|list|show`.
+
 ## 2026-11-08 (v6.2.0)
 
 ### Added
