@@ -1031,3 +1031,40 @@
     .sts-sample { padding: var(--sp-3) var(--sp-2) 0; }
     .sts-sample .ham-row { padding: var(--sp-2); }
     .sts-sample .ham-cols { padding-top: 0; }
+    /* Phone ergonomics (#17163, part of #17158): in the .modal-sheet tier
+       (the query responsive.css uses for full-screen dialogs) every control
+       in the activity monitor meets the coarse-pointer floor. --tap-target is
+       remapped to --tap-target-touch for this section only, so the grip, ?,
+       ⚙ and the ⧉ ⛶ 📺 header tools (responsive.css sizes them from the same
+       token) grow with the chips, selects, search box, Merged / queue chips
+       and label chips. The select checkbox and ⋯ kebab leave the left gutter
+       (12px wide on touch, hover-revealed on desktop) for the top-right
+       corner of the row header, always visible and tap-sized; the header
+       reserves their width so the title wraps beside them. The kebab menu
+       itself is a .hive-dialog.modal-sheet (tracker-actions.js adds
+       .ham-menu-sheet) with tap-sized items and the sheet's safe-area pad.
+       Desktop (and the popout, kiosk, TV / display modes at desktop widths)
+       does not match the query and is unchanged. Tokens only (ADR-0018). */
+    @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
+      #activity-monitor-section { --tap-target: var(--tap-target-touch); }
+      #activity-monitor-section .ham-toolbar .ham-chip, #activity-monitor-section .ham-labels .ham-chip, #activity-monitor-section .ham-selbar .ham-chip, #activity-monitor-section .ham-compact .ham-chip,
+      #activity-monitor-section .ham-select, #activity-monitor-section .ham-input,
+      #activity-monitor-section .ham-merged-count, #activity-monitor-section .ham-queue-chip,
+      #activity-monitor-section .ham-repo-chip, #activity-monitor-section .cue-event-ico, #activity-monitor-section .ham-lead-act, #activity-monitor-section .ham-badge-mod[data-action] {
+        box-sizing: border-box; min-height: var(--tap-target); min-width: var(--tap-target);
+      }
+      #activity-monitor-section .ham-toolbar .ham-chip, #activity-monitor-section .ham-labels .ham-chip, #activity-monitor-section .ham-selbar .ham-chip, #activity-monitor-section .ham-repo-chip, #activity-monitor-section .ham-lead-act { padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
+      #activity-monitor-section .ham-select, #activity-monitor-section .ham-input { height: var(--tap-target); padding-top: 0; padding-bottom: 0; }
+      #activity-monitor-section .ham-repo-filter { min-height: var(--tap-target); align-items: center; }
+      #activity-monitor-section .ham-header-tool { width: var(--tap-target); min-width: var(--tap-target); height: var(--tap-target); min-height: var(--tap-target); padding: 0; font-size: var(--tap-glyph); }
+      #activity-monitor-panel { padding-left: 0; }
+      #activity-monitor-section .ham-row > .ham-row-tools, #activity-monitor-section .ham-sub > .ham-row-tools { left: auto; right: 0; top: 0; width: auto; flex-direction: row; align-items: flex-start; gap: var(--sp-2); z-index: 1; }
+      #activity-monitor-section .ham-row > .ham-row-head, #activity-monitor-section .ham-sub > .ham-row-head { padding-right: calc(2 * var(--tap-target) + var(--sp-2) + var(--sp-3)); min-height: var(--tap-target); }
+      #activity-monitor-section .ham-sel, #activity-monitor-section .ham-kebab { width: var(--tap-target); height: var(--tap-target); min-width: var(--tap-target); min-height: var(--tap-target); font-size: var(--tap-glyph); opacity: 1; }
+      .ham-menu.ham-menu-sheet { position: static; min-width: 0; max-width: none; padding: 0; border: 0; box-shadow: none; background: transparent; font-size: var(--fs-touch); }
+      .ham-menu-sheet .ham-menu-head { display: none; }
+      .ham-menu-sheet .ham-menu-item { min-height: var(--tap-target-touch); padding: var(--sp-3) var(--sp-4); white-space: normal; overflow-wrap: anywhere; }
+      .ham-menu-sheet .ham-menu-hint, .ham-menu-sheet .ham-menu-note { font-size: var(--fs-sm); }
+      .ham-menu-sheet .ham-menu-sep { margin: var(--sp-2) 0; }
+      .ham-sheet .ham-sheet-body { padding-bottom: var(--safe-area-bottom); }
+    }
