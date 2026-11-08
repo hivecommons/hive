@@ -3978,6 +3978,18 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Webhook receiver: why the spoke is polling (no secret, deliveries
+	// failing, none arriving). A warning never changes the overall verdict:
+	// the hive still works on the polling cadence.
+	{
+		st, detail, snap := webhookHealthCheck()
+		wh := map[string]any{"status": st, "detail": detail, "mode": string(snap.Mode), "rejected_1h": snap.Rejected1h}
+		if snap.ReasonCode != "" {
+			wh["mode_reason_code"] = snap.ReasonCode
+		}
+		checks[healthCheckWebhooks] = wh
+	}
+
 	// 12. Queue trend (is work being processed?)
 	s.statusMu.RLock()
 	if s.status != nil {
@@ -5328,6 +5340,13 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 	if st, detail, ok := s.projectOrgCheck(); ok {
 		checks = append(checks, check{Name: healthCheckProjectOrg, Status: st, Detail: detail})
 		fails++
+	}
+
+	// Webhook receiver cause (see health_webhooks.go): listed, but it does not
+	// count toward warns, so it never changes the summary verdict that drives
+	// the header pill and DeepHealth — the hive works on polling.
+	if st, detail, _ := webhookHealthCheck(); st != "" {
+		checks = append(checks, check{Name: healthCheckWebhooks, Status: st, Detail: detail})
 	}
 
 	// 8. Queue

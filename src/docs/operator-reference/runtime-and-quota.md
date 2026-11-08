@@ -556,10 +556,13 @@ periodic housekeeping cannot starve the governor:
 
 `/api/status` and `/api/gh-rate-limits` expose
 `webhooks: {healthy, last_event_at, events_1h, invalidations_1h,
-targeted_refreshes_1h, tracker_invalidations_1h, mode, since, mode_reason,
+targeted_refreshes_1h, tracker_invalidations_1h, rejected_1h,
+last_rejected_at, mode, since, mode_reason, mode_reason_code,
 healthy_windows}` (the middle two count the single-item re-reads and the
-tracker cache drops webhooks caused; `mode` is `webhook` | `polling` and
-`since` when it began — see [webhooks.md](../webhooks.md));
+tracker cache drops webhooks caused; `rejected_1h` and `last_rejected_at`
+count deliveries the receiver turned away; `mode` is `webhook` | `polling`
+and `since` when it began; `mode_reason_code` says why it is polling — see
+[webhooks.md](../webhooks.md));
 `/api/status` adds `evalMode` (`webhook` | `poll`), `evalIntervalS`,
 `lastWakeReason`, `lastWakeAt` and `webhookWakes`;
 `graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing
