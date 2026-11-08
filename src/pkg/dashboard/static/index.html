@@ -21907,9 +21907,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const id = 'ham-prep-head-' + encodeURIComponent((q.repo || '') + '|' + (q.base_ref || '') + '|' + suffix);
       return `<div class="ham-train-head${stageTrackerTrainAccentClass(STAGE_TRACKER_PREPARATION_ACCENT)} ham-preparation-head"><span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon', 'Preparation train')} ${esc(text)}</span>${stageTrackerPreparationTooltip(id, stageTrackerPreparationHelp(group), 'ham-preparation-help')}</div>`;
     }
+    // A lone ticket is the base-refresh lock holder, not a train: its row
+    // comment already says owner/waiting and verified/unverified. The header
+    // (count + front) only earns its line once two recorded tickets share it.
+    function stageTrackerPreparationHeaderShown(group) {
+      return group.queue.state !== 'observed' || group.members.length >= 2;
+    }
     function stageTrackerPreparationMissingRows() {
-      return _stageTrackerPreparationInline.flatMap((group, index) => group.queue.state !== 'observed'
-        || (group.members.length && !group.members.some(e => e.location === 'page'))
+      return _stageTrackerPreparationInline.flatMap((group, index) => stageTrackerPreparationHeaderShown(group)
+        && (group.queue.state !== 'observed' || !group.members.some(e => e.location === 'page'))
         ? [{ key: 'preparation-missing:' + index, html: stageTrackerPreparationHeaderHtml(group, 'missing', false) }] : []);
     }
     function stageTrackerPreparationInlineRows(rows, pageItems, stages) {
@@ -21919,7 +21925,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const row of rows) {
         const item = byKey.get(row.key);
         const info = stageTrackerPreparationRowInfo(item, stages);
-        if (info && !stageTrackerPreparationAdjacent(prev, info)) {
+        if (info && !stageTrackerPreparationAdjacent(prev, info) && stageTrackerPreparationHeaderShown(_stageTrackerPreparationInline[info.groupIndex])) {
           out.push({ key: 'preparation:' + row.key, html: stageTrackerPreparationHeaderHtml(
             _stageTrackerPreparationInline[info.groupIndex], row.key, seen.has(info.groupIndex)) });
         }
@@ -21984,6 +21990,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const near = Object.assign({}, ctx, { preparationParent: parent, preparationInfo: info,
           preparationPrev: infos[i - 1] || null, preparationNext: infos[i + 1] || null });
         const heading = !parent && info && !stageTrackerPreparationAdjacent(infos[i - 1], info)
+          && stageTrackerPreparationHeaderShown(_stageTrackerPreparationInline[info.groupIndex])
           ? stageTrackerPreparationHeaderHtml(_stageTrackerPreparationInline[info.groupIndex], 'nested-' + issue.number + '-' + lp.number, seen.has(info.groupIndex)) : '';
         if (info) seen.add(info.groupIndex);
         return heading + stageTrackerSubRowHtml(lp, issue, stages, nowMs, near);
