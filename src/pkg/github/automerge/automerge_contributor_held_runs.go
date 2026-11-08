@@ -57,6 +57,12 @@ const (
 // for this head (hivecommons/hive#14589) — GitHub answers 403 "Resource not
 // accessible by integration", the PR is marked via markUnauthorized, and the
 // mark holds until the head's required checks exist or the head changes.
+// The pass and any refusal live in the process-wide hgithub.HeldRunApprovals
+// ledger, not on the engine: the sweep builds a new engine every tick, and
+// an engine-local map let a refused head be re-POSTed on every sweep. A
+// refused head is not tried again until it changes or the App gains
+// `actions: write`. Held runs GitHub's approve endpoint never accepts
+// (approvableHeldRun) are not sent at all.
 func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA string, claim contributorClaimMatch, policy ContributorLanePolicy, files []intent.ChangedFile, reason string) ([]int64, string) {
 	if c == nil || c.gh == nil || pr == nil || headSHA == "" {
 		return nil, reason
@@ -74,12 +80,18 @@ func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayR
 	if contributorLaneDiffReason(files) == contributorLaneReasonWorkflowPath {
 		return nil, reason
 	}
-	if c.contributorHeldRunsApprovalAttempted(owner, repo, number, headSHA) {
-		// Already tried this head; keep reporting the permission gap while
-		// it stands, without another API call or another log line.
-		if step := c.unauthorizedStep(owner, repo, number, headSHA); step == unauthorizedStepApproveWorkflowRuns {
-			return nil, unauthorizedReason(step)
+	fullRepo := owner + "/" + repo
+	if refused, ok := c.heldRuns.Refused(fullRepo, number, headSHA); ok {
+		// GitHub refused this head's approvals before. Keep reporting the
+		// blocker without another POST: the refusal stands until the head
+		// changes or the App gains `actions: write`.
+		level, known := c.actionsPermission(ctx)
+		if !c.heldRuns.ReleaseOnGrant(fullRepo, number, headSHA, level, known) {
+			return nil, unauthorizedReason(unauthorizedStepApproveWorkflowRuns)
 		}
+		c.info("contributor-lane retrying held-run approval: the App now holds actions: write", "repo", displayRepo, "pr", number, "head", headSHA, "refused_runs", refused)
+	} else if c.heldRuns.Attempted(fullRepo, number, headSHA) {
+		// Already approved (or tried to) on this head.
 		return nil, reason
 	}
 	missing := ""
@@ -105,9 +117,17 @@ func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayR
 		// evidence gap is not the approval hold, so leave it alone.
 		return nil, reason
 	}
-	// Mark before calling the API: a partial failure must not be retried
-	// every tick against the same head.
-	if !c.markContributorHeldRunsApprovalAttempted(owner, repo, number, headSHA) {
+	// GitHub approves only fork pull_request runs (or runs the Actions bot
+	// queued); any other held run answers 403 on every try, so it is never
+	// sent. Those runs stay a person's click on the checks banner.
+	held = approvableHeldRuns(held, fullRepo)
+	if len(held) == 0 {
+		return nil, reason
+	}
+	// Claim before calling the API: a partial failure must not be retried
+	// every tick against the same head. The ledger is process-wide, so the
+	// claim holds across the sweep's one-shot engines.
+	if !c.heldRuns.Claim(fullRepo, number, headSHA) {
 		return nil, reason
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
@@ -125,6 +145,8 @@ func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayR
 	}
 	if len(forbidden) > 0 && len(approved) == 0 {
 		sort.Slice(forbidden, func(i, j int) bool { return forbidden[i] < forbidden[j] })
+		level, known := c.actionsPermission(ctx)
+		c.heldRuns.RecordRefusal(fullRepo, number, headSHA, forbidden, level, known)
 		return nil, c.markUnauthorized(ctx, displayRepo, owner, repo, pr, number, headSHA, unauthorizedStepApproveWorkflowRuns, unauthorizedPermissionActionsWrite, approveWorkflowRunsHumanAction(owner, repo, missing, forbidden))
 	}
 	if len(approved) == 0 {
@@ -196,32 +218,44 @@ func heldWorkflowRunsForHead(runs []*gh.WorkflowRun, headRepo string) []*gh.Work
 	return held
 }
 
-func contributorHeldRunsApprovalKey(prKey, headSHA string) string {
-	return contributorHeldRunsApprovalKeyPrefix + prKey + "@" + strings.ToLower(headSHA)
-}
-
-// contributorHeldRunsApprovalAttempted reports whether this process already
-// approved (or tried to approve) the held runs for this PR head.
-func (c *Engine) contributorHeldRunsApprovalAttempted(owner, repo string, number int, headSHA string) bool {
-	c.heldRunApprovalsMu.Lock()
-	defer c.heldRunApprovalsMu.Unlock()
-	return c.heldRunApprovals[contributorHeldRunsApprovalKey(c.evaluatedHeadKey(owner, repo, number), headSHA)]
-}
-
-// markContributorHeldRunsApprovalAttempted records the attempt for this PR
-// head and reports whether it is the first.
-func (c *Engine) markContributorHeldRunsApprovalAttempted(owner, repo string, number int, headSHA string) bool {
-	key := contributorHeldRunsApprovalKey(c.evaluatedHeadKey(owner, repo, number), headSHA)
-	c.heldRunApprovalsMu.Lock()
-	defer c.heldRunApprovalsMu.Unlock()
-	if c.heldRunApprovals == nil {
-		c.heldRunApprovals = make(map[string]bool)
+// approvableHeldRuns keeps the held runs GitHub's approve endpoint
+// accepts: a `pull_request` run whose head repository is a fork of
+// baseRepo, or a run the Actions bot queued. GitHub answers any other run
+// with 403 "This run is not from a fork pull request or queued by the
+// Actions bot", forever. The fork test compares repositories rather than
+// reading head_repository.fork, which is true for any repository that is
+// itself a fork (projectbluefin/dakota-iso is).
+func approvableHeldRuns(runs []*gh.WorkflowRun, baseRepo string) []*gh.WorkflowRun {
+	var out []*gh.WorkflowRun
+	for _, run := range runs {
+		if approvableHeldRun(run, baseRepo) {
+			out = append(out, run)
+		}
 	}
-	if c.heldRunApprovals[key] {
+	return out
+}
+
+func approvableHeldRun(run *gh.WorkflowRun, baseRepo string) bool {
+	if run == nil || run.GetID() <= 0 {
 		return false
 	}
-	c.heldRunApprovals[key] = true
-	return true
+	if strings.EqualFold(run.GetTriggeringActor().GetLogin(), githubActionsBotLogin) {
+		return true
+	}
+	if run.GetEvent() != "pull_request" {
+		return false
+	}
+	head := strings.TrimSpace(run.GetHeadRepository().GetFullName())
+	return head != "" && !strings.EqualFold(head, baseRepo)
+}
+
+// actionsPermission reads the App installation's `actions` grant; known
+// is false when the transport cannot read it.
+func (c *Engine) actionsPermission(ctx context.Context) (string, bool) {
+	if c == nil || c.installationPermission == nil {
+		return "", false
+	}
+	return c.installationPermission(ctx, "actions")
 }
 
 // contributorHeldRunsApprovedComment is the audit comment body; the marker

@@ -881,15 +881,22 @@ at `required-check-missing:Audit production dependencies` until an operator
 clicked "Approve and run". When the registry path admitted the author and the
 lane stops at `required-check-missing:<ctx>`, or at `ci-unverified` while
 every `pull_request` run on the head is held (the branch's required checks
-are unreadable or empty), it now approves the head's held runs once (`POST /repos/{owner}/{repo}/actions/runs/{id}/approve`, fork head
-included), posts one `<!-- hive:contributor-held-runs-approved … -->` audit
+are unreadable or empty), it now approves the head's held runs once (`POST /repos/{owner}/{repo}/actions/runs/{id}/approve`). Only runs
+GitHub's endpoint accepts are sent: a fork `pull_request` run, or a run the
+Actions bot queued; any other held run (a same-repository run, a
+`pull_request_review` or `pull_request_target` run) would get 403 on every
+try and stays a person's click. It posts one `<!-- hive:contributor-held-runs-approved … -->` audit
 comment naming the author and tier, and logs `contributor-lane approved held
 runs` with the run ids (`approve_held_runs_for_registry_trusted`, default
 `true`). Claim-marker, auto-promotion and association admissions are never
 approved for, nor is a PR carrying the sentinel or an `exclude_labels` label,
 nor one touching `.github/workflows/**`. The App needs **Actions: Read and
-write** for the call; without it the approve fails, is logged once per head,
-and the PR waits for a person as before.
+write** for the call; without it the approve fails, the PR is marked
+`hive:unauthorized` once per head, and it waits for a person as before. The
+pass and the refusal are kept for the life of the hive process (not per
+sweep), so a refused head is not POSTed again until it changes or the App
+gains **Actions: Read and write** (read from the installation at most every
+five minutes); a restart tries each head once more.
 
 The required checks come from classic branch protection first. When classic
 protection says nothing is required (the branch is unprotected, or protected
