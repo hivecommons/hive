@@ -7,12 +7,13 @@ import (
 
 // TestActivityMonitorPhoneTextFloor guards the 12px phone text floor for the
 // Activity monitor (#17164): the phone media tier must remap --fs-2xs and
-// --fs-xs to --fs-sm inside #activity-monitor-section.
+// --fs-xs to --fs-sm inside #activity-monitor-section, plus --ham-odo-digit,
+// which :root resolves from --fs-xs before the section override can apply.
 func TestActivityMonitorPhoneTextFloor(t *testing.T) {
 	html := indexHTML(t)
 
 	const tier = "@media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {"
-	const rule = "#activity-monitor-section { --fs-2xs: var(--fs-sm); --fs-xs: var(--fs-sm); }"
+	const rule = "#activity-monitor-section { --fs-2xs: var(--fs-sm); --fs-xs: var(--fs-sm); --ham-odo-digit: var(--fs-sm); }"
 
 	found := false
 	for rest := html; ; {
