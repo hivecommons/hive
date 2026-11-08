@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.195.0)
+
+### Added
+
+- **crux serve:** every API request now gets a span and `crux.serve.requests` / `crux.serve.request.duration` metrics, labelled only by method, route pattern (for example `GET /v1/agents/{name}`) and status class; no-op unless an OTel provider is configured (hivecommons/crux#126).
+- **knowledge advisor:** with `knowledge.advisor_llm` set, a small model now ranks the mid-task advisor's candidates and picks one stored entry or nothing; it never writes advice. `shadow` delivers the matcher's top entry and logs the model's pick, `rank` delivers the pick with an optional `holdout_percent` control arm, budgets (6 calls per agent-hour, 300 per UTC day) and timeouts fail closed or to the matcher per `on_error`, and every decision writes one `knowledge advisor: decision` log line (#17155).
+
 ## 2026-11-08 (v5.194.0)
 
 ### Added
