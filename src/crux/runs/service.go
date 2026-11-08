@@ -14,6 +14,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/checkout"
+	"github.com/hivecommons/hive/crux/cmdlog"
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/runstate"
 	"github.com/hivecommons/hive/crux/sandbox"
@@ -126,6 +127,9 @@ type Service struct {
 	Environ func() []string
 	// Scrub redacts output before it is persisted; nil uses logscrub.
 	Scrub func(string) string
+	// CmdLog opens the per-run command log (S4) the runner appends to;
+	// nil keeps no log. Reading does not need it: Commands reads the file.
+	CmdLog cmdlog.Opener
 
 	mu     sync.Mutex
 	active map[string]*active
@@ -206,6 +210,21 @@ func (s *Service) Get(id string) (api.ContainedRun, error) {
 		return api.ContainedRun{}, err
 	}
 	return toWire(rec), nil
+}
+
+// Commands is the run's command log (S4) after sinceSeq, at most limit
+// records. A run whose directory holds no log yet answers an empty page,
+// not an error; only an unknown id is ErrNotFound.
+func (s *Service) Commands(id string, sinceSeq int64, limit int) (api.CommandPage, error) {
+	if _, err := s.Store.Get(id); err != nil {
+		return api.CommandPage{}, err
+	}
+	page, err := cmdlog.Read(s.Store.Path(id), sinceSeq, limit)
+	if errors.Is(err, cmdlog.ErrNotFound) {
+		page, err = api.CommandPage{Commands: []api.CommandRecord{}, NextSeq: sinceSeq}, nil
+	}
+	page.Run = id
+	return page, err
 }
 
 // Wait blocks until the run reaches a terminal status or ctx ends, then
@@ -458,12 +477,16 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 		EnvAllowlist: p.allowlist,
 		NetworkMode:  p.network,
 	}
+	log, seq := s.commandStarted(id, p.command)
 	res, err := s.Backend.Launcher.Run(runCtx, spec)
 	// A launcher that returned without error finished the command; a
 	// cancel or deadline that landed after that does not unmake the result.
 	cancelled := err != nil && ctx.Err() != nil
 	timedOut := err != nil && !cancelled && errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	status, reason, exit := classify(res, err, cancelled, timedOut)
+	if log != nil {
+		_ = log.Ended(seq, cmdlog.End{ExitCode: exit, Status: commandStatus(status, exit), Reason: reason, Stdout: res.Stdout, Stderr: res.Stderr})
+	}
 	if (cancelled || timedOut) && s.Backend.Teardown != nil {
 		tctx, cancel := context.WithTimeout(context.Background(), TeardownTimeout)
 		if terr := s.Backend.Teardown(tctx, name); terr != nil {
@@ -478,6 +501,46 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 		d.Stdout, d.StdoutTruncatedAt = stdout, stdoutCut
 		d.Stderr, d.StderrTruncatedAt = stderr, stderrCut
 	})
+}
+
+// commandStarted appends the dispatched command to the run's command log
+// and returns the log and seq to end it with; a nil log means no log is
+// kept (CmdLog unset or the open failed, which must not stop the run).
+func (s *Service) commandStarted(id string, command []string) (cmdlog.Recorder, int64) {
+	if s.CmdLog == nil {
+		return nil, 0
+	}
+	log, err := s.CmdLog(s.Store.Path(id))
+	if err != nil {
+		return nil, 0
+	}
+	seq, err := log.Started(cmdlog.Start{Command: command, Cwd: sandbox.DefaultWorkspaceMount, Capture: api.CommandCaptureRunner})
+	if err != nil {
+		return nil, 0
+	}
+	return log, seq
+}
+
+// commandStatus maps the run's outcome onto the command log's closed set.
+// The run calls a non-zero exit "completed" (the command ran to its own
+// end); the log says "failed", because the question it answers is whether
+// the command succeeded. Unfinished is reserved for an exit the runtime
+// never learned.
+func commandStatus(runStatus string, exit *int) string {
+	switch runStatus {
+	case runstate.StatusCancelled:
+		return api.CommandCancelled
+	case runstate.StatusUnfinished:
+		return api.CommandUnfinished
+	case runstate.StatusCompleted:
+		if exit != nil && *exit == 0 {
+			return api.CommandCompleted
+		}
+		return api.CommandFailed
+	}
+	// The run failed around the command (timed out, refused, teardown):
+	// the runtime ended it, so it is failed, not unfinished.
+	return api.CommandFailed
 }
 
 // classify turns the launcher's answer into a status. The exit code is
