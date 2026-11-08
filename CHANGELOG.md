@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v6.0.4)
+
+### Fixed
+
+- automerge: the lanes' "once per PR head" memory now lasts for the life of the hive process instead of one sweep. The queued, trusted-author and contributor lanes run every minute on a fresh engine, and the memory lived on that engine, so it was empty on every tick. A refused `update-branch` (a fork head behind a base that changed workflow files) was sent again every sweep: projectbluefin `fsdk-containers#508` logged "update-branch refused" about every 75 s. A merge GitHub refused for want of an approving review was sent again every minute instead of every 30 minutes. The trusted-author merge-forward was tried every sweep instead of once per head. "Logged once per head" holds, such as "merge train: PR left out of every train", were logged on every sweep (about 15 PRs every 80 s). The memory now lives on the long-lived GitHub client and is shared by every lane's engine. A read-only integration-eligibility check keeps its own memory, so a check that makes no write never marks a head as tried.
+- A spoke that rejects webhook deliveries now says why. `/api/status.webhooks` (and `/api/gh-rate-limits`) gain `mode_reason_code` — `no_secret` when `GITHUB_WEBHOOK_SECRET` is unset, `signature_failed` or `deliveries_rejected` when deliveries arrive but fail, `no_deliveries` when the secret is set but nothing verified has arrived — plus `rejected_1h` and `last_rejected_at`; `mode_reason` gives the same cause in plain words. The 503 a spoke without a secret returns is now counted like any other rejected delivery (the log stays at one WARN per process), and `/api/health/deep` plus the dashboard health tooltip carry a `webhooks` warning such as "polling — no GITHUB_WEBHOOK_SECRET on this spoke; relayed deliveries are rejected with 503". Before this, a hosted spoke whose hub never provisioned the secret read `healthy:false, mode:polling` with no reason, the same as "GitHub isn't sending". Only whether the secret is set is reported, never its value. See [webhooks.md](src/docs/webhooks.md).
+
 ## 2026-11-08 (v6.0.3)
 
 ### Fixed
