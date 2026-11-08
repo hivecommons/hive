@@ -254,8 +254,11 @@ func TestSymlinkedCruxDirCannotRedirectThePromptWrite(t *testing.T) {
 	}
 	f := newFixture(t, answers(`{"verdict":"pass"}`))
 	outside := t.TempDir()
-	if err := os.Symlink(outside, filepath.Join(f.host.Workspace, workspaceDir)); err != nil {
-		// workspaceDir may be nested (.crux/steps); link its first element
+	link := filepath.Join(f.host.Workspace, filepath.FromSlash(workspaceDir))
+	if err := os.MkdirAll(filepath.Dir(link), 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
 		t.Fatal(err)
 	}
 	step := Step(t, f)
