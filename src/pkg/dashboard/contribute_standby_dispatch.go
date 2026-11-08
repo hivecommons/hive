@@ -301,7 +301,7 @@ func (h *ContributeWSHub) assignStandbyTask(c *ContributorConnection, item Ready
 	c.lastLeaseRenew = assignedAt
 	c.taskAssignedAt = assignedAt
 	c.currentLabels = item.Labels
-	c.lastIdleReason = ""
+	c.clearIdleReasonLocked()
 	c.currentPrompt = ""
 	c.pendingToken = ""
 	c.credentialDelivered = false

@@ -1382,8 +1382,11 @@ the resident agent would flap on and off with every socket drop.
 
 A relay counts as covering the role only when all of these hold:
 
+- it is acting as the role: its effective role, after any owner "Acting as"
+  assignment, is that role;
 - its heartbeat is fresh;
-- it is not in a failure-streak pause;
+- it is signed in as a contributor with a GitHub login;
+- contributions are not suspended (`hub.contribute_suspended`);
 - it is not in standby mode (`just contribute-standby`). A standby relay never
   asks for ordinary work; it only takes what you dispatch to it by hand;
 - it has not reported a quota hold. A relay whose quota guard is holding stops
@@ -1391,13 +1394,24 @@ A relay counts as covering the role only when all of these hold:
   tells the hub (`quota_hold_v1`, see
   [the contributor relay guide](contributor-relay.md#a-held-relay-tells-the-hub-quota_hold_v1));
   an older relay is still counted while held;
+- it is not in a failure-streak pause;
 - it has not used up its hourly or daily task allowance
   (`hub.tier_limits.<tier>.max_per_hour` / `max_per_day` for the
   contributor's trust tier). The hub refuses such a relay work
   (`hourly_limit` / `daily_limit`) until the window rolls, so it covers
   nothing in the meantime. Coverage and task assignment use the same check,
   so they always agree on which limits apply and how they are counted;
-- contributions are not suspended (`hub.contribute_suspended`).
+- its access is not revoked and its trust tier is not in
+  `hub.disabled_tiers`. The hub refuses such a relay work (`tier_disabled`),
+  using the same check as coverage, and covers again as soon as you re-enable
+  the tier;
+- it is not idle on an empty queue: a relay holding no task whose every
+  request for work has been answered `no_matching_work` (or `repo_unmintable`,
+  the same answer when the hub had to skip a repository it cannot get a token
+  for) for two minutes is connected but working nothing, so it stops covering.
+  An idle relay asks again about every 30 seconds, so one empty answer between
+  two tasks never drops it. A task or a fix-pr task handed to the relay ends
+  the idle stretch at once.
 
 A relay that is busy on a task still counts, including one holding its
 tier's `max_concurrent` tasks.
