@@ -97,6 +97,9 @@ Commands:
   list   [--json] [--status=<s>] [--actor=<a>]  List beads
   ready  [--json] [--actor=<a>]                List open/unblocked beads
   create --title "..." --type <type> --priority <0-4> --actor <name> [--external-ref <ref>]
+  create --type knowledge --title "..." (--body "..." | --body-file <path|->)
+         [--state draft|approved] [--tag <tag>]... [--layer <channel>] [--fact-type <type>]
+                                           Create a knowledge fact via the dashboard API
   update <id> --claim                      Claim a bead (set in_progress)
   update <id> --status <status>            Change status
   update <id> --set-metadata key=value     Set metadata key
@@ -177,9 +180,13 @@ func cmdReady(args []string) {
 // ---------- create ----------
 
 func cmdCreate(args []string) {
+	if createTypeArg(args) == knowledgeCreateType {
+		cmdCreateKnowledge(args)
+		return
+	}
 	fs := flag.NewFlagSet("create", flag.ExitOnError)
 	title := fs.String("title", "", "Bead title (required)")
-	beadType := fs.String("type", "task", "Bead type: bug|feature|task|epic|chore|decision|advisory")
+	beadType := fs.String("type", "task", "Bead type: bug|feature|task|epic|chore|decision|advisory|knowledge")
 	priority := fs.Int("priority", 2, "Priority 0-4 (0=critical, 4=minor)")
 	actor := fs.String("actor", "", "Actor name (required)")
 	extRef := fs.String("external-ref", "", "External reference (e.g. issue URL)")

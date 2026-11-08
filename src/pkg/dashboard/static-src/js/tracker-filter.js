@@ -125,6 +125,13 @@
       return STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES.indexOf(n) >= 0 && (item.author_kind || '') === 'human';
     }
 
+    // The phone tier of the Activity monitor: the same media query the
+    // sheet-vs-popover decision uses (STAGE_TRACKER_SHEET_QUERY in
+    // tracker-actions.js), so the two cannot drift.
+    function stageTrackerPhone() {
+      return stageTrackerIsPhoneSheet();
+    }
+
     // Chip order: every stage/NNN-* label first by NNN, then everything
     // else alphabetically, case-insensitive.
     function stageTrackerLabelCompare(a, b) {
@@ -148,6 +155,7 @@
       f.needsHuman = !!f.needsHuman;
       f.onHold = !!f.onHold;
       f.waitingOnYou = !!f.waitingOnYou;
+      f.attentionFirst = f.attentionFirst !== false;
       if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
       if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
       f.attention = !!f.attention;
@@ -162,6 +170,14 @@
     // True when any narrowing filter (not sort / paging) is set.
     function stageTrackerFilterActive(f) {
       return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || f.waitingOnYou || f.age !== 'any' || f.author !== 'any' || f.attention || f.acted !== 'any';
+    }
+
+    // How many narrowing filters the phone Filters sheet holds are set:
+    // everything stageTrackerFilterActive counts except the kind /
+    // attention / waiting-on-you chips, which sit on the compact bar.
+    function stageTrackerSheetFilterCount(f) {
+      f = stageTrackerNormalizeFilter(f);
+      return (f.repo ? 1 : 0) + (f.q ? 1 : 0) + (f.age !== 'any' ? 1 : 0) + (f.author !== 'any' ? 1 : 0) + (f.acted !== 'any' ? 1 : 0) + f.labels.length + (f.needsHuman ? 1 : 0) + (f.onHold ? 1 : 0);
     }
 
     // Does one item pass the narrowing filters? ctx.nowMs anchors the age
@@ -271,8 +287,12 @@
     // and 'waiting' rows tier attention-first within a column
     // (stageTrackerAttentionTier); dir 'asc' reverses the strip / age /
     // repo / number keys but never the tier.
-    function stageTrackerSort(rows, stages, f) {
+    // On a phone (opts.phone) with f.attentionFirst the tier becomes the
+    // top-level group, ahead of the column, so rows parked on a person lead
+    // the list; desktop ordering never reads it.
+    function stageTrackerSort(rows, stages, f, opts) {
       f = stageTrackerNormalizeFilter(f);
+      const tierFirst = !!(opts && opts.phone) && f.attentionFirst && (f.sort === 'furthest' || f.sort === 'waiting');
       const byRepoNumber = (x, y) => ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0));
       const sign = f.dir === 'asc' ? -1 : 1;
       const byTier = (x, y) => stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y);
@@ -286,6 +306,8 @@
           cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return sign * (b.anchor - a.anchor) || byTier(x, y) || sign * ((a.since - b.since) || byRepoNumber(x, y)); };
         }
       }
+      const ordered = cmp;
+      if (tierFirst) cmp = (x, y) => byTier(x, y) || ordered(x, y);
       return (rows || []).slice().sort(cmp);
     }
 

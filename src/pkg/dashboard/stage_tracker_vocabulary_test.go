@@ -23,6 +23,7 @@ func TestStageTrackerVocabularyTable(t *testing.T) {
 		stagelabels.Actionable:             {trackerColumnActionable, "actionable"},
 		stagelabels.TriageNeeded:           {trackerColumnActionable, "waiting for triage"},
 		stagelabels.PossiblyExisting:       {trackerColumnActionable, "waiting for the author to confirm the gap (prior art found)"},
+		stagelabels.OpenForDiscussion:      {trackerColumnActionable, "open for discussion"},
 		stagelabels.Claimed:                {trackerColumnClaimed, "claimed"},
 		stagelabels.PRInProgress:           {trackerColumnPR, "a PR in progress"},
 		stagelabels.CoveredByPR:            {trackerColumnPR, "covered by a PR"},

@@ -1,7 +1,7 @@
 # Crux work services: S1 pinned checkout (hivecommons/crux#114)
 
 Status: **S0 caller principals and S1 pinned checkout shipped in hive
-`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; everything else in the RFC is unscheduled. This records
+`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate); everything else in the RFC is unscheduled. This records
 S1 *as implemented*, including where it is weaker than the RFC text.
 
 The RFC asks for "a working copy of this repo at this commit, owned by
@@ -152,6 +152,89 @@ does: a run is owned by the principal that created it, and only the owner
 or the operator may read or cancel it. While a run is live its checkout
 cannot be deleted (409 `conflict`); once the run settles, it can.
 
+## S3. Human gate
+
+A driver asks a person to decide something before it continues; the
+answer is recorded and survives a restart of `crux serve`. Package
+`src/crux/gates` (`gates.Service`), API types in `src/crux/api/gates.go`,
+routes in `src/crux/serve/gates.go`, CLI in `src/crux/cli/gate.go`. The
+service needs no configuration: `crux serve` always opens it on
+`<workdir>/gates`.
+
+| Route | Body | Response |
+|---|---|---|
+| `POST /v1/gates` | `{"subject", "context"?, "choices"?, "timeout"?, "opened_by"?, "idempotency_key"?}` | `201 Gate` new; `200 Gate` the same gate re-opened |
+| `GET /v1/gates[?status=waiting\|answered\|expired]` | | `200 {"gates":[Gate…]}` oldest first |
+| `GET /v1/gates/{id}` | | `200 Gate` |
+| `POST /v1/gates/{id}/answer` | `{"answer", "note"?, "as_operator"?}` | `200 Gate` |
+| `GET /v1/gates/{id}/wait[?timeout=30s]` | | `200 Gate` once answered or expired, or still `waiting` when the window (default 30 s, capped at 5 min) closes |
+
+`Gate` is `{"id","status","subject","context"?,"choices","timeout",
+"opened_by","opened_by_principal","opened_at","expires_at"?,"answer"?,
+"answered_by"?,"answered_by_principal"?,"answered_at"?,"note"?,
+"operator_override"?,"expired_at"?}`.
+
+```
+crux --server ADDR gate open --subject S [--choice C]… [--timeout D] [--context JSON] [--opened-by L] [--idempotency-key K] [--json]
+crux --server ADDR gate list [--status S] [--json]
+crux --server ADDR gate answer <id> --choice C [--note TEXT] [--as-operator] [--json]
+crux --server ADDR gate wait <id> [--timeout D] [--json]
+```
+
+`gate wait` prints the answer and exits 0, or exits 1 with nothing on
+stdout when the gate expired. Like `runs`, the verb exists only with
+`--server`: the server is the single writer that records identities,
+journals decisions and publishes events.
+
+| Condition | Status | `code` |
+|---|---|---|
+| empty subject, bad `timeout`, duplicate or empty choices, `context` not one JSON value, unknown `status` filter | 400 | `bad_request` |
+| a project answering, or reading a gate another principal opened | 403 | `forbidden` |
+| the opener answering its own gate without `as_operator` | 403 | `gate_self_answer` |
+| unknown id | 404 | `not_found` |
+| a different answer to an answered gate, any answer to an expired one | 409 | `gate_closed` |
+| `context` over 64 KiB once encoded | 413 | `gate_context_too_large` |
+| `answer` not one of `choices` (free text belongs in `note`) | 422 | `gate_invalid_choice` |
+| the server has no gate service | 501 | `not_supported` |
+
+**Semantics.**
+
+- *Idempotent open.* The key is derived the way `toolapprove`'s inbox
+  derives one: from the subject, the canonically re-encoded context
+  (object keys sorted), the choices, the timeout and `opened_by` — never
+  timestamps — or from `idempotency_key` when given. Either form is
+  scoped to the opening principal. Re-opening returns the existing record
+  in whatever state it is in, including the recorded answer.
+- *Who answers.* Only the operator principal. Projects open, read, list
+  and wait on their own gates. When the answering principal is the one
+  that opened the gate, `as_operator` is required; the record and journal
+  carry `operator_override: true` and the server emits a `runtime.audit`
+  event (`gate.operator_override`). Retrying the exact recorded answer is
+  a no-op `200`, not a conflict.
+- *Expiry.* `timeout` is a Go duration; `"0"` or absent waits
+  indefinitely. A gate past its deadline becomes `expired` with no
+  answer the first time anything reads it, and a waiter's own timer flips
+  it at the deadline. Expiry is neither approval nor denial.
+- *Secrets.* Subject, note, `opened_by` and every string inside
+  `context` pass through `logscrub.ScrubString` before they are stored.
+  Events and the journal never carry `context` or `note`.
+
+**Storage.**
+
+```
+gates/pending/<id>.json   waiting gates, 0600, tmp+rename
+gates/resolved/<id>.json  answered or expired gates, kept forever
+gates/gates.jsonl         append-only {at, op, id, status, by?, answer?, operator_override?, expires_at?}
+```
+
+Resolving writes the resolved record before removing the pending one;
+after a crash between the two, the resolved copy wins on the next start.
+
+**Deliberately not in S3.** No background sweeper (expiry is observed on
+read and by waiters, so a gate nobody looks at stays `waiting` on disk
+past its deadline until the next read); no in-process `crux gate` form;
+no per-gate answerer allowlist beyond "the operator".
+
 ## Deliberately not in S1
 
 - TTL sweeper (recorded, not enforced).
@@ -177,3 +260,7 @@ for runs are deferred and not scheduled.
 | `src/crux/serve/checkouts.go` | routes, ownership checks, error mapping; registered from `Server.Handler` after the runtime families and marked a work service for S0 |
 | `src/crux/serve/principal.go` | S0: `Principal`, `CallerFrom`, work-service gating |
 | `src/crux/cli/checkout.go` | `crux checkout add|rm|list`, local and remote |
+| `src/crux/gates/` | S3: `Service`, `Record`, `Caller`, `DeriveIdempotencyKey`, typed sentinels (`ErrBadRequest`, `ErrContextTooLarge`, `ErrNotFound`, `ErrInvalidChoice`, `ErrSelfAnswer`, `ErrForbidden`, `ErrClosed`); pending/resolved store and journal |
+| `src/crux/api/gates.go` | `PathGates`, `CodeGate*`, `EventGate*`, request/response types, `Client.{Open,List,Get,Answer,Wait}Gate` |
+| `src/crux/serve/gates.go` | gate routes, visibility, error mapping, `gate.*` events and override audit |
+| `src/crux/cli/gate.go` | `crux gate open|list|answer|wait`, remote only |

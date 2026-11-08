@@ -392,6 +392,10 @@
     // are visible at once; the older ones wait behind a "+N more" pill.
     const STAGE_TRACKER_MERGE_BANNER_PHONE_MAX = 3;
     const STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY = '(max-width: 480px)';
+    // A landscape phone (responsive.css's landscape tier) has ~390px of
+    // height; one banner at a time, the rest behind the pill (#17166).
+    const STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_MAX = 1;
+    const STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_QUERY = '(max-width: 1024px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse)';
     function stageTrackerCelebrateSetting() {
       try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_KEY) !== '0'; } catch { return true; }
     }
@@ -524,7 +528,7 @@
         // Numbers and counts go through String(): esc() drops non-strings.
         const n = esc(String(e.number || ''));
         const num = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">#${n}</a>` : `#${n}`;
-        return `<li><span class="ham-merged-num" title="${esc(String(e.repo || ''))}#${n}">${num}</span><span class="ham-merged-title" title="${esc(e.title || '')}">${esc(e.title || e.repo)}</span><span class="ham-merged-meta">${meta}</span></li>`;
+        return `<li><span class="ham-merged-num" title="${esc(String(e.repo || ''))}#${n}">${num}</span><span class="ham-merged-title" title="${esc(e.title || '')}">${esc(e.title || e.repo)}</span><span class="ham-merged-repo">${esc(String(e.repo || ''))}</span><span class="ham-merged-meta">${meta}</span></li>`;
       }).join('');
       const head = `<div class="ham-merged-pop-head"><span>Recent merges</span><span class="ham-merged-pop-sum">${esc(String(txt.today))} today · ${esc(String(txt.week))} this week · ${esc(String(txt.total30d))} in 30 days</span></div>`;
       const body = rows ? `<ol class="ham-merged-list">${rows}</ol>` : `<div class="ham-empty">No merges recorded yet.</div>`;
@@ -762,14 +766,65 @@
     // Stateful: redraw the popover when it is open.
     function stageTrackerMergedPopDraw(txt, nowMs) {
       const pop = document.getElementById('activity-monitor-merged-pop');
-      if (!pop || pop.hidden) return;
+      if (!pop) return;
+      const sheet = stageTrackerPopSheet('merged');
+      if (pop.hidden && !sheet) return;
       const html = stageTrackerMergedPopHtml(txt || stageTrackerMergedText(_stageTrackerMerged, nowMs || Date.now(), 0), nowMs || Date.now());
+      if (sheet) { stageTrackerPopSheetDraw(sheet, html); return; }
       if (pop.innerHTML !== html) pop.innerHTML = html;
+    }
+    // Phones get the Merged and queue lists as a .hive-dialog.modal-sheet
+    // (hiveWireDialog: Esc, ✕, backdrop) instead of the anchored popover;
+    // the same tier as the CSS .modal-sheet rules.
+    const STAGE_TRACKER_POP_SHEET_QUERY = '(max-width: 640px), ((pointer: coarse) and (max-width: 820px))';
+    // Open sheets by kind. Draw ticks consult this map, not the DOM: no
+    // document-wide query per tick, and Node harnesses whose document
+    // stub lacks querySelector keep working.
+    const _stageTrackerPopSheets = {};
+    function stageTrackerPopSheetPhone() {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(STAGE_TRACKER_POP_SHEET_QUERY).matches;
+    }
+    function stageTrackerPopSheet(kind) {
+      return _stageTrackerPopSheets[kind] || null;
+    }
+    function stageTrackerPopSheetDraw(overlay, html) {
+      const body = overlay.querySelector('.ham-pop-sheet-body');
+      if (body && body.innerHTML !== html) body.innerHTML = html;
+    }
+    function stageTrackerPopSheetOpen(kind, title, html, chip) {
+      const overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      overlay.setAttribute('data-ham-pop-sheet', kind);
+      hiveRememberModalOpen(overlay);
+      const id = 'ham-pop-sheet-' + kind;
+      overlay.innerHTML = '<div class="hive-dialog ham-pop-sheet" role="dialog" aria-modal="true" aria-labelledby="' + id + '-title">' +
+        '<div id="' + id + '-title" class="hive-dialog-title">' + esc(title) + '</div>' +
+        '<div class="modal-scroll ham-pop-sheet-body"></div></div>';
+      document.body.appendChild(overlay);
+      _stageTrackerPopSheets[kind] = overlay;
+      stageTrackerPopSheetDraw(overlay, html);
+      hiveWireDialog(overlay, () => {
+        if (_stageTrackerPopSheets[kind] === overlay) delete _stageTrackerPopSheets[kind];
+        if (!chip) return;
+        chip.setAttribute('aria-expanded', 'false');
+        if (chip.focus) chip.focus();
+      }, undefined, null, null, close => close());
+      return overlay;
     }
     function hamMergedToggle(open) {
       const pop = document.getElementById('activity-monitor-merged-pop');
       const chip = stageTrackerMergedChip();
       if (!pop) return false;
+      if (stageTrackerPopSheetPhone()) {
+        const sheet = stageTrackerPopSheet('merged');
+        const want = typeof open === 'boolean' ? open : !sheet;
+        pop.hidden = true;
+        if (want && !sheet) {
+          if (chip) chip.setAttribute('aria-expanded', 'true');
+          stageTrackerPopSheetOpen('merged', 'Recent merges', stageTrackerMergedPopHtml(stageTrackerMergedText(_stageTrackerMerged, Date.now(), 0), Date.now()), chip);
+        } else if (!want && sheet && sheet.hiveDialogClose) sheet.hiveDialogClose();
+        return want;
+      }
       const want = typeof open === 'boolean' ? open : !!pop.hidden;
       pop.hidden = !want;
       if (chip) chip.setAttribute('aria-expanded', want ? 'true' : 'false');
@@ -902,10 +957,13 @@
     }
     function stageTrackerTerminalView(d, nowMs) {
       if (!d || !Array.isArray(d.items)) return d;
+      // Merge state is null until its first fetch lands; a row menu can be
+      // opened before then, so read it as "nothing merged yet".
+      const merged = _stageTrackerMergeState || {};
       const items = d.items.map(item => {
         const rowKey = stageTrackerItemKey(item), pin = _stageTrackerCelebrating[rowKey];
         const active = pin && pin.until > nowMs;
-        if (item.kind === 'pr' && _stageTrackerMergeState[rowKey] === true) {
+        if (item.kind === 'pr' && merged[rowKey] === true) {
           const fact = _stageTrackerTerminalFacts[rowKey];
           return (fact && fact.until > nowMs) || Number(item.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(item, rowKey) : null;
         }
@@ -919,7 +977,7 @@
         }
         const linked = source.map(lp => {
           const key = stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp));
-          if (_stageTrackerMergeState[key] !== true) return lp;
+          if (merged[key] !== true) return lp;
           const fact = _stageTrackerTerminalFacts[key];
           return (fact && fact.until > nowMs) || Number(lp.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(lp, key) : null;
         }).filter(Boolean);
@@ -1231,14 +1289,25 @@
     function stageTrackerMergeBannerList(box) {
       return Array.prototype.filter.call(box.children, c => c.classList && c.classList.contains('merge-banner'));
     }
-    function stageTrackerMergeBannerIsPhone() {
-      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY).matches;
+    function stageTrackerMergeBannerMatches(query) {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(query).matches;
     }
-    // Crossing the phone breakpoint (a rotation, a resized window) re-lays
-    // the stack so hidden banners come back or the pill appears.
+    function stageTrackerMergeBannerIsPhone() {
+      return stageTrackerMergeBannerMatches(STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY);
+    }
+    // Pure: how many banners may show at once for the current viewport.
+    function stageTrackerMergeBannerCap() {
+      if (stageTrackerMergeBannerMatches(STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_QUERY)) return STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_MAX;
+      if (stageTrackerMergeBannerIsPhone()) return STAGE_TRACKER_MERGE_BANNER_PHONE_MAX;
+      return Infinity;
+    }
+    // Crossing the phone or landscape breakpoint (a rotation, a resized
+    // window) re-lays the stack so hidden banners come back or the pill appears.
     if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-      const mq = window.matchMedia(STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY);
-      if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => stageTrackerMergeBannerLayout(document.getElementById('merge-banners')));
+      for (const query of [STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY, STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_QUERY]) {
+        const mq = window.matchMedia(query);
+        if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => stageTrackerMergeBannerLayout(document.getElementById('merge-banners')));
+      }
     }
     // Pure-ish: on a phone keep the newest PHONE_MAX banners visible and hide
     // the older ones behind a "+N more" pill (which opens the Merged list);
@@ -1247,7 +1316,7 @@
     function stageTrackerMergeBannerLayout(box) {
       if (!box) return;
       const banners = stageTrackerMergeBannerList(box);
-      const cap = stageTrackerMergeBannerIsPhone() ? STAGE_TRACKER_MERGE_BANNER_PHONE_MAX : Infinity;
+      const cap = stageTrackerMergeBannerCap();
       const hiddenCount = Math.max(0, banners.length - cap);
       banners.forEach((el, i) => { if (i < hiddenCount) el.setAttribute('hidden', ''); else el.removeAttribute('hidden'); });
       let more = box.querySelector('.merge-banner-more');

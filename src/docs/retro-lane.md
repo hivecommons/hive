@@ -18,6 +18,32 @@ plan revisions before approval, PR rework commits after review, rollback
 events, and the affected user/repo/change-class scope. These signals are facts
 for retro analysis only; they do not change ACMM configuration.
 
+## Knowledge-advisor arm
+
+Each record also carries the knowledge advisor's arm for the bead's kicks
+(`knowledge.advisor_llm`, see [agent-knowledge-and-memory.md](agent-knowledge-and-memory.md)),
+built from the advisor's decision records and joined by the issue ref:
+
+- `AdvisorArm`: `none` (no decisions), `shadow` (shadow mode, delivery unchanged),
+  `deliver` (rank mode, advice delivered), `holdout` (every kick was held out:
+  the model ranked but nothing was typed), or `mixed` (kicks in more than one arm).
+- `AdvisorDecisions`, `AdvisorDelivered`, `AdvisorHeldOut`: counters over those decisions.
+
+Only these counters reach the analysis model; the advisor's reasons and pane text never do.
+
+The decision records live in the knowledge-advisor decision store,
+`/data/knowledge-advisor-decisions.jsonl` (`retro.AdvisorDecisionStore`): one JSON line per
+ranking decision with the agent, kick id, the kick's primed issue/PR refs, mode, arm, outcome and
+slug, rotated with lumberjack like prompt history, at 5 MiB, 3 gzipped backups, 90 days. The retro lane reads it in
+production; without the PVC it is in-memory only.
+
+To read the comparison, call `Lane.AdvisorArmSummary()`: per arm it gives the bead
+count and the mean `FixAttempts`, `CIFailureCount` and `KicksReceived`, with no model
+call (it works with `retro.analysis_model` empty). Compare `deliver` against `holdout`:
+both arms share the same selection, so a lower mean in `deliver` is the signal that
+delivered advice helped. Treat small bead counts as noise, and ignore `mixed` and `none`
+for the verdict.
+
 ## Deterministic findings
 
 Named threshold defaults are:

@@ -80,7 +80,9 @@ hivectl knowledge state old-deploy-flow deprecated --reason "deploy flow removed
   with `superseded`. The replacement must be in the same local channel as the
   entry. Invalid input returns 400.
 - The entry must be in a local channel (vault). Entries from remote wiki
-  layers, git sources and the reserved automation channel return 404.
+  layers, git sources and the reserved automation channel return 404. The one
+  exception is a drained CLI-memory entry (`source: cli-memory`) in the
+  `bead-synth-wiki` channel; see [Auto-memory drafts](#auto-memory-drafts).
 - Every change writes an audit entry: `knowledge_set_state`, or
   `knowledge_supersede` for supersession. The entry records the actor, the
   entry id and channel, the previous and new state, `superseded_by`, and the
@@ -90,3 +92,57 @@ hivectl knowledge state old-deploy-flow deprecated --reason "deploy flow removed
 
 Restoring a fact to `approved` clears its `superseded_by` link. It then
 reaches primers and the table of contents again.
+
+## Auto-memory drafts
+
+With `agents.cli_memory.drain_to_knowledge` on, each agent's coding-CLI memory
+(Claude Code `MEMORY.md` and topic files, Codex `memories*/`, Gemini
+`GEMINI.md`) is drained into `state: draft` entries in the `bead-synth-wiki`
+vault ([#17033](https://github.com/hivecommons/hive/issues/17033)). Each entry
+has `source: cli-memory` and the tags `cli-memory`, `agent:<name>`,
+`cli:<name>`, `memhash:<sha256>` and, when the project path names one of the
+agent's repos, `repo:<org>/<repo>`. The shared home's pre-isolation store is
+drained once, on demand, with
+[`hivectl knowledge drain-memory --legacy`](hivectl.md); those entries are
+tagged `agent:shared`.
+
+The text is agent-written and unreviewed: a model may have copied it from an
+issue body or a fetched page. So an auto-memory draft never reaches an agent
+([#17058](https://github.com/hivecommons/hive/issues/17058)):
+
+- The kick primer and the knowledge advisor never prime it, even when the
+  primer's `include_states` or the agent's `knowledge.agent_scopes` entry
+  admits `draft`, and even when its author matches the kicked agent.
+- An agent-identified read (`?agent=<name>` on `GET /api/knowledge/toc`,
+  `GET /api/knowledge/entry/{id}` and `GET /api/knowledge/effective`) never
+  returns it, whatever `include_states` the request names. The effective view
+  lists it as excluded with reason `lifecycle`.
+- The public knowledge MCP publishes approved facts only.
+- The curator's scheduled auto-promotion never selects a page tagged
+  `cli-memory`; it moves to a broader layer only through a manual promote.
+
+Operator reads still show these drafts so they can be reviewed: pass
+`include_states=draft` to `GET /api/knowledge/search` or
+`GET /api/knowledge/toc` without `?agent=`.
+
+### Reviewing them
+
+In the dashboard's knowledge view, **🧠 Auto-memory drafts** in the sources
+list shows every drained draft with the agents it was drained from. An owner
+gets two actions per row, both backed by `PUT /api/knowledge/entry/{id}/state`
+and audited:
+
+- **Approve** sets `approved`. From the next kick on, the entry is primed for
+  every agent whose scope includes it.
+- **Discard** sets `deprecated`. It reaches no agent, and because the drain
+  deduplicates by `memhash` across all states, the same memory is never drafted
+  again. Deleting the file instead would let the next drain re-create it.
+
+Outside the dashboard, list them with
+`GET /api/knowledge/search?tag=cli-memory&include_states=draft` and change
+their state from the CLI:
+
+```bash
+hivectl knowledge state cli-memory-1a2b3c4d5e6f7a8b approved --reason "verified"
+hivectl knowledge state cli-memory-1a2b3c4d5e6f7a8b deprecated --reason "one-off"
+```

@@ -71,6 +71,11 @@ type TOCScope struct {
 	// base agent and the hive's owner logins when the agent's agent_scopes
 	// entry lists draft in include_states. TOC and API reads leave it empty.
 	DraftAuthors []string
+	// HideAutoMemoryDrafts drops drained CLI-memory drafts (IsAutoMemoryDraft)
+	// whatever IncludeStates admits (#17058). AgentScope sets it, and the
+	// dashboard sets it on every agent-identified (?agent=) TOC, entry and
+	// effective read; operator reads leave it off so drafts can be reviewed.
+	HideAutoMemoryDrafts bool
 }
 
 // ListsDraft reports whether an include_states config list opts into drafts
@@ -93,7 +98,7 @@ func ListsDraft(includeStates []string) bool {
 // state is admitted only when that filter admits it too. Unknown state names
 // are dropped, and a list with none left admits approved knowledge only.
 func AgentScope(layers, repos, types, tags, includeStates []string) TOCScope {
-	sc := TOCScope{Repos: repos, Types: types, Tags: tags}
+	sc := TOCScope{Repos: repos, Types: types, Tags: tags, HideAutoMemoryDrafts: true}
 	for _, l := range layers {
 		if l = strings.ToLower(strings.TrimSpace(l)); l != "" {
 			sc.Layers = append(sc.Layers, LayerType(l))
@@ -161,7 +166,7 @@ var exclusionOrder = []string{ExcludedLifecycle, ExcludedLayer, ExcludedRepo, Ex
 // passes the scope, otherwise the reason code of the first failing check in
 // the order lifecycle, layer, repo, type, tag.
 func (sc TOCScope) ExclusionReason(f Fact) string {
-	if !lifecycleAllowed(f.EffectiveState(), sc.IncludeStates) {
+	if !lifecycleAllowed(f.EffectiveState(), sc.IncludeStates) || (sc.HideAutoMemoryDrafts && IsAutoMemoryDraft(f)) {
 		return ExcludedLifecycle
 	}
 	if len(sc.Layers) > 0 && !containsLayer(sc.Layers, f.Layer) {

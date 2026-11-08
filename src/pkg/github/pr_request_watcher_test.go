@@ -473,7 +473,7 @@ func TestPRRequestWatcher_QuarantinesAfterMaxAge(t *testing.T) {
 
 // The hive-open-pr choke point corrects a title emoji that contradicts the
 // Conventional Commits type (hivecommons/hive#13131: "📝 docs: …" failed the
-// repo's PR Type gate; 📝 is the proposal emoji, docs is 📖).
+// repo's PR Type gate; 📝 is not a prefix the gate accepts, docs is 📖).
 func TestPRRequestWatcher_CorrectsTitleEmojiToConvention(t *testing.T) {
 	var createdTitle string
 	inner := newPRMockServer(t, "", nil)

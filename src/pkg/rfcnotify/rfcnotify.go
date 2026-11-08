@@ -11,7 +11,7 @@
 // conventions hivecommons/hive uses (for example #12062 and #16075).
 //
 // In rich mode an RFC document proposed as a pull request is tracked too:
-// a PR is an RFC when its title starts with `📝 proposal:` or `📝 RFC`, or
+// a PR is an RFC when its title starts with `📝`/`📖` then `proposal:` or `RFC`, or
 // it adds or changes docs/rfc-*.md or src/docs/rfc-*.md (IsRFCPR).
 package rfcnotify
 
@@ -189,12 +189,14 @@ func IsRFC(title string, labels []string) bool {
 }
 
 // IsRFCPR reports whether a pull request proposes an RFC document: its title
-// starts with `📝 proposal:` or `📝 RFC`, or files add or change
+// starts with `📝`/`📖` then `proposal:` or `RFC`, or files add or change
 // docs/rfc-*.md or src/docs/rfc-*.md.
 func IsRFCPR(title string, files []string) bool {
 	t := strings.ToLower(strings.TrimSpace(title))
-	if strings.HasPrefix(t, "📝 proposal:") || strings.HasPrefix(t, "📝 rfc") {
-		return true
+	for _, emoji := range []string{"📝", "📖"} {
+		if strings.HasPrefix(t, emoji+" proposal:") || strings.HasPrefix(t, emoji+" rfc") {
+			return true
+		}
 	}
 	for _, f := range files {
 		if IsRFCDoc(f) {

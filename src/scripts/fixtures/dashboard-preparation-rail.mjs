@@ -38,7 +38,8 @@ export function preparationRailLayoutFixture() {
   const inspect = (block, selector, name, count) => {
     const members = [...block.querySelectorAll(selector)];
     check(members.length === count, name + ': exact member count');
-    check(block.querySelectorAll('.ham-preparation-head').length === 1, name + ': one header');
+    // A lone ticket is the refresh lock holder, not a train: rail and comment only, no header.
+    check(block.querySelectorAll('.ham-preparation-head').length === (count >= 2 ? 1 : 0), name + (count >= 2 ? ': one header' : ': no header for a lone ticket'));
     check(!block.textContent.includes('continuation'), name + ': no repeated continuation');
     const lines = members.map(rail);
     geometry.push({ name, lines });
@@ -80,7 +81,7 @@ export function preparationRailLayoutFixture() {
     inspect(roots, '.ham-row.ham-preparation-member', 'root reverse-FIFO rows', 3);
     check(roots.querySelector('.ham-preparation-member')?.dataset.hamKey === stageTrackerItemKey(owner), 'verified front is first despite scrambled source sort');
     inspect(nested, '.ham-sub.ham-preparation-member', 'nested PRs with expanded captions', 2);
-    inspect(single, '.ham-row.ham-preparation-member', 'single-member train with multiline caption', 1);
+    inspect(single, '.ham-row.ham-preparation-member', 'single ticket with multiline caption', 1);
     for (const [block, selector, name, count] of [
       [roots, '.ham-row.ham-preparation-member', 'last root dynamic comment', 3],
       [nested, '.ham-sub.ham-preparation-member', 'last nested dynamic comment', 2],

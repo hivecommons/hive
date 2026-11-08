@@ -37,12 +37,29 @@
       <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
       <div class="ham-selbar" id="activity-monitor-selbar" role="toolbar" aria-label="Selected rows" hidden></div>
       <div class="ham-sticky" id="activity-monitor-sticky">
+        <!-- Phone-only compact filter bar (#17159): the toolbar above is
+             hidden under the .modal-sheet tier and these chips take over;
+             ⋯ Filters moves the toolbar and label chips into a sheet
+             (openStageTrackerFilterSheet). Desktop never shows this. -->
+        <div class="ham-compact" id="activity-monitor-compact" role="toolbar" aria-label="Quick filters">
+          <span class="ham-compact-scroll">
+            <span class="ham-chips" role="group" aria-label="Item kind">
+              <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="all" aria-pressed="true">All</button>
+              <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="pr" aria-pressed="false">PRs</button>
+              <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="issue" aria-pressed="false">Issues</button>
+            </span>
+            <button type="button" class="ham-chip" id="activity-monitor-compact-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Only items that need attention: stalled, held, blocked, needs-human, needs-decision, needs-rebase">⚠ Needs attention</button>
+            <button type="button" class="ham-chip ham-chip--waiting" id="activity-monitor-compact-waiting" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle" aria-pressed="false" title="Only items parked on you">👤 Waiting on you<span class="ham-chip-n" hidden>0</span></button>
+          </span>
+          <button type="button" class="ham-chip ham-compact-more" id="activity-monitor-filters" data-action="openStageTrackerFilterSheet" aria-haspopup="dialog" aria-expanded="false" title="Repo, search, since, author, decisions, sort, group, per page and labels">⋯ Filters<span class="ham-chip-n" hidden>0</span></button>
+        </div>
         <span class="ham-sticky-live" id="activity-monitor-merged-live" role="status" aria-live="polite"></span>
         <button type="button" class="ham-chip ham-merged-count" id="activity-monitor-merged" data-action="hamMergedToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-merged-pop" title="Merged: 0 all time"><svg class="ham-merged-ico" viewBox="0 0 18 12" focusable="false" aria-hidden="true"><ellipse class="oc-version-bee-wing" cx="7" cy="3.6" rx="3" ry="1.5" transform="rotate(-18 7 3.6)"/><ellipse class="oc-version-bee-wing" cx="11" cy="3.4" rx="3" ry="1.5" transform="rotate(18 11 3.4)"/><ellipse class="oc-version-bee-body" cx="9.2" cy="7" rx="5.8" ry="3.3"/><path class="oc-version-bee-stripe" d="M7.2 4.2v5.6M10 3.8v6.4"/><circle class="oc-version-bee-head" cx="15" cy="7" r="1.7"/></svg>Merged <span class="ham-merged-n">0</span><span class="ham-merged-sub">0 today · 0 this week</span></button>
         <div class="ham-merged-pop" id="activity-monitor-merged-pop" role="dialog" aria-label="Recent merges" hidden></div>
         <button type="button" class="ham-chip ham-queue-chip" id="activity-monitor-queue" data-action="hamQueueToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-queue-pop" title="Merge queue: empty" hidden>⛓ Merge queue <span class="ham-queue-n">0</span></button>
         <div class="ham-merged-pop ham-queue-pop" id="activity-monitor-queue-pop" role="dialog" aria-label="Merge queue" hidden></div>
       </div>
+      <div class="ham-attn-wrap" id="activity-monitor-attn-line"></div>
       <div id="activity-monitor-native-queue" class="nq-rail" role="region" aria-label="Forge-owned merge queues" hidden></div>
       <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
       <div class="ham-meta ham-meta-foot" id="activity-monitor-meta-foot"></div>

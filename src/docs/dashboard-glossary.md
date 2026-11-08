@@ -27,6 +27,7 @@ For a plain-language explanation of every dashboard section — what it shows, h
 | Swarm | Several reviewers working on the same review. Their results still pass through the merge policy. |
 | Re-home | Continue work in a replacement PR owned by the appropriate author; do not silently rewrite the original author's commits. |
 | Issue band / PR band | A display group in Projects, not a scheduler or merge permission. See the exact groups below. |
+| Board pressure (BP) | The open issues and PRs the configured repos put on this Hive's board: total open issues / total open PRs, before any of them is sorted into actionable, held, blocked or outside. The Overview sidebar pill reads `BP = 19/4`. |
 
 For exact stage labels, repair ownership and hold rules, see [Labels and control signals](labels-and-control-signals.md). For commands that inspect beads, see [`hivectl bead`](hivectl.md#bead--work-items).
 

@@ -174,7 +174,7 @@ func TestHashFromFrontmatter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !seen["abc"] || !seen["def"] || seen["zzz"] || seen["nope"] {
+	if seen["abc"] == "" || seen["def"] == "" || seen["zzz"] != "" || seen["nope"] != "" {
 		t.Fatalf("existingHashes = %v", seen)
 	}
 }

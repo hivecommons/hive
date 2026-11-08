@@ -214,6 +214,11 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 		// in-process form, so the verb is only reachable with --server.
 		fmt.Fprintln(e.Stderr, "crux: runs needs --server ADDR (or CRUX_SERVER); contained runs execute on a crux serve")
 		return ExitUsage
+	case "gate":
+		// Gates are recorded, journaled and announced by a `crux serve`;
+		// there is no in-process form.
+		fmt.Fprintln(e.Stderr, "crux: gate needs --server ADDR (or CRUX_SERVER); gates are kept by a crux serve")
+		return ExitUsage
 	case "help", "-h", "--help":
 		fs := flag.NewFlagSet("crux", flag.ContinueOnError)
 		e.usage(fs)
@@ -351,6 +356,8 @@ Work services (no runtime; hivecommons/crux#114):
   checkout add|rm|list            pinned checkouts under <workdir>/checkouts
                                   (add -repo URL -commit SHA; -allow PREFIXES or
                                   $CRUX_CHECKOUT_ALLOWLIST gates which repos)
+  gate open|list|answer|wait      human gates on a crux serve (--server only;
+                                  'crux gate help' for flags)
 
 While 'crux run' is in the foreground it serves <workdir>/crux.sock; ps, logs,
 kick and stop use that socket when present so they act on the live runtime.

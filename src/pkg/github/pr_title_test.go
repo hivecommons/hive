@@ -100,8 +100,10 @@ func TestNormalizePRTitleEmoji(t *testing.T) {
 		// hivecommons/hive#13131: a docs PR opened as 📝 failed the PR Type gate.
 		{name: "docs under proposal emoji", input: "📝 docs: describe Prow dco-signoff labels as coexisting with hive's dco pair", want: "📖 docs: describe Prow dco-signoff labels as coexisting with hive's dco pair"},
 		{name: "docs already right", input: "📖 docs: explain exit 77", want: "📖 docs: explain exit 77"},
-		{name: "proposal keeps its emoji", input: "📝 proposal: central stage engine", want: "📝 proposal: central stage engine"},
-		{name: "rfc is a proposal", input: "📖 rfc: opportunity lab", want: "📝 rfc: opportunity lab"},
+		{name: "proposal keeps its emoji", input: "📖 proposal: central stage engine", want: "📖 proposal: central stage engine"},
+		// hivecommons/hive#17105: 📝 is not in the PR Type gate's set.
+		{name: "legacy proposal emoji is normalised", input: "📝 proposal: central stage engine", want: "📖 proposal: central stage engine"},
+		{name: "rfc is a proposal", input: "📝 rfc: opportunity lab", want: "📖 rfc: opportunity lab"},
 		{name: "fix under docs emoji", input: "📖 fix(ci): retry GHCR", want: "🐛 fix(ci): retry GHCR"},
 		{name: "fix under lock emoji", input: "🔒 fix: polkit defaults", want: "🐛 fix: polkit defaults"},
 		{name: "feat", input: "🐛 feat: owner-only sharing", want: "✨ feat: owner-only sharing"},

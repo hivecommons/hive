@@ -11,7 +11,7 @@ These rules apply to every AI agent (hive agents, Copilot CLI, Claude Code, Code
 ## Working style
 
 - Keep changes surgical and PR-sized; one concern per PR.
-- Sign commits (`git commit -s`); PR titles start with an emoji (`✨` feature, `🐛` fix, `📖` docs, `📝` proposal, `🌱` chore, `⚠️` breaking); `📝` is for proposals only.
+- Sign commits (`git commit -s`); PR titles start with an emoji (`✨` feature, `🐛` fix, `📖` docs or proposal, `🌱` chore, `⚠️` breaking); `📝` fails the PR Type gate.
 - Every PR with a user-visible `src/` code change needs a `changelog.d/<category>-<slug>.md` fragment at the repository root whose body is a single `- ` bullet.
 - Do not hand-edit `src/docs` file:line citations; when CI's citation guard reports drift, run `python3 src/scripts/check-docs-citations.py --fix`.
 

@@ -323,6 +323,8 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_MAX"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_PHONE_MAX"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY"),
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_QUERY"),
 		jsConstLine(t, html, "STAGE_TRACKER_SOUND_MAX_PLAYS"),
 		jsFunc(t, html, "stageTrackerCelebrateSetting"),
 		jsFunc(t, html, "stageTrackerSetCelebrate"),
@@ -351,6 +353,12 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerMergedLastSave"),
 		jsFunc(t, html, "stageTrackerMergedInFlight"),
 		jsFunc(t, html, "stageTrackerMergedCountDraw"),
+		jsConstLine(t, html, "STAGE_TRACKER_POP_SHEET_QUERY"),
+		jsConstLine(t, html, "_stageTrackerPopSheets"),
+		jsFunc(t, html, "stageTrackerPopSheetPhone"),
+		jsFunc(t, html, "stageTrackerPopSheet"),
+		jsFunc(t, html, "stageTrackerPopSheetDraw"),
+		jsFunc(t, html, "stageTrackerPopSheetOpen"),
 		jsFunc(t, html, "stageTrackerMergedPopDraw"),
 		jsFunc(t, html, "hamMergedToggle"),
 		jsFunc(t, html, "stageTrackerCelebrateTick"),
@@ -378,7 +386,9 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "toastCountdownCancel"),
 		jsFunc(t, html, "stageTrackerMergeBanner"),
 		jsFunc(t, html, "stageTrackerMergeBannerList"),
+		jsFunc(t, html, "stageTrackerMergeBannerMatches"),
 		jsFunc(t, html, "stageTrackerMergeBannerIsPhone"),
+		jsFunc(t, html, "stageTrackerMergeBannerCap"),
 		jsFunc(t, html, "stageTrackerMergeBannerLayout"),
 		jsFunc(t, html, "stageTrackerMergeBannerDismiss"),
 		jsFunc(t, html, "hamBannerOpenLink"),
@@ -727,6 +737,10 @@ stageTrackerMergeBannerDismiss(phone[4]); tick(180 * 1.5 + 1);
 assert.strictEqual(shown().length, STAGE_TRACKER_MERGE_BANNER_PHONE_MAX, 'a dismissal reveals the next oldest'); assert.strictEqual(banners.querySelector('.merge-banner-more').textContent, '+1 more');
 stageTrackerMergeBannerDismiss(phone[3]); tick(180 * 1.5 + 1);
 assert.strictEqual(hid().length, 0); assert.strictEqual(banners.querySelector('.merge-banner-more'), null, 'no pill once everything fits');
+// Landscape phone: one banner at a time, the rest behind the pill.
+window.matchMedia = q => ({ matches: q === STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_QUERY });
+stageTrackerMergeBannerLayout(banners);
+assert.strictEqual(shown().length, STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_MAX, 'a landscape phone shows one banner'); assert.strictEqual(banners.querySelector('.merge-banner-more').textContent, '+2 more');
 delete window.matchMedia;
 stageTrackerMergeBannerLayout(banners); assert.strictEqual(hid().length, 0, 'a desktop hides nothing');
 console.log('ok');

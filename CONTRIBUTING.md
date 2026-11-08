@@ -11,6 +11,7 @@ Thank you for helping improve Hive. This guide is for contributing code and docu
 - Not sure why the hive has not picked up your issue? It automatically works issues only from OWNER, MEMBER, and COLLABORATOR authors; anyone else waits for a maintainer to add `triage/accepted`. See [Reporter trust and escalation](GOVERNANCE.md#reporter-trust-and-escalation) for what those roles mean, [how to become a trusted reporter](GOVERNANCE.md#how-to-become-a-trusted-reporter), and how to escalate.
 - Pull requests are welcome too, and nothing above changes how they are reviewed.
 - Discuss design and review questions in public issues and pull requests so decisions remain public and searchable.
+- A proposal or design question goes in an issue labelled `proposal` (or `kind/design`). Until someone claims it, the hive shows it as **Open for discussion** (`stage/018-open-for-discussion`), not as agent work waiting to be picked up; `/claim` it when you want to take it on, and it moves through the pipeline like any other issue. See [stage labels](src/docs/labels-and-control-signals/stage-labels.md).
 - Follow the [CNCF Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md), adopted in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [Hive governance](GOVERNANCE.md).
 - Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 - Extending Hive? Start with the [Integration guide](src/docs/integration-guide.md) for the current work source, ClankeR/Flue-style external execution, and Spektacular Project Inception seams.
@@ -332,7 +333,7 @@ When a fix PR merges with `Closes #N`, `Fixes #N`, or `Resolves #N`, the issue c
 ## Pull requests
 
 - Target `v5` for all code and documentation contributions (the active development branch). `v4` is feature-frozen and accepts security and critical fixes only (see the base-branch table above).
-- Start PR titles with the repository's emoji convention: `✨ feature: ...`, `🐛 fix: ...`, `📖 docs: ...`, `📝 proposal: ...`, `⚠️` for a breaking change, `🌱` for chores and everything else. `📝` is for proposals only — a documentation PR is `📖 docs: ...`, and the required `PR Type` check fails the swap.
+- Start PR titles with the repository's emoji convention: `✨ feature: ...`, `🐛 fix: ...`, `📖 docs: ...`, `📖 proposal: ...`, `⚠️` for a breaking change, `🌱` for chores and everything else. The required `PR Type` check accepts only `⚠ ✨ 🐛 📖 🚀 🌱`, so `📝` fails it; the hive rewrites a leading `📝` on `proposal:`/`rfc:` to `📖`.
 - Include `Fixes #<issue>` lines for issues the PR closes.
 - Credit the issue's author with a `Co-authored-by:` trailer on the commit when the PR resolves somebody else's issue — see [Crediting issue authors](#crediting-issue-authors).
 - Describe what changed, why, and how you tested it.

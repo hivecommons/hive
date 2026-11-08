@@ -93,3 +93,36 @@ func TestCLIMemoryRoundTripsThroughMarshal(t *testing.T) {
 		t.Fatalf("zero fleet block encoded:\n%s", out)
 	}
 }
+
+func TestCLIMemoryDrainOnWriteNeedsDrainToKnowledge(t *testing.T) {
+	raw := `
+agents:
+  cli_memory:
+    drain_to_knowledge: true
+    drain_on_write: true
+  scanner:
+    enabled: true
+  builder:
+    enabled: true
+    cli_memory:
+      drain_on_write: true
+`
+	var cfg Config
+	if err := yaml.NewDecoder(strings.NewReader(raw)).Decode(&cfg); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !cfg.AgentsCLIMemory.DrainOnWrite || cfg.AgentsCLIMemory.IsZero() {
+		t.Fatalf("fleet block = %+v", cfg.AgentsCLIMemory)
+	}
+	enabled := cfg.EnabledAgents()
+	if !enabled["scanner"].CLIMemory.DrainMemoryOnWrite() {
+		t.Fatal("scanner must inherit the fleet drain_on_write")
+	}
+	if enabled["builder"].CLIMemory.DrainMemoryOnWrite() {
+		t.Fatal("drain_on_write without drain_to_knowledge must stay off")
+	}
+	var none *CLIMemoryConfig
+	if none.DrainMemoryOnWrite() {
+		t.Fatal("nil policy must read as off")
+	}
+}
