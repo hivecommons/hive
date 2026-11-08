@@ -352,6 +352,11 @@ func (s *Server) validateModelForAgent(name, model string) error {
 	if proc.BackendOverride != "" {
 		backend = proc.BackendOverride
 	}
+	// Shape check first: it needs no catalogue, so it also holds when the
+	// list below cannot be enumerated and the value would otherwise pass.
+	if err := malformedModelIDError(backend, model); err != nil {
+		return err
+	}
 
 	known := s.modelIDsForBackend(backend)
 	if len(known) == 0 {

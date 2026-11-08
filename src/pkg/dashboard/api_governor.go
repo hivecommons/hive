@@ -2741,6 +2741,11 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// And a model id its CLI is certain to refuse (model_id_check.go).
+	if err := malformedModelIDError(body.Backend, body.Model); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	agentCfg := config.AgentConfig{
 		Backend: body.Backend,

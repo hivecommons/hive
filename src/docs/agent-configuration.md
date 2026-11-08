@@ -799,14 +799,32 @@ The three routes differ in ways that matter here:
 |---|---|---|
 | Backend and model applied together | **no** — separate requests | **yes** |
 | Backend value validated | yes | yes |
-| Model value validated | yes, but see below | **not yet** — [#5698](https://github.com/hivecommons/hive/issues/5698) phase 2 |
-| Restarts the agent | yes, **once per call** | no — syncs into the live process config |
+| Model value validated | yes, but see below | shape only — see [Model ids are checked when you save them](#model-ids-are-checked-when-you-save-them) |
+| Restarts the agent | yes, **once per call** | yes, **once**, when the backend, model or effort changed |
 | Claims operator ownership | yes | yes |
 
 Two consequences worth knowing:
 
 - **Model validation does not save you here.** `POST /api/model/...` checks the model against the agent's *current effective* backend, and deliberately fails **open** when that backend's model list cannot be enumerated (see `validateModelForAgent`). Codex is exactly such a backend, so `switch` to codex followed by `model` set to a Claude id is accepted. Reverse the order and the model is validated against the backend you are about to leave. Neither order gives you a checked pair.
-- **The atomic route does not restart the agent.** It persists the pair and syncs it into the live process config, so the running CLI keeps its current method until the agent next restarts. That is usually what you want for a scripted change — the two-call path pays for two restarts — but if you need the change to take effect now, restart the agent afterwards.
+- **The atomic route restarts the agent once.** It persists the pair, applies it to the live launch configuration, and restarts the agent a single time when the backend, model or effort changed ([#7374](https://github.com/hivecommons/hive/issues/7374)). The two-call path pays for two restarts. A save that changes nothing restarts nothing.
+
+### Model ids are checked when you save them
+
+Every path that sets an agent's model checks the id against the backend it will launch on: `PUT /api/config/agent/{name}/models`, the Settings dialog (`PUT /api/config/agent/{name}/general`), `POST /api/model/{agent}/{model}` (the card dropdown, `hivectl agent model-set` and the admin MCP `agent.model` operation), and adding an agent with a model.
+
+The rule has two levels, because no model list is ever complete:
+
+| The id is… | Example | Result |
+|---|---|---|
+| Malformed for the backend | `claude-sonnet-5.5` on `claude` | **Refused** with `400` and the dashed spelling suggested. Anthropic model ids are dash-separated, and Claude Code refuses the dotted form. |
+| Well-formed but not in hive's list | `claude-sonnet-9-9` on `claude` | **Saved**, and `PUT .../models` adds a `warning` field to its response. The id may be a model newer than the list. |
+| In the list | `claude-sonnet-5-5` on `claude` | Saved, no warning. |
+
+The shape rule applies only to bare `claude-…` ids on the `claude` backend. The dotted spelling is correct elsewhere: Copilot's ids for the 4.x and 5.5 families are dotted (`claude-sonnet-5.5`), and inference backends and gateways pass ids through verbatim (`anthropic/claude-opus-4.8` on OpenRouter). Bedrock (`us.anthropic.claude-…`) and Vertex (`claude-…@date`) ids are not affected.
+
+The "known list" for the warning is the backend's last model discovery result, or the static fallback list in `src/pkg/dashboard/cli_models.go` when there is none. Saving never runs a discovery probe. `POST /api/model` keeps its stricter rule: when a live, authoritative list is cached, an id not on it is refused.
+
+If the CLI refuses a model anyway, the agent shows the error and backs off instead of restart-looping. See [An agent shows "model … rejected by the CLI"](troubleshooting.md#an-agent-shows-model--rejected-by-the-cli).
 
 ### `launch_cmd` and `backend`
 

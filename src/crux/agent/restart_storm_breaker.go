@@ -66,9 +66,13 @@ func (m *Manager) applyRestartStormPlan(name, reason string, plan restartStormPl
 			m.logger.Warn("automatic restart suppressed by restart-storm breaker",
 				"agent", name, "reason", reason, "trigger", plan.pauseTrigger, "pause_reason", plan.pauseReason)
 		}
-		if plan.pauseTrigger == DiskFullTrigger {
+		switch plan.pauseTrigger {
+		case DiskFullTrigger:
 			m.observeCondition(crux.ClassDataDiskPressure, DataDiskPressureKey, "data disk pressure: "+plan.pauseReason, "")
-		} else {
+		case ModelRejectedTrigger:
+			// An operator's model choice, not a hive defect: the pause reason
+			// on the agent is the report, so no restart-storm self-report.
+		default:
 			diagnostics := plan.pauseDiagnostics
 			if diagnostics == "" {
 				diagnostics = plan.pauseReason
@@ -109,6 +113,20 @@ func (m *Manager) planAutomaticRestart(name, reason, detail string, now time.Tim
 		agent.LastError = msg
 		agent.restartStormBackoffUntil = time.Time{}
 		return restartStormPlan{pauseTrigger: DiskFullTrigger, pauseReason: msg}
+	}
+	// A restart relaunches with the same --model, so it cannot fix a model
+	// the CLI rejected. Hold automatic restarts for the kick backoff the
+	// rejection armed, and park the agent once the same id has failed
+	// modelRejectionParkAfter times (model_rejection.go).
+	if agent.modelRejectedForCurrentModel() {
+		if agent.modelRejection.count >= modelRejectionParkAfter {
+			msg := modelRejectionPauseReason(agent.modelRejection.model, agent.modelRejection.count)
+			agent.restartStormBackoffUntil = time.Time{}
+			return restartStormPlan{pauseTrigger: ModelRejectedTrigger, pauseReason: msg}
+		}
+		if now.Before(agent.ProviderErrorBackoffUntil) {
+			return restartStormPlan{backoff: agent.ProviderErrorBackoffUntil.Sub(now)}
+		}
 	}
 	recent := restartEventsSince(agent.RestartEvents, now.Add(-restartStormWindow))
 	if recent >= restartStormPauseAfter {
