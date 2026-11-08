@@ -169,6 +169,9 @@ type Config struct {
 	// UpstreamWatch declares per-repo upstreams and filters for the fork
 	// upstream watch (hivecommons/hive#9966). Default off.
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`
+	// CodeScanning turns open GitHub code scanning alerts into grouped hive
+	// issues (src/docs/code-scanning.md). Default off, opt-in per repo.
+	CodeScanning CodeScanningConfig `yaml:"code_scanning,omitempty" json:"code_scanning,omitempty"`
 	// Convergence toggles the convergence-driven admission surfaces
 	// (kubestellar/hive#3845 follow-ons). Default off → zero behaviour change.
 	Convergence              ConvergenceConfig              `yaml:"convergence,omitempty" json:"convergence,omitempty"`

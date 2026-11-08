@@ -178,6 +178,7 @@ type Client struct {
 	mergeAlertIDsByRepo       map[string]map[string]*mergeAlertEntry
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
+	codeScanning              codeScanningState
 	workflowApprovals         workflowApprovalLedger
 	heldRunApprovals          HeldRunApprovals
 	installationPerms         installationPermissionCache

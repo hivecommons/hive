@@ -108,6 +108,20 @@ project:
 #   docs_url: https://github.com/hivecommons/hive/blob/v5/src/docs
 #   comment_template: ""    # text/template over gfi.Vars; must contain {{ .Marker }}
 
+# Code scanning issues (default OFF): file a repo's open GitHub code scanning
+# alerts (CodeQL, OSSF Scorecard, Trivy, ...) as grouped issues sized for one
+# PR, and close them when every alert is fixed or dismissed. Needs the App
+# permission "Code scanning alerts: Read-only". See docs/code-scanning.md.
+# code_scanning:
+#   interval: 1h              # pass cadence (at least 10m)
+#   min_severity: high        # critical | high | medium | low | note
+#   include_tools: []         # empty = every tool, e.g. [CodeQL, Trivy]
+#   exclude_rules: []         # added to the default Scorecard posture list; "!SASTID" re-includes
+#   max_new_issues_per_run: 5 # new issues per repo per pass
+#   repos:
+#     acme/widget:
+#       enabled: true
+
 # Optional contributor help/community links. Shown on /contribute Onboarding,
 # Operations, and printed by relays when they connect. Empty/omitted defaults to
 # Hive's contributor docs and issue tracker. URLs must be absolute http(s).

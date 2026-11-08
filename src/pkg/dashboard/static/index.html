@@ -8064,6 +8064,13 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <div class="gh-app-desc" id="issues-disabled-banner-list"></div>
     </div>
   </div>
+  <div id="code-scanning-banner" class="gh-app-install-banner perm-issue" hidden>
+    <span class="fs-2xl">&#9888;&#65039;</span>
+    <div class="gh-app-body">
+      <div class="gh-app-title">Code Scanning Alerts Not Readable</div>
+      <div class="gh-app-desc" id="code-scanning-banner-list"></div>
+    </div>
+  </div>
   <div id="hub-banner" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
   <div class="gh-auth-alert" id="gh-auth-alert">GitHub API authentication failed. Check GitHub App key or token configuration.</div>
@@ -30713,6 +30720,32 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       renderIssuesDisabledBanner({ issuesDisabledRepos: _lastIssuesDisabledRepos });
     }
 
+    // The code scanning sweep's notices (/api/status code_scanning): a repo
+    // whose alerts the GitHub App cannot read (it lacks "Code scanning
+    // alerts: Read") or that has no code scanning analysis. The sweep backs
+    // off from such a repo; the row links to the repo's Security tab.
+    function renderCodeScanningBanner(data) {
+      var banner = document.getElementById('code-scanning-banner');
+      if (!banner) return;
+      var repos = (data && data.code_scanning && data.code_scanning.repos) || [];
+      var shown = repos.filter(function(r) { return r && r.repo && r.notice; });
+      var list = document.getElementById('code-scanning-banner-list');
+      if (!shown.length || !list) {
+        banner.setAttribute('hidden', '');
+        banner.style.display = 'none';
+        if (list) list.innerHTML = '';
+        return;
+      }
+      list.innerHTML = shown.map(function(r) {
+        return '<div class="issues-disabled-row">'
+          + '<span class="issues-disabled-msg"><strong>' + escapeHtml(r.repo) + '</strong>: ' + escapeHtml(r.notice)
+          + ' <a href="' + escapeHtml(r.security_url || '') + '" target="_blank" rel="noopener">Security tab</a></span>'
+          + '</div>';
+      }).join('');
+      banner.removeAttribute('hidden');
+      banner.style.cssText = 'display:flex !important';
+    }
+
     var _hubBannerColorMap = {
       /* banner copy stays neutral (--text); the semantic color lives in the tint/border */
       green: {bg: 'rgba(22,163,74,0.12)', border: 'rgba(22,163,74,0.3)', color: 'var(--text)'},
@@ -48462,6 +48495,7 @@ function burnAreaChart() {
       renderRepoTargetBanner(data);
       renderOnboardingGuideChip(data);
       renderIssuesDisabledBanner(data);
+      renderCodeScanningBanner(data);
       refreshWelcomeAutoChecks(data);
       renderHubBanner(data.hubBanner);
       maybePlanningIntro(data);

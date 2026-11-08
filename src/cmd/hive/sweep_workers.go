@@ -189,6 +189,11 @@ func (b *boot) sweepJobs() []sweepJob {
 		{"rfc_notify", fixed(rfcnotify.DefaultInterval + time.Second), sweepOptional, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
 			runRFCNotifySweep(ctx, newRFCNotifySource(gh, notify), len(cfg.Project.Repos), cfg, b.dashSrv, notify, b.logger)
 		}},
+		// Opt-in per repo (code_scanning.*); a pass with no enabled repo
+		// makes no GitHub call.
+		{"code_scanning", func(cfg *config.Config) time.Duration { return cfg.CodeScanning.IntervalOrDefault() }, sweepOptional, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
+			runCodeScanningSweep(ctx, gh, cfg, b.logger)
+		}},
 	}
 }
 

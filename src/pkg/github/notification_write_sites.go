@@ -48,6 +48,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"dashboard.(*Server).handleReviewQueueSupersededClose":    {Class: NotificationClassStatus},
 	"dashboard.(*Server).mirrorPlanWith":                      {Class: NotificationClassStatus},
 	"github.(*Client).CloseIssueForConfiguredLinePR":          {Class: NotificationClassStatus},
+	"github.codeScanningForge.CloseIssue":                     {Class: NotificationClassStatus},
 	"github.(*Client).ApproveIssueRelease":                    {Class: NotificationClassStatus},
 	"github.(*Client).PostFleetReportCleared":                 {Class: NotificationClassStatus},
 	"github.(*Client).PostFleetReportRecovery":                {Class: NotificationClassStatus},

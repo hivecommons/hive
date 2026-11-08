@@ -4083,6 +4083,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	payload.Config = s.configHealthStatus()
 	if s.deps != nil {
 		payload.WorkflowApprovals = s.deps.GHClient.WorkflowApprovalsStatus()
+		if cs := s.deps.GHClient.CodeScanningStatus(); cs.Enabled || len(cs.Repos) > 0 {
+			payload.CodeScanning = &cs
+		}
 	}
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
 }
@@ -4117,6 +4120,11 @@ type statusWithWebhooks struct {
 	// WorkflowApprovals counts the hive's approvals of GitHub-gated
 	// workflow runs (hivecommons/hive#16603).
 	WorkflowApprovals github.WorkflowApprovalsStatus `json:"workflow_approvals"`
+	// CodeScanning is the code scanning sweep's per-repo picture: open
+	// alerts by severity, how many hive issues track, the Security-tab
+	// link, and a notice for a repo whose alerts the App cannot read.
+	// Absent while the sweep is off everywhere.
+	CodeScanning *github.CodeScanningStatusBlock `json:"code_scanning,omitempty"`
 	*EvalLoopStatus
 	// MatrixEnabled reports whether the Matrix block is active (enabled with
 	// at least one repo, see config.DashboardMatrixConfig.Active) so the header shows

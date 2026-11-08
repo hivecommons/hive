@@ -1,0 +1,400 @@
+[
+  {
+    "number": 149,
+    "html_url": "https://github.com/example/common/security/code-scanning/149",
+    "state": "open",
+    "rule": {
+      "id": "PinnedDependenciesID",
+      "name": "Pinned-Dependencies",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "Pinned-Dependencies",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#pinned-dependencies",
+      "tags": [
+        "dependencies",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "score is 8: pipCommand not pinned by hash\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": ".github/workflows/unit-tests.yml",
+        "start_line": 39,
+        "end_line": 39
+      }
+    }
+  },
+  {
+    "number": 148,
+    "html_url": "https://github.com/example/common/security/code-scanning/148",
+    "state": "open",
+    "rule": {
+      "id": "PinnedDependenciesID",
+      "name": "Pinned-Dependencies",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "Pinned-Dependencies",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#pinned-dependencies",
+      "tags": [
+        "dependencies",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "score is 8: pipCommand not pinned by hash\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": ".github/workflows/bazaar-featured-refresh.yml",
+        "start_line": 33,
+        "end_line": 33
+      }
+    }
+  },
+  {
+    "number": 145,
+    "html_url": "https://github.com/example/common/security/code-scanning/145",
+    "state": "open",
+    "rule": {
+      "id": "CVE-2026-97045",
+      "name": "LanguageSpecificPackageVulnerability",
+      "severity": "warning",
+      "security_severity_level": "medium",
+      "description": "golang.org/x/net/html: golang.org/x/net/html: Cross-Site Scripting via improper namespace handling during HTML rendering",
+      "help_uri": "https://avd.aquasec.com/nvd/cve-2026-97045",
+      "tags": [
+        "MEDIUM",
+        "security",
+        "vulnerability"
+      ]
+    },
+    "tool": {
+      "name": "Trivy"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "Package: golang.org/x/net\nInstalled Version: v0.61.0\nVulnerability CVE-2026-97045\nSeverity: UNKNOWN\nFixed Version: 0.62.0\nLink: [CVE-2026-97045](https://avd.aquasec.com/nvd/cve-2026-97045)"
+      },
+      "location": {
+        "path": "system_files/shared/usr/bin/uwelcome",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 144,
+    "html_url": "https://github.com/example/common/security/code-scanning/144",
+    "state": "open",
+    "rule": {
+      "id": "CVE-2026-78661",
+      "name": "LanguageSpecificPackageVulnerability",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "golang.org/x/net/html: golang.org/x/net/html: Denial of Service via crafted HTML input",
+      "help_uri": "https://avd.aquasec.com/nvd/cve-2026-78661",
+      "tags": [
+        "HIGH",
+        "security",
+        "vulnerability"
+      ]
+    },
+    "tool": {
+      "name": "Trivy"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "Package: golang.org/x/net\nInstalled Version: v0.61.0\nVulnerability CVE-2026-78661\nSeverity: UNKNOWN\nFixed Version: 0.62.0\nLink: [CVE-2026-78661](https://avd.aquasec.com/nvd/cve-2026-78661)"
+      },
+      "location": {
+        "path": "system_files/shared/usr/bin/uwelcome",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 139,
+    "html_url": "https://github.com/example/common/security/code-scanning/139",
+    "state": "open",
+    "rule": {
+      "id": "CVE-2026-111943",
+      "name": "LanguageSpecificPackageVulnerability",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "crypto/x509: golang: crypto/x509: Man-in-the-middle attacks via untrusted intermediate certificates",
+      "help_uri": "https://avd.aquasec.com/nvd/cve-2026-111943",
+      "tags": [
+        "HIGH",
+        "security",
+        "vulnerability"
+      ]
+    },
+    "tool": {
+      "name": "Trivy"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "Package: stdlib\nInstalled Version: v1.26.9\nVulnerability CVE-2026-111943\nSeverity: HIGH\nFixed Version: 1.26.10, 1.27.3\nLink: [CVE-2026-111943](https://avd.aquasec.com/nvd/cve-2026-111943)"
+      },
+      "location": {
+        "path": "system_files/shared/usr/bin/chairlift-helper",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 64,
+    "html_url": "https://github.com/example/common/security/code-scanning/64",
+    "state": "open",
+    "rule": {
+      "id": "PinnedDependenciesID",
+      "name": "Pinned-Dependencies",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "Pinned-Dependencies",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#pinned-dependencies",
+      "tags": [
+        "dependencies",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "score is 8: pipCommand not pinned by hash\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": ".github/workflows/validate-chairlift-config.yaml",
+        "start_line": 40,
+        "end_line": 40
+      }
+    }
+  },
+  {
+    "number": 61,
+    "html_url": "https://github.com/example/common/security/code-scanning/61",
+    "state": "open",
+    "rule": {
+      "id": "PinnedDependenciesID",
+      "name": "Pinned-Dependencies",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "Pinned-Dependencies",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#pinned-dependencies",
+      "tags": [
+        "dependencies",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "score is 8: pipCommand not pinned by hash\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": ".github/workflows/validate.yml",
+        "start_line": 149,
+        "end_line": 149
+      }
+    }
+  },
+  {
+    "number": 22,
+    "html_url": "https://github.com/example/common/security/code-scanning/22",
+    "state": "open",
+    "rule": {
+      "id": "FuzzingID",
+      "name": "Fuzzing",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "Fuzzing",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#fuzzing",
+      "tags": [
+        "security",
+        "supply-chain",
+        "testing"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "score is 0: project is not fuzzed:\nWarn: no fuzzer integrations found\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 21,
+    "html_url": "https://github.com/example/common/security/code-scanning/21",
+    "state": "open",
+    "rule": {
+      "id": "SASTID",
+      "name": "SAST",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "SAST",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#sast",
+      "tags": [
+        "security",
+        "supply-chain",
+        "testing"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "score is 9: SAST tool is not run on all commits -- score normalized to 9:\nWarn: 27 commits out of 29 are checked with a SAST tool\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 20,
+    "html_url": "https://github.com/example/common/security/code-scanning/20",
+    "state": "open",
+    "rule": {
+      "id": "CIIBestPracticesID",
+      "name": "CII-Best-Practices",
+      "severity": "error",
+      "security_severity_level": "low",
+      "description": "CII-Best-Practices",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#cii-best-practices",
+      "tags": [
+        "security",
+        "security-awareness",
+        "security-training"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "score is 0: no effort to earn an OpenSSF best practices badge detected\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 19,
+    "html_url": "https://github.com/example/common/security/code-scanning/19",
+    "state": "open",
+    "rule": {
+      "id": "CodeReviewID",
+      "name": "Code-Review",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Code-Review",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#code-review",
+      "tags": [
+        "code-reviews",
+        "security",
+        "source-code",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "score is 9: Found 26/27 approved changesets -- score normalized to 9\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 1,
+    "html_url": "https://github.com/example/common/security/code-scanning/1",
+    "state": "open",
+    "rule": {
+      "id": "BranchProtectionID",
+      "name": "Branch-Protection",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Branch-Protection",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#branch-protection",
+      "tags": [
+        "code-reviews",
+        "security",
+        "source-code",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "69acadb2cfa2b440dad43e33323b16169a654e0a",
+      "message": {
+        "text": "score is 4: branch protection is not maximal on development and all release branches:\nWarn: 'branch protection settings apply to administrators' is disabled on branch 'main'\nWarn: 'stale review dismissal' is disabled on branch 'main'\nWarn: codeowners review is not required on branch 'main'\nWarn: 'last push approval' is disabled on branch 'main'\nWarn: 'up-to-date branches' is disabled on branch 'main'\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  }
+]

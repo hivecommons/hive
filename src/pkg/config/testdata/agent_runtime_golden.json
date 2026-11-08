@@ -787,6 +787,7 @@
   "search": {},
   "scanner": {},
   "upstream_watch": {},
+  "code_scanning": {},
   "convergence": {},
   "integration_orchestration": {
     "mode": "",

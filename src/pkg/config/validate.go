@@ -242,6 +242,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateUpstreamWatch(); err != nil {
 		return err
 	}
+	if err := c.validateCodeScanning(); err != nil {
+		return err
+	}
 	if err := c.ValidateRecheckDiscovery(); err != nil {
 		return err
 	}

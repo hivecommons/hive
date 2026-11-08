@@ -575,6 +575,7 @@ without a class. Review submissions and review requests are always counted as
 | `dashboard.(*Server).handleReviewQueueSupersededClose` | `status` |  |
 | `dashboard.(*Server).mirrorPlanWith` | `status` |  |
 | `github.(*Client).CloseIssueForConfiguredLinePR` | `status` |  |
+| `github.codeScanningForge.CloseIssue` | `status` | closing note on a code scanning issue whose alerts are all fixed or dismissed ([code-scanning.md](code-scanning.md)) |
 | `github.(*Client).ApproveIssueRelease` | `status` | solicited authenticated release approval response |
 | `github.(*Client).CreateIssueCommentBudgeted` | `status` | passthrough wrapper; attributed to its caller |
 | `github.(*Client).PostFleetReportCleared` | `status` |  |

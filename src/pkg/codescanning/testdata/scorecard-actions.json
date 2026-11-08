@@ -1,0 +1,1126 @@
+[
+  {
+    "number": 142,
+    "html_url": "https://github.com/example/actions/security/code-scanning/142",
+    "state": "open",
+    "rule": {
+      "id": "PinnedDependenciesID",
+      "name": "Pinned-Dependencies",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "Pinned-Dependencies",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#pinned-dependencies",
+      "tags": [
+        "dependencies",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 8: pipCommand not pinned by hash\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-issue-policy-preview.yml",
+        "start_line": 71,
+        "end_line": 71
+      }
+    }
+  },
+  {
+    "number": 141,
+    "html_url": "https://github.com/example/actions/security/code-scanning/141",
+    "state": "open",
+    "rule": {
+      "id": "PinnedDependenciesID",
+      "name": "Pinned-Dependencies",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "Pinned-Dependencies",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#pinned-dependencies",
+      "tags": [
+        "dependencies",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 8: pipCommand not pinned by hash\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": ".github/workflows/actionlint.yml",
+        "start_line": 38,
+        "end_line": 38
+      }
+    }
+  },
+  {
+    "number": 138,
+    "html_url": "https://github.com/example/actions/security/code-scanning/138",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/update-v1-tag.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/update-v1-tag.yml",
+        "start_line": 22,
+        "end_line": 22
+      }
+    }
+  },
+  {
+    "number": 137,
+    "html_url": "https://github.com/example/actions/security/code-scanning/137",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-release.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-release.yml",
+        "start_line": 288,
+        "end_line": 288
+      }
+    }
+  },
+  {
+    "number": 103,
+    "html_url": "https://github.com/example/actions/security/code-scanning/103",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'checks' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/actionlint.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/actionlint.yml",
+        "start_line": 27,
+        "end_line": 27
+      }
+    }
+  },
+  {
+    "number": 100,
+    "html_url": "https://github.com/example/actions/security/code-scanning/100",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'statuses' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-promote-squash.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-promote-squash.yml",
+        "start_line": 572,
+        "end_line": 572
+      }
+    }
+  },
+  {
+    "number": 99,
+    "html_url": "https://github.com/example/actions/security/code-scanning/99",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-promote-squash.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-promote-squash.yml",
+        "start_line": 570,
+        "end_line": 570
+      }
+    }
+  },
+  {
+    "number": 98,
+    "html_url": "https://github.com/example/actions/security/code-scanning/98",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-promote-squash.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-promote-squash.yml",
+        "start_line": 171,
+        "end_line": 171
+      }
+    }
+  },
+  {
+    "number": 91,
+    "html_url": "https://github.com/example/actions/security/code-scanning/91",
+    "state": "open",
+    "rule": {
+      "id": "BranchProtectionID",
+      "name": "Branch-Protection",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Branch-Protection",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#branch-protection",
+      "tags": [
+        "code-reviews",
+        "security",
+        "source-code",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 4: branch protection is not maximal on development and all release branches:\nWarn: 'branch protection settings apply to administrators' is disabled on branch 'main'\nWarn: required approving review count is 1 on branch 'main'\nWarn: 'last push approval' is disabled on branch 'main'\nWarn: 'up-to-date branches' is disabled on branch 'main'\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 89,
+    "html_url": "https://github.com/example/actions/security/code-scanning/89",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: topLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/renovate-automerge.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/renovate-automerge.yml",
+        "start_line": 28,
+        "end_line": 28
+      }
+    }
+  },
+  {
+    "number": 64,
+    "html_url": "https://github.com/example/actions/security/code-scanning/64",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/vendor-chunka-files.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/vendor-chunka-files.yml",
+        "start_line": 35,
+        "end_line": 35
+      }
+    }
+  },
+  {
+    "number": 63,
+    "html_url": "https://github.com/example/actions/security/code-scanning/63",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-release.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-release.yml",
+        "start_line": 448,
+        "end_line": 448
+      }
+    }
+  },
+  {
+    "number": 62,
+    "html_url": "https://github.com/example/actions/security/code-scanning/62",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-sync-branches.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-sync-branches.yml",
+        "start_line": 40,
+        "end_line": 40
+      }
+    }
+  },
+  {
+    "number": 61,
+    "html_url": "https://github.com/example/actions/security/code-scanning/61",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'packages' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-execute-release.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-execute-release.yml",
+        "start_line": 193,
+        "end_line": 193
+      }
+    }
+  },
+  {
+    "number": 60,
+    "html_url": "https://github.com/example/actions/security/code-scanning/60",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-execute-release.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-execute-release.yml",
+        "start_line": 191,
+        "end_line": 191
+      }
+    }
+  },
+  {
+    "number": 59,
+    "html_url": "https://github.com/example/actions/security/code-scanning/59",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'packages' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-execute-release.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-execute-release.yml",
+        "start_line": 172,
+        "end_line": 172
+      }
+    }
+  },
+  {
+    "number": 48,
+    "html_url": "https://github.com/example/actions/security/code-scanning/48",
+    "state": "open",
+    "rule": {
+      "id": "PinnedDependenciesID",
+      "name": "Pinned-Dependencies",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "Pinned-Dependencies",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#pinned-dependencies",
+      "tags": [
+        "dependencies",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 8: npmCommand not pinned by hash\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": ".github/workflows/unit-tests.yml",
+        "start_line": 95,
+        "end_line": 95
+      }
+    }
+  },
+  {
+    "number": 47,
+    "html_url": "https://github.com/example/actions/security/code-scanning/47",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: topLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-promote-squash.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-promote-squash.yml",
+        "start_line": 134,
+        "end_line": 134
+      }
+    }
+  },
+  {
+    "number": 46,
+    "html_url": "https://github.com/example/actions/security/code-scanning/46",
+    "state": "open",
+    "rule": {
+      "id": "SASTID",
+      "name": "SAST",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "SAST",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#sast",
+      "tags": [
+        "security",
+        "supply-chain",
+        "testing"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: SAST tool is not run on all commits -- score normalized to 0:\nWarn: 0 commits out of 30 are checked with a SAST tool\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 45,
+    "html_url": "https://github.com/example/actions/security/code-scanning/45",
+    "state": "open",
+    "rule": {
+      "id": "FuzzingID",
+      "name": "Fuzzing",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "Fuzzing",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#fuzzing",
+      "tags": [
+        "security",
+        "supply-chain",
+        "testing"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: project is not fuzzed:\nWarn: no fuzzer integrations found\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 44,
+    "html_url": "https://github.com/example/actions/security/code-scanning/44",
+    "state": "open",
+    "rule": {
+      "id": "VulnerabilitiesID",
+      "name": "Vulnerabilities",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Vulnerabilities",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#vulnerabilities",
+      "tags": [
+        "security",
+        "supply-chain",
+        "vulnerabilities"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 9: 1 existing vulnerabilities detected:\nWarn: Project is vulnerable to: https://osv.dev/PYSEC-2026-1845\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 43,
+    "html_url": "https://github.com/example/actions/security/code-scanning/43",
+    "state": "open",
+    "rule": {
+      "id": "CIIBestPracticesID",
+      "name": "CII-Best-Practices",
+      "severity": "error",
+      "security_severity_level": "low",
+      "description": "CII-Best-Practices",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#cii-best-practices",
+      "tags": [
+        "security",
+        "security-awareness",
+        "security-training"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: no effort to earn an OpenSSF best practices badge detected\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 42,
+    "html_url": "https://github.com/example/actions/security/code-scanning/42",
+    "state": "open",
+    "rule": {
+      "id": "CodeReviewID",
+      "name": "Code-Review",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Code-Review",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#code-review",
+      "tags": [
+        "code-reviews",
+        "security",
+        "source-code",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 8: Found 12/15 approved changesets -- score normalized to 8\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  },
+  {
+    "number": 40,
+    "html_url": "https://github.com/example/actions/security/code-scanning/40",
+    "state": "open",
+    "rule": {
+      "id": "PinnedDependenciesID",
+      "name": "Pinned-Dependencies",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "Pinned-Dependencies",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#pinned-dependencies",
+      "tags": [
+        "dependencies",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 8: pipCommand not pinned by hash\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": ".github/workflows/unit-tests.yml",
+        "start_line": 59,
+        "end_line": 59
+      }
+    }
+  },
+  {
+    "number": 39,
+    "html_url": "https://github.com/example/actions/security/code-scanning/39",
+    "state": "open",
+    "rule": {
+      "id": "PinnedDependenciesID",
+      "name": "Pinned-Dependencies",
+      "severity": "error",
+      "security_severity_level": "medium",
+      "description": "Pinned-Dependencies",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#pinned-dependencies",
+      "tags": [
+        "dependencies",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 8: npmCommand not pinned by hash\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-validate-renovate.yml",
+        "start_line": 29,
+        "end_line": 29
+      }
+    }
+  },
+  {
+    "number": 24,
+    "html_url": "https://github.com/example/actions/security/code-scanning/24",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: topLevel 'security-events' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-vulnerability-scan.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-vulnerability-scan.yml",
+        "start_line": 37,
+        "end_line": 37
+      }
+    }
+  },
+  {
+    "number": 22,
+    "html_url": "https://github.com/example/actions/security/code-scanning/22",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: topLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-renovate-automerge.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-renovate-automerge.yml",
+        "start_line": 88,
+        "end_line": 88
+      }
+    }
+  },
+  {
+    "number": 20,
+    "html_url": "https://github.com/example/actions/security/code-scanning/20",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: topLevel 'packages' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/migration-test.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/migration-test.yml",
+        "start_line": 95,
+        "end_line": 95
+      }
+    }
+  },
+  {
+    "number": 18,
+    "html_url": "https://github.com/example/actions/security/code-scanning/18",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: topLevel 'packages' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/ghcr-cleanup.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/ghcr-cleanup.yml",
+        "start_line": 9,
+        "end_line": 9
+      }
+    }
+  },
+  {
+    "number": 14,
+    "html_url": "https://github.com/example/actions/security/code-scanning/14",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'packages' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/upgrade-test.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/upgrade-test.yml",
+        "start_line": 90,
+        "end_line": 90
+      }
+    }
+  },
+  {
+    "number": 7,
+    "html_url": "https://github.com/example/actions/security/code-scanning/7",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'security-events' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-build.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-build.yml",
+        "start_line": 104,
+        "end_line": 104
+      }
+    }
+  },
+  {
+    "number": 6,
+    "html_url": "https://github.com/example/actions/security/code-scanning/6",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'packages' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/reusable-build.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/reusable-build.yml",
+        "start_line": 101,
+        "end_line": 101
+      }
+    }
+  },
+  {
+    "number": 5,
+    "html_url": "https://github.com/example/actions/security/code-scanning/5",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'contents' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/prune-merged-branches.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/prune-merged-branches.yml",
+        "start_line": 15,
+        "end_line": 15
+      }
+    }
+  },
+  {
+    "number": 2,
+    "html_url": "https://github.com/example/actions/security/code-scanning/2",
+    "state": "open",
+    "rule": {
+      "id": "TokenPermissionsID",
+      "name": "Token-Permissions",
+      "severity": "error",
+      "security_severity_level": "high",
+      "description": "Token-Permissions",
+      "help_uri": "https://github.com/ossf/scorecard/blob/61e84743356275f6ffca23b1b2f2cb945e19eb96/docs/checks.md#token-permissions",
+      "tags": [
+        "infrastructure",
+        "security",
+        "supply-chain"
+      ]
+    },
+    "tool": {
+      "name": "Scorecard"
+    },
+    "most_recent_instance": {
+      "ref": "refs/heads/main",
+      "commit_sha": "460aab74615e911b69d2c1dc86bfb08442b15188",
+      "message": {
+        "text": "score is 0: jobLevel 'packages' permission set to 'write'\nRemediation tip: Visit [https://app.stepsecurity.io/secureworkflow](https://app.stepsecurity.io/secureworkflow/github.com/example/actions/migration-test.yml/main?enable=permissions).\nTick the 'Restrict permissions for GITHUB_TOKEN'\nUntick other options\nNOTE: If you want to resolve multiple issues at once, you can visit [https://app.stepsecurity.io/securerepo](https://app.stepsecurity.io/securerepo) instead.\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": ".github/workflows/migration-test.yml",
+        "start_line": 105,
+        "end_line": 105
+      }
+    }
+  }
+]

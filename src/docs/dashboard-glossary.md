@@ -26,6 +26,7 @@ For a plain-language explanation of every dashboard section — what it shows, h
 | Verdict / dwell / soak | A verdict is a review result. Dwell is time at a stage before it is considered stalled. Soak is an admitted PR's waiting period before merge. |
 | Swarm | Several reviewers working on the same review. Their results still pass through the merge policy. |
 | Re-home | Continue work in a replacement PR owned by the appropriate author; do not silently rewrite the original author's commits. |
+| Code scanning issue | An issue the hive filed from GitHub code scanning alerts (label `hive/code-scanning`). Its body starts with a hidden `<!-- hive:code-scanning tool=… rule=… paths=… alerts=… -->` marker listing every alert number it tracks; the sweep updates the alert table, and closes the issue when every alert is fixed or dismissed. See [Code scanning issues](code-scanning.md). |
 | Issue band / PR band | A display group in Projects, not a scheduler or merge permission. See the exact groups below. |
 
 For exact stage labels, repair ownership and hold rules, see [Labels and control signals](labels-and-control-signals.md). For commands that inspect beads, see [`hivectl bead`](hivectl.md#bead--work-items).
