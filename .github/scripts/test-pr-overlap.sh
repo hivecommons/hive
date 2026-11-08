@@ -78,8 +78,19 @@ commit_file c.txt "$(printf 'c%s\n' 1 2 3 4 5 6 7 8 9 PR3)" 'pr3 c'
 git -C "$SEED" checkout -q -b pr4 "$b0"
 commit_file d.txt 'd' 'pr4'
 
+# PRs 5 and 6 both add new.txt with different content (add/add conflict); PRs 7
+# and 8 both add same.txt with identical content (merges cleanly).
+git -C "$SEED" checkout -q -b pr5 "$b1"
+commit_file new.txt 'new-from-pr5' 'pr5'
+git -C "$SEED" checkout -q -b pr6 "$b1"
+commit_file new.txt 'new-from-pr6' 'pr6'
+git -C "$SEED" checkout -q -b pr7 "$b1"
+commit_file same.txt 'same-content' 'pr7'
+git -C "$SEED" checkout -q -b pr8 "$b1"
+commit_file same.txt 'same-content' 'pr8'
+
 git -C "$SEED" push -q "$ORIGIN" v6
-for n in 1 2 3 4; do
+for n in 1 2 3 4 5 6 7 8; do
   git -C "$SEED" push -q "$ORIGIN" "pr${n}:refs/pull/${n}/head"
 done
 
@@ -94,7 +105,7 @@ shift
 case "$*" in
   -X*) printf '%s\n' "$*" >>"$GH_WRITE_LOG"; exit 0 ;;
   *'/pulls?base=v6'*)
-    for n in 4 3 2 1; do printf '%s\tPR %s\t%s\t2026-01-01T00:00:00Z\n' "$n" "$n" "$REPO_SLUG"; done ;;
+    for n in 8 7 6 5 4 3 2 1; do printf '%s\tPR %s\t%s\t2026-01-01T00:00:00Z\n' "$n" "$n" "$REPO_SLUG"; done ;;
   *'.head.repo.full_name'*) printf '%s\n' "$REPO_SLUG" ;;
   *'.head.sha'*) printf '%s\n' "${FALLBACK_SHA:-}" ;;
   *'.base.ref'*) printf 'v6\n' ;;
@@ -127,12 +138,23 @@ LABEL_DEL="-X DELETE repos/${REPO_SLUG}/issues/%s/labels/conflicts-with-open-pr"
 echo 'PR 2: real sibling conflict with PR 3, stale PR 1 is not blamed'
 run_pr 2
 assert_exit0
-assert_contains "$OUT" '| #3 | PR 3 | CONFLICT | `b.txt` |' 'reports the real b.txt conflict with PR 3, and only b.txt'
-assert_not_contains "$OUT" 'c.txt' 'does not list the cleanly auto-merged c.txt'
+assert_contains "$OUT" '| #3 | PR 3 | CONFLICT | `b.txt` (conflict)<br>`c.txt` |' 'marks b.txt as the conflict with PR 3 and lists shared clean c.txt unmarked'
+assert_not_contains "$OUT" '`c.txt` (conflict)' 'does not mark the cleanly auto-merged c.txt as conflicting'
 assert_not_contains "$OUT" '| #1 |' 'does not blame PR 1 for its conflict with the base'
 assert_not_contains "$OUT" '| #4 |' 'does not link the unrelated stale PR 4'
 # shellcheck disable=SC2059
 assert_contains "$WRITES" "$(printf -- "$LABEL_ADD" 2)" 'labels PR 2 conflicts-with-open-pr'
+
+echo 'PR 5: add/add of the same new path with different content'
+run_pr 5
+assert_exit0
+assert_contains "$OUT" '| #6 | PR 6 | CONFLICT | `new.txt` (conflict) |' 'reports the add/add conflict on new.txt'
+
+echo 'PR 7: add/add of the same new path with identical content'
+run_pr 7
+assert_exit0
+assert_contains "$OUT" '| #8 | PR 8 | same files | `same.txt` |' 'reports same.txt as shared, not conflicting'
+assert_not_contains "$OUT" 'CONFLICT |' 'does not call identical add/add a conflict'
 
 echo 'PR 1: conflicts with the base itself'
 run_pr 1
@@ -158,12 +180,12 @@ git -C "$WORK" update-ref refs/heads/pr-3 "$(git -C "$SEED" rev-parse pr4)"
 run_pr 2
 assert_exit0
 assert_contains "$OUT" 'PR #3 pull ref unavailable; fetching head' 'reports the fallback'
-assert_contains "$OUT" '| #3 | PR 3 | CONFLICT | `b.txt` |' 'still detects the sibling conflict using the current head'
+assert_contains "$OUT" '| #3 | PR 3 | CONFLICT | `b.txt` (conflict)<br>`c.txt` |' 'still detects the sibling conflict using the current head'
 
 echo 'PR 3: fallback also works when the target PR has no pull ref'
 run_pr 3
 assert_exit0
-assert_contains "$OUT" '| #2 | PR 2 | CONFLICT | `b.txt` |' 'checks the target fetched by SHA'
+assert_contains "$OUT" '| #2 | PR 2 | CONFLICT | `b.txt` (conflict)<br>`c.txt` |' 'checks the target fetched by SHA'
 
 echo 'PR 3: invalid API head fails without publishing a partial report'
 FALLBACK_SHA=null
