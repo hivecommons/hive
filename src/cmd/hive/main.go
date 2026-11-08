@@ -5880,6 +5880,7 @@ func (b *boot) bootLanes() {
 		if b.knowledgeAPI != nil {
 			b.retroLane.SetKnowledgeSink(b.knowledgeAPI)
 		}
+		b.retroLane.SetAdvisorDecisions(b.knowledgeAdvisorDecisions())
 		autonomyNotify := func(title, message string, demote bool) {
 			if b.notifier == nil {
 				return

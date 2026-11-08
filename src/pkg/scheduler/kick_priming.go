@@ -424,21 +424,25 @@ const kickSummaryMaxRunes = 600
 // KickSummary is what the mid-task advisor's ranking pass knows about an
 // agent's current kick (#17155): an identity that changes every time the
 // scheduler primes a kick for the agent, and the primed issue refs, titles and
-// labels, capped at kickSummaryMaxRunes.
+// labels, capped at kickSummaryMaxRunes. Refs lists the primed issue/PR refs
+// that carry a repo ("owner/repo#N"), uncapped, so the advisor's decision
+// store can join decisions to beads (#17211).
 type KickSummary struct {
 	ID   string
 	Text string
+	Refs []string
 }
 
 // recordKickSummary stores a fresh KickSummary for agentName. It runs for
 // every primed kick, including one with no issues, so the identity always
 // moves with the kick.
 func (s *Scheduler) recordKickSummary(agentName string, issues []github.Issue) {
-	var parts []string
+	var parts, refs []string
 	for _, issue := range issues {
 		ref := fmt.Sprintf("#%d", issue.Number)
 		if issue.Repo != "" {
 			ref = issue.Repo + ref
+			refs = append(refs, ref)
 		}
 		part := ref + " " + strings.Join(strings.Fields(issue.Title), " ")
 		if len(issue.Labels) > 0 {
@@ -451,7 +455,7 @@ func (s *Scheduler) recordKickSummary(agentName string, issues []github.Issue) {
 		text = string(r[:kickSummaryMaxRunes])
 	}
 	id := fmt.Sprintf("%s#%d", agentName, s.kickSeq.Add(1))
-	s.kickSummaries.Store(agentName, KickSummary{ID: id, Text: text})
+	s.kickSummaries.Store(agentName, KickSummary{ID: id, Text: text, Refs: refs})
 }
 
 // KickSummary returns the summary of the most recent kick primed for

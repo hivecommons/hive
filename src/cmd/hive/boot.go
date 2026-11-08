@@ -230,6 +230,11 @@ type boot struct {
 	trajLane   *trajectory.Lane
 	replanLane *planning.ReplanLane
 	retroLane  *retro.Lane
+	// advisorDecisions is the knowledge-advisor decision store (#17211),
+	// written by the ranking decorator and read by the retro lane; opened
+	// once by knowledgeAdvisorDecisions.
+	advisorDecisions     *retro.AdvisorDecisionStore
+	advisorDecisionsOnce sync.Once
 
 	// runLoop
 	// matrixIngestSt gates the incremental Matrix ingest pass (#16276),

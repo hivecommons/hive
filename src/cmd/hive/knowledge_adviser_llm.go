@@ -80,6 +80,9 @@ type knowledgeAdviserLLM struct {
 	now        func() time.Time
 	logger     *slog.Logger
 	budget     *knowledgeAdviserLLMBudget
+	// decisions persists one compact record per decision for the retro
+	// lane's arm comparison (#17211); nil records nothing.
+	decisions knowledgeAdvisorDecisionRecorder
 
 	mu        sync.Mutex
 	delivered map[string]*knowledgeAdviserLLMKick
@@ -107,6 +110,7 @@ func newKnowledgeAdviserLLM(b *boot, inner *knowledgeAdviser) *knowledgeAdviserL
 		now:       time.Now,
 		logger:    b.logger,
 		budget:    newKnowledgeAdviserLLMBudget(time.Now),
+		decisions: b.knowledgeAdvisorDecisions(),
 		delivered: make(map[string]*knowledgeAdviserLLMKick),
 	}
 }
@@ -140,7 +144,7 @@ func (d *knowledgeAdviserLLM) Policy(agent string) crux.KnowledgeAdvisorPolicy {
 
 // Advise asks phase 1 for candidates, lets the model pick one or none, and
 // returns at most one entry. Every model decision writes one
-// "knowledge advisor: decision" log line.
+// "knowledge advisor: decision" log line and one decision-store record.
 func (d *knowledgeAdviserLLM) Advise(agent string, scope crux.KnowledgeScope) []crux.KnowledgeAdvice {
 	r, ok := d.resolve()
 	if !ok {
@@ -185,6 +189,7 @@ func (d *knowledgeAdviserLLM) Advise(agent string, scope crux.KnowledgeScope) []
 	}
 	d.markDelivered(agent, kick.ID, out)
 	d.logDecision(agent, kick.ID, scope, candidates, r, dec, outcome, out)
+	d.recordDecision(agent, kick, r, dec, outcome, out)
 	return out
 }
 

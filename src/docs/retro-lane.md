@@ -31,6 +31,12 @@ built from the advisor's decision records and joined by the issue ref:
 
 Only these counters reach the analysis model; the advisor's reasons and pane text never do.
 
+The decision records live in the knowledge-advisor decision store,
+`/data/knowledge-advisor-decisions.jsonl` (`retro.AdvisorDecisionStore`): one JSON line per
+ranking decision with the agent, kick id, the kick's primed issue/PR refs, mode, arm, outcome and
+slug, rotated like prompt history (5 MiB, 3 gzipped backups, 90 days). The retro lane reads it in
+production; without the PVC it is in-memory only.
+
 To read the comparison, call `Lane.AdvisorArmSummary()`: per arm it gives the bead
 count and the mean `FixAttempts`, `CIFailureCount` and `KicksReceived`, with no model
 call (it works with `retro.analysis_model` empty). Compare `deliver` against `holdout`:

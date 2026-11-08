@@ -192,6 +192,12 @@ flowchart LR
   `fallback-matcher`, or the verdict when nothing was typed). Over-budget
   lines also carry `budget=agent-hour|fleet-day`. Delivered lines still land
   in the prompt history under trigger `knowledge-advisor`.
+- **Decision store.** Each decision, held-out ones included, also appends one
+  compact record (agent, kick id, the kick's primed issue/PR refs, mode, arm
+  `shadow|deliver|holdout`, outcome, slug; never the reason or pane text) to
+  `/data/knowledge-advisor-decisions.jsonl`, which the retro lane reads to
+  assign each bead its advisor arm (see
+  [retro-lane.md](retro-lane.md#knowledge-advisor-arm)).
 
 **Rollout.** Start with `mode: shadow` for about a week: delivery is
 unchanged, and the decision lines show how often the model says `null`, how
