@@ -1,7 +1,9 @@
 package governor
 
 import (
+	"bytes"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -332,5 +334,44 @@ func TestContributorFirst_MixedCaseAgentNameKeepsItsGrace(t *testing.T) {
 	}
 	if want := time.Date(2026, 11, 3, 12, 30, 0, 0, time.UTC); !g.GetState().CoveredLanes["quality"].GraceUntil.Equal(want) {
 		t.Fatalf("GraceUntil = %v, want %v", g.GetState().CoveredLanes["quality"].GraceUntil, want)
+	}
+}
+
+// The General-tab toggle's usual order: a relay is already acting as the role
+// (the governor records coverage for every role, flagged or not), THEN the
+// owner switches contributor_first on. The covering line must appear once,
+// on the first evaluation that sees the flag, and not again on later ticks.
+// Seen on hive-wild-mole on 2026-11-08: coverage since 12:30:45Z, flag saved
+// 12:31:18Z, and no covering line in the hive log.
+func TestContributorFirst_FlagSwitchedOnForCoveredLaneLogsOnce(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	cfg, agents := standardConfig("quality", "scanner")
+	g := New(cfg, agents, logger)
+	const line = "contributor relay covering a contributor-first lane"
+	scanner := map[string]ContributorCoverage{"scanner": {Contributors: []string{"Danathar"}}}
+
+	g.SetContributorCoverage(scanner)
+	if n := strings.Count(buf.String(), line); n != 0 {
+		t.Fatalf("flag off: covering line logged %d times, want 0\n%s", n, buf.String())
+	}
+
+	flagged := make(map[string]config.AgentConfig, len(agents))
+	for name, ac := range agents {
+		flagged[name] = ac
+	}
+	sc := flagged["scanner"]
+	sc.ContributorFirst = true
+	flagged["scanner"] = sc
+	g.UpdateAgents(flagged)
+
+	for i := 0; i < 3; i++ {
+		g.SetContributorCoverage(scanner)
+	}
+	if n := strings.Count(buf.String(), line); n != 1 {
+		t.Fatalf("flag switched on for a covered lane: covering line logged %d times, want exactly 1\n%s", n, buf.String())
+	}
+	if !strings.Contains(buf.String(), "agent=scanner") {
+		t.Fatalf("covering line must name the lane\n%s", buf.String())
 	}
 }

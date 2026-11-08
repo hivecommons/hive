@@ -838,6 +838,8 @@ just contribute-quota resume                 # clear any active override
 just contribute-quota status                 # show the relay's current hold and any override
 ```
 
+In container and krun mode, `just contribute-hive` mounts your `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` into the container (at `/home/dev/.hive-quota-pool`) and points the relay there, so these commands reach a container relay too. It also passes `HIVE_CONTRIBUTOR_QUOTA_GUARD` and `HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT` through. Set them before the launch, either exported in the shell or in `contributor.env`; a relay that is already running keeps what it started with. `just contribute-quota` reads `contributor.env` too, so a value set there works on both sides. The pool key includes the backend, so if you launched with a backend argument that differs from `AGENT_BACKEND` in `contributor.env`, run the controls as `AGENT_BACKEND=<backend> just contribute-quota …`.
+
 Every override is narrowly scoped and expires mechanically, so none silently becomes a standing authorization to spend: `continue-once` is consumed after exactly one admitted assignment; `continue-until-reset` and `pause-until-reset` expire the moment that exact window reports a new reset epoch; `disable-session` expires when the session process exits. An override only ever authorizes spending below *your own* configured reserve — it never bypasses an unknown/unreadable quota (that still holds), and it never enables paid credits or changes any provider billing setting. `pause` mode holds the same way but offers no override path; `off` disables the guard for the session.
 
 ### Model reporting details
@@ -1138,6 +1140,8 @@ Set `HIVE_AGENT_ROLE` to request a delegated role, or use the **Acting as** cont
 export HIVE_AGENT_ROLE=quality
 just contribute-hive
 ```
+
+`HIVE_AGENT_ROLE` works in container, krun and local mode, either exported in the shell or set in `contributor.env`.
 
 The hive may override the request with an owner-assigned role. See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md) for tier, grant, and allow-list requirements.
 
@@ -1961,6 +1965,36 @@ Six behaviours are worth knowing:
   remaining routeless `unprovisioned` to a hold stays a one-line policy change
   left to the maintainer; taking it would strand exactly the hosts just listed.
   See "How the reading reaches the guard" for the marker mechanics.
+
+### A held relay tells the hub (`quota_hold_v1`)
+
+While the quota guard or the provider quota hold is holding, the relay stays
+connected and keeps answering heartbeats; it just stops sending `ready` and
+declines anything pushed to it. Before this, the hub could not tell such a relay
+from one that was working, so a relay acting as a role still counted as
+[contributor-first](agent-configuration.md#contributor-first-lanes-contributor_first)
+cover and the resident agent's kicks were withheld for a lane nobody was
+working.
+
+A hub that advertises `quota_hold_v1` in `auth_ok.server_capabilities` now hears
+about it:
+
+```jsonc
+{ "type": "quota_hold", "seq": 51, "state": "held", "reason": "quota_guard" }   // or "provider_quota"
+{ "type": "quota_hold", "seq": 52, "state": "released" }
+```
+
+- The relay sends `held` when either hold starts and `released` when both have
+  ended, before the `ready` that follows a release. It sends each transition
+  once per connection, and restates a live hold right after `auth_ok`, because
+  a new connection starts out not held on the hub.
+- The hub records it on the connection and uses it only for contributor-first
+  coverage. It changes no lease, assignment or standby state.
+- A hub that does not advertise the token never receives the frame. A relay
+  that never sends it is read as not held. Either way the behaviour is exactly
+  what it was before.
+
+The expired-CLI-login hold is not reported this way yet.
 
 ### Provider adapter sources
 

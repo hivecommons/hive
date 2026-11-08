@@ -1325,9 +1325,8 @@ covering. Standby (above) is the opposite order on purpose — it offers paused
 *budget* work to volunteers and never fires before the budget is gone.
 
 `contributor_first` inverts the order for one lane. While at least one
-contributor relay is **acting as that role and connected** — fresh heartbeat,
-not in a failure-streak pause — the governor **withholds the resident agent's
-kicks**, at the same gates where it withholds them for an exhausted budget
+contributor relay is **acting as that role and connected, and taking work**,
+the governor **withholds the resident agent's kicks**, at the same gates where it withholds them for an exhausted budget
 (cadence kicks, continuous re-kicks, CEL event kicks and crash-recovery resume
 kicks). The contributor is the lane's primary worker and spends their own
 inference; the resident agent is the fallback. Once no relay has covered the
@@ -1335,6 +1334,21 @@ role for `contributor_first_grace`, the resident agent resumes on its normal
 cadence. The grace exists because a relay reconnect is routine (the hub keeps
 a dropped relay's lease for thirty minutes for the same reason); without it
 the resident agent would flap on and off with every socket drop.
+
+A relay counts as covering the role only when all of these hold:
+
+- its heartbeat is fresh;
+- it is not in a failure-streak pause;
+- it is not in standby mode (`just contribute-standby`). A standby relay never
+  asks for ordinary work; it only takes what you dispatch to it by hand;
+- it has not reported a quota hold. A relay whose quota guard is holding stops
+  asking for work but stays connected. A relay new enough to know about this
+  tells the hub (`quota_hold_v1`, see
+  [the contributor relay guide](contributor-relay.md#a-held-relay-tells-the-hub-quota_hold_v1));
+  an older relay is still counted while held;
+- contributions are not suspended (`hub.contribute_suspended`).
+
+A relay that is busy on a task still counts.
 
 ```yaml
 agents:
