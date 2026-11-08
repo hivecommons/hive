@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/crux/config"
 )
@@ -359,6 +360,9 @@ func (m *Manager) SetModelOverride(name, model string) error {
 
 	prevModel := agent.effectiveModel()
 	agent.ModelOverride = model
+	// Picking a different model is the fix for a CLI model rejection: lift
+	// its kick backoff and count now rather than at the next launch.
+	m.clearStaleModelRejectionLocked(agent, model, time.Now())
 	m.logger.Info("agent model override set", "name", name, "model", model)
 	// State CHANGES only — the governor re-asserts the current model on every
 	// evaluation cycle, so auditing unchanged writes would flood the ring.

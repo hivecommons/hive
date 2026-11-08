@@ -442,6 +442,10 @@ type AgentProcess struct {
 	ProviderErrorLine           string
 	ProviderErrorBackoffUntil   time.Time
 	providerErrorBackoffAttempt int
+	// modelRejection counts identical "the CLI rejected the configured model"
+	// failures (see model_rejection.go). It survives restarts on purpose: a
+	// restart relaunches with the same --model and cannot fix the rejection.
+	modelRejection modelRejectionState
 	// BackendAuth is the per-agent backend-auth canary (#6558), derived from
 	// provider-auth failures observed in the CLI pane.
 	BackendAuth BackendAuthState

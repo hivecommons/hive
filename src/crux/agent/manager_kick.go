@@ -1011,6 +1011,17 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 	sinceKick := now.Sub(agent.lastInferKickAt)
 	if match, ok := classifyProviderError(paneAfterKickBaseline(pane, agent.lastInferKickVisible)); ok {
 		m.creditStallRecoveryLocked(agent, paneContentHash(pane))
+		if match.Class == ModelRejectedClass {
+			// Counted per turn, so the same refusal re-read on every stall
+			// check is one failure, and the Nth parks the agent instead of
+			// cycling backoff → kick → refusal forever.
+			count, _, park := m.recordModelRejectionLocked(agent, match, now)
+			m.mu.Unlock()
+			if park {
+				m.parkForModelRejection(name, match.Model, count)
+			}
+			return
+		}
 		backoff := m.markProviderErrorLocked(agent, match, now)
 		attempt := agent.providerErrorBackoffAttempt
 		m.mu.Unlock()
