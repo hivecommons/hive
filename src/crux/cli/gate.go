@@ -21,17 +21,19 @@ import (
 // decision and publishes gate.* events, so a second in-process writer on
 // the same work dir would undercut all three.
 
-const gateUsage = `usage: crux --server ADDR gate open --subject S [--choice C]… [--timeout D] [--context JSON] [--opened-by L] [--idempotency-key K] [--json]
+const gateUsage = `usage: crux --server ADDR gate open --subject S [--choice C]… [--timeout D] [--context JSON] [--opened-by L] [--idempotency-key K] [--run RUN] [--json]
        crux --server ADDR gate list [--status waiting|answered|expired] [--json]
        crux --server ADDR gate answer <id> --choice C [--note TEXT] [--as-operator] [--json]
        crux --server ADDR gate wait <id> [--timeout D] [--json]
 
 open prints the gate id; choices default to approve and deny, and timeout
-0 (the default) waits indefinitely. answer records one of the offered
-choices as the operator; --as-operator is the audited override that lets
-the principal that opened a gate answer it. wait blocks until the gate is
-answered (prints the answer, exit 0) or expires (exit 1, nothing printed):
-expiry is neither approval nor denial.`
+0 (the default) waits indefinitely. --run ties the gate to a contained
+run the caller owns: opening, answering and expiry become that run's
+needs-input, input and blocked turn signals. answer records one of the
+offered choices as the operator; --as-operator is the audited override
+that lets the principal that opened a gate answer it. wait blocks until
+the gate is answered (prints the answer, exit 0) or expires (exit 1,
+nothing printed): expiry is neither approval nor denial.`
 
 // remoteGate is `crux --server … gate`.
 func (e *Env) remoteGate(ctx context.Context, c *api.Client, args []string) int {
@@ -68,6 +70,7 @@ func (e *Env) remoteGateOpen(ctx context.Context, c *api.Client, args []string) 
 	fs.StringVar(&payload, "context", "", "JSON payload shown beside the subject (at most 64 KiB)")
 	fs.StringVar(&req.OpenedBy, "opened-by", "", "the driver's own label (default: the caller)")
 	fs.StringVar(&req.IdempotencyKey, "idempotency-key", "", "identify the gate by this key instead of its contents")
+	fs.StringVar(&req.Run, "run", "", "the contained run the gate holds up; its turn signals record the gate")
 	asJSON := fs.Bool("json", false, "print the record as JSON")
 	if code, ok := parseSub(fs, args); !ok {
 		return code
