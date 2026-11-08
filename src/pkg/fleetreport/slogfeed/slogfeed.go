@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -226,6 +226,14 @@ func inferenceBlockedStall(r slog.Record) bool {
 		return true
 	})
 	return blocked
+}
+
+// stageDampenerSuppression reports whether r is the stage-label store refusing
+// a flapping transition ("stage transition suppressed by dampener"). That is
+// the dampener working as designed, not a runtime error; the WARN stays in
+// local logs (hivecommons/hive#17103).
+func stageDampenerSuppression(r slog.Record) bool {
+	return strings.TrimSpace(r.Message) == "stage transition suppressed by dampener"
 }
 
 // automergeMergeGuardSkip reports whether r is an automerge sweep lane
