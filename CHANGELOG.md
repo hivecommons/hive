@@ -11,6 +11,23 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.193.1)
+
+### Changed
+
+- Dashboard: on phones each Activity monitor row is a ~90px card — ☐/⋯ in the top-right corner, a clamped head (repo chip, #ref, two-line title, PR line, chips), the progress pill, one line of caption, no "no linked issue" placeholder — the pill sheet carries the full title and note, and the phone ergonomics probe counts the padded hit areas the pill and inline chips grow to 44px with; the 1280 layout is unchanged (hivecommons/hive#17161).
+- **knowledge advisor:** the runtime now calls the knowledge adviser off the agent's poll goroutine with at most one call in flight per agent, so a slow adviser no longer stalls the tick; results are held until the delivery gates pass and dropped if the kick changed. Each observed scope carries an `Action` (`read`/`edit`/`run`) and is re-advised at most once, on its first edit or next `gh` command. An adviser can request a token-scrubbed pane tail, which the built-in matcher never does (#17153).
+
+## 2026-11-08 (v5.193.0)
+
+### Added
+
+- Dashboard: on phones the Activity monitor Merged and merge-queue lists now open as full-width modal sheets with tap-sized rows, closable with ✕, Esc or backdrop, instead of clipped popovers; desktop popovers are unchanged (#17165).
+
+### Fixed
+
+- mobile-shots: phone-ergonomics hit-rect only grows and uses layout size (#17199)
+
 ## 2026-11-08 (v5.192.0)
 
 ### Added
