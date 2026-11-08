@@ -3946,7 +3946,15 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// agent's pane first shows a scope its kick did not cover. Policy is read
 	// off the live config per call, so knowledge.advisor flips without a
 	// restart; the adviser itself is a no-op until SetPrimer has run.
-	b.agentMgr.SetKnowledgeAdviser(newKnowledgeAdviser(b))
+	// When knowledge.advisor_llm resolves at boot, the LLM ranking pass
+	// (#17155) wraps it; it re-reads the block per call and falls through to
+	// phase 1 unchanged whenever the block stops resolving or mode is off.
+	knowledgeMatcher := newKnowledgeAdviser(b)
+	var knowledgeAdviserImpl crux.KnowledgeAdviser = knowledgeMatcher
+	if _, ok := b.cfg.KnowledgeAdvisorLLM(); ok {
+		knowledgeAdviserImpl = newKnowledgeAdviserLLM(b, knowledgeMatcher)
+	}
+	b.agentMgr.SetKnowledgeAdviser(knowledgeAdviserImpl)
 
 	// Feed agent lifecycle events (start, stop, launch FAILURE, backend/model
 	// change) into the durable audit store behind the dashboard's Audit Log.
