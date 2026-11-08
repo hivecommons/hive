@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.200.0)
+
+### Added
+
+- crux: human gates, the third work service of the Crux work-services RFC ([hivecommons/crux#114](https://github.com/hivecommons/crux/issues/114) S3). A driver opens a gate with `POST /v1/gates` (or `crux --server … gate open`) and a person answers it with `crux gate answer <id> --choice approve` or `POST /v1/gates/{id}/answer`. Answers must be one of the offered choices, and any free text goes in a separate note. The record keeps both who opened the gate and who answered it. An opener answering its own gate needs the explicit, audited `--as-operator` override. Gates are stored under `<workdir>/gates` (`pending/`, `resolved/` and a `gates.jsonl` journal), so they survive a `crux serve` restart. Re-opening the same gate returns the same id and the recorded answer. A gate that times out is marked `expired`, which is neither approval nor denial. `GET /v1/gates/{id}/wait` and `crux gate wait` block until the gate is answered or expires, and `gate.opened`, `gate.answered` and `gate.expired` events appear on `/v1/events`.
+
+### Changed
+
+- **dashboard:** the sidebar **Overview** pill now reads `BP = 19/4` instead of a bare `19/4`, naming the pair *board pressure* (BP) — the open issues and PRs the configured repos put on this hive's board, total open issues over total open PRs, before any of them is sorted into actionable, held, blocked or outside. The tooltip opens with "Board pressure (BP): 19 open issues / 4 open PRs — …" ahead of the existing equation; the Governor, Contributors and Knowledge pills are unchanged, and the term is defined in the dashboard glossary (#17240).
+
 ## 2026-11-08 (v5.199.3)
 
 ### Fixed
