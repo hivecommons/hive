@@ -980,6 +980,12 @@ type FrontendAgent struct {
 	NoCadence       bool   `json:"noCadence"`
 	NeedsLogin      bool   `json:"needsLogin"`
 	LoginURL        string `json:"loginURL,omitempty"`
+
+	// CredentialBridgeBroken: a Claude token refresh replaced this agent's
+	// link to the shared login with a private file (crux.Process). The card
+	// names it instead of a generic needs-login.
+	CredentialBridgeBroken bool `json:"credentialBridgeBroken,omitempty"`
+
 	AuthAvailable   bool   `json:"authAvailable"`
 	AuthKnown       bool   `json:"authKnown"`
 	CLI             string `json:"cli"`

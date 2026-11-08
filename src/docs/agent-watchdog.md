@@ -111,6 +111,19 @@ recovery=chmod g+r /data/home/.claude/.credentials.json
 that is this condition, stated plainly. A report of `login expired (no usable
 refresh grant)` is the other condition and does need an operator login.
 
+### Some Claude agents stay on "Login expired" after a sign-in
+
+If a dashboard sign-in brings most of the fleet back but a few agents keep answering with `Login expired · Please run /login` or `OAuth token revoked`, look at their credential link:
+
+```console
+$ podman exec hive ls -l /data/home/agents/<name>/.claude/.credentials.json
+-rw-------. 1 hive-<name> node 471 Nov  7 06:51 /data/home/agents/<name>/.claude/.credentials.json
+```
+
+A regular file here, instead of a symlink to `/data/home/.claude/.credentials.json`, is the cause. A Claude Code token refresh replaced the link with a private copy, so no sign-in can reach that agent. The agent card says **credential bridge broken (private stale file)**.
+
+Hive repairs this on its own: at the agent's next launch, on the next credential-watchdog tick, and right after the next dashboard sign-in. It moves the private file aside as `.credentials.json.stale-<UTC time>`, keeps whichever token is newer and usable in the shared file, restores the symlink, and writes a `claude_credential_rebridged` Audit Log entry. See [When a Claude token refresh breaks the credential link](agent-configuration.md#when-a-claude-token-refresh-breaks-the-credential-link) for the rule. You do not need to move files by hand. If the card still shows the broken bridge after a watchdog cycle, the hive log has a `claude credential bridge: repair failed` warning that names the file and the error.
+
 ## Configuration
 
 Everything lives under `governor.watchdog` and is optional; an absent block

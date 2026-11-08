@@ -57,6 +57,7 @@ var auditSensitiveActions = map[string]bool{
 	"claude_auth_complete":                    true,
 	"claude_auth_logout":                      true,
 	"claude_auth_start":                       true,
+	"claude_credential_rebridged":             true,
 	"claude_token_missing":                    true,
 	"config_agent_cadences":                   true,
 	"config_agent_channels":                   true,

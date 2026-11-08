@@ -804,7 +804,8 @@
       overlay.className = 'gh-auth-overlay cred-dialog-overlay';
       var countdownSec = CLAUDE_AUTH_TAB_DELAY_MS / 1000;
       overlay.innerHTML = '<div class="gh-auth-modal" style="max-width:560px;text-align:left">' +
-        '<h3 style="color:#d97706;text-align:center">Login Claude Code</h3>' +
+        '<h3 style="color:#d97706;text-align:center">Sign in Claude for all agents</h3>' +
+        '<p style="color:var(--muted);font-size:0.85rem;text-align:center;margin:var(--sp-2) var(--sp-0)">This is the fleet-wide sign-in: it replaces the one shared Claude login every claude agent uses, then resumes the agents the login detector paused.</p>' +
         '<div id="claude-countdown" style="text-align:center;color:#d97706;font-weight:600;font-size:0.9rem;margin:var(--sp-4) var(--sp-0)">' +
           'Opening Claude login in ' + countdownSec + 's…</div>' +
         '<ol style="color:var(--muted);font-size:0.85rem;line-height:1.8;padding-left:1.5em;margin:var(--sp-5) var(--sp-0)">' +

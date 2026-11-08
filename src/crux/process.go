@@ -54,6 +54,12 @@ type Process struct {
 	BootstrapOverride      string
 	LastError              string
 	NeedsLogin             bool
+	// CredentialBridgeBroken is true for a per-UID claude agent whose
+	// $HOME/.claude/.credentials.json is a regular file instead of the symlink
+	// to the shared login: a Claude Code token refresh replaced the link with
+	// a private copy, so a dashboard sign-in does not reach this agent until
+	// hive re-bridges it (launch, credential watchdog, or sign-in).
+	CredentialBridgeBroken bool
 	LoginURL               string
 	Starting               bool
 	QuotaExhausted         bool

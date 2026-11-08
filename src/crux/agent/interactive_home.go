@@ -437,6 +437,13 @@ func (m *Manager) setupPerAgentCLIHome(agentName, home string, uid int, spec per
 				"agent", agentName, "link", link, "target", target)
 			continue
 		}
+		if spec.dir == claudeHomeDirName && name == claudeCredentialsFileName {
+			// A Claude token refresh replaces this link with a private regular
+			// file, which bridgeHomeEntry deliberately refuses to clobber.
+			// Re-bridge it first (moving the file aside, never deleting it);
+			// see claude_credential_bridge.go.
+			m.rebridgeClaudeCredential(agentName, link, target, claudeBridgeTriggerLaunch)
+		}
 		m.bridgeHomeEntry(agentName, link, target)
 	}
 }

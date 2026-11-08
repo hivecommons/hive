@@ -699,6 +699,32 @@
       kbShowModal('🗣 Advisor — ' + escapeHtml(agentName), bodyHtml, { width: '720px' });
     }
 
+    /* A Claude token refresh replaces an agent's link to the shared login
+       ($HOME/.claude/.credentials.json -> /data/home/.claude/.credentials.json)
+       with a private copy. The server reports it as credentialBridgeBroken.
+       A sign-in rewrites the shared file, which that agent no longer reads,
+       so a generic "needs login" sends the owner round a loop that cannot
+       work. The card names the real condition instead. */
+    const CREDENTIAL_BRIDGE_BROKEN_LABEL = 'credential bridge broken (private stale file)';
+    function credentialBridgeHintHtml(a) {
+      if (!a || a.credentialBridgeBroken !== true) return '';
+      return `<div class="terminal-copy-hint needs-login bridge-broken" role="note"><strong>${CREDENTIAL_BRIDGE_BROKEN_LABEL}.</strong> A Claude token refresh replaced this agent’s link to the shared login with its own copy, so a new sign-in does not reach it. Hive moves the copy aside and restores the link on the next credential-watchdog cycle, when the agent restarts, or when you sign in Claude for all agents.</div>`;
+    }
+    function needsLoginBadgeTitle(a) {
+      return (a && a.credentialBridgeBroken === true) ? CREDENTIAL_BRIDGE_BROKEN_LABEL : 'CLI needs login';
+    }
+    /* The Claude login on an agent card is NOT a per-agent login: it runs the
+       one dashboard sign-in that writes the shared credential every claude
+       agent uses. The label and tooltip say so. */
+    const CLAUDE_FLEET_SIGNIN_LABEL = 'Sign in Claude for all agents';
+    const CLAUDE_FLEET_SIGNIN_HELP = 'Fleet-wide sign-in, not a login for this agent only: it replaces the one shared Claude login every claude agent uses, re-links agents whose link a token refresh broke, and resumes agents the login detector paused. Operator pauses are left alone.';
+    function claudeLoginButtonHtml(a, needsLogin, claudeIcon) {
+      if (needsLogin) {
+        return '<button class="hv-btn btn-primary btn-sm cli-login-btn claude" data-action="loginAgent" data-arg0="' + esc(a.name) + '" data-arg1="claude" data-stop="1" title="' + esc(CLAUDE_FLEET_SIGNIN_HELP) + '">' + claudeIcon + ' ' + CLAUDE_FLEET_SIGNIN_LABEL + '</button>';
+      }
+      return '<button class="hv-btn btn-secondary btn-sm cli-login-btn logged-in" data-action="loginAgent" data-arg0="' + esc(a.name) + '" data-arg1="claude" data-stop="1" title="' + esc('Claude is signed in for all agents. Click to sign in again. ' + CLAUDE_FLEET_SIGNIN_HELP) + '">' + claudeIcon + ' ✓ logged in (all agents)</button>';
+    }
+
     /* SINGLE source of truth for the 🔑 "needs login" badge. Mirrors the
        server-side precedence rule in pkg/agent/authprobe.go:
 
@@ -1037,7 +1063,7 @@
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}" data-agent-order-key="${esc(a.name)}" data-agent-span="${layoutSize.span || 1}">
           ${agentSpanHandle}
           <span class="working-indicator"></span>
-          <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${isDisabled ? disabledEnableBtn : ''}${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionActions} <button class="hv-btn btn-secondary btn-sm" data-action="showAdvisorRecords" data-arg0="${esc(a.name)}" data-stop="1" title="Advisor reviews of this agent's finished turns — severity and text, newest first">🗣 advisor</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="' + esc(needsLoginBadgeTitle(a)) + '">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${isDisabled ? disabledEnableBtn : ''}${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionActions} <button class="hv-btn btn-secondary btn-sm" data-action="showAdvisorRecords" data-arg0="${esc(a.name)}" data-stop="1" title="Advisor reviews of this agent's finished turns — severity and text, newest first">🗣 advisor</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           <div class="agent-state ${isPoweredOff ? 'disabled' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${agentStateText(a)}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');
             if (a.structuredStatus === 'NEEDS_CONTEXT') return statusBadgeHTML('needs_context', 'needs context', a.statusEvidence, 'needs-context');
@@ -1050,7 +1076,7 @@
           ${agentRunLineHtml(a)}
           ${agentBlockerLineHtml(a)}
           ${repeatFailureLineHtml(a)}
-          ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
+          ${credentialBridgeHintHtml(a)}${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
           ${(() => {
             // Last upstream/launch error stays on its own line below the state
             // badge, never behind the working-indicator dot — previously the
@@ -1085,11 +1111,11 @@
             const claudeIcon = '<span class="cli-icon claude-icon"></span>';
             const copilotIcon = '<span class="cli-icon copilot-icon"></span>';
             if (needsLogin) {
-              if (isClaude) return '<button class="hv-btn btn-primary btn-sm cli-login-btn claude" data-action="loginAgent" data-arg0="' + esc(a.name) + '" data-arg1="claude" data-stop="1" title="Authenticate Claude Code CLI">' + claudeIcon + ' Login</button>';
+              if (isClaude) return claudeLoginButtonHtml(a, true, claudeIcon);
               if (isCopilot) return '<button class="hv-btn btn-primary btn-sm cli-login-btn copilot" data-action="loginAgent" data-arg0="' + esc(a.name) + '" data-arg1="copilot" data-stop="1" title="Authenticate GitHub Copilot CLI">' + copilotIcon + ' Login</button>';
               return '<button class="hv-btn btn-secondary btn-sm cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">Login</button>';
             }
-            if (isClaude) return '<button class="hv-btn btn-secondary btn-sm cli-login-btn logged-in" data-action="loginAgent" data-arg0="' + esc(a.name) + '" data-arg1="claude" data-stop="1" title="Re-authenticate Claude Code CLI">' + claudeIcon + ' ✓ logged in</button>';
+            if (isClaude) return claudeLoginButtonHtml(a, false, claudeIcon);
             if (isCopilot) return '<button class="hv-btn btn-secondary btn-sm cli-login-btn logged-in" data-action="loginAgent" data-arg0="' + esc(a.name) + '" data-arg1="copilot" data-stop="1" title="Re-authenticate GitHub Copilot CLI">' + copilotIcon + ' ✓ logged in</button>';
             return '<button class="hv-btn btn-secondary btn-sm cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">✓ logged in</button>';
           })()}</span></div>

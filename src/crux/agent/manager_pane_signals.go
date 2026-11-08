@@ -112,6 +112,7 @@ func (a *AgentProcess) snapshot() crux.Process {
 		RepeatFailure:             a.RepeatFailure,
 		SandboxLastRun:            cloneSandboxRun(a.SandboxLastRun),
 		NeedsLogin:                needsLogin,
+		CredentialBridgeBroken:    effectiveBackend(a) == "claude" && claudeCredentialBridgeBroken(a.Name, a.UID, "claude"),
 		LoginURL:                  loginURL,
 		Starting:                  a.startupLaunchQueued || a.launching,
 		QuotaExhausted:            quotaExhausted,
