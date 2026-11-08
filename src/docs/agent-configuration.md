@@ -681,6 +681,24 @@ Each per-UID agent runs with its own durable `HOME` under `/data/home/agents/<na
 
 Before [#17031](https://github.com/hivecommons/hive/issues/17031) `.claude`, `.gemini` and `.bob` were bridged whole, so every agent's CLI state sat in one tree that any agent could read and rewrite: the user-level `~/.claude/CLAUDE.md`, `history.jsonl` and `todos/` were a single shared copy, and each agent's cwd-keyed auto-memory (`projects/-data-agents-<name>/memory/MEMORY.md`, per-agent by path) was writable by every other agent and persisted on the PVC forever. Provisioning now retires those whole-directory bridges on the next launch, keeps only the login/settings entries above, and never deletes or moves anything under `/data/home`: a pre-existing shared memory store is left in place and logged once (`shared CLI home still holds a persistent memory store …`) so you can review or drain it ([#17033](https://github.com/hivecommons/hive/issues/17033)) before removing it by hand. The dashboard's token/cost scanners (`data.claude_sessions_dir`, `data.bob_sessions_dir`, `data.copilot_sessions_dir`) walk the shared path **and** every `/data/home/agents/*/…` sibling, attributing each per-agent tree to its owner, so cost accounting does not regress. `HIVE_SHARED_AGENT_HOME=1` restores the legacy single shared `HOME` for every agent (and with it the shared memory).
 
+#### When a Claude token refresh breaks the credential link
+
+The `.claude/.credentials.json` bridge is a symlink, and Claude Code does not write through it. About every 8 hours the CLI refreshes its OAuth token by writing a temp file in `~/.claude` and renaming it over `.credentials.json`. The rename replaces the symlink with a private regular file, owned by the agent's uid with mode `0600`. That agent now runs on its own copy: a later dashboard sign-in rewrites the shared file and never reaches it, and if its private token is revoked it answers every kick with `Login expired · Please run /login` or `OAuth token revoked`.
+
+Claude Code has no supported way to keep the link. `CLAUDE_CONFIG_DIR` moves the whole config directory (settings, transcripts, auto-memory), which would undo the per-agent split above, and a bind mount cannot be renamed over. So hive detects and repairs the replacement instead, in three places:
+
+- at every agent launch;
+- on every credential-watchdog cycle (`HIVE_CREDENTIAL_WATCHDOG_INTERVAL`, default 5 minutes), so a refresh that happens while the agent runs is caught within one cycle;
+- right after a successful dashboard Claude sign-in.
+
+The repair never deletes a token:
+
+1. It moves the private file aside to `.credentials.json.stale-<UTC time>` in the agent's `~/.claude`. The file keeps its owner and `0600` mode.
+2. It keeps whichever credential is newer **and** usable in the shared `/data/home/.claude/.credentials.json`. "Usable" is the rule the rest of hive uses: a live access token, or a refresh grant that has not expired. "Newer" means the access token's `expiresAt` is later. A fresh refresh in one agent therefore becomes the fleet's login, instead of stranding every other agent on the grant it just rotated. When the agent's copy wins, the old shared file is kept beside it as `.credentials.json.stale-<UTC time>` and the new one is written `0660` with the old file's owner and group. On a tie, or when the agent's copy is not usable, the shared file stays as it is.
+3. It restores the symlink.
+
+Each repair writes a `claude_credential_rebridged` Audit Log entry naming the agent, the trigger (`launch`, `watchdog` or `sign-in`), which credential was kept (`shared` or `agent`) and where the moved-aside file went. It never records token material. Until the repair runs, the agent card shows **credential bridge broken (private stale file)** instead of a generic "needs login". Moved-aside files are not cleaned up automatically; remove them by hand once you no longer need them.
+
 ### CLI auto-memory (`agents.cli_memory`)
 
 Subscription CLIs keep their own long-lived "memory" next to the transcripts: Claude Code's auto-memory (`~/.claude/projects/-data-agents-<name>/memory/MEMORY.md`), Codex memories (`$CODEX_HOME/memories/`), Copilot CLI's `memory` setting, and Gemini's `~/.gemini/GEMINI.md`. Hive agents already get their durable context from beads, the knowledge store, and the kick prompt, so a hidden per-CLI notebook mostly accumulates stale one-off inferences ([#17032](https://github.com/hivecommons/hive/issues/17032)). The `agents.cli_memory` block controls it fleet-wide, and each agent may override it with its own `cli_memory:` block:

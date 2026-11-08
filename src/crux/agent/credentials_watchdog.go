@@ -189,6 +189,12 @@ func credentialWatches() []credentialWatch {
 // the only signal is agents quietly ceasing work for hours. Turning that into
 // an immediate, queryable Audit Log entry is the whole point.
 //
+// One exception to "not a fixer": each tick also re-bridges any per-agent
+// Claude credential link that a token refresh replaced with a private file
+// (RepairClaudeCredentialBridges). That repair moves files and never mints,
+// prints or deletes a token; it is what keeps one agent's refresh from
+// stranding the rest of the fleet for more than one cycle.
+//
 // Gating: each backend's check only fires when at least one configured agent
 // uses that backend. A Claude-only hive never alerts on a missing Copilot
 // token, and vice versa; gateway/inference-only hives alert on neither.
@@ -208,6 +214,12 @@ func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Re-bridge BEFORE probing: a Claude token refresh can leave one
+			// agent on a private copy holding the only live grant, and the
+			// repair promotes it into the shared file the probe reads.
+			if m.backendInUse("claude") {
+				m.RepairClaudeCredentialBridges(claudeBridgeTriggerWatchdog)
+			}
 			for _, w := range credentialWatches() {
 				m.evalCredentialWatch(w, lastUnusable)
 			}

@@ -183,9 +183,13 @@ func (s *Server) handleClaudeAuthExchange(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Tell the agent manager to pick up the new token.
+	// Tell the agent manager to pick up the new token. With a usable shared
+	// credential this also re-bridges every agent whose link to it a token
+	// refresh had replaced with a private file (agent.Manager.ReloadClaudeToken).
+	var resumed []string
 	if s.deps != nil && s.deps.AgentMgr != nil {
 		s.deps.AgentMgr.ReloadClaudeToken()
+		resumed = s.resumeLoginPausedClaudeAgents(r)
 	}
 
 	// Clear the PKCE state.
@@ -194,10 +198,14 @@ func (s *Server) handleClaudeAuthExchange(w http.ResponseWriter, r *http.Request
 	s.claudeOAuthFlow.state = ""
 	s.claudeOAuthFlow.mu.Unlock()
 
-	s.auditFromRequest(r, "claude_auth_complete", "", "")
-	s.deps.Logger.Info("Claude Code authenticated via OAuth")
+	detail := ""
+	if len(resumed) > 0 {
+		detail = auditDetail("resumed_login_paused", strings.Join(resumed, " "))
+	}
+	s.auditFromRequest(r, "claude_auth_complete", detail, "")
+	s.deps.Logger.Info("Claude Code authenticated via OAuth", "resumed_login_paused", resumed)
 
-	jsonResponse(w, map[string]interface{}{"status": "complete"})
+	jsonResponse(w, map[string]interface{}{"status": "complete", "resumed": resumed})
 }
 
 // handleClaudeAuthLogout removes the Claude credentials.

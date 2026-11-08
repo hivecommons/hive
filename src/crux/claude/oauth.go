@@ -436,11 +436,17 @@ func HasValidToken(path string) bool {
 // Positive evidence only: an unreadable or absent file returns false, leaving
 // callers exactly where they were before they asked.
 func HasUsableToken(path string) bool {
-	tokens := LoadTokens(path)
+	return TokensUsable(LoadTokens(path), time.Now())
+}
+
+// TokensUsable is HasUsableToken over an already-loaded token set, for callers
+// that must judge two credentials side by side (the per-agent credential
+// bridge repair compares an agent's private copy with the shared file). A nil
+// token set is not usable.
+func TokensUsable(tokens *OAuthTokens, now time.Time) bool {
 	if tokens == nil {
 		return false
 	}
-	now := time.Now()
 	if tokens.AccessToken != "" && !expired(tokens.ExpiresAt, now) {
 		return true
 	}

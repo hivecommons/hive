@@ -22,11 +22,22 @@ type (
 )
 
 // ReloadClaudeToken re-reads the Claude credentials file and updates the
-// cached token. Called by the dashboard after a successful OAuth login.
+// cached token. Called by the dashboard after a successful OAuth login (and
+// after a logout).
+//
+// When the shared credential is usable afterwards — a sign-in just wrote it —
+// it also re-bridges every agent whose credential link a token refresh had
+// replaced with a private file. Without that, the new login never reaches
+// those agents: they keep reading their private, often revoked, copy and
+// every re-login is wasted. After a logout the shared file is gone, so
+// nothing is re-bridged.
 func (m *Manager) ReloadClaudeToken() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.claudeAuthToken = claude.ReadAccessToken(claude.CredentialsPath)
+	m.mu.Unlock()
+	if claude.HasUsableToken(sharedClaudeBridgeTarget()) {
+		m.RepairClaudeCredentialBridges(claudeBridgeTriggerSignIn)
+	}
 }
 
 // Copilot token sources, as reported by CopilotTokenSource. Operator-facing
