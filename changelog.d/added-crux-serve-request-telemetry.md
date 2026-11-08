@@ -1,1 +1,0 @@
-- **crux serve:** every API request now gets a span and `crux.serve.requests` / `crux.serve.request.duration` metrics, labelled only by method, route pattern (for example `GET /v1/agents/{name}`) and status class; no-op unless an OTel provider is configured (hivecommons/crux#126).

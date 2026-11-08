@@ -379,6 +379,27 @@ Child: #17057.
   outside the memory directory, end-to-end hook → draft fact → empty
   `MEMORY.md`.
 
+#### Phase 2 entry point (#17208)
+
+The hook runs as the agent's UID, so it can neither write the hive-owned
+vault nor reach the in-process drainer. It asks the hive instead: the
+`hive memory-drain` command (#17209) drops `{"agent", "cwd", "truncate"}` into
+`/var/run/hive-metrics/memory-drain-requests`, the same drop-box as the GitHub
+relays, and reads `<name>.result.json` back.
+
+- **Auth.** The owner UID of the request file is the caller's identity. The
+  runtime (`crux.CLIMemoryDrainNowHost`) refuses a request naming any other
+  agent. Every request, refused or not, is audited as
+  `cli_memory_drain_requested`.
+- **Sources.** Resolved from the agent's own home with
+  `cliMemoryDrainSources`, never from the request. `cwd` only narrows them to
+  the Claude project slug Claude derives from it.
+- **Truncate.** With `truncate`, a drain that reports no error is followed by
+  `Drainer.TruncateDrained`, which empties only the files whose every
+  `memhash` is in the vault.
+- **Drain off.** With `agents.cli_memory.drain_to_knowledge` off for the
+  agent, the answer is `ok` with `ran: false` and nothing drained.
+
 ### Phase 3 — review flow, draft exclusion, legacy migration, operator docs
 
 Child: #17058.

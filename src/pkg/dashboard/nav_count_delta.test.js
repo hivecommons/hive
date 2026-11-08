@@ -83,6 +83,7 @@ function load() {
     ['tracker-waiting', ['stageTrackerWaitingOnYou', 'stageTrackerWaitingTitle', 'stageTrackerWaitKindWords', 'stageTrackerRenderWaiting']],
     ['tracker-words-stage', ['stageTrackerDefaultFilter']],
     ['tracker-filter-render', ['renderStageTracker']],
+    ['tracker-actions', ['stageTrackerIsPhoneSheet']],
     ['tracker-merged', ['stageTrackerMergingHoldRelease']],
   ]) {
     for (const name of names) vm.runInContext(fn(file, name), ctx);
