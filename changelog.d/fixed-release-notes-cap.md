@@ -1,1 +1,0 @@
-- release: cap GitHub Release notes at `RELEASE_NOTES_MAX_CHARS` (120000) before the SBOM/NOTICE trailer, cutting the changelog section at a bullet boundary and linking the tag's full `CHANGELOG.md` section, so a first-on-the-line release such as v6.0.0 no longer fails `gh release create` with HTTP 422 "body is too long" after the tag and image retags have landed.
