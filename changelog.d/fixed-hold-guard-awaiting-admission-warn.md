@@ -1,0 +1,1 @@
+- hold guard no longer logs a WARN every tick when a held PR's base refresh is deliberately deferred to the automerge preparation front; the deferral is logged at debug level and no longer trips the selfreport error classifier.
