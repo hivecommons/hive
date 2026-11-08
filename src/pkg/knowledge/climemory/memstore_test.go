@@ -97,6 +97,47 @@ func TestOpenMemoryStoreRefusesSwappedStoreDirectory(t *testing.T) {
 	}
 }
 
+func TestTruncateDrainedNeverFollowsSymlinkedAncestorOfStore(t *testing.T) {
+	// The hive lists ~/.claude/projects/<slug>/memory with every symlink
+	// resolved, but the agent owns <slug> and can swap it for a symlink to
+	// another agent's project before the drain opens the store. The store
+	// path itself still Lstats as a real directory, so only refusing the
+	// symlinked ancestor keeps the other agent's store from being emptied.
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherProject := filepath.Join(base, "other", ".claude", "projects", "-data-agents-other")
+	victim := filepath.Join(otherProject, "memory", "MEMORY.md")
+	// No "- " bullets: zero facts count as fully stored, so a truncate that
+	// followed the symlink would empty it.
+	writeFile(t, victim, "# another agent's index\n")
+	slug := filepath.Join(base, "scanner", ".claude", "projects", "-data-agents-scanner")
+	store := filepath.Join(slug, "memory")
+	writeFile(t, filepath.Join(store, "MEMORY.md"), "# own index\n")
+	if err := os.Rename(slug, slug+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(otherProject, slug); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+
+	d := &Drainer{Dir: t.TempDir(), Now: fixedNow}
+	truncated, kept, err := d.TruncateDrained([]Source{{CLI: CLIClaude, Path: store}})
+	if len(truncated) != 0 {
+		t.Fatalf("truncated %v through a symlinked ancestor", truncated)
+	}
+	if len(kept) != 1 || kept[0] != filepath.Join(store, "MEMORY.md") {
+		t.Fatalf("kept = %v, want the listed file", kept)
+	}
+	if err == nil || !errors.Is(err, errNotMemoryFile) {
+		t.Fatalf("err = %v, want errNotMemoryFile", err)
+	}
+	if b, _ := os.ReadFile(victim); !strings.Contains(string(b), "another agent's index") {
+		t.Fatalf("store behind the symlinked ancestor was truncated: %q", b)
+	}
+}
+
 func TestMemoryStoreOpenKeepsSingleFileStoreWorking(t *testing.T) {
 	home := t.TempDir()
 	gemini := filepath.Join(home, "GEMINI.md")

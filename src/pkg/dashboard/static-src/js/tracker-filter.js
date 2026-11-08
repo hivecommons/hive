@@ -304,6 +304,181 @@
       return rank(item && item.finisher);
     }
 
+    /* ---- Maintainer notes (JS) --------------------------------------------
+       Private per-item notes maintainers leave for each other on a row
+       (/api/notes, api_maintainer_notes.go). They never reach GitHub; every
+       signed-in maintainer of the hive sees them, and the scheduler types
+       them into the item's agent kicks. The row's 🗒 button opens an inline
+       expander (list + one-line composer, ⌘/Ctrl+Enter adds). Pure helpers
+       (…Html, hamNotesIndex) run under node in
+       stage_tracker_maintainer_notes_test.go; the handlers below fetch. */
+    const MAINTAINER_NOTES_MAX = 2000;
+    const MAINTAINER_NOTES_GLYPH = '🗒';
+    const MAINTAINER_NOTES_AVATAR_PX = 32;
+    const MAINTAINER_NOTES_PRIVACY = 'Private to this hive\u2019s maintainers \u2014 not posted to GitHub; included in agent kicks for the item.';
+    var _hamNotes = {};
+    var _hamNotesOpen = new Set();
+    var _hamNotesDraft = {};
+    var _hamNotesLoaded = false;
+    var _hamNotesBusy = new Set();
+
+    function hamNotesKey(repo, number) { return String(repo || '').toLowerCase() + '#' + (Number(number) || 0); }
+    function hamNotesPanelId(key) { return 'ham-notes-' + String(key || '').replace(/[^a-z0-9]+/gi, '-'); }
+    // Pure: a /api/notes list → { 'owner/repo#n': [notes, oldest first] }.
+    function hamNotesIndex(notes) {
+      const out = {};
+      for (const n of (Array.isArray(notes) ? notes : [])) {
+        if (!n || !n.repo || !(Number(n.number) > 0)) continue;
+        const k = hamNotesKey(n.repo, n.number);
+        (out[k] = out[k] || []).push(n);
+      }
+      for (const k of Object.keys(out)) out[k].sort((a, b) => (Date.parse(a.created_at || '') || 0) - (Date.parse(b.created_at || '') || 0));
+      return out;
+    }
+    function hamNotesFor(item) { return (item && _hamNotes[hamNotesKey(item.repo, item.number)]) || []; }
+    function hamNotesCount(item) { return hamNotesFor(item).length; }
+    // The identity the notes UI draws for: signed in, login, write on the
+    // repo (null = not known yet), verified owner (may delete any note).
+    function hamNotesCtx(item) {
+      const base = typeof stageTrackerActionCtx === 'function' && item ? (stageTrackerActionCtx(item.repo) || {}) : {};
+      const role = (typeof window !== 'undefined' && window._hiveRole) || 'read';
+      const owner = typeof dashboardRoleAtLeast === 'function' && dashboardRoleAtLeast(role, 'owner');
+      return { user: !!base.user, login: String(base.login || ''), canHold: base.canHold, owner: !!owner };
+    }
+    // Pure: the row's notes affordance — nothing for a signed-out visitor
+    // (the notes are the maintainers' own), a count badge once the item
+    // has any. Sits with the row's decision controls.
+    // The phone card tier (hivecommons/hive#17161) renders the badge
+    // only once an item has notes, so an unnoted row keeps its two-line
+    // head; the ⋯ menu's "Maintainer notes…" is the way in there.
+    function hamNotesPhoneTier() {
+      return typeof matchMedia === 'function' && matchMedia('(max-width: 640px), ((pointer: coarse) and (max-width: 820px))').matches;
+    }
+    function stageTrackerNotesButtonHtml(item, ctx) {
+      if (!item || !ctx || !ctx.user) return '';
+      const key = hamNotesKey(item.repo, item.number);
+      const n = hamNotesCount(item);
+      if (!n && hamNotesPhoneTier()) return '';
+      const open = _hamNotesOpen.has(key);
+      const ref = stageTrackerRefOf(item);
+      const tip = (n ? n + ' maintainer note' + (n === 1 ? '' : 's') + '. ' : 'Leave a note for other maintainers. ') + MAINTAINER_NOTES_PRIVACY;
+      return `<button type="button" class="ham-notes-btn${n ? ' ham-notes-has' : ''}" data-action="hamNotesToggle" data-arg-types="e,t" data-stop="1" data-prevent="1" data-ham-notes-key="${esc(key)}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${esc(hamNotesPanelId(key))}" aria-label="${esc('Maintainer notes for ' + ref + (n ? ' (' + n + ')' : ''))}" title="${esc(tip)}"><span class="ham-notes-glyph" aria-hidden="true">${MAINTAINER_NOTES_GLYPH}</span>${n ? `<span class="ham-notes-count">${n}</span>` : ''}</button>`;
+    }
+    // Pure: one note — avatar, login, relative time (ticked in place by
+    // stageTrackerCueAgeSync via .cue-event-age), Delete for its author
+    // or an owner, then the text (plain, pre-wrapped).
+    function stageTrackerNoteHtml(n, ctx) {
+      const login = String(n.author || '');
+      const ms = Date.parse(n.created_at || '') || 0;
+      const mine = !!(ctx && ctx.login) && login.toLowerCase() === String(ctx.login).toLowerCase();
+      const canDelete = mine || !!(ctx && ctx.owner);
+      return `<li class="ham-note" data-ham-note-id="${esc(n.id || '')}"><div class="ham-note-meta"><img class="ham-note-avatar" src="https://github.com/${encodeURIComponent(login)}.png?size=${MAINTAINER_NOTES_AVATAR_PX}" alt="" loading="lazy" width="${MAINTAINER_NOTES_AVATAR_PX}" height="${MAINTAINER_NOTES_AVATAR_PX}"><span class="ham-note-author">@${esc(login)}</span><time class="cue-event-age ham-note-when" data-at="${ms}" datetime="${esc(n.created_at || '')}" title="${esc(n.created_at || '')}"></time>${canDelete ? `<button type="button" class="ham-note-del" data-action="hamNoteDelete" data-arg-types="e,t" data-stop="1" data-prevent="1" aria-label="${esc('Delete note by @' + login)}">Delete</button>` : ''}</div><div class="ham-note-text">${esc(n.text || '')}</div></li>`;
+    }
+    // Pure: the open expander — the notes, then the composer (a signed-in
+    // user without write on the repo reads but cannot add). '' when the
+    // row's expander is closed.
+    function stageTrackerNotesPanelHtml(item, ctx) {
+      if (!item || !ctx || !ctx.user) return '';
+      const key = hamNotesKey(item.repo, item.number);
+      if (!_hamNotesOpen.has(key)) return '';
+      const notes = hamNotesFor(item);
+      const ref = stageTrackerRefOf(item);
+      const draft = _hamNotesDraft[key] || '';
+      const list = notes.length
+        ? `<ul class="ham-notes-list">${notes.map(n => stageTrackerNoteHtml(n, ctx)).join('')}</ul>`
+        : `<p class="ham-notes-empty">No maintainer notes on ${esc(ref)} yet.</p>`;
+      const add = ctx.canHold !== false
+        ? `<div class="ham-notes-add"><textarea class="ham-notes-input" rows="1" maxlength="${MAINTAINER_NOTES_MAX}" placeholder="Note for other maintainers\u2026" aria-label="${esc('New maintainer note for ' + ref)}" data-input-action="hamNotesDraft" data-keydown-action="hamNotesKeydown" data-keys="Enter" data-arg-types="e,t">${esc(draft)}</textarea><button type="button" class="hv-btn btn-secondary ham-notes-submit" data-action="hamNoteAdd" data-arg-types="e,t" data-stop="1" data-prevent="1" title="Add note (\u2318/Ctrl+Enter)">Add note</button></div>`
+        : `<p class="ham-notes-empty">${esc(STAGE_TRACKER_WHY_WRITE)} to add a note.</p>`;
+      return `<div class="ham-notes" id="${esc(hamNotesPanelId(key))}" data-ham-notes="${notes.length}" data-ham-notes-key="${esc(key)}" role="region" aria-label="${esc('Maintainer notes for ' + ref)}"><div class="ham-notes-head">${esc(MAINTAINER_NOTES_PRIVACY)}</div>${list}${add}</div>`;
+    }
+    function hamNotesKeyOf(el) { const p = el && el.closest ? el.closest('[data-ham-notes-key]') : null; return p ? p.getAttribute('data-ham-notes-key') || '' : ''; }
+    function hamNotesSplitKey(key) { const i = String(key).lastIndexOf('#'); return { repo: String(key).slice(0, i), number: Number(String(key).slice(i + 1)) || 0 }; }
+    // Loads every live note once a maintainer is signed in (the count
+    // badges), or one item's after its `maintainer-notes` SSE frame.
+    async function hamNotesLoad(key) {
+      const role = window._hiveRole || 'read';
+      if (!window._hiveUser && !(typeof dashboardRoleAtLeast === 'function' && dashboardRoleAtLeast(role, 'owner'))) return;
+      try {
+        const q = key ? hamNotesSplitKey(key) : null;
+        const r = await fetch(q ? '/api/notes?repo=' + encodeURIComponent(q.repo) + '&number=' + q.number : '/api/notes');
+        if (!r.ok) return;
+        const d = await r.json();
+        const idx = hamNotesIndex(d && d.notes);
+        if (q) { if (idx[key]) _hamNotes[key] = idx[key]; else delete _hamNotes[key]; }
+        else { _hamNotes = idx; _hamNotesLoaded = true; }
+        renderStageTracker();
+      } catch (e) { /* keep the previous notes; the next poll or frame retries */ }
+    }
+    // Pure: the row menu's entry — the count in its label once there are notes.
+    function stageTrackerNotesMenuItem(item) {
+      const n = hamNotesCount(item);
+      return { id: 'notes', label: 'Maintainer notes' + (n ? ' (' + n + ')' : '') + '\u2026', hint: 'private', enabled: true, why: '' };
+    }
+    function hamNotesOpenFor(item) {
+      const key = hamNotesKey(item.repo, item.number);
+      _hamNotesOpen.add(key);
+      renderStageTracker();
+      const p = document.getElementById(hamNotesPanelId(key));
+      const ta = p && p.querySelector('.ham-notes-input');
+      if (ta) ta.focus(); else if (p && p.focus) { p.setAttribute('tabindex', '-1'); p.focus(); }
+      if (!_hamNotesLoaded) hamNotesLoad();
+    }
+    function hamNotesToggle(e, btn) {
+      const key = btn && btn.getAttribute ? btn.getAttribute('data-ham-notes-key') : '';
+      if (!key) return;
+      if (_hamNotesOpen.has(key)) _hamNotesOpen.delete(key); else _hamNotesOpen.add(key);
+      renderStageTracker();
+      if (_hamNotesOpen.has(key)) {
+        const p = document.getElementById(hamNotesPanelId(key));
+        const ta = p && p.querySelector('.ham-notes-input');
+        if (ta) ta.focus();
+        if (!_hamNotesLoaded) hamNotesLoad();
+      }
+    }
+    function hamNotesDraft(e, ta) { const key = hamNotesKeyOf(ta); if (key && ta) _hamNotesDraft[key] = ta.value; }
+    function hamNotesKeydown(e, ta) { if (e && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); hamNoteAdd(e, ta); } }
+    async function hamNoteAdd(e, el) {
+      const key = hamNotesKeyOf(el);
+      if (!key || _hamNotesBusy.has(key)) return;
+      const p = document.getElementById(hamNotesPanelId(key));
+      const ta = p && p.querySelector('.ham-notes-input');
+      const text = String(ta ? ta.value : (_hamNotesDraft[key] || '')).trim();
+      if (!text) { if (ta) ta.focus(); return; }
+      if (text.length > MAINTAINER_NOTES_MAX) { showToast('A note is at most ' + MAINTAINER_NOTES_MAX + ' characters', 'error'); return; }
+      const q = hamNotesSplitKey(key);
+      _hamNotesBusy.add(key);
+      try {
+        const r = await fetch('/api/notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo: q.repo, number: q.number, text }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast('Could not add the note: ' + (d && d.error ? d.error : 'HTTP ' + r.status), 'error'); return; }
+        delete _hamNotesDraft[key];
+        if (d && d.note) { const cur = (_hamNotes[key] || []).filter(n => n.id !== d.note.id); cur.push(d.note); _hamNotes[key] = cur; }
+        renderStageTracker();
+        const p2 = document.getElementById(hamNotesPanelId(key));
+        const ta2 = p2 && p2.querySelector('.ham-notes-input');
+        if (ta2) ta2.focus();
+      } catch (err) {
+        showToast('Could not add the note: ' + (err && err.message ? err.message : 'network error'), 'error');
+      } finally { _hamNotesBusy.delete(key); }
+    }
+    async function hamNoteDelete(e, btn) {
+      const li = btn && btn.closest ? btn.closest('.ham-note[data-ham-note-id]') : null;
+      const id = li ? li.getAttribute('data-ham-note-id') : '';
+      const key = hamNotesKeyOf(btn);
+      if (!id || !key) return;
+      try {
+        const r = await fetch('/api/notes/' + encodeURIComponent(id), { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast('Could not delete the note: ' + (d && d.error ? d.error : 'HTTP ' + r.status), 'error'); return; }
+        _hamNotes[key] = (_hamNotes[key] || []).filter(n => n.id !== id);
+        if (!_hamNotes[key].length) delete _hamNotes[key];
+        renderStageTracker();
+      } catch (err) {
+        showToast('Could not delete the note: ' + (err && err.message ? err.message : 'network error'), 'error');
+      }
+    }
+
     // The canonical tracker count (owner): rows of the default view — every
     // item on its own row except a PR drawn on a listed issue's row.
     function stageTrackerRowCount(items, ctx) {

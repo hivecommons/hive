@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // errNotMemoryFile marks a listed path that is no longer a regular memory
@@ -24,45 +25,112 @@ type memoryStore struct {
 }
 
 // openMemoryStore opens the store directory for path — path itself when it
-// is a directory, its parent for a file store — and checks that the opened
-// directory is the one Lstat sees at that path, so a store directory
-// swapped for a symlink since memoryFiles listed it is refused rather than
-// followed.
+// is a directory, its parent for a file store. path is the store as the hive
+// listed it with every symlink already resolved (the crux side resolves it
+// with EvalSymlinks and keeps it only under the agent's own home), so no
+// component of it may be a symlink by the time it is opened. The agent owns
+// every directory from its home down and can swap any of them (`.claude`,
+// `projects`, the project slug, the store itself) for a symlink after that
+// listing; a path-based open would follow it to another agent's store or any
+// hive-readable tree and drain, and with truncate empty, it under this
+// agent's name. The directories are therefore opened one component at a time
+// from the filesystem root, each refused when it is a symlink and checked to
+// be the very inode Lstat saw, so the store root is reached without following
+// a single symlink.
 func openMemoryStore(path string) (*memoryStore, error) {
-	base := path
-	lfi, err := os.Lstat(path)
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("%w: %s is not an absolute path", errNotMemoryFile, path)
+	}
+	path = filepath.Clean(path)
+	dir, name := filepath.Split(path)
+	if name == "" {
+		return nil, fmt.Errorf("%w: %s is not a memory store", errNotMemoryFile, path)
+	}
+	parent, err := openDirNoFollow(filepath.Clean(dir))
 	if err != nil {
 		return nil, err
 	}
-	// memoryFiles never lists a symlinked store, so one here was swapped in
-	// after the listing; refuse it before the file-store fallback below
-	// would otherwise open its (real) parent directory and pass SameFile.
+	lfi, err := parent.Lstat(name)
+	switch {
+	case err != nil:
+		parent.Close()
+		return nil, err
+	case lfi.IsDir():
+		root, err := openChildDirNoFollow(parent, name, lfi)
+		parent.Close()
+		if err != nil {
+			return nil, err
+		}
+		return &memoryStore{root: root}, nil
+	case lfi.Mode()&os.ModeSymlink != 0:
+		// memoryFiles never lists a symlinked store, so one here was swapped
+		// in after the listing; refuse it rather than open its parent.
+		parent.Close()
+		return nil, fmt.Errorf("%w: %s is a symlink", errNotMemoryFile, path)
+	default:
+		// A single-file store is opened through the directory holding it;
+		// open checks the file itself.
+		return &memoryStore{root: parent}, nil
+	}
+}
+
+// openDirNoFollow opens the absolute, clean directory dir by walking it from
+// the filesystem root one component at a time with openChildDirNoFollow, so
+// a symlink anywhere in dir is refused instead of followed. The returned
+// root's Name is dir.
+func openDirNoFollow(dir string) (*os.Root, error) {
+	vol := filepath.VolumeName(dir)
+	root, err := os.OpenRoot(vol + string(filepath.Separator))
+	if err != nil {
+		return nil, err
+	}
+	rest := strings.Trim(dir[len(vol):], string(filepath.Separator))
+	if rest == "" {
+		return root, nil
+	}
+	for _, name := range strings.Split(rest, string(filepath.Separator)) {
+		lfi, err := root.Lstat(name)
+		if err != nil {
+			root.Close()
+			return nil, err
+		}
+		next, err := openChildDirNoFollow(root, name, lfi)
+		root.Close()
+		if err != nil {
+			return nil, err
+		}
+		root = next
+	}
+	return root, nil
+}
+
+// openChildDirNoFollow opens name, an entry directly inside parent that
+// Lstat reported as lfi, as a root. A symlink or non-directory is refused,
+// and the opened directory must be the very inode Lstat saw: os.Root follows
+// a symlink that stays inside parent, so a directory swapped for one between
+// the two calls would otherwise be opened at its target.
+func openChildDirNoFollow(parent *os.Root, name string, lfi os.FileInfo) (*os.Root, error) {
+	path := filepath.Join(parent.Name(), name)
 	if lfi.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("%w: %s is a symlink", errNotMemoryFile, path)
 	}
 	if !lfi.IsDir() {
-		base = filepath.Dir(path)
-		if lfi, err = os.Lstat(base); err != nil {
-			return nil, err
-		}
+		return nil, fmt.Errorf("%w: %s is not a directory", errNotMemoryFile, path)
 	}
-	if !lfi.IsDir() {
-		return nil, fmt.Errorf("%w: %s is not a directory", errNotMemoryFile, base)
-	}
-	root, err := os.OpenRoot(base)
+	child, err := parent.OpenRoot(name)
 	if err != nil {
 		return nil, err
 	}
-	rfi, err := root.Stat(".")
+	cfi, err := child.Stat(".")
 	if err != nil {
-		root.Close()
+		child.Close()
 		return nil, err
 	}
-	if !os.SameFile(lfi, rfi) {
-		root.Close()
-		return nil, fmt.Errorf("%w: %s changed while being opened", errNotMemoryFile, base)
+	if !os.SameFile(lfi, cfi) {
+		child.Close()
+		return nil, fmt.Errorf("%w: %s changed while being opened", errNotMemoryFile, path)
 	}
-	return &memoryStore{root: root}, nil
+	return child, nil
 }
 
 func (s *memoryStore) Close() error {

@@ -73,6 +73,15 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 ### Fixed
 
 - release: cap GitHub Release notes at `RELEASE_NOTES_MAX_CHARS` (120000) before the SBOM/NOTICE trailer, cutting the changelog section at a bullet boundary and linking the tag's full `CHANGELOG.md` section, so a first-on-the-line release such as v6.0.0 no longer fails `gh release create` with HTTP 422 "body is too long" after the tag and image retags have landed.
+## 2026-11-08 (v5.202.0)
+
+### Added
+
+- crux: turn signals, the fifth work service of the Crux work-services RFC ([hivecommons/crux#114](https://github.com/hivecommons/crux/issues/114) S5). Every contained run now keeps an append-only `<workdir>/runs/<id>/signals.jsonl` of where its turn is and how it ended — `started` and `done` from the runner (`done` on every terminal path, with status, exit code and timed-out), `needs-input`, `input` and `blocked` from a gate opened with the new `run` field (`crux gate open --run`), and `thinking`, `tool`, `blocked`, `needs-input` or `input` posted by the run's owner. Read it with `GET /v1/runs/{id}/signals?since_seq=&limit=` or `crux --server … signal list`, post with `POST /v1/runs/{id}/signals` or `crux --server … signal emit`; each signal is also published as `run.signal` on `/v1/events`. The last kick outcome of every agent is saved under `<workdir>/signals/agents/` before `agent.kick_outcome` is published, and `GET /v1/agents/{name}/kick-outcome` answers it with `settled_for_last_kick`, so a driver that missed the event learns from the record whether its turn ended.
+
+### Security
+
+- The CLI-memory drain now reaches each memory store by opening its directories one component at a time from the filesystem root, refusing any component that is a symlink and requiring each opened directory to be the inode `Lstat` saw. `cliMemoryDrainSources` already resolved stores with `EvalSymlinks` and kept only those under the agent's own home, but the drain still opened the store root by path, so an agent that swapped `.claude`, `projects` or a project slug for a symlink after that listing could have had another agent's store (or any hive-readable `memory/*.md` tree) drained under its own name and, with `truncate`, emptied. Such a store is now reported in `kept` and the drain error, never followed ([#17256](https://github.com/hivecommons/hive/issues/17256)).
 
 ## 2026-11-08 (v5.201.1)
 

@@ -23,6 +23,8 @@ func TestLoadConfig(t *testing.T) {
 	}{
 		{"podman defaults", `{"image":"img"}`, ""},
 		{"job", `{"backend":"job","image":"img","job":{"workspace_claim":"pvc"}}`, ""},
+		{"job host network", `{"backend":"job","image":"img","job":{"workspace_claim":"pvc"},"job_network":"host"}`, ""},
+		{"job bad network", `{"backend":"job","image":"img","job":{"workspace_claim":"pvc"},"job_network":"bridge"}`, "job_network must be"},
 		{"unknown field", `{"image":"img","bogus":1}`, "bogus"},
 		{"no image", `{"backend":"podman"}`, "image is required"},
 		{"bad backend", `{"backend":"docker","image":"img"}`, "backend must be"},
@@ -44,6 +46,12 @@ func TestLoadConfig(t *testing.T) {
 				}
 				if cfg.DefaultTimeoutMs != DefaultTimeout.Milliseconds() || cfg.MaxOutputBytesCap != DefaultMaxOutputCap {
 					t.Fatalf("defaults not applied: %+v", cfg)
+				}
+				if tc.name == "job" && cfg.JobNetwork != kubejob.NetworkNone {
+					t.Fatalf("job_network default = %q, want none", cfg.JobNetwork)
+				}
+				if tc.name == "job host network" && cfg.JobNetwork != kubejob.NetworkHost {
+					t.Fatalf("job_network = %q", cfg.JobNetwork)
 				}
 				return
 			}
@@ -103,15 +111,24 @@ func TestBackendFromConfig(t *testing.T) {
 	if kube.Teardown != nil || kube.Name != BackendJob {
 		t.Fatalf("job backend = %+v", kube)
 	}
-	if what, ok := kube.Supports(api.RunNetworkNone); ok || !strings.Contains(what, `cannot enforce network "none"`) {
-		t.Fatalf("job none without a policy: %q %v", what, ok)
+	// Unset job_network is "none": the launcher isolates each run itself.
+	if _, ok := kube.Supports(api.RunNetworkNone); !ok {
+		t.Fatal("job none by default is not claimed")
 	}
 	opts := kube.Launcher.(*kubejob.Launcher).Options
 	if opts.WorkspaceClaim != "pvc" || opts.TTLSeconds != 60 || len(opts.Tolerations) != 1 || opts.Tolerations[0].Key != "k" ||
-		len(opts.ExtraVolumes) != 1 || opts.ExtraVolumes[0].MountPath != "/cache" || !opts.ExtraVolumes[0].ReadOnly {
+		len(opts.ExtraVolumes) != 1 || opts.ExtraVolumes[0].MountPath != "/cache" || !opts.ExtraVolumes[0].ReadOnly || opts.Network != kubejob.NetworkNone {
 		t.Fatalf("job options = %+v", opts)
 	}
-	policy, _ := BackendFromConfig(Config{Backend: BackendJob, Image: "img", Job: job, JobNetworkPolicy: true})
+	// On the cluster network only the operator's own policy can claim it.
+	open, _ := BackendFromConfig(Config{Backend: BackendJob, Image: "img", Job: job, JobNetwork: kubejob.NetworkDefault})
+	if what, ok := open.Supports(api.RunNetworkNone); ok || !strings.Contains(what, `cannot enforce network "none"`) {
+		t.Fatalf("job default without a policy: %q %v", what, ok)
+	}
+	if open.Launcher.(*kubejob.Launcher).Options.Network != kubejob.NetworkDefault {
+		t.Fatal("job_network default not passed through")
+	}
+	policy, _ := BackendFromConfig(Config{Backend: BackendJob, Image: "img", Job: job, JobNetwork: kubejob.NetworkHost, JobNetworkPolicy: true})
 	if _, ok := policy.Supports(api.RunNetworkNone); !ok {
 		t.Fatal("job_network_policy ignored")
 	}
@@ -122,6 +139,7 @@ func TestBackendFromConfig(t *testing.T) {
 	for name, cfg := range map[string]Config{
 		"job without block": {Backend: BackendJob, Image: "img"},
 		"job invalid":       {Backend: BackendJob, Image: "img", Job: &config.SandboxJobConfig{}},
+		"job bad network":   {Backend: BackendJob, Image: "img", Job: job, JobNetwork: "bridge"},
 		"unknown":           {Backend: "docker", Image: "img"},
 	} {
 		if _, err := BackendFromConfig(cfg); !errors.Is(err, ErrConfig) {
