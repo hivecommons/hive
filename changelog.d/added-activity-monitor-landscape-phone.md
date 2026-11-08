@@ -1,1 +1,0 @@
-- The Hive activity monitor on a landscape phone (≤500px tall, coarse pointer) uses the compact filter bar, hides the column header so the sticky stack is a single bar, and shows at most one merge banner, so rows are visible instead of chrome; portrait and desktop are unchanged (#17166, part of #17158).
