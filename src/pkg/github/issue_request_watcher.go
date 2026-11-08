@@ -706,7 +706,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if err == nil && parkBlocked {
 			err = c.AddLabels(ctx, req.Repo, req.Number, []string{BlockedLabel})
 			if err == nil {
-				err = c.RemoveLabel(ctx, req.Repo, req.Number, helpWantedLabel)
+				err = stripHelpWanted(ctx, c, req.Repo, req.Number)
 			}
 		}
 		if err == nil {
@@ -2202,7 +2202,7 @@ func subjectMatchFindingComment(title, body string) string {
 	b.WriteString("**Consolidated finding.** This was filed as a separate issue; it has the same subject as this one, so it was folded in here instead. Address it together with this issue.\n\n### ")
 	b.WriteString(title)
 	b.WriteString("\n\n")
-	b.WriteString(body)
+	b.WriteString(stripFiledForHelpMarker(body))
 	return b.String()
 }
 
@@ -2222,7 +2222,7 @@ func consolidatedFindingComment(title, body string, files map[string]bool) strin
 	b.WriteString("), so it was folded in here instead. Address it in the same PR as this issue — two PRs editing the same files would conflict.\n\n### ")
 	b.WriteString(title)
 	b.WriteString("\n\n")
-	b.WriteString(body)
+	b.WriteString(stripFiledForHelpMarker(body))
 	return b.String()
 }
 
@@ -2251,7 +2251,7 @@ func foldedComponentFindingComment(title, body, path string, openSiblings, close
 	b.WriteString("`, so it was folded into the oldest of them instead of opening another. Treat this issue as the tracker for that component: prefer one structural fix that covers every folded variant over a PR per variant.\n\n### ")
 	b.WriteString(title)
 	b.WriteString("\n\n")
-	b.WriteString(body)
+	b.WriteString(stripFiledForHelpMarker(body))
 	return b.String()
 }
 

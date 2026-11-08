@@ -283,7 +283,9 @@ agent's separate `claim` request lands
 an issue you are about to work on yourself, pass `--claim`: right after the
 create the watcher runs the same gate and claim a `claim` request does
 (`hive/claimed-by-<agent>` label, in-progress fact, start marker) and
-removes `help wanted`, so there is no window. The start signal it raises
+removes `help wanted`, so there is no window. The claim is a separate
+`claim` write: the lane's write allowlist must list `claim` as well as
+`create_issue`, or the issue is created and `claim_error` says why. The start signal it raises
 (`filed_claim`) also counts as the issue's kick listing on the hub, so the
 hub's claim ledger records the claim even though no kick ever named the
 new issue. A claim that fails or is refused does

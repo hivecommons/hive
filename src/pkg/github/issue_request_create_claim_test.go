@@ -287,3 +287,22 @@ func TestIssueRequestWatcher_CreateWithoutClaimReplacesForeignMarker(t *testing.
 		t.Fatalf("the seeded marker must be gone and exactly one marker remain: %q", f.createdBody)
 	}
 }
+
+// A finding folded into another issue is posted as a comment there; the
+// filed-for-help marker is read only from an issue's own body, so the fold
+// comments carry none of it and leave no stray blank lines where it was.
+func TestFoldedFindingCommentsDropFiledForHelpMarker(t *testing.T) {
+	body := "finding text\n\n" + FiledForHelpMarker("scanner") + "\n\n— hive: agent=scanner"
+	for name, comment := range map[string]string{
+		"subject":   subjectMatchFindingComment("t", body),
+		"file_set":  consolidatedFindingComment("t", body, map[string]bool{"a.go": true}),
+		"component": foldedComponentFindingComment("t", body, "pkg", 2, 0),
+	} {
+		if ParseFiledForHelpMarker(comment) != "" {
+			t.Fatalf("%s fold comment carries the filed-for-help marker: %q", name, comment)
+		}
+		if !strings.HasSuffix(comment, "finding text\n\n— hive: agent=scanner") {
+			t.Fatalf("%s fold comment body not preserved around the dropped marker: %q", name, comment)
+		}
+	}
+}

@@ -53,6 +53,7 @@ const filedForHelpAgentPattern = `[A-Za-z0-9_.-]+`
 var (
 	filedForHelpMarkerRe = regexp.MustCompile(`<!--\s*hive:filed-for-help\s+(` + filedForHelpAgentPattern + `)\s*-->`)
 	filedForHelpAgentRe  = regexp.MustCompile(`^` + filedForHelpAgentPattern + `$`)
+	filedForHelpBlankRe  = regexp.MustCompile(`\n{3,}`)
 )
 
 // ParseFiledForHelpMarker returns the agent named by body's filed-for-help
@@ -65,6 +66,16 @@ func ParseFiledForHelpMarker(body string) string {
 	return m[1]
 }
 
+// stripFiledForHelpMarker drops any filed-for-help marker from body. The
+// marker is read only from an issue's own body (ParseFiledForHelpMarker), so
+// a finding folded into another issue as a comment carries none: there it
+// would be noise that binds nobody.
+func stripFiledForHelpMarker(body string) string {
+	body = filedForHelpMarkerRe.ReplaceAllString(body, "")
+	body = filedForHelpBlankRe.ReplaceAllString(body, "\n\n")
+	return strings.TrimRight(body, "\n")
+}
+
 // withFiledForHelpMarker appends the filed-for-help marker for agent to
 // body. Any marker already in body is dropped first: the body is the
 // filer's own text, so a pre-seeded marker naming someone else would
@@ -74,7 +85,7 @@ func withFiledForHelpMarker(body, agent string) string {
 	if agent == "" || !filedForHelpAgentRe.MatchString(agent) {
 		return body
 	}
-	body = strings.TrimRight(filedForHelpMarkerRe.ReplaceAllString(body, ""), "\n")
+	body = stripFiledForHelpMarker(body)
 	if body == "" {
 		return FiledForHelpMarker(agent)
 	}

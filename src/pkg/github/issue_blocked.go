@@ -592,9 +592,10 @@ func stripBlockedHelpWanted(ctx context.Context, client *Client, t blockedIssueT
 }
 
 // stripHelpWanted takes `help wanted` off an issue the hive is not asking
-// outside help for: a blocked one, or one its filer claimed as its own next
-// step (hivecommons/hive#17299). Callers gate the write; this is the one
-// shared removal so the writeback ratchet sees a single call site.
+// outside help for: one parked `blocked` (by the sweep or a --blocked-on-pr
+// comment), or one its filer claimed as its own next step
+// (hivecommons/hive#17299). Callers gate the write; this is the one shared
+// removal so the writeback ratchet sees a single call site.
 func stripHelpWanted(ctx context.Context, client *Client, repo string, number int) error {
 	return client.RemoveLabel(ctx, repo, number, helpWantedLabel)
 }
