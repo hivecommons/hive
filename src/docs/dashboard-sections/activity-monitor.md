@@ -157,6 +157,8 @@ The reason, actor, nudges, repository, flags and recent stage hops live on the `
 
 Reduced-motion preferences disable animation; needs-human remains steadily red. Icons do not rotate. Movement animation and the newer working cues have their own settings/reference below.
 
+**On a phone** (≤640px, or a touch screen up to 820px) the eight chevrons do not fit a row, so each row shows a single **progress pill** in their place — `Step 7/8 · Merge queue · 2h`: the lit chevron's position counted as drawn (CI and Review are two steps; a nested PR row counts only its own PR columns), its word and the time on step. The pill takes the strip's colour: amber for a steady or working stage, green once merged, the amber→red needs-human tint when a person must move. The sticky column header is hidden with the strip. Tapping the pill opens the full chevron strip, the `since` age, the current-stage caption and the lit chevron's hover text in a full-screen sheet (✕, Esc or *Close*); the strip scrolls sideways inside the sheet if it has to. When a row moves between refreshes the pill flashes once instead of the chevron-to-chevron movement animation. At 1280 and in phone landscape wider than 820px the strip is drawn exactly as before ([#17160](https://github.com/hivecommons/hive/issues/17160)).
+
 ### Payload freshness and stage-engine reference
 
 The view is fed by `GET /api/stage-tracker`. Without a stage or journal entry an item is in the Open column; a not-yet-placed item can read **New** as described [below](#new-row-000-new-the-pre-stage-state). Scanner buckets can place unlabeled claimed→020, in-progress→030 and covered→040 work.

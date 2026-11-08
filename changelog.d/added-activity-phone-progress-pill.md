@@ -1,0 +1,1 @@
+- Dashboard: on phones the Activity monitor row shows a stage-coloured "Step 7/8 · Merge queue · 2h" progress pill in place of the chevron strip; tapping it opens the full strip in a sheet, and the sticky column header is hidden with the strip (hivecommons/hive#17160).

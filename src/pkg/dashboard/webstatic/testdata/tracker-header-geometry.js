@@ -61,6 +61,47 @@
     }
   };
   const rows = [...document.querySelectorAll('#activity-monitor-section .ham-row, #activity-monitor-section .ham-sub')];
+  // Phone tier (hivecommons/hive#17160): the chevron strip is hidden and a
+  // progress pill stands in for it, so the lane geometry below has nothing
+  // to measure. The pill contract is asserted instead: every visible row
+  // owns one pill, fully inside the row, at least the tap target tall, its
+  // text at least 12px, no strip-row scrolling sideways, no column header,
+  // needs-human rows coloured apart from the rest.
+  const phone = matchMedia('(max-width: 640px), ((pointer: coarse) and (max-width: 820px))').matches;
+  if (phone) {
+    const tapTarget = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tap-target')) || 40;
+    const minFont = 12;
+    const fills = { human: new Set(), other: new Set() };
+    let pills = 0;
+    const cols = document.querySelector('#activity-monitor-section .ham-cols');
+    assert(!visible(cols), 'phone: the sticky chevron column header is hidden (the pill names the stage)');
+    for (const [index, row] of rows.entries()) {
+      const name = 'row ' + index + ' ';
+      const stripRow = row.querySelector(':scope > .ham-strip-row');
+      if (!visible(row) || !visible(stripRow)) continue;
+      const strip = stripRow.querySelector(':scope > ol[aria-label="Pipeline progress"]');
+      const pill = stripRow.querySelector(':scope > .ham-pill');
+      assert(!visible(strip), name + 'phone: chevron strip is hidden behind the pill');
+      assert(stripRow.scrollWidth <= stripRow.clientWidth + tolerance, name + 'phone: strip row does not scroll sideways');
+      if (!strip || !strip.querySelector('.ham-seg.active')) continue; // no active step → no pill (superseded original)
+      assert(visible(pill), name + 'phone: every row with an active step shows a progress pill');
+      if (!visible(pill)) continue;
+      pills++;
+      const box = rect(pill), bounds = rect(row);
+      assert(box.left >= bounds.left - tolerance && box.right <= bounds.right + tolerance, name + 'phone: pill stays inside the row: ' + JSON.stringify({ pill: box.toJSON(), row: bounds.toJSON() }));
+      assert(box.height >= tapTarget - tolerance, name + 'phone: pill is at least the tap target tall: ' + box.height);
+      assert(parseFloat(getComputedStyle(pill).fontSize) >= minFont, name + 'phone: pill text is at least 12px');
+      assert(/^Step \d+\/\d+ · \S/.test(pill.textContent.replace(/\s+/g, ' ').trim()) || /^Step \d+\/\d+/.test(pill.querySelector('.ham-pill-step')?.textContent || ''), name + 'phone: pill reads "Step N/T · stage"');
+      assert(pill.matches('[data-action="stageTrackerPillSheet"][data-arg0]'), name + 'phone: tapping the pill opens the strip sheet');
+      (pill.dataset.motion === 'needs-human' ? fills.human : fills.other).add(getComputedStyle(pill).backgroundColor);
+      if (strip.querySelector('.ham-seg.active[data-motion="needs-human"]')) assert(pill.dataset.motion === 'needs-human', name + 'phone: needs-human row carries a needs-human pill');
+    }
+    assert(pills > 0, 'phone: preview must render progress pills');
+    assert(fills.human.size > 0, 'phone: preview must include a needs-human pill');
+    for (const fill of fills.human) assert(!fills.other.has(fill), 'phone: needs-human pills are visually distinct from the other pills: ' + fill);
+    if (failures.length) throw new Error(JSON.stringify({ viewport: innerWidth, phone: true, pills, failures }));
+    return { viewport: innerWidth, phone: true, pills, failures };
+  }
   const references = new Map();
   for (const [index, row] of rows.entries()) {
     const header = row.querySelector(':scope > .ham-row-head > .ham-head-cols');
