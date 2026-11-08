@@ -22,15 +22,9 @@ type (
 )
 
 // ReloadClaudeToken re-reads the Claude credentials file and updates the
-// cached token. Called by the dashboard after a successful OAuth login (and
-// after a logout).
-//
-// When the shared credential is usable afterwards — a sign-in just wrote it —
-// it also re-bridges every agent whose credential link a token refresh had
-// replaced with a private file. Without that, the new login never reaches
-// those agents: they keep reading their private, often revoked, copy and
-// every re-login is wasted. After a logout the shared file is gone, so
-// nothing is re-bridged.
+// cached token (dashboard sign-in or logout). When the shared credential is
+// usable afterwards, it re-bridges agents whose link a token refresh replaced
+// with a private file, so the new login reaches them.
 func (m *Manager) ReloadClaudeToken() {
 	m.mu.Lock()
 	m.claudeAuthToken = claude.ReadAccessToken(claude.CredentialsPath)
