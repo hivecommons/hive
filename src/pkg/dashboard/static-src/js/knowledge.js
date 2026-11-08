@@ -216,17 +216,19 @@
        (actionableNow.issues / .prs, the same numbers the Governor tiles
        print). Both stay hidden until their feed has answered once.
        sidebarPairBadgeText() is pure so sidebar_pair_badge_test.go can
-       execute it under node. */
-    function sidebarPairBadgeText(issues, prs) {
-      return (Number(issues) || 0) + '/' + (Number(prs) || 0);
+       execute it under node. The optional prefix names the pair — only
+       Overview passes one ("BP = " for board pressure, #17240); the
+       Governor and Contributors pills stay a bare "x/y". */
+    function sidebarPairBadgeText(issues, prs, prefix) {
+      return (prefix || '') + (Number(issues) || 0) + '/' + (Number(prs) || 0);
     }
 
-    function setSidebarPairBadge(el, issues, prs, title) {
+    function setSidebarPairBadge(el, issues, prs, title, prefix) {
       if (!el) return;
       const i = Number(issues) || 0;
       const p = Number(prs) || 0;
       el.hidden = false;
-      el.textContent = sidebarPairBadgeText(i, p);
+      el.textContent = sidebarPairBadgeText(i, p, prefix);
       if (i === 0 && p === 0) el.setAttribute('data-zero', '');
       else el.removeAttribute('data-zero');
       if (title) el.title = title;

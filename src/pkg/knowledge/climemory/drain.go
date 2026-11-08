@@ -98,6 +98,9 @@ type Drainer struct {
 type memFile struct {
 	cli, path, repo string
 	spoolDir        string
+	// store is the opened source the file is read through; nil for a file
+	// being retried from the spool.
+	store *memoryStore
 }
 
 // drainRun is the state of one Drain call.
@@ -133,14 +136,23 @@ func (d *Drainer) Drain(req Request) Result {
 	}
 	var files []memFile
 	for _, src := range req.Sources {
-		paths, err := memoryFiles(src.Path)
+		paths, err := listMemoryFiles(src.Path)
 		if err != nil {
 			res.Errors = append(res.Errors, err)
 			continue
 		}
+		if len(paths) == 0 {
+			continue
+		}
+		store, err := openMemoryStore(src.Path)
+		if err != nil {
+			res.Errors = append(res.Errors, fmt.Errorf("cli-memory drain: opening %s: %w", src.Path, err))
+			continue
+		}
+		defer store.Close()
 		repo := repoFromClaudeSlug(src.Path, req.Repos)
 		for _, p := range paths {
-			files = append(files, memFile{cli: src.CLI, path: p, repo: repo})
+			files = append(files, memFile{cli: src.CLI, path: p, repo: repo, store: store})
 		}
 	}
 	seen, err := r.prepareVault()
@@ -165,7 +177,7 @@ func (d *Drainer) Drain(req Request) Result {
 		}
 	}
 	for _, f := range files {
-		content, err := os.ReadFile(f.path)
+		content, err := f.store.read(f.path)
 		if err != nil {
 			res.Errors = append(res.Errors, fmt.Errorf("cli-memory drain: reading %s: %w", f.path, err))
 			continue
@@ -345,6 +357,10 @@ func hashFromFrontmatter(path string) string {
 	}
 	return ""
 }
+
+// listMemoryFiles is memoryFiles behind a seam, so a test can hand Drain
+// and TruncateDrained a listing the store no longer matches.
+var listMemoryFiles = memoryFiles
 
 // memoryFiles lists the markdown files under path (or path itself when it
 // is a file), skipping temp files, hidden entries, symlinks and oversized

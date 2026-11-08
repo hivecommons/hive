@@ -7,9 +7,29 @@ import (
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// useTestTracer routes the serve tracer at an in-memory exporter for the
+// test's lifetime. instrument resolves otel.Tracer per request, so swapping
+// the global provider is enough.
+func useTestTracer(t *testing.T) *tracetest.InMemoryExporter {
+	t.Helper()
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prev)
+		_ = tp.Shutdown(context.Background())
+	})
+	return exp
+}
 
 func useTestMetrics(t *testing.T) *sdkmetric.ManualReader {
 	t.Helper()
@@ -108,5 +128,111 @@ func TestInstrumentPreservesFlusher(t *testing.T) {
 	h.ServeHTTP(noFlush{httptest.NewRecorder()}, httptest.NewRequest(http.MethodGet, "/", nil))
 	if sawFlusher {
 		t.Error("non-flushable writer gained a Flusher")
+	}
+}
+
+// The span carries the same bounded attributes as the metric point and is
+// named after the route pattern: a concrete path (which may embed an agent
+// name) must appear in neither the span name nor its attributes.
+func TestRequestSpansNamedByRoutePatternWithoutThePath(t *testing.T) {
+	exp := useTestTracer(t)
+	h := instrument(func() http.Handler {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /v1/agents/{name}", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		})
+		return mux
+	}())
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/agents/secret-agent-xyz", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/nowhere/secret-agent-xyz", nil))
+
+	spans := exp.GetSpans()
+	if len(spans) != 2 {
+		t.Fatalf("spans = %d, want one per request", len(spans))
+	}
+	got := map[string]map[string]string{}
+	for _, sp := range spans {
+		if sp.SpanKind != trace.SpanKindServer {
+			t.Errorf("span %q kind = %v, want server", sp.Name, sp.SpanKind)
+		}
+		if strings.Contains(sp.Name, "secret-agent-xyz") {
+			t.Errorf("span name %q leaks the request path", sp.Name)
+		}
+		if len(sp.Attributes) != 3 {
+			t.Errorf("span %q attributes = %v, want exactly method, route, status_class", sp.Name, sp.Attributes)
+		}
+		attrs := map[string]string{}
+		for _, kv := range sp.Attributes {
+			if strings.Contains(kv.Value.Emit(), "secret-agent-xyz") {
+				t.Errorf("span attribute %s=%q leaks the request path", kv.Key, kv.Value.Emit())
+			}
+			attrs[string(kv.Key)] = kv.Value.Emit()
+		}
+		got[sp.Name] = attrs
+	}
+	want := map[string]map[string]string{
+		"GET /v1/agents/{name}": {"method": "GET", "route": "GET /v1/agents/{name}", "status_class": statusClass4xx},
+		routeUnmatched:          {"method": "GET", "route": routeUnmatched, "status_class": statusClass4xx},
+	}
+	for name, attrs := range want {
+		for k, v := range attrs {
+			if got[name][k] != v {
+				t.Errorf("span %q %s = %q, want %q (spans: %v)", name, k, got[name][k], v, got)
+			}
+		}
+	}
+}
+
+// The recorded status is the one the client saw: net/http commits the first
+// WriteHeader (or an implicit 200 on the first Write) and ignores the rest,
+// so the recorder must keep the first status too, not the last.
+func TestRecordedStatusIsTheOneTheClientSaw(t *testing.T) {
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		want    string
+	}{
+		{"implicit 200 on write, late 500 ignored", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("ok"))
+			w.WriteHeader(http.StatusInternalServerError)
+		}, statusClass2xx},
+		{"first WriteHeader wins", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			w.WriteHeader(http.StatusInternalServerError)
+		}, statusClass4xx},
+		{"nothing written is 200", func(http.ResponseWriter, *http.Request) {}, statusClass2xx},
+		{"explicit 5xx", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+		}, statusClass5xx},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := useTestMetrics(t)
+			rec := httptest.NewRecorder()
+			instrument(tc.handler).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+			var rm metricdata.ResourceMetrics
+			if err := reader.Collect(context.Background(), &rm); err != nil {
+				t.Fatalf("Collect: %v", err)
+			}
+			var classes []string
+			for _, sm := range rm.ScopeMetrics {
+				for _, m := range sm.Metrics {
+					if sum, ok := m.Data.(metricdata.Sum[int64]); ok {
+						for _, dp := range sum.DataPoints {
+							class, _ := dp.Attributes.Value(attrStatusClass)
+							classes = append(classes, class.AsString())
+						}
+					}
+				}
+			}
+			if len(classes) != 1 || classes[0] != tc.want {
+				t.Fatalf("status_class points = %v, want [%s]", classes, tc.want)
+			}
+			if statusClass(rec.Code) != tc.want {
+				t.Fatalf("recorder answered %d but %s was recorded: the metric disagrees with the client", rec.Code, tc.want)
+			}
+		})
 	}
 }

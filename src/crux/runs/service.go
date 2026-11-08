@@ -14,9 +14,11 @@ import (
 
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/checkout"
+	"github.com/hivecommons/hive/crux/cmdlog"
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/runstate"
 	"github.com/hivecommons/hive/crux/sandbox"
+	"github.com/hivecommons/hive/crux/signals"
 )
 
 // Artifact names inside a run's directory: the full scrubbed output.
@@ -39,6 +41,8 @@ var (
 	ErrNotConfigured = errors.New("runs: no contained-run backend is configured on this server")
 	// ErrNotFound: unknown run ID.
 	ErrNotFound = runstate.ErrNotFound
+	// ErrNoSignals: the server keeps no turn signals (Service.Signals nil).
+	ErrNoSignals = errors.New("runs: turn signals are not enabled on this server")
 )
 
 // RequestError is a malformed request (400).
@@ -126,6 +130,13 @@ type Service struct {
 	Environ func() []string
 	// Scrub redacts output before it is persisted; nil uses logscrub.
 	Scrub func(string) string
+	// CmdLog opens the per-run command log (S4) the runner appends to;
+	// nil keeps no log. Reading does not need it: Commands reads the file.
+	CmdLog cmdlog.Opener
+	// Signals is the turn-signal book (S5): the runner appends started and
+	// done through it, AppendSignal everything else. Nil keeps no signals;
+	// ReadSignals still reads what an earlier process wrote.
+	Signals *signals.Book
 
 	mu     sync.Mutex
 	active map[string]*active
@@ -144,7 +155,13 @@ func (s *Service) Configured() bool { return s.Backend != nil }
 // Reconcile marks every run left accepted or running by a previous process
 // unfinished. Call it once at serve start, before accepting requests.
 func (s *Service) Reconcile() ([]runstate.Record, error) {
-	return s.Store.Reconcile(ReconcileReason)
+	recs, err := s.Store.Reconcile(ReconcileReason)
+	// A run the previous process left in flight ended unobserved; its done
+	// signal says so, so a follower never waits on it forever.
+	for _, rec := range recs {
+		s.signalDone(rec.ID, api.SignalDoneData{Status: rec.Status}, rec.Reason)
+	}
+	return recs, err
 }
 
 // Create validates req, saves the accepted record owned by caller.Name and
@@ -206,6 +223,55 @@ func (s *Service) Get(id string) (api.ContainedRun, error) {
 		return api.ContainedRun{}, err
 	}
 	return toWire(rec), nil
+}
+
+// Commands is the run's command log (S4) after sinceSeq, at most limit
+// records. A run whose directory holds no log yet answers an empty page,
+// not an error; only an unknown id is ErrNotFound.
+func (s *Service) Commands(id string, sinceSeq int64, limit int) (api.CommandPage, error) {
+	if _, err := s.Store.Get(id); err != nil {
+		return api.CommandPage{}, err
+	}
+	page, err := cmdlog.Read(s.Store.Path(id), sinceSeq, limit)
+	if errors.Is(err, cmdlog.ErrNotFound) {
+		page, err = api.CommandPage{Commands: []api.CommandRecord{}, NextSeq: sinceSeq}, nil
+	}
+	page.Run = id
+	return page, err
+}
+
+// ReadSignals is the run's turn signals (S5) after sinceSeq, at most limit
+// of them. A run whose directory holds no signals yet answers an empty
+// page, not an error; only an unknown id is ErrNotFound.
+func (s *Service) ReadSignals(id string, sinceSeq int64, limit int) (api.RunSignalPage, error) {
+	if _, err := s.Store.Get(id); err != nil {
+		return api.RunSignalPage{}, err
+	}
+	page, err := signals.Read(s.Store.Path(id), sinceSeq, limit)
+	if errors.Is(err, signals.ErrNotFound) {
+		page, err = api.RunSignalPage{Signals: []api.RunSignal{}, NextSeq: sinceSeq}, nil
+	}
+	page.Run = id
+	return page, err
+}
+
+// AppendSignal records in on run id: a caller's report of where the turn
+// is, or a gate's. The book enforces the kind set and what each source may
+// append. A run that reached a terminal status is signals.ErrClosed even
+// before its done line is written (or when it finished on a server that
+// kept no signals): only the runner reports on a run that has ended.
+func (s *Service) AppendSignal(id string, in signals.Signal) (api.RunSignal, error) {
+	if s.Signals == nil {
+		return api.RunSignal{}, ErrNoSignals
+	}
+	rec, err := s.Store.Get(id)
+	if err != nil {
+		return api.RunSignal{}, err
+	}
+	if runstate.Terminal(rec.Status) {
+		return api.RunSignal{}, fmt.Errorf("%w: run %s is %s", signals.ErrClosed, id, rec.Status)
+	}
+	return s.Signals.Append(id, s.Store.Path(id), in)
 }
 
 // Wait blocks until the run reaches a terminal status or ctx ends, then
@@ -394,7 +460,8 @@ func pathUnder(path string, roots []string) bool {
 }
 
 // execute runs one accepted run to a terminal status. Every exit path
-// writes the record; nothing is left accepted or running by this process.
+// writes the record and then the run's done signal; nothing is left
+// accepted or running by this process.
 func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 	defer func() {
 		s.mu.Lock()
@@ -416,6 +483,13 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 			rec.Status, rec.Reason, rec.Detail = status, reason, raw
 			return nil
 		})
+		// fill only assigns the outcome fields, so applying it to an empty
+		// detail yields them whether or not the record write succeeded.
+		var out detail
+		if fill != nil {
+			fill(&out)
+		}
+		s.signalDone(id, api.SignalDoneData{Status: status, ExitCode: out.ExitCode, TimedOut: out.TimedOut}, reason)
 	}
 	workspace := p.workspace
 	if p.worktree != nil {
@@ -458,12 +532,17 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 		EnvAllowlist: p.allowlist,
 		NetworkMode:  p.network,
 	}
+	log, seq := s.commandStarted(id, p.command)
+	s.signal(id, api.SignalStarted, "sandbox launched", nil)
 	res, err := s.Backend.Launcher.Run(runCtx, spec)
 	// A launcher that returned without error finished the command; a
 	// cancel or deadline that landed after that does not unmake the result.
 	cancelled := err != nil && ctx.Err() != nil
 	timedOut := err != nil && !cancelled && errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	status, reason, exit := classify(res, err, cancelled, timedOut)
+	if log != nil {
+		_ = log.Ended(seq, cmdlog.End{ExitCode: exit, Status: commandStatus(status, exit), Reason: reason, Stdout: res.Stdout, Stderr: res.Stderr})
+	}
 	if (cancelled || timedOut) && s.Backend.Teardown != nil {
 		tctx, cancel := context.WithTimeout(context.Background(), TeardownTimeout)
 		if terr := s.Backend.Teardown(tctx, name); terr != nil {
@@ -478,6 +557,66 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 		d.Stdout, d.StdoutTruncatedAt = stdout, stdoutCut
 		d.Stderr, d.StderrTruncatedAt = stderr, stderrCut
 	})
+}
+
+// signal appends a runner signal to run id; a failure is dropped, because
+// signals report on the run and must never stop it.
+func (s *Service) signal(id, kind, message string, data json.RawMessage) {
+	if s.Signals == nil {
+		return
+	}
+	_, _ = s.Signals.Append(id, s.Store.Path(id), signals.Signal{Kind: kind, Source: api.SignalSourceRunner, Message: message, Data: data})
+}
+
+// signalDone appends the run's done signal: its terminal status, the exit
+// code when one was read and whether it timed out, with the reason as the
+// message.
+func (s *Service) signalDone(id string, d api.SignalDoneData, reason string) {
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return
+	}
+	s.signal(id, api.SignalDone, reason, raw)
+}
+
+// commandStarted appends the dispatched command to the run's command log
+// and returns the log and seq to end it with; a nil log means no log is
+// kept (CmdLog unset or the open failed, which must not stop the run).
+func (s *Service) commandStarted(id string, command []string) (cmdlog.Recorder, int64) {
+	if s.CmdLog == nil {
+		return nil, 0
+	}
+	log, err := s.CmdLog(s.Store.Path(id))
+	if err != nil {
+		return nil, 0
+	}
+	seq, err := log.Started(cmdlog.Start{Command: command, Cwd: sandbox.DefaultWorkspaceMount, Capture: api.CommandCaptureRunner})
+	if err != nil {
+		return nil, 0
+	}
+	return log, seq
+}
+
+// commandStatus maps the run's outcome onto the command log's closed set.
+// The run calls a non-zero exit "completed" (the command ran to its own
+// end); the log says "failed", because the question it answers is whether
+// the command succeeded. Unfinished is reserved for an exit the runtime
+// never learned.
+func commandStatus(runStatus string, exit *int) string {
+	switch runStatus {
+	case runstate.StatusCancelled:
+		return api.CommandCancelled
+	case runstate.StatusUnfinished:
+		return api.CommandUnfinished
+	case runstate.StatusCompleted:
+		if exit != nil && *exit == 0 {
+			return api.CommandCompleted
+		}
+		return api.CommandFailed
+	}
+	// The run failed around the command (timed out, refused, teardown):
+	// the runtime ended it, so it is failed, not unfinished.
+	return api.CommandFailed
 }
 
 // classify turns the launcher's answer into a status. The exit code is

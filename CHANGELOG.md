@@ -11,6 +11,35 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.201.1)
+
+### Security
+
+- The CLI-memory drain opens every agent memory file through an `os.Root` anchored at its store and truncates it through the descriptor it read, instead of reading and `os.Truncate`-ing by path after the listing. The store belongs to the agent and the drain runs with the hive's privileges, so an agent that swapped a listed `.md` (or the store directory) for a symlink between the listing and the open could have had the hive copy any file it can read into the knowledge vault, or empty any file it can write — `TruncateDrained` counts a file with no parseable fact as "fully stored". Such a path is now reported in `kept` and the drain error, never followed ([#17251](https://github.com/hivecommons/hive/issues/17251)).
+- The drain also refuses a memory-file symlink whose target stays inside the store root (for a single-file store such as `GEMINI.md` that root is its parent, e.g. `~/.gemini/`), by `Lstat`ing each entry through the root and requiring the opened file to be the same inode, and `cliMemoryDrainSources` now resolves each store with `EvalSymlinks` and drops any that leaves the agent's own home — so a `~/.claude/projects/<slug>` pointed at another agent's store is never drained or truncated under this agent's name ([#17251](https://github.com/hivecommons/hive/issues/17251)).
+
+## 2026-11-08 (v5.201.0)
+
+### Added
+
+- crux: per-run command log, the fourth work service of the Crux work-services RFC ([hivecommons/crux#114](https://github.com/hivecommons/crux/issues/114) S4). A contained run now records the command the runner hands to the sandbox — argv, cwd, start and end times, exit code, status (`completed`, `failed`, `unfinished` or `cancelled`), total stdout/stderr byte counts and a scrubbed head and tail of each — to `<workdir>/runs/<id>/commands.jsonl`, append-only. Read it with `GET /v1/runs/{id}/cmdlog?since_seq=&limit=` (paged by `next_seq`/`more`, visible only to the run's owner) or `crux --server … cmdlog list|show <run>`. Each record carries `capture: "runner"`: commands the run's process spawns itself (shell pipelines, `make` recipes, an agent's own tool calls) are not counted, and the work-services design note says so explicitly; `capture: "hook"` is reserved for an in-sandbox shim in a later slice.
+
+## 2026-11-08 (v5.200.0)
+
+### Added
+
+- crux: human gates, the third work service of the Crux work-services RFC ([hivecommons/crux#114](https://github.com/hivecommons/crux/issues/114) S3). A driver opens a gate with `POST /v1/gates` (or `crux --server … gate open`) and a person answers it with `crux gate answer <id> --choice approve` or `POST /v1/gates/{id}/answer`. Answers must be one of the offered choices, and any free text goes in a separate note. The record keeps both who opened the gate and who answered it. An opener answering its own gate needs the explicit, audited `--as-operator` override. Gates are stored under `<workdir>/gates` (`pending/`, `resolved/` and a `gates.jsonl` journal), so they survive a `crux serve` restart. Re-opening the same gate returns the same id and the recorded answer. A gate that times out is marked `expired`, which is neither approval nor denial. `GET /v1/gates/{id}/wait` and `crux gate wait` block until the gate is answered or expires, and `gate.opened`, `gate.answered` and `gate.expired` events appear on `/v1/events`.
+
+### Changed
+
+- **dashboard:** the sidebar **Overview** pill now reads `BP = 19/4` instead of a bare `19/4`, naming the pair *board pressure* (BP) — the open issues and PRs the configured repos put on this hive's board, total open issues over total open PRs, before any of them is sorted into actionable, held, blocked or outside. The tooltip opens with "Board pressure (BP): 19 open issues / 4 open PRs — …" ahead of the existing equation; the Governor, Contributors and Knowledge pills are unchanged, and the term is defined in the dashboard glossary (#17240).
+
+## 2026-11-08 (v5.199.3)
+
+### Fixed
+
+- **automerge:** the contributor lane's hive-wide auto-promotion search no longer drops every other repository when GitHub refuses to search one of them (`422 Validation Failed` for a renamed, deleted or invisible repo, or an unsearchable author): the chunk is re-asked one repository at a time, and each refused (author, repository) pair warns once and is left out of the search for an hour instead of repeating the 422 and the `repo search failed` warning on every sweep (#17148).
+
 ## 2026-11-08 (v5.199.2)
 
 ### Fixed

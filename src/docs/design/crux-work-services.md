@@ -1,7 +1,7 @@
 # Crux work services: S1 pinned checkout (hivecommons/crux#114)
 
 Status: **S0 caller principals and S1 pinned checkout shipped in hive
-`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; everything else in the RFC is unscheduled. This records
+`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate); S4 command log is [below](#s4-command-log); S5 turn signals are [below](#s5-turn-signals); everything else in the RFC is unscheduled. This records
 S1 *as implemented*, including where it is weaker than the RFC text.
 
 The RFC asks for "a working copy of this repo at this commit, owned by
@@ -152,6 +152,248 @@ does: a run is owned by the principal that created it, and only the owner
 or the operator may read or cancel it. While a run is live its checkout
 cannot be deleted (409 `conflict`); once the run settles, it can.
 
+## S3. Human gate
+
+A driver asks a person to decide something before it continues; the
+answer is recorded and survives a restart of `crux serve`. Package
+`src/crux/gates` (`gates.Service`), API types in `src/crux/api/gates.go`,
+routes in `src/crux/serve/gates.go`, CLI in `src/crux/cli/gate.go`. The
+service needs no configuration: `crux serve` always opens it on
+`<workdir>/gates`.
+
+| Route | Body | Response |
+|---|---|---|
+| `POST /v1/gates` | `{"subject", "context"?, "choices"?, "timeout"?, "opened_by"?, "idempotency_key"?}` | `201 Gate` new; `200 Gate` the same gate re-opened |
+| `GET /v1/gates[?status=waiting\|answered\|expired]` | | `200 {"gates":[Gate…]}` oldest first |
+| `GET /v1/gates/{id}` | | `200 Gate` |
+| `POST /v1/gates/{id}/answer` | `{"answer", "note"?, "as_operator"?}` | `200 Gate` |
+| `GET /v1/gates/{id}/wait[?timeout=30s]` | | `200 Gate` once answered or expired, or still `waiting` when the window (default 30 s, capped at 5 min) closes |
+
+`Gate` is `{"id","status","subject","context"?,"choices","timeout",
+"opened_by","opened_by_principal","opened_at","expires_at"?,"answer"?,
+"answered_by"?,"answered_by_principal"?,"answered_at"?,"note"?,
+"operator_override"?,"expired_at"?}`.
+
+```
+crux --server ADDR gate open --subject S [--choice C]… [--timeout D] [--context JSON] [--opened-by L] [--idempotency-key K] [--json]
+crux --server ADDR gate list [--status S] [--json]
+crux --server ADDR gate answer <id> --choice C [--note TEXT] [--as-operator] [--json]
+crux --server ADDR gate wait <id> [--timeout D] [--json]
+```
+
+`gate wait` prints the answer and exits 0, or exits 1 with nothing on
+stdout when the gate expired. Like `runs`, the verb exists only with
+`--server`: the server is the single writer that records identities,
+journals decisions and publishes events.
+
+| Condition | Status | `code` |
+|---|---|---|
+| empty subject, bad `timeout`, duplicate or empty choices, `context` not one JSON value, unknown `status` filter | 400 | `bad_request` |
+| a project answering, or reading a gate another principal opened | 403 | `forbidden` |
+| the opener answering its own gate without `as_operator` | 403 | `gate_self_answer` |
+| unknown id | 404 | `not_found` |
+| a different answer to an answered gate, any answer to an expired one | 409 | `gate_closed` |
+| `context` over 64 KiB once encoded | 413 | `gate_context_too_large` |
+| `answer` not one of `choices` (free text belongs in `note`) | 422 | `gate_invalid_choice` |
+| the server has no gate service | 501 | `not_supported` |
+
+**Semantics.**
+
+- *Idempotent open.* The key is derived the way `toolapprove`'s inbox
+  derives one: from the subject, the canonically re-encoded context
+  (object keys sorted), the choices, the timeout and `opened_by` — never
+  timestamps — or from `idempotency_key` when given. Either form is
+  scoped to the opening principal. Re-opening returns the existing record
+  in whatever state it is in, including the recorded answer.
+- *Who answers.* Only the operator principal. Projects open, read, list
+  and wait on their own gates. When the answering principal is the one
+  that opened the gate, `as_operator` is required; the record and journal
+  carry `operator_override: true` and the server emits a `runtime.audit`
+  event (`gate.operator_override`). Retrying the exact recorded answer is
+  a no-op `200`, not a conflict.
+- *Expiry.* `timeout` is a Go duration; `"0"` or absent waits
+  indefinitely. A gate past its deadline becomes `expired` with no
+  answer the first time anything reads it, and a waiter's own timer flips
+  it at the deadline. Expiry is neither approval nor denial.
+- *Secrets.* Subject, note, `opened_by` and every string inside
+  `context` pass through `logscrub.ScrubString` before they are stored.
+  Events and the journal never carry `context` or `note`.
+
+**Storage.**
+
+```
+gates/pending/<id>.json   waiting gates, 0600, tmp+rename
+gates/resolved/<id>.json  answered or expired gates, kept forever
+gates/gates.jsonl         append-only {at, op, id, status, by?, answer?, operator_override?, expires_at?}
+```
+
+Resolving writes the resolved record before removing the pending one;
+after a crash between the two, the resolved copy wins on the next start.
+
+**Deliberately not in S3.** No background sweeper (expiry is observed on
+read and by waiters, so a gate nobody looks at stays `waiting` on disk
+past its deadline until the next read); no in-process `crux gate` form;
+no per-gate answerer allowlist beyond "the operator".
+
+## S4. Command log
+
+What a contained run executed, kept with the run and readable after it.
+Package `src/crux/cmdlog` (`cmdlog.Log`, `cmdlog.Read`), API types in
+`src/crux/api/cmdlog.go`, the route in `src/crux/serve/runs.go`, CLI in
+`src/crux/cli/cmdlog.go`. No configuration: `crux serve` wires
+`runs.Service.CmdLog = cmdlog.FileOpener(cmdlog.Policy{})` whenever the
+runs service is on.
+
+| Route | Query | Response |
+|---|---|---|
+| `GET /v1/runs/{id}/cmdlog` | `since_seq` (default 0, exclusive), `limit` (default 100, cap 1000) | `200 {"run", "commands":[Command…], "next_seq", "more"?}` ascending by `seq` |
+
+A `Command` is `{seq, command[], cwd?, capture, status, reason?,
+started_at, ended_at?, duration_ms?, exit_code?, stdout?, stderr?}`;
+`stdout`/`stderr` are `{bytes, head?, tail?, truncated?}` — the full byte
+count always, and up to 4 KiB from each end of the text the runner kept.
+`status` is one of `completed` (exit 0), `failed` (non-zero exit,
+refusal or timeout), `unfinished` (the sandbox never reported an exit)
+or `cancelled`. A `started` line with no `ended` line is returned as
+`unfinished` with no `ended_at`; a status is never guessed. Paging:
+pass the previous page's `next_seq` as `since_seq` while `more` is true.
+Visibility follows the run — a project reads only its own runs' logs
+(403 otherwise), unknown run 404, bad `since_seq`/`limit` 400, a run that
+kept no log (or an older server) is an empty page, a corrupt line 500
+`runtime_error`, no runs service 501.
+
+```
+crux --server ADDR cmdlog list [--since N] [--limit N] [--all] [--json] <run>
+crux --server ADDR cmdlog show [--json] <run> <seq>
+```
+
+**Hook.** The S2 runner records through `cmdlog.Recorder`:
+`Started(Start) (seq, error)` is called before the launcher starts the
+command and `Ended(seq, End) error` after the result is classified.
+`runs.Service.CmdLog` is a `cmdlog.Opener func(runDir) (Recorder, error)`;
+a nil opener, or an opener that fails, disables logging for that run and
+never fails the run itself. Command text, reason and both output heads
+and tails pass through `logscrub.ScrubString` before they are written.
+
+**Storage.** `<workdir>/runs/<id>/commands.jsonl`, 0600, append-only,
+two lines per command: `{"event":"started","seq",…}` and
+`{"event":"ended","seq",…}`. Readers fold the pair; a stray `ended`
+without its `started` is dropped. Re-opening a run's log resumes `seq`
+after the highest one on disk and cannot end a command an earlier
+process left open — it stays `unfinished`, which is the truth.
+
+**Under-counting, stated plainly.** Every record carries `capture`; in
+S4 the only value written is `"runner"`, which means *the command the
+runner handed to the sandbox launcher*. A contained run is one launcher
+invocation, so a run's log has exactly one `runner` record. Anything that
+command spawns — `sh -c '…'` pipelines, `make` recipes, `go test`'s
+child processes, an agent's own tool calls inside the sandbox — is **not
+counted**; it is inside the `stdout`/`stderr` of its parent. The RFC's
+"verify under-counting by honest agents" is therefore resolved for S4 by
+making the count's meaning explicit rather than by widening it: a
+consumer must not read `len(commands)` as "commands the agent ran". The
+value `"hook"` is reserved in `api.CommandCaptureHook` for a later slice
+in which an in-sandbox shim reports child commands over the same
+`Recorder`; it is never written today.
+
+**Deliberately not in S4.** No in-sandbox shim or shell wrapper; no
+per-agent `/v1/agents/{name}/commands` view; no `crux commands verify`;
+no output beyond head/tail (the run record already keeps the capped
+stream); no retention policy — the log lives and dies with the run dir.
+
+## S5. Turn signals
+
+A driver that kicks a contained run or an agent learns, from a saved
+record and not only from a live event it may miss, when the turn ended
+and how, and while it runs, where it is. Package `src/crux/signals`
+(`signals.Book`, `signals.Read`, `signals.AgentOutcomes`), API types in
+`src/crux/api/signals.go`, routes in `src/crux/serve/runs.go` and
+`src/crux/serve/signals.go`, CLI in `src/crux/cli/signal.go`. No
+configuration: `crux serve` sets `runs.Service.Signals =
+signals.NewBook(signals.Policy{})` and `Server.KickOutcomes` on
+`<workdir>/signals/agents`.
+
+| Route | Body / query | Response |
+|---|---|---|
+| `GET /v1/runs/{id}/signals` | `since_seq` (default 0, exclusive), `limit` (default 100, cap 1000) | `200 {"run", "signals":[Signal…], "next_seq", "more"?}` ascending by `seq` |
+| `POST /v1/runs/{id}/signals` | `{"kind", "message"?, "data"?}` | `201 Signal` |
+| `GET /v1/agents/{name}/kick-outcome` | | `200 {"agent", "outcome"?, "last_kick"?, "settled_for_last_kick"}` |
+
+A `Signal` is `{seq, kind, source, at, message?, data?}`. `kind` is the
+closed set `started | thinking | tool | blocked | needs-input | input |
+done`; `source` is `runner`, `gate` or `caller`, and each source appends
+only its own kinds:
+
+| Source | Kinds | When |
+|---|---|---|
+| `runner` | `started`, `done` | `started` just before the sandbox launcher runs the command; `done` on every terminal path — completed, failed, timed out, cancelled, a provisioning failure (no `started`), and the run `crux serve` marks `unfinished` at start because it was in flight at the last shutdown. `done.data` is `{"status", "exit_code"?, "timed_out"?}`, its message the run's reason. |
+| `gate` | `needs-input`, `input`, `blocked` | a gate opened with `run`: opening is `needs-input` (message the subject), answering `input` (`data` `{"gate", "answer", "answered_by"}`), expiry `blocked`. `data.gate` names the gate; its note and context never ride along. |
+| `caller` | `thinking`, `tool`, `blocked`, `needs-input`, `input` | `POST /v1/runs/{id}/signals` by the run's owner or the operator. |
+
+`done` is always a run's last signal: anything after it is refused (409
+`signals_closed`), including after a restart, and so is a caller's or a
+gate's signal on a run whose record is already terminal (one that ended
+before its `done` line, or on a server that kept no signals). The message is trimmed,
+scrubbed with `logscrub.ScrubString` and bounded to 1 KiB (a caller's
+longer message is 400; the runner's and a gate's are cut on a rune
+boundary); `data` must be one JSON value, at most 8 KiB once encoded,
+with every string leaf scrubbed. Every durable signal is published as
+`run.signal` on `/v1/events` with `data` `{"run", …Signal}`, after the
+line is written. A follower polls with the previous page's `next_seq`
+until it reads `done`.
+
+`POST /v1/gates` accepts an optional `run`: the run must exist (400
+`bad_request` otherwise) and belong to the opener or the operator (403
+`forbidden`); a server without a runs service answers 501
+`not_supported`. The run is part of the derived idempotency key only when
+set, so gates opened without one keep their keys. A gate signal that
+cannot be written (the run is already `done`) is logged, never returned:
+the gate change is already durable.
+
+| Condition | Status | `code` |
+|---|---|---|
+| unknown or boundary `kind` from a caller, oversized message or `data`, `data` not one JSON value, unknown body field, bad `since_seq`/`limit` | 400 | `bad_request` |
+| reading or posting another principal's run | 403 | `forbidden` |
+| unknown run; agent neither held by the runtime nor recorded | 404 | `not_found` |
+| posting to a run that has ended (`done` recorded, or a terminal record) | 409 | `signals_closed` |
+| a corrupt `signals.jsonl` line or saved outcome | 500 | `runtime_error` |
+| no runs service, or no signal book for `POST`; no outcome store for `kick-outcome` | 501 | `not_supported` |
+
+```
+crux --server ADDR signal emit <run> --kind K [--message M] [--data JSON] [--json]
+crux --server ADDR signal list [--since N] [--limit N] [--all] [--json] <run>
+crux --server ADDR gate open … --run RUN
+```
+
+**Kick outcome (the RFC's S5 proper).** The runtime's kick-outcome
+observer now saves `api.KickOutcome` to
+`<workdir>/signals/agents/<name>.json` (0600, tmp+rename, reason
+scrubbed) *before* publishing `agent.kick_outcome`: the event is a
+notification, the record is the proof. `GET
+/v1/agents/{name}/kick-outcome` answers that record and
+`settled_for_last_kick = crux.KickOutcome.Settled(last_kick)`, where
+`last_kick` is the runtime's delivery time of its latest kick — the same
+`Settled` rule the runtime uses, never a loose timestamp comparison. A
+driver that sent a kick, missed the event and reconnected reads `true`
+once that turn ended; `false` with an outcome means the outcome is of an
+earlier kick (its `kickAt` says which). After a `crux serve` restart the
+runtime holds no `last_kick`, so the answer is the saved outcome with
+`settled_for_last_kick: false`; the driver compares `outcome.kickAt` with
+the kick time it holds. Like every `/v1/agents` route it is the
+operator's.
+
+**Storage.** `<workdir>/runs/<id>/signals.jsonl`, 0600, append-only, one
+`Signal` per line. `signals.Book` is the single writer per process: it
+assigns `seq` under its lock, resumes it from the file the first time a
+run is touched after a restart, and forgets a run once `done` is written
+(the file then says it is closed).
+
+**Deliberately not in S5.** No long-poll or stream route per run (follow
+with `since_seq`, or filter `run.signal` on `/v1/events`); no signals
+from inside the sandbox other than through the owner's API; no
+per-agent signal log beyond the last kick outcome; no retention policy —
+a run's signals live and die with the run dir.
+
 ## Deliberately not in S1
 
 - TTL sweeper (recorded, not enforced).
@@ -177,3 +419,19 @@ for runs are deferred and not scheduled.
 | `src/crux/serve/checkouts.go` | routes, ownership checks, error mapping; registered from `Server.Handler` after the runtime families and marked a work service for S0 |
 | `src/crux/serve/principal.go` | S0: `Principal`, `CallerFrom`, work-service gating |
 | `src/crux/cli/checkout.go` | `crux checkout add|rm|list`, local and remote |
+| `src/crux/gates/` | S3: `Service`, `Record`, `Caller`, `DeriveIdempotencyKey`, typed sentinels (`ErrBadRequest`, `ErrContextTooLarge`, `ErrNotFound`, `ErrInvalidChoice`, `ErrSelfAnswer`, `ErrForbidden`, `ErrClosed`); pending/resolved store and journal |
+| `src/crux/api/gates.go` | `PathGates`, `CodeGate*`, `EventGate*`, request/response types, `Client.{Open,List,Get,Answer,Wait}Gate` |
+| `src/crux/serve/gates.go` | gate routes, visibility, error mapping, `gate.*` events and override audit |
+| `src/crux/cli/gate.go` | `crux gate open|list|answer|wait`, remote only |
+| `src/crux/cmdlog/` | S4: `Log`, `Open`, `Read`, `Recorder`, `Opener`, `FileOpener`, `Policy`, `Start`, `End`, sentinels (`ErrNotFound`, `ErrUnknownSeq`, `ErrCorrupt`) |
+| `src/crux/api/cmdlog.go` | `RunCmdlogPath`, `RunCmdlogQuery`, `Command*` status and capture constants, `CommandRecord`, `CommandOutput`, `CommandPage`, `Client.RunCmdlog` |
+| `src/crux/runs/service.go` | S4 hook: `Service.CmdLog`, `Service.Commands`; `commandStarted`/`commandStatus` around the launcher call |
+| `src/crux/serve/runs.go` | `GET /v1/runs/{id}/cmdlog`, ownership check, paging validation |
+| `src/crux/cli/cmdlog.go` | `crux cmdlog list|show`, remote only |
+| `src/crux/signals/` | S5: `Book` (`Append`, `SetObserver`), `Read`, `Allowed`, `Signal`, `Policy`, `AgentOutcomes` (`Save`, `Load`), `AgentsDir`, sentinels (`ErrBadRequest`, `ErrClosed`, `ErrNotFound`, `ErrCorrupt`) |
+| `src/crux/api/signals.go` | `RunSignalsPath`, `RunSignalsQuery`, `AgentKickOutcomePath`, `Signal*` kind and source constants, `CodeSignalsClosed`, `EventRunSignal`, `RunSignal`, `SignalDoneData`, `SignalGateData`, `RunSignalRequest`, `RunSignalPage`, `RunSignalEvent`, `AgentKickOutcome`, `Client.{RunSignals,EmitRunSignal,AgentKickOutcome}` |
+| `src/crux/runs/service.go` | S5 hook: `Service.Signals`, `ReadSignals`, `AppendSignal`, `ErrNoSignals`; `started` before the launcher, `done` from every terminal path and from `Reconcile` |
+| `src/crux/serve/runs.go` | `GET`/`POST /v1/runs/{id}/signals`, `run.signal` relay |
+| `src/crux/serve/gates.go` | `run` on gate open (ownership check) and the gate's turn signals |
+| `src/crux/serve/signals.go` | `GET /v1/agents/{name}/kick-outcome`; the kick-outcome observer that saves before it publishes |
+| `src/crux/cli/signal.go` | `crux signal emit|list`, remote only |

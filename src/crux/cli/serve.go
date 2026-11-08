@@ -10,11 +10,14 @@ import (
 
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/checkout"
+	"github.com/hivecommons/hive/crux/cmdlog"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/gates"
 	"github.com/hivecommons/hive/crux/lanes"
 	"github.com/hivecommons/hive/crux/runs"
 	"github.com/hivecommons/hive/crux/runstate"
 	"github.com/hivecommons/hive/crux/serve"
+	"github.com/hivecommons/hive/crux/signals"
 	"github.com/nats-io/nats.go"
 )
 
@@ -130,6 +133,24 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 		srv.Checkouts = checkouts
 		runSvc.Checkouts = checkouts
 	}
+	// S3: gates need no configuration; records under <workdir>/gates
+	// outlive the process, so a gate opened before a restart is answerable
+	// after it.
+	gateSvc, err := gates.New(gates.Config{Dir: gates.DefaultDir(opts.workDir)})
+	if err != nil {
+		fmt.Fprintln(e.Stderr, "crux: gates:", err)
+		return ExitError
+	}
+	srv.Gates = gateSvc
+	// S5: the last kick outcome of every agent is saved under
+	// <workdir>/signals/agents before it is published, so a driver that
+	// missed the event reads it after a reconnect or a restart.
+	outcomes, err := signals.OpenAgentOutcomes(signals.AgentsDir(opts.workDir), signals.Policy{})
+	if err != nil {
+		fmt.Fprintln(e.Stderr, "crux: signals:", err)
+		return ExitError
+	}
+	srv.KickOutcomes = outcomes
 	if hive != nil {
 		hive.install(ctx, rt, srv, e.Stdout)
 		hive.watchPolicy(ctx, rt, e.Stdout, e.Stderr)
@@ -191,6 +212,12 @@ func (e *Env) openRuns(workDir, path string) (*runs.Service, error) {
 		return nil, err
 	}
 	svc := runs.New(store, backend, cfg)
+	// S4: every dispatched command is appended to <run dir>/commands.jsonl
+	// by the runner, with the default head/tail output policy.
+	svc.CmdLog = cmdlog.FileOpener(cmdlog.Policy{})
+	// S5: turn signals go to <run dir>/signals.jsonl. The book is set
+	// before Reconcile so a run left in flight gets its done signal.
+	svc.Signals = signals.NewBook(signals.Policy{})
 	reconciled, err := svc.Reconcile()
 	if err != nil {
 		return nil, err
