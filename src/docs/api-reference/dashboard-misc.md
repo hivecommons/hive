@@ -25,7 +25,7 @@ The monitor renders CI and Review concurrently on one shared PR row; see
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
 | `GET` | `/api/audit` | Read-write role | Audit Log — `{"entries": [...]}` envelope, newest first, capped at 200; response shape and the serve-time `user_name` field in [audit-log.md](../audit-log.md#get-apiaudit) | `pkg/dashboard/api.go:62` |
-| `GET` | `/api/watchdog/activity` | Read-write role | Watchdog activity readout for the Health tab (#7254): `watchdog-*` audit actions over `?days=` (default 30, clamped to 90) — total / taken / observed / `byAction`, a zero-filled per-day `daily` histogram, per-agent `agents` liveness, and the Observe → Heal `promotion` hint; see [agent-watchdog.md](../agent-watchdog.md#watchdog-activity-strip) | `pkg/dashboard/api.go:502` |
+| `GET` | `/api/watchdog/activity` | Read-write role | Watchdog activity readout for the Health tab (#7254): `watchdog-*` audit actions over `?days=` (default 30, clamped to 90) — total / taken / observed / `byAction`, a zero-filled per-day `daily` histogram, per-agent `agents` liveness, and the Observe → Heal `promotion` hint; see [agent-watchdog.md](../agent-watchdog.md#watchdog-activity-strip) | `pkg/dashboard/api.go:503` |
 | `POST` | `/api/presence` | Dashboard auth/session | Presence | `pkg/dashboard/api.go:65` |
 | `POST` | `/api/upgrade/announce` | Owner role | Announce a pod roll before it happens ([#15788](https://github.com/hivecommons/hive/issues/15788)): body `{"target": "<sha|tag>", "source": "hub"|"operator", "reason": "..."}` (`version` is an alias of `target`; all fields optional). Marks `/api/status`/`/api/version` `upgradeProgress` as `state: pulling, phase: announced` with the target and publishes an SSE `upgrading` event so every open dashboard shows the upgrade animation; a SIGTERM afterwards (or with no announce at all) publishes `phase: restarting` from the same record. The hub sends the same announce through the heartbeat response (`upgrade_announce`) for hub-managed hives; an announce with no kill expires after 15 minutes. Returns `{ok, upgradeProgress}` | `pkg/dashboard/api.go:68` |
 | `GET` | `/api/prompt-history` | Dashboard auth/session | Prompt History | `pkg/dashboard/api.go:66` |
@@ -40,18 +40,18 @@ The monitor renders CI and Review concurrently on one shared PR row; see
 
 
 | `GET` | `/api/convergence/soak` | Owner only | Convergence Soak Status | `pkg/dashboard/api.go:263` |
-| `POST` | `/api/plan/from-issue` | Dashboard auth/session | Plan From Issue | `pkg/dashboard/api.go:454` |
-| `GET` | `/api/plan/{epicID}` | Dashboard auth/session | Plan Tree | `pkg/dashboard/api.go:457` |
-| `POST` | `/api/plan/{epicID}/approve` | Owner only | Plan Approve | `pkg/dashboard/api.go:458` |
-| `POST` | `/api/plan/{epicID}/reject` | Owner only | Plan Reject | `pkg/dashboard/api.go:460` |
-| `POST` | `/api/plan/{epicID}/child/{childID}` | Owner only | Plan Child Action | `pkg/dashboard/api.go:461` |
+| `POST` | `/api/plan/from-issue` | Dashboard auth/session | Plan From Issue | `pkg/dashboard/api.go:455` |
+| `GET` | `/api/plan/{epicID}` | Dashboard auth/session | Plan Tree | `pkg/dashboard/api.go:458` |
+| `POST` | `/api/plan/{epicID}/approve` | Owner only | Plan Approve | `pkg/dashboard/api.go:459` |
+| `POST` | `/api/plan/{epicID}/reject` | Owner only | Plan Reject | `pkg/dashboard/api.go:461` |
+| `POST` | `/api/plan/{epicID}/child/{childID}` | Owner only | Plan Child Action | `pkg/dashboard/api.go:462` |
 | `POST` | `/api/linear/agent/install` | Owner only | Linear Agent Install (OAuth start) | `pkg/dashboard/api_linear_agent.go:215` |
 | `GET` | `/api/linear/agent/status` | Owner only | Linear Agent Status | `pkg/dashboard/api_linear_agent.go:216` |
 | `POST` | `/api/linear/agent/disconnect` | Owner only | Linear Agent Disconnect | `pkg/dashboard/api_linear_agent.go:217` |
 | `GET` | `/api/upstream-watch` | Owner only | Upstream-watch divergence: per watched fork the upstream followed, the watermark and last-run time, surfaced/ported/dismissed/skipped counts, and the recent upstream refs with their upstream URL, diff URL, fork issue number and state. Read-only — it reads the config and the watch state file, never GitHub. Also carries `interval`, `project_repos` and each repo's configured entry (`config`) for the editor. | `pkg/dashboard/api.go:305` |
 | `PUT` | `/api/config/upstream-watch` | Owner only | Upstream Watch Config Update: edit `upstream_watch` from the Features tab. Body `{enabled?, interval?, repos?: {<repo>: {upstream?, sources?, pr_labels?, max_issues_per_run?, label?} \| null}}` — absent keys are unchanged, `null` removes a repo, keys are stored as the bare repo name. Validated with the loader's rules before the config changes (400 on failure), then persisted and audited as `config_upstream_watch`. | `pkg/dashboard/api.go:306` |
 
-| `GET` | `/api/hotspots` | Dashboard auth/session | Merge-hotspot advisor report (`?repo=owner/name` optional): files repeatedly touched by concurrent PRs over the last `governor.hotspot_window_days`, each with `prs` (distinct PRs), `pr_numbers`, `overlaps` (PR pairs open at the same time), `conflicts` (rebase conflicts blamed on the file), `lines`, `kind` (`code`/`doc`/`lock`/`generated`/`data`), `score`, `symbol_groups`, `recommendation` (`split-code`/`split-doc`/`split-source`/`report-only`/`none`), `reason`, `generated_from`, `source_files` (files under `generated_from`, when known), `issue_number`/`issue_url` of the modularize issue filed, `last_updated`; top-level `count`/`actionable`/`filed`. Derived from the merge train's own PR file lists and the rebase follow-through's conflict records — never lists PRs or files from GitHub. See [operator-reference.md § Merge-hotspot advisor](../operator-reference.md#merge-hotspot-advisor-governorhotspot_). | `pkg/dashboard/api.go:539` |
+| `GET` | `/api/hotspots` | Dashboard auth/session | Merge-hotspot advisor report (`?repo=owner/name` optional): files repeatedly touched by concurrent PRs over the last `governor.hotspot_window_days`, each with `prs` (distinct PRs), `pr_numbers`, `overlaps` (PR pairs open at the same time), `conflicts` (rebase conflicts blamed on the file), `lines`, `kind` (`code`/`doc`/`lock`/`generated`/`data`), `score`, `symbol_groups`, `recommendation` (`split-code`/`split-doc`/`split-source`/`report-only`/`none`), `reason`, `generated_from`, `source_files` (files under `generated_from`, when known), `issue_number`/`issue_url` of the modularize issue filed, `last_updated`; top-level `count`/`actionable`/`filed`. Derived from the merge train's own PR file lists and the rebase follow-through's conflict records — never lists PRs or files from GitHub. See [operator-reference.md § Merge-hotspot advisor](../operator-reference.md#merge-hotspot-advisor-governorhotspot_). | `pkg/dashboard/api.go:540` |
 | `GET` | `/api/widget` | Dashboard auth/session | Widget | `pkg/dashboard/api.go:117` |
 | `GET` | `/api/pane/{agent}` | Dashboard auth/session | Pane | `pkg/dashboard/api.go:122` |
 | `GET` | `/api/role` | Dashboard auth/session | Role | `pkg/dashboard/api.go:136` |
@@ -63,10 +63,10 @@ The monitor renders CI and Review concurrently on one shared PR row; see
 | `GET` | `/api/matrix/lines` | Dashboard auth/session | Matrix Lines (deprecated name, see [Published-checkpoint regions](#published-checkpoint-regions)): serve bounded backlog of pushed lines behind dashboard.matrix with repo allowlist filtering. `max` counts only lines the repo allowlist admits, so a page is never emptied by filtered-out lines. A client paging with `max` should use the last returned line's `seq` as its next `since`, not the top-level `seq`, which is the source's latest sequence number and would skip lines still past the page. `more` is true only while another line the caller may see remains past the page; stop paging when it is false. | `pkg/dashboard/api.go:191` |
 | `POST` | `/api/prs/{owner}/{repo}/{number}/queue-automerge` | Merger/owner role | Queue PRAuto Merge | `pkg/dashboard/api.go:192` |
 | `GET` | `/api/inference/models/{backend}` | Dashboard auth/session | Inference Models | `pkg/dashboard/api.go:371` |
-| `GET` | `/api/hive-id` | Dashboard auth/session | Hive IDGet | `pkg/dashboard/api.go:433` |
-| `PUT` | `/api/hive-id` | Owner only | Hive IDSet | `pkg/dashboard/api.go:434` |
-| `POST` | `/api/chat` | Dashboard auth/session | Chat | `pkg/dashboard/api.go:463` |
-| `GET` | `/api/auth/token` | Public | Auth Token | `pkg/dashboard/api.go:497` |
+| `GET` | `/api/hive-id` | Dashboard auth/session | Hive IDGet | `pkg/dashboard/api.go:434` |
+| `PUT` | `/api/hive-id` | Owner only | Hive IDSet | `pkg/dashboard/api.go:435` |
+| `POST` | `/api/chat` | Dashboard auth/session | Chat | `pkg/dashboard/api.go:464` |
+| `GET` | `/api/auth/token` | Public | Auth Token | `pkg/dashboard/api.go:498` |
 | `GET` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:350` |
 | `POST` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:351` |
 | `GET` | `/api/docs` | Dashboard auth/session | APIDocs | `pkg/dashboard/api_contribute.go:352` |
