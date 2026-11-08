@@ -29,11 +29,25 @@ TMUX_SESSION="contributor"
 _DOCKER_BACKEND="${AGENT_BACKEND:-}"
 _DOCKER_MAX_PARALLEL_FIXES="${HIVE_MAX_PARALLEL_FIXES:-}"
 _DOCKER_FIX_PR_TIMEOUT_MS="${HIVE_FIX_PR_TIMEOUT_MS:-}"
+_DOCKER_QUOTA_POOL_DIR="${HIVE_CONTRIBUTOR_QUOTA_POOL_DIR:-}"
 
 # Load contributor config
 if [[ -f "$CONFIG_FILE" ]]; then
   # shellcheck source=/dev/null
   source "$CONFIG_FILE"
+fi
+
+# `just contribute-hive` mounts the host's quota pool directory into the
+# container and passes the mount point with -e. A contributor.env line names
+# the HOST path, which does not exist in here, so the -e value must win or
+# the relay and `just contribute-quota` on the host never meet.
+if [[ -n "$_DOCKER_QUOTA_POOL_DIR" ]]; then
+  export HIVE_CONTRIBUTOR_QUOTA_POOL_DIR="$_DOCKER_QUOTA_POOL_DIR"
+fi
+unset _DOCKER_QUOTA_POOL_DIR
+if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_QUOTA_POOL_DIR:-}" == "1" ]]; then
+  echo "HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=${HIVE_CONTRIBUTOR_QUOTA_POOL_DIR:-}"
+  exit 0
 fi
 
 # Docker -e takes precedence over config file

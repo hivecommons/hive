@@ -2239,6 +2239,33 @@ contribute-hive backend="" mode="docker": check-version
           add_provider_env "$name"
         done
       fi
+      # Quota-guard command path (#6953). `just contribute-quota …` on the host
+      # writes overrides into HIVE_CONTRIBUTOR_QUOTA_POOL_DIR and the relay reads
+      # them there, so the container needs the host directory itself, not just
+      # its name: mount it and point the relay (and the in-container quota
+      # publisher) at the mount. Podman gets the shared `z` label, not the
+      # private `Z` of the other mounts, because the pool is meant to be shared
+      # by every relay on the account and a second container's `Z` relabel would
+      # lock the first one out. krun goes through podman, so it gets the same
+      # mount. The account is part of the pool key, so it travels too, by name
+      # only so the value stays out of the runtime argv.
+      QUOTA_POOL_ARGS=()
+      if [[ -n "${HIVE_CONTRIBUTOR_QUOTA_POOL_DIR:-}" ]]; then
+        QUOTA_POOL_CTR_DIR="/home/dev/.hive-quota-pool"
+        mkdir -p -- "${HIVE_CONTRIBUTOR_QUOTA_POOL_DIR}"
+        # Absolute, or docker would take it for a named volume.
+        QUOTA_POOL_HOST_DIR="$(cd -- "${HIVE_CONTRIBUTOR_QUOTA_POOL_DIR}" && pwd -P)"
+        QUOTA_POOL_SUF=""
+        if [[ "$RUNTIME" == "podman" ]]; then QUOTA_POOL_SUF=":z"; fi
+        QUOTA_POOL_ARGS+=(
+          -v "${QUOTA_POOL_HOST_DIR}:${QUOTA_POOL_CTR_DIR}${QUOTA_POOL_SUF}"
+          -e "HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=${QUOTA_POOL_CTR_DIR}"
+        )
+        if [[ -n "${HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT:-}" ]]; then
+          export HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT
+          QUOTA_POOL_ARGS+=(-e HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT)
+        fi
+      fi
       # NOTE: deliberately NOT --rm. With --rm the runtime deletes the
       # container the instant it exits, taking its logs with it — so a
       # container that dies during startup leaves nothing to diagnose
@@ -2315,6 +2342,9 @@ contribute-hive backend="" mode="docker": check-version
         "${PROVIDER_ENV_ARGS[@]}" \
         ${AGENT_MODEL:+-e AGENT_MODEL="${AGENT_MODEL}"} \
         ${AGENT_REASONING_EFFORT:+-e AGENT_REASONING_EFFORT="${AGENT_REASONING_EFFORT}"} \
+        ${HIVE_AGENT_ROLE:+-e HIVE_AGENT_ROLE="${HIVE_AGENT_ROLE}"} \
+        ${HIVE_CONTRIBUTOR_QUOTA_GUARD:+-e HIVE_CONTRIBUTOR_QUOTA_GUARD="${HIVE_CONTRIBUTOR_QUOTA_GUARD}"} \
+        "${QUOTA_POOL_ARGS[@]}" \
         ${CONTRIBUTOR_MODE:+-e CONTRIBUTOR_MODE="${CONTRIBUTOR_MODE}"} \
         ${HIVE_CODEX_AUTO_USE_BANKED_RESET:+-e HIVE_CODEX_AUTO_USE_BANKED_RESET="${HIVE_CODEX_AUTO_USE_BANKED_RESET}"} \
         ${HIVE_SESSION+-e HIVE_SESSION="${HIVE_SESSION}"} \
@@ -2323,6 +2353,12 @@ contribute-hive backend="" mode="docker": check-version
       #   empty string is the relay's opt-out of session labeling and must be
       #   forwarded, while an unset variable must stay unset so the relay
       #   defaults the session to the backend name (kubestellar/hive#5605).
+      # ^ HIVE_AGENT_ROLE (the spoke-agent lane the relay asks for) must be
+      #   forwarded here: contributor-agent.sh sources contributor.env without
+      #   exporting it, so neither a shell export nor a contributor.env line
+      #   would otherwise reach the relay. The hub still checks the role.
+      # ^ HIVE_CONTRIBUTOR_QUOTA_GUARD is forwarded for the same reason: the
+      #   guard banner tells the operator to set it at launch to opt out.
 
       echo "Container: ${CONTAINER_NAME}"
       echo "Limits:    ${CONTAINER_MEMORY} memory, ${CONTAINER_CPUS} CPUs"
@@ -2691,9 +2727,14 @@ contribute-quota action="status":
     set -euo pipefail
     # Inherit the relay's own pool/account/backend config from contributor.env so
     # the derived pool key matches the running relay, not a parse-time default.
+    # set -a exports it to the node process below: contributor.env has no
+    # `export` lines, so a plain source left the pool dir, account and backend
+    # behind in this shell and the control wrote under the wrong pool key.
     if [[ -f "{{config_dir}}/contributor.env" ]]; then
+      set -a
       # shellcheck source=/dev/null
       source "{{config_dir}}/contributor.env"
+      set +a
     fi
     SCRIPT_DIR="{{justfile_directory()}}"
     node "${SCRIPT_DIR}/bin/contributor-quota-control.js" "{{action}}"
