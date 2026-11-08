@@ -2276,7 +2276,10 @@
       .ham-row > .ham-strip-row > .ham-since, .ham-sub > .ham-strip-row > .ham-since,
       .ham-row > .ham-strip-row > .ham-anim-layer, .ham-sub > .ham-strip-row > .ham-anim-layer { display: none; }
       .ham-row > .ham-strip-row, .ham-sub > .ham-strip-row { overflow: hidden; min-width: 0; }
-      .ham-pill { display: inline-flex; align-items: center; gap: var(--sp-2); max-width: 100%; min-height: var(--tap-target); padding: var(--sp-1) var(--sp-3); border: 0; border-radius: var(--r-pill); font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-semibold); line-height: 1.2; text-align: left; cursor: pointer; background: var(--amber); color: var(--surface-0); -webkit-tap-highlight-color: transparent; }
+      .ham-pill { display: inline-flex; position: relative; align-items: center; gap: var(--sp-2); max-width: 100%; min-height: var(--control-compact-min-h); padding: var(--sp-1) var(--sp-3); border: 0; border-radius: var(--r-pill); font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-semibold); line-height: 1.2; text-align: left; cursor: pointer; background: var(--amber); color: var(--surface-0); -webkit-tap-highlight-color: transparent; }
+      /* The box stays at the compact control height so a nested-PR row fits a 667px phone; the hit
+         area is padded out to the tap target. */
+      .ham-pill::before { content: ""; position: absolute; inset: calc((var(--control-compact-min-h) - var(--tap-target)) / 2) 0; }
       .ham-pill > span { min-width: 0; white-space: nowrap; }
       .ham-pill .ham-pill-step { flex: 0 0 auto; opacity: .85; font-variant-numeric: tabular-nums; }
       .ham-pill .ham-pill-label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }

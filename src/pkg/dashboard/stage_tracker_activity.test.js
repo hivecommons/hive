@@ -656,7 +656,8 @@ test('known and original chevrons keep full long text inside a shared one-line c
   assert.doesNotMatch(css, /--ham-compact-min-width/);
   assert.match(css, /^\s*\.ham-pill \{ display: none; \}/m);
   assert.match(css, /@media \(max-width: 640px\), \(\(pointer: coarse\) and \(max-width: 820px\)\) \{\s*\.ham-cols \{ display: none; \}\s*\.ham-row > \.ham-strip-row > \.ham-strip, \.ham-sub > \.ham-strip-row > \.ham-strip,/);
-  assert.match(css, /\.ham-pill \{ display: inline-flex;[^}]*min-height: var\(--tap-target\);[^}]*font-size: var\(--fs-sm\);/);
+  assert.match(css, /\.ham-pill \{ display: inline-flex;[^}]*min-height: var\(--control-compact-min-h\);[^}]*font-size: var\(--fs-sm\);/);
+  assert.match(css, /\.ham-pill::before \{ content: ""; position: absolute; inset: calc\(\(var\(--control-compact-min-h\) - var\(--tap-target\)\) \/ 2\) 0; \}/);
   assert.match(css, /\.ham-pill\[data-motion="needs-human"\] \{ background: color-mix\(in srgb, var\(--amber\) 45%, var\(--red\)\);/);
 });
 

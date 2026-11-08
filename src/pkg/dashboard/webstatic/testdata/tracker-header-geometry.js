@@ -89,7 +89,8 @@
       pills++;
       const box = rect(pill), bounds = rect(row);
       assert(box.left >= bounds.left - tolerance && box.right <= bounds.right + tolerance, name + 'phone: pill stays inside the row: ' + JSON.stringify({ pill: box.toJSON(), row: bounds.toJSON() }));
-      assert(box.height >= tapTarget - tolerance, name + 'phone: pill is at least the tap target tall: ' + box.height);
+      const hitPad = Math.max(0, -parseFloat(getComputedStyle(pill, '::before').top) || 0);
+      assert(box.height + 2 * hitPad >= tapTarget - tolerance, name + 'phone: pill hit area is at least the tap target tall: ' + (box.height + 2 * hitPad));
       assert(parseFloat(getComputedStyle(pill).fontSize) >= minFont, name + 'phone: pill text is at least 12px');
       assert(/^Step \d+\/\d+ · \S/.test(pill.textContent.replace(/\s+/g, ' ').trim()) || /^Step \d+\/\d+/.test(pill.querySelector('.ham-pill-step')?.textContent || ''), name + 'phone: pill reads "Step N/T · stage"');
       assert(pill.matches('[data-action="stageTrackerPillSheet"][data-arg0]'), name + 'phone: tapping the pill opens the strip sheet');

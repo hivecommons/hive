@@ -22,7 +22,8 @@
     const row = pill.closest('.ham-row, .ham-sub');
     const box = pill.getBoundingClientRect(), bounds = row.getBoundingClientRect();
     assert(box.left >= bounds.left - tolerance && box.right <= bounds.right + tolerance, 'pill ' + index + ' inside its row');
-    assert(box.height >= tapTarget - tolerance, 'pill ' + index + ' is at least the tap target tall: ' + box.height);
+    const hitPad = Math.max(0, -parseFloat(getComputedStyle(pill, '::before').top) || 0);
+    assert(box.height + 2 * hitPad >= tapTarget - tolerance, 'pill ' + index + ' hit area is at least the tap target tall: ' + (box.height + 2 * hitPad));
     assert(parseFloat(getComputedStyle(pill).fontSize) >= 12, 'pill ' + index + ' text is at least 12px');
     const stripRow = pill.parentElement;
     assert(stripRow.scrollWidth <= stripRow.clientWidth + tolerance, 'pill ' + index + ' strip row does not scroll sideways');
