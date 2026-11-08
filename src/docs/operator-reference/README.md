@@ -98,6 +98,12 @@ Interpret the top-consumer columns this way:
 - `requests` is `charged + not_modified` plus any other observed responses.
 - Any `rate_limited` entry, or any spoke below 10% remaining core quota, makes
   the script exit non-zero so it can be used as a smoke check.
+- `etag_cache` counts free revalidations (`hits`) against charged fetches
+  (`misses`). `bytes` is what the cache holds against its bound `max_bytes`,
+  and `evictions` counts entries the bounds pushed out before anyone asked for
+  them again. `bytes` at `max_bytes` with `evictions` climbing means the
+  hive's repeat reads no longer fit and are being charged in full; raise
+  `HIVE_GITHUB_ETAG_CACHE_MAX_MB` (see [env-vars.md](../env-vars.md)).
 
 The known hot endpoint in hosted fleets is
 `/repos/{owner}/{repo}/pulls/{number}`. It should be watched first when charged
