@@ -1,1 +1,0 @@
-- Activity monitor text now has a 12px floor on phones, so the chips, timestamps and column headers stay readable at 390px wide.
