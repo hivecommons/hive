@@ -616,6 +616,34 @@ func (c *Client) validatePRRequestTargets(ctx context.Context, req PRRequest, no
 		"Pick other work, or reference the issue without a closing keyword"}
 }
 
+// issueRequestStartTargetBlock is the claim-target gate on the kick/start
+// path (hivecommons/hive#17298): an issue request that starts work on
+// req.Number — a claim, or a comment announcing a start — is checked the
+// way a closing reference in hive-open-pr is, so epic-driven work that
+// never claims its target is refused before the start is booked.
+func (c *Client) issueRequestStartTargetBlock(ctx context.Context, req IssueRequest, now time.Time) (prRequestTargetRefusal, bool, error) {
+	if c == nil || c.client == nil {
+		return prRequestTargetRefusal{}, false, ErrNoGitHubClient
+	}
+	owner, repo := c.prRequestRepo(req.Repo)
+	refusal, blocked, err := c.prRequestTargetBlock(ctx, req.Agent, owner, repo, req.Number, now)
+	if err != nil {
+		return refusal, false, fmt.Errorf("checking claims on start target %s/%s#%d: %w", owner, repo, req.Number, err)
+	}
+	return refusal, blocked, nil
+}
+
+// issueRequestStartRefusedReason is the policy reason written to a start
+// request the claim-target gate refused.
+func issueRequestStartRefusedReason(kind string, r prRequestTargetRefusal) string {
+	verb := "start refused"
+	if kind == "claim" {
+		verb = "issue claim refused"
+	}
+	return fmt.Sprintf("%s: %s#%d is %s — another principal is working it; the owner decides whether to proceed. Pick other work",
+		verb, r.Repo, r.Issue, r.why())
+}
+
 // prRequestTargetBlock resolves one target issue: its live claim (the
 // forge marker or assignee when issue claims are on, else the hub's claim
 // ledger) and the duplicate-PR ledger's covering PR, re-read so a PR that

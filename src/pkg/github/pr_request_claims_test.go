@@ -536,3 +536,83 @@ func TestValidatePRRequestTargets_IssueClaimsEnabledReadsForgeAssignee(t *testin
 		t.Fatalf("refused = %+v, want #7 held by Karibhou", refused)
 	}
 }
+
+// hivecommons/hive#17298: the kick/start path. A relay comment that announces
+// a start on an issue another principal has claimed is refused before the
+// comment posts and before notifyAgentStart books the start.
+func TestIssueRequestStart_RefusesContributorClaimedTarget(t *testing.T) {
+	var posted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			var in struct{ Body string }
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			posted = append(posted, in.Body)
+			_, _ = io.WriteString(w, `{"id":1}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	now := time.Now()
+	c.SetIssueClaimLedger(liveLedgerClaim("Karibhou", now))
+	calls := recordStarts(c)
+	dir := withIssueDir(t)
+
+	p, err := WriteIssueRequest(dir, IssueRequest{Kind: "comment", Repo: "o/r", Number: 7, Body: "Starting on this now; repro confirmed.", Agent: "scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if _, err := os.Stat(p + ".denied"); err != nil {
+		t.Fatalf("start on a contributor-claimed issue must be denied: %v", err)
+	}
+	b, err := os.ReadFile(strings.TrimSuffix(p, ".json") + ".result.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resp IssueResponse
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK || !strings.Contains(resp.Error, "o/r#7 is already claimed by Karibhou") {
+		t.Fatalf("result = %+v, want a claim refusal naming Karibhou", resp)
+	}
+	if len(posted) != 1 || !strings.Contains(posted[0], prRequestClaimTargetMarker) || strings.Contains(posted[0], "Starting on this") {
+		t.Fatalf("comments posted = %q, want only the claim-target notice, not the start comment", posted)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("refused start reported start signals: %+v", *calls)
+	}
+}
+
+// The agent's own live claim lets its start comment through and books the
+// start, as before.
+func TestIssueRequestStart_AllowsOwnClaimedTarget(t *testing.T) {
+	commented := 0
+	srv := newIssueMockServer(t, "", nil, nil, &commented)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	now := time.Now()
+	c.SetIssueClaimLedger(liveLedgerClaim("scanner", now))
+	calls := recordStarts(c)
+	dir := withIssueDir(t)
+
+	if _, err := WriteIssueRequest(dir, IssueRequest{Kind: "comment", Repo: "o/r", Number: 7, Body: "Starting on this now; repro confirmed.", Agent: "scanner"}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if commented != 1 {
+		t.Fatalf("expected the start comment to post, got %d", commented)
+	}
+	want := startCall{agent: "scanner", repo: "o/r", number: 7, signal: AgentStartSignalComment}
+	if len(*calls) != 1 || (*calls)[0] != want {
+		t.Fatalf("start signals = %+v, want %+v", *calls, want)
+	}
+}

@@ -265,6 +265,12 @@ or arrived through an epic. The hive posts one notice on the issue (marker
 saying who holds it; the owner decides whether to proceed. If the claim or the
 covering PR cannot be read, the request is not opened and is retried later.
 
+The same check runs on the start path: a `hive-open-issue claim`, or a relay
+comment that announces a start on an issue, is denied with the same reason and
+the same notice before anything is written and before the start is booked, so
+epic-driven work that never claimed its target is caught when it starts, not
+only when it opens the PR.
+
 ### Base drift: a branch cut from the wrong line is rejected
 
 A head more than **100 commits behind its base** is rejected permanently
