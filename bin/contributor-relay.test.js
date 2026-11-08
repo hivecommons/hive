@@ -14501,6 +14501,9 @@ const HEALTHY_6953 = JSON.stringify({ state: 'available', limits: [{ id: 'weekly
 
 function poolFor(relay, dir) { return { dir, poolKey: relay.QUOTA_POOL_KEY }; }
 
+const HOUR_MS = 60 * 60 * 1000;
+const WEEK_MS = 7 * 24 * HOUR_MS;
+
 test('#6953 pool identity is opaque: no account identifier survives into the key', () => {
   const key = poolStore.derivePoolKey({ backend: 'claude', account: 'user@example.com:acct-9931' });
   assert.match(key, /^[0-9a-f]{16}$/, 'the pool key is a short hex digest, safe to put in a filename or log');
@@ -14535,7 +14538,9 @@ test('#6953 continue-until-reset expires when the exact window reset epoch chang
   poolStore.writeOverride(pool, { directive: 'continue_until_reset', window_id: 'weekly', reset_epoch: 1000 });
   assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, true,
     'the override pins this window at this reset epoch, so it admits while the epoch holds');
-  const rolled = { state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 10, reset_epoch: 2000 }] };
+  // A real roll moves the reset a whole window later (a week here); a few
+  // seconds of drift is the same reset (see the drift tests below).
+  const rolled = { state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 10, reset_epoch: 1000 + WEEK_MS }] };
   assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }, rolled).admit, false,
     'once the window resets to a new epoch the override no longer matches and the guard holds again');
   teardown(relay);
@@ -14567,11 +14572,142 @@ test('#6953 pause-until-reset outranks a fully recovered reading', () => {
   const d = relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' });
   assert.strictEqual(d.admit, false, 'an explicit pause must outrank an automatic resume');
   assert.strictEqual(d.reason, 'override_pause');
-  const rolled = { state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90, reset_epoch: 2000 }] };
+  const rolled = { state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90, reset_epoch: 1000 + WEEK_MS }] };
   assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }, rolled).admit, true,
     'and the pause expires the moment that exact window resets');
   teardown(relay);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ── Reset-time drift between readings ───────────────────────────────────────
+// Observed: `just contribute-quota continue-until-reset` pinned weekly_all at
+// reset_epoch 1794207600373 (07:00:00.373Z); the next Claude reading five
+// minutes later said 1794207599634 (06:59:59.634Z). The exact-match rule
+// dropped the override and the relay stayed held for 14 minutes.
+const PINNED_RESET = 1794207600373;
+const DRIFTED_RESET = 1794207599634;
+
+function weeklyAll(pct, resetEpoch) {
+  return { state: 'available', limits: [{ id: 'weekly_all', kind: 'weekly', pct_remaining: pct, reset_epoch: resetEpoch }] };
+}
+
+test('quota drift: continue-until-reset still applies when the reset time drifts by under a second', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify(weeklyAll(11, PINNED_RESET)) } });
+  try {
+    poolStore.writeOverride(poolFor(relay, dir), { directive: 'continue_until_reset', window_id: 'weekly_all', reset_epoch: PINNED_RESET });
+    const d = relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }, weeklyAll(11, DRIFTED_RESET));
+    assert.strictEqual(d.admit, true, 'a reading that restates the same reset 0.7 s earlier is the same reset, not a roll');
+    assert.strictEqual(d.reason, 'override_continue_until_reset');
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('quota drift: continue-until-reset still expires on a real roll to the next week or session', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify(weeklyAll(11, PINNED_RESET)) } });
+  try {
+    const pool = poolFor(relay, dir);
+    poolStore.writeOverride(pool, { directive: 'continue_until_reset', window_id: 'weekly_all', reset_epoch: PINNED_RESET });
+    assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }, weeklyAll(11, PINNED_RESET + WEEK_MS)).admit, false,
+      'the weekly window rolled to next week: the override is spent and the reserve holds again');
+
+    // Five-hour session window (Claude `session`, Codex `five_hour`).
+    const session = (resetEpoch) => ({ state: 'available', limits: [{ id: 'session', kind: 'session', pct_remaining: 5, reset_epoch: resetEpoch }] });
+    poolStore.writeOverride(pool, { directive: 'continue_until_reset', window_id: 'session', reset_epoch: PINNED_RESET });
+    assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }, session(DRIFTED_RESET)).admit, true,
+      'precondition: the session override applies across the drift');
+    assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }, session(PINNED_RESET + 5 * HOUR_MS)).admit, false,
+      'the next five-hour session is a new reset');
+    // The shortest window any adapter publishes is agy's one-hour `session`.
+    assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }, session(PINNED_RESET + HOUR_MS)).admit, false,
+      'even a one-hour roll is far outside the tolerance');
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('quota drift: the tolerance is five minutes, inclusive, and never matches a missing epoch', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    assert.strictEqual(relay.QUOTA_RESET_EPOCH_TOLERANCE_MS, 5 * 60 * 1000);
+    assert.strictEqual(relay.quotaResetEpochsMatch(PINNED_RESET, PINNED_RESET + relay.QUOTA_RESET_EPOCH_TOLERANCE_MS), true);
+    assert.strictEqual(relay.quotaResetEpochsMatch(PINNED_RESET, PINNED_RESET - relay.QUOTA_RESET_EPOCH_TOLERANCE_MS - 1), false);
+    assert.strictEqual(relay.quotaResetEpochsMatch(PINNED_RESET, null), false, 'a window with no reset epoch never matches');
+    assert.strictEqual(relay.quotaResetEpochsMatch(undefined, PINNED_RESET), false, 'an override with no pinned epoch never matches');
+  } finally { teardown(relay); }
+});
+
+test('quota drift: pause-until-reset keeps holding across the drift and expires on a real roll', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify(weeklyAll(90, PINNED_RESET)) } });
+  try {
+    poolStore.writeOverride(poolFor(relay, dir), { directive: 'pause_until_reset', window_id: 'weekly_all', reset_epoch: PINNED_RESET });
+    const held = relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }, weeklyAll(90, DRIFTED_RESET));
+    assert.strictEqual(held.admit, false, 'the pause must not lapse because the reading restated the same reset 0.7 s earlier');
+    assert.strictEqual(held.reason, 'override_pause');
+    assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }, weeklyAll(90, PINNED_RESET + WEEK_MS)).admit, true,
+      'and it still expires when the window rolls to next week');
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── The release log line names what released the hold ───────────────────────
+function retryReleaseLines(relay) {
+  const lines = [];
+  const log = console.log; const warn = console.warn;
+  console.log = (...a) => lines.push(a.join(' '));
+  console.warn = () => {};
+  try { relay.retryContributorQuota(); } finally { console.log = log; console.warn = warn; }
+  return lines.filter(l => l.includes('Contributor quota guard released'));
+}
+
+test('quota release line: a continue-once override names itself, not a recovered reading', () => {
+  const dir = poolDir6953();
+  const readingFile = path.join(dir, 'reading.json');
+  fs.writeFileSync(readingFile, JSON.stringify(weeklyAll(11, PINNED_RESET)));
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_FILE: readingFile } });
+  try {
+    relay.setCliReady(true);
+    relay.setWs({ readyState: 1, send: () => {} });
+    relay.setContributorQuotaPaused(true);
+    poolStore.writeOverride(poolFor(relay, dir), { directive: 'continue_once' });
+    const lines = retryReleaseLines(relay);
+    assert.strictEqual(lines.length, 1, `expected one release line, got ${JSON.stringify(lines)}`);
+    assert.match(lines[0], /continue-once override/);
+    assert.match(lines[0], /weekly_all is still at 11% against a 20% reserve/);
+    assert.doesNotMatch(lines[0], /fresh reading/, 'the reading did not recover; saying it did misleads the operator');
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('quota release line: continue-until-reset names itself across reset-time drift', () => {
+  const dir = poolDir6953();
+  const readingFile = path.join(dir, 'reading.json');
+  fs.writeFileSync(readingFile, JSON.stringify(weeklyAll(11, DRIFTED_RESET)));
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_FILE: readingFile } });
+  try {
+    relay.setCliReady(true);
+    relay.setWs({ readyState: 1, send: () => {} });
+    relay.setContributorQuotaPaused(true);
+    poolStore.writeOverride(poolFor(relay, dir), { directive: 'continue_until_reset', window_id: 'weekly_all', reset_epoch: PINNED_RESET });
+    const lines = retryReleaseLines(relay);
+    assert.strictEqual(lines.length, 1, `the drifted reading must still release on the override: ${JSON.stringify(lines)}`);
+    assert.match(lines[0], /continue-until-reset override/);
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('quota release line: a recovered reading says the reading cleared the reserves', () => {
+  const dir = poolDir6953();
+  const readingFile = path.join(dir, 'reading.json');
+  fs.writeFileSync(readingFile, JSON.stringify(weeklyAll(11, PINNED_RESET)));
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_FILE: readingFile } });
+  try {
+    relay.setCliReady(true);
+    relay.setWs({ readyState: 1, send: () => {} });
+    relay.setContributorQuotaPaused(true);
+    assert.deepStrictEqual(retryReleaseLines(relay), [], 'precondition: 11% against 20% with no override stays held');
+    fs.writeFileSync(readingFile, JSON.stringify(weeklyAll(60, PINNED_RESET)));
+    const lines = retryReleaseLines(relay);
+    assert.strictEqual(lines.length, 1);
+    assert.match(lines[0], /a fresh reading clears every effective reserve/);
+    assert.doesNotMatch(lines[0], /override/);
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('#6953 an override never bypasses an unknown/blind reading (fail closed)', () => {

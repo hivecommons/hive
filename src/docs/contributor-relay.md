@@ -831,7 +831,7 @@ In the default `ask` mode, when the guard holds it prints the four scoped contro
 
 ```bash
 just contribute-quota continue-once          # admit one task, then re-evaluate the guard
-just contribute-quota continue-until-reset   # admit until the guarded window's reset epoch changes
+just contribute-quota continue-until-reset   # admit until the guarded window resets
 just contribute-quota disable-session        # turn the guard off for the running relay session
 just contribute-quota pause-until-reset      # stay paused even if quota recovers, until the window resets
 just contribute-quota resume                 # clear any active override
@@ -840,7 +840,9 @@ just contribute-quota status                 # show the relay's current hold and
 
 In container and krun mode, `just contribute-hive` mounts your `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` into the container (at `/home/dev/.hive-quota-pool`) and points the relay there, so these commands reach a container relay too. It also passes `HIVE_CONTRIBUTOR_QUOTA_GUARD` and `HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT` through. Set them before the launch, either exported in the shell or in `contributor.env`; a relay that is already running keeps what it started with. `just contribute-quota` reads `contributor.env` too, so a value set there works on both sides. The pool key includes the backend, so if you launched with a backend argument that differs from `AGENT_BACKEND` in `contributor.env`, run the controls as `AGENT_BACKEND=<backend> just contribute-quota …`.
 
-Every override is narrowly scoped and expires mechanically, so none silently becomes a standing authorization to spend: `continue-once` is consumed after exactly one admitted assignment; `continue-until-reset` and `pause-until-reset` expire the moment that exact window reports a new reset epoch; `disable-session` expires when the session process exits. An override only ever authorizes spending below *your own* configured reserve — it never bypasses an unknown/unreadable quota (that still holds), and it never enables paid credits or changes any provider billing setting. `pause` mode holds the same way but offers no override path; `off` disables the guard for the session.
+Every override is narrowly scoped and expires mechanically, so none silently becomes a standing authorization to spend: `continue-once` is consumed after exactly one admitted assignment; `continue-until-reset` and `pause-until-reset` expire the moment that exact window reports a new reset epoch; `disable-session` expires when the session process exits. A reset epoch within five minutes of the pinned one counts as the same reset, because providers restate a window's reset time with a little jitter between readings (a weekly reset reported as 07:00:00.373Z, then as 06:59:59.634Z five minutes later). A real roll moves the reset by a whole window, and the shortest window any adapter publishes is an hour, so it still ends the override.
+
+When the hold lifts, the relay logs `Contributor quota guard released` and says why: a fresh reading that clears every reserve, or the override that released it (`continue-once`, `continue-until-reset` or `disable-session`) together with the window that is still below its reserve. An override only ever authorizes spending below *your own* configured reserve — it never bypasses an unknown/unreadable quota (that still holds), and it never enables paid credits or changes any provider billing setting. `pause` mode holds the same way but offers no override path; `off` disables the guard for the session.
 
 ### Model reporting details
 
