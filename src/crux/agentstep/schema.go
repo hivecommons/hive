@@ -64,7 +64,11 @@ func ParseSchema(raw json.RawMessage) (*Schema, error) {
 
 func parseSchema(raw json.RawMessage, at string) (*Schema, error) {
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		if err == nil {
+			// JSON null decodes to a nil map without error.
+			return nil, fmt.Errorf("%w: %s must be an object", ErrSchema, at)
+		}
 		// A bare boolean schema: true accepts anything, false nothing.
 		var b bool
 		if json.Unmarshal(raw, &b) == nil {
