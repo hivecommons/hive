@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	gogithub "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
@@ -42,7 +43,23 @@ const (
 	// forgeCountErrorLogInterval bounds the WARN for a failing count refresh;
 	// repeats inside the window log at DEBUG.
 	forgeCountErrorLogInterval = 15 * time.Minute
+
+	// repoMetadataRefreshInterval is how long one GET /repos/{owner}/{repo}
+	// answer serves the collector: the outreach card's stars and forks and
+	// the Issues-disabled banner's has_issues/fork. Reading every watched
+	// repo on every collect cost 189 calls an hour on the 20-repo
+	// projectbluefin hive (2026-11-08), 177 of them charged, for numbers
+	// that move a few times a day. A failed read is not held, so the next
+	// collect asks again. The advisory issue's create path keeps its own
+	// fresh has_issues check (ProbeIssuesDisabled).
+	repoMetadataRefreshInterval = time.Hour
 )
+
+// repoMetadataEntry is one repo's metadata as last read, and when.
+type repoMetadataEntry struct {
+	repo *gogithub.Repository
+	at   time.Time
+}
 
 // forgeCountCacheTTL is the configured reuse window for Search-API counts.
 func forgeCountCacheTTL() time.Duration {
@@ -111,6 +128,11 @@ type MetricsCollector struct {
 	// watched repo (#9972); the dashboard banner renders it.
 	issuesDisabledMu sync.RWMutex
 	issuesDisabled   []IssuesDisabledRepo
+
+	// repoMeta holds each repo's metadata for repoMetadataRefreshInterval,
+	// keyed by lower-cased owner/name; see repoMetadata.
+	repoMetaMu sync.Mutex
+	repoMeta   map[string]repoMetadataEntry
 }
 
 func NewMetricsCollector(ghClient *ghpkg.Client, org, primaryRepo, badgeURL, aiAuthor, projectName string, logger *slog.Logger) *MetricsCollector {
@@ -690,8 +712,8 @@ func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any 
 		return result
 	}
 
-	repo, _, err := gh.GetRepo(ctx, parts[0], parts[1])
-	if err == nil && repo != nil {
+	repo, err := mc.repoMetadata(ctx, gh, parts[0], parts[1])
+	if err == nil {
 		result["stars"] = repo.GetStargazersCount()
 		result["forks"] = repo.GetForksCount()
 	}
@@ -718,6 +740,38 @@ func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any 
 	}
 
 	return result
+}
+
+// repoMetadata returns owner/name's GET /repos/{owner}/{repo} answer, reading
+// it from GitHub at most once per repoMetadataRefreshInterval. Only a
+// successful read is held.
+func (mc *MetricsCollector) repoMetadata(ctx context.Context, client *ghpkg.Client, owner, name string) (*gogithub.Repository, error) {
+	key := strings.ToLower(owner + "/" + name)
+	now := mc.clock()
+	mc.repoMetaMu.Lock()
+	if e, ok := mc.repoMeta[key]; ok && now.Sub(e.at) < repoMetadataRefreshInterval {
+		mc.repoMetaMu.Unlock()
+		return e.repo, nil
+	}
+	mc.repoMetaMu.Unlock()
+
+	if client == nil {
+		return nil, ghpkg.ErrNoGitHubClient
+	}
+	repo, _, err := client.GetRepo(ctx, owner, name)
+	if err != nil {
+		return nil, err
+	}
+	if repo == nil {
+		return nil, fmt.Errorf("no metadata returned for %s/%s", owner, name)
+	}
+	mc.repoMetaMu.Lock()
+	if mc.repoMeta == nil {
+		mc.repoMeta = make(map[string]repoMetadataEntry)
+	}
+	mc.repoMeta[key] = repoMetadataEntry{repo: repo, at: now}
+	mc.repoMetaMu.Unlock()
+	return repo, nil
 }
 
 // collectCoverage reads the primary repo's test-coverage percentage for the

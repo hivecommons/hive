@@ -16,7 +16,7 @@ import (
 // a command older than that is ignored anyway, and Hive's reply is always
 // newer than the command it answers, so the dedup markers stay visible.
 func (c *Client) replyPRApproveCommand(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, cutoff time.Time, reply func(context.Context, string, int, *gh.IssueComment) (string, error)) (bool, error) {
-	comments, err := c.listIssueCommentsSince(ctx, owner, repo, issue.GetNumber(), cutoff)
+	comments, err := c.unparkComments(ctx, owner, repo, issue, cutoff)
 	if err != nil {
 		return false, err
 	}
