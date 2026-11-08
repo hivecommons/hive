@@ -178,7 +178,8 @@ func TestStoreGetDefaultAndReplayEdgeCases(t *testing.T) {
 	}
 
 	// Default() is one process-wide store at DefaultPath.
-	if Default() != Default() || Default().path != DefaultPath {
+	first := Default()
+	if second := Default(); first != second || first.path != DefaultPath {
 		t.Fatalf("Default() must be the singleton at %s", DefaultPath)
 	}
 	if len(newID()) != idBytes*2 {
