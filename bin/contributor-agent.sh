@@ -834,6 +834,12 @@ echo ""
 cleanup() {
   echo "Shutting down..."
   kill "$RELAY_PID" 2>/dev/null || true
+  # Wait for the relay before ending the container. This script is PID 1, so
+  # its exit SIGKILLs everything left, and a relay stopped just after an
+  # agent's verdict is still writing that task's task_complete. The relay bounds
+  # that wait itself, inside the runtime's stop timeout. tmux goes after it,
+  # because the relay's own shutdown still stops the agent in that session.
+  wait "$RELAY_PID" 2>/dev/null || true
   # The publisher starts and stops with the contributor (#10299): a survivor
   # would keep refreshing this pool's presence marker and tell the next relay a
   # reading is coming that nothing will write.
