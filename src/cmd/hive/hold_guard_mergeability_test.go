@@ -5,7 +5,9 @@ package main
 // integration style of hold_guard_test.go.
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -337,5 +339,33 @@ func TestMaintainHeldPRMergeabilityLeavesDependencyBotBranchesToTheBot(t *testin
 				t.Fatalf("snapshot = %+v ok=%v, want baseline %s and no conflict noted", rec, ok, tt.wantHead)
 			}
 		})
+	}
+}
+
+// A held PR whose repo's base refresh belongs to the automerge preparation
+// front is a policy deferral: it must not log the failure WARN every tick.
+func TestMaintainHeldPRMergeabilityDefersScheduledBaseRefreshWithoutWarn(t *testing.T) {
+	store := newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("c1", "strategist-bot", "docs: plan")},
+	}}
+	client := newHoldGuardClient(t, fake)
+	client.SetScheduledBaseRefresh(func(string) bool { return true })
+	cfg := escalationTestConfig()
+	store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}})
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	held := heldPRsActionable(github.PullRequest{Repo: "widgets", Number: 7, HeadSHA: "c1", BaseSHA: "b1", MergeableState: "behind"})
+	if got := enforceHoldGuard(context.Background(), cfg, client, client, held, logger); len(got) != 0 {
+		t.Fatalf("deferred base refresh must not flag the PR for re-review, got %v", got)
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "keeping held PR mergeable failed") || strings.Contains(out, "level=WARN") {
+		t.Fatalf("deferred base refresh logged a warning:\n%s", out)
+	}
+	if !strings.Contains(out, "base refresh deferred to the automerge preparation front") {
+		t.Fatalf("missing debug deferral log:\n%s", out)
 	}
 }

@@ -382,6 +382,12 @@ func maintainHeldPRMergeability(
 					"repo", repo, "pr", pr.Number, "expected_head", pr.HeadSHA, "error", err)
 				continue
 			}
+			if github.IsBaseRefreshAwaitingAdmission(err) {
+				// Policy deferral, not a failure: it recurs every tick by design.
+				logger.Debug("hold guard: held PR base refresh deferred to the automerge preparation front",
+					"repo", repo, "pr", pr.Number, "mergeable_state", state)
+				continue
+			}
 			if state != "dirty" {
 				// "behind" is expected to be a trivial fast-forward; a
 				// failure here is an anomaly (race, API hiccup), not the

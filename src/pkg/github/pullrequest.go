@@ -582,6 +582,17 @@ func (c *Client) UpdateBranchExpectedHead(ctx context.Context, repo string, numb
 	return c.updateBranch(ctx, repo, number, expectedHeadSHA, observedBaseSHA)
 }
 
+// ErrBaseRefreshAwaitingAdmission marks an update-branch call deferred by
+// policy: the repo's base refresh is owned by the automerge preparation front.
+var ErrBaseRefreshAwaitingAdmission = errors.New("base-refresh:awaiting-admission")
+
+// IsBaseRefreshAwaitingAdmission reports whether err is that deliberate
+// deferral rather than a failed update.
+func IsBaseRefreshAwaitingAdmission(err error) bool {
+	return err != nil && (errors.Is(err, ErrBaseRefreshAwaitingAdmission) ||
+		strings.Contains(err.Error(), ErrBaseRefreshAwaitingAdmission.Error()))
+}
+
 // IsUpdateBranchStaleHead reports whether err is GitHub refusing an
 // UpdateBranchExpectedHead call because the PR head is no longer the expected
 // SHA: a 422 naming the expected head. Callers treat it as "the head moved
@@ -614,7 +625,7 @@ func (c *Client) updateBranch(ctx context.Context, repo string, number int, expe
 	}
 	var inputs map[string]string
 	if c.baseRefreshScheduled(owner + "/" + repo) {
-		return fmt.Errorf("base-refresh:awaiting-admission: %s/%s#%d is refreshed only by the automerge preparation front", owner, repo, number)
+		return fmt.Errorf("%w: %s/%s#%d is refreshed only by the automerge preparation front", ErrBaseRefreshAwaitingAdmission, owner, repo, number)
 	}
 	if expectedHeadSHA != "" || observedBaseSHA != "" {
 		inputs = map[string]string{"expected_head_sha": expectedHeadSHA, "observed_base_sha": observedBaseSHA}
