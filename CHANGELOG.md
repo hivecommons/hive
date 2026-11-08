@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.193.2)
+
+### Changed
+
+- Activity monitor text now has a 12px floor on phones, so the chips, timestamps and column headers stay readable at 390px wide.
+
 ## 2026-11-08 (v5.193.1)
 
 ### Changed
