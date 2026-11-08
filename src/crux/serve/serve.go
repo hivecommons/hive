@@ -40,6 +40,7 @@ import (
 	"github.com/hivecommons/hive/crux/gates"
 	"github.com/hivecommons/hive/crux/lanes"
 	"github.com/hivecommons/hive/crux/runs"
+	"github.com/hivecommons/hive/crux/signals"
 )
 
 const (
@@ -119,6 +120,11 @@ type Server struct {
 	// api.PathGates) and relays gate.* events; nil answers those routes 501.
 	Gates *gates.Service
 
+	// KickOutcomes, when set, saves every agent kick outcome before it is
+	// published and serves GET /v1/agents/{name}/kick-outcome (RFC
+	// crux#114 S5); nil answers that route 501.
+	KickOutcomes *signals.AgentOutcomes
+
 	now     func() time.Time
 	started time.Time
 
@@ -178,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerCheckouts(mux)
 	s.registerRuns(mux)
 	s.registerGates(mux)
+	s.registerSignals(mux)
 	return s.laneHandler(s.authenticate(instrument(mux)))
 }
 

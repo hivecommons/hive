@@ -120,7 +120,7 @@ func (s *Service) Open(caller Caller, req Request) (Record, bool, error) {
 	rec := Record{
 		ID: s.newID(), Status: StatusWaiting, Subject: n.Subject, Context: n.Context, Choices: n.Choices,
 		Timeout: FormatTimeout(n.Timeout), OpenedBy: n.OpenedBy, OpenedByPrincipal: caller.Principal,
-		OpenedAt: now, IdempotencyKey: key,
+		OpenedAt: now, IdempotencyKey: key, Run: n.Run,
 	}
 	if rec.OpenedBy == "" {
 		rec.OpenedBy = caller.Name

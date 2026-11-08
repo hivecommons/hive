@@ -224,6 +224,11 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 		// and read through its API, never from the file.
 		fmt.Fprintln(e.Stderr, "crux: cmdlog needs --server ADDR (or CRUX_SERVER); command logs are kept by a crux serve")
 		return ExitUsage
+	case "signal":
+		// Turn signals are appended by a `crux serve` (its runner, its
+		// gates and its API) and read through that API.
+		fmt.Fprintln(e.Stderr, "crux: signal needs --server ADDR (or CRUX_SERVER); turn signals are kept by a crux serve")
+		return ExitUsage
 	case "help", "-h", "--help":
 		fs := flag.NewFlagSet("crux", flag.ContinueOnError)
 		e.usage(fs)
@@ -365,6 +370,9 @@ Work services (no runtime; hivecommons/crux#114):
                                   'crux gate help' for flags)
   cmdlog list|show <run>          the commands a contained run dispatched
                                   (--server only; 'crux cmdlog help' for flags)
+  signal emit|list <run>          a contained run's turn signals: where the
+                                  turn is and how it ended (--server only;
+                                  'crux signal help' for flags)
 
 While 'crux run' is in the foreground it serves <workdir>/crux.sock; ps, logs,
 kick and stop use that socket when present so they act on the live runtime.

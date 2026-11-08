@@ -39,6 +39,9 @@ func normalize(req Request) (Request, error) {
 	if len(out.IdempotencyKey) > maxIdempotencyKeyLen {
 		return Request{}, fmt.Errorf("%w: idempotency key is over %d bytes", ErrBadRequest, maxIdempotencyKeyLen)
 	}
+	if out.Run = strings.TrimSpace(req.Run); len(out.Run) > MaxRunLen {
+		return Request{}, fmt.Errorf("%w: run is %d bytes, over %d", ErrBadRequest, len(out.Run), MaxRunLen)
+	}
 	choices, err := normalizeChoices(req.Choices)
 	if err != nil {
 		return Request{}, err
