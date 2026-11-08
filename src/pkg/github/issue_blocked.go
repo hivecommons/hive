@@ -583,12 +583,20 @@ func stripBlockedHelpWanted(ctx context.Context, client *Client, t blockedIssueT
 	if !issueHasLabel(t.labels, helpWantedLabel) {
 		return
 	}
-	if err := client.RemoveLabel(ctx, t.repo, t.number, helpWantedLabel); err != nil {
+	if err := stripHelpWanted(ctx, client, t.repo, t.number); err != nil {
 		res.Errors++
 		logger.Warn("blocked sweep: help wanted not stripped", "repo", t.repo, "issue", t.number, "error", err)
 		return
 	}
 	res.Stripped++
+}
+
+// stripHelpWanted takes `help wanted` off an issue the hive is not asking
+// outside help for: a blocked one, or one its filer claimed as its own next
+// step (hivecommons/hive#17299). Callers gate the write; this is the one
+// shared removal so the writeback ratchet sees a single call site.
+func stripHelpWanted(ctx context.Context, client *Client, repo string, number int) error {
+	return client.RemoveLabel(ctx, repo, number, helpWantedLabel)
 }
 
 // liftBlockedMarkerless lifts `blocked` from an issue with no blocked-on
