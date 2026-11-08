@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.197.0)
+
+### Added
+
+- The retro lane now records each bead's knowledge-advisor arm (`none|shadow|deliver|holdout|mixed`) with decision, delivered and held-out counters on `RetroRecord`, passes only those counters to the analysis model, and can summarize mean fix attempts, CI failures and kicks per arm with no model call, so the `holdout_percent` comparison needs no new instrumentation ([#17156](https://github.com/hivecommons/hive/issues/17156), part of [#17054](https://github.com/hivecommons/hive/issues/17054)).
+
+### Security
+
+- crux contained runs: the ad-hoc `worktree {repo, commit}` form now refuses a non-canonical repository URL (`.`/`..`/empty segments, percent-encoding, credentials, query or fragment) and matches `repo_allowlist` on a segment boundary, the same rules the pinned-checkout service applies (#17102). A bare string-prefix check let `https://github.com/org/../other/repo` and `https://github.com/org-evil/…` pass an allowlist of `https://github.com/org`, and git resolved the `..` into a clone off the allowlist. Non-canonical `repo_allowlist` entries are now a configuration error (#17213).
+
 ## 2026-11-08 (v5.196.0)
 
 ### Added
