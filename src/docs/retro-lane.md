@@ -34,7 +34,7 @@ Only these counters reach the analysis model; the advisor's reasons and pane tex
 The decision records live in the knowledge-advisor decision store,
 `/data/knowledge-advisor-decisions.jsonl` (`retro.AdvisorDecisionStore`): one JSON line per
 ranking decision with the agent, kick id, the kick's primed issue/PR refs, mode, arm, outcome and
-slug, rotated like prompt history (5 MiB, 3 gzipped backups, 90 days). The retro lane reads it in
+slug, rotated with lumberjack like prompt history, at 5 MiB, 3 gzipped backups, 90 days. The retro lane reads it in
 production; without the PVC it is in-memory only.
 
 To read the comparison, call `Lane.AdvisorArmSummary()`: per arm it gives the bead
