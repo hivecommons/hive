@@ -111,3 +111,52 @@ func TestMemoryStoreOpenKeepsSingleFileStoreWorking(t *testing.T) {
 		t.Fatalf("read = %q, %v", b, err)
 	}
 }
+
+func TestTruncateDrainedNeverFollowsSymlinkToSiblingInsideStoreRoot(t *testing.T) {
+	// A single-file store opens through its parent, so an in-root symlink
+	// (GEMINI.md -> settings.json in the same ~/.gemini/) passes os.Root's
+	// escape check and fstat sees the target as a regular file. The entry
+	// itself must be refused.
+	home := filepath.Join(t.TempDir(), ".gemini")
+	sibling := filepath.Join(home, "settings.json")
+	writeFile(t, sibling, "{\"token\": \"not-a-fact\"}\n")
+	gemini := filepath.Join(home, "GEMINI.md")
+	writeFile(t, gemini, "# memory\n")
+	swapForSymlink(t, gemini, sibling)
+
+	d := &Drainer{Dir: t.TempDir(), Now: fixedNow}
+	truncated, kept, err := d.TruncateDrained([]Source{{CLI: CLIGemini, Path: gemini}})
+	if len(truncated) != 0 {
+		t.Fatalf("truncated %v through an in-root symlink", truncated)
+	}
+	if len(kept) != 1 || kept[0] != gemini {
+		t.Fatalf("kept = %v, want the swapped path", kept)
+	}
+	if err == nil || !errors.Is(err, errNotMemoryFile) {
+		t.Fatalf("err = %v, want errNotMemoryFile", err)
+	}
+	if b, _ := os.ReadFile(sibling); !strings.Contains(string(b), "not-a-fact") {
+		t.Fatalf("in-root symlink target was truncated: %q", b)
+	}
+}
+
+func TestMemoryStoreOpenRefusesInRootSymlink(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "memory")
+	target := filepath.Join(store, "notes.md")
+	writeFile(t, target, "- a sibling fact\n")
+	link := filepath.Join(store, "MEMORY.md")
+	if err := os.Symlink("notes.md", link); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	s, err := openMemoryStore(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.read(link); err == nil || !errors.Is(err, errNotMemoryFile) {
+		t.Fatalf("read through in-root symlink: err = %v, want errNotMemoryFile", err)
+	}
+	if b, err := s.read(target); err != nil || !strings.Contains(string(b), "sibling fact") {
+		t.Fatalf("regular sibling read = %q, %v", b, err)
+	}
+}

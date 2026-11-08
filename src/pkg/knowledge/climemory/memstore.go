@@ -73,9 +73,15 @@ func (s *memoryStore) Close() error {
 }
 
 // open opens path, a file memoryFiles listed under this store, inside the
-// store root (a symlink that leaves the root is refused by os.Root) and
-// checks the open descriptor is a regular file within the size cap. flag is
-// os.O_RDONLY or os.O_RDWR; the caller closes the file.
+// store root and checks the open descriptor is a regular file within the
+// size cap. os.Root only refuses a symlink whose target leaves the root; one
+// that stays inside it (another file of the same memory dir, or for a
+// single-file store any sibling under its parent such as ~/.gemini/) would
+// be followed and fstat would report the target as regular. So the entry is
+// Lstat'ed through the root first and refused when it is a symlink, and the
+// opened file must be the very inode Lstat saw, which closes the window
+// between the two calls. flag is os.O_RDONLY or os.O_RDWR; the caller closes
+// the file.
 func (s *memoryStore) open(path string, flag int) (*os.File, error) {
 	if s == nil || s.root == nil {
 		return nil, fmt.Errorf("%w: %s has no open store", errNotMemoryFile, path)
@@ -83,6 +89,16 @@ func (s *memoryStore) open(path string, flag int) (*os.File, error) {
 	rel, err := filepath.Rel(s.root.Name(), path)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %v", errNotMemoryFile, path, err)
+	}
+	lfi, err := s.root.Lstat(rel)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %v", errNotMemoryFile, path, err)
+	}
+	if lfi.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%w: %s is a symlink", errNotMemoryFile, path)
+	}
+	if !lfi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s is %s", errNotMemoryFile, path, lfi.Mode().Type())
 	}
 	f, err := s.root.OpenFile(rel, flag, 0)
 	if err != nil {
@@ -96,6 +112,10 @@ func (s *memoryStore) open(path string, flag int) (*os.File, error) {
 	if !fi.Mode().IsRegular() {
 		f.Close()
 		return nil, fmt.Errorf("%w: %s is %s", errNotMemoryFile, path, fi.Mode().Type())
+	}
+	if !os.SameFile(lfi, fi) {
+		f.Close()
+		return nil, fmt.Errorf("%w: %s changed while being opened", errNotMemoryFile, path)
 	}
 	if fi.Size() > maxMemoryFileBytes {
 		f.Close()

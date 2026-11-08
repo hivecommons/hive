@@ -61,8 +61,26 @@ func (m *Manager) SetCLIMemoryDrainer(fn CLIMemoryDrainer) {
 // cliMemoryDrainSources lists the agent's memory stores with the CLI that
 // owns each. Same per-agent-home-only rule as cliMemoryStorePaths: a shared
 // or bridged store is never drained under one agent's name.
+//
+// The store paths come from a Glob under the agent's home, which follows a
+// symlink in any ancestor (`.claude`, `projects`, the project slug). The
+// agent owns those directories and the drain runs with the hive's
+// privileges, so a slug pointed at another agent's store, or at any
+// hive-readable tree holding `memory/*.md`, would be drained under this
+// agent's name and, with truncate, emptied. Each store is therefore resolved
+// with EvalSymlinks and kept only if it still lies under the agent's own
+// resolved home (or CODEX_HOME); the resolved path is what the drainer opens
+// its store root at, so the listing and the open name the same directory,
+// and two listings that resolve to one store are drained once.
 func cliMemoryDrainSources(agent *AgentProcess, backend string) []CLIMemorySource {
+	homes := []string{AgentHome(agent.Name, agent.UID, backend), codexHomePath(agent.Name)}
+	for i, h := range homes {
+		if r, err := filepath.EvalSymlinks(h); err == nil {
+			homes[i] = r
+		}
+	}
 	var sources []CLIMemorySource
+	seen := map[string]bool{}
 	for _, p := range cliMemoryStorePaths(agent, backend) {
 		cli := cliMemoryCodex
 		switch {
@@ -71,9 +89,29 @@ func cliMemoryDrainSources(agent *AgentProcess, backend string) []CLIMemorySourc
 		case filepath.Base(p) == "memory":
 			cli = cliMemoryClaude
 		}
-		sources = append(sources, CLIMemorySource{CLI: cli, Path: p})
+		real, err := filepath.EvalSymlinks(p)
+		if err != nil || !pathUnderAny(real, homes) || seen[real] {
+			continue
+		}
+		seen[real] = true
+		sources = append(sources, CLIMemorySource{CLI: cli, Path: real})
 	}
 	return sources
+}
+
+// pathUnderAny reports whether path is one of, or strictly inside one of,
+// the given directories. All arguments are expected to be symlink-resolved.
+func pathUnderAny(path string, dirs []string) bool {
+	for _, d := range dirs {
+		rel, err := filepath.Rel(d, path)
+		if err != nil {
+			continue
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // drainCLIMemoryForKick runs the installed drainer over the agent's memory
