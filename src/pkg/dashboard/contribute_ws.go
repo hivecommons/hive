@@ -116,11 +116,23 @@ type ContributorConnection struct {
 	advisorModel  string
 	advisorEffort string
 	standby       map[string]StandbyConnectionState
-	role          string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
-	clientRole    string // relay-requested HIVE_AGENT_ROLE; owner assignment may override it
-	assignedRole  string // owner-selected role; "none" forces general work
-	connectedAt   time.Time
-	currentTask   *WSTaskAssign
+	// standbyDeclared is set by ANY standby_declare on this connection,
+	// accepted or rejected, and cleared when standby_release leaves no lane
+	// recorded. A relay in standby mode never asks for ordinary work, even
+	// when every lane it declared was rejected (a suspended standby key), so
+	// RoleCoverage must not count it as covering its role either way.
+	standbyDeclared bool
+	// quotaHeld is the relay's own report (quota_hold, capability
+	// quota_hold_v1) that its contributor quota guard or provider quota hold
+	// is withholding `ready`: the socket stays up and heartbeats, but the
+	// relay asks for no work. RoleCoverage skips such a connection. A relay
+	// that never sends quota_hold leaves it false, which is today's reading.
+	quotaHeld    bool
+	role         string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
+	clientRole   string // relay-requested HIVE_AGENT_ROLE; owner assignment may override it
+	assignedRole string // owner-selected role; "none" forces general work
+	connectedAt  time.Time
+	currentTask  *WSTaskAssign
 	// fixTasks are the fix-pr tasks in flight on this connection, keyed by
 	// task id (hivecommons/hive#12436). They never replace currentTask: a
 	// spawned fix runs beside the primary task and a preempting one parks it.
@@ -2571,6 +2583,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			s.handleStandbyDeclare(msg)
 		case "standby_release":
 			s.handleStandbyRelease(msg)
+		case "quota_hold":
+			s.handleQuotaHold(msg)
 		case "knowledge_state":
 			s.handleKnowledgeState(msg)
 		case "pong":
@@ -3179,6 +3193,9 @@ func (s *wsSession) handleStandbyDeclare(msg WSMessage) {
 	config := standbyConfigFromConnection(s.contributor)
 	key := standbyOutcomeKey(s.contributor.profile.GitHubUsername, config)
 	if suspended, _ := s.h.standbySuspended(key); suspended {
+		s.contributor.mu.Lock()
+		s.contributor.standbyDeclared = true
+		s.contributor.mu.Unlock()
 		for _, lane := range lanes {
 			rejected = append(rejected, WSStandbyLane{Lane: lane, Reason: string(standbypkg.ReasonSuspended)})
 		}
@@ -3186,6 +3203,7 @@ func (s *wsSession) handleStandbyDeclare(msg WSMessage) {
 		return
 	}
 	s.contributor.mu.Lock()
+	s.contributor.standbyDeclared = true
 	if s.contributor.standby == nil {
 		s.contributor.standby = map[string]StandbyConnectionState{}
 	}
@@ -3230,8 +3248,40 @@ func (s *wsSession) handleStandbyRelease(msg WSMessage) {
 			delete(s.contributor.standby, lane)
 		}
 	}
+	if len(s.contributor.standby) == 0 {
+		s.contributor.standbyDeclared = false
+	}
 	s.contributor.mu.Unlock()
 	_ = s.contributor.send(WSMessage{Type: "standby_ack", Seq: msg.Seq})
+}
+
+// handleQuotaHold records the relay's report that its quota guard has started
+// or stopped holding all work (capability quota_hold_v1). The relay sends
+// State "held" when it starts withholding `ready` for quota and "released"
+// when it is about to ask again; any other value reads as released, which is
+// what a hub that never heard the message assumes. The flag only feeds
+// RoleCoverage: it changes no lease, no assignment and no standby state, and
+// the relay still declines a pushed assignment on its own while held.
+func (s *wsSession) handleQuotaHold(msg WSMessage) {
+	if s.contributor == nil {
+		return
+	}
+	held := strings.EqualFold(strings.TrimSpace(msg.State), "held")
+	s.contributor.mu.Lock()
+	changed := s.contributor.quotaHeld != held
+	s.contributor.quotaHeld = held
+	s.contributor.mu.Unlock()
+	if changed {
+		reason := strings.TrimSpace(msg.Reason)
+		if len(reason) > 64 {
+			reason = reason[:64]
+		}
+		s.h.logger.Info("[contribute-ws] contributor relay quota hold changed",
+			"id", s.contributor.connID,
+			"username", contributorUsername(s.contributor),
+			"held", held,
+			"reason", reason)
+	}
 }
 
 func normalizeStandbyLanes(lanes []string) []string {

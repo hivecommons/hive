@@ -1715,6 +1715,10 @@ function makeHub(url, token, disabled = false, contributorId = '', repoScope = n
     // #16462/#16463: set by standby_ack, cleared whenever the connection it
     // was granted on goes away.
     standbyAcked: false,
+    // What this hub's CURRENT connection was last told about the quota hold
+    // (quota_hold, capability quota_hold_v1). Reset on every auth_ok: a fresh
+    // connection on the hub starts out not held.
+    quotaHoldSent: false,
     // Set by handleTLSHostMismatch when the dialed host is not in the served
     // certificate; parks the hub (no reconnect loop) until contributor.env
     // changes. relocationAttempted bounds the hub-registry re-resolution to
@@ -1852,6 +1856,41 @@ function writeRelayStatus() {
     if (temporary) { try { fs.unlinkSync(temporary); } catch (_) {} }
     console.error(`WARNING: could not write relay status file ${RELAY_STATUS_FILE}: ${e.message}`);
   }
+  // Every quota hold transition already ends here (it changes relayReadiness),
+  // so this is the one place the hub is told — see reportQuotaHold.
+  reportQuotaHoldToHubs();
+}
+
+// ── Quota hold report (quota_hold_v1) ────────────────────────────────────────
+// While the quota guard (#6951) or the provider quota hold (#6541) is holding,
+// this relay withholds `ready` and declines pushed work, but its socket stays
+// up and heartbeats. A hub counting connected relays as contributor-first
+// cover (RoleCoverage) could not tell, so it withheld the resident agent's
+// kicks for a lane nobody was working. Tell each hub that advertises
+// quota_hold_v1 when the hold starts and ends; a hub without the token never
+// sees the frame, and keeps today's reading.
+function relayQuotaHeld() {
+  return contributorQuotaPaused || quotaHoldActive();
+}
+
+function relayQuotaHoldReason() {
+  return contributorQuotaPaused ? 'quota_guard' : 'provider_quota';
+}
+
+function reportQuotaHold(hub) {
+  if (!hub || !hub.authenticated || hub.disabled) return;
+  if (!Array.isArray(hub.serverCapabilities) || !hub.serverCapabilities.includes('quota_hold_v1')) return;
+  const held = relayQuotaHeld();
+  if (held === hub.quotaHoldSent) return;
+  if (!hub.ws || hub.ws.readyState !== WebSocket.OPEN) return;
+  hub.quotaHoldSent = held;
+  sendTo(hub, held
+    ? { type: 'quota_hold', seq: nextSeq(), state: 'held', reason: relayQuotaHoldReason() }
+    : { type: 'quota_hold', seq: nextSeq(), state: 'released' });
+}
+
+function reportQuotaHoldToHubs() {
+  for (const hub of hubs) reportQuotaHold(hub);
 }
 
 let progressInterval = null;
@@ -9637,6 +9676,10 @@ function handleMessage(data, hub) {
       hub.authFailed = false;
       hub.connectionId = msg.connection_id || '';
       hub.serverCapabilities = Array.isArray(msg.server_capabilities) ? msg.server_capabilities.slice() : [];
+      // A fresh connection starts out not held on the hub; restate a live hold
+      // before anything else so contributor-first cover is right from the start.
+      hub.quotaHoldSent = false;
+      reportQuotaHold(hub);
       declareStandby(hub);
       hub.scopeSent = false;
       negotiateRepoScope(hub);
