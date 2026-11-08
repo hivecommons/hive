@@ -226,6 +226,8 @@ func paneShowsTransientAPIError(lines []string) bool {
 type providerErrorMatch struct {
 	Class string
 	Line  string
+	// Model is the rejected model id, set only for ModelRejectedClass.
+	Model string
 }
 
 var (
@@ -274,6 +276,12 @@ func classifyProviderError(pane string) (providerErrorMatch, bool) {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
+		}
+		// Checked first: the CLI refusing the configured model id is not
+		// retryable, and a nudge only repeats the refusal (see
+		// model_rejection.go).
+		if model, ok := lineModelRejection(trimmed); ok {
+			return modelRejectionMatch(model, modelRejectionCLIText(trimmed)), true
 		}
 		lower := strings.ToLower(trimmed)
 		switch {

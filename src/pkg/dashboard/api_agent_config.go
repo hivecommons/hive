@@ -570,6 +570,21 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			backendChanged = true
 		}
 	}
+	// Same set-time shape check as PUT .../models, against the backend the
+	// agent will launch with (a live override wins unless this request
+	// changed the backend).
+	if modelChanged && agentCfg.Model != "" {
+		launchBackend := agentCfg.Backend
+		if !backendChanged {
+			if proc, err := s.deps.AgentMgr.GetStatus(name); err == nil && proc != nil && proc.BackendOverride != "" {
+				launchBackend = proc.BackendOverride
+			}
+		}
+		if err := malformedModelIDError(launchBackend, agentCfg.Model); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	if v, ok := body["emoji"]; ok {
 		if s, ok := v.(string); ok {
 			agentCfg.Emoji = sanitizeString(s)
@@ -1067,8 +1082,20 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		effectiveBackend = agentCfg.Backend
 		backendChanged = backend != prevBackend
 	}
+	modelWarning := ""
 	if body.Model != "" {
-		agentCfg.Model = sanitizeString(body.Model)
+		model := sanitizeString(body.Model)
+		// Refuse an id the effective backend's CLI is certain to reject
+		// (a dotted claude-… id on claude), and only warn about a
+		// well-formed id hive's list does not know — it may be newer than
+		// the list. Without this the save succeeded and the agent then
+		// restart-looped on "There's an issue with the selected model".
+		if err := malformedModelIDError(effectiveBackend, model); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		modelWarning = s.unknownModelIDWarning(effectiveBackend, model)
+		agentCfg.Model = model
 		agentCfg.ModelOwner = config.FieldOwnerOperator
 		effectiveModel = agentCfg.Model
 		modelChanged = agentCfg.Model != prevModel
@@ -1136,6 +1163,9 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	resp := map[string]any{"ok": true, "status": "updated", "agent": name, "applied": true, "restarted": false}
+	if modelWarning != "" {
+		resp["warning"] = modelWarning
+	}
 	if modelChanged || backendChanged || effortChanged {
 		if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
 			// Persisted and applied to the launch configuration, but the

@@ -574,6 +574,24 @@ a login prompt: it badged the agent 🔑, and — because a valid token was on d
 auto-restarted it straight back into the same 403, which looked like the agent
 crash-looping. Hive no longer treats a 403 as a login signal; a 401 still is.
 
+## An agent shows "model … rejected by the CLI"
+
+```
+● There's an issue with the selected model (claude-sonnet-5.5). It may not exist or you may not have access to it. Run /model to pick a different model.
+```
+
+That is Claude Code refusing the model id the agent was launched with. The agent's login is fine, which is why its AUTH badge still says logged in; the model id is the problem. Usually it is a typo, such as `claude-sonnet-5.5` where the id is `claude-sonnet-5-5`, or a model this account cannot use.
+
+What hive does about it:
+
+- The agent card shows **blocked: inference (model_rejected): model `<id>` rejected by the CLI: …**, and `/api/status` carries the same text in the agent's status evidence and `lastError`.
+- Kicks back off instead of re-sending work into the same refusal. The first wait is 2 minutes and it doubles after each refusal, using the same backoff as other provider errors (`HIVE_PROVIDER_ERROR_BACKOFF_BASE` and `HIVE_PROVIDER_ERROR_BACKOFF_MAX` in [env-vars.md](env-vars.md)). Automatic restarts are held for the same window, because a restart relaunches with the same `--model` and cannot fix it.
+- After **3 refusals of the same id in a row** (one per kicked turn), the agent is paused with trigger `model-rejected` and the reason `model <id> rejected by the CLI 3 times in a row; set a valid model for this agent, then resume it`.
+
+To fix it, set a valid model for the agent (the model picker on its dashboard card or its settings dialog, `PUT /api/config/agent/{name}/models`, or `hivectl agent model-set`), then resume the agent. Picking a different model clears the backoff at once. If you resume without changing the model, the agent gets three fresh tries and is paused again if the CLI still refuses it.
+
+Before this, nothing classified the refusal. Each relaunch cleared the agent's last error, the card showed a healthy, logged-in agent, and the agent kept cycling between kicks and restarts (502 restarts in 24 hours on one hive).
+
 ## Every Copilot agent says "You are not licensed to use Copilot"
 
 ```
@@ -745,7 +763,7 @@ Or from the dashboard (which calls `POST /api/model/{agent}/{model}`). Both pers
 
 Two gotchas:
 
-- **Slug spelling is backend-specific.** The Claude CLI expects hyphens (`claude-opus-4-8`); Copilot uses dots (`claude-opus-4.8`). A mis-normalized slug is rejected by that backend. The dashboard offers candidate ids from live `/v1/models` discovery, with a static fallback list in `src/pkg/dashboard/cli_models.go`.
+- **Slug spelling is backend-specific.** The Claude CLI expects hyphens (`claude-opus-4-8`); Copilot uses dots (`claude-opus-4.8`). A mis-normalized slug is rejected by that backend. The dashboard offers candidate ids from live `/v1/models` discovery, with a static fallback list in `src/pkg/dashboard/cli_models.go`. On the `claude` backend a dotted `claude-…` id is refused when you save it (`400`, with the dashed spelling suggested); see [Model ids are checked when you save them](agent-configuration.md#model-ids-are-checked-when-you-save-them).
 - **A change that is not operator-owned reverts on restart.** If the model appears to "come back" to the pack default, it was set through a path that did not mark it operator-owned. The `hivectl` and dashboard routes above set operator ownership precisely to prevent that reconciliation.
 
 ## Dashboard auth and access problems

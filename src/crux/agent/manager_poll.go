@@ -255,6 +255,15 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				}
 			}
 
+			// The CLI refused the configured model id (Claude Code: "There's
+			// an issue with the selected model (<id>)"). Not transient, not a
+			// login problem: surface it as the agent's error, back kicks off,
+			// and park the agent after repeated identical failures instead of
+			// letting it cycle kick → refusal → restart (model_rejection.go).
+			if m.observeModelRejection(agent, tail, time.Now()) {
+				return
+			}
+
 			if bobKeyRejected {
 				agent.LastError = startFailureReason(bobBackend, StartFailureCredentialRejected, "")
 				m.mu.Lock()

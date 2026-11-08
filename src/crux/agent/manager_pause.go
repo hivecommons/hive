@@ -153,6 +153,10 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	agent.Config.Paused = false
 	agent.restartStormBackoffUntil = time.Time{}
 	agent.clearTokenRestartCap()
+	// A resume is the operator saying "try again": a model-rejection park
+	// gets a fresh count, and is parked again after the same number of
+	// identical failures if the model is still wrong.
+	m.clearModelRejectionLocked(agent, time.Now())
 	if persistPause := m.persistPauseCallback; persistPause != nil {
 		// Deferred so it runs after this function's explicit m.mu.Unlock on
 		// every return path: the callback does config disk I/O and may
