@@ -1045,18 +1045,30 @@ func TestReviewRetryServerErrorLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
-// #17103: the stage dampener suppressing a flap is designed behaviour.
+// #17103 / #17142: the stage dampener and the stage engine's reversal guard
+// suppressing a flap are designed behaviour.
 func TestStageDampenerSuppressionLogsWithoutFleetReport(t *testing.T) {
-	logger, seen, out := newFeed(t)
-	for i := 0; i < 12; i++ {
-		logger.Warn("stage transition suppressed by dampener",
-			"key", "hivecommons/hive#17073", "head", "abc", "from", "071-needs-author",
-			"to", "050-review-pending", "reason", "base-refresh:queued-behind#17048")
+	cases := []struct {
+		msg   string
+		attrs []any
+	}{
+		{"stage transition suppressed by dampener", []any{"key", "hivecommons/hive#17073", "head", "abc",
+			"from", "071-needs-author", "to", "050-review-pending", "reason", "base-refresh:queued-behind#17048"}},
+		{"stage flap suppressed", []any{"ref", "hivecommons/hive#17139", "head", "16a0c0c",
+			"from", "060-reviewed", "to", "050-review-pending", "reason", "base-refresh:queued-behind#17109"}},
 	}
-	if len(*seen) != 0 {
-		t.Errorf("produced observations: %+v", *seen)
-	}
-	if n := strings.Count(out.String(), "\n"); n != 12 {
-		t.Errorf("wrapped handler saw %d records, want 12", n)
+	for _, tc := range cases {
+		t.Run(tc.msg, func(t *testing.T) {
+			logger, seen, out := newFeed(t)
+			for range 12 {
+				logger.Warn(tc.msg, tc.attrs...)
+			}
+			if len(*seen) != 0 {
+				t.Errorf("produced observations: %+v", *seen)
+			}
+			if n := strings.Count(out.String(), "\n"); n != 12 {
+				t.Errorf("wrapped handler saw %d records, want 12", n)
+			}
+		})
 	}
 }

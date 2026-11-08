@@ -1,1 +1,0 @@
-- fix(crux): move pane-analysis helpers out of agent/manager_kick.go to stay under the file-size ratchet

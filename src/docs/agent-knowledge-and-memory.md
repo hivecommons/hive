@@ -254,16 +254,20 @@ Do not treat the following as current behaviour; follow the links.
   [PR #17039](https://github.com/hivecommons/hive/pull/17039) (per-agent
   `.claude`/`.gemini`/`.bob`, described above). Hives upgraded from before it
   still hold the old shared store under `/data/home/.claude/projects`; it is
-  left in place and logged once, remove or drain it by hand.
+  left in place and logged once. Drain it with
+  `hivectl knowledge drain-memory --legacy` (see
+  [Auto-memory drafts](knowledge-lifecycle.md#auto-memory-drafts)) or remove
+  it by hand.
 - [#17032](https://github.com/hivecommons/hive/issues/17032) — done:
   `agents.cli_memory.auto_memory` (default off) and
   `agents.cli_memory.clear_on_kick`, described above.
 - [#17033](https://github.com/hivecommons/hive/issues/17033) — done for the
-  kick-time drain: `agents.cli_memory.drain_to_knowledge`, described above.
-  Still open: a Claude Code `SessionEnd` hook that drains without waiting
-  for the next kick, and a one-shot drain of a pre-#17031 shared store
-  (sub-issues [#17057](https://github.com/hivecommons/hive/issues/17057),
-  [#17058](https://github.com/hivecommons/hive/issues/17058)).
+  kick-time drain (`agents.cli_memory.drain_to_knowledge`, described above),
+  the review flow, the hard exclusion of drained drafts from every agent read
+  and the one-shot legacy drain
+  ([#17058](https://github.com/hivecommons/hive/issues/17058)). Still open: a
+  Claude Code `SessionEnd` hook that drains without waiting for the next kick
+  ([#17057](https://github.com/hivecommons/hive/issues/17057)).
 - Repo `AGENTS.md` injection still requires `project.checkouts_dir`; nearest-
   file (`ParseNearest`) targeting is deferred ([agents-md.md](agents-md.md)).
 

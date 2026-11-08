@@ -371,6 +371,29 @@ test('comments dedupe current captions, retain current event detail, and use no 
   assert.match(actionHtml, /CI · failing current check · queued for base refresh/);
 });
 
+test('a lone ticket draws no train header: the owner row keeps its comment and rail, a second ticket brings the header back', () => {
+  const { ctx } = load(), f = fixture();
+  // hive #17151: the owner's base refresh moved its head, so the ticket is unverified and the only member.
+  f.owner.head = 'refreshed-45';
+  f.q.waiting = [];
+  f.data.items = [f.owner];
+  let rows = render(ctx, f), html = content(rows);
+  assert.deepEqual(rootKeys(rows), [REPO + '/pr#45']);
+  assert.doesNotMatch(html, /ham-preparation-head|Preparation train|0 confirmed PRs/);
+  assert.match(html, /ham-preparation-member/);
+  assert.match(html, /Recorded preparation owner · unverified/);
+  rows = render(ctx, f, [], []);
+  assert.doesNotMatch(content(rows), /ham-preparation-head/);
+  f.q.waiting = [f.first.preparation];
+  f.data.items = [f.owner, f.first];
+  html = content(render(ctx, f));
+  assert.equal((html.match(/ham-preparation-head/g) || []).length, 1);
+  assert.match(html, /Preparation train · 1 confirmed PRs · recorded front: #45/);
+  const issue = { kind: 'issue', repo: REPO, number: 500, stage: 40, linked_prs: [f.owner] };
+  f.q.waiting = []; f.data.items = [issue];
+  assert.doesNotMatch(content(render(ctx, f)), /ham-preparation-head/);
+});
+
 test('policy omission adds no preparation; read errors and missing snapshots explicitly say unavailable, not zero', () => {
   const { ctx } = load(), f = fixture();
   render(ctx, f);

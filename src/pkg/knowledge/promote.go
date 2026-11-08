@@ -123,7 +123,9 @@ func (p *Promoter) Promote(ctx context.Context, req PromoteRequest) PromoteResul
 
 // AutoPromoteCandidates scans the source layer for facts with confidence above
 // the configured threshold and returns them as promotion candidates. This is
-// used by the curator's scheduled auto-promote flow.
+// used by the curator's scheduled auto-promote flow. A page tagged
+// AutoMemoryTag is never a candidate (#17058): drained CLI memory is
+// agent-written text that moves only when an operator promotes it by hand.
 func (p *Promoter) AutoPromoteCandidates(ctx context.Context, fromLayer, toLayer LayerType) ([]PromoteRequest, error) {
 	client, ok := p.layers[fromLayer]
 	if !ok {
@@ -142,7 +144,7 @@ func (p *Promoter) AutoPromoteCandidates(ctx context.Context, fromLayer, toLayer
 	threshold := p.config.AutoPromoteThreshold
 	var candidates []PromoteRequest
 	for _, page := range pages {
-		if page.Confidence >= threshold && page.Status == "verified" {
+		if page.Confidence >= threshold && page.Status == "verified" && !hasTagFold(page.Tags, AutoMemoryTag) {
 			candidates = append(candidates, PromoteRequest{
 				Slug:      page.Slug,
 				FromLayer: fromLayer,

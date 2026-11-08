@@ -11,6 +11,35 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.191.0)
+
+### Added
+
+- Drained CLI-memory drafts (`cli-memory` tag) never reach an agent while they are drafts: not through the kick primer or knowledge advisor, not through any `?agent=` TOC or entry read, and not through curator auto-promotion, even when `include_states` admits drafts. The dashboard's knowledge view gains an **Auto-memory drafts** filter that shows each draft's `agent:` tags with owner-only Approve and Discard actions. A new owner-only command, `hivectl knowledge drain-memory --legacy [--truncate]`, drains the shared `/data/home/.claude/projects/*/memory` store into drafts tagged `agent:shared` (#17058).
+- The Hive activity monitor on a phone replaces its 13-control toolbar and label chips with a sticky compact filter bar (All / PRs / Issues, Needs attention, Waiting on you, ⋯ Filters) that opens the full toolbar in a modal sheet, so the first row is visible without scrolling; desktop is unchanged (#17159, part of #17158).
+
+### Fixed
+
+- **fleetreport:** the stage engine's `stage flap suppressed` warning no longer files an `unclassified_error_repeated` fleet selfreport; refusing a same-head reversal is the flap guard working as designed and stays in local logs (#17142).
+
+## 2026-11-08 (v5.190.0)
+
+### Added
+
+- Crux contained runs (`POST /v1/runs`, `crux runs start --checkout`) can execute in an S1 pinned checkout: the checkout's owner (or the operator) names its id, the run record carries it, and the checkout refuses deletion with 409 while the run is live. `/v1/runs` now admits lane project principals, with runs owned by and readable/cancellable only to their creator or the operator (hivecommons/crux#114 S1+S2).
+- Hives with no `knowledge.git_sources` now index their primary repo's knowledge dir (`bead_synthesizer.publish.path`, else `docs/knowledge/` or `src/docs/knowledge/`) as a seeded `<repo>-knowledge` project-layer git source, and `knowledge.primer.max_bytes` defaults to 8192 instead of 4096.
+
+### Fixed
+
+- fix(crux): move pane-analysis helpers out of agent/manager_kick.go to stay under the file-size ratchet
+
+## 2026-11-08 (v5.189.3)
+
+### Fixed
+
+- **fleetreport:** the stage dampener's `stage transition suppressed by dampener` warning no longer files an `unclassified_error_repeated` fleet selfreport; the suppression is the stage engine working as designed and stays in local logs (#17103).
+- Closing-claim parsing no longer treats a parenthetical citation after a closing word (`fix in that section (#333)`) or the passive `closed by #N` as a claim, so the supersession sweep no longer closes changelog/docs follow-ups that cite the merged fixes they record (#17134).
+
 ## 2026-11-08 (v5.189.2)
 
 ### Fixed

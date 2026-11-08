@@ -1,1 +1,0 @@
-- Hives with no `knowledge.git_sources` now index their primary repo's knowledge dir (`bead_synthesizer.publish.path`, else `docs/knowledge/` or `src/docs/knowledge/`) as a seeded `<repo>-knowledge` project-layer git source, and `knowledge.primer.max_bytes` defaults to 8192 instead of 4096.
