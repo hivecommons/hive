@@ -49,6 +49,11 @@ func (c *Engine) integrationReadOnlyOptions() Options {
 	options.isolatedSweepMemory = true
 	options.StageTracker = NewStageTracker()
 	options.BasePreparation = NewBasePreparationStore("")
+	// A private held-run ledger: the contributor lane claims a head before it
+	// calls the approve API, and this probe's transport refuses that call. On
+	// the process-wide ledger the claim would mark the head as tried, and the
+	// real sweep would never approve it.
+	options.HeldRunApprovals = &hgithub.HeldRunApprovals{}
 	// Review requirements remain intact; a diagnostic probe must not enqueue
 	// a planner repair or overwrite the real tracker/preparation observations.
 	options.HumanChangeRequests = nil

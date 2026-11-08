@@ -46,7 +46,7 @@ import (
 // never weaker than the review it stands in for. Prose gets no reply.
 func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, cutoff time.Time, opts IssueUnparkSweepOptions, result *IssueUnparkSweepResult) (bool, error) {
 	number := issue.GetNumber()
-	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	comments, err := c.unparkComments(ctx, owner, repo, issue, time.Time{})
 	if err != nil {
 		return false, err
 	}

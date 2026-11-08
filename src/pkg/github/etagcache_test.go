@@ -244,8 +244,20 @@ func TestETagCache_EvictsLeastRecentlyUsed(t *testing.T) {
 			t.Errorf("oldest entry %d survived eviction", i)
 		}
 	}
-	if cache.totalBytes != 3*len(`{}`) {
-		t.Errorf("totalBytes = %d, want %d", cache.totalBytes, 3*len(`{}`))
+	// The bound counts what each surviving entry holds: its body and the
+	// headers remembered with it.
+	held := 0
+	for _, e := range cache.entries {
+		if e.size < len(`{}`) {
+			t.Errorf("entry size %d does not cover its body", e.size)
+		}
+		held += e.size
+	}
+	if cache.totalBytes != held {
+		t.Errorf("totalBytes = %d, want %d (the surviving entries' sizes)", cache.totalBytes, held)
+	}
+	if got := cache.evictions.Load(); got != 2 {
+		t.Errorf("evictions = %d, want 2", got)
 	}
 }
 

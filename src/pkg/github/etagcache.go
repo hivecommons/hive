@@ -32,13 +32,26 @@ package github
 //
 // Rate-limit headers on a replayed response are the 304's, not the stale
 // 200's, so go-github's own quota bookkeeping stays exact.
+//
+// Bodies of etagCacheCompressMin bytes or more are held gzip-compressed and
+// the byte bound counts what is held. A closed-PR list page is ~2 MiB of
+// JSON and the hive re-lists such pages for every watched repo in several
+// query variants each cycle: on the projectbluefin hive (2026-11-08, 20
+// repos) one variant alone was 36 MiB, so a raw 64 MiB bound let each sweep
+// push the rest of the working set out, and a sweep that cycles through more
+// bytes than the bound gets no 304 at all under least-recently-used eviction.
+// GitHub JSON compresses about 7x at gzip's fastest level, so the same
+// memory now holds the working set. HIVE_GITHUB_ETAG_CACHE_MAX_MB sets the
+// bound for a hive that watches more than that.
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,9 +65,15 @@ const (
 	// tarball or diff response into memory.
 	etagCacheMaxBody = 4 << 20
 	// etagCacheMaxEntries / etagCacheMaxBytes bound the whole cache; least
-	// recently used entries are evicted past either.
-	etagCacheMaxEntries = 4096
-	etagCacheMaxBytes   = 64 << 20
+	// recently used entries are evicted past either. The byte bound counts
+	// what is held: compressed bodies plus the remembered headers.
+	// etagCacheMaxBytesEnv overrides the byte bound, in MiB.
+	etagCacheMaxEntries  = 16384
+	etagCacheMaxBytes    = 64 << 20
+	etagCacheMaxBytesEnv = "HIVE_GITHUB_ETAG_CACHE_MAX_MB"
+	// etagCacheCompressMin is the smallest body held compressed; below it
+	// the gzip framing costs more than it saves.
+	etagCacheCompressMin = 1 << 10
 	// etagCacheTTL is how long an entry may be reused for revalidation. An
 	// ETag never goes stale on GitHub's side, but an entry nobody has asked
 	// about in this long is just memory.
@@ -65,11 +84,64 @@ const (
 )
 
 type etagEntry struct {
-	etag     string
-	header   http.Header
+	etag   string
+	header http.Header
+	// body is what is held: the response body, gzip-compressed when gz is
+	// set. rawLen is the body's length as GitHub sent it.
 	body     []byte
+	gz       bool
+	rawLen   int
+	size     int
 	storedAt time.Time
 	lastUsed time.Time
+}
+
+// newETagEntry remembers a 200's body and headers, compressing the body when
+// that is worth it.
+func newETagEntry(etag string, header http.Header, raw []byte) *etagEntry {
+	e := &etagEntry{etag: etag, header: header, body: raw, rawLen: len(raw)}
+	if len(raw) >= etagCacheCompressMin {
+		var buf bytes.Buffer
+		buf.Grow(len(raw) / 4)
+		zw, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
+		if err == nil {
+			_, err = zw.Write(raw)
+			if cerr := zw.Close(); err == nil {
+				err = cerr
+			}
+		}
+		if err == nil && buf.Len() < len(raw) {
+			e.body, e.gz = bytes.Clone(buf.Bytes()), true
+		}
+	}
+	e.size = len(e.body)
+	for k, vs := range header {
+		e.size += len(k)
+		for _, v := range vs {
+			e.size += len(v)
+		}
+	}
+	return e
+}
+
+// rawBody returns the body as GitHub sent it.
+func (e *etagEntry) rawBody() ([]byte, error) {
+	if !e.gz {
+		return e.body, nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(e.body))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, e.rawLen)
+	buf := bytes.NewBuffer(out)
+	if _, err := io.Copy(buf, io.LimitReader(zr, int64(e.rawLen)+1)); err != nil {
+		return nil, err
+	}
+	if buf.Len() != e.rawLen {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return buf.Bytes(), nil
 }
 
 // etagCache is the process-wide store. Separate from the transport wrapper
@@ -86,19 +158,34 @@ type etagCache struct {
 	now        func() time.Time
 
 	// Counters for tests and for the operator: every hit is a request GitHub
-	// did not charge.
-	hits, misses, stores atomic.Int64
+	// did not charge; an eviction is an entry pushed out by a bound before
+	// anyone asked for it again.
+	hits, misses, stores, evictions atomic.Int64
 }
 
 func newETagCache() *etagCache {
 	return &etagCache{
 		entries:    map[string]*etagEntry{},
 		maxEntries: etagCacheMaxEntries,
-		maxBytes:   etagCacheMaxBytes,
+		maxBytes:   etagCacheMaxBytesFromEnv(),
 		maxBody:    etagCacheMaxBody,
 		ttl:        etagCacheTTL,
 		now:        time.Now,
 	}
+}
+
+// etagCacheMaxBytesFromEnv is the byte bound: HIVE_GITHUB_ETAG_CACHE_MAX_MB
+// MiB when that is a positive integer, etagCacheMaxBytes otherwise.
+func etagCacheMaxBytesFromEnv() int {
+	raw := strings.TrimSpace(os.Getenv(etagCacheMaxBytesEnv))
+	if raw == "" {
+		return etagCacheMaxBytes
+	}
+	mb, err := strconv.Atoi(raw)
+	if err != nil || mb <= 0 || mb > 1<<20 {
+		return etagCacheMaxBytes
+	}
+	return mb << 20
 }
 
 // sharedETagCache is the store every wrapped client shares.
@@ -107,11 +194,27 @@ var sharedETagCache = newETagCache()
 // ETagCacheStats reports how many requests were answered by a free 304
 // revalidation, how many were charged fetches, and how many bodies are held.
 func ETagCacheStats() (hits, misses, entries int64) {
+	info := ETagCacheSnapshot()
+	return info.Hits, info.Misses, info.Entries
+}
+
+// ETagCacheSnapshot is ETagCacheStats plus how many bytes are held against
+// which bound, and how many entries a bound has pushed out. A rising
+// evictions count with a byte count at the bound means the working set does
+// not fit (HIVE_GITHUB_ETAG_CACHE_MAX_MB).
+func ETagCacheSnapshot() ETagCacheInfo {
 	c := sharedETagCache
 	c.mu.Lock()
-	n := len(c.entries)
+	n, held, limit := len(c.entries), c.totalBytes, c.maxBytes
 	c.mu.Unlock()
-	return c.hits.Load(), c.misses.Load(), int64(n)
+	return ETagCacheInfo{
+		Hits:      c.hits.Load(),
+		Misses:    c.misses.Load(),
+		Entries:   int64(n),
+		Bytes:     int64(held),
+		MaxBytes:  int64(limit),
+		Evictions: c.evictions.Load(),
+	}
 }
 
 type etagCacheTransport struct {
@@ -220,7 +323,7 @@ func (c *etagCache) get(key string) *etagEntry {
 	}
 	now := c.now()
 	if now.Sub(e.lastUsed) > c.ttl {
-		c.totalBytes -= len(e.body)
+		c.totalBytes -= e.size
 		delete(c.entries, key)
 		return nil
 	}
@@ -232,12 +335,12 @@ func (c *etagCache) put(key string, e *etagEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if old, ok := c.entries[key]; ok {
-		c.totalBytes -= len(old.body)
+		c.totalBytes -= old.size
 	}
 	e.storedAt = c.now()
 	e.lastUsed = e.storedAt
 	c.entries[key] = e
-	c.totalBytes += len(e.body)
+	c.totalBytes += e.size
 	c.stores.Add(1)
 	c.evictLocked()
 }
@@ -246,7 +349,7 @@ func (c *etagCache) drop(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if old, ok := c.entries[key]; ok {
-		c.totalBytes -= len(old.body)
+		c.totalBytes -= old.size
 		delete(c.entries, key)
 	}
 }
@@ -265,8 +368,9 @@ func (c *etagCache) evictLocked() {
 		if oldest == nil {
 			return
 		}
-		c.totalBytes -= len(oldest.body)
+		c.totalBytes -= oldest.size
 		delete(c.entries, oldestKey)
+		c.evictions.Add(1)
 	}
 }
 
@@ -301,6 +405,14 @@ func (t *etagCacheTransport) RoundTrip(req *http.Request) (*http.Response, error
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, etagCacheMaxBody))
 			_ = resp.Body.Close()
 		}
+		body, berr := entry.rawBody()
+		if berr != nil {
+			// The held copy cannot be read back: forget it and fetch the
+			// resource plainly rather than hand the caller a broken body.
+			t.cache.drop(key)
+			t.cache.misses.Add(1)
+			return t.inner.RoundTrip(req)
+		}
 		t.cache.hits.Add(1)
 		hdr := entry.header.Clone()
 		for _, h := range replayHeaders {
@@ -309,7 +421,7 @@ func (t *etagCacheTransport) RoundTrip(req *http.Request) (*http.Response, error
 			}
 		}
 		hdr.Set(etagCacheHeader, "revalidated")
-		hdr.Set("Content-Length", strconv.Itoa(len(entry.body)))
+		hdr.Set("Content-Length", strconv.Itoa(len(body)))
 		return &http.Response{
 			Status:        "200 OK",
 			StatusCode:    http.StatusOK,
@@ -317,8 +429,8 @@ func (t *etagCacheTransport) RoundTrip(req *http.Request) (*http.Response, error
 			ProtoMajor:    resp.ProtoMajor,
 			ProtoMinor:    resp.ProtoMinor,
 			Header:        hdr,
-			Body:          io.NopCloser(bytes.NewReader(entry.body)),
-			ContentLength: int64(len(entry.body)),
+			Body:          io.NopCloser(bytes.NewReader(body)),
+			ContentLength: int64(len(body)),
 			Request:       req,
 		}, nil
 	}
@@ -346,7 +458,7 @@ func (t *etagCacheTransport) RoundTrip(req *http.Request) (*http.Response, error
 		if len(buf) > t.cache.maxBody {
 			return resp, nil
 		}
-		t.cache.put(key, &etagEntry{etag: etag, header: resp.Header.Clone(), body: buf})
+		t.cache.put(key, newETagEntry(etag, resp.Header.Clone(), buf))
 	case resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusForbidden:
 		// The resource is gone or no longer visible to this identity; the
 		// remembered body must not be revalidated against it again. 403/429
