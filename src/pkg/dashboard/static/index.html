@@ -48239,7 +48239,7 @@ function burnAreaChart() {
       const MB = 1024 * 1024;
       const mb = v => (v / MB).toFixed(v >= 100 * MB ? 0 : 1);
       const size = maxBytes > 0 ? `${mb(bytes)} / ${mb(maxBytes)} MB` : `${mb(bytes)} MB`;
-      return `${entries.toLocaleString()} entries · ${size}`;
+      return `${formatNumber(entries)} entries · ${size}`;
     }
     function ghApiBudgetHelpMark(key, label) {
       const id = 'gh-api-budget-' + key + '-tip';
