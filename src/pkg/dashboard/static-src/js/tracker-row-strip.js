@@ -809,6 +809,7 @@
       if (mods.indexOf('hold') >= 0 && typeof stageTrackerHoldPill === 'function' && stageTrackerHoldPill(item)) lines.push(stageTrackerHoldPill(item));
       if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) lines.push('Trail: ' + trail);
+      if (typeof hamNotesCount === 'function') { const nn = hamNotesCount(item); if (nn) lines.push(nn + ' maintainer note' + (nn === 1 ? '' : 's') + ' (private to this hive)'); }
       // Say it once: a line the caption already said is not repeated (hivecommons/hive#15394).
       return lines.filter((l, i) => l && lines.indexOf(l) === i).join('\n');
     }
