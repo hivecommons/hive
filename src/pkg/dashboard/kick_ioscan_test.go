@@ -138,6 +138,7 @@ type renderedKickScheduler struct {
 }
 
 func (r renderedKickScheduler) BuildAgentMessageFromLastActionable(string) string { return r.msg }
+func (r renderedKickScheduler) BuildAgentGuidance(string) string                  { return "" }
 
 func TestHandleKickIoscanServerRenderedPromptNotRescanned(t *testing.T) {
 	srv := kickIoscanSandboxServer(t)

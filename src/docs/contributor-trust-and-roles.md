@@ -126,6 +126,25 @@ hub:
 
 If the list is empty, Hive uses the safe default: `scanner`, `quality`, and `outreach`. Privileged roles must be both listed here and granted on the contributor profile. The owner UI exposes these grants as chips/check boxes; assigning a privileged role auto-preserves the matching grant so reconnects keep working.
 
+### What a contributor receives in a role
+
+A contributor acting as a role gets one assigned task, plus the role's guidance on how to do it. The guidance is not the resident agent's kick. The prompt has three parts, in this order:
+
+1. **Framing.** The `[clanker-agent-role:<role>]` marker, then a sentence that says attribution stays with the contributor's GitHub identity and permissions stay those of the contributor's tier. Then the scope rule: the assigned task at the end is the only work for the session. The contributor ignores any instruction in the guidance to find other work, pick another repository, merge pull requests or dispatch sub-agents.
+2. **Role guidance.** The role's kick template, resolved the same way as for the resident agent. It includes the hive's house style, the rule against discovering work with `gh pr list` or `gh issue list`, the work-tracker rules, and the repository's own `AGENTS.md` and skills.
+3. **The assigned task.** The task prompt itself, which is the same as for a contributor without a role.
+
+The guidance leaves out everything that belongs to the resident agent's session:
+
+- the work lists: actionable issues and PRs, merge-eligible PRs and CI-failing PRs;
+- the template sections that run the resident agent's session: *Priority Order*, *Workflow*, *Merge Sweep*, *Dispatching Fixes*, *CI Repair*, *File-Overlap Detection*, *Escalated PRs* and *Multi-Repo Coverage*;
+- the GitHub App authentication block (`${GH_AUTH}`), the authorized-repos list, the workflow-push note and the task-MCP pointer, because all of them describe the resident agent's own token and CLI;
+- the red-main notice, the fix-before-new and follow-up blocks, the in-flight and maintainer notes, the claim rule, and the closing "Begin now" line.
+
+Policy prose outside those sections that mentions the resident workflow stays in. For example, the shipped scanner template still opens with "fix bugs … using parallel sub-agents", and that is what the scope rule is there for. Donated standby work gets the same guidance, after the task, as its lane policy.
+
+Building the guidance reads no queue: it makes no classification, triage or kick-summary call. Before this change, each role-delegated assignment built the resident agent's full manual kick, which ran a classification sweep over the hive's whole cached queue.
+
 ### Making the contributor the primary worker (`contributor_first`)
 
 A delegated role runs **in parallel** with the hive's resident agent by default: the relay takes issues from the role's lane while the governor keeps kicking the resident agent, so the hive's own inference budget is still spent on that lane. To let contributors take the load *first*, set `contributor_first: true` on the agent. While at least one connected, healthy relay is acting as that role, the governor withholds the resident agent's kicks; once no relay has covered the role for `contributor_first_grace` (default 10m) the resident agent resumes on its normal cadence. The role must be delegatable (listed in `hub.contribute_delegatable_roles`, or one of the defaults), or the hive refuses to load. Budget pause and standby are unchanged — a covered lane is never reported as paused for budget. The agent's **General** tab in Settings exposes both `contributor_first` and `contributor_first_grace`, so this needs no `hive.yaml` edit. Details and the exact rules are in [Contributor-first lanes](agent-configuration.md#contributor-first-lanes-contributor_first).

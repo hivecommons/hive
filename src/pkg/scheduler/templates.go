@@ -304,6 +304,15 @@ func (s *Scheduler) inceptionVars() (idea, phase, mode, answers, slug, repoURL s
 // ${GH_AUTH} or ${AGENT_NAME}.
 func (s *Scheduler) substituteTemplateWithVars(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue, extra map[string]func() string, elideOpt ...bool) (string, bool) {
 	elideStuffed := len(elideOpt) > 0 && elideOpt[0]
+	return s.substituteTemplate(template, actionable, agentName, issues, extra, elideStuffed, false)
+}
+
+// substituteTemplate is the one ${VAR} renderer behind every kick. guidance
+// marks a contributor's role-guidance render (BuildAgentGuidance): the
+// metrics-file work lists are not read at all, and the variables that carry
+// the resident agent's work or its App credentials render empty
+// (guidanceBlankedVars). Every resident kick passes false and is unchanged.
+func (s *Scheduler) substituteTemplate(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue, extra map[string]func() string, elideStuffed, guidance bool) (string, bool) {
 	baseName := s.cfg.BaseAgentName(agentName)
 	if actionable == nil {
 		actionable = &github.ActionableResult{}
@@ -361,7 +370,12 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	if len(agentIssues) == 0 && actionable != nil && len(actionable.Issues.Items) > 0 {
 		agentIssues = actionable.Issues.Items
 	}
-	knowledgeInj := s.primeKnowledgeStats(agentName, agentIssues)
+	// A guidance render has no issues to prime knowledge from, and priming
+	// would record a kick summary for the resident agent that no kick sent.
+	var knowledgeInj knowledgeInjection
+	if !guidance {
+		knowledgeInj = s.primeKnowledgeStats(agentName, agentIssues)
+	}
 	knowledgeSection := knowledgeInj.Section
 
 	repoRoot := s.agentsRepoRoot(primaryRepo)
@@ -403,8 +417,11 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	// files, so they need the same narrowing: a scoped agent asked to fix red CI
 	// must not be handed a red PR on a repo it cannot push to (#6204).
 	repoInScope := func(repo string) bool { return s.cfg.AgentServesRepo(agentName, repo) }
-	mergeEligibleList := s.buildMergeEligibleListFor(repoInScope, elideStuffed)
-	ciFailingList := s.buildCIFailingListFor(repoInScope)
+	mergeEligibleList, ciFailingList := "", ""
+	if !guidance {
+		mergeEligibleList = s.buildMergeEligibleListFor(repoInScope, elideStuffed)
+		ciFailingList = s.buildCIFailingListFor(repoInScope)
+	}
 
 	// The built-in per-kick variables. Each value is already computed above, so
 	// the thunks just return it — but wrapping them as resolve.RuntimeContext
@@ -453,6 +470,11 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		"MERGE_ELIGIBLE":        lit(mergeEligibleList),
 		"CI_FAILING":            lit(ciFailingList),
 	}}
+	if guidance {
+		for _, name := range guidanceBlankedVars {
+			rt.Vars[name] = lit("")
+		}
+	}
 	// Caller-supplied vars lose a name clash: one already claimed by a built-in
 	// above is left alone, so no call site can redefine ${GH_AUTH}.
 	for name, fn := range extra {

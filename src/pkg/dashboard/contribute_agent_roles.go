@@ -101,12 +101,19 @@ func (h *ContributeWSHub) roleClaimAllowed(c *ContributorConnection, role string
 	return true, ""
 }
 
+// roleKickPrompt is the role's GUIDANCE for a contributor taking it on: the
+// policy, house style, lane rules and repository instructions, never the
+// resident agent's work lists, merge sweep, sub-agent dispatch, App-token
+// contract, red-main notice or "Begin now" (Scheduler.BuildAgentGuidance). It
+// used to be the resident agent's full manual kick, which a contributor's
+// model then followed instead of its one assigned task, and which ran a
+// classification sweep over the whole cached queue on every assignment.
 func (h *ContributeWSHub) roleKickPrompt(role string) string {
 	role = normalizeAgentRole(role)
 	if role == "" || h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Scheduler == nil {
 		return ""
 	}
-	return h.server.deps.Scheduler.BuildAgentMessageFromLastActionable(role)
+	return h.server.deps.Scheduler.BuildAgentGuidance(role)
 }
 
 // buildRoleTaskPromptForContributor wraps the ordinary assignment prompt in the
@@ -123,6 +130,13 @@ func buildRoleTaskPromptForContributorWithHints(ref worksource.Ref, title, role,
 	return wrapRoleTaskPrompt(buildTaskPromptForContributorWithHints(ref, title, canPush, guide, hints), role, agentPrompt)
 }
 
+// roleTaskScopeRule frames the role guidance for a contributor: it says how to
+// work, and the assigned task at the end is the only work. Policy prose still
+// describes the resident agent's session in places (a scanner policy says it
+// dispatches sub-agents and merges), so the rule names those instructions and
+// says to ignore them.
+const roleTaskScopeRule = "Use the ROLE GUIDANCE below for how to work. Your work for this session is ONLY the ASSIGNED CONTRIBUTOR TASK at the end: ignore any instruction in the guidance to find other work, pick another repository, merge pull requests, or dispatch sub-agents. Finish exactly as the task says, without waiting on CI."
+
 func wrapRoleTaskPrompt(base, role, agentPrompt string) string {
 	role = normalizeAgentRole(role)
 	if role == "" {
@@ -131,7 +145,7 @@ func wrapRoleTaskPrompt(base, role, agentPrompt string) string {
 	if strings.TrimSpace(agentPrompt) == "" {
 		return fmt.Sprintf("[clanker-agent-role:%s]\n\nOperate as the hive spoke agent role %q for this contributor-owned task. Your credentials and permissions remain those of the contributor; do not assume any extra access from the role.\n\n%s", role, role, base)
 	}
-	return fmt.Sprintf("[clanker-agent-role:%s]\n\nA contributor is temporarily taking on the hive spoke agent role %q. Attribution remains the contributor's GitHub identity, and permissions remain the contributor tier's permissions.\n\nROLE KICK PROMPT (same template used for the spoke agent):\n%s\n\nASSIGNED CONTRIBUTOR TASK:\n%s", role, role, agentPrompt, base)
+	return fmt.Sprintf("[clanker-agent-role:%s]\n\nA contributor is temporarily taking on the hive spoke agent role %q. Attribution remains the contributor's GitHub identity, and permissions remain the contributor tier's permissions.\n\n%s\n\nROLE GUIDANCE (how the %s role works; the spoke agent's work lists are not included):\n%s\n\nASSIGNED CONTRIBUTOR TASK (this is your whole job for this session):\n%s", role, role, roleTaskScopeRule, role, agentPrompt, base)
 }
 
 func (h *ContributeWSHub) issueMatchesAgentRole(role, title string, labels []string, lane string) bool {
