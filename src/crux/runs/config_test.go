@@ -30,6 +30,9 @@ func TestLoadConfig(t *testing.T) {
 		{"timeout order", `{"image":"img","default_timeout_ms":5,"max_timeout_ms":1}`, "default_timeout_ms exceeds"},
 		{"output order", `{"image":"img","default_max_output_bytes":5,"max_output_bytes_cap":1}`, "default_max_output_bytes exceeds"},
 		{"relative root", `{"image":"img","workspace_roots":["ws"]}`, "must be absolute"},
+		{"allowlist dot segment", `{"image":"img","repo_allowlist":["https://github.com/org/../"]}`, "repo_allowlist entry"},
+		{"allowlist credentials", `{"image":"img","repo_allowlist":["https://user:token@github.com/org/"]}`, "repo_allowlist entry"},
+		{"allowlist scheme", `{"image":"img","repo_allowlist":["ssh://git@github.com/org/"]}`, "repo_allowlist entry"},
 		{"too big", `{"image":"` + strings.Repeat("x", maxConfigBytes) + `"}`, "configuration size"},
 	}
 	for _, tc := range cases {

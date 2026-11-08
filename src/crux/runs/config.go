@@ -18,6 +18,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/hivecommons/hive/crux/checkout"
 	"time"
 
 	"github.com/hivecommons/hive/crux/config"
@@ -153,6 +155,14 @@ func (c Config) Validate() error {
 	for _, root := range c.WorkspaceRoots {
 		if !strings.HasPrefix(root, "/") {
 			return fmt.Errorf("%w: workspace_roots entries must be absolute: %q", ErrConfig, root)
+		}
+	}
+	// An allowlist entry is compared to the caller's URL as a string, so it
+	// must be canonical for the same reason the request must be (the
+	// checkout service applies the same rule to its allowlist).
+	for _, repo := range c.RepoAllowlist {
+		if err := checkout.ValidateRepoURL(strings.TrimSpace(repo)); err != nil {
+			return fmt.Errorf("%w: repo_allowlist entry %q: %v", ErrConfig, repo, err)
 		}
 	}
 	return nil
