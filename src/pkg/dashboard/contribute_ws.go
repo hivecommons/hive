@@ -3954,6 +3954,15 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// bar was "a PR was reported", still trusting an unverified field).
 			// verifiedPR is the ONLY value allowed to unlock the PR-gated
 			// rewards below; the raw msg.PRURL is never trusted directly again.
+			verifiedPR := ""
+			var prDetail ghpkg.PRVerification
+			if completedTask != nil {
+				prDetail = h.verifyReportedPRDetail(completedTask.Repo, msg.PRURL, s.contributor.profile.GitHubUsername)
+				// #17300: the scan ledger has usually not seen a PR the relay
+				// just opened with its own token, so record the verified PR
+				// before the revoke below decides whether the claim is kept.
+				h.recordCompletionPRClaim(completedTask, msg.PRURL, s.contributor.profile.GitHubUsername, prDetail)
+			}
 			// C4: a completion is terminal — revoke the server-issued lease so a
 			// later task_progress for this task cannot resurrect ownership and be
 			// re-minted a credential.
@@ -3962,11 +3971,6 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				if !h.completeImplementStage(identityOf(s.contributor), completedTask.TaskID, time.Now()) {
 					h.revokeLease(identityOf(s.contributor), completedTask.TaskID)
 				}
-			}
-			verifiedPR := ""
-			var prDetail ghpkg.PRVerification
-			if completedTask != nil {
-				prDetail = h.verifyReportedPRDetail(completedTask.Repo, msg.PRURL, s.contributor.profile.GitHubUsername)
 			}
 			if prDetail.Verified {
 				verifiedPR = msg.PRURL
@@ -4732,6 +4736,9 @@ func (h *ContributeWSHub) cleanupLoop() {
 			if n := h.claimsLedger().Expire(); n > 0 {
 				h.logger.Info("[claims] expired claims released", "count", n)
 			}
+			// #17300: a claim kept for its holder's covering PR lasts until
+			// that PR merges or closes.
+			h.sweepPRHeldClaims()
 
 			// Deregister under the lock; CLOSE outside it.
 			//

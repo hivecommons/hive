@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -178,7 +179,10 @@ func (h *ContributeWSHub) renewClaimForLease(identity, repo string, number int) 
 }
 
 // releaseClaimForLease drops the contributor claim that travelled with a lease
-// when the lease is revoked (task done, abandoned, yanked, or expired).
+// when the lease is revoked (task done, abandoned, yanked, or expired). When
+// the holder's own open PR already covers the issue the claim is converted to
+// a PR-held claim instead (hivecommons/hive#17300): the work is not abandoned,
+// and dropping the claim made every ledger-only reader see the issue as free.
 func (h *ContributeWSHub) releaseClaimForLease(identity, key, reason string) {
 	l := h.claimsLedger()
 	if l == nil || identity == "" {
@@ -187,9 +191,107 @@ func (h *ContributeWSHub) releaseClaimForLease(identity, key, reason string) {
 		}
 		return
 	}
+	if c, ok := l.LookupKey(key); ok && c.HolderID == identity && c.Kind == claims.KindContributor {
+		if pr, covered := h.coveringPRByHolder(c); covered {
+			if held, ok := l.HoldForPR(identity, key, coveringPRRepo(pr), pr.PRNumber); ok {
+				h.logger.Info("[claims] contributor claim kept for covering PR", "issue", held.Key(), "holder", held.Holder,
+					"pr", pr.PRNumber, "pr_url", pr.PRURL, "lease_reason", reason)
+				return
+			}
+		}
+	}
 	for _, c := range l.ReleaseByHolderID(identity, reason, key) {
 		h.logger.Info("[claims] contributor claim released with lease", "issue", c.Key(), "holder", c.Holder, "reason", reason)
 	}
+}
+
+// coveringPRByHolder reports the open pull request, authored by the claim's
+// holder, that the duplicate-PR claim ledger (Dependencies.IssueClaimed)
+// records as covering the claimed issue. Only a claim FilterClaimedIssues
+// would suppress the issue for counts (IssueClaim.CoversOpenIssue): a merged
+// or closed PR no longer holds anything. Both repo spellings are tried, as in
+// issueClaimedByOpenPR.
+func (h *ContributeWSHub) coveringPRByHolder(c claims.Claim) (ghpkg.IssueClaim, bool) {
+	if c.Holder == "" {
+		return ghpkg.IssueClaim{}, false
+	}
+	name := c.Repo
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	pr, ok := h.issueClaimedByOpenPR(c.Repo, name, c.Issue)
+	if !ok || !pr.CoversOpenIssue() || !strings.EqualFold(strings.TrimSpace(pr.PRAuthor), c.Holder) {
+		return ghpkg.IssueClaim{}, false
+	}
+	return pr, true
+}
+
+// coveringPRRepo is the repository the covering PR lives in.
+func coveringPRRepo(pr ghpkg.IssueClaim) string {
+	if pr.PRRepo != "" {
+		return pr.PRRepo
+	}
+	return pr.Repo
+}
+
+// recordCompletionPRClaim writes the PR a task_complete reported into the
+// duplicate-PR ledger IssueClaimed reads, once verifyReportedPRDetail has
+// confirmed it exists on the assigned repo and is this contributor's
+// (hivecommons/hive#17300). The ledger is otherwise only refreshed by the
+// eval-cycle scan and by PRs the hive's own client opens, so a PR the relay
+// opened with its own token minutes ago is usually missing from it — and the
+// lease revoke that follows the completion would then release the claim the
+// PR covers. Merged PRs are skipped: they hold nothing.
+func (h *ContributeWSHub) recordCompletionPRClaim(task *WSTaskAssign, prURL, username string, pr ghpkg.PRVerification) {
+	if task == nil || !pr.Verified || pr.Merged || task.Kind != "issue" || task.Number <= 0 || username == "" {
+		return
+	}
+	if task.SourceType != "" && task.SourceType != "github" {
+		return
+	}
+	if h.server == nil || h.server.deps == nil || h.server.deps.RecordIssueClaim == nil {
+		return
+	}
+	ref, err := ghpkg.ParsePRURL(prURL)
+	if err != nil || !strings.EqualFold(ref.FullName(), task.Repo) {
+		return
+	}
+	claim := ghpkg.IssueClaim{Repo: task.Repo, Issue: task.Number, PRRepo: ref.FullName(), PRNumber: ref.Number,
+		PRURL: prURL, PRAuthor: username, PRState: ghpkg.PRStateOpen, ExternalAuthor: true}
+	if err := h.server.deps.RecordIssueClaim(claim); err != nil {
+		h.logger.Warn("[claims] recording completion PR claim failed",
+			"repo", task.Repo, "issue", task.Number, "pr_url", prURL, "error", err.Error())
+	}
+}
+
+// sweepPRHeldClaims re-checks every contributor claim kept for a covering PR
+// (releaseClaimForLease, hivecommons/hive#17300): while the same PR still
+// covers the issue the hold is renewed; once it merged, closed, or stopped
+// covering the issue the claim is released. Without the duplicate-PR ledger
+// wired there is nothing to re-check against, so the holds are left to their
+// own TTL. Returns how many claims were released.
+func (h *ContributeWSHub) sweepPRHeldClaims() int {
+	l := h.claimsLedger()
+	if l == nil || h.server == nil || h.server.deps == nil || h.server.deps.IssueClaimed == nil {
+		return 0
+	}
+	released := 0
+	for _, c := range l.List() {
+		if c.Kind != claims.KindContributor || c.PRNumber <= 0 || c.HolderID == "" {
+			continue
+		}
+		// Any open PR by the holder that covers the issue keeps the hold, so
+		// closing PR A for a replacement PR B re-holds the claim for B.
+		if pr, ok := h.coveringPRByHolder(c); ok {
+			l.HoldForPR(c.HolderID, c.Key(), coveringPRRepo(pr), pr.PRNumber)
+			continue
+		}
+		for _, r := range l.ReleaseByHolderID(c.HolderID, claims.ReasonCoveringPRDone, c.Key()) {
+			released++
+			h.logger.Info("[claims] PR-held contributor claim released", "issue", r.Key(), "holder", r.Holder, "pr", r.PRNumber)
+		}
+	}
+	return released
 }
 
 // removeLegacyClaimLabelForLease tells the stage engine the contributor
