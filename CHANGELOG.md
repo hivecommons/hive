@@ -11,6 +11,25 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.192.0)
+
+### Added
+
+- The Hive activity monitor on a landscape phone (≤500px tall, coarse pointer) uses the compact filter bar, hides the column header so the sticky stack is a single bar, and shows at most one merge banner, so rows are visible instead of chrome; portrait and desktop are unchanged (#17166, part of #17158).
+- Activity monitor on a phone: every control meets the 44px coarse-pointer floor (`--tap-target-touch`), the per-row select / ⋯ controls move from the hidden left gutter into the row header, and the ⋯ menu opens as a full-screen sheet with tap-sized items.
+- Dashboard: on phones the Activity monitor row shows a stage-coloured "Step 7/8 · Merge queue · 2h" progress pill in place of the chevron strip; tapping it opens the full strip in a sheet, and the sticky column header is hidden with the strip (hivecommons/hive#17160).
+- `knowledge.advisor_llm` config block (mode off/shadow/rank, model, endpoint, key, candidates, pane_lines, timeout_s, holdout_percent, on_error) with hard call ceilings of 6 per agent-hour and 300 per day unless `budget_override: true`; shadow/rank without a model resolves to off with a warning, and `Config.KnowledgeAdvisorLLM()` resolves model/endpoint/key like the reviewer (explicit → `governor.litellm`). Config only; the ranking pass lands separately (hivecommons/hive#17154).
+
+### Fixed
+
+- PR titles for proposals now use the `📖 proposal:` prefix, which the required `PR Type` check accepts (`📝` never passed it); existing `📝 proposal:`/`📝 RFC` titles are still recognised as RFC documents and are rewritten to `📖` when the hive opens a PR (#17105).
+
+## 2026-11-08 (v5.191.1)
+
+### Fixed
+
+- Activity Monitor no longer draws a "Preparation train · 0 confirmed PRs" header over a single base-preparation ticket; one owner is the refresh lock holder, not a train, and its row comment already carries its state.
+
 ## 2026-11-08 (v5.191.0)
 
 ### Added

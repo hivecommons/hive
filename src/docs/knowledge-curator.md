@@ -667,8 +667,26 @@ Rules, all enforced by the runtime (`crux/agent/knowledge_advisor.go`):
 - **Never into a tool call, never after the turn.** A line waits while a
   shell command or tool is running; if the agent reaches an empty prompt
   first, the pending advice is dropped (the next kick primes afresh). It is
-  also skipped while a human is attached to the pane and while a kick is
+  also held while a human is attached to the pane and while a kick is
   being typed.
+- **Never stalls the poll tick.** The adviser is called on its own
+  goroutine, at most one call in flight per agent (hivecommons/hive#17153).
+  Scopes seen while a call runs queue newest first, capped at the lines
+  left in the kick's allowance. The tick waits briefly for a fast matcher
+  so its line still lands on the tick that saw the scope. A slower result
+  is held until a later tick passes the gates above. A result that comes
+  back after the agent's kick changed is dropped.
+- **Each scope is tagged with an action and asked about at most twice per
+  kick.** The pane line a scope comes from gives its `Action`:
+  `⏺ Read(…)` is `read`, `● Edit …` / `Write` / `Update` is `edit`, and a
+  `$ …` shell line (such as `$ gh pr …`) is `run`. The adviser is asked on
+  the scope's first sighting, and once more on the first `edit` in a scope
+  first seen without one, or on the next command in a `gh` family. A third
+  sighting is ignored, and elapsed time never makes a scope eligible again.
+- **No pane text unless the adviser asks.** An adviser whose policy sets
+  `WantsPaneTail` receives the last `PaneLines` (default 80) scrollback
+  lines, passed through `logscrub.RedactPaneTokens` first. Phase 1's
+  matcher never asks, so no pane text leaves the runtime.
 - **Per-agent opt-out:** `knowledge.advisor_exclude_agents: [scanner]`
   matches an agent name or its replica family base name.
 - **Measurable.** Each delivery is recorded in the dashboard prompt history
@@ -682,6 +700,40 @@ knowledge:
   advisor_max_per_kick: 3
   advisor_exclude_agents: [scanner]
 ```
+
+### Model-ranked advisor (`knowledge.advisor_llm`)
+
+`knowledge.advisor_llm` is the config surface for the model-ranked variant
+(hivecommons/hive#17054). This release only parses, validates and resolves
+it; nothing calls a model yet. It is ignored unless `knowledge.advisor` is on.
+
+```yaml
+knowledge:
+  advisor: true
+  advisor_llm:
+    mode: off                    # off | shadow | rank
+    model: "<your-small-model>"  # required for shadow/rank
+    endpoint: ""                 # default: governor.litellm endpoint
+    api_key_env: ""              # or api_key_file; default: governor.litellm key
+    candidates: 5
+    pane_lines: 80
+    timeout_s: 15
+    max_calls_per_agent_hour: 6  # hard ceiling without budget_override
+    max_calls_per_day: 300       # hard ceiling without budget_override
+    budget_override: false
+    holdout_percent: 0           # 0..100
+    on_error: silence            # silence | matcher
+```
+
+- `model`, `endpoint` and the key resolve like the governor reviewer:
+  explicit value, then `governor.litellm`, then unset. With no endpoint or key
+  from either place the block is unavailable.
+- `shadow` or `rank` with no model resolves to `off` and logs a warning; it
+  never stops the hive from loading.
+- `max_calls_per_agent_hour` above 6 or `max_calls_per_day` above 300 is a load
+  error naming the key unless `budget_override: true`.
+- `holdout_percent` outside 0..100, an unknown `mode` or `on_error`, and a
+  negative `candidates`, `pane_lines` or `timeout_s` are load errors.
 
 Phase 1 is a pure matcher with no model in the loop; the LLM-ranked variant
 (OMP's advisor agent as the model) is hivecommons/hive#17054. The advisor is
