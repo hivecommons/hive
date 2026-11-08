@@ -172,7 +172,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerFamilies(mux)
 	s.registerCheckouts(mux)
 	s.registerRuns(mux)
-	return s.laneHandler(s.authenticate(mux))
+	return s.laneHandler(s.authenticate(instrument(mux)))
 }
 
 // agentNamePattern is the CLI's definition-name gate (cmd/crux
