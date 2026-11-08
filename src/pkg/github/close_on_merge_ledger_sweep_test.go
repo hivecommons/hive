@@ -177,12 +177,14 @@ func TestCloseOnMergeLedgerSweepSettledClaimsSkipAPI(t *testing.T) {
 		}
 	}
 
-	// The marker is persisted: a reloaded ledger skips too.
-	reloaded, err := LoadClaimLedger(ledger.path, nil)
+	// The marker is persisted: a reloaded ledger skips too. Load with the
+	// test clock: settled claims are retired settledClaimRetention after
+	// their anchor, so reading under the wall clock drops them all once the
+	// fixed merge date is 30 days in the past.
+	reloaded, err := loadClaimLedgerAt(ledger.path, nil, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
-	reloaded.SetClock(func() time.Time { return now })
 	fourth := c.CloseOnMergeLedgerSweep(context.Background(), reloaded, opts)
 	if fourth.SkippedSettled != 3 || len(fourth.Results) != 0 {
 		t.Fatalf("reloaded sweep = %+v, want 3 settled skips", fourth)
