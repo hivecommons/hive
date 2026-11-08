@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/hivecommons/hive/crux/api"
+	"github.com/hivecommons/hive/crux/cmdlog"
 	"github.com/hivecommons/hive/crux/runs"
 )
 
@@ -31,6 +33,7 @@ func (s *Server) registerRuns(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.PathRuns, s.handleRunsCreate)
 	mux.HandleFunc("GET "+api.PathRuns+"/{id}", s.handleRunsGet)
 	mux.HandleFunc("POST "+api.PathRuns+"/{id}/cancel", s.handleRunsCancel)
+	mux.HandleFunc("GET "+api.PathRuns+"/{id}/cmdlog", s.handleRunsCmdlog)
 	s.workService(api.PathRuns)
 }
 
@@ -119,6 +122,48 @@ func (s *Server) handleRunsCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, run)
+}
+
+// handleRunsCmdlog is GET /v1/runs/{id}/cmdlog (S4): the run's command
+// log after ?since_seq, at most ?limit records. The caller must own the
+// run or be the operator, the same rule as the record itself.
+func (s *Server) handleRunsCmdlog(w http.ResponseWriter, r *http.Request) {
+	if !s.runsReady(w) {
+		return
+	}
+	run, ok := s.ownedRun(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	var sinceSeq int64
+	var limit int
+	if v := q.Get("since_seq"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, "since_seq must be a non-negative integer")
+			return
+		}
+		sinceSeq = n
+	}
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, "limit must be a positive integer")
+			return
+		}
+		limit = n
+	}
+	page, err := s.Runs.Commands(run.ID, sinceSeq, limit)
+	if err != nil {
+		if errors.Is(err, cmdlog.ErrCorrupt) {
+			s.writeError(w, http.StatusInternalServerError, api.CodeRuntime, err.Error())
+			return
+		}
+		s.writeRunsError(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, page)
 }
 
 // writeRunsError maps the run service's typed errors onto wire codes. The

@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/checkout"
+	"github.com/hivecommons/hive/crux/cmdlog"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/gates"
 	"github.com/hivecommons/hive/crux/lanes"
@@ -201,6 +202,9 @@ func (e *Env) openRuns(workDir, path string) (*runs.Service, error) {
 		return nil, err
 	}
 	svc := runs.New(store, backend, cfg)
+	// S4: every dispatched command is appended to <run dir>/commands.jsonl
+	// by the runner, with the default head/tail output policy.
+	svc.CmdLog = cmdlog.FileOpener(cmdlog.Policy{})
 	reconciled, err := svc.Reconcile()
 	if err != nil {
 		return nil, err

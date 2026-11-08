@@ -1,7 +1,7 @@
 # Crux work services: S1 pinned checkout (hivecommons/crux#114)
 
 Status: **S0 caller principals and S1 pinned checkout shipped in hive
-`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate); everything else in the RFC is unscheduled. This records
+`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate); S4 command log is [below](#s4-command-log); everything else in the RFC is unscheduled. This records
 S1 *as implemented*, including where it is weaker than the RFC text.
 
 The RFC asks for "a working copy of this repo at this commit, owned by
@@ -235,6 +235,72 @@ read and by waiters, so a gate nobody looks at stays `waiting` on disk
 past its deadline until the next read); no in-process `crux gate` form;
 no per-gate answerer allowlist beyond "the operator".
 
+## S4. Command log
+
+What a contained run executed, kept with the run and readable after it.
+Package `src/crux/cmdlog` (`cmdlog.Log`, `cmdlog.Read`), API types in
+`src/crux/api/cmdlog.go`, the route in `src/crux/serve/runs.go`, CLI in
+`src/crux/cli/cmdlog.go`. No configuration: `crux serve` wires
+`runs.Service.CmdLog = cmdlog.FileOpener(cmdlog.Policy{})` whenever the
+runs service is on.
+
+| Route | Query | Response |
+|---|---|---|
+| `GET /v1/runs/{id}/cmdlog` | `since_seq` (default 0, exclusive), `limit` (default 100, cap 1000) | `200 {"run", "commands":[Command…], "next_seq", "more"?}` ascending by `seq` |
+
+A `Command` is `{seq, command[], cwd?, capture, status, reason?,
+started_at, ended_at?, duration_ms?, exit_code?, stdout?, stderr?}`;
+`stdout`/`stderr` are `{bytes, head?, tail?, truncated?}` — the full byte
+count always, and up to 4 KiB from each end of the text the runner kept.
+`status` is one of `completed` (exit 0), `failed` (non-zero exit,
+refusal or timeout), `unfinished` (the sandbox never reported an exit)
+or `cancelled`. A `started` line with no `ended` line is returned as
+`unfinished` with no `ended_at`; a status is never guessed. Paging:
+pass the previous page's `next_seq` as `since_seq` while `more` is true.
+Visibility follows the run — a project reads only its own runs' logs
+(403 otherwise), unknown run 404, bad `since_seq`/`limit` 400, a run that
+kept no log (or an older server) is an empty page, a corrupt line 500
+`runtime_error`, no runs service 501.
+
+```
+crux --server ADDR cmdlog list [--since N] [--limit N] [--all] [--json] <run>
+crux --server ADDR cmdlog show [--json] <run> <seq>
+```
+
+**Hook.** The S2 runner records through `cmdlog.Recorder`:
+`Started(Start) (seq, error)` is called before the launcher starts the
+command and `Ended(seq, End) error` after the result is classified.
+`runs.Service.CmdLog` is a `cmdlog.Opener func(runDir) (Recorder, error)`;
+a nil opener, or an opener that fails, disables logging for that run and
+never fails the run itself. Command text, reason and both output heads
+and tails pass through `logscrub.ScrubString` before they are written.
+
+**Storage.** `<workdir>/runs/<id>/commands.jsonl`, 0600, append-only,
+two lines per command: `{"event":"started","seq",…}` and
+`{"event":"ended","seq",…}`. Readers fold the pair; a stray `ended`
+without its `started` is dropped. Re-opening a run's log resumes `seq`
+after the highest one on disk and cannot end a command an earlier
+process left open — it stays `unfinished`, which is the truth.
+
+**Under-counting, stated plainly.** Every record carries `capture`; in
+S4 the only value written is `"runner"`, which means *the command the
+runner handed to the sandbox launcher*. A contained run is one launcher
+invocation, so a run's log has exactly one `runner` record. Anything that
+command spawns — `sh -c '…'` pipelines, `make` recipes, `go test`'s
+child processes, an agent's own tool calls inside the sandbox — is **not
+counted**; it is inside the `stdout`/`stderr` of its parent. The RFC's
+"verify under-counting by honest agents" is therefore resolved for S4 by
+making the count's meaning explicit rather than by widening it: a
+consumer must not read `len(commands)` as "commands the agent ran". The
+value `"hook"` is reserved in `api.CommandCaptureHook` for a later slice
+in which an in-sandbox shim reports child commands over the same
+`Recorder`; it is never written today.
+
+**Deliberately not in S4.** No in-sandbox shim or shell wrapper; no
+per-agent `/v1/agents/{name}/commands` view; no `crux commands verify`;
+no output beyond head/tail (the run record already keeps the capped
+stream); no retention policy — the log lives and dies with the run dir.
+
 ## Deliberately not in S1
 
 - TTL sweeper (recorded, not enforced).
@@ -264,3 +330,8 @@ for runs are deferred and not scheduled.
 | `src/crux/api/gates.go` | `PathGates`, `CodeGate*`, `EventGate*`, request/response types, `Client.{Open,List,Get,Answer,Wait}Gate` |
 | `src/crux/serve/gates.go` | gate routes, visibility, error mapping, `gate.*` events and override audit |
 | `src/crux/cli/gate.go` | `crux gate open|list|answer|wait`, remote only |
+| `src/crux/cmdlog/` | S4: `Log`, `Open`, `Read`, `Recorder`, `Opener`, `FileOpener`, `Policy`, `Start`, `End`, sentinels (`ErrNotFound`, `ErrUnknownSeq`, `ErrCorrupt`) |
+| `src/crux/api/cmdlog.go` | `RunCmdlogPath`, `RunCmdlogQuery`, `Command*` status and capture constants, `CommandRecord`, `CommandOutput`, `CommandPage`, `Client.RunCmdlog` |
+| `src/crux/runs/service.go` | S4 hook: `Service.CmdLog`, `Service.Commands`; `commandStarted`/`commandStatus` around the launcher call |
+| `src/crux/serve/runs.go` | `GET /v1/runs/{id}/cmdlog`, ownership check, paging validation |
+| `src/crux/cli/cmdlog.go` | `crux cmdlog list|show`, remote only |
