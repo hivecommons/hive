@@ -190,7 +190,7 @@ func TestKnowledgePipelineParityBatch8RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resp.Engine != "llm-wiki" || resp.BeadSynthesizer["vault_path"] != "/data/vaults/bead-synth-wiki" ||
-		resp.Primer["merge_strategy"] != "precedence" || resp.Defaults["primer_max_bytes"] != float64(4096) {
+		resp.Primer["merge_strategy"] != "precedence" || resp.Defaults["primer_max_bytes"] != float64(config.DefaultKnowledgePrimerMaxBytes) {
 		t.Fatalf("GET response: %s", rec.Body.String())
 	}
 }
