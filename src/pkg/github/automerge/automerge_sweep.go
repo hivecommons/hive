@@ -290,6 +290,10 @@ type Options struct {
 	// again; nil records nothing.
 	HotspotRecorder          HotspotRecorder
 	IntegrationFilesObserved func(repo, head string, files []string)
+	// isolatedSweepMemory gives the engine a sweep memory of its own
+	// instead of the transport's shared one: a read-only evaluation must
+	// not mark a head as tried (automerge_sweep_memory.go).
+	isolatedSweepMemory bool
 }
 
 // Engine owns the automerge sweep policy state.
@@ -416,9 +420,6 @@ type Engine struct {
 	workflowApprovalScans          map[string]time.Time
 	workflowApprovalUntrusted      map[string]bool
 	workflowApprovalWorkflowChecks map[string]okToTestWorkflowCheck
-	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
-	// terminal held/never-started hold so later ticks only count them.
-	terminalHoldsLogged map[string]bool
 	// unauthorized remembers, per PR, the head and step this process marked
 	// `hive:unauthorized` for, so the same head logs once and the mark
 	// clears when the step is done; unauthorizedLabelReady remembers the
@@ -431,12 +432,13 @@ type Engine struct {
 	// a REST merge that cannot succeed (hivecommons/hive#14068).
 	mergeQueueBasesMu sync.Mutex
 	mergeQueueBases   *MergeQueueBases
-	// mergeRefusals remembers merges GitHub refused because an approving
-	// review is required (per PR head) or the merge method is disabled (per
-	// repository and method), so no sweep re-issues them every pass
-	// (automerge_merge_refusal.go).
-	mergeRefusalsMu sync.Mutex
-	mergeRefusals   map[string]mergeRefusal
+	// sweepMemory is what the lanes remember across sweeps: merge-forward
+	// and refused update-branch marks per head, the merges GitHub refused
+	// (automerge_merge_refusal.go) and the holds already logged. New shares
+	// it through the transport so the one-shot engine each tick builds
+	// keeps it (automerge_sweep_memory.go).
+	sweepMemoryOnce sync.Once
+	sweepMemory     *sweepMemory
 	// adoptionOriginalChecks throttles the self lane's lookup of an
 	// adoption PR's original (automerge_adoption_original.go).
 	adoptionOriginalChecksMu sync.Mutex
@@ -572,6 +574,9 @@ func New(transport Transport, opts Options) *Engine {
 		if provider, ok := transport.(interface{ MutationBoundary() effects.Boundary }); ok {
 			e.mutation = provider.MutationBoundary()
 		}
+	}
+	if !opts.isolatedSweepMemory {
+		e.sweepMemory = sharedSweepMemory(transport)
 	}
 	return e
 }

@@ -147,12 +147,13 @@ func (c *Engine) requiredChecksExpected(a mergeAttempt, err error) bool {
 // mergeable, so a "blocked"-only memory was never consulted there and the
 // merge was re-PUT every pass (hivecommons/hive#15419).
 func (c *Engine) checksExpectedKnown(a mergeAttempt, now time.Time) bool {
-	r, ok := c.mergeRefusals[mergeRefusalChecksKey(a)]
+	m := c.memory()
+	r, ok := m.mergeRefusals[mergeRefusalChecksKey(a)]
 	if !ok {
 		return false
 	}
 	if now.Sub(r.at) >= mergeRefusalRecheck || !strings.EqualFold(r.head, strings.TrimSpace(a.head)) || comparableMergeableState(a.state) != r.state {
-		delete(c.mergeRefusals, mergeRefusalChecksKey(a))
+		delete(m.mergeRefusals, mergeRefusalChecksKey(a))
 		return false
 	}
 	return true
@@ -187,27 +188,28 @@ func (c *Engine) knownMergeRefusal(a mergeAttempt) string {
 		return autoMergeReasonMergeQueueRequired
 	}
 	now := c.clock()
-	c.mergeRefusalsMu.Lock()
-	defer c.mergeRefusalsMu.Unlock()
+	m := c.memory()
+	m.mergeRefusalsMu.Lock()
+	defer m.mergeRefusalsMu.Unlock()
 	if c.checksExpectedKnown(a, now) {
 		return autoMergeReasonChecksExpected
 	}
 	if key := mergeRefusalMethodKey(a); strings.TrimSpace(a.method) != "" {
-		if r, ok := c.mergeRefusals[key]; ok {
+		if r, ok := m.mergeRefusals[key]; ok {
 			if now.Sub(r.at) < mergeRefusalRecheck {
 				return autoMergeReasonMergeRefusedMethod
 			}
-			delete(c.mergeRefusals, key)
+			delete(m.mergeRefusals, key)
 		}
 	}
 	key := mergeRefusalReviewKey(a)
-	r, ok := c.mergeRefusals[key]
+	r, ok := m.mergeRefusals[key]
 	if !ok {
 		return ""
 	}
 	state := comparableMergeableState(a.state)
 	if now.Sub(r.at) >= mergeRefusalRecheck || !strings.EqualFold(r.head, strings.TrimSpace(a.head)) || (state != "" && state != r.state) {
-		delete(c.mergeRefusals, key)
+		delete(m.mergeRefusals, key)
 		return ""
 	}
 	return autoMergeReasonMergeRefusedReview
@@ -251,20 +253,21 @@ func (c *Engine) refusedMerge(a mergeAttempt, err error) string {
 // entries once the map is large.
 func (c *Engine) rememberMergeRefusal(key string, r mergeRefusal) {
 	r.at = c.clock()
-	c.mergeRefusalsMu.Lock()
-	defer c.mergeRefusalsMu.Unlock()
-	if c.mergeRefusals == nil {
-		c.mergeRefusals = make(map[string]mergeRefusal)
+	m := c.memory()
+	m.mergeRefusalsMu.Lock()
+	defer m.mergeRefusalsMu.Unlock()
+	if m.mergeRefusals == nil {
+		m.mergeRefusals = make(map[string]mergeRefusal)
 	}
-	if len(c.mergeRefusals) >= mergeRefusalPruneAt {
+	if len(m.mergeRefusals) >= mergeRefusalPruneAt {
 		// Entries for PRs that merged or closed are never read again.
-		for k, old := range c.mergeRefusals {
+		for k, old := range m.mergeRefusals {
 			if r.at.Sub(old.at) >= mergeRefusalRecheck {
-				delete(c.mergeRefusals, k)
+				delete(m.mergeRefusals, k)
 			}
 		}
 	}
-	c.mergeRefusals[key] = r
+	m.mergeRefusals[key] = r
 }
 
 func nativeQueueMethodRefusalKey(claim effects.Claim) string {
@@ -281,14 +284,15 @@ func (c *Engine) knownNativeQueueMethodRefusal(claim effects.Claim, head string)
 	}
 	key := nativeQueueMethodRefusalKey(claim)
 	now := c.clock()
-	c.mergeRefusalsMu.Lock()
-	defer c.mergeRefusalsMu.Unlock()
-	r, ok := c.mergeRefusals[key]
+	m := c.memory()
+	m.mergeRefusalsMu.Lock()
+	defer m.mergeRefusalsMu.Unlock()
+	r, ok := m.mergeRefusals[key]
 	if !ok {
 		return false
 	}
 	if now.Sub(r.at) >= mergeRefusalRecheck || !strings.EqualFold(r.head, strings.TrimSpace(head)) {
-		delete(c.mergeRefusals, key)
+		delete(m.mergeRefusals, key)
 		return false
 	}
 	return true
@@ -301,17 +305,18 @@ func (c *Engine) noteNativeQueueMethodRefusal(claim effects.Claim, head string) 
 		return
 	}
 	r := mergeRefusal{head: strings.TrimSpace(head), at: c.clock()}
-	c.mergeRefusalsMu.Lock()
-	defer c.mergeRefusalsMu.Unlock()
-	if c.mergeRefusals == nil {
-		c.mergeRefusals = make(map[string]mergeRefusal)
+	m := c.memory()
+	m.mergeRefusalsMu.Lock()
+	defer m.mergeRefusalsMu.Unlock()
+	if m.mergeRefusals == nil {
+		m.mergeRefusals = make(map[string]mergeRefusal)
 	}
-	if len(c.mergeRefusals) >= mergeRefusalPruneAt {
-		for k, old := range c.mergeRefusals {
+	if len(m.mergeRefusals) >= mergeRefusalPruneAt {
+		for k, old := range m.mergeRefusals {
 			if r.at.Sub(old.at) >= mergeRefusalRecheck {
-				delete(c.mergeRefusals, k)
+				delete(m.mergeRefusals, k)
 			}
 		}
 	}
-	c.mergeRefusals[nativeQueueMethodRefusalKey(claim)] = r
+	m.mergeRefusals[nativeQueueMethodRefusalKey(claim)] = r
 }

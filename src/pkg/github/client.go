@@ -202,6 +202,10 @@ type Client struct {
 	selfLoginPending    chan struct{} // closed when the in-flight GET /user completes
 	additionalBotLogins []string
 	noBotIdentityWarned sync.Once
+	// sharedState holds process-wide values other packages keep on the
+	// Client (SharedState), such as the automerge sweeps' once-per-head marks.
+	sharedStateMu sync.Mutex
+	sharedState   map[string]any
 	// approvalDesk is the RFC #4000 approval-desk consultation performed per PR
 	// by the self-authored auto-merge sweep. nil (the default) means the sweep
 	// behaves exactly as it did before the desk existed. Set by SetApprovalDesk
