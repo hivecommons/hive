@@ -29,10 +29,12 @@ func webhookHealth(snap github.WebhookHealth) (status, detail string) {
 	rejected := fmt.Sprintf("%d rejected in the last hour", snap.Rejected1h)
 	switch snap.ReasonCode {
 	case github.WebhookReasonNoSecret:
-		if snap.LastRejectedAt != nil {
+		// Only rejections inside the window count: one delivery days ago must
+		// not leave the spoke at warn for good.
+		if snap.Rejected1h > 0 {
 			return "warn", "polling — no GITHUB_WEBHOOK_SECRET on this spoke; relayed deliveries are rejected with 503 (" + rejected + ")"
 		}
-		return "pass", "polling — no GITHUB_WEBHOOK_SECRET on this spoke; webhooks are off and no delivery has arrived"
+		return "pass", "polling — no GITHUB_WEBHOOK_SECRET on this spoke; webhooks are off and no delivery was rejected in the last hour"
 	case github.WebhookReasonSignatureFailed:
 		return "warn", "polling — deliveries fail signature verification: GITHUB_WEBHOOK_SECRET does not match the secret the sender signs with (" + rejected + ")"
 	case github.WebhookReasonDeliveriesRejected:

@@ -142,6 +142,26 @@ func TestHealthDeepWarnsWhenWebhooksRejectedForMissingSecret(t *testing.T) {
 	if st, d := summaryWebhookCheck(t, s); st != "warn" || !strings.Contains(d, "no GITHUB_WEBHOOK_SECRET") {
 		t.Fatalf("health summary webhooks = %s %q, want the same warning", st, d)
 	}
+	// The summary feeds the header pill and DeepHealth: the warning is listed
+	// there but does not move its verdict either (#17173 review).
+	if sum := s.HealthSummary(); sum["warns"] != 0 || sum["status"] != "ok" {
+		t.Fatalf("health summary verdict = %v (warns %v), want ok with the webhook check not counted", sum["status"], sum["warns"])
+	}
+}
+
+// One rejection outside the hourly window must not keep the spoke at warn
+// for good: the no-secret warning follows Rejected1h, not LastRejectedAt
+// (#17173 review).
+func TestWebhookHealthNoSecretWarnsOnlyWithinTheHour(t *testing.T) {
+	old := time.Now().Add(-26 * time.Hour)
+	snap := github.WebhookHealth{WebhookModeStatus: github.WebhookModeStatus{Mode: github.WebhookModePolling, ReasonCode: github.WebhookReasonNoSecret}, LastRejectedAt: &old}
+	if st, d := webhookHealth(snap); st != "pass" {
+		t.Fatalf("stale rejection: webhookHealth = %s %q, want pass", st, d)
+	}
+	snap.Rejected1h = 2
+	if st, _ := webhookHealth(snap); st != "warn" {
+		t.Fatalf("rejections in the last hour: webhookHealth = %s, want warn", st)
+	}
 }
 
 // With the secret set, the cause is "no deliveries" until a verified delivery

@@ -5342,12 +5342,11 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		fails++
 	}
 
-	// Webhook receiver cause (see health_webhooks.go): a warning, never a fail.
+	// Webhook receiver cause (see health_webhooks.go): listed, but it does not
+	// count toward warns, so it never changes the summary verdict that drives
+	// the header pill and DeepHealth — the hive works on polling.
 	if st, detail, _ := webhookHealthCheck(); st != "" {
 		checks = append(checks, check{Name: healthCheckWebhooks, Status: st, Detail: detail})
-		if st == "warn" {
-			warns++
-		}
 	}
 
 	// 8. Queue
