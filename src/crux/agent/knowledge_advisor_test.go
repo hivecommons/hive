@@ -3,11 +3,13 @@ package agent
 import (
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 // knowledge_advisor_test.go covers the mid-task knowledge advisor (#17052):
@@ -21,12 +23,14 @@ type fakeAdviser struct {
 	policy crux.KnowledgeAdvisorPolicy
 	byKey  map[string][]crux.KnowledgeAdvice
 	asked  []string
+	scopes []crux.KnowledgeScope
 }
 
 func (f *fakeAdviser) Policy(string) crux.KnowledgeAdvisorPolicy { return f.policy }
 
 func (f *fakeAdviser) Advise(_ string, scope crux.KnowledgeScope) []crux.KnowledgeAdvice {
 	f.asked = append(f.asked, scope.Key)
+	f.scopes = append(f.scopes, scope)
 	return f.byKey[scope.Key]
 }
 
@@ -319,4 +323,290 @@ func TestAdviseKnowledge_Refusals(t *testing.T) {
 			t.Fatal("typed with the advisor off")
 		}
 	})
+}
+
+// blockingAdviser holds every Advise call until the test releases it, and
+// records how many calls ran at once.
+type blockingAdviser struct {
+	policy  crux.KnowledgeAdvisorPolicy
+	byKey   map[string][]crux.KnowledgeAdvice
+	release chan struct{}
+
+	mu        sync.Mutex
+	asked     []string
+	running   int
+	maxActive int
+}
+
+func newBlockingAdviser(byKey map[string][]crux.KnowledgeAdvice) *blockingAdviser {
+	return &blockingAdviser{policy: enabledPolicy(), byKey: byKey, release: make(chan struct{}, 16)}
+}
+
+func (b *blockingAdviser) Policy(string) crux.KnowledgeAdvisorPolicy { return b.policy }
+
+func (b *blockingAdviser) Advise(_ string, scope crux.KnowledgeScope) []crux.KnowledgeAdvice {
+	b.mu.Lock()
+	b.asked = append(b.asked, scope.Key)
+	b.running++
+	if b.running > b.maxActive {
+		b.maxActive = b.running
+	}
+	b.mu.Unlock()
+	<-b.release
+	b.mu.Lock()
+	b.running--
+	b.mu.Unlock()
+	return b.byKey[scope.Key]
+}
+
+func (b *blockingAdviser) snapshot() ([]string, int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.asked...), b.maxActive
+}
+
+// waitKnowledgeIdle waits until no Advise call is in flight for agent.
+func waitKnowledgeIdle(t *testing.T, m *Manager, agent string) {
+	t.Helper()
+	ka := m.knowledgeAdvisor.Load()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		ka.mu.Lock()
+		busy := ka.inFlight[agent] != nil
+		ka.mu.Unlock()
+		if !busy {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("advise call still in flight")
+}
+
+func TestAdviseKnowledge_AsyncOneCallInFlight(t *testing.T) {
+	adv := newBlockingAdviser(map[string][]crux.KnowledgeAdvice{
+		"src/a": {{Slug: "a1", Title: "A1"}},
+		"src/b": {{Slug: "b1", Title: "B1"}},
+	})
+	m, a, typed := advisorManager(t, adv)
+	fakeClock(m, time.Date(2026, 11, 7, 12, 1, 0, 0, time.UTC))
+	m.adviseKnowledge(a, "", workingPane) // baseline
+
+	// The adviser blocks far past the 3 s poll interval; the tick must not.
+	start := time.Now()
+	m.adviseKnowledge(a, "⏺ Read(src/a/x.go)", workingPane)
+	if elapsed := time.Since(start); elapsed > knowledgeAdvisorAdviseGrace+time.Second {
+		t.Fatalf("tick blocked on Advise for %v", elapsed)
+	}
+	// A second scope while the first call runs is queued, not called.
+	m.adviseKnowledge(a, "⏺ Read(src/a/x.go)\n⏺ Read(src/b/y.go)", workingPane)
+	if asked, _ := adv.snapshot(); !reflect.DeepEqual(asked, []string{"src/a"}) {
+		t.Fatalf("asked = %v, want only src/a in flight", asked)
+	}
+	if len(*typed) != 0 {
+		t.Fatalf("typed before any result: %v", *typed)
+	}
+
+	adv.release <- struct{}{}
+	waitKnowledgeIdle(t, m, a.Name)
+	// The held result goes out on the next tick, which also starts src/b.
+	m.adviseKnowledge(a, "⏺ Read(src/a/x.go)\n⏺ Read(src/b/y.go)", workingPane)
+	if len(*typed) != 1 || (*typed)[0] != "📚 Knowledge: A1" {
+		t.Fatalf("typed = %v", *typed)
+	}
+	adv.release <- struct{}{}
+	waitKnowledgeIdle(t, m, a.Name)
+	asked, maxActive := adv.snapshot()
+	if !reflect.DeepEqual(asked, []string{"src/a", "src/b"}) {
+		t.Errorf("asked = %v", asked)
+	}
+	if maxActive != 1 {
+		t.Errorf("%d Advise calls ran at once, want 1", maxActive)
+	}
+}
+
+func TestAdviseKnowledge_QueueNewestFirstCappedAtAllowance(t *testing.T) {
+	adv := newBlockingAdviser(nil)
+	m, a, _ := advisorManager(t, adv)
+	fakeClock(m, time.Date(2026, 11, 7, 12, 1, 0, 0, time.UTC))
+	m.adviseKnowledge(a, "", workingPane)
+	m.adviseKnowledge(a, "⏺ Read(src/a/x.go)", workingPane) // in flight
+	m.adviseKnowledge(a, "⏺ Read(src/a/x.go)\n⏺ Read(src/b/x.go)\n⏺ Read(src/c/x.go)\n⏺ Read(src/d/x.go)", workingPane)
+
+	ka := m.knowledgeAdvisor.Load()
+	ka.mu.Lock()
+	var queued []string
+	for _, sc := range ka.agents[a.Name].queue {
+		queued = append(queued, sc.Key)
+	}
+	ka.mu.Unlock()
+	// MaxPerKick is 2: the two newest scopes wait, newest first.
+	if want := []string{"src/d", "src/c"}; !reflect.DeepEqual(queued, want) {
+		t.Errorf("queue = %v, want %v", queued, want)
+	}
+	for i := 0; i < 3; i++ {
+		adv.release <- struct{}{}
+	}
+	waitKnowledgeIdle(t, m, a.Name)
+}
+
+func TestAdviseKnowledge_ResultAfterNewKickDropped(t *testing.T) {
+	adv := newBlockingAdviser(map[string][]crux.KnowledgeAdvice{
+		"src/a": {{Slug: "a1", Title: "A1"}},
+	})
+	m, a, typed := advisorManager(t, adv)
+	fakeClock(m, time.Date(2026, 11, 7, 12, 1, 0, 0, time.UTC))
+	m.adviseKnowledge(a, "", workingPane)
+	m.adviseKnowledge(a, "⏺ Edit(src/a/x.go)", workingPane) // in flight
+
+	later := a.LastKick.Add(time.Hour)
+	a.LastKick = &later
+	m.adviseKnowledge(a, "⏺ Edit(src/a/x.go)", workingPane) // new kick's baseline
+	adv.release <- struct{}{}
+	waitKnowledgeIdle(t, m, a.Name)
+	m.adviseKnowledge(a, "⏺ Edit(src/a/x.go)", workingPane)
+	if len(*typed) != 0 {
+		t.Fatalf("advice from the previous kick was typed: %v", *typed)
+	}
+}
+
+func TestObservedKnowledgeScopesAction(t *testing.T) {
+	pane := strings.Join([]string{
+		"⏺ Read(src/crux/agent/manager.go)",
+		"● Edit src/pkg/config/config.go",
+		"⏺ Read(src/pkg/config/load.go)",
+		"⏺ Write(src/docs/new/page.md)",
+		"$ cat src/scripts/check.sh",
+		"$ gh pr checks 17153",
+	}, "\n")
+	got := map[string]string{}
+	for _, sc := range observedKnowledgeScopes(pane) {
+		got[sc.Key] = sc.Action
+	}
+	want := map[string]string{
+		"src/crux/agent": crux.KnowledgeActionRead,
+		"src/pkg/config": crux.KnowledgeActionEdit,
+		"src/docs/new":   crux.KnowledgeActionEdit,
+		"src/scripts":    crux.KnowledgeActionRun,
+		"gh:pr":          crux.KnowledgeActionRun,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("actions = %v, want %v", got, want)
+	}
+	// A later edit upgrades a scope first seen read.
+	if sc := observedKnowledgeScopes("⏺ Read(src/a/x.go)\n⏺ Update(src/a/y.go)")[0]; sc.Action != crux.KnowledgeActionEdit {
+		t.Errorf("read then update = %q, want edit", sc.Action)
+	}
+}
+
+func TestAdviseKnowledge_ReadviseOncePerScope(t *testing.T) {
+	adv := &fakeAdviser{policy: enabledPolicy()}
+	m, a, _ := advisorManager(t, adv)
+	now := fakeClock(m, time.Date(2026, 11, 7, 12, 1, 0, 0, time.UTC))
+	m.adviseKnowledge(a, "", workingPane)
+
+	pane := "⏺ Read(src/a/x.go)"
+	m.adviseKnowledge(a, pane, workingPane)
+	// Time alone never makes a scope eligible again.
+	*now = now.Add(time.Hour)
+	m.adviseKnowledge(a, pane, workingPane)
+	pane += "\n● Edit src/a/x.go"
+	m.adviseKnowledge(a, pane, workingPane)
+	pane += "\n⏺ Write(src/a/z.go)"
+	m.adviseKnowledge(a, pane, workingPane)
+
+	pane += "\n$ gh pr view 1"
+	m.adviseKnowledge(a, pane, workingPane)
+	m.adviseKnowledge(a, pane, workingPane)
+	pane += "\n$ gh pr checks 1"
+	m.adviseKnowledge(a, pane, workingPane)
+	pane += "\n$ gh pr merge 1"
+	m.adviseKnowledge(a, pane, workingPane)
+
+	var got []string
+	for _, sc := range adv.scopes {
+		got = append(got, sc.Key+"/"+sc.Action)
+	}
+	want := []string{"src/a/read", "src/a/edit", "gh:pr/run", "gh:pr/run"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("advised = %v, want %v", got, want)
+	}
+}
+
+func TestAdviseKnowledge_PaneTailOnlyWhenWanted(t *testing.T) {
+	adv := &fakeAdviser{policy: enabledPolicy()}
+	m, a, _ := advisorManager(t, adv)
+	fakeClock(m, time.Date(2026, 11, 7, 12, 1, 0, 0, time.UTC))
+	m.adviseKnowledge(a, "", workingPane)
+	m.adviseKnowledge(a, "⏺ Read(src/a/x.go)\n$ gh pr view 1", workingPane)
+	if len(adv.scopes) != 2 {
+		t.Fatalf("asked %v", adv.asked)
+	}
+	for _, sc := range adv.scopes {
+		if sc.PaneTail != "" {
+			t.Errorf("scope %s carried pane text without WantsPaneTail: %q", sc.Key, sc.PaneTail)
+		}
+	}
+}
+
+func TestAdviseKnowledge_PaneTailScrubbedAndCapped(t *testing.T) {
+	adv := &fakeAdviser{policy: enabledPolicy()}
+	adv.policy.WantsPaneTail = true
+	adv.policy.PaneLines = 3
+	m, a, _ := advisorManager(t, adv)
+	fakeClock(m, time.Date(2026, 11, 7, 12, 1, 0, 0, time.UTC))
+	m.adviseKnowledge(a, "", workingPane)
+
+	agentKey := "sk-hive-" + a.Name
+	ghToken := "ghp_" + strings.Repeat("A1b2", 9)
+	pane := strings.Join([]string{
+		"first line falls off the tail",
+		"$ export ANTHROPIC_API_KEY='" + agentKey + "'",
+		"$ GH_TOKEN=" + ghToken + " gh pr view 1",
+		"⏺ Read(src/a/x.go)",
+	}, "\n") + "\n"
+	m.adviseKnowledge(a, pane, workingPane)
+	if len(adv.scopes) == 0 {
+		t.Fatal("adviser not asked")
+	}
+	for _, sc := range adv.scopes {
+		tail := sc.PaneTail
+		if strings.Contains(tail, agentKey) || strings.Contains(tail, ghToken) {
+			t.Errorf("scope %s pane tail leaks a token: %q", sc.Key, tail)
+		}
+		if logscrub.RedactPaneTokens(tail) != tail {
+			t.Errorf("scope %s pane tail is not scrubbed: %q", sc.Key, tail)
+		}
+		if strings.Contains(tail, "first line") || strings.Count(tail, "\n") != 2 {
+			t.Errorf("scope %s pane tail not capped at 3 lines: %q", sc.Key, tail)
+		}
+		if !strings.Contains(tail, "⏺ Read(src/a/x.go)") {
+			t.Errorf("scope %s pane tail lost the work line: %q", sc.Key, tail)
+		}
+	}
+}
+
+func TestKnowledgePaneTailDefaultLines(t *testing.T) {
+	var lines []string
+	for i := 0; i < 100; i++ {
+		lines = append(lines, "line")
+	}
+	if got := strings.Count(knowledgePaneTail(strings.Join(lines, "\n"), 0), "\n") + 1; got != knowledgeAdvisorDefaultPaneLines {
+		t.Errorf("default tail is %d lines, want %d", got, knowledgeAdvisorDefaultPaneLines)
+	}
+}
+
+func TestAdviseKnowledge_AttachedHumanHoldsAdvice(t *testing.T) {
+	adv := &fakeAdviser{policy: enabledPolicy(), byKey: map[string][]crux.KnowledgeAdvice{
+		"src/a": {{Slug: "a1", Title: "A1"}},
+	}}
+	m, a, typed := advisorManager(t, adv)
+	fakeClock(m, time.Date(2026, 11, 7, 12, 1, 0, 0, time.UTC))
+	m.adviseKnowledge(a, "", workingPane)
+	termSeams(m).sessionAttached = func(*AgentProcess) bool { return true }
+	m.adviseKnowledge(a, "⏺ Edit(src/a/x.go)", workingPane)
+	termSeams(m).sessionAttached = func(*AgentProcess) bool { return false }
+	m.adviseKnowledge(a, "⏺ Edit(src/a/x.go)", workingPane)
+	if len(*typed) != 1 || (*typed)[0] != "📚 Knowledge: A1" {
+		t.Fatalf("held advice not delivered after the human left: %v", *typed)
+	}
 }
