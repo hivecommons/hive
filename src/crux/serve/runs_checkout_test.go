@@ -83,6 +83,9 @@ func TestRunsInACheckoutAreOwnerGatedAndHoldTheCheckout(t *testing.T) {
 	if code, e := f.call("beacon", http.MethodPost, api.RunCancelPath(run.ID), nil, nil); code != http.StatusForbidden || e.Code != api.CodeForbidden {
 		t.Fatalf("beacon cancel atlas's run: %d %+v", code, e)
 	}
+	if code, e := f.call("beacon", http.MethodGet, api.RunCmdlogPath(run.ID), nil, nil); code != http.StatusForbidden || e.Code != api.CodeForbidden {
+		t.Fatalf("beacon read atlas's command log: %d %+v", code, e)
+	}
 	var seen api.ContainedRun
 	if code, _ := f.call("operator", http.MethodGet, api.RunPath(run.ID), nil, &seen); code != http.StatusOK || seen.ID != run.ID {
 		t.Fatalf("operator get: %d %+v", code, seen)
