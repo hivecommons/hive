@@ -1077,6 +1077,19 @@
     .sts-sample { padding: var(--sp-3) var(--sp-2) 0; }
     .sts-sample .ham-row { padding: var(--sp-2); }
     .sts-sample .ham-cols { padding-top: 0; }
+
+    /* Phone count line (hivecommons/hive#17162): one tap target that toggles
+       the Waiting on you filter; absent at desktop widths. */
+    .ham-attn-wrap { display: none; }
+    @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
+      .ham-attn-wrap { display: block; position: sticky; top: calc(var(--navbar-sticky-height) + var(--ham-sticky-bar-h)); z-index: calc(var(--z-sticky) + 1); background: var(--panel); }
+      .ham-attn-wrap:empty { display: none; }
+      /* The column header sticks below the count line, not under it. */
+      .ham-attn-wrap:not(:empty) ~ #activity-monitor-panel .ham-cols { top: calc(var(--navbar-sticky-height) + var(--ham-sticky-bar-h) + var(--tap-target) + 1px); }
+      .ham-attn-line { display: flex; align-items: center; gap: var(--sp-2); width: 100%; min-height: var(--tap-target); padding: 0 var(--sp-3); border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--status-attention); font-size: var(--fs-touch); font-weight: 600; text-align: left; }
+      .ham-attn-line[aria-pressed="true"] { background: color-mix(in srgb, var(--status-attention) 12%, transparent); }
+    }
+
     /* Phone ergonomics (#17163, part of #17158): in the .modal-sheet tier
        (the query responsive.css uses for full-screen dialogs) every control
        in the activity monitor meets the coarse-pointer floor. --tap-target is

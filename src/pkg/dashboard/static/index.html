@@ -2420,6 +2420,19 @@
     .sts-sample { padding: var(--sp-3) var(--sp-2) 0; }
     .sts-sample .ham-row { padding: var(--sp-2); }
     .sts-sample .ham-cols { padding-top: 0; }
+
+    /* Phone count line (hivecommons/hive#17162): one tap target that toggles
+       the Waiting on you filter; absent at desktop widths. */
+    .ham-attn-wrap { display: none; }
+    @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
+      .ham-attn-wrap { display: block; position: sticky; top: calc(var(--navbar-sticky-height) + var(--ham-sticky-bar-h)); z-index: calc(var(--z-sticky) + 1); background: var(--panel); }
+      .ham-attn-wrap:empty { display: none; }
+      /* The column header sticks below the count line, not under it. */
+      .ham-attn-wrap:not(:empty) ~ #activity-monitor-panel .ham-cols { top: calc(var(--navbar-sticky-height) + var(--ham-sticky-bar-h) + var(--tap-target) + 1px); }
+      .ham-attn-line { display: flex; align-items: center; gap: var(--sp-2); width: 100%; min-height: var(--tap-target); padding: 0 var(--sp-3); border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--status-attention); font-size: var(--fs-touch); font-weight: 600; text-align: left; }
+      .ham-attn-line[aria-pressed="true"] { background: color-mix(in srgb, var(--status-attention) 12%, transparent); }
+    }
+
     /* Phone ergonomics (#17163, part of #17158): in the .modal-sheet tier
        (the query responsive.css uses for full-screen dialogs) every control
        in the activity monitor meets the coarse-pointer floor. --tap-target is
@@ -8623,6 +8636,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
         <button type="button" class="ham-chip ham-queue-chip" id="activity-monitor-queue" data-action="hamQueueToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-queue-pop" title="Merge queue: empty" hidden>⛓ Merge queue <span class="ham-queue-n">0</span></button>
         <div class="ham-merged-pop ham-queue-pop" id="activity-monitor-queue-pop" role="dialog" aria-label="Merge queue" hidden></div>
       </div>
+      <div class="ham-attn-wrap" id="activity-monitor-attn-line"></div>
       <div id="activity-monitor-native-queue" class="nq-rail" role="region" aria-label="Forge-owned merge queues" hidden></div>
       <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
       <div class="ham-meta ham-meta-foot" id="activity-monitor-meta-foot"></div>
@@ -16520,7 +16534,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerGroup = STAGE_TRACKER_GROUP_DEFAULT;
     var _stageTrackerCollapsed = {};
     function stageTrackerDefaultFilter() {
-      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, waitingOnYou: false, age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
+      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, waitingOnYou: false, attentionFirst: true, age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
     }
     var _stageTrackerFilter = stageTrackerDefaultFilter();
     // Type-to-filter text of the "all labels" dialog (not persisted).
@@ -21160,6 +21174,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES.indexOf(n) >= 0 && (item.author_kind || '') === 'human';
     }
 
+    // The phone tier of the Activity monitor (the css/responsive.css
+    // `.modal-sheet` media query).
+    function stageTrackerPhone() {
+      return !!(window.matchMedia && window.matchMedia('(max-width: 640px), ((pointer: coarse) and (max-width: 820px))').matches);
+    }
+
     // Chip order: every stage/NNN-* label first by NNN, then everything
     // else alphabetically, case-insensitive.
     function stageTrackerLabelCompare(a, b) {
@@ -21183,6 +21203,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       f.needsHuman = !!f.needsHuman;
       f.onHold = !!f.onHold;
       f.waitingOnYou = !!f.waitingOnYou;
+      f.attentionFirst = f.attentionFirst !== false;
       if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
       if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
       f.attention = !!f.attention;
@@ -21314,8 +21335,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // and 'waiting' rows tier attention-first within a column
     // (stageTrackerAttentionTier); dir 'asc' reverses the strip / age /
     // repo / number keys but never the tier.
-    function stageTrackerSort(rows, stages, f) {
+    // On a phone (opts.phone) with f.attentionFirst the tier becomes the
+    // top-level group, ahead of the column, so rows parked on a person lead
+    // the list; desktop ordering never reads it.
+    function stageTrackerSort(rows, stages, f, opts) {
       f = stageTrackerNormalizeFilter(f);
+      const tierFirst = !!(opts && opts.phone) && f.attentionFirst && (f.sort === 'furthest' || f.sort === 'waiting');
       const byRepoNumber = (x, y) => ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0));
       const sign = f.dir === 'asc' ? -1 : 1;
       const byTier = (x, y) => stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y);
@@ -21329,6 +21354,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return sign * (b.anchor - a.anchor) || byTier(x, y) || sign * ((a.since - b.since) || byRepoNumber(x, y)); };
         }
       }
+      const ordered = cmp;
+      if (tierFirst) cmp = (x, y) => byTier(x, y) || ordered(x, y);
       return (rows || []).slice().sort(cmp);
     }
 
@@ -22304,6 +22331,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + ' · runtime ' + (view.runtime_version || 'unknown') + ' · source/image unknown';
       return `<div class="cue-event" data-integration-subject="${esc(candidate.subject_id)}"><span class="cue-event-body" title="${esc(detail)}">${esc(text)}</span></div>`;
     }
+    // The phone-only count line above the list: one button that is the Waiting
+// on you chip (same hamFilter action). '' when nothing is parked on anyone.
+    function stageTrackerAttentionLineHtml(waiting, attention, on) {
+      if (!waiting && !attention) return '';
+      return `<button type="button" class="ham-attn-line" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle" aria-pressed="${on ? 'true' : 'false'}" title="${on ? 'Show every row again' : 'Show only the rows waiting on you'}"><span aria-hidden="true">⚠</span> ${waiting} waiting on you · ${attention} need${attention === 1 ? 's' : ''} attention</button>`;
+    }
     function stageTrackerPagerHtml(page) {
       if (page.pages <= 1) return '';
       return `<nav class="ham-pager" aria-label="Tracker pages"><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="prev"${page.page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹ Prev</button><span>page ${page.page} of ${page.pages}</span><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="next"${page.page >= page.pages ? ' disabled' : ''} aria-label="Next page">Next ›</button></nav>`;
@@ -22395,7 +22428,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
-      const sorted = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
+      const sorted = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f, { phone: stageTrackerPhone() }));
       const ordered = typeof stageTrackerPreparationOrderRows === 'function' ? stageTrackerPreparationOrderRows(d, sorted, stages) : sorted;
       // A TV display (display=1&density=tv) shows the rows that fit the
       // screen, ungrouped, with "+N more" in place of the pager.
@@ -22435,6 +22468,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       navCountBind(STAGE_TRACKER_COUNT_BADGE_IDS, counts.badge, counts.badgeTitle, !!data || countRefresh);
       stageTrackerRenderWaiting(d, nowMs, !!data || countRefresh);
+      const attnLine = document.getElementById('activity-monitor-attn-line');
+      if (attnLine) setIfChanged(attnLine, stageTrackerAttentionLineHtml(d.items.filter(it => it && it.waiting_on_you && !it.nested_under).length, attentionAll, f.waitingOnYou));
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       stageTrackerRenderLabelDialog();

@@ -125,6 +125,12 @@
       return STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES.indexOf(n) >= 0 && (item.author_kind || '') === 'human';
     }
 
+    // The phone tier of the Activity monitor (the css/responsive.css
+    // `.modal-sheet` media query).
+    function stageTrackerPhone() {
+      return !!(window.matchMedia && window.matchMedia('(max-width: 640px), ((pointer: coarse) and (max-width: 820px))').matches);
+    }
+
     // Chip order: every stage/NNN-* label first by NNN, then everything
     // else alphabetically, case-insensitive.
     function stageTrackerLabelCompare(a, b) {
@@ -148,6 +154,7 @@
       f.needsHuman = !!f.needsHuman;
       f.onHold = !!f.onHold;
       f.waitingOnYou = !!f.waitingOnYou;
+      f.attentionFirst = f.attentionFirst !== false;
       if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
       if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
       f.attention = !!f.attention;
@@ -279,8 +286,12 @@
     // and 'waiting' rows tier attention-first within a column
     // (stageTrackerAttentionTier); dir 'asc' reverses the strip / age /
     // repo / number keys but never the tier.
-    function stageTrackerSort(rows, stages, f) {
+    // On a phone (opts.phone) with f.attentionFirst the tier becomes the
+    // top-level group, ahead of the column, so rows parked on a person lead
+    // the list; desktop ordering never reads it.
+    function stageTrackerSort(rows, stages, f, opts) {
       f = stageTrackerNormalizeFilter(f);
+      const tierFirst = !!(opts && opts.phone) && f.attentionFirst && (f.sort === 'furthest' || f.sort === 'waiting');
       const byRepoNumber = (x, y) => ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0));
       const sign = f.dir === 'asc' ? -1 : 1;
       const byTier = (x, y) => stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y);
@@ -294,6 +305,8 @@
           cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return sign * (b.anchor - a.anchor) || byTier(x, y) || sign * ((a.since - b.since) || byRepoNumber(x, y)); };
         }
       }
+      const ordered = cmp;
+      if (tierFirst) cmp = (x, y) => byTier(x, y) || ordered(x, y);
       return (rows || []).slice().sort(cmp);
     }
 

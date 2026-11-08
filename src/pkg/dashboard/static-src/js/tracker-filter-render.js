@@ -1,3 +1,9 @@
+    // The phone-only count line above the list: one button that is the Waiting
+// on you chip (same hamFilter action). '' when nothing is parked on anyone.
+    function stageTrackerAttentionLineHtml(waiting, attention, on) {
+      if (!waiting && !attention) return '';
+      return `<button type="button" class="ham-attn-line" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle" aria-pressed="${on ? 'true' : 'false'}" title="${on ? 'Show every row again' : 'Show only the rows waiting on you'}"><span aria-hidden="true">⚠</span> ${waiting} waiting on you · ${attention} need${attention === 1 ? 's' : ''} attention</button>`;
+    }
     function stageTrackerPagerHtml(page) {
       if (page.pages <= 1) return '';
       return `<nav class="ham-pager" aria-label="Tracker pages"><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="prev"${page.page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹ Prev</button><span>page ${page.page} of ${page.pages}</span><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="next"${page.page >= page.pages ? ' disabled' : ''} aria-label="Next page">Next ›</button></nav>`;
@@ -89,7 +95,7 @@
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
-      const sorted = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
+      const sorted = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f, { phone: stageTrackerPhone() }));
       const ordered = typeof stageTrackerPreparationOrderRows === 'function' ? stageTrackerPreparationOrderRows(d, sorted, stages) : sorted;
       // A TV display (display=1&density=tv) shows the rows that fit the
       // screen, ungrouped, with "+N more" in place of the pager.
@@ -129,6 +135,8 @@
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       navCountBind(STAGE_TRACKER_COUNT_BADGE_IDS, counts.badge, counts.badgeTitle, !!data || countRefresh);
       stageTrackerRenderWaiting(d, nowMs, !!data || countRefresh);
+      const attnLine = document.getElementById('activity-monitor-attn-line');
+      if (attnLine) setIfChanged(attnLine, stageTrackerAttentionLineHtml(d.items.filter(it => it && it.waiting_on_you && !it.nested_under).length, attentionAll, f.waitingOnYou));
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       stageTrackerRenderLabelDialog();
