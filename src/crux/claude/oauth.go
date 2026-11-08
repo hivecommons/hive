@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -39,7 +40,27 @@ const (
 	// TokenExchangeTimeout limits how long we wait for the token endpoint,
 	// which can take 40-60s to respond.
 	TokenExchangeTimeout = 120 * time.Second
+
+	// ProfileURL is the OAuth profile endpoint Claude Code itself reads right
+	// after its own token exchange to learn the plan behind the new token
+	// (organization.organization_type and organization.rate_limit_tier). See
+	// FetchProfile.
+	ProfileURL = "https://api.anthropic.com/api/oauth/profile"
+
+	// ProfileFetchTimeout matches the 10s Claude Code allows the same call.
+	ProfileFetchTimeout = 10 * time.Second
 )
+
+// profileEndpointOverride redirects FetchProfile away from ProfileURL. TEST
+// SEAM ONLY, like tokenEndpointOverride: never set in production.
+var profileEndpointOverride string
+
+func profileEndpoint() string {
+	if profileEndpointOverride != "" {
+		return profileEndpointOverride
+	}
+	return ProfileURL
+}
 
 // tokenEndpointOverride redirects the token exchange away from the real Claude
 // endpoint. TEST SEAM ONLY: it is never set in production, where every exchange
@@ -82,6 +103,30 @@ type OAuthTokens struct {
 	Scopes                []string `json:"scopes"`
 	SubscriptionType      string   `json:"subscriptionType,omitempty"`
 	RateLimitTier         string   `json:"rateLimitTier,omitempty"`
+
+	// SignInAccount records which account and organization the dashboard
+	// sign-in minted this token for, as the token endpoint reported them. It
+	// is hive's own key, read only by ApplyProfile: it lets a later sign-in
+	// whose profile read fails tell whether the plan already on file belongs
+	// to the same account. Claude Code ignores it, and drops it when it
+	// rewrites the token block on its own refresh or sign-in, so a file the
+	// CLI rewrote never vouches for a plan.
+	SignInAccount *SignInAccount `json:"hiveSignInAccount,omitempty"`
+}
+
+// SignInAccount identifies the account and organization behind a token.
+type SignInAccount struct {
+	AccountUUID      string `json:"accountUuid"`
+	OrganizationUUID string `json:"organizationUuid,omitempty"`
+}
+
+// sameAccount reports whether a and b positively name the same account and
+// organization. A missing identity on either side is not a match.
+func sameAccount(a, b *SignInAccount) bool {
+	if a == nil || b == nil || a.AccountUUID == "" {
+		return false
+	}
+	return a.AccountUUID == b.AccountUUID && a.OrganizationUUID == b.OrganizationUUID
 }
 
 // tokenResponse is the raw response from the Claude token endpoint.
@@ -93,6 +138,15 @@ type tokenResponse struct {
 	Scope        string          `json:"scope"`
 	Error        json.RawMessage `json:"error"`
 	ErrorDesc    string          `json:"error_description"`
+	// Account and Organization identify who the token was minted for. Claude
+	// Code reads the same two objects from this response (account.uuid,
+	// organization.uuid) to record the signed-in account.
+	Account *struct {
+		UUID string `json:"uuid"`
+	} `json:"account"`
+	Organization *struct {
+		UUID string `json:"uuid"`
+	} `json:"organization"`
 }
 
 func (t *tokenResponse) ErrorString() string {
@@ -179,12 +233,113 @@ func ExchangeCode(code, codeVerifier, redirectURI string) (*OAuthTokens, error) 
 		scopes = strings.Fields(DefaultScopes)
 	}
 
-	return &OAuthTokens{
+	out := &OAuthTokens{
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
 		ExpiresAt:    time.Now().UnixMilli() + int64(tok.ExpiresIn)*1000,
 		Scopes:       scopes,
+	}
+	if tok.Account != nil && tok.Account.UUID != "" {
+		out.SignInAccount = &SignInAccount{AccountUUID: tok.Account.UUID}
+		if tok.Organization != nil {
+			out.SignInAccount.OrganizationUUID = tok.Organization.UUID
+		}
+	}
+	return out, nil
+}
+
+// subscriptionTypes maps the profile's organization.organization_type to the
+// subscriptionType value Claude Code stores in .credentials.json. It is the
+// CLI's own table; any other organization type stores no subscriptionType.
+var subscriptionTypes = map[string]string{
+	"claude_max":        "max",
+	"claude_pro":        "pro",
+	"claude_enterprise": "enterprise",
+	"claude_team":       "team",
+}
+
+// Profile is the plan behind an OAuth token, in the form Claude Code stores it.
+type Profile struct {
+	SubscriptionType string
+	RateLimitTier    string
+}
+
+type profileResponse struct {
+	Organization *struct {
+		OrganizationType string `json:"organization_type"`
+		RateLimitTier    string `json:"rate_limit_tier"`
+	} `json:"organization"`
+}
+
+// FetchProfile reads the plan behind accessToken from the OAuth profile
+// endpoint, the same call Claude Code makes after its own sign-in:
+//
+//	GET https://api.anthropic.com/api/oauth/profile
+//	Authorization: Bearer <access token>
+//
+// subscriptionType is organization.organization_type mapped through the CLI's
+// table (claude_max → max, …); rateLimitTier is organization.rate_limit_tier
+// as returned. Without this, a dashboard sign-in writes a token with no plan
+// and Claude Code labels the session "Claude API" / "API Usage Billing" even
+// on a subscription. Errors never carry the token or the response body.
+func FetchProfile(ctx context.Context, accessToken string) (Profile, error) {
+	ctx, cancel := context.WithTimeout(ctx, ProfileFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, profileEndpoint(), nil)
+	if err != nil {
+		return Profile{}, fmt.Errorf("build profile request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return Profile{}, fmt.Errorf("profile request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return Profile{}, fmt.Errorf("profile request: HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return Profile{}, fmt.Errorf("read profile response: %w", err)
+	}
+	var pr profileResponse
+	if err := json.Unmarshal(body, &pr); err != nil {
+		return Profile{}, fmt.Errorf("parse profile response: %w", err)
+	}
+	if pr.Organization == nil {
+		return Profile{}, fmt.Errorf("profile response has no organization")
+	}
+	return Profile{
+		SubscriptionType: subscriptionTypes[pr.Organization.OrganizationType],
+		RateLimitTier:    pr.Organization.RateLimitTier,
 	}, nil
+}
+
+// ApplyProfile stamps the plan onto freshly exchanged tokens before they are
+// written over previous (the token block currently on file, or nil).
+//
+// A successful read always wins. When the read failed, the plan on file is
+// kept only if previous was signed in by hive for the same account and
+// organization as tokens; otherwise the token is written with no plan, which
+// is what a sign-in wrote before hive read the profile at all. It reports
+// whether the previous plan was kept.
+func ApplyProfile(tokens *OAuthTokens, prof Profile, fetchErr error, previous *OAuthTokens) bool {
+	if tokens == nil {
+		return false
+	}
+	if fetchErr == nil {
+		tokens.SubscriptionType = prof.SubscriptionType
+		tokens.RateLimitTier = prof.RateLimitTier
+		return false
+	}
+	tokens.SubscriptionType, tokens.RateLimitTier = "", ""
+	if previous == nil || !sameAccount(previous.SignInAccount, tokens.SignInAccount) {
+		return false
+	}
+	tokens.SubscriptionType = previous.SubscriptionType
+	tokens.RateLimitTier = previous.RateLimitTier
+	return tokens.SubscriptionType != "" || tokens.RateLimitTier != ""
 }
 
 // WriteCredentials atomically writes tokens to the credentials file.
