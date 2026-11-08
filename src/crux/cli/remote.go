@@ -61,6 +61,8 @@ func (e *Env) remote(ctx context.Context, opts globalOptions, name string, args 
 		return e.remoteCmdlog(ctx, c, args)
 	case "signal":
 		return e.remoteSignal(ctx, c, args)
+	case "step":
+		return e.remoteStep(ctx, c, args)
 	default:
 		fmt.Fprintf(e.Stderr, "crux: %q is not available with --server; it runs where the runtime is\n", name)
 		return ExitUsage

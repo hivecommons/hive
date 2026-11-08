@@ -229,6 +229,10 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 		// gates and its API) and read through that API.
 		fmt.Fprintln(e.Stderr, "crux: signal needs --server ADDR (or CRUX_SERVER); turn signals are kept by a crux serve")
 		return ExitUsage
+	case "step":
+		// Agent steps run inside a session a `crux serve` holds open.
+		fmt.Fprintln(e.Stderr, "crux: step needs --server ADDR (or CRUX_SERVER); agent steps run on a crux serve")
+		return ExitUsage
 	case "help", "-h", "--help":
 		fs := flag.NewFlagSet("crux", flag.ContinueOnError)
 		e.usage(fs)
@@ -373,6 +377,9 @@ Work services (no runtime; hivecommons/crux#114):
   signal emit|list <run>          a contained run's turn signals: where the
                                   turn is and how it ended (--server only;
                                   'crux signal help' for flags)
+  step run|list|show <run>        schema-checked agent steps inside a
+                                  'runs start --profile agent' session
+                                  (--server only; 'crux step help' for flags)
 
 While 'crux run' is in the foreground it serves <workdir>/crux.sock; ps, logs,
 kick and stop use that socket when present so they act on the live runtime.
