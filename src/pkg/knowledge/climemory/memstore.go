@@ -34,6 +34,12 @@ func openMemoryStore(path string) (*memoryStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	// memoryFiles never lists a symlinked store, so one here was swapped in
+	// after the listing; refuse it before the file-store fallback below
+	// would otherwise open its (real) parent directory and pass SameFile.
+	if lfi.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%w: %s is a symlink", errNotMemoryFile, path)
+	}
 	if !lfi.IsDir() {
 		base = filepath.Dir(path)
 		if lfi, err = os.Lstat(base); err != nil {
