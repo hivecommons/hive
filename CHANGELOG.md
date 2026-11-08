@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.189.3)
+
+### Fixed
+
+- **fleetreport:** the stage dampener's `stage transition suppressed by dampener` warning no longer files an `unclassified_error_repeated` fleet selfreport; the suppression is the stage engine working as designed and stays in local logs (#17103).
+- Closing-claim parsing no longer treats a parenthetical citation after a closing word (`fix in that section (#333)`) or the passive `closed by #N` as a claim, so the supersession sweep no longer closes changelog/docs follow-ups that cite the merged fixes they record (#17134).
+
 ## 2026-11-08 (v5.189.2)
 
 ### Fixed
