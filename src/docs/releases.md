@@ -299,7 +299,7 @@ Concretely, per release:
    every fragment since the line diverged, ~877 KB) would otherwise fail
    this step after the tag and image retags have already landed. When the
    cap bites, the section is cut at a bullet boundary and ends with
-   `… (N more entries) — full notes in [CHANGELOG.md](…)` linking the tag's
+   `… (N more entries) — full notes in CHANGELOG.md`, a link to the tag's
    own section, so the trailer and the asset list always survive.
 
 ## Satisfying branch protection
