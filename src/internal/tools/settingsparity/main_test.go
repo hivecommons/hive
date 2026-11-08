@@ -97,12 +97,12 @@ func TestRunJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &rows); err != nil {
 		t.Fatalf("decode JSON output: %v\n%s", err, stdout.String())
 	}
-	if len(rows) != 12 {
-		t.Fatalf("got %d rows, want 12: %+v", len(rows), rows)
+	if len(rows) != 13 {
+		t.Fatalf("got %d rows, want 13: %+v", len(rows), rows)
 	}
 	want := row{Key: "hub.url", Type: "string", Default: "https://hub.example", UI: "read/write", Where: "Settings dialog reference", Notes: "may require restart or reconnect"}
-	if rows[9] != want {
-		t.Fatalf("rows[9] = %+v, want %+v", rows[9], want)
+	if rows[10] != want {
+		t.Fatalf("rows[10] = %+v, want %+v", rows[10], want)
 	}
 }
 

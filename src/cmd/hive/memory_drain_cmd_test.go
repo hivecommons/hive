@@ -178,7 +178,14 @@ func TestMemoryDrainHookEndToEnd(t *testing.T) {
 	served := make(chan struct{})
 	go func() {
 		defer close(served)
-		for ctx.Err() == nil {
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
 			reqs, _ := filepath.Glob(filepath.Join(dir, "*.json"))
 			for _, p := range reqs {
 				if strings.HasSuffix(p, ".result.json") {
@@ -193,7 +200,6 @@ func TestMemoryDrainHookEndToEnd(t *testing.T) {
 				_ = os.WriteFile(strings.TrimSuffix(p, ".json")+".result.json", out, 0o644)
 				_ = os.Remove(p)
 			}
-			time.Sleep(5 * time.Millisecond)
 		}
 	}()
 

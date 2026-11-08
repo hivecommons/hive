@@ -45,6 +45,19 @@ func (m *Manager) claudeMemoryDrainHooksLocked() (sessionEnd, onWrite bool) {
 	return sessionEnd, onWrite
 }
 
+// seedClaudeSettingsFiles writes (or repairs) each Claude settings file and
+// then merges the CLI-memory drain hooks into it (hivecommons/hive#17210).
+// Both the HOME userSettings file and the standalone --settings file get the
+// same entries; Claude Code runs an identical hook command once.
+// Caller holds m.mu (the launch path).
+func (m *Manager) seedClaudeSettingsFiles(agentName string, paths ...string) {
+	sessionEnd, onWrite := m.claudeMemoryDrainHooksLocked()
+	for _, path := range paths {
+		m.seedClaudeSettingsFile(agentName, path)
+		m.mergeClaudeMemoryDrainHooks(agentName, path, sessionEnd, onWrite)
+	}
+}
+
 // mergeClaudeMemoryDrainHooks adds or removes Hive's hook entries in the
 // Claude settings file at path. seedJSONFile only merges top-level keys and
 // would never touch an existing "hooks" object, so this goes one level
