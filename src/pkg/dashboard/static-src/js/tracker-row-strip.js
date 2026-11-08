@@ -665,9 +665,13 @@
       const head = row.querySelector(':scope > .ham-row-head .ham-ref, :scope > .ham-row-head .ham-pr-ref .ham-pr-num');
       const active = stripRow && stripRow.querySelector('.ham-seg.active');
       const title = (head ? head.textContent.trim() + ' · ' : '') + (pill ? pill.querySelector('.ham-pill-label').textContent : 'Pipeline progress');
+      // The phone card clamps the head to two lines and the needs-human note
+      // to one (hivecommons/hive#17161); the sheet carries them in full.
+      const fullTitle = [...row.querySelectorAll(':scope > .ham-row-head .ham-title:not(.ham-no-issue-t), :scope > .ham-row-head .ham-pr-title')].map(n => n.textContent.trim()).filter(Boolean).join(' · ');
+      const note = row.querySelector(':scope > .ham-human-context .cue-event-text') || row.querySelector(':scope > .ham-human-context > span');
       const overlay = document.createElement('div');
       overlay.className = 'hive-dialog-overlay';
-      overlay.innerHTML = `<div class="hive-dialog ham-pill-sheet" role="dialog" aria-modal="true" aria-label="Pipeline progress"><div class="hive-dialog-title">${esc(title)}</div><div class="hive-dialog-body long modal-scroll"><div class="ham-pill-sheet-strip"></div>${caption ? `<p class="ham-pill-sheet-caption">${esc(caption.textContent)}</p>` : ''}${active && active.title ? `<p class="ham-pill-sheet-tip">${esc(active.title)}</p>` : ''}</div><div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Close</button></div></div>`;
+      overlay.innerHTML = `<div class="hive-dialog ham-pill-sheet" role="dialog" aria-modal="true" aria-label="Pipeline progress"><div class="hive-dialog-title">${esc(title)}</div><div class="hive-dialog-body long modal-scroll">${fullTitle ? `<p class="ham-pill-sheet-title">${esc(fullTitle)}</p>` : ''}<div class="ham-pill-sheet-strip"></div>${note ? `<p class="ham-pill-sheet-note">${esc(note.textContent.trim())}</p>` : ''}${caption ? `<p class="ham-pill-sheet-caption">${esc(caption.textContent)}</p>` : ''}${active && active.title ? `<p class="ham-pill-sheet-tip">${esc(active.title)}</p>` : ''}</div><div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Close</button></div></div>`;
       const slot = overlay.querySelector('.ham-pill-sheet-strip');
       if (stripRow) {
         const copy = stripRow.cloneNode(true);

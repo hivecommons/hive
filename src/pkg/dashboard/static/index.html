@@ -2294,7 +2294,7 @@
       .ham-pill { display: inline-flex; position: relative; align-items: center; gap: var(--sp-2); max-width: 100%; min-height: var(--control-compact-min-h); padding: var(--sp-1) var(--sp-3); border: 0; border-radius: var(--r-pill); font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-semibold); line-height: 1.2; text-align: left; cursor: pointer; background: var(--amber); color: var(--surface-0); -webkit-tap-highlight-color: transparent; }
       /* The box stays at the compact control height so a nested-PR row fits a 667px phone; the hit
          area is padded out to the tap target. */
-      .ham-pill::before { content: ""; position: absolute; inset: calc((var(--control-compact-min-h) - var(--tap-target)) / 2) 0; }
+      .ham-pill::before { content: ""; position: absolute; inset: calc((var(--control-compact-min-h) - var(--tap-target)) / 2 - var(--sp-1)) 0; }
       .ham-pill > span { min-width: 0; white-space: nowrap; }
       .ham-pill .ham-pill-step { flex: 0 0 auto; opacity: .85; font-variant-numeric: tabular-nums; }
       .ham-pill .ham-pill-label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
@@ -2314,9 +2314,51 @@
     .ham-pill-sheet .ham-strip-row { display: flex; align-items: center; gap: var(--sp-2); min-width: 32em; overflow: visible; }
     .ham-pill-sheet .ham-strip-row > .ham-strip, .ham-pill-sheet .ham-strip-row > .ham-since { display: flex; }
     .ham-pill-sheet .ham-strip-row > .ham-strip { display: grid; }
+    .ham-pill-sheet .ham-pill-sheet-title { margin: 0 0 var(--sp-3); font-size: var(--fs-sm); color: var(--text); overflow-wrap: anywhere; }
+    .ham-pill-sheet .ham-pill-sheet-note { margin: var(--sp-3) 0 0; font-size: var(--fs-sm); color: var(--amber); }
     .ham-pill-sheet .ham-pill-sheet-caption { margin: var(--sp-3) 0 0; font-size: var(--fs-sm); color: var(--text); }
     .ham-pill-sheet .ham-pill-sheet-tip { margin: var(--sp-2) 0 0; font-size: var(--fs-sm); color: var(--text-muted); white-space: pre-line; }
     @media (prefers-reduced-motion: reduce) { .ham-pill.ham-pill-moved { animation: none; } }
+    /* Phone card per row (hivecommons/hive#17161). Same markup as 1280; the
+       phone tier re-flows it. ☐ and ⋯ already sit tap-sized in the card's
+       top right (#17163); the head drops the tap target's height so they
+       overhang the card's top padding and the pill starts where they end.
+       The head is a wrapping flex line: the issue slot (kind icon · repo
+       chip · #ref · title) and the PR reference are each a box clamped to
+       two lines — on a PR-only row the slot is just icon + chip and the PR
+       text hangs beside it; on an issue row that also names its PR the PR
+       gets one line below — while badges and the lead action wrap onto a
+       line of their own, never clipped by the clamp. "no linked issue" is
+       dropped and the caption keeps its lead clause on one line. The pill
+       sheet carries the full title and the needs-human note. */
+    @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
+      #activity-monitor-section .ham-row > .ham-row-head.ham-row-head, #activity-monitor-section .ham-sub > .ham-row-head.ham-row-head { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--sp-2); row-gap: var(--sp-1); min-height: 0; line-height: var(--lh-control); }
+      .ham-head-cols, .ham-head-cols > .ham-strip, .ham-head-cols .ham-seg.ham-head-lead, .ham-head-cols .ham-seg.ham-head-pr, .ham-head-cols .ham-pr-line { display: contents; }
+      #activity-monitor-section .ham-row-head .ham-head-main, #activity-monitor-section .ham-row-head .ham-pr-ref { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; flex: 1 1 auto; min-width: 0; max-width: 100%; gap: 0; }
+      #activity-monitor-section .ham-row-head .ham-head-main:has(> .ham-no-issue-t) { flex: 0 0 auto; }
+      #activity-monitor-section .ham-row-head .ham-pr-ref { flex-basis: 10em; font-size: inherit; }
+      #activity-monitor-section .ham-row-head:has(.ham-head-main > .ham-title:not(.ham-no-issue-t)) .ham-pr-ref { -webkit-line-clamp: 1; flex-basis: 100%; }
+      /* A row carrying a lead action or badge gives the title's second line
+         to that badge line so the card keeps its height. */
+      #activity-monitor-section .ham-row-head:has(.ham-badges:not(:empty)) :is(.ham-head-main, .ham-pr-ref) { -webkit-line-clamp: 1; }
+      .ham-row-head .ham-kind-ico, .ham-row-head .ham-active-ico { display: inline-block; vertical-align: calc(-1 * var(--sp-1)); }
+      /* Chips and the lead action render inline so no line box grows past
+         the head's line height; borders paint on the inline box and the
+         ::before / ::after hit areas pad the tap target back out. */
+      #activity-monitor-section .ham-row-head :is(.ham-repo-chip, .ham-base-pill, .ham-badge, .ham-lead-act) { position: relative; display: inline; min-height: 0; min-width: 0; height: auto; padding-block: 0; line-height: inherit; vertical-align: baseline; white-space: nowrap; }
+      .ham-row-head .ham-repo-chip::after, .ham-row-head .ham-lead-act::before { content: ""; position: absolute; inset: calc(-1 * var(--sp-6)) 0; }
+      .ham-row-head .ham-ref, .ham-row-head .ham-title, .ham-row-head .ham-pr-ref > *, .ham-row-head .ham-lineage, .ham-row-head .ham-adopted-from { display: inline; white-space: normal; overflow: visible; max-width: none; }
+      .ham-row-head .ham-ref, .ham-row-head .ham-pr-num, .ham-row-head .ham-repo-chip { margin-right: var(--sp-2); }
+      .ham-row-head .ham-title { color: var(--text); }
+      .ham-row-head .ham-no-issue-t, .ham-row-head .ham-linked-ico { display: none; }
+      .ham-row-head .ham-badges { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); flex: 0 1 auto; max-width: 100%; }
+      .ham-row-head .ham-badges:empty { display: none; }
+      .ham-row-head .ham-badges > .ham-badge { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+      /* The pill starts on the tools' bottom edge, so it stops short of
+         their column; its label ellipsises and the sheet has the rest. */
+      .ham-row > .ham-strip-row > .ham-pill, .ham-sub > .ham-strip-row > .ham-pill { max-width: calc(100% - 2 * var(--tap-target) - var(--sp-2) - var(--sp-3)); }
+      .ham-row > .ham-current-stage, .ham-sub > .ham-current-stage { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    }
     /* Movement animation: when an item's lit chevron changes column between
        two refreshes, the chosen effect (settings gear → Movement animation)
        plays once on that row. Overlays live in .ham-anim-layer, an absolute
@@ -18842,9 +18884,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const head = row.querySelector(':scope > .ham-row-head .ham-ref, :scope > .ham-row-head .ham-pr-ref .ham-pr-num');
       const active = stripRow && stripRow.querySelector('.ham-seg.active');
       const title = (head ? head.textContent.trim() + ' · ' : '') + (pill ? pill.querySelector('.ham-pill-label').textContent : 'Pipeline progress');
+      // The phone card clamps the head to two lines and the needs-human note
+      // to one (hivecommons/hive#17161); the sheet carries them in full.
+      const fullTitle = [...row.querySelectorAll(':scope > .ham-row-head .ham-title:not(.ham-no-issue-t), :scope > .ham-row-head .ham-pr-title')].map(n => n.textContent.trim()).filter(Boolean).join(' · ');
+      const note = row.querySelector(':scope > .ham-human-context .cue-event-text') || row.querySelector(':scope > .ham-human-context > span');
       const overlay = document.createElement('div');
       overlay.className = 'hive-dialog-overlay';
-      overlay.innerHTML = `<div class="hive-dialog ham-pill-sheet" role="dialog" aria-modal="true" aria-label="Pipeline progress"><div class="hive-dialog-title">${esc(title)}</div><div class="hive-dialog-body long modal-scroll"><div class="ham-pill-sheet-strip"></div>${caption ? `<p class="ham-pill-sheet-caption">${esc(caption.textContent)}</p>` : ''}${active && active.title ? `<p class="ham-pill-sheet-tip">${esc(active.title)}</p>` : ''}</div><div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Close</button></div></div>`;
+      overlay.innerHTML = `<div class="hive-dialog ham-pill-sheet" role="dialog" aria-modal="true" aria-label="Pipeline progress"><div class="hive-dialog-title">${esc(title)}</div><div class="hive-dialog-body long modal-scroll">${fullTitle ? `<p class="ham-pill-sheet-title">${esc(fullTitle)}</p>` : ''}<div class="ham-pill-sheet-strip"></div>${note ? `<p class="ham-pill-sheet-note">${esc(note.textContent.trim())}</p>` : ''}${caption ? `<p class="ham-pill-sheet-caption">${esc(caption.textContent)}</p>` : ''}${active && active.title ? `<p class="ham-pill-sheet-tip">${esc(active.title)}</p>` : ''}</div><div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Close</button></div></div>`;
       const slot = overlay.querySelector('.ham-pill-sheet-strip');
       if (stripRow) {
         const copy = stripRow.cloneNode(true);

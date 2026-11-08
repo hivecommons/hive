@@ -1,1 +1,0 @@
-- Activity monitor on a phone: every control meets the 44px coarse-pointer floor (`--tap-target-touch`), the per-row select / ⋯ controls move from the hidden left gutter into the row header, and the ⋯ menu opens as a full-screen sheet with tap-sized items.
