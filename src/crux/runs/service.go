@@ -43,6 +43,11 @@ var (
 	ErrNotFound = runstate.ErrNotFound
 	// ErrNoSignals: the server keeps no turn signals (Service.Signals nil).
 	ErrNoSignals = errors.New("runs: turn signals are not enabled on this server")
+	// ErrNotSession: a step was posted to a run that is not an open
+	// agent-profile session.
+	ErrNotSession = errors.New("runs: not an open agent step session")
+	// ErrStepBusy: the session is already running a step.
+	ErrStepBusy = errors.New("runs: the session is already running a step")
 )
 
 // RequestError is a malformed request (400).
@@ -71,6 +76,7 @@ type detail struct {
 	Command           []string `json:"command"`
 	Checkout          string   `json:"checkout,omitempty"`
 	Workspace         string   `json:"workspace,omitempty"`
+	EnvAllowlist      []string `json:"env_allowlist,omitempty"`
 	ExitCode          *int     `json:"exit_code,omitempty"`
 	TimedOut          bool     `json:"timed_out,omitempty"`
 	Stdout            string   `json:"stdout,omitempty"`
@@ -98,6 +104,13 @@ type active struct {
 	cancelled bool
 	// checkout is the S1 id the run holds open, if any (see InUse).
 	checkout string
+	// The rest is the agent-profile session's (S6): ctx is what its steps
+	// run under, ready closes once the workspace is provisioned (readyErr
+	// says if that failed), and busy is held while a step runs.
+	ctx      context.Context
+	ready    chan struct{}
+	readyErr error
+	busy     chan struct{}
 }
 
 // Caller is who asked for a run: the authenticated principal's name and
@@ -177,7 +190,7 @@ func (s *Service) Create(launchCtx context.Context, caller Caller, req api.Conta
 		return api.ContainedRun{}, false, err
 	}
 	owner := caller.Name
-	d := detail{Profile: p.profile, Network: p.network, Backend: s.Backend.Name, Command: p.command, Checkout: p.checkout, Workspace: p.workspace}
+	d := detail{Profile: p.profile, Network: p.network, Backend: s.Backend.Name, Command: p.command, Checkout: p.checkout, Workspace: p.workspace, EnvAllowlist: p.allowlist}
 	raw, err := json.Marshal(d)
 	if err != nil {
 		return api.ContainedRun{}, false, err
@@ -199,7 +212,12 @@ func (s *Service) Create(launchCtx context.Context, caller Caller, req api.Conta
 	s.mu.Lock()
 	s.active[rec.ID] = a
 	s.mu.Unlock()
-	go s.execute(ctx, rec.ID, p, a)
+	if p.profile == api.RunProfileAgent {
+		a.ctx, a.ready, a.busy = ctx, make(chan struct{}), make(chan struct{}, 1)
+		go s.session(ctx, rec.ID, p, a)
+	} else {
+		go s.execute(ctx, rec.ID, p, a)
+	}
 	return toWire(rec), true, nil
 }
 
@@ -319,22 +337,31 @@ func (s *Service) Cancel(ctx context.Context, id string) (api.ContainedRun, erro
 
 func (s *Service) validate(caller Caller, req api.ContainedRunRequest) (plan, error) {
 	var p plan
-	if len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "" {
-		return p, &RequestError{"command is required"}
-	}
-	p.command = req.Command
 	switch p.profile = req.Profile; p.profile {
 	case "":
 		p.profile = api.RunProfileExperiment
 	case api.RunProfileExperiment:
 	case api.RunProfileAgent:
-		return p, &UnsupportedError{fmt.Sprintf("profile %q is not available yet (schema-checked agent steps, S6)", req.Profile)}
+		// A session runs no command of its own: its steps are posted to it.
+		if len(req.Command) > 0 {
+			return p, &RequestError{fmt.Sprintf("profile %q takes no command; post steps to the session instead", req.Profile)}
+		}
 	default:
 		return p, &RequestError{fmt.Sprintf("profile must be %q or %q", api.RunProfileExperiment, api.RunProfileAgent)}
 	}
+	if p.profile != api.RunProfileAgent && (len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "") {
+		return p, &RequestError{"command is required"}
+	}
+	p.command = req.Command
 	switch p.network = req.Network; p.network {
 	case "":
+		// An agent needs its model, so a session defaults to the restricted
+		// network and is refused when the backend has none; an experiment
+		// defaults to none.
 		p.network = api.RunNetworkNone
+		if p.profile == api.RunProfileAgent {
+			p.network = api.RunNetworkRestricted
+		}
 	case api.RunNetworkNone, api.RunNetworkRestricted:
 	default:
 		return p, &RequestError{fmt.Sprintf("network must be %q or %q", api.RunNetworkNone, api.RunNetworkRestricted)}
@@ -344,7 +371,7 @@ func (s *Service) validate(caller Caller, req api.ContainedRunRequest) (plan, er
 	}
 	for _, name := range req.EnvAllowlist {
 		if sandbox.IsCredentialName(name) {
-			return p, &RequestError{fmt.Sprintf("env_allowlist names credential %q; the experiment profile carries no credentials", name)}
+			return p, &RequestError{fmt.Sprintf("env_allowlist names credential %q; contained runs carry no repository credentials", name)}
 		}
 	}
 	p.allowlist = req.EnvAllowlist
