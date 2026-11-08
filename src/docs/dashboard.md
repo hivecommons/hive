@@ -618,6 +618,44 @@ The **Hive activity monitor** section (sidebar, Dashboard group; expanded by def
 
 The endpoint returns `stages` (the stage table with `short`, `branch_from`, configured dwell and `falls_to` — the lower same-kind stages a move to which is a regression per the stage engine, so the event line says "fell back to" only for those; 015 → 010 triage accepted, 085 → 080 decision made and 072 → 070 author resuming read "moved to"), `items` (one per open issue/PR represented by the status snapshot, including actionable and held items plus display-only non-actionable issues, drafts, and exempt PRs: `labels`, `created_at`, `updated_at`, `bucket`, `bucket_reason`, stage, `stage_since`, humanised `reason`/`caption`, `actor`, `modifiers`, `author_kind` + `author_kind_source` (`label`, `inferred`, or `registry` — the author has a contributor-hub profile on this hive, so their clanker pushed it; the row icon, tooltip and claimant all read this one value), `lane`, `tier`, `linked_pr`, `linked_prs` (number, title, url, author, author kind, stage, `stage_since`, `caption` and `modifiers` of each open covering PR — enough to draw the nested sub-row without a second lookup), `nested_under` (on a PR: the issue it is listed under), nudge info and the last eight `history` hops from the stage store) and `author_kind_labels`. It answers `{"status":"initializing"}` until the first scan.
 
+### Maintainer notes
+
+Each row (and each PR sub-row under an issue) carries a small **🗒** button
+beside its decision controls — the item's **maintainer notes**: short notes
+one maintainer leaves for the others ("waiting on legal", "don't merge before
+the v5 cut", "asked the author about the test on Discord"), the way the
+decision badge records what was decided. A count rides on the button once
+the item has any (`🗒 2`), the row's hover tooltip repeats it, and clicking
+opens an inline expander listing every note (author avatar and login,
+relative time, text) over a one-line composer — **Add note**, or
+⌘/Ctrl+Enter. The author is always the dashboard session's GitHub login.
+
+What they are, and are not:
+
+- **Private to the hive's maintainers.** Notes are stored on the spoke in
+  the append-only `/data/maintainer-notes.jsonl` next to the decision
+  ledgers and are **never written to GitHub** — no comment, no label, no
+  mention. Anyone signed in to the dashboard sees them; adding one takes
+  write on the repository (the same check as the hold chip and the decision
+  buttons); a note is deleted by its author or an owner, and a delete is a
+  tombstone record, not a rewrite.
+- **Shared live.** Every add or delete is broadcast on the dashboard event
+  stream as a `maintainer-notes` frame, so the other maintainers' rows
+  update without a reload. A draft a maintainer is typing survives the
+  monitor's own refreshes.
+- **Read by the agents.** The scheduler types an item's live notes into the
+  agent's kick under a `# Maintainer notes` heading (newest first, capped at
+  1 KB with "… and N more note(s) on the dashboard"), so what a maintainer
+  wrote on the row reaches whoever picks the item up — the same seam that
+  injects decisions and in-flight context ([Kick size and the list
+  caps](operator-reference/sweeps-and-operations.md#kick-size-and-the-list-caps)).
+  Write them as instructions to a colleague, not as GitHub prose.
+
+API: `GET /api/notes?repo=&number=`, `POST /api/notes` `{repo, number,
+text}` (≤ 2000 characters), `DELETE /api/notes/{id}` — see the
+[REST reference](api-reference/packs-and-acmm.md). Audit log actions:
+`maintainer_note_add`, `maintainer_note_delete`.
+
 ## Code activity reader
 
 The code activity reader is a kiosk view at `?kiosk=1&view=reader` that shows
