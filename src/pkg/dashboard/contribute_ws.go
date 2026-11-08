@@ -4732,6 +4732,9 @@ func (h *ContributeWSHub) cleanupLoop() {
 			if n := h.claimsLedger().Expire(); n > 0 {
 				h.logger.Info("[claims] expired claims released", "count", n)
 			}
+			// #17300: a claim kept for its holder's covering PR lasts until
+			// that PR merges or closes.
+			h.sweepPRHeldClaims()
 
 			// Deregister under the lock; CLOSE outside it.
 			//

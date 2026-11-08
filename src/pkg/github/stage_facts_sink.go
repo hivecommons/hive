@@ -254,7 +254,9 @@ func (c *Client) rememberedCoveringPR(store *stagelabels.Store, issue stageengin
 // cycles planned around them. Only a claim FilterClaimedIssues would
 // suppress the issue for counts (IssueClaim.CoversOpenIssue); the ledger is
 // keyed by the configured repo spelling, so both the bare and the
-// owner-qualified name are tried.
+// owner-qualified name are tried. A contributor lease revoked while the
+// holder's own PR covers the issue now keeps the claim as a PR-held claim
+// (hivecommons/hive#17300); this fallback still covers every other release.
 func (c *Client) ledgerCoveringPR(issue stageengine.Ref) (pr stageengine.Ref, partial bool, ok bool) {
 	claim, found := c.ledgerClaim(issue)
 	if !found || !claim.CoversOpenIssue() {
