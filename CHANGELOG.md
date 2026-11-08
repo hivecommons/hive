@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v6.0.3)
+
+### Fixed
+
+- automerge: the contributor lane's held-run approval now tries each PR head once per process instead of once per sweep. The once-per-head mark lived on the one-shot engine each sweep builds, so a head GitHub refused with 403 (the App lacks `actions: write`) was re-POSTed every ~80 s; on projectbluefin two PRs spent ~270 charged calls an hour on `POST actions/runs/{id}/approve` that could never succeed. The refusal stands, with the existing `hive:unauthorized` note and label, until the head changes or the App gains `actions: write`. Held runs GitHub's approve endpoint never accepts (anything but a fork `pull_request` run or an Actions-bot run) are no longer sent.
+- The dashboard metrics collector reads each repo's GitHub metadata at most once an hour instead of on every five-minute collect. It read the primary repo for the outreach card's stars and forks, and every watched repo for the Issues-disabled banner, every collect: 189 `GET /repos/{owner}/{repo}` calls in an hour on a hosted hive with 20 repos (2026-11-08), 177 of them charged, for numbers that change a few times a day. One read per repo now serves both, a failed read is retried on the next collect, and the banner reflects a changed Issues setting within the hour. The advisory issue's create path still checks `has_issues` fresh before it creates.
+
 ## 2026-11-08 (v6.0.2)
 
 ### Fixed
