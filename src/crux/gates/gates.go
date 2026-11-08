@@ -59,6 +59,8 @@ const (
 	MaxChoiceLen  = 64
 	// MaxOpenedByLen bounds the driver's own label.
 	MaxOpenedByLen = 128
+	// MaxRunLen bounds the contained-run id a gate is opened for.
+	MaxRunLen = 64
 
 	idRandomBytes = 8
 	maxIDLen      = 64
@@ -113,6 +115,10 @@ type Request struct {
 	// IdempotencyKey, when set, identifies the gate instead of the request
 	// contents; it is scoped to the opening principal.
 	IdempotencyKey string
+	// Run, when set, is the contained run (S2) the gate holds up; crux
+	// serve checks the opener owns it and appends the gate's turn signals
+	// (S5) to it. The gate service itself only records it.
+	Run string
 }
 
 // Answer is a person's decision on a gate.
@@ -138,6 +144,7 @@ type Record struct {
 	OpenedAt            time.Time       `json:"opened_at"`
 	ExpiresAt           *time.Time      `json:"expires_at,omitempty"`
 	IdempotencyKey      string          `json:"idempotency_key"`
+	Run                 string          `json:"run,omitempty"`
 	Answer              string          `json:"answer,omitempty"`
 	AnsweredBy          string          `json:"answered_by,omitempty"`
 	AnsweredByPrincipal string          `json:"answered_by_principal,omitempty"`
@@ -191,10 +198,11 @@ func FormatTimeout(d time.Duration) string {
 // DeriveIdempotencyKey identifies a gate the way toolapprove's inbox
 // identifies an approval request: a caller-supplied key wins, otherwise the
 // key covers what is being asked — subject, canonical context, choices,
-// timeout and the driver label — and never timestamps, so a driver that
-// re-opens the same gate after a restart gets the same record. Either form
-// is scoped to the opening principal so two callers cannot read each
-// other's gates by guessing a key. req must already be normalized.
+// timeout, the driver label and the run it is opened for — and never
+// timestamps, so a driver that re-opens the same gate after a restart gets
+// the same record. Either form is scoped to the opening principal so two
+// callers cannot read each other's gates by guessing a key. req must
+// already be normalized.
 func DeriveIdempotencyKey(principal string, req Request) string {
 	h := sha256.New()
 	write := func(parts ...string) {
@@ -211,6 +219,11 @@ func DeriveIdempotencyKey(principal string, req Request) string {
 	write("request", req.Subject, string(req.Context), FormatTimeout(req.Timeout), req.OpenedBy)
 	write(fmt.Sprintf("%d", len(req.Choices)))
 	write(req.Choices...)
+	// A gate without a run keys exactly as before runs existed, so gates
+	// opened by an older server stay idempotent.
+	if req.Run != "" {
+		write("run", req.Run)
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
