@@ -537,6 +537,71 @@ func TestValidatePRRequestTargets_IssueClaimsEnabledReadsForgeAssignee(t *testin
 	}
 }
 
+// With issue claims on, a closing reference to an issue that does not exist
+// is permanent: it is rejected (the cross-repo hint validatePRRequestClaims
+// gives) rather than failed and retried until the horizon quarantines it.
+func TestValidatePRRequestTargets_IssueClaimsEnabledMissingTargetIsPolicyError(t *testing.T) {
+	srv := claimTargetServer(t, "")
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+	c.SetIssueClaims(func() (bool, time.Duration) { return true, time.Hour })
+
+	refused, err := c.validatePRRequestTargets(context.Background(), claimTargetRequest, time.Now())
+	reason, ok := prRequestPolicyReason(err)
+	if !ok || !strings.Contains(reason, "closing reference o/r#7 does not exist") || !strings.Contains(reason, "owner/repo#N") {
+		t.Fatalf("error = %v (%q, policy=%v), want a permanent missing-target rejection", err, reason, ok)
+	}
+	if len(refused) != 0 {
+		t.Fatalf("refused = %+v, want none for a missing target", refused)
+	}
+}
+
+// With issue claims on, a target that resolves to a pull request carries no
+// issue claim: a hive start comment on a contributor-assigned PR is not a
+// start on an issue and must not be refused.
+func TestIssueRequestStart_IssueClaimsEnabledAllowsCommentOnAssignedPR(t *testing.T) {
+	now := time.Now()
+	var posted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/7"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number": 7, "state": "open",
+				"updated_at":   now.Add(-time.Minute).UTC().Format(time.RFC3339),
+				"assignees":    []map[string]any{{"login": "Karibhou"}},
+				"pull_request": map[string]any{"url": "https://api.github.com/repos/o/r/pulls/7"},
+			})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			var in struct{ Body string }
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			posted = append(posted, in.Body)
+			_, _ = io.WriteString(w, `{"id":1}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	c.SetIssueClaims(func() (bool, time.Duration) { return true, time.Hour })
+	dir := withIssueDir(t)
+
+	p, err := WriteIssueRequest(dir, IssueRequest{Kind: "comment", Repo: "o/r", Number: 7, Body: "Starting on this now; repro confirmed.", Agent: "scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if _, err := os.Stat(p + ".denied"); err == nil {
+		t.Fatal("a start comment on a pull request must not be refused by the claim-target gate")
+	}
+	if len(posted) != 1 || !strings.Contains(posted[0], "Starting on this") {
+		t.Fatalf("comments posted = %q, want the start comment alone", posted)
+	}
+}
+
 // hivecommons/hive#17298: the kick/start path. A relay comment that announces
 // a start on an issue another principal has claimed is refused before the
 // comment posts and before notifyAgentStart books the start.

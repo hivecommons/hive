@@ -270,7 +270,8 @@ claim-target gate that refuses a `hive-open-pr` closing reference
 ([hive-open-pr.md](hive-open-pr.md#closes-n-on-an-issue-someone-else-is-working-is-rejected)),
 also applied to a relay comment that announces a start. The hive posts one
 notice on the issue (marker `<!-- hive:pr-request-claim-target -->`) saying
-what was asked, who holds it, and that the owner decides. The same gate admits every
+what was asked, who holds it, and that the owner decides. The dispatch-block gate
+(`needs-human`, decision labels, never-claim labels) admits every
 automated claim producer, so a start signal on such an issue records nothing. The
 `stage/030-pr-in-progress` label is swapped for `stage/040-covered-by-pr` when
 the agent's `hive-open-pr --issues` request opens the PR, and cleared when the

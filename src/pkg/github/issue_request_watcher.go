@@ -605,7 +605,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	// against the same claim-target gate as hive-open-pr before any write,
 	// and before notifyAgentStart books the start. An issue another principal
 	// has claimed, or covered with an open PR, is refused with a policy
-	// reason; a failed lookup fails closed and is retried.
+	// reason; a target that is a pull request is never refused (a start
+	// comment on a PR starts no issue); a failed lookup fails closed and is
+	// retried.
 	startSignal := issueRequestStartSignal(kind, req.Body)
 	if startSignal != "" {
 		refusal, blocked, gateErr := c.issueRequestStartTargetBlock(ctx, req, nowFn())

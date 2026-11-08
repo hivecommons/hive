@@ -579,8 +579,10 @@ func (r prRequestTargetRefusal) why() string {
 // that let #17250 supersede a contributor's #17248 on #17243.
 //
 // A refusal is returned as a prRequestPolicyError alongside the refused
-// targets; a claim or coverage lookup that fails returns a plain error, so
-// the request is not opened (fail closed) and is retried later.
+// targets, as is a closing reference whose issue does not exist (permanent,
+// so never retried); any other claim or coverage lookup failure returns a
+// plain error, so the request is not opened (fail closed) and is retried
+// later.
 func (c *Client) validatePRRequestTargets(ctx context.Context, req PRRequest, now time.Time) ([]prRequestTargetRefusal, error) {
 	if c == nil || c.client == nil {
 		return nil, ErrNoGitHubClient
@@ -598,6 +600,14 @@ func (c *Client) validatePRRequestTargets(ctx context.Context, req PRRequest, no
 		seen[key] = true
 		refusal, blocked, err := c.prRequestTargetBlock(ctx, req.Agent, refOwner, refRepo, ref.Issue, now)
 		if err != nil {
+			// A missing target is permanent (typically a cross-repo number
+			// written bare): reject it the way validatePRRequestClaims does
+			// rather than retrying until the horizon quarantines the request.
+			if errors.Is(err, errPRRequestTargetMissing) {
+				return nil, &prRequestPolicyError{reason: fmt.Sprintf(
+					"closing reference %s#%d does not exist; a cross-repo issue must be written as owner/repo#N",
+					refOwner+"/"+refRepo, ref.Issue)}
+			}
 			return nil, fmt.Errorf("checking claims on closing reference %s/%s#%d: %w", refOwner, refRepo, ref.Issue, err)
 		}
 		if blocked {
@@ -647,10 +657,15 @@ func issueRequestStartRefusedReason(kind string, r prRequestTargetRefusal) strin
 // prRequestTargetBlock resolves one target issue: its live claim (the
 // forge marker or assignee when issue claims are on, else the hub's claim
 // ledger) and the duplicate-PR ledger's covering PR, re-read so a PR that
-// has since closed or merged no longer blocks.
+// has since closed or merged no longer blocks. A target that is really a
+// pull request is never blocked: a start comment on a PR (a hive relay
+// note on a contributor's PR, say) does not start work on an issue.
 func (c *Client) prRequestTargetBlock(ctx context.Context, agent, owner, repo string, number int, now time.Time) (prRequestTargetRefusal, bool, error) {
 	refusal := prRequestTargetRefusal{Repo: owner + "/" + repo, Issue: number}
 	claim, found, err := c.prRequestTargetClaim(ctx, owner, repo, number, now)
+	if errors.Is(err, errPRRequestTargetIsPullRequest) {
+		return refusal, false, nil
+	}
 	if err != nil {
 		return refusal, false, err
 	}
@@ -703,6 +718,14 @@ func (c *Client) isOwnTargetClaim(claim issueclaim.Claim, agent string) bool {
 	return true
 }
 
+// errPRRequestTargetMissing wraps the 404 from reading a claim target: the
+// issue does not exist in that repository, which no retry can change.
+var errPRRequestTargetMissing = errors.New("target issue does not exist")
+
+// errPRRequestTargetIsPullRequest reports that the claim target resolved to
+// a pull request, which carries no issue claim.
+var errPRRequestTargetIsPullRequest = errors.New("target is a pull request")
+
 // prRequestTargetClaim is the live claim on one issue, read the way the
 // enumeration reads it (issueClaimFor) when issue claims are on, and from
 // the hub's ledger alone otherwise.
@@ -714,7 +737,13 @@ func (c *Client) prRequestTargetClaim(ctx context.Context, owner, repo string, n
 	}
 	issue, _, err := c.client.Issues.Get(ctx, owner, repo, number)
 	if err != nil {
+		if githubStatusError(err, http.StatusNotFound) {
+			return issueclaim.Claim{}, false, fmt.Errorf("%w: %w", errPRRequestTargetMissing, err)
+		}
 		return issueclaim.Claim{}, false, err
+	}
+	if issue.IsPullRequest() {
+		return issueclaim.Claim{}, false, errPRRequestTargetIsPullRequest
 	}
 	snapshot := Issue{
 		Repo:      owner + "/" + repo,
