@@ -19,7 +19,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/knowledge/stats` | Dashboard auth/session | Knowledge Stats | `pkg/dashboard/api.go:387` |
 | `GET` | `/api/knowledge/graph` | Dashboard auth/session | Knowledge Graph | `pkg/dashboard/api.go:388` |
 | `GET` | `/api/knowledge/fact-history` | Dashboard auth/session | Fact History | `pkg/dashboard/api.go:389` |
-| `POST` | `/api/knowledge/create` | Dashboard auth/session | Knowledge Create | `pkg/dashboard/api.go:390` |
+| `POST` | `/api/knowledge/create` | Dashboard auth/session | Create one fact (`title`, `body`, `type`, `tags`, `layer`, `confidence`, `state`). `state` is `approved` (default) or `draft`; a draft is written with `state: draft` into the local channel named by `layer` (400 when there is none, 409 when its title already names an entry). A request tagged `cli-memory` must be a draft carrying only `cli-memory`, `agent:<name>`, `cli:<claude\|codex\|gemini>`, `memhash:<hex>` and `repo:<org>/<repo>` tags (400 otherwise) | `pkg/dashboard/api.go:390` |
 | `POST` | `/api/knowledge/import` | Dashboard auth/session | Knowledge Import | `pkg/dashboard/api.go:391` |
 | `POST` | `/api/knowledge/promote` | Dashboard auth/session | Knowledge Promote | `pkg/dashboard/api.go:397` |
 | `GET` | `/api/knowledge/subscriptions` | Dashboard auth/session | Knowledge Subs List | `pkg/dashboard/api.go:398` |

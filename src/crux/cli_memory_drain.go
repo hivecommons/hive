@@ -21,13 +21,16 @@ type CLIMemoryDrainRequest struct {
 }
 
 // CLIMemoryDrainResult is what the drainer reports back for the runtime's
-// one log line per drain.
+// one log line per drain. Spooled counts memory files kept in the hive's
+// spool because not all of their facts were stored; they are retried on the
+// agent's next drain, so the wipe that follows the drain does not lose them.
 type CLIMemoryDrainResult struct {
 	// Store is the knowledge store (vault path or name) the drafts landed in.
 	Store   string
 	Drained int
 	Dupes   int
 	Skipped int
+	Spooled int
 	Err     error
 }
 

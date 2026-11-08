@@ -290,6 +290,13 @@ func (k *KnowledgeAPI) Stats(ctx context.Context) map[string]interface{} {
 }
 
 // CreateFactRequest is the payload for creating a new fact.
+//
+// State is the lifecycle state the fact is created in: empty or "approved"
+// (the default) ingests into the layer as before; "draft" writes the fact
+// into the local vault (channel) named Layer with `state: draft`, because
+// only a local channel records lifecycle state and lets an operator approve
+// or discard the fact later (#17056). Deprecated and superseded are states
+// a fact moves into, never ones it is created in.
 type CreateFactRequest struct {
 	Title      string   `json:"title"`
 	Body       string   `json:"body"`
@@ -297,16 +304,40 @@ type CreateFactRequest struct {
 	Tags       []string `json:"tags"`
 	Layer      string   `json:"layer"`
 	Confidence float64  `json:"confidence"`
+	State      string   `json:"state,omitempty"`
+}
+
+var (
+	// ErrNoDraftChannel is returned by CreateFact for a draft fact whose
+	// Layer names no connected local channel.
+	ErrNoDraftChannel = errors.New("draft facts are written to a local channel")
+	// ErrFactExists is returned by CreateFact for a draft fact whose title
+	// maps to an entry that already exists in the channel.
+	ErrFactExists = errors.New("a fact with this title already exists")
+)
+
+// ParseCreateState validates the state a fact is created in. Empty means
+// the default (approved); only draft and approved are accepted.
+func ParseCreateState(s string) (LifecycleState, error) {
+	if strings.TrimSpace(s) == "" {
+		return "", nil
+	}
+	st, err := ParseLifecycleState(s)
+	if err != nil {
+		return "", err
+	}
+	if st != StateDraft && st != StateApproved {
+		return "", fmt.Errorf("a fact is created as %s or %s, not %s", StateDraft, StateApproved, st)
+	}
+	return st, nil
 }
 
 // CreateFact ingests a new fact into the specified layer.
 func (k *KnowledgeAPI) CreateFact(ctx context.Context, req CreateFactRequest) error {
-	layer := LayerType(req.Layer)
-	client := k.clientForLayer(layer)
-	if client == nil {
-		return fmt.Errorf("layer %s has no configured endpoint", req.Layer)
+	state, err := ParseCreateState(req.State)
+	if err != nil {
+		return err
 	}
-
 	fact := ExtractedFact{
 		Title:      req.Title,
 		Body:       req.Body,
@@ -316,12 +347,46 @@ func (k *KnowledgeAPI) CreateFact(ctx context.Context, req CreateFactRequest) er
 		SourcePR:   "manual",
 		SourceDate: time.Now(),
 	}
+	if state == StateDraft {
+		return k.createDraftFact(req.Layer, fact)
+	}
+
+	layer := LayerType(req.Layer)
+	client := k.clientForLayer(layer)
+	if client == nil {
+		return fmt.Errorf("layer %s has no configured endpoint", req.Layer)
+	}
 
 	if err := client.IngestFacts(ctx, []ExtractedFact{fact}); err != nil {
 		return fmt.Errorf("ingesting fact: %w", err)
 	}
 
 	k.logger.Info("fact created", "title", req.Title, "layer", req.Layer, "type", req.Type)
+	return nil
+}
+
+// createDraftFact writes fact with `state: draft` into the local channel
+// named channel. A remote wiki layer cannot hold a draft: it records only a
+// status, and an unknown status loads as approved, so a draft sent there
+// would reach primers at once. An existing entry with the same title is
+// never overwritten, so a draft cannot replace an approved fact.
+func (k *KnowledgeAPI) createDraftFact(channel string, fact ExtractedFact) error {
+	v := k.vaultByName(channel)
+	if v == nil {
+		return fmt.Errorf("%w; no channel named %q", ErrNoDraftChannel, channel)
+	}
+	if strings.TrimSpace(fact.Title) == "" {
+		return errors.New("a draft fact needs a title")
+	}
+	if _, err := os.Lstat(v.factPath(fact.Title)); err == nil {
+		return fmt.Errorf("%w in channel %q: %q", ErrFactExists, channel, fact.Title)
+	}
+	fact.State = StateDraft
+	if err := v.WriteFacts([]ExtractedFact{fact}); err != nil {
+		return fmt.Errorf("writing draft fact to channel %q: %w", channel, err)
+	}
+	k.triggerVaultReindex(v.RootDir())
+	k.logger.Info("draft fact created", "title", fact.Title, "channel", channel, "type", fact.Type)
 	return nil
 }
 
