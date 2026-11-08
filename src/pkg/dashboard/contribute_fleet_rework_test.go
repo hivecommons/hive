@@ -288,6 +288,9 @@ function knowledgeLine() { return ''; }
 function clankerInterestsLine() { return ''; }
 function clankerFailureLine() { return ''; }
 function clankerPaneBlock() { return ''; }
+function ccPaneSelectionActive() { return false; }
+function ccPaneScrollsRead() { return {}; }
+function ccPaneScrollsRestore() {}
 function ccIssueURL(item) { return item && item.url ? item.url : (item && item.repo && item.number ? 'https://github.com/' + item.repo + '/issues/' + item.number : ''); }
 function ccIssueLinkHTML(item, label, extra) { var u = ccIssueURL(item); return u ? '<a class="cc-issue-link ' + (extra||'') + '" href="' + u + '">' + label + '</a>' : '<span>' + label + '</span>'; }
 ` + jsFunc(t, body, "idleReasonLabel") + "\n" +
