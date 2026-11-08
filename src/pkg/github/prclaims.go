@@ -472,13 +472,16 @@ var closingKeywords = []string{
 // released for re-verification every cycle (see FilterClaimedIssues).
 //
 // The gap is bounded exactly as referenceRefPattern's is — at most 40
-// characters, lazily matched, no '.', newline or '#' — so it cannot cross a
+// characters, lazily matched, no '.', newline or '#' — and additionally holds
+// no '(': a number that opens a parenthetical after prose cites a sibling
+// PR/issue rather than naming what this PR closes, as in hotshot#364's "every
+// sibling fix in that section (#333, #335)". So it cannot cross a
 // sentence boundary, swallow a paragraph, or skip over a nearer reference to
 // reach a further one. #7915 kept this parser single-issue for parity with
 // GitHub's "one keyword per number" rule, and that is untouched: with '#'
 // excluded from the gap a match still contains exactly one reference, and
 // referenceListTail remains reference-tier only.
-const claimKeywordGap = `(?:\s*:?\s+|[ \t][^.\n#]{0,39}?)`
+const claimKeywordGap = `(?:\s*:?\s+|[ \t][^.\n#(]{0,39}?)`
 
 // claimRefPattern matches a closing keyword followed by an issue reference in
 // either the same-repo (`#123`) or cross-repo (`owner/repo#123`) form.
@@ -530,12 +533,16 @@ var (
 	fencedCodeBlockPattern = regexp.MustCompile("(?s)```.*?```")
 	inlineCodeSpanPattern  = regexp.MustCompile("`[^`\n]*`")
 	closingURLPattern      = regexp.MustCompile(`https?://[^\s)]+`)
+	passiveClosePattern    = regexp.MustCompile(`(?i)\b(?:closed|fixed|resolved)\s+by\s+((?:[\w.-]+/[\w.-]+)?#\d+)`)
 )
 
 func stripClosingFalsePositiveText(text string) string {
 	text = fencedCodeBlockPattern.ReplaceAllString(text, " ")
 	text = inlineCodeSpanPattern.ReplaceAllString(text, " ")
 	text = closingURLPattern.ReplaceAllString(text, " ")
+	// "closed by #359" names the PR that already did the work, not a claim
+	// by this one (hotshot#364).
+	text = passiveClosePattern.ReplaceAllString(text, " $1")
 	return text
 }
 
