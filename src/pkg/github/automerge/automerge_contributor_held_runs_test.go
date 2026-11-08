@@ -22,6 +22,10 @@ import (
 
 const contributorHeldRunsTestContext = "Audit production dependencies"
 
+// contributorHeldRunsTestFork is the fork a contributor PR's head lives in:
+// GitHub approves held runs only for fork pull_request heads.
+const contributorHeldRunsTestFork = "kyle/widget"
+
 func TestContributorLaneApprovesHeldRunsForRegistryTrusted(t *testing.T) {
 	registryTrusted := registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"})
 	noMarker := func(fx *contributorLaneFixture) {
@@ -54,12 +58,12 @@ func TestContributorLaneApprovesHeldRunsForRegistryTrusted(t *testing.T) {
 			wantComments: 1,
 		},
 		{
-			name:         "registry trusted same-repo head approves once",
-			registry:     registryTrusted,
-			mutate:       noMarker,
-			wantReason:   wantReason,
-			wantApproved: []int64{11, 12},
-			wantComments: 1,
+			// GitHub answers 403 "not from a fork pull request" for a
+			// same-repo run, on every try: the lane never sends it.
+			name:       "registry trusted same-repo head is not approved",
+			registry:   registryTrusted,
+			mutate:     noMarker,
+			wantReason: wantReason,
 		},
 		{
 			name:     "auto-promoted author is not approved for",
@@ -114,9 +118,13 @@ func TestContributorLaneApprovesHeldRunsForRegistryTrusted(t *testing.T) {
 		{
 			// A non-403 approve failure is logged and otherwise changes nothing
 			// (the unauthorized path is TestContributorLaneUnauthorizedWhenApproveForbidden).
-			name:         "approve server error posts no comment and sets no label",
-			registry:     registryTrusted,
-			mutate:       func(fx *contributorLaneFixture) { noMarker(fx); fx.approveStatus = http.StatusInternalServerError },
+			name:     "approve server error posts no comment and sets no label",
+			registry: registryTrusted,
+			mutate: func(fx *contributorLaneFixture) {
+				noMarker(fx)
+				fx.headRepo = contributorHeldRunsTestFork
+				fx.approveStatus = http.StatusInternalServerError
+			},
 			wantReason:   wantReason,
 			wantApproved: []int64{11, 12},
 		},
@@ -194,7 +202,8 @@ func TestContributorLaneHeldRunsApprovalCommentIsIdempotent(t *testing.T) {
 	fx.body = "Part of #42\n\nSome change."
 	fx.issueComments = nil
 	fx.requiredContexts = []string{"ci/build", contributorHeldRunsTestContext}
-	fx.workflowRuns = []map[string]any{heldRun(11, "acme/widget")}
+	fx.headRepo = contributorHeldRunsTestFork
+	fx.workflowRuns = []map[string]any{heldRun(11, contributorHeldRunsTestFork)}
 	fx.prComments = []map[string]any{{
 		"id":   5,
 		"user": map[string]string{"login": testHiveAppBotLogin},
@@ -282,7 +291,8 @@ func TestContributorLaneUnauthorizedWhenApproveForbidden(t *testing.T) {
 			fx.body = "Part of #42\n\nSome change."
 			fx.issueComments = nil
 			fx.requiredContexts = []string{"ci/build", contributorHeldRunsTestContext}
-			fx.workflowRuns = []map[string]any{heldRun(11, "acme/widget"), heldRun(12, "acme/widget")}
+			fx.headRepo = contributorHeldRunsTestFork
+			fx.workflowRuns = []map[string]any{heldRun(11, contributorHeldRunsTestFork), heldRun(12, contributorHeldRunsTestFork)}
 			fx.approveStatus = http.StatusForbidden
 			if tc.labelled {
 				fx.labels = []string{unauthorizedLabel}
@@ -377,7 +387,8 @@ func TestContributorLaneConflictClearsUnauthorized(t *testing.T) {
 	fx.body = "Part of #42\n\nSome change."
 	fx.issueComments = nil
 	fx.requiredContexts = []string{"ci/build", contributorHeldRunsTestContext}
-	fx.workflowRuns = []map[string]any{heldRun(11, "acme/widget")}
+	fx.headRepo = contributorHeldRunsTestFork
+	fx.workflowRuns = []map[string]any{heldRun(11, contributorHeldRunsTestFork)}
 	fx.approveStatus = http.StatusForbidden
 	api := newContributorLaneAPI(t, &fx)
 	defer api.Close()
@@ -511,21 +522,21 @@ func TestContributorLaneApprovesHeldRunsWhenCIUnverifiedAndAllHeld(t *testing.T)
 	}{
 		{
 			name:         "every run held approves",
-			runs:         []map[string]any{heldRun(11, "acme/widget"), heldRun(12, "acme/widget"), heldRun(14, "mallory/widget")},
+			runs:         []map[string]any{heldRun(11, contributorHeldRunsTestFork), heldRun(12, contributorHeldRunsTestFork), heldRun(14, "mallory/widget")},
 			registry:     map[string]string{contributorLaneTestAuthor: "trusted"},
 			wantApproved: []int64{11, 12},
 		},
 		{
 			name: "a run already in progress leaves it alone",
 			runs: []map[string]any{
-				heldRun(11, "acme/widget"),
-				{"id": 13, "name": "lint", "status": "in_progress", "head_repository": map[string]any{"full_name": "acme/widget"}},
+				heldRun(11, contributorHeldRunsTestFork),
+				{"id": 13, "name": "lint", "event": "pull_request", "status": "in_progress", "head_repository": map[string]any{"full_name": contributorHeldRunsTestFork}},
 			},
 			registry: map[string]string{contributorLaneTestAuthor: "trusted"},
 		},
 		{
 			name:     "claim marker author is not approved for",
-			runs:     []map[string]any{heldRun(11, "acme/widget")},
+			runs:     []map[string]any{heldRun(11, contributorHeldRunsTestFork)},
 			registry: nil,
 		},
 	} {
@@ -537,6 +548,7 @@ func TestContributorLaneApprovesHeldRunsWhenCIUnverifiedAndAllHeld(t *testing.T)
 				fx.issueComments = nil
 			}
 			fx.noCIEvidence = true
+			fx.headRepo = contributorHeldRunsTestFork
 			fx.workflowRuns = tc.runs
 			api := newContributorLaneAPI(t, &fx)
 			defer api.Close()

@@ -179,6 +179,8 @@ type Client struct {
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
 	workflowApprovals         workflowApprovalLedger
+	heldRunApprovals          HeldRunApprovals
+	installationPerms         installationPermissionCache
 	mergedClaimScanTransient  sync.Map        // repo -> true while its merged-PR scan is timing out
 	stageFacts                stageFactsState // out-of-cycle stage writes; see StageFacts
 	apiBudget                 apiBudgetState

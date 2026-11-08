@@ -201,6 +201,15 @@ type Options struct {
 	// HeadFirstSeen overrides the process-wide head-age tracker. nil shares
 	// the package default so one-shot engines keep a head's pinned age.
 	HeadFirstSeen *HeadFirstSeenTracker
+	// HeldRunApprovals overrides where the contributor lane remembers its
+	// held-run approval passes. nil uses the transport's process-wide
+	// ledger (hgithub.Client.HeldRunApprovals) so a one-shot engine per
+	// tick does not re-POST a refused approval every sweep.
+	HeldRunApprovals *hgithub.HeldRunApprovals
+	// InstallationPermission overrides how the lane reads the App
+	// installation's grant for a permission (level, known). nil uses the
+	// transport's InstallationPermission when it has one.
+	InstallationPermission func(ctx context.Context, name string) (level string, known bool)
 	// MergeQueueBases is the memory of base branches that refused a direct
 	// merge as merge-queue-only. The hive passes one instance to every sweep
 	// engine and to the merge-eligibility classifier, so a base one lane
@@ -402,6 +411,11 @@ type Engine struct {
 	// nudges and bot takeovers (historic name; workflow approvals no longer use it).
 	heldRunApprovalsMu sync.Mutex
 	heldRunApprovals   map[string]bool
+	// heldRuns is the process-wide record of the contributor lane's
+	// held-run approval passes (Options.HeldRunApprovals);
+	// installationPermission reads the App's grants for its retry rule.
+	heldRuns               *hgithub.HeldRunApprovals
+	installationPermission func(ctx context.Context, name string) (string, bool)
 	// workflowApprovalCommands records the first time this process saw and
 	// commented /ok-to-test for a PR head. The mutation boundary dedupes the
 	// actual comment across restarts; this clock drives the missing-caller grace.
@@ -558,6 +572,25 @@ func New(transport Transport, opts Options) *Engine {
 	}
 	if e.headFirstSeen == nil {
 		e.headFirstSeen = sharedHeadFirstSeen
+	}
+	e.heldRuns = opts.HeldRunApprovals
+	if e.heldRuns == nil {
+		if provider, ok := transport.(interface {
+			HeldRunApprovals() *hgithub.HeldRunApprovals
+		}); ok {
+			e.heldRuns = provider.HeldRunApprovals()
+		}
+	}
+	if e.heldRuns == nil {
+		e.heldRuns = &hgithub.HeldRunApprovals{}
+	}
+	e.installationPermission = opts.InstallationPermission
+	if e.installationPermission == nil {
+		if provider, ok := transport.(interface {
+			InstallationPermission(ctx context.Context, name string) (string, bool)
+		}); ok {
+			e.installationPermission = provider.InstallationPermission
+		}
 	}
 	if e.sweepTrigger == nil {
 		// Always present: with the forgestate cache the event-driven loop
