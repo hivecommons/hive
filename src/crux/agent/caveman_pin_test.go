@@ -8,7 +8,7 @@ import (
 )
 
 // TestCavemanPinIsNotBareSHA guards the caveman skill pin format in
-// installCavemanForAgent (manager.go).
+// installCavemanForAgent (manager_launch_caveman.go).
 //
 // The `skills` CLI (and npx's git resolution for `skills add`) clones with
 // `git clone --depth 1 --branch <ref>`, and git cannot clone a bare commit
@@ -17,13 +17,13 @@ import (
 // happened with the 0d95a81d35a9 pin (fixed by re-pinning to the equivalent
 // tag v1.9.1 in PR #4518). Pins must be branch or tag names.
 //
-// This test scans manager.go for caveman refs and fails if any ref after '#'
+// This test scans manager_launch_caveman.go for caveman refs and fails if any ref after '#'
 // is a bare hex SHA (7-40 hex chars), so the regression cannot be
 // reintroduced.
 func TestCavemanPinIsNotBareSHA(t *testing.T) {
-	src, err := os.ReadFile("manager_launch.go")
+	src, err := os.ReadFile("manager_launch_caveman.go")
 	if err != nil {
-		t.Fatalf("reading manager.go: %v", err)
+		t.Fatalf("reading manager_launch_caveman.go: %v", err)
 	}
 
 	// Match both pin forms: "github:JuliusBrussee/caveman#<ref>" (npx) and
@@ -33,7 +33,7 @@ func TestCavemanPinIsNotBareSHA(t *testing.T) {
 
 	matches := refRe.FindAllStringSubmatch(string(src), -1)
 	if len(matches) == 0 {
-		t.Fatal("no caveman refs found in manager.go; if the pin moved, update this test to scan the new location")
+		t.Fatal("no caveman refs found in manager_launch_caveman.go; if the pin moved, update this test to scan the new location")
 	}
 
 	for _, m := range matches {
@@ -49,12 +49,12 @@ func TestCavemanPinIsNotBareSHA(t *testing.T) {
 // <agent>` renders an interactive confirmation that auto-cancels in the
 // hive's non-TTY captured-output context — the command exits 0 but installs
 // NOTHING (npx's `-y` only confirms the npx package fetch, not the skills
-// prompts). See PR #4548. Every `skills add` invocation in manager.go must
+// prompts). See PR #4548. Every `skills add` invocation in manager_launch_caveman.go must
 // therefore carry a `-y` argument.
 func TestCavemanSkillsAddIsHeadless(t *testing.T) {
-	src, err := os.ReadFile("manager_launch.go")
+	src, err := os.ReadFile("manager_launch_caveman.go")
 	if err != nil {
-		t.Fatalf("reading manager.go: %v", err)
+		t.Fatalf("reading manager_launch_caveman.go: %v", err)
 	}
 
 	addLineRe := regexp.MustCompile(`(?m)^.*"skills",\s*"add".*$`)
@@ -64,7 +64,7 @@ func TestCavemanSkillsAddIsHeadless(t *testing.T) {
 
 	lines := addLineRe.FindAllString(string(src), -1)
 	if len(lines) == 0 {
-		t.Fatal("no `skills add` invocations found in manager.go; if the install moved, update this test to scan the new location")
+		t.Fatal("no `skills add` invocations found in manager_launch_caveman.go; if the install moved, update this test to scan the new location")
 	}
 
 	for _, line := range lines {
