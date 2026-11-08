@@ -202,8 +202,18 @@ type ContributorConnection struct {
 	// connection (#2546): one of the taskUnavailable* reasons. It lets the ops tab
 	// show WHY a connected clanker is idle (suspended vs hub-not-ready vs
 	// no-matching-work vs an enforced refusal) instead of an indistinguishable
-	// silence. Cleared when a task is actually assigned. Purely diagnostic.
+	// silence. Cleared with lastIdleReasonSince below. It never routes or gates
+	// a work item; its one gating reader is RoleCoverage, which uses the pair to
+	// tell the governor a relay is not working its lane.
 	lastIdleReason string
+	// lastIdleReasonSince is when the current run of lastIdleReason began: the
+	// first of the consecutive task_unavailable answers that carried it, with
+	// no_matching_work and repo_unmintable counted as one run (idleRunKey).
+	// Set by noteIdleReasonLocked; zeroed with lastIdleReason by
+	// clearIdleReasonLocked when a task is assigned or adopted on resume, or a
+	// fix-pr task is dispatched. RoleCoverage stops counting a relay that has
+	// had nothing but "no work for you" for coverageNoWorkWindow.
+	lastIdleReasonSince time.Time
 	// capabilities is the client-declared runtime posture from auth_response
 	// (#2547 declare half): container runtime, OS/arch, agent/relay versions,
 	// credential type. Nil when the client declared nothing (an unversioned
@@ -2245,7 +2255,7 @@ func (h *ContributeWSHub) yankAndReassign(targets []releaseTarget, reason, revok
 			// the ready handler does.
 			if msg != nil {
 				tgt.conn.mu.Lock()
-				tgt.conn.lastIdleReason = msg.Reason
+				tgt.conn.noteIdleReasonLocked(msg.Reason, time.Now())
 				tgt.conn.mu.Unlock()
 			}
 			continue
@@ -3765,7 +3775,7 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 		// no_matching_work). Record the reason on the connection so the ops
 		// tab can show WHY this clanker is idle, then send it.
 		s.contributor.mu.Lock()
-		s.contributor.lastIdleReason = task.Reason
+		s.contributor.noteIdleReasonLocked(task.Reason, time.Now())
 		s.contributor.mu.Unlock()
 		if err := s.contributor.send(*task); err != nil {
 			h.logger.Warn("[contribute-ws] failed to send task_unavailable", "error", err)
@@ -4182,6 +4192,7 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			s.contributor.mu.Lock()
 			s.contributor.currentTask = rebuilt
 			s.contributor.currentTaskGen = lease.gen
+			s.contributor.clearIdleReasonLocked()
 			s.contributor.lastLeaseRenew = time.Now()
 			s.contributor.tmuxOutput = msg.TmuxOutput
 			s.contributor.tmuxOutputTask = lease.taskID

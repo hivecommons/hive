@@ -377,10 +377,14 @@ func (h *ContributeWSHub) canonicalRepoKey(repo string) string {
 func (h *ContributeWSHub) resumeGateReason(c *ContributorConnection) string {
 	tier := ""
 	if c != nil && c.profile != nil {
-		if c.profile.TrustTier == "revoked" {
-			return "contribution access revoked"
-		}
 		tier = c.profile.TrustTier
+	}
+	// The per-contributor half (revoked, disabled tier) is tierAccessGateReason,
+	// which RoleCoverage shares. A revoked profile outranks every other reason,
+	// as it always has; a disabled tier is reported after the hub checks.
+	tierReason := h.tierAccessGateReason(tier)
+	if tierReason == resumeRefusedAccessRevoked {
+		return tierReason
 	}
 	if h.server == nil {
 		return taskUnavailableHubNotReady
@@ -389,13 +393,49 @@ func (h *ContributeWSHub) resumeGateReason(c *ContributorConnection) string {
 		if h.server.deps.Config.Hub.ContributeSuspended {
 			return taskUnavailableContributionSuspended
 		}
-		for _, dt := range h.server.deps.Config.Hub.DisabledTiers {
-			if dt == tier {
-				return taskUnavailableTierDisabled
-			}
-		}
+	}
+	return tierReason
+}
+
+// resumeRefusedAccessRevoked is the reason resumeGateReason gives for a revoked
+// contributor profile.
+const resumeRefusedAccessRevoked = "contribution access revoked"
+
+// tierAccessGateReason is the one rule for "this trust tier may not be handed
+// work": a revoked profile (resumeRefusedAccessRevoked) or a tier the operator
+// listed in hub.disabled_tiers (taskUnavailableTierDisabled). "" means the tier
+// is open. resumeGateReason refuses a resume with it, selectTaskPass refuses a
+// fresh assignment with its disabled-tier half (tierDisabled; selection never
+// checked revoked, which is refused at auth), and RoleCoverage uses it so a
+// relay that would be refused for either reason does not count as
+// contributor-first cover.
+//
+// It takes a tier rather than a connection so callers read the tier under c.mu
+// and evaluate with every lock released. It reads the config without a lock,
+// as selection does.
+func (h *ContributeWSHub) tierAccessGateReason(tier string) string {
+	if tier == contributorTierRevoked {
+		return resumeRefusedAccessRevoked
+	}
+	if h.tierDisabled(tier) {
+		return taskUnavailableTierDisabled
 	}
 	return ""
+}
+
+// tierDisabled reports whether the operator listed tier in hub.disabled_tiers
+// (#2436 finding 2). It is the disabled-tier half of tierAccessGateReason, and
+// what selectTaskPass refuses a fresh assignment with.
+func (h *ContributeWSHub) tierDisabled(tier string) bool {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return false
+	}
+	for _, dt := range h.server.deps.Config.Hub.DisabledTiers {
+		if dt == tier {
+			return true
+		}
+	}
+	return false
 }
 
 // mintFailureRepoCooldown is how long a repository stays excluded from selection
@@ -551,16 +591,15 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	if c.profile != nil {
 		tier = c.profile.TrustTier
 	}
-	if h.server.deps != nil && h.server.deps.Config != nil {
-		for _, dt := range h.server.deps.Config.Hub.DisabledTiers {
-			if dt == tier {
-				h.logger.Warn("[contribute-ws] refusing task: tier disabled",
-					"username", identityOf(c), "tier", tier)
-				h.recordDecision(decisionUsername(c), decisionRefused, "", "", 0,
-					"tier "+tier+" is disabled on this hive")
-				return h.taskUnavailable(taskUnavailableTierDisabled)
-			}
-		}
+	// The disabled-tier rule is tierDisabled, which RoleCoverage shares through
+	// tierAccessGateReason, so a relay refused here is never reported as
+	// covering its role.
+	if h.tierDisabled(tier) {
+		h.logger.Warn("[contribute-ws] refusing task: tier disabled",
+			"username", identityOf(c), "tier", tier)
+		h.recordDecision(decisionUsername(c), decisionRefused, "", "", 0,
+			"tier "+tier+" is disabled on this hive")
+		return h.taskUnavailable(taskUnavailableTierDisabled)
 	}
 
 	// activeIssues tracks issues already held by SOME live connection so we do
@@ -1233,7 +1272,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// rollbackAssignment hands back to unrecordAssignment.
 	c.taskAssignedAt = assignedAt
 	c.currentLabels = chosen.labels
-	c.lastIdleReason = ""
+	c.clearIdleReasonLocked()
 	// The prompt and the credential are not known yet — see below. A stale
 	// pendingToken from a previous task must not survive into this claim.
 	c.currentPrompt = ""

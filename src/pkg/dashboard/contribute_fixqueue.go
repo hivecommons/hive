@@ -448,6 +448,8 @@ func (h *ContributeWSHub) sendFixTask(c *ContributorConnection, user string, d *
 		c.fixTasksAt = map[string]time.Time{}
 	}
 	c.fixTasksAt[d.ID] = time.Now()
+	// A dispatched fix is work: the relay is no longer idle on an empty queue.
+	c.clearIdleReasonLocked()
 	c.mu.Unlock()
 	msg := WSMessage{
 		Type: "task_assign", Seq: h.nextSeq(), TaskID: d.ID, TaskGen: h.nextTaskGen(),

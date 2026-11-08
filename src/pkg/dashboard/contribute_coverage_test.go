@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fixqueue"
 	"github.com/hivecommons/hive/pkg/governor"
 	standbypkg "github.com/hivecommons/hive/pkg/standby"
 )
@@ -352,5 +353,264 @@ func TestTierRateLimitReached(t *testing.T) {
 	var none *ContributeWSHub
 	if got := none.tierRateLimitReached("c-alice", "contributor", now); got != (tierRateLimitHit{}) {
 		t.Fatalf("nil hub: tierRateLimitReached = %+v, want zero", got)
+	}
+}
+
+// A relay whose trust tier the operator listed in hub.disabled_tiers is refused
+// every fresh assignment with tier_disabled and every resume too, while its
+// socket stays up. It must not keep the resident agent withheld; once the tier
+// is re-enabled, the same connection covers again.
+func TestRoleCoverage_DisabledTierDoesNotCover(t *testing.T) {
+	hub, s := covK2Hub(t)
+	now := time.Now()
+	relay := coverageConn("alice", "scanner", now)
+	hub.mu.Lock()
+	hub.connections["alice"] = relay
+	hub.mu.Unlock()
+
+	s.deps.Config.Hub.DisabledTiers = []string{"newcomer", "contributor"}
+	if got := selectionRefusal(t, hub, s, relay); got != taskUnavailableTierDisabled {
+		t.Fatalf("setup: selection refused with %q, want %q", got, taskUnavailableTierDisabled)
+	}
+	if got := hub.resumeGateReason(relay); got != taskUnavailableTierDisabled {
+		t.Fatalf("setup: resumeGateReason = %q, want %q", got, taskUnavailableTierDisabled)
+	}
+	if got := hub.RoleCoverage(now); got != nil {
+		t.Fatalf("relay in a disabled tier counted as cover: RoleCoverage = %+v, want nil", got)
+	}
+
+	s.deps.Config.Hub.DisabledTiers = []string{"newcomer"}
+	want := map[string]governor.ContributorCoverage{"scanner": {Contributors: []string{"alice"}}}
+	if got := hub.RoleCoverage(now); !reflect.DeepEqual(got, want) {
+		t.Fatalf("tier re-enabled: RoleCoverage = %+v, want %+v", got, want)
+	}
+}
+
+// A revoked profile is refused a resume by the same gate. A connection that
+// still carries one covers nothing.
+func TestRoleCoverage_RevokedDoesNotCover(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	now := time.Now()
+	relay := coverageConn("alice", "scanner", now)
+	relay.profile.TrustTier = contributorTierRevoked
+	hub.mu.Lock()
+	hub.connections["alice"] = relay
+	hub.connections["bob"] = coverageConn("bob", "scanner", now)
+	hub.mu.Unlock()
+
+	if got := hub.resumeGateReason(relay); got != resumeRefusedAccessRevoked {
+		t.Fatalf("setup: resumeGateReason = %q, want %q", got, resumeRefusedAccessRevoked)
+	}
+	want := map[string]governor.ContributorCoverage{"scanner": {Contributors: []string{"bob"}}}
+	if got := hub.RoleCoverage(now); !reflect.DeepEqual(got, want) {
+		t.Fatalf("revoked relay counted as cover: RoleCoverage = %+v, want %+v", got, want)
+	}
+}
+
+// tierAccessGateReason is the rule resumeGateReason, selection's disabled-tier
+// refusal and RoleCoverage share.
+func TestTierAccessGateReason(t *testing.T) {
+	hub, s := covK2Hub(t)
+	s.deps.Config.Hub.DisabledTiers = []string{"newcomer"}
+	for tier, want := range map[string]string{
+		"contributor":          "",
+		"newcomer":             taskUnavailableTierDisabled,
+		contributorTierRevoked: resumeRefusedAccessRevoked,
+	} {
+		if got := hub.tierAccessGateReason(tier); got != want {
+			t.Errorf("tierAccessGateReason(%q) = %q, want %q", tier, got, want)
+		}
+	}
+	var none *ContributeWSHub
+	if got := none.tierAccessGateReason("newcomer"); got != "" {
+		t.Errorf("nil hub: tierAccessGateReason = %q, want empty", got)
+	}
+	if got := none.tierAccessGateReason(contributorTierRevoked); got != resumeRefusedAccessRevoked {
+		t.Errorf("nil hub: a revoked tier is still refused, got %q", got)
+	}
+}
+
+// noWorkRelay connects a scanner relay over a real socket to a hub whose queue
+// is empty, so every ready it sends is answered by real task selection.
+func noWorkRelay(t *testing.T) (*ContributeWSHub, *Server, *ContributorConnection, *wsSession, func() map[string]any) {
+	t.Helper()
+	hub, s := covK2Hub(t)
+	s.statusMu.Lock()
+	s.status = &StatusPayload{}
+	s.statusMu.Unlock()
+	server, client := wsPipe(t)
+	relay := coverageConn("alice", "scanner", time.Now())
+	relay.ws = server
+	hub.mu.Lock()
+	hub.connections["alice"] = relay
+	hub.mu.Unlock()
+	sess := &wsSession{h: hub, conn: server, contributor: relay}
+	return hub, s, relay, sess, func() map[string]any { return readWire(t, client) }
+}
+
+// sendReady drives one ready through the real handler and returns the frame
+// the relay received.
+func sendReady(t *testing.T, sess *wsSession, read func() map[string]any) map[string]any {
+	t.Helper()
+	if stop := sess.handleReady(WSMessage{Type: "ready"}); stop {
+		t.Fatal("ready must not stop the session")
+	}
+	return read()
+}
+
+// coverageAt evaluates RoleCoverage at a moment the relay's heartbeat is
+// fresh, so only the idle run decides.
+func coverageAt(hub *ContributeWSHub, relay *ContributorConnection, at time.Time) map[string]governor.ContributorCoverage {
+	relay.mu.Lock()
+	relay.lastPong = at
+	relay.mu.Unlock()
+	return hub.RoleCoverage(at)
+}
+
+func idleSince(relay *ContributorConnection) time.Time {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	return relay.lastIdleReasonSince
+}
+
+var scannerAlice = map[string]governor.ContributorCoverage{"scanner": {Contributors: []string{"alice"}}}
+
+// One empty answer is what a relay gets between two tasks when the queue is
+// momentarily dry. It must not drop the relay's cover.
+func TestRoleCoverage_OneNoMatchingWorkAnswerStillCovers(t *testing.T) {
+	hub, _, relay, sess, read := noWorkRelay(t)
+	if f := sendReady(t, sess, read); f["type"] != "task_unavailable" || f["reason"] != taskUnavailableNoMatchingWork {
+		t.Fatalf("setup: expected task_unavailable/%s, got %v", taskUnavailableNoMatchingWork, f)
+	}
+	since := idleSince(relay)
+	if since.IsZero() {
+		t.Fatal("the no_matching_work answer must start an idle run on the connection")
+	}
+	// The next ready, ~30 s on, is still inside the window.
+	if got := coverageAt(hub, relay, since.Add(30*time.Second)); !reflect.DeepEqual(got, scannerAlice) {
+		t.Fatalf("one empty answer dropped cover: RoleCoverage = %+v, want %+v", got, scannerAlice)
+	}
+}
+
+// A relay answered no_matching_work on every ready for the whole window is
+// connected and idle: it covers nothing. Observed on 2026-11-08 on
+// hive-wild-mole, where such a relay kept the scanner lane "covered". A task
+// assigned afterwards ends the run, so it covers again — while it works the
+// task and after it finishes it.
+func TestRoleCoverage_NoMatchingWorkForWindowDoesNotCover(t *testing.T) {
+	hub, s, relay, sess, read := noWorkRelay(t)
+	sendReady(t, sess, read)
+	since := idleSince(relay)
+	for i := 0; i < 3; i++ {
+		if f := sendReady(t, sess, read); f["reason"] != taskUnavailableNoMatchingWork {
+			t.Fatalf("setup: ready %d answered %v, want %s", i+2, f, taskUnavailableNoMatchingWork)
+		}
+	}
+	if got := idleSince(relay); !got.Equal(since) {
+		t.Fatalf("consecutive no_matching_work answers must extend one run: since moved %v -> %v", since, got)
+	}
+	if got := coverageAt(hub, relay, since.Add(coverageNoWorkWindow-time.Second)); !reflect.DeepEqual(got, scannerAlice) {
+		t.Fatalf("inside the window: RoleCoverage = %+v, want %+v", got, scannerAlice)
+	}
+	later := since.Add(coverageNoWorkWindow)
+	if got := coverageAt(hub, relay, later); got != nil {
+		t.Fatalf("relay answered no_matching_work for the whole window counted as cover: RoleCoverage = %+v, want nil", got)
+	}
+
+	// Work arrives: the next ready is handed a task.
+	oneActionableIssue(s)
+	if f := sendReady(t, sess, read); f["type"] != "task_assign" {
+		t.Fatalf("setup: expected task_assign once work exists, got %v", f)
+	}
+	if got := coverageAt(hub, relay, later); !reflect.DeepEqual(got, scannerAlice) {
+		t.Fatalf("relay working an assigned task: RoleCoverage = %+v, want %+v", got, scannerAlice)
+	}
+	if got := idleSince(relay); !got.IsZero() {
+		t.Fatalf("an assignment must end the idle run, since = %v", got)
+	}
+	relay.mu.Lock()
+	relay.currentTask = nil // the task finished; no new ready yet
+	relay.mu.Unlock()
+	if got := coverageAt(hub, relay, later.Add(time.Hour)); !reflect.DeepEqual(got, scannerAlice) {
+		t.Fatalf("relay between tasks after an assignment: RoleCoverage = %+v, want %+v", got, scannerAlice)
+	}
+}
+
+// repo_unmintable is the name selectTask's re-scan gives no_matching_work when
+// it dropped an unmintable repo on the way: nothing in the queue may be handed
+// to this relay either way. It drops cover like no_matching_work does, and the
+// two continue one run.
+func TestRoleCoverage_RepoUnmintableBehavesLikeNoMatchingWork(t *testing.T) {
+	hub, s, relay, sess, read := noWorkRelay(t)
+	sendReady(t, sess, read) // no_matching_work: the queue is empty
+	since := idleSince(relay)
+
+	oneActionableIssue(s)
+	hub.markRepoUnmintable("myorg/repo1", time.Now())
+	for i := 0; i < 2; i++ {
+		if f := sendReady(t, sess, read); f["type"] != "task_unavailable" || f["reason"] != taskUnavailableRepoUnmintable {
+			t.Fatalf("setup: expected task_unavailable/%s, got %v", taskUnavailableRepoUnmintable, f)
+		}
+	}
+	if got := idleSince(relay); !got.Equal(since) {
+		t.Fatalf("repo_unmintable after no_matching_work must continue the run: since moved %v -> %v", since, got)
+	}
+	if got := coverageAt(hub, relay, since.Add(30*time.Second)); !reflect.DeepEqual(got, scannerAlice) {
+		t.Fatalf("inside the window: RoleCoverage = %+v, want %+v", got, scannerAlice)
+	}
+	if got := coverageAt(hub, relay, since.Add(coverageNoWorkWindow)); got != nil {
+		t.Fatalf("relay answered repo_unmintable for the whole window counted as cover: RoleCoverage = %+v, want nil", got)
+	}
+
+	// A run of repo_unmintable alone drops cover too.
+	relay.mu.Lock()
+	relay.clearIdleReasonLocked()
+	relay.mu.Unlock()
+	sendReady(t, sess, read)
+	if got := coverageAt(hub, relay, idleSince(relay).Add(coverageNoWorkWindow)); got != nil {
+		t.Fatalf("repo_unmintable-only run counted as cover: RoleCoverage = %+v, want nil", got)
+	}
+}
+
+// A different answer ends the no-work run: a relay refused for another reason
+// is judged by that reason's own rule, not by this window.
+func TestRoleCoverage_OtherIdleReasonEndsNoWorkRun(t *testing.T) {
+	_, _, relay, _, _ := noWorkRelay(t)
+	start := time.Now()
+	relay.mu.Lock()
+	relay.noteIdleReasonLocked(taskUnavailableNoMatchingWork, start)
+	relay.noteIdleReasonLocked(taskUnavailableHubNotReady, start.Add(time.Minute))
+	relay.noteIdleReasonLocked(taskUnavailableNoMatchingWork, start.Add(90*time.Second))
+	got := relay.lastIdleReasonSince
+	relay.mu.Unlock()
+	if !got.Equal(start.Add(90 * time.Second)) {
+		t.Fatalf("a run broken by another reason must restart, since = %v, want %v", got, start.Add(90*time.Second))
+	}
+}
+
+// A dispatched fix-pr task is work too: it ends the idle run, and the relay
+// covers while the fix runs and after it settles.
+func TestRoleCoverage_FixTaskDispatchEndsNoWorkRun(t *testing.T) {
+	hub, _, relay, sess, read := noWorkRelay(t)
+	sendReady(t, sess, read)
+	later := idleSince(relay).Add(coverageNoWorkWindow)
+	if got := coverageAt(hub, relay, later); got != nil {
+		t.Fatalf("setup: idle relay must not cover, got %+v", got)
+	}
+
+	relay.mu.Lock()
+	relay.ws = nil // sendFixTask pushes only to a live socket; the frame is not under test
+	relay.mu.Unlock()
+	hub.sendFixTask(relay, "alice", &fixqueue.Dispatch{ID: "fix-1", Mode: fixqueue.ModeBoundary, Items: []fixqueue.Item{
+		{Repo: "myorg/repo1", Number: 7, URL: "https://github.com/myorg/repo1/pull/7", Title: "red PR"},
+	}})
+	if got := coverageAt(hub, relay, later); !reflect.DeepEqual(got, scannerAlice) {
+		t.Fatalf("relay working a fix task: RoleCoverage = %+v, want %+v", got, scannerAlice)
+	}
+	relay.mu.Lock()
+	delete(relay.fixTasks, "fix-1")
+	relay.mu.Unlock()
+	if got := coverageAt(hub, relay, later.Add(time.Hour)); !reflect.DeepEqual(got, scannerAlice) {
+		t.Fatalf("relay after its fix settled: RoleCoverage = %+v, want %+v", got, scannerAlice)
 	}
 }
