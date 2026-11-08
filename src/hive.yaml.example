@@ -930,6 +930,13 @@ github:
   token: ${HIVE_GITHUB_TOKEN}
   # Reuse per-PR detail GETs while list head.sha/updated_at still match.
   pr_detail_ttl_s: 1800
+  # Memory for the conditional-request (ETag / 304) response cache, in MiB of
+  # gzip-compressed bodies (default 128, max 2048), and its entry cap (default
+  # 8192). A cache that fills within hours evicts bodies other pollers are
+  # about to revalidate and charged fetches climb; raise it. Env overrides:
+  # HIVE_GITHUB_ETAG_CACHE_MAX_MB / HIVE_GITHUB_ETAG_CACHE_MAX_ENTRIES.
+  etag_cache_max_mb: 128
+  etag_cache_max_entries: 8192
   # Batch open PR detail and CI rollups with GraphQL during scans (default true).
   graphql_pr_batch: true
   graphql_pr_batch_page_size: 50

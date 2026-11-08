@@ -362,3 +362,36 @@ func TestHostWithoutLogOrSignalsStillRuns(t *testing.T) {
 		t.Fatalf("step = %+v", step)
 	}
 }
+
+func TestReconcileMarksRunningStepsUnfinished(t *testing.T) {
+	store := Store{RunDir: t.TempDir()}
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	for _, st := range []string{api.StepSucceeded, api.StepRunning, api.StepRunning} {
+		if _, err := store.Create(api.Step{Run: "run_1", Status: st, CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A corrupt record is skipped so the rest still settle.
+	if err := os.MkdirAll(store.Dir(4), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store.Dir(4), RecordName), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := store.Reconcile("serve restarted", now)
+	if err != nil || len(changed) != 2 || changed[0].N != 2 || changed[1].N != 3 {
+		t.Fatalf("Reconcile = %+v, %v", changed, err)
+	}
+	for _, n := range []int{2, 3} {
+		got, err := store.Get(n)
+		if err != nil || got.Status != api.StepUnfinished || got.Reason != "serve restarted" || got.FinishedAt == nil || !got.FinishedAt.Equal(now) {
+			t.Fatalf("step %d = %+v, %v", n, got, err)
+		}
+	}
+	if got, _ := store.Get(1); got.Status != api.StepSucceeded {
+		t.Fatalf("finished step touched: %+v", got)
+	}
+	if again, err := store.Reconcile("x", now); err != nil || len(again) != 0 {
+		t.Fatalf("second reconcile = %+v, %v", again, err)
+	}
+}

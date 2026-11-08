@@ -37,6 +37,7 @@ func (s *Server) registerRuns(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+api.PathRuns+"/{id}/cmdlog", s.handleRunsCmdlog)
 	mux.HandleFunc("GET "+api.PathRuns+"/{id}/signals", s.handleRunsSignalsList)
 	mux.HandleFunc("POST "+api.PathRuns+"/{id}/signals", s.handleRunsSignalsEmit)
+	s.registerRunsSaved(mux)
 	s.workService(api.PathRuns)
 	if s.Runs != nil && s.Runs.Signals != nil {
 		s.Runs.Signals.SetObserver(s.publishRunSignal)
@@ -263,6 +264,8 @@ func (s *Server) writeRunsError(w http.ResponseWriter, err error) {
 		s.writeError(w, http.StatusNotImplemented, api.CodeNotSupported, err.Error())
 	case errors.Is(err, runs.ErrNotFound):
 		s.writeError(w, http.StatusNotFound, api.CodeNotFound, "run not found")
+	case errors.Is(err, runs.ErrLive), errors.Is(err, runs.ErrNoRequest):
+		s.writeError(w, http.StatusConflict, api.CodeConflict, err.Error())
 	case errors.As(err, &reqErr):
 		s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, err.Error())
 	case errors.As(err, &forbidden):

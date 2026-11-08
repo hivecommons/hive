@@ -14,6 +14,9 @@ import (
 const runsUsage = `usage: crux --server ADDR runs start [flags] -- <command> [args…]
        crux --server ADDR runs status <id>
        crux --server ADDR runs cancel <id>
+       crux --server ADDR runs list [--status S] [--limit N] [--json]
+       crux --server ADDR runs restart [--reason TEXT] [--idempotency-key KEY] [--detach] [--json] <id>
+       crux --server ADDR runs history [--json] <id>
 
 start flags:
   --checkout ID             run in a pinned checkout you own (crux checkout add)
@@ -46,6 +49,12 @@ func (e *Env) remoteRuns(ctx context.Context, c *api.Client, args []string) int 
 		return e.remoteRunsGet(ctx, c, args[1:])
 	case "cancel":
 		return e.remoteRunsCancel(ctx, c, args[1:])
+	case "list":
+		return e.remoteRunsList(ctx, c, args[1:])
+	case "restart":
+		return e.remoteRunsRestart(ctx, c, args[1:])
+	case "history":
+		return e.remoteRunsHistory(ctx, c, args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprintln(e.Stderr, runsUsage)
 		return ExitOK

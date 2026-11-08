@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agentstep"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/checkout"
 	"github.com/hivecommons/hive/crux/cmdlog"
@@ -83,6 +84,14 @@ type detail struct {
 	Stderr            string   `json:"stderr,omitempty"`
 	StdoutTruncatedAt *int64   `json:"stdout_truncated_at,omitempty"`
 	StderrTruncatedAt *int64   `json:"stderr_truncated_at,omitempty"`
+	// Request is what the run was created from, less the idempotency key
+	// and detach, so a restart (S7) re-validates and re-runs the same thing.
+	Request *api.ContainedRunRequest `json:"request,omitempty"`
+	// RestartedFrom and RestartedBy link a restart to the run it re-ran and
+	// back; RestartReason is the caller's stated reason for the restart.
+	RestartedFrom string `json:"restarted_from,omitempty"`
+	RestartedBy   string `json:"restarted_by,omitempty"`
+	RestartReason string `json:"restart_reason,omitempty"`
 }
 
 // plan is a validated request.
@@ -165,13 +174,17 @@ func New(store *runstate.Store, backend *Backend, cfg Config) *Service {
 // Configured reports whether runs can be executed here.
 func (s *Service) Configured() bool { return s.Backend != nil }
 
-// Reconcile marks every run left accepted or running by a previous process
-// unfinished. Call it once at serve start, before accepting requests.
+// Reconcile marks every run left accepted, running or waiting by a previous
+// process unfinished, and with it any step (S6) that run still records as
+// running. Call it once at serve start, before accepting requests.
 func (s *Service) Reconcile() ([]runstate.Record, error) {
 	recs, err := s.Store.Reconcile(ReconcileReason)
 	// A run the previous process left in flight ended unobserved; its done
 	// signal says so, so a follower never waits on it forever.
 	for _, rec := range recs {
+		if _, serr := (agentstep.Store{RunDir: s.Store.Path(rec.ID)}).Reconcile(ReconcileReason, s.Store.Now()); serr != nil && err == nil {
+			err = serr
+		}
 		s.signalDone(rec.ID, api.SignalDoneData{Status: rec.Status}, rec.Reason)
 	}
 	return recs, err
@@ -189,8 +202,20 @@ func (s *Service) Create(launchCtx context.Context, caller Caller, req api.Conta
 	if err != nil {
 		return api.ContainedRun{}, false, err
 	}
-	owner := caller.Name
-	d := detail{Profile: p.profile, Network: p.network, Backend: s.Backend.Name, Command: p.command, Checkout: p.checkout, Workspace: p.workspace, EnvAllowlist: p.allowlist}
+	return s.accept(launchCtx, caller.Name, req.IdempotencyKey, p, s.detailFor(p, req))
+}
+
+// detailFor is the accepted record's payload: the plan and the request it
+// came from, with the per-call fields (idempotency key, detach) dropped so
+// a restart cannot inherit them.
+func (s *Service) detailFor(p plan, req api.ContainedRunRequest) detail {
+	req.IdempotencyKey, req.Detach = "", false
+	return detail{Profile: p.profile, Network: p.network, Backend: s.Backend.Name, Command: p.command, Checkout: p.checkout, Workspace: p.workspace, EnvAllowlist: p.allowlist, Request: &req}
+}
+
+// accept saves d as owner's accepted record (or returns the record key
+// already names) and starts the run under launchCtx.
+func (s *Service) accept(launchCtx context.Context, owner, key string, p plan, d detail) (api.ContainedRun, bool, error) {
 	raw, err := json.Marshal(d)
 	if err != nil {
 		return api.ContainedRun{}, false, err
@@ -198,7 +223,7 @@ func (s *Service) Create(launchCtx context.Context, caller Caller, req api.Conta
 	rec, created, err := s.Store.Create(runstate.Record{
 		Kind:           runstate.KindRun,
 		Owner:          owner,
-		IdempotencyKey: runstate.DeriveIdempotencyKey(owner, req.IdempotencyKey),
+		IdempotencyKey: runstate.DeriveIdempotencyKey(owner, key),
 		Detail:         raw,
 	})
 	if err != nil {
@@ -753,5 +778,6 @@ func toWire(rec runstate.Record) api.ContainedRun {
 		Profile: d.Profile, Network: d.Network, Backend: d.Backend, Command: d.Command, Checkout: d.Checkout, Workdir: d.Workspace,
 		ExitCode: d.ExitCode, TimedOut: d.TimedOut, Stdout: d.Stdout, Stderr: d.Stderr,
 		StdoutTruncatedAt: d.StdoutTruncatedAt, StderrTruncatedAt: d.StderrTruncatedAt,
+		RestartedFrom: d.RestartedFrom, RestartedBy: d.RestartedBy,
 	}
 }

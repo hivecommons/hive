@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.204.1)
+
+### Fixed
+
+- Fleet report: repeated `copilot sniff: upstream dial failed` ERRORs — the proxy could not reach a `*.githubcopilot.com` host it was usage-sniffing, such as a dial timeout to `telemetry.enterprise.githubcopilot.com` — are now classified as `proxy_connect_dial_failed` (medium, component `github-proxy`, remedy "restore the spoke's outbound proxy or network path") alongside `proxy: CONNECT dial failed`, instead of surfacing as `unclassified_error_repeated` ([#17262](https://github.com/hivecommons/hive/issues/17262)).
+
 ## 2026-11-08 (v5.204.0)
 
 ### Added

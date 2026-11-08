@@ -363,8 +363,10 @@ Commands (each maps onto crux.Runtime):
                                   runtime that spawned it, not run by hand
   cline-turn                      one bounded Cline CLI turn (stdin prompt);
                                   --model provider/model, --check for preflight
-  runs start|status|cancel        contained command runs on a crux serve
-                                  (--server only; 'crux runs help' for flags)
+  runs start|status|cancel|list|restart|history
+                                  contained command runs on a crux serve and
+                                  their saved results (--server only;
+                                  'crux runs help' for flags)
 
 Work services (no runtime; hivecommons/crux#114):
   checkout add|rm|list            pinned checkouts under <workdir>/checkouts
