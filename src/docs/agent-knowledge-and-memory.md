@@ -126,10 +126,80 @@ knowledge search|list`, and `bd kb search` inside the pod. See
 [knowledge-toc.md](knowledge-toc.md) and
 [public-knowledge-mcp.md](public-knowledge-mcp.md).
 
-The mid-task advisor (`knowledge.advisor`) can later rank candidates with a
+The mid-task advisor (`knowledge.advisor`) can rank its candidates with a
 model; its `knowledge.advisor_llm` block carries hard budget ceilings (6 calls
 per agent-hour, 300 per day) that only `budget_override: true` lifts. See
+[Model-ranked advisor](#model-ranked-advisor-knowledgeadvisor_llm) below and
 [knowledge-curator.md](knowledge-curator.md#model-ranked-advisor-knowledgeadvisor_llm).
+
+### Model-ranked advisor (`knowledge.advisor_llm`)
+
+When `knowledge.advisor_llm` resolves at startup (the advisor is on and an
+endpoint and key come from the block or `governor.litellm`), a ranking pass
+wraps the phase-1 matcher in the hive process
+(hivecommons/hive#17155, RFC `docs/rfc-17054-llm-ranked-knowledge-advisor.md`).
+It re-reads the block on every call, so `mode: off` returns to phase 1 without
+a restart. The pass ranks; it never writes. The agent only ever receives a
+stored knowledge entry, typed with phase 1's `📚 Knowledge:` line and gates.
+
+```mermaid
+flowchart LR
+  P[new scope] --> M[phase-1 matcher: up to `candidates`<br/>minus kick-primed and already-delivered slugs]
+  M -->|0 candidates| X[nothing, no model call]
+  M -->|1..N| G{mode}
+  G -->|off| D[phase-1 top entries, unchanged]
+  G -->|shadow| S[phase-1 top-1 delivered<br/>model pick logged]
+  G -->|rank| R[model: one candidate slug or null]
+  R -->|slug in candidates| D2[deliver that entry]
+  R -->|null / invalid| X2[nothing]
+  R -->|timeout / error / over budget| E{on_error}
+  E -->|silence| X2
+  E -->|matcher| D3[phase-1 top-1]
+```
+
+- **Input.** The kick summary (primed issue refs, titles and labels, at most
+  600 characters), the runtime's scrubbed pane tail (`pane_lines`, verbatim)
+  and each candidate as `slug — title — summary` with the same ≤300-character
+  summary phase 1 would type. Entry bodies never reach the model.
+- **Call.** One chat completion per decision: `temperature: 0`, about 120
+  output tokens, `timeout_s`, and the `user` field set to
+  `hive-knowledge-advisor:<agent>` so proxy spend logs attribute cost per
+  agent. The answer must be `{"slug": <candidate>|null, "reason": "..."}`;
+  a slug that is not exactly a candidate, or a malformed answer, is `invalid`
+  and treated as `null`. There is no retry, and the `reason` is logged, never
+  typed.
+- **Modes.** `shadow` delivers phase 1's top entry and records what the model
+  would have picked. `rank` delivers the model's pick; with
+  `holdout_percent`, the kick identity is hashed into a delivery or holdout
+  arm, and holdout kicks make the call and log the pick but type nothing.
+  A valid `null` never falls back to the matcher; `on_error: matcher` only
+  covers timeouts, endpoint errors and exhausted budgets.
+- **Budgets.** A rolling one-hour window per agent
+  (`max_calls_per_agent_hour`, default and ceiling 6) and a per-UTC-day fleet
+  counter (`max_calls_per_day`, default and ceiling 300). An exhausted budget
+  makes no request and is handled like an error.
+- **Decision log.** Every model decision writes one line:
+
+  ```
+  knowledge advisor: decision agent=… kick=… mode=rank scope_kind=path scope_key=src/pkg/x scope_action=edit
+    candidates=a,b,c pick=b reason="…" verdict=pick outcome=delivered delivered=b
+    latency_ms=… prompt_tokens=… completion_tokens=…
+  ```
+
+  `verdict` is what the model produced (`pick`, `null`, `invalid`,
+  `timeout`, `over-budget`, `error`); `outcome` is what happened to delivery
+  (`delivered`, `held-out`, `gated` when the kick moved during the call,
+  `fallback-matcher`, or the verdict when nothing was typed). Over-budget
+  lines also carry `budget=agent-hour|fleet-day`. Delivered lines still land
+  in the prompt history under trigger `knowledge-advisor`.
+
+**Rollout.** Start with `mode: shadow` for about a week: delivery is
+unchanged, and the decision lines show how often the model says `null`, how
+often it disagrees with the matcher's top entry, the cost per kick and the
+latency. Then switch to `mode: rank` with `holdout_percent: 50` so half the
+kicks form a control group with the same selection, and compare the two arms'
+outcomes. Lower `holdout_percent` once the comparison is settled; `mode: off`
+returns to phase 1 at any time.
 
 ## 3. AGENTS.md / CLAUDE.md: injected by Hive, not read natively
 
