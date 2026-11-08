@@ -116,6 +116,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// open PR nor blanks the Matrix feed until the next sweep (#16276).
 	client.SetSentinelHeadsPath(sentinelHeadsStatePath)
 	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)
+	// The conditional-request cache is process-wide, not per client; size it
+	// from github.etag_cache_max_mb / _max_entries so a hive that evicts
+	// within hours can be given more room without a rebuild.
+	github.SetETagCacheLimits(b.cfg.GitHub.EffectiveETagCacheMaxBytes(), b.cfg.GitHub.EffectiveETagCacheMaxEntries())
 	// Per-repo pause (#6203). A live predicate over the shared config, so a
 	// pause taken in the dashboard narrows the very next enumeration and
 	// automerge sweep without a restart.
