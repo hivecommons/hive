@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.206.2)
+
+### Fixed
+
+- hold guard no longer logs a WARN every tick when a held PR's base refresh is deliberately deferred to the automerge preparation front; the deferral is logged at debug level and no longer trips the selfreport error classifier.
+
+## 2026-11-08 (v5.206.1)
+
+### Security
+
+- crux agentstep: step prompt/answer file access on the host now goes through an os.Root at the workspace, so a symlink inside a provisioned worktree (or one planted by the sandboxed agent) can no longer read or write host paths outside it ([#17293](https://github.com/hivecommons/hive/issues/17293)). A `prompt_path` that resolves outside the workspace is refused with the existing "must be relative to the workspace and stay inside it" 400.
+
 ## 2026-11-08 (v5.206.0)
 
 ### Added
