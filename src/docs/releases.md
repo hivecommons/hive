@@ -291,7 +291,16 @@ Concretely, per release:
    were built from.
 7. A GitHub Release is created from the tag, with GitHub's auto-generated
    notes plus an SBOM callout, and the three SBOM files from step 4a attached
-   as release assets.
+   as release assets. The notes body is the tag's dated `CHANGELOG.md`
+   section, capped by `src/scripts/release-notes-cap.sh` at
+   `RELEASE_NOTES_MAX_CHARS` (120000 bytes by default) **before** the
+   SBOM/NOTICE trailer is appended: GitHub rejects release bodies over
+   125000 characters, and the first release on a new line (v6.0.0 carried
+   every fragment since the line diverged, ~877 KB) would otherwise fail
+   this step after the tag and image retags have already landed. When the
+   cap bites, the section is cut at a bullet boundary and ends with
+   `… (N more entries) — full notes in CHANGELOG.md`, a link to the tag's
+   own section, so the trailer and the asset list always survive.
 
 ## Satisfying branch protection
 
