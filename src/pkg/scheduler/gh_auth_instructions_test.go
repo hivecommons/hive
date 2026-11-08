@@ -114,10 +114,10 @@ func TestGHAuthInstructions_DoesNotContradictItselfOnGHTOKEN(t *testing.T) {
 
 // The PR-title convention the repo's PR Type gate enforces is spelled out
 // where the agent reads how to open a PR, with the one swap that failed
-// hivecommons/hive#13131 called out (📝 is proposal, docs is 📖).
+// hivecommons/hive#13131 called out (docs and proposals are both 📖).
 func TestGHAuthInstructions_NamesThePRTitleEmojiConvention(t *testing.T) {
 	block := ghAuthBlock(t)
-	for _, want := range []string{"✨ feature", "🐛 fix", "📖 docs", "📝 proposal", "⚠️ breaking", "🌱 chore", `"📖 docs: …"`, "📝 is for proposals only"} {
+	for _, want := range []string{"✨ feature", "🐛 fix", "📖 docs", "📖 proposal", "⚠️ breaking", "🌱 chore", `"📖 docs: …"`} {
 		if !strings.Contains(block, want) {
 			t.Errorf("hive-open-pr instructions lack %q", want)
 		}
