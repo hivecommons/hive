@@ -47,8 +47,8 @@ func RunSignalsQuery(id string, sinceSeq int64, limit int) string {
 // AgentKickOutcomePath is the route of an agent's saved kick outcome.
 func AgentKickOutcomePath(name string) string { return AgentPath(name) + "/kick-outcome" }
 
-// Signal kinds, the closed set every signal reports. Started and done are
-// the runner's; the rest may come from the run's owner, and needs-input,
+// Signal kinds, the closed set every signal reports. Started, done and step
+// (SignalStep, steps.go) are the runner's; the rest may come from the run's owner, and needs-input,
 // input and blocked also from a gate opened for the run.
 const (
 	// SignalStarted: the sandbox was launched.

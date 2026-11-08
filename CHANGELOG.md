@@ -11,6 +11,23 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.203.0)
+
+### Added
+
+- crux: checkout requests are bounded by a server ceiling (`--checkout-max-bytes`, `CRUX_CHECKOUT_MAX_BYTES`), private repositories clone with `CRUX_CHECKOUT_TOKEN` through a credential helper that never logs the token, and the `job` run backend isolates each Job with a deny-all NetworkPolicy by default (`job_network: none|host|default`)
+- **Maintainer notes on the Activity Monitor.** With more than one maintainer running a hive, there was nowhere on the dashboard to leave a colleague a word about an item short of a GitHub comment everyone else could read. Each row now carries a 🗒 button with a count badge: click it for the item's maintainer notes — who wrote what, when — and a one-line composer (⌘/Ctrl+Enter). Notes are stored on the spoke in the append-only `/data/maintainer-notes.jsonl` and are never written to GitHub; every signed-in maintainer sees them, adding one takes write on the repo, deleting is author-or-owner, and the `maintainer-notes` SSE frame keeps the other browsers live. The scheduler types an item's notes into the agent's kick under `# Maintainer notes` (1 KB cap), so what a maintainer wrote on the row reaches whoever picks it up. `GET`/`POST /api/notes`, `DELETE /api/notes/{id}`; audited as `maintainer_note_add` / `maintainer_note_delete`.
+
+## 2026-11-08 (v5.202.0)
+
+### Added
+
+- crux: turn signals, the fifth work service of the Crux work-services RFC ([hivecommons/crux#114](https://github.com/hivecommons/crux/issues/114) S5). Every contained run now keeps an append-only `<workdir>/runs/<id>/signals.jsonl` of where its turn is and how it ended — `started` and `done` from the runner (`done` on every terminal path, with status, exit code and timed-out), `needs-input`, `input` and `blocked` from a gate opened with the new `run` field (`crux gate open --run`), and `thinking`, `tool`, `blocked`, `needs-input` or `input` posted by the run's owner. Read it with `GET /v1/runs/{id}/signals?since_seq=&limit=` or `crux --server … signal list`, post with `POST /v1/runs/{id}/signals` or `crux --server … signal emit`; each signal is also published as `run.signal` on `/v1/events`. The last kick outcome of every agent is saved under `<workdir>/signals/agents/` before `agent.kick_outcome` is published, and `GET /v1/agents/{name}/kick-outcome` answers it with `settled_for_last_kick`, so a driver that missed the event learns from the record whether its turn ended.
+
+### Security
+
+- The CLI-memory drain now reaches each memory store by opening its directories one component at a time from the filesystem root, refusing any component that is a symlink and requiring each opened directory to be the inode `Lstat` saw. `cliMemoryDrainSources` already resolved stores with `EvalSymlinks` and kept only those under the agent's own home, but the drain still opened the store root by path, so an agent that swapped `.claude`, `projects` or a project slug for a symlink after that listing could have had another agent's store (or any hive-readable `memory/*.md` tree) drained under its own name and, with `truncate`, emptied. Such a store is now reported in `kept` and the drain error, never followed ([#17256](https://github.com/hivecommons/hive/issues/17256)).
+
 ## 2026-11-08 (v5.201.1)
 
 ### Security

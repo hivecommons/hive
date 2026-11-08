@@ -183,6 +183,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerFamilies(mux)
 	s.registerCheckouts(mux)
 	s.registerRuns(mux)
+	s.registerSteps(mux)
 	s.registerGates(mux)
 	s.registerSignals(mux)
 	return s.laneHandler(s.authenticate(instrument(mux)))
