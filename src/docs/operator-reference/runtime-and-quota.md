@@ -105,12 +105,16 @@ agents:
 |---|---|---|
 | `auto_memory` | `false` | Pins Claude Code (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`), Codex (`[features] memories = false`) and Copilot CLI (`"memory": false`) auto-memory off at launch; `true` pins it on. |
 | `clear_on_kick` | `false` | Removes the agent's own memory stores before each non-resume kick; shared homes (`HIVE_SHARED_AGENT_HOME=1`, uid 0) are never touched. |
-| `drain_to_knowledge` | `false` | Before the wipe, writes every memory bullet or paragraph as a `state: draft` entry into the `bead-synth-wiki` vault (`knowledge.bead_synthesizer.vault_path`), tagged `cli-memory`, `agent:<name>`, `cli:<name>` and `repo:<org/repo>` when derivable, deduplicated by content hash. Drafts are excluded from kicks until approved. |
+| `drain_to_knowledge` | `false` | Before the wipe, writes every memory bullet or paragraph as a `state: draft` entry into the `bead-synth-wiki` vault (`knowledge.bead_synthesizer.vault_path`), tagged `cli-memory`, `agent:<name>`, `cli:<name>` and `repo:<org/repo>` when derivable, deduplicated by content hash; a duplicate only gains the draining agent's `agent:<name>` tag and keeps its state. Drafts are excluded from kicks until approved. |
 
 The drain logs one line per kick that found a store:
-`cli-memory: drained N facts from <agent> into bead-synth-wiki (dupes K)`
-with `drained`, `dupes`, `skipped` (over the 200-facts-per-drain cap; the
-rest drain on the next kick) and `sources`. Review drafts in the dashboard's
+`cli-memory: drained N facts from <agent> into bead-synth-wiki (dupes K, spooled S)`
+with `drained`, `dupes`, `skipped` (over the 200-facts-per-drain cap),
+`spooled` and `sources`. A memory file whose facts did not all reach the vault
+(cap hit, vault unwritable) is copied to
+`/data/knowledge/auto-memory-spool/<agent>/` before `clear_on_kick` wipes the
+store, retried first on the agent's next drain, and deleted from the spool
+once every fact in it is stored. Review drafts in the dashboard's
 knowledge view or the vault directory and approve them through the normal
 lifecycle (`PUT /api/knowledge/entry/{id}/state`); nothing promotes them
 automatically.

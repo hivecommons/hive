@@ -326,6 +326,17 @@ the focus trap and the body scroll lock behave as on desktop; desktop layout
 is unchanged apart from the affordance. Metrics come from the
 `--modal-scroll-*` / `--modal-sheet-*` tokens in `tokens.css`.
 
+### Phone text floor for the Activity monitor
+
+Inside `#activity-monitor-section`, the phone tier
+(`@media (max-width: 640px), ((pointer: coarse) and (max-width: 820px))` in
+`responsive.css`) remaps `--fs-2xs` and `--fs-xs` to `--fs-sm` (`.75rem`,
+12px), so no `.ham-*` text renders below 12px on a phone. Inputs stay at
+`--fs-touch`. Desktop sizes are unchanged. New tracker CSS should size text
+through `--fs-2xs`/`--fs-xs`/`--fs-sm` and never hard-code a smaller size, so
+the floor applies automatically. `dashboard-mobile-shots.mjs` asserts it at
+390×844 through the `tracker-text-floor` probe.
+
 ### Phone tap targets: `--tap-target-touch`
 
 `--tap-target` (40px) sizes icon-only controls on desktop and the 768px tier.

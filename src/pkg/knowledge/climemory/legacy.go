@@ -87,9 +87,9 @@ func (d *Drainer) TruncateDrained(sources []Source) (truncated, kept []string, e
 	return truncated, kept, errors.Join(errs...)
 }
 
-func allStored(facts []Fact, seen map[string]bool) bool {
+func allStored(facts []Fact, seen map[string]string) bool {
 	for _, f := range facts {
-		if !seen[Hash(f.Body)] {
+		if _, ok := seen[Hash(f.Body)]; !ok {
 			return false
 		}
 	}

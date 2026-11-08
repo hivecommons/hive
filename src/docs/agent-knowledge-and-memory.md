@@ -218,12 +218,22 @@ entry is written with `state: draft`, `source: cli-memory`, `agent: <name>`,
 `cli: <claude|codex|gemini>`, `repo: <org/repo>` when the Claude project slug
 ends in one of the agent's repos, and a `memhash` (SHA-256 of the normalised
 text) that makes the drain idempotent: a fact already in the vault, in any
-state and under any file name, counts as a duplicate. Because the Primer is
+state and under any file name, counts as a duplicate. A duplicate is never
+rewritten; it only gains the draining agent's `agent:<name>` tag, so an
+inference several agents reached on their own is one entry with one tag per
+agent, and a fact an operator deprecated or superseded stays that way however
+often a CLI writes it again ([#17056](https://github.com/hivecommons/hive/issues/17056)).
+A memory file whose facts do not all reach the vault (the vault is
+unwritable, or the 200-facts-per-drain cap was hit) is copied to
+`/data/knowledge/auto-memory-spool/<agent>/` first, so the `clear_on_kick`
+wipe that follows loses nothing; the agent's next drain retries the spool
+before its live store and deletes each spooled copy once all its facts are
+stored. The drain never blocks the kick. Because the Primer is
 approved-only by default (section 1), a drained fact is **not** injected into
 anyone's kick until an operator approves it through the normal lifecycle —
 that review step is the point: the CLI's one-off inference becomes a
 candidate, not a rule. One log line per drain:
-`cli-memory: drained N facts from <agent> into bead-synth-wiki (dupes K)`.
+`cli-memory: drained N facts from <agent> into bead-synth-wiki (dupes K, spooled S)`.
 The drain needs the in-process crux runtime; the sidecar runtime logs a
 warning and only wipes.
 
