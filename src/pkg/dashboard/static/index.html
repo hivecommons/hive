@@ -2403,6 +2403,10 @@
       #activity-monitor-panel { padding-left: 0; }
       #activity-monitor-section .ham-row > .ham-row-tools, #activity-monitor-section .ham-sub > .ham-row-tools { left: auto; right: 0; top: 0; width: auto; flex-direction: row; align-items: flex-start; gap: var(--sp-2); z-index: 1; }
       #activity-monitor-section .ham-row > .ham-row-head, #activity-monitor-section .ham-sub > .ham-row-head { padding-right: calc(2 * var(--tap-target) + var(--sp-2) + var(--sp-3)); min-height: var(--tap-target); }
+      /* Bridge until #17161's card layout: with the tools' width reserved,
+         a title squeezed under ~14em drops below the chips instead of
+         wrapping word-per-word beside them. */
+      #activity-monitor-section .ham-head-main > .ham-title { min-width: min(100%, 14em); }
       #activity-monitor-section .ham-sel, #activity-monitor-section .ham-kebab { width: var(--tap-target); height: var(--tap-target); min-width: var(--tap-target); min-height: var(--tap-target); font-size: var(--tap-glyph); opacity: 1; }
       .ham-menu.ham-menu-sheet { position: static; min-width: 0; max-width: none; padding: 0; border: 0; box-shadow: none; background: transparent; font-size: var(--fs-touch); }
       .ham-menu-sheet .ham-menu-head { display: none; }
