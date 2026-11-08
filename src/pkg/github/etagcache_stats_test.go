@@ -51,3 +51,32 @@ func TestETagCacheStats_ReportsSharedCache(t *testing.T) {
 		t.Errorf("entries delta = %d, want 1", entries1-entries0)
 	}
 }
+
+// ETagCacheSnapshot reports the shared cache's held bytes against its bound
+// and the evictions count, so an operator can see a working set that does not
+// fit (a rising evictions count with bytes at max_bytes).
+func TestETagCacheSnapshot_ReportsBytesAndBound(t *testing.T) {
+	srv := &etagServer{body: `[{"number":8}]`, etag: `W/"snapshot-probe"`, remaining: 100}
+	ts := httptest.NewServer(http.HandlerFunc(srv.handler))
+	defer ts.Close()
+	url := ts.URL + "/repos/hivecommons/hive/issues?snapshot-probe=1"
+	t.Cleanup(func() {
+		req, _ := http.NewRequest(http.MethodGet, url, nil)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "Bearer tok-snapshot")
+		sharedETagCache.drop(etagCacheKey(req))
+	})
+
+	before := ETagCacheSnapshot()
+	etagGet(t, etagCacheWrap(http.DefaultTransport), url, "tok-snapshot")
+	after := ETagCacheSnapshot()
+	if after.MaxBytes != int64(sharedETagCache.maxBytes) || after.MaxBytes <= 0 {
+		t.Errorf("MaxBytes = %d, want the shared bound %d", after.MaxBytes, sharedETagCache.maxBytes)
+	}
+	if after.Bytes-before.Bytes < int64(len(srv.body)) {
+		t.Errorf("Bytes grew by %d after storing a %d-byte body", after.Bytes-before.Bytes, len(srv.body))
+	}
+	if after.Entries-before.Entries != 1 || after.Misses-before.Misses != 1 {
+		t.Errorf("snapshot deltas entries=%d misses=%d, want 1 and 1", after.Entries-before.Entries, after.Misses-before.Misses)
+	}
+}
