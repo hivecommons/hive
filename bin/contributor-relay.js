@@ -753,11 +753,32 @@ function quotaPublisherMarkerFresh(markerFile, nowMs = Date.now()) {
 // The reset epoch of a normalized window, however the adapter spells it. This
 // is what makes an until-reset override expire MECHANICALLY: the override pins
 // the epoch it was created against, and the moment the window reports a
-// different one the override no longer matches and is inert.
+// different reset (quotaResetEpochsMatch) the override no longer matches and is
+// inert.
 function quotaWindowResetEpoch(window) {
   const raw = window && (window.reset_epoch ?? window.resets_at ?? window.reset_at);
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
+}
+
+// How far apart two reset epochs (milliseconds, the published reading's unit)
+// may be and still name the SAME reset. Providers restate a window's reset time
+// with jitter between readings: a continue-until-reset pinned to weekly_all at
+// 07:00:00.373Z met a reading five minutes later saying 06:59:59.634Z, and the
+// old exact match dropped the override for 14 minutes until someone used
+// continue-once. A real roll moves the epoch by at least the window's length,
+// and the shortest window any adapter publishes is an hour (agy `session`;
+// Claude and Codex are 5 h and 7 d, agy also has 5 h / daily / weekly, Kiro is
+// monthly). The published reading carries no window length, so the tolerance
+// is fixed rather than relative: five minutes is hundreds of times the jitter
+// seen and a twelfth of the shortest window, so a real roll still expires the
+// override.
+const QUOTA_RESET_EPOCH_TOLERANCE_MS = 5 * 60 * 1000;
+
+function quotaResetEpochsMatch(pinned, current) {
+  const a = Number(pinned);
+  if (current === null || current === undefined || !Number.isFinite(a)) return false;
+  return Math.abs(a - current) <= QUOTA_RESET_EPOCH_TOLERANCE_MS;
 }
 
 // A continue-* override is consent to spend BELOW the configured reserve. It is
@@ -777,14 +798,14 @@ function quotaOverrideApplies(override, guardWindow, reading) {
       // task-admission site, not here (evaluate also runs for `ready`).
       return true;
     case 'continue_until_reset': {
-      // Bound to the EXACT guarded window and the reset epoch it was created
-      // against. A different window, or the same window after its reset epoch
-      // rolls, no longer matches.
+      // Bound to the EXACT guarded window and the reset it was created
+      // against. A different window, or the same window after its reset
+      // rolls, no longer matches; a few seconds of reset-time jitter between
+      // readings is the same reset (QUOTA_RESET_EPOCH_TOLERANCE_MS).
       if (!guardWindow) return false;
       const id = guardWindow.id || guardWindow.kind;
       if (override.window_id !== id) return false;
-      const epoch = quotaWindowResetEpoch(guardWindow);
-      return epoch !== null && override.reset_epoch === epoch;
+      return quotaResetEpochsMatch(override.reset_epoch, quotaWindowResetEpoch(guardWindow));
     }
     default:
       return false;
@@ -794,15 +815,15 @@ function quotaOverrideApplies(override, guardWindow, reading) {
 // A pause-until-reset override forces a hold even when a reading has cleared,
 // until the window it names resets — an explicit pause outranking an automatic
 // resume (#6833). Absent that window from the reading (or a rolled epoch) it has
-// expired and no longer holds.
+// expired and no longer holds. Reset-time jitter is tolerated exactly as for
+// continue-until-reset (quotaResetEpochsMatch).
 function quotaPauseOverrideActive(override, reading) {
   if (!override || override.directive !== 'pause_until_reset') return false;
   const windows = (reading && reading.limits) || [];
   for (const w of windows) {
     const id = w.id || w.kind;
     if (override.window_id !== id) continue;
-    const epoch = quotaWindowResetEpoch(w);
-    if (epoch !== null && override.reset_epoch === epoch) return true;
+    if (quotaResetEpochsMatch(override.reset_epoch, quotaWindowResetEpoch(w))) return true;
   }
   return false;
 }
@@ -1151,6 +1172,42 @@ function armContributorQuotaRetry() {
   if (typeof contributorQuotaRetryTimer.unref === 'function') contributorQuotaRetryTimer.unref();
 }
 
+// The release line names what actually released the hold. It used to say "a
+// fresh reading clears every effective reserve" every time, including when a
+// continue-once override released it with the weekly window still at 11%
+// against a 20% reserve — which reads as the quota having recovered when it had
+// not.
+function quotaGuardReleaseMessage(decision) {
+  const d = decision || {};
+  const pct = v => (Number.isFinite(Number(v)) ? `${Number(v)}%` : '?');
+  const still = d.window_id
+    ? ` Window ${d.window_id} is still at ${pct(d.remaining_pct)} against a ${pct(d.required_reserve_pct)} reserve.`
+    : '';
+  let cause;
+  switch (d.override) {
+    case 'continue_once':
+      cause = `by the continue-once override.${still} It admits one task, then the guard checks again.`;
+      break;
+    case 'continue_until_reset':
+      cause = `by the continue-until-reset override.${still} It stays in force until that window resets.`;
+      break;
+    case 'disable_session':
+      cause = `by the disable-session override.${still} The guard is off for this relay session.`;
+      break;
+    default:
+      if (d.override) {
+        cause = `by the ${d.override} override.${still}`;
+      } else if (d.reason === 'banked_reset_available') {
+        cause = '— a fresh reading clears every reserve except the weekly one, which a banked reset covers.';
+      } else if (d.reason === 'unprovisioned') {
+        cause = '— no quota reading source is configured, so the guard is not guarding anything.';
+      } else {
+        cause = '— a fresh reading clears every effective reserve.';
+      }
+  }
+  return `Contributor quota guard released ${cause} Asking for work again.`;
+}
+
 function retryContributorQuota() {
   if (!contributorQuotaPaused) return;
   // An explicit contributor pause outranks a fresh reading: someone asked for
@@ -1160,7 +1217,7 @@ function retryContributorQuota() {
   if (!decision.admit) { armContributorQuotaRetry(); return; }
   contributorQuotaPaused = false;
   writeRelayStatus();
-  console.log('Contributor quota guard released — a fresh reading clears every effective reserve. Asking for work again.');
+  console.log(quotaGuardReleaseMessage(decision));
   if (!currentTask && !cliReadyFailed && !quotaHoldActive()) {
     requestWork(hubs[activeHubIndex], 'quota_guard_released');
   }
@@ -10551,6 +10608,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     consumeQuotaOverrideOnce,
     quotaOverrideApplies,
     quotaPauseOverrideActive,
+    quotaResetEpochsMatch,
+    QUOTA_RESET_EPOCH_TOLERANCE_MS,
+    quotaGuardReleaseMessage,
     QUOTA_SESSION_ID,
     QUOTA_RELAY_ID,
     QUOTA_POOL_KEY: quotaPool ? quotaPool.poolKey : null,
