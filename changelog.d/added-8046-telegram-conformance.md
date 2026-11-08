@@ -1,1 +1,0 @@
-- Telegram now has v6 readiness conformance coverage for inbound ioscan enforcement, outbound secret/canary scrubbing, and structural guard invariants on command paths (#8046)

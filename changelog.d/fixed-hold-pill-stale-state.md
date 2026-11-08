@@ -1,1 +1,0 @@
-- Fix dashboard repository hold pills so toggles immediately update the cached status snapshot, return a status-sequence floor, and render distinct Hold/Release controls.

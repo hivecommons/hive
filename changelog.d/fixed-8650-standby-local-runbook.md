@@ -1,1 +1,0 @@
-- Allow local v6 standby runbook harnesses to redirect the mutation convergence journal away from /data.

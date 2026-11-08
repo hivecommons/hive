@@ -1,1 +1,0 @@
-- Fixed a flaky claim-hook test that let the label-release hook keep writing after the test finished by letting hooks run on a caller-supplied effect queue that tests can drain (#15520)

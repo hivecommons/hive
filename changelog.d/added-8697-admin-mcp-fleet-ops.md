@@ -1,1 +1,0 @@
-- Add admin MCP fleet-level write operations for autonomy level, plan proposal/review, and governor feature settings behind the preview-and-confirm contract.

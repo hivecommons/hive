@@ -1,1 +1,0 @@
-- Add v6 Spektacular-backed design mode linking `hive-design`, dashboard approval, and `!runs design` to Spec/Plan run checkpoints with work-source design signal adapters.

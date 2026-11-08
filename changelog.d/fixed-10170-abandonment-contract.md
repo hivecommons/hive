@@ -1,1 +1,0 @@
-- Align terminal run-key abandonment documentation and OpenAPI registration, and cover explicit owner admission/reset refusal after retirement.

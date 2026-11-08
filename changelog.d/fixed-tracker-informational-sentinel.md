@@ -1,1 +1,0 @@
-- Keep informational trusted-author security notices separate from actual sentinel gates in Activity Monitor, quoting the real reviewer question without assigning exclusive decision authority to either the PR author or a person the reviewer mentions.

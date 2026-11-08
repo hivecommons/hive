@@ -1,1 +1,0 @@
-- Expected hold-guard refusals for branches changed while held no longer generate repeated runtime-error fleet reports; local warnings and merge safety remain unchanged.

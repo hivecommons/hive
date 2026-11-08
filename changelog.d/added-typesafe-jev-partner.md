@@ -1,1 +1,0 @@
-- List Jev by TypeSafe AI as a Hive Commons partner integration on the hub landing page.

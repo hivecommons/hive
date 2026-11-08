@@ -1,1 +1,0 @@
-- Fix dashboard cost-per-PR and cost-per-issue divisors for App-authored multi-repo hives, preserving persisted counts instead of showing false zeroes when GitHub counts are unavailable.

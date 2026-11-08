@@ -1,1 +1,0 @@
-- Hold guard no longer merges the base branch into held Renovate/dependency-bot PRs (a `renovate/*` head branch or a `renovate[bot]`, `dependabot[bot]` or `mergeraptor[bot]` author); the bot keeps those branches current itself, and a hive commit made Renovate stop rebasing them.

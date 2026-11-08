@@ -1,1 +1,0 @@
-- Hub-launched agents now receive a per-launch lease-scoped token in their task MCP URL instead of the dashboard auth token; the token is bound to the launch scope and stops working when the launch ends (#8348)

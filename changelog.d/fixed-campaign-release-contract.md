@@ -1,1 +1,0 @@
-- Clarify that campaign release only releases Inception pickup leases and preserves both contributor-held and pending Spektacular stage leases.

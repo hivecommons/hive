@@ -1,1 +1,0 @@
-- Fix v6 dashboard forward-merge debris in OpenAPI coverage, diagnostics health rendering, run-plan import, and version provenance UI.

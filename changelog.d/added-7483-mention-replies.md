@@ -1,1 +1,0 @@
-- Added in-thread completion replies for GitHub mention-triggered runs through the existing guarded comment path.

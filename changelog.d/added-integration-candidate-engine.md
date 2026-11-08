@@ -1,1 +1,0 @@
-- Add independent default-OFF integration execution enrollment, versioned private candidate provenance and actual runner accounting, designated-executor authority, bounded preparation admission, and exact protected-prefix promotion guards without replacing normal review, trust, CI, hold, or native-queue authority.

@@ -1,1 +1,0 @@
-- Replace flat 60% knowledge confidence defaults with signal-based scores and show unscored facts honestly.

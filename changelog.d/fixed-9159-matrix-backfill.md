@@ -1,1 +1,0 @@
-- fix(matrix): backfill dropped events via `/rooms/{id}/messages` when a sync's timeline is `limited`, instead of only logging a warning (#9159)

@@ -1,1 +1,0 @@
-- Cancel revoked Spektacular hub stages, join workers and status polling on shutdown, protect active worktrees across hub restarts, and bound retained executor output and bookkeeping ([#9148](https://github.com/hivecommons/hive/issues/9148)).

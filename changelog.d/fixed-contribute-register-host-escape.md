@@ -1,1 +1,0 @@
-- Dashboard: the no-OAuth `/contribute/register` page now HTML-escapes the request host when rendering the example curl command (#13353).

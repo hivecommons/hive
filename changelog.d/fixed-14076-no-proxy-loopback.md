@@ -1,1 +1,0 @@
-- Set NO_PROXY for loopback on every agent backend and stop warning when the proxy fails to forward to loopback (#14076)

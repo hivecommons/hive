@@ -1,1 +1,0 @@
-- Serialize inference and live Copilot token updates through atomic file publication so concurrent responses cannot race over the shared temporary usage file or overwrite newer cumulative totals with an older snapshot.

@@ -1,1 +1,0 @@
-- Trusted integration candidates now compose real required CI jobs and bind read-only member-governance verification to signed exact-job receipts; execution remains opt-in and OFF by default, with protected-promotion qualification still required.

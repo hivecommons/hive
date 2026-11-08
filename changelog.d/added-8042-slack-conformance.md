@@ -1,1 +1,0 @@
-- Add the v6 readiness conformance suite for Slack Socket Mode. (#8042)

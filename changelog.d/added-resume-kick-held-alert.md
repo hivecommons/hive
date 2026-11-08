@@ -1,1 +1,0 @@
-- A crash-restarted agent that the resume-kick gate leaves idle now raises a per-agent dashboard alert (with an OOM hint when the container's cgroup `oom_kill` counter rose) that clears once any kick reaches it, instead of silently waiting for its next slot.

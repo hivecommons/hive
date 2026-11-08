@@ -1,1 +1,0 @@
-- Standby suspension checks no longer make synchronous GitHub requests during status builds or WebSocket handling. A background worker reconciles PR outcomes every five minutes, and legacy issue-numbered rows that return 404 are retired without penalizing contributors ([#9183](https://github.com/hivecommons/hive/issues/9183)).

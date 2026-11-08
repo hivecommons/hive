@@ -1,1 +1,0 @@
-- A missing GITHUB_WEBHOOK_SECRET is warned about once per process instead of on every rejected webhook, so it no longer surfaces as a repeated-error self-report (#13666).

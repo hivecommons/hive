@@ -1,1 +1,0 @@
-- After a restart, the periodic GitHub sweeps no longer all run in the first second. The merge sweep still starts at once. The others start one at a time over the first five minutes, so a restart no longer uses up much of the GitHub App's hourly request limit in a few minutes. After that first pass each sweep runs on its usual schedule.

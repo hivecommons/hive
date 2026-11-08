@@ -1,1 +1,0 @@
-- crux: `serve` attaches a caller principal to every authenticated request (`serve.CallerFrom`): the control token is the operator (named by `--operator-name`/`CRUX_OPERATOR_NAME`), and lane project credentials are accepted as project principals on work-services routes only — agent RPCs still refuse them. Groundwork for the crux work services (hivecommons/crux#114 S0).

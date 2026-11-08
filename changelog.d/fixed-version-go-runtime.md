@@ -1,1 +1,0 @@
-- `/api/version` now reports the Go version the hive was actually built with in its `go` field, instead of a fixed `1.25` that no longer matched the build.

@@ -1,1 +1,0 @@
-- The chat SSE notification bridge now gives up after 30 s on a dashboard that accepts the `/api/events` connection but never sends response headers, and reconnects, instead of waiting out the 10-minute idle watchdog ([#9126](https://github.com/hivecommons/hive/issues/9126)).

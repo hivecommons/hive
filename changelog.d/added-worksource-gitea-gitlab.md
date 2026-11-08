@@ -1,1 +1,0 @@
-- Added Gitea/Forgejo and GitLab work-source adapters with issue enumeration plus label, comment, and close/reopen mutation support.

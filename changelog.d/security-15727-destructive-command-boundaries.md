@@ -1,1 +1,0 @@
-- Fix tool approval's built-in destructive-command detection for root/home removal and fork bombs without relying on host text-scanner findings, and avoid matching removal of ordinary subpaths ([#15727](https://github.com/hivecommons/hive/issues/15727)).

@@ -1,1 +1,0 @@
-- The changelog-fragment-guard check now pushes a signed-off fragment generated from the PR title to same-repo PRs that lack one (fork PRs get a guidance comment), and the PR template leads with the changelog requirement.

@@ -1,1 +1,0 @@
-- Fixed Model Gateway/LiteLLM key rotation so saved keys immediately refresh live agent proxy routes, surface the effective key SHA-256 in APIs/UI, and log only the hash for operator correlation.

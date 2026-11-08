@@ -1,1 +1,0 @@
-- A contributor PR with no linked issue no longer logs the "waits on the hive past the stage dwell — reviewer lane needs attention" warning; it is waiting on a person, not the reviewer lane (#15009)

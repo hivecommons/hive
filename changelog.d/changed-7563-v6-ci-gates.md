@@ -1,1 +1,0 @@
-- CI now gates PRs targeting the v6 line: v2 CI, v2 Tests, the changelog fragment guard, the testutil guard, and Go security analysis run on v6 pushes and pull requests (#7563 Track 7).

@@ -1,1 +1,0 @@
-- Add lease-scoped Task MCP tokens for remote contributors and advertise MCP server config in task_assign.

@@ -1,1 +1,0 @@
-- The v6 hub/spoke, hub, and contributor images now ship the Spektacular CLI: the agent probes its version at startup and runs stage status/export commands from the owning repo's worktree, so Spektacular stage state is available per repo without any manual install ([#8737](https://github.com/hivecommons/hive/issues/8737)).

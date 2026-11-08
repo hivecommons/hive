@@ -1,1 +1,0 @@
-- fix(matrix): honor `limited`/`prev_batch` on sync so gappy timelines are backfilled instead of silently dropped (#9159)

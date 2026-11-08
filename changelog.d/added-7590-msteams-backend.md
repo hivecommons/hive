@@ -1,1 +1,0 @@
-- Add a Microsoft Teams chat backend on the pkg/chat spine using Microsoft Graph polling without inbound webhooks.

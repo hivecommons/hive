@@ -1,1 +1,0 @@
-- Add the v6 readiness conformance suite for GitHub @-mention triggers. (#8041)

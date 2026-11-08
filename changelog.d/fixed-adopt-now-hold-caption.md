@@ -1,1 +1,0 @@
-- A hold added after Adopt now no longer leaves the row captioned as queued; it reads 'release the hold first' (#15665)

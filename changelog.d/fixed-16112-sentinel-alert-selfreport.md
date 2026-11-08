@@ -1,1 +1,0 @@
-- Sentinel findings on pull requests no longer generate repeated runtime-error fleet reports; the local warning and the PR alert remain unchanged, and sentinel sweep failures stay reportable.

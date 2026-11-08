@@ -1,1 +1,0 @@
-- Campaign Release now returns an explicit conflict for run-backed Spektacular campaigns instead of revoking the contributor's stage lease and making the run disappear; Inception campaign leases can still be released.

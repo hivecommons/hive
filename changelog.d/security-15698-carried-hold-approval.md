@@ -1,1 +1,0 @@
-- The hold guard no longer treats an approval carried from an adopted PR as proof that a trusted merger reviewed the copy's current head ([#15698](https://github.com/hivecommons/hive/issues/15698)).

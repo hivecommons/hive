@@ -1,1 +1,0 @@
-- Re-checking a parked issue no longer spends a copy lookup on the hive's own adoption copy when that copy closed unmerged and refers to the issue.

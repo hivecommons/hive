@@ -1,1 +1,0 @@
-- Crux guardrail path matching now normalises redundant separators and `.`/`..` components before matching protected paths

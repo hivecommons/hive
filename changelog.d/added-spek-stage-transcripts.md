@@ -1,1 +1,0 @@
-- Capture Spektacular stage documents, interview status, prompts and bounded agent transcripts for run Details, and render stage details as prose.

@@ -1,1 +1,0 @@
-- Reconcile closed donated standby PRs so two closed-unmerged donations suspend that contributor configuration.

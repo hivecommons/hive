@@ -1,1 +1,0 @@
-- Redesigned the dashboard Settings → Extensions tab around scannable per-extension cards with grouped controls and clearer disabled states.

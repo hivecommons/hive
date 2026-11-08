@@ -1,1 +1,0 @@
-- Added the repo-policy opt-in `project.repo_policies[].release_on_approve` (default off); config only, no behaviour change yet (#12631).

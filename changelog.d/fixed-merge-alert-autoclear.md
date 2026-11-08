@@ -1,1 +1,0 @@
-- Dashboard "Merge blocked" alerts now clear on their own once the blocked PR closes or its fork workflow runs are approved / the approval setting is relaxed, instead of waiting for an unrelated App merge or a restart (#9391).

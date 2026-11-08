@@ -1,1 +1,0 @@
-- Fix Spek live activity so hub lease renewals no longer mask idle agent output; dashboard activity now reports agent log idle time and artifact-creation waits.

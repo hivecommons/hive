@@ -1,1 +1,0 @@
-- Fixed self-authored and trusted-author automerge to gate on required branch-protection checks instead of GitHub's aggregate merge state, with per-PR skip reasons.

@@ -1,1 +1,0 @@
-- Honor `runs.spektacular.binary` in hub executor initialization, status probes, and spec/plan agent prompts ([#9145](https://github.com/hivecommons/hive/issues/9145)).

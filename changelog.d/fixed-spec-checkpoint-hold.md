@@ -1,1 +1,0 @@
-- Enforce the Spektacular Spec checkpoint hold before runs advance to Plan.
