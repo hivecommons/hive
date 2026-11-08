@@ -1,7 +1,7 @@
 # Crux work services: S1 pinned checkout (hivecommons/crux#114)
 
 Status: **S0 caller principals and S1 pinned checkout shipped in hive
-`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate); S4 command log is [below](#s4-command-log); S5 turn signals are [below](#s5-turn-signals); S6 agent step is [below](#s6-agent-step); everything else in the RFC is unscheduled. This records
+`src/crux` (v5).** S2 contained run and the S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate); S4 command log is [below](#s4-command-log); S5 turn signals are [below](#s5-turn-signals); S6 agent step is [below](#s6-agent-step); S7 saved run results is complete and [below](#s7-saved-run-results). How an orchestrator composes the slices end to end is the [integration guide](../crux-integration-guide.md). This records
 S1 *as implemented*, including where it is weaker than the RFC text.
 
 The RFC asks for "a working copy of this repo at this commit, owned by
@@ -588,11 +588,69 @@ next one sees.
   the service lives in hive `src/crux` and ships through the existing
   mirror unchanged.
 
-## Deferred runs routes
+## S7. Saved run results
 
-The runs routes (`POST /v1/runs`, `GET /v1/runs/{id}`,
-`POST /v1/runs/{id}/cancel`) shipped in #17014. Restart and listing routes
-for runs are deferred and not scheduled.
+The RFC's S7 is the promise that a run's outcome outlives the process that
+produced it: stable ids at accept, idempotent create, a closed status set,
+the saved record readable later, in-flight runs settled to `unfinished`
+when `crux serve` restarts, and an explicit, audited restart that refuses
+a run whose saved state is still live. #17014 shipped the minimum (ids,
+idempotency, `GET /v1/runs/{id}`, reconcile of runs); this section is the
+rest, *as implemented*.
+
+### Surface
+
+| Route | Who | Answer |
+|---|---|---|
+| `GET /v1/runs?status=S&limit=N` | owner sees own runs, operator sees all | `ContainedRunList`, newest first, stdout/stderr stripped; `limit` must be a positive integer (server default 100); `status` must be a known status |
+| `POST /v1/runs/{id}/restart` | owner or operator | the new run, `200` once it has finished or `202` with `detach: true` (sessions are always `202`); `409 conflict` while the old run is `accepted`/`running`/`waiting` or when its record predates the saved request; an empty body is a plain restart |
+| `GET /v1/runs/{id}/history` | owner or operator | `RunHistory`: every status the record passed through with its time and reason |
+| `GET /v1/runs/{id}/steps/{n}` | owner or operator | the RFC's `GET /v1/steps/{id}`: steps are numbered per run (S6), so a step's saved record lives under its run |
+
+CLI: `crux --server ADDR runs list [--status S] [--limit N] [--json]`,
+`runs restart [--reason TEXT] [--idempotency-key KEY] [--detach] [--json] <id>`,
+`runs history [--json] <id>`.
+
+### Semantics
+
+- **Restart re-runs the saved request.** The record keeps the
+  `ContainedRunRequest` it was accepted with (minus `idempotency_key` and
+  `detach`); restart validates it again as the *original owner* against
+  the *current* configuration, so a removed workspace root, a deleted
+  checkout or a shrunk allowlist refuse the restart with the same
+  `bad_request` the original would get now. An operator restarting a
+  project's run does not widen what the run may do, and the new run is
+  owned by the project.
+- **Two records, linked both ways.** The new run carries
+  `restarted_from`; the old record gains `restarted_by` once the restart
+  is accepted. Its status does not change — a restart is a new run, not
+  a mutation of the finished one. `reason` is saved on the new record and
+  audited.
+- **Refused while live.** Any non-terminal status is `ErrLive` → `409`:
+  the runner may still be alive, and two drivers must not both resume one
+  task. The only ways out of a live state are the run ending, `cancel`,
+  or the reconcile at serve restart.
+- **Idempotent like create.** `idempotency_key` on the restart request is
+  scoped the same way as on create; a replay returns the restart it
+  already started, without a second launch.
+- **Audited.** Every accepted restart records `run.restart` with the new
+  run, `restarted_from`, the old status, the reason and the owner, through
+  the same sink as the gate override.
+- **History is the transition log.** `runstate` appends to `index.jsonl`
+  on create and on every status change, and only then — a payload-only
+  update (output, cmdlog pointer, restart back-link) is not a transition.
+  `History(id)` is that file filtered by id.
+- **Reconcile settles steps too.** When serve restarts, every run that
+  goes `unfinished` has its `running` steps marked `unfinished` with the
+  same reason, so `GET /v1/runs/{id}/steps/{n}` never shows a step that is
+  "running" in a run that is not.
+
+### Not in S7
+
+- Pruning or archival of saved records.
+- Restart of a run whose record predates the saved request (shipped
+  before this slice): `409 conflict` with a message naming the cause.
+- A `GET /v1/steps/{id}` route distinct from the per-run one.
 
 ## Package map
 
@@ -626,3 +684,9 @@ for runs are deferred and not scheduled.
 | `src/crux/runs/service.go` | S6 session: `profile: agent` validation, `session` runner, `RunStep`, `Steps`, `Step`, `ErrNotSession`, `ErrStepBusy` |
 | `src/crux/serve/steps.go` | `POST`/`GET /v1/runs/{id}/steps`, `GET /v1/runs/{id}/steps/{n}`, ownership check, error mapping |
 | `src/crux/cli/step.go` | `crux step run|list|show`, remote only |
+| `src/crux/api/runs.go` | S7: `RunRestartPath`, `RunHistoryPath`, `RunsListQuery`, `ContainedRun.RestartedFrom/RestartedBy`, `RunRestartRequest`, `ContainedRunList`, `RunTransition`, `RunHistory`, `Client.{ListRuns,RestartRun,RunHistory}` |
+| `src/crux/runstate/runstate.go` | S7: `History`; the index is the transition log |
+| `src/crux/runs/restart.go` | S7: `Restart`, `List`, `ListFilter`, `History`, `ErrLive`, `ErrNoRequest`, `DefaultListLimit`; `service.go` saves the request on the record and reconciles steps |
+| `src/crux/agentstep/store.go` | S7: `Store.Reconcile` marks running steps `unfinished` |
+| `src/crux/serve/runs_saved.go` | `GET /v1/runs`, `POST /v1/runs/{id}/restart`, `GET /v1/runs/{id}/history`, `run.restart` audit |
+| `src/crux/cli/runs_saved.go` | `crux runs list|restart|history`, remote only |

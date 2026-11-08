@@ -4413,13 +4413,22 @@ type ETagCacheInfo struct {
 	Hits    int64 `json:"hits"`
 	Misses  int64 `json:"misses"`
 	Entries int64 `json:"entries"`
-	// Bytes / MaxBytes / Evictions are the conditional-request cache's
-	// memory against its bound and how many entries the bounds pushed out
-	// (ETagCacheSnapshot). Unset for caches that do not report them.
-	Bytes     int64 `json:"bytes,omitempty"`
-	MaxBytes  int64 `json:"max_bytes,omitempty"`
-	Evictions int64 `json:"evictions,omitempty"`
+	// Bytes / MaxBytes / MaxEntries show the fill level of a size-bounded
+	// cache so an operator can see eviction pressure, and Evictions how many
+	// entries the bounds pushed out (ETagCacheSnapshot). The PR detail cache
+	// has no byte bound and leaves them zero.
+	Bytes      int64 `json:"bytes,omitempty"`
+	MaxBytes   int64 `json:"max_bytes,omitempty"`
+	MaxEntries int64 `json:"max_entries,omitempty"`
+	Evictions  int64 `json:"evictions,omitempty"`
 }
+
+// etagCacheInfo snapshots the shared ETag cache's counters and fill level.
+func etagCacheInfo() ETagCacheInfo { return ETagCacheSnapshot() }
+
+// ETagCacheInfoSnapshot is etagCacheInfo for callers outside the package
+// that assemble their own RateLimitInfo (the hub's token-less poller).
+func ETagCacheInfoSnapshot() ETagCacheInfo { return etagCacheInfo() }
 
 type RateLimitEntry struct {
 	Limit     int       `json:"limit"`
@@ -4487,7 +4496,7 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 		info.GraphQLPRBatch = c.prBatchStats
 		c.prBatchMu.Unlock()
 	}
-	info.ETagCache = ETagCacheSnapshot()
+	info.ETagCache = etagCacheInfo()
 	hits, misses, entries := PRDetailCacheStats()
 	info.PRDetailCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
 	info.Webhooks = WebhookHealthSnapshot()

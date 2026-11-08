@@ -1139,6 +1139,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"github app recheck: installation does not cover every configured repo":                ClassGitHubAppRepoNotCovered,
 		"proxy: plain HTTP forward refused — destination is not globally routable":             ClassProxyPlainForwardRefused,
 		"proxy: CONNECT dial failed":                                                           ClassProxyConnectDialFailed,
+		"copilot sniff: upstream dial failed":                                                  ClassProxyConnectDialFailed,
 		"inference upstream error":                                                             ClassInferenceUpstreamError,
 		"copilot transcript activity scan outlived its interval; agent liveness reads may lag": ClassTranscriptScanSlow,
 		"inference upstream failed":                                                            ClassInferenceUpstreamError,

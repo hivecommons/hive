@@ -12,6 +12,7 @@
 package runstate
 
 import (
+	"bufio"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -52,8 +53,10 @@ const (
 
 	idRandomBytes = 6
 	maxIDLen      = 64
-	dirMode       = 0o770
-	fileMode      = 0o660
+	// indexLineBuf bounds one index line; a reason is a sentence, not a log.
+	indexLineBuf = 64 * 1024
+	dirMode      = 0o770
+	fileMode     = 0o660
 )
 
 // ErrNotFound is returned by Get and Update for an unknown ID.
@@ -178,7 +181,7 @@ func (s *Store) Create(rec Record) (Record, bool, error) {
 	if err := os.MkdirAll(s.Path(rec.ID), dirMode); err != nil {
 		return Record{}, false, fmt.Errorf("runstate: %w", err)
 	}
-	if err := s.write(rec); err != nil {
+	if err := s.write(rec, true); err != nil {
 		return Record{}, false, err
 	}
 	if rec.IdempotencyKey != "" {
@@ -226,7 +229,9 @@ func (s *Store) Update(id string, fn func(*Record) error) (Record, error) {
 			rec.FinishedAt = &now
 		}
 	}
-	if err := s.write(rec); err != nil {
+	// The index is the status history: a write that only touched the
+	// payload (output, a restart link) is not a transition.
+	if err := s.write(rec, rec.Status != before); err != nil {
 		return Record{}, err
 	}
 	return rec, nil
@@ -291,6 +296,42 @@ func (s *Store) Reconcile(reason string) ([]Record, error) {
 	return changed, nil
 }
 
+// History is every status id passed through, in the order the index
+// recorded them: the proof behind the record's current status. An unknown
+// id is ErrNotFound; a record whose index lines are missing (the index was
+// pruned) answers an empty history, not an error.
+func (s *Store) History(id string) ([]IndexEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.read(id); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(filepath.Join(s.dir, IndexName))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []IndexEntry{}, nil
+		}
+		return nil, fmt.Errorf("runstate: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	out := []IndexEntry{}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, indexLineBuf), indexLineBuf)
+	for sc.Scan() {
+		var e IndexEntry
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+			return nil, fmt.Errorf("runstate: %s: corrupt index line: %w", id, err)
+		}
+		if e.ID == id {
+			out = append(out, e)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("runstate: %w", err)
+	}
+	return out, nil
+}
+
 func (s *Store) read(id string) (Record, error) {
 	if !validID(id) {
 		return Record{}, ErrNotFound
@@ -309,8 +350,9 @@ func (s *Store) read(id string) (Record, error) {
 	return rec, nil
 }
 
-// write replaces the record atomically and appends the status to the index.
-func (s *Store) write(rec Record) error {
+// write replaces the record atomically and, when index is set, appends the
+// status to the index.
+func (s *Store) write(rec Record, index bool) error {
 	data, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("runstate: %w", err)
@@ -322,6 +364,9 @@ func (s *Store) write(rec Record) error {
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("runstate: %w", err)
+	}
+	if !index {
+		return nil
 	}
 	line, err := json.Marshal(IndexEntry{At: s.Now().UTC(), ID: rec.ID, Kind: rec.Kind, Status: rec.Status, Reason: rec.Reason})
 	if err != nil {

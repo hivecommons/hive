@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/hivecommons/hive/crux/api"
 )
@@ -156,4 +157,29 @@ func (s Store) AppendTranscript(n int, a attempt) error {
 		werr = cerr
 	}
 	return werr
+}
+
+// Reconcile marks every step still recorded as running unfinished with
+// reason and returns the steps it changed. It runs when the run that owns
+// the steps is itself reconciled at `crux serve` start: the process that
+// ran the step is gone, so its outcome is not knowable and is never
+// guessed. A corrupt record is skipped, not an error, so the rest settle.
+func (s Store) Reconcile(reason string, now time.Time) ([]api.Step, error) {
+	steps, err := s.List()
+	if err != nil && !errors.Is(err, ErrCorrupt) {
+		return nil, err
+	}
+	var changed []api.Step
+	for _, step := range steps {
+		if step.Status != api.StepRunning {
+			continue
+		}
+		at := now
+		step.Status, step.Reason, step.FinishedAt = api.StepUnfinished, reason, &at
+		if err := s.Write(step); err != nil {
+			return changed, err
+		}
+		changed = append(changed, step)
+	}
+	return changed, nil
 }

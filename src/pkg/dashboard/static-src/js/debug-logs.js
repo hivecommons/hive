@@ -131,7 +131,18 @@
     const GH_API_BUDGET_HELP = {
       core: 'Requests left in GitHub’s core REST rate limit for the current hour, out of the hourly limit for this credential (5,000 for a token; App installations may get more). GitHub resets the counter once an hour. The bar turns yellow at 25% free and red at 10%. Below the configured API reserve (default 800 requests) the governor enters conserve mode — it stretches the eval interval and skips optional steps such as recommendations and advisories; below the API critical floor (default 250) it stretches the interval further.',
       etag: 'Share of cacheable GitHub REST GETs answered 304 Not Modified because the hive re-sent a remembered ETag (If-None-Match). GitHub does not charge a 304 against the core rate limit, so a higher rate means more of the hive’s polling is free. Counted since the process started, not over the 1h window — a low rate right after a restart is normal while the cache warms. The 304 column below shows the same hits per caller.',
+      etagFill: 'How full the ETag response cache is: remembered responses held, and gzip-compressed bytes against the configured cap (Settings → Forge App → ETag cache size, github.etag_cache_max_mb, default 128 MB). At the cap, each new store evicts the least recently used body, and a body evicted before its next poll costs a charged fetch instead of a free 304 — if the hit rate slides while this sits at the cap, raise the cap.',
     };
+    function ghEtagCacheFillText(etag) {
+      etag = etag || {};
+      const entries = Number(etag.entries) || 0;
+      const bytes = Number(etag.bytes) || 0;
+      const maxBytes = Number(etag.max_bytes || etag.maxBytes) || 0;
+      const MB = 1024 * 1024;
+      const mb = v => (v / MB).toFixed(v >= 100 * MB ? 0 : 1);
+      const size = maxBytes > 0 ? `${mb(bytes)} / ${mb(maxBytes)} MB` : `${mb(bytes)} MB`;
+      return `${formatNumber(entries)} entries · ${size}`;
+    }
     function ghApiBudgetHelpMark(key, label) {
       const id = 'gh-api-budget-' + key + '-tip';
       return `<span class="config-info overview-term-info" tabindex="0" data-action="gh3" data-stop="1" aria-describedby="${id}" aria-label="${esc(label)} details">ⓘ<span id="${id}" class="config-tooltip" role="tooltip">${esc(GH_API_BUDGET_HELP[key] || '')}</span></span>`;
@@ -157,6 +168,7 @@
         <div class="gh-api-budget-label">GitHub API budget (1h)</div>
         <div class="gh-api-budget-row"><span>Core remaining${ghApiBudgetHelpMark('core', 'Core remaining')}</span><span class="gh-api-budget-strong">${core.remaining} / ${core.limit || '—'} (${core.remainingPct}% free)</span></div>
         <div class="gh-api-budget-row"><span>ETag hit rate${ghApiBudgetHelpMark('etag', 'ETag hit rate')}</span><span class="gh-api-budget-strong">${etagPct}%</span></div>
+        <div class="gh-api-budget-row"><span>ETag cache${ghApiBudgetHelpMark('etagFill', 'ETag cache')}</span><span class="gh-api-budget-strong">${ghEtagCacheFillText(etag)}</span></div>
         ${bar}
         <div class="gh-api-budget-table-wrap" tabindex="0" role="region" aria-label="GitHub API consumers table">
           <p class="mobile-table-hint">Scroll horizontally for more columns.</p>

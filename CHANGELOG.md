@@ -92,6 +92,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 ### Fixed
 
 - release: cap GitHub Release notes at `RELEASE_NOTES_MAX_CHARS` (120000) before the SBOM/NOTICE trailer, cutting the changelog section at a bullet boundary and linking the tag's full `CHANGELOG.md` section, so a first-on-the-line release such as v6.0.0 no longer fails `gh release create` with HTTP 422 "body is too long" after the tag and image retags have landed.
+
+## 2026-11-08 (v5.204.1)
+
+### Fixed
+
+- Fleet report: repeated `copilot sniff: upstream dial failed` ERRORs — the proxy could not reach a `*.githubcopilot.com` host it was usage-sniffing, such as a dial timeout to `telemetry.enterprise.githubcopilot.com` — are now classified as `proxy_connect_dial_failed` (medium, component `github-proxy`, remedy "restore the spoke's outbound proxy or network path") alongside `proxy: CONNECT dial failed`, instead of surfacing as `unclassified_error_repeated` ([#17262](https://github.com/hivecommons/hive/issues/17262)).
+
+## 2026-11-08 (v5.204.0)
+
+### Added
+
+- crux: agent step service, the sixth work service of the Crux work-services RFC ([hivecommons/crux#114](https://github.com/hivecommons/crux/issues/114) S6). `POST /v1/runs` with `"profile": "agent"` now opens a step session — a contained run that provisions its checkout and waits — and `POST /v1/runs/{id}/steps` runs one agent step inside it: a `claude`, `codex` or `process` backend reads the prompt in the sandbox and its JSON answer is checked against the request's `output_schema`, with bounded re-asks on a mismatch, a per-attempt timeout, tool and turn limits where the backend can enforce them, and a recorded `unsupported` refusal where it cannot. Each step is logged in the S4 command log, announced as a `step` turn signal, and read back with `GET /v1/runs/{id}/steps[/{n}]` or `crux --server … step run|list|show`.
+
 ## 2026-11-08 (v5.203.0)
 
 ### Added

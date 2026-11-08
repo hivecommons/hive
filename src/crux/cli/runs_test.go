@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/config"
@@ -20,6 +21,8 @@ type fakeRunsAPI struct {
 	mu        sync.Mutex
 	created   []api.ContainedRunRequest
 	cancelled []string
+	listed    []string
+	restarted []api.RunRestartRequest
 }
 
 func (f *fakeRunsAPI) handler() http.Handler {
@@ -81,7 +84,140 @@ func (f *fakeRunsAPI) handler() http.Handler {
 		}
 		_ = json.NewEncoder(w).Encode(rec)
 	})
+	mux.HandleFunc("GET "+api.PathRuns, func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.listed = append(f.listed, r.URL.RawQuery)
+		f.mu.Unlock()
+		list := api.ContainedRunList{Runs: []api.ContainedRun{}}
+		for _, id := range []string{"run_sleep", "run_lost", "run_ok"} {
+			rec := records[id]
+			if q := r.URL.Query().Get("status"); q != "" && rec.Status != q {
+				continue
+			}
+			rec.Stdout, rec.Stderr, rec.Owner, rec.Command = "", "", "operator", []string{"make", "test"}
+			list.Runs = append(list.Runs, rec)
+		}
+		_ = json.NewEncoder(w).Encode(list)
+	})
+	mux.HandleFunc("POST "+api.PathRuns+"/{id}/restart", func(w http.ResponseWriter, r *http.Request) {
+		var req api.RunRestartRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(api.Error{Error: err.Error(), Code: api.CodeBadRequest})
+			return
+		}
+		f.mu.Lock()
+		f.restarted = append(f.restarted, req)
+		f.mu.Unlock()
+		rec, ok := records[r.PathValue("id")]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(api.Error{Error: "run not found", Code: api.CodeNotFound})
+			return
+		}
+		if rec.Status == api.RunRunning {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(api.Error{Error: "run is running", Code: api.CodeConflict})
+			return
+		}
+		again := records["run_ok"]
+		again.ID, again.RestartedFrom = "run_again", rec.ID
+		if req.Detach {
+			again.Status, again.Stdout, again.ExitCode = api.RunAccepted, "", nil
+			w.WriteHeader(http.StatusAccepted)
+		}
+		_ = json.NewEncoder(w).Encode(again)
+	})
+	mux.HandleFunc("GET "+api.PathRuns+"/{id}/history", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if _, ok := records[id]; !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(api.Error{Error: "run not found", Code: api.CodeNotFound})
+			return
+		}
+		at := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)
+		_ = json.NewEncoder(w).Encode(api.RunHistory{Run: id, Transitions: []api.RunTransition{
+			{At: at, Status: api.RunAccepted}, {At: at.Add(time.Second), Status: api.RunRunning}, {At: at.Add(2 * time.Second), Status: api.RunUnfinished, Reason: "pod vanished"},
+		}})
+	})
 	return mux
+}
+
+func TestRunsListRestartHistory(t *testing.T) {
+	t.Setenv(config.ServerEnvVar, "")
+	t.Setenv(config.ServeTokenEnvVar, "")
+	f := &fakeRunsAPI{}
+	ts := httptest.NewServer(f.handler())
+	t.Cleanup(ts.Close)
+	server := ts.URL
+
+	h := newHarness(t)
+	if code := h.run("--server", server, "runs", "list"); code != ExitOK {
+		t.Fatalf("list: %d %s", code, h.stderr)
+	}
+	out := h.stdout.String()
+	if !strings.HasPrefix(out, "ID") || !strings.Contains(out, "run_sleep") || !strings.Contains(out, "run_lost") || !strings.Contains(out, "make test") || strings.Contains(out, "hello") {
+		t.Fatalf("list output:\n%s", out)
+	}
+	h = newHarness(t)
+	if code := h.run("--server", server, "runs", "list", "--status", api.RunUnfinished, "--limit", "7", "--json"); code != ExitOK {
+		t.Fatalf("list --json: %d %s", code, h.stderr)
+	}
+	var list api.ContainedRunList
+	if err := json.Unmarshal(h.stdout.Bytes(), &list); err != nil || len(list.Runs) != 1 || list.Runs[0].ID != "run_lost" {
+		t.Fatalf("list --json = %s (%v)", h.stdout, err)
+	}
+	if q := f.listed[len(f.listed)-1]; !strings.Contains(q, "status=unfinished") || !strings.Contains(q, "limit=7") {
+		t.Fatalf("list query = %q", q)
+	}
+
+	h = newHarness(t)
+	if code := h.run("--server", server, "runs", "restart", "--reason", "flaky", "--idempotency-key", "r1", "run_lost"); code != ExitOK {
+		t.Fatalf("restart: %d %s", code, h.stderr)
+	}
+	if !strings.Contains(h.stderr.String(), "run run_lost restarted as run_again") || !strings.Contains(h.stdout.String(), "hello") {
+		t.Fatalf("restart output: %s / %s", h.stderr, h.stdout)
+	}
+	if len(f.restarted) != 1 || f.restarted[0].Reason != "flaky" || f.restarted[0].IdempotencyKey != "r1" || f.restarted[0].Detach {
+		t.Fatalf("restart request = %+v", f.restarted)
+	}
+	h = newHarness(t)
+	if code := h.run("--server", server, "runs", "restart", "--detach", "--json", "run_ok"); code != ExitOK {
+		t.Fatalf("restart --detach: %d %s", code, h.stderr)
+	}
+	var again api.ContainedRun
+	if err := json.Unmarshal(h.stdout.Bytes(), &again); err != nil || again.ID != "run_again" || again.Status != api.RunAccepted || again.RestartedFrom != "run_ok" {
+		t.Fatalf("restart --detach --json = %s (%v)", h.stdout, err)
+	}
+	h = newHarness(t)
+	if code := h.run("--server", server, "runs", "restart", "run_sleep"); code != ExitError || !strings.Contains(h.stderr.String(), "run is running") {
+		t.Fatalf("restart of a live run: %d %s", code, h.stderr)
+	}
+	h = newHarness(t)
+	if code := h.run("--server", server, "runs", "restart", "run_nope"); code != ExitError || !strings.Contains(h.stderr.String(), "not found") {
+		t.Fatalf("restart of a missing run: %d %s", code, h.stderr)
+	}
+
+	h = newHarness(t)
+	if code := h.run("--server", server, "runs", "history", "run_lost"); code != ExitOK {
+		t.Fatalf("history: %d %s", code, h.stderr)
+	}
+	out = h.stdout.String()
+	if !strings.HasPrefix(out, "AT") || !strings.Contains(out, "2026-11-09T10:00:02Z") || !strings.Contains(out, "unfinished") || !strings.Contains(out, "pod vanished") {
+		t.Fatalf("history output:\n%s", out)
+	}
+	h = newHarness(t)
+	if code := h.run("--server", server, "runs", "history", "--json", "run_lost"); code != ExitOK {
+		t.Fatalf("history --json: %d %s", code, h.stderr)
+	}
+	var hist api.RunHistory
+	if err := json.Unmarshal(h.stdout.Bytes(), &hist); err != nil || hist.Run != "run_lost" || len(hist.Transitions) != 3 {
+		t.Fatalf("history --json = %s (%v)", h.stdout, err)
+	}
+	h = newHarness(t)
+	if code := h.run("--server", server, "runs", "history", "run_nope"); code != ExitError || !strings.Contains(h.stderr.String(), "not found") {
+		t.Fatalf("history of a missing run: %d %s", code, h.stderr)
+	}
 }
 
 func TestRunsIsRemoteOnly(t *testing.T) {
@@ -206,6 +342,12 @@ func TestRunsUsage(t *testing.T) {
 		{[]string{"runs", "status", "-bogus"}, ExitUsage, "bogus"},
 		{[]string{"runs", "cancel", "a", "b"}, ExitUsage, "usage: crux --server ADDR runs cancel"},
 		{[]string{"runs", "cancel", "-bogus"}, ExitUsage, "bogus"},
+		{[]string{"runs", "list", "extra"}, ExitUsage, "usage: crux --server ADDR runs list"},
+		{[]string{"runs", "list", "-bogus"}, ExitUsage, "bogus"},
+		{[]string{"runs", "restart"}, ExitUsage, "usage: crux --server ADDR runs restart"},
+		{[]string{"runs", "restart", "-h"}, ExitOK, "-idempotency-key"},
+		{[]string{"runs", "history"}, ExitUsage, "usage: crux --server ADDR runs history"},
+		{[]string{"runs", "history", "a", "b"}, ExitUsage, "usage: crux --server ADDR runs history"},
 	} {
 		h := newHarness(t)
 		if code := h.run(append([]string{"--server", ts.URL}, tc.args...)...); code != tc.code || !strings.Contains(h.stderr.String(), tc.stderr) {

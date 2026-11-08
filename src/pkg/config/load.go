@@ -444,6 +444,19 @@ func (c *Config) applyBootstrapEnv() {
 	if v := strings.TrimSpace(os.Getenv(ContributeSkipLabelsEnvVar)); v != "" {
 		c.Hub.ContributeSkipLabels = parseContributeSkipLabels(v)
 	}
+	// Operators size the ETag cache per deployment from the environment; a
+	// value that fails to parse is ignored so a typo cannot stop the boot,
+	// and an out-of-range one is caught by Validate like a file value.
+	if v := strings.TrimSpace(os.Getenv(GitHubETagCacheMaxMBEnv)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.GitHub.ETagCacheMaxMB = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(GitHubETagCacheMaxEntriesEnv)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.GitHub.ETagCacheMaxEntries = n
+		}
+	}
 }
 
 func readDashboardAuthTokenFile() string {
