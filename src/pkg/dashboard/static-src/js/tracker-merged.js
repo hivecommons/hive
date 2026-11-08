@@ -902,10 +902,13 @@
     }
     function stageTrackerTerminalView(d, nowMs) {
       if (!d || !Array.isArray(d.items)) return d;
+      // Merge state is null until its first fetch lands; a row menu can be
+      // opened before then, so read it as "nothing merged yet".
+      const merged = _stageTrackerMergeState || {};
       const items = d.items.map(item => {
         const rowKey = stageTrackerItemKey(item), pin = _stageTrackerCelebrating[rowKey];
         const active = pin && pin.until > nowMs;
-        if (item.kind === 'pr' && _stageTrackerMergeState[rowKey] === true) {
+        if (item.kind === 'pr' && merged[rowKey] === true) {
           const fact = _stageTrackerTerminalFacts[rowKey];
           return (fact && fact.until > nowMs) || Number(item.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(item, rowKey) : null;
         }
@@ -919,7 +922,7 @@
         }
         const linked = source.map(lp => {
           const key = stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp));
-          if (_stageTrackerMergeState[key] !== true) return lp;
+          if (merged[key] !== true) return lp;
           const fact = _stageTrackerTerminalFacts[key];
           return (fact && fact.until > nowMs) || Number(lp.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(lp, key) : null;
         }).filter(Boolean);
