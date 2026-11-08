@@ -137,6 +137,11 @@ func (m *Manager) DrainCLIMemoryNow(req CLIMemoryDrainNowRequest) (CLIMemoryDrai
 	if !agent.Config.CLIMemory.DrainMemoryToKnowledge() {
 		return CLIMemoryDrainResult{}, false, nil
 	}
+	// The PostToolUse hook lives in the one fleet-wide Claude settings file,
+	// so it also fires for agents that only drain at SessionEnd.
+	if req.OnWrite && !agent.Config.CLIMemory.DrainMemoryOnWrite() {
+		return CLIMemoryDrainResult{}, false, nil
+	}
 	backend := effectiveBackend(agent)
 	sources := cliMemoryDrainSources(agent, backend)
 	if req.Cwd != "" {

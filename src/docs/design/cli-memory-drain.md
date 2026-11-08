@@ -1,9 +1,11 @@
 # Draining CLI auto-memory into draft knowledge (#17033)
 
-Status: **phase 1 shipped, phases 2 and 3 open.** The three open questions in
-#17033 are decided below; the work is cut into three implementation children,
-listed in [Implementation plan](#implementation-plan). Phase 1 shipped with
-the differences recorded in [Phase 1 as shipped](#phase-1-as-shipped).
+Status: **shipped.** The three open questions in #17033 are decided below;
+the work is cut into three implementation children, listed in
+[Implementation plan](#implementation-plan). Each phase shipped with the
+differences recorded in [Phase 1 as shipped](#phase-1-as-shipped),
+[Phase 2 as shipped](#phase-2-as-shipped) and
+[Phase 3 as shipped](#phase-3-as-shipped).
 
 All citations are against `origin/v5` at `7a929356`. The CLI-memory isolation
 and disable work this design builds on (#17031, #17032) is in open PRs
@@ -399,6 +401,35 @@ relays, and reads `<name>.result.json` back.
   `memhash` is in the vault.
 - **Drain off.** With `agents.cli_memory.drain_to_knowledge` off for the
   agent, the answer is `ok` with `ran: false` and nothing drained.
+
+#### Phase 2 as shipped
+
+Phase 2 landed in #17208 (entry point above), #17209 and #17210. Where the
+shipped code differs from the plan above, the shipped code is authoritative:
+
+- **Command.** `hive memory-drain --cli claude --agent "$HIVE_AGENT"` does not
+  wrap the drain library: it queues a request for the entry point above, with
+  `truncate` set and the hook's `cwd`, and waits up to 10 seconds
+  (`--wait`) for the answer. Every outcome exits 0; a refusal, a timeout or a
+  missing request directory is a warning on stderr, and the kick-time drain
+  remains the backstop.
+- **PostToolUse.** The command exits before queuing anything unless
+  `tool_input.file_path` is under `~/.claude/projects/<slug>/memory/` (or
+  `$CLAUDE_CONFIG_DIR/projects/<slug>/memory/`). Its request carries
+  `on_write`, which the hive answers as a no-op unless the agent has
+  `drain_on_write`.
+- **Keys.** The new key is `agents.cli_memory.drain_on_write`, fleet-wide and
+  per agent, and it has no effect without `drain_to_knowledge`.
+- **Seeding.** Not through `seedJSONFile`, which never touches an existing
+  top-level key: a separate merge works per `hooks.<event>`. It adds Hive's
+  entry only when no matcher group already runs the exact command, keeps
+  every operator entry, and when the hook is off removes only Hive's command
+  (and a group or event it leaves empty). The settings files are shared, so
+  `SessionEnd` is seeded while any agent has `drain_to_knowledge` and
+  `PostToolUse` while any agent has `drain_on_write`; the hive's per-agent
+  answer keeps every other agent a no-op. Both are merged into the shared
+  interactive settings file and into the two files `ensureClaudeSettings`
+  writes for inference agents.
 
 ### Phase 3 — review flow, draft exclusion, legacy migration, operator docs
 

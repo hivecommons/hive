@@ -36,10 +36,13 @@ var memoryDrainRequestPollInterval = 2 * time.Second
 // It carries no path: the hive resolves the stores from the agent's home.
 // Cwd is the hook's working directory, used only to narrow the drain to that
 // Claude project. Truncate empties the drained files that are fully stored.
+// OnWrite marks a request from the PostToolUse hook, answered as a no-op
+// unless agents.cli_memory.drain_on_write is on for the agent.
 type MemoryDrainRequest struct {
 	Agent    string `json:"agent"`
 	Cwd      string `json:"cwd,omitempty"`
 	Truncate bool   `json:"truncate,omitempty"`
+	OnWrite  bool   `json:"on_write,omitempty"`
 }
 
 // MemoryDrainResponse is written next to the consumed request as
