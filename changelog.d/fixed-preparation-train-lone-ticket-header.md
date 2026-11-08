@@ -1,1 +1,0 @@
-- Activity Monitor no longer draws a "Preparation train · 0 confirmed PRs" header over a single base-preparation ticket; one owner is the refresh lock holder, not a train, and its row comment already carries its state.
