@@ -117,6 +117,11 @@ knowledge search|list`, and `bd kb search` inside the pod. See
 [knowledge-toc.md](knowledge-toc.md) and
 [public-knowledge-mcp.md](public-knowledge-mcp.md).
 
+The mid-task advisor (`knowledge.advisor`) can later rank candidates with a
+model; its `knowledge.advisor_llm` block carries hard budget ceilings (6 calls
+per agent-hour, 300 per day) that only `budget_override: true` lifts. See
+[knowledge-curator.md](knowledge-curator.md#model-ranked-advisor-knowledgeadvisor_llm).
+
 ## 3. AGENTS.md / CLAUDE.md: injected by Hive, not read natively
 
 Each agent's CLI starts in `/data/agents/<name>` (`crux.DefaultWorkDir`),

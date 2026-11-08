@@ -56,6 +56,9 @@ type KnowledgeConfig struct {
 	// AdvisorExcludeAgents lists agents (by name or family base name) the
 	// advisor never types at, e.g. lanes whose work is reading, not editing.
 	AdvisorExcludeAgents []string `yaml:"advisor_exclude_agents,omitempty"`
+	// AdvisorLLM configures the optional model-ranked advisor pass
+	// (hivecommons/hive#17054). Ignored unless Advisor is true.
+	AdvisorLLM AdvisorLLMConfig `yaml:"advisor_llm,omitempty"`
 }
 
 // PublicKnowledgeConfig is the dashboard-persisted owner override for the
