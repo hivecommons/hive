@@ -70,6 +70,13 @@ func (a *knowledgeAdviser) Policy(agent string) crux.KnowledgeAdvisorPolicy {
 // Primer has no kick context for paths, so the observed file goes in as the
 // primer's file path and the scope's segments as keywords.
 func (a *knowledgeAdviser) Advise(agent string, scope crux.KnowledgeScope) []crux.KnowledgeAdvice {
+	return a.adviseUpTo(agent, scope, knowledgeAdviseMaxPerScope)
+}
+
+// adviseUpTo is Advise with the per-scope cap as a parameter, so the ranking
+// pass (#17155) can ask for its larger candidate set without changing what
+// phase 1 hands the runtime.
+func (a *knowledgeAdviser) adviseUpTo(agent string, scope crux.KnowledgeScope, limit int) []crux.KnowledgeAdvice {
 	primer := a.primer()
 	cfg := a.cfg()
 	if primer == nil || cfg == nil {
@@ -87,7 +94,7 @@ func (a *knowledgeAdviser) Advise(agent string, scope crux.KnowledgeScope) []cru
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeAdviseTimeout)
 	defer cancel()
 	primed := primer.PrimeScoped(ctx, agentScope, paths, scope.Keywords)
-	advice := selectKnowledgeAdvice(primed.Facts, a.primed(agent), knowledgeAdviseMaxPerScope)
+	advice := selectKnowledgeAdvice(primed.Facts, a.primed(agent), limit)
 	a.logger.Debug("knowledge advisor: scope entered",
 		"agent", agent, "scope", scope.Key, "candidates", len(primed.Facts), "advice", len(advice))
 	return advice
