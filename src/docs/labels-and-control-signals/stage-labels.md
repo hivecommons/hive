@@ -149,6 +149,8 @@ stateDiagram-v2
     s015 --> s045: needs-human / park label (agent escalates)
     s010 --> s018: proposal / kind/design label added to an unclaimed issue (reclassification)
     s018 --> s010: proposal / kind/design label removed (not a regression)
+    s015 --> s018: proposal / kind/design label added to an untriaged issue (reclassification)
+    s018 --> s015: proposal / kind/design label removed on an untriaged issue (not a regression)
     s018 --> s020: a person, relay contributor or agent claims it (018 is not a gate)
     s018 --> s045: needs-human / park label
     s045 --> s018: /hive approve or /hive decision on a proposal

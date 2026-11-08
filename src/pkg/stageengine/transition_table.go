@@ -17,6 +17,8 @@ var diagramEdges = map[Edge]bool{
 	{stagelabels.TriageNeeded, stagelabels.IssueNeedsDecision}:          true, // needs-human / park label (agent escalates)
 	{stagelabels.Actionable, stagelabels.OpenForDiscussion}:             true, // proposal / kind/design label added to an unclaimed issue (reclassification)
 	{stagelabels.OpenForDiscussion, stagelabels.Actionable}:             true, // proposal / kind/design label removed (not a regression)
+	{stagelabels.TriageNeeded, stagelabels.OpenForDiscussion}:           true, // proposal / kind/design label added to an untriaged issue (reclassification)
+	{stagelabels.OpenForDiscussion, stagelabels.TriageNeeded}:           true, // proposal / kind/design label removed on an untriaged issue (not a regression)
 	{stagelabels.OpenForDiscussion, stagelabels.Claimed}:                true, // a person, relay contributor or agent claims it (018 is not a gate)
 	{stagelabels.OpenForDiscussion, stagelabels.IssueNeedsDecision}:     true, // needs-human / park label
 	{stagelabels.IssueNeedsDecision, stagelabels.OpenForDiscussion}:     true, // /hive approve or /hive decision on a proposal
