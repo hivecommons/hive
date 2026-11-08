@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -104,16 +105,21 @@ func (h *ContributeWSHub) roleClaimAllowed(c *ContributorConnection, role string
 // roleKickPrompt is the role's GUIDANCE for a contributor taking it on: the
 // policy, house style, lane rules and repository instructions, never the
 // resident agent's work lists, merge sweep, sub-agent dispatch, App-token
-// contract, red-main notice or "Begin now" (Scheduler.BuildAgentGuidance). It
-// used to be the resident agent's full manual kick, which a contributor's
+// contract, red-main notice or "Begin now" (Scheduler.BuildAgentGuidanceForTask).
+// It used to be the resident agent's full manual kick, which a contributor's
 // model then followed instead of its one assigned task, and which ran a
 // classification sweep over the whole cached queue on every assignment.
-func (h *ContributeWSHub) roleKickPrompt(role string) string {
+//
+// task is the assigned issue: its title and labels prime the guidance's
+// Relevant Knowledge, and its Repo picks whose AGENTS.md and skills it
+// carries, so a contributor working projectbluefin/common#1614 as scanner gets
+// common's instructions rather than those of scanner's primary repo.
+func (h *ContributeWSHub) roleKickPrompt(role string, task ghpkg.Issue) string {
 	role = normalizeAgentRole(role)
 	if role == "" || h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Scheduler == nil {
 		return ""
 	}
-	return h.server.deps.Scheduler.BuildAgentGuidance(role)
+	return h.server.deps.Scheduler.BuildAgentGuidanceForTask(role, task)
 }
 
 // buildRoleTaskPromptForContributor wraps the ordinary assignment prompt in the

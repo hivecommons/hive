@@ -17,9 +17,30 @@ import (
 // assigned issue. Building that kick also ran a full classification sweep
 // over the cached queue on every assignment.
 //
-// BuildAgentGuidance renders the same templates through the same chain, but
-// keeps only how the role works: the policy text, house style, lane rules and
-// the repository's own instructions (AGENTS.md and skills via ${KNOWLEDGE}).
+// BuildAgentGuidanceForTask renders the same templates through the same
+// chain, but keeps only how the role works: the policy text, house style, lane
+// rules, the writing guide, and through ${KNOWLEDGE} the assigned task's
+// "# Relevant Knowledge" and its repository's own instructions (AGENTS.md and
+// skills).
+
+// roleGuidance marks a guidance render (substituteTemplate) and carries the
+// one task it is rendered for.
+type roleGuidance struct {
+	task github.Issue
+}
+
+// instructionsRepo is the repository whose AGENTS.md and skills the render
+// injects: the assigned task's, or primary when the task names none (or for a
+// resident kick, where g is nil).
+func (g *roleGuidance) instructionsRepo(primary string) string {
+	if g == nil {
+		return primary
+	}
+	if repo := strings.TrimSpace(g.task.Repo); repo != "" {
+		return repo
+	}
+	return primary
+}
 
 // residentWorkSections are the H2 sections of a kick template that run the
 // RESIDENT agent's session — what to do first, how to sweep merges, dispatch
@@ -54,14 +75,27 @@ var guidanceBlankedVars = append(append([]string{}, workListVars...), "IN_FLIGHT
 
 var lonePlaceholder = regexp.MustCompile(`^\$\{([A-Z_][A-Z0-9_]*)\}$`)
 
-// BuildAgentGuidance renders the named role's GUIDANCE for a contributor
-// working one assigned task in that role: the resolved policy template (same
-// chain and same ${VAR} engine as the resident kick) without the resident
-// agent's session sections or work lists, plus the static house-style,
-// work-source, review, formal-quality and work-tracker seams.
+// BuildAgentGuidance is BuildAgentGuidanceForTask with no task known: no
+// Relevant Knowledge, and the primary repository's AGENTS.md.
+func (s *Scheduler) BuildAgentGuidance(agentName string) string {
+	return s.BuildAgentGuidanceForTask(agentName, github.Issue{})
+}
+
+// BuildAgentGuidanceForTask renders the named role's GUIDANCE for a
+// contributor working one assigned task in that role: the resolved policy
+// template (same chain and same ${VAR} engine as the resident kick) without
+// the resident agent's session sections or work lists, plus the static
+// house-style, work-source, review, formal-quality and work-tracker seams.
+//
+// task is the assigned issue. Its title and labels prime the "# Relevant
+// Knowledge" section the way a resident kick's issues do, and its Repo picks
+// the repository whose AGENTS.md and skills are injected — the repo the
+// contributor will change, not the role's primary repo. A task with no Repo
+// falls back to the primary repo; one with no title or labels primes nothing.
 //
 // It is not a kick. It reads no queue and makes no classification, triage or
-// kick-summary call, so it is safe to build on every contributor assignment.
+// kick-summary call, and priming records no KickSummary or primed slugs for
+// the resident agent, so it is safe to build on every contributor assignment.
 // Left out on purpose: the work lists, the merge-eligible and CI-failing
 // lists, the resident session sections (residentWorkSections), ${GH_AUTH},
 // AUTHORIZED REPOS, the workflow-push ceiling and task-MCP pointer (both
@@ -72,13 +106,14 @@ var lonePlaceholder = regexp.MustCompile(`^\$\{([A-Z_][A-Z0-9_]*)\}$`)
 // Policy prose that names the resident workflow inline, outside those
 // sections, stays: the caller's framing tells the contributor that the
 // assigned task is the whole job.
-func (s *Scheduler) BuildAgentGuidance(agentName string) string {
+func (s *Scheduler) BuildAgentGuidanceForTask(agentName string, task github.Issue) string {
 	agentName = strings.TrimSpace(agentName)
 	if s == nil || s.cfg == nil || agentName == "" {
 		return ""
 	}
+	guidance := &roleGuidance{task: task}
 	render := func(template string) (string, bool) {
-		return s.substituteTemplate(guidanceTemplate(template), &github.ActionableResult{}, agentName, nil, nil, false, true)
+		return s.substituteTemplate(guidanceTemplate(template), &github.ActionableResult{}, agentName, nil, nil, false, guidance)
 	}
 	message, ok := s.resolveTemplatedKick(agentName, render)
 	if !ok {

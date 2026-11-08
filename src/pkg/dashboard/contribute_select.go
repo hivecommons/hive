@@ -1464,7 +1464,8 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	prompt := buildTaskPromptForContributorWithIssue(chosen.ref, chosen.title, chosen.body,
 		chosen.targetBranch, canPush, guide, hints)
 	if requestedRole != "" {
-		prompt = wrapRoleTaskPrompt(prompt, requestedRole, h.roleKickPrompt(requestedRole))
+		task := ghpkg.Issue{Repo: chosen.repoFull, Number: chosen.number, Title: chosen.title, Body: chosen.body, Labels: chosen.labels}
+		prompt = wrapRoleTaskPrompt(prompt, requestedRole, h.roleKickPrompt(requestedRole, task))
 	}
 	if chosen.stage != "" {
 		prompt += runStageWorktreePrompt(chosen.repoFull, chosen.ref.Key(), chosen.stage, gen)

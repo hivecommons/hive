@@ -1,11 +1,14 @@
 package scheduler
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/timeline"
 )
 
@@ -168,5 +171,104 @@ func TestGuidanceTemplateDropsSessionSectionsAndLists(t *testing.T) {
 		if strings.Contains(got, banned) {
 			t.Errorf("guidanceTemplate kept %q:\n%s", banned, got)
 		}
+	}
+}
+
+// withTaskRepoAndKnowledge gives a guidance scheduler a second checkout
+// (docs, not the primary console) with its own AGENTS.md, a knowledge vault
+// holding one fact about the assigned task, and a writing guide.
+func withTaskRepoAndKnowledge(t *testing.T, s *Scheduler) {
+	t.Helper()
+	docs := filepath.Join(s.cfg.Project.CheckoutsDir, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docs, "AGENTS.md"),
+		[]byte("# Docs agent notes\n\nTASK-REPO-INSTRUCTION: run make docs-check before pushing.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vault := t.TempDir()
+	if err := os.WriteFile(filepath.Join(vault, "sidebar.md"), []byte("---\ntitle: Sidebar anchor links drift\ntype: gotcha\nlayer: project\n---\n"+
+		"TASK-KNOWLEDGE: sidebar anchors are generated from headings; rename both together.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store, err := knowledge.NewFileStore(vault, "vault", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primer := knowledge.NewPrimer(nil, knowledge.PrimerConfig{MaxFacts: 25}, logger)
+	primer.AddFileStore("vault", store, knowledge.LayerProject)
+	s.SetPrimer(primer)
+	s.cfg.Project.WritingGuide = "WRITING-GUIDE-MARKER: lead with the user-visible change."
+}
+
+var guidanceTask = github.Issue{Repo: "golden-org/docs", Number: 1614, Title: "Sidebar anchor links broken", Labels: []string{"sidebar"}}
+
+// A contributor's guidance for a task in docs carries docs' AGENTS.md (not the
+// primary console's), the "# Relevant Knowledge" primed from that one issue,
+// and the writing guide — and still none of the resident agent's work.
+// Priming it records nothing for the resident agent: no kick summary, no
+// primed slugs, no classified journeys.
+func TestBuildAgentGuidanceForTaskCarriesTaskRepoAndIssueKnowledge(t *testing.T) {
+	for _, agent := range []string{"scanner", "quality"} {
+		t.Run(agent, func(t *testing.T) {
+			s := guidanceScheduler(t, "")
+			withTaskRepoAndKnowledge(t, s)
+			store := timeline.NewStore()
+			s.SetLifecycleRecorder(store)
+
+			g := s.BuildAgentGuidanceForTask(agent, guidanceTask)
+			for _, want := range []string{
+				"[agent:" + agent + "]",
+				"HOUSE STYLE (source: built-in)",
+				"# Relevant Knowledge",
+				"TASK-KNOWLEDGE: sidebar anchors",
+				"TASK-REPO-INSTRUCTION: run make docs-check before pushing.",
+				"WRITING GUIDE (set by this hive's owner",
+				"WRITING-GUIDE-MARKER",
+			} {
+				if !strings.Contains(g, want) {
+					t.Errorf("guidance is missing %q", want)
+				}
+			}
+			if strings.Contains(g, "REPO-OWN-INSTRUCTION") {
+				t.Errorf("guidance carries the primary repo's AGENTS.md, not the task repo's")
+			}
+			for _, banned := range residentOnlyKickText {
+				if strings.Contains(g, banned) {
+					t.Errorf("guidance carries resident-only text %q", banned)
+				}
+			}
+			if _, ok := s.KickSummary(agent); ok {
+				t.Errorf("guidance recorded a kick summary for the resident %s", agent)
+			}
+			if slugs := s.KickPrimedSlugs(agent); slugs != nil {
+				t.Errorf("guidance recorded primed slugs %v for the resident %s", slugs, agent)
+			}
+			if n := len(store.Journeys(0)); n != 0 {
+				t.Errorf("guidance recorded %d classified journeys", n)
+			}
+			if t.Failed() {
+				t.Logf("guidance:\n%s", g)
+			}
+		})
+	}
+}
+
+// A task that names no repository falls back to the primary repo's AGENTS.md,
+// as before; one with no title or labels primes no knowledge.
+func TestBuildAgentGuidanceForTaskWithoutRepoFallsBackToPrimary(t *testing.T) {
+	s := guidanceScheduler(t, "")
+	withTaskRepoAndKnowledge(t, s)
+	g := s.BuildAgentGuidanceForTask("scanner", github.Issue{})
+	if !strings.Contains(g, "REPO-OWN-INSTRUCTION: run make lint before pushing.") {
+		t.Errorf("guidance without a task repo lost the primary repo's AGENTS.md")
+	}
+	if strings.Contains(g, "TASK-REPO-INSTRUCTION") || strings.Contains(g, "# Relevant Knowledge") {
+		t.Errorf("guidance without a task carries task-repo instructions or knowledge:\n%s", g)
+	}
+	if !strings.Contains(g, "WRITING-GUIDE-MARKER") {
+		t.Errorf("guidance lost the writing guide")
 	}
 }

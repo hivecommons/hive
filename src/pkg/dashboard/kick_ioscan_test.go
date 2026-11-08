@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/crux/sandbox"
 	"github.com/hivecommons/hive/pkg/config"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
@@ -137,8 +138,8 @@ type renderedKickScheduler struct {
 	msg string
 }
 
-func (r renderedKickScheduler) BuildAgentMessageFromLastActionable(string) string { return r.msg }
-func (r renderedKickScheduler) BuildAgentGuidance(string) string                  { return "" }
+func (r renderedKickScheduler) BuildAgentMessageFromLastActionable(string) string    { return r.msg }
+func (r renderedKickScheduler) BuildAgentGuidanceForTask(string, ghpkg.Issue) string { return "" }
 
 func TestHandleKickIoscanServerRenderedPromptNotRescanned(t *testing.T) {
 	srv := kickIoscanSandboxServer(t)
