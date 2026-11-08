@@ -342,3 +342,185 @@ func TestWaitWakesOnAnswerExpiryAndWindow(t *testing.T) {
 		t.Fatalf("cancelled wait: %v", err)
 	}
 }
+
+func TestRequestBounds(t *testing.T) {
+	f := newFixture(t)
+	long := func(n int) string { return strings.Repeat("x", n) }
+	many := make([]string, MaxChoices+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("c%d", i)
+	}
+	for _, tc := range []struct {
+		name string
+		req  Request
+		want error
+	}{
+		{"subject too long", Request{Subject: long(MaxSubjectLen + 1)}, ErrBadRequest},
+		{"opened_by too long", Request{Subject: "s", OpenedBy: long(MaxOpenedByLen + 1)}, ErrBadRequest},
+		{"key too long", Request{Subject: "s", IdempotencyKey: long(maxIdempotencyKeyLen + 1)}, ErrBadRequest},
+		{"too many choices", Request{Subject: "s", Choices: many}, ErrBadRequest},
+		{"choice too long", Request{Subject: "s", Choices: []string{long(MaxChoiceLen + 1)}}, ErrBadRequest},
+	} {
+		if _, _, err := f.svc.Open(driver, tc.req); !errors.Is(err, tc.want) {
+			t.Errorf("%s: Open = %v, want %v", tc.name, err, tc.want)
+		}
+	}
+	// JSON null, whitespace and an absent payload all store no context;
+	// nested arrays are scrubbed like objects; the driver label defaults
+	// to the caller's name.
+	for _, raw := range []string{"", "  ", "null"} {
+		rec, _, err := f.svc.Open(driver, Request{Subject: "ctx " + raw, Context: json.RawMessage(raw)})
+		if err != nil || rec.Context != nil || rec.OpenedBy != "atlas" {
+			t.Fatalf("context %q: %+v %v", raw, rec, err)
+		}
+	}
+	rec, _, err := f.svc.Open(driver, Request{Subject: "nested", Context: json.RawMessage(`[{"k":["ghp_secretvalue1234567890"]}, 1.50]`)})
+	if err != nil || strings.Contains(string(rec.Context), "ghp_") || !strings.Contains(string(rec.Context), "1.50") {
+		t.Fatalf("nested context = %s %v", rec.Context, err)
+	}
+	if _, err := f.svc.Answer(operator, rec.ID, Answer{Choice: "approve", Note: long(MaxNoteLen + 1)}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("long note: %v", err)
+	}
+	if _, err := ParseTimeout("-1s"); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("negative timeout: %v", err)
+	}
+	if FormatTimeout(-time.Second) != "0" || FormatTimeout(90*time.Second) != "1m30s" {
+		t.Fatalf("FormatTimeout")
+	}
+}
+
+func TestValidID(t *testing.T) {
+	for id, want := range map[string]bool{
+		"gate_0123abcdef":                       true,
+		"gate_":                                 false,
+		"run_abc":                               false,
+		"gate_ABC":                              false,
+		"gate_a/b":                              false,
+		"gate_" + strings.Repeat("a", maxIDLen): false,
+	} {
+		if got := ValidID(id); got != want {
+			t.Errorf("ValidID(%q) = %v, want %v", id, got, want)
+		}
+	}
+}
+
+func TestDefaultsMintUniqueIDs(t *testing.T) {
+	svc, err := New(Config{Dir: filepath.Join(t.TempDir(), DirName)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _, err := svc.Open(driver, Request{Subject: "a"})
+	if err != nil || !ValidID(a.ID) || a.OpenedAt.IsZero() {
+		t.Fatalf("open with defaults: %+v %v", a, err)
+	}
+	b, _, _ := svc.Open(driver, Request{Subject: "b"})
+	if a.ID == b.ID {
+		t.Fatalf("ids collide: %s", a.ID)
+	}
+	if !Visible(a, operator) || !Visible(a, driver) || Visible(a, Caller{Principal: "project:beacon"}) {
+		t.Fatalf("Visible")
+	}
+	if _, err := New(Config{}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("New without dir: %v", err)
+	}
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Config{Dir: filepath.Join(file, DirName)}); err == nil {
+		t.Fatal("New under a file succeeded")
+	}
+}
+
+func TestResolvedCopyWinsAfterCrash(t *testing.T) {
+	f := newFixture(t)
+	g, _, _ := f.svc.Open(driver, Request{Subject: "crash"})
+	if _, err := f.svc.Answer(operator, g.ID, Answer{Choice: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	// A crash between writing resolved/<id>.json and removing
+	// pending/<id>.json leaves both; the stale pending copy is the old
+	// waiting record.
+	pending := filepath.Join(f.dir, PendingDirName, g.ID+".json")
+	if err := os.WriteFile(pending, []byte(`{"id":"`+g.ID+`","status":"waiting","choices":["approve","deny"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Stray files in the record directories are ignored.
+	for _, name := range []string{"notes.txt", "gate_x.json.tmp", "run_1.json"} {
+		if err := os.WriteFile(filepath.Join(f.dir, PendingDirName, name), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(f.dir, ResolvedDirName, "gate_dir.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.restart()
+	if _, err := os.Stat(pending); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale pending copy survived restart: %v", err)
+	}
+	rec, err := f.svc.Get(g.ID)
+	if err != nil || rec.Status != StatusAnswered {
+		t.Fatalf("after crash = %+v %v", rec, err)
+	}
+	list, err := f.svc.List(ListFilter{})
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list = %+v %v", list, err)
+	}
+	if _, err := f.svc.Wait(context.Background(), "gate_missing", 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("wait on unknown: %v", err)
+	}
+}
+
+func TestCorruptRecordIsReported(t *testing.T) {
+	f := newFixture(t)
+	g, _, _ := f.svc.Open(driver, Request{Subject: "fine"})
+	if err := os.WriteFile(filepath.Join(f.dir, PendingDirName, "gate_bad.json"), []byte("{nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Get("gate_bad"); err == nil || !strings.Contains(err.Error(), "corrupt") {
+		t.Fatalf("corrupt get: %v", err)
+	}
+	if _, err := f.svc.List(ListFilter{}); err == nil || !strings.Contains(err.Error(), "corrupt") {
+		t.Fatalf("corrupt list: %v", err)
+	}
+	if rec, err := f.svc.Get(g.ID); err != nil || rec.ID != g.ID {
+		t.Fatalf("healthy get beside corrupt: %+v %v", rec, err)
+	}
+	if _, err := New(Config{Dir: f.dir}); err == nil {
+		t.Fatal("New over a corrupt record succeeded")
+	}
+}
+
+func TestStorageFailuresSurface(t *testing.T) {
+	f := newFixture(t)
+	g, _, _ := f.svc.Open(driver, Request{Subject: "before"})
+	// The journal becomes a directory: the record is written but the
+	// append fails, and the caller hears about it.
+	journal := filepath.Join(f.dir, JournalName)
+	if err := os.Remove(journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(journal, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := f.svc.Open(driver, Request{Subject: "journal down"}); err == nil || !created {
+		t.Fatalf("open with journal down: created=%v err=%v", created, err)
+	}
+	if _, err := f.svc.Answer(operator, g.ID, Answer{Choice: "deny"}); err == nil {
+		t.Fatal("answer with journal down succeeded")
+	}
+	// The pending directory becomes a file: nothing can be written at all.
+	pending := filepath.Join(f.dir, PendingDirName)
+	if err := os.RemoveAll(pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pending, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.svc.Open(driver, Request{Subject: "no pending dir"}); err == nil {
+		t.Fatal("open without a pending dir succeeded")
+	}
+	if _, err := f.svc.List(ListFilter{}); err == nil {
+		t.Fatal("list without a pending dir succeeded")
+	}
+}
