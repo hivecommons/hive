@@ -3151,6 +3151,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 	// bead-synth vault it writes drafts into is connected before the primer
 	// registers stores below.
 	b.installCLIMemoryDrainer()
+	b.startCLIMemoryDrainRequests()
 
 	// Generated repository code maps (#11106); opt-in, connects its vault
 	// before stores are registered with the primer below.
