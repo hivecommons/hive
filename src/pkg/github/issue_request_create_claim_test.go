@@ -110,9 +110,10 @@ func TestIssueRequestWatcher_CreateWithClaimClaimsInSameRequest(t *testing.T) {
 	if f.created != 1 {
 		t.Fatalf("expected 1 issue created, got %d", f.created)
 	}
-	// The hub's ledger claim is written from this signal, as for a `claim`
-	// request.
-	if want := []string{"scanner o/r#99 " + AgentStartSignalClaim}; strings.Join(starts, ";") != strings.Join(want, ";") {
+	// The hub's ledger claim is written from this signal; it is the
+	// filed-claim signal, not a plain `claim`, because no kick listed the
+	// new issue and the hub only ledgers a plain claim on a listed issue.
+	if want := []string{"scanner o/r#99 " + AgentStartSignalFiledClaim}; strings.Join(starts, ";") != strings.Join(want, ";") {
 		t.Fatalf("agent start signals = %v, want %v", starts, want)
 	}
 	if strings.Join(f.labelAdds, ",") != claimOwnershipLabel("scanner") {
