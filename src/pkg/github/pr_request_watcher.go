@@ -439,7 +439,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 				if !strings.EqualFold(r.Repo, req.Repo) && !c.AgentServesRepo(req.Agent, r.Repo) {
 					continue
 				}
-				c.noticePRRequestTargetRefusal(ctx, r)
+				c.noticePRRequestTargetRefusal(ctx, prRequestTargetActionOpenPR, r)
 			}
 			c.rejectPRRequest(path, req, "claim", reason, nowFn)
 			return

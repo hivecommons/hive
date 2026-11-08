@@ -616,7 +616,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			return
 		}
 		if blocked {
-			c.noticePRRequestTargetRefusal(ctx, refusal)
+			c.noticePRRequestTargetRefusal(ctx, issueRequestStartTargetAction(kind), refusal)
 			c.denyIssueRequest(path, req, issueRequestStartRefusedReason(kind, refusal), nowFn)
 			return
 		}

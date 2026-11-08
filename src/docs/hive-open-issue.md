@@ -263,7 +263,14 @@ issue labelled `needs-human` or held, on an issue parked on a person's
 decision (`stage/045-needs-decision`, `needs-spec`, the retired decision
 labels), and on an umbrella issue wearing a never-claim label
 (`governor.claims.never_claim_labels`, default `epic`, case-insensitive):
-an epic is the list of work, not the work. The same gate admits every
+an epic is the list of work, not the work. The claim is also refused when
+another principal already holds the issue — a live claim by a contributor or
+another hive's agent — or when another author's open PR covers it: the same
+claim-target gate that refuses a `hive-open-pr` closing reference
+([hive-open-pr.md](hive-open-pr.md#closes-n-on-an-issue-someone-else-is-working-is-rejected)),
+also applied to a relay comment that announces a start. The hive posts one
+notice on the issue (marker `<!-- hive:pr-request-claim-target -->`) saying
+what was asked, who holds it, and that the owner decides. The same gate admits every
 automated claim producer, so a start signal on such an issue records nothing. The
 `stage/030-pr-in-progress` label is swapped for `stage/040-covered-by-pr` when
 the agent's `hive-open-pr --issues` request opens the PR, and cleared when the

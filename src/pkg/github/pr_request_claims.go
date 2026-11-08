@@ -729,12 +729,48 @@ func (c *Client) prRequestTargetClaim(ctx context.Context, owner, repo string, n
 	return c.issueClaimFor(ctx, owner, repo, &snapshot, ttl, now)
 }
 
+// prRequestTargetAction names what the refused request was trying to do,
+// so the notice on the target issue describes the event that happened.
+type prRequestTargetAction string
+
+const (
+	// prRequestTargetActionOpenPR: hive-open-pr with a closing reference.
+	prRequestTargetActionOpenPR prRequestTargetAction = "open-pr"
+	// prRequestTargetActionClaim: hive-open-issue claim on the issue.
+	prRequestTargetActionClaim prRequestTargetAction = "claim"
+	// prRequestTargetActionStart: a relay comment announcing a start.
+	prRequestTargetActionStart prRequestTargetAction = "start"
+)
+
+// issueRequestStartTargetAction maps a start-path request kind to the
+// action named in the claim-target notice.
+func issueRequestStartTargetAction(kind string) prRequestTargetAction {
+	if kind == "claim" {
+		return prRequestTargetActionClaim
+	}
+	return prRequestTargetActionStart
+}
+
+// noticePRRequestTargetRefusalBody is the notice posted on a refused target
+// issue: what was asked, why it was refused, that nothing happened, and
+// that the owner decides.
+func noticePRRequestTargetRefusalBody(action prRequestTargetAction, r prRequestTargetRefusal) string {
+	asked, outcome := "asked to open a pull request that would close this issue", "No PR was opened"
+	switch action {
+	case prRequestTargetActionClaim:
+		asked, outcome = "asked to claim this issue", "The claim was not recorded"
+	case prRequestTargetActionStart:
+		asked, outcome = "asked to start work on this issue", "No work was started"
+	}
+	return fmt.Sprintf("%s\nA hive agent %s, but it is %s. %s; the owner decides whether to proceed.",
+		prRequestClaimTargetMarker, asked, r.why(), outcome)
+}
+
 // noticePRRequestTargetRefusal posts (or refreshes) the one notice on a
 // refused target issue. Best-effort: the rejected request is the
 // enforcement, the notice tells the issue's watchers why.
-func (c *Client) noticePRRequestTargetRefusal(ctx context.Context, r prRequestTargetRefusal) {
-	body := fmt.Sprintf("%s\nA hive agent asked to open a pull request that would close this issue, but it is %s. "+
-		"No PR was opened; the owner decides whether to proceed.", prRequestClaimTargetMarker, r.why())
+func (c *Client) noticePRRequestTargetRefusal(ctx context.Context, action prRequestTargetAction, r prRequestTargetRefusal) {
+	body := noticePRRequestTargetRefusalBody(action, r)
 	if _, err := c.EditIssueMarkerComment(ctx, r.Repo, r.Issue, prRequestClaimTargetMarker, func(string) string { return body }); err != nil {
 		c.logger.Warn("pr-request watcher: could not post the claim-target notice",
 			slog.String("repo", r.Repo), slog.Int("issue", r.Issue), slog.String("error", err.Error()))

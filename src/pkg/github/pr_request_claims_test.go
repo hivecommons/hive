@@ -586,8 +586,48 @@ func TestIssueRequestStart_RefusesContributorClaimedTarget(t *testing.T) {
 	if len(posted) != 1 || !strings.Contains(posted[0], prRequestClaimTargetMarker) || strings.Contains(posted[0], "Starting on this") {
 		t.Fatalf("comments posted = %q, want only the claim-target notice, not the start comment", posted)
 	}
+	// The notice describes the start that was refused, not a PR open that
+	// never happened, and still names the holder and the owner's call.
+	for _, want := range []string{"asked to start work on this issue", "already claimed by Karibhou", "No work was started", "the owner decides"} {
+		if !strings.Contains(posted[0], want) {
+			t.Fatalf("notice = %q, want it to contain %q", posted[0], want)
+		}
+	}
+	for _, reject := range []string{"pull request", "No PR was opened"} {
+		if strings.Contains(posted[0], reject) {
+			t.Fatalf("notice = %q, must not describe a PR open on the start path", posted[0])
+		}
+	}
 	if len(*calls) != 0 {
 		t.Fatalf("refused start reported start signals: %+v", *calls)
+	}
+}
+
+// The claim-target notice names the action that was refused on each path.
+func TestNoticePRRequestTargetRefusalBody_NamesAction(t *testing.T) {
+	r := prRequestTargetRefusal{Repo: "o/r", Issue: 7, Holder: "Karibhou"}
+	cases := []struct {
+		action prRequestTargetAction
+		asked  string
+		result string
+	}{
+		{prRequestTargetActionOpenPR, "asked to open a pull request that would close this issue", "No PR was opened"},
+		{prRequestTargetActionClaim, "asked to claim this issue", "The claim was not recorded"},
+		{prRequestTargetActionStart, "asked to start work on this issue", "No work was started"},
+	}
+	for _, tc := range cases {
+		body := noticePRRequestTargetRefusalBody(tc.action, r)
+		for _, want := range []string{prRequestClaimTargetMarker, tc.asked, "already claimed by Karibhou", tc.result, "the owner decides"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: notice = %q, want it to contain %q", tc.action, body, want)
+			}
+		}
+	}
+	if got := issueRequestStartTargetAction("claim"); got != prRequestTargetActionClaim {
+		t.Errorf("issueRequestStartTargetAction(claim) = %q", got)
+	}
+	if got := issueRequestStartTargetAction("comment"); got != prRequestTargetActionStart {
+		t.Errorf("issueRequestStartTargetAction(comment) = %q", got)
 	}
 }
 

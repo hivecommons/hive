@@ -266,8 +266,9 @@ saying who holds it; the owner decides whether to proceed. If the claim or the
 covering PR cannot be read, the request is not opened and is retried later.
 
 The same check runs on the start path: a `hive-open-issue claim`, or a relay
-comment that announces a start on an issue, is denied with the same reason and
-the same notice before anything is written and before the start is booked, so
+comment that announces a start on an issue, is denied with the same reason
+before anything is written and before the start is booked; the notice on the
+issue then says a claim or a start was asked for, not a PR, so
 epic-driven work that never claimed its target is caught when it starts, not
 only when it opens the PR.
 
