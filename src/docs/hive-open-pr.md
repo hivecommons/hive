@@ -252,6 +252,19 @@ rewritten without the note. The hive log carries the same reason under
 `pr-request watcher: downgraded closing reference to Refs`, but that log has a
 retention window and the PR body does not.
 
+### `Closes #N` on an issue someone else is working is rejected
+
+Before the request books a start on any issue, the watcher checks every issue
+your title or body closes ([#17298](https://github.com/hivecommons/hive/issues/17298)).
+The request is rejected (gate `claim`) when the issue has a live claim held by
+anyone other than you — a contributor, a person, or another agent — or is
+covered by an open PR from an author outside the hive. Your own claim and the
+hive's own PR pass. This applies whether the work was dispatched from the issue
+or arrived through an epic. The hive posts one notice on the issue (marker
+`<!-- hive:pr-request-claim-target -->`, edited in place on repeat refusals)
+saying who holds it; the owner decides whether to proceed. If the claim or the
+covering PR cannot be read, the request is not opened and is retried later.
+
 ### Base drift: a branch cut from the wrong line is rejected
 
 A head more than **100 commits behind its base** is rejected permanently

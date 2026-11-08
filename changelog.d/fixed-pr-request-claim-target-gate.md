@@ -1,0 +1,1 @@
+- hive-open-pr and the PR-request watcher now refuse a Fixes/Closes target that another principal has claimed or covered with an open PR, and post one deduplicated notice on the issue (#17298).

@@ -10,6 +10,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
 func claimValidationServer(t *testing.T, files []string, issue map[string]any) *httptest.Server {
@@ -368,5 +371,94 @@ func TestValidatePRRequestClaims_HumanFiledBugCloseOnMergeMarkerDoesNotAffectPRC
 				t.Fatalf("human-filed bug should keep Closes regardless of close-gate marker: body = %q", body)
 			}
 		})
+	}
+}
+
+// claimTargetServer answers GET /pulls/8 with prState ("" answers 404, the
+// lookup error); every other path 404s.
+func claimTargetServer(t *testing.T, prState string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/8") && prState != "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": prState, "user": map[string]any{"login": "Karibhou"}})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+}
+
+func liveLedgerClaim(identity string, now time.Time) func(string, int) (issueclaim.Claim, bool) {
+	return func(repo string, number int) (issueclaim.Claim, bool) {
+		if number != 7 {
+			return issueclaim.Claim{}, false
+		}
+		return issueclaim.Claim{Identity: identity, StartedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour), Source: issueclaim.SourceLease}, true
+	}
+}
+
+var claimTargetRequest = PRRequest{Repo: "o/r", Head: "scanner/fix-7", Title: "fix: thing", Body: "Fixes #7", Agent: "scanner"}
+
+// hivecommons/hive#17298: #17243 was claimed by a contributor and the
+// agent's PR closing it was opened anyway.
+func TestValidatePRRequestTargets_RefusesContributorClaimedTarget(t *testing.T) {
+	srv := claimTargetServer(t, "")
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+	now := time.Now()
+	c.SetIssueClaimLedger(liveLedgerClaim("Karibhou", now))
+
+	refused, err := c.validatePRRequestTargets(context.Background(), claimTargetRequest, now)
+	reason, ok := prRequestPolicyReason(err)
+	if !ok || !strings.Contains(reason, "already claimed by Karibhou") {
+		t.Fatalf("error = %v (%q, policy=%v), want a claim refusal", err, reason, ok)
+	}
+	if len(refused) != 1 || refused[0].Issue != 7 || refused[0].Holder != "Karibhou" {
+		t.Fatalf("refused = %+v, want #7 held by Karibhou", refused)
+	}
+}
+
+func TestValidatePRRequestTargets_RefusesTargetCoveredByAnotherAuthorsPR(t *testing.T) {
+	srv := claimTargetServer(t, "open")
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+	c.SetPRClaimLookup(ledgerLookupFor(IssueClaim{Repo: "r", Issue: 7, PRNumber: 8, PRRepo: "r", PRAuthor: "Karibhou", PRState: "open", ExternalAuthor: true, Closing: true}, true))
+
+	refused, err := c.validatePRRequestTargets(context.Background(), claimTargetRequest, time.Now())
+	reason, ok := prRequestPolicyReason(err)
+	if !ok || !strings.Contains(reason, "covered by #8") {
+		t.Fatalf("error = %v (%q, policy=%v), want a coverage refusal", err, reason, ok)
+	}
+	if len(refused) != 1 || !strings.HasPrefix(refused[0].CoveringPR, "#8") {
+		t.Fatalf("refused = %+v, want #7 covered by #8", refused)
+	}
+}
+
+func TestValidatePRRequestTargets_AllowsOwnClaimAndOwnPR(t *testing.T) {
+	srv := claimTargetServer(t, "open")
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+	now := time.Now()
+	c.SetIssueClaimLedger(liveLedgerClaim("scanner", now))
+	c.SetPRClaimLookup(ledgerLookupFor(IssueClaim{Repo: "r", Issue: 7, PRNumber: 8, PRRepo: "r", PRAuthor: "hive[bot]", PRState: "open", Closing: true}, true))
+
+	refused, err := c.validatePRRequestTargets(context.Background(), claimTargetRequest, now)
+	if err != nil || len(refused) != 0 {
+		t.Fatalf("validatePRRequestTargets = %+v, %v; want the agent's own claim and the hive's own PR allowed", refused, err)
+	}
+}
+
+func TestValidatePRRequestTargets_LookupErrorRefuses(t *testing.T) {
+	srv := claimTargetServer(t, "")
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+	c.SetPRClaimLookup(ledgerLookupFor(IssueClaim{Repo: "r", Issue: 7, PRNumber: 8, PRRepo: "r", PRAuthor: "Karibhou", PRState: "open", ExternalAuthor: true, Closing: true}, true))
+
+	_, err := c.validatePRRequestTargets(context.Background(), claimTargetRequest, time.Now())
+	if err == nil {
+		t.Fatal("validatePRRequestTargets succeeded although the covering PR could not be read; want fail closed")
+	}
+	if _, policy := prRequestPolicyReason(err); policy {
+		t.Fatalf("error = %v is a policy refusal; want a lookup error the watcher retries", err)
 	}
 }
