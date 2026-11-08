@@ -354,8 +354,15 @@ func (f codeScanningForge) CloseIssue(ctx context.Context, repo string, number i
 	if err := f.gate(repo, number, comment); err != nil {
 		return err
 	}
-	if err := f.c.CreateIssueComment(ctx, repo, number, comment); err != nil { // writeback:gated — WritebackAllowed consulted above
+	// The closing note carries codescanning.CloseMarker: when an earlier
+	// pass posted it and the close itself failed, close without a second note.
+	owner, name := f.c.splitRepo(repo)
+	if _, posted, err := f.c.findOwnMarkerComment(ctx, owner, name, number, codescanning.CloseMarker); err != nil {
 		return err
+	} else if !posted {
+		if err := f.c.CreateIssueComment(ctx, repo, number, comment); err != nil { // writeback:gated — WritebackAllowed consulted above
+			return err
+		}
 	}
 	return f.c.CloseIssue(ctx, repo, number, IssueCloseOptions{StateReason: stateReason}) // writeback:gated — WritebackAllowed consulted above
 }

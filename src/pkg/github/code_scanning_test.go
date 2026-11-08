@@ -28,6 +28,7 @@ type codeScanningServer struct {
 	creates   []map[string]any
 	edits     int
 	comments  int
+	posted    map[int][]string // comment bodies by issue number
 	requests  int
 	alertGets int
 	labels    map[string]bool
@@ -102,8 +103,21 @@ func (s *codeScanningServer) start(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(is)
 		case strings.HasPrefix(p, "/repos/o/r/issues/") && strings.HasSuffix(p, "/comments") && r.Method == http.MethodPost:
 			s.comments++
+			n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(p, "/repos/o/r/issues/"), "/comments"))
+			if s.posted == nil {
+				s.posted = map[int][]string{}
+			}
+			body, _ := in["body"].(string)
+			s.posted[n] = append(s.posted[n], body)
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":1}`))
+		case strings.HasPrefix(p, "/repos/o/r/issues/") && strings.HasSuffix(p, "/comments") && r.Method == http.MethodGet:
+			n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(p, "/repos/o/r/issues/"), "/comments"))
+			out := []map[string]any{}
+			for i, b := range s.posted[n] {
+				out = append(out, map[string]any{"id": i + 1, "body": b, "user": map[string]any{"login": "hive-app[bot]", "type": "Bot"}})
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case strings.HasPrefix(p, "/repos/o/r/issues/"):
 			n, _ := strconv.Atoi(strings.TrimPrefix(p, "/repos/o/r/issues/"))
 			for _, is := range s.issues {
@@ -286,5 +300,34 @@ func TestCodeScanningAlertListingIsBounded(t *testing.T) {
 	alerts, complete, err = f.ListAlerts(context.Background(), "o/r", "open", 10)
 	if err != nil || !complete || len(alerts) != len(s.alerts) {
 		t.Fatalf("full listing: %d alerts complete=%v err=%v", len(alerts), complete, err)
+	}
+}
+
+// A closing note carries codescanning.CloseMarker. When an earlier pass
+// posted it and the close itself failed, the retry closes without posting
+// the note a second time.
+func TestCodeScanningCloseNotePostedOnceAcrossRetries(t *testing.T) {
+	srv := &codeScanningServer{issues: []map[string]any{{"number": 7, "state": "open", "title": "t", "body": "b", "user": map[string]any{"login": "hive-app[bot]", "type": "Bot"}}}}
+	c := newCodeScanningClient(t, srv.start(t))
+	f := codeScanningForge{c: c}
+	note := codescanning.CloseComment(map[int]codescanning.AlertStatus{12: codescanning.StatusFixed})
+	if !strings.Contains(note, codescanning.CloseMarker) {
+		t.Fatalf("close note lacks its marker: %q", note)
+	}
+	ctx := context.Background()
+	if err := f.CloseIssue(ctx, "o/r", 7, note, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	// A retry (as after a refused close) must not post the note again.
+	if err := f.CloseIssue(ctx, "o/r", 7, note, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if got := len(srv.posted[7]); got != 1 {
+		t.Fatalf("closing note posted %d times, want 1", got)
+	}
+	if srv.issues[0]["state"] != "closed" {
+		t.Fatalf("issue state = %v, want closed", srv.issues[0]["state"])
 	}
 }

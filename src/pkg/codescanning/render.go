@@ -342,6 +342,10 @@ func rewriteBody(body string, m Marker, section string) string {
 	return markerRE.ReplaceAllLiteralString(body, m.String())
 }
 
+// CloseMarker tags the closing note, so a retry after a failed close (the
+// note posted, the close refused) closes without posting the note again.
+const CloseMarker = "<!-- hive:code-scanning-closed -->"
+
 // CloseComment is the note posted when every tracked alert is gone.
 func CloseComment(gone map[int]AlertStatus) string {
 	nums := make([]int, 0, len(gone))
@@ -358,6 +362,7 @@ func CloseComment(gone map[int]AlertStatus) string {
 		}
 	}
 	var b strings.Builder
+	b.WriteString(CloseMarker + "\n")
 	b.WriteString("Every code scanning alert this issue tracked is no longer open on GitHub")
 	if len(fixed) > 0 {
 		b.WriteString("; fixed: " + strings.Join(fixed, ", "))
