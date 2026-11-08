@@ -1,1 +1,0 @@
-- crux: checkout requests are bounded by a server ceiling (`--checkout-max-bytes`, `CRUX_CHECKOUT_MAX_BYTES`), private repositories clone with `CRUX_CHECKOUT_TOKEN` through a credential helper that never logs the token, and the `job` run backend isolates each Job with a deny-all NetworkPolicy by default (`job_network: none|host|default`)
