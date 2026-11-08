@@ -229,12 +229,11 @@ func hubGitHubRateLimits(ctx context.Context) (*hgithub.RateLimitInfo, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
 		return nil, err
 	}
-	hits, misses, entries := hgithub.ETagCacheStats()
 	return &hgithub.RateLimitInfo{
 		Core:         toEntry(body.Resources.Core),
 		Search:       toEntry(body.Resources.Search),
 		GraphQL:      toEntry(body.Resources.GraphQL),
 		TopConsumers: hgithub.RESTTopConsumers(10),
-		ETagCache:    hgithub.ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries},
+		ETagCache:    hgithub.ETagCacheInfoSnapshot(),
 	}, nil
 }

@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // The github.* quota, scan and authorship keys round-trip through
@@ -27,6 +30,10 @@ func TestConfigGitHubParityBatch6RoundTrip(t *testing.T) {
 		{"graphql_pr_batch_page_size": -1},
 		{"graphql_pr_batch_page_size": 101},
 		{"api_reserve": -1},
+		{"etag_cache_max_mb": -1},
+		{"etag_cache_max_mb": 2049},
+		{"etag_cache_max_entries": -1},
+		{"etag_cache_max_entries": 1 << 21},
 		{"api_critical": 900},
 		{"api_reserve": 200},
 		{"api_reserve": 100, "api_critical": 100},
@@ -36,14 +43,19 @@ func TestConfigGitHubParityBatch6RoundTrip(t *testing.T) {
 			t.Fatalf("%v: expected 400, got %d — %s", bad, rec.Code, rec.Body.String())
 		}
 	}
-	if g := s.deps.Config.GitHub; g.APIReserve != before.APIReserve || g.APICritical != before.APICritical || g.AppSignedCommits != nil {
+	if g := s.deps.Config.GitHub; g.APIReserve != before.APIReserve || g.APICritical != before.APICritical || g.AppSignedCommits != nil ||
+		g.ETagCacheMaxMB != 0 || g.ETagCacheMaxEntries != 0 {
 		t.Fatal("a rejected PUT changed the config")
 	}
+	_, maxBytes0, maxEntries0 := github.ETagCacheUsage()
+	t.Cleanup(func() { github.SetETagCacheLimits(maxBytes0, maxEntries0) })
 
 	if rec := doPut(s, "/api/config/github", map[string]any{
 		"agent_reserve_floor":        500,
 		"api_reserve":                1000,
 		"api_critical":               300,
+		"etag_cache_max_mb":          256,
+		"etag_cache_max_entries":     16384,
 		"pr_detail_ttl_s":            600,
 		"graphql_pr_batch":           false,
 		"graphql_pr_batch_page_size": 25,
@@ -54,8 +66,23 @@ func TestConfigGitHubParityBatch6RoundTrip(t *testing.T) {
 	}
 	g := s.deps.Config.GitHub
 	if g.AgentReserveFloor != 500 || g.APIReserve != 1000 || g.APICritical != 300 || g.PRDetailTTLS != 600 ||
+		g.ETagCacheMaxMB != 256 || g.ETagCacheMaxEntries != 16384 ||
 		g.GraphQLPRBatchEnabled() || g.GraphQLPRBatchPageSize != 25 || g.AppAuthoredPRsEnabled() || !g.AppSignedCommitsEnabled() {
 		t.Fatalf("github settings not applied: %+v", g)
+	}
+	// The ETag cache resize applies to the live process-wide cache at once.
+	if _, maxBytes, maxEntries := github.ETagCacheUsage(); maxBytes != 256<<20 || maxEntries != 16384 {
+		t.Fatalf("etag cache limits not applied live: %d bytes / %d entries", maxBytes, maxEntries)
+	}
+	// Clearing restores the built-in defaults on the live cache too.
+	if rec := doPut(s, "/api/config/github", map[string]any{"etag_cache_max_mb": 0, "etag_cache_max_entries": 0}); rec.Code != http.StatusOK {
+		t.Fatalf("clearing etag cache bounds: %d — %s", rec.Code, rec.Body.String())
+	}
+	if _, maxBytes, maxEntries := github.ETagCacheUsage(); maxBytes != config.DefaultGitHubETagCacheMaxMB<<20 || maxEntries != config.DefaultGitHubETagCacheMaxEntries {
+		t.Fatalf("cleared etag cache bounds did not restore defaults: %d bytes / %d entries", maxBytes, maxEntries)
+	}
+	if rec := doPut(s, "/api/config/github", map[string]any{"etag_cache_max_mb": 256, "etag_cache_max_entries": 16384}); rec.Code != http.StatusOK {
+		t.Fatalf("restore etag cache bounds: %d — %s", rec.Code, rec.Body.String())
 	}
 
 	// Clearing a quota field restores the default, as config.Validate and
@@ -100,6 +127,7 @@ func TestConfigGitHubParityBatch6RoundTrip(t *testing.T) {
 	}
 	st := got.Settings
 	if !st.TokenSet || st.AgentReserveFloor != 500 || st.APIReserve != 1000 || st.APICritical != 300 || st.PRDetailTTLS != 600 ||
+		st.ETagCacheMaxMB != 256 || st.ETagCacheMaxEntries != 16384 || st.Defaults["etag_cache_max_mb"] != config.DefaultGitHubETagCacheMaxMB ||
 		!st.GraphQLPRBatch || st.GraphQLPRBatchPageSize != 25 || st.AppAuthoredPRs || !st.AppSignedCommits {
 		t.Fatalf("forge-apps settings: %+v", st)
 	}
@@ -202,6 +230,8 @@ func TestParityBatch6SettingsRenderEveryKey(t *testing.T) {
 		{"github.api_critical", `num('api_critical'`},
 		{"github.agent_reserve_floor", `num('agent_reserve_floor'`},
 		{"github.pr_detail_ttl_s", `num('pr_detail_ttl_s'`},
+		{"github.etag_cache_max_mb", `num('etag_cache_max_mb'`},
+		{"github.etag_cache_max_entries", `num('etag_cache_max_entries'`},
 		{"github.graphql_pr_batch_page_size", `num('graphql_pr_batch_page_size'`},
 		{"github.graphql_pr_batch", `toggle('graphql_pr_batch'`},
 		{"github.app_authored_prs", `toggle('app_authored_prs'`},
