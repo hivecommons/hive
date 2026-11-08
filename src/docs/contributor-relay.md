@@ -1966,6 +1966,36 @@ Six behaviours are worth knowing:
   left to the maintainer; taking it would strand exactly the hosts just listed.
   See "How the reading reaches the guard" for the marker mechanics.
 
+### A held relay tells the hub (`quota_hold_v1`)
+
+While the quota guard or the provider quota hold is holding, the relay stays
+connected and keeps answering heartbeats; it just stops sending `ready` and
+declines anything pushed to it. Before this, the hub could not tell such a relay
+from one that was working, so a relay acting as a role still counted as
+[contributor-first](agent-configuration.md#contributor-first-lanes-contributor_first)
+cover and the resident agent's kicks were withheld for a lane nobody was
+working.
+
+A hub that advertises `quota_hold_v1` in `auth_ok.server_capabilities` now hears
+about it:
+
+```jsonc
+{ "type": "quota_hold", "seq": 51, "state": "held", "reason": "quota_guard" }   // or "provider_quota"
+{ "type": "quota_hold", "seq": 52, "state": "released" }
+```
+
+- The relay sends `held` when either hold starts and `released` when both have
+  ended, before the `ready` that follows a release. It sends each transition
+  once per connection, and restates a live hold right after `auth_ok`, because
+  a new connection starts out not held on the hub.
+- The hub records it on the connection and uses it only for contributor-first
+  coverage. It changes no lease, assignment or standby state.
+- A hub that does not advertise the token never receives the frame. A relay
+  that never sends it is read as not held. Either way the behaviour is exactly
+  what it was before.
+
+The expired-CLI-login hold is not reported this way yet.
+
 ### Provider adapter sources
 
 The `src/pkg/rotation` probers normalize each provider's usage into the reading

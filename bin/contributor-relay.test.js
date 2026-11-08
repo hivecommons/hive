@@ -17020,3 +17020,86 @@ test('#16463 standby acknowledgement does not outlive the connection it was gran
     relay.setCurrentTask(null); teardown(relay);
   }
 });
+
+// ---------------------------------------------------------------------------
+// quota_hold_v1: a held relay tells the hub, so it stops counting as
+// contributor-first cover. Observed on 2026-11-08: a relay acting as scanner
+// was held by its quota guard (weekly window 15% left, reserve 20%) while the
+// hub kept reporting it as covering the lane, and nobody worked it.
+// ---------------------------------------------------------------------------
+
+function quotaHoldFrames(sent) {
+  return sent.filter(m => m.type === 'quota_hold');
+}
+
+test('quota_hold_v1: the quota guard hold is reported, and released before the relay asks again', () => {
+  const p = tmp6951(JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 15 }] }));
+  const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_FILE: p } });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(true);
+    const sent = [];
+    relay.setWs({ readyState: 1, send: s => sent.push(JSON.parse(s)) });
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', server_capabilities: ['quota_hold_v1'] }));
+    assert.strictEqual(sent.some(m => m.type === 'ready'), false, 'precondition: the guard withholds ready at 15% < 20%');
+    assert.deepStrictEqual(quotaHoldFrames(sent).map(m => [m.state, m.reason]), [['held', 'quota_guard']],
+      `the hub must hear the hold once: ${JSON.stringify(sent.map(m => m.type))}`);
+
+    relay.retryContributorQuota();
+    assert.strictEqual(quotaHoldFrames(sent).length, 1, 'a retry that is still held must not repeat the frame');
+
+    fs.writeFileSync(p, JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90 }] }));
+    relay.retryContributorQuota();
+    const frames = quotaHoldFrames(sent);
+    assert.deepStrictEqual(frames.map(m => m.state), ['held', 'released'], 'the release must be reported');
+    const releasedAt = sent.indexOf(frames[1]);
+    const readyAt = sent.findIndex(m => m.type === 'ready');
+    assert.ok(readyAt > releasedAt, `released must reach the hub before the next ready: ${JSON.stringify(sent.map(m => m.type + (m.state ? ':' + m.state : '')))}`);
+  } finally { console.warn = warn; console.log = log; fs.unlinkSync(p); teardown(relay); }
+});
+
+test('quota_hold_v1: a hub that does not advertise the token never sees the frame', () => {
+  const p = tmp6951(JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 15 }] }));
+  const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_FILE: p } });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(true);
+    const sent = [];
+    relay.setWs({ readyState: 1, send: s => sent.push(JSON.parse(s)) });
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', server_capabilities: ['standby_v1'] }));
+    relay.enterQuotaHold({ line: 'quota exhausted', resetMs: 60 * 60 * 1000 });
+    fs.writeFileSync(p, JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90 }] }));
+    relay.retryContributorQuota();
+    relay.releaseQuotaHold('test');
+    assert.strictEqual(relay.getContributorQuotaPaused(), false, 'precondition: both holds came and went');
+    assert.deepStrictEqual(quotaHoldFrames(sent), [], 'an old hub must see exactly today\'s traffic');
+  } finally { console.warn = warn; console.log = log; fs.unlinkSync(p); teardown(relay); }
+});
+
+test('quota_hold_v1: the provider quota hold is reported, restated on reconnect, and released', () => {
+  const relay = loadRelay({});
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(true);
+    const sent = [];
+    relay.setWs({ readyState: 1, send: s => sent.push(JSON.parse(s)) });
+    const authOK = JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', server_capabilities: ['quota_hold_v1'] });
+    relay.handleMessage(authOK);
+    relay.enterQuotaHold({ line: 'quota exhausted', resetMs: 60 * 60 * 1000 });
+    assert.deepStrictEqual(quotaHoldFrames(sent).map(m => [m.state, m.reason]), [['held', 'provider_quota']]);
+
+    // A reconnect is a new connection the hub knows nothing about: restate.
+    relay.handleMessage(authOK);
+    assert.deepStrictEqual(quotaHoldFrames(sent).map(m => m.state), ['held', 'held'],
+      'auth_ok during a hold must tell the new connection, once');
+
+    relay.releaseQuotaHold('test');
+    const frames = quotaHoldFrames(sent);
+    assert.deepStrictEqual(frames.map(m => m.state), ['held', 'held', 'released']);
+    const readyAt = sent.findIndex((m, i) => i > sent.indexOf(frames[2]) && m.type === 'ready');
+    assert.ok(readyAt > 0, `release must still re-advertise after telling the hub: ${JSON.stringify(sent.map(m => m.type))}`);
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
