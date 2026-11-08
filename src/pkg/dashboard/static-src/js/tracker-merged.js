@@ -776,6 +776,8 @@
       return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(STAGE_TRACKER_POP_SHEET_QUERY).matches;
     }
     function stageTrackerPopSheet(kind) {
+      // Node test harnesses stub document without querySelector.
+      if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return null;
       return document.querySelector('.hive-dialog-overlay[data-ham-pop-sheet="' + kind + '"]');
     }
     function stageTrackerPopSheetDraw(overlay, html) {
