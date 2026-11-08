@@ -76,6 +76,10 @@ type GateRequest struct {
 	OpenedBy string `json:"opened_by,omitempty"`
 	// IdempotencyKey, when set, identifies the gate instead of its contents.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	// Run, when set, is a contained run the caller owns that the gate holds
+	// up: opening appends needs-input to its turn signals, answering input,
+	// expiry blocked (S5).
+	Run string `json:"run,omitempty"`
 }
 
 // Gate is one gate record: the response of every gate route.
@@ -90,6 +94,7 @@ type Gate struct {
 	OpenedByPrincipal   string          `json:"opened_by_principal"`
 	OpenedAt            time.Time       `json:"opened_at"`
 	ExpiresAt           *time.Time      `json:"expires_at,omitempty"`
+	Run                 string          `json:"run,omitempty"`
 	Answer              string          `json:"answer,omitempty"`
 	AnsweredBy          string          `json:"answered_by,omitempty"`
 	AnsweredByPrincipal string          `json:"answered_by_principal,omitempty"`

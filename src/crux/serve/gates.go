@@ -1,13 +1,17 @@
 package serve
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/gates"
+	"github.com/hivecommons/hive/crux/runs"
+	"github.com/hivecommons/hive/crux/signals"
 )
 
 // Human gates (hivecommons/crux#114 S3) are a work-services family: a
@@ -74,9 +78,13 @@ func (s *Server) handleGateOpen(w http.ResponseWriter, r *http.Request) {
 		s.writeGateError(w, err)
 		return
 	}
+	in.Run = strings.TrimSpace(in.Run)
+	if in.Run != "" && !s.gateRunUsable(w, r, in.Run) {
+		return
+	}
 	rec, created, err := svc.Open(s.gatesCaller(r), gates.Request{
 		Subject: in.Subject, Context: in.Context, Choices: in.Choices, Timeout: timeout,
-		OpenedBy: in.OpenedBy, IdempotencyKey: in.IdempotencyKey,
+		OpenedBy: in.OpenedBy, IdempotencyKey: in.IdempotencyKey, Run: in.Run,
 	})
 	if err != nil {
 		s.writeGateError(w, err)
@@ -87,6 +95,31 @@ func (s *Server) handleGateOpen(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	s.writeJSON(w, status, gateToAPI(rec))
+}
+
+// gateRunUsable checks the run a gate is opened for: the server must keep
+// runs, the run must exist and the caller must own it (or be the
+// operator), the same rule as reading the run. On failure the response
+// has been written.
+func (s *Server) gateRunUsable(w http.ResponseWriter, r *http.Request, id string) bool {
+	if s.Runs == nil {
+		s.writeError(w, http.StatusNotImplemented, api.CodeNotSupported, "this server has no contained-run service; open the gate without run")
+		return false
+	}
+	run, err := s.Runs.Get(id)
+	switch {
+	case errors.Is(err, runs.ErrNotFound):
+		s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, fmt.Sprintf("run %q not found", id))
+		return false
+	case err != nil:
+		s.writeRunsError(w, err)
+		return false
+	}
+	if caller := s.runsCaller(r); !caller.Operator && run.Owner != caller.Name {
+		s.writeError(w, http.StatusForbidden, api.CodeForbidden, fmt.Sprintf("run %s is owned by %q, not by %q", run.ID, run.Owner, caller.Name))
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleGateList(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +240,8 @@ func (s *Server) writeGateError(w http.ResponseWriter, err error) {
 }
 
 // publishGate relays one durable gate change onto /v1/events, without the
-// context payload, and audits an operator override.
+// context payload, audits an operator override and, for a gate opened for
+// a run, appends the matching turn signal to that run.
 func (s *Server) publishGate(op string, rec gates.Record) {
 	typ := api.EventGateOpened
 	switch op {
@@ -224,12 +258,45 @@ func (s *Server) publishGate(op string, rec gates.Record) {
 			"gate": rec.ID, "answer": rec.Answer, "opened_by_principal": rec.OpenedByPrincipal,
 		})
 	}
+	s.gateSignal(op, rec)
+}
+
+// gateSignal maps a gate change onto its run's turn signals: opened is
+// needs-input (the subject is the message), answered is input with the
+// answer, expired is blocked. The note and context stay with the gate. A
+// failure — no signal book, a run already done — is logged, never
+// returned: the gate change is already durable.
+func (s *Server) gateSignal(op string, rec gates.Record) {
+	if rec.Run == "" || s.Runs == nil || s.Runs.Signals == nil {
+		return
+	}
+	sig := signals.Signal{Source: api.SignalSourceGate}
+	data := api.SignalGateData{Gate: rec.ID}
+	switch op {
+	case gates.OpOpened:
+		sig.Kind, sig.Message = api.SignalNeedsInput, rec.Subject
+	case gates.OpAnswered:
+		sig.Kind, sig.Message = api.SignalInput, "gate answered: "+rec.Answer
+		data.Answer, data.AnsweredBy = rec.Answer, rec.AnsweredBy
+	case gates.OpExpired:
+		sig.Kind, sig.Message = api.SignalBlocked, "gate expired with no answer"
+	default:
+		return
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	sig.Data = raw
+	if _, err := s.Runs.AppendSignal(rec.Run, sig); err != nil {
+		s.Logger.Warn("crux serve: gate turn signal", "gate", rec.ID, "run", rec.Run, "err", err)
+	}
 }
 
 func gateToAPI(rec gates.Record) api.Gate {
 	return api.Gate{
 		ID: rec.ID, Status: rec.Status, Subject: rec.Subject, Context: rec.Context, Choices: rec.Choices, Timeout: rec.Timeout,
-		OpenedBy: rec.OpenedBy, OpenedByPrincipal: rec.OpenedByPrincipal, OpenedAt: rec.OpenedAt, ExpiresAt: rec.ExpiresAt,
+		OpenedBy: rec.OpenedBy, OpenedByPrincipal: rec.OpenedByPrincipal, OpenedAt: rec.OpenedAt, ExpiresAt: rec.ExpiresAt, Run: rec.Run,
 		Answer: rec.Answer, AnsweredBy: rec.AnsweredBy, AnsweredByPrincipal: rec.AnsweredByPrincipal, AnsweredAt: rec.AnsweredAt,
 		Note: rec.Note, OperatorOverride: rec.OperatorOverride, ExpiredAt: rec.ExpiredAt,
 	}
