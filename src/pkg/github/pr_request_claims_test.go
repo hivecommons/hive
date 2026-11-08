@@ -448,6 +448,33 @@ func TestValidatePRRequestTargets_AllowsOwnClaimAndOwnPR(t *testing.T) {
 	}
 }
 
+func TestValidatePRRequestTargets_RefusesSameNamedContributorAndOtherHiveClaims(t *testing.T) {
+	tests := []struct {
+		name  string
+		claim issueclaim.Claim
+	}{
+		{"contributor login equal to the agent name", issueclaim.Claim{Identity: "scanner", Kind: "contributor"}},
+		{"same-named agent in another hive", issueclaim.Claim{Identity: "scanner", Kind: "agent", Hive: "other-hive"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := claimTargetServer(t, "")
+			defer srv.Close()
+			c := claimValidationClient(t, srv)
+			c.SetIssueClaimLedgerHive(func() string { return "this-hive" })
+			now := time.Now()
+			claim := tt.claim
+			claim.StartedAt, claim.ExpiresAt, claim.Source = now.Add(-time.Hour), now.Add(time.Hour), issueclaim.SourceLease
+			c.SetIssueClaimLedger(func(repo string, number int) (issueclaim.Claim, bool) { return claim, number == 7 })
+
+			refused, err := c.validatePRRequestTargets(context.Background(), claimTargetRequest, now)
+			if _, ok := prRequestPolicyReason(err); !ok || len(refused) != 1 {
+				t.Fatalf("validatePRRequestTargets = %+v, %v; want a claim refusal", refused, err)
+			}
+		})
+	}
+}
+
 func TestValidatePRRequestTargets_LookupErrorRefuses(t *testing.T) {
 	srv := claimTargetServer(t, "")
 	defer srv.Close()

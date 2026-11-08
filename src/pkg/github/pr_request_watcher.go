@@ -436,6 +436,9 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	if err != nil {
 		if reason, policy := prRequestPolicyReason(err); policy {
 			for _, r := range refused {
+				if !strings.EqualFold(r.Repo, req.Repo) && !c.AgentServesRepo(req.Agent, r.Repo) {
+					continue
+				}
 				c.noticePRRequestTargetRefusal(ctx, r)
 			}
 			c.rejectPRRequest(path, req, "claim", reason, nowFn)

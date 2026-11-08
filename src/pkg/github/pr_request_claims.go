@@ -626,7 +626,7 @@ func (c *Client) prRequestTargetBlock(ctx context.Context, agent, owner, repo st
 	if err != nil {
 		return refusal, false, err
 	}
-	if found && !strings.EqualFold(strings.TrimSpace(claim.Identity), strings.TrimSpace(agent)) {
+	if found && !c.isOwnTargetClaim(claim, agent) {
 		refusal.Holder = claim.Identity
 		return refusal, true, nil
 	}
@@ -654,6 +654,25 @@ func (c *Client) prRequestTargetBlock(ctx context.Context, agent, owner, repo st
 		refusal.CoveringPR += " (@" + author + ")"
 	}
 	return refusal, true, nil
+}
+
+// isOwnTargetClaim reports whether claim is the requesting agent's own. A
+// bare agent name is only meaningful for kind=agent (or a legacy marker
+// without kind): a contributor's login can equal an agent name, and a
+// same-named agent in another hive is not this hive's agent.
+func (c *Client) isOwnTargetClaim(claim issueclaim.Claim, agent string) bool {
+	if claim.Kind != "" && !strings.EqualFold(claim.Kind, "agent") {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(claim.Identity), strings.TrimSpace(agent)) {
+		return false
+	}
+	if c.issueClaimLedgerHive != nil {
+		if hive := c.issueClaimLedgerHive(); hive != "" && claim.Hive != "" && claim.Hive != hive {
+			return false
+		}
+	}
+	return true
 }
 
 // prRequestTargetClaim is the live claim on one issue, read the way the
