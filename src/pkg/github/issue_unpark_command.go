@@ -325,6 +325,9 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 	// it round their since down to the hour so repeat passes stay cacheable
 	// (cacheableSince).
 	cutoff := now.Add(-unparkCommandScanWindow)
+	// Comment and timeline reads of an item whose updated_at has not moved
+	// since the last pass are reused (issue_unpark_read_cache.go).
+	ctx = withUnparkReadScope(ctx, &c.unparkReads, now)
 
 	for _, repo := range c.getRepos() {
 		if result.actions() >= maxActions {
@@ -350,6 +353,13 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 		if err != nil {
 			return result, err
 		}
+		listed := make(map[int]bool, len(issues))
+		for _, issue := range issues {
+			if issue != nil {
+				listed[issue.GetNumber()] = true
+			}
+		}
+		c.unparkReads.prune(owner, repoName, listed)
 		unparkedBefore := len(result.Unparked)
 		// waitingPRs are the PRs this pass saw at 085 or 070; the rest of
 		// the repo's PRs lose their "Your move" section after a full pass.
@@ -368,6 +378,9 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			// Items without an open episode cost no API call.
 			n, err := c.replyAttentionCommands(ctx, owner+"/"+repoName, owner, repoName, issue, cutoff)
 			result.Replies += n
+			if n > 0 || err != nil {
+				c.forgetUnparkRead(ctx, owner, repoName, issue.GetNumber())
+			}
 			if err != nil && c.logger != nil {
 				c.logger.Warn("unpark sweep skipped attention commands", "repo", repo, "item", issue.GetNumber(), "error", err)
 			}
@@ -380,6 +393,9 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 				// against the issue path.
 				if opts.PRApproveReply != nil && issue.GetComments() > 0 && !issue.GetUpdatedAt().Time.Before(cutoff) {
 					acted, err := c.replyPRApproveCommand(ctx, repo, owner, repoName, issue, cutoff, opts.PRApproveReply)
+					if acted || err != nil {
+						c.forgetUnparkRead(ctx, owner, repoName, issue.GetNumber())
+					}
 					if err != nil {
 						// One PR's failure must not stop un-parking for the rest of the pass.
 						if c.logger != nil {
@@ -402,6 +418,9 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 				result.Seen++
 				waitingPRs[issue.GetNumber()] = true
 				acted, err := c.tryUnparkPullRequest(ctx, repo, owner, repoName, issue, cutoff, opts, result)
+				if acted || err != nil {
+					c.forgetUnparkRead(ctx, owner, repoName, issue.GetNumber())
+				}
 				// After the command, so an approval it just read clears the
 				// section in the same pass. Never counted as an action.
 				if opts.PRReplyOptions {
@@ -427,6 +446,9 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			}
 			result.Seen++
 			acted, err := c.tryUnparkIssue(ctx, repo, owner, repoName, issue, cutoff, labelDriven, unparkLabelApproval{policy: policy, enabled: labelApproval, audit: opts.LabelApprovalAudit}, releasePolicy, result, opts.Audit, opts.ClosedAudit)
+			if acted || err != nil {
+				c.forgetUnparkRead(ctx, owner, repoName, issue.GetNumber())
+			}
 			if err != nil {
 				if c.noteArchivedWrite(strings.ToLower(owner+"/"+repoName), err) {
 					if c.logger != nil {
@@ -551,7 +573,7 @@ func unparkTextsProposeOwnerStep(issue *gh.Issue, comments []*gh.IssueComment) b
 // remove only the park labels the hive added itself.
 func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, cutoff time.Time, labelDriven bool, la unparkLabelApproval, releasePolicy unparkReleasePolicy, result *IssueUnparkSweepResult, audit, closedAudit func(IssueUnparkEvent)) (bool, error) {
 	number := issue.GetNumber()
-	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	comments, err := c.unparkComments(ctx, owner, repo, issue, time.Time{})
 	if err != nil {
 		return false, err
 	}
@@ -723,7 +745,9 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 func (c *Client) tryLabelApproval(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, comments []*gh.IssueComment, la unparkLabelApproval, result *IssueUnparkSweepResult) (bool, error) {
 	number := issue.GetNumber()
 	labels := issueLabelNames(issue.Labels)
-	f, err := c.evaluateLabelApproval(ctx, owner, repo, issue, la.policy)
+	f, err := c.evaluateLabelApprovalFrom(ctx, owner, repo, issue, la.policy, func() ([]issueLabelEvent, error) {
+		return c.unparkLabelEvents(ctx, owner, repo, issue)
+	})
 	if err != nil {
 		return false, err
 	}
@@ -1688,6 +1712,13 @@ func unparkOptionLetter(line string) string {
 // park re-check note does); a refusal keeps the in-place edit.
 func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo string, issue *gh.Issue, comments []*gh.IssueComment, releaseOnApprove bool) error {
 	number := issue.GetNumber()
+	// A write here changes the comments the sweep cached for the item.
+	wrote := false
+	defer func() {
+		if wrote {
+			c.forgetUnparkRead(ctx, owner, repo, number)
+		}
+	}()
 	desired := renderUnparkNoticeForPolicy(c.unparkMenuFor(issue.GetBody(), issue.GetUser(), comments), releaseOnApprove)
 	var notices []*gh.IssueComment
 	last := -1
@@ -1698,6 +1729,7 @@ func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo stri
 		}
 	}
 	if last < 0 {
+		wrote = true
 		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desired)}); err != nil {
 			return fmt.Errorf("creating unpark notice on %s/%s#%d: %w", owner, repo, number, err)
 		}
@@ -1711,6 +1743,7 @@ func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo stri
 		if d := c.WritebackAllowed(owner+"/"+repo, item, writeback.KindNeedsDecisionComment, desired); !d.Allowed {
 			stale = nil
 		} else if buried {
+			wrote = true
 			if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desired)}); err != nil { // writeback:gated
 				return fmt.Errorf("moving unpark notice to the bottom of %s/%s#%d: %w", owner, repo, number, err)
 			}
@@ -1718,11 +1751,13 @@ func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo stri
 		}
 	}
 	if keep := notices[len(notices)-1]; !moved && keep.GetBody() != desired {
+		wrote = true
 		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, keep.GetID(), &gh.IssueComment{Body: gh.Ptr(desired)}); err != nil {
 			return fmt.Errorf("editing unpark notice on %s/%s#%d: %w", owner, repo, number, err)
 		}
 	}
 	for _, cm := range stale {
+		wrote = true
 		if _, err := c.client.Issues.DeleteComment(ctx, owner, repo, cm.GetID()); err != nil { // writeback:gated
 			return fmt.Errorf("deleting buried unpark notice on %s/%s#%d: %w", owner, repo, number, err)
 		}

@@ -326,6 +326,15 @@ func (f labelApprovalFinding) Blocked() bool { return len(f.BlockingParkLabels) 
 // The label must still be on the issue (R11: a withdrawn acceptance is not
 // acted on) and only the newest `labeled` event for it is considered.
 func (c *Client) evaluateLabelApproval(ctx context.Context, owner, repo string, issue *gh.Issue, policy LabelApprovalPolicy) (labelApprovalFinding, error) {
+	return c.evaluateLabelApprovalFrom(ctx, owner, repo, issue, policy, func() ([]issueLabelEvent, error) {
+		return c.listIssueLabelEvents(ctx, owner, repo, issue.GetNumber())
+	})
+}
+
+// evaluateLabelApprovalFrom is evaluateLabelApproval with the label
+// timeline read by loadEvents, which the un-park sweep answers from its
+// per-item read cache (issue_unpark_read_cache.go).
+func (c *Client) evaluateLabelApprovalFrom(ctx context.Context, owner, repo string, issue *gh.Issue, policy LabelApprovalPolicy, loadEvents func() ([]issueLabelEvent, error)) (labelApprovalFinding, error) {
 	var f labelApprovalFinding
 	labels := issueLabelNames(issue.Labels)
 	var present []string
@@ -337,7 +346,7 @@ func (c *Client) evaluateLabelApproval(ctx context.Context, owner, repo string, 
 	if len(present) == 0 {
 		return f, nil
 	}
-	events, err := c.listIssueLabelEvents(ctx, owner, repo, issue.GetNumber())
+	events, err := loadEvents()
 	if err != nil {
 		return f, err
 	}

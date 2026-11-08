@@ -144,6 +144,11 @@ func TestSweepIssueUnparkCommands_CommentListSinceIsCacheable(t *testing.T) {
 		if _, err := client.SweepIssueUnparkCommands(context.Background(), opts); err != nil {
 			t.Fatalf("sweep at %v: %v", now, err)
 		}
+		// The item never changes, so the sweep's per-item read cache would
+		// answer passes 2 and 3 without any request at all
+		// (issue_unpark_read_cache.go). Drop it: this test is about the URL
+		// a read sends when one is needed.
+		client.unparkReads.prune("org", "repo", nil)
 	}
 	assertCacheablePasses(t, srv.requests(), "2026-10-31T19:00:00Z", "2026-10-31T20:00:00Z")
 }
