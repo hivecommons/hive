@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.206.0)
+
+### Added
+
+- The GitHub conditional-request (ETag / 304) response cache is now sized by `github.etag_cache_max_mb` and `github.etag_cache_max_entries` (env `HIVE_GITHUB_ETAG_CACHE_MAX_MB` / `HIVE_GITHUB_ETAG_CACHE_MAX_ENTRIES`), editable under Settings → Forge App and applied without a restart. The built-in default rises from 64 MiB / 4096 entries to 128 MiB / 8192 entries, cached bodies are stored gzip-compressed so the cap holds several times as many responses, and `/api/gh-rate-limits` plus the Debug → GitHub API budget panel show the cache's fill level (`bytes` / `max_bytes` / `max_entries`) so an operator can see eviction pressure before the hit rate slides.
+
+### Security
+
+- crux: a contained run's `workspace_path` is now checked against `workspace_roots` after resolving symlinks, and the run mounts the resolved directory ([#17029](https://github.com/hivecommons/hive/issues/17029)). Previously the root check was lexical, so a symlink under a workspace root — one a previous run could plant in its read-write workspace — pointing at `/` passed the check and the backend mounted the link's target read-write. Such a request is now refused with 403 (`resolves outside this server's workspace_roots`); roots that are themselves reached through a symlink keep working.
+
 ## 2026-11-08 (v5.205.0)
 
 ### Added
