@@ -36,7 +36,7 @@ memory.
  │      Fisher-Rao rerank → type priority → cap at max_facts (25) →             │
  │      expandWithGraph (never past the scope) → Context7 hints                 │
  │ 4. PrimedKnowledge.Render (primer_render.go): "# Relevant Knowledge",        │
- │    grouped by type, whole facts dropped past max_bytes (4096),               │
+ │    grouped by type, whole facts dropped past max_bytes (8192),               │
  │    "_… truncated: N facts / M bytes omitted (size cap)._" marker             │
  └──────────────────────────────────────────────────────────────────────────────┘
                               │
@@ -55,7 +55,17 @@ configured `knowledge.vaults` (personal layer), `knowledge.git_sources`
 organic source on a running hive), plus any HTTP wiki layers in
 `knowledge.layers`. The repo's own docs are *not* a source unless you index
 them through a git source, connector or code map
-([knowledge-curator.md](knowledge-curator.md)).
+([knowledge-curator.md](knowledge-curator.md)) — with one seeded default:
+a hive whose `knowledge.git_sources` key is absent gets one entry for its
+primary repo's knowledge directory at boot
+(`seedKnowledgeGitSource`, `src/cmd/hive/boot_knowledge_seed.go`). The
+probe asks GitHub for the repo's default branch, then for
+`knowledge.bead_synthesizer.publish.path` if set, else `docs/knowledge/`
+then `src/docs/knowledge/`; the first that exists becomes
+`<repo>-knowledge` at the `project` layer. Nothing is written to
+`hive.yaml`; an operator list — including an explicit `git_sources: []`,
+which is what a dashboard disconnect saves — is never touched, and a
+missing dir, non-GitHub forge or absent client skips with a DEBUG line.
 
 **How it is scoped.**
 
@@ -86,7 +96,7 @@ them through a git source, connector or code map
 
 | Block | Cap | Config |
 |---|---|---|
-| `# Relevant Knowledge` | 25 facts, 4096 bytes (floor 512) | `knowledge.primer.max_facts`, `knowledge.primer.max_bytes` |
+| `# Relevant Knowledge` | 25 facts, 8192 bytes (floor 512) | `knowledge.primer.max_facts`, `knowledge.primer.max_bytes` |
 | Repo `AGENTS.md` | 8192 bytes (floor 2048), whole sections | `project.agents_md_max_bytes` (`agentsmd.DefaultMaxInjectionBytes`) |
 | Declared skills | 8192 bytes, whole skills | `maxSkillsInjectionBytes` in `kick_priming.go` (fixed) |
 

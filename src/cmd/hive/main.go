@@ -2996,6 +2996,15 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 		}
 	}
 
+	// A hive with no git_sources gets its primary repo's knowledge dir
+	// (boot_knowledge_seed.go); bootGitHub has already run, so the probe can
+	// use the hive's own client.
+	var seedProbe knowledgeSeedProbe
+	if b.ghClient != nil {
+		seedProbe = b.ghClient
+	}
+	seedKnowledgeGitSource(b.ctx, b.cfg, seedProbe, b.logger)
+
 	// Auto-connect configured git sources (remote repos indexed as knowledge)
 	for _, gsc := range b.cfg.Knowledge.GitSources {
 		if b.knowledgeAPI == nil {
