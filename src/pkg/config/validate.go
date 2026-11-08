@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"regexp"
 	"sort"
@@ -193,6 +194,13 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	}
 	if err := c.validateRepoForges(); err != nil {
 		return err
+	}
+	advisorWarnings, err := c.validateKnowledgeAdvisorLLM()
+	if err != nil {
+		return err
+	}
+	for _, w := range advisorWarnings {
+		log.Printf("WARNING: %s", w)
 	}
 	if err := ValidateKnowledgeConnectors(c.Knowledge.Connectors); err != nil {
 		return err
