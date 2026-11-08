@@ -267,7 +267,7 @@ async function main() {
   const activityFailures = [];
   const fixtureRoot = path.join(process.cwd(), 'src/pkg/dashboard/webstatic/testdata');
   const density = JSON.parse(fs.readFileSync(path.join(fixtureRoot, 'tracker-activity-density.json'), 'utf8'));
-  const probes = ['tracker-header-geometry', 'tracker-decision-interaction', 'tracker-phone-chrome', 'tracker-phone-pill', 'tracker-text-floor'].map(name => ({
+  const probes = ['tracker-header-geometry', 'tracker-decision-interaction', 'tracker-phone-chrome', 'tracker-phone-pill', 'tracker-phone-ergonomics', 'tracker-text-floor'].map(name => ({
     name, source: fs.readFileSync(path.join(fixtureRoot, name + '.js'), 'utf8'),
   }));
   // Phone tier (hivecommons/hive#17160): the chevron strip is hidden behind

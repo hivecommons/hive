@@ -759,6 +759,27 @@
       textarea {
         font-size: var(--fs-touch) !important;
       }
+      /* Activity monitor on a landscape phone (#17166): ~390px of height.
+         The toolbar and label chips collapse into the compact filter bar
+         exactly as on a portrait phone (#17159), the column header hides
+         so the sticky stack is the bar alone (≤100px); the notch is
+         already honoured by this tier's body padding. Lines naming
+         .ham-sticky must stay free of
+         literal colours (stage_tracker_actor_icon_test.go). */
+      #activity-monitor-section { --ham-sticky-bar-h: calc(var(--tap-target) + 2 * var(--sp-1)); }
+      #activity-monitor-section .section-body > .ham-toolbar, #activity-monitor-section .section-body > .ham-labels { display: none; }
+      #activity-monitor-meta > :not(.ham-count) { display: none; }
+      #activity-monitor-section .dash-card-body { overflow: clip; }
+      #activity-monitor-panel .ham-cols { display: none; }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky .ham-merged-sub { display: none; }
+      .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact-scroll::-webkit-scrollbar { display: none; }
+      .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
+      .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }
+      .ham-compact-more[data-ham-active] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
     }
     /* Touch phones use one full-screen chat layout in either orientation.
        Desktop docking/resizing controls do not apply to this layout. */

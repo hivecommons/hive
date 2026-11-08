@@ -23,7 +23,7 @@ func merged(pr Issue, at time.Time) Issue {
 }
 
 func TestIsRFCPR(t *testing.T) {
-	for _, title := range []string{"📝 proposal: Discord RFC cards", "📝 RFC: threads", "📝 rfc - lowercase"} {
+	for _, title := range []string{"📝 proposal: Discord RFC cards", "📝 RFC: threads", "📝 rfc - lowercase", "📖 proposal: Discord RFC cards", "📖 RFC: threads"} {
 		if !IsRFCPR(title, nil) {
 			t.Errorf("IsRFCPR(%q) = false, want true", title)
 		}

@@ -337,6 +337,22 @@ through `--fs-2xs`/`--fs-xs`/`--fs-sm` and never hard-code a smaller size, so
 the floor applies automatically. `dashboard-mobile-shots.mjs` asserts it at
 390×844 through the `tracker-text-floor` probe.
 
+### Phone tap targets: `--tap-target-touch`
+
+`--tap-target` (40px) sizes icon-only controls on desktop and the 768px tier.
+Phone tiers that must meet the Apple HIG / WCAG 2.5.5 coarse-pointer floor
+remap it for their subtree to `--tap-target-touch` (44px, `base.css`) rather
+than hard-coding sizes: the activity monitor does this in the
+`.modal-sheet` phone query, so its chips, selects, search box, Merged /
+queue chips, label chips, ⧉ ⛶ 📺 header tools, grip, ?, ⚙ and the per-row
+select / ⋯ controls all grow together. The row controls leave the
+hover-revealed left gutter for the top-right corner of the row header and
+the ⋯ menu opens as a `.hive-dialog.modal-sheet` (`stageTrackerOpenSheet`,
+`tracker-actions.js`) with tap-sized items. Inline text links (issue / PR
+refs, prose anchors) are the one documented exclusion. The gate is
+`webstatic/testdata/tracker-phone-ergonomics.js`, run by
+`dashboard-mobile-shots.mjs` at 390×844.
+
 ## Ratchet plan
 
 `pkg/dashboard/webstatic/style_ratchet_test.go`, modeled on

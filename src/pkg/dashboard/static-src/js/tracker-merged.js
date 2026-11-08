@@ -392,6 +392,10 @@
     // are visible at once; the older ones wait behind a "+N more" pill.
     const STAGE_TRACKER_MERGE_BANNER_PHONE_MAX = 3;
     const STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY = '(max-width: 480px)';
+    // A landscape phone (responsive.css's landscape tier) has ~390px of
+    // height; one banner at a time, the rest behind the pill (#17166).
+    const STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_MAX = 1;
+    const STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_QUERY = '(max-width: 1024px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse)';
     function stageTrackerCelebrateSetting() {
       try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_KEY) !== '0'; } catch { return true; }
     }
@@ -902,10 +906,13 @@
     }
     function stageTrackerTerminalView(d, nowMs) {
       if (!d || !Array.isArray(d.items)) return d;
+      // Merge state is null until its first fetch lands; a row menu can be
+      // opened before then, so read it as "nothing merged yet".
+      const merged = _stageTrackerMergeState || {};
       const items = d.items.map(item => {
         const rowKey = stageTrackerItemKey(item), pin = _stageTrackerCelebrating[rowKey];
         const active = pin && pin.until > nowMs;
-        if (item.kind === 'pr' && _stageTrackerMergeState[rowKey] === true) {
+        if (item.kind === 'pr' && merged[rowKey] === true) {
           const fact = _stageTrackerTerminalFacts[rowKey];
           return (fact && fact.until > nowMs) || Number(item.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(item, rowKey) : null;
         }
@@ -919,7 +926,7 @@
         }
         const linked = source.map(lp => {
           const key = stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp));
-          if (_stageTrackerMergeState[key] !== true) return lp;
+          if (merged[key] !== true) return lp;
           const fact = _stageTrackerTerminalFacts[key];
           return (fact && fact.until > nowMs) || Number(lp.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(lp, key) : null;
         }).filter(Boolean);
@@ -1231,14 +1238,25 @@
     function stageTrackerMergeBannerList(box) {
       return Array.prototype.filter.call(box.children, c => c.classList && c.classList.contains('merge-banner'));
     }
-    function stageTrackerMergeBannerIsPhone() {
-      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY).matches;
+    function stageTrackerMergeBannerMatches(query) {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(query).matches;
     }
-    // Crossing the phone breakpoint (a rotation, a resized window) re-lays
-    // the stack so hidden banners come back or the pill appears.
+    function stageTrackerMergeBannerIsPhone() {
+      return stageTrackerMergeBannerMatches(STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY);
+    }
+    // Pure: how many banners may show at once for the current viewport.
+    function stageTrackerMergeBannerCap() {
+      if (stageTrackerMergeBannerMatches(STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_QUERY)) return STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_MAX;
+      if (stageTrackerMergeBannerIsPhone()) return STAGE_TRACKER_MERGE_BANNER_PHONE_MAX;
+      return Infinity;
+    }
+    // Crossing the phone or landscape breakpoint (a rotation, a resized
+    // window) re-lays the stack so hidden banners come back or the pill appears.
     if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-      const mq = window.matchMedia(STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY);
-      if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => stageTrackerMergeBannerLayout(document.getElementById('merge-banners')));
+      for (const query of [STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY, STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_QUERY]) {
+        const mq = window.matchMedia(query);
+        if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => stageTrackerMergeBannerLayout(document.getElementById('merge-banners')));
+      }
     }
     // Pure-ish: on a phone keep the newest PHONE_MAX banners visible and hide
     // the older ones behind a "+N more" pill (which opens the Merged list);
@@ -1247,7 +1265,7 @@
     function stageTrackerMergeBannerLayout(box) {
       if (!box) return;
       const banners = stageTrackerMergeBannerList(box);
-      const cap = stageTrackerMergeBannerIsPhone() ? STAGE_TRACKER_MERGE_BANNER_PHONE_MAX : Infinity;
+      const cap = stageTrackerMergeBannerCap();
       const hiddenCount = Math.max(0, banners.length - cap);
       banners.forEach((el, i) => { if (i < hiddenCount) el.setAttribute('hidden', ''); else el.removeAttribute('hidden'); });
       let more = box.querySelector('.merge-banner-more');

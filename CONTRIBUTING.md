@@ -332,7 +332,7 @@ When a fix PR merges with `Closes #N`, `Fixes #N`, or `Resolves #N`, the issue c
 ## Pull requests
 
 - Target `v5` for all code and documentation contributions (the active development branch). `v4` is feature-frozen and accepts security and critical fixes only (see the base-branch table above).
-- Start PR titles with the repository's emoji convention: `✨ feature: ...`, `🐛 fix: ...`, `📖 docs: ...`, `📝 proposal: ...`, `⚠️` for a breaking change, `🌱` for chores and everything else. `📝` is for proposals only — a documentation PR is `📖 docs: ...`, and the required `PR Type` check fails the swap.
+- Start PR titles with the repository's emoji convention: `✨ feature: ...`, `🐛 fix: ...`, `📖 docs: ...`, `📖 proposal: ...`, `⚠️` for a breaking change, `🌱` for chores and everything else. The required `PR Type` check accepts only `⚠ ✨ 🐛 📖 🚀 🌱`, so `📝` fails it; the hive rewrites a leading `📝` on `proposal:`/`rfc:` to `📖`.
 - Include `Fixes #<issue>` lines for issues the PR closes.
 - Credit the issue's author with a `Co-authored-by:` trailer on the commit when the PR resolves somebody else's issue — see [Crediting issue authors](#crediting-issue-authors).
 - Describe what changed, why, and how you tested it.
