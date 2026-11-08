@@ -189,6 +189,8 @@ func stageTrackerStageActorOf(it StageTrackerItem, workers map[string]stageTrack
 			k = StageActorHuman
 		}
 		return set(k, it.Author, "prior art found — the author must confirm the gap or close it")
+	case stagelabels.OpenForDiscussion:
+		return set(StageActorHuman, "", "open for discussion — no agent work is queued; anyone may claim it")
 	case stagelabels.Claimed:
 		switch it.ClaimantKind {
 		case authorKindHive, authorKindClanker, authorKindHuman:
@@ -280,6 +282,8 @@ func stageTrackerHumanAsk(stage stagelabels.Stage) string {
 		return "needs triage"
 	case stagelabels.PossiblyExisting:
 		return "author confirms the gap"
+	case stagelabels.OpenForDiscussion:
+		return "open for discussion"
 	case stagelabels.Claimed:
 		return "a person holds the claim"
 	case stagelabels.Fixing, stagelabels.NeedsAuthor, stagelabels.ReturnedToContributor:

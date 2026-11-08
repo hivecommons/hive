@@ -41,6 +41,7 @@ func TestStageTrackerMergeFailedColumnNode(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN")+"\n"+
 		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_NEEDED")+"\n"+
 		jsConstLine(t, html, "STAGE_TRACKER_POSSIBLY_EXISTS")+"\n"+
+		jsConstLine(t, html, "STAGE_TRACKER_OPEN_FOR_DISCUSSION")+"\n"+
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_GATE_WORD")+"\n"+
 		jsConstBlock(t, html, "STAGE_TRACKER_GATE_REASON_WORDS")+"\n"+
 		jsConstBlock(t, html, "STAGE_TRACKER_EVENT_MOD_WORDS")+"\n"+

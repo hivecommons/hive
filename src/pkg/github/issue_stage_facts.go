@@ -78,10 +78,11 @@ func issueBucketFrom(bucket string) stageengine.IssueBucket {
 
 // resolveIssueLabelFacts fills the label-family verdicts the engine's
 // deriver reads (IssueFacts.HoldLabel, BlockedReason, UmbrellaLabel,
-// TriageAwaiting, LikelyDone and the ParkFacts) from the labels and bucket
-// in carries, using the hive's configured label vocabulary (hold labels,
-// never-claim labels, hard-suppress park labels, the reporter-trust
-// awaiting label). It is the one place that vocabulary meets the engine.
+// DiscussionLabel, TriageAwaiting, LikelyDone and the ParkFacts) from the
+// labels and bucket in carries, using the hive's configured label
+// vocabulary (hold labels, never-claim labels, hard-suppress park labels,
+// the reporter-trust awaiting label). It is the one place that vocabulary
+// meets the engine.
 func resolveIssueLabelFacts(in IssueStageInput, f *stageengine.Facts) {
 	f.Park.Holds = stagelabels.Holds(in.Labels)
 	f.Park.NeedsHuman = f.Park.NeedsHuman || issueHeldByNeedsHuman(in)
@@ -102,6 +103,7 @@ func resolveIssueLabelFacts(in IssueStageInput, f *stageengine.Facts) {
 		is.ApprovedDirectionLabel = HumanAckLabel
 	}
 	is.UmbrellaLabel = issueUmbrellaLabel(in.Labels, in.SpekUmbrella)
+	is.DiscussionLabel = issueDiscussionLabel(in.Labels)
 	is.BlockedReason = ""
 	if hasBlockedLabel(in.Labels) {
 		is.BlockedReason = blockedStageReason(in)

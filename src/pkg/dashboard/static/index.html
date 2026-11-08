@@ -15816,6 +15816,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // 017 possible-existing: the prior-art gate parked the issue on its
     // author (hivecommons/hive#13575). Lights Actionable with its own word.
     const STAGE_TRACKER_POSSIBLY_EXISTS = 17;
+    // 018 open-for-discussion: an unclaimed proposal / design issue
+    // (hivecommons/hive#17150). Lights Actionable with its own word; no
+    // agent work is queued on it, anyone may claim it.
+    const STAGE_TRACKER_OPEN_FOR_DISCUSSION = 18;
     // Stages that share a column (or a detour word) and what the lit chevron says.
     const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
     // Merge-gate pill vocabulary (hivecommons/hive#15073), one word per
@@ -15848,10 +15852,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MERGING_SLOW_MS = 60000;
     const STAGE_TRACKER_MERGE_PATH_WORDS = { sweep: 'automerge sweep', dashboard: 'maintainer merge from the dashboard', relay: 'hive-merge relay', forge: 'forge adapter', queue: 'merge queue' };
     const STAGE_TRACKER_MERGE_FAILED_SHORT_MAX = 60;
-    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Review passed', 80: 'Queued for merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 18: 'Open for discussion', 60: 'Review passed', 80: 'Queued for merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
-    const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
+    const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 18: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     // Motion bucket of the lit chevron: only a step the hive is acting on
     // ('active', gentle pulse) or one waiting on a person ('needs-human',
@@ -16607,6 +16611,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 10: return 'Waiting for a worker';
         case 15: return 'Triage needed';
         case 17: return 'Possibly exists · needs author';
+        case 18: return 'Open for discussion';
         case 20: return 'Claimed';
         case 30: return 'PR in progress';
         case 40: return 'Covered by a PR, not yet in review';
@@ -16705,7 +16710,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Stage → operator phrase, mirrored from stageTrackerStagePhrase
     // (stage_tracker_vocabulary.go): every string the page renders names a
     // stage by its chevron's words, never by a code ("060 reviewed").
-    const STAGE_TRACKER_STAGE_PHRASE = { 10: 'actionable', 15: 'waiting for triage', 17: 'waiting for the author to confirm the gap (prior art found)', 20: 'claimed', 30: 'a PR in progress', 40: 'covered by a PR', 45: 'waiting for a human decision', 50: 'in CI / review', 60: 'review passed · waiting for merge admission', 70: 'being remediated by hive', 71: 'waiting for its author', 72: 'returned to the contributor', 74: 'adopted by hive', 80: 'at the merge queue', 85: 'waiting for a human decision', 90: 'ready for human merge', 95: 'soaking before merge', 100: 'in the merge queue' };
+    const STAGE_TRACKER_STAGE_PHRASE = { 10: 'actionable', 15: 'waiting for triage', 17: 'waiting for the author to confirm the gap (prior art found)', 18: 'open for discussion', 20: 'claimed', 30: 'a PR in progress', 40: 'covered by a PR', 45: 'waiting for a human decision', 50: 'in CI / review', 60: 'review passed · waiting for merge admission', 70: 'being remediated by hive', 71: 'waiting for its author', 72: 'returned to the contributor', 74: 'adopted by hive', 80: 'at the merge queue', 85: 'waiting for a human decision', 90: 'ready for human merge', 95: 'soaking before merge', 100: 'in the merge queue' };
     // Pure: a stage's name in plain words for cues and tooltips — its short
     // word when the stages table has one, else its label with the lane's
     // "stage/060-" slug prefix dropped and the slug humanised ("Reviewed").
@@ -17818,7 +17823,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // not merge-ready): PR in progress, with the merge-queue chevron
       // empty (hivecommons/hive#16524).
       if (kind === 'pr' && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) return STAGE_TRACKER_PR_COLUMN;
-      if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
+      if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS || cur === STAGE_TRACKER_OPEN_FOR_DISCUSSION) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
       if (cur === 40) return STAGE_TRACKER_PR_COLUMN;
@@ -17849,7 +17854,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // chevron reads the column's own word ("CI / Review"), not "Needs
       // @author" (hivecommons/hive#15784). Guarded: the harnesses load by name.
       const pushedBack = (cur === 71 || cur === 72) && typeof stageTrackerPushedBack === 'function' && stageTrackerPushedBack(item);
-      const detour = (!terminal && !pushedBack && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
+      const detour = (!terminal && !pushedBack && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== STAGE_TRACKER_OPEN_FOR_DISCUSSION && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
         ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (typeof stageTrackerBlockerWord === 'function' && cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       if (detour && cur === 70 && !detour.sentinel && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
       // A bare "Needs human decision" (045 / 085) says why in the chevron
