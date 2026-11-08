@@ -267,7 +267,7 @@ async function main() {
   const activityFailures = [];
   const fixtureRoot = path.join(process.cwd(), 'src/pkg/dashboard/webstatic/testdata');
   const density = JSON.parse(fs.readFileSync(path.join(fixtureRoot, 'tracker-activity-density.json'), 'utf8'));
-  const probes = ['tracker-header-geometry', 'tracker-decision-interaction', 'tracker-phone-chrome', 'tracker-phone-pill', 'tracker-phone-ergonomics'].map(name => ({
+  const probes = ['tracker-header-geometry', 'tracker-decision-interaction', 'tracker-phone-chrome', 'tracker-phone-pill', 'tracker-phone-ergonomics', 'tracker-phone-attention-first'].map(name => ({
     name, source: fs.readFileSync(path.join(fixtureRoot, name + '.js'), 'utf8'),
   }));
   // Phone tier (hivecommons/hive#17160): the chevron strip is hidden behind
@@ -519,6 +519,12 @@ async function main() {
             // exercise the pill there, never pass by falling into the strip tier.
             if (probe.name === 'tracker-phone-pill' && vp.name === PILL_REQUIRED_VIEWPORT && !(result.ok && result.result && result.result.phone === true && result.result.pills > 0)) {
               activityFailures.push(vp.name + ' ' + theme + ' progress pill must replace the strip at 390x844');
+            }
+            // Likewise the attention-first order and the count line
+            // (hivecommons/hive#17162): at 390×844 the probe must have found
+            // attention rows to lead with, never pass by skipping.
+            if (probe.name === 'tracker-phone-attention-first' && vp.name === PILL_REQUIRED_VIEWPORT && !(result.ok && result.result && result.result.phone === true && result.result.attentionRows > 0)) {
+              activityFailures.push(vp.name + ' ' + theme + ' attention rows must lead the list under the count line at 390x844');
             }
           }
           let native;

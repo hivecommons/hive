@@ -4,7 +4,9 @@ export function activityDensityFixture(input) {
   const panel = document.getElementById('activity-monitor-panel');
   if (!panel) throw new Error('Actual Activity Monitor panel is missing');
   const nowMs = Date.now(), observed = new Date(nowMs).toISOString();
+  const attnLine = document.getElementById('activity-monitor-attn-line');
   const saved = { data: _stageTracker, rows: _stageTrackerRows,
+    attnLine: attnLine ? attnLine.innerHTML : null,
     role: window._hiveRole, user: window._hiveUser,
     preparation: [_stageTrackerPreparationShown, _stageTrackerPreparationRendered,
       _stageTrackerPreparationInline, _stageTrackerPreparationNow] };
@@ -123,6 +125,7 @@ export function activityDensityFixture(input) {
     stageTrackerCloseDecisionPop(false);
     if (typeof hideConfigTooltip === 'function') hideConfigTooltip();
     host.remove();
+    if (attnLine) attnLine.innerHTML = saved.attnLine;
     _stageTracker = saved.data;
     _stageTrackerRows = saved.rows;
     window._hiveRole = saved.role;
@@ -150,8 +153,20 @@ export function activityDensityFixture(input) {
   const ctx = { nowMs, items, events: {}, noteTuck: false, sharedPRs: {}, workers: {} };
   try {
     host.appendChild(stageTrackerRowNode('fixture-columns', stageTrackerHeaderHtml(stages)));
-    const ordered = stageTrackerPreparationOrderRows(_stageTracker, items, stages);
+    // Phone tier (hivecommons/hive#17162): take the production order —
+    // stageTrackerSort with the stored filter, attention tier first — and
+    // draw the sticky count line the renderer draws, so the 390×844 probe
+    // asserts the real contract. Desktop keeps the fixture's own order so
+    // the 1280 capture and the strip-tier probes are unchanged.
+    const phone = typeof stageTrackerPhone === 'function' && stageTrackerPhone();
+    const listed = phone ? stageTrackerTrainContiguous(stageTrackerSort(items, stages, _stageTrackerFilter, { phone: true })) : items;
+    const ordered = stageTrackerPreparationOrderRows(_stageTracker, listed, stages);
     _stageTrackerRows = ordered;
+    if (phone && attnLine) {
+      const f = stageTrackerNormalizeFilter(_stageTrackerFilter);
+      attnLine.innerHTML = stageTrackerAttentionLineHtml(items.filter(it => it && it.waiting_on_you && !it.nested_under).length,
+        items.filter(stageTrackerNeedsAttention).length, f.waitingOnYou);
+    }
     stageTrackerPreparationVisualSync(_stageTracker, ordered, ordered, stages, nowMs);
     const rows = ordered.map(item => ({ key: stageTrackerItemKey(item), html: stageTrackerRowHtml(item, stages, ctx) }));
     for (const row of stageTrackerPreparationInlineRows(rows, ordered, stages)) host.appendChild(stageTrackerRowNode(row.key, row.html));
