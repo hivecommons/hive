@@ -98,6 +98,41 @@ func TestDeriveIssueTable(t *testing.T) {
 		{"umbrella actionable is plain 010", func(f *Facts) { f.Issue.UmbrellaLabel = "epic" }, stagelabels.Actionable, false, "actionable"},
 		{"unknown bucket", func(f *Facts) { f.Issue.Bucket = "weird" }, stagelabels.None, false, "outside the pipeline: weird"},
 		{"decomposed parent", func(f *Facts) { f.Issue.OpenChildren = 2 }, stagelabels.Actionable, false, "actionable; waiting on 2 open child issue(s)"},
+		// hivecommons/hive#17150: an unclaimed proposal / design issue is a
+		// discussion, not idle agent work; a live claim stages it as usual.
+		{"proposal unclaimed", func(f *Facts) { f.Issue.DiscussionLabel = "proposal" }, stagelabels.OpenForDiscussion, false, "open for discussion: proposal"},
+		{"kind/design unclaimed", func(f *Facts) { f.Issue.DiscussionLabel = "kind/design" }, stagelabels.OpenForDiscussion, false, "open for discussion: kind/design"},
+		{"proposal outranks triage", func(f *Facts) {
+			f.Issue.DiscussionLabel = "proposal"
+			f.Issue.TriageAwaiting = "carries needs-triage"
+		}, stagelabels.OpenForDiscussion, false, "open for discussion: proposal"},
+		{"proposal claimed", func(f *Facts) {
+			f.Issue.DiscussionLabel = "proposal"
+			f.Issue.Bucket = BucketClaimed
+			f.Issue.Claim = &ClaimFact{Holder: "bob", Kind: "human"}
+		}, stagelabels.Claimed, false, "live issue claim"},
+		{"proposal claimed with a PR under way", func(f *Facts) {
+			f.Issue.DiscussionLabel = "kind/design"
+			f.Issue.Bucket = BucketClaimed
+			f.Issue.Claim = &ClaimFact{Kind: claims.KindContributor, PRStarted: true}
+		}, stagelabels.PRInProgress, false, "live claim with a PR under way"},
+		{"proposal covered by a Refs PR", func(f *Facts) {
+			f.Issue.DiscussionLabel = "proposal"
+			f.Issue.Bucket = BucketCoveredByPR
+			f.Issue.CoveringPR = pr99
+			f.Issue.Claim = &ClaimFact{PRNumber: 99, Partial: true}
+		}, stagelabels.CoveredByPR, false, "open PR addresses part of it (references it without a closing keyword)"},
+		{"parked proposal stays 045", func(f *Facts) {
+			f.Issue.DiscussionLabel = "proposal"
+			f.Issue.Bucket = BucketFiltered
+			f.Park.NeedsHuman = true
+		}, stagelabels.IssueNeedsDecision, false, "held for a person: needs-human"},
+		{"umbrella proposal claim not staged", func(f *Facts) {
+			f.Issue.DiscussionLabel = "proposal"
+			f.Issue.UmbrellaLabel = "epic"
+			f.Issue.Bucket = BucketClaimed
+			f.Issue.Claim = &ClaimFact{Kind: claims.KindAgent}
+		}, stagelabels.OpenForDiscussion, false, "open for discussion: proposal"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

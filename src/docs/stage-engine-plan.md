@@ -270,6 +270,22 @@ Shipped as three PRs (hivecommons/hive#13011):
   `040 → 020` (covering PR closed with nothing / a start marker / the claim
   still live) and `030 → 020` (PR evidence lapsed, claim held).
 
+- **018 open for discussion** ([#17150](https://github.com/hivecommons/hive/issues/17150)):
+  an open issue labelled `proposal` or `kind/design` with no live claim
+  derives `stage/018-open-for-discussion` instead of 010 / 015.
+  `pkg/github` resolves the label into `IssueFacts.DiscussionLabel`; the
+  deriver applies it wherever the issue would otherwise sit unclaimed (the
+  actionable / reporter-triage buckets, and an umbrella whose claim is not
+  staged), and names the label in the reason (`open for discussion:
+  proposal`). Claims, PR coverage, parks, holds and `blocked` are
+  unchanged, and the claim gate does not refuse the labels, so a claim
+  still stages 020 / 030. `issueProgress` books `040 → 018` under
+  `hive/partially-addressed` as progress (a `Refs` RFC PR merged, the
+  discussion remains), and leaving 018 is never a regression. The diagram
+  and `transition_table.go` gained `010 ↔ 018`, `018 → 020`, `018 ↔ 045`,
+  `020 → 018`, `030 → 018` and `040 → 018`. The stage engine reads labels
+  only, never titles: a 📝 RFC without either label stays 010.
+
 ## Tracking
 
 Tracking issue: [#12999](https://github.com/hivecommons/hive/issues/12999) *Central stage engine (ADR-0025)* — one checkbox per PR
