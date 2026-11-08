@@ -42,6 +42,11 @@ type WebhookHealth struct {
 	CIEvents1h        int        `json:"ci_events_1h"`
 	CIEventsApplied1h int        `json:"ci_events_applied_1h"`
 	CIRefetches1h     int        `json:"ci_refetches_1h"`
+	// Rejected1h counts deliveries the receiver turned away in the last hour
+	// (no secret configured, signature mismatch, undecodable payload) and
+	// LastRejectedAt is the newest one; mode_reason_code says which kind.
+	Rejected1h     int        `json:"rejected_1h"`
+	LastRejectedAt *time.Time `json:"last_rejected_at"`
 	// WebhookModeStatus is the reconcile cadence the health drives:
 	// `mode` webhook|polling and `since` (hivecommons/hive#13381).
 	WebhookModeStatus
@@ -137,7 +142,42 @@ type webhookTracker struct {
 	// the cadence mode machine (webhook_mode.go).
 	lastActivity time.Time
 	lastFailure  time.Time
-	mode         webhookModeMachine
+	// lastFailureReason is the WebhookReason* code of lastFailure and
+	// rejected the per-minute count of rejected deliveries (rejected_1h).
+	lastFailureReason string
+	rejected          webhookMinuteCounter
+	mode              webhookModeMachine
+}
+
+// webhookMinuteCounter counts events over the last hour in sixty one-minute
+// buckets: fixed size, so recording a delivery never allocates however many
+// arrive.
+type webhookMinuteCounter struct {
+	minute [60]int64
+	count  [60]uint32
+}
+
+func (c *webhookMinuteCounter) add(now time.Time) {
+	m := now.Unix() / 60
+	i := int(m % 60)
+	if c.minute[i] != m {
+		c.minute[i] = m
+		c.count[i] = 0
+	}
+	c.count[i]++
+}
+
+// total is the count over the hour ending at now (the current minute and the
+// 59 before it).
+func (c *webhookMinuteCounter) total(now time.Time) int {
+	m := now.Unix() / 60
+	n := 0
+	for i := range c.minute {
+		if c.count[i] > 0 && c.minute[i] > m-60 && c.minute[i] <= m {
+			n += int(c.count[i])
+		}
+	}
+	return n
 }
 
 func newWebhookTracker() *webhookTracker {
@@ -402,7 +442,12 @@ func (t *webhookTracker) snapshot() WebhookHealth {
 	out := WebhookHealth{Healthy: healthy, Events1h: len(t.events), Invalidations1h: len(t.invalidations),
 		TargetedRefreshes1h: len(t.refreshes), TrackerInvalidations1h: len(t.trackerDrops),
 		CIEvents1h: len(t.ciEvents), CIEventsApplied1h: len(t.ciApplied), CIRefetches1h: len(t.ciRefetches),
-		WebhookModeStatus: t.mode.status(t.window, now)}
+		Rejected1h: t.rejected.total(now), WebhookModeStatus: t.mode.status(t.window, now)}
+	t.annotateModeLocked(&out.WebhookModeStatus, now)
+	if !t.lastFailure.IsZero() {
+		at := t.lastFailure.UTC()
+		out.LastRejectedAt = &at
+	}
 	if !latest.IsZero() {
 		at := latest.UTC()
 		out.LastEventAt = &at

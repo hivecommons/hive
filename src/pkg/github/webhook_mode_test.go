@@ -118,7 +118,7 @@ func TestWebhookTrackerModeInputs(t *testing.T) {
 
 	// A failure newer than the last good delivery degrades; one older than a
 	// later good delivery does not.
-	RecordWebhookDeliveryFailure()
+	RecordWebhookDeliveryFailure(WebhookReasonSignatureFailed)
 	if status, degraded, _ = ObserveWebhookMode(); status.Mode != WebhookModePolling || !degraded || status.Reason != WebhookDegradedReasonFailures {
 		t.Fatalf("failure: %+v degraded=%v", status, degraded)
 	}
@@ -126,5 +126,60 @@ func TestWebhookTrackerModeInputs(t *testing.T) {
 	RecordWebhookEventForTest("org/repo")
 	if status, _, _ = ObserveWebhookMode(); status.HealthyWindows != 1 {
 		t.Fatalf("good delivery after the failure should start the streak: %+v", status)
+	}
+}
+
+// TestWebhookModeReasonCodes covers webhooks.mode_reason_code and the
+// rejected-delivery counters: no secret wins, a failure newer than the last
+// good delivery names its kind, silence is no_deliveries, and a verified
+// delivery clears the code. rejected_1h ages out after an hour.
+func TestWebhookModeReasonCodes(t *testing.T) {
+	clock := &webhookTestClock{now: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)}
+	t.Cleanup(resetWebhookTrackerForTest(clock.Now))
+	SetWebhookHealthWindow(10 * time.Minute)
+
+	t.Setenv(WebhookSecretEnvVar, "  ")
+	if snap := WebhookHealthSnapshot(); snap.ReasonCode != WebhookReasonNoSecret || snap.Reason != webhookReasonNoSecretIdleText || snap.LastRejectedAt != nil {
+		t.Fatalf("blank secret, nothing sent: %+v", snap)
+	}
+	for i := 0; i < 4; i++ {
+		RecordWebhookDeliveryFailure(WebhookReasonNoSecret)
+	}
+	snap := WebhookHealthSnapshot()
+	if snap.ReasonCode != WebhookReasonNoSecret || snap.Reason != webhookReasonNoSecretRejectedText || snap.Rejected1h != 4 ||
+		snap.LastRejectedAt == nil || !snap.LastRejectedAt.Equal(clock.now) {
+		t.Fatalf("no secret, deliveries rejected: %+v", snap)
+	}
+	if got := WebhookModeSnapshot(); got.ReasonCode != WebhookReasonNoSecret {
+		t.Fatalf("mode snapshot = %+v, want no_secret", got)
+	}
+	clock.now = clock.now.Add(59 * time.Minute)
+	if snap = WebhookHealthSnapshot(); snap.Rejected1h != 4 {
+		t.Fatalf("rejected_1h inside the hour = %d, want 4", snap.Rejected1h)
+	}
+	clock.now = clock.now.Add(time.Minute)
+	if snap = WebhookHealthSnapshot(); snap.Rejected1h != 0 || snap.LastRejectedAt == nil {
+		t.Fatalf("after an hour rejected_1h = %d (want 0), last_rejected_at = %v (want kept)", snap.Rejected1h, snap.LastRejectedAt)
+	}
+
+	t.Setenv(WebhookSecretEnvVar, "set")
+	if snap = WebhookHealthSnapshot(); snap.ReasonCode != WebhookReasonNoDeliveries || snap.Reason != "" {
+		t.Fatalf("secret set, silent: %+v", snap)
+	}
+	RecordWebhookDeliveryFailure(WebhookReasonSignatureFailed)
+	if snap = WebhookHealthSnapshot(); snap.ReasonCode != WebhookReasonSignatureFailed || snap.Reason != WebhookDegradedReasonFailures {
+		t.Fatalf("bad signature: %+v", snap)
+	}
+	RecordWebhookDeliveryFailure(WebhookReasonDeliveriesRejected)
+	if snap = WebhookHealthSnapshot(); snap.ReasonCode != WebhookReasonDeliveriesRejected || snap.Rejected1h != 2 {
+		t.Fatalf("undecodable payload: %+v", snap)
+	}
+	clock.now = clock.now.Add(time.Second)
+	RecordWebhookEventForTest("org/repo")
+	if snap = WebhookHealthSnapshot(); snap.ReasonCode != "" || snap.Reason != "" || !snap.Healthy {
+		t.Fatalf("verified delivery should clear the cause: %+v", snap)
+	}
+	if status, _, recovered := ObserveWebhookMode(); status.Mode != WebhookModeWebhook || !recovered || status.ReasonCode != "" {
+		t.Fatalf("observe: %+v recovered=%v, want webhook mode with no code", status, recovered)
 	}
 }

@@ -132,10 +132,10 @@ Defaults: `src/pkg/config/defaults.go:30-32` (`DefaultEvalIntervalWebhookS`,
 `DefaultWebhookWakeDebounceS`, `DefaultWebhookWakeMinGapS`),
 `src/pkg/config/forgestate.go:8` (`DefaultForgeStateReconcileInterval`,
 `DefaultForgeStateFreshnessBound`, `DefaultForgeStateDriftThreshold`),
-`src/pkg/github/webhook_cache.go:14` (`DefaultWebhookHealthWindow`, replaced
-by `SetWebhookHealthWindow` at `src/pkg/github/webhook_cache.go:102` once the
+`src/pkg/github/webhook_cache.go:17` (`DefaultWebhookHealthWindow`, replaced
+by `SetWebhookHealthWindow` at `src/pkg/github/webhook_cache.go:206` once the
 governor loop publishes 2 × `eval_interval_s`), and
-`src/pkg/github/webhook_mode.go:34` (`WebhookRecoveryHealthyWindows`). The
+`src/pkg/github/webhook_mode.go:38` (`WebhookRecoveryHealthyWindows`). The
 effective tick is composed in `webhookAwareEvalInterval`
 (`src/cmd/hive/api_budget_decision.go:82`): the API-budget stretch still
 applies and the larger interval wins.
@@ -158,7 +158,7 @@ forgestate:
 
 Webhook mode is only safe while deliveries actually arrive. The governor
 therefore keeps a small cadence **mode** machine on top of the raw health
-window (`src/pkg/github/webhook_mode.go:100`, `observe`) and recomputes it
+window (`src/pkg/github/webhook_mode.go:149`, `observe`) and recomputes it
 wherever it recomputes the eval interval
 (`evalIntervalAndModeForConfig`, `src/cmd/hive/api_budget_decision.go:115`),
 including the re-check timer that fires as the health window closes
@@ -174,16 +174,16 @@ States and transitions:
   - the health window lapsed **and** GitHub was active meanwhile: a cadence
     pass listed an item whose `updated_at` is newer than the newest delivery
     (plus a 30 s clock-skew allowance, `webhookActivityClockSkew`,
-    `src/pkg/github/webhook_mode.go:40`). The reconcile pass reports that
+    `src/pkg/github/webhook_mode.go:44`). The reconcile pass reports that
     newest `updated_at` through `RecordGitHubActivity`
-    (`src/pkg/github/webhook_mode.go:183`). Silence alone — a quiet
+    (`src/pkg/github/webhook_mode.go:232`). Silence alone — a quiet
     repository overnight — is **not** degradation and keeps the stretched
     tick; or
   - deliveries are failing: the receiver saw a delivery (direct or relayed
     by the hub) whose signature did not verify or whose payload did not
     decode, newer than the last good delivery and inside the window
-    (`RecordWebhookDeliveryFailure`, `src/pkg/github/webhook_mode.go:199`,
-    called from `src/pkg/dashboard/api_github_webhook.go:58`). A wrong
+    (`RecordWebhookDeliveryFailure`, `src/pkg/github/webhook_mode.go:251`,
+    called from `src/pkg/dashboard/api_github_webhook.go:84`). A wrong
     `GITHUB_WEBHOOK_SECRET` on a spoke therefore shows up as polling mode
     with `mode_reason: deliveries failing verification`, not as a silent
     stretch to 900 s.
@@ -208,8 +208,12 @@ The dashboard reads the same machine:
 
 - `/api/status.webhooks.mode` — `webhook` | `polling`;
   `/api/status.webhooks.since` — when the current mode began;
-  `mode_reason` while polling after a degradation; `healthy_windows` while
-  recovering (`src/pkg/github/webhook_cache.go:307`, `snapshot`).
+  `mode_reason` while polling after a degradation or while webhooks cannot
+  work at all; `mode_reason_code` (`no_secret`, `signature_failed`,
+  `deliveries_rejected`, `no_deliveries`) whenever it is polling for a
+  reason; `rejected_1h` and `last_rejected_at` for deliveries the receiver
+  turned away; `healthy_windows` while recovering
+  (`src/pkg/github/webhook_cache.go:430`, `snapshot`).
   `webhooks.healthy` stays the raw window (a delivery inside
   2 × `eval_interval_s`), so `healthy: false, mode: webhook` reads "quiet
   but trusted" and `healthy: true, mode: polling` reads "recovering".
@@ -228,7 +232,15 @@ Operator checks:
    `mode: webhook` on a busy repo with the App webhook pointed at the hub
    or the spoke; `polling` with a `mode_reason` is a configuration fault to
    fix (secret, App subscription, hub relay target), `polling` without one
-   means no delivery has ever arrived.
+   means no delivery has ever arrived. `mode_reason_code` tells the causes
+   apart: `no_secret` means `GITHUB_WEBHOOK_SECRET` is unset on this spoke
+   and every delivery, relayed or direct, is answered 503 (`rejected_1h` and
+   `last_rejected_at` show they are arriving); `signature_failed` means the
+   secret does not match the sender's; `deliveries_rejected` means signed
+   payloads did not decode; `no_deliveries` means the secret is set but
+   nothing verified has arrived, so look at the App webhook URL or the hub
+   relay. `GET /api/health/deep` carries the same cause as a `webhooks`
+   warning.
 2. `grep 'webhooks degraded' hive.log` — one line per outage with the
    reason; the matching `webhooks healthy; webhook cadence engaged` closes
    it.
