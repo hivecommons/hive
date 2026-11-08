@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: hivecommons/crux
-          ref: 13372ca72d161cc05e9f795ae4a1b3b352e55a73 # crux main, 2026-10-29
+          ref: fefb7a3251093348a87a16cef19de269204ee4be # crux main, 2026-11-08
           path: crux-ratchet
           persist-credentials: false
           fetch-depth: 1
