@@ -48,10 +48,10 @@ func TestKickMaintainerNotesInjectedAndCapped(t *testing.T) {
 			block = block[:end+2+j]
 		}
 	}
-	if !strings.Contains(block, "## acme/widget!ENG-42") || !strings.Contains(block, "- @alice (2026-11-08): owner wants this after the v6 cut") {
+	if !strings.Contains(block, "## acme/widget#42") || !strings.Contains(block, "- @alice (2026-11-08): owner wants this after the v6 cut") {
 		t.Fatalf("noted item missing:\n%s", block)
 	}
-	if strings.Contains(block, "ENG-43") {
+	if strings.Contains(block, "acme/widget#43") {
 		t.Fatalf("an item without notes must not be listed:\n%s", block)
 	}
 	// Newest first; the oldest, oversized note is cut at the cap rather
