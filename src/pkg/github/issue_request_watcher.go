@@ -608,9 +608,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			return
 		}
 	}
-	if kind == "issue" && !req.Claim {
+	if kind == "issue" && !req.Claim && req.Parent == 0 {
 		// Filed unclaimed = filed for outside help (#17299): the filer's
-		// later claim is refused by IssueStartBlockReason.
+		// later claim is refused by IssueStartBlockReason. --parent children
+		// are the hive's own decomposition backlog, so they stay unmarked.
 		body = withFiledForHelpMarker(body, req.Agent)
 	}
 	if c.attributionTrailerOn() {

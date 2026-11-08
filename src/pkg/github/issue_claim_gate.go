@@ -71,8 +71,10 @@ func ParseFiledForHelpMarker(body string) string {
 // a finding folded into another issue as a comment carries none: there it
 // would be noise that binds nobody.
 func stripFiledForHelpMarker(body string) string {
-	body = filedForHelpMarkerRe.ReplaceAllString(body, "")
-	body = filedForHelpBlankRe.ReplaceAllString(body, "\n\n")
+	if filedForHelpMarkerRe.MatchString(body) {
+		body = filedForHelpMarkerRe.ReplaceAllString(body, "")
+		body = filedForHelpBlankRe.ReplaceAllString(body, "\n\n")
+	}
 	return strings.TrimRight(body, "\n")
 }
 

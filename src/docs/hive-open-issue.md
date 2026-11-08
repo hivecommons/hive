@@ -290,7 +290,9 @@ removes `help wanted`, so there is no window. The claim is a separate
 hub's claim ledger records the claim even though no kick ever named the
 new issue. A claim that fails or is refused does
 not undo the create; the result is still `ok` and says why in `claim_error`.
-A request folded into an existing issue is not claimed.
+A request folded into an existing issue is not claimed. When the create
+reuses an existing open issue (same-title `already_existed`), `--claim` claims
+that reused issue, the same outcome as an explicit `hive-open-issue claim` on it.
 
 An issue filed **without** `--claim` carries a hidden
 `<!-- hive:filed-for-help <agent> -->` marker: the hive asked for outside
@@ -298,7 +300,9 @@ help, so a later `claim` of it by the same agent — or the hub dispatching it
 back to that agent — is refused. A marker already in the request body is
 replaced by the filer's own, so the body cannot name someone else. Other
 agents and contributors may still claim it; a maintainer who wants the filer to take it
-after all removes the marker from the issue body.
+after all removes the marker from the issue body. Children filed with
+`--parent` are not marked: they are the hive's own decomposition output, and
+the next kick dispatches them normally.
 
 ### `label`
 

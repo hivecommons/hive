@@ -198,6 +198,29 @@ func TestIssueRequestWatcher_CreateWithoutClaimMarksFiledForHelp(t *testing.T) {
 	}
 }
 
+// A decomposition child (--parent) is the hive's own backlog: no marker.
+func TestIssueRequestWatcher_CreateWithParentIsNotMarkedFiledForHelp(t *testing.T) {
+	f := &createClaimFake{}
+	srv := f.server(t)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	if _, err := WriteIssueRequest(dir, IssueRequest{
+		Repo: "o/r", Title: "[scanner] child step", Body: "Part of #5", Agent: "scanner", Parent: 5,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if f.createdBody == "" {
+		t.Fatal("expected the child issue to be created")
+	}
+	if got := ParseFiledForHelpMarker(f.createdBody); got != "" {
+		t.Fatalf("a --parent child must not carry the filed-for-help marker, got %q (body %q)", got, f.createdBody)
+	}
+}
+
 // A later claim by the agent that filed the issue for outside help is
 // refused; another agent may still claim it.
 func TestIssueRequestWatcher_ClaimRefusedForOwnFiledForHelpIssue(t *testing.T) {
