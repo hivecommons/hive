@@ -53,6 +53,8 @@ func TestStageTrackerPhoneAttentionFirstJS(t *testing.T) {
 		stageTrackerActedJS(t, html),
 		jsFunc(t, html, "stageTrackerNormalizeFilter"),
 		jsFunc(t, html, "stageTrackerSort"),
+		jsConstLine(t, html, "STAGE_TRACKER_SHEET_QUERY"),
+		jsFunc(t, html, "stageTrackerIsPhoneSheet"),
 		jsFunc(t, html, "stageTrackerPhone"),
 		jsFunc(t, html, "stageTrackerAttentionLineHtml"),
 	}, "\n") + `

@@ -125,10 +125,11 @@
       return STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES.indexOf(n) >= 0 && (item.author_kind || '') === 'human';
     }
 
-    // The phone tier of the Activity monitor (the css/responsive.css
-    // `.modal-sheet` media query).
+    // The phone tier of the Activity monitor: the same media query the
+    // sheet-vs-popover decision uses (STAGE_TRACKER_SHEET_QUERY in
+    // tracker-actions.js), so the two cannot drift.
     function stageTrackerPhone() {
-      return !!(window.matchMedia && window.matchMedia('(max-width: 640px), ((pointer: coarse) and (max-width: 820px))').matches);
+      return stageTrackerIsPhoneSheet();
     }
 
     // Chip order: every stage/NNN-* label first by NNN, then everything

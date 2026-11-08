@@ -1,5 +1,5 @@
     // The phone-only count line above the list: one button that is the Waiting
-// on you chip (same hamFilter action). '' when nothing is parked on anyone.
+    // on you chip (same hamFilter action). '' when nothing is parked on anyone.
     function stageTrackerAttentionLineHtml(waiting, attention, on) {
       if (!waiting && !attention) return '';
       return `<button type="button" class="ham-attn-line" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle" aria-pressed="${on ? 'true' : 'false'}" title="${on ? 'Show every row again' : 'Show only the rows waiting on you'}"><span aria-hidden="true">⚠</span> ${waiting} waiting on you · ${attention} need${attention === 1 ? 's' : ''} attention</button>`;

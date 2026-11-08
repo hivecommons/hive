@@ -1128,8 +1128,8 @@
       .ham-attn-wrap { display: block; position: sticky; top: calc(var(--navbar-sticky-height) + var(--ham-sticky-bar-h)); z-index: calc(var(--z-sticky) + 1); background: var(--panel); }
       .ham-attn-wrap:empty { display: none; }
       /* The column header sticks below the count line, not under it. */
-      .ham-attn-wrap:not(:empty) ~ #activity-monitor-panel .ham-cols { top: calc(var(--navbar-sticky-height) + var(--ham-sticky-bar-h) + var(--tap-target) + 1px); }
-      .ham-attn-line { display: flex; align-items: center; gap: var(--sp-2); width: 100%; min-height: var(--tap-target); padding: 0 var(--sp-3); border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--status-attention); font-size: var(--fs-touch); font-weight: 600; text-align: left; }
+      .ham-attn-wrap:not(:empty) ~ #activity-monitor-panel .ham-cols { top: calc(var(--navbar-sticky-height) + var(--ham-sticky-bar-h) + var(--tap-target) + var(--line-width)); }
+      .ham-attn-line { display: flex; align-items: center; gap: var(--sp-2); width: 100%; min-height: var(--tap-target); padding: 0 var(--sp-3); border: 0; border-bottom: var(--line-width) solid var(--border); background: transparent; color: var(--status-attention); font-size: var(--fs-touch); font-weight: 600; text-align: left; }
       .ham-attn-line[aria-pressed="true"] { background: color-mix(in srgb, var(--status-attention) 12%, transparent); }
     }
 
