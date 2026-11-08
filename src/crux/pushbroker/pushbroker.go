@@ -667,19 +667,23 @@ func shortSHA(sha string) string {
 	return sha
 }
 
+// outgoingDiff returns the text the secret gate scans. --text and
+// --no-textconv keep binary classification (a NUL byte in the first bytes, or a
+// committed .gitattributes "-diff"/"binary") from hiding content behind
+// "Binary files differ".
 func (b *Broker) outgoingDiff(ctx context.Context) (string, error) {
 	if base := strings.TrimSpace(b.BaseRef); base != "" {
 		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
-			out, err := b.git(ctx, "diff", "--no-ext-diff", base+"...HEAD")
+			out, err := b.git(ctx, "diff", "--text", "--no-textconv", "--no-ext-diff", base+"...HEAD")
 			return string(out), err
 		}
 	}
 	base := b.remoteRef()
 	if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
-		out, err := b.git(ctx, "diff", "--no-ext-diff", base+"...HEAD")
+		out, err := b.git(ctx, "diff", "--text", "--no-textconv", "--no-ext-diff", base+"...HEAD")
 		return string(out), err
 	}
-	out, err := b.git(ctx, "show", "--format=", "--no-ext-diff", "HEAD")
+	out, err := b.git(ctx, "show", "--text", "--no-textconv", "--format=", "--no-ext-diff", "HEAD")
 	return string(out), err
 }
 
