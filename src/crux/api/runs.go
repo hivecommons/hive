@@ -1,6 +1,10 @@
 package api
 
-import "time"
+import (
+	"net/url"
+	"strconv"
+	"time"
+)
 
 // Contained runs and saved run results (hivecommons/crux#114, S2 and S7):
 //
@@ -8,9 +12,14 @@ import "time"
 //	GET  /v1/runs/{id}          the saved record, whatever the process state
 //	POST /v1/runs/{id}/cancel   cancel; after completion returns the result
 //	                            unchanged with already_finished: true
+//	GET  /v1/runs               the caller's saved records (all, for the
+//	                            operator), newest first, ?status= ?limit=
+//	POST /v1/runs/{id}/restart  explicit, audited re-run of a finished run as
+//	                            a new record linked to the old one; 409
+//	                            conflict while the saved state is still live
+//	GET  /v1/runs/{id}/history  every status the record passed through
 //
-// Routes beyond these (restart, listing) are deferred; see
-// src/docs/design/crux-work-services.md.
+// See src/docs/design/crux-work-services.md (S7).
 const PathRuns = "/" + Version + "/runs"
 
 // RunPath is the route of one run's saved record.
@@ -18,6 +27,29 @@ func RunPath(id string) string { return PathRuns + "/" + id }
 
 // RunCancelPath is the route that cancels one run.
 func RunCancelPath(id string) string { return RunPath(id) + "/cancel" }
+
+// RunRestartPath is the route that re-runs one finished run (S7).
+func RunRestartPath(id string) string { return RunPath(id) + "/restart" }
+
+// RunHistoryPath is the route of one run's status history (S7).
+func RunHistoryPath(id string) string { return RunPath(id) + "/history" }
+
+// RunsListQuery is the query string of GET /v1/runs: status filters on one
+// status of the closed set, limit caps the page (newest first); either may
+// be empty or zero for no filter and the server default.
+func RunsListQuery(status string, limit int) string {
+	q := url.Values{}
+	if status != "" {
+		q.Set("status", status)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if len(q) == 0 {
+		return PathRuns
+	}
+	return PathRuns + "?" + q.Encode()
+}
 
 // The runs routes answer CodeUnsupported (501, shared with the checkout
 // routes) when the request asks for something the configured backend cannot
@@ -124,4 +156,41 @@ type ContainedRun struct {
 	// AlreadyFinished is set on a cancel response when the run had already
 	// reached a terminal status; the record is returned unchanged.
 	AlreadyFinished bool `json:"already_finished,omitempty"`
+	// RestartedFrom is the finished run this one re-ran (S7); RestartedBy
+	// is the run that re-ran this one. Both are saved, so the chain is
+	// readable from either end after a restart of the serving process.
+	RestartedFrom string `json:"restarted_from,omitempty"`
+	RestartedBy   string `json:"restarted_by,omitempty"`
+}
+
+// RunRestartRequest is POST /v1/runs/{id}/restart (S7). The run re-runs
+// with the request it was created from; only the bookkeeping is new.
+type RunRestartRequest struct {
+	// Reason is recorded with the new run and in the audit record.
+	Reason string `json:"reason,omitempty"`
+	// IdempotencyKey makes a repeated restart return the run the first one
+	// started instead of a third run.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	// Detach returns the accepted record instead of waiting for the result.
+	Detach bool `json:"detach,omitempty"`
+}
+
+// ContainedRunList is GET /v1/runs: the caller's saved records (every
+// record for the operator), newest first, without the command output.
+type ContainedRunList struct {
+	Runs []ContainedRun `json:"runs"`
+}
+
+// RunTransition is one status the record passed through, in order.
+type RunTransition struct {
+	At     time.Time `json:"at"`
+	Status string    `json:"status"`
+	Reason string    `json:"reason,omitempty"`
+}
+
+// RunHistory is GET /v1/runs/{id}/history: the saved record's statuses in
+// the order they were written, the proof of what happened to the run.
+type RunHistory struct {
+	Run         string          `json:"run"`
+	Transitions []RunTransition `json:"transitions"`
 }

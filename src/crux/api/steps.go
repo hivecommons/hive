@@ -55,6 +55,9 @@ const (
 	// StepUnsupported: the request asked for something the backend cannot
 	// enforce (a tool allowlist, a turn limit); the step never ran.
 	StepUnsupported = "unsupported"
+	// StepUnfinished: the serving process stopped while the step ran, so
+	// its outcome is not knowable (S7 reconciliation); never a guess.
+	StepUnfinished = "unfinished"
 )
 
 // Step backends shipped with crux. Process is the generic adapter: the
