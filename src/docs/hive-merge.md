@@ -894,7 +894,7 @@ nor one touching `.github/workflows/**`. The App needs **Actions: Read and
 write** for the call; without it the approve fails, the PR is marked
 `hive:unauthorized` once per head, and it waits for a person as before. The
 pass and the refusal are kept for the life of the hive process (not per
-sweep), so a refused head is not POSTed again until it changes or the App
+sweep; an entry no sweep has touched for 24 hours is dropped), so a refused head is not POSTed again until it changes or the App
 gains **Actions: Read and write** (read from the installation at most every
 five minutes); a restart tries each head once more.
 

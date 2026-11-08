@@ -34,9 +34,6 @@ const (
 	// contributorHeldRunsApprovedMarkerPrefix tags the one audit comment the
 	// lane posts after approving a head's held runs.
 	contributorHeldRunsApprovedMarkerPrefix = "<!-- hive:contributor-held-runs-approved"
-	// contributorHeldRunsApprovalKeyPrefix namespaces the once-per-head
-	// bookkeeping inside Engine.heldRunApprovals.
-	contributorHeldRunsApprovalKeyPrefix = "registry-held-approve:"
 	// contributorHeldRunsCIUnverified is the commit-CI reason for a head with
 	// no CI evidence while its required checks are unknown or known-empty.
 	contributorHeldRunsCIUnverified = "ci-unverified"
