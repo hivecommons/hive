@@ -1,0 +1,1 @@
+- The Activity monitor lists rows that need you first on phones, with a sticky "waiting on you" count line that toggles the Waiting on you filter.

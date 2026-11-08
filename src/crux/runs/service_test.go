@@ -83,7 +83,7 @@ func newFixture(t *testing.T, launcher *fakeLauncher) *fixture {
 	}
 	cfg := Config{
 		Image:          "img:1",
-		RepoAllowlist:  []string{"https://github.com/hivecommons/"},
+		RepoAllowlist:  []string{"https://github.com/hivecommons/", "https://git.example/org"},
 		WorkspaceRoots: []string{root},
 		MaxTimeoutMs:   time.Minute.Milliseconds(),
 	}
@@ -457,6 +457,16 @@ func TestValidationErrors(t *testing.T) {
 		{"worktree repo", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Commit: testSHA}}, &RequestError{}, "worktree.repo"},
 		{"worktree short sha", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: wt.Repo, Commit: "main"}}, &RequestError{}, "40-hex"},
 		{"worktree forbidden", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://example.com/r", Commit: testSHA}}, &ForbiddenError{}, "repo_allowlist"},
+		// The allowlist is a string prefix; git resolves ".." (libcurl for
+		// https, literally for file) and decodes percent-encoding, so a
+		// non-canonical URL must be refused before the prefix is compared.
+		{"worktree dot segments", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://github.com/hivecommons/../octocat/Hello-World", Commit: testSHA}}, &RequestError{}, "canonical"},
+		{"worktree percent-encoded", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://github.com/hivecommons/%2e%2e/octocat/Hello-World", Commit: testSHA}}, &RequestError{}, "canonical"},
+		{"worktree credentials", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://user:tok@github.com/hivecommons/hive", Commit: testSHA}}, &RequestError{}, "credentials"},
+		// An entry without a trailing slash is a repository or org name, not
+		// a string prefix: it must not admit a sibling or a longer host.
+		{"worktree sibling prefix", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://git.example/org-evil/repo", Commit: testSHA}}, &ForbiddenError{}, "repo_allowlist"},
+		{"worktree host suffix", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://git.example.evil/org/repo", Commit: testSHA}}, &ForbiddenError{}, "repo_allowlist"},
 		{"relative workspace", api.ContainedRunRequest{Command: []string{"x"}, WorkspacePath: "proj"}, &RequestError{}, "absolute"},
 		{"workspace outside roots", api.ContainedRunRequest{Command: []string{"x"}, WorkspacePath: filepath.Dir(f.root)}, &ForbiddenError{}, "workspace_roots"},
 		{"workspace sibling prefix", api.ContainedRunRequest{Command: []string{"x"}, WorkspacePath: f.root + "2"}, &ForbiddenError{}, "workspace_roots"},
