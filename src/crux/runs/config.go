@@ -19,10 +19,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hivecommons/hive/crux/checkout"
 	"time"
 
+	"github.com/hivecommons/hive/crux/checkout"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/kubejob"
 )
 
 // Backend names, Config.Backend.
@@ -62,11 +63,17 @@ type Config struct {
 	// Job holds the Kubernetes Job settings when Backend is BackendJob;
 	// the same shape as the agent sandbox's job block.
 	Job *config.SandboxJobConfig `json:"job,omitempty"`
-	// JobNetworkPolicy is the operator's assertion that a NetworkPolicy in
-	// the Job namespace denies egress for pods labelled
-	// app.kubernetes.io/managed-by=hive-kubejob. The Job launcher cannot
-	// set a network mode itself, so without this assertion a request for
-	// network "none" on the job backend is refused.
+	// JobNetwork is how a Job's pod reaches the network: "none" (default)
+	// has the launcher create a per-run deny-all NetworkPolicy before the
+	// Job and refuse the run if it cannot; "host" runs the pod with
+	// hostNetwork; "default" leaves the pod on the cluster network. Only
+	// "none" lets the backend claim the network "none" capability on its
+	// own — and only as far as the cluster's CNI enforces NetworkPolicy.
+	JobNetwork string `json:"job_network,omitempty"`
+	// JobNetworkPolicy is the operator's assertion that a NetworkPolicy of
+	// their own in the Job namespace already denies egress for pods
+	// labelled app.kubernetes.io/managed-by=hive-kubejob. It lets a
+	// job_network of "host" or "default" still claim network "none".
 	JobNetworkPolicy bool `json:"job_network_policy,omitempty"`
 	// NetworkRestricted is the operator's assertion that a container
 	// network named "restricted" exists on the podman host; without it a
@@ -118,6 +125,9 @@ func (c *Config) Defaults() {
 	if c.Backend == "" {
 		c.Backend = BackendPodman
 	}
+	if c.Backend == BackendJob && c.JobNetwork == "" {
+		c.JobNetwork = kubejob.NetworkNone
+	}
 	if c.DefaultTimeoutMs <= 0 {
 		c.DefaultTimeoutMs = DefaultTimeout.Milliseconds()
 	}
@@ -142,6 +152,11 @@ func (c Config) Validate() error {
 	case BackendJob:
 		if c.Job == nil {
 			return fmt.Errorf("%w: backend %q needs a job block", ErrConfig, BackendJob)
+		}
+		switch c.JobNetwork {
+		case kubejob.NetworkNone, kubejob.NetworkHost, kubejob.NetworkDefault:
+		default:
+			return fmt.Errorf("%w: job_network must be %q, %q or %q", ErrConfig, kubejob.NetworkNone, kubejob.NetworkHost, kubejob.NetworkDefault)
 		}
 	default:
 		return fmt.Errorf("%w: backend must be %q or %q", ErrConfig, BackendPodman, BackendJob)

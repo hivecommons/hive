@@ -148,6 +148,23 @@ func TestCheckoutUsageErrors(t *testing.T) {
 	if code := h.run("checkout", "add", "-allow", "ssh://bad", "-repo", "https://x/y", "-commit", strings.Repeat("a", 40)); code != ExitUsage || !strings.Contains(h.stderr.String(), "crux: checkout:") {
 		t.Errorf("bad allowlist: %d %s", code, h.stderr)
 	}
+	// The ceiling comes from the flag, then the environment, and must parse.
+	t.Setenv(config.CheckoutMaxBytesEnvVar, "lots")
+	h.stderr.Reset()
+	if code := h.run("checkout", "list", "-allow", "file:///", "-dir", t.TempDir()); code != ExitUsage || !strings.Contains(h.stderr.String(), config.CheckoutMaxBytesEnvVar) {
+		t.Errorf("bad ceiling env: %d %s", code, h.stderr)
+	}
+	if code := h.run("checkout", "list", "-allow", "file:///", "-dir", t.TempDir(), "-max-bytes-ceiling", "1024"); code != ExitOK {
+		t.Errorf("ceiling flag overrides a bad env: %d %s", code, h.stderr)
+	}
+	t.Setenv(config.CheckoutMaxBytesEnvVar, "2048")
+	if n, err := checkoutMaxBytesFromEnv(); err != nil || n != 2048 {
+		t.Errorf("ceiling env = %d, %v", n, err)
+	}
+	t.Setenv(config.CheckoutMaxBytesEnvVar, "-5")
+	if _, err := checkoutMaxBytesFromEnv(); err == nil {
+		t.Error("negative ceiling env accepted")
+	}
 	// The control socket does not forward checkout.
 	e := &Env{Stdout: h.stdout, Stderr: h.stderr}
 	h.stderr.Reset()
