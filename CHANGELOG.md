@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.189.1)
+
+### Changed
+
+- docs(dashboard): review fallback doc comment describes the reviewer-lane branch (#17125)
+
+### Fixed
+
+- pr-request watcher: a closing reference to an issue that does not exist in the target repository (404) now rejects the request as a permanent claim error instead of retrying with backoff forever (#17124).
+
 ## 2026-11-07 (v5.190.0)
 
 ### Added
