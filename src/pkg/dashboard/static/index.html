@@ -1886,6 +1886,26 @@
     .ham-superseded-note { color: var(--muted); font-size: var(--fs-xs); flex: 0 0 auto; white-space: nowrap; }
     .ham-review-notes { color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-1); }
     .ham-review-notes a { color: inherit; }
+    /* ---- Maintainer notes (CSS) — see the JS block of the same name.
+       Tokens only (ADR-0018); the phone tier below lifts the button and
+       the composer to --tap-target. */
+    .ham-notes-btn { display: inline-flex; align-items: center; gap: var(--sp-1); padding: 0 var(--sp-2); border: var(--line-width) solid var(--line-strong); border-radius: var(--r-pill); background: var(--panel); color: var(--muted); font: inherit; font-size: var(--fs-xs); line-height: 1.5; cursor: pointer; }
+    .ham-notes-btn:hover, .ham-notes-btn:focus-visible, .ham-notes-btn[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+    .ham-notes-btn.ham-notes-has { color: var(--text); }
+    .ham-notes-count { font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums; }
+    .ham-notes { margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid var(--line); border-radius: var(--r-sm); background: var(--panel); font-size: var(--fs-xs); color: var(--text); }
+    .ham-notes-head, .ham-notes-empty { margin: 0 0 var(--sp-2); color: var(--muted); }
+    .ham-notes-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+    .ham-note-meta { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .ham-note-avatar { width: var(--sp-4); height: var(--sp-4); border-radius: var(--r-pill); flex: 0 0 auto; }
+    .ham-note-author { font-weight: var(--fw-semibold); }
+    .ham-note-when { color: var(--muted); }
+    .ham-note-del { margin-left: auto; padding: 0 var(--sp-2); border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
+    .ham-note-del:hover, .ham-note-del:focus-visible { color: var(--red); background: var(--panel-strong); }
+    .ham-note-text { margin-top: var(--sp-1); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .ham-notes-add { display: flex; align-items: flex-start; gap: var(--sp-2); margin-top: var(--sp-2); }
+    .ham-notes-input { flex: 1 1 auto; min-width: 0; resize: vertical; padding: var(--sp-1) var(--sp-2); border: var(--line-width) solid var(--line-strong); border-radius: var(--r-sm); background: var(--bg); color: var(--text); font: inherit; font-size: var(--fs-xs); }
+    .ham-notes-submit { flex: 0 0 auto; white-space: nowrap; }
     .ham-adopted-from { color: var(--muted); text-decoration: none; }
     /* The Let hive decide preview. One decision, readable in three seconds
        (operator feedback on the dialog, issue 15397): subject line,
@@ -2495,9 +2515,16 @@
       #activity-monitor-section .ham-toolbar .ham-chip, #activity-monitor-section .ham-labels .ham-chip, #activity-monitor-section .ham-selbar .ham-chip, #activity-monitor-section .ham-compact .ham-chip,
       #activity-monitor-section .ham-select, #activity-monitor-section .ham-input,
       #activity-monitor-section .ham-merged-count, #activity-monitor-section .ham-queue-chip,
-      #activity-monitor-section .ham-repo-chip, #activity-monitor-section .cue-event-ico, #activity-monitor-section .ham-lead-act, #activity-monitor-section .ham-badge-mod[data-action] {
+      #activity-monitor-section .ham-repo-chip, #activity-monitor-section .cue-event-ico, #activity-monitor-section .ham-lead-act, #activity-monitor-section .ham-badge-mod[data-action],
+      #activity-monitor-section .ham-notes-btn, #activity-monitor-section .ham-note-del, #activity-monitor-section .ham-notes-submit, #activity-monitor-section .ham-notes-input {
         box-sizing: border-box; min-height: var(--tap-target); min-width: var(--tap-target);
       }
+      #activity-monitor-section .ham-notes-btn { font-size: var(--tap-glyph); padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
+      /* A card keeps its two-line head and its density (#17161): the 🗒
+         shows on a phone only once the item has notes; the row's ⋯ menu
+         carries "Maintainer notes…" for the rest. */
+      #activity-monitor-section .ham-notes-btn:not(.ham-notes-has) { display: none; }
+      #activity-monitor-section .ham-notes-add { flex-wrap: wrap; }
       #activity-monitor-section .ham-toolbar .ham-chip, #activity-monitor-section .ham-labels .ham-chip, #activity-monitor-section .ham-selbar .ham-chip, #activity-monitor-section .ham-repo-chip, #activity-monitor-section .ham-lead-act { padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
       #activity-monitor-section .ham-select, #activity-monitor-section .ham-input { height: var(--tap-target); padding-top: 0; padding-bottom: 0; }
       #activity-monitor-section .ham-repo-filter { min-height: var(--tap-target); align-items: center; }
@@ -19048,6 +19075,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (mods.indexOf('hold') >= 0 && typeof stageTrackerHoldPill === 'function' && stageTrackerHoldPill(item)) lines.push(stageTrackerHoldPill(item));
       if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) lines.push('Trail: ' + trail);
+      if (typeof hamNotesCount === 'function') { const nn = hamNotesCount(item); if (nn) lines.push(nn + ' maintainer note' + (nn === 1 ? '' : 's') + ' (private to this hive)'); }
       // Say it once: a line the caption already said is not repeated (hivecommons/hive#15394).
       return lines.filter((l, i) => l && lines.indexOf(l) === i).join('\n');
     }
@@ -19932,14 +19960,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(pr, stages, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + stageTrackerChipsHtml(pr) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : ''))}
+            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + stageTrackerChipsHtml(pr) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : '') + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(pr, hamNotesCtx(pr)) : ''))}
           </div>
           <div class="ham-strip-row">
             ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(pr, stages, ctx) : ''}
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
             ${stageTrackerSinceHtml(pr, nowMs)}${typeof stageTrackerPillHtml === 'function' ? stageTrackerPillHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx) : ''}
           </div>
-          ${humanNote}${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, noteCtx, subKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(subKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}
+          ${humanNote}${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, noteCtx, subKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(subKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}${typeof stageTrackerNotesPanelHtml === 'function' ? stageTrackerNotesPanelHtml(pr, hamNotesCtx(pr)) : ''}
         </div>`;
     }
 
@@ -20248,13 +20276,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(item, stages, ctx) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : ''), prTargetKey)}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '') + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(item, hamNotesCtx(item)) : ''), prTargetKey)}
         </div>
         <div class="ham-strip-row">
           ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
           ${stageTrackerSinceHtml(shown, nowMs)}${typeof stageTrackerPillHtml === 'function' ? stageTrackerPillHtml(shown, stages, range, nowMs, ctx) : ''}
-        </div>${humanNote}${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, noteCtx, rowKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(rowKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${subs}
+        </div>${humanNote}${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, noteCtx, rowKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(rowKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${typeof stageTrackerNotesPanelHtml === 'function' ? stageTrackerNotesPanelHtml(item, hamNotesCtx(item)) : ''}${subs}
       </div>`;
     }
 
@@ -21086,6 +21114,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const src = stageTrackerRowSrcKey(r.html);
         const moved = stageTrackerRowHasMove(r.html);
         if (prev && !moved && stageTrackerRowSrcOf(prev) === src) { place(prev); out.kept++; continue; }
+        if (prev && !moved && typeof stageTrackerRowHoldsComposer === 'function' && stageTrackerRowHoldsComposer(prev)) { place(prev); out.kept++; continue; }
         if (prev && !moved && stageTrackerRowAnimating(prev)) { place(prev); out.deferred++; continue; }
         const node = stageTrackerRowNode(r.key, r.html);
         if (prev) { el.replaceChild(node, prev); out.replaced++; }
@@ -21093,6 +21122,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         place(node);
       }
       return out;
+    }
+    // A maintainer typing a note in this row: the refresh keeps the node
+    // (and the draft, and the caret); the row catches up on the next one.
+    function stageTrackerRowHoldsComposer(node) {
+      const a = typeof document !== 'undefined' ? document.activeElement : null;
+      return !!(a && a.classList && a.classList.contains('ham-notes-input') && node && typeof node.contains === 'function' && node.contains(a));
     }
     // A refresh that found a row mid-move re-renders once the move has
     // settled, so the row's incidental changes still land.
@@ -21375,6 +21410,181 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? `${notes.length} review note${notes.length === 1 ? '' : 's'} blocked on this PR`
         : `+${notes.length} more review note${notes.length === 1 ? '' : 's'} blocked on PR #${Number(item.review_note_of)}`;
       return `<div class="ham-review-notes" data-ham-review-notes="${notes.length}">${esc(lead)} · ${links}</div>`;
+    }
+
+    /* ---- Maintainer notes (JS) --------------------------------------------
+       Private per-item notes maintainers leave for each other on a row
+       (/api/notes, api_maintainer_notes.go). They never reach GitHub; every
+       signed-in maintainer of the hive sees them, and the scheduler types
+       them into the item's agent kicks. The row's 🗒 button opens an inline
+       expander (list + one-line composer, ⌘/Ctrl+Enter adds). Pure helpers
+       (…Html, hamNotesIndex) run under node in
+       stage_tracker_maintainer_notes_test.go; the handlers below fetch. */
+    const MAINTAINER_NOTES_MAX = 2000;
+    const MAINTAINER_NOTES_GLYPH = '🗒';
+    const MAINTAINER_NOTES_AVATAR_PX = 32;
+    const MAINTAINER_NOTES_PRIVACY = 'Private to this hive\u2019s maintainers \u2014 not posted to GitHub; included in agent kicks for the item.';
+    var _hamNotes = {};
+    var _hamNotesOpen = new Set();
+    var _hamNotesDraft = {};
+    var _hamNotesLoaded = false;
+    var _hamNotesBusy = new Set();
+
+    function hamNotesKey(repo, number) { return String(repo || '').toLowerCase() + '#' + (Number(number) || 0); }
+    function hamNotesPanelId(key) { return 'ham-notes-' + String(key || '').replace(/[^a-z0-9]+/gi, '-'); }
+    // Pure: a /api/notes list → { 'owner/repo#n': [notes, oldest first] }.
+    function hamNotesIndex(notes) {
+      const out = {};
+      for (const n of (Array.isArray(notes) ? notes : [])) {
+        if (!n || !n.repo || !(Number(n.number) > 0)) continue;
+        const k = hamNotesKey(n.repo, n.number);
+        (out[k] = out[k] || []).push(n);
+      }
+      for (const k of Object.keys(out)) out[k].sort((a, b) => (Date.parse(a.created_at || '') || 0) - (Date.parse(b.created_at || '') || 0));
+      return out;
+    }
+    function hamNotesFor(item) { return (item && _hamNotes[hamNotesKey(item.repo, item.number)]) || []; }
+    function hamNotesCount(item) { return hamNotesFor(item).length; }
+    // The identity the notes UI draws for: signed in, login, write on the
+    // repo (null = not known yet), verified owner (may delete any note).
+    function hamNotesCtx(item) {
+      const base = typeof stageTrackerActionCtx === 'function' && item ? (stageTrackerActionCtx(item.repo) || {}) : {};
+      const role = (typeof window !== 'undefined' && window._hiveRole) || 'read';
+      const owner = typeof dashboardRoleAtLeast === 'function' && dashboardRoleAtLeast(role, 'owner');
+      return { user: !!base.user, login: String(base.login || ''), canHold: base.canHold, owner: !!owner };
+    }
+    // Pure: the row's notes affordance — nothing for a signed-out visitor
+    // (the notes are the maintainers' own), a count badge once the item
+    // has any. Sits with the row's decision controls.
+    // The phone card tier (hivecommons/hive#17161) renders the badge
+    // only once an item has notes, so an unnoted row keeps its two-line
+    // head; the ⋯ menu's "Maintainer notes…" is the way in there.
+    function hamNotesPhoneTier() {
+      return typeof matchMedia === 'function' && matchMedia('(max-width: 640px), ((pointer: coarse) and (max-width: 820px))').matches;
+    }
+    function stageTrackerNotesButtonHtml(item, ctx) {
+      if (!item || !ctx || !ctx.user) return '';
+      const key = hamNotesKey(item.repo, item.number);
+      const n = hamNotesCount(item);
+      if (!n && hamNotesPhoneTier()) return '';
+      const open = _hamNotesOpen.has(key);
+      const ref = stageTrackerRefOf(item);
+      const tip = (n ? n + ' maintainer note' + (n === 1 ? '' : 's') + '. ' : 'Leave a note for other maintainers. ') + MAINTAINER_NOTES_PRIVACY;
+      return `<button type="button" class="ham-notes-btn${n ? ' ham-notes-has' : ''}" data-action="hamNotesToggle" data-arg-types="e,t" data-stop="1" data-prevent="1" data-ham-notes-key="${esc(key)}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${esc(hamNotesPanelId(key))}" aria-label="${esc('Maintainer notes for ' + ref + (n ? ' (' + n + ')' : ''))}" title="${esc(tip)}"><span class="ham-notes-glyph" aria-hidden="true">${MAINTAINER_NOTES_GLYPH}</span>${n ? `<span class="ham-notes-count">${n}</span>` : ''}</button>`;
+    }
+    // Pure: one note — avatar, login, relative time (ticked in place by
+    // stageTrackerCueAgeSync via .cue-event-age), Delete for its author
+    // or an owner, then the text (plain, pre-wrapped).
+    function stageTrackerNoteHtml(n, ctx) {
+      const login = String(n.author || '');
+      const ms = Date.parse(n.created_at || '') || 0;
+      const mine = !!(ctx && ctx.login) && login.toLowerCase() === String(ctx.login).toLowerCase();
+      const canDelete = mine || !!(ctx && ctx.owner);
+      return `<li class="ham-note" data-ham-note-id="${esc(n.id || '')}"><div class="ham-note-meta"><img class="ham-note-avatar" src="https://github.com/${encodeURIComponent(login)}.png?size=${MAINTAINER_NOTES_AVATAR_PX}" alt="" loading="lazy" width="${MAINTAINER_NOTES_AVATAR_PX}" height="${MAINTAINER_NOTES_AVATAR_PX}"><span class="ham-note-author">@${esc(login)}</span><time class="cue-event-age ham-note-when" data-at="${ms}" datetime="${esc(n.created_at || '')}" title="${esc(n.created_at || '')}"></time>${canDelete ? `<button type="button" class="ham-note-del" data-action="hamNoteDelete" data-arg-types="e,t" data-stop="1" data-prevent="1" aria-label="${esc('Delete note by @' + login)}">Delete</button>` : ''}</div><div class="ham-note-text">${esc(n.text || '')}</div></li>`;
+    }
+    // Pure: the open expander — the notes, then the composer (a signed-in
+    // user without write on the repo reads but cannot add). '' when the
+    // row's expander is closed.
+    function stageTrackerNotesPanelHtml(item, ctx) {
+      if (!item || !ctx || !ctx.user) return '';
+      const key = hamNotesKey(item.repo, item.number);
+      if (!_hamNotesOpen.has(key)) return '';
+      const notes = hamNotesFor(item);
+      const ref = stageTrackerRefOf(item);
+      const draft = _hamNotesDraft[key] || '';
+      const list = notes.length
+        ? `<ul class="ham-notes-list">${notes.map(n => stageTrackerNoteHtml(n, ctx)).join('')}</ul>`
+        : `<p class="ham-notes-empty">No maintainer notes on ${esc(ref)} yet.</p>`;
+      const add = ctx.canHold !== false
+        ? `<div class="ham-notes-add"><textarea class="ham-notes-input" rows="1" maxlength="${MAINTAINER_NOTES_MAX}" placeholder="Note for other maintainers\u2026" aria-label="${esc('New maintainer note for ' + ref)}" data-input-action="hamNotesDraft" data-keydown-action="hamNotesKeydown" data-keys="Enter" data-arg-types="e,t">${esc(draft)}</textarea><button type="button" class="hv-btn btn-secondary ham-notes-submit" data-action="hamNoteAdd" data-arg-types="e,t" data-stop="1" data-prevent="1" title="Add note (\u2318/Ctrl+Enter)">Add note</button></div>`
+        : `<p class="ham-notes-empty">${esc(STAGE_TRACKER_WHY_WRITE)} to add a note.</p>`;
+      return `<div class="ham-notes" id="${esc(hamNotesPanelId(key))}" data-ham-notes="${notes.length}" data-ham-notes-key="${esc(key)}" role="region" aria-label="${esc('Maintainer notes for ' + ref)}"><div class="ham-notes-head">${esc(MAINTAINER_NOTES_PRIVACY)}</div>${list}${add}</div>`;
+    }
+    function hamNotesKeyOf(el) { const p = el && el.closest ? el.closest('[data-ham-notes-key]') : null; return p ? p.getAttribute('data-ham-notes-key') || '' : ''; }
+    function hamNotesSplitKey(key) { const i = String(key).lastIndexOf('#'); return { repo: String(key).slice(0, i), number: Number(String(key).slice(i + 1)) || 0 }; }
+    // Loads every live note once a maintainer is signed in (the count
+    // badges), or one item's after its `maintainer-notes` SSE frame.
+    async function hamNotesLoad(key) {
+      const role = window._hiveRole || 'read';
+      if (!window._hiveUser && !(typeof dashboardRoleAtLeast === 'function' && dashboardRoleAtLeast(role, 'owner'))) return;
+      try {
+        const q = key ? hamNotesSplitKey(key) : null;
+        const r = await fetch(q ? '/api/notes?repo=' + encodeURIComponent(q.repo) + '&number=' + q.number : '/api/notes');
+        if (!r.ok) return;
+        const d = await r.json();
+        const idx = hamNotesIndex(d && d.notes);
+        if (q) { if (idx[key]) _hamNotes[key] = idx[key]; else delete _hamNotes[key]; }
+        else { _hamNotes = idx; _hamNotesLoaded = true; }
+        renderStageTracker();
+      } catch (e) { /* keep the previous notes; the next poll or frame retries */ }
+    }
+    // Pure: the row menu's entry — the count in its label once there are notes.
+    function stageTrackerNotesMenuItem(item) {
+      const n = hamNotesCount(item);
+      return { id: 'notes', label: 'Maintainer notes' + (n ? ' (' + n + ')' : '') + '\u2026', hint: 'private', enabled: true, why: '' };
+    }
+    function hamNotesOpenFor(item) {
+      const key = hamNotesKey(item.repo, item.number);
+      _hamNotesOpen.add(key);
+      renderStageTracker();
+      const p = document.getElementById(hamNotesPanelId(key));
+      const ta = p && p.querySelector('.ham-notes-input');
+      if (ta) ta.focus(); else if (p && p.focus) { p.setAttribute('tabindex', '-1'); p.focus(); }
+      if (!_hamNotesLoaded) hamNotesLoad();
+    }
+    function hamNotesToggle(e, btn) {
+      const key = btn && btn.getAttribute ? btn.getAttribute('data-ham-notes-key') : '';
+      if (!key) return;
+      if (_hamNotesOpen.has(key)) _hamNotesOpen.delete(key); else _hamNotesOpen.add(key);
+      renderStageTracker();
+      if (_hamNotesOpen.has(key)) {
+        const p = document.getElementById(hamNotesPanelId(key));
+        const ta = p && p.querySelector('.ham-notes-input');
+        if (ta) ta.focus();
+        if (!_hamNotesLoaded) hamNotesLoad();
+      }
+    }
+    function hamNotesDraft(e, ta) { const key = hamNotesKeyOf(ta); if (key && ta) _hamNotesDraft[key] = ta.value; }
+    function hamNotesKeydown(e, ta) { if (e && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); hamNoteAdd(e, ta); } }
+    async function hamNoteAdd(e, el) {
+      const key = hamNotesKeyOf(el);
+      if (!key || _hamNotesBusy.has(key)) return;
+      const p = document.getElementById(hamNotesPanelId(key));
+      const ta = p && p.querySelector('.ham-notes-input');
+      const text = String(ta ? ta.value : (_hamNotesDraft[key] || '')).trim();
+      if (!text) { if (ta) ta.focus(); return; }
+      if (text.length > MAINTAINER_NOTES_MAX) { showToast('A note is at most ' + MAINTAINER_NOTES_MAX + ' characters', 'error'); return; }
+      const q = hamNotesSplitKey(key);
+      _hamNotesBusy.add(key);
+      try {
+        const r = await fetch('/api/notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo: q.repo, number: q.number, text }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast('Could not add the note: ' + (d && d.error ? d.error : 'HTTP ' + r.status), 'error'); return; }
+        delete _hamNotesDraft[key];
+        if (d && d.note) { const cur = (_hamNotes[key] || []).filter(n => n.id !== d.note.id); cur.push(d.note); _hamNotes[key] = cur; }
+        renderStageTracker();
+        const p2 = document.getElementById(hamNotesPanelId(key));
+        const ta2 = p2 && p2.querySelector('.ham-notes-input');
+        if (ta2) ta2.focus();
+      } catch (err) {
+        showToast('Could not add the note: ' + (err && err.message ? err.message : 'network error'), 'error');
+      } finally { _hamNotesBusy.delete(key); }
+    }
+    async function hamNoteDelete(e, btn) {
+      const li = btn && btn.closest ? btn.closest('.ham-note[data-ham-note-id]') : null;
+      const id = li ? li.getAttribute('data-ham-note-id') : '';
+      const key = hamNotesKeyOf(btn);
+      if (!id || !key) return;
+      try {
+        const r = await fetch('/api/notes/' + encodeURIComponent(id), { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast('Could not delete the note: ' + (d && d.error ? d.error : 'HTTP ' + r.status), 'error'); return; }
+        _hamNotes[key] = (_hamNotes[key] || []).filter(n => n.id !== id);
+        if (!_hamNotes[key].length) delete _hamNotes[key];
+        renderStageTracker();
+      } catch (err) {
+        showToast('Could not delete the note: ' + (err && err.message ? err.message : 'network error'), 'error');
+      }
     }
 
     // The canonical tracker count (owner): rows of the default view — every
@@ -22649,6 +22859,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (text === _stageTrackerSig) { stageTrackerTickClock(); return; }
         _stageTrackerSig = text;
         renderStageTracker(JSON.parse(text));
+        if (!_hamNotesLoaded && typeof hamNotesLoad === 'function') hamNotesLoad();
         dashboardSetInterval('stage-tracker-clock', stageTrackerTickClock, STAGE_TRACKER_CLOCK_MS);
       } catch (e) {
         // Network failure or an aborted body: keep the previous render but
@@ -23232,6 +23443,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return [
           { id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' },
           { id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' },
+          ...(ctx.user && typeof stageTrackerNotesMenuItem === 'function' ? [stageTrackerNotesMenuItem(item)] : []),
         ];
       }
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
@@ -23285,6 +23497,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.kind === 'issue' && String(item.state || '').toLowerCase() !== 'closed') out.push(Object.assign({ id: 'decide:close-issue', label: 'Close issue…', danger: true, hint: 'only this issue · completed' }, stageTrackerActionAllowed('decide:close-issue', ctx)));
       out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
+      if (ctx.user && typeof stageTrackerNotesMenuItem === 'function') out.push(stageTrackerNotesMenuItem(item));
       return out;
     }
     // Pure: the one action a row leads with, rendered inline on the row
@@ -25383,6 +25596,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (id === 'blocker:wait' || id === 'blocker:patch') {
         showToast(id === 'blocker:wait' ? 'Left as is — the row stays blocked until the permission is granted or a person acts.' : 'Not available: the hive has no identity that may push workflow files.', 'info');
+        return { toasts: [], pending: [] };
+      }
+      if (id === 'notes') {
+        // The phone tier's way in (the row's 🗒 only shows there once the
+        // item has notes): open the first selected row's expander.
+        if (items[0]) hamNotesOpenFor(items[0]);
         return { toasts: [], pending: [] };
       }
       if (id === 'copy') {
@@ -53003,6 +53222,15 @@ function burnAreaChart() {
       source.addEventListener('stage-tracker', () => {
         noteSSEFrame();
         if (_stageTrackerSig || _stageTrackerEtag) stageTrackerNudge();
+      });
+      // Another maintainer added or deleted a note on an item: refetch
+      // that item's notes so the row's badge and open expander follow.
+      source.addEventListener('maintainer-notes', (e) => {
+        noteSSEFrame();
+        try {
+          const p = JSON.parse(e.data || '{}');
+          if (p && p.repo && p.number) hamNotesLoad(hamNotesKey(p.repo, p.number));
+        } catch (err) { hamNotesLoad(); }
       });
 
       source.addEventListener('agent-status', (e) => {

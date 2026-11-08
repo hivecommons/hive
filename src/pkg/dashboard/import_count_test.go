@@ -60,8 +60,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// (hivecommons/hive#15963), plus pkg/webassets, the browser-asset
 	// packages (tracker view, kiosk call-to-action badge) shared verbatim by
 	// the spoke dashboard and the hub's public Fleet page so the two kiosk
-	// surfaces render one markup (hivecommons/hive#16236).
-	const maxDashboardInternalImports = 58
+	// surfaces render one markup (hivecommons/hive#16236), plus
+	// pkg/maintainernotes, the append-only store behind the Activity
+	// Monitor's private per-item maintainer notes and the /api/notes routes,
+	// shared with the scheduler's kick injection (hivecommons/hive#17244).
+	const maxDashboardInternalImports = 59
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

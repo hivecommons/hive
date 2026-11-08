@@ -29148,6 +29148,278 @@
         }
       }
     },
+    "/api/notes": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "List maintainer notes for one item, or every live note in the hive",
+        "description": "Maintainer notes are the private, per-item notes maintainers leave each other on Activity Monitor rows. They live in the spoke's append-only /data/maintainer-notes.jsonl and are never written to or read from GitHub; every signed-in maintainer of the hive sees them and the scheduler injects an item's notes into the agent kick under `# Maintainer notes` (1 KiB cap). Adds and deletes are broadcast on the dashboard event stream as the `maintainer-notes` SSE event {seq, repo, number, count, action}. With repo and number: that item's live notes, oldest first. With neither: every live note (the SPA's count badges). Requires a signed-in GitHub user or a verified owner session.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "owner/name; must be given together with number"
+          },
+          {
+            "name": "number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string",
+                            "description": "owner/name, lower-cased"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "author": {
+                            "type": "string",
+                            "description": "GitHub login of the dashboard session that wrote it"
+                          },
+                          "text": {
+                            "type": "string",
+                            "maxLength": 2000
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "deleted_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "Set on the tombstone a DELETE returns; live notes omit it"
+                          },
+                          "deleted_by": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "repo without number (or the reverse), or a malformed repo"
+          },
+          "401": {
+            "description": "GitHub user session required"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Append a maintainer note to one issue or pull request",
+        "description": "Maintainer notes are the private, per-item notes maintainers leave each other on Activity Monitor rows. They live in the spoke's append-only /data/maintainer-notes.jsonl and are never written to or read from GitHub; every signed-in maintainer of the hive sees them and the scheduler injects an item's notes into the agent kick under `# Maintainer notes` (1 KiB cap). Adds and deletes are broadcast on the dashboard event stream as the `maintainer-notes` SSE event {seq, repo, number, count, action}. The author is the dashboard session's GitHub login, never a body field. Same authorisation as the hold toggle (owner, or GitHub write/maintain/admin on the repository) plus a signed-in user. Written to the audit log as maintainer_note_add.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "number",
+                  "text"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "description": "owner/name"
+                  },
+                  "number": {
+                    "type": "integer"
+                  },
+                  "text": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "description": "Plain text; trimmed, non-empty"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Note appended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "note": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "repo": {
+                          "type": "string",
+                          "description": "owner/name, lower-cased"
+                        },
+                        "number": {
+                          "type": "integer"
+                        },
+                        "author": {
+                          "type": "string",
+                          "description": "GitHub login of the dashboard session that wrote it"
+                        },
+                        "text": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "deleted_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "Set on the tombstone a DELETE returns; live notes omit it"
+                        },
+                        "deleted_by": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty or over-long text, or a bad repo/number"
+          },
+          "401": {
+            "description": "GitHub user session required"
+          },
+          "403": {
+            "description": "Repository write permission required"
+          },
+          "503": {
+            "description": "GitHub client unavailable for the permission check"
+          }
+        }
+      }
+    },
+    "/api/notes/{id}": {
+      "delete": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Delete (tombstone) a maintainer note",
+        "description": "Maintainer notes are the private, per-item notes maintainers leave each other on Activity Monitor rows. They live in the spoke's append-only /data/maintainer-notes.jsonl and are never written to or read from GitHub; every signed-in maintainer of the hive sees them and the scheduler injects an item's notes into the agent kick under `# Maintainer notes` (1 KiB cap). Adds and deletes are broadcast on the dashboard event stream as the `maintainer-notes` SSE event {seq, repo, number, count, action}. Only the note's author or a verified owner may delete; the store appends a tombstone rather than rewriting. Written to the audit log as maintainer_note_delete.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Note deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "note": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "repo": {
+                          "type": "string",
+                          "description": "owner/name, lower-cased"
+                        },
+                        "number": {
+                          "type": "integer"
+                        },
+                        "author": {
+                          "type": "string",
+                          "description": "GitHub login of the dashboard session that wrote it"
+                        },
+                        "text": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "deleted_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "Set on the tombstone a DELETE returns; live notes omit it"
+                        },
+                        "deleted_by": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "GitHub user session required"
+          },
+          "403": {
+            "description": "Not the note's author and not an owner"
+          },
+          "404": {
+            "description": "Unknown or already deleted note"
+          }
+        }
+      }
+    },
     "/api/repos/{owner}/{repo}/items/{number}/decide-delegated": {
       "post": {
         "tags": [

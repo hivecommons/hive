@@ -31,6 +31,7 @@ import (
 //	14. PR follow-up handoff                 dynamic (pr-followup/)
 //	15. guide flow line                      dynamic (guide only)
 //	16. in-flight note                       dynamic (session claims)
+//	16a. maintainer notes                    dynamic (dashboard notes on listed items)
 //	17. question answer contract             dynamic (scanner only)
 //	18. in-progress claim rule               static, present whenever the kick lists issues
 //	19. closing instruction                  static, always last
@@ -112,6 +113,7 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	message = s.addPRFollowUpHandoff(a.agent, message)
 	message = s.addGuideFlow(a.agent, a.actionable, message)
 	message = s.addInflightNote(message, a.issues)
+	message = s.addMaintainerNotes(message, a.issues)
 	message = s.addQuestionAnswerContract(a.agent, message, a.issues)
 	message = addInProgressClaimRule(message, a.issues)
 	if a.idleReason == "" {

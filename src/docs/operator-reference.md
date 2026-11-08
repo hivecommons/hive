@@ -69,6 +69,8 @@ The reference is organized into the sections below. Existing links to this page 
 - [Scheduled-upgrade progress and history](operator-reference/sweeps-and-operations.md#scheduled-upgrade-progress-and-history)
 <a id="governor-cadence-and-budget"></a>
 - [Governor cadence and budget](operator-reference/sweeps-and-operations.md#governor-cadence-and-budget)
+<a id="maintainer-notes"></a>
+- [Maintainer notes](dashboard.md#maintainer-notes) — private per-item notes maintainers share on the Activity Monitor rows (`/data/maintainer-notes.jsonl`, never GitHub; injected into kicks)
 <a id="kick-size-and-the-list-caps"></a>
   - [Kick size and the list caps](operator-reference/sweeps-and-operations.md#kick-size-and-the-list-caps)
 <a id="what-consumes-tokens-while-agents-are-paused"></a>

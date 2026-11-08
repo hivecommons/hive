@@ -95,6 +95,15 @@
         noteSSEFrame();
         if (_stageTrackerSig || _stageTrackerEtag) stageTrackerNudge();
       });
+      // Another maintainer added or deleted a note on an item: refetch
+      // that item's notes so the row's badge and open expander follow.
+      source.addEventListener('maintainer-notes', (e) => {
+        noteSSEFrame();
+        try {
+          const p = JSON.parse(e.data || '{}');
+          if (p && p.repo && p.number) hamNotesLoad(hamNotesKey(p.repo, p.number));
+        } catch (err) { hamNotesLoad(); }
+      });
 
       source.addEventListener('agent-status', (e) => {
         noteSSEFrame();
