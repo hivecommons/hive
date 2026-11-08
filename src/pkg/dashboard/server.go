@@ -33,6 +33,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/maintainernotes"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/review/autoscale"
 	"github.com/hivecommons/hive/pkg/runtimeobs"
@@ -234,6 +235,11 @@ type Server struct {
 	repoRescanLast     ReposRescanResult
 	repoHoldPermMu     sync.Mutex
 	repoHoldPermCache  map[string]repoHoldPermissionCacheEntry
+	// maintainerNotes is the per-item note store /api/notes serves; nil
+	// means the process-wide maintainernotes.Default().
+	maintainerNotes *maintainernotes.Store
+	// maintainerNotesSeq numbers the `maintainer-notes` SSE frames.
+	maintainerNotesSeq atomic.Uint64
 	// delegatedJobs tracks "Let hive decide" jobs by repo#number
 	// (api_repo_item_decide_delegated.go).
 	delegatedJobs delegatedDecisionJobs
