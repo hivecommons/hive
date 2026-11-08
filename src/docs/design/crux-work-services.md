@@ -94,7 +94,9 @@ operator and answer 403 for anyone else.
 
 **Live runs block delete.** `checkout.Config.InUse func(id string) bool`
 is the hook S2 wires to its run state; the default returns false. A true
-answer turns `DELETE` into 409 `conflict`. Delete is otherwise
+answer turns `DELETE` into 409 `conflict`. `crux serve` wires it to
+`runs.Service.InUse`, which answers true while a run in flight names the
+checkout. Delete is otherwise
 `git worktree remove --force` (falling back to `os.RemoveAll`), the record
 file removed, and an index line appended naming who deleted it.
 
@@ -137,12 +139,24 @@ clone (a project cannot be made to pay for, or read, another's fetches).
 Records follow the `sandbox_run.go` conventions: one file per entity plus
 a `.jsonl` index.
 
+## Running in a checkout (S1 ↔ S2)
+
+`POST /v1/runs {"checkout": "chk_…"}` (CLI `crux --server … runs start
+--checkout chk_… -- cmd`) executes the command in the checkout's pinned
+worktree; the run record carries `checkout` and `workspace`. The checkout
+must belong to the caller or the caller must be the operator (403
+`forbidden` otherwise, the same rule as delete); an unknown id is 400
+`bad_request`; a server without a checkout service answers 501
+`unsupported`. `/v1/runs` admits project principals like `/v1/checkouts`
+does: a run is owned by the principal that created it, and only the owner
+or the operator may read or cancel it. While a run is live its checkout
+cannot be deleted (409 `conflict`); once the run settles, it can.
+
 ## Deliberately not in S1
 
 - TTL sweeper (recorded, not enforced).
 - `--filter=blob:limit=` partial clones; the cap is post-hoc only.
 - A per-owner allowlist; one list per server.
-- Wiring `InUse` to live runs: that is S2's side of the seam; the S2 commit (#17014) did not wire it, so it remains an open follow-up.
 - `ssh://` and `http://` repositories; `git@` syntax.
 - Anything about the hivecommons/crux repository or the publish path:
   the service lives in hive `src/crux` and ships through the existing

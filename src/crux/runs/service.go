@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/api"
+	"github.com/hivecommons/hive/crux/checkout"
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/runstate"
 	"github.com/hivecommons/hive/crux/sandbox"
@@ -64,6 +65,7 @@ type detail struct {
 	Network           string   `json:"network"`
 	Backend           string   `json:"backend"`
 	Command           []string `json:"command"`
+	Checkout          string   `json:"checkout,omitempty"`
 	Workspace         string   `json:"workspace,omitempty"`
 	ExitCode          *int     `json:"exit_code,omitempty"`
 	TimedOut          bool     `json:"timed_out,omitempty"`
@@ -76,6 +78,7 @@ type detail struct {
 // plan is a validated request.
 type plan struct {
 	worktree  *api.ContainedRunWorktree
+	checkout  string
 	workspace string
 	command   []string
 	allowlist []string
@@ -89,6 +92,22 @@ type active struct {
 	cancel    context.CancelFunc
 	done      chan struct{}
 	cancelled bool
+	// checkout is the S1 id the run holds open, if any (see InUse).
+	checkout string
+}
+
+// Caller is who asked for a run: the authenticated principal's name and
+// whether it holds the operator credential. The operator may run against
+// any checkout; a project only against its own.
+type Caller struct {
+	Name     string
+	Operator bool
+}
+
+// CheckoutResolver looks up S1 checkouts by id; *checkout.Service
+// satisfies it. The runs service never creates or deletes checkouts.
+type CheckoutResolver interface {
+	Get(id string) (checkout.Record, error)
 }
 
 // Service accepts, executes, cancels and reports contained runs.
@@ -96,6 +115,10 @@ type Service struct {
 	Store   *runstate.Store
 	Backend *Backend
 	Config  Config
+	// Checkouts resolves the request's checkout id to a pinned worktree
+	// (S1). Nil means this server has no checkout service and checkout
+	// ids are refused as unsupported.
+	Checkouts CheckoutResolver
 	// Provisioner materialises the ad-hoc worktree form; nil uses git.
 	Provisioner Provisioner
 	// Environ supplies the base environment the allowlist filters; nil uses
@@ -124,18 +147,20 @@ func (s *Service) Reconcile() ([]runstate.Record, error) {
 	return s.Store.Reconcile(ReconcileReason)
 }
 
-// Create validates req, saves the accepted record and starts the run under
-// launchCtx (which must outlive the request). created is false when
-// req.IdempotencyKey matched an existing run, whose record is returned.
-func (s *Service) Create(launchCtx context.Context, owner string, req api.ContainedRunRequest) (api.ContainedRun, bool, error) {
+// Create validates req, saves the accepted record owned by caller.Name and
+// starts the run under launchCtx (which must outlive the request). created
+// is false when req.IdempotencyKey matched an existing run, whose record
+// is returned.
+func (s *Service) Create(launchCtx context.Context, caller Caller, req api.ContainedRunRequest) (api.ContainedRun, bool, error) {
 	if !s.Configured() {
 		return api.ContainedRun{}, false, ErrNotConfigured
 	}
-	p, err := s.validate(req)
+	p, err := s.validate(caller, req)
 	if err != nil {
 		return api.ContainedRun{}, false, err
 	}
-	d := detail{Profile: p.profile, Network: p.network, Backend: s.Backend.Name, Command: p.command, Workspace: p.workspace}
+	owner := caller.Name
+	d := detail{Profile: p.profile, Network: p.network, Backend: s.Backend.Name, Command: p.command, Checkout: p.checkout, Workspace: p.workspace}
 	raw, err := json.Marshal(d)
 	if err != nil {
 		return api.ContainedRun{}, false, err
@@ -153,12 +178,25 @@ func (s *Service) Create(launchCtx context.Context, owner string, req api.Contai
 		return toWire(rec), false, nil
 	}
 	ctx, cancel := context.WithCancel(launchCtx)
-	a := &active{cancel: cancel, done: make(chan struct{})}
+	a := &active{cancel: cancel, done: make(chan struct{}), checkout: p.checkout}
 	s.mu.Lock()
 	s.active[rec.ID] = a
 	s.mu.Unlock()
 	go s.execute(ctx, rec.ID, p, a)
 	return toWire(rec), true, nil
+}
+
+// InUse reports whether a run in flight holds checkout id. It is the
+// checkout.Config.InUse hook: a checkout with live runs cannot be deleted.
+func (s *Service) InUse(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.active {
+		if a.checkout == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Get returns the saved record whatever the process state.
@@ -213,7 +251,7 @@ func (s *Service) Cancel(ctx context.Context, id string) (api.ContainedRun, erro
 	return s.Wait(ctx, id)
 }
 
-func (s *Service) validate(req api.ContainedRunRequest) (plan, error) {
+func (s *Service) validate(caller Caller, req api.ContainedRunRequest) (plan, error) {
 	var p plan
 	if len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "" {
 		return p, &RequestError{"command is required"}
@@ -258,10 +296,10 @@ func (s *Service) validate(req api.ContainedRunRequest) (plan, error) {
 		}
 		p.maxOutput = req.MaxOutputBytes
 	}
-	return p, s.validateWorkspace(req, &p)
+	return p, s.validateWorkspace(caller, req, &p)
 }
 
-func (s *Service) validateWorkspace(req api.ContainedRunRequest, p *plan) error {
+func (s *Service) validateWorkspace(caller Caller, req api.ContainedRunRequest, p *plan) error {
 	sources := 0
 	for _, set := range []bool{req.Checkout != "", req.Worktree != nil, req.WorkspacePath != ""} {
 		if set {
@@ -270,11 +308,11 @@ func (s *Service) validateWorkspace(req api.ContainedRunRequest, p *plan) error 
 	}
 	switch {
 	case sources == 0:
-		return &RequestError{"one of worktree or workspace_path is required"}
+		return &RequestError{"one of checkout, worktree or workspace_path is required"}
 	case sources > 1:
 		return &RequestError{"checkout, worktree and workspace_path are mutually exclusive"}
 	case req.Checkout != "":
-		return &UnsupportedError{"checkout ids need the checkout service (S1), which is not available yet; use worktree {repo, commit} or workspace_path"}
+		return s.resolveCheckout(caller, req.Checkout, p)
 	case req.Worktree != nil:
 		wt := *req.Worktree
 		if strings.TrimSpace(wt.Repo) == "" {
@@ -300,6 +338,26 @@ func (s *Service) validateWorkspace(req api.ContainedRunRequest, p *plan) error 
 		return &RequestError{fmt.Sprintf("workspace_path %q is not a directory", path)}
 	}
 	p.workspace = path
+	return nil
+}
+
+// resolveCheckout points the plan at the S1 checkout's pinned worktree.
+// The id must exist and belong to the caller (or the caller is the
+// operator): the same rule checkout applies to deletion.
+func (s *Service) resolveCheckout(caller Caller, id string, p *plan) error {
+	if s.Checkouts == nil {
+		return &UnsupportedError{"checkout ids need a checkout service and this server has none (start it with --checkout-allow); use worktree {repo, commit} or workspace_path"}
+	}
+	rec, err := s.Checkouts.Get(id)
+	switch {
+	case errors.Is(err, checkout.ErrNotFound):
+		return &RequestError{fmt.Sprintf("checkout %q not found", id)}
+	case err != nil:
+		return err
+	case !checkout.CanUse(rec, caller.Name, caller.Operator):
+		return &ForbiddenError{fmt.Sprintf("checkout %s is owned by %q, not by %q", rec.ID, rec.Owner, caller.Name)}
+	}
+	p.checkout, p.workspace = rec.ID, rec.Path
 	return nil
 }
 
@@ -487,7 +545,7 @@ func toWire(rec runstate.Record) api.ContainedRun {
 	return api.ContainedRun{
 		ID: rec.ID, Status: rec.Status, Owner: rec.Owner, Reason: rec.Reason,
 		CreatedAt: rec.CreatedAt, StartedAt: rec.StartedAt, FinishedAt: rec.FinishedAt,
-		Profile: d.Profile, Network: d.Network, Backend: d.Backend, Command: d.Command, Workdir: d.Workspace,
+		Profile: d.Profile, Network: d.Network, Backend: d.Backend, Command: d.Command, Checkout: d.Checkout, Workdir: d.Workspace,
 		ExitCode: d.ExitCode, TimedOut: d.TimedOut, Stdout: d.Stdout, Stderr: d.Stderr,
 		StdoutTruncatedAt: d.StdoutTruncatedAt, StderrTruncatedAt: d.StderrTruncatedAt,
 	}
