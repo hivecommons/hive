@@ -119,9 +119,7 @@ func (s *FileStore) WriteFacts(facts []ExtractedFact) error {
 			// clobber a shared "untitled.md".
 			continue
 		}
-		slug := slugify(f.Title)
-		filename := strings.ReplaceAll(slug+".md", "/", "_")
-		path := filepath.Join(s.rootDir, filename)
+		path := s.factPath(f.Title)
 
 		var buf strings.Builder
 		buf.WriteString("---\n")
@@ -134,6 +132,9 @@ func (s *FileStore) WriteFacts(facts []ExtractedFact) error {
 		}
 		if len(f.Tags) > 0 {
 			fmt.Fprintf(&buf, "tags: [%s]\n", sanitizeFrontmatterList(f.Tags))
+		}
+		if f.State != "" {
+			fmt.Fprintf(&buf, "state: %s\n", sanitizeFrontmatterValue(string(f.State)))
 		}
 		if len(f.Related) > 0 {
 			fmt.Fprintf(&buf, "related: [%s]\n", sanitizeFrontmatterList(f.Related))
@@ -151,6 +152,11 @@ func (s *FileStore) WriteFacts(facts []ExtractedFact) error {
 		}
 	}
 	return nil
+}
+
+// factPath is the file WriteFacts writes a fact with this title to.
+func (s *FileStore) factPath(title string) string {
+	return filepath.Join(s.rootDir, strings.ReplaceAll(slugify(title)+".md", "/", "_"))
 }
 
 func (s *FileStore) reindex() {

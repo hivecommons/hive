@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"path"
 	"regexp"
 	"strconv"
@@ -227,6 +228,14 @@ func (c *Client) validatePRRequestClaims(ctx context.Context, req PRRequest) (st
 		refOwner, refRepo := c.prRequestRepo(ref.Repo)
 		issue, _, err := c.client.Issues.Get(ctx, refOwner, refRepo, ref.Issue)
 		if err != nil {
+			// A 404 is permanent: the referenced issue does not exist in that
+			// repository (typically a cross-repo number written bare, so it
+			// resolved against the PR's own repo). Retrying can never fix it.
+			if githubStatusError(err, http.StatusNotFound) {
+				return "", "", &prRequestPolicyError{reason: fmt.Sprintf(
+					"closing reference %s#%d does not exist; a cross-repo issue must be written as owner/repo#N",
+					refOwner+"/"+refRepo, ref.Issue)}
+			}
 			return "", "", fmt.Errorf("validating closing reference %s#%d: %w", ref.Repo, ref.Issue, err)
 		}
 		if reason := incompleteIssueReason(issue); reason != "" {

@@ -53,10 +53,10 @@ let kpi = tiles(out);
 assert.equal(kpi['open-issues'], 31);
 assert.equal(kpi['open-prs'], 18);
 assert.equal(pillEl().hidden, false);
-assert.equal(pillEl().textContent, '31/18', 'pill must print the tile totals, not the tracked working set');
-assert.equal(pillEl().textContent, kpi['open-issues'] + '/' + kpi['open-prs']);
+assert.equal(pillEl().textContent, 'BP = 31/18', 'pill must print the tile totals as board pressure, not the tracked working set');
+assert.equal(pillEl().textContent, 'BP = ' + kpi['open-issues'] + '/' + kpi['open-prs']);
 assert.ok(!('data-zero' in pillEl().attrs));
-assert.match(pillEl().title, /^31 open issues \/ 18 open PRs — the Hive activity monitor pill counts rows of this same set \(every issue, plus each PR not shown under a listed issue\), so it can read differently · 31 total open issues \+ 18 total open PRs = 3 actionable now \+ /, 'pill title names each half, says how the activity-monitor pill differs, then carries the tile equation');
+assert.match(pillEl().title, /^Board pressure \(BP\): 31 open issues \/ 18 open PRs — the Hive activity monitor pill counts rows of this same set \(every issue, plus each PR not shown under a listed issue\), so it can read differently · 31 total open issues \+ 18 total open PRs = 3 actionable now \+ /, 'pill title opens with the term, names each half, says how the activity-monitor pill differs, then carries the tile equation');
 assert.doesNotMatch(pillEl().title, /stale/);
 
 // 2. Stale / last-good: GitHub refused the enumeration, the tiles show the
@@ -66,8 +66,8 @@ window._lastStatus.staleSince = '2026-10-21T15:04:05Z';
 out = renderOverviewKPIs(repos, issueSlices, prSlices, state);
 kpi = tiles(out);
 assert.match(out, /overview-kpi-stale/);
-assert.equal(pillEl().textContent, kpi['open-issues'] + '/' + kpi['open-prs']);
-assert.equal(pillEl().textContent, '31/18');
+assert.equal(pillEl().textContent, 'BP = ' + kpi['open-issues'] + '/' + kpi['open-prs']);
+assert.equal(pillEl().textContent, 'BP = 31/18');
 assert.match(pillEl().title, /\(stale since .+ · serving last-good\)$/);
 delete window._lastStatus.staleSince;
 
@@ -80,7 +80,7 @@ out = renderOverviewKPIs(repos, issueSlices, prSlices, state);
 kpi = tiles(out);
 assert.equal(kpi['open-issues'], 12);
 assert.equal(kpi['open-prs'], 5);
-assert.equal(pillEl().textContent, '12/5');
+assert.equal(pillEl().textContent, 'BP = 12/5');
 
 // 4. KPI strip hidden by the user: no tiles are rendered, but the pill keeps
 // following the same numbers the tiles would print.
@@ -88,7 +88,7 @@ repos[0].issues = 9;
 repos[0].prs = 0;
 out = renderOverviewKPIs(repos, issueSlices, prSlices, { showKPIs: false });
 assert.equal(out, '');
-assert.equal(pillEl().textContent, '9/0');
+assert.equal(pillEl().textContent, 'BP = 9/0');
 
 // 5. Before /api/status has answered the pill stays untouched (hidden), so a
 // chart-only render never flashes 0/0.
@@ -96,13 +96,13 @@ document._els = {};
 window._lastStatus = null;
 renderOverviewKPIs([], [], [], state);
 assert.equal(pillEl().hidden, true);
-assert.equal(pillEl().textContent, '0/0');
+assert.equal(pillEl().textContent, 'BP = 0/0');
 
 // 6. Zero is a real answer once the feed has answered.
 window._lastStatus = { repos: [], overviewTotals: { issues: { forge: 0 }, prs: { forge: 0 } } };
 renderOverviewKPIs([], [], [], state);
 assert.equal(pillEl().hidden, false);
-assert.equal(pillEl().textContent, '0/0');
+assert.equal(pillEl().textContent, 'BP = 0/0');
 assert.equal(pillEl().attrs['data-zero'], '');
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()

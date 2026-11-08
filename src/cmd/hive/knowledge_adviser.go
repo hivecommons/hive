@@ -18,8 +18,9 @@ import (
 // not already carry.
 
 const (
-	// knowledgeAdviseTimeout bounds one adviser query. It runs on the agent's
-	// poll goroutine, so a slow wiki layer must not stall the poller.
+	// knowledgeAdviseTimeout bounds one adviser query. The runtime calls it off
+	// the poll goroutine, one call per agent at a time, so a slow wiki layer
+	// only holds back that agent's next scope.
 	knowledgeAdviseTimeout = 5 * time.Second
 	// knowledgeAdviseMaxPerScope caps how many entries one scope may queue;
 	// the runtime's per-kick cap is the real bound, this keeps the queue short.
@@ -61,13 +62,21 @@ func (a *knowledgeAdviser) Policy(agent string) crux.KnowledgeAdvisorPolicy {
 	if cfg == nil || !cfg.KnowledgeAdvisorEnabledFor(agent) {
 		return crux.KnowledgeAdvisorPolicy{}
 	}
-	return crux.KnowledgeAdvisorPolicy{Enabled: true, MaxPerKick: cfg.Knowledge.AdvisorMaxPerKick}
+	// The matcher works from the scope alone; it never asks for pane text.
+	return crux.KnowledgeAdvisorPolicy{Enabled: true, MaxPerKick: cfg.Knowledge.AdvisorMaxPerKick, WantsPaneTail: false}
 }
 
 // Advise searches the knowledge store for scope. Until #17045 lands the
 // Primer has no kick context for paths, so the observed file goes in as the
 // primer's file path and the scope's segments as keywords.
 func (a *knowledgeAdviser) Advise(agent string, scope crux.KnowledgeScope) []crux.KnowledgeAdvice {
+	return a.adviseUpTo(agent, scope, knowledgeAdviseMaxPerScope)
+}
+
+// adviseUpTo is Advise with the per-scope cap as a parameter, so the ranking
+// pass (#17155) can ask for its larger candidate set without changing what
+// phase 1 hands the runtime.
+func (a *knowledgeAdviser) adviseUpTo(agent string, scope crux.KnowledgeScope, limit int) []crux.KnowledgeAdvice {
 	primer := a.primer()
 	cfg := a.cfg()
 	if primer == nil || cfg == nil {
@@ -85,7 +94,7 @@ func (a *knowledgeAdviser) Advise(agent string, scope crux.KnowledgeScope) []cru
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeAdviseTimeout)
 	defer cancel()
 	primed := primer.PrimeScoped(ctx, agentScope, paths, scope.Keywords)
-	advice := selectKnowledgeAdvice(primed.Facts, a.primed(agent), knowledgeAdviseMaxPerScope)
+	advice := selectKnowledgeAdvice(primed.Facts, a.primed(agent), limit)
 	a.logger.Debug("knowledge advisor: scope entered",
 		"agent", agent, "scope", scope.Key, "candidates", len(primed.Facts), "advice", len(advice))
 	return advice

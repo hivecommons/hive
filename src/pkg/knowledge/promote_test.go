@@ -131,6 +131,8 @@ func TestAutoPromoteCandidates(t *testing.T) {
 				{Slug: "high-conf", Confidence: 0.95, Status: "verified"},
 				{Slug: "low-conf", Confidence: 0.5, Status: "verified"},
 				{Slug: "high-but-draft", Confidence: 0.95, Status: "draft"},
+				// Drained CLI memory never auto-promotes, however it scores (#17058).
+				{Slug: "auto-memory", Confidence: 0.99, Status: "verified", Tags: []string{"agent:scanner", " CLI-Memory "}},
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")

@@ -400,6 +400,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/effective", s.handleKnowledgeEffective)
 	s.mux.HandleFunc("GET /api/knowledge/entry/{id}", s.handleKnowledgeEntry)
 	s.mux.HandleFunc("PUT /api/knowledge/entry/{id}/state", s.handleKnowledgeEntryState)
+	s.mux.HandleFunc("POST /api/knowledge/cli-memory/drain-legacy", s.handleKnowledgeDrainLegacyMemory)
 	// Anonymous, owner-switched, read-only MCP surface (#10615). POST only, no SSE stream; the handler answers a GET 405.
 	s.mux.HandleFunc("GET /mcp/knowledge", s.handlePublicKnowledgeMCP)
 	s.mux.HandleFunc("POST /mcp/knowledge", s.handlePublicKnowledgeMCP) // path == publicKnowledgeMCPPath

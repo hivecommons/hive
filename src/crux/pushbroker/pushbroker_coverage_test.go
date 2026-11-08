@@ -127,10 +127,10 @@ func TestValidateRejectsUnusableConfigurations(t *testing.T) {
 func TestRunPrefersAnExplicitBaseRef(t *testing.T) {
 	fixed := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	git := &scriptedGit{replies: map[string]string{
-		"rev-parse HEAD":                                      "cafebabe\n",
-		"rev-parse --verify origin/main":                      "deadbeef\n",
-		"diff --no-renames --name-only -z origin/main...HEAD": "pkg/safe.go\x00",
-		"diff --no-ext-diff origin/main...HEAD":               "+// harmless\n",
+		"rev-parse HEAD":                                             "cafebabe\n",
+		"rev-parse --verify origin/main":                             "deadbeef\n",
+		"diff --no-renames --name-only -z origin/main...HEAD":        "pkg/safe.go\x00",
+		"diff --text --no-textconv --no-ext-diff origin/main...HEAD": "+// harmless\n",
 	}}
 	res, err := (&Broker{
 		Workspace: fakeGitWorkspace(t), Branch: "work", BaseRef: "origin/main",
@@ -160,7 +160,7 @@ func TestRunFallsBackToHeadCommitWhenNoBaseExists(t *testing.T) {
 		replies: map[string]string{
 			"rev-parse HEAD": "abc123\n",
 			"diff-tree --root --no-commit-id --no-renames --name-only -r -z HEAD": "pkg/new.go\x00\x00",
-			"show --format= --no-ext-diff HEAD":                                   "+// new file\n",
+			"show --text --no-textconv --format= --no-ext-diff HEAD":              "+// new file\n",
 		},
 		fails: map[string]error{"rev-parse --verify refs/remotes/origin/work": noBase},
 	}
@@ -183,9 +183,9 @@ func TestRunFallsBackToRemoteRefWhenBaseRefIsGone(t *testing.T) {
 	git := &scriptedGit{
 		replies: map[string]string{
 			"rev-parse HEAD": "abc123\n",
-			"rev-parse --verify refs/remotes/origin/work":                      "999888\n",
-			"diff --no-renames --name-only -z refs/remotes/origin/work...HEAD": "pkg/safe.go\x00",
-			"diff --no-ext-diff refs/remotes/origin/work...HEAD":               "+// harmless\n",
+			"rev-parse --verify refs/remotes/origin/work":                             "999888\n",
+			"diff --no-renames --name-only -z refs/remotes/origin/work...HEAD":        "pkg/safe.go\x00",
+			"diff --text --no-textconv --no-ext-diff refs/remotes/origin/work...HEAD": "+// harmless\n",
 		},
 		fails: map[string]error{"rev-parse --verify origin/deleted": errors.New("unknown revision")},
 	}
@@ -253,7 +253,7 @@ func TestRunSurfacesEachFailureStage(t *testing.T) {
 	clean := map[string]string{
 		"rev-parse HEAD": "abc123\n",
 		"diff-tree --root --no-commit-id --no-renames --name-only -r -z HEAD": "pkg/safe.go\x00",
-		"show --format= --no-ext-diff HEAD":                                   "+// harmless\n",
+		"show --text --no-textconv --format= --no-ext-diff HEAD":              "+// harmless\n",
 	}
 	noBase := map[string]error{"rev-parse --verify refs/remotes/origin/work": errors.New("unknown revision")}
 
@@ -288,7 +288,7 @@ func TestRunSurfacesEachFailureStage(t *testing.T) {
 			name: "diff read fails",
 			git: &scriptedGit{
 				replies: map[string]string{"rev-parse HEAD": "abc123\n", "diff-tree --root --no-commit-id --no-renames --name-only -r -z HEAD": "pkg/safe.go\x00"},
-				fails:   mergeErrs(noBase, map[string]error{"show --format= --no-ext-diff HEAD": errors.New("bad object")}),
+				fails:   mergeErrs(noBase, map[string]error{"show --text --no-textconv --format= --no-ext-diff HEAD": errors.New("bad object")}),
 			},
 			minter:  fakeMinter{"ghs_tok"},
 			wantErr: "bad object",

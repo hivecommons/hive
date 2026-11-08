@@ -287,13 +287,16 @@ func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue)
 	primer := s.primer
 	cfg := s.cfg
 	s.mu.RUnlock()
-	if primer == nil || len(issues) == 0 {
+	if primer == nil {
 		return knowledgeInjection{}
 	}
-
 	limit := maxIssuesToPrime
 	if len(issues) < limit {
 		limit = len(issues)
+	}
+	s.recordKickSummary(agentName, issues[:limit])
+	if len(issues) == 0 {
+		return knowledgeInjection{}
 	}
 
 	keywords := extractKeywords(issues[:limit])
@@ -412,6 +415,58 @@ func (s *Scheduler) KickPrimedSlugs(agentName string) []string {
 	}
 	slugs, _ := v.([]string)
 	return slugs
+}
+
+// kickSummaryMaxRunes caps KickSummary.Text, the kick context the mid-task
+// advisor's ranking pass hands its model (#17155).
+const kickSummaryMaxRunes = 600
+
+// KickSummary is what the mid-task advisor's ranking pass knows about an
+// agent's current kick (#17155): an identity that changes every time the
+// scheduler primes a kick for the agent, and the primed issue refs, titles and
+// labels, capped at kickSummaryMaxRunes. Refs lists the primed issue/PR refs
+// that carry a repo ("owner/repo#N"), uncapped, so the advisor's decision
+// store can join decisions to beads (#17211).
+type KickSummary struct {
+	ID   string
+	Text string
+	Refs []string
+}
+
+// recordKickSummary stores a fresh KickSummary for agentName. It runs for
+// every primed kick, including one with no issues, so the identity always
+// moves with the kick.
+func (s *Scheduler) recordKickSummary(agentName string, issues []github.Issue) {
+	var parts, refs []string
+	for _, issue := range issues {
+		ref := fmt.Sprintf("#%d", issue.Number)
+		if issue.Repo != "" {
+			ref = issue.Repo + ref
+			refs = append(refs, ref)
+		}
+		part := ref + " " + strings.Join(strings.Fields(issue.Title), " ")
+		if len(issue.Labels) > 0 {
+			part += " [" + strings.Join(issue.Labels, ", ") + "]"
+		}
+		parts = append(parts, part)
+	}
+	text := strings.Join(parts, "; ")
+	if r := []rune(text); len(r) > kickSummaryMaxRunes {
+		text = string(r[:kickSummaryMaxRunes])
+	}
+	id := fmt.Sprintf("%s#%d", agentName, s.kickSeq.Add(1))
+	s.kickSummaries.Store(agentName, KickSummary{ID: id, Text: text, Refs: refs})
+}
+
+// KickSummary returns the summary of the most recent kick primed for
+// agentName; ok is false before the first one.
+func (s *Scheduler) KickSummary(agentName string) (KickSummary, bool) {
+	v, ok := s.kickSummaries.Load(agentName)
+	if !ok {
+		return KickSummary{}, false
+	}
+	sum, ok := v.(KickSummary)
+	return sum, ok
 }
 
 // kickContextFor is the kick context a scoped knowledge entry is matched

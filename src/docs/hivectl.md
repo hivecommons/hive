@@ -219,6 +219,22 @@ hivectl knowledge state old-relay deprecated --reason "relay removed"
 hivectl knowledge state old-relay superseded --superseded-by relay-v2 --reason "relay rewritten"
 ```
 
+`drain-memory --legacy` is a one-shot, owner-only drain of the shared
+home's Claude auto-memory (`/data/home/.claude/projects/*/memory`), which
+per-agent CLI homes stopped writing to but left in place. Each memory fact
+becomes a `state: draft` entry in the `bead-synth-wiki` vault tagged
+`cli-memory` and `agent:shared`, deduplicated by content hash, via
+`POST /api/knowledge/cli-memory/drain-legacy`; the run is audited. Memory files
+are left alone unless `--truncate` is given, and even then only files whose
+every fact is now stored are emptied (`kept` lists the rest). Review the drafts
+as described in
+[Auto-memory drafts](knowledge-lifecycle.md#auto-memory-drafts).
+
+```bash
+hivectl knowledge drain-memory --legacy
+hivectl knowledge drain-memory --legacy --truncate --output json
+```
+
 `suggest` lets an agent propose a knowledge change without changing what other
 agents see. It runs locally against a repository checkout (no dashboard call):
 it writes the change under `.hive/wiki/` (`--dir`, `--repo-root`) and prints

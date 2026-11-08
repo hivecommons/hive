@@ -53,6 +53,14 @@ func TestStageTrackerReviewFallbackStateDerivesAConcreteStatement(t *testing.T) 
 			}
 		})
 	}
+	// With no reviewer lane, waiting for CI must not promise a hive reviewer (hivecommons/hive#17095).
+	for _, lane := range []bool{false, true} {
+		out := trackerUnknownActivity(head, stageTrackerReviewNoDataCaption(head))
+		stageTrackerReviewFallbackState(out, stageTrackerReviewFallbackInputs{Head: head, CI: ci("running", 3, 0, 11), ReviewerLane: lane})
+		if promises := strings.Contains(out.Detail, "the reviewer is requested"); promises != lane {
+			t.Fatalf("lane=%v: detail %q", lane, out.Detail)
+		}
+	}
 	// A settled or in-flight track is left alone.
 	for _, state := range []string{"approved", "changes_requested", "human_decision", "reviewing", "assigned", "unassigned", reviewStateUnverified} {
 		out := &StageTrackerActivity{Head: head, State: state, Caption: "kept"}

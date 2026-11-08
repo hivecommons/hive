@@ -25,7 +25,7 @@ func TestKnowledgePipelineParityBatch8RoundTrip(t *testing.T) {
 		MaxFactsPerCycle: 20, MaxAPICallsPerCycle: 40, VaultPath: "/data/vaults/bead-synth-wiki",
 	}
 	k.Curator = config.KnowledgeCurator{AutoPromoteThreshold: 0.9}
-	k.Primer = config.KnowledgePrimer{MaxFacts: 25, MaxBytes: 4096, MergeStrategy: "precedence"}
+	k.Primer = config.KnowledgePrimer{MaxFacts: 25, MaxBytes: 8192, MergeStrategy: "precedence"}
 	before := *k
 
 	for _, bad := range []map[string]any{
@@ -190,7 +190,7 @@ func TestKnowledgePipelineParityBatch8RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resp.Engine != "llm-wiki" || resp.BeadSynthesizer["vault_path"] != "/data/vaults/bead-synth-wiki" ||
-		resp.Primer["merge_strategy"] != "precedence" || resp.Defaults["primer_max_bytes"] != float64(4096) {
+		resp.Primer["merge_strategy"] != "precedence" || resp.Defaults["primer_max_bytes"] != float64(config.DefaultKnowledgePrimerMaxBytes) {
 		t.Fatalf("GET response: %s", rec.Body.String())
 	}
 }

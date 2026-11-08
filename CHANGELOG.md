@@ -74,6 +74,166 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 - release: cap GitHub Release notes at `RELEASE_NOTES_MAX_CHARS` (120000) before the SBOM/NOTICE trailer, cutting the changelog section at a bullet boundary and linking the tag's full `CHANGELOG.md` section, so a first-on-the-line release such as v6.0.0 no longer fails `gh release create` with HTTP 422 "body is too long" after the tag and image retags have landed.
 
+## 2026-11-08 (v5.201.1)
+
+### Security
+
+- The CLI-memory drain opens every agent memory file through an `os.Root` anchored at its store and truncates it through the descriptor it read, instead of reading and `os.Truncate`-ing by path after the listing. The store belongs to the agent and the drain runs with the hive's privileges, so an agent that swapped a listed `.md` (or the store directory) for a symlink between the listing and the open could have had the hive copy any file it can read into the knowledge vault, or empty any file it can write — `TruncateDrained` counts a file with no parseable fact as "fully stored". Such a path is now reported in `kept` and the drain error, never followed ([#17251](https://github.com/hivecommons/hive/issues/17251)).
+- The drain also refuses a memory-file symlink whose target stays inside the store root (for a single-file store such as `GEMINI.md` that root is its parent, e.g. `~/.gemini/`), by `Lstat`ing each entry through the root and requiring the opened file to be the same inode, and `cliMemoryDrainSources` now resolves each store with `EvalSymlinks` and drops any that leaves the agent's own home — so a `~/.claude/projects/<slug>` pointed at another agent's store is never drained or truncated under this agent's name ([#17251](https://github.com/hivecommons/hive/issues/17251)).
+
+## 2026-11-08 (v5.201.0)
+
+### Added
+
+- crux: per-run command log, the fourth work service of the Crux work-services RFC ([hivecommons/crux#114](https://github.com/hivecommons/crux/issues/114) S4). A contained run now records the command the runner hands to the sandbox — argv, cwd, start and end times, exit code, status (`completed`, `failed`, `unfinished` or `cancelled`), total stdout/stderr byte counts and a scrubbed head and tail of each — to `<workdir>/runs/<id>/commands.jsonl`, append-only. Read it with `GET /v1/runs/{id}/cmdlog?since_seq=&limit=` (paged by `next_seq`/`more`, visible only to the run's owner) or `crux --server … cmdlog list|show <run>`. Each record carries `capture: "runner"`: commands the run's process spawns itself (shell pipelines, `make` recipes, an agent's own tool calls) are not counted, and the work-services design note says so explicitly; `capture: "hook"` is reserved for an in-sandbox shim in a later slice.
+
+## 2026-11-08 (v5.200.0)
+
+### Added
+
+- crux: human gates, the third work service of the Crux work-services RFC ([hivecommons/crux#114](https://github.com/hivecommons/crux/issues/114) S3). A driver opens a gate with `POST /v1/gates` (or `crux --server … gate open`) and a person answers it with `crux gate answer <id> --choice approve` or `POST /v1/gates/{id}/answer`. Answers must be one of the offered choices, and any free text goes in a separate note. The record keeps both who opened the gate and who answered it. An opener answering its own gate needs the explicit, audited `--as-operator` override. Gates are stored under `<workdir>/gates` (`pending/`, `resolved/` and a `gates.jsonl` journal), so they survive a `crux serve` restart. Re-opening the same gate returns the same id and the recorded answer. A gate that times out is marked `expired`, which is neither approval nor denial. `GET /v1/gates/{id}/wait` and `crux gate wait` block until the gate is answered or expires, and `gate.opened`, `gate.answered` and `gate.expired` events appear on `/v1/events`.
+
+### Changed
+
+- **dashboard:** the sidebar **Overview** pill now reads `BP = 19/4` instead of a bare `19/4`, naming the pair *board pressure* (BP) — the open issues and PRs the configured repos put on this hive's board, total open issues over total open PRs, before any of them is sorted into actionable, held, blocked or outside. The tooltip opens with "Board pressure (BP): 19 open issues / 4 open PRs — …" ahead of the existing equation; the Governor, Contributors and Knowledge pills are unchanged, and the term is defined in the dashboard glossary (#17240).
+
+## 2026-11-08 (v5.199.3)
+
+### Fixed
+
+- **automerge:** the contributor lane's hive-wide auto-promotion search no longer drops every other repository when GitHub refuses to search one of them (`422 Validation Failed` for a renamed, deleted or invisible repo, or an unsearchable author): the chunk is re-asked one repository at a time, and each refused (author, repository) pair warns once and is left out of the search for an hour instead of repeating the 422 and the `repo search failed` warning on every sweep (#17148).
+
+## 2026-11-08 (v5.199.2)
+
+### Fixed
+
+- The crux pushbroker pre-push secret gate now runs `git diff`/`git show` with `--text --no-textconv`, so a file git classifies as binary (a NUL byte in its first bytes, or a path marked `-diff`/`binary` in a committed `.gitattributes`) is scanned for token-shaped secrets instead of being hidden behind "Binary files differ" ([crux#128](https://github.com/hivecommons/crux/issues/128)).
+
+## 2026-11-08 (v5.199.1)
+
+### Fixed
+
+- An open issue labelled `proposal` or `kind/design` that nobody has claimed now derives the new `stage/018-open-for-discussion` and reads **Open for discussion** in the activity monitor instead of sitting at `stage/010-actionable` as agent work no lane will usefully pick up — including a proposal whose `Refs` RFC PR merged and left it `hive/partially-addressed`, a `040 → 018` fall booked as progress, not a regression. The stage reason names the label (`open for discussion: proposal`). The issue stays claimable: the claim gate is unchanged, a `/claim`, relay or agent claim stages it 020 / 030 as before, and removing the label returns it to 010 ([#17150](https://github.com/hivecommons/hive/issues/17150)).
+
+## 2026-11-08 (v5.199.0)
+
+### Added
+
+- The model-ranked knowledge advisor now persists one compact record per decision (agent, kick id, the kick's primed issue/PR refs, mode, arm `shadow|deliver|holdout`, outcome, slug; never the model's reason or pane text) to `/data/knowledge-advisor-decisions.jsonl`, and the retro lane reads that store in production, so beads get their real `AdvisorArm` instead of always `none` and the `holdout_percent` comparison can be read from `Lane.AdvisorArmSummary()` ([#17211](https://github.com/hivecommons/hive/issues/17211), part of [#17054](https://github.com/hivecommons/hive/issues/17054)).
+
+## 2026-11-08 (v5.198.0)
+
+### Added
+
+- **cli memory:** with `agents.cli_memory.drain_to_knowledge` on, Hive now seeds a Claude Code `SessionEnd` hook running the new `hive memory-drain --cli claude --agent "$HIVE_AGENT"` command, so a session's memory becomes draft knowledge (and the stored files are emptied) when the session ends; the new `agents.cli_memory.drain_on_write` key (default off, fleet-wide or per agent) adds a `PostToolUse` hook that does the same as soon as a memory file is written. Operator `hooks` entries are kept, and turning the keys off removes only Hive's entry (#17209, #17210).
+
+## 2026-11-08 (v5.197.0)
+
+### Added
+
+- The retro lane now records each bead's knowledge-advisor arm (`none|shadow|deliver|holdout|mixed`) with decision, delivered and held-out counters on `RetroRecord`, passes only those counters to the analysis model, and can summarize mean fix attempts, CI failures and kicks per arm with no model call, so the `holdout_percent` comparison needs no new instrumentation ([#17156](https://github.com/hivecommons/hive/issues/17156), part of [#17054](https://github.com/hivecommons/hive/issues/17054)).
+
+### Security
+
+- crux contained runs: the ad-hoc `worktree {repo, commit}` form now refuses a non-canonical repository URL (`.`/`..`/empty segments, percent-encoding, credentials, query or fragment) and matches `repo_allowlist` on a segment boundary, the same rules the pinned-checkout service applies (#17102). A bare string-prefix check let `https://github.com/org/../other/repo` and `https://github.com/org-evil/…` pass an allowlist of `https://github.com/org`, and git resolved the `..` into a clone off the allowlist. Non-canonical `repo_allowlist` entries are now a configuration error (#17213).
+
+## 2026-11-08 (v5.196.0)
+
+### Added
+
+- The Activity monitor lists rows that need you first on phones, with a sticky "waiting on you" count line that toggles the Waiting on you filter.
+- **cli memory:** an agent can now ask the hive to drain its own Claude memory into the knowledge store on demand, by dropping a request into `/var/run/hive-metrics/memory-drain-requests`; the hive resolves the stores from the agent's own home (optionally narrowed to the hook's project `cwd`), refuses a request naming any other agent, audits each call as `cli_memory_drain_requested`, empties with `truncate` only the files whose every fact is in the vault, and answers a no-op when `agents.cli_memory.drain_to_knowledge` is off for that agent (#17208).
+
+## 2026-11-08 (v5.195.0)
+
+### Added
+
+- **crux serve:** every API request now gets a span and `crux.serve.requests` / `crux.serve.request.duration` metrics, labelled only by method, route pattern (for example `GET /v1/agents/{name}`) and status class; no-op unless an OTel provider is configured (hivecommons/crux#126).
+- **knowledge advisor:** with `knowledge.advisor_llm` set, a small model now ranks the mid-task advisor's candidates and picks one stored entry or nothing; it never writes advice. `shadow` delivers the matcher's top entry and logs the model's pick, `rank` delivers the pick with an optional `holdout_percent` control arm, budgets (6 calls per agent-hour, 300 per UTC day) and timeouts fail closed or to the matcher per `on_error`, and every decision writes one `knowledge advisor: decision` log line (#17155).
+
+## 2026-11-08 (v5.194.0)
+
+### Added
+
+- CLI memory drain, phase 1 completion (#17056): a fact already in the vault now gains the draining agent's `agent:<name>` tag instead of being ignored, and keeps whatever state an operator gave it, so a deprecated memory is never revived. A memory file whose facts did not all reach the vault (vault unwritable, 200-facts-per-drain cap) is copied to `/data/knowledge/auto-memory-spool/<agent>/` before `clear_on_kick` wipes the store and retried on the agent's next drain; the drain log line now reports `spooled S`. `POST /api/knowledge/create` takes `state` (`approved` default, or `draft`, which is written into the local channel named by `layer` and never overwrites an existing entry) and accepts a `cli-memory`-tagged fact only as a draft carrying the drain's own tags. `bd create --type knowledge [--state] [--tag]… [--layer]` creates a fact through that endpoint.
+
+## 2026-11-08 (v5.193.2)
+
+### Changed
+
+- Activity monitor text now has a 12px floor on phones, so the chips, timestamps and column headers stay readable at 390px wide.
+
+## 2026-11-08 (v5.193.1)
+
+### Changed
+
+- Dashboard: on phones each Activity monitor row is a ~90px card — ☐/⋯ in the top-right corner, a clamped head (repo chip, #ref, two-line title, PR line, chips), the progress pill, one line of caption, no "no linked issue" placeholder — the pill sheet carries the full title and note, and the phone ergonomics probe counts the padded hit areas the pill and inline chips grow to 44px with; the 1280 layout is unchanged (hivecommons/hive#17161).
+- **knowledge advisor:** the runtime now calls the knowledge adviser off the agent's poll goroutine with at most one call in flight per agent, so a slow adviser no longer stalls the tick; results are held until the delivery gates pass and dropped if the kick changed. Each observed scope carries an `Action` (`read`/`edit`/`run`) and is re-advised at most once, on its first edit or next `gh` command. An adviser can request a token-scrubbed pane tail, which the built-in matcher never does (#17153).
+
+## 2026-11-08 (v5.193.0)
+
+### Added
+
+- Dashboard: on phones the Activity monitor Merged and merge-queue lists now open as full-width modal sheets with tap-sized rows, closable with ✕, Esc or backdrop, instead of clipped popovers; desktop popovers are unchanged (#17165).
+
+### Fixed
+
+- mobile-shots: phone-ergonomics hit-rect only grows and uses layout size (#17199)
+
+## 2026-11-08 (v5.192.0)
+
+### Added
+
+- The Hive activity monitor on a landscape phone (≤500px tall, coarse pointer) uses the compact filter bar, hides the column header so the sticky stack is a single bar, and shows at most one merge banner, so rows are visible instead of chrome; portrait and desktop are unchanged (#17166, part of #17158).
+- Activity monitor on a phone: every control meets the 44px coarse-pointer floor (`--tap-target-touch`), the per-row select / ⋯ controls move from the hidden left gutter into the row header, and the ⋯ menu opens as a full-screen sheet with tap-sized items.
+- Dashboard: on phones the Activity monitor row shows a stage-coloured "Step 7/8 · Merge queue · 2h" progress pill in place of the chevron strip; tapping it opens the full strip in a sheet, and the sticky column header is hidden with the strip (hivecommons/hive#17160).
+- `knowledge.advisor_llm` config block (mode off/shadow/rank, model, endpoint, key, candidates, pane_lines, timeout_s, holdout_percent, on_error) with hard call ceilings of 6 per agent-hour and 300 per day unless `budget_override: true`; shadow/rank without a model resolves to off with a warning, and `Config.KnowledgeAdvisorLLM()` resolves model/endpoint/key like the reviewer (explicit → `governor.litellm`). Config only; the ranking pass lands separately (hivecommons/hive#17154).
+
+### Fixed
+
+- PR titles for proposals now use the `📖 proposal:` prefix, which the required `PR Type` check accepts (`📝` never passed it); existing `📝 proposal:`/`📝 RFC` titles are still recognised as RFC documents and are rewritten to `📖` when the hive opens a PR (#17105).
+
+## 2026-11-08 (v5.191.1)
+
+### Fixed
+
+- Activity Monitor no longer draws a "Preparation train · 0 confirmed PRs" header over a single base-preparation ticket; one owner is the refresh lock holder, not a train, and its row comment already carries its state.
+
+## 2026-11-08 (v5.191.0)
+
+### Added
+
+- Drained CLI-memory drafts (`cli-memory` tag) never reach an agent while they are drafts: not through the kick primer or knowledge advisor, not through any `?agent=` TOC or entry read, and not through curator auto-promotion, even when `include_states` admits drafts. The dashboard's knowledge view gains an **Auto-memory drafts** filter that shows each draft's `agent:` tags with owner-only Approve and Discard actions. A new owner-only command, `hivectl knowledge drain-memory --legacy [--truncate]`, drains the shared `/data/home/.claude/projects/*/memory` store into drafts tagged `agent:shared` (#17058).
+- The Hive activity monitor on a phone replaces its 13-control toolbar and label chips with a sticky compact filter bar (All / PRs / Issues, Needs attention, Waiting on you, ⋯ Filters) that opens the full toolbar in a modal sheet, so the first row is visible without scrolling; desktop is unchanged (#17159, part of #17158).
+
+### Fixed
+
+- **fleetreport:** the stage engine's `stage flap suppressed` warning no longer files an `unclassified_error_repeated` fleet selfreport; refusing a same-head reversal is the flap guard working as designed and stays in local logs (#17142).
+
+## 2026-11-08 (v5.190.0)
+
+### Added
+
+- Crux contained runs (`POST /v1/runs`, `crux runs start --checkout`) can execute in an S1 pinned checkout: the checkout's owner (or the operator) names its id, the run record carries it, and the checkout refuses deletion with 409 while the run is live. `/v1/runs` now admits lane project principals, with runs owned by and readable/cancellable only to their creator or the operator (hivecommons/crux#114 S1+S2).
+- Hives with no `knowledge.git_sources` now index their primary repo's knowledge dir (`bead_synthesizer.publish.path`, else `docs/knowledge/` or `src/docs/knowledge/`) as a seeded `<repo>-knowledge` project-layer git source, and `knowledge.primer.max_bytes` defaults to 8192 instead of 4096.
+
+### Fixed
+
+- fix(crux): move pane-analysis helpers out of agent/manager_kick.go to stay under the file-size ratchet
+
+## 2026-11-08 (v5.189.3)
+
+### Fixed
+
+- **fleetreport:** the stage dampener's `stage transition suppressed by dampener` warning no longer files an `unclassified_error_repeated` fleet selfreport; the suppression is the stage engine working as designed and stays in local logs (#17103).
+- Closing-claim parsing no longer treats a parenthetical citation after a closing word (`fix in that section (#333)`) or the passive `closed by #N` as a claim, so the supersession sweep no longer closes changelog/docs follow-ups that cite the merged fixes they record (#17134).
+
+## 2026-11-08 (v5.189.2)
+
+### Fixed
+
+- release: cap GitHub Release notes at `RELEASE_NOTES_MAX_CHARS` (120000) before the SBOM/NOTICE trailer, cutting the changelog section at a bullet boundary and linking the tag's full `CHANGELOG.md` section, so a first-on-the-line release such as v6.0.0 no longer fails `gh release create` with HTTP 422 "body is too long" after the tag and image retags have landed.
+
 ## 2026-11-08 (v6.0.0)
 
 ### Added
@@ -2262,6 +2422,39 @@ The train header no longer says "not in this view: 7 more" over PRs that were ne
 - The Activity Monitor streamer's loopback `authproxy` (`src/deploy/stream`) now forwards only `GET`/`HEAD` to the dashboard and answers every other method `405` locally, before the bearer is attached. The token it injects is the spoke's shared dashboard token, which the dashboard treats as an unscoped owner; the kiosk only ever reads, so a compromised or misbehaving page in the `--no-sandbox` Chromium can no longer reach agent-control, config or settings mutations with that authority.
 - With `task_mcp.remote_enabled` on, a hive that set neither `dashboard.public_url` nor `hub.dashboard_url` named the hub as its own task MCP: `task_assign` carried `mcp.url = <hub.url>/api/contribute/mcp` (`https://hive.hivecommons.dev`, the default on every hive) together with this hive's lease bearer, the relay wrote both into the contributor's `.mcp.json`, and the contributor's agent presented the bearer to the hub. A hive whose hub link is off but that still held a `hub.dashboard_url` handed that stale address out the same way. `mcp.url` is now only ever this hive's own address: `dashboard.public_url`, or `hub.dashboard_url` while `hub.enabled` is true. `hub.url` is never used. A hive with no such address sends no `mcp` block and mints no bearer, so its contributors work without the task MCP until the operator sets `dashboard.public_url`.
 - Fixed the tool-approval guardrail-path check never seeing the target of a Copilot CLI `apply_patch` call ([#16979](https://github.com/hivecommons/hive/issues/16979)). The tool carries its paths in the patch text (`*** Update File:`, `*** Add File:`, `*** Delete File:`, `*** Move to:`) instead of a path argument, so `ToolRequest.GetFilePath` returned an empty string and a patch touching `.github/workflows/**`, `OWNERS`, `hive.yaml` or `policies/**` auto-approved at L5/L6. `GetFilePath` now falls back to the first path in the patch body, and the guardrail check now iterates the new `GetFilePaths` over every path the request names, so a patch that lists a harmless file first and a guardrail path later is still caught.
+## 2026-11-08 (v5.189.1)
+
+### Changed
+
+- docs(dashboard): review fallback doc comment describes the reviewer-lane branch (#17125)
+
+### Fixed
+
+- pr-request watcher: a closing reference to an issue that does not exist in the target repository (404) now rejects the request as a permanent claim error instead of retrying with backoff forever (#17124).
+
+## 2026-11-07 (v5.190.0)
+
+### Added
+
+- `agents.cli_memory.drain_to_knowledge` (default off) converts each agent's CLI memory (Claude `MEMORY.md` + topic files, Codex `memories*`, Gemini `GEMINI.md`) into `state: draft` knowledge entries in the bead-synth vault before every kick and before `clear_on_kick` wipes the store — tagged `cli-memory`, `agent:<name>`, `cli:<name>`, `repo:` when derivable, deduplicated by content hash, never auto-approved; one `cli-memory: drained N facts …` log line per drain. Proposed by @gregoryhunt (#17033).
+- `v6` is now an official release line: `.github/release-lines.yml` lists `[v4, v5, v6]`, so `tagged-release.yml` mints `v6.x.y` tags (starting at `v6.0.0`), GitHub Releases, SBOMs and immutable image retags from the `v6` branch exactly as `v5` does; the default-branch copy of the workflow relays a completed `v6` build to `v6`'s own copy, since GitHub only delivers `workflow_run` to the default branch. Channel ownership is unchanged — `stable`/`candidate`/`:latest` follow `v5`, `edge`/`v6-latest` follow `v6`.
+
+### Changed
+
+- Contributor nudges are now one comment per PR and reason class, edited in place for a new head or changed reason, with a single re-nudge after `auto_merge.nudge_repeat_after` (default 72h); an agent's free-text relay comments fold into the `hive:status` card in quiet mode or one `hive:origin-notes` comment per item otherwise; a marker ratchet test caps unmarked bot comment emitters (hivecommons/hive#17067).
+
+### Fixed
+
+- The "Review · waiting for CI" detail no longer says a reviewer will be requested when the repo has no hive reviewer lane; it now says a person must review (hivecommons/hive#17095).
+- fix(crux): move buffer/output getters out of agent/manager.go to stay under the file-size ratchet (#17122)
+- The bob startup preflight now checks that the per-agent `~/.bob` (where bob writes its installation ID and chat recordings since per-agent homes landed) is writable, instead of probing the shared `/data/home/.bob` that only holds the bridged settings, so an unwritable state directory is reported against the directory bob actually uses (#17062).
+- Dashboard: on a phone (≤480px) merged banners and toasts span the viewport width with a two-line title, a mono lane/merger/time line, one links row, tap-anywhere dismiss and a "+N more" pill after the newest three; the Overview KPI label/subline no longer jump to a larger font under 720px (the #16613 override assumed `--fs-2xs` was undefined at `:root`).
+- The native-queue workflow contract test asserted `native-queue-policy.yml`'s release-lines pin as the literal `[v6, -v4]`; with v6 a `release_lines` entry the pin reads `[-v4]`, so the test now resolves the pin against `release_lines` and checks that v5 and v6 are covered.
+
+### Security
+
+- The shared Claude Code user settings file (`/data/home/.claude/settings.json`, which every interactive claude agent reads through its per-agent `~/.claude/settings.json` bridge) is now hive-owned and kept read-only to agent UIDs. Before each claude launch the manager checks that the file is a regular file owned by the hive; a symlink or a file owned by another uid is moved aside to `settings.json.rejected` and the file is re-seeded, and group/other write is removed from a hive-owned copy. The entrypoint sweeps and the permissions watcher no longer widen this file to group write. Settings keys such as `hooks` and `apiKeyHelper` run commands in every agent's session, so one agent can no longer change them for the rest of the fleet; operators who keep extra keys there (for example `enabledPlugins`) and find the file moved aside after upgrading can re-apply them from the rejected copy as the hive user (#17059).
+- The pinned-checkout service's repository allowlist now matches on URL segment boundaries and refuses non-canonical repository paths. Previously `CRUX_CHECKOUT_ALLOWLIST` was compared as a plain string prefix against the URL the caller sent, so `https://host/allowed/../other/repo` (which git resolves to `other/repo`), `file:///allowed/../../elsewhere`, and `https://host/allowed-evil/repo` all passed for an entry of `https://host/allowed`. Requests whose path contains `.`, `..`, empty or percent-encoded segments are now rejected as bad requests before any clone, and a prefix that does not end in `/` must be followed by `/`, `.git` or the end of the URL.
 
 ## 2026-11-07 (v5.189.0)
 

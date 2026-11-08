@@ -186,6 +186,12 @@ type IssueFacts struct {
 	// UmbrellaLabel is the never-claim label the issue carries
 	// (governor.claims.never_claim_labels, default `epic`).
 	UmbrellaLabel string
+	// DiscussionLabel is the proposal / design label the issue carries
+	// (`proposal`, `kind/design`), "" when it carries none. An unclaimed
+	// issue wearing one derives 018-open-for-discussion instead of
+	// 010/015; a live claim or covering PR stages it as on any issue
+	// (hivecommons/hive#17150).
+	DiscussionLabel string
 	// TriageAwaiting is why an actionable issue is still untriaged (015):
 	// the reporter-trust awaiting label it carries or the gate's
 	// reporter_triage bucket.

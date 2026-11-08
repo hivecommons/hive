@@ -70,8 +70,9 @@ func checkoutRecordToAPI(rec checkout.Record) api.Checkout {
 
 // newCheckoutService builds the service from the flag or environment
 // allowlist; nil with no error means no allowlist was given, so the
-// service stays off.
-func newCheckoutService(allow, dir, workDir string) (*checkout.Service, error) {
+// service stays off. inUse is the contained-run service's hook that keeps
+// a checkout with live runs from being deleted; nil means never in use.
+func newCheckoutService(allow, dir, workDir string, inUse func(id string) bool) (*checkout.Service, error) {
 	if allow == "" {
 		allow = os.Getenv(config.CheckoutAllowlistEnvVar)
 	}
@@ -90,7 +91,7 @@ func newCheckoutService(allow, dir, workDir string) (*checkout.Service, error) {
 			prefixes = append(prefixes, p)
 		}
 	}
-	return checkout.New(checkout.Config{Dir: dir, AllowedRepos: prefixes})
+	return checkout.New(checkout.Config{Dir: dir, AllowedRepos: prefixes, InUse: inUse})
 }
 
 // cmdCheckout is the local `crux checkout`: the service on <workdir>.
@@ -103,7 +104,7 @@ func (e *Env) cmdCheckout(ctx context.Context, opts globalOptions, args []string
 	allow := fs.String("allow", "", "comma-separated repo URL prefixes this command may clone (default $"+config.CheckoutAllowlistEnvVar+")")
 	dir := fs.String("dir", "", "where checkouts live (default $"+config.CheckoutDirEnvVar+", then <workdir>/"+checkout.DirName+")")
 	return e.checkout(ctx, func() (checkoutClient, error) {
-		svc, err := newCheckoutService(*allow, *dir, opts.workDir)
+		svc, err := newCheckoutService(*allow, *dir, opts.workDir, nil)
 		if err == nil && svc == nil {
 			// No allowlist: a service that refuses every clone but can
 			// still list and remove what exists.

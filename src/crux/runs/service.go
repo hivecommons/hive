@@ -13,9 +13,12 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/api"
+	"github.com/hivecommons/hive/crux/checkout"
+	"github.com/hivecommons/hive/crux/cmdlog"
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/runstate"
 	"github.com/hivecommons/hive/crux/sandbox"
+	"github.com/hivecommons/hive/crux/signals"
 )
 
 // Artifact names inside a run's directory: the full scrubbed output.
@@ -38,6 +41,8 @@ var (
 	ErrNotConfigured = errors.New("runs: no contained-run backend is configured on this server")
 	// ErrNotFound: unknown run ID.
 	ErrNotFound = runstate.ErrNotFound
+	// ErrNoSignals: the server keeps no turn signals (Service.Signals nil).
+	ErrNoSignals = errors.New("runs: turn signals are not enabled on this server")
 )
 
 // RequestError is a malformed request (400).
@@ -64,6 +69,7 @@ type detail struct {
 	Network           string   `json:"network"`
 	Backend           string   `json:"backend"`
 	Command           []string `json:"command"`
+	Checkout          string   `json:"checkout,omitempty"`
 	Workspace         string   `json:"workspace,omitempty"`
 	ExitCode          *int     `json:"exit_code,omitempty"`
 	TimedOut          bool     `json:"timed_out,omitempty"`
@@ -76,6 +82,7 @@ type detail struct {
 // plan is a validated request.
 type plan struct {
 	worktree  *api.ContainedRunWorktree
+	checkout  string
 	workspace string
 	command   []string
 	allowlist []string
@@ -89,6 +96,22 @@ type active struct {
 	cancel    context.CancelFunc
 	done      chan struct{}
 	cancelled bool
+	// checkout is the S1 id the run holds open, if any (see InUse).
+	checkout string
+}
+
+// Caller is who asked for a run: the authenticated principal's name and
+// whether it holds the operator credential. The operator may run against
+// any checkout; a project only against its own.
+type Caller struct {
+	Name     string
+	Operator bool
+}
+
+// CheckoutResolver looks up S1 checkouts by id; *checkout.Service
+// satisfies it. The runs service never creates or deletes checkouts.
+type CheckoutResolver interface {
+	Get(id string) (checkout.Record, error)
 }
 
 // Service accepts, executes, cancels and reports contained runs.
@@ -96,6 +119,10 @@ type Service struct {
 	Store   *runstate.Store
 	Backend *Backend
 	Config  Config
+	// Checkouts resolves the request's checkout id to a pinned worktree
+	// (S1). Nil means this server has no checkout service and checkout
+	// ids are refused as unsupported.
+	Checkouts CheckoutResolver
 	// Provisioner materialises the ad-hoc worktree form; nil uses git.
 	Provisioner Provisioner
 	// Environ supplies the base environment the allowlist filters; nil uses
@@ -103,6 +130,13 @@ type Service struct {
 	Environ func() []string
 	// Scrub redacts output before it is persisted; nil uses logscrub.
 	Scrub func(string) string
+	// CmdLog opens the per-run command log (S4) the runner appends to;
+	// nil keeps no log. Reading does not need it: Commands reads the file.
+	CmdLog cmdlog.Opener
+	// Signals is the turn-signal book (S5): the runner appends started and
+	// done through it, AppendSignal everything else. Nil keeps no signals;
+	// ReadSignals still reads what an earlier process wrote.
+	Signals *signals.Book
 
 	mu     sync.Mutex
 	active map[string]*active
@@ -121,21 +155,29 @@ func (s *Service) Configured() bool { return s.Backend != nil }
 // Reconcile marks every run left accepted or running by a previous process
 // unfinished. Call it once at serve start, before accepting requests.
 func (s *Service) Reconcile() ([]runstate.Record, error) {
-	return s.Store.Reconcile(ReconcileReason)
+	recs, err := s.Store.Reconcile(ReconcileReason)
+	// A run the previous process left in flight ended unobserved; its done
+	// signal says so, so a follower never waits on it forever.
+	for _, rec := range recs {
+		s.signalDone(rec.ID, api.SignalDoneData{Status: rec.Status}, rec.Reason)
+	}
+	return recs, err
 }
 
-// Create validates req, saves the accepted record and starts the run under
-// launchCtx (which must outlive the request). created is false when
-// req.IdempotencyKey matched an existing run, whose record is returned.
-func (s *Service) Create(launchCtx context.Context, owner string, req api.ContainedRunRequest) (api.ContainedRun, bool, error) {
+// Create validates req, saves the accepted record owned by caller.Name and
+// starts the run under launchCtx (which must outlive the request). created
+// is false when req.IdempotencyKey matched an existing run, whose record
+// is returned.
+func (s *Service) Create(launchCtx context.Context, caller Caller, req api.ContainedRunRequest) (api.ContainedRun, bool, error) {
 	if !s.Configured() {
 		return api.ContainedRun{}, false, ErrNotConfigured
 	}
-	p, err := s.validate(req)
+	p, err := s.validate(caller, req)
 	if err != nil {
 		return api.ContainedRun{}, false, err
 	}
-	d := detail{Profile: p.profile, Network: p.network, Backend: s.Backend.Name, Command: p.command, Workspace: p.workspace}
+	owner := caller.Name
+	d := detail{Profile: p.profile, Network: p.network, Backend: s.Backend.Name, Command: p.command, Checkout: p.checkout, Workspace: p.workspace}
 	raw, err := json.Marshal(d)
 	if err != nil {
 		return api.ContainedRun{}, false, err
@@ -153,12 +195,25 @@ func (s *Service) Create(launchCtx context.Context, owner string, req api.Contai
 		return toWire(rec), false, nil
 	}
 	ctx, cancel := context.WithCancel(launchCtx)
-	a := &active{cancel: cancel, done: make(chan struct{})}
+	a := &active{cancel: cancel, done: make(chan struct{}), checkout: p.checkout}
 	s.mu.Lock()
 	s.active[rec.ID] = a
 	s.mu.Unlock()
 	go s.execute(ctx, rec.ID, p, a)
 	return toWire(rec), true, nil
+}
+
+// InUse reports whether a run in flight holds checkout id. It is the
+// checkout.Config.InUse hook: a checkout with live runs cannot be deleted.
+func (s *Service) InUse(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.active {
+		if a.checkout == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Get returns the saved record whatever the process state.
@@ -168,6 +223,55 @@ func (s *Service) Get(id string) (api.ContainedRun, error) {
 		return api.ContainedRun{}, err
 	}
 	return toWire(rec), nil
+}
+
+// Commands is the run's command log (S4) after sinceSeq, at most limit
+// records. A run whose directory holds no log yet answers an empty page,
+// not an error; only an unknown id is ErrNotFound.
+func (s *Service) Commands(id string, sinceSeq int64, limit int) (api.CommandPage, error) {
+	if _, err := s.Store.Get(id); err != nil {
+		return api.CommandPage{}, err
+	}
+	page, err := cmdlog.Read(s.Store.Path(id), sinceSeq, limit)
+	if errors.Is(err, cmdlog.ErrNotFound) {
+		page, err = api.CommandPage{Commands: []api.CommandRecord{}, NextSeq: sinceSeq}, nil
+	}
+	page.Run = id
+	return page, err
+}
+
+// ReadSignals is the run's turn signals (S5) after sinceSeq, at most limit
+// of them. A run whose directory holds no signals yet answers an empty
+// page, not an error; only an unknown id is ErrNotFound.
+func (s *Service) ReadSignals(id string, sinceSeq int64, limit int) (api.RunSignalPage, error) {
+	if _, err := s.Store.Get(id); err != nil {
+		return api.RunSignalPage{}, err
+	}
+	page, err := signals.Read(s.Store.Path(id), sinceSeq, limit)
+	if errors.Is(err, signals.ErrNotFound) {
+		page, err = api.RunSignalPage{Signals: []api.RunSignal{}, NextSeq: sinceSeq}, nil
+	}
+	page.Run = id
+	return page, err
+}
+
+// AppendSignal records in on run id: a caller's report of where the turn
+// is, or a gate's. The book enforces the kind set and what each source may
+// append. A run that reached a terminal status is signals.ErrClosed even
+// before its done line is written (or when it finished on a server that
+// kept no signals): only the runner reports on a run that has ended.
+func (s *Service) AppendSignal(id string, in signals.Signal) (api.RunSignal, error) {
+	if s.Signals == nil {
+		return api.RunSignal{}, ErrNoSignals
+	}
+	rec, err := s.Store.Get(id)
+	if err != nil {
+		return api.RunSignal{}, err
+	}
+	if runstate.Terminal(rec.Status) {
+		return api.RunSignal{}, fmt.Errorf("%w: run %s is %s", signals.ErrClosed, id, rec.Status)
+	}
+	return s.Signals.Append(id, s.Store.Path(id), in)
 }
 
 // Wait blocks until the run reaches a terminal status or ctx ends, then
@@ -213,7 +317,7 @@ func (s *Service) Cancel(ctx context.Context, id string) (api.ContainedRun, erro
 	return s.Wait(ctx, id)
 }
 
-func (s *Service) validate(req api.ContainedRunRequest) (plan, error) {
+func (s *Service) validate(caller Caller, req api.ContainedRunRequest) (plan, error) {
 	var p plan
 	if len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "" {
 		return p, &RequestError{"command is required"}
@@ -258,10 +362,10 @@ func (s *Service) validate(req api.ContainedRunRequest) (plan, error) {
 		}
 		p.maxOutput = req.MaxOutputBytes
 	}
-	return p, s.validateWorkspace(req, &p)
+	return p, s.validateWorkspace(caller, req, &p)
 }
 
-func (s *Service) validateWorkspace(req api.ContainedRunRequest, p *plan) error {
+func (s *Service) validateWorkspace(caller Caller, req api.ContainedRunRequest, p *plan) error {
 	sources := 0
 	for _, set := range []bool{req.Checkout != "", req.Worktree != nil, req.WorkspacePath != ""} {
 		if set {
@@ -270,11 +374,11 @@ func (s *Service) validateWorkspace(req api.ContainedRunRequest, p *plan) error 
 	}
 	switch {
 	case sources == 0:
-		return &RequestError{"one of worktree or workspace_path is required"}
+		return &RequestError{"one of checkout, worktree or workspace_path is required"}
 	case sources > 1:
 		return &RequestError{"checkout, worktree and workspace_path are mutually exclusive"}
 	case req.Checkout != "":
-		return &UnsupportedError{"checkout ids need the checkout service (S1), which is not available yet; use worktree {repo, commit} or workspace_path"}
+		return s.resolveCheckout(caller, req.Checkout, p)
 	case req.Worktree != nil:
 		wt := *req.Worktree
 		if strings.TrimSpace(wt.Repo) == "" {
@@ -282,6 +386,12 @@ func (s *Service) validateWorkspace(req api.ContainedRunRequest, p *plan) error 
 		}
 		if !fullSHA.MatchString(wt.Commit) {
 			return &RequestError{"worktree.commit must be a full 40-hex commit SHA; a tag or branch name cannot pin the run"}
+		}
+		// The URL must already be canonical: git (libcurl for https, literally
+		// for file) resolves "..", so a prefix check on the raw string would
+		// otherwise admit "https://h/allowed/../other/repo".
+		if err := checkout.ValidateRepoURL(wt.Repo); err != nil {
+			return &RequestError{"worktree.repo: " + strings.TrimPrefix(err.Error(), checkout.ErrBadRequest.Error()+": ")}
 		}
 		if !repoAllowed(wt.Repo, s.Config.RepoAllowlist) {
 			return &ForbiddenError{fmt.Sprintf("repository %q is not on this server's repo_allowlist", wt.Repo)}
@@ -303,11 +413,32 @@ func (s *Service) validateWorkspace(req api.ContainedRunRequest, p *plan) error 
 	return nil
 }
 
-// repoAllowed reports whether repo starts with one of the allowlisted
-// URL prefixes.
+// resolveCheckout points the plan at the S1 checkout's pinned worktree.
+// The id must exist and belong to the caller (or the caller is the
+// operator): the same rule checkout applies to deletion.
+func (s *Service) resolveCheckout(caller Caller, id string, p *plan) error {
+	if s.Checkouts == nil {
+		return &UnsupportedError{"checkout ids need a checkout service and this server has none (start it with --checkout-allow); use worktree {repo, commit} or workspace_path"}
+	}
+	rec, err := s.Checkouts.Get(id)
+	switch {
+	case errors.Is(err, checkout.ErrNotFound):
+		return &RequestError{fmt.Sprintf("checkout %q not found", id)}
+	case err != nil:
+		return err
+	case !checkout.CanUse(rec, caller.Name, caller.Operator):
+		return &ForbiddenError{fmt.Sprintf("checkout %s is owned by %q, not by %q", rec.ID, rec.Owner, caller.Name)}
+	}
+	p.checkout, p.workspace = rec.ID, rec.Path
+	return nil
+}
+
+// repoAllowed reports whether repo falls under one of the allowlisted URL
+// prefixes on a segment boundary (checkout.PrefixMatches), so an entry
+// without a trailing slash does not admit "<entry>-evil/…".
 func repoAllowed(repo string, prefixes []string) bool {
 	for _, p := range prefixes {
-		if p = strings.TrimSpace(p); p != "" && strings.HasPrefix(repo, p) {
+		if p = strings.TrimSpace(p); p != "" && checkout.PrefixMatches(repo, p) {
 			return true
 		}
 	}
@@ -329,7 +460,8 @@ func pathUnder(path string, roots []string) bool {
 }
 
 // execute runs one accepted run to a terminal status. Every exit path
-// writes the record; nothing is left accepted or running by this process.
+// writes the record and then the run's done signal; nothing is left
+// accepted or running by this process.
 func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 	defer func() {
 		s.mu.Lock()
@@ -351,6 +483,13 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 			rec.Status, rec.Reason, rec.Detail = status, reason, raw
 			return nil
 		})
+		// fill only assigns the outcome fields, so applying it to an empty
+		// detail yields them whether or not the record write succeeded.
+		var out detail
+		if fill != nil {
+			fill(&out)
+		}
+		s.signalDone(id, api.SignalDoneData{Status: status, ExitCode: out.ExitCode, TimedOut: out.TimedOut}, reason)
 	}
 	workspace := p.workspace
 	if p.worktree != nil {
@@ -393,12 +532,17 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 		EnvAllowlist: p.allowlist,
 		NetworkMode:  p.network,
 	}
+	log, seq := s.commandStarted(id, p.command)
+	s.signal(id, api.SignalStarted, "sandbox launched", nil)
 	res, err := s.Backend.Launcher.Run(runCtx, spec)
 	// A launcher that returned without error finished the command; a
 	// cancel or deadline that landed after that does not unmake the result.
 	cancelled := err != nil && ctx.Err() != nil
 	timedOut := err != nil && !cancelled && errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	status, reason, exit := classify(res, err, cancelled, timedOut)
+	if log != nil {
+		_ = log.Ended(seq, cmdlog.End{ExitCode: exit, Status: commandStatus(status, exit), Reason: reason, Stdout: res.Stdout, Stderr: res.Stderr})
+	}
 	if (cancelled || timedOut) && s.Backend.Teardown != nil {
 		tctx, cancel := context.WithTimeout(context.Background(), TeardownTimeout)
 		if terr := s.Backend.Teardown(tctx, name); terr != nil {
@@ -413,6 +557,66 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 		d.Stdout, d.StdoutTruncatedAt = stdout, stdoutCut
 		d.Stderr, d.StderrTruncatedAt = stderr, stderrCut
 	})
+}
+
+// signal appends a runner signal to run id; a failure is dropped, because
+// signals report on the run and must never stop it.
+func (s *Service) signal(id, kind, message string, data json.RawMessage) {
+	if s.Signals == nil {
+		return
+	}
+	_, _ = s.Signals.Append(id, s.Store.Path(id), signals.Signal{Kind: kind, Source: api.SignalSourceRunner, Message: message, Data: data})
+}
+
+// signalDone appends the run's done signal: its terminal status, the exit
+// code when one was read and whether it timed out, with the reason as the
+// message.
+func (s *Service) signalDone(id string, d api.SignalDoneData, reason string) {
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return
+	}
+	s.signal(id, api.SignalDone, reason, raw)
+}
+
+// commandStarted appends the dispatched command to the run's command log
+// and returns the log and seq to end it with; a nil log means no log is
+// kept (CmdLog unset or the open failed, which must not stop the run).
+func (s *Service) commandStarted(id string, command []string) (cmdlog.Recorder, int64) {
+	if s.CmdLog == nil {
+		return nil, 0
+	}
+	log, err := s.CmdLog(s.Store.Path(id))
+	if err != nil {
+		return nil, 0
+	}
+	seq, err := log.Started(cmdlog.Start{Command: command, Cwd: sandbox.DefaultWorkspaceMount, Capture: api.CommandCaptureRunner})
+	if err != nil {
+		return nil, 0
+	}
+	return log, seq
+}
+
+// commandStatus maps the run's outcome onto the command log's closed set.
+// The run calls a non-zero exit "completed" (the command ran to its own
+// end); the log says "failed", because the question it answers is whether
+// the command succeeded. Unfinished is reserved for an exit the runtime
+// never learned.
+func commandStatus(runStatus string, exit *int) string {
+	switch runStatus {
+	case runstate.StatusCancelled:
+		return api.CommandCancelled
+	case runstate.StatusUnfinished:
+		return api.CommandUnfinished
+	case runstate.StatusCompleted:
+		if exit != nil && *exit == 0 {
+			return api.CommandCompleted
+		}
+		return api.CommandFailed
+	}
+	// The run failed around the command (timed out, refused, teardown):
+	// the runtime ended it, so it is failed, not unfinished.
+	return api.CommandFailed
 }
 
 // classify turns the launcher's answer into a status. The exit code is
@@ -487,7 +691,7 @@ func toWire(rec runstate.Record) api.ContainedRun {
 	return api.ContainedRun{
 		ID: rec.ID, Status: rec.Status, Owner: rec.Owner, Reason: rec.Reason,
 		CreatedAt: rec.CreatedAt, StartedAt: rec.StartedAt, FinishedAt: rec.FinishedAt,
-		Profile: d.Profile, Network: d.Network, Backend: d.Backend, Command: d.Command, Workdir: d.Workspace,
+		Profile: d.Profile, Network: d.Network, Backend: d.Backend, Command: d.Command, Checkout: d.Checkout, Workdir: d.Workspace,
 		ExitCode: d.ExitCode, TimedOut: d.TimedOut, Stdout: d.Stdout, Stderr: d.Stderr,
 		StdoutTruncatedAt: d.StdoutTruncatedAt, StderrTruncatedAt: d.StderrTruncatedAt,
 	}

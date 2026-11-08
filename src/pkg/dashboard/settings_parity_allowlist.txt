@@ -121,6 +121,8 @@ agents.<key>.sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings 
 agents.<key>.sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
 agents.<key>.cli_memory.auto_memory # TODO #11854
 agents.<key>.cli_memory.clear_on_kick # TODO #11854
+agents.<key>.cli_memory.drain_on_write # TODO #11854
+agents.<key>.cli_memory.drain_to_knowledge # TODO #11854
 agents.<key>.session_recycle.enabled # TODO #11854
 agents.<key>.session_recycle.max_age # TODO #11854
 agents.<key>.session_recycle.max_rss_mb # TODO #11854
@@ -151,6 +153,8 @@ agents.<key>.variables.<key>.url # TODO #11854
 agents.<key>.variables.<key>.value # TODO #11854
 agents.cli_memory.auto_memory # TODO #11854
 agents.cli_memory.clear_on_kick # TODO #11854
+agents.cli_memory.drain_on_write # TODO #11854
+agents.cli_memory.drain_to_knowledge # TODO #11854
 agents.github_api_hourly_cap # TODO #11854
 agents.session_recycle.enabled # TODO #11854
 agents.session_recycle.max_age # TODO #11854
@@ -359,6 +363,19 @@ issues.rfc_existing_check.post_when_nothing_found # triage existing-coverage che
 issues.sha_hold_trusted_label # TODO #11854
 knowledge.advisor # mid-task knowledge advisor, yaml-only while it soaks (#17052)
 knowledge.advisor_exclude_agents[] # mid-task knowledge advisor, yaml-only while it soaks (#17052)
+knowledge.advisor_llm.api_key_env # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.api_key_file # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.budget_override # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.candidates # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.endpoint # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.holdout_percent # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.max_calls_per_agent_hour # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.max_calls_per_day # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.mode # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.model # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.on_error # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.pane_lines # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
+knowledge.advisor_llm.timeout_s # LLM-ranked knowledge advisor, yaml-only while it soaks (#17054)
 knowledge.advisor_max_per_kick # mid-task knowledge advisor, yaml-only while it soaks (#17052)
 knowledge.agent_scopes.<key>.include_states[] # TODO #11854
 knowledge.agent_scopes.<key>.layers[] # TODO #11854

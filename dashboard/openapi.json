@@ -15296,6 +15296,101 @@
         }
       }
     },
+    "/api/knowledge/cli-memory/drain-legacy": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Drain the shared home's legacy Claude memory into draft knowledge",
+        "description": "Owner-only, one-shot drain of every `/data/home/.claude/projects/*/memory` store that the per-agent CLI homes (#17039) left behind. Each memory fact becomes a `state: draft` entry in the `bead-synth-wiki` vault tagged `cli-memory` and `agent:shared`, deduplicated by content hash against every entry already in the vault. Drafts are never primed until approved through `PUT /api/knowledge/entry/{id}/state`. The memory files are emptied only when `truncate` is true, and only files whose every fact is now in the vault. The run is written to the audit log.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "truncate": {
+                    "type": "boolean",
+                    "description": "Empty each memory file whose facts are all stored (default false)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Drain result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "store": {
+                      "type": "string"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "sources": {
+                      "type": "integer"
+                    },
+                    "drained": {
+                      "type": "integer"
+                    },
+                    "dupes": {
+                      "type": "integer"
+                    },
+                    "skipped": {
+                      "type": "integer",
+                      "description": "Facts over the 200-per-drain cap; run again to drain them"
+                    },
+                    "truncate": {
+                      "type": "boolean"
+                    },
+                    "truncated": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "kept": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Files left in place because a fact in them is not stored yet"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body"
+          },
+          "403": {
+            "description": "Caller is not an owner"
+          },
+          "409": {
+            "description": "The bead-synth-wiki vault is not connected"
+          },
+          "500": {
+            "description": "The legacy project tree could not be listed"
+          },
+          "503": {
+            "description": "Knowledge not enabled"
+          }
+        }
+      }
+    },
     "/api/knowledge/stats": {
       "get": {
         "tags": [

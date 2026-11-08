@@ -1325,7 +1325,7 @@
       // counted or separately cached number.
       if (window._lastStatus) {
         const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted);
-        setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title);
+        setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title, pill.prefix);
       }
       if (!state.showKPIs) return '';
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
@@ -1353,7 +1353,9 @@
        and the last-good "stale" note. overview_sidebar_pill_test.go runs
        it under node. */
     // Pure: the sidebar Overview pill. The text is the open-item totals the
-    // tiles print (issues/PRs); the tooltip names each half and says that
+    // tiles print, named "board pressure" (BP) — the open issues and PRs
+    // the configured repos put on this hive's board — so it reads
+    // "BP = issues/PRs" (#17240); the tooltip names each half and says that
     // the Hive activity monitor pill counts rows of the same set — every
     // issue plus each PR not drawn under a listed issue — so 33/13 beside
     // Overview and 37 beside the activity monitor are one population, not
@@ -1367,11 +1369,11 @@
       if (syncing) title += ` · ${syncing}`;
       const note = overviewUnlistedNote(unlisted);
       if (note) title += ` · ${note}`;
-      return { issues, prs, title };
+      return { issues, prs, title, prefix: 'BP = ' };
     }
     function overviewSidebarPillLead(issues, prs) {
       const i = Number(issues) || 0, p = Number(prs) || 0;
-      return `${i} open ${i === 1 ? 'issue' : 'issues'} / ${p} open ${p === 1 ? 'PR' : 'PRs'} — the Hive activity monitor pill counts rows of this same set (every issue, plus each PR not shown under a listed issue), so it can read differently`;
+      return `Board pressure (BP): ${i} open ${i === 1 ? 'issue' : 'issues'} / ${p} open ${p === 1 ? 'PR' : 'PRs'} — the Hive activity monitor pill counts rows of this same set (every issue, plus each PR not shown under a listed issue), so it can read differently`;
     }
 
     /* Pure: open items the enumeration or forgestate cache reported in its

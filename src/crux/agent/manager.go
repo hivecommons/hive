@@ -563,9 +563,9 @@ type Manager struct {
 	// rateLimitRelaunchMu guards lastRateLimitRelaunch, the fleet-wide clock
 	// that spaces rate-limit relaunches (rateLimitRelaunchFleetSpacing). Its
 	// own mutex: the pane pollers that consult it must not take m.mu.
-	rateLimitRelaunchMu     sync.Mutex
-	lastRateLimitRelaunch   time.Time
-	sharedCLIMemoryWarnOnce sync.Once // see warnSharedCLIMemoryOnce (hivecommons/hive#17031)
+	rateLimitRelaunchMu   sync.Mutex
+	lastRateLimitRelaunch time.Time
+	cliMemory             cliMemoryState // shared-store warning and drain hook, see cli_memory_drain.go
 
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
 	// the output-capture goroutines, and taking m.mu there risks startup
@@ -1635,5 +1635,5 @@ func (m *Manager) bobPreflightUnlocked(agent *AgentProcess) {
 	// across the agent fleet.
 	m.ensureBobAuthSettings(agent.Name, bobSharedHome)
 	m.verifyBobKeyReadable(agent.Name, m.bobKeyFilePath(), agent.UID)
-	_ = m.verifyBobStateDirsWritable(agent.Name, bobSharedHome, m.workDir+"/"+agent.Name, agent.UID)
+	_ = m.verifyBobStateDirsWritable(agent.Name, bobStateHome(agent.Name, agent.UID, backend), m.workDir+"/"+agent.Name, agent.UID)
 }

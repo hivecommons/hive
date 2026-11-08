@@ -216,6 +216,7 @@ verified list is actually longer, which sharpens the caution:
 | Contribute ledger dir | `/data/contributors/*.json` (§2.3 rows 27–30, plus contributor profiles) | Spoke dashboard; each map saved atomically (tmp+rename) on mutation |
 | Upgrade kill-switch | `/data/saas/upgrade-pause.json` (`upgrade_pause.go:41`) | Hub; lazily loaded, consulted on every heartbeat and reconcile cycle |
 | Audit + prompt logs | `/data/audit.jsonl` (`dashboard/audit.go:17`), `/data/prompt-history.jsonl` | Spoke dashboard; append-only JSONL, lumberjack-rotated |
+| Knowledge-advisor decisions | `/data/knowledge-advisor-decisions.jsonl` (`retro/advisor_decisions.go:27`) | Spoke; append-only JSONL, lumberjack-rotated (5 MiB, 3 gzipped backups, 90 days); read by the retro lane for the per-arm summary |
 | PR-claim ledger | `/data/pr-claims.json` (`prclaims.go:53`) | Spoke; shared by governor dedupe and contribute admission |
 | Bead stores | `/data/beads/<agent>/` (`src/pkg/beads`) | Per-agent work-item store |
 | Hub leaf stores | timeline, journey, alert-acks, banners, revocations, reach-history, key generations (§2.1) | Hub; each its own file, own mutex, atomic writes |

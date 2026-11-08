@@ -425,6 +425,15 @@ enumerator's filtered-reason) the way it reproduces 045 from `needs-spec`,
 and the resume sweep removes it on `/hive decision proceed` / `exists`.
 Leaving 017 for 010 or closed is never a regression.
 
+**Open for discussion (`stage/018-open-for-discussion`, #17150).** Added
+after the epic: an issue-only stage between 017 and 020 with no dwell.
+Unlike 017 it is derived, not written by a gate: `DeriveIssue` returns it
+for an open issue labelled `proposal` or `kind/design` with no live claim
+(`IssueFacts.DiscussionLabel`, resolved in `pkg/github`), reason
+`open for discussion: <label>`. It is not a suppress: the claim gate is
+unchanged and a claim stages 020/030. `040 → 018` under
+`hive/partially-addressed` is progress; leaving 018 is never a regression.
+
 ## Consequences
 
 - A taxonomy change (new stage, renamed stage, new author kind) touches the

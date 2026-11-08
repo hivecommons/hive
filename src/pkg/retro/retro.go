@@ -93,6 +93,10 @@ type RetroRecord struct {
 	KicksReceived               int
 	CIFailureCount              int
 	FixAttempts                 int
+	AdvisorArm                  string
+	AdvisorDecisions            int
+	AdvisorDelivered            int
+	AdvisorHeldOut              int
 	DriftPauses                 int
 	PlanRevisionsBeforeApproval int
 	PRReworkCommitsAfterReview  int
@@ -125,6 +129,29 @@ type AttemptReader interface {
 	Attempts(repo string, number int) int
 }
 
+// AdvisorDecision is one knowledge-advisor ranking decision, reduced to the
+// counters the arm comparison needs: the decorator's mode (shadow|rank) and
+// outcome (delivered|held-out|...). It carries no reason or pane text.
+type AdvisorDecision struct {
+	Kick    string
+	Mode    string
+	Outcome string
+}
+
+// AdvisorDecisionReader returns the advisor decisions made for the kicks of an
+// issue, keyed by the same issue ref RetroRecord.IssueRef carries.
+type AdvisorDecisionReader interface {
+	AdvisorDecisions(issueRef string) []AdvisorDecision
+}
+
+const (
+	AdvisorArmNone    = "none"
+	AdvisorArmShadow  = "shadow"
+	AdvisorArmDeliver = "deliver"
+	AdvisorArmHoldout = "holdout"
+	AdvisorArmMixed   = "mixed"
+)
+
 type KnowledgeSink interface {
 	IngestRetroLesson(ctx context.Context, lesson knowledge.RetroLesson) (slug string, created bool, err error)
 }
@@ -134,6 +161,7 @@ type Lane struct {
 	advisoryStore *beads.Store
 	timeline      *timeline.Store
 	attempts      AttemptReader
+	advisor       AdvisorDecisionReader
 	analyzer      *Analyzer
 	knowledge     KnowledgeSink
 	logger        *slog.Logger
@@ -181,6 +209,10 @@ func (l *Lane) SetKnowledgeSink(sink KnowledgeSink) {
 	l.knowledge = sink
 }
 
+func (l *Lane) SetAdvisorDecisions(reader AdvisorDecisionReader) {
+	l.advisor = reader
+}
+
 func (l *Lane) SetAutonomyPolicy(engine *AutonomyPolicyEngine) {
 	l.autonomy = engine
 }
@@ -213,6 +245,7 @@ func (l *Lane) Run(ctx context.Context) int {
 			if !record.HasAssociatedClosedPR() {
 				continue
 			}
+			ApplyAdvisorDecisions(&record, l.advisor)
 			findings := Detect(record, l.thresholds)
 			analysis := l.analyze(ctx, record, findings)
 			l.ingestLesson(ctx, record, analysis)
@@ -516,6 +549,106 @@ func Reconstruct(b *beads.Bead, tl *timeline.Store, attempts AttemptReader) Retr
 		r.ClaimToClose = r.ClosedAt.Sub(r.ClaimedAt)
 	}
 	return r
+}
+
+// ApplyAdvisorDecisions fills the advisor arm counters from the decisions
+// recorded for the record's issue. Holdout kicks are held-out, shadow-mode
+// kicks are the shadow arm, every other rank-mode decision is the deliver arm;
+// kicks in more than one arm make the bead mixed.
+func ApplyAdvisorDecisions(r *RetroRecord, reader AdvisorDecisionReader) {
+	r.AdvisorArm = AdvisorArmNone
+	if reader == nil || r.IssueRef == "" {
+		return
+	}
+	arms := map[string]bool{}
+	for _, d := range reader.AdvisorDecisions(r.IssueRef) {
+		r.AdvisorDecisions++
+		switch d.Outcome {
+		case "held-out":
+			r.AdvisorHeldOut++
+			arms[AdvisorArmHoldout] = true
+		case "delivered", "fallback-matcher":
+			r.AdvisorDelivered++
+			arms[armOfMode(d.Mode)] = true
+		default:
+			arms[armOfMode(d.Mode)] = true
+		}
+	}
+	switch len(arms) {
+	case 0:
+	case 1:
+		for arm := range arms {
+			r.AdvisorArm = arm
+		}
+	default:
+		r.AdvisorArm = AdvisorArmMixed
+	}
+}
+
+func armOfMode(mode string) string {
+	if mode == "shadow" {
+		return AdvisorArmShadow
+	}
+	return AdvisorArmDeliver
+}
+
+// ArmSummary is the per-arm outcome comparison: bead count and the mean of the
+// counters the retro lane already reconstructs.
+type ArmSummary struct {
+	Arm                string
+	Beads              int
+	MeanFixAttempts    float64
+	MeanCIFailureCount float64
+	MeanKicksReceived  float64
+}
+
+// SummarizeArms groups records by advisor arm and averages their counters. It
+// makes no model call. Arms are ordered none, shadow, deliver, holdout, mixed.
+func SummarizeArms(records []RetroRecord) []ArmSummary {
+	type acc struct{ n, fix, ci, kicks int }
+	byArm := map[string]*acc{}
+	for _, r := range records {
+		arm := firstNonEmpty(r.AdvisorArm, AdvisorArmNone)
+		a := byArm[arm]
+		if a == nil {
+			a = &acc{}
+			byArm[arm] = a
+		}
+		a.n++
+		a.fix += r.FixAttempts
+		a.ci += r.CIFailureCount
+		a.kicks += r.KicksReceived
+	}
+	var out []ArmSummary
+	for _, arm := range []string{AdvisorArmNone, AdvisorArmShadow, AdvisorArmDeliver, AdvisorArmHoldout, AdvisorArmMixed} {
+		a := byArm[arm]
+		if a == nil {
+			continue
+		}
+		n := float64(a.n)
+		out = append(out, ArmSummary{Arm: arm, Beads: a.n, MeanFixAttempts: float64(a.fix) / n, MeanCIFailureCount: float64(a.ci) / n, MeanKicksReceived: float64(a.kicks) / n})
+	}
+	return out
+}
+
+// AdvisorArmSummary reports the per-arm comparison over every closed bead with
+// an associated closed PR, with zero model calls.
+func (l *Lane) AdvisorArmSummary() []ArmSummary {
+	var records []RetroRecord
+	for _, store := range l.stores {
+		if store == nil || store == l.advisoryStore {
+			continue
+		}
+		for _, b := range store.AllClosed() {
+			record := Reconstruct(b, l.timeline, l.attempts)
+			if !record.HasAssociatedClosedPR() {
+				continue
+			}
+			ApplyAdvisorDecisions(&record, l.advisor)
+			records = append(records, record)
+		}
+	}
+	return SummarizeArms(records)
 }
 
 func (r RetroRecord) HasAssociatedClosedPR() bool {

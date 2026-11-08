@@ -959,9 +959,16 @@ A PR merges through this tier only when all of the following hold:
     walked first; only when it is short does one `search/issues` query
     (`is:pr is:merged author:<login> repo:… repo:…`) find which other hive
     repos hold the author's merges, and only those are walked for revert
-    evidence — a revert or sentinel hit in any repository blocks. Promotion
-    is a property of the author in the hive, not of a PR, so the sweep
-    announces it **once per (hive, author)**: the first PR that earns it
+    evidence — a revert or sentinel hit in any repository blocks. When
+    GitHub refuses that query with `422 Validation Failed` (a listed
+    repository was renamed, deleted or is invisible to the App, or the
+    author cannot be searched), its repositories are re-asked one at a time
+    so the searchable ones still count; each refused (author, repository)
+    pair warns once (`contributor-lane auto-promotion search cannot see
+    repository for this author`) and is left out of the search for an hour
+    (#17148). Any other search failure counts the PR's own repository only.
+    Promotion is a property of the author in the hive, not of a PR, so the
+    sweep announces it **once per (hive, author)**: the first PR that earns it
     gets a `<!-- hive:trust-promoted login=… merged=N scope=hive
     repos=hive:4,docs:1 -->` comment ("@login is now trusted for
     contributor-lane merging in this hive … Applies to their open and

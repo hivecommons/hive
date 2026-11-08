@@ -196,6 +196,21 @@ func (s *Service) Allowed(repo string) (rule string, err error) {
 	return "", fmt.Errorf("%w: repository %q matches none of the allowed prefixes %s", ErrForbidden, repo, strings.Join(s.cfg.AllowedRepos, ", "))
 }
 
+// ValidateRepoURL reports whether raw is a repository URL this package would
+// accept: https:// or file://, no credentials, query or fragment, and a path
+// already in canonical form (see parseRepo). The error wraps ErrBadRequest.
+// Other services that gate a clone on a URL-prefix allowlist (the runs
+// package's ad-hoc worktree form) call it so the string they compare is the
+// string git will fetch.
+func ValidateRepoURL(raw string) error {
+	_, err := parseRepo(raw)
+	return err
+}
+
+// PrefixMatches is prefixMatches for other allowlist holders: it reports
+// whether repo falls under the allowlist prefix p on a segment boundary.
+func PrefixMatches(repo, p string) bool { return prefixMatches(repo, p) }
+
 // prefixMatches reports whether repo falls under the allowlist prefix p.
 // A prefix that ends in "/" is a directory and admits everything beneath
 // it; any other prefix must be followed by a segment boundary ("/", the
@@ -296,6 +311,10 @@ func (s *Service) Delete(ctx context.Context, id, by string) error {
 func CanDelete(rec Record, caller string, operator bool) bool {
 	return operator || (caller != "" && caller == rec.Owner)
 }
+
+// CanUse is the same rule for running against a checkout (S2): only the
+// owner or an operator may point a contained run at it.
+func CanUse(rec Record, caller string, operator bool) bool { return CanDelete(rec, caller, operator) }
 
 // validate checks req and returns the record it will produce.
 func (s *Service) validate(req Request) (Record, error) {

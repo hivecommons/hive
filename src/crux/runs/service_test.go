@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/api"
+	"github.com/hivecommons/hive/crux/checkout"
 	"github.com/hivecommons/hive/crux/runstate"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
@@ -47,6 +48,21 @@ type fixture struct {
 
 const testSHA = "0123456789abcdef0123456789abcdef01234567"
 
+// operator is the caller every fixture run is made as unless a test says
+// otherwise.
+var operator = Caller{Name: "operator", Operator: true}
+
+// fakeCheckouts is a CheckoutResolver over a fixed set of records.
+type fakeCheckouts map[string]checkout.Record
+
+func (f fakeCheckouts) Get(id string) (checkout.Record, error) {
+	rec, ok := f[id]
+	if !ok {
+		return checkout.Record{}, checkout.ErrNotFound
+	}
+	return rec, nil
+}
+
 func newFixture(t *testing.T, launcher *fakeLauncher) *fixture {
 	t.Helper()
 	workDir := t.TempDir()
@@ -67,7 +83,7 @@ func newFixture(t *testing.T, launcher *fakeLauncher) *fixture {
 	}
 	cfg := Config{
 		Image:          "img:1",
-		RepoAllowlist:  []string{"https://github.com/hivecommons/"},
+		RepoAllowlist:  []string{"https://github.com/hivecommons/", "https://git.example/org"},
 		WorkspaceRoots: []string{root},
 		MaxTimeoutMs:   time.Minute.Milliseconds(),
 	}
@@ -80,7 +96,7 @@ func (f *fixture) workspace() string { return filepath.Join(f.root, "proj") }
 
 func (f *fixture) start(req api.ContainedRunRequest) api.ContainedRun {
 	f.t.Helper()
-	run, created, err := f.svc.Create(context.Background(), "operator", req)
+	run, created, err := f.svc.Create(context.Background(), operator, req)
 	if err != nil || !created {
 		f.t.Fatalf("Create: %v created=%v", err, created)
 	}
@@ -284,11 +300,11 @@ func TestIdempotencyKeyReturnsTheExistingRun(t *testing.T) {
 	}))
 	req := api.ContainedRunRequest{WorkspacePath: f.workspace(), Command: []string{"x"}, IdempotencyKey: "k1"}
 	first := f.wait(f.start(req).ID)
-	again, created, err := f.svc.Create(context.Background(), "operator", req)
+	again, created, err := f.svc.Create(context.Background(), operator, req)
 	if err != nil || created || again.ID != first.ID || again.Status != api.RunCompleted || again.Stdout != "once" {
 		t.Fatalf("replay = %+v created=%v err=%v", again, created, err)
 	}
-	other, created, err := f.svc.Create(context.Background(), "someone-else", req)
+	other, created, err := f.svc.Create(context.Background(), Caller{Name: "someone-else", Operator: true}, req)
 	if err != nil || !created || other.ID == first.ID {
 		t.Fatalf("other owner shared the record: %+v created=%v err=%v", other, created, err)
 	}
@@ -316,6 +332,72 @@ func TestWorktreeIsProvisionedBeforeLaunch(t *testing.T) {
 	}
 	if done.Status != api.RunCompleted {
 		t.Fatalf("status = %s", done.Status)
+	}
+}
+
+func TestCheckoutResolvesToItsWorktreeAndIsInUseWhileRunning(t *testing.T) {
+	f := newFixture(t, blocking())
+	path := filepath.Join(f.root, "proj")
+	f.svc.Checkouts = fakeCheckouts{
+		"chk_atlas":  {ID: "chk_atlas", Owner: "atlas", Path: path},
+		"chk_beacon": {ID: "chk_beacon", Owner: "beacon", Path: path},
+	}
+	atlas := Caller{Name: "atlas"}
+	cases := []struct {
+		name   string
+		caller Caller
+		id     string
+		want   any
+		msg    string
+	}{
+		{"unknown id", atlas, "chk_nope", &RequestError{}, `checkout "chk_nope" not found`},
+		{"another project's checkout", atlas, "chk_beacon", &ForbiddenError{}, `owned by "beacon", not by "atlas"`},
+		{"checkout and workspace", atlas, "chk_atlas", &RequestError{}, "mutually exclusive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := api.ContainedRunRequest{Command: []string{"x"}, Checkout: tc.id}
+			if tc.name == "checkout and workspace" {
+				req.WorkspacePath = path
+			}
+			_, created, err := f.svc.Create(context.Background(), tc.caller, req)
+			if created || err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("Create: created=%v err=%v, want %q", created, err, tc.msg)
+			}
+			var reqErr *RequestError
+			var forbidden *ForbiddenError
+			if _, isReq := tc.want.(*RequestError); isReq != errors.As(err, &reqErr) || !isReq != errors.As(err, &forbidden) {
+				t.Fatalf("err = %T, want %T", err, tc.want)
+			}
+		})
+	}
+	if len(f.launcher.specs) != 0 {
+		t.Fatal("a refused request reached the launcher")
+	}
+
+	// The owner and the operator may both run in it; while either run is
+	// live the checkout is in use, and afterwards it is not.
+	var ids []string
+	for _, caller := range []Caller{atlas, operator} {
+		run, created, err := f.svc.Create(context.Background(), caller, api.ContainedRunRequest{Command: []string{"make"}, Checkout: "chk_atlas"})
+		if err != nil || !created || run.Owner != caller.Name || run.Checkout != "chk_atlas" {
+			t.Fatalf("Create as %s: %+v created=%v err=%v", caller.Name, run, created, err)
+		}
+		if spec := f.spec(); spec.Workspace != path {
+			t.Fatalf("spec.Workspace = %q, want %q", spec.Workspace, path)
+		}
+		ids = append(ids, run.ID)
+	}
+	if !f.svc.InUse("chk_atlas") || f.svc.InUse("chk_beacon") {
+		t.Fatal("InUse should name only the checkout with live runs")
+	}
+	for _, id := range ids {
+		if done, err := f.svc.Cancel(context.Background(), id); err != nil || done.Status != api.RunCancelled || done.Checkout != "chk_atlas" || done.Workdir != path {
+			t.Fatalf("Cancel %s: %+v err=%v", id, done, err)
+		}
+	}
+	if f.svc.InUse("chk_atlas") {
+		t.Fatal("InUse after both runs settled")
 	}
 }
 
@@ -369,12 +451,22 @@ func TestValidationErrors(t *testing.T) {
 		{"credential env", api.ContainedRunRequest{WorkspacePath: ws, Command: []string{"x"}, EnvAllowlist: []string{"GITHUB_TOKEN"}}, &RequestError{}, "credential"},
 		{"timeout cap", api.ContainedRunRequest{WorkspacePath: ws, Command: []string{"x"}, TimeoutMs: time.Hour.Milliseconds()}, &RequestError{}, "timeout_ms"},
 		{"output cap", api.ContainedRunRequest{WorkspacePath: ws, Command: []string{"x"}, MaxOutputBytes: DefaultMaxOutputCap + 1}, &RequestError{}, "max_output_bytes"},
-		{"no source", api.ContainedRunRequest{Command: []string{"x"}}, &RequestError{}, "one of worktree or workspace_path"},
+		{"no source", api.ContainedRunRequest{Command: []string{"x"}}, &RequestError{}, "one of checkout, worktree or workspace_path"},
 		{"two sources", api.ContainedRunRequest{Command: []string{"x"}, WorkspacePath: ws, Worktree: wt}, &RequestError{}, "mutually exclusive"},
-		{"checkout id", api.ContainedRunRequest{Command: []string{"x"}, Checkout: "chk_1"}, &UnsupportedError{}, "S1"},
+		{"checkout without a service", api.ContainedRunRequest{Command: []string{"x"}, Checkout: "chk_1"}, &UnsupportedError{}, "this server has none"},
 		{"worktree repo", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Commit: testSHA}}, &RequestError{}, "worktree.repo"},
 		{"worktree short sha", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: wt.Repo, Commit: "main"}}, &RequestError{}, "40-hex"},
 		{"worktree forbidden", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://example.com/r", Commit: testSHA}}, &ForbiddenError{}, "repo_allowlist"},
+		// The allowlist is a string prefix; git resolves ".." (libcurl for
+		// https, literally for file) and decodes percent-encoding, so a
+		// non-canonical URL must be refused before the prefix is compared.
+		{"worktree dot segments", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://github.com/hivecommons/../octocat/Hello-World", Commit: testSHA}}, &RequestError{}, "canonical"},
+		{"worktree percent-encoded", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://github.com/hivecommons/%2e%2e/octocat/Hello-World", Commit: testSHA}}, &RequestError{}, "canonical"},
+		{"worktree credentials", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://user:tok@github.com/hivecommons/hive", Commit: testSHA}}, &RequestError{}, "credentials"},
+		// An entry without a trailing slash is a repository or org name, not
+		// a string prefix: it must not admit a sibling or a longer host.
+		{"worktree sibling prefix", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://git.example/org-evil/repo", Commit: testSHA}}, &ForbiddenError{}, "repo_allowlist"},
+		{"worktree host suffix", api.ContainedRunRequest{Command: []string{"x"}, Worktree: &api.ContainedRunWorktree{Repo: "https://git.example.evil/org/repo", Commit: testSHA}}, &ForbiddenError{}, "repo_allowlist"},
 		{"relative workspace", api.ContainedRunRequest{Command: []string{"x"}, WorkspacePath: "proj"}, &RequestError{}, "absolute"},
 		{"workspace outside roots", api.ContainedRunRequest{Command: []string{"x"}, WorkspacePath: filepath.Dir(f.root)}, &ForbiddenError{}, "workspace_roots"},
 		{"workspace sibling prefix", api.ContainedRunRequest{Command: []string{"x"}, WorkspacePath: f.root + "2"}, &ForbiddenError{}, "workspace_roots"},
@@ -382,7 +474,7 @@ func TestValidationErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, created, err := f.svc.Create(context.Background(), "operator", tc.req)
+			_, created, err := f.svc.Create(context.Background(), operator, tc.req)
 			if created || err == nil {
 				t.Fatalf("Create accepted: created=%v err=%v", created, err)
 			}
@@ -417,7 +509,7 @@ func TestNotConfiguredServesRecordsButRefusesCreates(t *testing.T) {
 	if svc.Configured() {
 		t.Fatal("Configured without a backend")
 	}
-	if _, _, err := svc.Create(context.Background(), "operator", api.ContainedRunRequest{Command: []string{"x"}}); !errors.Is(err, ErrNotConfigured) {
+	if _, _, err := svc.Create(context.Background(), operator, api.ContainedRunRequest{Command: []string{"x"}}); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("Create = %v", err)
 	}
 	rec, _, _ := store.Create(runstate.Record{})

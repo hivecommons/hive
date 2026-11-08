@@ -75,10 +75,15 @@ type contributorLaneFixture struct {
 	// (acme/<name>), served to the hive-wide auto-promotion walk; the fake
 	// search/issues endpoint reports a repo only when it holds a merged PR
 	// by the searched author.
-	otherHistory    map[string][]map[string]any
-	searchStatus    int
-	searches        int
-	searchQuery     string
+	otherHistory  map[string][]map[string]any
+	searchStatus  int
+	searches      int
+	searchQuery   string
+	searchQueries []string
+	// unsearchable lists the owner/repo names the fake search/issues
+	// endpoint refuses with GitHub's 422 Validation Failed whenever a query
+	// names them, as it does for a renamed or invisible repository.
+	unsearchable    map[string]bool
 	otherLists      []string
 	issueCommentsSt int
 	reviews         []map[string]any
@@ -243,6 +248,7 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 		case r.Method == http.MethodGet && r.URL.Path == "/search/issues":
 			fx.searches++
 			fx.searchQuery = r.URL.Query().Get("q")
+			fx.searchQueries = append(fx.searchQueries, fx.searchQuery)
 			if fx.searchStatus != 0 {
 				http.Error(w, "search error", fx.searchStatus)
 				return
@@ -255,6 +261,14 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 					searchedAuthor = strings.TrimPrefix(term, "author:")
 				case strings.HasPrefix(term, "repo:"):
 					searchedRepos = append(searchedRepos, strings.TrimPrefix(term, "repo:"))
+				}
+			}
+			for _, full := range searchedRepos {
+				if fx.unsearchable[full] {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnprocessableEntity)
+					json.NewEncoder(w).Encode(map[string]any{"message": "Validation Failed", "errors": []map[string]string{{"resource": "Search", "field": "q", "code": "invalid", "message": "The listed users and repositories cannot be searched either because the resources do not exist or you do not have permission to view them."}}})
+					return
 				}
 			}
 			items := []map[string]any{}
@@ -1308,6 +1322,7 @@ func TestTrySweepContributorLanePRAutoPromotionScope(t *testing.T) {
 		own          []map[string]any
 		other        map[string][]map[string]any
 		searchStatus int
+		unsearchable []string
 		wantReason   string
 		wantMerges   int
 		wantSearches int
@@ -1383,9 +1398,31 @@ func TestTrySweepContributorLanePRAutoPromotionScope(t *testing.T) {
 			name:         "search failure degrades to the PR's repository",
 			own:          cleanHistory(1),
 			other:        map[string][]map[string]any{"hive": cleanHistory(9)},
-			searchStatus: http.StatusUnprocessableEntity,
+			searchStatus: http.StatusInternalServerError,
 			wantReason:   contributorLaneReasonClaimTier,
 			wantSearches: 1,
+		},
+		// hivecommons/hive#17148: GitHub refuses the whole query when one
+		// listed repository cannot be searched; the others still count. The
+		// PR's own repository is part of the chunk on v6 (per-author cache,
+		// #15088), so the per-repository fallback asks for it too.
+		{
+			name:         "an unsearchable repository does not hide the others",
+			own:          cleanHistory(1),
+			other:        map[string][]map[string]any{"hive": cleanHistory(9)},
+			unsearchable: []string{"acme/docs"},
+			wantMerges:   1,
+			wantSearches: 5,
+			wantLists:    []string{"hive"},
+			wantComment:  "merged=5 scope=hive repos=widget:1,hive:4 -->",
+		},
+		{
+			name:         "an unsearchable author degrades to the PR's repository",
+			own:          cleanHistory(1),
+			other:        map[string][]map[string]any{"hive": cleanHistory(9)},
+			unsearchable: []string{"acme/hive", "acme/docs", "acme/homebrew-hive"},
+			wantReason:   contributorLaneReasonClaimTier,
+			wantSearches: 5,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1394,6 +1431,10 @@ func TestTrySweepContributorLanePRAutoPromotionScope(t *testing.T) {
 			fx.mergedHistory = tc.own
 			fx.otherHistory = tc.other
 			fx.searchStatus = tc.searchStatus
+			fx.unsearchable = map[string]bool{}
+			for _, full := range tc.unsearchable {
+				fx.unsearchable[full] = true
+			}
 			api := newContributorLaneAPI(t, &fx)
 			defer api.Close()
 			policy := defaultContributorLanePolicy()
@@ -1415,16 +1456,17 @@ func TestTrySweepContributorLanePRAutoPromotionScope(t *testing.T) {
 				t.Fatalf("searches = %d, want %d (q=%q)", fx.searches, tc.wantSearches, fx.searchQuery)
 			}
 			if fx.searches > 0 {
+				first := fx.searchQueries[0]
 				for _, want := range []string{"is:pr", "is:merged", "author:" + contributorLaneTestAuthor, "repo:acme/hive", "repo:acme/docs", "repo:acme/homebrew-hive"} {
-					if !strings.Contains(fx.searchQuery, want) {
-						t.Fatalf("search query %q missing %q", fx.searchQuery, want)
+					if !strings.Contains(first, want) {
+						t.Fatalf("search query %q missing %q", first, want)
 					}
 				}
 				// The answer is cached per author for every active repository,
 				// so the PR's own repository is searched too; it is never walked
 				// twice (wantLists below).
-				if !strings.Contains(fx.searchQuery, "repo:acme/widget") {
-					t.Fatalf("search query %q must cover the PR's own repository for the per-author cache", fx.searchQuery)
+				if !strings.Contains(first, "repo:acme/widget") {
+					t.Fatalf("search query %q must cover the PR's own repository for the per-author cache", first)
 				}
 			}
 			if strings.Join(fx.otherLists, ",") != strings.Join(tc.wantLists, ",") {

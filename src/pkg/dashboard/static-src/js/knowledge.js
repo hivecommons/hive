@@ -216,17 +216,19 @@
        (actionableNow.issues / .prs, the same numbers the Governor tiles
        print). Both stay hidden until their feed has answered once.
        sidebarPairBadgeText() is pure so sidebar_pair_badge_test.go can
-       execute it under node. */
-    function sidebarPairBadgeText(issues, prs) {
-      return (Number(issues) || 0) + '/' + (Number(prs) || 0);
+       execute it under node. The optional prefix names the pair — only
+       Overview passes one ("BP = " for board pressure, #17240); the
+       Governor and Contributors pills stay a bare "x/y". */
+    function sidebarPairBadgeText(issues, prs, prefix) {
+      return (prefix || '') + (Number(issues) || 0) + '/' + (Number(prs) || 0);
     }
 
-    function setSidebarPairBadge(el, issues, prs, title) {
+    function setSidebarPairBadge(el, issues, prs, title, prefix) {
       if (!el) return;
       const i = Number(issues) || 0;
       const p = Number(prs) || 0;
       el.hidden = false;
-      el.textContent = sidebarPairBadgeText(i, p);
+      el.textContent = sidebarPairBadgeText(i, p, prefix);
       if (i === 0 && p === 0) el.setAttribute('data-zero', '');
       else el.removeAttribute('data-zero');
       if (title) el.title = title;
@@ -328,6 +330,12 @@
       renderKnowledgeFacts();
     }
 
+    // Auto-memory review (#17058): drafts the CLI-memory drain wrote. The
+    // search API is an operator read, so include_states=draft lists them;
+    // no agent read ever does until one is approved.
+    const KB_AUTO_MEMORY_VIEW = 'auto-memory';
+    const KB_AUTO_MEMORY_TAG = 'cli-memory';
+
     async function kbLoadFacts(offset) {
       const request = ++_kbRequest;
       const query = _kbSearchQuery;
@@ -336,6 +344,9 @@
       let url;
       if (query) {
         url = '/api/knowledge/search?q=' + encodeURIComponent(query) + '&limit=50';
+        if (typeFilter) url += '&type=' + encodeURIComponent(typeFilter);
+      } else if (layer === KB_AUTO_MEMORY_VIEW) {
+        url = '/api/knowledge/search?tag=' + KB_AUTO_MEMORY_TAG + '&include_states=draft&limit=200';
         if (typeFilter) url += '&type=' + encodeURIComponent(typeFilter);
       } else if (layer && layer !== 'all') {
         // Check if this is a vault, document, or standard layer type
@@ -366,6 +377,7 @@
         _kbPageOffset = offset;
         _kbHasMore = !!data.has_more;
         _kbFacts = Array.isArray(data) ? data : (data.results || data.facts || []);
+        if (!query && layer === KB_AUTO_MEMORY_VIEW) _kbFacts = _kbFacts.filter(f => f.state === 'draft');
         _kbSelectedFact = null;
         renderKnowledgeFacts();
       } catch (e) {
@@ -1121,6 +1133,7 @@
       html += '<div class="kb-layer-list" id="kb-layer-btns">';
       // Aggregate row stays on top as the filter reset (kbSelectLayer keys on the 'All Layers' text)
       html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === 'all' ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="all"><span class="kb-layer-label">📋 All Layers</span><span class="kb-layer-count">${totalPages}</span></button>`;
+      html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === KB_AUTO_MEMORY_VIEW ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="${KB_AUTO_MEMORY_VIEW}" title="Drafts drained from the coding CLIs' own memory stores. No agent sees one until it is approved."><span class="kb-layer-label">🧠 Auto-memory drafts</span></button>`;
       for (const l of layers) {
         const isGitSource = l.type && l.type.startsWith('git_source:');
         const icon = KB_LAYER_ICONS[l.type] || (isGitSource ? '📄' : '📂');
@@ -1346,6 +1359,7 @@
         html += `<span class="kb-type-badge ${typeClass}">${escapeHtml(f.type || 'unknown')}</span>`;
         html += `<span class="kb-layer-badge ${layerClass}">${escapeHtml(f.layer || '')}</span>`;
         if (f.status) html += `<span class="kb-layer-badge" style="background:var(--bg);color:var(--muted)">${escapeHtml(f.status)}</span>`;
+        html += kbAutoMemoryRowHTML(f);
         html += '</div></div></div>';
       }
       if (_kbPageOffset > 0 || hasNext) {
@@ -1355,6 +1369,44 @@
         html += '<button class="hv-btn btn-secondary btn-sm" data-action="kbNextPage"' + (!hasNext ? ' disabled' : '') + '>Next</button></div>';
       }
       el.innerHTML = html;
+    }
+
+    function kbIsAutoMemory(f) {
+      return (f.tags || []).some(t => String(t).trim().toLowerCase() === KB_AUTO_MEMORY_TAG);
+    }
+
+    // Agent tags of a drained CLI-memory fact, plus approve and discard for
+    // an owner while it is still a draft. Discard deprecates rather than
+    // deletes, so the drain's content hash keeps it from being re-drafted.
+    function kbAutoMemoryRowHTML(f) {
+      if (!kbIsAutoMemory(f)) return '';
+      let html = '';
+      for (const t of (f.tags || [])) {
+        const m = /^agent:(.+)$/i.exec(String(t).trim());
+        if (m) html += `<span class="kb-layer-badge" title="Drained from this agent's CLI memory">agent ${escapeHtml(m[1])}</span>`;
+      }
+      if (f.state === 'draft' && viewerIsOwner()) {
+        const slug = escapeHtml(f.slug || '');
+        html += `<button class="hv-btn btn-primary btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="approved" data-stop="1" title="Approve: agents whose scope includes this entry receive it in their kicks">Approve</button>`;
+        html += `<button class="hv-btn btn-danger btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="deprecated" data-stop="1" title="Discard: mark it deprecated so no agent receives it and the drain never re-drafts it">Discard</button>`;
+      }
+      return html;
+    }
+
+    async function kbAutoMemoryReview(slug, state) {
+      const question = state === 'approved'
+        ? 'Approve "' + slug + '"? It was written by an agent, and once approved it is injected into the kicks of every agent whose scope includes it.'
+        : 'Discard "' + slug + '"? It is marked deprecated, no agent receives it, and the drain will not re-draft it.';
+      if (!(await hiveConfirm(question))) return;
+      try {
+        const r = await fetch('/api/knowledge/entry/' + encodeURIComponent(slug) + '/state', {
+          method: 'PUT', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ state, reason: 'auto-memory review (dashboard)' }),
+        });
+        if (!r.ok) { const e = await r.json().catch(() => ({})); await hiveAlert(e.error || 'Failed to change state'); return; }
+        fetchKnowledgeStats();
+        kbSearch();
+      } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
     function renderKnowledgeDetail() {

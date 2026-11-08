@@ -139,6 +139,14 @@ func isSharedGroupReadableFile(path string) bool {
 		filepath.Base(geminiDir) == ".gemini"
 }
 
+// isSharedClaudeSettingsFile reports whether path is the shared Claude user
+// settings file (.claude/settings.json directly under a watched home). Matched
+// by name like isAgyCLILog, so the check follows WatchedHomeDirs in tests.
+func isSharedClaudeSettingsFile(path string) bool {
+	return filepath.Base(path) == claudeSettingsFileName &&
+		filepath.Base(filepath.Dir(path)) == claudeHomeDirName
+}
+
 // isAgyCLILog reports whether path is an Antigravity CLI session log
 // (.gemini/antigravity-cli/log/cli-*.log). agy recreates/rewrites these with
 // its own 0640 mode on every run, so widening them to group-write just made
@@ -592,6 +600,13 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	}
 
 	if !fi.IsDir() && isAgyCLILog(path) {
+		return
+	}
+
+	// The shared Claude settings.json is hive-owned and must never be widened
+	// to group write (hivecommons/hive#17059); see
+	// ensureClaudeRemoteControlDefault.
+	if !fi.IsDir() && isSharedClaudeSettingsFile(path) {
 		return
 	}
 

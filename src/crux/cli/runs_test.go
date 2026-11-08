@@ -137,6 +137,14 @@ func TestRunsStartStatusCancel(t *testing.T) {
 	}
 
 	h = newHarness(t)
+	if code := h.run("--server", server, "runs", "start", "--checkout", "chk_a1b2c3", "--detach", "--", "true"); code != ExitOK {
+		t.Fatalf("checkout: %d %s", code, h.stderr)
+	}
+	if req := f.created[2]; req.Checkout != "chk_a1b2c3" || req.Worktree != nil || req.WorkspacePath != "" {
+		t.Fatalf("checkout request = %+v", req)
+	}
+
+	h = newHarness(t)
 	if code := h.run("--server", server, "runs", "start", "--workspace", "/srv/ws", "--profile", "agent", "--", "true"); code != ExitError || !strings.Contains(h.stderr.String(), "not available yet") {
 		t.Fatalf("unsupported: %d %s", code, h.stderr)
 	}
@@ -192,6 +200,7 @@ func TestRunsUsage(t *testing.T) {
 		{[]string{"runs", "bogus"}, ExitUsage, `unknown subcommand "bogus"`},
 		{[]string{"runs", "start"}, ExitUsage, "usage: crux --server ADDR runs start"},
 		{[]string{"runs", "start", "-h"}, ExitOK, "-repo"},
+		{[]string{"runs", "start", "-h"}, ExitOK, "-checkout"},
 		{[]string{"runs", "start", "--bogus", "x"}, ExitUsage, "bogus"},
 		{[]string{"runs", "status"}, ExitUsage, "usage: crux --server ADDR runs status"},
 		{[]string{"runs", "status", "-bogus"}, ExitUsage, "bogus"},

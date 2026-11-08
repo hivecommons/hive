@@ -42,6 +42,7 @@ func newKnowledgeCommand(env *commandEnv) *cobra.Command {
 	knowledge.AddCommand(knowledgeWriteCommand(env, "update"))
 	knowledge.AddCommand(knowledgeDeleteCommand(env))
 	knowledge.AddCommand(knowledgeStateCommand(env))
+	knowledge.AddCommand(knowledgeDrainMemoryCommand(env))
 	knowledge.AddCommand(knowledgeImportCommand(env))
 	knowledge.AddCommand(knowledgeExportCommand(env))
 	knowledge.AddCommand(knowledgeGraphCommand(env))
@@ -259,6 +260,32 @@ func knowledgeStateCommand(env *commandEnv) *cobra.Command {
 	}
 	command.Flags().StringVar(&supersededBy, "superseded-by", "", "replacement entry id (required for state superseded)")
 	command.Flags().StringVar(&reason, "reason", "", "why the state is changing, recorded in the audit log")
+	return command
+}
+
+func knowledgeDrainMemoryCommand(env *commandEnv) *cobra.Command {
+	var legacy, truncate bool
+	command := &cobra.Command{
+		Use:   "drain-memory --legacy [--truncate]",
+		Short: "Drain the shared home's legacy Claude memory into draft knowledge (owner only, audited)",
+		Long: "Drains every /data/home/.claude/projects/*/memory store left behind by per-agent CLI homes\n" +
+			"into draft entries in the bead-synth-wiki vault, tagged cli-memory and agent:shared and\n" +
+			"deduplicated by content hash. Drafts reach no agent until approved with\n" +
+			"'hivectl knowledge state <id> approved'. Memory files are emptied only with --truncate,\n" +
+			"and only files whose every fact is now stored. Per-agent stores drain at kick time\n" +
+			"(agents.cli_memory.drain_to_knowledge), so --legacy is required.",
+		Args: argsNone(),
+		Example: "  hivectl knowledge drain-memory --legacy\n" +
+			"  hivectl knowledge drain-memory --legacy --truncate --output json",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !legacy {
+				return &usageError{message: "--legacy is required: per-agent CLI memory drains at kick time (agents.cli_memory.drain_to_knowledge)"}
+			}
+			return env.do(cmd, http.MethodPost, "/api/knowledge/cli-memory/drain-legacy", map[string]any{"truncate": truncate})
+		},
+	}
+	command.Flags().BoolVar(&legacy, "legacy", false, "drain the shared /data/home Claude memory store (required)")
+	command.Flags().BoolVar(&truncate, "truncate", false, "empty each memory file whose facts are all stored")
 	return command
 }
 

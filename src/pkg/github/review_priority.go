@@ -61,8 +61,10 @@ func reviewRank(c ReviewClass) int {
 }
 
 // Title-prefix signals, checked in this order. The emoji set follows
-// CONTRIBUTING.md's PR-title convention (🐛 fix, 📖 docs, 📝 proposal, ...;
-// see PRTitleEmoji* in pr_title.go — a proposal triages with docs); the word
+// CONTRIBUTING.md's PR-title convention (🐛 fix, 📖 docs or proposal, ...;
+// see PRTitleEmoji* in pr_title.go — a proposal triages with docs). The
+// literal 📝 stays so pre-existing "📝 RFC: …" / "📝 Epic: …" titles, which
+// have no word-prefix match, still classify by title; the word
 // prefixes are the conventional-commit forms agents and humans both use
 // ("fix:", "fix(proxy):", "refactor:", "test:") plus the "[lane]" prefix that
 // classify.classifyLane already treats as the most explicit routing signal.
@@ -71,7 +73,7 @@ func reviewRank(c ReviewClass) int {
 var (
 	reviewFixEmojiPrefixes  = []string{"🐛", "🔒", "🛡", "🚑", "🔥"}
 	reviewTestEmojiPrefixes = []string{"🧪", "✅"}
-	reviewDocsEmojiPrefixes = []string{PRTitleEmojiDocs, PRTitleEmojiProposal, "🏗", "♻"}
+	reviewDocsEmojiPrefixes = []string{PRTitleEmojiDocs, PRTitleEmojiProposal, "📝", "🏗", "♻"}
 
 	reviewFixWordPrefixes  = []string{"fix", "hotfix", "bugfix", "security", "sec", "[scanner]", "[ci-maintainer]", "[sec-check]"}
 	reviewTestWordPrefixes = []string{"test", "tests", "coverage", "[quality]"}

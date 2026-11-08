@@ -1,8 +1,11 @@
 # Draining CLI auto-memory into draft knowledge (#17033)
 
-Status: **design only.** Nothing described here is implemented yet. The three
-open questions in #17033 are decided below; the work is cut into three
-implementation children, listed in [Implementation plan](#implementation-plan).
+Status: **shipped.** The three open questions in #17033 are decided below;
+the work is cut into three implementation children, listed in
+[Implementation plan](#implementation-plan). Each phase shipped with the
+differences recorded in [Phase 1 as shipped](#phase-1-as-shipped),
+[Phase 2 as shipped](#phase-2-as-shipped) and
+[Phase 3 as shipped](#phase-3-as-shipped).
 
 All citations are against `origin/v5` at `7a929356`. The CLI-memory isolation
 and disable work this design builds on (#17031, #17032) is in open PRs
@@ -136,10 +139,12 @@ A file whose drain fails part-way is left untouched and retried on the next
 drain. That is safe because dedup makes the drain idempotent.
 
 Reads and the truncate follow the same rules as #17040's
-`cliMemoryStores`. Only stores private to the agent are drained; every path
-component is checked with `Lstat`, so a planted symlink is never followed. The
-truncate and remove run as the agent through the same `su-exec` path as
-`cliMemoryRemover`. A store that is still shared (a legacy whole-directory
+`cliMemoryStores`. Only stores private to the agent are drained. The plan
+was to `Lstat` every path component and to truncate and remove as the agent
+through the same `su-exec` path as `cliMemoryRemover`; as shipped, the drain
+runs in the hive process and instead opens every memory file through an
+`os.Root` anchored at its store (see "Phase 2 as shipped" below and #17251).
+A store that is still shared (a legacy whole-directory
 bridge, a UID 0 agent, `HIVE_SHARED_AGENT_HOME=1`) is **not** drained. It
 cannot be attributed to one agent, and truncating it would wipe other agents'
 memory. It is logged once per agent, exactly like `clear_on_kick`, and is left
@@ -339,6 +344,31 @@ Child: #17056.
   not revived, partial failure leaves the file, symlinked or shared stores are
   skipped, spool and retry, kick never blocked.
 
+#### Phase 1 as shipped
+
+Phase 1 landed in #17086 and the follow-up for #17056. Where the shipped code
+differs from the plan above, the shipped code is authoritative:
+
+- **Drain library.** The drain is `src/pkg/knowledge/climemory`, run in the
+  hive process and installed on the in-process runtime through
+  `crux.CLIMemoryDrainHost`, not an HTTP-only `src/crux/agent/memdrain`. It
+  writes into the `bead-synth-wiki` vault the Primer already reads, so the
+  Crux module still imports nothing from `src/pkg`.
+- **Names.** The config key is `agents.cli_memory.drain_to_knowledge`, and
+  the provenance tag is `cli-memory` (with `source: cli-memory` frontmatter)
+  rather than `auto-memory`.
+- **Dedup.** As designed: a duplicate in any state only gains the draining
+  agent's `agent:<name>` tag; its state is never reset.
+- **Store emptying.** The drain does not truncate the store; `clear_on_kick`
+  does. A file whose facts did not all reach the vault is **copied** to
+  `/data/knowledge/auto-memory-spool/<agent>/` before the wipe and retried on
+  the next drain, which gives the "partial failure loses nothing" property
+  without a second remover running as the agent.
+- **Create path.** `CreateFactRequest.state` and the `cli-memory` tag
+  allow-list on `POST /api/knowledge/create`, and `bd create --type knowledge`,
+  shipped as planned; a draft is written into the local channel named by
+  `layer`.
+
 ### Phase 2 — Claude Code `SessionEnd` and `PostToolUse` hooks
 
 Child: #17057.
@@ -352,6 +382,69 @@ Child: #17057.
 - Tests: seed and merge keep operator hooks, the hook exits fast on writes
   outside the memory directory, end-to-end hook → draft fact → empty
   `MEMORY.md`.
+
+#### Phase 2 entry point (#17208)
+
+The hook runs as the agent's UID, so it can neither write the hive-owned
+vault nor reach the in-process drainer. It asks the hive instead: the
+`hive memory-drain` command (#17209) drops `{"agent", "cwd", "truncate"}` into
+`/var/run/hive-metrics/memory-drain-requests`, the same drop-box as the GitHub
+relays, and reads `<name>.result.json` back.
+
+- **Auth.** The owner UID of the request file is the caller's identity. The
+  runtime (`crux.CLIMemoryDrainNowHost`) refuses a request naming any other
+  agent. Every request, refused or not, is audited as
+  `cli_memory_drain_requested`.
+- **Sources.** Resolved from the agent's own home with
+  `cliMemoryDrainSources`, never from the request. `cwd` only narrows them to
+  the Claude project slug Claude derives from it.
+- **Truncate.** With `truncate`, a drain that reports no error is followed by
+  `Drainer.TruncateDrained`, which empties only the files whose every
+  `memhash` is in the vault.
+- **Drain off.** With `agents.cli_memory.drain_to_knowledge` off for the
+  agent, the answer is `ok` with `ran: false` and nothing drained.
+
+#### Phase 2 as shipped
+
+Phase 2 landed in #17208 (entry point above), #17209 and #17210. Where the
+shipped code differs from the plan above, the shipped code is authoritative:
+
+- **Command.** `hive memory-drain --cli claude --agent "$HIVE_AGENT"` does not
+  wrap the drain library: it queues a request for the entry point above, with
+  `truncate` set and the hook's `cwd`, and waits up to 10 seconds
+  (`--wait`) for the answer. Every outcome exits 0; a refusal, a timeout or a
+  missing request directory is a warning on stderr, and the kick-time drain
+  remains the backstop.
+- **PostToolUse.** The command exits before queuing anything unless
+  `tool_input.file_path` is under `~/.claude/projects/<slug>/memory/` (or
+  `$CLAUDE_CONFIG_DIR/projects/<slug>/memory/`). Its request carries
+  `on_write`, which the hive answers as a no-op unless the agent has
+  `drain_on_write`.
+- **Open through the store root (#17251).** The drain never reads or
+  truncates a memory file by path. Each `Source` is resolved with
+  `EvalSymlinks` and dropped unless it still lies under the agent's own
+  resolved home (a slug or `.claude` directory symlinked at another agent's
+  store is not drained). The store is then opened as an `os.Root` (the parent
+  directory for a single-file store such as `GEMINI.md`), checked with
+  `SameFile` against what `Lstat` saw, and every listed file is `Lstat`ed
+  through the root — a symlink entry is refused even when its target stays
+  inside the root — opened through it, required to be a regular file within
+  the size cap and the same inode `Lstat` reported, and `TruncateDrained`
+  truncates through that read descriptor. A path swapped for a symlink
+  between the listing and the open lands in `kept` and the drain error;
+  nothing outside the store is ever read or emptied.
+- **Keys.** The new key is `agents.cli_memory.drain_on_write`, fleet-wide and
+  per agent, and it has no effect without `drain_to_knowledge`.
+- **Seeding.** Not through `seedJSONFile`, which never touches an existing
+  top-level key: a separate merge works per `hooks.<event>`. It adds Hive's
+  entry only when no matcher group already runs the exact command, keeps
+  every operator entry, and when the hook is off removes only Hive's command
+  (and a group or event it leaves empty). The settings files are shared, so
+  `SessionEnd` is seeded while any agent has `drain_to_knowledge` and
+  `PostToolUse` while any agent has `drain_on_write`; the hive's per-agent
+  answer keeps every other agent a no-op. Both are merged into the shared
+  interactive settings file and into the two files `ensureClaudeSettings`
+  writes for inference agents.
 
 ### Phase 3 — review flow, draft exclusion, legacy migration, operator docs
 
@@ -371,6 +464,37 @@ Child: #17058.
   reference, an "Auto-memory drafts" section in
   [Knowledge lifecycle states](../knowledge-lifecycle.md), and the status line
   in [the design index](README.md) moved to partly shipped or shipped.
+
+#### Phase 3 as shipped
+
+Where the shipped code differs from the plan above, the shipped code is
+authoritative. User-facing behaviour is documented in
+[Auto-memory drafts](../knowledge-lifecycle.md#auto-memory-drafts).
+
+- **Marker.** The drain shipped with the tag `cli-memory` and
+  `source: cli-memory` frontmatter, not `auto-memory`.
+  `knowledge.IsAutoMemory` accepts either marker. A fact is excluded when
+  its effective state is `draft`.
+- **Exclusion.** `FilterByLifecycleFor` (the kick primer and the knowledge
+  advisor) never admits an auto-memory draft. `TOCScope.HideAutoMemoryDrafts`
+  drops it from every scope `AgentScope` builds and from every `?agent=` TOC,
+  entry and effective read. The operator filter `FilterByLifecycle` and
+  operator TOC reads still list it. The public MCP was already approved-only.
+- **Review in the reserved vault.** Drained entries live in `bead-synth-wiki`,
+  which `PUT /api/knowledge/entry/{id}/state` used to refuse outright. It now
+  accepts entries whose frontmatter says `source: cli-memory`, because the
+  drain never rewrites an existing entry. The dashboard's **Discard** sets
+  `deprecated` rather than deleting, so the `memhash` keeps the fact from
+  being re-drafted.
+- **Auto-promotion.** `AutoPromoteCandidates` skips any page tagged
+  `cli-memory`, whatever its status.
+- **Legacy drain.** `hivectl knowledge drain-memory --legacy [--truncate]`
+  calls the owner-only `POST /api/knowledge/cli-memory/drain-legacy`, which runs
+  the phase-1 drainer in the hive process. With `--truncate` it empties only
+  the files whose every fact's `memhash` is now in the vault.
+- **Config key.** The operator reference documents the shipped key,
+  `agents.cli_memory.drain_to_knowledge`. There is no separate
+  `agents.cli_memory.drain`.
 
 ## References
 

@@ -262,6 +262,9 @@ ioscan:
 # for known agent names. New/custom agents should set these fields explicitly.
 agents:
   # github_api_hourly_cap: 300            # Per-agent charged GitHub API responses/hour through the proxy; 0 disables.
+  # cli_memory:                           # Fleet CLI auto-memory policy; each agent may override it with its own cli_memory block
+  #   drain_to_knowledge: false           # Drain each CLI memory fact into a draft knowledge entry (kick, Claude SessionEnd hook)
+  #   drain_on_write: false               # Also drain a Claude memory file as soon as it is written (PostToolUse hook); needs drain_to_knowledge
   scanner:
     # id: scan-01                         # Stable internal key (defaults to YAML key)
     enabled: true

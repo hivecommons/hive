@@ -1,11 +1,37 @@
 name: PR Verifier
 
+# REQUIRED CONTEXT on v5: `verify PR contents` must report on the final head
+# of every PR. On #16567 changelog-fragment-guard's autofix pushed b9cd4bac
+# with github.token (a Dependabot-triggered `pull_request` run sees no Actions
+# secrets, so TOPUP_PUSH_TOKEN was empty; every run on that head reports
+# actor=github-actions[bot]). That push fired the `pull_request` workflows
+# but NOT this `pull_request_target` one, no label event followed for three
+# days, and the context stayed "expected" until a human closed and reopened
+# the PR — BLOCKED the whole time (#16567, #17036). A PAT or App-token push
+# fires both event kinds, so the gap is specific to github.token pushes.
+# Two things close it:
+#   - `labeled`/`unlabeled` (and `ready_for_review`) are listed, mirroring
+#     native-queue-policy.yml, so any App- or PAT-made label flip re-runs the
+#     verifier on the current head (github.token label flips fire nothing).
+#   - `workflow_dispatch`: changelog-fragment-guard dispatches this workflow
+#     on the PR branch right after a github.token autofix push.
+#     workflow_dispatch is one of the two events a github.token may trigger,
+#     and the run's check lands on the branch tip, i.e. the pushed head. Only
+#     same-repo branches are ever dispatched (the autofix never pushes to
+#     forks); such a run uses the GitHub-hosted ARM runner like fork PRs do.
+# The concurrency group below bounds the cost.
 on:
   pull_request_target:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Number of the same-repo PR whose branch tip this run verifies (#17036)
+        required: true
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
 
 permissions:
@@ -23,6 +49,39 @@ jobs:
     env:
       PR_VERIFIER_IMAGE: ghcr.io/hivecommons/pr-verifier@sha256:8c2b63817c4bfa7de510ab699b154637f27a42f87826c98083903daf2a539943
     steps:
+      # A dispatched run has no pull_request payload. Rebuild one from the API
+      # for the verifier image, and bail out (green, nothing verified, said so)
+      # when the PR head is no longer this ref's tip: whoever moved it fired
+      # the normal events, and a verdict on a non-head commit is noise.
+      - name: Reconstruct the pull_request payload for a dispatched run
+        if: github.event_name == 'workflow_dispatch'
+        id: dispatch_event
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::pr_number must be a PR number, got '$PR_NUMBER'"
+            exit 1
+          fi
+          pr="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          head_repo="$(jq -r '.head.repo.full_name' <<<"$pr")"
+          head_sha="$(jq -r '.head.sha' <<<"$pr")"
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::#${PR_NUMBER} comes from ${head_repo}; only same-repo PRs may be dispatched"
+            exit 1
+          fi
+          if [ "$head_sha" != "$GITHUB_SHA" ]; then
+            echo "::notice::#${PR_NUMBER} head is ${head_sha}, not this run's ${GITHUB_SHA}; the push that moved it fired pr-verifier itself — nothing verified here (#17036)."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          repo="$(gh api "repos/${GITHUB_REPOSITORY}")"
+          jq -n --argjson pr "$pr" --argjson repo "$repo" \
+            '{action: "synchronize", number: $pr.number, pull_request: $pr, repository: $repo}' \
+            > "${RUNNER_TEMP}/pr-verifier-event.json"
+          echo "event_path=${RUNNER_TEMP}/pr-verifier-event.json" >> "$GITHUB_OUTPUT"
       # Login and pull are advisory for the same reason the verification below
       # is: this check exists to report on PR CONTENTS, and a registry-side
       # failure (org rename, package visibility change, GHCR outage — #6085
@@ -59,21 +118,26 @@ jobs:
         run: |
           echo "::warning::PR Verifier image $PR_VERIFIER_IMAGE was unavailable or incompatible — verification was SKIPPED, not passed. Inspect the pull/platform error; this is a runner/registry/image problem, not a PR problem (#6085)."
       - name: Verifier action
-        if: steps.pull.outcome == 'success'
+        if: steps.pull.outcome == 'success' && steps.dispatch_event.outputs.stale != 'true'
         id: verifier
         continue-on-error: true
+        env:
+          # A dispatched run presents itself to the image as the
+          # pull_request_target run it stands in for (see dispatch_event).
+          VERIFIER_EVENT_NAME: ${{ github.event_name == 'workflow_dispatch' && 'pull_request_target' || github.event_name }}
+          VERIFIER_EVENT_PATH: ${{ steps.dispatch_event.outputs.event_path || github.event_path }}
         run: |
           docker run --rm \
             -e INPUT_GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             -e GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             -e GITHUB_ACTIONS="true" \
-            -e GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+            -e GITHUB_EVENT_NAME="$VERIFIER_EVENT_NAME" \
             -e GITHUB_EVENT_PATH="/github/event.json" \
             -e GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
             -e GITHUB_SHA="$GITHUB_SHA" \
             -e GITHUB_REF="$GITHUB_REF" \
             -e GITHUB_WORKSPACE="/github/workspace" \
-            -v "$GITHUB_EVENT_PATH:/github/event.json:ro" \
+            -v "$VERIFIER_EVENT_PATH:/github/event.json:ro" \
             -v "$GITHUB_WORKSPACE:/github/workspace:ro" \
             "$PR_VERIFIER_IMAGE"
       - name: Report verifier failure
