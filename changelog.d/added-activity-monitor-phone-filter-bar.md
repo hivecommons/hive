@@ -1,1 +1,0 @@
-- The Hive activity monitor on a phone replaces its 13-control toolbar and label chips with a sticky compact filter bar (All / PRs / Issues, Needs attention, Waiting on you, ⋯ Filters) that opens the full toolbar in a modal sheet, so the first row is visible without scrolling; desktop is unchanged (#17159, part of #17158).

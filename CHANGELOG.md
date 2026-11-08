@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.191.0)
+
+### Added
+
+- Drained CLI-memory drafts (`cli-memory` tag) never reach an agent while they are drafts: not through the kick primer or knowledge advisor, not through any `?agent=` TOC or entry read, and not through curator auto-promotion, even when `include_states` admits drafts. The dashboard's knowledge view gains an **Auto-memory drafts** filter that shows each draft's `agent:` tags with owner-only Approve and Discard actions. A new owner-only command, `hivectl knowledge drain-memory --legacy [--truncate]`, drains the shared `/data/home/.claude/projects/*/memory` store into drafts tagged `agent:shared` (#17058).
+- The Hive activity monitor on a phone replaces its 13-control toolbar and label chips with a sticky compact filter bar (All / PRs / Issues, Needs attention, Waiting on you, ⋯ Filters) that opens the full toolbar in a modal sheet, so the first row is visible without scrolling; desktop is unchanged (#17159, part of #17158).
+
+### Fixed
+
+- **fleetreport:** the stage engine's `stage flap suppressed` warning no longer files an `unclassified_error_repeated` fleet selfreport; refusing a same-head reversal is the flap guard working as designed and stays in local logs (#17142).
+
 ## 2026-11-08 (v5.190.0)
 
 ### Added
