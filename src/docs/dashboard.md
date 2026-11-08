@@ -425,8 +425,10 @@ built from the enumeration snapshot, the ForgeState cache items and the
 last-good copy — counted items, never a separately fetched total; a repo that
 reports more than it lists surfaces the remainder as `unlistedIssues` /
 `unlistedPrs` and a **+N not yet listed** badge instead of inflating the
-total). The left-nav **Overview** `issues/PRs` pill is those same two tile
-values, written by the same KPI render from the same `/api/status` snapshot,
+total). The left-nav **Overview** pill reads `BP = issues/PRs` — *board pressure*,
+the open issues and PRs the configured repos put on this hive's board — and is
+those same two tile values, written by the same KPI render from the same
+`/api/status` snapshot,
 and the Hive activity monitor lists exactly that set, so its header "N items
 (I issues / P PRs)" equals the tile; its tooltip carries the full equation
 and, after a refused GitHub enumeration or on a boot-restored snapshot, the
