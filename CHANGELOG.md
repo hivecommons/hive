@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v6.1.2)
+
+### Fixed
+
+- Contributor-first lanes are no longer left unworked by a relay that has used up its hourly or daily task allowance. A relay at its tier's `max_per_hour` or `max_per_day` is refused work until the window rolls, but it still counted as covering its role, so the governor kept the resident agent's kicks withheld while nobody worked the lane (for the daily cap, that can be most of a day). The hub now leaves such a relay out of coverage, using the same limit check that refuses it work.
+- The contributor quota guard's `continue-until-reset` and `pause-until-reset` overrides no longer drop out when a provider restates the same reset time a little differently. They were pinned to the exact reset epoch, so when a Claude reading reported the weekly window resetting at 06:59:59.634Z instead of the 07:00:00.373Z the override had recorded, the override stopped applying and the relay stayed held for 14 minutes. Two reset times within five minutes of each other now count as the same reset; a real roll to the next window (an hour later at the shortest) still ends the override. The "Contributor quota guard released" log line also now names what released the hold (a recovered reading, or the continue-once / continue-until-reset / disable-session override with the window still below its reserve) instead of always saying a fresh reading cleared every reserve.
+
 ## 2026-11-08 (v6.1.1)
 
 ### Fixed
