@@ -1392,6 +1392,23 @@
     .ham-sound-file input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .ham-sound-help { font-size: var(--fs-xs); margin: var(--sp-0); }
     .ham-sound-volume-value { color: var(--text); font-variant-numeric: tabular-nums; }
+    /* Phone compact filter bar + Filters sheet (#17159). .ham-compact lives
+       on the sticky bar and is shown only in responsive.css's phone tier;
+       the sheet receives the toolbar and label chips as-is (same ids and
+       hamFilter actions), one control per line at tap height. Desktop
+       never shows either. */
+    .ham-compact { display: none; }
+    .ham-filter-sheet-body { white-space: normal; }
+    .ham-filter-sheet .ham-toolbar { flex-direction: column; align-items: stretch; gap: var(--sp-3); margin: 0; }
+    .ham-filter-sheet .ham-toolbar .ham-chips { display: flex; }
+    .ham-filter-sheet .ham-toolbar .ham-chips .ham-chip { flex: 1 1 0; }
+    .ham-filter-sheet .ham-chip { min-height: var(--tap-target); font-size: var(--fs-sm); }
+    .ham-filter-sheet .ham-repo-filter { display: flex; justify-content: space-between; gap: var(--sp-3); min-height: var(--tap-target); white-space: nowrap; }
+    .ham-filter-sheet .ham-select { flex: 1 1 auto; max-width: none; min-height: var(--tap-target); font-size: var(--fs-touch); }
+    .ham-filter-sheet .ham-input { flex: none; width: 100%; box-sizing: border-box; min-height: var(--tap-target); font-size: var(--fs-touch); }
+    .ham-filter-sheet .ham-dir { min-width: var(--tap-target); }
+    .ham-filter-sheet .ham-sound { margin-left: 0; }
+    .ham-filter-sheet .ham-labels { margin: var(--sp-3) 0 0; gap: var(--sp-2); }
     .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
     .ham-labels:empty { display: none; }
     .ham-label-chip { font-family: var(--font-mono); }
@@ -5835,6 +5852,30 @@
       .hive-dialog.modal-sheet > .hive-dialog-buttons { flex: 0 0 auto; margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--border); }
       .hive-dialog.modal-sheet > .hive-dialog-buttons .hv-btn { min-height: var(--modal-sheet-close-size); }
       .hive-dialog.modal-sheet .modal-sheet-close { display: inline-flex; }
+      /* Activity monitor on a phone (#17159): the 13-control toolbar and
+         the label chips hide; the sticky bar carries the compact chips
+         (kind / needs attention / waiting on you / ⋯ Filters) beside the
+         Merged pill, and the meta line keeps only "showing N of M". The
+         sticky bar grows to tap height, so the column header below it
+         follows through --ham-sticky-bar-h. Lines naming .ham-sticky must
+         stay free of literal colours (stage_tracker_actor_icon_test.go). */
+      #activity-monitor-section { --ham-sticky-bar-h: calc(var(--tap-target) + 2 * var(--sp-1)); }
+      #activity-monitor-section .section-body > .ham-toolbar, #activity-monitor-section .section-body > .ham-labels { display: none; }
+      #activity-monitor-meta > :not(.ham-count) { display: none; }
+      /* The card body's overflow:hidden makes it the sticky containing
+         scroller; with only the meta line above the bar, sticky top would
+         push the bar down over the first row. overflow:clip clips without
+         creating a scroller, so the bar sticks to the viewport instead. */
+      #activity-monitor-section .dash-card-body { overflow: clip; }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky .ham-merged-sub { display: none; }
+      .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact-scroll::-webkit-scrollbar { display: none; }
+      .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
+      .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }
+      .ham-compact-more[data-ham-active] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
     }
     @media (max-width: 768px) {
       body {
@@ -8453,6 +8494,22 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
       <div class="ham-selbar" id="activity-monitor-selbar" role="toolbar" aria-label="Selected rows" hidden></div>
       <div class="ham-sticky" id="activity-monitor-sticky">
+        <!-- Phone-only compact filter bar (#17159): the toolbar above is
+             hidden under the .modal-sheet tier and these chips take over;
+             ⋯ Filters moves the toolbar and label chips into a sheet
+             (openStageTrackerFilterSheet). Desktop never shows this. -->
+        <div class="ham-compact" id="activity-monitor-compact" role="toolbar" aria-label="Quick filters">
+          <span class="ham-compact-scroll">
+            <span class="ham-chips" role="group" aria-label="Item kind">
+              <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="all" aria-pressed="true">All</button>
+              <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="pr" aria-pressed="false">PRs</button>
+              <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="issue" aria-pressed="false">Issues</button>
+            </span>
+            <button type="button" class="ham-chip" id="activity-monitor-compact-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Only items that need attention: stalled, held, blocked, needs-human, needs-decision, needs-rebase">⚠ Needs attention</button>
+            <button type="button" class="ham-chip ham-chip--waiting" id="activity-monitor-compact-waiting" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle" aria-pressed="false" title="Only items parked on you">👤 Waiting on you<span class="ham-chip-n" hidden>0</span></button>
+          </span>
+          <button type="button" class="ham-chip ham-compact-more" id="activity-monitor-filters" data-action="openStageTrackerFilterSheet" aria-haspopup="dialog" aria-expanded="false" title="Repo, search, since, author, decisions, sort, group, per page and labels">⋯ Filters<span class="ham-chip-n" hidden>0</span></button>
+        </div>
         <span class="ham-sticky-live" id="activity-monitor-merged-live" role="status" aria-live="polite"></span>
         <button type="button" class="ham-chip ham-merged-count" id="activity-monitor-merged" data-action="hamMergedToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-merged-pop" title="Merged: 0 all time"><svg class="ham-merged-ico" viewBox="0 0 18 12" focusable="false" aria-hidden="true"><ellipse class="oc-version-bee-wing" cx="7" cy="3.6" rx="3" ry="1.5" transform="rotate(-18 7 3.6)"/><ellipse class="oc-version-bee-wing" cx="11" cy="3.4" rx="3" ry="1.5" transform="rotate(18 11 3.4)"/><ellipse class="oc-version-bee-body" cx="9.2" cy="7" rx="5.8" ry="3.3"/><path class="oc-version-bee-stripe" d="M7.2 4.2v5.6M10 3.8v6.4"/><circle class="oc-version-bee-head" cx="15" cy="7" r="1.7"/></svg>Merged <span class="ham-merged-n">0</span><span class="ham-merged-sub">0 today · 0 this week</span></button>
         <div class="ham-merged-pop" id="activity-monitor-merged-pop" role="dialog" aria-label="Recent merges" hidden></div>
@@ -20957,6 +21014,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || f.waitingOnYou || f.age !== 'any' || f.author !== 'any' || f.attention || f.acted !== 'any';
     }
 
+    // How many narrowing filters the phone Filters sheet holds are set:
+    // everything stageTrackerFilterActive counts except the kind /
+    // attention / waiting-on-you chips, which sit on the compact bar.
+    function stageTrackerSheetFilterCount(f) {
+      f = stageTrackerNormalizeFilter(f);
+      return (f.repo ? 1 : 0) + (f.q ? 1 : 0) + (f.age !== 'any' ? 1 : 0) + (f.author !== 'any' ? 1 : 0) + (f.acted !== 'any' ? 1 : 0) + f.labels.length + (f.needsHuman ? 1 : 0) + (f.onHold ? 1 : 0);
+    }
+
     // Does one item pass the narrowing filters? ctx.nowMs anchors the age
     // test; ctx.stages supplies the dwell for the "stale" age.
     function stageTrackerMatches(item, f, ctx) {
@@ -21441,6 +21506,59 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', (f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending') + STAGE_TRACKER_DIR_TIER_NOTE); }
       const reset = document.getElementById('activity-monitor-reset');
       if (reset) reset.hidden = !stageTrackerFilterActive(f);
+      stageTrackerSyncCompact(f);
+    }
+    // The phone compact bar (#17159) mirrors the kind / attention /
+    // waiting chips and counts the filters the sheet holds on ⋯ Filters.
+    function stageTrackerSyncCompact(f) {
+      const bar = document.getElementById('activity-monitor-compact');
+      if (!bar) return;
+      bar.querySelectorAll('.ham-chip[data-arg0="kind"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.arg1 === f.kind ? 'true' : 'false'));
+      const att = document.getElementById('activity-monitor-compact-attention');
+      if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
+      const wait = document.getElementById('activity-monitor-compact-waiting');
+      if (wait) wait.setAttribute('aria-pressed', f.waitingOnYou ? 'true' : 'false');
+      const more = document.getElementById('activity-monitor-filters');
+      const n = more && more.querySelector('.ham-chip-n');
+      if (n) { const count = stageTrackerSheetFilterCount(f); n.textContent = String(count); n.hidden = !count; more.toggleAttribute('data-ham-active', count > 0); }
+    }
+    // ⋯ Filters: the toolbar and the label chips move, as they are, into a
+    // .hive-dialog.modal-sheet (same ids, same hamFilter actions, so every
+    // render keeps syncing them) and move back home when the sheet closes
+    // (Esc / ✕ / backdrop / Done via hiveWireDialog).
+    var _stageTrackerFilterSheetReturnFocus = null;
+    function openStageTrackerFilterSheet() {
+      if (document.getElementById('activity-monitor-filters-overlay')) return;
+      const toolbar = document.getElementById('activity-monitor-toolbar');
+      const labels = document.getElementById('activity-monitor-labels');
+      if (!toolbar) return;
+      _stageTrackerFilterSheetReturnFocus = document.activeElement;
+      const overlay = document.createElement('div');
+      overlay.id = 'activity-monitor-filters-overlay';
+      overlay.className = 'hive-dialog-overlay';
+      hiveRememberModalOpen(overlay);
+      overlay.innerHTML = `<div class="hive-dialog ham-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="activity-monitor-filters-title">
+        <div id="activity-monitor-filters-title" class="hive-dialog-title">Filters</div>
+        <div class="hive-dialog-body modal-scroll ham-filter-sheet-body"></div>
+        <div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary">Done</button></div>
+      </div>`;
+      const body = overlay.querySelector('.ham-filter-sheet-body');
+      const homes = [toolbar, labels].filter(Boolean).map(node => {
+        const home = document.createComment('ham-filter-sheet-home');
+        node.parentNode.insertBefore(home, node);
+        body.appendChild(node);
+        return { node, home };
+      });
+      document.body.appendChild(overlay);
+      const more = document.getElementById('activity-monitor-filters');
+      if (more) more.setAttribute('aria-expanded', 'true');
+      hiveWireDialog(overlay, () => {
+        homes.forEach(({ node, home }) => { if (home.parentNode) { home.parentNode.insertBefore(node, home); home.remove(); } });
+        if (more) more.setAttribute('aria-expanded', 'false');
+        const ret = _stageTrackerFilterSheetReturnFocus;
+        _stageTrackerFilterSheetReturnFocus = null;
+        if (ret && ret.focus && document.contains(ret)) setTimeout(() => ret.focus({ preventScroll: true }), 0);
+      }, undefined, '.primary', null, close => close());
     }
 
     function stageTrackerLabelChipHtml(c) {
@@ -27444,6 +27562,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       const chip = document.getElementById('activity-monitor-waiting');
       if (chip) chip.textContent = w.count ? 'Waiting on you (' + w.count + ')' : 'Waiting on you';
+      const compact = document.getElementById('activity-monitor-compact-waiting');
+      const compactN = compact && compact.querySelector('.ham-chip-n');
+      if (compactN) { compactN.textContent = String(w.count); compactN.hidden = !w.count; }
       stageTrackerWaitingToast(w, nowMs);
     }
 
@@ -41893,6 +42014,12 @@ function burnAreaChart() {
       renderKnowledgeFacts();
     }
 
+    // Auto-memory review (#17058): drafts the CLI-memory drain wrote. The
+    // search API is an operator read, so include_states=draft lists them;
+    // no agent read ever does until one is approved.
+    const KB_AUTO_MEMORY_VIEW = 'auto-memory';
+    const KB_AUTO_MEMORY_TAG = 'cli-memory';
+
     async function kbLoadFacts(offset) {
       const request = ++_kbRequest;
       const query = _kbSearchQuery;
@@ -41901,6 +42028,9 @@ function burnAreaChart() {
       let url;
       if (query) {
         url = '/api/knowledge/search?q=' + encodeURIComponent(query) + '&limit=50';
+        if (typeFilter) url += '&type=' + encodeURIComponent(typeFilter);
+      } else if (layer === KB_AUTO_MEMORY_VIEW) {
+        url = '/api/knowledge/search?tag=' + KB_AUTO_MEMORY_TAG + '&include_states=draft&limit=200';
         if (typeFilter) url += '&type=' + encodeURIComponent(typeFilter);
       } else if (layer && layer !== 'all') {
         // Check if this is a vault, document, or standard layer type
@@ -41929,6 +42059,7 @@ function burnAreaChart() {
         _kbPageOffset = offset;
         _kbHasMore = !!data.has_more;
         _kbFacts = Array.isArray(data) ? data : (data.results || data.facts || []);
+        if (!query && layer === KB_AUTO_MEMORY_VIEW) _kbFacts = _kbFacts.filter(f => f.state === 'draft');
         _kbSelectedFact = null;
         renderKnowledgeFacts();
       } catch (e) {
@@ -42683,6 +42814,7 @@ function burnAreaChart() {
       html += '<div class="kb-layer-list" id="kb-layer-btns">';
       // Aggregate row stays on top as the filter reset (kbSelectLayer keys on the 'All Layers' text)
       html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === 'all' ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="all"><span class="kb-layer-label">📋 All Layers</span><span class="kb-layer-count">${totalPages}</span></button>`;
+      html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === KB_AUTO_MEMORY_VIEW ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="${KB_AUTO_MEMORY_VIEW}" title="Drafts drained from the coding CLIs' own memory stores. No agent sees one until it is approved."><span class="kb-layer-label">🧠 Auto-memory drafts</span></button>`;
       for (const l of layers) {
         const isGitSource = l.type && l.type.startsWith('git_source:');
         const icon = KB_LAYER_ICONS[l.type] || (isGitSource ? '📄' : '📂');
@@ -42908,6 +43040,7 @@ function burnAreaChart() {
         html += `<span class="kb-type-badge ${typeClass}">${escapeHtml(f.type || 'unknown')}</span>`;
         html += `<span class="kb-layer-badge ${layerClass}">${escapeHtml(f.layer || '')}</span>`;
         if (f.status) html += `<span class="kb-layer-badge" style="background:var(--bg);color:var(--muted)">${escapeHtml(f.status)}</span>`;
+        html += kbAutoMemoryRowHTML(f);
         html += '</div></div></div>';
       }
       if (_kbPageOffset > 0 || hasNext) {
@@ -42917,6 +43050,44 @@ function burnAreaChart() {
         html += '<button class="hv-btn btn-secondary btn-sm" data-action="kbNextPage"' + (!hasNext ? ' disabled' : '') + '>Next</button></div>';
       }
       el.innerHTML = html;
+    }
+
+    function kbIsAutoMemory(f) {
+      return (f.tags || []).some(t => String(t).trim().toLowerCase() === KB_AUTO_MEMORY_TAG);
+    }
+
+    // Agent tags of a drained CLI-memory fact, plus approve and discard for
+    // an owner while it is still a draft. Discard deprecates rather than
+    // deletes, so the drain's content hash keeps it from being re-drafted.
+    function kbAutoMemoryRowHTML(f) {
+      if (!kbIsAutoMemory(f)) return '';
+      let html = '';
+      for (const t of (f.tags || [])) {
+        const m = /^agent:(.+)$/i.exec(String(t).trim());
+        if (m) html += `<span class="kb-layer-badge" title="Drained from this agent's CLI memory">agent ${escapeHtml(m[1])}</span>`;
+      }
+      if (f.state === 'draft' && viewerIsOwner()) {
+        const slug = escapeHtml(f.slug || '');
+        html += `<button class="hv-btn btn-primary btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="approved" data-stop="1" title="Approve: agents whose scope includes this entry receive it in their kicks">Approve</button>`;
+        html += `<button class="hv-btn btn-danger btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="deprecated" data-stop="1" title="Discard: mark it deprecated so no agent receives it and the drain never re-drafts it">Discard</button>`;
+      }
+      return html;
+    }
+
+    async function kbAutoMemoryReview(slug, state) {
+      const question = state === 'approved'
+        ? 'Approve "' + slug + '"? It was written by an agent, and once approved it is injected into the kicks of every agent whose scope includes it.'
+        : 'Discard "' + slug + '"? It is marked deprecated, no agent receives it, and the drain will not re-draft it.';
+      if (!(await hiveConfirm(question))) return;
+      try {
+        const r = await fetch('/api/knowledge/entry/' + encodeURIComponent(slug) + '/state', {
+          method: 'PUT', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ state, reason: 'auto-memory review (dashboard)' }),
+        });
+        if (!r.ok) { const e = await r.json().catch(() => ({})); await hiveAlert(e.error || 'Failed to change state'); return; }
+        fetchKnowledgeStats();
+        kbSearch();
+      } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
     function renderKnowledgeDetail() {

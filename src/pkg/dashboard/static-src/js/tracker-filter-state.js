@@ -241,6 +241,59 @@
       if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', (f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending') + STAGE_TRACKER_DIR_TIER_NOTE); }
       const reset = document.getElementById('activity-monitor-reset');
       if (reset) reset.hidden = !stageTrackerFilterActive(f);
+      stageTrackerSyncCompact(f);
+    }
+    // The phone compact bar (#17159) mirrors the kind / attention /
+    // waiting chips and counts the filters the sheet holds on ⋯ Filters.
+    function stageTrackerSyncCompact(f) {
+      const bar = document.getElementById('activity-monitor-compact');
+      if (!bar) return;
+      bar.querySelectorAll('.ham-chip[data-arg0="kind"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.arg1 === f.kind ? 'true' : 'false'));
+      const att = document.getElementById('activity-monitor-compact-attention');
+      if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
+      const wait = document.getElementById('activity-monitor-compact-waiting');
+      if (wait) wait.setAttribute('aria-pressed', f.waitingOnYou ? 'true' : 'false');
+      const more = document.getElementById('activity-monitor-filters');
+      const n = more && more.querySelector('.ham-chip-n');
+      if (n) { const count = stageTrackerSheetFilterCount(f); n.textContent = String(count); n.hidden = !count; more.toggleAttribute('data-ham-active', count > 0); }
+    }
+    // ⋯ Filters: the toolbar and the label chips move, as they are, into a
+    // .hive-dialog.modal-sheet (same ids, same hamFilter actions, so every
+    // render keeps syncing them) and move back home when the sheet closes
+    // (Esc / ✕ / backdrop / Done via hiveWireDialog).
+    var _stageTrackerFilterSheetReturnFocus = null;
+    function openStageTrackerFilterSheet() {
+      if (document.getElementById('activity-monitor-filters-overlay')) return;
+      const toolbar = document.getElementById('activity-monitor-toolbar');
+      const labels = document.getElementById('activity-monitor-labels');
+      if (!toolbar) return;
+      _stageTrackerFilterSheetReturnFocus = document.activeElement;
+      const overlay = document.createElement('div');
+      overlay.id = 'activity-monitor-filters-overlay';
+      overlay.className = 'hive-dialog-overlay';
+      hiveRememberModalOpen(overlay);
+      overlay.innerHTML = `<div class="hive-dialog ham-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="activity-monitor-filters-title">
+        <div id="activity-monitor-filters-title" class="hive-dialog-title">Filters</div>
+        <div class="hive-dialog-body modal-scroll ham-filter-sheet-body"></div>
+        <div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary">Done</button></div>
+      </div>`;
+      const body = overlay.querySelector('.ham-filter-sheet-body');
+      const homes = [toolbar, labels].filter(Boolean).map(node => {
+        const home = document.createComment('ham-filter-sheet-home');
+        node.parentNode.insertBefore(home, node);
+        body.appendChild(node);
+        return { node, home };
+      });
+      document.body.appendChild(overlay);
+      const more = document.getElementById('activity-monitor-filters');
+      if (more) more.setAttribute('aria-expanded', 'true');
+      hiveWireDialog(overlay, () => {
+        homes.forEach(({ node, home }) => { if (home.parentNode) { home.parentNode.insertBefore(node, home); home.remove(); } });
+        if (more) more.setAttribute('aria-expanded', 'false');
+        const ret = _stageTrackerFilterSheetReturnFocus;
+        _stageTrackerFilterSheetReturnFocus = null;
+        if (ret && ret.focus && document.contains(ret)) setTimeout(() => ret.focus({ preventScroll: true }), 0);
+      }, undefined, '.primary', null, close => close());
     }
 
     function stageTrackerLabelChipHtml(c) {

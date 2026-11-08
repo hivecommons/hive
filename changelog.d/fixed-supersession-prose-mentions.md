@@ -1,1 +1,0 @@
-- Closing-claim parsing no longer treats a parenthetical citation after a closing word (`fix in that section (#333)`) or the passive `closed by #N` as a claim, so the supersession sweep no longer closes changelog/docs follow-ups that cite the merged fixes they record (#17134).

@@ -84,12 +84,6 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 		operatorName = os.Getenv(config.ServeOperatorNameEnvVar)
 	}
 	srv.OperatorName = operatorName
-	if checkouts, err := newCheckoutService(checkoutAllow, checkoutDir, opts.workDir); err != nil {
-		fmt.Fprintln(e.Stderr, "crux: checkouts:", err)
-		return ExitUsage
-	} else if checkouts != nil {
-		srv.Checkouts = checkouts
-	}
 	srv.Logger = slog.New(slog.NewTextHandler(e.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	if laneConfig == "" {
 		laneConfig = os.Getenv("CRUX_LANES_CONFIG")
@@ -127,6 +121,15 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 		return ExitUsage
 	}
 	srv.Runs = runSvc
+	// S1 and S2 are wired both ways: a run may execute in a checkout, and a
+	// checkout with a live run refuses deletion.
+	if checkouts, err := newCheckoutService(checkoutAllow, checkoutDir, opts.workDir, runSvc.InUse); err != nil {
+		fmt.Fprintln(e.Stderr, "crux: checkouts:", err)
+		return ExitUsage
+	} else if checkouts != nil {
+		srv.Checkouts = checkouts
+		runSvc.Checkouts = checkouts
+	}
 	if hive != nil {
 		hive.install(ctx, rt, srv, e.Stdout)
 		hive.watchPolicy(ctx, rt, e.Stdout, e.Stderr)

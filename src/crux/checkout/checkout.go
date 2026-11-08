@@ -297,6 +297,10 @@ func CanDelete(rec Record, caller string, operator bool) bool {
 	return operator || (caller != "" && caller == rec.Owner)
 }
 
+// CanUse is the same rule for running against a checkout (S2): only the
+// owner or an operator may point a contained run at it.
+func CanUse(rec Record, caller string, operator bool) bool { return CanDelete(rec, caller, operator) }
+
 // validate checks req and returns the record it will produce.
 func (s *Service) validate(req Request) (Record, error) {
 	repo := strings.TrimSpace(req.Repo)
