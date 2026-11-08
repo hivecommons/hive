@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.199.2)
+
+### Fixed
+
+- The crux pushbroker pre-push secret gate now runs `git diff`/`git show` with `--text --no-textconv`, so a file git classifies as binary (a NUL byte in its first bytes, or a path marked `-diff`/`binary` in a committed `.gitattributes`) is scanned for token-shaped secrets instead of being hidden behind "Binary files differ" ([crux#128](https://github.com/hivecommons/crux/issues/128)).
+
 ## 2026-11-08 (v5.199.1)
 
 ### Fixed
