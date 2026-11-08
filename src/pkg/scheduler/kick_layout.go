@@ -93,11 +93,9 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 		s.addWorkTrackerSection,
 		func(m string) string { return s.addTaskMCPPointer(a.agent, m, a.elideStuffed) },
 	}
-	for i := len(staticSeams) - 1; i >= 0; i-- {
-		message = staticSeams[i](message)
-		if message == "" {
-			return message
-		}
+	message = applyStaticSeams(message, staticSeams)
+	if message == "" {
+		return message
 	}
 
 	// Semi-static: changes when the operator pauses/scopes repos, not per kick.
@@ -125,6 +123,20 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	message = addInProgressClaimRule(message, a.issues)
 	if a.idleReason == "" {
 		message = addConcreteKickClosingInstruction(message)
+	}
+	return message
+}
+
+// applyStaticSeams splices each static seam in directly under the kick header.
+// Each one lands right after the header line, so the LAST one applied ends up
+// FIRST: seams is written in reading order and applied in reverse. A seam that
+// fails closed empties the message and stops the chain.
+func applyStaticSeams(message string, seams []func(string) string) string {
+	for i := len(seams) - 1; i >= 0; i-- {
+		message = seams[i](message)
+		if message == "" {
+			return message
+		}
 	}
 	return message
 }
