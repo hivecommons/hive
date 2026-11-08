@@ -33,12 +33,16 @@ type fakeAPI struct {
 	exitCode              int
 	noPod                 bool
 	logBody               string
-	podStatus             string // "terminated" or "running"
-	failCode              int    // when >0, every request fails with this status
-	createErr             int    // when >0, POST fails with this status
-	onJobGet              func() // called (under mu) on every GET job, after it is counted
-	onPodLogAfterComplete func() // called (under mu) on pod log request after Job Complete
-	jobCompleted          bool   // tracks whether job status shows Complete
+	podStatus             string         // "terminated" or "running"
+	failCode              int            // when >0, every request fails with this status
+	createErr             int            // when >0, POST fails with this status
+	onJobGet              func()         // called (under mu) on every GET job, after it is counted
+	onPodLogAfterComplete func()         // called (under mu) on pod log request after Job Complete
+	jobCompleted          bool           // tracks whether job status shows Complete
+	policy                map[string]any // the NetworkPolicy manifest, when one was created
+	policyErr             int            // when >0, the NetworkPolicy POST fails with this status
+	policyDeleted         bool
+	order                 []string // "policy", "job" in creation order
 }
 
 func newFakeAPI() *fakeAPI {
@@ -55,6 +59,24 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 			return
 		}
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/networkpolicies"):
+			if f.policyErr > 0 {
+				w.WriteHeader(f.policyErr)
+				_, _ = w.Write([]byte(`{"kind":"Status","message":"networkpolicies.networking.k8s.io is forbidden"}`))
+				return
+			}
+			body, _ := io.ReadAll(r.Body)
+			var m map[string]any
+			if err := json.Unmarshal(body, &m); err != nil {
+				t.Errorf("policy is not JSON: %v", err)
+			}
+			f.policy = m
+			f.order = append(f.order, "policy")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write(body)
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/networkpolicies/"):
+			f.policyDeleted = true
+			_, _ = w.Write([]byte(`{"kind":"Status","status":"Success"}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/jobs"):
 			if f.createErr > 0 {
 				w.WriteHeader(f.createErr)
@@ -67,6 +89,7 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 				t.Errorf("manifest is not JSON: %v", err)
 			}
 			f.created = m
+			f.order = append(f.order, "job")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write(body)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/jobs/"):
@@ -310,6 +333,7 @@ func TestRunValidation(t *testing.T) {
 		{"no claim", Options{WorkspaceClaim: " "}, specFor("/data/x"), "workspace_claim"},
 		{"negative ttl", Options{WorkspaceClaim: "c", TTLSeconds: -1}, specFor("/data/x"), "ttl_seconds"},
 		{"bad volume", Options{WorkspaceClaim: "c", ExtraVolumes: []VolumeMount{{Claim: "x"}}}, specFor("/data/x"), "volumes[0]"},
+		{"bad network", Options{WorkspaceClaim: "c", Network: "bridge"}, specFor("/data/x"), "network must be"},
 		{"no image", Options{WorkspaceClaim: "c"}, sandbox.LaunchSpec{Workspace: "/data/x"}, "image"},
 		{"no workspace", Options{WorkspaceClaim: "c"}, sandbox.LaunchSpec{Image: "i"}, "workspace is required"},
 		{"workspace outside claim", Options{WorkspaceClaim: "c"}, specFor("/tmp/elsewhere"), "not under the workspace claim mount"},
@@ -665,6 +689,107 @@ func TestManifestCopiesAllowlistedEnv(t *testing.T) {
 	for _, leak := range []string{"HIVE_TEST_UNLISTED", "HIVE_TEST_API_TOKEN", "GITHUB_TOKEN", "leak", "from-process"} {
 		if strings.Contains(m, leak) {
 			t.Errorf("%q reached the Job manifest:\n%s", leak, m)
+		}
+	}
+}
+
+func TestNetworkNoneWrapsTheJobInADenyAllPolicy(t *testing.T) {
+	api := newFakeAPI()
+	api.statuses = []string{statusPending, statusComplete}
+	srv := httptest.NewServer(api.handler(t))
+	defer srv.Close()
+	l := newLauncher(srv, Options{Network: NetworkNone})
+	if _, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123")); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Join(api.order, ",") != "policy,job" {
+		t.Fatalf("creation order = %v, want the policy before the job", api.order)
+	}
+	if !api.deleted || !api.policyDeleted {
+		t.Fatalf("after success job deleted=%v policy deleted=%v", api.deleted, api.policyDeleted)
+	}
+	name := api.created["metadata"].(map[string]any)["name"].(string)
+	meta := api.policy["metadata"].(map[string]any)
+	spec := api.policy["spec"].(map[string]any)
+	if api.policy["kind"] != "NetworkPolicy" || meta["name"] != name || meta["namespace"] != "hive" {
+		t.Fatalf("policy = %+v", api.policy)
+	}
+	selector := spec["podSelector"].(map[string]any)["matchLabels"].(map[string]any)
+	if selector[jobLabel] != name {
+		t.Fatalf("podSelector = %+v, want %s=%s", selector, jobLabel, name)
+	}
+	types := spec["policyTypes"].([]any)
+	if len(types) != 2 || types[0] != "Ingress" || types[1] != "Egress" || spec["ingress"] != nil || spec["egress"] != nil {
+		t.Fatalf("policy spec = %+v, want deny-all ingress and egress", spec)
+	}
+	template := api.created["spec"].(map[string]any)["template"].(map[string]any)
+	labels := template["metadata"].(map[string]any)["labels"].(map[string]any)
+	if labels[jobLabel] != name {
+		t.Fatalf("pod labels = %+v lack %s", labels, jobLabel)
+	}
+	if podSpec := template["spec"].(map[string]any); podSpec["hostNetwork"] != nil {
+		t.Fatalf("network none set hostNetwork: %+v", podSpec)
+	}
+}
+
+func TestNetworkNoneRefusesToRunWithoutItsPolicy(t *testing.T) {
+	api := newFakeAPI()
+	api.policyErr = http.StatusForbidden
+	srv := httptest.NewServer(api.handler(t))
+	defer srv.Close()
+	l := newLauncher(srv, Options{Network: NetworkNone})
+	_, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123"))
+	if err == nil || !strings.Contains(err.Error(), "deny-all NetworkPolicy") || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("Run = %v, want the policy refusal", err)
+	}
+	if api.created != nil {
+		t.Fatal("the Job was created without its policy")
+	}
+}
+
+func TestNetworkNonePolicyIsRemovedWhenTheJobCannotBeCreatedOrFails(t *testing.T) {
+	api := newFakeAPI()
+	api.createErr = http.StatusForbidden
+	srv := httptest.NewServer(api.handler(t))
+	defer srv.Close()
+	l := newLauncher(srv, Options{Network: NetworkNone})
+	if _, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123")); err == nil {
+		t.Fatal("Run succeeded without a Job")
+	}
+	if api.policy == nil || !api.policyDeleted {
+		t.Fatalf("policy created=%v deleted=%v after a failed job create", api.policy != nil, api.policyDeleted)
+	}
+
+	api = newFakeAPI()
+	api.statuses = []string{statusFailed}
+	srv2 := httptest.NewServer(api.handler(t))
+	defer srv2.Close()
+	l = newLauncher(srv2, Options{Network: NetworkNone})
+	if _, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123")); err == nil {
+		t.Fatal("failed Job reported success")
+	}
+	if api.deleted || !api.policyDeleted {
+		t.Fatalf("failed job deleted=%v (want kept) policy deleted=%v (want gone)", api.deleted, api.policyDeleted)
+	}
+}
+
+func TestNetworkHostAndDefaultManifests(t *testing.T) {
+	for _, network := range []string{NetworkHost, NetworkDefault, ""} {
+		api := newFakeAPI()
+		api.statuses = []string{statusComplete}
+		srv := httptest.NewServer(api.handler(t))
+		l := newLauncher(srv, Options{Network: network})
+		_, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123"))
+		srv.Close()
+		if err != nil {
+			t.Fatalf("network %q: %v", network, err)
+		}
+		if api.policy != nil {
+			t.Fatalf("network %q created a policy", network)
+		}
+		podSpec := api.created["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+		if host := network == NetworkHost; (podSpec["hostNetwork"] == true) != host || (podSpec["dnsPolicy"] == "ClusterFirstWithHostNet") != host {
+			t.Fatalf("network %q: hostNetwork=%v dnsPolicy=%v", network, podSpec["hostNetwork"], podSpec["dnsPolicy"])
 		}
 	}
 }

@@ -13,7 +13,14 @@
 // transferring it, so the clone and worktree are measured after they land
 // and removed when they exceed the cap (ErrTooLarge). When they cannot be
 // measured the checkout is removed and the call fails with ErrUnsupported
-// rather than delivering an uncapped copy.
+// rather than delivering an uncapped copy. The operator's Config.MaxBytes
+// is the ceiling a request's max_bytes may not exceed (ErrAboveCeiling)
+// and the cap when the request names none.
+//
+// Private repositories: Config.Token, when set, reaches git only through a
+// credential helper that reads it from the child's environment — never on
+// the command line, never in a record, never in an error. Git is run with
+// GIT_TERMINAL_PROMPT=0 so a missing credential fails instead of hanging.
 package checkout
 
 import (
@@ -31,6 +38,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
 
@@ -41,8 +49,15 @@ const (
 	IndexName = "index.jsonl"
 	// IDPrefix starts every checkout id.
 	IDPrefix = "chk_"
-	// DefaultMaxBytes is the size cap when a request names none: 5 GiB.
+	// DefaultMaxBytes is the server ceiling on a checkout's clone plus
+	// worktree, and the cap when a request names none: 5 GiB.
 	DefaultMaxBytes int64 = 5 << 30
+	// TokenUser is the username the credential helper pairs with
+	// Config.Token; GitHub and GitLab accept it for any token.
+	TokenUser = "x-access-token"
+	// tokenEnvVar carries Config.Token into the git child process for the
+	// credential helper to read; it is set on that process only.
+	tokenEnvVar = "CRUX_CHECKOUT_GIT_TOKEN"
 	// DefaultMaxCheckouts bounds live worktrees under Dir.
 	DefaultMaxCheckouts = 64
 	// MaxOwnerLen bounds the owner identifier.
@@ -77,6 +92,9 @@ var (
 	ErrMismatch = errors.New("checkout: commit mismatch")
 	// ErrTooLarge is a clone that exceeded max_bytes once measured.
 	ErrTooLarge = errors.New("checkout: exceeds size cap")
+	// ErrAboveCeiling is a request whose max_bytes is above the server's
+	// Config.MaxBytes; it is also an ErrBadRequest.
+	ErrAboveCeiling = errors.New("checkout: max_bytes above the server ceiling")
 	// ErrUnsupported is a cap the backend could not verify.
 	ErrUnsupported = errors.New("checkout: cannot enforce size cap")
 	// ErrGit is a git failure (clone, fetch, worktree).
@@ -101,7 +119,15 @@ type Config struct {
 	AllowedRepos []string
 	// MaxCheckouts caps live worktrees; zero means DefaultMaxCheckouts.
 	MaxCheckouts int
-	// Git runs git; nil uses os/exec.
+	// MaxBytes is the ceiling on a request's max_bytes and the cap when a
+	// request names none; zero means DefaultMaxBytes.
+	MaxBytes int64
+	// Token authenticates https clones of private repositories. It is
+	// handed to git through a credential helper reading the child's
+	// environment and appears in no record, argument or error.
+	Token string
+	// Git runs git; nil uses os/exec. When Token is set the runner is
+	// wrapped so every git invocation carries the credential helper.
 	Git Runner
 	// Now is the clock; nil uses time.Now.
 	Now func() time.Time
@@ -165,11 +191,21 @@ func New(cfg Config) (*Service, error) {
 	if cfg.MaxCheckouts <= 0 {
 		cfg.MaxCheckouts = DefaultMaxCheckouts
 	}
+	if cfg.MaxBytes < 0 {
+		return nil, fmt.Errorf("%w: max_bytes must not be negative", ErrBadRequest)
+	}
+	if cfg.MaxBytes == 0 {
+		cfg.MaxBytes = DefaultMaxBytes
+	}
+	cfg.Token = strings.TrimSpace(cfg.Token)
+	if cfg.Git == nil {
+		cfg.Git = execRunner(cfg.Token)
+	}
+	if cfg.Token != "" {
+		cfg.Git = withCredentialHelper(cfg.Git)
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
-	}
-	if cfg.Git == nil {
-		cfg.Git = execRunner
 	}
 	if cfg.DiskUsage == nil {
 		cfg.DiskUsage = diskUsage
@@ -333,6 +369,9 @@ func (s *Service) validate(req Request) (Record, error) {
 	if req.MaxBytes < 0 || req.TTL < 0 {
 		return Record{}, fmt.Errorf("%w: max_bytes and ttl must not be negative", ErrBadRequest)
 	}
+	if req.MaxBytes > s.cfg.MaxBytes {
+		return Record{}, fmt.Errorf("%w: %w: request asks for %d bytes, this server allows at most %d", ErrBadRequest, ErrAboveCeiling, req.MaxBytes, s.cfg.MaxBytes)
+	}
 	id, err := newID()
 	if err != nil {
 		return Record{}, err
@@ -340,7 +379,7 @@ func (s *Service) validate(req Request) (Record, error) {
 	now := s.cfg.Now().UTC()
 	rec := Record{ID: id, Repo: repo, Commit: commit, Owner: owner, Branches: req.Branches == nil || *req.Branches, MaxBytes: req.MaxBytes, CreatedAt: now}
 	if rec.MaxBytes == 0 {
-		rec.MaxBytes = DefaultMaxBytes
+		rec.MaxBytes = s.cfg.MaxBytes
 	}
 	if req.TTL > 0 {
 		rec.TTL = req.TTL.String()
@@ -406,14 +445,14 @@ func (s *Service) ensureSource(ctx context.Context, rec Record) error {
 		args = append(args, "--", rec.Repo, rec.Source)
 		if out, err := s.cfg.Git(ctx, s.cfg.Dir, "git", args...); err != nil {
 			_ = os.RemoveAll(rec.Source)
-			return fmt.Errorf("%w: clone: %v: %s", ErrGit, err, strings.TrimSpace(string(out)))
+			return fmt.Errorf("%w: clone: %v: %s", ErrGit, err, gitOutput(out))
 		}
 	}
 	if _, err := s.cfg.Git(ctx, rec.Source, "git", "cat-file", "-e", rec.Commit+"^{commit}"); err == nil {
 		return nil
 	}
 	if out, err := s.cfg.Git(ctx, rec.Source, "git", "fetch", "--quiet", "origin", rec.Commit); err != nil {
-		return fmt.Errorf("%w: commit %s is not in %s and could not be fetched: %s", ErrBadRequest, rec.Commit, rec.Repo, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%w: commit %s is not in %s and could not be fetched: %s", ErrBadRequest, rec.Commit, rec.Repo, gitOutput(out))
 	}
 	if _, err := s.cfg.Git(ctx, rec.Source, "git", "cat-file", "-e", rec.Commit+"^{commit}"); err != nil {
 		return fmt.Errorf("%w: commit %s is not in %s", ErrBadRequest, rec.Commit, rec.Repo)
@@ -458,10 +497,41 @@ func ValidID(id string) bool {
 	return err == nil
 }
 
-func execRunner(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	return cmd.CombinedOutput()
+// execRunner is the os/exec Runner. Git never prompts, and token (when
+// set) is in the child's environment for the credential helper alone.
+func execRunner(token string) Runner {
+	return func(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		if token != "" {
+			cmd.Env = append(cmd.Env, tokenEnvVar+"="+token)
+		}
+		return cmd.CombinedOutput()
+	}
+}
+
+// credentialHelper is the inline helper git runs on an https challenge: it
+// answers with TokenUser and the token from the child's environment, so
+// the secret is never an argument. The leading "!" marks a shell snippet.
+const credentialHelper = "!f() { echo username=" + TokenUser + "; echo \"password=$" + tokenEnvVar + "\"; }; f"
+
+// withCredentialHelper wraps inner so every git invocation first clears any
+// configured helpers (a host-wide one could leak the operator's own
+// credential into a caller's clone) and then installs credentialHelper.
+func withCredentialHelper(inner Runner) Runner {
+	return func(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+		if name == "git" {
+			args = append([]string{"-c", "credential.helper=", "-c", "credential.helper=" + credentialHelper}, args...)
+		}
+		return inner(ctx, dir, name, args...)
+	}
+}
+
+// gitOutput is git's combined output as it may appear in an error: trimmed
+// and scrubbed, in case a server ever echoes a credential back.
+func gitOutput(out []byte) string {
+	return logscrub.ScrubString(strings.TrimSpace(string(out)))
 }
 
 // diskUsage sums regular file sizes under path.

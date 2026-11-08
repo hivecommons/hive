@@ -36,6 +36,15 @@ const (
 	// CheckoutDirEnvVar overrides where pinned checkouts live (default
 	// <work dir>/checkouts).
 	CheckoutDirEnvVar = "CRUX_CHECKOUT_DIR"
+	// CheckoutMaxBytesEnvVar is the server ceiling, in bytes, on a
+	// checkout's clone plus worktree and the cap when a request names none
+	// (default 5 GiB).
+	CheckoutMaxBytesEnvVar = "CRUX_CHECKOUT_MAX_BYTES"
+	// CheckoutTokenEnvVar is the token the pinned-checkout service hands to
+	// git, through a credential helper, for private https repositories.
+	// There is no flag: a token on the command line is visible to every
+	// process on the host.
+	CheckoutTokenEnvVar = "CRUX_CHECKOUT_TOKEN"
 	// ServeSocketName is the socket file name under ServeSocketDir.
 	ServeSocketName = "crux.sock"
 	// ServeSocketDirName is the per-user directory under $XDG_RUNTIME_DIR or
