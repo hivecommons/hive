@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.198.0)
+
+### Added
+
+- **cli memory:** with `agents.cli_memory.drain_to_knowledge` on, Hive now seeds a Claude Code `SessionEnd` hook running the new `hive memory-drain --cli claude --agent "$HIVE_AGENT"` command, so a session's memory becomes draft knowledge (and the stored files are emptied) when the session ends; the new `agents.cli_memory.drain_on_write` key (default off, fleet-wide or per agent) adds a `PostToolUse` hook that does the same as soon as a memory file is written. Operator `hooks` entries are kept, and turning the keys off removes only Hive's entry (#17209, #17210).
+
 ## 2026-11-08 (v5.197.0)
 
 ### Added
