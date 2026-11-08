@@ -30,6 +30,12 @@ type unparkWireIssue struct {
 	PullRequest *unparkWirePRLink `json:"pull_request,omitempty"`
 	HeadSHA     string            `json:"-"`
 	State       string            `json:"state,omitempty"`
+	// UpdatedAt is the item's updated_at in the list; empty omits it, which
+	// keeps the sweep's per-item read cache out of the test.
+	UpdatedAt string `json:"updated_at,omitempty"`
+	// CommentCount is the list's comments count; the PR approve-command
+	// read is skipped for a PR without comments.
+	CommentCount int `json:"comments,omitempty"`
 }
 
 type unparkWirePRLink struct {
@@ -85,6 +91,8 @@ type unparkServer struct {
 	register func(unparkWireIssue)
 	// orgLookups counts membership lookups, permLookups permission lookups.
 	orgLookups, permLookups, timelineReads int
+	// commentReads counts comment-list GETs per issue number.
+	commentReads map[int]int
 }
 
 type unparkWireTimelineEvent struct {
@@ -108,12 +116,13 @@ func unlabeledAt(id int64, actor, label string, at time.Time) unparkWireTimeline
 func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue, permissions map[string]string) (*httptest.Server, *unparkServer) {
 	t.Helper()
 	rec := &unparkServer{
-		posted:      map[int][]string{},
-		edited:      map[int64]string{},
-		added:       map[int][]string{},
-		removed:     map[int][]string{},
-		patched:     map[int][]string{},
-		permissions: permissions,
+		posted:       map[int][]string{},
+		edited:       map[int64]string{},
+		added:        map[int][]string{},
+		removed:      map[int][]string{},
+		patched:      map[int][]string{},
+		permissions:  permissions,
+		commentReads: map[int]int{},
 	}
 	byNum := map[int]unparkWireIssue{}
 	for _, issue := range issues {
@@ -201,6 +210,7 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 		case strings.HasSuffix(path, "/comments") && r.Method == http.MethodGet:
 			var n int
 			fmt.Sscanf(path, "issues/%d/comments", &n)
+			rec.commentReads[n]++
 			_ = json.NewEncoder(w).Encode(byNum[n].Comments)
 
 		case strings.HasSuffix(path, "/comments") && r.Method == http.MethodPost:
