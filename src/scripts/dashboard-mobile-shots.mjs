@@ -267,7 +267,7 @@ async function main() {
   const activityFailures = [];
   const fixtureRoot = path.join(process.cwd(), 'src/pkg/dashboard/webstatic/testdata');
   const density = JSON.parse(fs.readFileSync(path.join(fixtureRoot, 'tracker-activity-density.json'), 'utf8'));
-  const probes = ['tracker-header-geometry', 'tracker-decision-interaction', 'tracker-phone-chrome', 'tracker-phone-pill', 'tracker-phone-ergonomics', 'tracker-phone-card', 'tracker-text-floor'].map(name => ({
+  const probes = ['tracker-header-geometry', 'tracker-decision-interaction', 'tracker-phone-chrome', 'tracker-phone-pill', 'tracker-phone-ergonomics', 'tracker-phone-card', 'tracker-text-floor', 'tracker-phone-attention-first'].map(name => ({
     name, source: fs.readFileSync(path.join(fixtureRoot, name + '.js'), 'utf8'),
   }));
   // Phone tier (hivecommons/hive#17160): the chevron strip is hidden behind
@@ -526,6 +526,12 @@ async function main() {
             // median row ≤ 96px and ≥ 6 rows in view with the density fixture.
             if (probe.name === 'tracker-phone-card' && vp.name === PILL_REQUIRED_VIEWPORT && !(result.ok && result.result && result.result.phone === true && result.result.median <= CARD_MAX_MEDIAN_ROW_PX && result.result.inView >= CARD_MIN_ROWS_IN_VIEW)) {
               activityFailures.push(vp.name + ' ' + theme + ' card rows must have median height ≤ ' + CARD_MAX_MEDIAN_ROW_PX + 'px with ≥ ' + CARD_MIN_ROWS_IN_VIEW + ' rows in view at 390x844');
+            }
+            // Likewise the attention-first order and the count line
+            // (hivecommons/hive#17162): at 390×844 the probe must have found
+            // attention rows to lead with, never pass by skipping.
+            if (probe.name === 'tracker-phone-attention-first' && vp.name === PILL_REQUIRED_VIEWPORT && !(result.ok && result.result && result.result.phone === true && result.result.attentionRows > 0)) {
+              activityFailures.push(vp.name + ' ' + theme + ' attention rows must lead the list under the count line at 390x844');
             }
           }
           let native;
