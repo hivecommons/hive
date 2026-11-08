@@ -2,6 +2,8 @@
 
 The governor picks a mode — **idle → quiet → busy → surge** — by comparing queue depth (actionable issues + open PRs, summed across every repo the hive watches) against three thresholds. The mode then selects each agent's kick cadence, so the thresholds are what decide how hard the hive works.
 
+Queue depth counts the enumerated work queue, not stage labels: an issue at `stage/018-open-for-discussion` (an unclaimed `proposal` / `kind/design` issue, [#17150](https://github.com/hivecommons/hive/issues/17150)) is still an open, claimable issue and still counts toward the actionable issue depth, exactly as it did when it read `stage/010-actionable`. The stage only changes how the activity monitor labels it.
+
 ## The problem the scaling solves
 
 Queue depth scales with how many repos a hive watches; the thresholds did not. A fixed `surge: 20` therefore encoded an implicit repo count:

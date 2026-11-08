@@ -135,7 +135,7 @@ func stageTrackerClassifyModifiers(labels []string, hiveID string, rec stagelabe
 // caption clause naming what it waits on. Only the pre-claim stages
 // qualify: once a claim or PR exists the sequencing no longer gates it.
 func stageTrackerBlockedBy(it *StageTrackerItem, blockers []string) {
-	if it == nil || len(blockers) == 0 || it.Stage > trackerNumberPossiblyExists {
+	if it == nil || len(blockers) == 0 || it.Stage >= trackerNumberClaimed {
 		return
 	}
 	it.BlockedOn = append([]string(nil), blockers...)
@@ -822,6 +822,14 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return stageTrackerTriageNeededCaption, "maintainer"
 	case stagelabels.PossiblyExisting:
 		return joinClause("Prior art found; the author must confirm the gap (`/hive decision proceed — <gap>`) or close it (`/hive decision exists`)", clause), strings.TrimPrefix(who, "@")
+	case stagelabels.OpenForDiscussion:
+		// The reason ("open for discussion: proposal") would repeat the
+		// chevron word; the caption names the label and the way in.
+		head := "Open for discussion; no agent work is queued — claim it to take it on"
+		if label := stageengine.ReasonDiscussionLabel(reason); label != "" {
+			head = "Open for discussion (" + label + "); no agent work is queued — claim it to take it on"
+		}
+		return head, "anyone"
 	case stagelabels.Claimed:
 		return joinClause("Claimed; work is about to start", clause), "claimant"
 	case stagelabels.PRInProgress:

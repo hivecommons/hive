@@ -24,6 +24,11 @@ func TestDeriveIssueProgress(t *testing.T) {
 	}{
 		{"actionable, no label", nil, stagelabels.Actionable, false},
 		{"actionable, partially addressed", func(f *Facts) { f.Labels = []string{"help wanted", partial} }, stagelabels.Actionable, true},
+		{"open for discussion, partially addressed", func(f *Facts) {
+			f.Labels = []string{"proposal", partial}
+			f.Issue.DiscussionLabel = "proposal"
+		}, stagelabels.OpenForDiscussion, true},
+		{"open for discussion, no label", func(f *Facts) { f.Issue.DiscussionLabel = "proposal" }, stagelabels.OpenForDiscussion, false},
 		{"label case-insensitive", func(f *Facts) { f.Labels = []string{strings.ToUpper(partial)} }, stagelabels.Actionable, true},
 		{"triage needed, partially addressed", func(f *Facts) {
 			f.Labels = []string{partial}
@@ -57,14 +62,20 @@ func TestDeriveIssueProgress(t *testing.T) {
 // PR merges partially and the issue returns to 010 wearing
 // hive/partially-addressed. The record must not read as regressed. The
 // control case — the covering PR closes unmerged, no label — still does.
+// A proposal takes the same fall to 018 (hivecommons/hive#17020: a `Refs`
+// RFC PR merged and left the discussion open, hivecommons/hive#17150).
 func TestReconcileProgressFallBooksNoRegression(t *testing.T) {
 	cases := []struct {
 		name          string
 		labels        []string
+		discussion    string
+		wantStage     stagelabels.Stage
 		wantRegressed bool
 	}{
-		{"covering PR merged partially", []string{stagelabels.CoveredByPR.Label(), stagelabels.PartiallyAddressedLabel}, false},
-		{"covering PR closed unmerged", []string{stagelabels.CoveredByPR.Label()}, true},
+		{"covering PR merged partially", []string{stagelabels.CoveredByPR.Label(), stagelabels.PartiallyAddressedLabel}, "", stagelabels.Actionable, false},
+		{"covering PR closed unmerged", []string{stagelabels.CoveredByPR.Label()}, "", stagelabels.Actionable, true},
+		{"proposal: Refs PR merged", []string{stagelabels.CoveredByPR.Label(), "proposal", stagelabels.PartiallyAddressedLabel}, "proposal", stagelabels.OpenForDiscussion, false},
+		{"proposal: covering PR closed unmerged", []string{stagelabels.CoveredByPR.Label(), "proposal"}, "proposal", stagelabels.OpenForDiscussion, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,7 +98,11 @@ func TestReconcileProgressFallBooksNoRegression(t *testing.T) {
 					f.Issue.Claim = &ClaimFact{Holder: "scanner", Kind: "agent"}
 				},
 				func(f *Facts) { f.Issue.Bucket = BucketCoveredByPR; f.Issue.CoveringPR = pr },
-				func(f *Facts) { f.Issue.Bucket = BucketActionable; f.Labels = tc.labels },
+				func(f *Facts) {
+					f.Issue.Bucket = BucketActionable
+					f.Labels = tc.labels
+					f.Issue.DiscussionLabel = tc.discussion
+				},
 			}
 			var last Transition
 			for i, mut := range steps {
@@ -104,8 +119,8 @@ func TestReconcileProgressFallBooksNoRegression(t *testing.T) {
 				}
 				last = tr
 			}
-			if last.From != stagelabels.CoveredByPR || last.To != stagelabels.Actionable {
-				t.Fatalf("final hop %v → %v, want 040 → 010", last.From, last.To)
+			if last.From != stagelabels.CoveredByPR || last.To != tc.wantStage {
+				t.Fatalf("final hop %v → %v, want 040 → %v", last.From, last.To, tc.wantStage)
 			}
 			rec, ok := store.Get(stagelabels.Key("hivecommons/hive", 14557))
 			if !ok {

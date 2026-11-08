@@ -931,7 +931,11 @@ const (
 	// lights the Actionable column with the word "Possibly exists" and
 	// waits on its author (hivecommons/hive#13575).
 	trackerNumberPossiblyExists = 17
-	stageTrackerHistoryMaxItems = stagelabels.HistoryLimit
+	// trackerNumberOpenForDiscussion is the unclaimed proposal / design
+	// issue (018): it lights the Actionable column with the words "Open for
+	// discussion" — no agent work is queued on it (hivecommons/hive#17150).
+	trackerNumberOpenForDiscussion = 18
+	stageTrackerHistoryMaxItems    = stagelabels.HistoryLimit
 )
 
 // Modifier names (also the CSS hooks in index.html).
@@ -1025,6 +1029,8 @@ func stageTrackerShort(s stagelabels.Stage) string {
 		return "Triage needed"
 	case stagelabels.PossiblyExisting:
 		return "Possibly exists"
+	case stagelabels.OpenForDiscussion:
+		return "Open for discussion"
 	case stagelabels.Claimed:
 		return "Claimed"
 	case stagelabels.PRInProgress:
