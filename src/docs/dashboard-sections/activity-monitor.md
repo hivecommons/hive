@@ -68,6 +68,7 @@ Side stages share a column rather than adding columns:
 | Stage | Column / meaning |
 | --- | --- |
 | 015 Triage needed | Actionable; a human must triage. From `needs-triage` or the reporter-trust `reporter_triage` bucket, never merely the reporter's identity. |
+| 018 Open for discussion | Actionable; an unclaimed `proposal` / `kind/design` issue whose remainder is a discussion, not agent work. The caption names the label (*Open for discussion (proposal); no agent work is queued — claim it to take it on*); a claim moves it to Claimed as usual ([#17150](https://github.com/hivecommons/hive/issues/17150)). |
 | 045 Needs human decision | Actionable on an issue. A pre-045 issue still wearing 085 is drawn here until reconciliation. |
 | 070 Fixing / 071 Needs author / 072 Returned to contributor | CI / Review: Hive repairs its own PR at 070; a human author acts at 071; a contributor agent gets its PR back at 072. `needs-rebase` explains a repair here, not at 050. |
 | 074 Adopted by hive | CI / Review while the Hive repairs adopted work; pending, green or red pushes remain 074 until the merge gate takes it. |

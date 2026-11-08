@@ -112,6 +112,15 @@ const (
 	// label itself is the park signal (hard suppress, like 045). Appended
 	// for the same persisted-enum reason as NeedsDecision.
 	PossiblyExisting
+	// OpenForDiscussion is stage/018-open-for-discussion: an open ISSUE
+	// labelled `proposal` or `kind/design` that nobody holds a live claim
+	// on. What remains on it is a discussion, not agent work, so it reads
+	// "Open for discussion" rather than "Actionable"
+	// (hivecommons/hive#17150). NOT a gate: admission still lets anyone
+	// claim it, and a claim stages 020/030 as on any issue. Issue-only,
+	// open-ended. Appended for the same persisted-enum reason as
+	// NeedsDecision.
+	OpenForDiscussion
 )
 
 // Prefix is the stage label family prefix. Every label under it is
@@ -206,7 +215,8 @@ type Item int
 const (
 	// IssueItem: an issue. Only Issue:true stages (010–045; 015 is the
 	// untriaged actionable issue, 017 the issue parked on its author by
-	// the prior-art gate, 045 the issue parked on a person) may land on it.
+	// the prior-art gate, 018 the unclaimed proposal / design issue, 045
+	// the issue parked on a person) may land on it.
 	IssueItem Item = iota
 	// PRItem: a pull request. Only PR:true stages (050–100) may land on it.
 	PRItem
@@ -262,6 +272,7 @@ var Table = []Definition{
 	{Stage: Actionable, Number: 10, Slug: "actionable", Description: "Triaged; eligible for the hive to pick up", Dwell: 24 * time.Hour, Issue: true},
 	{Stage: TriageNeeded, Number: 15, Slug: "triage-needed", Description: "Actionable but held by the reporter-trust gate: awaiting a maintainer's triage label", Dwell: TriageNeededDwell, Issue: true},
 	{Stage: PossiblyExisting, Number: PossiblyExistingNumber, Slug: PossiblyExistingSlug, Description: "Possibly exists · needs author: prior art found; confirm the gap or close before an agent takes it", Issue: true},
+	{Stage: OpenForDiscussion, Number: OpenForDiscussionNumber, Slug: OpenForDiscussionSlug, Description: "Open for discussion: proposal / design issue with no live claim; claimable, no agent work queued", Issue: true},
 	{Stage: Claimed, Number: 20, Slug: "claimed", Description: "Claimed by the scanner or a relay contributor", Dwell: 2 * time.Hour, Issue: true},
 	{Stage: PRInProgress, Number: 30, Slug: "pr-in-progress", Description: "An agent has a PR under way for this issue (branch pushed or PR request in flight)", Dwell: 90 * time.Minute, Issue: true},
 	{Stage: CoveredByPR, Number: 40, Slug: "covered-by-pr", Description: "An open PR covers this issue", Issue: true},
@@ -341,6 +352,15 @@ const TriageNeededDwell = 24 * time.Hour
 const (
 	PossiblyExistingNumber = 17
 	PossiblyExistingSlug   = "possible-existing"
+)
+
+// OpenForDiscussionNumber and OpenForDiscussionSlug name stage/018: the
+// unclaimed proposal / design issue sits beside the other pre-claim,
+// person-owned stages (015, 017) and before 020 claimed, which a claim on
+// it still reaches (hivecommons/hive#17150).
+const (
+	OpenForDiscussionNumber = 18
+	OpenForDiscussionSlug   = "open-for-discussion"
 )
 
 // MergeQueueNumber is fixed: the merge queue is always the top stage. New
@@ -435,8 +455,8 @@ func (s Stage) Before(other Stage) bool {
 // (the scanner claims from it exactly as from 010), so a `needs-triage` the
 // issue still wears at one of these stages is stale: the reconciler removes
 // it (Desired.Clear) and the activity monitor does not read "Triage needed"
-// from it (hivecommons/hive#14586). 010, 015, 017 and the 045 park are
-// before the claim and keep the label.
+// from it (hivecommons/hive#14586). 010, 015, 017, 018 and the 045 park
+// are before the claim and keep the label.
 func (s Stage) SettlesTriage() bool {
 	return s != None && !s.Before(Claimed) && s != IssueNeedsDecision
 }

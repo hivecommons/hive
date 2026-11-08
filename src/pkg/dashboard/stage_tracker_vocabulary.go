@@ -36,7 +36,7 @@ const (
 // CI / Review column — only 080 and later are the merge gate.
 func stageTrackerColumn(stage stagelabels.Stage) int {
 	switch stage {
-	case stagelabels.Actionable, stagelabels.TriageNeeded, stagelabels.PossiblyExisting, stagelabels.IssueNeedsDecision:
+	case stagelabels.Actionable, stagelabels.TriageNeeded, stagelabels.PossiblyExisting, stagelabels.OpenForDiscussion, stagelabels.IssueNeedsDecision:
 		return trackerColumnActionable
 	case stagelabels.Claimed:
 		return trackerColumnClaimed
@@ -153,6 +153,8 @@ func stageTrackerStagePhrase(stage stagelabels.Stage) string {
 		return "waiting for triage"
 	case stagelabels.PossiblyExisting:
 		return "waiting for the author to confirm the gap (prior art found)"
+	case stagelabels.OpenForDiscussion:
+		return "open for discussion"
 	case stagelabels.Claimed:
 		return "claimed"
 	case stagelabels.PRInProgress:
