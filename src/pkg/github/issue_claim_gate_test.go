@@ -29,6 +29,11 @@ func TestIssueClaimBlockReason(t *testing.T) {
 		{"Epic", ClaimBlockReasonNeverClaimPrefix + "Epic"},
 		{"epic", ClaimBlockReasonNeverClaimPrefix + "epic"},
 		{"approved-direction", ""},
+		// Proposal / design issues derive 018-open-for-discussion but stay
+		// claimable (hivecommons/hive#17150): only the stage changes.
+		{"proposal", ""},
+		{"kind/design", ""},
+		{"stage/018-open-for-discussion", ""},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

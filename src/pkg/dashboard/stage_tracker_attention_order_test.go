@@ -108,6 +108,7 @@ func TestStageTrackerAttentionOrderJS(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_NEEDED"),
 		jsConstLine(t, html, "STAGE_TRACKER_POSSIBLY_EXISTS"),
+		jsConstLine(t, html, "STAGE_TRACKER_OPEN_FOR_DISCUSSION"),
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),
 		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_MODS"),
 		stageTrackerTierJS(t, html),
