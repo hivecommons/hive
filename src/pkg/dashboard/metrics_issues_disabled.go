@@ -1,6 +1,10 @@
 package dashboard
 
-import "context"
+import (
+	"context"
+
+	ghpkg "github.com/hivecommons/hive/pkg/github"
+)
 
 // IssuesDisabledRepo is a watched repo whose Issues feature is turned off
 // (has_issues=false). Agents cannot file issues there and the advisory issue
@@ -14,11 +18,13 @@ type IssuesDisabledRepo struct {
 	Message string `json:"message"`
 }
 
-// collectIssuesDisabled probes has_issues for every repo the GitHub client
-// watches (project.repos). It runs on the metrics cadence: once at startup and
-// every metricsCollectInterval after. A failed probe fails OPEN for that repo:
-// the previous verdict is kept, so a transient API error neither invents a
-// warning nor silently clears a real one.
+// collectIssuesDisabled checks has_issues for every repo the GitHub client
+// watches (project.repos). It runs on the metrics cadence (once at startup and
+// every metricsCollectInterval after), but each repo's metadata is read from
+// GitHub at most once per repoMetadataRefreshInterval (repoMetadata), so a
+// change to a repo's Issues setting shows within the hour. A failed read fails
+// OPEN for that repo: the previous verdict is kept, so a transient API error
+// neither invents a warning nor silently clears a real one.
 func (mc *MetricsCollector) collectIssuesDisabled(ctx context.Context) {
 	gh := mc.client()
 	if gh == nil {
@@ -43,7 +49,7 @@ func (mc *MetricsCollector) collectIssuesDisabled(ctx context.Context) {
 		}
 		seen[full] = true
 
-		disabled, err := gh.ProbeIssuesDisabled(ctx, owner, name)
+		meta, err := mc.repoMetadata(ctx, gh, owner, name)
 		if err != nil {
 			mc.logger.Warn("could not check watched repo has_issues", "repo", full, "error", err)
 			if p, ok := prev[full]; ok {
@@ -51,7 +57,7 @@ func (mc *MetricsCollector) collectIssuesDisabled(ctx context.Context) {
 			}
 			continue
 		}
-		if disabled != nil {
+		if disabled := ghpkg.IssuesDisabledFor(owner, name, meta); disabled != nil {
 			found = append(found, IssuesDisabledRepo{Repo: disabled.Repo, Fork: disabled.Fork, Message: disabled.Error()})
 		}
 	}
