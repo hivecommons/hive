@@ -1,6 +1,10 @@
 package dashboard
 
 import (
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -8,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/redmain"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -295,5 +300,112 @@ func TestStandbyDispatchCarriesGuidanceNotResidentWorkList(t *testing.T) {
 	} else if !strings.Contains(msg.Prompt[:at], "tiny standby item") {
 		t.Errorf("the standby task must come before the lane policy")
 	}
+	assertGuidanceOnlyRolePrompt(t, msg.Prompt, "quality", counting, store)
+}
+
+// installTaskRepoKnowledge gives the hive a primary repo and the assigned
+// task's repo, each checked out with its own AGENTS.md, and a knowledge vault
+// with one fact about the assigned task, so a role prompt shows which repo's
+// instructions it carries and whether knowledge was primed from the task.
+func installTaskRepoKnowledge(t *testing.T, s *Server, sched *scheduler.Scheduler, taskRepo string) {
+	t.Helper()
+	checkouts := t.TempDir()
+	for name, text := range map[string]string{
+		"primary-repo":          "PRIMARY-REPO-INSTRUCTION: this is the role's primary repo.",
+		filepath.Base(taskRepo): "TASK-REPO-INSTRUCTION: this is the assigned task's repo.",
+	} {
+		if err := os.MkdirAll(filepath.Join(checkouts, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(checkouts, name, "AGENTS.md"), []byte("# Agent notes\n\n"+text+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := s.deps.Config
+	cfg.Project.PrimaryRepo = "primary-repo"
+	cfg.Project.CheckoutsDir = checkouts
+
+	vault := t.TempDir()
+	fact := "---\ntitle: Standby coverage for the assigned-only API\ntype: gotcha\nlayer: project\n---\n" +
+		"TASK-KNOWLEDGE: tiny standby items and assigned-only API coverage share one fixture.\n"
+	if err := os.WriteFile(filepath.Join(vault, "task-fact.md"), []byte(fact), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, err := knowledge.NewFileStore(vault, "vault", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primer := knowledge.NewPrimer(nil, knowledge.PrimerConfig{MaxFacts: 25}, logger)
+	primer.AddFileStore("vault", store, knowledge.LayerProject)
+	sched.SetPrimer(primer)
+}
+
+func assertTaskRepoRolePrompt(t *testing.T, prompt, agent string, sched *scheduler.Scheduler) {
+	t.Helper()
+	for _, want := range []string{"# Relevant Knowledge", "TASK-KNOWLEDGE:", "TASK-REPO-INSTRUCTION"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("role prompt is missing %q", want)
+		}
+	}
+	if strings.Contains(prompt, "PRIMARY-REPO-INSTRUCTION") {
+		t.Errorf("role prompt carries the role's primary repo AGENTS.md instead of the task repo's")
+	}
+	if _, ok := sched.KickSummary(agent); ok {
+		t.Errorf("building the role prompt recorded a kick summary for the resident %s", agent)
+	}
+	if slugs := sched.KickPrimedSlugs(agent); slugs != nil {
+		t.Errorf("building the role prompt recorded primed slugs %v for the resident %s", slugs, agent)
+	}
+}
+
+// A role-delegated task's guidance carries the AGENTS.md of the repository the
+// task is in, not the role's primary repo, and the "# Relevant Knowledge"
+// primed from that one issue — still with no resident work lists, no
+// classification sweep and no kick summary for the resident agent.
+func TestRoleDelegatedTaskGuidanceCarriesTaskRepoAndIssueKnowledge(t *testing.T) {
+	for _, tc := range []struct{ role, template string }{
+		{role: "scanner", template: "scanner-automerge.md"},
+		{role: "quality", template: "quality-full.md"},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			hub, s := roleTestHub(t)
+			counting, store := installGuidanceCountingScheduler(t, s, tc.role, tc.template)
+			installTaskRepoKnowledge(t, s, counting.Scheduler, "myorg/repo1")
+			setStatusIssues(s, map[string]any{
+				"number": float64(7),
+				"title":  "missing test coverage for the assigned-only API",
+				"author": "bob",
+				"labels": []any{"test-coverage"},
+				"lane":   tc.role,
+			})
+			conn := &ContributorConnection{
+				profile:  &ContributorProfile{GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "contributor"},
+				role:     tc.role,
+				lastPong: time.Now(),
+			}
+			msg := hub.selectTask(conn)
+			if msg == nil || msg.Type != "task_assign" || msg.Number != 7 || msg.Repo != "myorg/repo1" {
+				t.Fatalf("expected task_assign for myorg/repo1#7, got %+v", msg)
+			}
+			assertTaskRepoRolePrompt(t, msg.Prompt, tc.role, counting.Scheduler)
+			assertGuidanceOnlyRolePrompt(t, msg.Prompt, tc.role, counting, store)
+		})
+	}
+}
+
+// Donated standby work gets the same task-repo guidance.
+func TestStandbyDispatchGuidanceCarriesTaskRepoAndIssueKnowledge(t *testing.T) {
+	cfg := standbyAutoDispatchConfig(true, "T2", 1)
+	s, conn := standbyAutoDispatchHarness(t, cfg)
+	counting, store := installGuidanceCountingScheduler(t, s, "quality", "quality-full.md")
+	installTaskRepoKnowledge(t, s, counting.Scheduler, "alice/repo")
+
+	s.contributeHub.AutoDispatchStandby([]string{"quality"})
+	msg := readMsg(t, conn)
+	if msg.Type != "task_assign" || msg.Repo != "alice/repo" {
+		t.Fatalf("auto dispatch msg = %s (%s): %s", msg.Type, msg.Repo, msg.Reason)
+	}
+	assertTaskRepoRolePrompt(t, msg.Prompt, "quality", counting.Scheduler)
 	assertGuidanceOnlyRolePrompt(t, msg.Prompt, "quality", counting, store)
 }

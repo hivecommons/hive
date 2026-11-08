@@ -319,7 +319,8 @@ func (h *ContributeWSHub) assignStandbyTask(c *ContributorConnection, item Ready
 	}
 	canPush := h.contributorCanPush(item.Repo, c.profile.GitHubUsername)
 	prompt := buildTaskPromptForContributor(ref, item.Title, canPush, h.writingGuideSection())
-	if policy := strings.TrimSpace(h.roleKickPrompt(lane)); policy != "" {
+	task := ghpkg.Issue{Repo: item.Repo, Number: item.Number, Title: item.Title, Labels: item.Labels}
+	if policy := strings.TrimSpace(h.roleKickPrompt(lane, task)); policy != "" {
 		prompt = buildStandbyTaskPrompt(prompt, lane, policy)
 	} else {
 		prompt = buildStandbyTaskPrompt(prompt, lane, "")

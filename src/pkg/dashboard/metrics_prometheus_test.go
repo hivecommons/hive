@@ -17,12 +17,12 @@ type metricsSchedulerStub struct{ actionable *ghpkg.ActionableResult }
 func (m metricsSchedulerStub) BuildAgentMessage(string, []ghpkg.Issue, *ghpkg.ActionableResult) string {
 	return ""
 }
-func (m metricsSchedulerStub) BuildAgentMessageFromLastActionable(string) string { return "" }
-func (m metricsSchedulerStub) BuildAgentGuidance(string) string                  { return "" }
-func (m metricsSchedulerStub) FirstScanDone() bool                               { return true }
-func (m metricsSchedulerStub) DeferKickUntilFirstScan(string, func(string))      {}
-func (m metricsSchedulerStub) GetLastActionable() *ghpkg.ActionableResult        { return m.actionable }
-func (m metricsSchedulerStub) GetLaneDepths() map[string]int                     { return nil }
+func (m metricsSchedulerStub) BuildAgentMessageFromLastActionable(string) string    { return "" }
+func (m metricsSchedulerStub) BuildAgentGuidanceForTask(string, ghpkg.Issue) string { return "" }
+func (m metricsSchedulerStub) FirstScanDone() bool                                  { return true }
+func (m metricsSchedulerStub) DeferKickUntilFirstScan(string, func(string))         {}
+func (m metricsSchedulerStub) GetLastActionable() *ghpkg.ActionableResult           { return m.actionable }
+func (m metricsSchedulerStub) GetLaneDepths() map[string]int                        { return nil }
 func (m metricsSchedulerStub) ResolveTemplate(string) scheduler.TemplateResolution {
 	return scheduler.TemplateResolution{}
 }

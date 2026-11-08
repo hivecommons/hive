@@ -281,7 +281,10 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 	return inj.Section
 }
 
-// primeKnowledgeStats is primeKnowledge without the summary log line.
+// primeKnowledgeStats is primeKnowledge without the summary log line. It is
+// the RESIDENT kick's primer: besides the injection it records what this kick
+// carried for the agent — a fresh KickSummary (the mid-task advisor's kick
+// identity, #17155) and the rendered slugs (KickPrimedSlugs, #17052).
 func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue) knowledgeInjection {
 	s.mu.RLock()
 	primer := s.primer
@@ -295,14 +298,45 @@ func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue)
 		limit = len(issues)
 	}
 	s.recordKickSummary(agentName, issues[:limit])
-	if len(issues) == 0 {
+	inj, slugs := s.renderKnowledge(primer, cfg, agentName, issues[:limit])
+	if inj.Primed {
+		s.primedSlugs.Store(agentName, slugs)
+	}
+	return inj
+}
+
+// primeKnowledgeForTask is the "# Relevant Knowledge" section for a
+// contributor's one assigned task in agentName's role (BuildAgentGuidanceForTask):
+// the same query, agent scope, kick context and byte cap a resident kick uses,
+// primed from that issue alone. It records nothing for the resident agent —
+// no KickSummary and no KickPrimedSlugs — because no resident kick was sent:
+// writing either would move the resident session's advisor identity and make
+// its advisor hold back facts its own kick never carried.
+func (s *Scheduler) primeKnowledgeForTask(agentName string, task github.Issue) knowledgeInjection {
+	s.mu.RLock()
+	primer := s.primer
+	cfg := s.cfg
+	s.mu.RUnlock()
+	if primer == nil {
 		return knowledgeInjection{}
 	}
+	inj, _ := s.renderKnowledge(primer, cfg, agentName, []github.Issue{task})
+	return inj
+}
 
-	keywords := extractKeywords(issues[:limit])
+// renderKnowledge is the side-effect-free core both primers share: it queries
+// the wiki layers for issues and renders the section, returning the slugs it
+// rendered for a caller that records them. It writes no scheduler state other
+// than the cap-log dedupe key, which only picks the log level.
+func (s *Scheduler) renderKnowledge(primer *knowledge.Primer, cfg *config.Config, agentName string, issues []github.Issue) (knowledgeInjection, []string) {
+	if len(issues) == 0 {
+		return knowledgeInjection{}, nil
+	}
+
+	keywords := extractKeywords(issues)
 	if len(keywords) == 0 {
 		s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
-		return knowledgeInjection{}
+		return knowledgeInjection{}, nil
 	}
 
 	s.logger.Info("knowledge primer: searching", "keywords", len(keywords), "sample", keywordSample(keywords))
@@ -314,9 +348,8 @@ func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue)
 		}
 		scope = &agentScope
 	}
-	primed := primer.PrimeForKick(context.Background(), scope, kickContextFor(cfg, agentName, issues[:limit]), keywords)
+	primed := primer.PrimeForKick(context.Background(), scope, kickContextFor(cfg, agentName, issues), keywords)
 	result, omitted := primed.Render()
-	s.primedSlugs.Store(agentName, primed.RenderedSlugs())
 	inj := knowledgeInjection{
 		Section:       result,
 		Bytes:         len(result),
@@ -341,7 +374,7 @@ func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue)
 			"omitted_facts", omitted.Facts, "omitted_hints", omitted.Hints,
 			"omitted_bytes", omitted.Bytes, "cap_bytes", primed.MaxBytes)
 	}
-	return inj
+	return inj, primed.RenderedSlugs()
 }
 
 // kickDraftAuthors lists the identities whose draft knowledge a kick for

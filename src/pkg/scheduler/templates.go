@@ -304,15 +304,18 @@ func (s *Scheduler) inceptionVars() (idea, phase, mode, answers, slug, repoURL s
 // ${GH_AUTH} or ${AGENT_NAME}.
 func (s *Scheduler) substituteTemplateWithVars(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue, extra map[string]func() string, elideOpt ...bool) (string, bool) {
 	elideStuffed := len(elideOpt) > 0 && elideOpt[0]
-	return s.substituteTemplate(template, actionable, agentName, issues, extra, elideStuffed, false)
+	return s.substituteTemplate(template, actionable, agentName, issues, extra, elideStuffed, nil)
 }
 
-// substituteTemplate is the one ${VAR} renderer behind every kick. guidance
-// marks a contributor's role-guidance render (BuildAgentGuidance): the
-// metrics-file work lists are not read at all, and the variables that carry
-// the resident agent's work or its App credentials render empty
-// (guidanceBlankedVars). Every resident kick passes false and is unchanged.
-func (s *Scheduler) substituteTemplate(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue, extra map[string]func() string, elideStuffed, guidance bool) (string, bool) {
+// substituteTemplate is the one ${VAR} renderer behind every kick. A non-nil
+// guidance marks a contributor's role-guidance render
+// (BuildAgentGuidanceForTask): the metrics-file work lists are not read at
+// all, the variables that carry the resident agent's work or its App
+// credentials render empty (guidanceBlankedVars), knowledge is primed from the
+// one assigned task without recording anything for the resident agent, and
+// AGENTS.md and skills come from the task's repository. Every resident kick
+// passes nil and is unchanged.
+func (s *Scheduler) substituteTemplate(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue, extra map[string]func() string, elideStuffed bool, guidance *roleGuidance) (string, bool) {
 	baseName := s.cfg.BaseAgentName(agentName)
 	if actionable == nil {
 		actionable = &github.ActionableResult{}
@@ -370,15 +373,18 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 	if len(agentIssues) == 0 && actionable != nil && len(actionable.Issues.Items) > 0 {
 		agentIssues = actionable.Issues.Items
 	}
-	// A guidance render has no issues to prime knowledge from, and priming
-	// would record a kick summary for the resident agent that no kick sent.
+	// A guidance render primes from its one assigned task, never from the
+	// resident agent's queue, and records no kick summary or primed slugs for
+	// the resident agent: no resident kick was sent.
 	var knowledgeInj knowledgeInjection
-	if !guidance {
+	if guidance == nil {
 		knowledgeInj = s.primeKnowledgeStats(agentName, agentIssues)
+	} else {
+		knowledgeInj = s.primeKnowledgeForTask(agentName, guidance.task)
 	}
 	knowledgeSection := knowledgeInj.Section
 
-	repoRoot := s.agentsRepoRoot(primaryRepo)
+	repoRoot := s.agentsRepoRoot(guidance.instructionsRepo(primaryRepo))
 
 	// Additive: prepend the repo's AGENTS.md instructions + requested skills to
 	// the injected knowledge, when a checkout root is available — local, or the
@@ -386,11 +392,14 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 	// guarded, single call point — it returns "" (and never errors) when no
 	// AGENTS.md exists, so it is a no-op for repos that don't use the convention.
 	//
-	// The root is resolved for the PRIMARY repo, which is the repo this kick's
-	// instructions are about — the same repo ${PROJECT_PRIMARY_REPO} names here
-	// and HIVE_REPO names in the agent's environment. A multi-repo hive gets the
-	// primary repo's AGENTS.md, never a different repo's: resolution is keyed by
-	// repo name, so it cannot silently pick the wrong one.
+	// A resident kick resolves the root for the PRIMARY repo, which is the repo
+	// its instructions are about — the same repo ${PROJECT_PRIMARY_REPO} names
+	// here and HIVE_REPO names in the agent's environment. A multi-repo hive
+	// gets the primary repo's AGENTS.md, never a different repo's: resolution is
+	// keyed by repo name, so it cannot silently pick the wrong one. A role
+	// guidance render resolves it for the assigned task's repository instead,
+	// since that is the repo the contributor will change, and falls back to the
+	// primary only when the task names no repo (roleGuidance.instructionsRepo).
 	//
 	// TODO(agentsmd): once file-level targeting exists, prefer
 	// agentsmd.ParseNearest for closest-wins nested AGENTS.md. That still has no
@@ -402,7 +411,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 	}
 
 	// Agent-declared skills prefer the hive-host-local registry, then fall back
-	// to definitions in the primary repo's AGENTS.md or adjacent skills/
+	// to definitions in that repo's AGENTS.md or adjacent skills/
 	// directory. The registry remains independently useful without a checkout;
 	// the fallback activates only when agentsRepoRoot found one above.
 	skillsSection := s.primeSkills(agentName, repoRoot)
@@ -418,7 +427,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 	// must not be handed a red PR on a repo it cannot push to (#6204).
 	repoInScope := func(repo string) bool { return s.cfg.AgentServesRepo(agentName, repo) }
 	mergeEligibleList, ciFailingList := "", ""
-	if !guidance {
+	if guidance == nil {
 		mergeEligibleList = s.buildMergeEligibleListFor(repoInScope, elideStuffed)
 		ciFailingList = s.buildCIFailingListFor(repoInScope)
 	}
@@ -470,7 +479,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 		"MERGE_ELIGIBLE":        lit(mergeEligibleList),
 		"CI_FAILING":            lit(ciFailingList),
 	}}
-	if guidance {
+	if guidance != nil {
 		for _, name := range guidanceBlankedVars {
 			rt.Vars[name] = lit("")
 		}

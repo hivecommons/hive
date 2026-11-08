@@ -663,10 +663,12 @@ func pruneNousSnapshots(dir string, entries []os.DirEntry, keep int) int {
 type SchedulerControl interface {
 	BuildAgentMessage(agentName string, issues []ghpkg.Issue, actionable *ghpkg.ActionableResult) string
 	BuildAgentMessageFromLastActionable(agentName string) string
-	// BuildAgentGuidance is the role's guidance without the resident agent's
-	// work lists or session steps, for a contributor working one assigned
-	// task in that role. It reads no queue and classifies nothing.
-	BuildAgentGuidance(agentName string) string
+	// BuildAgentGuidanceForTask is the role's guidance without the resident
+	// agent's work lists or session steps, for a contributor working one
+	// assigned task in that role: knowledge primed from that issue, and the
+	// AGENTS.md of the task's repository. It reads no queue, classifies
+	// nothing and records no kick summary.
+	BuildAgentGuidanceForTask(agentName string, task ghpkg.Issue) string
 	FirstScanDone() bool
 	DeferKickUntilFirstScan(agentName string, deliver func(msg string))
 	GetLastActionable() *ghpkg.ActionableResult
