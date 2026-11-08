@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.206.2)
+
+### Fixed
+
+- hold guard no longer logs a WARN every tick when a held PR's base refresh is deliberately deferred to the automerge preparation front; the deferral is logged at debug level and no longer trips the selfreport error classifier.
+
 ## 2026-11-08 (v5.206.1)
 
 ### Security
