@@ -96,7 +96,7 @@ func (c *Config) validateKnowledgeAdvisorLLM() (warnings []string, err error) {
 		{"max_calls_per_day", a.MaxCallsPerDay},
 	} {
 		if f.v < 0 {
-			return nil, fmt.Errorf("knowledge.advisor_llm.%s: %d must be at least 1 (omit for the default)", f.key, f.v)
+			return nil, fmt.Errorf("knowledge.advisor_llm.%s: %d must not be negative (omit or 0 for the default)", f.key, f.v)
 		}
 	}
 	if a.HoldoutPercent < 0 || a.HoldoutPercent > 100 {
