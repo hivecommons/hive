@@ -69,3 +69,23 @@ func TestIsUpdateBranchStaleHead(t *testing.T) {
 		})
 	}
 }
+
+func TestIsBaseRefreshAwaitingAdmission(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"sentinel", fmt.Errorf("%w: acme/widgets#1 is refreshed only by the automerge preparation front", ErrBaseRefreshAwaitingAdmission), true},
+		{"flattened message", fmt.Errorf("base-refresh:awaiting-admission: acme/widgets#1"), true},
+		{"other error", fmt.Errorf("boom"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsBaseRefreshAwaitingAdmission(tc.err); got != tc.want {
+				t.Fatalf("IsBaseRefreshAwaitingAdmission(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
