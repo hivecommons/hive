@@ -65,15 +65,16 @@ var (
 // kinds is the closed kind set.
 var kinds = map[string]bool{
 	api.SignalStarted: true, api.SignalThinking: true, api.SignalTool: true, api.SignalBlocked: true,
-	api.SignalNeedsInput: true, api.SignalInput: true, api.SignalDone: true,
+	api.SignalNeedsInput: true, api.SignalInput: true, api.SignalDone: true, api.SignalStep: true,
 }
 
 // bySource is what each source may append. The runner owns the run's
-// boundaries; a gate reports a person being asked, answering or not
-// answering in time; the caller reports everything in between but never a
-// boundary, so a done signal always means the runner saw the run end.
+// boundaries and the steps an agent session ran (S6); a gate reports a
+// person being asked, answering or not answering in time; the caller
+// reports everything in between but never a boundary, so a done signal
+// always means the runner saw the run end.
 var bySource = map[string]map[string]bool{
-	api.SignalSourceRunner: {api.SignalStarted: true, api.SignalDone: true},
+	api.SignalSourceRunner: {api.SignalStarted: true, api.SignalDone: true, api.SignalStep: true},
 	api.SignalSourceGate:   {api.SignalNeedsInput: true, api.SignalInput: true, api.SignalBlocked: true},
 	api.SignalSourceCaller: {api.SignalThinking: true, api.SignalTool: true, api.SignalBlocked: true, api.SignalNeedsInput: true, api.SignalInput: true},
 }

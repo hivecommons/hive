@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agentstep"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/checkout"
 	"github.com/hivecommons/hive/crux/cmdlog"
@@ -43,6 +44,11 @@ var (
 	ErrNotFound = runstate.ErrNotFound
 	// ErrNoSignals: the server keeps no turn signals (Service.Signals nil).
 	ErrNoSignals = errors.New("runs: turn signals are not enabled on this server")
+	// ErrNotSession: a step was posted to a run that is not an open
+	// agent-profile session.
+	ErrNotSession = errors.New("runs: not an open agent step session")
+	// ErrStepBusy: the session is already running a step.
+	ErrStepBusy = errors.New("runs: the session is already running a step")
 )
 
 // RequestError is a malformed request (400).
@@ -71,6 +77,7 @@ type detail struct {
 	Command           []string `json:"command"`
 	Checkout          string   `json:"checkout,omitempty"`
 	Workspace         string   `json:"workspace,omitempty"`
+	EnvAllowlist      []string `json:"env_allowlist,omitempty"`
 	ExitCode          *int     `json:"exit_code,omitempty"`
 	TimedOut          bool     `json:"timed_out,omitempty"`
 	Stdout            string   `json:"stdout,omitempty"`
@@ -98,6 +105,13 @@ type active struct {
 	cancelled bool
 	// checkout is the S1 id the run holds open, if any (see InUse).
 	checkout string
+	// The rest is the agent-profile session's (S6): ctx is what its steps
+	// run under, ready closes once the workspace is provisioned (readyErr
+	// says if that failed), and busy is held while a step runs.
+	ctx      context.Context
+	ready    chan struct{}
+	readyErr error
+	busy     chan struct{}
 }
 
 // Caller is who asked for a run: the authenticated principal's name and
@@ -177,7 +191,7 @@ func (s *Service) Create(launchCtx context.Context, caller Caller, req api.Conta
 		return api.ContainedRun{}, false, err
 	}
 	owner := caller.Name
-	d := detail{Profile: p.profile, Network: p.network, Backend: s.Backend.Name, Command: p.command, Checkout: p.checkout, Workspace: p.workspace}
+	d := detail{Profile: p.profile, Network: p.network, Backend: s.Backend.Name, Command: p.command, Checkout: p.checkout, Workspace: p.workspace, EnvAllowlist: p.allowlist}
 	raw, err := json.Marshal(d)
 	if err != nil {
 		return api.ContainedRun{}, false, err
@@ -199,7 +213,12 @@ func (s *Service) Create(launchCtx context.Context, caller Caller, req api.Conta
 	s.mu.Lock()
 	s.active[rec.ID] = a
 	s.mu.Unlock()
-	go s.execute(ctx, rec.ID, p, a)
+	if p.profile == api.RunProfileAgent {
+		a.ctx, a.ready, a.busy = ctx, make(chan struct{}), make(chan struct{}, 1)
+		go s.session(ctx, rec.ID, p, a)
+	} else {
+		go s.execute(ctx, rec.ID, p, a)
+	}
 	return toWire(rec), true, nil
 }
 
@@ -319,22 +338,31 @@ func (s *Service) Cancel(ctx context.Context, id string) (api.ContainedRun, erro
 
 func (s *Service) validate(caller Caller, req api.ContainedRunRequest) (plan, error) {
 	var p plan
-	if len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "" {
-		return p, &RequestError{"command is required"}
-	}
-	p.command = req.Command
 	switch p.profile = req.Profile; p.profile {
 	case "":
 		p.profile = api.RunProfileExperiment
 	case api.RunProfileExperiment:
 	case api.RunProfileAgent:
-		return p, &UnsupportedError{fmt.Sprintf("profile %q is not available yet (schema-checked agent steps, S6)", req.Profile)}
+		// A session runs no command of its own: its steps are posted to it.
+		if len(req.Command) > 0 {
+			return p, &RequestError{fmt.Sprintf("profile %q takes no command; post steps to the session instead", req.Profile)}
+		}
 	default:
 		return p, &RequestError{fmt.Sprintf("profile must be %q or %q", api.RunProfileExperiment, api.RunProfileAgent)}
 	}
+	if p.profile != api.RunProfileAgent && (len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "") {
+		return p, &RequestError{"command is required"}
+	}
+	p.command = req.Command
 	switch p.network = req.Network; p.network {
 	case "":
+		// An agent needs its model, so a session defaults to the restricted
+		// network and is refused when the backend has none; an experiment
+		// defaults to none.
 		p.network = api.RunNetworkNone
+		if p.profile == api.RunProfileAgent {
+			p.network = api.RunNetworkRestricted
+		}
 	case api.RunNetworkNone, api.RunNetworkRestricted:
 	default:
 		return p, &RequestError{fmt.Sprintf("network must be %q or %q", api.RunNetworkNone, api.RunNetworkRestricted)}
@@ -344,7 +372,7 @@ func (s *Service) validate(caller Caller, req api.ContainedRunRequest) (plan, er
 	}
 	for _, name := range req.EnvAllowlist {
 		if sandbox.IsCredentialName(name) {
-			return p, &RequestError{fmt.Sprintf("env_allowlist names credential %q; the experiment profile carries no credentials", name)}
+			return p, &RequestError{fmt.Sprintf("env_allowlist names credential %q; contained runs carry no repository credentials", name)}
 		}
 	}
 	p.allowlist = req.EnvAllowlist
@@ -695,4 +723,159 @@ func toWire(rec runstate.Record) api.ContainedRun {
 		ExitCode: d.ExitCode, TimedOut: d.TimedOut, Stdout: d.Stdout, Stderr: d.Stderr,
 		StdoutTruncatedAt: d.StdoutTruncatedAt, StderrTruncatedAt: d.StderrTruncatedAt,
 	}
+}
+
+// session runs an agent-profile run (S6): it provisions the workspace,
+// marks the run waiting and holds it open for steps until it is cancelled.
+// The steps themselves run through RunStep under this goroutine's ctx.
+func (s *Service) session(ctx context.Context, id string, p plan, a *active) {
+	defer func() {
+		s.mu.Lock()
+		delete(s.active, id)
+		s.mu.Unlock()
+		close(a.done)
+	}()
+	finish := func(status, reason string) {
+		_, _ = s.Store.Update(id, func(rec *runstate.Record) error {
+			rec.Status, rec.Reason = status, reason
+			return nil
+		})
+		s.signalDone(id, api.SignalDoneData{Status: status}, reason)
+	}
+	workspace := p.workspace
+	if p.worktree != nil {
+		prov := s.Provisioner
+		if prov == nil {
+			prov = GitProvisioner{}
+		}
+		path, err := prov.Provision(ctx, s.Store.Path(id), *p.worktree)
+		if err != nil {
+			a.readyErr = ErrNotSession
+			close(a.ready)
+			if ctx.Err() != nil {
+				finish(runstate.StatusCancelled, "cancelled while provisioning the worktree")
+			} else {
+				finish(runstate.StatusFailed, "provisioning the worktree: "+s.scrub(err.Error()))
+			}
+			return
+		}
+		workspace = path
+	}
+	if _, err := s.Store.Update(id, func(rec *runstate.Record) error {
+		var d detail
+		_ = json.Unmarshal(rec.Detail, &d)
+		d.Workspace = workspace
+		raw, err := json.Marshal(d)
+		rec.Status, rec.Detail = runstate.StatusWaiting, raw
+		return err
+	}); err != nil {
+		a.readyErr = ErrNotSession
+		close(a.ready)
+		finish(runstate.StatusFailed, "recording the start: "+err.Error())
+		return
+	}
+	s.signal(id, api.SignalStarted, "agent step session open", nil)
+	close(a.ready)
+	<-ctx.Done()
+	// Wait for a step in flight to record its own cancellation first.
+	a.busy <- struct{}{}
+	steps, _ := agentstep.Store{RunDir: s.Store.Path(id)}.List()
+	finish(runstate.StatusCancelled, fmt.Sprintf("session closed after %d step(s)", len(steps)))
+}
+
+// sessionFor is the open session id belongs to, or ErrNotSession.
+func (s *Service) sessionFor(ctx context.Context, id string) (*active, error) {
+	rec, err := s.Store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	a := s.active[id]
+	s.mu.Unlock()
+	if rec.Kind != runstate.KindRun || a == nil || a.ready == nil {
+		return nil, ErrNotSession
+	}
+	select {
+	case <-a.ready:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if a.readyErr != nil || a.ctx.Err() != nil {
+		return nil, ErrNotSession
+	}
+	return a, nil
+}
+
+// RunStep executes one agent step inside session id and returns its
+// record. One step runs at a time: a second concurrent post is ErrStepBusy.
+// The step runs under the session's context, so cancelling the run ends it.
+func (s *Service) RunStep(ctx context.Context, id string, req api.StepRequest) (api.Step, error) {
+	a, err := s.sessionFor(ctx, id)
+	if err != nil {
+		return api.Step{}, err
+	}
+	select {
+	case a.busy <- struct{}{}:
+	default:
+		return api.Step{}, ErrStepBusy
+	}
+	defer func() { <-a.busy }()
+	if a.ctx.Err() != nil {
+		return api.Step{}, ErrNotSession
+	}
+	rec, err := s.Store.Get(id)
+	if err != nil {
+		return api.Step{}, err
+	}
+	var d detail
+	_ = json.Unmarshal(rec.Detail, &d)
+	setStatus := func(status string) {
+		_, _ = s.Store.Update(id, func(rec *runstate.Record) error {
+			if runstate.Terminal(rec.Status) {
+				return nil
+			}
+			rec.Status = status
+			return nil
+		})
+	}
+	setStatus(runstate.StatusRunning)
+	defer setStatus(runstate.StatusWaiting)
+	host := agentstep.Host{
+		Run: id, RunDir: s.Store.Path(id), Workspace: d.Workspace,
+		Image: s.Config.Image, Network: d.Network,
+		Env: s.allowlistedEnv(d.EnvAllowlist), EnvAllowlist: d.EnvAllowlist,
+		Launcher: s.Backend.Launcher, Teardown: s.Backend.Teardown,
+		Timeout:    time.Duration(s.Config.DefaultTimeoutMs) * time.Millisecond,
+		MaxTimeout: time.Duration(s.Config.MaxTimeoutMs) * time.Millisecond,
+		Signal:     func(kind, msg string, data json.RawMessage) { s.signal(id, kind, msg, data) },
+		Scrub:      s.scrub,
+	}
+	if s.CmdLog != nil {
+		if log, err := s.CmdLog(host.RunDir); err == nil {
+			host.CmdLog = log
+		}
+	}
+	// A caller that goes away does not end the step; the session's cancel
+	// does.
+	return agentstep.Run(a.ctx, host, req)
+}
+
+// Steps lists run id's steps, oldest first.
+func (s *Service) Steps(id string) (api.StepList, error) {
+	if _, err := s.Store.Get(id); err != nil {
+		return api.StepList{}, err
+	}
+	steps, err := agentstep.Store{RunDir: s.Store.Path(id)}.List()
+	if err != nil {
+		return api.StepList{}, err
+	}
+	return api.StepList{Run: id, Steps: steps}, nil
+}
+
+// Step is step n of run id.
+func (s *Service) Step(id string, n int) (api.Step, error) {
+	if _, err := s.Store.Get(id); err != nil {
+		return api.Step{}, err
+	}
+	return agentstep.Store{RunDir: s.Store.Path(id)}.Get(n)
 }
