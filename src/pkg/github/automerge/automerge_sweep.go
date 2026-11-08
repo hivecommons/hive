@@ -290,6 +290,12 @@ type Engine struct {
 	selfSkipWarnedMu sync.Mutex
 	selfSkipWarned   map[string]struct{}
 
+	// contributorUnsearchable maps author|owner/repo to the time until which
+	// contributorMergedRepos leaves that pair out of its search, after
+	// GitHub refused to search it (see automerge_contributor_unsearchable.go).
+	contributorUnsearchableMu sync.Mutex
+	contributorUnsearchable   map[string]time.Time
+
 	mergerAuthzMu sync.RWMutex
 	// humanReturnChecked remembers, per PR key, the head whose worn
 	// 071/072 label was already attributed (see foldHumanReturnLabel), so
