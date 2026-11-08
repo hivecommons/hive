@@ -214,6 +214,21 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 		// in-process form, so the verb is only reachable with --server.
 		fmt.Fprintln(e.Stderr, "crux: runs needs --server ADDR (or CRUX_SERVER); contained runs execute on a crux serve")
 		return ExitUsage
+	case "gate":
+		// Gates are recorded, journaled and announced by a `crux serve`;
+		// there is no in-process form.
+		fmt.Fprintln(e.Stderr, "crux: gate needs --server ADDR (or CRUX_SERVER); gates are kept by a crux serve")
+		return ExitUsage
+	case "cmdlog":
+		// The command log is written by the runner inside a `crux serve`
+		// and read through its API, never from the file.
+		fmt.Fprintln(e.Stderr, "crux: cmdlog needs --server ADDR (or CRUX_SERVER); command logs are kept by a crux serve")
+		return ExitUsage
+	case "signal":
+		// Turn signals are appended by a `crux serve` (its runner, its
+		// gates and its API) and read through that API.
+		fmt.Fprintln(e.Stderr, "crux: signal needs --server ADDR (or CRUX_SERVER); turn signals are kept by a crux serve")
+		return ExitUsage
 	case "help", "-h", "--help":
 		fs := flag.NewFlagSet("crux", flag.ContinueOnError)
 		e.usage(fs)
@@ -351,6 +366,13 @@ Work services (no runtime; hivecommons/crux#114):
   checkout add|rm|list            pinned checkouts under <workdir>/checkouts
                                   (add -repo URL -commit SHA; -allow PREFIXES or
                                   $CRUX_CHECKOUT_ALLOWLIST gates which repos)
+  gate open|list|answer|wait      human gates on a crux serve (--server only;
+                                  'crux gate help' for flags)
+  cmdlog list|show <run>          the commands a contained run dispatched
+                                  (--server only; 'crux cmdlog help' for flags)
+  signal emit|list <run>          a contained run's turn signals: where the
+                                  turn is and how it ended (--server only;
+                                  'crux signal help' for flags)
 
 While 'crux run' is in the foreground it serves <workdir>/crux.sock; ps, logs,
 kick and stop use that socket when present so they act on the live runtime.

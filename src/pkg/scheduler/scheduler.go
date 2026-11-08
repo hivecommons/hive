@@ -25,6 +25,8 @@ type Scheduler struct {
 	logger          *slog.Logger
 	primerCapLogged sync.Map // agent|cap_bytes -> omitted fact count last logged at INFO
 	primedSlugs     sync.Map // agent -> []string slugs the last kick's knowledge block rendered (#17052)
+	kickSummaries   sync.Map // agent -> KickSummary of the last primed kick (#17155)
+	kickSeq         atomic.Uint64
 	promptResolver  *promptsrc.Resolver
 	agentsMdFetcher AgentsMdFetcher
 	// remoteAgents caches the materialised AGENTS.md root per "owner/repo"

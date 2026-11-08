@@ -79,6 +79,77 @@ The sampled value is shown as **Session RSS** (with the session age and a
 `↻N` recycle count) in the agent detail panel. The log line is
 `agent session recycled` with `rss_mb`, `age` and `reason`.
 
+## Agent CLI memory
+
+Each subscription CLI keeps a private cross-session memory in the agent's
+home (Claude Code `~/.claude/projects/*/memory/`, Codex `$CODEX_HOME/memories*/`,
+Gemini `~/.gemini/GEMINI.md`; Copilot memory is server-side). The
+`agents.cli_memory` block, overridable per agent, decides what happens to it;
+the full table is in
+[agent-configuration.md](../agent-configuration.md#cli-auto-memory-agentscli_memory).
+
+```yaml
+agents:
+  cli_memory:                  # fleet default; each key may be overridden per agent
+    auto_memory: false         # pin the vendor auto-memory switch off (default)
+    clear_on_kick: false       # wipe the agent's memory stores before every non-resume kick
+    drain_to_knowledge: false  # first convert each memory fact into a draft knowledge entry
+    drain_on_write: false      # also drain a Claude memory file as soon as it is written
+  scanner:
+    cli_memory:
+      auto_memory: true        # this agent may take notes…
+      drain_to_knowledge: true # …which become drafts in bead-synth-wiki at the next kick
+      clear_on_kick: true      # …and the private store is then emptied
+```
+
+| Key | Default | Effect |
+|---|---|---|
+| `auto_memory` | `false` | Pins Claude Code (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`), Codex (`[features] memories = false`) and Copilot CLI (`"memory": false`) auto-memory off at launch; `true` pins it on. |
+| `clear_on_kick` | `false` | Removes the agent's own memory stores before each non-resume kick; shared homes (`HIVE_SHARED_AGENT_HOME=1`, uid 0) are never touched. |
+| `drain_to_knowledge` | `false` | Before the wipe, writes every memory bullet or paragraph as a `state: draft` entry into the `bead-synth-wiki` vault (`knowledge.bead_synthesizer.vault_path`), tagged `cli-memory`, `agent:<name>`, `cli:<name>` and `repo:<org/repo>` when derivable, deduplicated by content hash; a duplicate only gains the draining agent's `agent:<name>` tag and keeps its state. Drafts are excluded from kicks until approved. |
+| `drain_on_write` | `false` | Needs `drain_to_knowledge`. Also drains a Claude Code memory file as soon as the session writes it, through a `PostToolUse` hook on `Write\|Edit\|MultiEdit`, for long-lived sessions that rarely end. |
+
+For Claude Code, `drain_to_knowledge` also seeds a `SessionEnd` hook, and
+`drain_on_write` a `PostToolUse` hook (matcher `Write|Edit|MultiEdit`), into
+the Claude settings Hive manages: the shared `/data/home/.claude/settings.json`
+for interactive agents and both settings files of inference agents. Each runs
+`hive memory-drain --cli claude --agent "$HIVE_AGENT"`, which asks the hive to
+drain that session's project memory into drafts and empty the files whose
+every fact is stored. The hook always exits 0 and waits at most 10 seconds;
+on a write outside `~/.claude/projects/*/memory/` it exits at once. Your own
+`hooks` entries are kept; turning the keys off removes only Hive's entry.
+Each request is audited as `cli_memory_drain_requested`.
+
+The drain logs one line per kick that found a store:
+`cli-memory: drained N facts from <agent> into bead-synth-wiki (dupes K, spooled S)`
+with `drained`, `dupes`, `skipped` (over the 200-facts-per-drain cap),
+`spooled` and `sources`. A memory file whose facts did not all reach the vault
+(cap hit, vault unwritable) is copied to
+`/data/knowledge/auto-memory-spool/<agent>/` before `clear_on_kick` wipes the
+store, retried first on the agent's next drain, and deleted from the spool
+once every fact in it is stored. Review drafts in the dashboard's
+knowledge view or the vault directory and approve them through the normal
+lifecycle (`PUT /api/knowledge/entry/{id}/state`); nothing promotes them
+automatically.
+
+A drained draft reaches no agent while it is a draft, even for an agent whose
+`knowledge.agent_scopes` entry (or the primer's `include_states`) admits
+drafts: the kick primer, the knowledge advisor and every `?agent=` TOC, entry
+and effective read skip it, and the curator's auto-promotion never selects
+it. Review it under **🧠 Auto-memory drafts** in the dashboard's knowledge
+view, where an owner can **Approve** (primed from the next kick) or
+**Discard** (deprecated, never re-drafted); see
+[Auto-memory drafts](../knowledge-lifecycle.md#auto-memory-drafts).
+
+The shared `/data/home/.claude/projects/*/memory` store that predates
+per-agent CLI homes is not drained at kick time. Drain it once with
+`hivectl knowledge drain-memory --legacy` (owner-only, audited as
+`knowledge_drain_legacy_memory`): its facts become drafts tagged
+`agent:shared`, and the files stay as they are unless `--truncate` is given,
+which empties only files whose every fact is now in the vault. The
+`bead-synth-wiki` vault must be connected (bead stores configured or
+`drain_to_knowledge` on); otherwise the call returns 409.
+
 ## GitHub API quota
 
 Agents reach `api.github.com` through the Hive GitHub proxy, which injects the

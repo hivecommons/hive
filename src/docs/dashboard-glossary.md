@@ -28,6 +28,7 @@ For a plain-language explanation of every dashboard section — what it shows, h
 | Re-home | Continue work in a replacement PR owned by the appropriate author; do not silently rewrite the original author's commits. |
 | Code scanning issue | An issue the hive filed from GitHub code scanning alerts (label `hive/code-scanning`). Its body starts with a hidden `<!-- hive:code-scanning tool=… rule=… paths=… alerts=… -->` marker listing every alert number it tracks; the sweep updates the alert table, and closes the issue when every alert is fixed or dismissed. See [Code scanning issues](code-scanning.md). |
 | Issue band / PR band | A display group in Projects, not a scheduler or merge permission. See the exact groups below. |
+| Board pressure (BP) | The open issues and PRs the configured repos put on this Hive's board: total open issues / total open PRs, before any of them is sorted into actionable, held, blocked or outside. The Overview sidebar pill reads `BP = 19/4`. |
 
 For exact stage labels, repair ownership and hold rules, see [Labels and control signals](labels-and-control-signals.md). For commands that inspect beads, see [`hivectl bead`](hivectl.md#bead--work-items).
 

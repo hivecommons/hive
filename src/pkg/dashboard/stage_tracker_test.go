@@ -24,8 +24,8 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 	pins := map[stagelabels.Stage]int{
 		stagelabels.Actionable: trackerNumberActionable, stagelabels.TriageNeeded: trackerNumberTriageNeeded, stagelabels.Claimed: trackerNumberClaimed,
 		stagelabels.PRInProgress: trackerNumberPRInProgress, stagelabels.CoveredByPR: trackerNumberCoveredByPR,
-		stagelabels.IssueNeedsDecision: trackerNumberIssueDecision,
-		stagelabels.ReviewPending:      trackerNumberReviewPending, stagelabels.Reviewed: trackerNumberReviewed,
+		stagelabels.IssueNeedsDecision: trackerNumberIssueDecision, stagelabels.OpenForDiscussion: trackerNumberOpenForDiscussion,
+		stagelabels.ReviewPending: trackerNumberReviewPending, stagelabels.Reviewed: trackerNumberReviewed,
 		stagelabels.Fixing: trackerNumberFixing, stagelabels.NeedsAuthor: trackerNumberNeedsAuthor, stagelabels.ReturnedToContributor: trackerNumberReturned,
 		stagelabels.AdoptedByHive: trackerNumberAdopted, stagelabels.AwaitingMergeAdmission: trackerNumberAwaitingMerge,
 		stagelabels.NeedsDecision: trackerNumberNeedsDecision, stagelabels.ReadyForHumanMerge: trackerNumberReadyForHuman,
@@ -51,8 +51,8 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 			t.Errorf("detour %s branches from %d", st.Slug, st.BranchFrom)
 		}
 	}
-	if mains != 12 || detours != 6 {
-		t.Fatalf("mains=%d detours=%d, want 12 main segments (015 and 017 share the Actionable column; 045 is the issue parking bay; 095 shares the merge gate column) and 6 detours", mains, detours)
+	if mains != 13 || detours != 6 {
+		t.Fatalf("mains=%d detours=%d, want 13 main segments (015, 017 and 018 share the Actionable column; 045 is the issue parking bay; 095 shares the merge gate column) and 6 detours", mains, detours)
 	}
 }
 
@@ -72,6 +72,8 @@ func TestStageTrackerStagesFallsTo(t *testing.T) {
 	}{
 		{trackerNumberTriageNeeded, trackerNumberActionable, false},
 		{trackerNumberPossiblyExists, trackerNumberActionable, false},
+		{trackerNumberOpenForDiscussion, trackerNumberActionable, false},
+		{trackerNumberCoveredByPR, trackerNumberOpenForDiscussion, true},
 		{trackerNumberIssueDecision, trackerNumberActionable, false},
 		{trackerNumberNeedsDecision, trackerNumberAwaitingMerge, false},
 		{trackerNumberReturned, trackerNumberFixing, false},

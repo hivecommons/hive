@@ -419,3 +419,44 @@ func TestKnowledgeListStateTagRejectLayer(t *testing.T) {
 		}
 	}
 }
+
+// TestKnowledgeDrainMemoryLegacy covers drain-memory: --legacy is required
+// (per-agent stores drain at kick time) and --truncate is forwarded, default
+// off, to the legacy drain endpoint.
+func TestKnowledgeDrainMemoryLegacy(t *testing.T) {
+	refuse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("drain-memory without --legacy reached the server: %s %s", r.Method, r.URL.Path)
+	}))
+	_, _, err := execute(t, refuse, "", "knowledge", "drain-memory")
+	refuse.Close()
+	if err == nil || ExitCode(err) != ExitUsage {
+		t.Fatalf("drain-memory without --legacy err = %v, want usage error", err)
+	}
+
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"--legacy"}, false},
+		{[]string{"--legacy", "--truncate"}, true},
+	} {
+		var got map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost || r.URL.Path != "/api/knowledge/cli-memory/drain-legacy" {
+				t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"drained":1}`)
+		}))
+		if _, _, err := execute(t, server, "", append([]string{"knowledge", "drain-memory"}, tc.args...)...); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		server.Close()
+		if len(got) != 1 || got["truncate"] != tc.want {
+			t.Fatalf("%v: body = %v, want truncate=%v", tc.args, got, tc.want)
+		}
+	}
+}

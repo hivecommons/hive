@@ -37,8 +37,10 @@ import (
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/checkout"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/gates"
 	"github.com/hivecommons/hive/crux/lanes"
 	"github.com/hivecommons/hive/crux/runs"
+	"github.com/hivecommons/hive/crux/signals"
 )
 
 const (
@@ -114,6 +116,15 @@ type Server struct {
 	// S7); nil answers those routes with not_supported.
 	Runs *runs.Service
 
+	// Gates, when set, serves the human-gate family (RFC crux#114 S3,
+	// api.PathGates) and relays gate.* events; nil answers those routes 501.
+	Gates *gates.Service
+
+	// KickOutcomes, when set, saves every agent kick outcome before it is
+	// published and serves GET /v1/agents/{name}/kick-outcome (RFC
+	// crux#114 S5); nil answers that route 501.
+	KickOutcomes *signals.AgentOutcomes
+
 	now     func() time.Time
 	started time.Time
 
@@ -172,7 +183,9 @@ func (s *Server) Handler() http.Handler {
 	s.registerFamilies(mux)
 	s.registerCheckouts(mux)
 	s.registerRuns(mux)
-	return s.laneHandler(s.authenticate(mux))
+	s.registerGates(mux)
+	s.registerSignals(mux)
+	return s.laneHandler(s.authenticate(instrument(mux)))
 }
 
 // agentNamePattern is the CLI's definition-name gate (cmd/crux

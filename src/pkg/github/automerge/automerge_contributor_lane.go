@@ -958,7 +958,12 @@ type contributorMergedReposEntry struct {
 // 256-character query limit, so a ten-repo hive costs one or two search
 // calls instead of ten closed-PR listings. A search failure degrades to the
 // PR's own repository with a warning rather than blocking the sweep: the
-// result is then exactly the pre-#14517 per-repo count.
+// result is then exactly the pre-#14517 per-repo count. A 422 — GitHub
+// refusing to search a listed repository or user — is not a failure of the
+// whole search: the chunk's repositories are re-asked one at a time so one
+// renamed or invisible repository does not hide the others, and each refused
+// (author, repository) pair is left out of later searches for
+// contributorUnsearchableTTL (hivecommons/hive#17148).
 //
 // The answer covers every active repository and is kept on the Engine per
 // author for contributorMergedReposTTL (a failure for
@@ -969,6 +974,7 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 	if c == nil || c.gh == nil || c.transport == nil {
 		return nil
 	}
+	author = strings.TrimPrefix(strings.TrimSpace(author), "@")
 	own := strings.ToLower(owner + "/" + repo)
 	others := func(refs []contributorRepoRef) []contributorRepoRef {
 		var out []contributorRepoRef
@@ -992,13 +998,17 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 			continue
 		}
 		seen[full] = true
-		candidates = append(candidates, contributorRepoRef{Owner: o, Repo: r})
+		ref := contributorRepoRef{Owner: o, Repo: r}
+		if c.contributorSearchSkips(author, ref) {
+			continue
+		}
+		candidates = append(candidates, ref)
 		names = append(names, full)
 	}
 	if len(others(candidates)) == 0 {
 		return nil
 	}
-	key := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(author), "@"))
+	key := strings.ToLower(author)
 	repos := strings.Join(names, ",")
 	now := c.clock()
 	c.contributorMergedReposMu.Lock()
@@ -1015,15 +1025,14 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 		}
 		c.contributorMergedReposCache[key] = contributorMergedReposEntry{refs: refs, repos: repos, expires: now.Add(ttl)}
 	}
-	base := "is:pr is:merged author:" + strings.TrimPrefix(strings.TrimSpace(author), "@")
+	base := "is:pr is:merged author:" + author
 	found := map[string]bool{}
-	query := base
-	flush := func() error {
-		if query == base {
-			return nil
+	search := func(refs []contributorRepoRef) error {
+		query := base
+		for _, ref := range refs {
+			query += " repo:" + ref.Owner + "/" + ref.Repo
 		}
 		result, _, err := c.gh.Search.Issues(ctx, query, &gh.SearchOptions{Sort: "updated", Order: "desc", ListOptions: gh.ListOptions{PerPage: 100}})
-		query = base
 		if err != nil {
 			return err
 		}
@@ -1037,21 +1046,46 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 		}
 		return nil
 	}
+	flush := func(chunk []contributorRepoRef) error {
+		err := search(chunk)
+		if !searchQueryUnsearchable(err) {
+			return err
+		}
+		if len(chunk) == 1 {
+			c.noteContributorUnsearchable(owner, repo, author, chunk[0], err)
+			return nil
+		}
+		for _, ref := range chunk {
+			err := search([]contributorRepoRef{ref})
+			if searchQueryUnsearchable(err) {
+				c.noteContributorUnsearchable(owner, repo, author, ref, err)
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	failed := func(err error) []contributorRepoRef {
 		c.warn("contributor-lane auto-promotion repo search failed; counting the PR's repository only", "repo", owner+"/"+repo, "author", author, "error", err, "retry_after", contributorMergedReposFailureTTL)
 		remember(nil, contributorMergedReposFailureTTL)
 		return nil
 	}
+	var chunk []contributorRepoRef
+	length := len(base)
 	for _, ref := range candidates {
-		qualifier := " repo:" + ref.Owner + "/" + ref.Repo
-		if len(query)+len(qualifier) > contributorSearchQueryMaxLen {
-			if err := flush(); err != nil {
+		qualifier := len(" repo:") + len(ref.Owner) + len("/") + len(ref.Repo)
+		if len(chunk) > 0 && length+qualifier > contributorSearchQueryMaxLen {
+			if err := flush(chunk); err != nil {
 				return failed(err)
 			}
+			chunk, length = nil, len(base)
 		}
-		query += qualifier
+		chunk = append(chunk, ref)
+		length += qualifier
 	}
-	if err := flush(); err != nil {
+	if err := flush(chunk); err != nil {
 		return failed(err)
 	}
 	out := make([]contributorRepoRef, 0, len(found))

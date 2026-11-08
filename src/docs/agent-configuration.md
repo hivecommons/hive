@@ -344,6 +344,8 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
     cli_memory:                  # optional override of the fleet agents.cli_memory
       auto_memory: false         #   policy: CLI auto-memory (Claude MEMORY.md, Codex
       clear_on_kick: false       #   memories, Copilot memory) off; wipe before each kick
+      drain_to_knowledge: false  #   first turn each memory fact into a draft knowledge entry
+      drain_on_write: false      #   and drain a Claude memory write at once (PostToolUse hook)
     restart_strategy: immediate  # how to bring a dead session back
     beads_dir: /data/beads/scanner   # work-record (bead) storage; default per-agent
     replicas: 3                  # materialize scanner, scanner-2, scanner-3 (max 5)
@@ -706,8 +708,10 @@ Subscription CLIs keep their own long-lived "memory" next to the transcripts: Cl
 ```yaml
 agents:
   cli_memory:
-    auto_memory: false     # default false: pin every CLI's auto-memory feature off
-    clear_on_kick: false   # default false: true wipes this agent's memory stores before each kick
+    auto_memory: false         # default false: pin every CLI's auto-memory feature off
+    clear_on_kick: false       # default false: true wipes this agent's memory stores before each kick
+    drain_to_knowledge: false  # default false: true drains each memory fact into a draft knowledge entry first
+    drain_on_write: false      # default false: true also drains a Claude memory write at once (needs drain_to_knowledge)
 ```
 
 | Key | Default | Effect |
@@ -715,7 +719,10 @@ agents:
 | `auto_memory` | `false` | When false hive pins the vendor switch off at launch: Claude Code gets `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in its environment ([docs](https://code.claude.com/docs/en/memory)); Codex gets `[features] memories = false` merged into `$CODEX_HOME/config.toml` ([docs](https://developers.openai.com/codex/memories)); Copilot CLI gets `"memory": false` in its per-agent `~/.copilot/settings.json` (`copilot help config`). `true` writes the opposite pin so an operator's own setting is never silently shadowed. Gemini CLI has no equivalent switch. |
 | `clear_on_kick` | `false` | Before every non-resume kick (next to the `/clear` sent by `clear_on_kick`), remove this agent's `~/.claude/projects/*/memory/`, `$CODEX_HOME/memories*/`, and `~/.gemini/GEMINI.md`. Only the per-agent home under `/data/home/agents/<name>` is touched; nothing under the shared `/data/home` is removed, and agents running with `HIVE_SHARED_AGENT_HOME=1` or as uid 0 are skipped. Copilot memory is server-side and has no local store. |
 
-Set `auto_memory: true` on a single agent to let it keep a private notebook while the rest of the fleet stays stateless between kicks. The two knobs are independent: `auto_memory: true` with `clear_on_kick: true` gives a memory that lives for exactly one kick.
+| `drain_to_knowledge` | `false` | Before every non-resume kick, and before `clear_on_kick` wipes anything, read this agent's Claude `~/.claude/projects/*/memory/` (`MEMORY.md` plus topic files), Codex `$CODEX_HOME/memories*/` and the `## Gemini Added Memories` section of `~/.gemini/GEMINI.md`, and write each bullet or paragraph as a **draft** entry in the `bead-synth-wiki` vault (`knowledge.bead_synthesizer.vault_path`, default `/data/vaults/bead-synth-wiki`) with `source: cli-memory`, `agent: <name>`, `cli: <claude\|codex\|gemini>` and, when the Claude project slug ends in one of the agent's repos, `repo: <org/repo>`. Entries are deduplicated by a SHA-256 of the normalised text (`memhash`), so repeated drains and the same fact from several agents produce one entry, which gains an `agent:<name>` tag per draining agent; an entry an operator approved, deprecated or renamed is still a duplicate and keeps its state. A memory file whose facts did not all reach the vault (vault unwritable, 200-facts-per-drain cap) is copied to `/data/knowledge/auto-memory-spool/<agent>/` before the wipe and retried on the next drain ([#17056](https://github.com/hivecommons/hive/issues/17056)). Drafts never reach a kick until a human approves them ([#17033](https://github.com/hivecommons/hive/issues/17033)). Needs the in-process crux runtime. |
+| `drain_on_write` | `false` | Needs `drain_to_knowledge`. For Claude Code, Hive always seeds a `SessionEnd` hook with `drain_to_knowledge`; this adds a `PostToolUse` hook on `Write\|Edit\|MultiEdit` that drains a memory file under `~/.claude/projects/*/memory/` as soon as it is written, for long-lived sessions. Both run `hive memory-drain --cli claude --agent "$HIVE_AGENT"`, never fail the session, and are merged into the Claude settings Hive manages without touching your own `hooks` entries ([#17210](https://github.com/hivecommons/hive/issues/17210)). |
+
+Set `auto_memory: true` on a single agent to let it keep a private notebook while the rest of the fleet stays stateless between kicks. The knobs are independent: `auto_memory: true` with `clear_on_kick: true` gives a memory that lives for exactly one kick, and adding `drain_to_knowledge: true` is the "memory → beads" flow: the CLI may take notes during a turn, every note becomes a reviewable draft at the next kick, and the private store is then emptied. The log line per drain is `cli-memory: drained N facts from <agent> into bead-synth-wiki (dupes K, spooled S)`.
 
 Every Model Gateway (and the bob backend) also accepts an optional `key_name` — a human-chosen LABEL for the configured key, e.g. `key_name: openrouter-prod-key`. It is safe-to-show metadata, not a secret: the dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set, so operators can tell keys apart without ever seeing the value. For gateway keys, the row and settings/status APIs also expose `keySHA256`, the lowercase SHA-256 of the exact effective key string Hive will inject through the inference proxy; this lets operators compare Hive with LiteLLM/OpenRouter key-hash displays without revealing the secret. Saving a replacement key refreshes live inference proxy routes for running agents, so the next kick uses the new key without an agent restart. See [`inference-backends.md`](../../docs/inference-backends.md) for a full YAML example.
 

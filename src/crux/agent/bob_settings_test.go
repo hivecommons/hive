@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/crux/config"
@@ -672,5 +673,161 @@ func TestVerifyBobStateDirsWritableIgnoresNonDirectoryStatePath(t *testing.T) {
 	got := m.verifyBobStateDirsWritable("tester", home, workDir, 2004)
 	if len(got) != 0 {
 		t.Errorf("verifyBobStateDirsWritable() = %v for non-directory state path, want advisory warning only", got)
+	}
+}
+
+// TestBobStateHomeIsPerAgentHome pins that the preflight probes the per-agent
+// ~/.bob bob actually writes to, not the shared /data/home/.bob.
+func TestBobStateHomeIsPerAgentHome(t *testing.T) {
+	t.Setenv("HIVE_SHARED_AGENT_HOME", "")
+	sharedRoot := t.TempDir()
+	orig := sharedAgentHome
+	sharedAgentHome = sharedRoot
+	t.Cleanup(func() { sharedAgentHome = orig })
+
+	got := bobStateHome("tester", 2004, bobBackend)
+	if want := interactiveHomePath("tester"); got != want {
+		t.Fatalf("bobStateHome() = %q, want per-agent home %q", got, want)
+	}
+	if got == bobSharedHome || got == sharedRoot {
+		t.Errorf("bobStateHome() = %q, must not be the shared home", got)
+	}
+
+	// An unwritable per-agent ~/.bob is reported against the per-agent dir.
+	agentBob := filepath.Dir(bobSettingsPath(got))
+	if err := os.MkdirAll(agentBob, 0o770); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(agentBob, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(agentBob, 0o770) })
+	workDir := t.TempDir()
+	if err := os.Chmod(workDir, 0o770); err != nil {
+		t.Fatalf("chmod workDir: %v", err)
+	}
+	m := &Manager{logger: discardLogger()}
+	unwritable := m.verifyBobStateDirsWritable("tester", got, workDir, 2004)
+	if len(unwritable) == 0 || unwritable[0] != agentBob {
+		t.Errorf("verifyBobStateDirsWritable() = %v, want first entry %s", unwritable, agentBob)
+	}
+}
+
+// TestVerifyBobStateDirsWritableAcceptsAgentOwnedDir pins that a per-agent
+// ~/.bob created by bob itself — owned by the agent UID with mkdirSync's
+// 0755/0700 and no group write bit — is NOT reported as unwritable. The probe
+// must judge an agent-owned dir by its owner bits, otherwise every launch after
+// first run logs a false "bob state dir is not writable" error. The same holds
+// for a missing dir whose nearest existing parent is agent-owned 0700.
+func TestVerifyBobStateDirsWritableAcceptsAgentOwnedDir(t *testing.T) {
+	uid := os.Getuid()
+	if uid <= 0 {
+		t.Skip("probe is a no-op for uid 0; cannot model an agent-owned dir as root")
+	}
+	home := t.TempDir()
+	workDir := t.TempDir()
+	// t.TempDir() is 0700 and owned by this process, which is exactly the
+	// shape bob's own mkdirSync leaves behind for the agent UID.
+	agentBob := filepath.Dir(bobSettingsPath(home))
+	if err := os.Mkdir(agentBob, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(agentBob, 0o700); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	m := &Manager{logger: discardLogger()}
+	if got := m.verifyBobStateDirsWritable("tester", home, workDir, uid); len(got) != 0 {
+		t.Errorf("verifyBobStateDirsWritable() = %v for agent-owned 0700 dirs, want none", got)
+	}
+
+	// An agent-owned dir with the owner write bit stripped IS still flagged:
+	// ownership does not short-circuit the check, it only selects which bits
+	// are consulted.
+	if err := os.Chmod(agentBob, 0o500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(agentBob, 0o700) })
+	// Both ~/.bob itself and the missing ~/.bob/settings (whose nearest
+	// existing parent is that same 0500 dir) are reported; nothing else is.
+	got := m.verifyBobStateDirsWritable("tester", home, workDir, uid)
+	wantV2 := filepath.Dir(bobV2SettingsPath(home))
+	if len(got) != 2 || got[0] != agentBob || got[1] != wantV2 {
+		t.Errorf("verifyBobStateDirsWritable() = %v for agent-owned 0500 dir, want [%s %s]", got, agentBob, wantV2)
+	}
+
+	// A dir owned by someone OTHER than the agent UID still falls back to the
+	// group test, so the dev-owned shared-home behaviour is unchanged.
+	if err := os.Chmod(agentBob, 0o700); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if got := m.verifyBobStateDirsWritable("tester", home, workDir, uid+1); len(got) == 0 || got[0] != agentBob {
+		t.Errorf("verifyBobStateDirsWritable() = %v for foreign-owned 0700 dir, want [%s ...]", got, agentBob)
+	}
+}
+
+// TestVerifyBobStateDirsWritableSkipsHomeProbesWhenHomeMissing pins the
+// first-launch shape of a per-UID bob agent: bobPreflightUnlocked runs BEFORE
+// launchInTmux, and the per-agent home is only created by setupInteractiveHome
+// inside the launch. With the home absent, the ancestor walk would land on the
+// home root — deliberately 0755 dev-owned, nothing is written there — and emit
+// two bogus "chmod 2775 <root>" errors on every new agent. The $HOME/.bob
+// probes must be skipped in that shape; the workspace dir is still probed.
+func TestVerifyBobStateDirsWritableSkipsHomeProbesWhenHomeMissing(t *testing.T) {
+	root := t.TempDir()
+	// The production /data/home/agents mode: traversable, not group-writable.
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatalf("chmod root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o770) })
+	home := filepath.Join(root, "tester")
+
+	workDir := t.TempDir()
+	if err := os.Chmod(workDir, 0o770); err != nil {
+		t.Fatalf("chmod workDir: %v", err)
+	}
+
+	m := &Manager{logger: discardLogger()}
+	if got := m.verifyBobStateDirsWritable("tester", home, workDir, 2004); len(got) != 0 {
+		t.Errorf("verifyBobStateDirsWritable() = %v for not-yet-created home, want none", got)
+	}
+
+	// The workspace dir is NOT exempt: a missing home only silences the two
+	// $HOME/.bob probes, never the <workdir>/.bob one.
+	if err := os.Chmod(workDir, 0o750); err != nil {
+		t.Fatalf("chmod workDir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(workDir, 0o770) })
+	got := m.verifyBobStateDirsWritable("tester", home, workDir, 2004)
+	wantDir := filepath.Join(workDir, config.BobStateDirName)
+	if len(got) != 1 || got[0] != wantDir {
+		t.Errorf("verifyBobStateDirsWritable() = %v for missing home with unwritable workDir, want [%s]", got, wantDir)
+	}
+}
+
+// TestBobStateDirRemedy pins that the logged remedy matches the branch that
+// failed: an agent-owned dir needs its OWNER bits restored, and must never be
+// told to widen group access (which would undo per-agent isolation), while a
+// dev-owned dir reached through group `node` keeps the group-mode advice.
+func TestBobStateDirRemedy(t *testing.T) {
+	uid := os.Getuid()
+	if uid <= 0 {
+		t.Skip("cannot model an agent-owned dir as root")
+	}
+	dir := t.TempDir()
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+
+	got := bobStateDirRemedy(info, dir, uid, "770")
+	if !strings.HasPrefix(got, "chmod u+rwx "+dir) || strings.Contains(got, "node") {
+		t.Errorf("agent-owned remedy = %q, want owner-bit chmod with no group widening", got)
+	}
+
+	for _, mode := range []string{"770", "2775"} {
+		got := bobStateDirRemedy(info, dir, uid+1, mode)
+		if want := "chmod " + mode + " " + dir + " and ensure it is group-owned by node"; got != want {
+			t.Errorf("foreign-owned remedy(%s) = %q, want %q", mode, got, want)
+		}
 	}
 }

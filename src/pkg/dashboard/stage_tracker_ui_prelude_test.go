@@ -27,6 +27,7 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_SOFT_LINK_TIP"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_NEEDED"),
 		jsConstLine(t, html, "STAGE_TRACKER_POSSIBLY_EXISTS"),
+		jsConstLine(t, html, "STAGE_TRACKER_OPEN_FOR_DISCUSSION"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTIVE_WORD"),

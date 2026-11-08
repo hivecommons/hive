@@ -618,6 +618,75 @@
       return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>`;
     }
 
+    // Phone progress pill (hivecommons/hive#17160): "Step 7/9 · Merge queue ·
+    // 2h" stands in for the chevron strip at phone widths, where eight
+    // chevrons cannot fit a 390px row. Pure: rendered into every strip-row
+    // next to the <ol>, shown by tracker.css only inside the phone media
+    // tier; tapping opens the full strip in a modal sheet
+    // (stageTrackerPillSheet). Steps count chevrons as drawn — column 50 is
+    // two (CI, Review) — within the row's range, so a nested PR row counts
+    // only its own chevrons. Colour follows the strip: data-motion carries
+    // the row's motion bucket, "merged" when the cap is lit.
+    function stageTrackerPillHtml(item, stages, range, nowMs, ctx) {
+      if (!item || (item.superseded && item.superseded.closer_pr)) return '';
+      const from = range && range.from != null ? range.from : -Infinity;
+      const to = range && range.to != null ? range.to : Infinity;
+      const segs = stageTrackerSegments(item, stages, nowMs, ctx).filter(sg => sg.number >= from && sg.number <= to);
+      let step = 0, total = 0, active = null;
+      segs.forEach(sg => {
+        const width = sg.number === 50 ? 2 : 1;
+        if (sg.state === 'active' && !active) {
+          active = sg;
+          // Column 50: Review is the second chevron, lit when only it runs.
+          step = total + (sg.number === 50 && typeof stageTrackerTrackRunning === 'function' && !stageTrackerTrackRunning(item, 'ci') && stageTrackerTrackRunning(item, 'review') ? 2 : 1);
+        }
+        total += width;
+      });
+      if (!active) return '';
+      const label = active.detour && active.detour.text ? active.detour.text : active.short;
+      const since = (stageTrackerSinceHtml(item, nowMs).match(/>([^<]*)<\/span>/) || [])[1] || '';
+      const motion = active.cap && (active.terminal || item.terminal_merge) ? 'merged' : stageTrackerMotion(item);
+      const words = `Step ${step}/${total} · ${label}${since ? ' · ' + since : ''}`;
+      return `<button type="button" class="ham-pill" data-motion="${esc(motion)}" data-action="stageTrackerPillSheet" data-arg0="${esc(stageTrackerItemKey(item))}" data-stop="1" aria-label="${esc(words + ' — show pipeline steps')}"><span class="ham-pill-step">Step ${step}/${total}</span><span class="ham-pill-label">${esc(label)}</span>${since ? `<span class="ham-pill-since">${esc(since)}</span>` : ''}</button>`;
+    }
+
+    // Tap on the phone pill: the row's full chevron strip, its "since" age
+    // and the current-stage caption in a bottom sheet (.hive-dialog
+    // .modal-sheet, decorated by hiveWireDialog). The strip is cloned from
+    // the row so the sheet shows exactly what the desktop row shows,
+    // scrolling sideways when eight chevrons outgrow the sheet.
+    function stageTrackerPillSheet(key) {
+      const panel = document.getElementById('activity-monitor-panel');
+      const row = panel && [...panel.querySelectorAll('.ham-row, .ham-sub')].find(r => (r.dataset.hamKey || r.dataset.hamSubKey || '') === String(key) || !!r.querySelector(`:scope > .ham-strip-row > .ham-pill[data-arg0="${CSS.escape(String(key))}"]`));
+      if (!row) return;
+      const stripRow = row.querySelector(':scope > .ham-strip-row');
+      const pill = stripRow && stripRow.querySelector(':scope > .ham-pill');
+      const caption = row.querySelector(':scope > .ham-current-stage');
+      const head = row.querySelector(':scope > .ham-row-head .ham-ref, :scope > .ham-row-head .ham-pr-ref .ham-pr-num');
+      const active = stripRow && stripRow.querySelector('.ham-seg.active');
+      const title = (head ? head.textContent.trim() + ' · ' : '') + (pill ? pill.querySelector('.ham-pill-label').textContent : 'Pipeline progress');
+      // The phone card clamps the head to two lines and the needs-human note
+      // to one (hivecommons/hive#17161); the sheet carries them in full.
+      const fullTitle = [...row.querySelectorAll(':scope > .ham-row-head .ham-title:not(.ham-no-issue-t), :scope > .ham-row-head .ham-pr-title')].map(n => n.textContent.trim()).filter(Boolean).join(' · ');
+      const note = row.querySelector(':scope > .ham-human-context .cue-event-text') || row.querySelector(':scope > .ham-human-context > span');
+      const overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      overlay.innerHTML = `<div class="hive-dialog ham-pill-sheet" role="dialog" aria-modal="true" aria-label="Pipeline progress"><div class="hive-dialog-title">${esc(title)}</div><div class="hive-dialog-body long modal-scroll">${fullTitle ? `<p class="ham-pill-sheet-title">${esc(fullTitle)}</p>` : ''}<div class="ham-pill-sheet-strip"></div>${note ? `<p class="ham-pill-sheet-note">${esc(note.textContent.trim())}</p>` : ''}${caption ? `<p class="ham-pill-sheet-caption">${esc(caption.textContent)}</p>` : ''}${active && active.title ? `<p class="ham-pill-sheet-tip">${esc(active.title)}</p>` : ''}</div><div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Close</button></div></div>`;
+      const slot = overlay.querySelector('.ham-pill-sheet-strip');
+      if (stripRow) {
+        const copy = stripRow.cloneNode(true);
+        copy.querySelectorAll('.ham-pill, .ham-anim-layer').forEach(n => n.remove());
+        copy.querySelectorAll('[data-ham-prev-col]').forEach(n => n.removeAttribute('data-ham-prev-col'));
+        copy.querySelectorAll('[tabindex]').forEach(n => n.removeAttribute('tabindex'));
+        slot.appendChild(copy);
+      }
+      document.body.appendChild(overlay);
+      if (typeof hiveRememberModalOpen === 'function') hiveRememberModalOpen(overlay);
+      const done = () => { if (overlay.parentNode) overlay.remove(); if (pill && typeof pill.focus === 'function') pill.focus(); };
+      if (typeof hiveWireDialog === 'function') hiveWireDialog(overlay, done, undefined, '.primary', null, close => close());
+      else overlay.querySelector('.primary').addEventListener('click', done);
+    }
+
     // "040 Covered by PR" — the stage code plus the strip word the payload
     // names for it (the code alone when the stage table is not loaded yet).
     function stageTrackerStageWord(n) {

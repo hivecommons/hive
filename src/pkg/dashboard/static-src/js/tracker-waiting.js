@@ -77,6 +77,9 @@
       }
       const chip = document.getElementById('activity-monitor-waiting');
       if (chip) chip.textContent = w.count ? 'Waiting on you (' + w.count + ')' : 'Waiting on you';
+      const compact = document.getElementById('activity-monitor-compact-waiting');
+      const compactN = compact && compact.querySelector('.ham-chip-n');
+      if (compactN) { compactN.textContent = String(w.count); compactN.hidden = !w.count; }
       stageTrackerWaitingToast(w, nowMs);
     }
 

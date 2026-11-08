@@ -56,7 +56,7 @@ that status is the thing to check before treating a page as current behaviour:
   `local`, so an assistant-mediated action is indistinguishable from a dashboard one.
 - [Crux: the agent runtime boundary](crux.md) — **Stage 1 shipped (v5); Stage 2 blocked on `pkg/config`.** RFC [#13536](https://github.com/hivecommons/hive/issues/13536): names the agent runtime inside Hive (`pkg/agent` and its ring) as Crux, lists what stays in Hive, records the staged plan (in-repo boundary → nested module → `crux serve`) and the naming decision. Inbound and outbound ratchets in `src/internal/testutil/crux_*_ratchet_test.go`, the tmux funnel, `crux.Runtime`, Crux-owned value types, CI path filters and the `crux` CLI are live; the nested module waits on an agent-runtime config leaf (the doc lists the measured outbound edges and prerequisites).
 
-- [Draining CLI auto-memory into draft knowledge](cli-memory-drain.md) — **Design only.** #17033: turns each coding CLI's hidden memory store (Claude Code `projects/*/memory`, Codex `memories`, Gemini `GEMINI.md`) into `draft` knowledge facts tagged `auto-memory` and `agent:<name>`. Claude Code drains through a `SessionEnd` hook; the others drain on the manager side at kick time, before `clear_on_kick`. Decides content-hash dedup across agents, an ingest-only drain with the existing curator as the only promoter, and untrusted-content handling (never primed while draft). Implementation is split into three child issues.
+- [Draining CLI auto-memory into draft knowledge](cli-memory-drain.md) — **Partly shipped** (phase 1: manager-side drain, dedup tags, spool, draft create path; phase 3: review flow, draft exclusion, legacy drain; phase 2, the Claude Code `SessionEnd` hook, is open). #17033: turns each coding CLI's hidden memory store (Claude Code `projects/*/memory`, Codex `memories`, Gemini `GEMINI.md`) into `draft` knowledge facts tagged `cli-memory` and `agent:<name>`. Claude Code drains through a `SessionEnd` hook; the others drain on the manager side at kick time, before `clear_on_kick`. Decides content-hash dedup across agents, an ingest-only drain with the existing curator as the only promoter, and untrusted-content handling (never primed while draft). Implementation is split into three child issues.
 
 - [Crux: generic tool policy for the MITM proxy](crux-tool-policy.md) — **Design only (proposed).** #14228, child of #14138: a shared operation vocabulary with per-forge adapters, a `relay(<command>)` verdict, deny-by-default for unrecognised operations, and the proxy's evaluation pipeline written down once. It also covers migrating behind a parity test and treating #14211 as the first non-GitHub adapter.
 
@@ -249,6 +249,16 @@ that status is the thing to check before treating a page as current behaviour:
   keeping the bot credential-free and having Hive perform the audited,
   server-side allowlisted label write. Credits RFC #6239 and records the
   Discord intents/partials trap before implementation.
+
+- [Nous → Spek: the winning experiment as a `spek-new` source](nous-spek-source.md)
+  — **proposed / design only, no Hive change.** #17020: what the external Nous
+  framework leaves on disk for a winning candidate (`best_found.json`,
+  `meta_findings.json` `deployment_recommendation`, findings, bundle
+  `code_changes`), what Hive reads of it (two files at boot, a ledger
+  vocabulary the framework's rows don't share), and what `spek-new` accepts (a
+  `sources[].uri`). Proposes a straw-man artifact and publishing it as a GitHub
+  issue so `spek-new` can start from the link, and lists the questions the Nous
+  team has to answer.
 
 - [`hive tui` — a terminal dashboard for Hive](tui.md) — **shipped (v1).** The
   design record for the k9s-style terminal client tracked in #4907: scope, the

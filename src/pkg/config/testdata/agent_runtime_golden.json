@@ -561,7 +561,22 @@
     "AgentScopes": null,
     "Advisor": false,
     "AdvisorMaxPerKick": 0,
-    "AdvisorExcludeAgents": null
+    "AdvisorExcludeAgents": null,
+    "AdvisorLLM": {
+      "Mode": "",
+      "Model": "",
+      "Endpoint": "",
+      "APIKeyEnv": "",
+      "APIKeyFile": "",
+      "Candidates": 0,
+      "PaneLines": 0,
+      "TimeoutS": 0,
+      "MaxCallsPerAgentHour": 0,
+      "MaxCallsPerDay": 0,
+      "BudgetOverride": false,
+      "HoldoutPercent": 0,
+      "OnError": ""
+    }
   },
   "Hub": {
     "Enabled": false,

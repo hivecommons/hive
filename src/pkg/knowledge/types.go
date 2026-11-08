@@ -149,6 +149,9 @@ type ExtractedFact struct {
 	// Sensitive marks a fact that must stay inside the hive; repository
 	// publishing skips it (see IsSensitiveFact).
 	Sensitive bool `json:"sensitive,omitempty"`
+	// State is the lifecycle state recorded when the fact is written to a
+	// local vault. Empty writes no `state:` key, which loads as approved.
+	State LifecycleState `json:"state,omitempty"`
 }
 
 func containsAny(s string, needles ...string) bool {

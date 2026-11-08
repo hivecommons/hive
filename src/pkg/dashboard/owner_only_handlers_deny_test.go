@@ -104,6 +104,7 @@ func TestV4OwnerOnlyHandlerGapsRejectUnverifiedOwners(t *testing.T) {
 		{"knowledge connectors sync", http.MethodPost, "/api/config/knowledge/connectors/docs/sync", srv.handleKnowledgeConnectorsSync},
 		{"knowledge connectors validate", http.MethodPost, "/api/config/knowledge/connectors/validate", srv.handleKnowledgeConnectorsValidate},
 		{"knowledge entry state", http.MethodPut, "/api/knowledge/entry/old-way/state", srv.handleKnowledgeEntryState},
+		{"knowledge legacy memory drain", http.MethodPost, "/api/knowledge/cli-memory/drain-legacy", srv.handleKnowledgeDrainLegacyMemory},
 		{"knowledge public", http.MethodPut, "/api/knowledge/public", srv.handlePublicKnowledgePut},
 		{"knowledge toggle", http.MethodPut, "/api/knowledge/enabled", srv.handleKnowledgeToggle},
 		{"nous abort", http.MethodPost, "/api/nous/abort", srv.handleNousAbort},

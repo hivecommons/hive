@@ -109,7 +109,7 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "overviewProjectFilterRepoMatches") + `
 ` + jsFunc(t, html, "overviewProjectFilterSummary") + `
 ` + jsFunc(t, html, "renderOverviewKPIs") + `
-const document = { _els: {}, getElementById(id) { if (!this._els[id]) this._els[id] = { id, hidden: true, textContent: '0/0', title: '', attrs: { 'data-zero': '' }, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; } }; return this._els[id]; } };
+const document = { _els: {}, getElementById(id) { if (!this._els[id]) this._els[id] = { id, hidden: true, textContent: 'BP = 0/0', title: '', attrs: { 'data-zero': '' }, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; } }; return this._els[id]; } };
 ` + jsFunc(t, html, "overviewSidebarPill") + `
 ` + jsFunc(t, html, "overviewSidebarPillLead") + `
 ` + jsFunc(t, html, "overviewUnlistedCounts") + `

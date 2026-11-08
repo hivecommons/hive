@@ -124,6 +124,8 @@ hive_run_uid_isolation_migration() {
     if [ "${HIVE_HOME_MODE_REPAIR_NEEDED:-false}" = "true" ]; then
       chmod -R g+rwX /data/home 2>/dev/null \
         || echo "[entrypoint] WARN: chmod -R g+rwX /data/home failed — is CAP_FOWNER in the pod's capabilities.add? Continuing; agents may hit EACCES under /data/home"
+      # The shared Claude settings.json stays hive-owned and not group-writable (#17059).
+      [ -L /data/home/.claude/settings.json ] || chmod go-w /data/home/.claude/settings.json 2>/dev/null || true
       find /data/home -type d -exec chmod g+s {} + 2>/dev/null \
         || echo "[entrypoint] WARN: chmod g+s on /data/home dirs failed — is CAP_FOWNER/CAP_FSETID in the pod's capabilities.add? Continuing"
     fi
@@ -1687,12 +1689,16 @@ if [ "$(id -u)" = "0" ]; then
   # no-follow guarantee -- chmod has no no-follow form, so an entry an agent
   # swaps for a link between enumeration and the chmod is still followed (the
   # same window `chmod -R` has). `chown -h` never follows.
+  #
+  # The shared Claude settings.json is excluded: it carries hooks and
+  # apiKeyHelper, so it is hive-owned and never group-writable (#17059). The
+  # manager verifies and tightens it before every claude launch.
   hive_fix_walk() {
     [ -d "$1" ] || return 0
     _walk_root="$1"; shift
     _regroup_sh="$(hive_fix_regroup_sh)"
     _reown_sh="$(hive_fix_reown_sh)"
-    find "$_walk_root" ! -type l "$@" \( -type d -uid 0 -exec sh -c "$_reown_sh" sh g+rwxs {} + -o -type d -exec sh -c "$_regroup_sh" sh g+rwxs {} + -o -uid 0 -exec sh -c "$_reown_sh" sh g+rwX {} + -o -exec sh -c "$_regroup_sh" sh g+rwX {} + \) 2>/dev/null || true
+    find "$_walk_root" ! -type l ! -path /data/home/.claude/settings.json "$@" \( -type d -uid 0 -exec sh -c "$_reown_sh" sh g+rwxs {} + -o -type d -exec sh -c "$_regroup_sh" sh g+rwxs {} + -o -uid 0 -exec sh -c "$_reown_sh" sh g+rwX {} + -o -exec sh -c "$_regroup_sh" sh g+rwX {} + \) 2>/dev/null || true
     return 0
   }
 

@@ -225,6 +225,8 @@ is not a repeated runtime defect (hivecommons/hive#16795). The WARN and its
 `minutes_since_kick` / `total_action_nudges` fields stay in local logs; actual
 nudge-delivery failures remain eligible for reporting when repeated.
 
+It also skips `stage transition suppressed by dampener` (`stageDampenerSuppression`, `pkg/fleetreport/slogfeed/slogfeed.go`): the stage-label store suppresses flapping transitions during its dampener hold window (hivecommons/hive#17103). That is the dampener working as designed, not a runtime error. The same function skips `stage flap suppressed` (`suppressStageFlap`, `pkg/stageengine/writer.go`): the stage engine refuses a same-head, same-evidence reversal of its last label write inside its flap window (hivecommons/hive#17142).
+
 The re-engagement sweep logs `re-engagement kick undeliverable; budget not
 charged` at INFO rather than WARN when the cause is `shared session pool is
 busy` (`deliverReEngagement`, `src/cmd/hive/main_sweeps.go`): a saturated shared CLI

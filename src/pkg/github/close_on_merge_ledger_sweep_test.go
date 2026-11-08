@@ -178,9 +178,9 @@ func TestCloseOnMergeLedgerSweepSettledClaimsSkipAPI(t *testing.T) {
 	}
 
 	// The marker is persisted: a reloaded ledger skips too. Load with the
-	// test clock: LoadClaimLedger prunes settled claims past
-	// settledClaimRetention against the wall clock, so a fixed fixture date
-	// would otherwise expire the claims once the calendar moves on.
+	// test clock: settled claims are retired settledClaimRetention after
+	// their anchor, so reading under the wall clock drops them all once the
+	// fixed merge date is 30 days in the past.
 	reloaded, err := loadClaimLedgerAt(ledger.path, nil, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)

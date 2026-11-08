@@ -39,6 +39,9 @@
          into a circle several times its glyph. */
       --tap-target: 40px;
       --tap-glyph: 16px;
+      /* Coarse-pointer floor (Apple HIG / WCAG 2.5.5: 44pt). Phone tiers
+         that must meet it remap --tap-target to this for their subtree. */
+      --tap-target-touch: 44px;
       --tap-ring: 28px;
       /* Terminal surface — terminals always read as terminals: near-black
          in dark mode, deep neutral (never white) in light mode. The

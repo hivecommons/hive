@@ -55,6 +55,9 @@
          into a circle several times its glyph. */
       --tap-target: 40px;
       --tap-glyph: 16px;
+      /* Coarse-pointer floor (Apple HIG / WCAG 2.5.5: 44pt). Phone tiers
+         that must meet it remap --tap-target to this for their subtree. */
+      --tap-target-touch: 44px;
       --tap-ring: 28px;
       /* Terminal surface — terminals always read as terminals: near-black
          in dark mode, deep neutral (never white) in light mode. The
@@ -1394,6 +1397,23 @@
     .ham-sound-file input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .ham-sound-help { font-size: var(--fs-xs); margin: var(--sp-0); }
     .ham-sound-volume-value { color: var(--text); font-variant-numeric: tabular-nums; }
+    /* Phone compact filter bar + Filters sheet (#17159). .ham-compact lives
+       on the sticky bar and is shown only in responsive.css's phone tier;
+       the sheet receives the toolbar and label chips as-is (same ids and
+       hamFilter actions), one control per line at tap height. Desktop
+       never shows either. */
+    .ham-compact { display: none; }
+    .ham-filter-sheet-body { white-space: normal; }
+    .ham-filter-sheet .ham-toolbar { flex-direction: column; align-items: stretch; gap: var(--sp-3); margin: 0; }
+    .ham-filter-sheet .ham-toolbar .ham-chips { display: flex; }
+    .ham-filter-sheet .ham-toolbar .ham-chips .ham-chip { flex: 1 1 0; }
+    .ham-filter-sheet .ham-chip { min-height: var(--tap-target); font-size: var(--fs-sm); }
+    .ham-filter-sheet .ham-repo-filter { display: flex; justify-content: space-between; gap: var(--sp-3); min-height: var(--tap-target); white-space: nowrap; }
+    .ham-filter-sheet .ham-select { flex: 1 1 auto; max-width: none; min-height: var(--tap-target); font-size: var(--fs-touch); }
+    .ham-filter-sheet .ham-input { flex: none; width: 100%; box-sizing: border-box; min-height: var(--tap-target); font-size: var(--fs-touch); }
+    .ham-filter-sheet .ham-dir { min-width: var(--tap-target); }
+    .ham-filter-sheet .ham-sound { margin-left: 0; }
+    .ham-filter-sheet .ham-labels { margin: var(--sp-3) 0 0; gap: var(--sp-2); }
     .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
     .ham-labels:empty { display: none; }
     .ham-label-chip { font-family: var(--font-mono); }
@@ -2060,6 +2080,18 @@
     .ham-merged-list .ham-merged-meta { color: var(--text-faint); white-space: nowrap; font-size: var(--fs-xs); }
     .ham-merged-pop .ham-empty { padding: var(--sp-2) 0; }
     .ham-merged-pop-foot { margin-top: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); }
+    .ham-merged-list .ham-merged-repo { display: none; }
+    @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
+      .ham-pop-sheet .ham-merged-pop-head > span:first-child { display: none; }
+      .ham-pop-sheet .ham-merged-pop-head { margin-bottom: var(--sp-3); }
+      .ham-pop-sheet .ham-merged-list li { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "title title title" "num repo meta"; align-items: center; row-gap: var(--sp-1); min-height: var(--tap-target); padding: var(--sp-2) var(--sp-0); border-bottom: var(--line-width) solid var(--line); }
+      .ham-pop-sheet .ham-merged-list .ham-merged-title { grid-area: title; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+      .ham-pop-sheet .ham-merged-list .ham-merged-num { grid-area: num; }
+      .ham-pop-sheet .ham-merged-list .ham-merged-meta { grid-area: meta; font-size: var(--fs-sm); }
+      .ham-pop-sheet .ham-merged-list .ham-merged-repo { grid-area: repo; display: inline-block; justify-self: start; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: var(--sp-0) var(--sp-2); border: var(--line-width) solid var(--line); border-radius: var(--r-lg); color: var(--text-faint); font-size: var(--fs-xs); }
+      .ham-pop-sheet .ham-merged-list a { display: inline-flex; align-items: center; min-height: var(--tap-target); }
+      .ham-pop-sheet .ham-merged-pop-foot { padding-bottom: var(--safe-area-bottom); }
+    }
     /* Merge queue chip + popover (hivecommons/hive issue 15395): the train in merge order. */
     .ham-queue-chip .ham-queue-n { margin-left: var(--sp-1); font-variant-numeric: tabular-nums; }
     .ham-queue-train { margin: var(--sp-3) 0 var(--sp-2); font-weight: var(--fw-semibold); }
@@ -2072,7 +2104,7 @@
        (just the ⟳ and the actor glyph). */
     .ham-seg.active .ham-seg-t.ham-queue-stalled { color: inherit; }
     .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
-    .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; position: relative; overflow: hidden; animation: merge-banner-in 220ms ease-out both; }
+    .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; position: relative; overflow: hidden; cursor: pointer; animation: merge-banner-in 220ms ease-out both; }
     .merge-banner .toast-bar { background: color-mix(in srgb, var(--green) 40%, transparent); }
     .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }
     .merge-banner-ico { color: var(--green); font-weight: var(--fw-bold); }
@@ -2085,8 +2117,37 @@
     .merge-banner-links button:hover, .merge-banner-links a:hover { text-decoration: underline; }
     .merge-banner-close { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: var(--fs-md); line-height: 1; padding: 0 var(--sp-1); }
     .merge-banner-close:hover { color: var(--text); }
+    /* The title and its "(lane, by, hh:mm)" tail are separate spans so the
+       phone layout below can stack them; on a desktop they read as one line. */
+    .merge-banner-more { display: none; }
+    .merge-banner[hidden] { display: none; }
     @keyframes merge-banner-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
     @keyframes merge-banner-out { from { opacity: 1; } to { opacity: 0; transform: translateY(6px); } }
+    /* Phone (hivecommons/hive: "the formatting for merged toasts on mobile
+       is terrible"): the stack spans the width above the home indicator,
+       the title wraps to two lines instead of an ellipsis at ~30 chars, the
+       lane/merger/time tail drops to its own small mono line, the three
+       links sit in one row, and the ≤768px `button { min-height: 44px }`
+       tap-target rule is undone for the inline repo chip and text links
+       (it drew the chip as a 33×44 block and dropped "Open on GitHub"
+       — an <a>, so exempt — out of line with its button neighbours).
+       Only the newest STAGE_TRACKER_MERGE_BANNER_PHONE_MAX banners show;
+       the rest sit behind a "+N more" pill that opens the Merged list.
+       A tap anywhere on a banner (outside its links) dismisses it. */
+    @media (max-width: 480px) {
+      .merge-banners { left: var(--sp-4); right: var(--sp-4); bottom: calc(var(--sp-4) + var(--safe-area-bottom)); max-width: none; gap: var(--sp-2); }
+      .merge-banner { gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); }
+      .merge-banner-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); }
+      .merge-banner .ham-repo-chip { min-height: 0; height: auto; line-height: 1.5; }
+      .merge-banner-text { white-space: normal; text-overflow: clip; }
+      .merge-banner-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+      .merge-banner-meta { display: block; margin-top: var(--sp-1); color: var(--text-faint); font-family: var(--font-mono); font-size: var(--fs-2xs); }
+      .merge-banner-links { flex-wrap: nowrap; gap: var(--sp-5); min-width: 0; }
+      .merge-banner-links button, .merge-banner-links a { min-height: 0; height: auto; display: inline-flex; align-items: center; padding: var(--sp-2) 0; white-space: nowrap; }
+      .merge-banner-close { min-height: 0; height: auto; width: var(--tap-target); min-width: var(--tap-target); margin: calc(-1 * var(--sp-2)) calc(-1 * var(--sp-2)) 0 0; display: inline-flex; align-items: center; justify-content: center; }
+      .merge-banner-more { display: inline-flex; align-self: flex-end; align-items: center; justify-content: center; min-height: 0; height: auto; padding: var(--sp-1) var(--sp-3); border: var(--line-width) solid var(--line); border-radius: var(--r-pill); background: var(--panel-strong); color: var(--muted); font: inherit; font-size: var(--fs-xs); box-shadow: var(--shadow-raised); cursor: pointer; pointer-events: auto; }
+      .merge-banner-more[hidden] { display: none; }
+    }
     @keyframes cue-cap-glow { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 55%, transparent); } 35% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 35%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }
     @keyframes cue-flight { 0% { opacity: 0; transform: translate(0, 0) scale(0.9); } 12% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.08), calc(var(--cue-dy, 0px) * 0.1)) scale(1.1); } 55% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.45 + 10px), calc(var(--cue-dy, 0px) * 0.62)) scale(1.05); } 100% { opacity: var(--cue-end-opacity, 0.25); transform: translate(var(--cue-dx, 0px), var(--cue-dy, 0px)) scale(0.7); } }
     @keyframes cue-flight-fade { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
@@ -2231,10 +2292,87 @@
       .ham-cols .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-cols .ham-seg.cap { flex-basis: 2em; }
     }
-    @media (max-width: 640px) {
-      #activity-monitor-panel { --ham-compact-min-width: 60em; }
-      .ham-row > .ham-strip-row, .ham-sub > .ham-strip-row, .ham-cols > .ham-strip-row { overflow-x: auto; }
-      .ham-row > .ham-strip-row > .ham-strip, .ham-sub > .ham-strip-row > .ham-strip, .ham-cols > .ham-strip-row > .ham-strip { min-width: var(--ham-compact-min-width); }
+    /* Phone progress pill (hivecommons/hive#17160). Outside the phone tier
+       the pill does not exist for layout: the strip, its anim layer and the
+       sticky column header are exactly what they are at 1280. Inside it the
+       chevron strip, the since-age and .ham-cols are hidden and the pill
+       ("Step 7/9 · Merge queue · 2h", stage-coloured, ≥ --tap-target tall)
+       stands in; tapping it opens the full strip in a modal sheet. */
+    .ham-pill { display: none; }
+    @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
+      .ham-cols { display: none; }
+      .ham-row > .ham-strip-row > .ham-strip, .ham-sub > .ham-strip-row > .ham-strip,
+      .ham-row > .ham-strip-row > .ham-since, .ham-sub > .ham-strip-row > .ham-since,
+      .ham-row > .ham-strip-row > .ham-anim-layer, .ham-sub > .ham-strip-row > .ham-anim-layer { display: none; }
+      .ham-row > .ham-strip-row, .ham-sub > .ham-strip-row { overflow: hidden; min-width: 0; }
+      .ham-pill { display: inline-flex; position: relative; align-items: center; gap: var(--sp-2); max-width: 100%; min-height: var(--control-compact-min-h); padding: var(--sp-1) var(--sp-3); border: 0; border-radius: var(--r-pill); font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-semibold); line-height: 1.2; text-align: left; cursor: pointer; background: var(--amber); color: var(--surface-0); -webkit-tap-highlight-color: transparent; }
+      /* The box stays at the compact control height so a nested-PR row fits a 667px phone; the hit
+         area is padded out to the tap target. */
+      .ham-pill::before { content: ""; position: absolute; inset: calc((var(--control-compact-min-h) - var(--tap-target)) / 2 - var(--sp-1)) 0; }
+      .ham-pill > span { min-width: 0; white-space: nowrap; }
+      .ham-pill .ham-pill-step { flex: 0 0 auto; opacity: .85; font-variant-numeric: tabular-nums; }
+      .ham-pill .ham-pill-label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+      .ham-pill .ham-pill-since { flex: 0 0 auto; opacity: .85; font-variant-numeric: tabular-nums; }
+      .ham-pill .ham-pill-label::before, .ham-pill .ham-pill-since::before { content: "· "; opacity: .7; }
+      .ham-pill[data-motion="static"] { background: color-mix(in srgb, var(--amber) 70%, var(--panel)); }
+      .ham-pill[data-motion="needs-human"] { background: color-mix(in srgb, var(--amber) 45%, var(--red)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 55%, transparent); }
+      .ham-pill[data-motion="merged"] { background: var(--green); }
+      .ham-pill:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: 2px; }
+      .ham-pill.ham-pill-moved { animation: ham-pill-moved .45s ease-out 1; }
+    }
+    @keyframes ham-pill-moved { 0% { transform: scale(.94); filter: brightness(1.6); } 100% { transform: none; filter: none; } }
+    /* The sheet opened from the pill carries a copy of the row's strip; the
+       phone rules above hide a strip that sits in a row, so this one is put
+       back and scrolls sideways when eight chevrons outgrow the sheet. */
+    .ham-pill-sheet .ham-pill-sheet-strip { overflow-x: auto; padding-bottom: var(--sp-2); }
+    .ham-pill-sheet .ham-strip-row { display: flex; align-items: center; gap: var(--sp-2); min-width: 32em; overflow: visible; }
+    .ham-pill-sheet .ham-strip-row > .ham-strip, .ham-pill-sheet .ham-strip-row > .ham-since { display: flex; }
+    .ham-pill-sheet .ham-strip-row > .ham-strip { display: grid; }
+    .ham-pill-sheet .ham-pill-sheet-title { margin: 0 0 var(--sp-3); font-size: var(--fs-sm); color: var(--text); overflow-wrap: anywhere; }
+    .ham-pill-sheet .ham-pill-sheet-note { margin: var(--sp-3) 0 0; font-size: var(--fs-sm); color: var(--amber); }
+    .ham-pill-sheet .ham-pill-sheet-caption { margin: var(--sp-3) 0 0; font-size: var(--fs-sm); color: var(--text); }
+    .ham-pill-sheet .ham-pill-sheet-tip { margin: var(--sp-2) 0 0; font-size: var(--fs-sm); color: var(--text-muted); white-space: pre-line; }
+    @media (prefers-reduced-motion: reduce) { .ham-pill.ham-pill-moved { animation: none; } }
+    /* Phone card per row (hivecommons/hive#17161). Same markup as 1280; the
+       phone tier re-flows it. ☐ and ⋯ already sit tap-sized in the card's
+       top right (#17163); the head drops the tap target's height so they
+       overhang the card's top padding and the pill starts where they end.
+       The head is a wrapping flex line: the issue slot (kind icon · repo
+       chip · #ref · title) and the PR reference are each a box clamped to
+       two lines — on a PR-only row the slot is just icon + chip and the PR
+       text hangs beside it; on an issue row that also names its PR the PR
+       gets one line below — while badges and the lead action wrap onto a
+       line of their own, never clipped by the clamp. "no linked issue" is
+       dropped and the caption keeps its lead clause on one line. The pill
+       sheet carries the full title and the needs-human note. */
+    @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
+      #activity-monitor-section .ham-row { padding-block: var(--sp-3); }
+      #activity-monitor-section .ham-row > .ham-row-head.ham-row-head, #activity-monitor-section .ham-sub > .ham-row-head.ham-row-head { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--sp-2); row-gap: var(--sp-1); min-height: 0; line-height: var(--lh-control); }
+      .ham-head-cols, .ham-head-cols > .ham-strip, .ham-head-cols .ham-seg.ham-head-lead, .ham-head-cols .ham-seg.ham-head-pr, .ham-head-cols .ham-pr-line { display: contents; }
+      #activity-monitor-section .ham-row-head .ham-head-main, #activity-monitor-section .ham-row-head .ham-pr-ref { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; flex: 1 1 auto; min-width: 0; max-width: 100%; gap: 0; }
+      #activity-monitor-section .ham-row-head .ham-head-main:has(> .ham-no-issue-t) { flex: 0 0 auto; }
+      #activity-monitor-section .ham-row-head .ham-pr-ref { flex-basis: 10em; font-size: inherit; }
+      #activity-monitor-section .ham-row-head:has(.ham-head-main > .ham-title:not(.ham-no-issue-t)) .ham-pr-ref { -webkit-line-clamp: 1; flex-basis: 100%; }
+      /* A row carrying a lead action or badge gives the title's second line
+         to that badge line so the card keeps its height. */
+      #activity-monitor-section .ham-row-head:has(.ham-badges:not(:empty)) :is(.ham-head-main, .ham-pr-ref) { -webkit-line-clamp: 1; }
+      .ham-row-head .ham-kind-ico, .ham-row-head .ham-active-ico { display: inline-block; vertical-align: calc(-1 * var(--sp-1)); }
+      /* Chips and the lead action render inline so no line box grows past
+         the head's line height; borders paint on the inline box and the
+         ::before / ::after hit areas pad the tap target back out. */
+      #activity-monitor-section .ham-row-head :is(.ham-repo-chip, .ham-base-pill, .ham-badge, .ham-lead-act) { position: relative; display: inline; min-height: 0; min-width: 0; height: auto; padding-block: 0; line-height: inherit; vertical-align: baseline; white-space: nowrap; }
+      .ham-row-head .ham-repo-chip::after, .ham-row-head .ham-lead-act::before { content: ""; position: absolute; inset: calc(-1 * var(--sp-6)) 0; }
+      .ham-row-head .ham-ref, .ham-row-head .ham-title, .ham-row-head .ham-pr-ref > *, .ham-row-head .ham-lineage, .ham-row-head .ham-adopted-from { display: inline; white-space: normal; overflow: visible; max-width: none; }
+      .ham-row-head .ham-ref, .ham-row-head .ham-pr-num, .ham-row-head .ham-repo-chip { margin-right: var(--sp-2); }
+      .ham-row-head .ham-title { color: var(--text); }
+      .ham-row-head .ham-no-issue-t, .ham-row-head .ham-linked-ico { display: none; }
+      .ham-row-head .ham-badges { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); flex: 0 1 auto; max-width: 100%; }
+      .ham-row-head .ham-badges:empty { display: none; }
+      .ham-row-head .ham-badges > .ham-badge { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+      /* The pill starts on the tools' bottom edge, so it stops short of
+         their column; its label ellipsises and the sheet has the rest. */
+      .ham-row > .ham-strip-row > .ham-pill, .ham-sub > .ham-strip-row > .ham-pill { max-width: calc(100% - 2 * var(--tap-target) - var(--sp-2) - var(--sp-3)); }
+      .ham-row > .ham-current-stage, .ham-sub > .ham-current-stage { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     }
     /* Movement animation: when an item's lit chevron changes column between
        two refreshes, the chosen effect (settings gear → Movement animation)
@@ -2339,6 +2477,56 @@
     .sts-sample { padding: var(--sp-3) var(--sp-2) 0; }
     .sts-sample .ham-row { padding: var(--sp-2); }
     .sts-sample .ham-cols { padding-top: 0; }
+
+    /* Phone count line (hivecommons/hive#17162): one tap target that toggles
+       the Waiting on you filter; absent at desktop widths. */
+    .ham-attn-wrap { display: none; }
+    @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
+      .ham-attn-wrap { display: block; position: sticky; top: calc(var(--navbar-sticky-height) + var(--ham-sticky-bar-h)); z-index: calc(var(--z-sticky) + 1); background: var(--panel); }
+      .ham-attn-wrap:empty { display: none; }
+      /* The column header sticks below the count line, not under it. */
+      .ham-attn-wrap:not(:empty) ~ #activity-monitor-panel .ham-cols { top: calc(var(--navbar-sticky-height) + var(--ham-sticky-bar-h) + var(--tap-target) + var(--line-width)); }
+      .ham-attn-line { display: flex; align-items: center; gap: var(--sp-2); width: 100%; min-height: var(--tap-target); padding: 0 var(--sp-3); border: 0; border-bottom: var(--line-width) solid var(--border); background: transparent; color: var(--status-attention); font-size: var(--fs-touch); font-weight: 600; text-align: left; }
+      .ham-attn-line[aria-pressed="true"] { background: color-mix(in srgb, var(--status-attention) 12%, transparent); }
+    }
+
+    /* Phone ergonomics (#17163, part of #17158): in the .modal-sheet tier
+       (the query responsive.css uses for full-screen dialogs) every control
+       in the activity monitor meets the coarse-pointer floor. --tap-target is
+       remapped to --tap-target-touch for this section only, so the grip, ?,
+       ⚙ and the ⧉ ⛶ 📺 header tools (responsive.css sizes them from the same
+       token) grow with the chips, selects, search box, Merged / queue chips
+       and label chips. The select checkbox and ⋯ kebab leave the left gutter
+       (12px wide on touch, hover-revealed on desktop) for the top-right
+       corner of the row header, always visible and tap-sized; the header
+       reserves their width so the title wraps beside them. The kebab menu
+       itself is a .hive-dialog.modal-sheet (tracker-actions.js adds
+       .ham-menu-sheet) with tap-sized items and the sheet's safe-area pad.
+       Desktop (and the popout, kiosk, TV / display modes at desktop widths)
+       does not match the query and is unchanged. Tokens only (ADR-0018). */
+    @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
+      #activity-monitor-section { --tap-target: var(--tap-target-touch); }
+      #activity-monitor-section .ham-toolbar .ham-chip, #activity-monitor-section .ham-labels .ham-chip, #activity-monitor-section .ham-selbar .ham-chip, #activity-monitor-section .ham-compact .ham-chip,
+      #activity-monitor-section .ham-select, #activity-monitor-section .ham-input,
+      #activity-monitor-section .ham-merged-count, #activity-monitor-section .ham-queue-chip,
+      #activity-monitor-section .ham-repo-chip, #activity-monitor-section .cue-event-ico, #activity-monitor-section .ham-lead-act, #activity-monitor-section .ham-badge-mod[data-action] {
+        box-sizing: border-box; min-height: var(--tap-target); min-width: var(--tap-target);
+      }
+      #activity-monitor-section .ham-toolbar .ham-chip, #activity-monitor-section .ham-labels .ham-chip, #activity-monitor-section .ham-selbar .ham-chip, #activity-monitor-section .ham-repo-chip, #activity-monitor-section .ham-lead-act { padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
+      #activity-monitor-section .ham-select, #activity-monitor-section .ham-input { height: var(--tap-target); padding-top: 0; padding-bottom: 0; }
+      #activity-monitor-section .ham-repo-filter { min-height: var(--tap-target); align-items: center; }
+      #activity-monitor-section .ham-header-tool { width: var(--tap-target); min-width: var(--tap-target); height: var(--tap-target); min-height: var(--tap-target); padding: 0; font-size: var(--tap-glyph); }
+      #activity-monitor-panel { padding-left: 0; }
+      #activity-monitor-section .ham-row > .ham-row-tools, #activity-monitor-section .ham-sub > .ham-row-tools { left: auto; right: 0; top: 0; width: auto; flex-direction: row; align-items: flex-start; gap: var(--sp-2); z-index: 1; }
+      #activity-monitor-section .ham-row > .ham-row-head, #activity-monitor-section .ham-sub > .ham-row-head { padding-right: calc(2 * var(--tap-target) + var(--sp-2) + var(--sp-3)); min-height: var(--tap-target); }
+      #activity-monitor-section .ham-sel, #activity-monitor-section .ham-kebab { width: var(--tap-target); height: var(--tap-target); min-width: var(--tap-target); min-height: var(--tap-target); font-size: var(--tap-glyph); opacity: 1; }
+      .ham-menu.ham-menu-sheet { position: static; min-width: 0; max-width: none; padding: 0; border: 0; box-shadow: none; background: transparent; font-size: var(--fs-touch); }
+      .ham-menu-sheet .ham-menu-head { display: none; }
+      .ham-menu-sheet .ham-menu-item { min-height: var(--tap-target-touch); padding: var(--sp-3) var(--sp-4); white-space: normal; overflow-wrap: anywhere; }
+      .ham-menu-sheet .ham-menu-hint, .ham-menu-sheet .ham-menu-note { font-size: var(--fs-sm); }
+      .ham-menu-sheet .ham-menu-sep { margin: var(--sp-2) 0; }
+      .ham-sheet .ham-sheet-body { padding-bottom: var(--safe-area-bottom); }
+    }
     .nq-rail { margin: var(--sp-5) 0; padding: var(--sp-5); border: 1px solid var(--border-color); border-radius: var(--r); overflow-wrap: anywhere; }
     .nq-rail h3, .nq-rail h4, .nq-rail h5 { margin: var(--sp-4) 0; }
     .nq-muted { color: var(--text-secondary); font-size: var(--fs-sm); }
@@ -3425,9 +3613,11 @@
     .overview-kpi-spark { min-height: 24px; min-width: 0; display: flex; align-items: end; margin-top: var(--sp-1); }
     .overview-kpi-spark .sparkline { width: 100%; max-width: 100%; min-width: 0; }
     .overview-kpi-spark svg { width: 100%; max-width: 100%; height: 24px; }
-    /* Phone: keep the tile label/subline at the compact body sizes the tiles
-       shipped with rather than the 2xs helper size. */
-    @media (max-width: 720px) { .overview-kpi-label { font-size: var(--fs-base); } .overview-kpi-subline { font-size: var(--fs-md); } }
+    /* Phone: the tile label/subline keep --fs-2xs at every width. #16613
+       bumped them to --fs-base/--fs-md under 720px on the belief that
+       --fs-2xs was undefined outside .config-modal; tokens.css has defined
+       it at :root since #13989, so the phone rule only enlarged the tiles
+       (the "large text Overview" on the candidate channel). No override. */
     .overview-kpi-coverage[data-coverage-state="success"] { --overview-coverage-color: var(--green); }
     .overview-kpi-coverage[data-coverage-state="warn"] { --overview-coverage-color: var(--yellow); }
     .overview-kpi-coverage[data-coverage-state="danger"] { --overview-coverage-color: var(--red); }
@@ -4164,6 +4354,16 @@
     .ham-result-link { color: var(--accent); text-decoration: none; justify-self: start; }
     .ham-result-link:hover { text-decoration: underline; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* Phone: the generic toast stack (kicks, saves, failed / needs-human
+       results) spans the width under the notch instead of a 360px card
+       hugging the right edge, and a long message wraps anywhere rather
+       than pushing the card past the viewport. */
+    @media (max-width: 480px) {
+      #toast-container { left: var(--sp-4); right: var(--sp-4); top: calc(var(--sp-4) + var(--safe-area-top)); gap: var(--sp-2); }
+      .toast { max-width: none; width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+      .toast.sticky { padding-right: 40px; }
+      .toast-close { min-height: 0; height: auto; width: var(--tap-target); min-width: var(--tap-target); top: 0; right: 0; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+    }
 
     .feedback-bug-btn { position:relative; min-width:34px; }
     .feedback-pill { position:absolute; top:-7px; right:-7px; min-width:16px; height:16px; padding:var(--sp-0) var(--sp-1); border-radius:var(--r-pill); background:var(--red); color:var(--text); font-size:var(--fs-2xs); font-weight:800; line-height:16px; text-align:center; box-shadow:var(--shadow-raised); }
@@ -6046,6 +6246,31 @@
       .hive-dialog.modal-sheet > .hive-dialog-buttons { flex: 0 0 auto; margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--border); }
       .hive-dialog.modal-sheet > .hive-dialog-buttons .hv-btn { min-height: var(--modal-sheet-close-size); }
       .hive-dialog.modal-sheet .modal-sheet-close { display: inline-flex; }
+      /* Activity monitor on a phone (#17159): the 13-control toolbar and
+         the label chips hide; the sticky bar carries the compact chips
+         (kind / needs attention / waiting on you / ⋯ Filters) beside the
+         Merged pill, and the meta line keeps only "showing N of M". The
+         sticky bar grows to tap height, so the column header below it
+         follows through --ham-sticky-bar-h. Lines naming .ham-sticky must
+         stay free of literal colours (stage_tracker_actor_icon_test.go). */
+      #activity-monitor-section { --ham-sticky-bar-h: calc(var(--tap-target) + 2 * var(--sp-1)); }
+      #activity-monitor-section .section-body > .ham-toolbar, #activity-monitor-section .section-body > .ham-labels { display: none; }
+      #activity-monitor-meta > :not(.ham-count) { display: none; }
+      /* The card body's overflow:hidden makes it the sticky containing
+         scroller; with only the meta line above the bar, sticky top would
+         push the bar down over the first row. overflow:clip clips without
+         creating a scroller, so the bar sticks to the viewport instead. */
+      #activity-monitor-section .dash-card-body { overflow: clip; }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky .ham-merged-sub { display: none; }
+      .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact-scroll::-webkit-scrollbar { display: none; }
+      .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
+      .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }
+      .ham-compact-more[data-ham-active] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
+      #activity-monitor-section { --fs-2xs: var(--fs-sm); --fs-xs: var(--fs-sm); --ham-odo-digit: var(--fs-sm); }
     }
     @media (max-width: 768px) {
       body {
@@ -6765,6 +6990,27 @@
       textarea {
         font-size: var(--fs-touch) !important;
       }
+      /* Activity monitor on a landscape phone (#17166): ~390px of height.
+         The toolbar and label chips collapse into the compact filter bar
+         exactly as on a portrait phone (#17159), the column header hides
+         so the sticky stack is the bar alone (≤100px); the notch is
+         already honoured by this tier's body padding. Lines naming
+         .ham-sticky must stay free of
+         literal colours (stage_tracker_actor_icon_test.go). */
+      #activity-monitor-section { --ham-sticky-bar-h: calc(var(--tap-target) + 2 * var(--sp-1)); }
+      #activity-monitor-section .section-body > .ham-toolbar, #activity-monitor-section .section-body > .ham-labels { display: none; }
+      #activity-monitor-meta > :not(.ham-count) { display: none; }
+      #activity-monitor-section .dash-card-body { overflow: clip; }
+      #activity-monitor-panel .ham-cols { display: none; }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky .ham-merged-sub { display: none; }
+      .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact-scroll::-webkit-scrollbar { display: none; }
+      .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
+      .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }
+      .ham-compact-more[data-ham-active] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
     }
     /* Touch phones use one full-screen chat layout in either orientation.
        Desktop docking/resizing controls do not apply to this layout. */
@@ -8192,7 +8438,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     </div>
     <div class="oc-nav-group" id="dashboard-section-nav-group">
       <div class="oc-nav-label">Dashboard</div>
-      <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span><span id="overview-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
+      <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span><span id="overview-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>BP = 0/0</span></a>
       <a class="oc-nav-item" data-section="activity-monitor-section" data-action="ocNavigate" data-arg0="activity-monitor-section"><span class="oc-nav-emoji">📍</span><span class="oc-nav-text">Hive activity monitor</span><span id="activity-monitor-waiting-badge" class="badge-count oc-nav-count oc-nav-count--waiting" data-zero title="Nothing is waiting on you" aria-label="0 waiting on you">0</span><span id="activity-monitor-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">🚦</span><span class="oc-nav-text">Governor</span><span id="governor-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
       <a class="oc-nav-item" data-section="runs-section" data-action="ocNavigate" data-arg0="runs-section"><span class="oc-nav-emoji">🏃</span><span class="oc-nav-text">Runs</span><span id="runs-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
@@ -8769,12 +9015,29 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
       <div class="ham-selbar" id="activity-monitor-selbar" role="toolbar" aria-label="Selected rows" hidden></div>
       <div class="ham-sticky" id="activity-monitor-sticky">
+        <!-- Phone-only compact filter bar (#17159): the toolbar above is
+             hidden under the .modal-sheet tier and these chips take over;
+             ⋯ Filters moves the toolbar and label chips into a sheet
+             (openStageTrackerFilterSheet). Desktop never shows this. -->
+        <div class="ham-compact" id="activity-monitor-compact" role="toolbar" aria-label="Quick filters">
+          <span class="ham-compact-scroll">
+            <span class="ham-chips" role="group" aria-label="Item kind">
+              <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="all" aria-pressed="true">All</button>
+              <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="pr" aria-pressed="false">PRs</button>
+              <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="issue" aria-pressed="false">Issues</button>
+            </span>
+            <button type="button" class="ham-chip" id="activity-monitor-compact-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Only items that need attention: stalled, held, blocked, needs-human, needs-decision, needs-rebase">⚠ Needs attention</button>
+            <button type="button" class="ham-chip ham-chip--waiting" id="activity-monitor-compact-waiting" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle" aria-pressed="false" title="Only items parked on you">👤 Waiting on you<span class="ham-chip-n" hidden>0</span></button>
+          </span>
+          <button type="button" class="ham-chip ham-compact-more" id="activity-monitor-filters" data-action="openStageTrackerFilterSheet" aria-haspopup="dialog" aria-expanded="false" title="Repo, search, since, author, decisions, sort, group, per page and labels">⋯ Filters<span class="ham-chip-n" hidden>0</span></button>
+        </div>
         <span class="ham-sticky-live" id="activity-monitor-merged-live" role="status" aria-live="polite"></span>
         <button type="button" class="ham-chip ham-merged-count" id="activity-monitor-merged" data-action="hamMergedToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-merged-pop" title="Merged: 0 all time"><svg class="ham-merged-ico" viewBox="0 0 18 12" focusable="false" aria-hidden="true"><ellipse class="oc-version-bee-wing" cx="7" cy="3.6" rx="3" ry="1.5" transform="rotate(-18 7 3.6)"/><ellipse class="oc-version-bee-wing" cx="11" cy="3.4" rx="3" ry="1.5" transform="rotate(18 11 3.4)"/><ellipse class="oc-version-bee-body" cx="9.2" cy="7" rx="5.8" ry="3.3"/><path class="oc-version-bee-stripe" d="M7.2 4.2v5.6M10 3.8v6.4"/><circle class="oc-version-bee-head" cx="15" cy="7" r="1.7"/></svg>Merged <span class="ham-merged-n">0</span><span class="ham-merged-sub">0 today · 0 this week</span></button>
         <div class="ham-merged-pop" id="activity-monitor-merged-pop" role="dialog" aria-label="Recent merges" hidden></div>
         <button type="button" class="ham-chip ham-queue-chip" id="activity-monitor-queue" data-action="hamQueueToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-queue-pop" title="Merge queue: empty" hidden>⛓ Merge queue <span class="ham-queue-n">0</span></button>
         <div class="ham-merged-pop ham-queue-pop" id="activity-monitor-queue-pop" role="dialog" aria-label="Merge queue" hidden></div>
       </div>
+      <div class="ham-attn-wrap" id="activity-monitor-attn-line"></div>
       <div id="activity-monitor-native-queue" class="nq-rail" role="region" aria-label="Forge-owned merge queues" hidden></div>
       <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
       <div class="ham-meta ham-meta-foot" id="activity-monitor-meta-foot"></div>
@@ -16016,6 +16279,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // 017 possible-existing: the prior-art gate parked the issue on its
     // author (hivecommons/hive#13575). Lights Actionable with its own word.
     const STAGE_TRACKER_POSSIBLY_EXISTS = 17;
+    // 018 open-for-discussion: an unclaimed proposal / design issue
+    // (hivecommons/hive#17150). Lights Actionable with its own word; no
+    // agent work is queued on it, anyone may claim it.
+    const STAGE_TRACKER_OPEN_FOR_DISCUSSION = 18;
     // Stages that share a column (or a detour word) and what the lit chevron says.
     const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
     // Merge-gate pill vocabulary (hivecommons/hive#15073), one word per
@@ -16048,10 +16315,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MERGING_SLOW_MS = 60000;
     const STAGE_TRACKER_MERGE_PATH_WORDS = { sweep: 'automerge sweep', dashboard: 'maintainer merge from the dashboard', relay: 'hive-merge relay', forge: 'forge adapter', queue: 'merge queue' };
     const STAGE_TRACKER_MERGE_FAILED_SHORT_MAX = 60;
-    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Review passed', 80: 'Queued for merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 18: 'Open for discussion', 60: 'Review passed', 80: 'Queued for merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
-    const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
+    const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 18: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     // Motion bucket of the lit chevron: only a step the hive is acting on
     // ('active', gentle pulse) or one waiting on a person ('needs-human',
@@ -16778,7 +17045,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerGroup = STAGE_TRACKER_GROUP_DEFAULT;
     var _stageTrackerCollapsed = {};
     function stageTrackerDefaultFilter() {
-      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, waitingOnYou: false, age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
+      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, waitingOnYou: false, attentionFirst: true, age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
     }
     var _stageTrackerFilter = stageTrackerDefaultFilter();
     // Type-to-filter text of the "all labels" dialog (not persisted).
@@ -16807,6 +17074,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 10: return 'Waiting for a worker';
         case 15: return 'Triage needed';
         case 17: return 'Possibly exists · needs author';
+        case 18: return 'Open for discussion';
         case 20: return 'Claimed';
         case 30: return 'PR in progress';
         case 40: return 'Covered by a PR, not yet in review';
@@ -16905,7 +17173,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Stage → operator phrase, mirrored from stageTrackerStagePhrase
     // (stage_tracker_vocabulary.go): every string the page renders names a
     // stage by its chevron's words, never by a code ("060 reviewed").
-    const STAGE_TRACKER_STAGE_PHRASE = { 10: 'actionable', 15: 'waiting for triage', 17: 'waiting for the author to confirm the gap (prior art found)', 20: 'claimed', 30: 'a PR in progress', 40: 'covered by a PR', 45: 'waiting for a human decision', 50: 'in CI / review', 60: 'review passed · waiting for merge admission', 70: 'being remediated by hive', 71: 'waiting for its author', 72: 'returned to the contributor', 74: 'adopted by hive', 80: 'at the merge queue', 85: 'waiting for a human decision', 90: 'ready for human merge', 95: 'soaking before merge', 100: 'in the merge queue' };
+    const STAGE_TRACKER_STAGE_PHRASE = { 10: 'actionable', 15: 'waiting for triage', 17: 'waiting for the author to confirm the gap (prior art found)', 18: 'open for discussion', 20: 'claimed', 30: 'a PR in progress', 40: 'covered by a PR', 45: 'waiting for a human decision', 50: 'in CI / review', 60: 'review passed · waiting for merge admission', 70: 'being remediated by hive', 71: 'waiting for its author', 72: 'returned to the contributor', 74: 'adopted by hive', 80: 'at the merge queue', 85: 'waiting for a human decision', 90: 'ready for human merge', 95: 'soaking before merge', 100: 'in the merge queue' };
     // Pure: a stage's name in plain words for cues and tooltips — its short
     // word when the stages table has one, else its label with the lane's
     // "stage/060-" slug prefix dropped and the slug humanised ("Reviewed").
@@ -18018,7 +18286,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // not merge-ready): PR in progress, with the merge-queue chevron
       // empty (hivecommons/hive#16524).
       if (kind === 'pr' && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) return STAGE_TRACKER_PR_COLUMN;
-      if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
+      if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS || cur === STAGE_TRACKER_OPEN_FOR_DISCUSSION) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
       if (cur === 40) return STAGE_TRACKER_PR_COLUMN;
@@ -18049,7 +18317,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // chevron reads the column's own word ("CI / Review"), not "Needs
       // @author" (hivecommons/hive#15784). Guarded: the harnesses load by name.
       const pushedBack = (cur === 71 || cur === 72) && typeof stageTrackerPushedBack === 'function' && stageTrackerPushedBack(item);
-      const detour = (!terminal && !pushedBack && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
+      const detour = (!terminal && !pushedBack && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== STAGE_TRACKER_OPEN_FOR_DISCUSSION && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
         ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (typeof stageTrackerBlockerWord === 'function' && cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       if (detour && cur === 70 && !detour.sentinel && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
       // A bare "Needs human decision" (045 / 085) says why in the chevron
@@ -19055,6 +19323,75 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return (a.caption || noData).replace(/^(CI|Review) unknown(?= ·|$)/, noData) + (!Number.isFinite(observed) ? ' · observation time unknown' : !fresh ? ' · last observed ' + stageTrackerAgoWord(observed, clock) + (moving ? ' · refreshing' : '') : '');
       }).join(' · ') : '';
       return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>`;
+    }
+
+    // Phone progress pill (hivecommons/hive#17160): "Step 7/9 · Merge queue ·
+    // 2h" stands in for the chevron strip at phone widths, where eight
+    // chevrons cannot fit a 390px row. Pure: rendered into every strip-row
+    // next to the <ol>, shown by tracker.css only inside the phone media
+    // tier; tapping opens the full strip in a modal sheet
+    // (stageTrackerPillSheet). Steps count chevrons as drawn — column 50 is
+    // two (CI, Review) — within the row's range, so a nested PR row counts
+    // only its own chevrons. Colour follows the strip: data-motion carries
+    // the row's motion bucket, "merged" when the cap is lit.
+    function stageTrackerPillHtml(item, stages, range, nowMs, ctx) {
+      if (!item || (item.superseded && item.superseded.closer_pr)) return '';
+      const from = range && range.from != null ? range.from : -Infinity;
+      const to = range && range.to != null ? range.to : Infinity;
+      const segs = stageTrackerSegments(item, stages, nowMs, ctx).filter(sg => sg.number >= from && sg.number <= to);
+      let step = 0, total = 0, active = null;
+      segs.forEach(sg => {
+        const width = sg.number === 50 ? 2 : 1;
+        if (sg.state === 'active' && !active) {
+          active = sg;
+          // Column 50: Review is the second chevron, lit when only it runs.
+          step = total + (sg.number === 50 && typeof stageTrackerTrackRunning === 'function' && !stageTrackerTrackRunning(item, 'ci') && stageTrackerTrackRunning(item, 'review') ? 2 : 1);
+        }
+        total += width;
+      });
+      if (!active) return '';
+      const label = active.detour && active.detour.text ? active.detour.text : active.short;
+      const since = (stageTrackerSinceHtml(item, nowMs).match(/>([^<]*)<\/span>/) || [])[1] || '';
+      const motion = active.cap && (active.terminal || item.terminal_merge) ? 'merged' : stageTrackerMotion(item);
+      const words = `Step ${step}/${total} · ${label}${since ? ' · ' + since : ''}`;
+      return `<button type="button" class="ham-pill" data-motion="${esc(motion)}" data-action="stageTrackerPillSheet" data-arg0="${esc(stageTrackerItemKey(item))}" data-stop="1" aria-label="${esc(words + ' — show pipeline steps')}"><span class="ham-pill-step">Step ${step}/${total}</span><span class="ham-pill-label">${esc(label)}</span>${since ? `<span class="ham-pill-since">${esc(since)}</span>` : ''}</button>`;
+    }
+
+    // Tap on the phone pill: the row's full chevron strip, its "since" age
+    // and the current-stage caption in a bottom sheet (.hive-dialog
+    // .modal-sheet, decorated by hiveWireDialog). The strip is cloned from
+    // the row so the sheet shows exactly what the desktop row shows,
+    // scrolling sideways when eight chevrons outgrow the sheet.
+    function stageTrackerPillSheet(key) {
+      const panel = document.getElementById('activity-monitor-panel');
+      const row = panel && [...panel.querySelectorAll('.ham-row, .ham-sub')].find(r => (r.dataset.hamKey || r.dataset.hamSubKey || '') === String(key) || !!r.querySelector(`:scope > .ham-strip-row > .ham-pill[data-arg0="${CSS.escape(String(key))}"]`));
+      if (!row) return;
+      const stripRow = row.querySelector(':scope > .ham-strip-row');
+      const pill = stripRow && stripRow.querySelector(':scope > .ham-pill');
+      const caption = row.querySelector(':scope > .ham-current-stage');
+      const head = row.querySelector(':scope > .ham-row-head .ham-ref, :scope > .ham-row-head .ham-pr-ref .ham-pr-num');
+      const active = stripRow && stripRow.querySelector('.ham-seg.active');
+      const title = (head ? head.textContent.trim() + ' · ' : '') + (pill ? pill.querySelector('.ham-pill-label').textContent : 'Pipeline progress');
+      // The phone card clamps the head to two lines and the needs-human note
+      // to one (hivecommons/hive#17161); the sheet carries them in full.
+      const fullTitle = [...row.querySelectorAll(':scope > .ham-row-head .ham-title:not(.ham-no-issue-t), :scope > .ham-row-head .ham-pr-title')].map(n => n.textContent.trim()).filter(Boolean).join(' · ');
+      const note = row.querySelector(':scope > .ham-human-context .cue-event-text') || row.querySelector(':scope > .ham-human-context > span');
+      const overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      overlay.innerHTML = `<div class="hive-dialog ham-pill-sheet" role="dialog" aria-modal="true" aria-label="Pipeline progress"><div class="hive-dialog-title">${esc(title)}</div><div class="hive-dialog-body long modal-scroll">${fullTitle ? `<p class="ham-pill-sheet-title">${esc(fullTitle)}</p>` : ''}<div class="ham-pill-sheet-strip"></div>${note ? `<p class="ham-pill-sheet-note">${esc(note.textContent.trim())}</p>` : ''}${caption ? `<p class="ham-pill-sheet-caption">${esc(caption.textContent)}</p>` : ''}${active && active.title ? `<p class="ham-pill-sheet-tip">${esc(active.title)}</p>` : ''}</div><div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Close</button></div></div>`;
+      const slot = overlay.querySelector('.ham-pill-sheet-strip');
+      if (stripRow) {
+        const copy = stripRow.cloneNode(true);
+        copy.querySelectorAll('.ham-pill, .ham-anim-layer').forEach(n => n.remove());
+        copy.querySelectorAll('[data-ham-prev-col]').forEach(n => n.removeAttribute('data-ham-prev-col'));
+        copy.querySelectorAll('[tabindex]').forEach(n => n.removeAttribute('tabindex'));
+        slot.appendChild(copy);
+      }
+      document.body.appendChild(overlay);
+      if (typeof hiveRememberModalOpen === 'function') hiveRememberModalOpen(overlay);
+      const done = () => { if (overlay.parentNode) overlay.remove(); if (pill && typeof pill.focus === 'function') pill.focus(); };
+      if (typeof hiveWireDialog === 'function') hiveWireDialog(overlay, done, undefined, '.primary', null, close => close());
+      else overlay.querySelector('.primary').addEventListener('click', done);
     }
 
     // "040 Covered by PR" — the stage code plus the strip word the payload
@@ -20085,7 +20422,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="ham-strip-row">
             ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(pr, stages, ctx) : ''}
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
-            ${stageTrackerSinceHtml(pr, nowMs)}
+            ${stageTrackerSinceHtml(pr, nowMs)}${typeof stageTrackerPillHtml === 'function' ? stageTrackerPillHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx) : ''}
           </div>
           ${humanNote}${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, noteCtx, subKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(subKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}
         </div>`;
@@ -20403,7 +20740,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="ham-strip-row">
           ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
-          ${stageTrackerSinceHtml(shown, nowMs)}
+          ${stageTrackerSinceHtml(shown, nowMs)}${typeof stageTrackerPillHtml === 'function' ? stageTrackerPillHtml(shown, stages, range, nowMs, ctx) : ''}
         </div>${humanNote}${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, noteCtx, rowKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(rowKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${subs}
       </div>`;
     }
@@ -21097,6 +21434,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!fn || !strip || from === to) return false;
       const dest = strip.children[to], src = strip.children[from];
       if (!dest || !src || dest.classList.contains('blank')) return false;
+      // Phone tier (hivecommons/hive#17160): the strip is display:none and
+      // the progress pill stands in for it, so the overlay has no geometry
+      // to play against. One flash on the pill is the whole cue; the
+      // chevrons already show the new state when the sheet opens. Guarded
+      // for the test stub strip, which has no getClientRects.
+      if (typeof strip.getClientRects === 'function' && !strip.getClientRects().length) {
+        const pill = strip.parentElement && strip.parentElement.querySelector ? strip.parentElement.querySelector(':scope > .ham-pill') : null;
+        if (pill) {
+          pill.classList.add('ham-pill-moved');
+          stageTrackerAfter(pill, 'animationend', STAGE_TRACKER_MOVE_MS, () => pill.classList.remove('ham-pill-moved'));
+        }
+        return true;
+      }
       stageTrackerAnimLayer(strip).innerHTML = '';
       const plan = stageTrackerMovePlan(effect, stageTrackerAnimScale(strip));
       strip.dataset.hamPhase = 'flash';
@@ -21364,6 +21714,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES.indexOf(n) >= 0 && (item.author_kind || '') === 'human';
     }
 
+    // The phone tier of the Activity monitor: the same media query the
+    // sheet-vs-popover decision uses (STAGE_TRACKER_SHEET_QUERY in
+    // tracker-actions.js), so the two cannot drift.
+    function stageTrackerPhone() {
+      return stageTrackerIsPhoneSheet();
+    }
+
     // Chip order: every stage/NNN-* label first by NNN, then everything
     // else alphabetically, case-insensitive.
     function stageTrackerLabelCompare(a, b) {
@@ -21387,6 +21744,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       f.needsHuman = !!f.needsHuman;
       f.onHold = !!f.onHold;
       f.waitingOnYou = !!f.waitingOnYou;
+      f.attentionFirst = f.attentionFirst !== false;
       if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
       if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
       f.attention = !!f.attention;
@@ -21401,6 +21759,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // True when any narrowing filter (not sort / paging) is set.
     function stageTrackerFilterActive(f) {
       return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || f.waitingOnYou || f.age !== 'any' || f.author !== 'any' || f.attention || f.acted !== 'any';
+    }
+
+    // How many narrowing filters the phone Filters sheet holds are set:
+    // everything stageTrackerFilterActive counts except the kind /
+    // attention / waiting-on-you chips, which sit on the compact bar.
+    function stageTrackerSheetFilterCount(f) {
+      f = stageTrackerNormalizeFilter(f);
+      return (f.repo ? 1 : 0) + (f.q ? 1 : 0) + (f.age !== 'any' ? 1 : 0) + (f.author !== 'any' ? 1 : 0) + (f.acted !== 'any' ? 1 : 0) + f.labels.length + (f.needsHuman ? 1 : 0) + (f.onHold ? 1 : 0);
     }
 
     // Does one item pass the narrowing filters? ctx.nowMs anchors the age
@@ -21541,8 +21907,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // attention-first within a column (stageTrackerAttentionTier); dir 'asc'
     // reverses the strip / age / repo / number keys but never the tier, and
     // reverses 'finisher' whole (rows that need a person first).
-    function stageTrackerSort(rows, stages, f) {
+    // On a phone (opts.phone) with f.attentionFirst the tier becomes the
+    // top-level group, ahead of the column, so rows parked on a person lead
+    // the list; desktop ordering never reads it.
+    function stageTrackerSort(rows, stages, f, opts) {
       f = stageTrackerNormalizeFilter(f);
+      const tierFirst = !!(opts && opts.phone) && f.attentionFirst && (f.sort === 'furthest' || f.sort === 'waiting');
       const byRepoNumber = (x, y) => ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0));
       const sign = f.dir === 'asc' ? -1 : 1;
       const byTier = (x, y) => stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y);
@@ -21561,6 +21931,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return sign * (b.anchor - a.anchor) || byTier(x, y) || sign * ((a.since - b.since) || byRepoNumber(x, y)); };
         }
       }
+      const ordered = cmp;
+      if (tierFirst) cmp = (x, y) => byTier(x, y) || ordered(x, y);
       return (rows || []).slice().sort(cmp);
     }
 
@@ -21928,6 +22300,59 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', (f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending') + STAGE_TRACKER_DIR_TIER_NOTE); }
       const reset = document.getElementById('activity-monitor-reset');
       if (reset) reset.hidden = !stageTrackerFilterActive(f);
+      stageTrackerSyncCompact(f);
+    }
+    // The phone compact bar (#17159) mirrors the kind / attention /
+    // waiting chips and counts the filters the sheet holds on ⋯ Filters.
+    function stageTrackerSyncCompact(f) {
+      const bar = document.getElementById('activity-monitor-compact');
+      if (!bar) return;
+      bar.querySelectorAll('.ham-chip[data-arg0="kind"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.arg1 === f.kind ? 'true' : 'false'));
+      const att = document.getElementById('activity-monitor-compact-attention');
+      if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
+      const wait = document.getElementById('activity-monitor-compact-waiting');
+      if (wait) wait.setAttribute('aria-pressed', f.waitingOnYou ? 'true' : 'false');
+      const more = document.getElementById('activity-monitor-filters');
+      const n = more && more.querySelector('.ham-chip-n');
+      if (n) { const count = stageTrackerSheetFilterCount(f); n.textContent = String(count); n.hidden = !count; more.toggleAttribute('data-ham-active', count > 0); }
+    }
+    // ⋯ Filters: the toolbar and the label chips move, as they are, into a
+    // .hive-dialog.modal-sheet (same ids, same hamFilter actions, so every
+    // render keeps syncing them) and move back home when the sheet closes
+    // (Esc / ✕ / backdrop / Done via hiveWireDialog).
+    var _stageTrackerFilterSheetReturnFocus = null;
+    function openStageTrackerFilterSheet() {
+      if (document.getElementById('activity-monitor-filters-overlay')) return;
+      const toolbar = document.getElementById('activity-monitor-toolbar');
+      const labels = document.getElementById('activity-monitor-labels');
+      if (!toolbar) return;
+      _stageTrackerFilterSheetReturnFocus = document.activeElement;
+      const overlay = document.createElement('div');
+      overlay.id = 'activity-monitor-filters-overlay';
+      overlay.className = 'hive-dialog-overlay';
+      hiveRememberModalOpen(overlay);
+      overlay.innerHTML = `<div class="hive-dialog ham-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="activity-monitor-filters-title">
+        <div id="activity-monitor-filters-title" class="hive-dialog-title">Filters</div>
+        <div class="hive-dialog-body modal-scroll ham-filter-sheet-body"></div>
+        <div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary">Done</button></div>
+      </div>`;
+      const body = overlay.querySelector('.ham-filter-sheet-body');
+      const homes = [toolbar, labels].filter(Boolean).map(node => {
+        const home = document.createComment('ham-filter-sheet-home');
+        node.parentNode.insertBefore(home, node);
+        body.appendChild(node);
+        return { node, home };
+      });
+      document.body.appendChild(overlay);
+      const more = document.getElementById('activity-monitor-filters');
+      if (more) more.setAttribute('aria-expanded', 'true');
+      hiveWireDialog(overlay, () => {
+        homes.forEach(({ node, home }) => { if (home.parentNode) { home.parentNode.insertBefore(node, home); home.remove(); } });
+        if (more) more.setAttribute('aria-expanded', 'false');
+        const ret = _stageTrackerFilterSheetReturnFocus;
+        _stageTrackerFilterSheetReturnFocus = null;
+        if (ret && ret.focus && document.contains(ret)) setTimeout(() => ret.focus({ preventScroll: true }), 0);
+      }, undefined, '.primary', null, close => close());
     }
 
     function stageTrackerLabelChipHtml(c) {
@@ -22276,9 +22701,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const id = 'ham-prep-head-' + encodeURIComponent((q.repo || '') + '|' + (q.base_ref || '') + '|' + suffix);
       return `<div class="ham-train-head${stageTrackerTrainAccentClass(STAGE_TRACKER_PREPARATION_ACCENT)} ham-preparation-head"><span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon', 'Preparation train')} ${esc(text)}</span>${stageTrackerPreparationTooltip(id, stageTrackerPreparationHelp(group), 'ham-preparation-help')}</div>`;
     }
+    // A lone ticket is the base-refresh lock holder, not a train: its row
+    // comment already says owner/waiting and verified/unverified. The header
+    // (count + front) only earns its line once two recorded tickets share it.
+    function stageTrackerPreparationHeaderShown(group) {
+      return group.queue.state !== 'observed' || group.members.length >= 2;
+    }
     function stageTrackerPreparationMissingRows() {
-      return _stageTrackerPreparationInline.flatMap((group, index) => group.queue.state !== 'observed'
-        || (group.members.length && !group.members.some(e => e.location === 'page'))
+      return _stageTrackerPreparationInline.flatMap((group, index) => stageTrackerPreparationHeaderShown(group)
+        && (group.queue.state !== 'observed' || !group.members.some(e => e.location === 'page'))
         ? [{ key: 'preparation-missing:' + index, html: stageTrackerPreparationHeaderHtml(group, 'missing', false) }] : []);
     }
     function stageTrackerPreparationInlineRows(rows, pageItems, stages) {
@@ -22288,7 +22719,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const row of rows) {
         const item = byKey.get(row.key);
         const info = stageTrackerPreparationRowInfo(item, stages);
-        if (info && !stageTrackerPreparationAdjacent(prev, info)) {
+        if (info && !stageTrackerPreparationAdjacent(prev, info) && stageTrackerPreparationHeaderShown(_stageTrackerPreparationInline[info.groupIndex])) {
           out.push({ key: 'preparation:' + row.key, html: stageTrackerPreparationHeaderHtml(
             _stageTrackerPreparationInline[info.groupIndex], row.key, seen.has(info.groupIndex)) });
         }
@@ -22353,6 +22784,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const near = Object.assign({}, ctx, { preparationParent: parent, preparationInfo: info,
           preparationPrev: infos[i - 1] || null, preparationNext: infos[i + 1] || null });
         const heading = !parent && info && !stageTrackerPreparationAdjacent(infos[i - 1], info)
+          && stageTrackerPreparationHeaderShown(_stageTrackerPreparationInline[info.groupIndex])
           ? stageTrackerPreparationHeaderHtml(_stageTrackerPreparationInline[info.groupIndex], 'nested-' + issue.number + '-' + lp.number, seen.has(info.groupIndex)) : '';
         if (info) seen.add(info.groupIndex);
         return heading + stageTrackerSubRowHtml(lp, issue, stages, nowMs, near);
@@ -22481,6 +22913,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + ' · runtime ' + (view.runtime_version || 'unknown') + ' · source/image unknown';
       return `<div class="cue-event" data-integration-subject="${esc(candidate.subject_id)}"><span class="cue-event-body" title="${esc(detail)}">${esc(text)}</span></div>`;
     }
+    // The phone-only count line above the list: one button that is the Waiting
+    // on you chip (same hamFilter action). '' when nothing is parked on anyone.
+    function stageTrackerAttentionLineHtml(waiting, attention, on) {
+      if (!waiting && !attention) return '';
+      return `<button type="button" class="ham-attn-line" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle" aria-pressed="${on ? 'true' : 'false'}" title="${on ? 'Show every row again' : 'Show only the rows waiting on you'}"><span aria-hidden="true">⚠</span> ${waiting} waiting on you · ${attention} need${attention === 1 ? 's' : ''} attention</button>`;
+    }
     function stageTrackerPagerHtml(page) {
       if (page.pages <= 1) return '';
       return `<nav class="ham-pager" aria-label="Tracker pages"><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="prev"${page.page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹ Prev</button><span>page ${page.page} of ${page.pages}</span><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="next"${page.page >= page.pages ? ' disabled' : ''} aria-label="Next page">Next ›</button></nav>`;
@@ -22572,7 +23010,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
-      const sorted = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
+      const sorted = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f, { phone: stageTrackerPhone() }));
       const ordered = typeof stageTrackerPreparationOrderRows === 'function' ? stageTrackerPreparationOrderRows(d, sorted, stages) : sorted;
       // A TV display (display=1&density=tv) shows the rows that fit the
       // screen, ungrouped, with "+N more" in place of the pager.
@@ -22612,6 +23050,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       navCountBind(STAGE_TRACKER_COUNT_BADGE_IDS, counts.badge, counts.badgeTitle, !!data || countRefresh);
       stageTrackerRenderWaiting(d, nowMs, !!data || countRefresh);
+      const attnLine = document.getElementById('activity-monitor-attn-line');
+      if (attnLine) setIfChanged(attnLine, stageTrackerAttentionLineHtml(stageTrackerWaitingOnYou(d).count || 0, attentionAll, f.waitingOnYou));
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       stageTrackerRenderLabelDialog();
@@ -23699,8 +24139,31 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       document.removeEventListener('keydown', m.onKey, true);
       window.removeEventListener('resize', m.onAway);
       window.removeEventListener('scroll', m.onAway, true);
-      if (m.el.parentNode) m.el.parentNode.removeChild(m.el);
+      const host = m.host || m.el;
+      if (host.hiveDialogClose) host.hiveDialogClose(); else if (host.parentNode) host.parentNode.removeChild(host);
       if (refocus && m.restore && typeof m.restore.focus === 'function' && document.contains(m.restore)) m.restore.focus();
+    }
+    // The phone tier of the dashboard's .modal-sheet (responsive.css): on a
+    // phone the row menu and the Merged / queue popovers open as full-screen
+    // sheets instead of anchored popovers. One query, shared with the CSS.
+    const STAGE_TRACKER_SHEET_QUERY = '(max-width: 640px), ((pointer: coarse) and (max-width: 820px))';
+    function stageTrackerIsPhoneSheet() {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(STAGE_TRACKER_SHEET_QUERY).matches;
+    }
+    // Wrap `body` in a .hive-dialog.modal-sheet overlay (Esc / ✕ / backdrop
+    // close via hiveWireDialog; safe-area pad from the shared sheet CSS) and
+    // return the overlay. `onClose` runs once, however the sheet was closed;
+    // `onEnter` runs for Enter on a focused control inside the body.
+    function stageTrackerOpenSheet(title, body, cls, onClose, onEnter) {
+      const overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      if (typeof hiveRememberModalOpen === 'function') hiveRememberModalOpen(overlay);
+      const id = 'ham-sheet-' + Math.random().toString(36).slice(2);
+      overlay.innerHTML = `<div class="hive-dialog ham-sheet ${esc(cls || '')}" role="dialog" aria-modal="true" aria-labelledby="${id}"><div id="${id}" class="hive-dialog-title">${esc(title)}</div><div class="modal-scroll ham-sheet-body"></div></div>`;
+      overlay.querySelector('.ham-sheet-body').appendChild(body);
+      document.body.appendChild(overlay);
+      hiveWireDialog(overlay, () => { if (typeof onClose === 'function') onClose(); }, null, null, null, () => { if (typeof onEnter === 'function') onEnter(); });
+      return overlay;
     }
     // Open the menu for `items` at (x, y) — or below `anchor` — and run the
     // picked action on them.
@@ -23717,13 +24180,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const tpl = document.createElement('template');
       tpl.innerHTML = stageTrackerMenuHtml(actions, head);
       const el = tpl.content.firstElementChild;
-      document.body.appendChild(el);
-      let x = at.x, y = at.y;
-      if (at.anchor && typeof at.anchor.getBoundingClientRect === 'function') { const r = at.anchor.getBoundingClientRect(); x = r.left; y = r.bottom; }
-      const pos = stageTrackerMenuPosition(x, y, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight);
-      el.style.setProperty('left', pos.left + 'px');
-      el.style.setProperty('top', pos.top + 'px');
+      // On a phone the menu is a full-screen sheet (#17163): the fixed
+      // popover's ~30px items are too small to tap and it can land under
+      // the thumb. Same markup, roles and keyboard model; the sheet adds ✕,
+      // backdrop and Esc via the shared dialog wiring.
+      const sheet = stageTrackerIsPhoneSheet();
       const m = { el, items, restore: at.restore || at.anchor || null };
+      if (sheet) {
+        el.classList.add('ham-menu-sheet');
+        m.host = stageTrackerOpenSheet(head, el, 'ham-menu-dialog', () => stageTrackerCloseMenu(true), () => {
+          const b = document.activeElement && document.activeElement.closest ? document.activeElement.closest('[role="menuitem"]') : null;
+          if (b && el.contains(b)) b.click();
+        });
+      } else {
+        document.body.appendChild(el);
+        let x = at.x, y = at.y;
+        if (at.anchor && typeof at.anchor.getBoundingClientRect === 'function') { const r = at.anchor.getBoundingClientRect(); x = r.left; y = r.bottom; }
+        const pos = stageTrackerMenuPosition(x, y, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight);
+        el.style.setProperty('left', pos.left + 'px');
+        el.style.setProperty('top', pos.top + 'px');
+      }
       m.onAway = e => { if (e.type !== 'pointerdown' || !el.contains(e.target)) stageTrackerCloseMenu(false); };
       m.onKey = e => {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stageTrackerCloseMenu(true); return; }
@@ -23736,7 +24212,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           case 'End': e.preventDefault(); stageTrackerMenuFocus(el, 'last'); break;
           case 'ArrowRight': if (b && b.getAttribute('aria-haspopup') === 'menu' && b.getAttribute('aria-disabled') !== 'true') { e.preventDefault(); b.setAttribute('aria-expanded', 'true'); stageTrackerMenuFocus(el, 1, b); } break;
           case 'ArrowLeft': { const sub = b && b.closest('.ham-submenu'); if (sub && sub.previousElementSibling) { e.preventDefault(); sub.previousElementSibling.setAttribute('aria-expanded', 'false'); sub.previousElementSibling.focus(); } break; }
-          case 'Tab': stageTrackerCloseMenu(true); break;
+          case 'Tab': if (!sheet) stageTrackerCloseMenu(true); break;
         }
       };
       el.addEventListener('click', e => {
@@ -23753,10 +24229,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stageTrackerCloseMenu(true);
         stageTrackerDoAction(m.items, act);
       });
-      document.addEventListener('pointerdown', m.onAway, true);
+      if (!sheet) {
+        document.addEventListener('pointerdown', m.onAway, true);
+        window.addEventListener('resize', m.onAway);
+        window.addEventListener('scroll', m.onAway, true);
+      }
       document.addEventListener('keydown', m.onKey, true);
-      window.addEventListener('resize', m.onAway);
-      window.addEventListener('scroll', m.onAway, true);
       _stageTrackerMenu = m;
       stageTrackerSetMenuOpen(document.getElementById('activity-monitor-panel'), true);
       if (at.expandDecide) { const d = el.querySelector('[data-ham-act="decide"]'); if (d && d.getAttribute('aria-disabled') !== 'true') d.setAttribute('aria-expanded', 'true'); }
@@ -26074,6 +26552,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MERGED_LIST_MAX = 20;
     const STAGE_TRACKER_MERGE_BANNER_MS = 30000;
     const STAGE_TRACKER_MERGE_BANNER_MAX = 5;
+    // On a phone (the .merge-banners ≤480px layout) only this many banners
+    // are visible at once; the older ones wait behind a "+N more" pill.
+    const STAGE_TRACKER_MERGE_BANNER_PHONE_MAX = 3;
+    const STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY = '(max-width: 480px)';
+    // A landscape phone (responsive.css's landscape tier) has ~390px of
+    // height; one banner at a time, the rest behind the pill (#17166).
+    const STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_MAX = 1;
+    const STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_QUERY = '(max-width: 1024px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse)';
     function stageTrackerCelebrateSetting() {
       try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_KEY) !== '0'; } catch { return true; }
     }
@@ -26206,7 +26692,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // Numbers and counts go through String(): esc() drops non-strings.
         const n = esc(String(e.number || ''));
         const num = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">#${n}</a>` : `#${n}`;
-        return `<li><span class="ham-merged-num" title="${esc(String(e.repo || ''))}#${n}">${num}</span><span class="ham-merged-title" title="${esc(e.title || '')}">${esc(e.title || e.repo)}</span><span class="ham-merged-meta">${meta}</span></li>`;
+        return `<li><span class="ham-merged-num" title="${esc(String(e.repo || ''))}#${n}">${num}</span><span class="ham-merged-title" title="${esc(e.title || '')}">${esc(e.title || e.repo)}</span><span class="ham-merged-repo">${esc(String(e.repo || ''))}</span><span class="ham-merged-meta">${meta}</span></li>`;
       }).join('');
       const head = `<div class="ham-merged-pop-head"><span>Recent merges</span><span class="ham-merged-pop-sum">${esc(String(txt.today))} today · ${esc(String(txt.week))} this week · ${esc(String(txt.total30d))} in 30 days</span></div>`;
       const body = rows ? `<ol class="ham-merged-list">${rows}</ol>` : `<div class="ham-empty">No merges recorded yet.</div>`;
@@ -26444,14 +26930,65 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Stateful: redraw the popover when it is open.
     function stageTrackerMergedPopDraw(txt, nowMs) {
       const pop = document.getElementById('activity-monitor-merged-pop');
-      if (!pop || pop.hidden) return;
+      if (!pop) return;
+      const sheet = stageTrackerPopSheet('merged');
+      if (pop.hidden && !sheet) return;
       const html = stageTrackerMergedPopHtml(txt || stageTrackerMergedText(_stageTrackerMerged, nowMs || Date.now(), 0), nowMs || Date.now());
+      if (sheet) { stageTrackerPopSheetDraw(sheet, html); return; }
       if (pop.innerHTML !== html) pop.innerHTML = html;
+    }
+    // Phones get the Merged and queue lists as a .hive-dialog.modal-sheet
+    // (hiveWireDialog: Esc, ✕, backdrop) instead of the anchored popover;
+    // the same tier as the CSS .modal-sheet rules.
+    const STAGE_TRACKER_POP_SHEET_QUERY = '(max-width: 640px), ((pointer: coarse) and (max-width: 820px))';
+    // Open sheets by kind. Draw ticks consult this map, not the DOM: no
+    // document-wide query per tick, and Node harnesses whose document
+    // stub lacks querySelector keep working.
+    const _stageTrackerPopSheets = {};
+    function stageTrackerPopSheetPhone() {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(STAGE_TRACKER_POP_SHEET_QUERY).matches;
+    }
+    function stageTrackerPopSheet(kind) {
+      return _stageTrackerPopSheets[kind] || null;
+    }
+    function stageTrackerPopSheetDraw(overlay, html) {
+      const body = overlay.querySelector('.ham-pop-sheet-body');
+      if (body && body.innerHTML !== html) body.innerHTML = html;
+    }
+    function stageTrackerPopSheetOpen(kind, title, html, chip) {
+      const overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      overlay.setAttribute('data-ham-pop-sheet', kind);
+      hiveRememberModalOpen(overlay);
+      const id = 'ham-pop-sheet-' + kind;
+      overlay.innerHTML = '<div class="hive-dialog ham-pop-sheet" role="dialog" aria-modal="true" aria-labelledby="' + id + '-title">' +
+        '<div id="' + id + '-title" class="hive-dialog-title">' + esc(title) + '</div>' +
+        '<div class="modal-scroll ham-pop-sheet-body"></div></div>';
+      document.body.appendChild(overlay);
+      _stageTrackerPopSheets[kind] = overlay;
+      stageTrackerPopSheetDraw(overlay, html);
+      hiveWireDialog(overlay, () => {
+        if (_stageTrackerPopSheets[kind] === overlay) delete _stageTrackerPopSheets[kind];
+        if (!chip) return;
+        chip.setAttribute('aria-expanded', 'false');
+        if (chip.focus) chip.focus();
+      }, undefined, null, null, close => close());
+      return overlay;
     }
     function hamMergedToggle(open) {
       const pop = document.getElementById('activity-monitor-merged-pop');
       const chip = stageTrackerMergedChip();
       if (!pop) return false;
+      if (stageTrackerPopSheetPhone()) {
+        const sheet = stageTrackerPopSheet('merged');
+        const want = typeof open === 'boolean' ? open : !sheet;
+        pop.hidden = true;
+        if (want && !sheet) {
+          if (chip) chip.setAttribute('aria-expanded', 'true');
+          stageTrackerPopSheetOpen('merged', 'Recent merges', stageTrackerMergedPopHtml(stageTrackerMergedText(_stageTrackerMerged, Date.now(), 0), Date.now()), chip);
+        } else if (!want && sheet && sheet.hiveDialogClose) sheet.hiveDialogClose();
+        return want;
+      }
       const want = typeof open === 'boolean' ? open : !!pop.hidden;
       pop.hidden = !want;
       if (chip) chip.setAttribute('aria-expanded', want ? 'true' : 'false');
@@ -26584,10 +27121,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function stageTrackerTerminalView(d, nowMs) {
       if (!d || !Array.isArray(d.items)) return d;
+      // Merge state is null until its first fetch lands; a row menu can be
+      // opened before then, so read it as "nothing merged yet".
+      const merged = _stageTrackerMergeState || {};
       const items = d.items.map(item => {
         const rowKey = stageTrackerItemKey(item), pin = _stageTrackerCelebrating[rowKey];
         const active = pin && pin.until > nowMs;
-        if (item.kind === 'pr' && _stageTrackerMergeState[rowKey] === true) {
+        if (item.kind === 'pr' && merged[rowKey] === true) {
           const fact = _stageTrackerTerminalFacts[rowKey];
           return (fact && fact.until > nowMs) || Number(item.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(item, rowKey) : null;
         }
@@ -26601,7 +27141,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
         const linked = source.map(lp => {
           const key = stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp));
-          if (_stageTrackerMergeState[key] !== true) return lp;
+          if (merged[key] !== true) return lp;
           const fact = _stageTrackerTerminalFacts[key];
           return (fact && fact.until > nowMs) || Number(lp.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(lp, key) : null;
         }).filter(Boolean);
@@ -26872,7 +27412,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const merger = stageTrackerMergerText(b.merged_by);
       const paren = [b.lane || '', who, hm].filter(Boolean).join(', ');
       const num = stageTrackerMergeBannerNumber(b);
-      return { number: num, merger, head: `${num ? '#' + num + ' ' : ''}merged${merger ? ' by ' + merger : ''}${b.preview ? ' (test)' : ''}`, text: `${b.title || b.repo || ''}${paren ? ' (' + paren + ')' : ''}`.trim() };
+      const title = String(b.title || b.repo || '').trim();
+      const meta = paren ? '(' + paren + ')' : '';
+      return { number: num, merger, head: `${num ? '#' + num + ' ' : ''}merged${merger ? ' by ' + merger : ''}${b.preview ? ' (test)' : ''}`, title, meta, text: `${title}${meta ? ' ' + meta : ''}`.trim() };
     }
     // Stateful: a persistent banner, bottom right, for one merge — stays
     // until dismissed or stageTrackerMergeBannerMs() (twice the info toast
@@ -26898,19 +27440,71 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       el.className = 'merge-banner';
       el.setAttribute('role', 'status');
       if (b.rowKey) el.setAttribute('data-ham-row', b.rowKey);
-      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${t.merger ? ` by <span class="merge-banner-by">${esc(t.merger)}</span>` : ''}${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
+      // The banner itself is the dismiss target (a tap on a phone, a click
+      // anywhere on a desktop); its links carry data-stop so they still act.
+      el.setAttribute('data-action', 'hamBannerDismiss'); el.setAttribute('data-arg-types', 't');
+      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${t.merger ? ` by <span class="merge-banner-by">${esc(t.merger)}</span>` : ''}${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}"><span class="merge-banner-title">${esc(t.title)}</span>${t.meta ? ` <span class="merge-banner-meta">${esc(t.meta)}</span>` : ''}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener" data-action="hamBannerOpenLink" data-stop="1">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
-      while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) { toastCountdownCancel(box.children[0]); box.children[0].remove(); }
+      while (stageTrackerMergeBannerList(box).length > STAGE_TRACKER_MERGE_BANNER_MAX) { const oldest = stageTrackerMergeBannerList(box)[0]; toastCountdownCancel(oldest); oldest.remove(); }
+      stageTrackerMergeBannerLayout(box);
       toastCountdownBar(el, stageTrackerMergeBannerMs(), () => stageTrackerMergeBannerDismiss(el));
       return el;
     }
+    function stageTrackerMergeBannerList(box) {
+      return Array.prototype.filter.call(box.children, c => c.classList && c.classList.contains('merge-banner'));
+    }
+    function stageTrackerMergeBannerMatches(query) {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(query).matches;
+    }
+    function stageTrackerMergeBannerIsPhone() {
+      return stageTrackerMergeBannerMatches(STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY);
+    }
+    // Pure: how many banners may show at once for the current viewport.
+    function stageTrackerMergeBannerCap() {
+      if (stageTrackerMergeBannerMatches(STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_QUERY)) return STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_MAX;
+      if (stageTrackerMergeBannerIsPhone()) return STAGE_TRACKER_MERGE_BANNER_PHONE_MAX;
+      return Infinity;
+    }
+    // Crossing the phone or landscape breakpoint (a rotation, a resized
+    // window) re-lays the stack so hidden banners come back or the pill appears.
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      for (const query of [STAGE_TRACKER_MERGE_BANNER_PHONE_QUERY, STAGE_TRACKER_MERGE_BANNER_LANDSCAPE_QUERY]) {
+        const mq = window.matchMedia(query);
+        if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => stageTrackerMergeBannerLayout(document.getElementById('merge-banners')));
+      }
+    }
+    // Pure-ish: on a phone keep the newest PHONE_MAX banners visible and hide
+    // the older ones behind a "+N more" pill (which opens the Merged list);
+    // elsewhere every banner shows and the pill is absent. Re-run on every
+    // add and remove so the pill's count tracks the stack.
+    function stageTrackerMergeBannerLayout(box) {
+      if (!box) return;
+      const banners = stageTrackerMergeBannerList(box);
+      const cap = stageTrackerMergeBannerCap();
+      const hiddenCount = Math.max(0, banners.length - cap);
+      banners.forEach((el, i) => { if (i < hiddenCount) el.setAttribute('hidden', ''); else el.removeAttribute('hidden'); });
+      let more = box.querySelector('.merge-banner-more');
+      if (hiddenCount <= 0) { if (more) more.remove(); return; }
+      if (!more) {
+        more = document.createElement('button');
+        more.type = 'button'; more.className = 'merge-banner-more';
+        more.setAttribute('data-action', 'hamMergedOpen'); more.setAttribute('data-stop', '1');
+      }
+      more.textContent = `+${hiddenCount} more`;
+      more.setAttribute('aria-label', `${hiddenCount} more ${hiddenCount === 1 ? 'merge' : 'merges'} — open the Merged list`);
+      if (box.firstChild !== more) box.insertBefore(more, box.firstChild);
+    }
     function stageTrackerMergeBannerDismiss(el) {
       if (!el || !el.parentNode) return;
+      const box = el.parentNode;
       toastCountdownCancel(el);
-      if (stageTrackerReducedMotion()) { el.remove(); return; }
+      if (stageTrackerReducedMotion()) { el.remove(); stageTrackerMergeBannerLayout(box); return; }
       el.classList.add('merge-banner-out');
-      stageTrackerAfter(el, 'animationend', 180, () => el.remove());
+      stageTrackerAfter(el, 'animationend', 180, () => { el.remove(); stageTrackerMergeBannerLayout(box); });
     }
+    // "Open on GitHub" is a plain link; the data-action only exists so the
+    // click stops at the link and does not also dismiss the banner.
+    function hamBannerOpenLink() { return true; }
     function hamBannerDismiss(btn) {
       const el = btn && typeof btn.closest === 'function' ? btn.closest('.merge-banner') : null;
       stageTrackerMergeBannerDismiss(el);
@@ -27069,14 +27663,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function stageTrackerQueuePopDraw(nowMs) {
       const pop = document.getElementById('activity-monitor-queue-pop');
-      if (!pop || pop.hidden) return;
+      if (!pop) return;
+      const sheet = stageTrackerPopSheet('queue');
+      if (pop.hidden && !sheet) return;
       const html = stageTrackerQueuePopHtml(_stageTrackerQueueItems, nowMs || Date.now(), _stageTrackerPreparationQueues);
+      if (sheet) { stageTrackerPopSheetDraw(sheet, html); return; }
       if (pop.innerHTML !== html) pop.innerHTML = html;
     }
     function hamQueueToggle(open) {
       const pop = document.getElementById('activity-monitor-queue-pop');
       const chip = stageTrackerQueueChip();
       if (!pop) return false;
+      if (stageTrackerPopSheetPhone()) {
+        const sheet = stageTrackerPopSheet('queue');
+        const want = typeof open === 'boolean' ? open : !sheet;
+        pop.hidden = true;
+        if (want && !sheet) {
+          if (chip) chip.setAttribute('aria-expanded', 'true');
+          stageTrackerPopSheetOpen('queue', 'Merge queue', stageTrackerQueuePopHtml(_stageTrackerQueueItems, Date.now(), _stageTrackerPreparationQueues), chip);
+        } else if (!want && sheet && sheet.hiveDialogClose) sheet.hiveDialogClose();
+        return want;
+      }
       const want = typeof open === 'boolean' ? open : !!pop.hidden;
       pop.hidden = !want;
       if (chip) chip.setAttribute('aria-expanded', want ? 'true' : 'false');
@@ -27944,6 +28551,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       const chip = document.getElementById('activity-monitor-waiting');
       if (chip) chip.textContent = w.count ? 'Waiting on you (' + w.count + ')' : 'Waiting on you';
+      const compact = document.getElementById('activity-monitor-compact-waiting');
+      const compactN = compact && compact.querySelector('.ham-chip-n');
+      if (compactN) { compactN.textContent = String(w.count); compactN.hidden = !w.count; }
       stageTrackerWaitingToast(w, nowMs);
     }
 
@@ -34689,7 +35299,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // counted or separately cached number.
       if (window._lastStatus) {
         const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted);
-        setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title);
+        setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title, pill.prefix);
       }
       if (!state.showKPIs) return '';
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
@@ -34717,7 +35327,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        and the last-good "stale" note. overview_sidebar_pill_test.go runs
        it under node. */
     // Pure: the sidebar Overview pill. The text is the open-item totals the
-    // tiles print (issues/PRs); the tooltip names each half and says that
+    // tiles print, named "board pressure" (BP) — the open issues and PRs
+    // the configured repos put on this hive's board — so it reads
+    // "BP = issues/PRs" (#17240); the tooltip names each half and says that
     // the Hive activity monitor pill counts rows of the same set — every
     // issue plus each PR not drawn under a listed issue — so 33/13 beside
     // Overview and 37 beside the activity monitor are one population, not
@@ -34731,11 +35343,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (syncing) title += ` · ${syncing}`;
       const note = overviewUnlistedNote(unlisted);
       if (note) title += ` · ${note}`;
-      return { issues, prs, title };
+      return { issues, prs, title, prefix: 'BP = ' };
     }
     function overviewSidebarPillLead(issues, prs) {
       const i = Number(issues) || 0, p = Number(prs) || 0;
-      return `${i} open ${i === 1 ? 'issue' : 'issues'} / ${p} open ${p === 1 ? 'PR' : 'PRs'} — the Hive activity monitor pill counts rows of this same set (every issue, plus each PR not shown under a listed issue), so it can read differently`;
+      return `Board pressure (BP): ${i} open ${i === 1 ? 'issue' : 'issues'} / ${p} open ${p === 1 ? 'PR' : 'PRs'} — the Hive activity monitor pill counts rows of this same set (every issue, plus each PR not shown under a listed issue), so it can read differently`;
     }
 
     /* Pure: open items the enumeration or forgestate cache reported in its
@@ -44296,17 +44908,19 @@ function burnAreaChart() {
        (actionableNow.issues / .prs, the same numbers the Governor tiles
        print). Both stay hidden until their feed has answered once.
        sidebarPairBadgeText() is pure so sidebar_pair_badge_test.go can
-       execute it under node. */
-    function sidebarPairBadgeText(issues, prs) {
-      return (Number(issues) || 0) + '/' + (Number(prs) || 0);
+       execute it under node. The optional prefix names the pair — only
+       Overview passes one ("BP = " for board pressure, #17240); the
+       Governor and Contributors pills stay a bare "x/y". */
+    function sidebarPairBadgeText(issues, prs, prefix) {
+      return (prefix || '') + (Number(issues) || 0) + '/' + (Number(prs) || 0);
     }
 
-    function setSidebarPairBadge(el, issues, prs, title) {
+    function setSidebarPairBadge(el, issues, prs, title, prefix) {
       if (!el) return;
       const i = Number(issues) || 0;
       const p = Number(prs) || 0;
       el.hidden = false;
-      el.textContent = sidebarPairBadgeText(i, p);
+      el.textContent = sidebarPairBadgeText(i, p, prefix);
       if (i === 0 && p === 0) el.setAttribute('data-zero', '');
       else el.removeAttribute('data-zero');
       if (title) el.title = title;
@@ -44408,6 +45022,12 @@ function burnAreaChart() {
       renderKnowledgeFacts();
     }
 
+    // Auto-memory review (#17058): drafts the CLI-memory drain wrote. The
+    // search API is an operator read, so include_states=draft lists them;
+    // no agent read ever does until one is approved.
+    const KB_AUTO_MEMORY_VIEW = 'auto-memory';
+    const KB_AUTO_MEMORY_TAG = 'cli-memory';
+
     async function kbLoadFacts(offset) {
       const request = ++_kbRequest;
       const query = _kbSearchQuery;
@@ -44416,6 +45036,9 @@ function burnAreaChart() {
       let url;
       if (query) {
         url = '/api/knowledge/search?q=' + encodeURIComponent(query) + '&limit=50';
+        if (typeFilter) url += '&type=' + encodeURIComponent(typeFilter);
+      } else if (layer === KB_AUTO_MEMORY_VIEW) {
+        url = '/api/knowledge/search?tag=' + KB_AUTO_MEMORY_TAG + '&include_states=draft&limit=200';
         if (typeFilter) url += '&type=' + encodeURIComponent(typeFilter);
       } else if (layer && layer !== 'all') {
         // Check if this is a vault, document, or standard layer type
@@ -44446,6 +45069,7 @@ function burnAreaChart() {
         _kbPageOffset = offset;
         _kbHasMore = !!data.has_more;
         _kbFacts = Array.isArray(data) ? data : (data.results || data.facts || []);
+        if (!query && layer === KB_AUTO_MEMORY_VIEW) _kbFacts = _kbFacts.filter(f => f.state === 'draft');
         _kbSelectedFact = null;
         renderKnowledgeFacts();
       } catch (e) {
@@ -45201,6 +45825,7 @@ function burnAreaChart() {
       html += '<div class="kb-layer-list" id="kb-layer-btns">';
       // Aggregate row stays on top as the filter reset (kbSelectLayer keys on the 'All Layers' text)
       html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === 'all' ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="all"><span class="kb-layer-label">📋 All Layers</span><span class="kb-layer-count">${totalPages}</span></button>`;
+      html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === KB_AUTO_MEMORY_VIEW ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="${KB_AUTO_MEMORY_VIEW}" title="Drafts drained from the coding CLIs' own memory stores. No agent sees one until it is approved."><span class="kb-layer-label">🧠 Auto-memory drafts</span></button>`;
       for (const l of layers) {
         const isGitSource = l.type && l.type.startsWith('git_source:');
         const icon = KB_LAYER_ICONS[l.type] || (isGitSource ? '📄' : '📂');
@@ -45426,6 +46051,7 @@ function burnAreaChart() {
         html += `<span class="kb-type-badge ${typeClass}">${escapeHtml(f.type || 'unknown')}</span>`;
         html += `<span class="kb-layer-badge ${layerClass}">${escapeHtml(f.layer || '')}</span>`;
         if (f.status) html += `<span class="kb-layer-badge" style="background:var(--bg);color:var(--muted)">${escapeHtml(f.status)}</span>`;
+        html += kbAutoMemoryRowHTML(f);
         html += '</div></div></div>';
       }
       if (_kbPageOffset > 0 || hasNext) {
@@ -45435,6 +46061,44 @@ function burnAreaChart() {
         html += '<button class="hv-btn btn-secondary btn-sm" data-action="kbNextPage"' + (!hasNext ? ' disabled' : '') + '>Next</button></div>';
       }
       el.innerHTML = html;
+    }
+
+    function kbIsAutoMemory(f) {
+      return (f.tags || []).some(t => String(t).trim().toLowerCase() === KB_AUTO_MEMORY_TAG);
+    }
+
+    // Agent tags of a drained CLI-memory fact, plus approve and discard for
+    // an owner while it is still a draft. Discard deprecates rather than
+    // deletes, so the drain's content hash keeps it from being re-drafted.
+    function kbAutoMemoryRowHTML(f) {
+      if (!kbIsAutoMemory(f)) return '';
+      let html = '';
+      for (const t of (f.tags || [])) {
+        const m = /^agent:(.+)$/i.exec(String(t).trim());
+        if (m) html += `<span class="kb-layer-badge" title="Drained from this agent's CLI memory">agent ${escapeHtml(m[1])}</span>`;
+      }
+      if (f.state === 'draft' && viewerIsOwner()) {
+        const slug = escapeHtml(f.slug || '');
+        html += `<button class="hv-btn btn-primary btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="approved" data-stop="1" title="Approve: agents whose scope includes this entry receive it in their kicks">Approve</button>`;
+        html += `<button class="hv-btn btn-danger btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="deprecated" data-stop="1" title="Discard: mark it deprecated so no agent receives it and the drain never re-drafts it">Discard</button>`;
+      }
+      return html;
+    }
+
+    async function kbAutoMemoryReview(slug, state) {
+      const question = state === 'approved'
+        ? 'Approve "' + slug + '"? It was written by an agent, and once approved it is injected into the kicks of every agent whose scope includes it.'
+        : 'Discard "' + slug + '"? It is marked deprecated, no agent receives it, and the drain will not re-draft it.';
+      if (!(await hiveConfirm(question))) return;
+      try {
+        const r = await fetch('/api/knowledge/entry/' + encodeURIComponent(slug) + '/state', {
+          method: 'PUT', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ state, reason: 'auto-memory review (dashboard)' }),
+        });
+        if (!r.ok) { const e = await r.json().catch(() => ({})); await hiveAlert(e.error || 'Failed to change state'); return; }
+        fetchKnowledgeStats();
+        kbSearch();
+      } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
     function renderKnowledgeDetail() {

@@ -379,3 +379,89 @@ func itoa(n int) string {
 	}
 	return string(buf[i:])
 }
+
+type fakeAdvisor map[string][]AdvisorDecision
+
+func (f fakeAdvisor) AdvisorDecisions(issueRef string) []AdvisorDecision { return f[issueRef] }
+
+func TestApplyAdvisorDecisionsArms(t *testing.T) {
+	reader := fakeAdvisor{
+		"o/r#1": {{Kick: "dev#1", Mode: "rank", Outcome: "held-out"}, {Kick: "dev#2", Mode: "rank", Outcome: "held-out"}},
+		"o/r#2": {{Kick: "dev#3", Mode: "rank", Outcome: "held-out"}, {Kick: "dev#4", Mode: "rank", Outcome: "delivered"}},
+		"o/r#4": {{Kick: "dev#5", Mode: "shadow", Outcome: "delivered"}},
+	}
+	cases := []struct {
+		ref                  string
+		arm                  string
+		decisions, delivered int
+		heldOut              int
+	}{
+		{"o/r#1", "holdout", 2, 0, 2},
+		{"o/r#2", "mixed", 2, 1, 1},
+		{"o/r#3", "none", 0, 0, 0},
+		{"o/r#4", "shadow", 1, 1, 0},
+	}
+	for _, tt := range cases {
+		r := RetroRecord{IssueRef: tt.ref}
+		ApplyAdvisorDecisions(&r, reader)
+		if r.AdvisorArm != tt.arm || r.AdvisorDecisions != tt.decisions || r.AdvisorDelivered != tt.delivered || r.AdvisorHeldOut != tt.heldOut {
+			t.Fatalf("%s = %s/%d/%d/%d, want %s/%d/%d/%d", tt.ref, r.AdvisorArm, r.AdvisorDecisions, r.AdvisorDelivered, r.AdvisorHeldOut, tt.arm, tt.decisions, tt.delivered, tt.heldOut)
+		}
+	}
+	r := RetroRecord{IssueRef: "o/r#1"}
+	ApplyAdvisorDecisions(&r, nil)
+	if r.AdvisorArm != "none" {
+		t.Fatalf("nil reader arm = %q, want none", r.AdvisorArm)
+	}
+}
+
+func TestBuildAnalysisPromptAdvisorCountersOnly(t *testing.T) {
+	rec := RetroRecord{BeadID: "b1", IssueRef: "o/r#1", AdvisorArm: "holdout", AdvisorDecisions: 3, AdvisorHeldOut: 3}
+	msgs := buildAnalysisPrompt(rec, []Finding{{Pattern: PatternExcessiveKicks, Severity: "low", Detail: "d"}})
+	got := msgs[1].Content
+	for _, want := range []string{"advisor_arm: holdout", "advisor_decisions: 3", "advisor_delivered: 0", "advisor_held_out: 3"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(strings.ToLower(got), "reason") {
+		t.Fatalf("prompt carries advisor reason text:\n%s", got)
+	}
+}
+
+func TestLaneAdvisorArmSummaryWithoutModel(t *testing.T) {
+	source := newStore(t, "arm-source")
+	retroStore := newStore(t, "arm-retro")
+	add := func(issue, pr string, fix int) {
+		b, err := source.Create("work "+issue, beads.TypeTask, beads.PriorityMedium, "scanner", issue)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := source.Update(b.ID, func(bd *beads.Bead) {
+			bd.Status = beads.StatusClosed
+			bd.Metadata = map[string]interface{}{"pr_ref": pr, "pr_state": "merged", "fix_attempts": itoa(fix), "kicks_received": "2"}
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("o/r#1", "o/r#11", 4)
+	add("o/r#2", "o/r#12", 2)
+	add("o/r#3", "o/r#13", 1)
+	lane := NewLane(map[string]*beads.Store{"scanner": source, Actor: retroStore}, retroStore, nil, nil, Config{ScanIntervalS: 1}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if lane.analyzer != nil {
+		t.Fatal("analyzer configured; the summary test needs retro.analysis_model empty")
+	}
+	lane.SetAdvisorDecisions(fakeAdvisor{
+		"o/r#1": {{Mode: "rank", Outcome: "held-out"}},
+		"o/r#2": {{Mode: "rank", Outcome: "held-out"}},
+		"o/r#3": {{Mode: "rank", Outcome: "delivered"}},
+	})
+	got := lane.AdvisorArmSummary()
+	want := []ArmSummary{
+		{Arm: "deliver", Beads: 1, MeanFixAttempts: 1, MeanCIFailureCount: 1, MeanKicksReceived: 2},
+		{Arm: "holdout", Beads: 2, MeanFixAttempts: 3, MeanCIFailureCount: 3, MeanKicksReceived: 2},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("summary = %+v, want %+v", got, want)
+	}
+}

@@ -8,7 +8,7 @@
 |---|---|
 | `bd list [--json] [--status <s>] [--actor <a>]` | List beads; filter by status or actor. |
 | `bd ready [--json] [--actor <a>]` | Show open, unblocked work ready to claim. |
-| `bd create --title "..." --type <type> --priority <0-4> --actor <name> [--external-ref <ref>]` | Create work. Types include `bug`, `feature`, `task`, `epic`, `chore`, `decision`, and `advisory`; priority `0` is highest. |
+| `bd create --title "..." --type <type> --priority <0-4> --actor <name> [--external-ref <ref>]` | Create work. Types include `bug`, `feature`, `task`, `epic`, `chore`, `decision`, and `advisory`; priority `0` is highest. `--type knowledge` creates a knowledge fact instead; see [Knowledge commands](#knowledge-commands). |
 | `bd update <id> --claim` | Mark a bead `in_progress`. |
 | `bd update <id> --status open|in_progress|blocked|done|closed` | Change status directly. |
 | `bd update <id> --set-metadata key=value` / `--unset-metadata key` | Add or remove custom metadata in the bead ledger. |
@@ -62,7 +62,7 @@ bd close bead-123
 
 ## Knowledge commands
 
-`bd kb` talks to the dashboard API (`BD_DASHBOARD_URL`, default `http://localhost:3001`) rather than the local bead store.
+`bd kb` and `bd create --type knowledge` talk to the dashboard API (`BD_DASHBOARD_URL`, default `http://localhost:3001`) rather than the local bead store.
 
 | Command | Use |
 |---|---|
@@ -73,3 +73,14 @@ bd close bead-123
 | `bd kb ctx7-search <name>` | Search Context7 library IDs. |
 | `bd kb import-ctx7 <library-id> [--name <n>] [--query <topic>]` | Import Context7 docs into the community layer. |
 | `bd kb list-docs` | List imported documents. |
+| `bd create --type knowledge --title "..." (--body "..." \| --body-file <path\|->) [--state draft\|approved] [--tag <tag>]... [--layer <name>] [--fact-type <type>]` | Create one knowledge fact through `POST /api/knowledge/create`. Defaults: layer `project`, fact type `pattern`, state `approved`. `--body-file -` reads stdin (256 KiB max). |
+
+`--state draft` writes the fact into the local channel (vault) named by `--layer`, with `state: draft`, so it stays out of every kick until an operator approves it (`hivectl knowledge state <id> approved` or `PUT /api/knowledge/entry/{id}/state`). Remote wiki layers only record a status, so the dashboard refuses a draft for a layer that is not a local channel, and it refuses a draft whose title already names an entry in that channel (HTTP 409) rather than overwrite it. Only `draft` and `approved` are accepted at create time.
+
+A fact tagged `cli-memory` claims to come from a CLI's memory store ([memory → knowledge drain](agent-knowledge-and-memory.md)). The dashboard accepts one only as `--state draft`, and only with the tags the drain itself writes: `cli-memory`, `agent:<name>`, `cli:<claude|codex|gemini>`, `memhash:<hex>` and `repo:<org>/<repo>`.
+
+```bash
+bd create --type knowledge --state draft --layer notes \
+  --title "Read the failing job log first" --body-file note.md \
+  --tag cli-memory --tag agent:scanner --tag cli:codex
+```

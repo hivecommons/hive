@@ -156,6 +156,10 @@
     // 017 possible-existing: the prior-art gate parked the issue on its
     // author (hivecommons/hive#13575). Lights Actionable with its own word.
     const STAGE_TRACKER_POSSIBLY_EXISTS = 17;
+    // 018 open-for-discussion: an unclaimed proposal / design issue
+    // (hivecommons/hive#17150). Lights Actionable with its own word; no
+    // agent work is queued on it, anyone may claim it.
+    const STAGE_TRACKER_OPEN_FOR_DISCUSSION = 18;
     // Stages that share a column (or a detour word) and what the lit chevron says.
     const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
     // Merge-gate pill vocabulary (hivecommons/hive#15073), one word per
@@ -188,10 +192,10 @@
     const STAGE_TRACKER_MERGING_SLOW_MS = 60000;
     const STAGE_TRACKER_MERGE_PATH_WORDS = { sweep: 'automerge sweep', dashboard: 'maintainer merge from the dashboard', relay: 'hive-merge relay', forge: 'forge adapter', queue: 'merge queue' };
     const STAGE_TRACKER_MERGE_FAILED_SHORT_MAX = 60;
-    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Review passed', 80: 'Queued for merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 18: 'Open for discussion', 60: 'Review passed', 80: 'Queued for merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
-    const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
+    const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 18: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     // Motion bucket of the lit chevron: only a step the hive is acting on
     // ('active', gentle pulse) or one waiting on a person ('needs-human',

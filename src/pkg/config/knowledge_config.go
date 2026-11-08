@@ -56,6 +56,9 @@ type KnowledgeConfig struct {
 	// AdvisorExcludeAgents lists agents (by name or family base name) the
 	// advisor never types at, e.g. lanes whose work is reading, not editing.
 	AdvisorExcludeAgents []string `yaml:"advisor_exclude_agents,omitempty"`
+	// AdvisorLLM configures the optional model-ranked advisor pass
+	// (hivecommons/hive#17054). Ignored unless Advisor is true.
+	AdvisorLLM AdvisorLLMConfig `yaml:"advisor_llm,omitempty"`
 }
 
 // PublicKnowledgeConfig is the dashboard-persisted owner override for the
@@ -128,7 +131,7 @@ const (
 	DefaultCuratorSchedule              = "daily"
 	DefaultCuratorAutoPromoteThreshold  = 0.9
 	DefaultKnowledgePrimerMaxFacts      = 25
-	DefaultKnowledgePrimerMaxBytes      = 4096
+	DefaultKnowledgePrimerMaxBytes      = 8192
 	DefaultKnowledgePrimerMergeStrategy = "precedence"
 	DefaultKnowledgeAdvisorMaxPerKick   = 3
 )
@@ -313,7 +316,7 @@ type KnowledgePrimer struct {
 	MergeStrategy string   `yaml:"merge_strategy"`
 	// MaxBytes caps the rendered knowledge primer per kick; facts past it are
 	// dropped whole and a marker says so. Zero takes the knowledge package
-	// default (4096).
+	// default (8192).
 	MaxBytes int `yaml:"max_bytes"`
 }
 

@@ -815,8 +815,31 @@
       document.removeEventListener('keydown', m.onKey, true);
       window.removeEventListener('resize', m.onAway);
       window.removeEventListener('scroll', m.onAway, true);
-      if (m.el.parentNode) m.el.parentNode.removeChild(m.el);
+      const host = m.host || m.el;
+      if (host.hiveDialogClose) host.hiveDialogClose(); else if (host.parentNode) host.parentNode.removeChild(host);
       if (refocus && m.restore && typeof m.restore.focus === 'function' && document.contains(m.restore)) m.restore.focus();
+    }
+    // The phone tier of the dashboard's .modal-sheet (responsive.css): on a
+    // phone the row menu and the Merged / queue popovers open as full-screen
+    // sheets instead of anchored popovers. One query, shared with the CSS.
+    const STAGE_TRACKER_SHEET_QUERY = '(max-width: 640px), ((pointer: coarse) and (max-width: 820px))';
+    function stageTrackerIsPhoneSheet() {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(STAGE_TRACKER_SHEET_QUERY).matches;
+    }
+    // Wrap `body` in a .hive-dialog.modal-sheet overlay (Esc / ✕ / backdrop
+    // close via hiveWireDialog; safe-area pad from the shared sheet CSS) and
+    // return the overlay. `onClose` runs once, however the sheet was closed;
+    // `onEnter` runs for Enter on a focused control inside the body.
+    function stageTrackerOpenSheet(title, body, cls, onClose, onEnter) {
+      const overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      if (typeof hiveRememberModalOpen === 'function') hiveRememberModalOpen(overlay);
+      const id = 'ham-sheet-' + Math.random().toString(36).slice(2);
+      overlay.innerHTML = `<div class="hive-dialog ham-sheet ${esc(cls || '')}" role="dialog" aria-modal="true" aria-labelledby="${id}"><div id="${id}" class="hive-dialog-title">${esc(title)}</div><div class="modal-scroll ham-sheet-body"></div></div>`;
+      overlay.querySelector('.ham-sheet-body').appendChild(body);
+      document.body.appendChild(overlay);
+      hiveWireDialog(overlay, () => { if (typeof onClose === 'function') onClose(); }, null, null, null, () => { if (typeof onEnter === 'function') onEnter(); });
+      return overlay;
     }
     // Open the menu for `items` at (x, y) — or below `anchor` — and run the
     // picked action on them.
@@ -833,13 +856,26 @@
       const tpl = document.createElement('template');
       tpl.innerHTML = stageTrackerMenuHtml(actions, head);
       const el = tpl.content.firstElementChild;
-      document.body.appendChild(el);
-      let x = at.x, y = at.y;
-      if (at.anchor && typeof at.anchor.getBoundingClientRect === 'function') { const r = at.anchor.getBoundingClientRect(); x = r.left; y = r.bottom; }
-      const pos = stageTrackerMenuPosition(x, y, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight);
-      el.style.setProperty('left', pos.left + 'px');
-      el.style.setProperty('top', pos.top + 'px');
+      // On a phone the menu is a full-screen sheet (#17163): the fixed
+      // popover's ~30px items are too small to tap and it can land under
+      // the thumb. Same markup, roles and keyboard model; the sheet adds ✕,
+      // backdrop and Esc via the shared dialog wiring.
+      const sheet = stageTrackerIsPhoneSheet();
       const m = { el, items, restore: at.restore || at.anchor || null };
+      if (sheet) {
+        el.classList.add('ham-menu-sheet');
+        m.host = stageTrackerOpenSheet(head, el, 'ham-menu-dialog', () => stageTrackerCloseMenu(true), () => {
+          const b = document.activeElement && document.activeElement.closest ? document.activeElement.closest('[role="menuitem"]') : null;
+          if (b && el.contains(b)) b.click();
+        });
+      } else {
+        document.body.appendChild(el);
+        let x = at.x, y = at.y;
+        if (at.anchor && typeof at.anchor.getBoundingClientRect === 'function') { const r = at.anchor.getBoundingClientRect(); x = r.left; y = r.bottom; }
+        const pos = stageTrackerMenuPosition(x, y, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight);
+        el.style.setProperty('left', pos.left + 'px');
+        el.style.setProperty('top', pos.top + 'px');
+      }
       m.onAway = e => { if (e.type !== 'pointerdown' || !el.contains(e.target)) stageTrackerCloseMenu(false); };
       m.onKey = e => {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stageTrackerCloseMenu(true); return; }
@@ -852,7 +888,7 @@
           case 'End': e.preventDefault(); stageTrackerMenuFocus(el, 'last'); break;
           case 'ArrowRight': if (b && b.getAttribute('aria-haspopup') === 'menu' && b.getAttribute('aria-disabled') !== 'true') { e.preventDefault(); b.setAttribute('aria-expanded', 'true'); stageTrackerMenuFocus(el, 1, b); } break;
           case 'ArrowLeft': { const sub = b && b.closest('.ham-submenu'); if (sub && sub.previousElementSibling) { e.preventDefault(); sub.previousElementSibling.setAttribute('aria-expanded', 'false'); sub.previousElementSibling.focus(); } break; }
-          case 'Tab': stageTrackerCloseMenu(true); break;
+          case 'Tab': if (!sheet) stageTrackerCloseMenu(true); break;
         }
       };
       el.addEventListener('click', e => {
@@ -869,10 +905,12 @@
         stageTrackerCloseMenu(true);
         stageTrackerDoAction(m.items, act);
       });
-      document.addEventListener('pointerdown', m.onAway, true);
+      if (!sheet) {
+        document.addEventListener('pointerdown', m.onAway, true);
+        window.addEventListener('resize', m.onAway);
+        window.addEventListener('scroll', m.onAway, true);
+      }
       document.addEventListener('keydown', m.onKey, true);
-      window.addEventListener('resize', m.onAway);
-      window.addEventListener('scroll', m.onAway, true);
       _stageTrackerMenu = m;
       stageTrackerSetMenuOpen(document.getElementById('activity-monitor-panel'), true);
       if (at.expandDecide) { const d = el.querySelector('[data-ham-act="decide"]'); if (d && d.getAttribute('aria-disabled') !== 'true') d.setAttribute('aria-expanded', 'true'); }

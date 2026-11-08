@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -226,6 +226,20 @@ func inferenceBlockedStall(r slog.Record) bool {
 		return true
 	})
 	return blocked
+}
+
+// stageDampenerSuppression reports whether r is a stage guard refusing a
+// flapping transition: the stage-label store's dampener ("stage transition
+// suppressed by dampener", hivecommons/hive#17103) or the stage engine's
+// same-head reversal guard ("stage flap suppressed", hivecommons/hive#17142).
+// Both are the guard working as designed, not a runtime error; the WARN stays
+// in local logs.
+func stageDampenerSuppression(r slog.Record) bool {
+	switch strings.TrimSpace(r.Message) {
+	case "stage transition suppressed by dampener", "stage flap suppressed":
+		return true
+	}
+	return false
 }
 
 // automergeMergeGuardSkip reports whether r is an automerge sweep lane

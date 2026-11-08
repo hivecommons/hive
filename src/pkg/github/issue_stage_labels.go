@@ -299,6 +299,28 @@ func parkedOnPersonLabel(in IssueStageInput) string {
 	return ""
 }
 
+// discussionLabels are the labels that mark an issue whose remaining
+// content is a discussion — a proposal or a design question — rather than
+// agent work. An open issue wearing one with no live claim derives
+// stage/018-open-for-discussion instead of 010/015
+// (hivecommons/hive#17150). They are NOT claim-gate labels: admission
+// lets anyone claim such an issue, and the claim stages 020/030.
+var discussionLabels = []string{"proposal", "kind/design"}
+
+// issueDiscussionLabel returns the first discussionLabels entry labels
+// carry (case-insensitive, as the issue spells it), or "".
+func issueDiscussionLabel(labels []string) string {
+	for _, l := range labels {
+		name := strings.TrimSpace(l)
+		for _, want := range discussionLabels {
+			if strings.EqualFold(name, want) {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
 // issueAuthorKind is the stage input's author kind from the enumeration's
 // verdict (Client.isHumanAuthor): Human when it said so, Hive — the App
 // bot, a `[bot]` login or a hive identity — when it did not. The verdict

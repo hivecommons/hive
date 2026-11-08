@@ -17,6 +17,31 @@
       .hive-dialog.modal-sheet > .hive-dialog-buttons { flex: 0 0 auto; margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--border); }
       .hive-dialog.modal-sheet > .hive-dialog-buttons .hv-btn { min-height: var(--modal-sheet-close-size); }
       .hive-dialog.modal-sheet .modal-sheet-close { display: inline-flex; }
+      /* Activity monitor on a phone (#17159): the 13-control toolbar and
+         the label chips hide; the sticky bar carries the compact chips
+         (kind / needs attention / waiting on you / ⋯ Filters) beside the
+         Merged pill, and the meta line keeps only "showing N of M". The
+         sticky bar grows to tap height, so the column header below it
+         follows through --ham-sticky-bar-h. Lines naming .ham-sticky must
+         stay free of literal colours (stage_tracker_actor_icon_test.go). */
+      #activity-monitor-section { --ham-sticky-bar-h: calc(var(--tap-target) + 2 * var(--sp-1)); }
+      #activity-monitor-section .section-body > .ham-toolbar, #activity-monitor-section .section-body > .ham-labels { display: none; }
+      #activity-monitor-meta > :not(.ham-count) { display: none; }
+      /* The card body's overflow:hidden makes it the sticky containing
+         scroller; with only the meta line above the bar, sticky top would
+         push the bar down over the first row. overflow:clip clips without
+         creating a scroller, so the bar sticks to the viewport instead. */
+      #activity-monitor-section .dash-card-body { overflow: clip; }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky .ham-merged-sub { display: none; }
+      .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact-scroll::-webkit-scrollbar { display: none; }
+      .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
+      .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }
+      .ham-compact-more[data-ham-active] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
+      #activity-monitor-section { --fs-2xs: var(--fs-sm); --fs-xs: var(--fs-sm); --ham-odo-digit: var(--fs-sm); }
     }
     @media (max-width: 768px) {
       body {
@@ -736,6 +761,27 @@
       textarea {
         font-size: var(--fs-touch) !important;
       }
+      /* Activity monitor on a landscape phone (#17166): ~390px of height.
+         The toolbar and label chips collapse into the compact filter bar
+         exactly as on a portrait phone (#17159), the column header hides
+         so the sticky stack is the bar alone (≤100px); the notch is
+         already honoured by this tier's body padding. Lines naming
+         .ham-sticky must stay free of
+         literal colours (stage_tracker_actor_icon_test.go). */
+      #activity-monitor-section { --ham-sticky-bar-h: calc(var(--tap-target) + 2 * var(--sp-1)); }
+      #activity-monitor-section .section-body > .ham-toolbar, #activity-monitor-section .section-body > .ham-labels { display: none; }
+      #activity-monitor-meta > :not(.ham-count) { display: none; }
+      #activity-monitor-section .dash-card-body { overflow: clip; }
+      #activity-monitor-panel .ham-cols { display: none; }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky .ham-merged-sub { display: none; }
+      .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact-scroll::-webkit-scrollbar { display: none; }
+      .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
+      .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }
+      .ham-compact-more[data-ham-active] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
     }
     /* Touch phones use one full-screen chat layout in either orientation.
        Desktop docking/resizing controls do not apply to this layout. */

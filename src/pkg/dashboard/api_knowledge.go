@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/knowledge/climemory"
 )
 
 func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
@@ -690,6 +692,20 @@ func (s *Server) handleKnowledgeCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "title and body are required", http.StatusBadRequest)
 		return
 	}
+	state, err := knowledge.ParseCreateState(req.State)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// A fact that claims to be drained from CLI memory must enter as a
+	// draft carrying only the drain's own tags (#17056).
+	if err := climemory.ValidateCreate(req.State, req.Tags); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if state == "" {
+		state = knowledge.StateApproved
+	}
 	if req.Layer == "" {
 		req.Layer = "project"
 	}
@@ -702,11 +718,18 @@ func (s *Server) handleKnowledgeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.deps.Knowledge.CreateFact(s.deps.Ctx, req); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, knowledge.ErrNoDraftChannel):
+			status = http.StatusBadRequest
+		case errors.Is(err, knowledge.ErrFactExists):
+			status = http.StatusConflict
+		}
+		jsonError(w, err.Error(), status)
 		return
 	}
-	s.auditFromRequest(r, "knowledge_create_fact", auditDetail("title", req.Title, "layer", req.Layer), "")
-	jsonResponse(w, map[string]interface{}{"ok": true, "title": req.Title, "layer": req.Layer})
+	s.auditFromRequest(r, "knowledge_create_fact", auditDetail("title", req.Title, "layer", req.Layer, "state", string(state)), "")
+	jsonResponse(w, map[string]interface{}{"ok": true, "title": req.Title, "layer": req.Layer, "state": state})
 }
 
 func (s *Server) handleKnowledgeUpdate(w http.ResponseWriter, r *http.Request) {

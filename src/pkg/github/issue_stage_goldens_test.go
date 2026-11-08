@@ -312,6 +312,39 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 			Note:  "A PR that names the epic still covers it; only claim/in-progress buckets are suppressed.",
 			Input: issueStageGoldenInput{Repo: repo, Number: 12997, Labels: []string{"Epic"}, Bucket: workBucketClaimedByPR, ClaimPresent: true, ClaimPR: 13054, CoveringPRStage: stagelabels.ReviewPending.String()},
 		},
+		{
+			Name:  "regression/17020-proposal-after-refs-pr-is-018",
+			Note:  "hivecommons/hive#17020 (label proposal): its Refs PR merged and close-on-merge left hive/partially-addressed; the remainder is a discussion, so it derives 018-open-for-discussion, not 010 (hivecommons/hive#17150).",
+			Input: issueStageGoldenInput{Repo: repo, Number: 17020, Labels: []string{"good first issue", "help wanted", VerifiedOpenLabel, "proposal", stagelabels.PartiallyAddressedLabel}},
+		},
+		{
+			Name:  "regression/17054-rfc-epic-labelled-proposal-is-018",
+			Note:  "hivecommons/hive#17054 (a 📝 RFC whose Refs PR merged) derives 018 once it carries proposal.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 17054, Labels: []string{"help wanted", "Epic", HumanAckLabel, "proposal"}},
+		},
+		{
+			Name:  "regression/17054-rfc-epic-without-proposal-stays-010",
+			Note:  "The rule keys on labels only: hivecommons/hive#17054 as labelled on 2026-11-08 (Epic, no proposal / kind/design) is still 010; the stage engine never reads titles.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 17054, Labels: []string{"help wanted", "Epic", HumanAckLabel, stagelabels.Actionable.Label()}},
+		},
+		{
+			Name:  "regression/17150-kind-design-is-018",
+			Input: issueStageGoldenInput{Repo: repo, Number: 17150, Labels: []string{"Kind/Design"}},
+		},
+		{
+			Name:  "regression/17150-proposal-label-removed-is-010",
+			Note:  "Removing proposal / kind/design returns the issue to plain 010 derivation, whatever stage label it still wears.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 17150, Labels: []string{"help wanted", stagelabels.OpenForDiscussion.Label()}},
+		},
+		{
+			Name:  "regression/17150-proposal-human-claim-is-020",
+			Note:  "018 is not a gate: a person's /claim stages 020 as on any issue.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 17150, Labels: []string{"proposal", stagelabels.OpenForDiscussion.Label()}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindHuman), ClaimedBy: "alice"},
+		},
+		{
+			Name:  "regression/17150-proposal-agent-claim-with-pr-is-030",
+			Input: issueStageGoldenInput{Repo: repo, Number: 17150, Labels: []string{"proposal"}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner", PRStarted: true},
+		},
 	} {
 		add("regressions.json", c)
 	}

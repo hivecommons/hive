@@ -3195,6 +3195,15 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 		}
 	}
 
+	// A hive with no git_sources gets its primary repo's knowledge dir
+	// (boot_knowledge_seed.go); bootGitHub has already run, so the probe can
+	// use the hive's own client.
+	var seedProbe knowledgeSeedProbe
+	if b.ghClient != nil {
+		seedProbe = b.ghClient
+	}
+	seedKnowledgeGitSource(b.ctx, b.cfg, seedProbe, b.logger)
+
 	// Auto-connect configured git sources (remote repos indexed as knowledge)
 	for _, gsc := range b.cfg.Knowledge.GitSources {
 		if b.knowledgeAPI == nil {
@@ -3280,7 +3289,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			b.logger.Warn("failed to create bead-synth vault dir", "path", synthVaultPath, "error", err)
 		}
 		if b.knowledgeAPI != nil {
-			if connErr := b.knowledgeAPI.ConnectVault(synthVaultPath, "bead-synth-wiki"); connErr != nil {
+			if connErr := b.knowledgeAPI.ConnectVault(synthVaultPath, beadSynthVaultName); connErr != nil {
 				b.logger.Warn("failed to auto-connect bead-synth vault", "path", synthVaultPath, "error", connErr)
 			} else {
 				b.logger.Info("auto-connected bead-synth vault", "path", synthVaultPath)
@@ -3336,6 +3345,12 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			)
 		}
 	}
+
+	// CLI memory drain (hivecommons/hive#17033); opt-in, makes sure the
+	// bead-synth vault it writes drafts into is connected before the primer
+	// registers stores below.
+	b.installCLIMemoryDrainer()
+	b.startCLIMemoryDrainRequests()
 
 	// Generated repository code maps (#11106); opt-in, connects its vault
 	// before stores are registered with the primer below.
@@ -4169,7 +4184,15 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// agent's pane first shows a scope its kick did not cover. Policy is read
 	// off the live config per call, so knowledge.advisor flips without a
 	// restart; the adviser itself is a no-op until SetPrimer has run.
-	b.agentMgr.SetKnowledgeAdviser(newKnowledgeAdviser(b))
+	// When knowledge.advisor_llm resolves at boot, the LLM ranking pass
+	// (#17155) wraps it; it re-reads the block per call and falls through to
+	// phase 1 unchanged whenever the block stops resolving or mode is off.
+	knowledgeMatcher := newKnowledgeAdviser(b)
+	var knowledgeAdviserImpl crux.KnowledgeAdviser = knowledgeMatcher
+	if _, ok := b.cfg.KnowledgeAdvisorLLM(); ok {
+		knowledgeAdviserImpl = newKnowledgeAdviserLLM(b, knowledgeMatcher)
+	}
+	b.agentMgr.SetKnowledgeAdviser(knowledgeAdviserImpl)
 
 	// Feed agent lifecycle events (start, stop, launch FAILURE, backend/model
 	// change) into the durable audit store behind the dashboard's Audit Log.
@@ -6325,6 +6348,7 @@ func (b *boot) bootLanes() {
 		if b.knowledgeAPI != nil {
 			b.retroLane.SetKnowledgeSink(b.knowledgeAPI)
 		}
+		b.retroLane.SetAdvisorDecisions(b.knowledgeAdvisorDecisions())
 		autonomyNotify := func(title, message string, demote bool) {
 			if b.notifier == nil {
 				return
@@ -7722,6 +7746,10 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// the engine starts; see pkg/nousdeps/cli.go. Fetches the campaign's
 		// pinned dependencies from allowlisted hosts only and records them.
 		return true, nousdeps.Run(args[1:], stdout, stderr)
+	case memoryDrainSubcommand:
+		// Run as the agent by the Claude Code memory hooks Hive seeds; see
+		// memory_drain_cmd.go. Always exits 0.
+		return true, runMemoryDrain(args[1:], os.Stdin, stdout, stderr)
 	default:
 		return false, 0
 	}

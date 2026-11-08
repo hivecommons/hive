@@ -988,9 +988,7 @@ func (s *Server) installHostObservers() func() {
 	if !ok {
 		return func() {}
 	}
-	host.SetKickOutcomeObserver(func(agent string, o crux.KickOutcome) {
-		s.publishData(api.EventKickOutcome, agent, api.KickOutcome{Kind: o.Kind, Reason: o.Reason, At: o.At, KickAt: o.KickAt})
-	})
+	host.SetKickOutcomeObserver(s.recordKickOutcome)
 	host.SetPauseTransitionObserver(func(ev crux.PauseTransitionEvent) {
 		s.publishData(api.EventPauseTransition, ev.Agent, api.PauseTransition{
 			Paused: ev.Paused, Trigger: ev.Trigger, Reason: ev.Reason, By: ev.By, At: ev.At,

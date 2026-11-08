@@ -128,4 +128,14 @@
     .ham-result-link { color: var(--accent); text-decoration: none; justify-self: start; }
     .ham-result-link:hover { text-decoration: underline; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* Phone: the generic toast stack (kicks, saves, failed / needs-human
+       results) spans the width under the notch instead of a 360px card
+       hugging the right edge, and a long message wraps anywhere rather
+       than pushing the card past the viewport. */
+    @media (max-width: 480px) {
+      #toast-container { left: var(--sp-4); right: var(--sp-4); top: calc(var(--sp-4) + var(--safe-area-top)); gap: var(--sp-2); }
+      .toast { max-width: none; width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+      .toast.sticky { padding-right: 40px; }
+      .toast-close { min-height: 0; height: auto; width: var(--tap-target); min-width: var(--tap-target); top: 0; right: 0; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+    }
 
