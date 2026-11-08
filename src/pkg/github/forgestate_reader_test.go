@@ -50,7 +50,7 @@ func newForgeTestForge(t *testing.T) *forgeTestForge {
 	// freshness re-read.
 	ResetRateLimitPacingForTest()
 	t.Cleanup(ResetRateLimitPacingForTest)
-	oldAccounting := sharedRESTAccountingPtr.Swap(&restAccountingStore{now: time.Now, coreRemaining: -1})
+	oldAccounting := sharedRESTAccountingPtr.Swap(&restAccountingStore{now: time.Now})
 	t.Cleanup(func() { sharedRESTAccountingPtr.Store(oldAccounting) })
 	f.issues = []wireIssue{
 		{Number: 1, Title: "first", User: wireUser{"alice"}, CreatedAt: hoursAgo(3), State: "open"},

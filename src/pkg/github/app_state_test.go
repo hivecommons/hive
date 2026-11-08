@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // testKeyBits is deliberately small — these tests only need a signable key,
@@ -316,6 +317,9 @@ func TestAppStateWriteForbidden_MessageIsAccurate(t *testing.T) {
 // TestClassifyAPIError_RateLimitIsNotACredentialProblem — a 403 rate limit is
 // transient and must never latch a credential warning.
 func TestClassifyAPIError_RateLimitIsNotACredentialProblem(t *testing.T) {
+	// Keep this test's rate-limit readings out of the shared core snapshot.
+	resetRESTAccountingForTest(t, time.Now())
+
 	// The exhausted-quota 403 below engages the shared post-reset pacing
 	// (#7430); release it so the rest of the package is not paced.
 	t.Cleanup(resetSharedSlowStart)

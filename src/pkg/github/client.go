@@ -4472,6 +4472,11 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 	// See ratelimit_window.go for the mechanism and why the obvious
 	// reset-based clamp does not work.
 	info.Core = c.rateLimits.observe("core", info.Core)
+	// The hive's own responses, not this one sample, say which core window is
+	// being spent and keep observed_at moving (rateLimitTracker.adopt).
+	if ev, ok := coreRateLimitEvidence(); ok && c.rateLimits.clock().Before(ev.Reset) {
+		info.Core = c.rateLimits.adopt("core", ev)
+	}
 	info.Search = c.rateLimits.observe("search", info.Search)
 	info.GraphQL = c.rateLimits.observe("graphql", info.GraphQL)
 	if c != nil {

@@ -46,35 +46,74 @@ type restAccountingEvent struct {
 }
 
 type restAccountingStore struct {
-	mu            sync.Mutex
-	events        []restAccountingEvent
-	now           func() time.Time
-	coreRemaining int
-	coreLimit     int
-	coreReset     time.Time
-	coreObserved  time.Time
+	mu     sync.Mutex
+	events []restAccountingEvent
+	now    func() time.Time
+	// coreWindows holds one entry per core rate-limit window (keyed by its
+	// reset) that the hive's own responses have reported recently. See
+	// coreEvidenceLocked for why it is not a single last-response-wins value.
+	coreWindows []coreWindow
+	coreLimit   int
 }
+
+// coreWindow is what the hive's own responses say about one core rate-limit
+// window, identified by the X-RateLimit-Reset it carries.
+type coreWindow struct {
+	limit int
+	// remaining is the lowest remaining seen for this window: within one
+	// window the real value only falls, so a higher one is an older response
+	// that arrived late.
+	remaining int
+	// reset is zero for readings that carried no reset header.
+	reset time.Time
+	// observed is when a response last reported this window.
+	observed time.Time
+}
+
+// coreWindowPeerSpan is how recently a window must have been reported, relative
+// to the newest report, to compete for "the hive's bucket". A window nobody
+// has reported for this long is a burst that ended, not the bucket being spent.
+const coreWindowPeerSpan = 5 * time.Minute
+
+// maxCoreWindows bounds coreWindows. Two windows (the real one and a stray) is
+// what has been seen live; the bound only stops a pathological header stream
+// from growing the slice.
+const maxCoreWindows = 8
 
 var sharedRESTAccountingPtr atomic.Pointer[restAccountingStore]
 
 func init() {
-	sharedRESTAccountingPtr.Store(&restAccountingStore{now: time.Now, coreRemaining: -1})
+	sharedRESTAccountingPtr.Store(&restAccountingStore{now: time.Now})
 }
 
 // sharedRESTAccounting returns the process-wide store. The pointer is atomic so
 // tests can swap it while transports in other goroutines are still recording.
 func sharedRESTAccounting() *restAccountingStore { return sharedRESTAccountingPtr.Load() }
 
-type restAccountingTransport struct{ inner http.RoundTripper }
+type restAccountingTransport struct {
+	inner http.RoundTripper
+	// appJWT marks the App-JWT chain (installation-token mint, installation
+	// discovery). Those responses describe the App's own JWT bucket, not an
+	// installation's core bucket, so they are counted per caller but never
+	// move the shared core snapshot.
+	appJWT bool
+}
 
 func restAccountingWrap(inner http.RoundTripper) http.RoundTripper {
 	return &restAccountingTransport{inner: inner}
 }
 
+// restAccountingWrapAppJWT is restAccountingWrap for the App-JWT chain.
+func restAccountingWrapAppJWT(inner http.RoundTripper) http.RoundTripper {
+	return &restAccountingTransport{inner: inner, appJWT: true}
+}
+
 func (t *restAccountingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.inner.RoundTrip(req)
 	if resp != nil {
-		RecordRESTRequest(restCallerFromContext(req.Context()), req.Method, req.URL.Path, resp.StatusCode, resp.Header)
+		caller := restCallerFromContext(req.Context())
+		recordRESTRequest(caller, req.Method, req.URL.Path, resp.StatusCode, resp.Header,
+			!t.appJWT && !strings.HasPrefix(caller, agentRESTCallerPrefix))
 	}
 	return resp, err
 }
@@ -146,6 +185,12 @@ func CoreRateLimitSnapshot() (remaining int, reset time.Time, ok bool) {
 	return sharedRESTAccounting().coreSnapshot()
 }
 
+// coreRateLimitEvidence is CoreRateLimitSnapshot with the window's limit and
+// the time a response last reported it, for the budget reader and the card.
+func coreRateLimitEvidence() (RateLimitEntry, bool) {
+	return sharedRESTAccounting().coreEvidence()
+}
+
 func (s *restAccountingStore) record(ev restAccountingEvent, h http.Header, daemonCredential bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -160,14 +205,109 @@ func (s *restAccountingStore) record(ev restAccountingEvent, h http.Header, daem
 		if !s.sameCoreBucketLocked(ev.caller, h) {
 			return
 		}
-		if rem, err := strconv.Atoi(h.Get("X-RateLimit-Remaining")); err == nil {
-			s.coreRemaining = rem
-			s.coreObserved = ev.at
+		rem, err := strconv.Atoi(h.Get("X-RateLimit-Remaining"))
+		if err != nil {
+			return
 		}
-		if reset, err := strconv.ParseInt(h.Get("X-RateLimit-Reset"), 10, 64); err == nil && reset > 0 {
-			s.coreReset = time.Unix(reset, 0)
+		var reset time.Time
+		if r, err := strconv.ParseInt(h.Get("X-RateLimit-Reset"), 10, 64); err == nil && r > 0 {
+			reset = time.Unix(r, 0)
+		}
+		limit, _ := strconv.Atoi(strings.TrimSpace(h.Get("X-RateLimit-Limit")))
+		s.observeCoreLocked(rem, limit, reset, ev.at)
+	}
+}
+
+// observeCoreLocked folds one core reading into its window. A reading without
+// a reset header belongs to the window most recently reported.
+func (s *restAccountingStore) observeCoreLocked(remaining, limit int, reset, at time.Time) {
+	s.pruneCoreLocked(at)
+	idx := -1
+	if reset.IsZero() {
+		for i := range s.coreWindows {
+			if idx < 0 || s.coreWindows[i].observed.After(s.coreWindows[idx].observed) {
+				idx = i
+			}
+		}
+	} else {
+		for i := range s.coreWindows {
+			if s.coreWindows[i].reset.Equal(reset) {
+				idx = i
+				break
+			}
 		}
 	}
+	if idx < 0 {
+		if len(s.coreWindows) >= maxCoreWindows {
+			s.coreWindows = s.coreWindows[1:]
+		}
+		s.coreWindows = append(s.coreWindows, coreWindow{limit: limit, remaining: remaining, reset: reset, observed: at})
+		return
+	}
+	w := &s.coreWindows[idx]
+	if remaining < w.remaining {
+		w.remaining = remaining
+	}
+	if limit > 0 {
+		w.limit = limit
+	}
+	if w.reset.IsZero() {
+		w.reset = reset
+	}
+	if at.After(w.observed) {
+		w.observed = at
+	}
+}
+
+// pruneCoreLocked drops windows whose reset has passed or that no response has
+// reported for restAccountingWindow.
+func (s *restAccountingStore) pruneCoreLocked(now time.Time) {
+	kept := s.coreWindows[:0]
+	for _, w := range s.coreWindows {
+		if !w.reset.IsZero() && !now.Before(w.reset) {
+			continue
+		}
+		if now.Sub(w.observed) > restAccountingWindow {
+			continue
+		}
+		kept = append(kept, w)
+	}
+	s.coreWindows = kept
+}
+
+// coreEvidenceLocked picks the window the hive's own traffic is spending.
+//
+// It used to be "the last response wins". But two core windows are reported to
+// the daemon at once on a live hive: on 2026-11-08 between 11:31 and 11:35Z
+// readings of 783, 732, 716, 549 and 380 (reset 11:56:18Z, the installation
+// bucket that was returning 403s) alternated every few seconds with 6806, 6790
+// and 6779 (reset 12:15:11Z), and the budget mode flipped between normal and
+// conserve with them. Keying by reset keeps the two apart, and among the
+// windows reported within coreWindowPeerSpan of the newest report the LOWEST
+// remaining is taken: the bucket being spent is the one running out, and a
+// wrong pick can only make the hive more careful, never send it into 403s.
+func (s *restAccountingStore) coreEvidenceLocked(now time.Time) (coreWindow, bool) {
+	s.pruneCoreLocked(now)
+	var newest time.Time
+	for _, w := range s.coreWindows {
+		if w.observed.After(newest) {
+			newest = w.observed
+		}
+	}
+	best := -1
+	for i, w := range s.coreWindows {
+		if newest.Sub(w.observed) > coreWindowPeerSpan {
+			continue
+		}
+		if best < 0 || w.remaining < s.coreWindows[best].remaining ||
+			(w.remaining == s.coreWindows[best].remaining && w.observed.After(s.coreWindows[best].observed)) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return coreWindow{}, false
+	}
+	return s.coreWindows[best], true
 }
 
 // sameCoreBucketLocked reports whether a response's rate-limit headers
@@ -250,13 +390,19 @@ func (s *restAccountingStore) top(limit int) []RESTConsumer {
 }
 
 func (s *restAccountingStore) coreSnapshot() (remaining int, reset time.Time, ok bool) {
+	e, ok := s.coreEvidence()
+	return e.Remaining, e.Reset, ok
+}
+
+func (s *restAccountingStore) coreEvidence() (RateLimitEntry, bool) {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.coreRemaining < 0 || now.Sub(s.coreObserved) > restAccountingWindow {
-		return 0, time.Time{}, false
+	w, ok := s.coreEvidenceLocked(now)
+	if !ok {
+		return RateLimitEntry{}, false
 	}
-	return s.coreRemaining, s.coreReset, true
+	return RateLimitEntry{Limit: w.limit, Remaining: w.remaining, Reset: w.reset, ObservedAt: w.observed}, true
 }
 
 func (s *restAccountingStore) pruneLocked(now time.Time) {

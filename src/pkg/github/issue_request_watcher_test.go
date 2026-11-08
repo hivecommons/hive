@@ -590,6 +590,9 @@ func TestCreateIssue_ValidationAndDegradedPaths(t *testing.T) {
 }
 
 func TestCreateIssue_DedupeRetryableFailureFailsClosed(t *testing.T) {
+	// Keep this test's rate-limit readings out of the shared core snapshot.
+	resetRESTAccountingForTest(t, time.Now())
+
 	// This test answers a real client with a rate-limit refusal, which arms
 	// the process-wide slow-start pacing ledger (#7439); clear it so later
 	// tests in the binary are not spaced ~2s per request.
@@ -648,6 +651,9 @@ func TestCreateIssue_DedupeTooManyRequestsFailsClosed(t *testing.T) {
 }
 
 func TestCreateIssue_LabelEnsureRetryableFailureFailsClosed(t *testing.T) {
+	// Keep this test's rate-limit readings out of the shared core snapshot.
+	resetRESTAccountingForTest(t, time.Now())
+
 	// This test answers a real client with a rate-limit refusal, which arms
 	// the process-wide slow-start pacing ledger (#7439); clear it so later
 	// tests in the binary are not spaced ~2s per request.
@@ -771,6 +777,9 @@ func TestCreateIssue_LabelEnsureTerminalFailureCreatesWithoutLabel(t *testing.T)
 }
 
 func TestIssueRequestWatcher_RateLimitBackoffUsesReset(t *testing.T) {
+	// Keep this test's rate-limit readings out of the shared core snapshot.
+	resetRESTAccountingForTest(t, time.Now())
+
 	// This test answers a real client with a rate-limit refusal, which arms
 	// the process-wide slow-start pacing ledger (#7439); clear it so later
 	// tests in the binary are not spaced ~2s per request.

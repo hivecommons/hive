@@ -88,6 +88,52 @@ func (t *rateLimitTracker) observe(bucket string, obs RateLimitEntry) RateLimitE
 	return entryOf(accepted)
 }
 
+// adopt folds per-response evidence for a bucket (coreRateLimitEvidence: what
+// the hive's own responses report, keyed by window) into the tracked window and
+// returns the value that should be reported.
+//
+// A /rate_limit reading is a single sample, and the one a process takes right
+// after it mints its token has twice described a different window from the
+// one its traffic was spending: after the 2026-11-07 18:22Z restart it read
+// 6613 (reset 19:13:07Z) while the installation was returning 403s on the
+// window resetting at 18:54:37Z, and after the 2026-11-08 18:30:53Z restart it
+// read 6945 (reset 19:21:44Z) against 3195 (reset 18:56:25Z). observe() then
+// discarded every later reading until that wrong window's reset, so the card
+// sat on one stale number for most of an hour. Per-response evidence comes from
+// every response, so it decides which window is current:
+//
+//   - a different reset replaces the tracked window outright;
+//   - the same reset keeps the lower remaining, as observe() does, and moves
+//     observedAt forward when the evidence is at least as low.
+func (t *rateLimitTracker) adopt(bucket string, ev RateLimitEntry) RateLimitEntry {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.windows == nil {
+		t.windows = make(map[string]rateLimitWindow, 3)
+	}
+	prev, tracked := t.windows[bucket]
+	next := rateLimitWindow{
+		limit:      ev.Limit,
+		remaining:  ev.Remaining,
+		reset:      ev.Reset,
+		observedAt: ev.ObservedAt,
+	}
+	if next.limit <= 0 && tracked {
+		next.limit = prev.limit
+	}
+	if tracked && ev.Reset.Equal(prev.reset) {
+		switch {
+		case ev.Remaining > prev.remaining:
+			// The tracker already holds a lower reading for this window.
+			return entryOf(prev)
+		case ev.Remaining == prev.remaining && prev.observedAt.After(next.observedAt):
+			next.observedAt = prev.observedAt
+		}
+	}
+	t.windows[bucket] = next
+	return entryOf(next)
+}
+
 func (t *rateLimitTracker) snapshot(bucket string) RateLimitEntry {
 	t.mu.Lock()
 	defer t.mu.Unlock()

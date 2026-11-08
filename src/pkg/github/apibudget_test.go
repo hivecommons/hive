@@ -116,7 +116,10 @@ func TestAPIBudgetModeUsesResponseHeaders(t *testing.T) {
 	}{
 		{"lower remaining critical", true, "0", now.Add(20 * time.Minute), APIBudgetCritical, 0},
 		{"lower remaining conserve later reset", true, "600", now.Add(60 * time.Minute), APIBudgetConserve, 600},
-		{"higher remaining ignored", true, "4999", now.Add(20 * time.Minute), APIBudgetNormal, 4908},
+		{"higher remaining in the same window ignored", true, "4999", trackerReset, APIBudgetNormal, 4908},
+		// The tracker's reading came from /rate_limit; the hive's own
+		// responses say a different window is current, and they win.
+		{"other window from responses replaces the rate_limit reading", true, "4999", now.Add(20 * time.Minute), APIBudgetNormal, 4999},
 		{"past reset ignored", true, "0", now.Add(-time.Minute), APIBudgetNormal, 4908},
 		{"no header snapshot", false, "", time.Time{}, APIBudgetNormal, 4908},
 	}

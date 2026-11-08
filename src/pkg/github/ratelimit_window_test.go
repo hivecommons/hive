@@ -256,6 +256,9 @@ func TestRateLimitTracker_ConcurrentObservationsAreSafe(t *testing.T) {
 // lives on the client precisely so that both /api/status and
 // /api/gh-rate-limits inherit it.
 func TestRateLimits_ClampAppliesThroughTheClient(t *testing.T) {
+	// Start from an empty core snapshot: this test is about /rate_limit alone.
+	resetRESTAccountingForTest(t, time.Now())
+
 	reset := time.Now().Add(30 * time.Minute).Truncate(time.Second)
 	artifactReset := reset.Add(155 * time.Second)
 
