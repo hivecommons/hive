@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 	standbypkg "github.com/hivecommons/hive/pkg/standby"
 )
@@ -212,5 +213,144 @@ func TestRoleCoverage_RejectedStandbyDeclarationDoesNotCover(t *testing.T) {
 	}
 	if got := hub.RoleCoverage(now); got != nil {
 		t.Fatalf("rejected standby relay counted as cover: RoleCoverage = %+v, want nil", got)
+	}
+}
+
+// rateLimitedCoverageHub builds a hub whose "contributor" tier has the given
+// limits and seeds identityOf(relay) with one assignment stamp per age, as
+// recordAssignment does when selection hands a task out.
+func rateLimitedCoverageHub(t *testing.T, limits config.TierRate, relay *ContributorConnection, now time.Time, ages ...time.Duration) (*ContributeWSHub, *Server) {
+	t.Helper()
+	hub, s := covK2Hub(t)
+	s.deps.Config.Hub.TierLimits = map[string]config.TierRate{"contributor": limits}
+	for _, age := range ages {
+		hub.recordAssignment(identityOf(relay), now.Add(-age))
+	}
+	hub.mu.Lock()
+	hub.connections[relay.profile.GitHubUsername] = relay
+	hub.mu.Unlock()
+	return hub, s
+}
+
+// selectionRefusal asks real task selection for work on behalf of relay's
+// identity and returns the task_unavailable reason. The probe connection has
+// no role, so the answer is about the identity's limits, not role policy.
+func selectionRefusal(t *testing.T, hub *ContributeWSHub, s *Server, relay *ContributorConnection) string {
+	t.Helper()
+	oneActionableIssueN(s, 0)
+	msg := hub.selectTask(&ContributorConnection{profile: relay.profile, lastPong: time.Now()})
+	if msg == nil || msg.Type != "task_unavailable" {
+		t.Fatalf("setup: selection must refuse this identity, got %+v", msg)
+	}
+	return msg.Reason
+}
+
+// A relay that has been handed its tier's max_per_hour tasks in the last hour
+// is refused work with hourly_limit until the window rolls. It is connected
+// and acting as the role, but it will not take the lane's next item, so it
+// must not keep the resident agent withheld.
+func TestRoleCoverage_HourlyLimitReachedDoesNotCover(t *testing.T) {
+	now := time.Now()
+	relay := coverageConn("alice", "quality", now)
+	hub, s := rateLimitedCoverageHub(t, config.TierRate{MaxPerHour: 2, MaxPerDay: 50, MaxConcurrent: 5},
+		relay, now, 10*time.Minute, 20*time.Minute)
+
+	if got := selectionRefusal(t, hub, s, relay); got != taskUnavailableHourlyLimit {
+		t.Fatalf("setup: selection refused with %q, want %q", got, taskUnavailableHourlyLimit)
+	}
+	if got := hub.RoleCoverage(now); got != nil {
+		t.Fatalf("relay at its hourly limit counted as cover: RoleCoverage = %+v, want nil", got)
+	}
+}
+
+// The same for the daily cap: no assignment in the last hour, but the tier's
+// max_per_day in the last 24 hours, so selection refuses with daily_limit.
+func TestRoleCoverage_DailyLimitReachedDoesNotCover(t *testing.T) {
+	now := time.Now()
+	relay := coverageConn("alice", "scanner", now)
+	hub, s := rateLimitedCoverageHub(t, config.TierRate{MaxPerHour: 10, MaxPerDay: 3, MaxConcurrent: 5},
+		relay, now, 2*time.Hour, 5*time.Hour, 20*time.Hour)
+
+	if got := selectionRefusal(t, hub, s, relay); got != taskUnavailableDailyLimit {
+		t.Fatalf("setup: selection refused with %q, want %q", got, taskUnavailableDailyLimit)
+	}
+	if got := hub.RoleCoverage(now); got != nil {
+		t.Fatalf("relay at its daily limit counted as cover: RoleCoverage = %+v, want nil", got)
+	}
+}
+
+// A relay one task short of both caps still covers: only a used-up allowance
+// takes a relay out. Stamps older than the day window do not count. Bob, in
+// the same tier and lane, is at the hourly cap and is the only one dropped.
+func TestRoleCoverage_UnderRateLimitsCovers(t *testing.T) {
+	now := time.Now()
+	alice := coverageConn("alice", "quality", now)
+	bob := coverageConn("bob", "quality", now)
+	// alice: 1 of 2 this hour, 2 of 3 today (the 25h-old stamp has rolled off).
+	hub, _ := rateLimitedCoverageHub(t, config.TierRate{MaxPerHour: 2, MaxPerDay: 3, MaxConcurrent: 5},
+		alice, now, 10*time.Minute, 3*time.Hour, 25*time.Hour)
+	hub.recordAssignment(identityOf(bob), now.Add(-5*time.Minute))
+	hub.recordAssignment(identityOf(bob), now.Add(-15*time.Minute))
+	hub.mu.Lock()
+	hub.connections["bob"] = bob
+	hub.mu.Unlock()
+
+	want := map[string]governor.ContributorCoverage{"quality": {Contributors: []string{"alice"}}}
+	if got := hub.RoleCoverage(now); !reflect.DeepEqual(got, want) {
+		t.Fatalf("RoleCoverage = %+v, want %+v (alice under both caps, bob at the hourly cap)", got, want)
+	}
+}
+
+// tierRateLimitReached is the single rule selection and RoleCoverage share.
+func TestTierRateLimitReached(t *testing.T) {
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name   string
+		limits map[string]config.TierRate
+		tier   string
+		ages   []time.Duration
+		want   tierRateLimitHit
+	}{
+		{name: "under both caps", limits: map[string]config.TierRate{"contributor": {MaxPerHour: 2, MaxPerDay: 3}},
+			tier: "contributor", ages: []time.Duration{time.Minute, 2 * time.Hour}},
+		{name: "at the hourly cap", limits: map[string]config.TierRate{"contributor": {MaxPerHour: 2, MaxPerDay: 50}},
+			tier: "contributor", ages: []time.Duration{time.Minute, 30 * time.Minute},
+			want: tierRateLimitHit{Reason: taskUnavailableHourlyLimit, Count: 2, Max: 2}},
+		{name: "at the daily cap", limits: map[string]config.TierRate{"contributor": {MaxPerHour: 10, MaxPerDay: 2}},
+			tier: "contributor", ages: []time.Duration{2 * time.Hour, 23 * time.Hour},
+			want: tierRateLimitHit{Reason: taskUnavailableDailyLimit, Count: 2, Max: 2}},
+		{name: "both caps reports hourly first", limits: map[string]config.TierRate{"contributor": {MaxPerHour: 1, MaxPerDay: 1}},
+			tier: "contributor", ages: []time.Duration{time.Minute},
+			want: tierRateLimitHit{Reason: taskUnavailableHourlyLimit, Count: 1, Max: 1}},
+		{name: "stamps past the day window do not count", limits: map[string]config.TierRate{"contributor": {MaxPerHour: 1, MaxPerDay: 1}},
+			tier: "contributor", ages: []time.Duration{25 * time.Hour}},
+		{name: "zero caps are unlimited", limits: map[string]config.TierRate{"advisor": {}},
+			tier: "advisor", ages: []time.Duration{time.Minute, 2 * time.Minute, 3 * time.Minute}},
+		{name: "a tier with no row is unlimited", limits: map[string]config.TierRate{"contributor": {MaxPerHour: 1, MaxPerDay: 1}},
+			tier: "custom", ages: []time.Duration{time.Minute, 2 * time.Minute}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hub, s := covK2Hub(t)
+			s.deps.Config.Hub.TierLimits = tc.limits
+			for _, age := range tc.ages {
+				hub.recordAssignment("c-alice", now.Add(-age))
+			}
+			if got := hub.tierRateLimitReached("c-alice", tc.tier, now); got != tc.want {
+				t.Fatalf("tierRateLimitReached = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+
+	// No server or config behind the hub: nothing to enforce, never a panic.
+	bare := NewContributeWSHub(slog.Default(), nil)
+	t.Cleanup(bare.Close)
+	bare.recordAssignment("c-alice", now)
+	if got := bare.tierRateLimitReached("c-alice", "contributor", now); got != (tierRateLimitHit{}) {
+		t.Fatalf("hub without a server: tierRateLimitReached = %+v, want zero", got)
+	}
+	var none *ContributeWSHub
+	if got := none.tierRateLimitReached("c-alice", "contributor", now); got != (tierRateLimitHit{}) {
+		t.Fatalf("nil hub: tierRateLimitReached = %+v, want zero", got)
 	}
 }
