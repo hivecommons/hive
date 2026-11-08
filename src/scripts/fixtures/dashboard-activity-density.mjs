@@ -164,7 +164,7 @@ export function activityDensityFixture(input) {
     _stageTrackerRows = ordered;
     if (phone && attnLine) {
       const f = stageTrackerNormalizeFilter(_stageTrackerFilter);
-      attnLine.innerHTML = stageTrackerAttentionLineHtml(items.filter(it => it && it.waiting_on_you && !it.nested_under).length,
+      attnLine.innerHTML = stageTrackerAttentionLineHtml(stageTrackerWaitingOnYou({ items }).count || 0,
         items.filter(stageTrackerNeedsAttention).length, f.waitingOnYou);
     }
     stageTrackerPreparationVisualSync(_stageTracker, ordered, ordered, stages, nowMs);

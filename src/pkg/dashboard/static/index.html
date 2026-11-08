@@ -22518,7 +22518,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       navCountBind(STAGE_TRACKER_COUNT_BADGE_IDS, counts.badge, counts.badgeTitle, !!data || countRefresh);
       stageTrackerRenderWaiting(d, nowMs, !!data || countRefresh);
       const attnLine = document.getElementById('activity-monitor-attn-line');
-      if (attnLine) setIfChanged(attnLine, stageTrackerAttentionLineHtml(d.items.filter(it => it && it.waiting_on_you && !it.nested_under).length, attentionAll, f.waitingOnYou));
+      if (attnLine) setIfChanged(attnLine, stageTrackerAttentionLineHtml(stageTrackerWaitingOnYou(d).count || 0, attentionAll, f.waitingOnYou));
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       stageTrackerRenderLabelDialog();
