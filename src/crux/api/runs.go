@@ -63,8 +63,9 @@ type ContainedRunWorktree struct {
 }
 
 // ContainedRunRequest is POST /v1/runs. Exactly one of Checkout, Worktree or
-// WorkspacePath names the workspace. Checkout (an S1 id) is accepted by the
-// wire shape but answers CodeUnsupported until the checkout service lands.
+// WorkspacePath names the workspace. Checkout is an S1 checkout id: the run
+// executes in that pinned worktree and must be made by the checkout's owner
+// (or the operator); the checkout cannot be deleted while the run is live.
 type ContainedRunRequest struct {
 	Checkout      string                `json:"checkout,omitempty"`
 	Worktree      *ContainedRunWorktree `json:"worktree,omitempty"`
@@ -101,15 +102,18 @@ type ContainedRun struct {
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 
-	Profile  string   `json:"profile,omitempty"`
-	Network  string   `json:"network,omitempty"`
-	Backend  string   `json:"backend,omitempty"`
-	Command  []string `json:"command,omitempty"`
-	Workdir  string   `json:"workspace,omitempty"`
-	ExitCode *int     `json:"exit_code,omitempty"`
-	TimedOut bool     `json:"timed_out,omitempty"`
-	Stdout   string   `json:"stdout,omitempty"`
-	Stderr   string   `json:"stderr,omitempty"`
+	Profile string   `json:"profile,omitempty"`
+	Network string   `json:"network,omitempty"`
+	Backend string   `json:"backend,omitempty"`
+	Command []string `json:"command,omitempty"`
+	// Checkout is the S1 checkout id the run executes in, when it was
+	// requested that way.
+	Checkout string `json:"checkout,omitempty"`
+	Workdir  string `json:"workspace,omitempty"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+	TimedOut bool   `json:"timed_out,omitempty"`
+	Stdout   string `json:"stdout,omitempty"`
+	Stderr   string `json:"stderr,omitempty"`
 	// StdoutTruncatedAt and StderrTruncatedAt are the byte offsets at which
 	// the response output was cut; absent when nothing was truncated. The
 	// full, scrubbed output is the stdout.txt / stderr.txt artifact in the

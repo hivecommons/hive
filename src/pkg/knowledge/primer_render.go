@@ -11,10 +11,11 @@ import (
 // so. Override with knowledge.primer.max_bytes.
 const (
 	// DefaultPrimerMaxBytes is the rendered-prompt cap when
-	// PrimerConfig.MaxBytes is zero. 4 KiB is the "Top 5 safe wins" figure from
-	// the 2026-10 token-usage review (#12124): enough for a dozen typical facts,
-	// small next to the issue/PR lists it shares the kick with.
-	DefaultPrimerMaxBytes = 4096
+	// PrimerConfig.MaxBytes is zero. The 2026-10 token-usage review (#12124)
+	// set 4 KiB; on hive's own spoke that dropped 15 of 25 primed facts per
+	// kick once the knowledge dir was indexed, so 8 KiB keeps most of the
+	// max_facts budget while staying small next to the issue/PR lists.
+	DefaultPrimerMaxBytes = 8192
 	// primerMinBytes is the floor a configured cap is raised to, so a typo
 	// cannot produce a primer that is nothing but its own marker.
 	primerMinBytes = 512
