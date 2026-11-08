@@ -1403,14 +1403,16 @@ func TestTrySweepContributorLanePRAutoPromotionScope(t *testing.T) {
 			wantSearches: 1,
 		},
 		// hivecommons/hive#17148: GitHub refuses the whole query when one
-		// listed repository cannot be searched; the others still count.
+		// listed repository cannot be searched; the others still count. The
+		// PR's own repository is part of the chunk on v6 (per-author cache,
+		// #15088), so the per-repository fallback asks for it too.
 		{
 			name:         "an unsearchable repository does not hide the others",
 			own:          cleanHistory(1),
 			other:        map[string][]map[string]any{"hive": cleanHistory(9)},
 			unsearchable: []string{"acme/docs"},
 			wantMerges:   1,
-			wantSearches: 4,
+			wantSearches: 5,
 			wantLists:    []string{"hive"},
 			wantComment:  "merged=5 scope=hive repos=widget:1,hive:4 -->",
 		},
@@ -1420,7 +1422,7 @@ func TestTrySweepContributorLanePRAutoPromotionScope(t *testing.T) {
 			other:        map[string][]map[string]any{"hive": cleanHistory(9)},
 			unsearchable: []string{"acme/hive", "acme/docs", "acme/homebrew-hive"},
 			wantReason:   contributorLaneReasonClaimTier,
-			wantSearches: 4,
+			wantSearches: 5,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

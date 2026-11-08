@@ -44,18 +44,25 @@ func TestContributorMergedReposRemembersUnsearchableRepository(t *testing.T) {
 		}
 	}
 
+	// The PR's own repository is searched too: the per-author answer is
+	// cached for every active repository (#15088) and filtered on read.
 	ask("first refusal isolates the repository",
-		" repo:acme/hive repo:acme/docs repo:acme/homebrew-hive",
+		" repo:acme/widget repo:acme/hive repo:acme/docs repo:acme/homebrew-hive",
+		" repo:acme/widget",
 		" repo:acme/hive",
 		" repo:acme/docs",
 		" repo:acme/homebrew-hive",
 	)
-	ask("next sweep leaves the refused pair out", " repo:acme/hive repo:acme/homebrew-hive")
+	// The refused pair drops out of the candidate set, which changes the
+	// cached answer's repository list, so the next sweep asks again without
+	// it; the sweep after that is served from the per-author cache.
+	ask("next sweep leaves the refused pair out", " repo:acme/widget repo:acme/hive repo:acme/homebrew-hive")
 	clock.at = clock.at.Add(contributorUnsearchableTTL - time.Minute)
-	ask("still inside the TTL", " repo:acme/hive repo:acme/homebrew-hive")
+	ask("still inside the TTL")
 	clock.at = clock.at.Add(time.Minute)
 	ask("TTL expiry re-asks GitHub",
-		" repo:acme/hive repo:acme/docs repo:acme/homebrew-hive",
+		" repo:acme/widget repo:acme/hive repo:acme/docs repo:acme/homebrew-hive",
+		" repo:acme/widget",
 		" repo:acme/hive",
 		" repo:acme/docs",
 		" repo:acme/homebrew-hive",

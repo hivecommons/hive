@@ -61,7 +61,7 @@ intent, and against the ledger for what it confirmed.
   `/var/run/nous/governor/`; a new row shows up after a restart. It reads
   nothing else from the work directory — not `best_found.json`, not
   `meta_findings.json`. See
-  [Experiment Lab: The experiment loop](../strategy-lab.md#the-experiment-loop).
+  [Experiment Lab: The experiment loop](../experiment-lab.md#the-experiment-loop).
 - **Ledger rows pass through untouched.** `GET /api/nous/ledger` (dashboard
   auth) returns each row as the loop wrote it, minus Hive-self rows
   (`nousRepoOnlyLedger`). Extra keys the loop writes are already served.

@@ -47,11 +47,13 @@ func TestIssueStageCoveredAndOrdinalsMatchTable(t *testing.T) {
 	// onto the issue. The parking stages (045, and 085 — the pre-045 issue
 	// spelling of the park) sort past 040 but are NOT coverage: an issue
 	// there waits on a person, and no PR need exist. Neither is the
-	// prior-art park 017, which sorts before 020 claimed.
+	// prior-art park 017, which sorts before 020 claimed, nor 018 open for
+	// discussion: a proposal issue with no live claim.
 	notCovered := map[stagelabels.Stage]bool{
 		stagelabels.Actionable:         true,
 		stagelabels.TriageNeeded:       true,
 		stagelabels.PossiblyExisting:   true,
+		stagelabels.OpenForDiscussion:  true,
 		stagelabels.Claimed:            true,
 		stagelabels.PRInProgress:       true,
 		stagelabels.IssueNeedsDecision: true,
