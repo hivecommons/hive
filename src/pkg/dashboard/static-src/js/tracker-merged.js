@@ -524,7 +524,7 @@
         // Numbers and counts go through String(): esc() drops non-strings.
         const n = esc(String(e.number || ''));
         const num = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">#${n}</a>` : `#${n}`;
-        return `<li><span class="ham-merged-num" title="${esc(String(e.repo || ''))}#${n}">${num}</span><span class="ham-merged-title" title="${esc(e.title || '')}">${esc(e.title || e.repo)}</span><span class="ham-merged-meta">${meta}</span></li>`;
+        return `<li><span class="ham-merged-num" title="${esc(String(e.repo || ''))}#${n}">${num}</span><span class="ham-merged-title" title="${esc(e.title || '')}">${esc(e.title || e.repo)}</span><span class="ham-merged-repo">${esc(String(e.repo || ''))}</span><span class="ham-merged-meta">${meta}</span></li>`;
       }).join('');
       const head = `<div class="ham-merged-pop-head"><span>Recent merges</span><span class="ham-merged-pop-sum">${esc(String(txt.today))} today · ${esc(String(txt.week))} this week · ${esc(String(txt.total30d))} in 30 days</span></div>`;
       const body = rows ? `<ol class="ham-merged-list">${rows}</ol>` : `<div class="ham-empty">No merges recorded yet.</div>`;
@@ -762,14 +762,58 @@
     // Stateful: redraw the popover when it is open.
     function stageTrackerMergedPopDraw(txt, nowMs) {
       const pop = document.getElementById('activity-monitor-merged-pop');
-      if (!pop || pop.hidden) return;
+      const sheet = stageTrackerPopSheet('merged');
+      if (!pop || (pop.hidden && !sheet)) return;
       const html = stageTrackerMergedPopHtml(txt || stageTrackerMergedText(_stageTrackerMerged, nowMs || Date.now(), 0), nowMs || Date.now());
+      if (sheet) { stageTrackerPopSheetDraw(sheet, html); return; }
       if (pop.innerHTML !== html) pop.innerHTML = html;
+    }
+    // Phones get the Merged and queue lists as a .hive-dialog.modal-sheet
+    // (hiveWireDialog: Esc, ✕, backdrop) instead of the anchored popover;
+    // the same tier as the CSS .modal-sheet rules.
+    const STAGE_TRACKER_POP_SHEET_QUERY = '(max-width: 640px), ((pointer: coarse) and (max-width: 820px))';
+    function stageTrackerPopSheetPhone() {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(STAGE_TRACKER_POP_SHEET_QUERY).matches;
+    }
+    function stageTrackerPopSheet(kind) {
+      return document.querySelector('.hive-dialog-overlay[data-ham-pop-sheet="' + kind + '"]');
+    }
+    function stageTrackerPopSheetDraw(overlay, html) {
+      const body = overlay.querySelector('.ham-pop-sheet-body');
+      if (body && body.innerHTML !== html) body.innerHTML = html;
+    }
+    function stageTrackerPopSheetOpen(kind, title, html, chip) {
+      const overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      overlay.setAttribute('data-ham-pop-sheet', kind);
+      hiveRememberModalOpen(overlay);
+      const id = 'ham-pop-sheet-' + kind;
+      overlay.innerHTML = '<div class="hive-dialog ham-pop-sheet" role="dialog" aria-modal="true" aria-labelledby="' + id + '-title">' +
+        '<div id="' + id + '-title" class="hive-dialog-title">' + esc(title) + '</div>' +
+        '<div class="modal-scroll ham-pop-sheet-body"></div></div>';
+      document.body.appendChild(overlay);
+      stageTrackerPopSheetDraw(overlay, html);
+      hiveWireDialog(overlay, () => {
+        if (!chip) return;
+        chip.setAttribute('aria-expanded', 'false');
+        if (chip.focus) chip.focus();
+      }, undefined, null, null, close => close());
+      return overlay;
     }
     function hamMergedToggle(open) {
       const pop = document.getElementById('activity-monitor-merged-pop');
       const chip = stageTrackerMergedChip();
       if (!pop) return false;
+      if (stageTrackerPopSheetPhone()) {
+        const sheet = stageTrackerPopSheet('merged');
+        const want = typeof open === 'boolean' ? open : !sheet;
+        pop.hidden = true;
+        if (want && !sheet) {
+          if (chip) chip.setAttribute('aria-expanded', 'true');
+          stageTrackerPopSheetOpen('merged', 'Recent merges', stageTrackerMergedPopHtml(stageTrackerMergedText(_stageTrackerMerged, Date.now(), 0), Date.now()), chip);
+        } else if (!want && sheet && sheet.hiveDialogClose) sheet.hiveDialogClose();
+        return want;
+      }
       const want = typeof open === 'boolean' ? open : !!pop.hidden;
       pop.hidden = !want;
       if (chip) chip.setAttribute('aria-expanded', want ? 'true' : 'false');
