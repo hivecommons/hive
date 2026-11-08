@@ -14,6 +14,8 @@
   const phoneMaxWidth = 640;
   const maxChromePx = 160;
   const minRowPeekPx = 120;
+  const minLandscapeRowShare = 50;
+  const referenceLandscapeHeight = 390;
   const failures = [];
   const assert = (ok, label) => { if (!ok) failures.push(label); };
   const rect = el => el.getBoundingClientRect();
@@ -81,12 +83,18 @@
       const banners = [...document.querySelectorAll('.merge-banner')].filter(visible);
       assert(banners.length <= 1, 'at most one merge banner is visible on a landscape phone');
       if (sticky && rows.length) {
-        // Rows are taller than a landscape phone; the contract is that
-        // rows start inside the viewport once the bar is at the top.
+        // A fixture row is a whole work-item cluster, taller than a landscape
+        // phone; the contract is that with the bar at the top, rows (not
+        // chrome) fill most of the viewport and, at the epic's reference
+        // 844×390, a second row starts inside it.
         sticky.scrollIntoView({ block: 'start', behavior: 'instant' });
         await frames(3);
         measurements.rowsStartingInViewport = rows.filter(row => { const box = rect(row); return box.top >= navbar - 1 && box.top < innerHeight; }).length;
-        assert(measurements.rowsStartingInViewport >= 2, 'at least two rows start inside the viewport on a landscape phone (' + measurements.rowsStartingInViewport + ')');
+        const rowArea = rows.reduce((sum, row) => { const box = rect(row); return sum + Math.max(0, Math.min(box.bottom, innerHeight) - Math.max(box.top, navbar)); }, 0);
+        measurements.rowShare = Math.round(100 * rowArea / (innerHeight - navbar));
+        assert(measurements.rowsStartingInViewport >= 1, 'a row starts inside the viewport on a landscape phone with the bar at the top');
+        assert(measurements.rowShare >= minLandscapeRowShare, 'rows fill at least ' + minLandscapeRowShare + '% of the landscape viewport below the navbar (' + measurements.rowShare + '%)');
+        if (innerHeight >= referenceLandscapeHeight) assert(measurements.rowsStartingInViewport >= 2, 'at least two rows start inside the viewport on a landscape phone (' + measurements.rowsStartingInViewport + ')');
         header.scrollIntoView({ block: 'start', behavior: 'instant' });
         await frames(2);
       }
