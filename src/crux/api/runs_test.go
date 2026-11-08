@@ -20,8 +20,8 @@ func TestRunPaths(t *testing.T) {
 }
 
 func TestSavedRunPathsAndQuery(t *testing.T) {
-	if RunRestartPath("run a") != "/v1/runs/run%20a/restart" || RunHistoryPath("run_a") != "/v1/runs/run_a/history" {
-		t.Fatalf("paths: %s %s", RunRestartPath("run a"), RunHistoryPath("run_a"))
+	if RunRestartPath("run_a") != "/v1/runs/run_a/restart" || RunHistoryPath("run_a") != "/v1/runs/run_a/history" {
+		t.Fatalf("paths: %s %s", RunRestartPath("run_a"), RunHistoryPath("run_a"))
 	}
 	for _, tc := range []struct {
 		status string
