@@ -30,19 +30,26 @@
   const stripCell = el => el.matches('.ham-chevron-info, .ham-chevron-decision, .ham-chevron-copy .ham-decision-trigger');
   const controls = [...section.querySelectorAll('button, a[href], input, select, summary, [role="button"], [role="menuitem"], [tabindex]:not([tabindex="-1"]):not(.ham-row):not(.ham-sub)')]
     .filter(el => visible(el) && !inlineText(el) && !stripCell(el));
-  // A compact control may extend its hit area with an absolutely positioned
-  // empty ::before (the progress pill, #17183): its tap target is the pseudo
-  // box, not the painted box. Negative insets grow the rect.
-  const hitRect = el => {
+  // A control may extend its hit area past its painted box with an
+  // absolutely positioned ::before/::after (the progress pill's
+  // `inset: calc((compact - tap) / 2) 0`): measure the union of the
+  // element and such pseudo-elements, since that is what the thumb hits.
+  const px = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+  const hitBox = el => {
     const r = el.getBoundingClientRect();
-    const b = getComputedStyle(el, '::before');
-    if (b.position !== 'absolute' || b.content !== '""' || getComputedStyle(el).position === 'static') return r;
-    const px = v => parseFloat(v) || 0;
-    return { width: r.width - px(b.left) - px(b.right), height: r.height - px(b.top) - px(b.bottom) };
+    let { left, top, right, bottom } = r;
+    if (getComputedStyle(el).position === 'static') return { width: right - left, height: bottom - top };
+    for (const pseudo of ['::before', '::after']) {
+      const cs = getComputedStyle(el, pseudo);
+      if (cs.content === 'none' || cs.position !== 'absolute' || cs.pointerEvents === 'none') continue;
+      left = Math.min(left, r.left + px(cs.left)); top = Math.min(top, r.top + px(cs.top));
+      right = Math.max(right, r.right - px(cs.right)); bottom = Math.max(bottom, r.bottom - px(cs.bottom));
+    }
+    return { width: right - left, height: bottom - top };
   };
   const small = [];
   for (const el of controls) {
-    const r = hitRect(el);
+    const r = hitBox(el);
     if (r.width + tolerance < 44 || r.height + tolerance < 44) small.push(`${el.tagName.toLowerCase()}.${[...el.classList].join('.')} ${Math.round(r.width)}×${Math.round(r.height)}`);
   }
   assert(small.length === 0, `${small.length} control(s) under 44×44 at 390×844: ${[...new Set(small)].slice(0, 12).join(', ')}`);
