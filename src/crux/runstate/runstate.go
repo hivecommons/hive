@@ -46,7 +46,8 @@ const (
 	RecordName = "record.json"
 	// IndexName is the append-only status history, one IndexEntry per line.
 	IndexName = "index.jsonl"
-	// KindRun is a contained run (S2); S6 steps add their own kind later.
+	// KindRun is a contained run (S2) or, with profile agent, a step
+	// session (S6); steps are kept under the run's directory by agentstep.
 	KindRun = "run"
 
 	idRandomBytes = 6
@@ -263,8 +264,8 @@ func (s *Store) List() ([]Record, error) {
 	return out, nil
 }
 
-// Reconcile moves every accepted or running record to StatusUnfinished with
-// reason and returns the records it changed. It runs at `crux serve` start:
+// Reconcile moves every accepted, running or waiting record to
+// StatusUnfinished with reason and returns the records it changed. It runs at `crux serve` start:
 // the process that owned those items is gone, so their exit is not knowable
 // and they are never restarted silently.
 func (s *Store) Reconcile(reason string) ([]Record, error) {
@@ -274,7 +275,7 @@ func (s *Store) Reconcile(reason string) ([]Record, error) {
 	}
 	var changed []Record
 	for _, r := range recs {
-		if r.Status != StatusAccepted && r.Status != StatusRunning {
+		if r.Status != StatusAccepted && r.Status != StatusRunning && r.Status != StatusWaiting {
 			continue
 		}
 		rec, err := s.Update(r.ID, func(rec *Record) error {

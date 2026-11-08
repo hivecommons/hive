@@ -44,8 +44,9 @@ const (
 	// RunProfileExperiment (the default) runs with network none, no
 	// credentials and time and output limits.
 	RunProfileExperiment = "experiment"
-	// RunProfileAgent is S6's execution half and is not yet accepted
-	// (CodeUnsupported).
+	// RunProfileAgent opens a step session (S6): no command, network
+	// restricted by default, held waiting until cancelled; steps are
+	// posted to RunStepsPath.
 	RunProfileAgent = "agent"
 )
 

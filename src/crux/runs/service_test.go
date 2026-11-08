@@ -444,7 +444,8 @@ func TestValidationErrors(t *testing.T) {
 	}{
 		{"no command", api.ContainedRunRequest{WorkspacePath: ws}, &RequestError{}, "command is required"},
 		{"blank command", api.ContainedRunRequest{WorkspacePath: ws, Command: []string{" "}}, &RequestError{}, "command is required"},
-		{"agent profile", api.ContainedRunRequest{WorkspacePath: ws, Command: []string{"x"}, Profile: "agent"}, &UnsupportedError{}, "S6"},
+		{"agent with command", api.ContainedRunRequest{WorkspacePath: ws, Command: []string{"x"}, Profile: "agent"}, &RequestError{}, "takes no command"},
+		{"agent needs restricted", api.ContainedRunRequest{WorkspacePath: ws, Profile: "agent"}, &UnsupportedError{}, `cannot enforce network "restricted"`},
 		{"bad profile", api.ContainedRunRequest{WorkspacePath: ws, Command: []string{"x"}, Profile: "root"}, &RequestError{}, "profile must be"},
 		{"bad network", api.ContainedRunRequest{WorkspacePath: ws, Command: []string{"x"}, Network: "host"}, &RequestError{}, "network must be"},
 		{"restricted unsupported", api.ContainedRunRequest{WorkspacePath: ws, Command: []string{"x"}, Network: "restricted"}, &UnsupportedError{}, `cannot enforce network "restricted"`},

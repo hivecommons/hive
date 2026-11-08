@@ -334,6 +334,9 @@ func TestETagCache_ThroughGoGithub(t *testing.T) {
 // post-reset wave is paced — the projectbluefin spoke re-exhausted a 6650/hr
 // quota within one second of every reset (#7430).
 func TestSlowStart_PrimaryLimitEngagesCaution(t *testing.T) {
+	// Keep this test's rate-limit readings out of the shared core snapshot.
+	resetRESTAccountingForTest(t, time.Now())
+
 	reset := time.Now().Add(30 * time.Minute).Truncate(time.Second)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-RateLimit-Limit", "6650")

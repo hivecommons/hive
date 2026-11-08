@@ -245,6 +245,9 @@ func TestOTelTransport_SecondaryLimitHit(t *testing.T) {
 }
 
 func TestOTelTransport_UnknownCallerAndUnauthenticatedBucketIgnored(t *testing.T) {
+	// Keep this test's rate-limit readings out of the shared core snapshot.
+	resetRESTAccountingForTest(t, time.Now())
+
 	spans, _ := otelTestPipeline(t)
 	ResetRateLimitBudgetForTest()
 	ResetRateLimitPacingForTest()

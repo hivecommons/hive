@@ -24,6 +24,9 @@ start flags:
   --timeout DURATION        wall-clock limit (server default when unset)
   --max-output BYTES        bytes of stdout/stderr returned (server default)
   --profile experiment|agent
+                            agent opens a step session: no command, answered
+                            as accepted, steps via 'crux step run', closed by
+                            'runs cancel'
   --idempotency-key KEY     return the existing run for a repeated request
   --detach                  return the accepted record instead of waiting
   --json                    print the record as JSON`
@@ -78,7 +81,9 @@ func (e *Env) remoteRunsStart(ctx context.Context, c *api.Client, args []string)
 	if code, ok := parseSub(fs, args); !ok {
 		return code
 	}
-	if fs.NArg() == 0 {
+	// An agent session takes no command: its steps are posted with
+	// `crux step run`.
+	if fs.NArg() == 0 && req.Profile != api.RunProfileAgent {
 		fmt.Fprintln(e.Stderr, runsUsage)
 		return ExitUsage
 	}

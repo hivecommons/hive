@@ -87,7 +87,10 @@ func (s *Server) handleRunsCreate(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, run)
 		return
 	}
-	if req.Detach {
+	// A step session (profile agent) stays open until it is cancelled, so
+	// it is always answered as accepted; its steps are what the caller waits
+	// on.
+	if req.Detach || run.Profile == api.RunProfileAgent {
 		s.writeJSON(w, http.StatusAccepted, run)
 		return
 	}

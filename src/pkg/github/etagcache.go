@@ -247,6 +247,14 @@ func githubUnpacedTransportChain(inner http.RoundTripper) http.RoundTripper {
 	return etagCacheWrap(rest404NegativeCacheWrap(restAccountingWrap(inner)))
 }
 
+// githubAppJWTTransportChain is githubUnpacedTransportChain for requests
+// authenticated with the App JWT. Their rate-limit headers describe the App's
+// JWT bucket, so REST accounting counts them per caller but keeps them out of
+// the installation's core snapshot that drives the API budget mode.
+func githubAppJWTTransportChain(inner http.RoundTripper) http.RoundTripper {
+	return etagCacheWrap(rest404NegativeCacheWrap(restAccountingWrapAppJWT(inner)))
+}
+
 // externalSlowStartState paces requests made through NewHTTPTransport. It is
 // deliberately separate from sharedSlowStartState: NewHTTPTransport callers
 // (the hub's pollers) may run anonymously, and a per-IP anonymous 403 from
