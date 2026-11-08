@@ -650,8 +650,40 @@ test('known and original chevrons keep full long text inside a shared one-line c
   assert.doesNotMatch(css, /\.ham-(?:seg-t|detour)\.ham-has-holder[^}]*white-space: nowrap/);
   assert.match(css, /padding: var\(--sp-1\) calc\(var\(--ham-notch\) \+ var\(--sp-2\)\)/);
   assert.match(css, /\.config-tooltip\.ham-chevron-tip \{[^}]*pointer-events: auto/);
-  assert.match(css, /#activity-monitor-panel \{ --ham-compact-min-width: 60em; \}/);
-  assert.match(css, /\.ham-row > \.ham-strip-row, \.ham-sub > \.ham-strip-row, \.ham-cols > \.ham-strip-row \{ overflow-x: auto; \}/);
+  // Phone tier (hivecommons/hive#17160): the strip no longer scrolls
+  // sideways; it is hidden behind the progress pill, which opens it in a
+  // sheet. Outside the tier the pill has no box, so 1280 is untouched.
+  assert.doesNotMatch(css, /--ham-compact-min-width/);
+  assert.match(css, /^\s*\.ham-pill \{ display: none; \}/m);
+  assert.match(css, /@media \(max-width: 640px\), \(\(pointer: coarse\) and \(max-width: 820px\)\) \{\s*\.ham-cols \{ display: none; \}\s*\.ham-row > \.ham-strip-row > \.ham-strip, \.ham-sub > \.ham-strip-row > \.ham-strip,/);
+  assert.match(css, /\.ham-pill \{ display: inline-flex;[^}]*min-height: var\(--control-compact-min-h\);[^}]*font-size: var\(--fs-sm\);/);
+  assert.match(css, /\.ham-pill::before \{ content: ""; position: absolute; inset: calc\(\(var\(--control-compact-min-h\) - var\(--tap-target\)\) \/ 2\) 0; \}/);
+  assert.match(css, /\.ham-pill\[data-motion="needs-human"\] \{ background: color-mix\(in srgb, var\(--amber\) 45%, var\(--red\)\);/);
+});
+
+test('phone progress pill names the step, stage and age and opens the strip sheet (#17160)', () => {
+  const layout = fs.readFileSync(path.join(root, 'tracker-row-layout.js'), 'utf8');
+  const pillHtml = new Function('esc', 'stageTrackerSegments', 'stageTrackerShortAgo', globals + `
+const STAGE_TRACKER_MOTION_STATIC = 'static', STAGE_TRACKER_MOTION_HUMAN = 'needs-human';
+function stageTrackerMotion(item) { return (item.modifiers || []).includes('needs-human') ? STAGE_TRACKER_MOTION_HUMAN : STAGE_TRACKER_MOTION_STATIC; }
+function stageTrackerItemKey(it) { return it.repo + '/' + it.kind + '#' + it.number; }
+function stageTrackerOpenSince() { return { ms: 0 }; }
+` + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(layout, 'stageTrackerSinceHtml') + fn(strip, 'stageTrackerPillHtml') + ';return stageTrackerPillHtml;')(esc, segments, ms => Math.round(ms / 3600000) + 'h');
+  const pillStages = [{ number: 80, short: 'Merge queue' }, { number: 30, short: 'PR in progress' }, { number: 85, short: 'Needs human decision', branch_from: 80 }].concat(stages.filter(st => st.number !== 85));
+  const since = new Date(now - 2 * 3600 * 1000).toISOString();
+  const pill = pillHtml(livePR({ repo: 'org/repo', number: 7, stage: 85, display_column: 80, stage_since: since, modifiers: ['needs-human'] }), pillStages, null, now, {});
+  assert.match(pill, /^<button type="button" class="ham-pill" data-motion="needs-human" data-action="stageTrackerPillSheet" data-arg0="org\/repo\/pr#7" data-stop="1" aria-label="Step 7\/8 · Needs human decision · 2h — show pipeline steps">/);
+  assert.match(pill, /<span class="ham-pill-step">Step 7\/8<\/span><span class="ham-pill-label">Needs human decision<\/span><span class="ham-pill-since">2h<\/span><\/button>$/, 'column 50 counts as two chevrons (CI, Review), so the merge queue is step 7 of 8');
+  const sub = pillHtml(livePR({ repo: 'org/repo', number: 8, stage: 30, display_column: 30, stage_since: since }), pillStages, { from: 30 }, now, {});
+  assert.match(sub, /data-motion="static"[^>]*>.*Step 1\/5</, 'a nested PR row counts only its own chevrons');
+  const reviewing = pillHtml(livePR({ repo: 'org/repo', number: 9, review_activity: activity('reviewing', 'Review working', true) }), pillStages, null, now, {});
+  assert.match(reviewing, /Step 6\/8</, 'only Review running lights the second column-50 chevron');
+  assert.equal(pillHtml(livePR({ repo: 'org/repo', number: 10, stage: 30, superseded: { closer_pr: 11 } }), pillStages, null, now, {}), '', 'a superseded original has no pill');
+  const render = fs.readFileSync(path.join(root, 'tracker-row-render.js'), 'utf8');
+  assert.match(render, /\$\{stageTrackerSinceHtml\(shown, nowMs\)\}\$\{typeof stageTrackerPillHtml === 'function' \? stageTrackerPillHtml\(shown, stages, range, nowMs, ctx\) : ''\}\s*<\/div>/, 'the row pill sits in the strip row after the since age');
+  assert.match(layout, /\$\{stageTrackerSinceHtml\(pr, nowMs\)\}\$\{typeof stageTrackerPillHtml === 'function' \? stageTrackerPillHtml\(pr, stages, \{ from: STAGE_TRACKER_PR_COLUMN \}, nowMs, ctx\) : ''\}/, 'the nested PR pill is scoped to the PR columns');
+  const motion = fs.readFileSync(path.join(root, 'tracker-motion.js'), 'utf8');
+  assert.match(fn(motion, 'stageTrackerAnimateMove'), /typeof strip.getClientRects === 'function' && !strip.getClientRects\(\).length[^]*?'ham-pill-moved'[^]*?return true;/, 'a hidden strip plays the move cue on the pill instead of the overlay');
 });
 
 test('a 071/072 row with a pushed or checking head keeps its running CI track lit (#16552)', () => {

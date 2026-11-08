@@ -17,7 +17,9 @@ the actual tracker items and the original train's thin gold side rail through
 their rows. Existing train styling and theme tokens supply its spacing, border,
 markers and font. A white marker identifies an exact-current preparation owner;
 an outlined marker identifies unverified observations. Neither changes CI /
-Review chevrons or creates a ready or native queue seat.
+Review chevrons or creates a ready or native queue seat. The pill is drawn only
+when two or more tickets are recorded for a base; a lone owner shows its state
+in its row comment instead.
 
 Subdued comments inside the corresponding PR row retain the current pipeline
 caption and add base-refresh context, known ticket age, and the hosting issue

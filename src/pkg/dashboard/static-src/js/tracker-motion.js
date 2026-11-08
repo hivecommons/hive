@@ -676,6 +676,19 @@
       if (!fn || !strip || from === to) return false;
       const dest = strip.children[to], src = strip.children[from];
       if (!dest || !src || dest.classList.contains('blank')) return false;
+      // Phone tier (hivecommons/hive#17160): the strip is display:none and
+      // the progress pill stands in for it, so the overlay has no geometry
+      // to play against. One flash on the pill is the whole cue; the
+      // chevrons already show the new state when the sheet opens. Guarded
+      // for the test stub strip, which has no getClientRects.
+      if (typeof strip.getClientRects === 'function' && !strip.getClientRects().length) {
+        const pill = strip.parentElement && strip.parentElement.querySelector ? strip.parentElement.querySelector(':scope > .ham-pill') : null;
+        if (pill) {
+          pill.classList.add('ham-pill-moved');
+          stageTrackerAfter(pill, 'animationend', STAGE_TRACKER_MOVE_MS, () => pill.classList.remove('ham-pill-moved'));
+        }
+        return true;
+      }
       stageTrackerAnimLayer(strip).innerHTML = '';
       const plan = stageTrackerMovePlan(effect, stageTrackerAnimScale(strip));
       strip.dataset.hamPhase = 'flash';

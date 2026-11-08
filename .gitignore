@@ -48,3 +48,6 @@ src/docs/design/_out/
 # smoke test's socket + work dir. Build products, never source.
 src/crux/bin/
 src/crux/.smoke/
+
+# scratch Chrome profile from src/scripts/dashboard-mobile-shots.mjs
+.chrome-dashboard-mobile-shots/

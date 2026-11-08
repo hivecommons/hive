@@ -157,6 +157,8 @@ The reason, actor, nudges, repository, flags and recent stage hops live on the `
 
 Reduced-motion preferences disable animation; needs-human remains steadily red. Icons do not rotate. Movement animation and the newer working cues have their own settings/reference below.
 
+**On a phone** (≤640px, or a touch screen up to 820px) the eight chevrons do not fit a row, so each row shows a single **progress pill** in their place — `Step 7/8 · Merge queue · 2h`: the lit chevron's position counted as drawn (CI and Review are two steps; a nested PR row counts only its own PR columns), its word and the time on step. The pill takes the strip's colour: amber for a steady or working stage, green once merged, the amber→red needs-human tint when a person must move. The sticky column header is hidden with the strip. Tapping the pill opens the full chevron strip, the `since` age, the current-stage caption and the lit chevron's hover text in a full-screen sheet (✕, Esc or *Close*); the strip scrolls sideways inside the sheet if it has to. When a row moves between refreshes the pill flashes once instead of the chevron-to-chevron movement animation. At 1280 and in phone landscape wider than 820px the strip is drawn exactly as before ([#17160](https://github.com/hivecommons/hive/issues/17160)).
+
 ### Payload freshness and stage-engine reference
 
 The view is fed by `GET /api/stage-tracker`. Without a stage or journal entry an item is in the Open column; a not-yet-placed item can read **New** as described [below](#new-row-000-new-the-pre-stage-state). Scanner buckets can place unlabeled claimed→020, in-progress→030 and covered→040 work.
@@ -261,6 +263,12 @@ one header and a continuous connector through expanded captions, row padding and
 nested PR spacing. An unrelated row or child ends the rail rather than acquiring
 misleading membership. A missing, closed or stale front is never synthesized as a
 verified owner; recorded/unverified metadata remains explicit.
+A lone ticket draws no header: one owner (or one waiter) is the base-refresh lock
+holder, not a train, so its row comment carries the role and verification state and
+the header's count and front only appear once two recorded tickets share the base.
+A refreshed owner is the usual lone ticket — `update-branch` moves its head, so the
+ticket reads *Recorded preparation owner · unverified · Head changed* until it merges
+or is released; that is expected, not a dropped batch.
 
 When several approved PRs to the same base touch the same files, the automerge lanes merge them one at a time ([#15117](https://github.com/hivecommons/hive/issues/15117)). The tracker renders every train contiguously, in merge order, with a thin left rail linking the rows and a header chip `🚆 merge train · 4 PRs · 1st: #15074` — the glyph is an inline-SVG railcar (14px, currentColor, hover *Merge queue*), the same icon the **Merge queue** column header and its chevrons wear; overlapping files are listed beside it. Pill wording per state is the PR's place in the queue (the owner's words — `front` and `queued-behind` appear nowhere a person reads): the head reads "Queued for merge · 1st of 4 · ~13m" (its own soak left plus the next pass); the others "Queued for merge · 2nd of 4 · ~4m", "Queued for merge · 3rd of 4", … (`1st 2nd 3rd 4th … 11th 12th 13th 21st`, always with the queue length, countdown to its turn); when the page draws more than one train each queue word ends with its train's tag — "Queued for merge · 1st of 2 · train main.go" (the first overlapping file's basename, else the head `#N`) — and the hover leads *Train of 2 PRs overlapping main.go; merges after #15567.*, so two "1st"s on one page tell apart (one train → no tag); the header and every member row of a train share one rail accent (`.ham-train-k0…k3`, cycling in page order); once the front merged and the hive is rebasing a conflicting sibling, "Rebasing · attempt 1/2"; when the loop guard (`auto_merge.merge_train.max_rebase_attempts`) is spent, "Needs human decision · rebase failed twice" at stage/085 with the decision option "Rebase, then merge as maintainer".
 

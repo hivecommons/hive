@@ -2,13 +2,15 @@
 // Phone-only acceptance for the Activity monitor chrome (#17158): on a
 // portrait phone the compact filter bar replaces the toolbar, the chrome
 // between the section header and the first row stays short enough that a
-// row is visible without scrolling, and the ⋯ Filters sheet carries the
-// full toolbar and returns it on close. Desktop and landscape return a
+// row is visible without scrolling (a fixture row is a whole work-item
+// cluster, so a tall first row only has to show its header line), and the
+// ⋯ Filters sheet carries the full toolbar and returns it on close. Desktop and landscape return a
 // skip marker; they are covered elsewhere. Restores scroll positions.
 (async ({ dedicatedPreview = false } = {}) => {
   if (!dedicatedPreview) throw new Error('Use a dedicated published-preview tab, not the user’s live dashboard');
   const phoneMaxWidth = 640;
   const maxChromePx = 160;
+  const minRowPeekPx = 120;
   const failures = [];
   const assert = (ok, label) => { if (!ok) failures.push(label); };
   const rect = el => el.getBoundingClientRect();
@@ -53,7 +55,14 @@
       measurements.chrome = Math.round(rect(first).top - rect(header).bottom - measurements.fixtureNote);
       assert(measurements.chrome <= maxChromePx, 'chrome between the section header and the first row is ' + measurements.chrome + 'px (max ' + maxChromePx + ')');
       measurements.rowsFullyVisible = rows.filter(row => { const box = rect(row); return box.top >= navbar - 1 && box.bottom <= innerHeight + 1; }).length;
-      assert(measurements.rowsFullyVisible >= 1, 'at least one row is fully visible with the section header at the top of the viewport');
+      // The density fixture's first row is a parent issue with its child PR,
+      // decision and notes: taller than a 667px phone leaves below the chrome
+      // (#17176). Accept it when enough of it shows to read its header line.
+      const firstBox = rect(first);
+      measurements.firstRowPeek = Math.round(Math.min(firstBox.bottom, innerHeight) - Math.max(firstBox.top, navbar));
+      const firstRowTooTall = firstBox.height > innerHeight - Math.max(firstBox.top, navbar);
+      assert(measurements.rowsFullyVisible >= 1 || (firstRowTooTall && measurements.firstRowPeek >= minRowPeekPx),
+        'at least one row is fully visible with the section header at the top of the viewport (or the first row is taller than the space left and shows at least ' + minRowPeekPx + 'px, got ' + measurements.firstRowPeek + 'px)');
     }
     const sticky = document.getElementById('activity-monitor-sticky');
     if (sticky) {
