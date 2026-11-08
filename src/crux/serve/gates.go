@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/gates"
+	"github.com/hivecommons/hive/crux/signals"
 )
 
 // Human gates (hivecommons/crux#114 S3) are a work-services family: a
@@ -74,9 +76,12 @@ func (s *Server) handleGateOpen(w http.ResponseWriter, r *http.Request) {
 		s.writeGateError(w, err)
 		return
 	}
+	if in.Run != "" && !s.gateRunAllowed(w, r, in.Run) {
+		return
+	}
 	rec, created, err := svc.Open(s.gatesCaller(r), gates.Request{
 		Subject: in.Subject, Context: in.Context, Choices: in.Choices, Timeout: timeout,
-		OpenedBy: in.OpenedBy, IdempotencyKey: in.IdempotencyKey,
+		OpenedBy: in.OpenedBy, IdempotencyKey: in.IdempotencyKey, Run: in.Run,
 	})
 	if err != nil {
 		s.writeGateError(w, err)
@@ -219,6 +224,7 @@ func (s *Server) publishGate(op string, rec gates.Record) {
 	ev := gateToAPI(rec)
 	ev.Context = nil
 	s.publishData(typ, "", ev)
+	s.signalGate(op, rec)
 	if op == gates.OpAnswered && rec.OperatorOverride {
 		auditTee{s}.Record(rec.AnsweredByPrincipal, auditGateOverride, "", map[string]any{
 			"gate": rec.ID, "answer": rec.Answer, "opened_by_principal": rec.OpenedByPrincipal,
@@ -226,10 +232,55 @@ func (s *Server) publishGate(op string, rec gates.Record) {
 	}
 }
 
+// gateRunAllowed checks a gate's run: the runs service must exist, the
+// run must be known, and the caller must own it or be the operator. On
+// failure the response has been written.
+func (s *Server) gateRunAllowed(w http.ResponseWriter, r *http.Request, id string) bool {
+	if s.Runs == nil {
+		s.writeError(w, http.StatusNotImplemented, api.CodeNotSupported, "this server has no runs service to attach the gate to")
+		return false
+	}
+	run, err := s.Runs.Get(id)
+	if err != nil {
+		s.writeRunsError(w, err)
+		return false
+	}
+	if caller := s.runsCaller(r); !caller.Operator && run.Owner != caller.Name {
+		s.writeError(w, http.StatusForbidden, api.CodeForbidden, fmt.Sprintf("run %s is owned by %q, not by %q", run.ID, run.Owner, caller.Name))
+		return false
+	}
+	return true
+}
+
+// signalGate emits the S5 signal a gate change implies on the run the
+// gate names: opened → needs-input, answered → input, expired → blocked.
+// A failure to record it never fails the gate; the gate record is the
+// authority and the signal a convenience for the run's follower.
+func (s *Server) signalGate(op string, rec gates.Record) {
+	if rec.Run == "" || s.Runs == nil {
+		return
+	}
+	kind, msg := api.SignalNeedsInput, rec.Subject
+	data := map[string]any{"gate": rec.ID, "status": rec.Status}
+	switch op {
+	case gates.OpAnswered:
+		kind, msg = api.SignalInput, rec.Answer
+		data["answer"], data["answered_by"] = rec.Answer, rec.AnsweredBy
+	case gates.OpExpired:
+		kind, msg = api.SignalBlocked, "gate expired without an answer"
+	default:
+		data["choices"] = rec.Choices
+	}
+	raw, _ := json.Marshal(data)
+	if _, err := s.Runs.Emit(rec.Run, signals.Signal{Kind: kind, Source: api.SignalSourceGate, Message: msg, Data: raw}); err != nil {
+		s.Logger.Warn("crux serve: gate signal", "gate", rec.ID, "run", rec.Run, "err", err)
+	}
+}
+
 func gateToAPI(rec gates.Record) api.Gate {
 	return api.Gate{
 		ID: rec.ID, Status: rec.Status, Subject: rec.Subject, Context: rec.Context, Choices: rec.Choices, Timeout: rec.Timeout,
-		OpenedBy: rec.OpenedBy, OpenedByPrincipal: rec.OpenedByPrincipal, OpenedAt: rec.OpenedAt, ExpiresAt: rec.ExpiresAt,
+		OpenedBy: rec.OpenedBy, OpenedByPrincipal: rec.OpenedByPrincipal, Run: rec.Run, OpenedAt: rec.OpenedAt, ExpiresAt: rec.ExpiresAt,
 		Answer: rec.Answer, AnsweredBy: rec.AnsweredBy, AnsweredByPrincipal: rec.AnsweredByPrincipal, AnsweredAt: rec.AnsweredAt,
 		Note: rec.Note, OperatorOverride: rec.OperatorOverride, ExpiredAt: rec.ExpiredAt,
 	}

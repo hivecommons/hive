@@ -34,7 +34,12 @@ func (s *Server) registerRuns(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+api.PathRuns+"/{id}", s.handleRunsGet)
 	mux.HandleFunc("POST "+api.PathRuns+"/{id}/cancel", s.handleRunsCancel)
 	mux.HandleFunc("GET "+api.PathRuns+"/{id}/cmdlog", s.handleRunsCmdlog)
+	mux.HandleFunc("GET "+api.PathRuns+"/{id}/signals", s.handleRunsSignals)
+	mux.HandleFunc("POST "+api.PathRuns+"/{id}/signals", s.handleRunsSignalEmit)
 	s.workService(api.PathRuns)
+	if s.Runs != nil {
+		s.Runs.SignalObserver = s.publishSignal
+	}
 }
 
 // ownedRun loads {id} and enforces that the caller owns it or is the
@@ -135,24 +140,9 @@ func (s *Server) handleRunsCmdlog(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
-	var sinceSeq int64
-	var limit int
-	if v := q.Get("since_seq"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, "since_seq must be a non-negative integer")
-			return
-		}
-		sinceSeq = n
-	}
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, "limit must be a positive integer")
-			return
-		}
-		limit = n
+	sinceSeq, limit, ok := s.seqPaging(w, r)
+	if !ok {
+		return
 	}
 	page, err := s.Runs.Commands(run.ID, sinceSeq, limit)
 	if err != nil {
@@ -164,6 +154,29 @@ func (s *Server) handleRunsCmdlog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, page)
+}
+
+// seqPaging reads ?since_seq and ?limit, the paging every per-run log
+// shares; on a bad value a 400 has been written and ok is false.
+func (s *Server) seqPaging(w http.ResponseWriter, r *http.Request) (sinceSeq int64, limit int, ok bool) {
+	q := r.URL.Query()
+	if v := q.Get("since_seq"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, "since_seq must be a non-negative integer")
+			return 0, 0, false
+		}
+		sinceSeq = n
+	}
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, "limit must be a positive integer")
+			return 0, 0, false
+		}
+		limit = n
+	}
+	return sinceSeq, limit, true
 }
 
 // writeRunsError maps the run service's typed errors onto wire codes. The

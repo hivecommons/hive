@@ -33,6 +33,10 @@ func normalize(req Request) (Request, error) {
 		return Request{}, fmt.Errorf("%w: opened_by is %d bytes, over %d", ErrBadRequest, len(openedBy), MaxOpenedByLen)
 	}
 	out.OpenedBy = logscrub.ScrubString(openedBy)
+	out.Run = strings.TrimSpace(req.Run)
+	if len(out.Run) > MaxRunLen {
+		return Request{}, fmt.Errorf("%w: run is %d bytes, over %d", ErrBadRequest, len(out.Run), MaxRunLen)
+	}
 	if req.Timeout < 0 {
 		return Request{}, fmt.Errorf("%w: timeout is negative", ErrBadRequest)
 	}

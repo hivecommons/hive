@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/runstate"
 	"github.com/hivecommons/hive/crux/sandbox"
+	"github.com/hivecommons/hive/crux/signals"
 )
 
 // Artifact names inside a run's directory: the full scrubbed output.
@@ -76,6 +77,19 @@ type detail struct {
 	StderrTruncatedAt *int64   `json:"stderr_truncated_at,omitempty"`
 }
 
+// startedData and doneData are the runner's signal payloads (S5).
+type startedData struct {
+	Command []string `json:"command"`
+	Backend string   `json:"backend"`
+	Network string   `json:"network"`
+}
+
+type doneData struct {
+	Status   string `json:"status"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+	TimedOut bool   `json:"timed_out,omitempty"`
+}
+
 // plan is a validated request.
 type plan struct {
 	worktree  *api.ContainedRunWorktree
@@ -130,6 +144,13 @@ type Service struct {
 	// CmdLog opens the per-run command log (S4) the runner appends to;
 	// nil keeps no log. Reading does not need it: Commands reads the file.
 	CmdLog cmdlog.Opener
+	// SignalLog opens the per-run signal log (S5) the runner, the gate
+	// service and the owner emit through; nil keeps none. Reading does not
+	// need it: Signals reads the file.
+	SignalLog signals.Opener
+	// SignalObserver, when set, is told about every signal after it is
+	// durable (crux serve publishes run.signal events from it).
+	SignalObserver func(runID string, sig api.Signal)
 
 	mu     sync.Mutex
 	active map[string]*active
@@ -225,6 +246,62 @@ func (s *Service) Commands(id string, sinceSeq int64, limit int) (api.CommandPag
 	}
 	page.Run = id
 	return page, err
+}
+
+// Signals is the run's signal log (S5) after sinceSeq, at most limit
+// records. A run with no signals yet answers an empty page; only an
+// unknown id is ErrNotFound.
+func (s *Service) Signals(id string, sinceSeq int64, limit int) (api.SignalPage, error) {
+	if _, err := s.Store.Get(id); err != nil {
+		return api.SignalPage{}, err
+	}
+	page, err := signals.Read(s.Store.Path(id), sinceSeq, limit)
+	if errors.Is(err, signals.ErrNotFound) {
+		page, err = api.SignalPage{Signals: []api.Signal{}, NextSeq: sinceSeq}, nil
+	}
+	page.Run = id
+	return page, err
+}
+
+// Emit appends sig to run id's signal log and tells the observer. The
+// source decides which kinds are accepted (signals.Allowed); the caller
+// has already been checked against the run's owner. A run that has
+// finished still accepts signals — a gate answered after the turn ended
+// is a fact about the run. ErrNotFound for an unknown id;
+// ErrNotConfigured when this server keeps no signal log.
+func (s *Service) Emit(id string, sig signals.Signal) (api.Signal, error) {
+	if _, err := s.Store.Get(id); err != nil {
+		return api.Signal{}, err
+	}
+	if s.SignalLog == nil {
+		return api.Signal{}, fmt.Errorf("%w: this server keeps no signal log", ErrNotConfigured)
+	}
+	log, err := s.SignalLog(s.Store.Path(id))
+	if err != nil {
+		return api.Signal{}, err
+	}
+	rec, err := log.Emit(sig)
+	if err != nil {
+		return api.Signal{}, err
+	}
+	if s.SignalObserver != nil {
+		s.SignalObserver(id, rec)
+	}
+	return rec, nil
+}
+
+// signal is the runner's own emit: a nil or failing log never fails the
+// run, and a kind the runner may not write is a programming error that
+// is likewise swallowed rather than surfaced on the run.
+func (s *Service) signal(id, kind, message string, data any) {
+	if s.SignalLog == nil {
+		return
+	}
+	var raw json.RawMessage
+	if data != nil {
+		raw, _ = json.Marshal(data)
+	}
+	_, _ = s.Emit(id, signals.Signal{Kind: kind, Source: api.SignalSourceRunner, Message: message, Data: raw})
 }
 
 // Wait blocks until the run reaches a terminal status or ctx ends, then
@@ -435,6 +512,13 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 			rec.Status, rec.Reason, rec.Detail = status, reason, raw
 			return nil
 		})
+		// S5: every terminal path ends with a done signal carrying the
+		// saved status; done is where the turn is, not how well it went.
+		var d detail
+		if fill != nil {
+			fill(&d)
+		}
+		s.signal(id, api.SignalDone, reason, doneData{Status: status, ExitCode: d.ExitCode, TimedOut: d.TimedOut})
 	}
 	workspace := p.workspace
 	if p.worktree != nil {
@@ -464,6 +548,7 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 		finish(runstate.StatusFailed, "recording the start: "+err.Error(), nil)
 		return
 	}
+	s.signal(id, api.SignalStarted, "", startedData{Command: p.command, Backend: s.Backend.Name, Network: p.network})
 
 	runCtx, cancelTimeout := context.WithTimeout(ctx, p.timeout)
 	defer cancelTimeout()

@@ -59,6 +59,8 @@ const (
 	MaxChoiceLen  = 64
 	// MaxOpenedByLen bounds the driver's own label.
 	MaxOpenedByLen = 128
+	// MaxRunLen bounds the run id a gate names.
+	MaxRunLen = 128
 
 	idRandomBytes = 8
 	maxIDLen      = 64
@@ -113,6 +115,9 @@ type Request struct {
 	// IdempotencyKey, when set, identifies the gate instead of the request
 	// contents; it is scoped to the opening principal.
 	IdempotencyKey string
+	// Run, when set, is the contained run (S2) this gate blocks; the
+	// server emits needs-input / input / blocked signals (S5) on it.
+	Run string
 }
 
 // Answer is a person's decision on a gate.
@@ -135,6 +140,7 @@ type Record struct {
 	Timeout             string          `json:"timeout"`
 	OpenedBy            string          `json:"opened_by"`
 	OpenedByPrincipal   string          `json:"opened_by_principal"`
+	Run                 string          `json:"run,omitempty"`
 	OpenedAt            time.Time       `json:"opened_at"`
 	ExpiresAt           *time.Time      `json:"expires_at,omitempty"`
 	IdempotencyKey      string          `json:"idempotency_key"`
@@ -209,6 +215,9 @@ func DeriveIdempotencyKey(principal string, req Request) string {
 		return hex.EncodeToString(h.Sum(nil))
 	}
 	write("request", req.Subject, string(req.Context), FormatTimeout(req.Timeout), req.OpenedBy)
+	if req.Run != "" {
+		write("run", req.Run)
+	}
 	write(fmt.Sprintf("%d", len(req.Choices)))
 	write(req.Choices...)
 	return hex.EncodeToString(h.Sum(nil))

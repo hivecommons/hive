@@ -127,6 +127,16 @@ func TestOpenIsIdempotentAndSurvivesRestart(t *testing.T) {
 	if other, created, err := f.svc.Open(Caller{Name: "beacon", Principal: "project:beacon"}, req); err != nil || !created || other.ID == first.ID {
 		t.Fatalf("other principal: %+v created=%v err=%v", other, created, err)
 	}
+	// The same question on a run (S5) is a different gate that carries it.
+	onRun := req
+	onRun.Run = " run_abc "
+	if r, created, err := f.svc.Open(driver, onRun); err != nil || !created || r.ID == first.ID || r.Run != "run_abc" {
+		t.Fatalf("on run: %+v created=%v err=%v", r, created, err)
+	}
+	onRun.Run = strings.Repeat("r", MaxRunLen+1)
+	if _, _, err := f.svc.Open(driver, onRun); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("long run: %v", err)
+	}
 
 	f.restart()
 	answered, err := f.svc.Answer(operator, first.ID, Answer{Choice: "approve", Note: "within budget"})
@@ -153,7 +163,7 @@ func TestOpenIsIdempotentAndSurvivesRestart(t *testing.T) {
 			t.Fatalf("answered entry = %+v", e)
 		}
 	}
-	if strings.Join(ops, ",") != "opened,opened,answered" {
+	if strings.Join(ops, ",") != "opened,opened,opened,answered" {
 		t.Fatalf("journal ops = %v", ops)
 	}
 }

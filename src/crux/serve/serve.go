@@ -40,6 +40,7 @@ import (
 	"github.com/hivecommons/hive/crux/gates"
 	"github.com/hivecommons/hive/crux/lanes"
 	"github.com/hivecommons/hive/crux/runs"
+	"github.com/hivecommons/hive/crux/signals"
 )
 
 const (
@@ -119,6 +120,11 @@ type Server struct {
 	// api.PathGates) and relays gate.* events; nil answers those routes 501.
 	Gates *gates.Service
 
+	// KickOutcomes, when set, persists each agent's last KickOutcome (RFC
+	// crux#114 S5) and answers GET /v1/agents/{name}/kick-outcome after a
+	// restart; nil serves the live outcome only.
+	KickOutcomes *signals.OutcomeStore
+
 	now     func() time.Time
 	started time.Time
 
@@ -171,6 +177,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+api.PathAgents, s.handleRun)
 	mux.HandleFunc("GET "+api.PathAgents+"/{name}", s.handleGet)
 	mux.HandleFunc("GET "+api.PathAgents+"/{name}/logs", s.handleLogs)
+	mux.HandleFunc("GET "+api.PathAgents+"/{name}/kick-outcome", s.handleAgentKickOutcome)
 	mux.HandleFunc("POST "+api.PathAgents+"/{name}/kick", s.handleKick)
 	mux.HandleFunc("POST "+api.PathAgents+"/{name}/stop", s.handleStop)
 	mux.HandleFunc("GET "+api.PathEvents, s.handleEvents)

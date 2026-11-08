@@ -21,7 +21,7 @@ import (
 // decision and publishes gate.* events, so a second in-process writer on
 // the same work dir would undercut all three.
 
-const gateUsage = `usage: crux --server ADDR gate open --subject S [--choice C]… [--timeout D] [--context JSON] [--opened-by L] [--idempotency-key K] [--json]
+const gateUsage = `usage: crux --server ADDR gate open --subject S [--choice C]… [--timeout D] [--context JSON] [--opened-by L] [--idempotency-key K] [--run RUN] [--json]
        crux --server ADDR gate list [--status waiting|answered|expired] [--json]
        crux --server ADDR gate answer <id> --choice C [--note TEXT] [--as-operator] [--json]
        crux --server ADDR gate wait <id> [--timeout D] [--json]
@@ -68,6 +68,7 @@ func (e *Env) remoteGateOpen(ctx context.Context, c *api.Client, args []string) 
 	fs.StringVar(&payload, "context", "", "JSON payload shown beside the subject (at most 64 KiB)")
 	fs.StringVar(&req.OpenedBy, "opened-by", "", "the driver's own label (default: the caller)")
 	fs.StringVar(&req.IdempotencyKey, "idempotency-key", "", "identify the gate by this key instead of its contents")
+	fs.StringVar(&req.Run, "run", "", "the contained run this gate blocks; it gets needs-input/input signals")
 	asJSON := fs.Bool("json", false, "print the record as JSON")
 	if code, ok := parseSub(fs, args); !ok {
 		return code

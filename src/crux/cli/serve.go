@@ -17,6 +17,7 @@ import (
 	"github.com/hivecommons/hive/crux/runs"
 	"github.com/hivecommons/hive/crux/runstate"
 	"github.com/hivecommons/hive/crux/serve"
+	"github.com/hivecommons/hive/crux/signals"
 	"github.com/nats-io/nats.go"
 )
 
@@ -141,6 +142,14 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 		return ExitError
 	}
 	srv.Gates = gateSvc
+	// S5: each agent's last kick outcome is saved under <workdir>/signals
+	// so GET /v1/agents/{name}/kick-outcome answers after a restart.
+	outcomes, err := signals.OpenOutcomes(signals.DefaultDir(opts.workDir))
+	if err != nil {
+		fmt.Fprintln(e.Stderr, "crux: signals:", err)
+		return ExitError
+	}
+	srv.KickOutcomes = outcomes
 	if hive != nil {
 		hive.install(ctx, rt, srv, e.Stdout)
 		hive.watchPolicy(ctx, rt, e.Stdout, e.Stderr)
@@ -205,6 +214,9 @@ func (e *Env) openRuns(workDir, path string) (*runs.Service, error) {
 	// S4: every dispatched command is appended to <run dir>/commands.jsonl
 	// by the runner, with the default head/tail output policy.
 	svc.CmdLog = cmdlog.FileOpener(cmdlog.Policy{})
+	// S5: the runner, the gate service and the owner append turn signals
+	// to <run dir>/signals.jsonl.
+	svc.SignalLog = signals.FileOpener(signals.Policy{})
 	reconciled, err := svc.Reconcile()
 	if err != nil {
 		return nil, err
