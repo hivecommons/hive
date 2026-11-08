@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/runs"
@@ -23,7 +24,8 @@ func (s *Server) runsCaller(r *http.Request) runs.Caller {
 	return runs.Caller{Name: p.Name, Operator: p.IsOperator()}
 }
 
-// registerRuns mounts the contained-run family (RFC crux#114 S2 + S7).
+// registerRuns mounts the contained-run family (RFC crux#114 S2 + S7) and
+// each run's command log (S4).
 // The routes are always present so a server without a backend answers
 // with a clear not_supported instead of a bare 404. Like checkouts, the
 // family admits project principals; ownership is enforced per record.
@@ -31,6 +33,7 @@ func (s *Server) registerRuns(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.PathRuns, s.handleRunsCreate)
 	mux.HandleFunc("GET "+api.PathRuns+"/{id}", s.handleRunsGet)
 	mux.HandleFunc("POST "+api.PathRuns+"/{id}/cancel", s.handleRunsCancel)
+	mux.HandleFunc("GET "+api.PathRuns+"/{id}/cmdlog", s.handleRunsCmdlog)
 	s.workService(api.PathRuns)
 }
 
@@ -119,6 +122,47 @@ func (s *Server) handleRunsCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, run)
+}
+
+// handleRunsCmdlog is GET /v1/runs/{id}/cmdlog[?since_seq=N&limit=M]: one
+// page of the run's command log, for its owner or the operator.
+func (s *Server) handleRunsCmdlog(w http.ResponseWriter, r *http.Request) {
+	if !s.runsReady(w) {
+		return
+	}
+	run, ok := s.ownedRun(w, r)
+	if !ok {
+		return
+	}
+	since, err := queryInt(r, "since_seq")
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, err.Error())
+		return
+	}
+	limit, err := queryInt(r, "limit")
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, err.Error())
+		return
+	}
+	page, err := s.Runs.CommandLog(run.ID, since, int(min(limit, api.CmdlogMaxLimit)))
+	if err != nil {
+		s.writeRunsError(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, page)
+}
+
+// queryInt reads a non-negative integer query parameter; absent is 0.
+func queryInt(r *http.Request, name string) (int64, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return 0, nil
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer, got %q", name, raw)
+	}
+	return v, nil
 }
 
 // writeRunsError maps the run service's typed errors onto wire codes. The

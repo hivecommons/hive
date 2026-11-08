@@ -111,6 +111,12 @@ func (s *workServicesServer) handler() http.Handler {
 	mux.HandleFunc("POST "+PathRuns+"/{id}/cancel", record(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, ContainedRun{ID: r.PathValue("id"), Status: "cancelled"})
 	}))
+	mux.HandleFunc("GET "+PathRuns+"/{id}/cmdlog", record(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, CommandLog{Run: r.PathValue("id"), NextSeq: 2, Commands: []CommandRecord{{
+			Seq: 1, EndSeq: 2, Command: []string{"make"}, Capture: CaptureRunner, Status: CommandCompleted, StartedAt: opened,
+			ExitCode: new(0), Stdout: &CommandOutput{Bytes: 3, Head: "ok\n"},
+		}}})
+	}))
 	return mux
 }
 
@@ -196,6 +202,14 @@ func TestWorkServicesClientRoutesAndDecodes(t *testing.T) {
 		t.Fatalf("cancel run %+v %v", run, err)
 	}
 
+	cmds, err := c.RunCommandLog(ctx, "run_1", 0, 0)
+	if err != nil || cmds.Run != "run_1" || cmds.NextSeq != 2 || len(cmds.Commands) != 1 || cmds.Commands[0].Stdout.Head != "ok\n" || *cmds.Commands[0].ExitCode != 0 {
+		t.Fatalf("command log %+v %v", cmds, err)
+	}
+	if _, err := c.RunCommandLog(ctx, "run_1", 2, 50); err != nil {
+		t.Fatalf("command log page %v", err)
+	}
+
 	requests, bodies := s.seen()
 	wantRequests := []string{
 		"POST /v1/gates",
@@ -215,6 +229,8 @@ func TestWorkServicesClientRoutesAndDecodes(t *testing.T) {
 		"POST /v1/runs",
 		"GET /v1/runs/run_1",
 		"POST /v1/runs/run_1/cancel",
+		"GET /v1/runs/run_1/cmdlog",
+		"GET /v1/runs/run_1/cmdlog?limit=50&since_seq=2",
 	}
 	if strings.Join(requests, "\n") != strings.Join(wantRequests, "\n") {
 		t.Fatalf("requests:\n%s\nwant:\n%s", strings.Join(requests, "\n"), strings.Join(wantRequests, "\n"))
@@ -229,7 +245,7 @@ func TestWorkServicesClientRoutesAndDecodes(t *testing.T) {
 			t.Errorf("request %d %s: body %q lacks %q", i, requests[i], bodies[i], want)
 		}
 	}
-	for _, i := range []int{1, 3, 7, 11, 13, 15} {
+	for _, i := range []int{1, 3, 7, 11, 13, 15, 17, 18} {
 		if bodies[i] != "" {
 			t.Errorf("request %d %s: unexpected body %q", i, requests[i], bodies[i])
 		}

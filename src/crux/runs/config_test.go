@@ -29,6 +29,8 @@ func TestLoadConfig(t *testing.T) {
 		{"job without block", `{"backend":"job","image":"img"}`, "needs a job block"},
 		{"timeout order", `{"image":"img","default_timeout_ms":5,"max_timeout_ms":1}`, "default_timeout_ms exceeds"},
 		{"output order", `{"image":"img","default_max_output_bytes":5,"max_output_bytes_cap":1}`, "default_max_output_bytes exceeds"},
+		{"negative cmdlog head", `{"image":"img","cmdlog_head_bytes":-1}`, "must not be negative"},
+		{"negative cmdlog tail", `{"image":"img","cmdlog_tail_bytes":-1}`, "must not be negative"},
 		{"relative root", `{"image":"img","workspace_roots":["ws"]}`, "must be absolute"},
 		{"allowlist dot segment", `{"image":"img","repo_allowlist":["https://github.com/org/../"]}`, "repo_allowlist entry"},
 		{"allowlist credentials", `{"image":"img","repo_allowlist":["https://user:token@github.com/org/"]}`, "repo_allowlist entry"},

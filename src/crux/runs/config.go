@@ -86,6 +86,11 @@ type Config struct {
 	// zero takes the package defaults.
 	DefaultMaxOutputBytes int64 `json:"default_max_output_bytes,omitempty"`
 	MaxOutputBytesCap     int64 `json:"max_output_bytes_cap,omitempty"`
+	// CmdlogHeadBytes and CmdlogTailBytes are how much of each output
+	// stream the command log (S4) keeps from its start and its end; zero
+	// takes the cmdlog defaults.
+	CmdlogHeadBytes int `json:"cmdlog_head_bytes,omitempty"`
+	CmdlogTailBytes int `json:"cmdlog_tail_bytes,omitempty"`
 }
 
 // LoadConfig reads and validates the JSON configuration at path.
@@ -151,6 +156,9 @@ func (c Config) Validate() error {
 	}
 	if c.DefaultMaxOutputBytes > c.MaxOutputBytesCap {
 		return fmt.Errorf("%w: default_max_output_bytes exceeds max_output_bytes_cap", ErrConfig)
+	}
+	if c.CmdlogHeadBytes < 0 || c.CmdlogTailBytes < 0 {
+		return fmt.Errorf("%w: cmdlog_head_bytes and cmdlog_tail_bytes must not be negative", ErrConfig)
 	}
 	for _, root := range c.WorkspaceRoots {
 		if !strings.HasPrefix(root, "/") {

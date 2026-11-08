@@ -1,7 +1,7 @@
 # Crux work services: S1 pinned checkout (hivecommons/crux#114)
 
 Status: **S0 caller principals and S1 pinned checkout shipped in hive
-`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate); everything else in the RFC is unscheduled. This records
+`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate), and so is the S4 [command log](#s4-command-log); everything else in the RFC is unscheduled. This records
 S1 *as implemented*, including where it is weaker than the RFC text.
 
 The RFC asks for "a working copy of this repo at this commit, owned by
@@ -235,6 +235,99 @@ read and by waiters, so a gate nobody looks at stays `waiting` on disk
 past its deadline until the next read); no in-process `crux gate` form;
 no per-gate answerer allowlist beyond "the operator".
 
+## S4. Command log
+
+An append-only record of the commands a contained run (S2) executes,
+written by the runtime, not by the command: a driver checks "did the agent
+really run what it said it ran?" against evidence the agent cannot write.
+Package `src/crux/cmdlog` (`cmdlog.Recorder`, `cmdlog.Read`), API types in
+`src/crux/api/cmdlog.go`, the route in `src/crux/serve/runs.go`, CLI in
+`src/crux/cli/cmdlog.go`. Every `runs.Service` made by `runs.New` records
+one; there is nothing to enable.
+
+| Route | Response |
+|---|---|
+| `GET /v1/runs/{id}/cmdlog[?since_seq=N&limit=M]` | `200 {"run","commands":[CommandRecord…],"next_seq","more"?}` |
+
+`CommandRecord` is `{"seq","end_seq"?,"command","cwd"?,"capture","status",
+"started_at","ended_at"?,"duration_ms"?,"exit_code"?,"reason"?,
+"stdout"?,"stderr"?}`; each stream is `{"bytes","head"?,"tail"?,
+"truncated"?}`.
+
+```
+crux --server ADDR cmdlog list [--since-seq N] [--limit M] [--json] <run>
+crux --server ADDR cmdlog show [--seq N] [--json] <run>
+```
+
+`list` prints one page as a table and, when `more` is set, the
+`--since-seq` of the next page; `show` follows every page and prints each
+command in full (`--seq` picks one).
+
+| Condition | Status | `code` |
+|---|---|---|
+| `since_seq` or `limit` not a non-negative integer | 400 | `bad_request` |
+| reading another principal's run | 403 | `forbidden` |
+| unknown run | 404 | `not_found` |
+| the log cannot be folded (a corrupt line) | 500 | `runtime_error` |
+| the server has no run service | 501 | `not_supported` |
+
+**What is counted, and what is not.** The log counts what the runtime
+dispatched: every record has `capture: "runner"`, and a contained run
+dispatches exactly one command, the `command` of its request. Commands a
+shell or a build tool spawns inside the sandbox (`sh -c "make && ./x"`
+runs `make`, the compilers it starts and `./x`) are **not individually
+observed in this slice**: the log under-counts them, it never invents
+them. A record says "the runtime started this command line in this
+directory, and this is how it ended", not "nothing else ran". Per-process
+capture inside the sandbox, S5 turn signals, S6 agent steps and a
+per-agent `crux commands verify` are not part of S4.
+
+**Semantics.**
+
+- *Lines.* `<workdir>/runs/<id>/commands.jsonl` holds one `started` line
+  written immediately before the launcher is called and one `ended` line
+  written when it returns, before the run record turns terminal (so a
+  caller that waited on the run reads a complete log). Every line carries
+  the next `seq` of that log, starting at 1; an `ended` line names its
+  command by `start_seq`. A record's `seq` is its `started` line's.
+- *Fail closed.* A run whose `started` line cannot be written is `failed`
+  ("recording the command: …") and its command never starts. A failure to
+  write the `ended` line is appended to the run's `reason`; the record then
+  folds to `unfinished`, which is what the runtime can vouch for.
+- *Status.* `completed|failed|cancelled|unfinished`, with the run's
+  meaning: `completed` is a command whose exit was read (whatever its
+  code, which is `exit_code`); `failed` one the launcher refused or that
+  timed out; `cancelled` one stopped by the caller; `unfinished` one with
+  no `ended` line (still running, or `crux serve` stopped while it ran) or
+  whose exit was not knowable. An exit code is never guessed.
+- *Times.* `started_at`/`ended_at` are wall-clock; `duration_ms` is
+  measured on the server's monotonic clock between the two lines.
+- *`cwd`.* The host workspace the runner mounts as the sandbox's working
+  directory, the run record's `workspace`.
+- *Output.* `bytes` counts the whole scrubbed stream, the same bytes kept
+  in the run's `stdout.txt`/`stderr.txt`. Up to `cmdlog_head_bytes` +
+  `cmdlog_tail_bytes` (runs config; default 4 KiB each) the stream is kept
+  whole in `head`; past that `head` and `tail` keep its two ends, cut on
+  UTF-8 boundaries, and `truncated` is set.
+- *Secrets.* Every argument of the command line, `cwd`, `reason` and both
+  streams pass through `logscrub.ScrubString` before they are written.
+- *Paging.* A page holds the commands with a line after `since_seq`,
+  ordered by their latest line, at most `limit` (default 100, capped at
+  1000). `next_seq` is the `since_seq` of the next page. A command that was
+  `unfinished` on one page comes back once its `ended` line is written, so
+  paging with `next_seq` always ends on every command's final state.
+- *Torn lines.* A line is committed by its newline. A torn last line (the
+  server stopped mid-write) is left out of reads; the recorder refuses to
+  append after one, so a run cannot write past it. Any other unreadable
+  line, a `seq` that does not increase or an `ended` line without its
+  `started` line makes the read fail with `runtime_error` instead of
+  folding a partial history.
+
+**Deliberately not in S4.** Observation below the runner (no process
+tracing, shell hooks or audit inside the sandbox); listing command logs
+across runs; a separate command-log retention (the log lives and goes with
+its run directory).
+
 ## Deliberately not in S1
 
 - TTL sweeper (recorded, not enforced).
@@ -264,3 +357,7 @@ for runs are deferred and not scheduled.
 | `src/crux/api/gates.go` | `PathGates`, `CodeGate*`, `EventGate*`, request/response types, `Client.{Open,List,Get,Answer,Wait}Gate` |
 | `src/crux/serve/gates.go` | gate routes, visibility, error mapping, `gate.*` events and override audit |
 | `src/crux/cli/gate.go` | `crux gate open|list|answer|wait`, remote only |
+| `src/crux/cmdlog/` | S4: `Recorder` (the `runs.Service.Commands` hook: `Started`, `Ended`), `Read` (fold and page), `Policy`, `ErrCorrupt` |
+| `src/crux/api/cmdlog.go` | `RunCmdlogPath`, `CommandRecord`, `CommandOutput`, `CommandLog`, `Command*` statuses, `CaptureRunner`, `Client.RunCommandLog` |
+| `src/crux/serve/runs.go` | also `GET /v1/runs/{id}/cmdlog`: owner check, query validation |
+| `src/crux/cli/cmdlog.go` | `crux cmdlog list|show`, remote only |

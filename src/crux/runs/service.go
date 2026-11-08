@@ -14,6 +14,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/checkout"
+	"github.com/hivecommons/hive/crux/cmdlog"
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/runstate"
 	"github.com/hivecommons/hive/crux/sandbox"
@@ -126,6 +127,10 @@ type Service struct {
 	Environ func() []string
 	// Scrub redacts output before it is persisted; nil uses logscrub.
 	Scrub func(string) string
+	// Commands is the S4 command log the runner appends each dispatched
+	// command to, beside the run's record; New sets one with the policy
+	// from Config. Nil records no command log.
+	Commands *cmdlog.Recorder
 
 	mu     sync.Mutex
 	active map[string]*active
@@ -135,7 +140,10 @@ type Service struct {
 // saved records stay readable and every create answers ErrNotConfigured.
 func New(store *runstate.Store, backend *Backend, cfg Config) *Service {
 	cfg.Defaults()
-	return &Service{Store: store, Backend: backend, Config: cfg, active: map[string]*active{}}
+	return &Service{
+		Store: store, Backend: backend, Config: cfg, active: map[string]*active{},
+		Commands: &cmdlog.Recorder{Policy: cmdlog.Policy{HeadBytes: cfg.CmdlogHeadBytes, TailBytes: cfg.CmdlogTailBytes}},
+	}
 }
 
 // Configured reports whether runs can be executed here.
@@ -206,6 +214,18 @@ func (s *Service) Get(id string) (api.ContainedRun, error) {
 		return api.ContainedRun{}, err
 	}
 	return toWire(rec), nil
+}
+
+// CommandLog is one page of the run's S4 command log (cmdlog.Read): the
+// commands with a line after sinceSeq, at most limit of them. A run that
+// dispatched nothing yet has an empty log.
+func (s *Service) CommandLog(id string, sinceSeq int64, limit int) (api.CommandLog, error) {
+	if _, err := s.Store.Get(id); err != nil {
+		return api.CommandLog{}, err
+	}
+	page, err := cmdlog.Read(s.Store.Path(id), sinceSeq, limit)
+	page.Run = id
+	return page, err
 }
 
 // Wait blocks until the run reaches a terminal status or ctx ends, then
@@ -458,6 +478,17 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 		EnvAllowlist: p.allowlist,
 		NetworkMode:  p.network,
 	}
+	// The command log is written here, by the runtime, before the command
+	// can do anything; a run whose command cannot be recorded is not run.
+	var cmdSeq int64
+	if s.Commands != nil {
+		seq, err := s.Commands.Started(s.Store.Path(id), cmdlog.Start{Command: p.command, Cwd: workspace})
+		if err != nil {
+			finish(runstate.StatusFailed, "recording the command: "+s.scrub(err.Error()), nil)
+			return
+		}
+		cmdSeq = seq
+	}
 	res, err := s.Backend.Launcher.Run(runCtx, spec)
 	// A launcher that returned without error finished the command; a
 	// cancel or deadline that landed after that does not unmake the result.
@@ -471,8 +502,16 @@ func (s *Service) execute(ctx context.Context, id string, p plan, a *active) {
 		}
 		cancel()
 	}
-	stdout, stdoutCut := s.persistOutput(id, StdoutArtifact, res.Stdout, p.maxOutput)
-	stderr, stderrCut := s.persistOutput(id, StderrArtifact, res.Stderr, p.maxOutput)
+	stdoutText, stderrText := s.scrub(res.Stdout), s.scrub(res.Stderr)
+	stdout, stdoutCut := s.persistOutput(id, StdoutArtifact, stdoutText, p.maxOutput)
+	stderr, stderrCut := s.persistOutput(id, StderrArtifact, stderrText, p.maxOutput)
+	if s.Commands != nil {
+		// The run statuses classify returns are the command statuses.
+		end := cmdlog.End{Status: status, ExitCode: exit, Reason: reason, Stdout: stdoutText, Stderr: stderrText}
+		if lerr := s.Commands.Ended(s.Store.Path(id), cmdSeq, end); lerr != nil {
+			reason += "; command log: " + s.scrub(lerr.Error())
+		}
+	}
 	finish(status, reason, func(d *detail) {
 		d.ExitCode, d.TimedOut = exit, timedOut
 		d.Stdout, d.StdoutTruncatedAt = stdout, stdoutCut
@@ -508,10 +547,9 @@ func classify(res sandbox.Result, err error, cancelled, timedOut bool) (status, 
 	return runstate.StatusUnfinished, logscrub.ScrubString(err.Error()), nil
 }
 
-// persistOutput scrubs raw, writes the whole of it as an artifact and
+// persistOutput writes the whole of the scrubbed text as an artifact and
 // returns the response copy, cut at max with the offset when it was.
-func (s *Service) persistOutput(id, name, raw string, max int64) (string, *int64) {
-	text := s.scrub(raw)
+func (s *Service) persistOutput(id, name, text string, max int64) (string, *int64) {
 	_ = os.WriteFile(filepath.Join(s.Store.Path(id), name), []byte(text), 0o660)
 	if int64(len(text)) <= max {
 		return text, nil

@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/checkout"
+	"github.com/hivecommons/hive/crux/cmdlog"
 	"github.com/hivecommons/hive/crux/runstate"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
@@ -548,3 +549,135 @@ func TestClassifyTable(t *testing.T) {
 }
 
 func ptr(v int) *int { return &v }
+
+func TestCommandLogRecordsWhatTheRunnerDispatched(t *testing.T) {
+	token := "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	cases := []struct {
+		name   string
+		res    sandbox.Result
+		err    error
+		status string
+		exit   *int
+	}{
+		{"completed", sandbox.Result{Stdout: "built " + token + "\n", Stderr: "warn\n"}, nil, api.CommandCompleted, new(0)},
+		{"non-zero exit", sandbox.Result{Stderr: "boom", ExitCode: 3}, errors.New("exit status 3"), api.CommandCompleted, new(3)},
+		{"refused", sandbox.Result{}, errors.New("image pull failed"), api.CommandFailed, nil},
+		{"exit not knowable", sandbox.Result{ExitCode: -1}, errors.New("pod vanished"), api.CommandUnfinished, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, newFakeLauncher(func(context.Context, sandbox.LaunchSpec) (sandbox.Result, error) { return tc.res, tc.err }))
+			run := f.wait(f.start(api.ContainedRunRequest{WorkspacePath: f.workspace(), Command: []string{"make", "-j2", "test"}}).ID)
+			page, err := f.svc.CommandLog(run.ID, 0, 0)
+			if err != nil || page.Run != run.ID || len(page.Commands) != 1 || page.More {
+				t.Fatalf("CommandLog = %+v, %v", page, err)
+			}
+			rec := page.Commands[0]
+			if strings.Join(rec.Command, " ") != "make -j2 test" || rec.Cwd != f.workspace() || rec.Capture != api.CaptureRunner || rec.Status != tc.status || rec.EndedAt == nil {
+				t.Fatalf("record = %+v", rec)
+			}
+			if (rec.ExitCode == nil) != (tc.exit == nil) || (rec.ExitCode != nil && *rec.ExitCode != *tc.exit) {
+				t.Fatalf("exit = %v, want %v", rec.ExitCode, tc.exit)
+			}
+			// The log counts the same scrubbed bytes the run keeps as its
+			// artifact, and never the secret.
+			full, err := os.ReadFile(filepath.Join(f.svc.Store.Path(run.ID), StdoutArtifact))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec.Stdout == nil || rec.Stdout.Bytes != int64(len(full)) || strings.Contains(rec.Stdout.Head, token) {
+				t.Fatalf("stdout = %+v, artifact %q", rec.Stdout, full)
+			}
+		})
+	}
+}
+
+func TestCommandLogRecordsCancelAndTimeout(t *testing.T) {
+	f := newFixture(t, blocking())
+	run := f.start(api.ContainedRunRequest{WorkspacePath: f.workspace(), Command: []string{"sleep", "60"}})
+	f.spec()
+	// While the command runs the log already holds it, unfinished.
+	page, err := f.svc.CommandLog(run.ID, 0, 0)
+	if err != nil || len(page.Commands) != 1 || page.Commands[0].Status != api.CommandUnfinished || page.Commands[0].EndedAt != nil {
+		t.Fatalf("live log = %+v, %v", page, err)
+	}
+	if _, err := f.svc.Cancel(context.Background(), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	page, err = f.svc.CommandLog(run.ID, page.NextSeq, 0)
+	if err != nil || len(page.Commands) != 1 || page.Commands[0].Status != api.CommandCancelled || page.Commands[0].Reason != "cancelled by the caller" {
+		t.Fatalf("cancelled log = %+v, %v", page, err)
+	}
+
+	timed := f.wait(f.start(api.ContainedRunRequest{WorkspacePath: f.workspace(), Command: []string{"sleep"}, TimeoutMs: 20}).ID)
+	page, err = f.svc.CommandLog(timed.ID, 0, 0)
+	if err != nil || len(page.Commands) != 1 || page.Commands[0].Status != api.CommandFailed || page.Commands[0].Reason != "timed out" {
+		t.Fatalf("timed-out log = %+v, %v", page, err)
+	}
+}
+
+func TestCommandLogPolicyComesFromTheConfig(t *testing.T) {
+	f := newFixture(t, newFakeLauncher(func(context.Context, sandbox.LaunchSpec) (sandbox.Result, error) {
+		return sandbox.Result{Stdout: "0123456789abcdef"}, nil
+	}))
+	f.svc = New(f.svc.Store, f.svc.Backend, Config{Image: "img", WorkspaceRoots: f.svc.Config.WorkspaceRoots, CmdlogHeadBytes: 4, CmdlogTailBytes: 2})
+	run := f.wait(f.start(api.ContainedRunRequest{WorkspacePath: f.workspace(), Command: []string{"x"}}).ID)
+	page, err := f.svc.CommandLog(run.ID, 0, 0)
+	if err != nil || len(page.Commands) != 1 {
+		t.Fatalf("CommandLog = %+v, %v", page, err)
+	}
+	if out := page.Commands[0].Stdout; out.Head != "0123" || out.Tail != "ef" || !out.Truncated || out.Bytes != 16 {
+		t.Fatalf("stdout = %+v", out)
+	}
+}
+
+func TestUnrecordableCommandIsNotRun(t *testing.T) {
+	f := newFixture(t, blocking())
+	f.svc.Store.NewID = func() string { return "run_unrecordable" }
+	// The log's path is taken by a directory, so the started line cannot
+	// be written.
+	if err := os.MkdirAll(filepath.Join(f.svc.Store.Path("run_unrecordable"), cmdlog.FileName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	run := f.wait(f.start(api.ContainedRunRequest{WorkspacePath: f.workspace(), Command: []string{"x"}}).ID)
+	if run.Status != api.RunFailed || !strings.HasPrefix(run.Reason, "recording the command: ") || run.ExitCode != nil {
+		t.Fatalf("unrecordable = %+v", run)
+	}
+	if len(f.launcher.specs) != 0 {
+		t.Fatal("the launcher ran a command the log could not record")
+	}
+	if _, err := f.svc.CommandLog(run.ID, 0, 0); err == nil {
+		t.Fatal("read a log that is a directory")
+	}
+}
+
+func TestUnwritableEndIsNotedOnTheRun(t *testing.T) {
+	var f *fixture
+	f = newFixture(t, newFakeLauncher(func(_ context.Context, spec sandbox.LaunchSpec) (sandbox.Result, error) {
+		// The command replaces the log with a directory before it ends.
+		path := filepath.Join(f.svc.Store.Path(strings.TrimPrefix(spec.Name, launchNamePrefix)), cmdlog.FileName)
+		if err := os.Remove(path); err != nil {
+			return sandbox.Result{}, err
+		}
+		return sandbox.Result{Stdout: "ok"}, os.Mkdir(path, 0o700)
+	}))
+	run := f.wait(f.start(api.ContainedRunRequest{WorkspacePath: f.workspace(), Command: []string{"x"}}).ID)
+	if run.Status != api.RunCompleted || !strings.Contains(run.Reason, "; command log: ") {
+		t.Fatalf("run = %+v", run)
+	}
+}
+
+func TestCommandLogOfUnknownOrUnloggedRuns(t *testing.T) {
+	f := newFixture(t, newFakeLauncher(func(context.Context, sandbox.LaunchSpec) (sandbox.Result, error) {
+		return sandbox.Result{}, nil
+	}))
+	if _, err := f.svc.CommandLog("run_missing", 0, 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown run = %v", err)
+	}
+	f.svc.Commands = nil
+	run := f.wait(f.start(api.ContainedRunRequest{WorkspacePath: f.workspace(), Command: []string{"x"}}).ID)
+	page, err := f.svc.CommandLog(run.ID, 0, 0)
+	if run.Status != api.RunCompleted || err != nil || len(page.Commands) != 0 || page.Run != run.ID {
+		t.Fatalf("run %+v without a recorder: %+v, %v", run, page, err)
+	}
+}
