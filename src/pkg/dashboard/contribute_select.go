@@ -162,6 +162,48 @@ func (h *ContributeWSHub) rateWindowCounts(identity string, now time.Time) (hour
 	return hour, day
 }
 
+// tierRateLimitHit says which assignment-rate cap an identity has used up:
+// Reason is taskUnavailableHourlyLimit or taskUnavailableDailyLimit, Count is
+// the assignments counted in that window and Max the cap. A zero value means
+// the identity may be handed another task.
+type tierRateLimitHit struct {
+	Reason     string
+	Count, Max int
+}
+
+// tierRateLimitReached is the one rule for "this identity has used up its
+// hourly or daily task allowance" (#2566). selectTaskPass refuses work with it,
+// and RoleCoverage uses it so a relay that selection refuses for this reason
+// does not count as contributor-first cover.
+//
+// The limits are hub.tier_limits[tier] for the connection's trust tier, and
+// nothing else: config load fills in the shipped row for each built-in tier
+// the operator did not set (config/defaults.go), there is no per-contributor
+// override (ContributorProfile.RateLimits is stored but never enforced), and a
+// tier with no row is unlimited. A cap of 0 or less is unlimited. The hourly
+// cap is checked first, so a relay at both caps reports hourly_limit, as
+// selection always has.
+//
+// It takes rateMu (through rateWindowCounts) and reads the config without a
+// lock, as selection does. The caller must not hold rateMu.
+func (h *ContributeWSHub) tierRateLimitReached(identity, tier string, now time.Time) tierRateLimitHit {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return tierRateLimitHit{}
+	}
+	limits, ok := h.server.deps.Config.Hub.TierLimits[tier]
+	if !ok || (limits.MaxPerHour <= 0 && limits.MaxPerDay <= 0) {
+		return tierRateLimitHit{}
+	}
+	hourCount, dayCount := h.rateWindowCounts(identity, now)
+	if limits.MaxPerHour > 0 && hourCount >= limits.MaxPerHour {
+		return tierRateLimitHit{Reason: taskUnavailableHourlyLimit, Count: hourCount, Max: limits.MaxPerHour}
+	}
+	if limits.MaxPerDay > 0 && dayCount >= limits.MaxPerDay {
+		return tierRateLimitHit{Reason: taskUnavailableDailyLimit, Count: dayCount, Max: limits.MaxPerDay}
+	}
+	return tierRateLimitHit{}
+}
+
 // recordAssignment appends an assignment timestamp for the identity. Called once
 // per task_assign actually shipped, so the rate windows count tasks HANDED OUT
 // (matching max_concurrent's semantics and the max_tasks_per_hour/day naming), not
@@ -590,28 +632,27 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 						strconv.Itoa(limits.MaxConcurrent))
 				return h.taskUnavailable(taskUnavailableConcurrencyLimit)
 			}
-			if limits.MaxPerHour > 0 || limits.MaxPerDay > 0 {
-				hourCount, dayCount := h.rateWindowCounts(identityOf(c), time.Now())
-				if limits.MaxPerHour > 0 && hourCount >= limits.MaxPerHour {
-					h.logger.Warn("[contribute-ws] refusing task: hourly rate limit reached",
-						"username", identityOf(c), "tier", tier,
-						"assigned_last_hour", hourCount, "max_per_hour", limits.MaxPerHour)
-					h.recordDecision(decisionUsername(c), decisionRefused, "", "", 0,
-						"hourly rate limit for tier "+tier+": "+strconv.Itoa(hourCount)+
-							" assigned in the last hour, max "+strconv.Itoa(limits.MaxPerHour))
-					return h.taskUnavailable(taskUnavailableHourlyLimit)
-				}
-				if limits.MaxPerDay > 0 && dayCount >= limits.MaxPerDay {
-					h.logger.Warn("[contribute-ws] refusing task: daily rate limit reached",
-						"username", identityOf(c), "tier", tier,
-						"assigned_last_day", dayCount, "max_per_day", limits.MaxPerDay)
-					h.recordDecision(decisionUsername(c), decisionRefused, "", "", 0,
-						"daily rate limit for tier "+tier+": "+strconv.Itoa(dayCount)+
-							" assigned in the last day, max "+strconv.Itoa(limits.MaxPerDay))
-					return h.taskUnavailable(taskUnavailableDailyLimit)
-				}
-			}
 		}
+	}
+	// The hourly/daily caps live in tierRateLimitReached, which RoleCoverage
+	// shares, so a relay refused here is never reported as covering its role.
+	switch hit := h.tierRateLimitReached(identityOf(c), tier, time.Now()); hit.Reason {
+	case taskUnavailableHourlyLimit:
+		h.logger.Warn("[contribute-ws] refusing task: hourly rate limit reached",
+			"username", identityOf(c), "tier", tier,
+			"assigned_last_hour", hit.Count, "max_per_hour", hit.Max)
+		h.recordDecision(decisionUsername(c), decisionRefused, "", "", 0,
+			"hourly rate limit for tier "+tier+": "+strconv.Itoa(hit.Count)+
+				" assigned in the last hour, max "+strconv.Itoa(hit.Max))
+		return h.taskUnavailable(taskUnavailableHourlyLimit)
+	case taskUnavailableDailyLimit:
+		h.logger.Warn("[contribute-ws] refusing task: daily rate limit reached",
+			"username", identityOf(c), "tier", tier,
+			"assigned_last_day", hit.Count, "max_per_day", hit.Max)
+		h.recordDecision(decisionUsername(c), decisionRefused, "", "", 0,
+			"daily rate limit for tier "+tier+": "+strconv.Itoa(hit.Count)+
+				" assigned in the last day, max "+strconv.Itoa(hit.Max))
+		return h.taskUnavailable(taskUnavailableDailyLimit)
 	}
 
 	// #6450: pause claims for an identity whose recent assignments all died

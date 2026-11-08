@@ -1384,9 +1384,16 @@ A relay counts as covering the role only when all of these hold:
   tells the hub (`quota_hold_v1`, see
   [the contributor relay guide](contributor-relay.md#a-held-relay-tells-the-hub-quota_hold_v1));
   an older relay is still counted while held;
+- it has not used up its hourly or daily task allowance
+  (`hub.tier_limits.<tier>.max_per_hour` / `max_per_day` for the
+  contributor's trust tier). The hub refuses such a relay work
+  (`hourly_limit` / `daily_limit`) until the window rolls, so it covers
+  nothing in the meantime. Coverage and task assignment use the same check,
+  so they always agree on which limits apply and how they are counted;
 - contributions are not suspended (`hub.contribute_suspended`).
 
-A relay that is busy on a task still counts.
+A relay that is busy on a task still counts, including one holding its
+tier's `max_concurrent` tasks.
 
 ```yaml
 agents:

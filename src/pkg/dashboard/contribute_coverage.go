@@ -31,15 +31,22 @@ import (
 //     Observed on 2026-11-08: a relay held at 15% of its weekly window kept
 //     the scanner lane "covered" while nobody worked it. A relay too old to
 //     send quota_hold is still counted, as before;
+//   - its identity has not used up its hourly or daily task allowance
+//     (hub.tier_limits max_per_hour / max_per_day for its trust tier). Task
+//     selection refuses such a relay with hourly_limit / daily_limit until the
+//     window rolls, so it takes nothing in the meantime. The check is
+//     tierRateLimitReached, the same function selection refuses with, so the
+//     two can never disagree about which limits apply or how they are counted;
 //   - the operator has not suspended contributions (hub.contribute_suspended).
 //     The suspend switch refuses work to every relay while their sockets stay
 //     up, so a connected relay is then covering nothing; reporting it as
 //     coverage would turn "pause contributors" into "pause the lane".
 //
 // A relay that is busy on a task still counts — it is draining the lane,
-// which is the point. Standby and quota hold do not wait for the task to end:
-// both mean the relay will not take the lane's NEXT item, which is what the
-// governor is deciding whether to withhold. Whether the relay is ALLOWED the role (trust tier,
+// which is the point. Standby, quota hold and a used-up allowance do not wait
+// for the task to end: each means the relay will not take the lane's NEXT
+// item, which is what the governor is deciding whether to withhold. (Holding
+// max_concurrent tasks is different: that relay is busy, and counts.) Whether the relay is ALLOWED the role (trust tier,
 // grants, the delegatable list) was settled when the hub set c.role; nothing
 // is re-derived here.
 func (h *ContributeWSHub) RoleCoverage(now time.Time) map[string]governor.ContributorCoverage {
@@ -47,7 +54,7 @@ func (h *ContributeWSHub) RoleCoverage(now time.Time) map[string]governor.Contri
 		return nil
 	}
 	type candidate struct {
-		role, login, identity string
+		role, login, identity, tier string
 	}
 	var candidates []candidate
 	h.mu.RLock()
@@ -58,24 +65,31 @@ func (h *ContributeWSHub) RoleCoverage(now time.Time) map[string]governor.Contri
 		c.mu.Lock()
 		role := normalizeAgentRole(c.role)
 		fresh := now.Sub(c.lastPong) <= wsHeartbeatTimeout
-		login := ""
+		login, tier := "", ""
 		if c.profile != nil {
 			login = strings.TrimSpace(c.profile.GitHubUsername)
+			tier = c.profile.TrustTier
 		}
 		notTakingWork := c.standbyDeclared || len(c.standby) > 0 || c.quotaHeld
 		c.mu.Unlock()
 		if role == "" || !fresh || login == "" || notTakingWork {
 			continue
 		}
-		candidates = append(candidates, candidate{role: role, login: login, identity: identityOf(c)})
+		candidates = append(candidates, candidate{role: role, login: login, identity: identityOf(c), tier: tier})
 	}
 	h.mu.RUnlock()
 
-	// The failure-streak ledger has its own lock; consult it with h.mu
-	// released so the two are never nested.
+	// The failure-streak ledger and the assignment-rate windows each have
+	// their own lock (failureStreakMu, rateMu); consult them with h.mu
+	// released so neither is ever nested inside it. The rate check is a scan
+	// of at most a day of assignment stamps for one identity, once per
+	// candidate per governor evaluation, and never takes selectMu.
 	byRole := make(map[string]map[string]struct{})
 	for _, cand := range candidates {
 		if paused, _, _ := h.contributorFailureStreakActive(cand.identity, now); paused {
+			continue
+		}
+		if h.tierRateLimitReached(cand.identity, cand.tier, now).Reason != "" {
 			continue
 		}
 		if byRole[cand.role] == nil {
