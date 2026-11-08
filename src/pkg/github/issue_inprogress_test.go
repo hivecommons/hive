@@ -54,6 +54,10 @@ func newInProgressRelayServer(t *testing.T) *inProgressRelayServer {
 			_, _ = io.WriteString(w, `{"number":43,"labels":[{"name":"stage/030-pr-in-progress"},{"name":"hive/in-progress"},{"name":"bug"}],"updated_at":"2026-10-14T14:00:00Z"}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
 			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			// The claim-target gate (#17298) reads the forge marker when
+			// issue claims are on; an unclaimed issue has no comments.
+			_, _ = io.WriteString(w, `[]`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
 			var body []string
 			_ = json.NewDecoder(r.Body).Decode(&body)
