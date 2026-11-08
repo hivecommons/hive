@@ -69,6 +69,7 @@ func TestRunMarkdown(t *testing.T) {
 		"| --- | --- | --- | --- | --- | --- |",
 		"| `agents.cli_memory.auto_memory` | `*bool` |  | none |  |  |",
 		"| `agents.cli_memory.clear_on_kick` | `bool` |  | none |  |  |",
+		"| `agents.cli_memory.drain_on_write` | `bool` |  | none |  |  |",
 		"| `agents.cli_memory.drain_to_knowledge` | `bool` |  | none |  |  |",
 		"| `agents.github_api_hourly_cap` | `int` |  | none |  | may require restart or reconnect |",
 		"| `agents.session_recycle.enabled` | `*bool` |  | none |  |  |",

@@ -139,7 +139,7 @@ const auditCLIMemoryDrainRequested = "cli_memory_drain_requested"
 func cliMemoryDrainRequestHandler(host crux.CLIMemoryDrainNowHost, audit agentaudit.AuditSink) github.MemoryDrainHandler {
 	return func(req github.MemoryDrainRequest, fileUID int) github.MemoryDrainResponse {
 		res, ran, err := host.DrainCLIMemoryNow(crux.CLIMemoryDrainNowRequest{
-			Agent: req.Agent, CallerUID: fileUID, Cwd: req.Cwd, Truncate: req.Truncate,
+			Agent: req.Agent, CallerUID: fileUID, Cwd: req.Cwd, Truncate: req.Truncate, OnWrite: req.OnWrite,
 		})
 		resp := github.MemoryDrainResponse{
 			OK: err == nil, Agent: req.Agent, Ran: ran, Store: res.Store,
@@ -161,6 +161,7 @@ func cliMemoryDrainRequestHandler(host crux.CLIMemoryDrainNowHost, audit agentau
 				"uid", strconv.Itoa(fileUID),
 				"cwd", req.Cwd,
 				"truncate", strconv.FormatBool(req.Truncate),
+				"on_write", strconv.FormatBool(req.OnWrite),
 				"drained", strconv.Itoa(res.Drained),
 				"dupes", strconv.Itoa(res.Dupes),
 				"truncated", strconv.Itoa(res.Truncated),

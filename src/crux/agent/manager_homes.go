@@ -652,6 +652,11 @@ func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
 	// skipDangerousModePermissionPrompt from either source.
 	m.seedClaudeSettingsFile(agentName, settingsFile)
 	m.seedClaudeSettingsFile(agentName, claudeInferenceSettingsPath)
+	// The CLI-memory drain hooks go into both files too (hivecommons/hive#17210);
+	// Claude Code runs an identical hook command once.
+	sessionEnd, onWrite := m.claudeMemoryDrainHooksLocked()
+	m.mergeClaudeMemoryDrainHooks(agentName, settingsFile, sessionEnd, onWrite)
+	m.mergeClaudeMemoryDrainHooks(agentName, claudeInferenceSettingsPath, sessionEnd, onWrite)
 	// Pre-populate (or repair) .claude.json so the CLI skips first-run setup.
 	userConfigPath := filepath.Join(homePath, ".claude.json")
 	m.seedClaudeUserConfig(agentName, userConfigPath)
