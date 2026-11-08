@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.199.3)
+
+### Fixed
+
+- **automerge:** the contributor lane's hive-wide auto-promotion search no longer drops every other repository when GitHub refuses to search one of them (`422 Validation Failed` for a renamed, deleted or invisible repo, or an unsearchable author): the chunk is re-asked one repository at a time, and each refused (author, repository) pair warns once and is left out of the search for an hour instead of repeating the 422 and the `repo search failed` warning on every sweep (#17148).
+
 ## 2026-11-08 (v5.199.2)
 
 ### Fixed
