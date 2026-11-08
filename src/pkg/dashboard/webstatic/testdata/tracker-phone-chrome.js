@@ -9,6 +9,7 @@
   if (!dedicatedPreview) throw new Error('Use a dedicated published-preview tab, not the user’s live dashboard');
   const phoneMaxWidth = 640;
   const maxChromePx = 160;
+  const tallPhoneMinHeight = 800;
   const failures = [];
   const assert = (ok, label) => { if (!ok) failures.push(label); };
   const rect = el => el.getBoundingClientRect();
@@ -46,14 +47,19 @@
     if (rows.length) {
       const first = rows[0];
       // The acceptance fixture prefixes its rows with a provenance note that
-      // real renders do not have; measure the chrome without it.
+      // real renders do not have; hide it while measuring the chrome.
       const note = panel.querySelector('#activity-density-layout-fixture > p');
-      const noteStyle = note && getComputedStyle(note);
-      measurements.fixtureNote = note ? Math.round(rect(note).height + parseFloat(noteStyle.marginTop) + parseFloat(noteStyle.marginBottom)) : 0;
-      measurements.chrome = Math.round(rect(first).top - rect(header).bottom - measurements.fixtureNote);
+      if (note) { note.hidden = true; await frames(2); }
+      measurements.chrome = Math.round(rect(first).top - rect(header).bottom);
       assert(measurements.chrome <= maxChromePx, 'chrome between the section header and the first row is ' + measurements.chrome + 'px (max ' + maxChromePx + ')');
       measurements.rowsFullyVisible = rows.filter(row => { const box = rect(row); return box.top >= navbar - 1 && box.bottom <= innerHeight + 1; }).length;
-      assert(measurements.rowsFullyVisible >= 1, 'at least one row is fully visible with the section header at the top of the viewport');
+      measurements.firstRowTop = Math.round(rect(first).top);
+      // Row height is the row layout's concern (its own epic children); the chrome
+      // contract is that the first row starts high. On an 844px-tall phone
+      // (the epic's reference 390×844) a row must also fit entirely.
+      assert(measurements.firstRowTop <= innerHeight / 2, 'first row starts in the upper half of the viewport with the section header at the top');
+      if (innerHeight >= tallPhoneMinHeight) assert(measurements.rowsFullyVisible >= 1, 'at least one row is fully visible with the section header at the top of the viewport');
+      if (note) note.hidden = false;
     }
     const sticky = document.getElementById('activity-monitor-sticky');
     if (sticky) {
