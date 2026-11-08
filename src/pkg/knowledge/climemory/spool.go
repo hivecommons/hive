@@ -47,7 +47,7 @@ func (r *drainRun) spool(f memFile, content []byte) {
 	}
 	if content == nil {
 		var err error
-		if content, err = os.ReadFile(f.path); err != nil {
+		if content, err = f.store.read(f.path); err != nil {
 			r.res.Errors = append(r.res.Errors, fmt.Errorf("cli-memory drain: reading %s to spool: %w", f.path, err))
 			return
 		}

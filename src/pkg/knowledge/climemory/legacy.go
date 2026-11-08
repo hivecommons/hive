@@ -46,7 +46,10 @@ func LegacyClaudeSources(projectsDir string) ([]Source, error) {
 // holding a fact the vault lacks — a write failed, the per-drain cap was
 // hit — is left as it is and reported in kept, so truncation never loses a
 // fact. A non-empty file with no fact to drain (a Claude index of links)
-// counts as stored. Already-empty files are in neither list.
+// counts as stored. Already-empty files are in neither list. Each file is
+// read and truncated through one descriptor opened inside its store, so a
+// path the agent swapped for a symlink since the listing is kept, not
+// followed.
 func (d *Drainer) TruncateDrained(sources []Source) (truncated, kept []string, err error) {
 	if d == nil || d.Dir == "" {
 		return nil, nil, errors.New("cli-memory drain: no target directory")
@@ -57,34 +60,52 @@ func (d *Drainer) TruncateDrained(sources []Source) (truncated, kept []string, e
 	}
 	var errs []error
 	for _, src := range sources {
-		files, err := memoryFiles(src.Path)
+		files, err := listMemoryFiles(src.Path)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		for _, file := range files {
-			content, err := os.ReadFile(file)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("cli-memory drain: reading %s: %w", file, err))
-				kept = append(kept, file)
-				continue
-			}
-			if len(content) == 0 {
-				continue
-			}
-			if !allStored(ParseFor(src.CLI, string(content)), seen) {
-				kept = append(kept, file)
-				continue
-			}
-			if err := os.Truncate(file, 0); err != nil {
-				errs = append(errs, fmt.Errorf("cli-memory drain: truncating %s: %w", file, err))
-				kept = append(kept, file)
-				continue
-			}
-			truncated = append(truncated, file)
+		if len(files) == 0 {
+			continue
 		}
+		store, err := openMemoryStore(src.Path)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("cli-memory drain: opening %s: %w", src.Path, err))
+			kept = append(kept, files...)
+			continue
+		}
+		for _, file := range files {
+			t, k, err := truncateIfStored(store, src.CLI, file, seen)
+			if err != nil {
+				errs = append(errs, err)
+			}
+			truncated, kept = append(truncated, t...), append(kept, k...)
+		}
+		store.Close()
 	}
 	return truncated, kept, errors.Join(errs...)
+}
+
+func truncateIfStored(store *memoryStore, cli, file string, seen map[string]string) (truncated, kept []string, err error) {
+	f, err := store.open(file, os.O_RDWR)
+	if err != nil {
+		return nil, []string{file}, fmt.Errorf("cli-memory drain: opening %s: %w", file, err)
+	}
+	defer f.Close()
+	content, err := readMemoryFile(f)
+	if err != nil {
+		return nil, []string{file}, fmt.Errorf("cli-memory drain: reading %s: %w", file, err)
+	}
+	if len(content) == 0 {
+		return nil, nil, nil
+	}
+	if !allStored(ParseFor(cli, string(content)), seen) {
+		return nil, []string{file}, nil
+	}
+	if err := f.Truncate(0); err != nil {
+		return nil, []string{file}, fmt.Errorf("cli-memory drain: truncating %s: %w", file, err)
+	}
+	return []string{file}, nil, nil
 }
 
 func allStored(facts []Fact, seen map[string]string) bool {
