@@ -306,6 +306,9 @@ func TestKickOutcomeIsSavedBeforeItIsPublishedAndSettlesAgainstTheLastKick(t *te
 	// The runtime no longer holds the agent (crux serve restarted, the
 	// definition was removed): the record still answers, unsettled.
 	f.srv.recordKickOutcome("gone", crux.KickOutcome{Kind: crux.KickOutcomeEnded, At: kick, KickAt: kick})
+	// last_kick is omitempty: decode into a fresh value so alpha's does not
+	// survive into gone's answer.
+	got = api.AgentKickOutcome{}
 	f.expect(http.MethodGet, api.AgentKickOutcomePath("gone"), nil, http.StatusOK, &got)
 	if got.Outcome == nil || got.LastKick != nil || got.SettledForLastKick {
 		t.Fatalf("unknown to the runtime: %+v", got)
