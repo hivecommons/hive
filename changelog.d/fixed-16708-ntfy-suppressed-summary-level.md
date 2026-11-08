@@ -1,1 +1,0 @@
-- Log the ntfy error-dedupe summary at INFO so a sustained ntfy outage no longer files a second unclassified_error_repeated selfreport for the summary line itself (#16708).

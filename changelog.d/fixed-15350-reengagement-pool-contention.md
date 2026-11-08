@@ -1,1 +1,0 @@
-- Re-engagement kicks deferred by a busy shared CLI session pool remain in local logs without generating repeated runtime-error self-reports; undelivered kicks still consume no repair budget.

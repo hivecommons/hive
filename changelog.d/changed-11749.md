@@ -1,1 +1,0 @@
-- v6] docs: add Testing v6 changes note pointing testers to :edge (#11749)

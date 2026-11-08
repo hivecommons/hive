@@ -1,1 +1,0 @@
-- The stage-label reconciler now warns once per PR head and refusal reason when the write-back gate refuses reopening a hive-closed superseded PR, instead of on every tick.

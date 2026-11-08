@@ -1,1 +1,0 @@
-- Retrofit Hive-authored default-branch PRs that used `Refs #N` so issue-stage sweeps add GitHub issue links, and unstick open issues whose claiming PR already merged.

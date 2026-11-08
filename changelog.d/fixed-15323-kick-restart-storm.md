@@ -1,1 +1,0 @@
-- Bound crash and consent-screen recovery before agent kicks with the shared restart-storm breaker, backing off repeated failures and pausing agents at the storm limit instead of restarting indefinitely.

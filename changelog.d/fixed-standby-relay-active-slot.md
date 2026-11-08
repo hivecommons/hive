@@ -1,1 +1,0 @@
-- relay: a multi-hub relay now accepts standby assignments from the hub that acknowledged its standby instead of rejecting them as not the active polling slot (#16422)

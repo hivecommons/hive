@@ -10819,6 +10819,187 @@ test('#5655 a crash exit (uncaught exception) still takes the scoped token with 
   } finally { cleanupTmp(); }
 });
 
+// ---------------------------------------------------------------------------
+// A stop that lands just after a task's verdict must not lose the verdict.
+//
+// Observed live 2026-11-08: the relay logged "Task ... completed —
+// signal=verdict (HIVE_VERDICT: no_work_needed)", a `docker stop` arrived about
+// a second later, and the hub never got task_complete. It booked the run
+// "abandoned: connection lost with the task still held" and the issue was
+// worked again 13 minutes later.
+//
+// The finish is synchronous (label calls are execSync, stopping the agent
+// sleeps), so a signal that arrives during it is handled only after
+// task_complete was handed to the socket — and the handler then called
+// process.exit(0) with the write still queued. The child below reproduces that
+// order with a real signal: SIGTERM is raised, then the task is finished in
+// the same synchronous turn, and the fake socket completes its write a moment
+// later, the way a real one does.
+// ---------------------------------------------------------------------------
+
+const VERDICT_SHUTDOWN_CHILD_DRIVER = `
+  'use strict';
+  const Module = require('module');
+  const origLoad = Module._load;
+  class FakeWebSocket {
+    static get OPEN() { return 1; }
+    constructor() { this.readyState = 1; }
+    on() {} close() {} ping() {} terminate() {} removeAllListeners() {}
+    send(payload, cb) {
+      const frame = JSON.parse(payload);
+      console.log('QUEUED ' + frame.type);
+      setTimeout(() => {
+        console.log('WRITTEN ' + frame.type);
+        if (typeof cb === 'function') cb();
+      }, Number(process.env.FAKE_WS_WRITE_MS));
+    }
+  }
+  Module._load = function (request) {
+    if (request === 'ws') return FakeWebSocket;
+    return origLoad.apply(this, arguments);
+  };
+  const relay = require(process.env.RELAY_UNDER_TEST);
+  Module._load = origLoad;
+  relay.setWs(new FakeWebSocket());
+  relay.setCurrentTask({ task_id: 'ct-Danathar/arch-bootc-627-1', task_gen: 1, kind: 'issue', repo: 'Danathar/arch-bootc', number: 627 });
+  const t0 = Date.now();
+  process.on('exit', () => console.log('EXITED_AFTER_MS ' + (Date.now() - t0)));
+  // Keep the loop alive: the process must end through the signal handler.
+  setInterval(() => {}, 1000);
+  process.kill(process.pid, 'SIGTERM');
+  if (process.env.SHUTDOWN_CASE === 'verdict') {
+    relay.finishCurrentTask({
+      completionSignal: 'verdict',
+      summary: 'Agent returned to idle (reported no_work_needed)',
+      tmuxLines: ['HIVE_VERDICT: no_work_needed — the requested change is not needed'],
+      prURL: null,
+      noWork: { verdict: 'no_work_needed', reason: 'the requested change is not needed' },
+    });
+  } else {
+    // Mid-task, nothing finished: only an ordinary progress frame is queued.
+    relay.sendTo(relay.getHubs()[0], { type: 'task_progress', seq: 1, task_id: 'ct-Danathar/arch-bootc-627-1', task_gen: 1, status: 'working' });
+  }
+`;
+
+function runVerdictShutdownChild(shutdownCase, writeMs) {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const tmpDir = fs.mkdtempSync(path.join(scratchRoot, 'relay-verdict-shutdown-'));
+  const res = spawnSync(process.execPath, ['-e', VERDICT_SHUTDOWN_CHILD_DRIVER], {
+    env: {
+      ...process.env,
+      HIVE_RELAY_TEST_MODE: '1',
+      CONTRIBUTOR_MODE: 'headless',
+      AGENT_BACKEND: 'claude',
+      HIVE_REGISTRATION_TOKEN: 'test-token',
+      HIVE_HUB: '',
+      HIVE_WORKSPACE_DIR: '',
+      RELAY_UNDER_TEST: RELAY_PATH,
+      SHUTDOWN_CASE: shutdownCase,
+      FAKE_WS_WRITE_MS: String(writeMs),
+      HIVE_CONTRIBUTOR_CONFIG_DIR: tmpDir,
+      HIVE_RELAY_PID_FILE: path.join(tmpDir, 'contributor-relay.pid'),
+      HIVE_RELAY_STATUS_FILE: path.join(tmpDir, 'relay-status.json'),
+      HIVE_HUBS_SEEN_FILE: path.join(tmpDir, 'hubs-seen.json'),
+      HIVE_RELAY_ACTIVITY_FILE: path.join(tmpDir, 'relay-activity.jsonl'),
+      HIVE_RELAY_AUDIT_DIR: path.join(tmpDir, 'relay-audit'),
+      HIVE_GH_TOKEN_CACHE: path.join(tmpDir, 'gh-token.cache'),
+      HIVE_TASK_FILE: path.join(tmpDir, 'contributor-task.json'),
+      HIVE_HEADLESS_STATUS_FILE: path.join(tmpDir, 'headless-status.json'),
+    },
+    encoding: 'utf8',
+    timeout: 30000,
+  });
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+  const lines = String(res.stdout || '').split('\n');
+  const exitedAfter = Number((lines.find(l => l.startsWith('EXITED_AFTER_MS ')) || '').split(' ')[1]);
+  return { res, lines, exitedAfter };
+}
+
+test('SIGTERM during a verdict finish waits for task_complete to be written before exiting', () => {
+  const { res, lines, exitedAfter } = runVerdictShutdownChild('verdict', 300);
+  const out = `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`;
+  assert.strictEqual(res.status, 0, `the handler must still exit 0 (${out})`);
+  const queued = lines.indexOf('QUEUED task_complete');
+  const written = lines.indexOf('WRITTEN task_complete');
+  const exited = lines.findIndex(l => l.startsWith('EXITED_AFTER_MS '));
+  assert.ok(queued >= 0, `the finish must hand task_complete to the socket (${out})`);
+  assert.ok(written > queued && exited > written,
+    `the relay exited before the task_complete write completed — the hub would book the finished task abandoned (${out})`);
+  assert.ok(exitedAfter < 5000, `the wait must end when the write does, not at the deadline (exited after ${exitedAfter}ms)`);
+  const waiting = lines.findIndex(l => /^SIGTERM: waiting up to \d+s for task_complete for ct-Danathar\/arch-bootc-627-1/.test(l));
+  assert.ok(waiting >= 0, `the wait must say what it is waiting for (${out})`);
+  assert.ok(!lines.slice(waiting).some(l => l === 'QUEUED ready'),
+    `no ready may go out once shutdown has started (${out})`);
+});
+
+test('SIGTERM with no finished task to report still exits at once', () => {
+  const { res, lines, exitedAfter } = runVerdictShutdownChild('progress', 3000);
+  const out = `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`;
+  assert.strictEqual(res.status, 0, `the handler must exit 0 (${out})`);
+  assert.ok(lines.includes('QUEUED task_progress'), `precondition: a progress frame was queued (${out})`);
+  assert.ok(!lines.includes('WRITTEN task_progress'),
+    `a progress frame must not hold the exit — only a finished task's frame does (${out})`);
+  assert.ok(exitedAfter < 1500, `an idle shutdown must stay immediate (exited after ${exitedAfter}ms)`);
+});
+
+// The same handler driven in-process, for the parts a child cannot time
+// cheaply: the deadline, work offered during the wait, and a second signal.
+function loadRelayWithStuckSocket(env = {}) {
+  const relay = loadRelay({ backend: 'claude', env });
+  const sent = [];
+  // A socket whose writes never complete: the send callback is never called.
+  relay.setWs({ readyState: 1, send: (payload) => { sent.push(JSON.parse(payload)); } });
+  const exits = [];
+  relay.__setExitProcess((code) => { exits.push(code); });
+  relay.setCurrentTask({ task_id: 'ct-foo/bar-834-1', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 834 });
+  relay.finishCurrentTask({ completionSignal: 'verdict', summary: 'done', tmuxLines: [], prURL: null, noWork: null });
+  return { relay, sent, exits };
+}
+
+test('SIGTERM shutdown gives up on an unwritten task_complete at the deadline, and takes no work meanwhile', async () => {
+  const log = console.log; const warn = console.warn;
+  console.log = () => {}; console.warn = () => {};
+  const { relay, sent, exits } = loadRelayWithStuckSocket({ HIVE_RELAY_SHUTDOWN_FLUSH_MS: '80' });
+  try {
+    assert.ok(sent.some(m => m.type === 'task_complete'), 'precondition: the finish handed task_complete to the socket');
+    assert.strictEqual(relay.unflushedHeldFrameCount(), 1, 'precondition: its write has not completed');
+    relay.handleShutdownSignal('SIGTERM');
+    assert.strictEqual(relay.isShuttingDown(), true);
+    assert.deepStrictEqual(exits, [], 'a finished task still on the wire holds the exit');
+    const before = sent.length;
+    relay.requestWork(relay.getHubs()[0], 'test_after_sigterm');
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'ct-foo/bar-900-1', kind: 'issue', repo: 'foo/bar', number: 900, title: 'late offer', prompt: 'p' }), relay.getHubs()[0]);
+    const after = sent.slice(before);
+    assert.ok(!after.some(m => m.type === 'ready'), `no ready during shutdown: ${JSON.stringify(after)}`);
+    assert.ok(after.some(m => m.type === 'task_failed' && m.task_id === 'ct-foo/bar-900-1' && /shutting down/.test(m.reason)),
+      `an assignment during shutdown is handed back: ${JSON.stringify(after)}`);
+    assert.strictEqual(relay.getCurrentTask(), null, 'the late assignment must not become the current task');
+    await new Promise(r => setTimeout(r, 250));
+    assert.deepStrictEqual(exits, [0], 'the wait is bounded: the relay exits once the deadline passes');
+  } finally { console.log = log; console.warn = warn; teardown(relay); }
+});
+
+test('a second signal during the shutdown wait exits at once', () => {
+  const log = console.log; const warn = console.warn;
+  console.log = () => {}; console.warn = () => {};
+  const { relay, exits } = loadRelayWithStuckSocket({ HIVE_RELAY_SHUTDOWN_FLUSH_MS: '80' });
+  try {
+    relay.handleShutdownSignal('SIGTERM');
+    assert.deepStrictEqual(exits, [], 'precondition: the first signal waits');
+    relay.handleShutdownSignal('SIGINT');
+    assert.deepStrictEqual(exits, [0], 'the second signal must not wait');
+  } finally { console.log = log; console.warn = warn; teardown(relay); }
+});
+
+test('the shutdown deadline stays below the 10 s container stop timeout', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    assert.ok(relay.SHUTDOWN_FLUSH_DEADLINE_MS > 0 && relay.SHUTDOWN_FLUSH_DEADLINE_MS < 10000,
+      `docker and podman SIGKILL 10 s after the stop signal; got ${relay.SHUTDOWN_FLUSH_DEADLINE_MS}ms`);
+  } finally { teardown(relay); }
+});
+
 // kubestellar/hive#5650 — the relay lost track of a live claude after the first
 // task of a session, then booked the NEXT task complete off the previous one's
 // transcript.
@@ -17019,4 +17200,87 @@ test('#16463 standby acknowledgement does not outlive the connection it was gran
     console.log = log; console.error = error;
     relay.setCurrentTask(null); teardown(relay);
   }
+});
+
+// ---------------------------------------------------------------------------
+// quota_hold_v1: a held relay tells the hub, so it stops counting as
+// contributor-first cover. Observed on 2026-11-08: a relay acting as scanner
+// was held by its quota guard (weekly window 15% left, reserve 20%) while the
+// hub kept reporting it as covering the lane, and nobody worked it.
+// ---------------------------------------------------------------------------
+
+function quotaHoldFrames(sent) {
+  return sent.filter(m => m.type === 'quota_hold');
+}
+
+test('quota_hold_v1: the quota guard hold is reported, and released before the relay asks again', () => {
+  const p = tmp6951(JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 15 }] }));
+  const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_FILE: p } });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(true);
+    const sent = [];
+    relay.setWs({ readyState: 1, send: s => sent.push(JSON.parse(s)) });
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', server_capabilities: ['quota_hold_v1'] }));
+    assert.strictEqual(sent.some(m => m.type === 'ready'), false, 'precondition: the guard withholds ready at 15% < 20%');
+    assert.deepStrictEqual(quotaHoldFrames(sent).map(m => [m.state, m.reason]), [['held', 'quota_guard']],
+      `the hub must hear the hold once: ${JSON.stringify(sent.map(m => m.type))}`);
+
+    relay.retryContributorQuota();
+    assert.strictEqual(quotaHoldFrames(sent).length, 1, 'a retry that is still held must not repeat the frame');
+
+    fs.writeFileSync(p, JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90 }] }));
+    relay.retryContributorQuota();
+    const frames = quotaHoldFrames(sent);
+    assert.deepStrictEqual(frames.map(m => m.state), ['held', 'released'], 'the release must be reported');
+    const releasedAt = sent.indexOf(frames[1]);
+    const readyAt = sent.findIndex(m => m.type === 'ready');
+    assert.ok(readyAt > releasedAt, `released must reach the hub before the next ready: ${JSON.stringify(sent.map(m => m.type + (m.state ? ':' + m.state : '')))}`);
+  } finally { console.warn = warn; console.log = log; fs.unlinkSync(p); teardown(relay); }
+});
+
+test('quota_hold_v1: a hub that does not advertise the token never sees the frame', () => {
+  const p = tmp6951(JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 15 }] }));
+  const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_FILE: p } });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(true);
+    const sent = [];
+    relay.setWs({ readyState: 1, send: s => sent.push(JSON.parse(s)) });
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', server_capabilities: ['standby_v1'] }));
+    relay.enterQuotaHold({ line: 'quota exhausted', resetMs: 60 * 60 * 1000 });
+    fs.writeFileSync(p, JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90 }] }));
+    relay.retryContributorQuota();
+    relay.releaseQuotaHold('test');
+    assert.strictEqual(relay.getContributorQuotaPaused(), false, 'precondition: both holds came and went');
+    assert.deepStrictEqual(quotaHoldFrames(sent), [], 'an old hub must see exactly today\'s traffic');
+  } finally { console.warn = warn; console.log = log; fs.unlinkSync(p); teardown(relay); }
+});
+
+test('quota_hold_v1: the provider quota hold is reported, restated on reconnect, and released', () => {
+  const relay = loadRelay({});
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(true);
+    const sent = [];
+    relay.setWs({ readyState: 1, send: s => sent.push(JSON.parse(s)) });
+    const authOK = JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', server_capabilities: ['quota_hold_v1'] });
+    relay.handleMessage(authOK);
+    relay.enterQuotaHold({ line: 'quota exhausted', resetMs: 60 * 60 * 1000 });
+    assert.deepStrictEqual(quotaHoldFrames(sent).map(m => [m.state, m.reason]), [['held', 'provider_quota']]);
+
+    // A reconnect is a new connection the hub knows nothing about: restate.
+    relay.handleMessage(authOK);
+    assert.deepStrictEqual(quotaHoldFrames(sent).map(m => m.state), ['held', 'held'],
+      'auth_ok during a hold must tell the new connection, once');
+
+    relay.releaseQuotaHold('test');
+    const frames = quotaHoldFrames(sent);
+    assert.deepStrictEqual(frames.map(m => m.state), ['held', 'held', 'released']);
+    const readyAt = sent.findIndex((m, i) => i > sent.indexOf(frames[2]) && m.type === 'ready');
+    assert.ok(readyAt > 0, `release must still re-advertise after telling the hub: ${JSON.stringify(sent.map(m => m.type))}`);
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
 });

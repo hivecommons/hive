@@ -1,1 +1,0 @@
-- Preserve review opinions, trusted human review state, and comment and thread counts in GraphQL PR batches.

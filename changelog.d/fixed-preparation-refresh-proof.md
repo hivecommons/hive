@@ -1,1 +1,0 @@
-- Recognize an active preparation owner's own base refresh when the destination advances beyond its recorded base snapshot, including after restart, using the existing App-authored unchanged-content proof while preserving CI, review, ownership, and fairness gates.

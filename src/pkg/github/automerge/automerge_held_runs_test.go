@@ -23,7 +23,7 @@ import (
 
 func heldRun(id int, headRepo string) map[string]any {
 	return map[string]any{
-		"id": id, "name": "v2 CI", "status": "completed", "conclusion": "action_required",
+		"id": id, "name": "v2 CI", "event": "pull_request", "status": "completed", "conclusion": "action_required",
 		"head_repository": map[string]any{"full_name": headRepo},
 	}
 }

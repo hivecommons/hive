@@ -145,7 +145,9 @@ shadowed by a shallower one:
 7. **Repo Issues disabled** — the repo's Issues tab is off (the GitHub
    default on forks), so the advisory digest and every agent-filed issue
    have nowhere to go. Nothing about the App, key, or agents is wrong; the
-   fix is the repo setting.
+   fix is the repo setting. The dashboard re-reads each watched repo's
+   setting at most once an hour, so the banner clears within the hour of the
+   fix (or at the next restart).
 7. **Banded output freshness** — only now, with every precondition green,
    can "no write in 30h (7 queued)" or "advisory stale" appear.
 

@@ -162,6 +162,10 @@ type contributorLaneFixture struct {
 	labelsCreated int
 	labelsAdded   []string
 	labelsRemoved []string
+	// updateStatus, when set, is the status every PUT update-branch
+	// answers with, carrying updateMessage.
+	updateStatus  int
+	updateMessage string
 }
 
 func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.Server {
@@ -436,6 +440,12 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			json.NewEncoder(w).Encode(commit)
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
 			fx.updates++
+			if fx.updateStatus != 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(fx.updateStatus)
+				json.NewEncoder(w).Encode(map[string]any{"message": fx.updateMessage})
+				return
+			}
 			json.NewEncoder(w).Encode(map[string]any{"message": "Updating pull request branch."})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/labels":
 			fx.labelsCreated++

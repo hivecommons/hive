@@ -1,1 +1,0 @@
-- Spektacular hub-executor workspace paths now consistently use the race-safe workspace-root accessor, preventing shuffled dashboard CI from reporting false data races while stages are being cleaned up.

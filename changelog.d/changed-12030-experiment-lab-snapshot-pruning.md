@@ -1,1 +1,0 @@
-- Experiment Lab now prunes baseline snapshots to the newest 4× baseline target on each status refresh; `baseline_pct` is unchanged. Fixes #12030

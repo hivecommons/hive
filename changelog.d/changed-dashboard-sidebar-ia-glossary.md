@@ -1,1 +1,0 @@
-- Regrouped the operator dashboard sidebar, unified sidebar count badges, and documented the Agent/Contributor/Governor/Fleet glossary pending maintainer review.

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/effects"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
 func TestIntegrationEligibilityIsolatesObservationsWithoutWeakeningPolicy(t *testing.T) {
@@ -27,5 +28,23 @@ func TestIntegrationEligibilityIsolatesObservationsWithoutWeakeningPolicy(t *tes
 	_, err := probe.MutationBoundary.Execute(context.Background(), effects.Claim{Kind: effects.KindPullRequestMerge}, func(context.Context) (effects.Result, error) { called = true; return effects.Result{}, nil })
 	if err == nil || called {
 		t.Fatal("private evaluation executed a mutation")
+	}
+}
+
+// The read-only probe must not claim a head in the process-wide held-run
+// ledger: its approve call is refused locally, so a shared claim would stop
+// the real sweep from ever approving that head (hivecommons/hive#17178 review).
+func TestIntegrationEligibilityHeldRunLedgerIsPrivate(t *testing.T) {
+	shared := &hgithub.HeldRunApprovals{}
+	engine := &Engine{integrationOptions: Options{HeldRunApprovals: shared}}
+	probe := engine.integrationReadOnlyOptions()
+	if probe.HeldRunApprovals == nil || probe.HeldRunApprovals == shared {
+		t.Fatal("probe shares the process-wide held-run ledger")
+	}
+	if !probe.HeldRunApprovals.Claim("o/r", 7, "abc") {
+		t.Fatal("private ledger refused a first claim")
+	}
+	if shared.Attempted("o/r", 7, "abc") {
+		t.Fatal("a probe claim leaked into the shared ledger")
 	}
 }

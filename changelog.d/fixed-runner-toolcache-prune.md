@@ -1,1 +1,0 @@
-- Stop the LKE cache-prune DaemonSet from deleting live toolchain binaries by archive timestamp; operators must apply the updated manifest to protect runner tool caches (#13425).

@@ -1,1 +1,0 @@
-- Recognise configured Linear issue identifiers as review scope contracts.

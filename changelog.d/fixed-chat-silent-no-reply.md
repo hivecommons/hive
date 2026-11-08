@@ -1,1 +1,0 @@
-- Fixed Hive Chat free-text inputs so common questions get local answers and unavailable responders return a visible message instead of appearing silent.

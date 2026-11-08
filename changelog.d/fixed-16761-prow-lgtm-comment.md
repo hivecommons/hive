@@ -1,1 +1,0 @@
-- Corrected the `bindProwLgtm` comment to describe returned reporting errors and best-effort warnings; runtime behavior is unchanged (#16761).

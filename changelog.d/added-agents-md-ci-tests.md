@@ -1,1 +1,0 @@
-- Added a repo-root `AGENTS.md` (and `CLAUDE.md` alias) telling agents that CI runs the tests: no local `go test`/build/lint, and never run this repo's suite inside an agent pane (#9416).

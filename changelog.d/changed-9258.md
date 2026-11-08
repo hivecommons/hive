@@ -1,1 +1,0 @@
-- Sequence known-bug triage before v6 live-exercise attempts in the readiness runbook.

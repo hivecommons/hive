@@ -1,1 +1,0 @@
-- Bound Spektacular CLI calls and stage polling, and run stage polling independently so a hung CLI cannot stall contributor lease and websocket cleanup ([#9144](https://github.com/hivecommons/hive/issues/9144)).

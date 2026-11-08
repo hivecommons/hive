@@ -1,1 +1,0 @@
-- Stale upgrade recovery preserves the original elapsed time when a release channel advances, so promotions cannot restart the silent-drain hold or postpone stuck-upgrade alerts.

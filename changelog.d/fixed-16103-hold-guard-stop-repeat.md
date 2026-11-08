@@ -1,1 +1,0 @@
-- The hold guard's "stopped keeping held PR mergeable until its head or base moves" warning is logged once per head, base and reason instead of on every pass.

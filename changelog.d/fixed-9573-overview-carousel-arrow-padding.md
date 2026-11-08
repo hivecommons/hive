@@ -1,1 +1,0 @@
-- Restore the tokenized `padding: var(--sp-1) var(--sp-2)` on `.overview-carousel-arrow` that the v5→v6 forward-merge regressed to a raw `2px`, keeping the dashboard styling ratchet baseline intact.

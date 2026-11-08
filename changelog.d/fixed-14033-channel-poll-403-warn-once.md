@@ -1,1 +1,0 @@
-- Hosted hubs no longer repeat HTTP 403 warnings for the channel commit-date, channel-distance and SHA-poll commit-message GitHub fetches on every poll; repeats are logged at debug (#14033, #14034, #14040)

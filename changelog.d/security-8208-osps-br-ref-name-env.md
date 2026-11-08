@@ -1,1 +1,0 @@
-- Pass `github.ref_name`, the gate SHA and the run number to `docker.yml` publish steps through step `env:` and quote them in the shell, and compare `github.ref` instead of `github.ref_name` in `dco-post-merge.yml` guards, closing OpenSSF Baseline OSPS-BR-01.02 reported by LFX Insights (#8208).

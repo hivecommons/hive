@@ -1,6 +1,10 @@
 package github
 
-import "time"
+import (
+	"os"
+	"strings"
+	"time"
+)
 
 // Webhook-outage fallback to polling (hivecommons/hive#13381, ForgeState
 // phase 4).
@@ -45,13 +49,58 @@ const (
 	WebhookDegradedReasonFailures       = "deliveries failing verification"
 )
 
+// Machine-readable causes for polling, reported as webhooks.mode_reason_code
+// so an operator (or a tool) can tell "this spoke cannot verify deliveries"
+// from "GitHub is not sending any". They are also the reasons
+// RecordWebhookDeliveryFailure takes for a rejected delivery.
+const (
+	// WebhookReasonNoSecret: GITHUB_WEBHOOK_SECRET is unset on this process,
+	// so every delivery (direct or hub-relayed) is answered 503.
+	WebhookReasonNoSecret = "no_secret"
+	// WebhookReasonSignatureFailed: deliveries arrive but their
+	// X-Hub-Signature-256 does not verify against the configured secret.
+	WebhookReasonSignatureFailed = "signature_failed"
+	// WebhookReasonDeliveriesRejected: deliveries arrive signed but are
+	// rejected for another reason (the payload did not decode).
+	WebhookReasonDeliveriesRejected = "deliveries_rejected"
+	// WebhookReasonNoDeliveries: the secret is set but no verified delivery
+	// is inside the health window (none ever, or none while GitHub was busy).
+	WebhookReasonNoDeliveries = "no_deliveries"
+)
+
+// webhookReasonNoSecret*Text are the plain-words mode_reason for
+// WebhookReasonNoSecret: with deliveries arriving, and with none yet.
+const (
+	webhookReasonNoSecretRejectedText = "no GITHUB_WEBHOOK_SECRET on this spoke; relayed deliveries are rejected with 503"
+	webhookReasonNoSecretIdleText     = "no GITHUB_WEBHOOK_SECRET on this spoke; webhooks are off"
+)
+
+// WebhookSecretEnvVar names the GitHub App webhook HMAC secret a spoke
+// verifies /api/webhook/github deliveries with.
+const WebhookSecretEnvVar = "GITHUB_WEBHOOK_SECRET"
+
+// WebhookSecretConfigured reports whether GITHUB_WEBHOOK_SECRET is set (non-blank)
+// in this process. Only the yes/no ever leaves this function: the value, its
+// length and any digest of it must never reach status, logs or health output.
+func WebhookSecretConfigured() bool {
+	return strings.TrimSpace(os.Getenv(WebhookSecretEnvVar)) != ""
+}
+
 // WebhookModeStatus is the mode block /api/status serves inside `webhooks`.
 type WebhookModeStatus struct {
 	Mode  WebhookMode `json:"mode"`
 	Since *time.Time  `json:"since,omitempty"`
-	// Reason is set while polling after a degradation (empty at boot before
-	// webhooks were ever healthy, and in webhook mode).
+	// Reason is the plain-words cause while polling: the degradation reason
+	// after a degradation, or why webhooks cannot work at all (no secret,
+	// deliveries failing). Empty in webhook mode and while polling only
+	// because no delivery has arrived yet.
 	Reason string `json:"mode_reason,omitempty"`
+	// ReasonCode is the machine-readable cause while polling: one of
+	// WebhookReasonNoSecret, WebhookReasonSignatureFailed,
+	// WebhookReasonDeliveriesRejected or WebhookReasonNoDeliveries. Empty in
+	// webhook mode, and while polling with a verified delivery in the window
+	// and no newer failure (about to engage webhook mode).
+	ReasonCode string `json:"mode_reason_code,omitempty"`
 	// HealthyWindows counts the consecutive healthy windows observed while
 	// polling after a degradation; recovery happens at
 	// WebhookRecoveryHealthyWindows. Non-zero means "recovering".
@@ -193,14 +242,56 @@ func RecordGitHubActivity(updatedAt time.Time) {
 }
 
 // RecordWebhookDeliveryFailure notes a delivery that reached the receiver
-// (directly or via the hub relay) but could not be applied — a signature
-// that did not verify or a payload that did not decode. Failures newer than
-// the newest good delivery degrade the cadence to polling.
-func RecordWebhookDeliveryFailure() {
+// (directly or via the hub relay) but could not be applied, with why:
+// WebhookReasonNoSecret (no secret to verify with), WebhookReasonSignatureFailed
+// or WebhookReasonDeliveriesRejected (payload did not decode). Failures newer
+// than the newest good delivery degrade the cadence to polling. Each call
+// costs one counter bump in a fixed per-minute ring, never an allocation, so
+// a flood of rejected deliveries cannot grow memory.
+func RecordWebhookDeliveryFailure(reason string) {
 	t := sharedWebhookTracker()
 	t.mu.Lock()
-	t.lastFailure = t.now()
+	now := t.now()
+	t.lastFailure = now
+	t.lastFailureReason = reason
+	t.rejected.add(now)
 	t.mu.Unlock()
+}
+
+// annotateModeLocked fills the polling cause (mode_reason_code, and a
+// plain-words mode_reason where the machine has none) on a mode status.
+func (t *webhookTracker) annotateModeLocked(st *WebhookModeStatus, now time.Time) {
+	if st.Mode != WebhookModePolling {
+		return
+	}
+	healthy, latest := t.healthyLocked(now)
+	recentFailure := !t.lastFailure.IsZero() && now.Sub(t.lastFailure) < t.window && t.lastFailure.After(latest)
+	switch {
+	case !WebhookSecretConfigured():
+		st.ReasonCode = WebhookReasonNoSecret
+		if st.Reason == "" {
+			st.Reason = webhookReasonNoSecretIdleText
+			if !t.lastFailure.IsZero() && t.lastFailureReason == WebhookReasonNoSecret {
+				st.Reason = webhookReasonNoSecretRejectedText
+			}
+		}
+	case recentFailure:
+		st.ReasonCode = webhookFailureCode(t.lastFailureReason)
+		if st.Reason == "" {
+			st.Reason = WebhookDegradedReasonFailures
+		}
+	case !healthy:
+		st.ReasonCode = WebhookReasonNoDeliveries
+	}
+}
+
+// webhookFailureCode maps a recorded failure reason to the reported code; a
+// failure recorded without a known reason reads as a rejected delivery.
+func webhookFailureCode(reason string) string {
+	if reason == WebhookReasonSignatureFailed {
+		return reason
+	}
+	return WebhookReasonDeliveriesRejected
 }
 
 func (t *webhookTracker) modeInputLocked(now time.Time) webhookModeInput {
@@ -219,13 +310,18 @@ func (t *webhookTracker) observeMode() webhookModeTransition {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
-	return t.mode.observe(t.modeInputLocked(now), t.window, now)
+	tr := t.mode.observe(t.modeInputLocked(now), t.window, now)
+	t.annotateModeLocked(&tr.Status, now)
+	return tr
 }
 
 func (t *webhookTracker) modeSnapshot() WebhookModeStatus {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.mode.status(t.window, t.now())
+	now := t.now()
+	st := t.mode.status(t.window, now)
+	t.annotateModeLocked(&st, now)
+	return st
 }
 
 // newestEnumeratedUpdate is the newest `updated_at` across one repo's listed

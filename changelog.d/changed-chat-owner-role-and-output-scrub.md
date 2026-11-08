@@ -1,1 +1,0 @@
-- Chat agent-control commands (`!kick`, `!pause`, `!resume`, `!standby`, `!<agent> <prompt>`) now require the owner role, matching the dashboard; `allowed_users` entries accept an `id:role` suffix. Spektacular hub stages run with an allowlisted environment and a read-only repository token, and chat replies, run logs and notification errors are passed through the log scrubber.

@@ -1,1 +1,0 @@
-- The dashboard CLI-model last-good tests no longer expire 24 hours after their fixture date: the cache constructor now takes its clock before loading persisted catalogs (#12036).

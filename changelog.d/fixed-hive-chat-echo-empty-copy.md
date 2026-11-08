@@ -1,1 +1,0 @@
-- Fix Hive Chat so forwarded commands and unsupported free-text always produce a visible assistant response, and empty Completed payload fences no longer render copy-only blocks.

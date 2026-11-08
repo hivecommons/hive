@@ -1,1 +1,0 @@
-- Dashboard chat's bang-command defer guard now uses a byte comparison so the v6 chat conformance scan passes on the v6 base branch (#9136)

@@ -1,1 +1,0 @@
-- Harden Activity Monitor source-work verification with credential-free, bounded, read-only Git inspection that cannot execute workspace hooks, filters or helpers; unsupported normalization and unstable repository evidence stay unknown.

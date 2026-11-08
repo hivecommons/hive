@@ -1,1 +1,0 @@
-- Fixed Hive Chat and Discord agent lifecycle messages so completed/working notices show useful summaries and links instead of captured CLI TUI footer chrome.

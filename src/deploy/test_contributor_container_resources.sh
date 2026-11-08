@@ -206,6 +206,8 @@ ENV_UNSET=(
   -u HIVE_CONTAINER_OCI_RUNTIME -u CONTRIBUTOR_MODE -u HIVE_HUB
   -u HIVE_CONTRIBUTOR_IMAGE -u AGENT_MODEL -u AGENT_REASONING_EFFORT
   -u HIVE_CODEX_AUTO_USE_BANKED_RESET -u HIVE_SESSION -u HIVE_KRUN_KVM_DEVICE
+  -u HIVE_AGENT_ROLE -u HIVE_CONTRIBUTOR_QUOTA_GUARD
+  -u HIVE_CONTRIBUTOR_QUOTA_POOL_DIR -u HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT
 )
 for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST \
   OPENAI_BASE_PATH GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL \
@@ -289,6 +291,16 @@ started_nothing() {
 arg_after() {
   local flag="$1"
   awk -v flag="$flag" '$0 == flag { getline; print; exit }' "$CAPTURE"
+}
+
+# The values passed with -e, one per line (NAME=value).
+env_args() {
+  awk '$0 == "-e" { getline; print }' "$CAPTURE"
+}
+
+# The values passed with -v, one per line (host:container[:options]).
+vol_args() {
+  awk '$0 == "-v" { getline; print }' "$CAPTURE"
 }
 
 echo ""
@@ -655,6 +667,121 @@ check "krun from contributor.env is a krun launch" "krun" "$(arg_after --runtime
 OUT="$(run_recipe docker codex)"; RC=$?
 check "krun from contributor.env with docker is refused" "1" "$RC"
 started_nothing "krun from contributor.env with docker"
+cp "$WORK/contributor.env.orig" "$FAKE_HOME/.config/hive/contributor.env"
+
+echo ""
+echo "-- HIVE_AGENT_ROLE reaches the contributor container --"
+# The relay reads HIVE_AGENT_ROLE to ask for a spoke-agent lane. Inside the
+# container contributor-agent.sh sources contributor.env without exporting
+# it, so the recipe's -e list is the only way the role reaches the relay.
+OUT="$(run_contributor docker HIVE_AGENT_ROLE=scanner)"; RC=$?
+check "launch with an exported role succeeds" "0" "$RC"
+check "an exported role is forwarded with -e" "HIVE_AGENT_ROLE=scanner" "$(env_args | grep "^HIVE_AGENT_ROLE=")"
+OUT="$(run_contributor podman)"; RC=$?
+check "launch with no role succeeds" "0" "$RC"
+if env_args | grep -q '^HIVE_AGENT_ROLE='; then
+  fail "no role means no HIVE_AGENT_ROLE argument"
+else
+  pass "no role means no HIVE_AGENT_ROLE argument"
+fi
+OUT="$(run_krun "" codex HIVE_AGENT_ROLE=quality)"; RC=$?
+check "krun launch with a role succeeds" "0" "$RC"
+check "krun forwards the role too" "HIVE_AGENT_ROLE=quality" "$(env_args | grep "^HIVE_AGENT_ROLE=")"
+cp "$FAKE_HOME/.config/hive/contributor.env" "$WORK/contributor.env.orig"
+printf '%s\n' 'HIVE_AGENT_ROLE=scanner' >> "$FAKE_HOME/.config/hive/contributor.env"
+OUT="$(run_contributor docker)"; RC=$?
+check "launch with the role only in contributor.env succeeds" "0" "$RC"
+check "a role set only in contributor.env is forwarded" "HIVE_AGENT_ROLE=scanner" "$(env_args | grep "^HIVE_AGENT_ROLE=")"
+cp "$WORK/contributor.env.orig" "$FAKE_HOME/.config/hive/contributor.env"
+
+echo ""
+echo "-- the quota-guard switches reach the contributor container --"
+# The relay's quota-guard banner tells the operator to set
+# HIVE_CONTRIBUTOR_QUOTA_GUARD=off at launch, or to run `just contribute-quota
+# …` against HIVE_CONTRIBUTOR_QUOTA_POOL_DIR. Like the role, neither reaches
+# the relay unless the recipe passes it into the container.
+OUT="$(run_contributor docker HIVE_CONTRIBUTOR_QUOTA_GUARD=off)"; RC=$?
+check "launch with the guard off succeeds" "0" "$RC"
+check "an exported guard mode is forwarded with -e" "HIVE_CONTRIBUTOR_QUOTA_GUARD=off" \
+  "$(env_args | grep "^HIVE_CONTRIBUTOR_QUOTA_GUARD=")"
+OUT="$(run_contributor podman)"; RC=$?
+check "launch with no guard mode succeeds" "0" "$RC"
+if env_args | grep -q '^HIVE_CONTRIBUTOR_QUOTA_GUARD='; then
+  fail "no guard mode means no HIVE_CONTRIBUTOR_QUOTA_GUARD argument"
+else
+  pass "no guard mode means no HIVE_CONTRIBUTOR_QUOTA_GUARD argument"
+fi
+if env_args | grep -q '^HIVE_CONTRIBUTOR_QUOTA_POOL'; then
+  fail "no pool dir means no quota-pool -e argument"
+else
+  pass "no pool dir means no quota-pool -e argument"
+fi
+if vol_args | grep -q 'hive-quota-pool'; then
+  fail "no pool dir means no quota-pool mount"
+else
+  pass "no pool dir means no quota-pool mount"
+fi
+OUT="$(run_krun "" codex HIVE_CONTRIBUTOR_QUOTA_GUARD=pause)"; RC=$?
+check "krun launch with a guard mode succeeds" "0" "$RC"
+check "krun forwards the guard mode too" "HIVE_CONTRIBUTOR_QUOTA_GUARD=pause" \
+  "$(env_args | grep "^HIVE_CONTRIBUTOR_QUOTA_GUARD=")"
+
+# The pool directory is shared state, not a setting: the host's
+# `just contribute-quota` writes overrides into it and the relay reads them,
+# so the host directory is mounted and the relay is pointed at the mount.
+POOL_HOST="$WORK/quota pool"
+for runtime in docker podman; do
+  rm -rf "$POOL_HOST"
+  OUT="$(run_contributor "$runtime" HIVE_CONTRIBUTOR_QUOTA_POOL_DIR="$POOL_HOST")"; RC=$?
+  check "$runtime launch with a pool dir succeeds" "0" "$RC"
+  if [ "$runtime" = podman ]; then suffix=":z"; else suffix=""; fi
+  check "$runtime mounts the host pool dir" "$POOL_HOST:/home/dev/.hive-quota-pool$suffix" \
+    "$(vol_args | grep ':/home/dev/.hive-quota-pool')"
+  check "$runtime points the relay at the mounted pool dir" \
+    "HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=/home/dev/.hive-quota-pool" \
+    "$(env_args | grep "^HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=")"
+  if [ -d "$POOL_HOST" ]; then pass "$runtime creates the host pool dir before mounting it"
+  else fail "$runtime creates the host pool dir before mounting it"; fi
+done
+OUT="$(run_krun "" codex HIVE_CONTRIBUTOR_QUOTA_POOL_DIR="$POOL_HOST")"; RC=$?
+check "krun launch with a pool dir succeeds" "0" "$RC"
+check "krun mounts the host pool dir like podman" "$POOL_HOST:/home/dev/.hive-quota-pool:z" \
+  "$(vol_args | grep ':/home/dev/.hive-quota-pool')"
+check "krun points the relay at the mounted pool dir" \
+  "HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=/home/dev/.hive-quota-pool" \
+  "$(env_args | grep "^HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=")"
+# A relative path would be a named volume to docker, not the host directory.
+# Recipes run in the checkout, so that is where a relative path resolves.
+OUT="$(run_contributor docker HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=rel-pool)"; RC=$?
+check "launch with a relative pool dir succeeds" "0" "$RC"
+check "a relative pool dir is mounted by its absolute path" \
+  "$(cd "$ROOT" && pwd -P)/rel-pool:/home/dev/.hive-quota-pool" "$(vol_args | grep ':/home/dev/.hive-quota-pool')"
+rmdir "$ROOT/rel-pool" 2>/dev/null || true
+# The account is part of the pool key, so the relay needs the host's value.
+# It is passed by name, so the value stays out of the runtime argv.
+OUT="$(run_contributor docker HIVE_CONTRIBUTOR_QUOTA_POOL_DIR="$POOL_HOST" \
+  HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT=account-fixture)"; RC=$?
+check "launch with a pool account succeeds" "0" "$RC"
+check "the pool account is forwarded by name" "HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT" \
+  "$(env_args | grep "^HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT")"
+lacks "the pool account value is not in the runtime argv" "$(cat "$CAPTURE")" "account-fixture"
+cp "$FAKE_HOME/.config/hive/contributor.env" "$WORK/contributor.env.orig"
+printf '%s\n' 'HIVE_CONTRIBUTOR_QUOTA_GUARD=off' "HIVE_CONTRIBUTOR_QUOTA_POOL_DIR='$POOL_HOST'" \
+  >> "$FAKE_HOME/.config/hive/contributor.env"
+OUT="$(run_contributor docker)"; RC=$?
+check "launch with the switches only in contributor.env succeeds" "0" "$RC"
+check "a guard mode set only in contributor.env is forwarded" "HIVE_CONTRIBUTOR_QUOTA_GUARD=off" \
+  "$(env_args | grep "^HIVE_CONTRIBUTOR_QUOTA_GUARD=")"
+check "a pool dir set only in contributor.env is mounted" "$POOL_HOST:/home/dev/.hive-quota-pool" \
+  "$(vol_args | grep ':/home/dev/.hive-quota-pool')"
+
+# The host side of the command path: `just contribute-quota` must see the
+# same pool dir and backend as the relay. contributor.env has no `export`
+# lines, so the recipe has to export what it sources.
+want_key="$(cd "$ROOT" && node -e 'process.stdout.write(require("./bin/lib/quota-pool-store.js").derivePoolKey({ backend: "codex" }))')"
+OUT="$(cd "$ROOT" && env "${ENV_UNSET[@]}" -u AGENT_BACKEND HOME="$FAKE_HOME" just contribute-quota status 2>&1)"; RC=$?
+check "contribute-quota finds the pool dir in contributor.env" "0" "$RC"
+contains "contribute-quota keys the pool like the codex relay" "$OUT" "\"pool_key\": \"$want_key\""
 cp "$WORK/contributor.env.orig" "$FAKE_HOME/.config/hive/contributor.env"
 
 echo ""

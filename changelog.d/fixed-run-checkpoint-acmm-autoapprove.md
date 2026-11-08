@@ -1,1 +1,0 @@
-- Keep ACMM plan auto-approval from bypassing held Spek run checkpoints, recording auto-approval provenance only when the run checkpoint is explicitly disabled.

@@ -1,1 +1,0 @@
-- Fix task-scoped MCP scope resolution for hub-launched agents by adding active launch lookup, per-launch URL scope parameters, and a short prompt pointer to `context_bundle`.

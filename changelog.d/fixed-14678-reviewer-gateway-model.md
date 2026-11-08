@@ -1,1 +1,0 @@
-- ACMM pack agents moved onto an inference gateway that has no default model now get the model the hive's other agents on that gateway run, instead of being left with no model, failing to start and being paused.

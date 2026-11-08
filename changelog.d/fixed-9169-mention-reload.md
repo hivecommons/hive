@@ -1,1 +1,0 @@
-- GitHub mention triggers now live-reload mention, Actions and review-bot settings, including starting and stopping the mention poller when mentions are toggled ([#9169](https://github.com/hivecommons/hive/issues/9169)).

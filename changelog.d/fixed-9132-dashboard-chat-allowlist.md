@@ -1,1 +1,0 @@
-- Dashboard chat now refreshes its command allowlist from heartbeat configuration updates, so added and removed users take effect without restarting the chat service. Concurrent chat handlers read the allowlist safely during refresh ([#9132](https://github.com/hivecommons/hive/issues/9132)).

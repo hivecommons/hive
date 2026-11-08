@@ -1,1 +1,0 @@
-- Applying an ACMM pack now persists reconciled pack-owned agent fields into per-agent overlays, so config reloads keep the selected level while preserving operator-owned model/backend/pause/effort choices ([#8938](https://github.com/hivecommons/hive/issues/8938)).

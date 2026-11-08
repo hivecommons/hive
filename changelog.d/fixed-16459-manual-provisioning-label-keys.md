@@ -1,1 +1,0 @@
-- Fixed `manual-provisioning.md` to name the `hive.hivecommons.dev/*` namespace identity labels and annotation the hub actually stamps, instead of the legacy `hive.kubestellar.io/*` keys (#16459).

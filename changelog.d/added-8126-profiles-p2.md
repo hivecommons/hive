@@ -1,1 +1,0 @@
-- `hivectl hives use` now switches a running contributor relay to the newly active hive without a restart by signaling the relay to reload its generated `contributor.env`; the relay records non-secret hub last-seen timestamps for `hives list` and lets any in-flight task finish on its original hive before soliciting from the new one (#8126).

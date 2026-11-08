@@ -1,1 +1,0 @@
-- refactor: split `src/cmd/hive/main.go` into 4 files (`main.go`, `main_github_app.go`, `main_eval_cycle.go`, `main_sweeps.go`) to cut rebase churn on a merge hotspot; no behaviour change ([#15585](https://github.com/hivecommons/hive/issues/15585)).

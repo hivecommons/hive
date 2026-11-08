@@ -1,1 +1,0 @@
-- Chat commands, pending inception answers and run checkpoint replies now match `allowed_users` entries the way dashboard sign-in does (case-insensitive, `github:` prefix optional), so a hub-delivered `github:alice:owner` entry authorizes dashboard chat commands from `alice` (#9131).

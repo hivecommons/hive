@@ -1,1 +1,0 @@
-- Changed CI to report open-PR file overlaps, auto-update stale PR branches after base pushes, and avoid redundant Go cache archiving on self-hosted runners.

@@ -1,1 +1,0 @@
-- Refuse symlinked Copilot session logs when archiving kick transcripts and judging busy visibility (#14811)

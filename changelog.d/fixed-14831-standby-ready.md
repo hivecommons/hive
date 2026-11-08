@@ -1,1 +1,0 @@
-- Standby contributor relays no longer request ordinary work when the CLI becomes ready or a no-work retry rotates between hubs, including hubs without standby support (Fixes #14831).

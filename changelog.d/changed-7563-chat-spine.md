@@ -1,1 +1,0 @@
-- Extract the Discord bot command, dashboard, and notification logic into a transport-agnostic chat service spine.

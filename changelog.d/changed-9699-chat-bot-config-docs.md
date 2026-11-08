@@ -1,1 +1,0 @@
-- docs: notifications.md now documents the Slack Socket Mode, Telegram, Matrix and Teams bot blocks (required keys, provider-side setup, startup log lines, `allowed_users` fail-closed rule) alongside the webhook channels (#9699)

@@ -1,1 +1,0 @@
-- Add a Matrix chat backend on the pkg/chat spine for unencrypted rooms.

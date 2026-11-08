@@ -1,1 +1,0 @@
-- Sanitise table keys and headers from server responses to prevent ANSI escape sequences and tabs from breaking terminal output layout.

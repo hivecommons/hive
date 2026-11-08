@@ -1,1 +1,0 @@
-- Enforce run checkpoint policy at stage gates, auto-approving explicitly disabled checkpoints with an `auto` audit actor and config source.

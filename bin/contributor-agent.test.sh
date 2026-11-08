@@ -1507,4 +1507,31 @@ wss://hosted-x.hive.hivecommons.dev/contribute|wss://hosted-x.hive.hivecommons.d
 wss://hive.example.org/contribute|wss://hive.example.org/contribute|no
 CASES
 
+# 7. Quota pool dir: in the container the recipe passes the mount point with
+#    -e, while a contributor.env line names the host path. The -e value must
+#    win; with no -e value the contributor.env line still applies (local mode).
+run_pool_dir() {
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_QUOTA_POOL_DIR=1 \
+    "$@" \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>/dev/null
+}
+pool_env="${HOME_DIR}/.config/hive/contributor.env"
+pool_env_saved=""
+if [[ -f "$pool_env" ]]; then pool_env_saved="$(cat "$pool_env")"; fi
+printf '%s\n' "$pool_env_saved" 'HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=/host/side/quota-pool' > "$pool_env"
+got="$(run_pool_dir HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=/home/dev/.hive-quota-pool)"
+if [[ "$got" != "HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=/home/dev/.hive-quota-pool" ]]; then
+  echo "quota pool dir: the -e mount point must win over the contributor.env host path; got: ${got}" >&2
+  exit 1
+fi
+got="$(run_pool_dir)"
+if [[ "$got" != "HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=/host/side/quota-pool" ]]; then
+  echo "quota pool dir: with no -e value the contributor.env line must apply; got: ${got}" >&2
+  exit 1
+fi
+printf '%s\n' "$pool_env_saved" > "$pool_env"
+
 echo "contributor-agent codex + claude contract tests passed"

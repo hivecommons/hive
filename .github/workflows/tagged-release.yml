@@ -1278,11 +1278,15 @@ jobs:
           }
           while true; do
             # $GITHUB_REPOSITORY (runner-provided) rather than the
-            # ${{ github.repository }} expression other steps use: this step's
-            # script is extracted verbatim and run under plain bash by
+            # github.repository workflow expression other steps use: this
+            # step's script is extracted verbatim and run under plain bash by
             # test-release-push-retry.sh, where an unexpanded workflow
             # expression is a bash bad-substitution. Same value, and it keeps
-            # the step testable.
+            # the step testable. The script must also stay free of workflow
+            # expressions for a second reason: one anywhere in it makes
+            # GitHub evaluate the whole 20k-char block as an expression,
+            # which exceeds its 21000-char limit and breaks the workflow file
+            # for every event (seen 2026-11-07 after the #17083 growth).
             #
             # Do NOT write an empty workflow-expression delimiter pair in this
             # comment to illustrate the point. GitHub's workflow parser scans
@@ -1407,7 +1411,9 @@ jobs:
       # operator ledger is the dated CHANGELOG.md section in the tag; if that
       # section is unexpectedly empty or absent, fall back to GitHub's
       # auto-generated commit/PR summary so a Release is still created with a
-      # useful body instead of leaving a tag-only ledger gap.
+      # useful body instead of leaving a tag-only ledger gap. The body is then
+      # capped by src/scripts/release-notes-cap.sh (RELEASE_NOTES_MAX_CHARS)
+      # so a very long section cannot 422 the release the way v6.0.0 did.
       - name: Create GitHub Release
         if: steps.push_line.outputs.pushed == 'true'
         env:
@@ -1422,6 +1428,11 @@ jobs:
             --jq .body > "$generated_notes" || echo "(auto-generated notes unavailable)" > "$generated_notes"
           git show "v${VERSION}:CHANGELOG.md" > "$tag_changelog"
           src/scripts/extract-release-notes.sh "$tag_changelog" "$VERSION" "$generated_notes" > "$notes_file"
+          # GitHub refuses bodies over 125000 chars (v6.0.0's first-on-the-line
+          # section was ~877 KB and failed here after the tag and retags had
+          # landed). Cap the section BEFORE the SBOM/NOTICE trailer so the
+          # trailer always survives; the cut links the tag's full section.
+          src/scripts/release-notes-cap.sh "$notes_file" "$VERSION" "$GITHUB_REPOSITORY" "$tag_changelog"
           {
             echo
             echo "---"

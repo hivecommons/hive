@@ -1,1 +1,0 @@
-- Dashboard: removed the duplicated Advisory, ACMM Eval, Tokens, and Cost sidebar items that the v5→v6 forward-merge left rendered twice in the Dashboard nav group; a regression test now asserts every sidebar `data-section` target appears only once in `index.html` (#9111).

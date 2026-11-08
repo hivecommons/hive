@@ -1,1 +1,0 @@
-- Fix the watchdog flagging advisory pack agents (e.g. `supervisor`) as "alive but not producing": the advisory-only exemption now resolves the effective mode (explicit mode, else the ACMM level default) the same way `SyncModeFiles` does (#11167)

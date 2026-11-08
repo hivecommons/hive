@@ -23,7 +23,7 @@ const (
 	// GITHUB_WEBHOOK_SECRET and verifies X-Hub-Signature-256 over the raw body.
 	githubWebhookPath = "/api/webhook/github"
 
-	githubWebhookSecretEnvVar = "GITHUB_WEBHOOK_SECRET"
+	githubWebhookSecretEnvVar = github.WebhookSecretEnvVar
 	githubWebhookMaxBodyBytes = 1 << 20
 )
 
@@ -71,12 +71,17 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		if !warned {
 			s.webhookLogger().Debug(msg)
 		}
+		// Counted like any other rejected delivery so /api/status.webhooks
+		// (mode_reason_code no_secret, rejected_1h, last_rejected_at) and
+		// /api/health/deep say why the spoke is polling; the log stays at one
+		// WARN per process (#13666).
+		github.RecordWebhookDeliveryFailure(github.WebhookReasonNoSecret)
 		jsonError(w, "webhooks disabled: no secret configured", http.StatusServiceUnavailable)
 		return
 	}
 	if !verifyGitHubWebhookSignature(body, r.Header.Get("X-Hub-Signature-256"), secret) {
 		s.webhookLogger().Warn("github webhook signature verification failed", "event", event)
-		github.RecordWebhookDeliveryFailure()
+		github.RecordWebhookDeliveryFailure(github.WebhookReasonSignatureFailed)
 		jsonError(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
@@ -97,7 +102,7 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.deps.GHClient.HandleWebhookEvent(event, body)
 	if err != nil {
-		github.RecordWebhookDeliveryFailure()
+		github.RecordWebhookDeliveryFailure(github.WebhookReasonDeliveriesRejected)
 		jsonError(w, "invalid webhook payload", http.StatusBadRequest)
 		return
 	}

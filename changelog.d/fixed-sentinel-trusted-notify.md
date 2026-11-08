@@ -1,1 +1,0 @@
-- Sentinel now treats trusted Hive authors as notice-only by default, remediates stale trusted-author alert labels, and offers `sentinel.trusted_authors_block` for operators who want the blocking label on trusted PRs too.

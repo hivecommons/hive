@@ -1,1 +1,0 @@
-- Fix hub-launched Codex agents so they run unattended with approvals/sandbox bypassed, classify Codex approval/update prompts, and seed CODEX_HOME to disable startup update checks.

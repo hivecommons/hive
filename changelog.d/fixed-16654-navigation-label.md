@@ -1,1 +1,0 @@
-- Label the narrow dashboard's navigation drawer button so operators can find sidebar sections and version details without guessing what the menu icon does (#16654).

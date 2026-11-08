@@ -1,1 +1,0 @@
-- Added a collapsible dashboard Overview section with issue and PR band charts across the hive.

@@ -1,1 +1,0 @@
-- Inline the linked Linear issue (title, state, description, recent comments; capped and marked untrusted) into review kicks whose scope contract is a Linear issue, read hive-side so reviewers need no Linear token.
