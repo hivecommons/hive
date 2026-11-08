@@ -1,7 +1,7 @@
 # Crux work services: S1 pinned checkout (hivecommons/crux#114)
 
 Status: **S0 caller principals and S1 pinned checkout shipped in hive
-`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate); S4 command log is [below](#s4-command-log); S5 turn signals are [below](#s5-turn-signals); everything else in the RFC is unscheduled. This records
+`src/crux` (v5).** S2 contained run and S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate); S4 command log is [below](#s4-command-log); S5 turn signals are [below](#s5-turn-signals); S6 agent step is [below](#s6-agent-step); everything else in the RFC is unscheduled. This records
 S1 *as implemented*, including where it is weaker than the RFC text.
 
 The RFC asks for "a working copy of this repo at this commit, owned by
@@ -363,12 +363,12 @@ signals.NewBook(signals.Policy{})` and `Server.KickOutcomes` on
 
 A `Signal` is `{seq, kind, source, at, message?, data?}`. `kind` is the
 closed set `started | thinking | tool | blocked | needs-input | input |
-done`; `source` is `runner`, `gate` or `caller`, and each source appends
-only its own kinds:
+step | done`; `source` is `runner`, `gate` or `caller`, and each source
+appends only its own kinds:
 
 | Source | Kinds | When |
 |---|---|---|
-| `runner` | `started`, `done` | `started` just before the sandbox launcher runs the command; `done` on every terminal path — completed, failed, timed out, cancelled, a provisioning failure (no `started`), and the run `crux serve` marks `unfinished` at start because it was in flight at the last shutdown. `done.data` is `{"status", "exit_code"?, "timed_out"?}`, its message the run's reason. |
+| `runner` | `started`, `step`, `done` | `started` just before the sandbox launcher runs the command (for an agent session, once its workspace is ready); `step` once per finished agent step (S6, `data` `{"step", "status", "attempts"}`, message the step's reason); `done` on every terminal path — completed, failed, timed out, cancelled, a provisioning failure (no `started`), and the run `crux serve` marks `unfinished` at start because it was in flight at the last shutdown. `done.data` is `{"status", "exit_code"?, "timed_out"?}`, its message the run's reason. |
 | `gate` | `needs-input`, `input`, `blocked` | a gate opened with `run`: opening is `needs-input` (message the subject), answering `input` (`data` `{"gate", "answer", "answered_by"}`), expiry `blocked`. `data.gate` names the gate; its note and context never ride along. |
 | `caller` | `thinking`, `tool`, `blocked`, `needs-input`, `input` | `POST /v1/runs/{id}/signals` by the run's owner or the operator. |
 
@@ -436,6 +436,145 @@ from inside the sandbox other than through the owner's API; no
 per-agent signal log beyond the last kick outcome; no retention policy —
 a run's signals live and die with the run dir.
 
+## S6. Agent step
+
+One step = one agent backend run inside a sandbox, in a prepared
+checkout, with a prompt in and a schema-checked JSON answer out. Package
+`src/crux/agentstep` (`Run`, `Host`, `Backend`, `Backends`, `Store`,
+`ParseSchema`, `CorrectivePrompt`), API types in `src/crux/api/steps.go`,
+routes in `src/crux/serve/steps.go`, the session in
+`src/crux/runs/service.go`, CLI in `src/crux/cli/step.go`. No new
+configuration: a step runs on the S2 backend and image with the S2
+timeouts (`default_timeout_ms` per attempt, `max_timeout_ms` the cap).
+
+**Session.** A step needs a sandbox that already holds the checkout, so
+`POST /v1/runs` with `"profile": "agent"` opens a *step session* instead
+of running a command: `command` must be empty (400), the source is any
+S2 source (checkout, worktree or workspace_path), `network` defaults to
+`restricted` because the agent must reach its model (a backend without
+that capability answers 501 `unsupported`; a caller may ask `none` for a
+process backend that needs nothing), and `env_allowlist` still refuses
+credential names — a session carries no repository-write authority, as
+the RFC asks. The response is always 202 with the `accepted` record,
+`detach` or not: the session has no end of its own. Its runner
+provisions the workspace, moves the record to `waiting`, signals
+`started` and holds until `POST /v1/runs/{id}/cancel` closes it
+(`cancelled`, reason `session closed after N step(s)`, `done` signal).
+While a step runs the record is `running`; between steps `waiting`.
+`Reconcile` at start marks a `waiting` session `unfinished` like any run
+left in flight. One step at a time: a second concurrent post is 409
+`step_busy`; a step on a run that is not an open session (an experiment,
+a closed or reconciled session, a session whose provisioning failed) is
+409 `not_session`. A step posted while the session is still provisioning
+waits for it.
+
+| Route | Body | Response |
+|---|---|---|
+| `POST /v1/runs/{id}/steps` | `StepRequest` | `201 Step` once the step has finished, whatever its status |
+| `GET /v1/runs/{id}/steps` | | `200 {"run", "steps":[Step…]}` oldest first; a step in flight shows as `running` |
+| `GET /v1/runs/{id}/steps/{n}` | | `200 Step` |
+
+`StepRequest` is `{backend, prompt | prompt_path, output_schema, model?,
+tools?, turn_limit?, timeout_ms?, retry_on_mismatch?, command?}`.
+`prompt` is inline (≤ 1 MiB); `prompt_path` is relative to the session
+workspace and must stay inside it. `output_schema` is a JSON Schema the
+answer must match; `tools` is the allowlist of tools the agent may use
+(empty: the backend's default, which for `claude` is every tool);
+`turn_limit` bounds agent turns per attempt; `retry_on_mismatch` (0–5)
+re-asks when the answer misses the schema; `command` is the process
+backend's. A `Step` is `{run, n, status, reason?, backend, model?,
+created_at, finished_at?, attempts, answer?, usage{input_tokens,
+output_tokens}, transcript_path?, violations?}`. `status` is the RFC's
+closed set: `succeeded | schema_mismatch | timeout | backend_error |
+tool_denied | turn_limit_exceeded | cancelled | unsupported`, plus
+`running` while in flight. `answer` is present only on `succeeded`.
+
+**Execution.** The service writes the prompt to
+`<workspace>/.crux/steps/<n>/prompt-<attempt>.md` (the same place the
+agent sandbox keeps its kick prompt), builds the backend's command line
+with the prompt as stdin, records it in the S4 command log (`capture:
+runner`, status from the exit), launches it through the S2 launcher as
+`crux-step-<run>-<n>-<attempt>` with the session's network and filtered
+environment, and reads the answer back. The first attempt sends the
+caller's prompt verbatim; every retry appends `CorrectivePrompt`: the
+schema, the violations by JSON path, and how many attempts remain. A
+non-JSON or missing answer counts as a mismatch (`$: the backend returned
+no JSON value`) and is retried the same way. Timeout and cancel tear the
+launch down by name, as S2 does. Every finished step writes its record,
+appends one `step` signal to the run and leaves a transcript at
+`<workdir>/runs/<id>/steps/<n>/transcript.jsonl` (one line per attempt:
+command, exit, scrubbed output, status, violations, usage).
+
+**Schema.** `agentstep.ParseSchema` enforces the subset the service can
+check without a schema library: `type` (incl. unions), `enum`, `const`,
+`properties`, `required`, `additionalProperties` (bool or schema),
+`items`, `minItems`/`maxItems`, `minLength`/`maxLength`, `pattern`,
+`minimum`/`maximum`/`exclusiveMinimum`/`exclusiveMaximum`, `multipleOf`,
+boolean schemas; `title`, `description`, `default`, `examples`, `$schema`,
+`$id` and `$comment` are ignored. Any other keyword (`$ref`, `oneOf`,
+`format`, …) is refused with 400 rather than silently unenforced, so a
+`succeeded` step means the answer was fully checked.
+
+**Backends.** `agentstep.Backend` is `{Name; Command(Spec) ([]string,
+error); Parse(Spec, sandbox.Result, readFile) Outcome}`: it turns the
+request into a command line the sandbox runs and reads the attempt's
+result back. `Command` returning `*UnsupportedError` for a request the
+backend cannot honour (tools it cannot restrict, a turn limit it cannot
+enforce) records a step with status `unsupported` and answers 501
+`unsupported`: the refusal is on the record, as the RFC asks. The RFC
+decision's two v1 backends and one test backend ship:
+
+| Backend | Command | `Outcome` from |
+|---|---|---|
+| `claude` | `claude -p --output-format json [--model M] (--allowedTools a,b \| --dangerously-skip-permissions) [--max-turns N] < prompt` | the result object: `result` holds the answer (JSON extracted from prose or a fence), `usage` the tokens, `num_turns` the turns; `permission_denials` → `tool_denied`; subtype `error_max_turns` → `turn_limit_exceeded`; any other error → `backend_error` |
+| `codex` | `codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox [--model M] --output-last-message .crux/steps/<n>/answer-<a>.txt - < prompt` | the last-message file, else the last `agent_message` item in the JSONL; `usage` events sum the tokens. `tools` is refused as unsupported (codex has no allowlist), and so is `turn_limit` above 1 (codex exec is one turn) |
+| `process` | `sh -lc '<command…> < prompt'` | stdout as the answer, non-zero exit `backend_error`. Takes `command`; `tools`, `turn_limit` and `model` are refused as unsupported (the command offers whatever it offers). This is the test and escape-hatch backend: any CLI that reads a prompt on stdin |
+
+The claude and codex command lines and result shapes are the adapter
+contract this slice fixes; they are exercised against recorded output in
+`backend_test.go`, not a live CLI. The RFC's other backends (`gemini`,
+`agy`, `cline`) are not registered: adding one is a `Backend`
+implementation and a line in `Backends`, with no change to the service,
+the routes or the CLI.
+
+| Condition | Status | `code` |
+|---|---|---|
+| unknown backend, both or neither of `prompt`/`prompt_path`, path outside the workspace, bad or unenforceable `output_schema`, `retry_on_mismatch` outside 0–5, `timeout_ms` above the cap, `command` with a non-process backend, process without `command`; agent profile with `command` | 400 | `bad_request` |
+| another principal's run | 403 | `forbidden` |
+| unknown run or step | 404 | `not_found` |
+| the run is not an open session | 409 | `not_session` |
+| the session is running a step | 409 | `step_busy` |
+| the backend cannot honour `tools`, `turn_limit` or `model`; a session on a backend without `restricted` | 501 | `unsupported` |
+| no runs service | 501 | `not_supported` |
+
+```
+crux --server ADDR runs start --profile agent [--network none] --checkout ID
+crux --server ADDR step run <run> --backend B (--prompt P | --prompt-file F) --schema FILE
+                                  [--model M] [--tool T]... [--turn-limit N] [--retry N]
+                                  [--timeout-ms N] [--json] [-- CMD ARGS...]
+crux --server ADDR step list [--json] <run>
+crux --server ADDR step show [--json] <run> <n>
+crux --server ADDR runs cancel <run>
+```
+
+`step run` exits 0 only on `succeeded`; any other status prints the
+record (with violations) and exits 1, so a driver script can branch on
+it.
+
+**Storage.** `<workdir>/runs/<id>/steps/<n>/record.json` (the `Step`,
+tmp+rename) and `transcript.jsonl`, 0600; steps are numbered from 1 in
+creation order under a process-wide lock. Prompts and backend answer
+files live in the workspace under `.crux/steps/<n>/` and go with it.
+
+**Deliberately not in S6.** No `gemini`, `agy` or `cline` backend yet;
+no streaming of a step's progress beyond the S5 `step` signal and the S4
+log; no step-level idempotency key (post once, read back with `GET`);
+no fan-out of one prompt to several backends; no cost accounting beyond
+the usage the backend reports; no persistence of the agent's own session
+between steps — each step is a fresh backend invocation in the same
+checkout, and whatever the step wrote to the workspace is the state the
+next one sees.
+
 ## Deliberately not in S1
 
 - TTL sweeper (recorded, not enforced).
@@ -482,3 +621,8 @@ for runs are deferred and not scheduled.
 | `src/crux/serve/gates.go` | `run` on gate open (ownership check) and the gate's turn signals |
 | `src/crux/serve/signals.go` | `GET /v1/agents/{name}/kick-outcome`; the kick-outcome observer that saves before it publishes |
 | `src/crux/cli/signal.go` | `crux signal emit|list`, remote only |
+| `src/crux/agentstep/` | S6: `Run`, `Host`, `Backend`, `Backends`, `Lookup`, `Spec`, `Outcome`, `Store` (`Create`, `Write`, `Get`, `List`), `ParseSchema`, `Schema.Validate`, `CorrectivePrompt`, `RequestError`, `UnsupportedError`, sentinels (`ErrSchema`, `ErrNotFound`, `ErrCorrupt`, `ErrNoAnswer`) |
+| `src/crux/api/steps.go` | `RunStepsPath`, `RunStepPath`, `Step*` status and backend constants, `CodeStepBusy`, `CodeNotSession`, `SignalStep`, `SignalStepData`, `StepRequest`, `Step`, `StepUsage`, `SchemaViolation`, `StepList`, `Client.{RunStep,ListSteps,GetStep}` |
+| `src/crux/runs/service.go` | S6 session: `profile: agent` validation, `session` runner, `RunStep`, `Steps`, `Step`, `ErrNotSession`, `ErrStepBusy` |
+| `src/crux/serve/steps.go` | `POST`/`GET /v1/runs/{id}/steps`, `GET /v1/runs/{id}/steps/{n}`, ownership check, error mapping |
+| `src/crux/cli/step.go` | `crux step run|list|show`, remote only |
