@@ -8,6 +8,7 @@ Use this guide to choose a connection to Hive v5. Configuring an existing integr
 | Lend your machine's AI coding tool | [Contributor relay: basic setup](contributor-relay.md#basic-setup) | The relay receives work from Hive and reports its result. |
 | Have an external workflow engine run work | [ClankeR and Flue-style execution](integrations/clanker-flue.md) | Hive still decides what may run and verifies reported evidence; Flue dispatch is report-only. |
 | Turn a specification into staged work | [Spektacular integration](integrations/spektacular.md) | The planning tool must implement the documented Spektacular CLI contract; there is no general planning-engine registry. |
+| Drive agent work through the Crux work services | [Crux work services: integration guide](crux-integration-guide.md) | Pinned checkouts, contained runs, schema-checked agent steps, command log, turn signals, human gates and saved results over the `crux serve` API; the orchestrator decides what the records mean. |
 
 In the diagram, the **work source** supplies tasks, the **governor** schedules agents, and a **run lease** records who owns a stage and when it expires. An *additive* source appends tasks alongside the selected primary source rather than replacing it.
 
