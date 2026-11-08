@@ -18,8 +18,9 @@ import (
 
 const (
 	// SourceTag marks every drained entry; `source: cli-memory` is also
-	// written as frontmatter so the dashboard filter and the tag agree.
-	SourceTag = "cli-memory"
+	// written as frontmatter so the dashboard filter and the tag agree. The
+	// knowledge package keys the agent-facing draft exclusion on it.
+	SourceTag = knowledge.AutoMemoryTag
 	// HashKey is the frontmatter key (and tag prefix) carrying the SHA-256 of
 	// the normalised fact body; it is what makes repeated drains idempotent.
 	HashKey = "memhash"

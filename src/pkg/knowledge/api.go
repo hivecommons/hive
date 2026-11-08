@@ -453,8 +453,12 @@ func (k *KnowledgeAPI) SetEntryState(id string, state LifecycleState, superseded
 	return change, nil
 }
 
-// writableVaultHolding returns the first non-reserved vault holding id and
-// the entry as currently stored.
+// writableVaultHolding returns the first vault holding id whose entries a
+// lifecycle change may rewrite, and the entry as currently stored. The
+// reserved bead-synth vault is skipped except for drained CLI-memory entries
+// (`source: cli-memory`, #17058): the drain writes those once and never
+// rewrites them, so approving or discarding one cannot fight the
+// synthesizer, and review is the only way a drained draft is ever primed.
 func (k *KnowledgeAPI) writableVaultHolding(id string) (*FileStore, *Fact) {
 	if id == "" {
 		return nil, nil
@@ -463,14 +467,29 @@ func (k *KnowledgeAPI) writableVaultHolding(id string) (*FileStore, *Fact) {
 	vaults := append([]*FileStore(nil), k.vaults...)
 	k.mu.RUnlock()
 	for _, v := range vaults {
-		if v.Name() == reservedVaultName {
+		f, err := v.ReadPage(id)
+		if err != nil {
 			continue
 		}
-		if f, err := v.ReadPage(id); err == nil {
-			return v, f
+		if v.Name() == reservedVaultName && !strings.EqualFold(strings.TrimSpace(f.Origin), AutoMemoryTag) {
+			continue
 		}
+		return v, f
 	}
 	return nil, nil
+}
+
+// AutoMemoryVault returns the connected bead-synth vault that CLI-memory
+// drains write their drafts into, or nil when it is not connected.
+func (k *KnowledgeAPI) AutoMemoryVault() *FileStore {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	for _, v := range k.vaults {
+		if v.Name() == reservedVaultName {
+			return v
+		}
+	}
+	return nil
 }
 
 // DeleteFact removes a fact from the specified layer.

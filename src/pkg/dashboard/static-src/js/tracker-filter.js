@@ -164,6 +164,14 @@
       return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || f.waitingOnYou || f.age !== 'any' || f.author !== 'any' || f.attention || f.acted !== 'any';
     }
 
+    // How many narrowing filters the phone Filters sheet holds are set:
+    // everything stageTrackerFilterActive counts except the kind /
+    // attention / waiting-on-you chips, which sit on the compact bar.
+    function stageTrackerSheetFilterCount(f) {
+      f = stageTrackerNormalizeFilter(f);
+      return (f.repo ? 1 : 0) + (f.q ? 1 : 0) + (f.age !== 'any' ? 1 : 0) + (f.author !== 'any' ? 1 : 0) + (f.acted !== 'any' ? 1 : 0) + f.labels.length + (f.needsHuman ? 1 : 0) + (f.onHold ? 1 : 0);
+    }
+
     // Does one item pass the narrowing filters? ctx.nowMs anchors the age
     // test; ctx.stages supplies the dwell for the "stale" age.
     function stageTrackerMatches(item, f, ctx) {
