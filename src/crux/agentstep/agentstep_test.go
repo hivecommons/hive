@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -221,6 +222,64 @@ func TestPromptPathReadsFromTheWorkspace(t *testing.T) {
 	if f.launcher.prompts[0] != "from file" {
 		t.Fatalf("prompt = %q", f.launcher.prompts[0])
 	}
+}
+
+func TestPromptPathSymlinkOutsideWorkspaceIsRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	f := newFixture(t, answers(`{"verdict":"pass"}`))
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("host-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(f.host.Workspace, "task.md")); err != nil {
+		t.Fatal(err)
+	}
+	req := f.process("", okSchema)
+	req.PromptPath = "task.md"
+	_, err := Run(context.Background(), f.host, req)
+	var reqErr *RequestError
+	if !errors.As(err, &reqErr) {
+		t.Fatalf("err = %v, want *RequestError", err)
+	}
+	if strings.Contains(err.Error(), "host-secret") || len(f.launcher.prompts) != 0 {
+		t.Fatalf("outside file reached the step: %v, prompts %q", err, f.launcher.prompts)
+	}
+}
+
+func TestSymlinkedCruxDirCannotRedirectThePromptWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	f := newFixture(t, answers(`{"verdict":"pass"}`))
+	outside := t.TempDir()
+	link := filepath.Join(f.host.Workspace, filepath.FromSlash(workspaceDir))
+	if err := os.MkdirAll(filepath.Dir(link), 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	step := Step(t, f)
+	if step.Status != api.StepBackendError {
+		t.Fatalf("status = %q, want %q", step.Status, api.StepBackendError)
+	}
+	var found []string
+	_ = filepath.WalkDir(outside, func(p string, d os.DirEntry, _ error) error {
+		if p != outside {
+			found = append(found, p)
+		}
+		return nil
+	})
+	if len(found) != 0 {
+		t.Fatalf("wrote outside the workspace: %v", found)
+	}
+}
+
+func Step(t *testing.T, f *fixture) api.Step {
+	t.Helper()
+	return f.run(f.process("hello", okSchema))
 }
 
 func TestRequestRefusals(t *testing.T) {

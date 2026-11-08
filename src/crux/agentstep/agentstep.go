@@ -158,8 +158,18 @@ func validate(host Host, req api.StepRequest) (plan, error) {
 		if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, "../") {
 			return p, &RequestError{"prompt_path must be relative to the workspace and stay inside it"}
 		}
-		data, err := os.ReadFile(filepath.Join(host.Workspace, rel))
+		root, err := os.OpenRoot(host.Workspace)
 		if err != nil {
+			return p, &RequestError{fmt.Sprintf("prompt_path %q: %v", req.PromptPath, err)}
+		}
+		data, err := root.ReadFile(rel)
+		root.Close()
+		if err != nil {
+			// os.Root's escape error is unexported; a symlink leaving the
+			// workspace is reported like a lexical escape.
+			if strings.Contains(err.Error(), "escapes from parent") {
+				return p, &RequestError{"prompt_path must be relative to the workspace and stay inside it"}
+			}
 			return p, &RequestError{fmt.Sprintf("prompt_path %q: %v", req.PromptPath, err)}
 		}
 		p.prompt = string(data)
@@ -251,10 +261,18 @@ func runAttempt(ctx context.Context, host Host, store Store, step api.Step, p pl
 	spec := p.spec
 	spec.PromptRel = rel + fmt.Sprintf("/prompt-%d.md", n)
 	spec.AnswerRel = rel + fmt.Sprintf("/answer-%d.txt", n)
-	if err := os.MkdirAll(filepath.Join(host.Workspace, rel), 0o770); err != nil {
+	// Every host-side workspace access goes through root so a symlink in the
+	// workspace (provisioned, or planted by the sandboxed agent) cannot
+	// redirect it outside (#17293).
+	root, err := os.OpenRoot(host.Workspace)
+	if err != nil {
 		return a, Outcome{Status: api.StepBackendError, Reason: "writing the prompt: " + host.scrub(err.Error())}
 	}
-	if err := os.WriteFile(filepath.Join(host.Workspace, filepath.FromSlash(spec.PromptRel)), []byte(prompt), 0o660); err != nil {
+	defer root.Close()
+	if err := root.MkdirAll(rel, 0o770); err != nil {
+		return a, Outcome{Status: api.StepBackendError, Reason: "writing the prompt: " + host.scrub(err.Error())}
+	}
+	if err := root.WriteFile(filepath.FromSlash(spec.PromptRel), []byte(prompt), 0o660); err != nil {
 		return a, Outcome{Status: api.StepBackendError, Reason: "writing the prompt: " + host.scrub(err.Error())}
 	}
 	cmd, err := p.backend.Command(spec)
@@ -298,7 +316,7 @@ func runAttempt(ctx context.Context, host Host, store Store, step api.Step, p pl
 		out = Outcome{Status: api.StepBackendError, Reason: host.scrub(runErr.Error())}
 	default:
 		out = p.backend.Parse(spec, res, func(rel string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(host.Workspace, filepath.FromSlash(rel)))
+			return root.ReadFile(filepath.FromSlash(rel))
 		})
 		out.Reason = host.scrub(out.Reason)
 	}
