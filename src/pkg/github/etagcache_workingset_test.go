@@ -152,27 +152,6 @@ func TestETagCache_WorkingSetLargerThanOldBoundKeepsHits(t *testing.T) {
 	}
 }
 
-// HIVE_GITHUB_ETAG_CACHE_MAX_MB sets the byte bound for a hive whose working
-// set is larger still; anything but a positive whole number keeps the default.
-func TestETagCache_MaxBytesFromEnv(t *testing.T) {
-	for _, tc := range []struct {
-		env  string
-		want int
-	}{
-		{"", 64 << 20},
-		{"256", 256 << 20},
-		{" 8 ", 8 << 20},
-		{"0", 64 << 20},
-		{"-5", 64 << 20},
-		{"lots", 64 << 20},
-	} {
-		t.Setenv("HIVE_GITHUB_ETAG_CACHE_MAX_MB", tc.env)
-		if got := newETagCache().maxBytes; got != tc.want {
-			t.Errorf("HIVE_GITHUB_ETAG_CACHE_MAX_MB=%q: maxBytes = %d, want %d", tc.env, got, tc.want)
-		}
-	}
-}
-
 // A held body that cannot be read back is never handed to the caller: the
 // entry is dropped and the resource fetched plainly.
 func TestETagCache_UnreadableHeldBodyFetchesPlainly(t *testing.T) {
@@ -198,8 +177,8 @@ func TestETagCache_UnreadableHeldBodyFetchesPlainly(t *testing.T) {
 		t.Fatalf("entries = %d, want 1", len(cache.entries))
 	}
 	for _, e := range cache.entries {
-		if !e.gz || len(e.body) >= e.rawLen {
-			t.Errorf("a %d-byte JSON body is held as %d bytes (gz=%v), want it compressed", e.rawLen, len(e.body), e.gz)
+		if !e.gzipped || len(e.body) >= e.size {
+			t.Errorf("a %d-byte JSON body is held as %d bytes (gzipped=%v), want it compressed", e.size, len(e.body), e.gzipped)
 		}
 		e.body = []byte("not gzip")
 	}

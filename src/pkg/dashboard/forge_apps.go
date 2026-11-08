@@ -87,6 +87,8 @@ type forgeGitHubSettings struct {
 	AgentReserveFloor      int  `json:"agent_reserve_floor"`
 	APIReserve             int  `json:"api_reserve"`
 	APICritical            int  `json:"api_critical"`
+	ETagCacheMaxMB         int  `json:"etag_cache_max_mb"`
+	ETagCacheMaxEntries    int  `json:"etag_cache_max_entries"`
 	PRDetailTTLS           int  `json:"pr_detail_ttl_s"`
 	GraphQLPRBatch         bool `json:"graphql_pr_batch"`
 	GraphQLPRBatchPageSize int  `json:"graphql_pr_batch_page_size"`
@@ -108,6 +110,8 @@ func forgeGitHubSettingsFor(cfg *config.Config, hubManaged bool) forgeGitHubSett
 		AgentReserveFloor:      cfg.GitHubAgentReserveFloor(),
 		APIReserve:             g.APIReserve,
 		APICritical:            g.APICritical,
+		ETagCacheMaxMB:         g.ETagCacheMaxMB,
+		ETagCacheMaxEntries:    g.ETagCacheMaxEntries,
 		PRDetailTTLS:           g.PRDetailTTLS,
 		GraphQLPRBatch:         g.GraphQLPRBatchEnabled(),
 		GraphQLPRBatchPageSize: g.GraphQLPRBatchPageSize,
@@ -115,6 +119,8 @@ func forgeGitHubSettingsFor(cfg *config.Config, hubManaged bool) forgeGitHubSett
 		AppSignedCommits:       g.AppSignedCommitsEnabled(),
 		Defaults: map[string]int{
 			"agent_reserve_floor":        config.DefaultGitHubAgentReserveFloor,
+			"etag_cache_max_mb":          config.DefaultGitHubETagCacheMaxMB,
+			"etag_cache_max_entries":     config.DefaultGitHubETagCacheMaxEntries,
 			"pr_detail_ttl_s":            int(config.DefaultGitHubPRDetailTTL / time.Second),
 			"graphql_pr_batch_page_size": config.DefaultGraphQLPRBatchPageSize,
 		},

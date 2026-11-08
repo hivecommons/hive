@@ -99,7 +99,7 @@ func TestUpdateTimestampsAndTerminalGuard(t *testing.T) {
 	for _, e := range readIndex(t, dir) {
 		statuses = append(statuses, e.Status)
 	}
-	if want := "accepted running completed completed"; strings.Join(statuses, " ") != want {
+	if want := "accepted running completed"; strings.Join(statuses, " ") != want {
 		t.Fatalf("index statuses = %v", statuses)
 	}
 }
@@ -377,5 +377,48 @@ func TestNewIDShape(t *testing.T) {
 	a, b := newID(), newID()
 	if a == b || !validID(a) || !strings.HasPrefix(a, "run_") {
 		t.Fatalf("newID = %q, %q", a, b)
+	}
+}
+
+func TestHistoryIsTheRecordsTransitionsOnly(t *testing.T) {
+	s, dir := newStore(t)
+	a, _, _ := s.Create(Record{})
+	b, _, _ := s.Create(Record{})
+	s.Update(a.ID, func(r *Record) error { r.Status = StatusRunning; return nil })
+	s.Update(b.ID, func(r *Record) error { r.Status = StatusFailed; r.Reason = "boom"; return nil })
+	s.Update(a.ID, func(r *Record) error { r.Status = StatusCompleted; return nil })
+	// A payload-only write is not a transition and leaves no index line.
+	s.Update(a.ID, func(r *Record) error { r.Detail = json.RawMessage(`{"restarted_by":"run_x"}`); return nil })
+	hist, err := s.History(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statuses []string
+	for _, e := range hist {
+		if e.ID != a.ID {
+			t.Fatalf("foreign entry %+v", e)
+		}
+		statuses = append(statuses, e.Status)
+	}
+	if strings.Join(statuses, " ") != "accepted running completed" {
+		t.Fatalf("history = %v", statuses)
+	}
+	if hb, _ := s.History(b.ID); len(hb) != 2 || hb[1].Reason != "boom" {
+		t.Fatalf("b history = %+v", hb)
+	}
+	if _, err := s.History("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing = %v", err)
+	}
+	if err := os.Remove(filepath.Join(Dir(dir), IndexName)); err != nil {
+		t.Fatal(err)
+	}
+	if hist, err := s.History(a.ID); err != nil || len(hist) != 0 {
+		t.Fatalf("pruned index = %+v, %v", hist, err)
+	}
+	if err := os.WriteFile(filepath.Join(Dir(dir), IndexName), []byte("{not json\n"), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.History(a.ID); err == nil || !strings.Contains(err.Error(), "corrupt index") {
+		t.Fatalf("corrupt index = %v", err)
 	}
 }

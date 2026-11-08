@@ -121,6 +121,8 @@ type githubAPISettings struct {
 	AgentReserveFloor      *int  `json:"agent_reserve_floor"`
 	APIReserve             *int  `json:"api_reserve"`
 	APICritical            *int  `json:"api_critical"`
+	ETagCacheMaxMB         *int  `json:"etag_cache_max_mb"`
+	ETagCacheMaxEntries    *int  `json:"etag_cache_max_entries"`
 	PRDetailTTLS           *int  `json:"pr_detail_ttl_s"`
 	GraphQLPRBatch         *bool `json:"graphql_pr_batch"`
 	GraphQLPRBatchPageSize *int  `json:"graphql_pr_batch_page_size"`
@@ -130,6 +132,7 @@ type githubAPISettings struct {
 
 func (b githubAPISettings) empty() bool {
 	return b.AgentReserveFloor == nil && b.APIReserve == nil && b.APICritical == nil && b.PRDetailTTLS == nil &&
+		b.ETagCacheMaxMB == nil && b.ETagCacheMaxEntries == nil &&
 		b.GraphQLPRBatch == nil && b.GraphQLPRBatchPageSize == nil && b.AppAuthoredPRs == nil && b.AppSignedCommits == nil
 }
 
@@ -151,6 +154,18 @@ func (b githubAPISettings) validate(cur config.GitHubConfig) error {
 	}
 	if b.GraphQLPRBatchPageSize != nil && *b.GraphQLPRBatchPageSize > 100 {
 		return fmt.Errorf("graphql_pr_batch_page_size must be between 1 and 100, or 0 for the default")
+	}
+	if b.ETagCacheMaxMB != nil || b.ETagCacheMaxEntries != nil {
+		mb, entries := cur.ETagCacheMaxMB, cur.ETagCacheMaxEntries
+		if b.ETagCacheMaxMB != nil {
+			mb = *b.ETagCacheMaxMB
+		}
+		if b.ETagCacheMaxEntries != nil {
+			entries = *b.ETagCacheMaxEntries
+		}
+		if err := config.ValidateETagCacheLimits(mb, entries); err != nil {
+			return fmt.Errorf("%s", strings.TrimPrefix(err.Error(), "github."))
+		}
 	}
 	for _, f := range []struct {
 		v    *int
@@ -200,6 +215,12 @@ func (b githubAPISettings) apply(g *config.GitHubConfig) {
 		if g.APICritical == 0 {
 			g.APICritical = config.DefaultGitHubAPICritical
 		}
+	}
+	if b.ETagCacheMaxMB != nil {
+		g.ETagCacheMaxMB = *b.ETagCacheMaxMB
+	}
+	if b.ETagCacheMaxEntries != nil {
+		g.ETagCacheMaxEntries = *b.ETagCacheMaxEntries
 	}
 	if b.PRDetailTTLS != nil {
 		g.PRDetailTTLS = *b.PRDetailTTLS
@@ -251,7 +272,7 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.AppID == nil && body.InstallationID == nil && body.KeyFile == "" && body.PrivateKey == "" && body.SelfAuthorizationHold == nil && body.githubAPISettings.empty() {
-		jsonError(w, "at least one field required: app_id, installation_id, key_file, private_key, self_authorization_hold, agent_reserve_floor, api_reserve, api_critical, pr_detail_ttl_s, graphql_pr_batch, graphql_pr_batch_page_size, app_authored_prs, app_signed_commits", http.StatusBadRequest)
+		jsonError(w, "at least one field required: app_id, installation_id, key_file, private_key, self_authorization_hold, agent_reserve_floor, api_reserve, api_critical, etag_cache_max_mb, etag_cache_max_entries, pr_detail_ttl_s, graphql_pr_batch, graphql_pr_batch_page_size, app_authored_prs, app_signed_commits", http.StatusBadRequest)
 		return
 	}
 
@@ -330,6 +351,12 @@ func (s *Server) applyGitHubConfigUpdate(r *http.Request, body githubConfigUpdat
 		}
 		body.githubAPISettings.apply(g)
 	})
+	// The ETag cache is process-wide and reads no config of its own, so a
+	// resize is pushed to it here; shrinking evicts immediately, growing
+	// stops evictions on the next store — no restart either way.
+	if body.ETagCacheMaxMB != nil || body.ETagCacheMaxEntries != nil {
+		github.SetETagCacheLimits(cfg.GitHub.EffectiveETagCacheMaxBytes(), cfg.GitHub.EffectiveETagCacheMaxEntries())
+	}
 
 	result, err := s.finishGitHubConfigUpdateLocked(requestAuditUser(r), "")
 	if err != nil {

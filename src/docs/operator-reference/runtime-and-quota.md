@@ -181,6 +181,16 @@ loops, so the proxy enforces two safeguards:
   mode follow that window, not the process's first `GET /rate_limit`
   reading after a restart.
 
+- `github.etag_cache_max_mb` (default `128`, env `HIVE_GITHUB_ETAG_CACHE_MAX_MB`)
+  and `github.etag_cache_max_entries` (default `8192`) bound the shared
+  conditional-request cache that turns repeat `GET`s into free `304`s. When it
+  is full, every new store evicts a body some poller is about to revalidate,
+  and that poll is charged again. The **ETag cache** row under Debug → GitHub
+  API budget (and `etag_cache.bytes` / `max_bytes` in `/api/gh-rate-limits`)
+  shows the fill level; raising the cap from Settings → Forge App applies at
+  once. Bodies are stored gzip-compressed, so the cap is several times its
+  size in raw JSON.
+
 The proxy returns JSON shaped for the GitHub CLI:
 
 ```json
@@ -783,6 +793,7 @@ curl -s 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=1' | head  # parked g
 |---|---|
 | `HIVE_GITHUB_TOKEN` | Main PAT fallback when `github.token` is empty; also used for token identity/fleet stats fallback. Wrong-scope tokens fail with generic 403s at request time — see [github-app-setup.md](../github-app-setup.md#personal-access-token-pat-scopes) for the required scopes per ACMM tier. |
 | `GH_APP_KEY_FILE` | GitHub App private-key path fallback when `github.key_file` is empty. |
+| `HIVE_GITHUB_ETAG_CACHE_MAX_MB` / `HIVE_GITHUB_ETAG_CACHE_MAX_ENTRIES` | Size the shared GitHub ETag response cache (defaults `128` MiB compressed / `8192` entries); win over `github.etag_cache_max_mb` / `github.etag_cache_max_entries`. See [GitHub API quota](#github-api-quota). |
 | `HIVE_DASHBOARD_TOKEN` | Shared dashboard/API token fallback for `dashboard.auth_token`. Any non-empty string is accepted with no strength check — generate one with `openssl rand -hex 32`; see [env-vars.md](../env-vars.md#generating-and-rotating-hive_dashboard_token). |
 
 ### Hosted-spoke and fleet metadata

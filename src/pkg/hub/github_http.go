@@ -234,6 +234,6 @@ func hubGitHubRateLimits(ctx context.Context) (*hgithub.RateLimitInfo, error) {
 		Search:       toEntry(body.Resources.Search),
 		GraphQL:      toEntry(body.Resources.GraphQL),
 		TopConsumers: hgithub.RESTTopConsumers(10),
-		ETagCache:    hgithub.ETagCacheSnapshot(),
+		ETagCache:    hgithub.ETagCacheInfoSnapshot(),
 	}, nil
 }
