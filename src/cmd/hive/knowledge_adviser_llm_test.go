@@ -504,7 +504,8 @@ func TestKnowledgeAdviserLLM_NoCandidatesNoCall(t *testing.T) {
 func TestKnowledgeAdviserLLM_Prompt(t *testing.T) {
 	f := newLLMFixture(t, config.AdvisorLLMConfig{Mode: config.AdvisorLLMModeRank})
 	scope := llmTestScope
-	scope.PaneTail = logscrub.RedactPaneTokens("$ gh pr view 7\nexport TOKEN=ghp_" + strings.Repeat("a", 36) + "\n⏺ Edit(src/pkg/tree/pin.go)")
+	secret := "ghp_" + strings.Repeat("a", 36)
+	scope.PaneTail = logscrub.RedactPaneTokens("$ gh pr view 7\nexport TOKEN=" + secret + "\n⏺ Edit(src/pkg/tree/pin.go)")
 	f.d.Advise("developer", scope)
 	req := f.request()
 	if req.Temperature != 0 || req.MaxTokens != knowledgeAdviserLLMMaxTokens || req.User != "hive-knowledge-advisor:developer" || req.Model != "small-ranker" {
@@ -517,8 +518,10 @@ func TestKnowledgeAdviserLLM_Prompt(t *testing.T) {
 	if !strings.Contains(prompt, "\n"+scope.PaneTail+"\n") {
 		t.Errorf("prompt does not carry the scrubbed pane tail verbatim:\n%s", prompt)
 	}
-	if strings.Contains(prompt, "ghp_") {
-		t.Error("prompt carries an unredacted token")
+	// RedactPaneTokens keeps a 7-char prefix ("ghp_aaa***"), so assert on the
+	// secret itself rather than the "ghp_" marker.
+	if strings.Contains(prompt, secret) || !strings.Contains(prompt, "ghp_aaa***") {
+		t.Errorf("prompt carries an unredacted token:\n%s", prompt)
 	}
 	if strings.Contains(prompt, llmTestBodyMarker) || strings.Contains(prompt, "primed body") {
 		t.Errorf("prompt carries an entry body:\n%s", prompt)
