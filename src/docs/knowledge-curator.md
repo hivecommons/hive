@@ -703,9 +703,11 @@ knowledge:
 
 ### Model-ranked advisor (`knowledge.advisor_llm`)
 
-`knowledge.advisor_llm` is the config surface for the model-ranked variant
-(hivecommons/hive#17054). This release only parses, validates and resolves
-it; nothing calls a model yet. It is ignored unless `knowledge.advisor` is on.
+`knowledge.advisor_llm` configures the model-ranked variant
+(hivecommons/hive#17054): a small model picks one of the matcher's candidates
+or nothing (hivecommons/hive#17155). It is ignored unless `knowledge.advisor`
+is on. The pipeline, modes, budgets, decision log line and rollout steps are
+in [agent-knowledge-and-memory.md](agent-knowledge-and-memory.md#model-ranked-advisor-knowledgeadvisor_llm).
 
 ```yaml
 knowledge:
@@ -735,8 +737,8 @@ knowledge:
 - `holdout_percent` outside 0..100, an unknown `mode` or `on_error`, and a
   negative `candidates`, `pane_lines` or `timeout_s` are load errors.
 
-Phase 1 is a pure matcher with no model in the loop; the LLM-ranked variant
-(OMP's advisor agent as the model) is hivecommons/hive#17054. The advisor is
+Without `knowledge.advisor_llm` (or with `mode: off`) the advisor is the
+pure phase-1 matcher with no model in the loop. The advisor is
 wired only when the agent runtime runs in-process; the `crux serve` sidecar
 has no adviser in this phase.
 
