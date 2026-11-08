@@ -369,3 +369,32 @@ func TestMaintainHeldPRMergeabilityDefersScheduledBaseRefreshWithoutWarn(t *test
 		t.Fatalf("missing debug deferral log:\n%s", out)
 	}
 }
+
+// The deferral is scoped to `behind`: a held PR that GitHub reports `dirty` on
+// a scheduled-base-refresh repo is a real conflict, and the preparation front
+// does not tell the human about held PRs, so the conflict notice must still
+// be posted.
+func TestMaintainHeldPRMergeabilityStillNotesConflictWhenBaseRefreshIsScheduled(t *testing.T) {
+	store := newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("c1", "strategist-bot", "docs: plan")},
+	}}
+	client := newHoldGuardClient(t, fake)
+	client.SetScheduledBaseRefresh(func(string) bool { return true })
+	cfg := escalationTestConfig()
+	store.Snapshot("acme/widgets", 7, "c1", nil)
+
+	held := heldPRsActionable(github.PullRequest{Repo: "widgets", Number: 7, HeadSHA: "c1", BaseSHA: "b1", MergeableState: "dirty"})
+	_ = enforceHoldGuard(context.Background(), cfg, client, client, held, discardLogger())
+
+	if len(fake.comments) != 1 {
+		t.Fatalf("want one conflict notice on a dirty held PR, got %v", fake.comments)
+	}
+	if !strings.Contains(fake.comments[0], "conflict") {
+		t.Fatalf("conflict comment = %q, want it to name the conflict", fake.comments[0])
+	}
+	rec, ok := store.Recorded("acme/widgets", 7)
+	if !ok || !rec.ConflictNoted {
+		t.Fatalf("snapshot = %+v ok=%v, want ConflictNoted set", rec, ok)
+	}
+}
