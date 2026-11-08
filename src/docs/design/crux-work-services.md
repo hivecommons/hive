@@ -1,7 +1,7 @@
 # Crux work services: S1 pinned checkout (hivecommons/crux#114)
 
 Status: **S0 caller principals and S1 pinned checkout shipped in hive
-`src/crux` (v5).** S2 contained run and the S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate); S4 command log is [below](#s4-command-log); S5 turn signals are [below](#s5-turn-signals); S6 agent step is [below](#s6-agent-step); S7 saved run results is complete and [below](#s7-saved-run-results). This records
+`src/crux` (v5).** S2 contained run and the S7 minimum shipped in #17014; S3 human gate is [below](#s3-human-gate); S4 command log is [below](#s4-command-log); S5 turn signals are [below](#s5-turn-signals); S6 agent step is [below](#s6-agent-step); S7 saved run results is complete and [below](#s7-saved-run-results). How an orchestrator composes the slices end to end is the [integration guide](../crux-integration-guide.md). This records
 S1 *as implemented*, including where it is weaker than the RFC text.
 
 The RFC asks for "a working copy of this repo at this commit, owned by
