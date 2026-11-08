@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.193.0)
+
+### Added
+
+- Dashboard: on phones the Activity monitor Merged and merge-queue lists now open as full-width modal sheets with tap-sized rows, closable with ✕, Esc or backdrop, instead of clipped popovers; desktop popovers are unchanged (#17165).
+
+### Fixed
+
+- mobile-shots: phone-ergonomics hit-rect only grows and uses layout size (#17199)
+
 ## 2026-11-08 (v5.192.0)
 
 ### Added

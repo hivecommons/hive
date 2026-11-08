@@ -16,7 +16,20 @@ type KnowledgeScope struct {
 	Path string
 	// Keywords are the search terms the scope contributes to the matcher.
 	Keywords []string
+	// Action is what the pane line that produced this observation shows the
+	// agent doing in the scope: "read", "edit" or "run" (hivecommons/hive#17153).
+	Action string
+	// PaneTail is the last PaneLines lines of the agent's scrollback, with
+	// tokens redacted, filled only when the policy sets WantsPaneTail.
+	PaneTail string
 }
+
+// Knowledge scope actions.
+const (
+	KnowledgeActionRead = "read"
+	KnowledgeActionEdit = "edit"
+	KnowledgeActionRun  = "run"
+)
 
 // KnowledgeAdvice is one knowledge entry the adviser matched to a scope.
 // The runtime renders it as a single line typed into the live session.
@@ -46,6 +59,11 @@ type KnowledgeAdvisorPolicy struct {
 	// Cooldown is the minimum gap between two deliveries to one agent;
 	// non-positive means the default.
 	Cooldown time.Duration
+	// WantsPaneTail asks the runtime to fill KnowledgeScope.PaneTail. False
+	// means no pane text crosses the seam.
+	WantsPaneTail bool
+	// PaneLines caps PaneTail; non-positive means the default (80).
+	PaneLines int
 }
 
 // KnowledgeAdviser is the hive side of the mid-task knowledge advisor.
@@ -54,6 +72,8 @@ type KnowledgeAdviser interface {
 	Policy(agent string) KnowledgeAdvisorPolicy
 	// Advise returns the entries worth surfacing to agent for a scope it has
 	// just entered, excluding anything its kick already carried. Order is
-	// best first. It runs on the agent's poll goroutine and must be bounded.
+	// best first. The runtime calls it on its own goroutine, at most one call
+	// in flight per agent, so a slow adviser never stalls the poll tick; the
+	// result is dropped if the agent's kick has changed by the time it returns.
 	Advise(agent string, scope KnowledgeScope) []KnowledgeAdvice
 }

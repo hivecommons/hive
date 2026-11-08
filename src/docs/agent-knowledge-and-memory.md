@@ -106,6 +106,15 @@ knowledge toggle registers/unregisters the primer live
 (`knowledgePrimerControl`). `knowledge.enabled: false` or an empty keyword set
 means the kick simply has no knowledge section.
 
+**Mid-task advisor.** After the kick, the opt-in advisor (`knowledge.advisor`)
+types one `📚 Knowledge:` line when the pane shows the agent entering a new
+scope. Each scope is tagged `read`, `edit` or `run` from its pane line and
+asked about at most twice per kick: on first sight, and on its first edit or
+next `gh` command. The adviser runs off the poll goroutine with one call in
+flight per agent. A result is held until a tick passes the delivery gates and
+dropped if the kick changed meanwhile. See
+[knowledge-curator.md](knowledge-curator.md#mid-task-knowledge-advisor-knowledgeadvisor).
+
 ## 2. Knowledge: pull access
 
 Agents (and external tools) can fetch what the primer did not push:

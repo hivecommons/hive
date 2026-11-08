@@ -1,1 +1,0 @@
-- Dashboard: on phones the Activity monitor Merged and merge-queue lists now open as full-width modal sheets with tap-sized rows, closable with ✕, Esc or backdrop, instead of clipped popovers; desktop popovers are unchanged (#17165).
