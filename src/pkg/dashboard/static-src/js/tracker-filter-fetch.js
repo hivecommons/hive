@@ -23,6 +23,7 @@
         if (text === _stageTrackerSig) { stageTrackerTickClock(); return; }
         _stageTrackerSig = text;
         renderStageTracker(JSON.parse(text));
+        if (!_hamNotesLoaded && typeof hamNotesLoad === 'function') hamNotesLoad();
         dashboardSetInterval('stage-tracker-clock', stageTrackerTickClock, STAGE_TRACKER_CLOCK_MS);
       } catch (e) {
         // Network failure or an aborted body: keep the previous render but

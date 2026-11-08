@@ -545,6 +545,26 @@
     .ham-superseded-note { color: var(--muted); font-size: var(--fs-xs); flex: 0 0 auto; white-space: nowrap; }
     .ham-review-notes { color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-1); }
     .ham-review-notes a { color: inherit; }
+    /* ---- Maintainer notes (CSS) — see the JS block of the same name.
+       Tokens only (ADR-0018); the phone tier below lifts the button and
+       the composer to --tap-target. */
+    .ham-notes-btn { display: inline-flex; align-items: center; gap: var(--sp-1); padding: 0 var(--sp-2); border: var(--line-width) solid var(--line-strong); border-radius: var(--r-pill); background: var(--panel); color: var(--muted); font: inherit; font-size: var(--fs-xs); line-height: 1.5; cursor: pointer; }
+    .ham-notes-btn:hover, .ham-notes-btn:focus-visible, .ham-notes-btn[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+    .ham-notes-btn.ham-notes-has { color: var(--text); }
+    .ham-notes-count { font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums; }
+    .ham-notes { margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid var(--line); border-radius: var(--r-sm); background: var(--panel); font-size: var(--fs-xs); color: var(--text); }
+    .ham-notes-head, .ham-notes-empty { margin: 0 0 var(--sp-2); color: var(--muted); }
+    .ham-notes-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+    .ham-note-meta { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .ham-note-avatar { width: var(--sp-4); height: var(--sp-4); border-radius: var(--r-pill); flex: 0 0 auto; }
+    .ham-note-author { font-weight: var(--fw-semibold); }
+    .ham-note-when { color: var(--muted); }
+    .ham-note-del { margin-left: auto; padding: 0 var(--sp-2); border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
+    .ham-note-del:hover, .ham-note-del:focus-visible { color: var(--red); background: var(--panel-strong); }
+    .ham-note-text { margin-top: var(--sp-1); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .ham-notes-add { display: flex; align-items: flex-start; gap: var(--sp-2); margin-top: var(--sp-2); }
+    .ham-notes-input { flex: 1 1 auto; min-width: 0; resize: vertical; padding: var(--sp-1) var(--sp-2); border: var(--line-width) solid var(--line-strong); border-radius: var(--r-sm); background: var(--bg); color: var(--text); font: inherit; font-size: var(--fs-xs); }
+    .ham-notes-submit { flex: 0 0 auto; white-space: nowrap; }
     .ham-adopted-from { color: var(--muted); text-decoration: none; }
     /* The Let hive decide preview. One decision, readable in three seconds
        (operator feedback on the dialog, issue 15397): subject line,
@@ -1164,9 +1184,16 @@
       #activity-monitor-section .ham-toolbar .ham-chip, #activity-monitor-section .ham-labels .ham-chip, #activity-monitor-section .ham-selbar .ham-chip, #activity-monitor-section .ham-compact .ham-chip,
       #activity-monitor-section .ham-select, #activity-monitor-section .ham-input,
       #activity-monitor-section .ham-merged-count, #activity-monitor-section .ham-queue-chip,
-      #activity-monitor-section .ham-repo-chip, #activity-monitor-section .cue-event-ico, #activity-monitor-section .ham-lead-act, #activity-monitor-section .ham-badge-mod[data-action] {
+      #activity-monitor-section .ham-repo-chip, #activity-monitor-section .cue-event-ico, #activity-monitor-section .ham-lead-act, #activity-monitor-section .ham-badge-mod[data-action],
+      #activity-monitor-section .ham-notes-btn, #activity-monitor-section .ham-note-del, #activity-monitor-section .ham-notes-submit, #activity-monitor-section .ham-notes-input {
         box-sizing: border-box; min-height: var(--tap-target); min-width: var(--tap-target);
       }
+      #activity-monitor-section .ham-notes-btn { font-size: var(--tap-glyph); padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
+      /* A card keeps its two-line head and its density (#17161): the 🗒
+         shows on a phone only once the item has notes; the row's ⋯ menu
+         carries "Maintainer notes…" for the rest. */
+      #activity-monitor-section .ham-notes-btn:not(.ham-notes-has) { display: none; }
+      #activity-monitor-section .ham-notes-add { flex-wrap: wrap; }
       #activity-monitor-section .ham-toolbar .ham-chip, #activity-monitor-section .ham-labels .ham-chip, #activity-monitor-section .ham-selbar .ham-chip, #activity-monitor-section .ham-repo-chip, #activity-monitor-section .ham-lead-act { padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
       #activity-monitor-section .ham-select, #activity-monitor-section .ham-input { height: var(--tap-target); padding-top: 0; padding-bottom: 0; }
       #activity-monitor-section .ham-repo-filter { min-height: var(--tap-target); align-items: center; }

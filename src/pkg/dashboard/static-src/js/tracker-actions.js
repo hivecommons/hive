@@ -448,6 +448,7 @@
         return [
           { id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' },
           { id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' },
+          ...(ctx.user && typeof stageTrackerNotesMenuItem === 'function' ? [stageTrackerNotesMenuItem(item)] : []),
         ];
       }
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
@@ -501,6 +502,7 @@
       if (item.kind === 'issue' && String(item.state || '').toLowerCase() !== 'closed') out.push(Object.assign({ id: 'decide:close-issue', label: 'Close issue…', danger: true, hint: 'only this issue · completed' }, stageTrackerActionAllowed('decide:close-issue', ctx)));
       out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
+      if (ctx.user && typeof stageTrackerNotesMenuItem === 'function') out.push(stageTrackerNotesMenuItem(item));
       return out;
     }
     // Pure: the one action a row leads with, rendered inline on the row
@@ -2647,6 +2649,12 @@
       }
       if (id === 'blocker:wait' || id === 'blocker:patch') {
         showToast(id === 'blocker:wait' ? 'Left as is — the row stays blocked until the permission is granted or a person acts.' : 'Not available: the hive has no identity that may push workflow files.', 'info');
+        return { toasts: [], pending: [] };
+      }
+      if (id === 'notes') {
+        // The phone tier's way in (the row's 🗒 only shows there once the
+        // item has notes): open the first selected row's expander.
+        if (items[0]) hamNotesOpenFor(items[0]);
         return { toasts: [], pending: [] };
       }
       if (id === 'copy') {

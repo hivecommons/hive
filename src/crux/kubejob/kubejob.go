@@ -83,8 +83,12 @@ const (
 	jobLabelKey   = "job-name"
 	// managedByLabel marks Jobs this launcher created so an operator (or a
 	// future sweeper) can list them without guessing at name prefixes.
-	managedByLabel   = "app.kubernetes.io/managed-by"
-	managedByValue   = "hive-kubejob"
+	managedByLabel = "app.kubernetes.io/managed-by"
+	managedByValue = "hive-kubejob"
+	// jobLabel marks a Job's pods with the Job name so a per-Job
+	// NetworkPolicy can select them without relying on the controller's
+	// own job-name label, whose key changed across Kubernetes releases.
+	jobLabel         = "hive.kubestellar.io/job"
 	agentLabel       = "hive.kubestellar.io/agent"
 	namePrefix       = "hive-kick-"
 	restartNever     = "Never"
@@ -124,8 +128,20 @@ type Options struct {
 	ExtraVolumes []VolumeMount
 	// TTLSeconds is the Job's ttlSecondsAfterFinished (default one hour).
 	TTLSeconds int
+	// Network is NetworkDefault, NetworkNone or NetworkHost; empty is
+	// NetworkDefault so the agent sandbox, which needs the network, is
+	// unchanged. The contained-run backend sets NetworkNone by default.
+	Network string
 	// PollInterval overrides how often the Job status is read (tests).
 	PollInterval time.Duration
+}
+
+// network is Options.Network with the empty default applied.
+func (o Options) network() string {
+	if o.Network == "" {
+		return NetworkDefault
+	}
+	return o.Network
 }
 
 // Toleration mirrors the subset of corev1.Toleration an operator writes in YAML.
@@ -150,6 +166,21 @@ type VolumeMount struct {
 	MountPath string `json:"mount_path"`
 	ReadOnly  bool   `json:"read_only,omitempty"`
 }
+
+// Network modes, Options.Network.
+const (
+	// NetworkDefault leaves the pod on the cluster network with whatever
+	// policies the namespace already has. The empty string means this.
+	NetworkDefault = "default"
+	// NetworkNone creates a deny-all NetworkPolicy selecting the Job's pods
+	// before the Job and removes it with the Job; the run is refused when
+	// the policy cannot be created. Enforcement is the CNI's: a cluster
+	// whose network plugin ignores NetworkPolicy isolates nothing, and the
+	// launcher cannot tell.
+	NetworkNone = "none"
+	// NetworkHost runs the pod with hostNetwork.
+	NetworkHost = "host"
+)
 
 // Launcher implements sandbox.Launcher by running the kick as a Job.
 type Launcher struct {
@@ -181,6 +212,11 @@ func (o Options) Validate() error {
 		if strings.TrimSpace(v.Claim) == "" || strings.TrimSpace(v.MountPath) == "" {
 			return fmt.Errorf("kubejob: volumes[%d] needs both claim and mount_path", i)
 		}
+	}
+	switch o.network() {
+	case NetworkDefault, NetworkNone, NetworkHost:
+	default:
+		return fmt.Errorf("kubejob: network must be %q, %q or %q, got %q", NetworkNone, NetworkHost, NetworkDefault, o.Network)
 	}
 	return nil
 }
@@ -217,7 +253,24 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 		return res, err
 	}
 	jobsPath := fmt.Sprintf("/apis/batch/v1/namespaces/%s/jobs", ns)
+	policyPath := ""
+	if l.Options.network() == NetworkNone {
+		// The policy exists before any pod can: a Job created first could
+		// start its pod in the window before the policy lands.
+		policiesPath := fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies", ns)
+		policy, err := json.Marshal(denyAllPolicy(ns, name))
+		if err != nil {
+			return res, err
+		}
+		if _, err := l.do(ctx, http.MethodPost, policiesPath, policy); err != nil {
+			return res, fmt.Errorf("kubejob: network %q: creating the deny-all NetworkPolicy for %s: %w", NetworkNone, name, err)
+		}
+		policyPath = policiesPath + "/" + name
+	}
 	if _, err := l.do(ctx, http.MethodPost, jobsPath, body); err != nil {
+		if policyPath != "" {
+			_ = l.delete(ctx, policyPath)
+		}
 		return res, fmt.Errorf("kubejob: creating job %s: %w", name, err)
 	}
 	jobPath := jobsPath + "/" + name
@@ -255,9 +308,13 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 		// Context ended (kick timeout or cancel). The Job would otherwise
 		// keep running the workload on the accelerator node; stop it.
 		_ = l.delete(live(), jobPath)
+		l.deletePolicy(live(), policyPath)
 		return res, waitErr
 	}
 	if !done.succeeded {
+		// The Job stays for inspection; its pods are finished, so the
+		// policy has nothing left to isolate and goes.
+		l.deletePolicy(live(), policyPath)
 		res.Stderr = done.reason
 		return res, fmt.Errorf("kubejob: job %s failed: %s", name, done.reason)
 	}
@@ -269,7 +326,33 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 	// Collection may have expired the context even on success; the fresh
 	// context ensures the finished Job is still removed immediately.
 	_ = l.delete(live(), jobPath)
+	l.deletePolicy(live(), policyPath)
 	return res, nil
+}
+
+// deletePolicy removes the per-Job NetworkPolicy when one was created.
+func (l *Launcher) deletePolicy(ctx context.Context, policyPath string) {
+	if policyPath != "" {
+		_ = l.delete(ctx, policyPath)
+	}
+}
+
+// denyAllPolicy is a networking.k8s.io/v1 NetworkPolicy named after the
+// Job that selects its pods and allows no ingress and no egress.
+func denyAllPolicy(ns, job string) map[string]any {
+	return map[string]any{
+		"apiVersion": "networking.k8s.io/v1",
+		"kind":       "NetworkPolicy",
+		"metadata": map[string]any{
+			"name":      job,
+			"namespace": ns,
+			"labels":    map[string]string{managedByLabel: managedByValue, jobLabel: job},
+		},
+		"spec": map[string]any{
+			"podSelector": map[string]any{"matchLabels": map[string]string{jobLabel: job}},
+			"policyTypes": []string{"Ingress", "Egress"},
+		},
+	}
 }
 
 type jobOutcome struct {
@@ -502,7 +585,11 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 	if l.Options.SchedulerName != "" {
 		podSpec["schedulerName"] = l.Options.SchedulerName
 	}
-	labels := map[string]string{managedByLabel: managedByValue}
+	if l.Options.network() == NetworkHost {
+		podSpec["hostNetwork"] = true
+		podSpec["dnsPolicy"] = "ClusterFirstWithHostNet"
+	}
+	labels := map[string]string{managedByLabel: managedByValue, jobLabel: name}
 	if spec.Name != "" {
 		labels[agentLabel] = sanitizeLabel(spec.Name)
 	}

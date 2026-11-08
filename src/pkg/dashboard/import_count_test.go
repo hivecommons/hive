@@ -63,8 +63,17 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// surface the dashboard holds instead of *agent.Manager; pkg/agent stays
 	// for the audit, trailer, provider-status and agent-mode helpers the
 	// Runtime does not cover, and leaves when those move behind the boundary
-	// (hivecommons/hive#13536).
-	const maxDashboardInternalImports = 66
+	// (hivecommons/hive#13536), plus pkg/hubactivity, the leaf wire contract
+	// (ceilings, urgency order, sanitiser) the spoke's heartbeat activity
+	// digest is built against from the dashboard's own stage tracker
+	// (hivecommons/hive#15963), plus pkg/webassets, the browser-asset
+	// packages (tracker view, kiosk call-to-action badge) shared verbatim by
+	// the spoke dashboard and the hub's public Fleet page so the two kiosk
+	// surfaces render one markup (hivecommons/hive#16236), plus
+	// pkg/maintainernotes, the append-only store behind the Activity
+	// Monitor's private per-item maintainer notes and the /api/notes routes,
+	// shared with the scheduler's kick injection (hivecommons/hive#17244).
+	const maxDashboardInternalImports = 67
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

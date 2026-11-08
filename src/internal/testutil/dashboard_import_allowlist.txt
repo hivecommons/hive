@@ -69,6 +69,7 @@ github.com/hivecommons/hive/pkg/hubbackup
 github.com/hivecommons/hive/pkg/inferencehealth
 github.com/hivecommons/hive/pkg/ioscan
 github.com/hivecommons/hive/pkg/knowledge
+github.com/hivecommons/hive/pkg/maintainernotes
 github.com/hivecommons/hive/pkg/mention
 github.com/hivecommons/hive/pkg/mergelane
 github.com/hivecommons/hive/pkg/modelfamily
