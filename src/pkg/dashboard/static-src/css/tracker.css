@@ -52,6 +52,23 @@
     .ham-sound-file input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .ham-sound-help { font-size: var(--fs-xs); margin: var(--sp-0); }
     .ham-sound-volume-value { color: var(--text); font-variant-numeric: tabular-nums; }
+    /* Phone compact filter bar + Filters sheet (#17159). .ham-compact lives
+       on the sticky bar and is shown only in responsive.css's phone tier;
+       the sheet receives the toolbar and label chips as-is (same ids and
+       hamFilter actions), one control per line at tap height. Desktop
+       never shows either. */
+    .ham-compact { display: none; }
+    .ham-filter-sheet-body { white-space: normal; }
+    .ham-filter-sheet .ham-toolbar { flex-direction: column; align-items: stretch; gap: var(--sp-3); margin: 0; }
+    .ham-filter-sheet .ham-toolbar .ham-chips { display: flex; }
+    .ham-filter-sheet .ham-toolbar .ham-chips .ham-chip { flex: 1 1 0; }
+    .ham-filter-sheet .ham-chip { min-height: var(--tap-target); font-size: var(--fs-sm); }
+    .ham-filter-sheet .ham-repo-filter { display: flex; justify-content: space-between; gap: var(--sp-3); min-height: var(--tap-target); white-space: nowrap; }
+    .ham-filter-sheet .ham-select { flex: 1 1 auto; max-width: none; min-height: var(--tap-target); font-size: var(--fs-touch); }
+    .ham-filter-sheet .ham-input { flex: none; width: 100%; box-sizing: border-box; min-height: var(--tap-target); font-size: var(--fs-touch); }
+    .ham-filter-sheet .ham-dir { min-width: var(--tap-target); }
+    .ham-filter-sheet .ham-sound { margin-left: 0; }
+    .ham-filter-sheet .ham-labels { margin: var(--sp-3) 0 0; gap: var(--sp-2); }
     .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
     .ham-labels:empty { display: none; }
     .ham-label-chip { font-family: var(--font-mono); }

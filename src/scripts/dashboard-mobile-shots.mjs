@@ -267,7 +267,7 @@ async function main() {
   const activityFailures = [];
   const fixtureRoot = path.join(process.cwd(), 'src/pkg/dashboard/webstatic/testdata');
   const density = JSON.parse(fs.readFileSync(path.join(fixtureRoot, 'tracker-activity-density.json'), 'utf8'));
-  const probes = ['tracker-header-geometry', 'tracker-decision-interaction'].map(name => ({
+  const probes = ['tracker-header-geometry', 'tracker-decision-interaction', 'tracker-phone-chrome'].map(name => ({
     name, source: fs.readFileSync(path.join(fixtureRoot, name + '.js'), 'utf8'),
   }));
   const event = process.env.GITHUB_EVENT_PATH ? JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};

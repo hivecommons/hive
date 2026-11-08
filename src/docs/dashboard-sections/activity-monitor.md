@@ -123,6 +123,8 @@ Filters run on the cached browser payload and persist across reloads, except the
 
 **+N more** opens *All labels*, with every label and count, type-to-filter, toggles and **Clear**. Selected labels are promoted into the visible row. **Clear filters** appears whenever the view is narrowed.
 
+**On a phone** (the `.modal-sheet` tier: ≤640px wide, or a coarse pointer up to 820px) the toolbar and label chips are not drawn above the list. The sticky bar carries a compact filter row instead — *All / PRs / Issues*, *⚠ Needs attention*, *👤 Waiting on you* (with its count) and **⋯ Filters** — beside the Merged pill, so the first row starts within about 100px of the section header. **⋯ Filters** opens a full-screen sheet holding the complete toolbar (Repo, search, Since, Author, Decisions, Sort, Group, Per page, sound) and the label chips; its badge counts the filters set in the sheet. Filters apply as you change them and stay applied when the sheet closes (**Done**, ✕, Esc or the backdrop). Desktop layout is unchanged.
+
 Default sort is furthest along first; covered issues rank by their furthest-along PR. Within each column, attention rows precede plain rows, then held/draft rows and PRs standing for closed issues. Within a tier, longest waiting comes first, then repository and number. The same ordering applies to nested PRs and the server payload, so chat `/prs` and the hub agree. `deferred_modifiers` never promote a row.
 
 **Sort** also offers longest waiting (tier, then wait), newest and number (no tiers). The arrow reverses column/age/repo/number keys, never attention tiers: “Attention-first within each column; arrow flips age order.” Pages offer **25 / 50 / 100** rows (default 50) and **Prev / Next**, with counts above and below.
