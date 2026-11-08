@@ -463,6 +463,8 @@ jobs:
       # so tags do not become ledger entries with unusable bodies.
       - name: Release notes extraction fallback (#5934)
         run: bash scripts/test-extract-release-notes.sh
+      - name: Release notes size cap under GitHub's body limit
+        run: bash scripts/test-release-notes-cap.sh
 
       # #4206: the standalone stack's image references live in exactly one
       # place, src/deploy/standalone-images.sh, so the Docker Compose assets
