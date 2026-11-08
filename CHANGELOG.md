@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.203.0)
+
+### Added
+
+- crux: checkout requests are bounded by a server ceiling (`--checkout-max-bytes`, `CRUX_CHECKOUT_MAX_BYTES`), private repositories clone with `CRUX_CHECKOUT_TOKEN` through a credential helper that never logs the token, and the `job` run backend isolates each Job with a deny-all NetworkPolicy by default (`job_network: none|host|default`)
+- **Maintainer notes on the Activity Monitor.** With more than one maintainer running a hive, there was nowhere on the dashboard to leave a colleague a word about an item short of a GitHub comment everyone else could read. Each row now carries a 🗒 button with a count badge: click it for the item's maintainer notes — who wrote what, when — and a one-line composer (⌘/Ctrl+Enter). Notes are stored on the spoke in the append-only `/data/maintainer-notes.jsonl` and are never written to GitHub; every signed-in maintainer sees them, adding one takes write on the repo, deleting is author-or-owner, and the `maintainer-notes` SSE frame keeps the other browsers live. The scheduler types an item's notes into the agent's kick under `# Maintainer notes` (1 KB cap), so what a maintainer wrote on the row reaches whoever picks it up. `GET`/`POST /api/notes`, `DELETE /api/notes/{id}`; audited as `maintainer_note_add` / `maintainer_note_delete`.
+
 ## 2026-11-08 (v5.202.0)
 
 ### Added
