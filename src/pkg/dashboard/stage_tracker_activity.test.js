@@ -657,8 +657,34 @@ test('known and original chevrons keep full long text inside a shared one-line c
   assert.match(css, /^\s*\.ham-pill \{ display: none; \}/m);
   assert.match(css, /@media \(max-width: 640px\), \(\(pointer: coarse\) and \(max-width: 820px\)\) \{\s*\.ham-cols \{ display: none; \}\s*\.ham-row > \.ham-strip-row > \.ham-strip, \.ham-sub > \.ham-strip-row > \.ham-strip,/);
   assert.match(css, /\.ham-pill \{ display: inline-flex;[^}]*min-height: var\(--control-compact-min-h\);[^}]*font-size: var\(--fs-sm\);/);
-  assert.match(css, /\.ham-pill::before \{ content: ""; position: absolute; inset: calc\(\(var\(--control-compact-min-h\) - var\(--tap-target\)\) \/ 2\) 0; \}/);
+  assert.match(css, /\.ham-pill::before \{ content: ""; position: absolute; inset: calc\(\(var\(--control-compact-min-h\) - var\(--tap-target\)\) \/ 2 - var\(--sp-1\)\) 0; \}/);
   assert.match(css, /\.ham-pill\[data-motion="needs-human"\] \{ background: color-mix\(in srgb, var\(--amber\) 45%, var\(--red\)\);/);
+});
+
+test('phone card per row: clamped head boxes, badge line, one-line caption, full title in the sheet (#17161)', () => {
+  const css = fs.readFileSync(path.join(__dirname, 'static-src/css/tracker.css'), 'utf8');
+  const start = css.indexOf('Phone card per row (hivecommons/hive#17161)');
+  const open = css.indexOf('@media', start);
+  const card = css.slice(open, css.indexOf('\n    }\n', open) + 7);
+  // Scoped to the phone tier only; the desktop lane grid is untouched.
+  assert.match(card, /^\s*@media \(max-width: 640px\), \(\(pointer: coarse\) and \(max-width: 820px\)\) \{/m);
+  // The head drops the tap target's min-height (#17163) and wraps the issue slot, PR reference and badges as flex items.
+  assert.match(card, /#activity-monitor-section \.ham-row > \.ham-row-head\.ham-row-head, #activity-monitor-section \.ham-sub > \.ham-row-head\.ham-row-head \{ display: flex; flex-wrap: wrap;[^}]*min-height: 0;/);
+  assert.match(card, /\.ham-head-cols, \.ham-head-cols > \.ham-strip, \.ham-head-cols \.ham-seg\.ham-head-lead, \.ham-head-cols \.ham-seg\.ham-head-pr, \.ham-head-cols \.ham-pr-line \{ display: contents; \}/);
+  assert.match(card, /\.ham-row-head \.ham-head-main, #activity-monitor-section \.ham-row-head \.ham-pr-ref \{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;/);
+  assert.match(card, /\.ham-row-head:has\(\.ham-head-main > \.ham-title:not\(\.ham-no-issue-t\)\) \.ham-pr-ref \{ -webkit-line-clamp: 1; flex-basis: 100%; \}/);
+  assert.match(card, /\.ham-row-head:has\(\.ham-badges:not\(:empty\)\) :is\(\.ham-head-main, \.ham-pr-ref\) \{ -webkit-line-clamp: 1; \}/);
+  assert.match(card, /\.ham-row-head \.ham-no-issue-t, \.ham-row-head \.ham-linked-ico \{ display: none; \}/);
+  assert.match(card, /\.ham-row > \.ham-current-stage, \.ham-sub > \.ham-current-stage \{ margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; \}/);
+  // Inline chips keep the line height; their hit areas pad out to --tap-target. The pill stops short of the tools column.
+  assert.match(card, /\.ham-row-head \.ham-repo-chip::after, \.ham-row-head \.ham-lead-act::before \{ content: ""; position: absolute; inset: calc\(-1 \* var\(--sp-6\)\) 0; \}/);
+  assert.match(card, /\.ham-row > \.ham-strip-row > \.ham-pill, \.ham-sub > \.ham-strip-row > \.ham-pill \{ max-width: calc\(100% - 2 \* var\(--tap-target\) - var\(--sp-2\) - var\(--sp-3\)\); \}/);
+  assert.doesNotMatch(card.slice(card.indexOf('{')), /#[0-9a-fA-F]{3,8}\b|\d+px/, 'card tier uses tokens only');
+  // The sheet exposes what the card clamps: the full title and the needs-human note.
+  const sheet = fn(strip, 'stageTrackerPillSheet');
+  assert.match(sheet, /\.ham-title:not\(\.ham-no-issue-t\), :scope > \.ham-row-head \.ham-pr-title/);
+  assert.match(sheet, /<p class="ham-pill-sheet-title">\$\{esc\(fullTitle\)\}<\/p>/);
+  assert.match(sheet, /<p class="ham-pill-sheet-note">\$\{esc\(note\.textContent\.trim\(\)\)\}<\/p>/);
 });
 
 test('phone progress pill names the step, stage and age and opens the strip sheet (#17160)', () => {
