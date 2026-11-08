@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v6.0.6)
+
+### Fixed
+
+- `just contribute-hive` now passes `HIVE_AGENT_ROLE` into the contributor container in the default container mode and in krun mode. Before, the role was dropped at the container boundary (whether it was exported in the shell or set in `contributor.env`), so the relay connected with no role and a contributor-first agent lane was never covered. Local mode already worked.
+- `just contribute-hive` now passes the quota-guard switches into the contributor container in the default container mode and in krun mode. `HIVE_CONTRIBUTOR_QUOTA_GUARD` is forwarded, so `HIVE_CONTRIBUTOR_QUOTA_GUARD=off` at launch (the opt-out the guard banner names) takes effect. `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` is mounted into the container and the relay is pointed at the mount, so `just contribute-quota continue-once` and the other scoped controls reach a container relay (the container's entrypoint keeps that mount path even when `contributor.env` names the host path). `just contribute-quota` now exports what it reads from `contributor.env`, so it uses the same pool directory and pool key as the relay. Before, both switches did nothing for a container relay unless `contributor.env` held `export` lines.
+- A contributor relay that is stopped just after its agent finished a task now reports that task before it exits. Before, a `docker stop` (or Ctrl-C) a second or two after the agent's `HIVE_VERDICT` lost the `task_complete`: the relay exited with the frame still queued, and the container entrypoint ended the container without waiting for the relay. The hub then recorded the run as "abandoned: connection lost with the task still held" and offered the issue again. Now the relay waits up to 5 seconds (`HIVE_RELAY_SHUTDOWN_FLUSH_MS`) for a finished task's `task_complete` or `task_failed` to be written, sends no `ready` and hands back any offer while it waits, and exits at once on a second signal or when nothing is pending. The entrypoint waits for the relay before it stops tmux and exits. See [contributor-relay.md](src/docs/contributor-relay.md).
+
 ## 2026-11-08 (v6.0.5)
 
 ### Fixed

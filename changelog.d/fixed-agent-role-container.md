@@ -1,1 +1,0 @@
-- `just contribute-hive` now passes `HIVE_AGENT_ROLE` into the contributor container in the default container mode and in krun mode. Before, the role was dropped at the container boundary (whether it was exported in the shell or set in `contributor.env`), so the relay connected with no role and a contributor-first agent lane was never covered. Local mode already worked.
