@@ -18,8 +18,9 @@ import (
 // not already carry.
 
 const (
-	// knowledgeAdviseTimeout bounds one adviser query. It runs on the agent's
-	// poll goroutine, so a slow wiki layer must not stall the poller.
+	// knowledgeAdviseTimeout bounds one adviser query. The runtime calls it off
+	// the poll goroutine, one call per agent at a time, so a slow wiki layer
+	// only holds back that agent's next scope.
 	knowledgeAdviseTimeout = 5 * time.Second
 	// knowledgeAdviseMaxPerScope caps how many entries one scope may queue;
 	// the runtime's per-kick cap is the real bound, this keeps the queue short.
@@ -61,7 +62,8 @@ func (a *knowledgeAdviser) Policy(agent string) crux.KnowledgeAdvisorPolicy {
 	if cfg == nil || !cfg.KnowledgeAdvisorEnabledFor(agent) {
 		return crux.KnowledgeAdvisorPolicy{}
 	}
-	return crux.KnowledgeAdvisorPolicy{Enabled: true, MaxPerKick: cfg.Knowledge.AdvisorMaxPerKick}
+	// The matcher works from the scope alone; it never asks for pane text.
+	return crux.KnowledgeAdvisorPolicy{Enabled: true, MaxPerKick: cfg.Knowledge.AdvisorMaxPerKick, WantsPaneTail: false}
 }
 
 // Advise searches the knowledge store for scope. Until #17045 lands the

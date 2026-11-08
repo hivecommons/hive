@@ -267,7 +267,7 @@ async function main() {
   const activityFailures = [];
   const fixtureRoot = path.join(process.cwd(), 'src/pkg/dashboard/webstatic/testdata');
   const density = JSON.parse(fs.readFileSync(path.join(fixtureRoot, 'tracker-activity-density.json'), 'utf8'));
-  const probes = ['tracker-header-geometry', 'tracker-decision-interaction', 'tracker-phone-chrome', 'tracker-phone-pill', 'tracker-phone-ergonomics', 'tracker-phone-attention-first'].map(name => ({
+  const probes = ['tracker-header-geometry', 'tracker-decision-interaction', 'tracker-phone-chrome', 'tracker-phone-pill', 'tracker-phone-ergonomics', 'tracker-phone-card', 'tracker-phone-attention-first'].map(name => ({
     name, source: fs.readFileSync(path.join(fixtureRoot, name + '.js'), 'utf8'),
   }));
   // Phone tier (hivecommons/hive#17160): the chevron strip is hidden behind
@@ -276,6 +276,8 @@ async function main() {
   const PHONE_MEDIA = '(max-width: 640px), ((pointer: coarse) and (max-width: 820px))';
   const STRIP_PROBES = new Set(['tracker-decision-interaction']);
   const PILL_REQUIRED_VIEWPORT = '390x844@3';
+  const CARD_MAX_MEDIAN_ROW_PX = 96;
+  const CARD_MIN_ROWS_IN_VIEW = 6;
   const event = process.env.GITHUB_EVENT_PATH ? JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};
   const provenance = { head: event.pull_request?.head?.sha || process.env.GITHUB_SHA || 'unpublished-local',
     checkoutSHA: process.env.GITHUB_SHA || 'unpublished-local',
@@ -519,6 +521,11 @@ async function main() {
             // exercise the pill there, never pass by falling into the strip tier.
             if (probe.name === 'tracker-phone-pill' && vp.name === PILL_REQUIRED_VIEWPORT && !(result.ok && result.result && result.result.phone === true && result.result.pills > 0)) {
               activityFailures.push(vp.name + ' ' + theme + ' progress pill must replace the strip at 390x844');
+            }
+            // 390×844 acceptance for the card layout (hivecommons/hive#17161):
+            // median row ≤ 96px and ≥ 6 rows in view with the density fixture.
+            if (probe.name === 'tracker-phone-card' && vp.name === PILL_REQUIRED_VIEWPORT && !(result.ok && result.result && result.result.phone === true && result.result.median <= CARD_MAX_MEDIAN_ROW_PX && result.result.inView >= CARD_MIN_ROWS_IN_VIEW)) {
+              activityFailures.push(vp.name + ' ' + theme + ' card rows must have median height ≤ ' + CARD_MAX_MEDIAN_ROW_PX + 'px with ≥ ' + CARD_MIN_ROWS_IN_VIEW + ' rows in view at 390x844');
             }
             // Likewise the attention-first order and the count line
             // (hivecommons/hive#17162): at 390×844 the probe must have found

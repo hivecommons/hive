@@ -11,6 +11,36 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.193.1)
+
+### Changed
+
+- Dashboard: on phones each Activity monitor row is a ~90px card — ☐/⋯ in the top-right corner, a clamped head (repo chip, #ref, two-line title, PR line, chips), the progress pill, one line of caption, no "no linked issue" placeholder — the pill sheet carries the full title and note, and the phone ergonomics probe counts the padded hit areas the pill and inline chips grow to 44px with; the 1280 layout is unchanged (hivecommons/hive#17161).
+- **knowledge advisor:** the runtime now calls the knowledge adviser off the agent's poll goroutine with at most one call in flight per agent, so a slow adviser no longer stalls the tick; results are held until the delivery gates pass and dropped if the kick changed. Each observed scope carries an `Action` (`read`/`edit`/`run`) and is re-advised at most once, on its first edit or next `gh` command. An adviser can request a token-scrubbed pane tail, which the built-in matcher never does (#17153).
+
+## 2026-11-08 (v5.193.0)
+
+### Added
+
+- Dashboard: on phones the Activity monitor Merged and merge-queue lists now open as full-width modal sheets with tap-sized rows, closable with ✕, Esc or backdrop, instead of clipped popovers; desktop popovers are unchanged (#17165).
+
+### Fixed
+
+- mobile-shots: phone-ergonomics hit-rect only grows and uses layout size (#17199)
+
+## 2026-11-08 (v5.192.0)
+
+### Added
+
+- The Hive activity monitor on a landscape phone (≤500px tall, coarse pointer) uses the compact filter bar, hides the column header so the sticky stack is a single bar, and shows at most one merge banner, so rows are visible instead of chrome; portrait and desktop are unchanged (#17166, part of #17158).
+- Activity monitor on a phone: every control meets the 44px coarse-pointer floor (`--tap-target-touch`), the per-row select / ⋯ controls move from the hidden left gutter into the row header, and the ⋯ menu opens as a full-screen sheet with tap-sized items.
+- Dashboard: on phones the Activity monitor row shows a stage-coloured "Step 7/8 · Merge queue · 2h" progress pill in place of the chevron strip; tapping it opens the full strip in a sheet, and the sticky column header is hidden with the strip (hivecommons/hive#17160).
+- `knowledge.advisor_llm` config block (mode off/shadow/rank, model, endpoint, key, candidates, pane_lines, timeout_s, holdout_percent, on_error) with hard call ceilings of 6 per agent-hour and 300 per day unless `budget_override: true`; shadow/rank without a model resolves to off with a warning, and `Config.KnowledgeAdvisorLLM()` resolves model/endpoint/key like the reviewer (explicit → `governor.litellm`). Config only; the ranking pass lands separately (hivecommons/hive#17154).
+
+### Fixed
+
+- PR titles for proposals now use the `📖 proposal:` prefix, which the required `PR Type` check accepts (`📝` never passed it); existing `📝 proposal:`/`📝 RFC` titles are still recognised as RFC documents and are rewritten to `📖` when the hive opens a PR (#17105).
+
 ## 2026-11-08 (v5.191.1)
 
 ### Fixed
