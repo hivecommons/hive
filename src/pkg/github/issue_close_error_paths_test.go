@@ -251,3 +251,31 @@ func TestValidatePRRequestClaimsClosingRefGetFailure(t *testing.T) {
 		t.Fatalf("err = %v, want closing-reference validation failure", err)
 	}
 }
+
+func TestValidatePRRequestClaimsClosingRefNotFoundIsPolicyError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/17122":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+
+	// A bare cross-repo issue number resolves against the PR's own repo and
+	// 404s there. That can never succeed on retry, so it must surface as a
+	// permanent policy rejection rather than a retry-with-backoff failure.
+	_, _, err := c.validatePRRequestClaims(context.Background(), PRRequest{
+		Repo: "o/r", Head: "scanner/fix", Title: "[scanner] fix: thing", Body: "Closes #17122",
+	})
+	reason, policy := prRequestPolicyReason(err)
+	if !policy {
+		t.Fatalf("err = %v, want prRequestPolicyError", err)
+	}
+	if !strings.Contains(reason, "o/r#17122 does not exist") {
+		t.Fatalf("reason = %q, want missing-issue explanation", reason)
+	}
+}
