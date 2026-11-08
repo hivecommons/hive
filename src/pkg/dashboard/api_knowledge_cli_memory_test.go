@@ -95,7 +95,9 @@ func postLegacyDrain(s *Server, body string) (int, map[string]interface{}) {
 }
 
 func TestKnowledgeDrainLegacyMemory(t *testing.T) {
-	projects := t.TempDir()
+	// Mirror ~/.claude/projects/<slug>/memory: repoFromClaudeSlug keys off
+	// the "projects" segment, so the fixture must carry it too.
+	projects := filepath.Join(t.TempDir(), ".claude", "projects")
 	prev := legacyClaudeProjectsDir
 	legacyClaudeProjectsDir = projects
 	t.Cleanup(func() { legacyClaudeProjectsDir = prev })

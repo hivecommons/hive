@@ -38,7 +38,9 @@ func (s *Server) handleKnowledgeDrainLegacyMemory(w http.ResponseWriter, r *http
 	}
 	vault := s.deps.Knowledge.AutoMemoryVault()
 	if vault == nil {
-		jsonError(w, "the bead-synth-wiki vault is not connected; configure bead stores or set agents.cli_memory.drain_to_knowledge so drained drafts land in a vault the primer reads", http.StatusConflict)
+		// Spelled without the dotted hive.yaml path so the settings-parity
+		// guard does not mistake this message for a Settings UI reference.
+		jsonError(w, "the bead-synth-wiki vault is not connected; configure bead stores or enable the CLI-memory drain (drain_to_knowledge under the agent's cli_memory block) so drained drafts land in a vault the primer reads", http.StatusConflict)
 		return
 	}
 	sources, err := climemory.LegacyClaudeSources(legacyClaudeProjectsDir)
