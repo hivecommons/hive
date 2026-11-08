@@ -16,7 +16,7 @@
 # forge-resistance as the gh wrapper; this shim adds no privilege.
 #
 # Usage (drop-in for the common gh shapes):
-#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision] [--no-consolidate <reason>]
+#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision] [--no-consolidate <reason>] [--claim]
 #   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--blocked-on-pr <n>]
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
@@ -55,6 +55,15 @@
 # request into an existing open issue (hivecommons/hive#14360); use it when the
 # request is unrelated work that merely shares a file or component with one.
 # The reason is required, and the watcher records it in the result.
+#
+# --claim (issue only) files AND claims the new issue in one request
+# (hivecommons/hive#17299): the watcher applies hive/claimed-by-<agent> and
+# records the claim right after the create, and takes `help wanted` off, so
+# no one else can take the issue in between. Use it whenever you file an
+# issue you are about to work on yourself (your own next step). Without it,
+# a hive-filed issue is marked as filed for outside help and a later claim of
+# it by the agent that filed it is refused. A failed claim is reported in the
+# result (claim_error); the issue is still created.
 #
 # --blocked-on-pr <n> (comment only) parks the issue on open PR <n> in the
 # same repo (hivecommons/hive#13093): use it when the code a finding names
@@ -132,6 +141,7 @@ PARENT=""
 BLOCKED_BY=()
 CLOSE_ON_MERGE=0
 NEEDS_DECISION=0
+CLAIM_ON_CREATE=0
 BLOCKED_ON_PR=""
 NO_CONSOLIDATE=""
 NO_CONSOLIDATE_SET=0
@@ -140,7 +150,7 @@ LABELS=()
 REMOVE_LABELS=()
 REVIEWERS=()
 TEAM_REVIEWERS=()
-SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --no-consolidate, --blocked-on-pr, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --claim, --no-consolidate, --blocked-on-pr, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -169,6 +179,7 @@ while [ $# -gt 0 ]; do
     --override-reason=*) OVERRIDE_REASON="${1#*=}"; shift;;
     --close-on-merge) CLOSE_ON_MERGE=1; shift;;
     --needs-decision) NEEDS_DECISION=1; shift;;
+    --claim) CLAIM_ON_CREATE=1; shift;;
     --no-consolidate) NO_CONSOLIDATE_SET=1; NO_CONSOLIDATE="${2:-}"; shift $(( $# > 1 ? 2 : 1 ));;
     --no-consolidate=*) NO_CONSOLIDATE_SET=1; NO_CONSOLIDATE="${1#*=}"; shift;;
     --blocked-on-pr) BLOCKED_ON_PR="$2"; shift 2;;
@@ -220,6 +231,11 @@ fi
 
 if [ "$NEEDS_DECISION" -eq 1 ] && [ "$KIND" != "issue" ]; then
   echo "hive-open-issue: --needs-decision only applies when creating an issue; nothing was written." >&2
+  exit 2
+fi
+
+if [ "$CLAIM_ON_CREATE" -eq 1 ] && [ "$KIND" != "issue" ]; then
+  echo "hive-open-issue: --claim only applies when creating an issue (use 'hive-open-issue claim' for an existing one); nothing was written." >&2
   exit 2
 fi
 
@@ -355,9 +371,9 @@ REMOVE_LABELS_JSON="$(printf '%s\n' "${REMOVE_LABELS[@]:-}" | python3 -c 'import
 REVIEWERS_JSON="$(printf '%s\n' "${REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 TEAM_REVIEWERS_JSON="$(printf '%s\n' "${TEAM_REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 BLOCKED_BY_JSON="$(printf '%s\n' "${BLOCKED_BY[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "${BLOCKED_ON_PR:-0}" "$NO_CONSOLIDATE" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "${BLOCKED_ON_PR:-0}" "$NO_CONSOLIDATE" "$CLAIM_ON_CREATE" <<'PY'
 import json, os, sys
-temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by, needs_decision, blocked_on_pr, no_consolidate = sys.argv[1:19]
+temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by, needs_decision, blocked_on_pr, no_consolidate, claim_on_create = sys.argv[1:20]
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
 remove_labels = [part.strip() for value in json.loads(remove_labels)
@@ -427,6 +443,10 @@ else:
     # the reason (hivecommons/hive#14360).
     if no_consolidate.strip():
         req["no_consolidate_reason"] = no_consolidate.strip()
+    # --claim: the watcher claims the new issue for this agent in the same
+    # request (hivecommons/hive#17299).
+    if claim_on_create == "1":
+        req["claim"] = True
 if kind == "comment" and int(blocked_on_pr) > 0:
     # --blocked-on-pr: the watcher adds the marker and the `blocked` label
     # itself (hivecommons/hive#13093).
@@ -465,6 +485,9 @@ else
   fi
   if [ "$NEEDS_DECISION" -eq 1 ]; then
     echo "hive-open-issue: will park the issue on a maintainer decision (needs-decision label)"
+  fi
+  if [ "$CLAIM_ON_CREATE" -eq 1 ]; then
+    echo "hive-open-issue: will claim the new issue for $AGENT (hive/claimed-by-$AGENT label; help wanted removed)"
   fi
   if [ "$NO_CONSOLIDATE_SET" -eq 1 ]; then
     echo "hive-open-issue: will not consolidate into an existing issue: $NO_CONSOLIDATE"

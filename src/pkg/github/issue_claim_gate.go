@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync/atomic"
 
@@ -30,6 +31,47 @@ const (
 	ClaimBlockReasonNeverClaimPrefix = "never-claim label: "
 	ClaimBlockReasonParkedPrefix     = "parked: "
 )
+
+// ClaimBlockReasonFiledForHelpPrefix is the IssueStartBlockReason for an
+// issue the requesting agent itself filed WITHOUT --claim
+// (hivecommons/hive#17299): filing it unclaimed asked for outside help, so
+// the filer does not start it later and race a contributor who took it up.
+// The reason ends with the filing agent's name.
+const ClaimBlockReasonFiledForHelpPrefix = "filed for outside help by "
+
+const filedForHelpMarkerPrefix = "<!-- hive:filed-for-help "
+
+// FiledForHelpMarker is the hidden body marker the issue-request watcher puts
+// on an issue an agent files without --claim, naming that agent.
+func FiledForHelpMarker(agent string) string {
+	return filedForHelpMarkerPrefix + agent + " -->"
+}
+
+var filedForHelpMarkerRe = regexp.MustCompile(`<!--\s*hive:filed-for-help\s+([A-Za-z0-9_.-]+)\s*-->`)
+
+// ParseFiledForHelpMarker returns the agent named by body's filed-for-help
+// marker, or "" when it has none.
+func ParseFiledForHelpMarker(body string) string {
+	m := filedForHelpMarkerRe.FindStringSubmatch(body)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// withFiledForHelpMarker appends the filed-for-help marker for agent to body
+// unless body already carries one.
+func withFiledForHelpMarker(body, agent string) string {
+	agent = strings.TrimSpace(agent)
+	if agent == "" || !filedForHelpMarkerRe.MatchString(FiledForHelpMarker(agent)) || ParseFiledForHelpMarker(body) != "" {
+		return body
+	}
+	body = strings.TrimRight(body, "\n")
+	if body == "" {
+		return FiledForHelpMarker(agent)
+	}
+	return body + "\n\n" + FiledForHelpMarker(agent)
+}
 
 // umbrellaLabels is the never-claim set the pure derivation (IssueStageFor)
 // reads, kept in step with the client by SetNeverClaimLabels. nil → the
@@ -140,6 +182,9 @@ type issueClaimGateResult struct {
 	reason string
 	labels []string
 	closed bool
+	// filedForHelpBy is the agent named by the issue body's filed-for-help
+	// marker, "" when there is none.
+	filedForHelpBy string
 }
 
 // issueClaimGate reads the issue once and applies every label-based refusal.
@@ -156,8 +201,9 @@ func (c *Client) issueClaimGate(ctx context.Context, repo string, number int) (i
 		return issueClaimGateResult{reason: ClaimBlockReasonPullRequest}, nil
 	}
 	res := issueClaimGateResult{
-		labels: extractLabels(issue.Labels),
-		closed: strings.EqualFold(issue.GetState(), "closed"),
+		labels:         extractLabels(issue.Labels),
+		closed:         strings.EqualFold(issue.GetState(), "closed"),
+		filedForHelpBy: ParseFiledForHelpMarker(issue.GetBody()),
 	}
 	labels := res.labels
 	switch {
@@ -190,9 +236,25 @@ func (c *Client) issueClaimGate(ctx context.Context, repo string, number int) (i
 // very PR it exists to protect. Off with scanner.skip_issues_with_open_pr:
 // false; a failed listing fails open with a warning.
 func (c *Client) IssueDispatchBlockReason(ctx context.Context, repo string, number int) (string, error) {
+	return c.issueDispatchBlockReason(ctx, repo, number, "")
+}
+
+// IssueStartBlockReason is IssueDispatchBlockReason for a named agent's own
+// start (the `claim` relay request): it also refuses an issue that same agent
+// filed for outside help (ClaimBlockReasonFiledForHelpPrefix,
+// hivecommons/hive#17299). A maintainer lets the filer take it after all by
+// removing the marker from the issue body.
+func (c *Client) IssueStartBlockReason(ctx context.Context, repo string, number int, agent string) (string, error) {
+	return c.issueDispatchBlockReason(ctx, repo, number, agent)
+}
+
+func (c *Client) issueDispatchBlockReason(ctx context.Context, repo string, number int, agent string) (string, error) {
 	gate, err := c.issueClaimGate(ctx, repo, number)
 	if err != nil || gate.reason != "" {
 		return gate.reason, err
+	}
+	if agent = strings.TrimSpace(agent); agent != "" && strings.EqualFold(gate.filedForHelpBy, agent) {
+		return ClaimBlockReasonFiledForHelpPrefix + gate.filedForHelpBy + "; it was filed without --claim, so it is open for others — leave it to them unless a maintainer removes the filed-for-help marker", nil
 	}
 	// The same read says whether the issue is still open: a closing keyword
 	// on a PR that merged since the snapshot was listed closes it, and a
