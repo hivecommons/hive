@@ -73,6 +73,31 @@ func TestParseClaimedIssuesProseGap(t *testing.T) {
 			want: []ClaimedRef{{Repo: "documentation", Issue: 11}},
 		},
 		{
+			name: "a parenthetical citation is not a claim",
+			text: "every sibling Windows redaction fix in that section (#333, #335, the save-failure message) has a bullet",
+			want: nil,
+		},
+		{
+			name: "passive closed by names the closer, not a claim",
+			text: "closed by #359",
+			want: nil,
+		},
+		{
+			name: "a reference's closed-by aside is not a claim",
+			text: "Refs #358 (closed by #359; this PR adds CHANGELOG.md)",
+			want: nil,
+		},
+		{
+			name: "trailer form still claims",
+			text: "fix: the thing (closes #60)",
+			want: []ClaimedRef{{Repo: "documentation", Issue: 60}},
+		},
+		{
+			name: "colon trailer form still claims",
+			text: "Fixes: #12",
+			want: []ClaimedRef{{Repo: "documentation", Issue: 12}},
+		},
+		{
 			name: "a newline still ends the prose gap",
 			text: "Resolves the argument\nabout #12",
 			want: nil,
