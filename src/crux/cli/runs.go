@@ -16,6 +16,7 @@ const runsUsage = `usage: crux --server ADDR runs start [flags] -- <command> [ar
        crux --server ADDR runs cancel <id>
 
 start flags:
+  --checkout ID             run in a pinned checkout you own (crux checkout add)
   --repo URL --commit SHA   clone URL at SHA into a fresh workspace
   --workspace PATH          run in an existing directory on the server
   --env NAME                pass this environment variable through (repeatable)
@@ -62,6 +63,7 @@ func (e *Env) remoteRunsStart(ctx context.Context, c *api.Client, args []string)
 	var req api.ContainedRunRequest
 	var wt api.ContainedRunWorktree
 	var env stringList
+	fs.StringVar(&req.Checkout, "checkout", "", "pinned checkout id to run in")
 	fs.StringVar(&wt.Repo, "repo", "", "repository URL to clone")
 	fs.StringVar(&wt.Commit, "commit", "", "full commit SHA to check out")
 	fs.StringVar(&req.WorkspacePath, "workspace", "", "existing directory on the server")

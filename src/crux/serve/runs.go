@@ -3,28 +3,50 @@ package serve
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/runs"
 )
 
-// runsOwner is the principal a contained run is recorded under.
-//
-// TODO(S0): switch to CallerFrom(r.Context()) once the caller-principal
-// change lands; until then every authenticated caller is the operator,
-// which is exactly what the bearer-token check already establishes.
-func runsOwner(r *http.Request) string {
-	return "operator"
+// runsCaller is the S0 principal behind the request, as the run service
+// sees it: a run is recorded under its name, and only it (or the operator)
+// may point a run at a checkout, read the run, or cancel it. A context
+// that did not pass authenticate (a unix-socket server without a token)
+// is the operator, which is what that transport already establishes.
+func (s *Server) runsCaller(r *http.Request) runs.Caller {
+	p, ok := CallerFrom(r.Context())
+	if !ok {
+		p = s.operator()
+	}
+	return runs.Caller{Name: p.Name, Operator: p.IsOperator()}
 }
 
 // registerRuns mounts the contained-run family (RFC crux#114 S2 + S7).
 // The routes are always present so a server without a backend answers
-// with a clear not_supported instead of a bare 404.
+// with a clear not_supported instead of a bare 404. Like checkouts, the
+// family admits project principals; ownership is enforced per record.
 func (s *Server) registerRuns(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+api.PathRuns, s.handleRunsCreate)
 	mux.HandleFunc("GET "+api.PathRuns+"/{id}", s.handleRunsGet)
 	mux.HandleFunc("POST "+api.PathRuns+"/{id}/cancel", s.handleRunsCancel)
+	s.workService(api.PathRuns)
+}
+
+// ownedRun loads {id} and enforces that the caller owns it or is the
+// operator; on failure the response has been written.
+func (s *Server) ownedRun(w http.ResponseWriter, r *http.Request) (api.ContainedRun, bool) {
+	run, err := s.Runs.Get(r.PathValue("id"))
+	if err != nil {
+		s.writeRunsError(w, err)
+		return api.ContainedRun{}, false
+	}
+	if caller := s.runsCaller(r); !caller.Operator && run.Owner != caller.Name {
+		s.writeError(w, http.StatusForbidden, api.CodeForbidden, fmt.Sprintf("run %s is owned by %q, not by %q", run.ID, run.Owner, caller.Name))
+		return api.ContainedRun{}, false
+	}
+	return run, true
 }
 
 // runsReady reports whether the run service exists; when it does not, a
@@ -46,7 +68,7 @@ func (s *Server) handleRunsCreate(w http.ResponseWriter, r *http.Request) {
 	if !s.readJSON(w, r, &req) {
 		return
 	}
-	run, created, err := s.Runs.Create(s.LaunchContext, runsOwner(r), req)
+	run, created, err := s.Runs.Create(s.LaunchContext, s.runsCaller(r), req)
 	if err != nil {
 		s.writeRunsError(w, err)
 		return
@@ -77,9 +99,8 @@ func (s *Server) handleRunsGet(w http.ResponseWriter, r *http.Request) {
 	if !s.runsReady(w) {
 		return
 	}
-	run, err := s.Runs.Get(r.PathValue("id"))
-	if err != nil {
-		s.writeRunsError(w, err)
+	run, ok := s.ownedRun(w, r)
+	if !ok {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, run)
@@ -87,6 +108,9 @@ func (s *Server) handleRunsGet(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRunsCancel(w http.ResponseWriter, r *http.Request) {
 	if !s.runsReady(w) {
+		return
+	}
+	if _, ok := s.ownedRun(w, r); !ok {
 		return
 	}
 	run, err := s.Runs.Cancel(r.Context(), r.PathValue("id"))

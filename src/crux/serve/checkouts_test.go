@@ -74,7 +74,9 @@ func newCheckoutFixture(t *testing.T, repo string) *checkoutFixture {
 	svc, err := checkout.New(checkout.Config{
 		Dir:          filepath.Join(t.TempDir(), "checkouts"),
 		AllowedRepos: []string{"file://" + filepath.Dir(strings.TrimPrefix(repo, "file://"))},
-		InUse:        func(id string) bool { return f.inUse[id] },
+		// The map is the test's own hand on the hook; a wired run service
+		// (withRuns) is consulted too, the way crux serve wires it.
+		InUse: func(id string) bool { return f.inUse[id] || (f.s.Runs != nil && f.s.Runs.InUse(id)) },
 	})
 	if err != nil {
 		t.Fatal(err)
