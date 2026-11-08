@@ -125,7 +125,10 @@ func TestSourcesAppendOnlyTheirKinds(t *testing.T) {
 	}{
 		{api.SignalSourceRunner, api.SignalStarted, true},
 		{api.SignalSourceRunner, api.SignalDone, true},
+		{api.SignalSourceRunner, api.SignalStep, true},
 		{api.SignalSourceRunner, api.SignalThinking, false},
+		{api.SignalSourceGate, api.SignalStep, false},
+		{api.SignalSourceCaller, api.SignalStep, false},
 		{api.SignalSourceGate, api.SignalNeedsInput, true},
 		{api.SignalSourceGate, api.SignalInput, true},
 		{api.SignalSourceGate, api.SignalBlocked, true},
