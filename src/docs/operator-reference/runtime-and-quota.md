@@ -94,6 +94,7 @@ agents:
     auto_memory: false         # pin the vendor auto-memory switch off (default)
     clear_on_kick: false       # wipe the agent's memory stores before every non-resume kick
     drain_to_knowledge: false  # first convert each memory fact into a draft knowledge entry
+    drain_on_write: false      # also drain a Claude memory file as soon as it is written
   scanner:
     cli_memory:
       auto_memory: true        # this agent may take notes…
@@ -106,6 +107,18 @@ agents:
 | `auto_memory` | `false` | Pins Claude Code (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`), Codex (`[features] memories = false`) and Copilot CLI (`"memory": false`) auto-memory off at launch; `true` pins it on. |
 | `clear_on_kick` | `false` | Removes the agent's own memory stores before each non-resume kick; shared homes (`HIVE_SHARED_AGENT_HOME=1`, uid 0) are never touched. |
 | `drain_to_knowledge` | `false` | Before the wipe, writes every memory bullet or paragraph as a `state: draft` entry into the `bead-synth-wiki` vault (`knowledge.bead_synthesizer.vault_path`), tagged `cli-memory`, `agent:<name>`, `cli:<name>` and `repo:<org/repo>` when derivable, deduplicated by content hash; a duplicate only gains the draining agent's `agent:<name>` tag and keeps its state. Drafts are excluded from kicks until approved. |
+| `drain_on_write` | `false` | Needs `drain_to_knowledge`. Also drains a Claude Code memory file as soon as the session writes it, through a `PostToolUse` hook on `Write\|Edit\|MultiEdit`, for long-lived sessions that rarely end. |
+
+For Claude Code, `drain_to_knowledge` also seeds a `SessionEnd` hook, and
+`drain_on_write` a `PostToolUse` hook (matcher `Write|Edit|MultiEdit`), into
+the Claude settings Hive manages: the shared `/data/home/.claude/settings.json`
+for interactive agents and both settings files of inference agents. Each runs
+`hive memory-drain --cli claude --agent "$HIVE_AGENT"`, which asks the hive to
+drain that session's project memory into drafts and empty the files whose
+every fact is stored. The hook always exits 0 and waits at most 10 seconds;
+on a write outside `~/.claude/projects/*/memory/` it exits at once. Your own
+`hooks` entries are kept; turning the keys off removes only Hive's entry.
+Each request is audited as `cli_memory_drain_requested`.
 
 The drain logs one line per kick that found a store:
 `cli-memory: drained N facts from <agent> into bead-synth-wiki (dupes K, spooled S)`

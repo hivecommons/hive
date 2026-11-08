@@ -63,12 +63,15 @@ type CLIMemoryDrainHost interface {
 // request file); the runtime refuses a name that UID does not belong to.
 // Cwd, when set, narrows the drain to the Claude project directory Claude
 // derives from it. The sources are always resolved from the agent's own
-// home, never taken from the caller.
+// home, never taken from the caller. OnWrite marks a request from the
+// PostToolUse hook, which runs only for agents with
+// agents.cli_memory.drain_on_write (hivecommons/hive#17210).
 type CLIMemoryDrainNowRequest struct {
 	Agent     string
 	CallerUID int
 	Cwd       string
 	Truncate  bool
+	OnWrite   bool
 }
 
 // CLIMemoryDrainNowHost is the optional capability behind that entry point.

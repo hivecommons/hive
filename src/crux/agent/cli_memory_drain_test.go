@@ -188,6 +188,19 @@ func TestDrainCLIMemoryNow(t *testing.T) {
 		}
 	})
 
+	t.Run("write hook is a no-op without drain_on_write", func(t *testing.T) {
+		calls = nil
+		_, ran, err := m.DrainCLIMemoryNow(CLIMemoryDrainNowRequest{Agent: "scanner", CallerUID: 2001, OnWrite: true})
+		if err != nil || ran || len(calls) != 0 {
+			t.Fatalf("ran=%v err=%v calls=%+v", ran, err, calls)
+		}
+		m.agents["scanner"].Config.CLIMemory = &config.CLIMemoryConfig{DrainToKnowledge: true, DrainOnWrite: true}
+		t.Cleanup(func() { m.agents["scanner"].Config.CLIMemory = &config.CLIMemoryConfig{DrainToKnowledge: true} })
+		if _, ran, err := m.DrainCLIMemoryNow(CLIMemoryDrainNowRequest{Agent: "scanner", CallerUID: 2001, OnWrite: true}); err != nil || !ran || len(calls) != 1 {
+			t.Fatalf("ran=%v err=%v calls=%+v", ran, err, calls)
+		}
+	})
+
 	t.Run("no-op when the drain is off", func(t *testing.T) {
 		calls = nil
 		m.agents["scanner"].Config.CLIMemory = &config.CLIMemoryConfig{}

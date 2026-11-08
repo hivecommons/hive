@@ -53,7 +53,8 @@ func sharedClaudeSettingsFile() string {
 // launch so a relaunch can never fall back to the server-side rollout default,
 // and so an out-of-band deletion of the key self-heals on the next launch —
 // the same posture as ensureBobAuthSettings for bob's shared settings. The
-// bypass-consent suppressor (claudeBypassConsentSeed) is seeded the same way.
+// bypass-consent suppressor (claudeBypassConsentSeed) is seeded the same way,
+// and so are the CLI-memory drain hooks (mergeClaudeMemoryDrainHooks).
 //
 // The shared file is hive-owned (hivecommons/hive#17059): before seeding, a
 // settings.json that is a symlink or owned by another uid is moved aside and
@@ -91,6 +92,8 @@ func (m *Manager) ensureClaudeRemoteControlDefault(agent *AgentProcess) {
 	m.rejectUntrustedSharedClaudeSettings(agent.Name, path)
 	m.seedJSONFile(agent.Name, path, claudeRemoteControlSeed())
 	m.seedJSONFile(agent.Name, path, claudeBypassConsentSeed())
+	sessionEnd, onWrite := m.claudeMemoryDrainHooksLocked()
+	m.mergeClaudeMemoryDrainHooks(agent.Name, path, sessionEnd, onWrite)
 	if reason := lockSharedClaudeSettings(path); reason != "" {
 		m.logger.Warn("shared claude settings.json could not be brought to a hive-owned state after seeding",
 			"agent", agent.Name, "path", path, "reason", reason)

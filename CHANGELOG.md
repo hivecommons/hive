@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.196.0)
+
+### Added
+
+- The Activity monitor lists rows that need you first on phones, with a sticky "waiting on you" count line that toggles the Waiting on you filter.
+- **cli memory:** an agent can now ask the hive to drain its own Claude memory into the knowledge store on demand, by dropping a request into `/var/run/hive-metrics/memory-drain-requests`; the hive resolves the stores from the agent's own home (optionally narrowed to the hook's project `cwd`), refuses a request naming any other agent, audits each call as `cli_memory_drain_requested`, empties with `truncate` only the files whose every fact is in the vault, and answers a no-op when `agents.cli_memory.drain_to_knowledge` is off for that agent (#17208).
+
 ## 2026-11-08 (v5.195.0)
 
 ### Added

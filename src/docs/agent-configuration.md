@@ -321,6 +321,7 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
       auto_memory: false         #   policy: CLI auto-memory (Claude MEMORY.md, Codex
       clear_on_kick: false       #   memories, Copilot memory) off; wipe before each kick
       drain_to_knowledge: false  #   first turn each memory fact into a draft knowledge entry
+      drain_on_write: false      #   and drain a Claude memory write at once (PostToolUse hook)
     restart_strategy: immediate  # how to bring a dead session back
     beads_dir: /data/beads/scanner   # work-record (bead) storage; default per-agent
     replicas: 3                  # materialize scanner, scanner-2, scanner-3 (max 5)
@@ -642,6 +643,7 @@ agents:
     auto_memory: false         # default false: pin every CLI's auto-memory feature off
     clear_on_kick: false       # default false: true wipes this agent's memory stores before each kick
     drain_to_knowledge: false  # default false: true drains each memory fact into a draft knowledge entry first
+    drain_on_write: false      # default false: true also drains a Claude memory write at once (needs drain_to_knowledge)
 ```
 
 | Key | Default | Effect |
@@ -650,6 +652,7 @@ agents:
 | `clear_on_kick` | `false` | Before every non-resume kick (next to the `/clear` sent by `clear_on_kick`), remove this agent's `~/.claude/projects/*/memory/`, `$CODEX_HOME/memories*/`, and `~/.gemini/GEMINI.md`. Only the per-agent home under `/data/home/agents/<name>` is touched; nothing under the shared `/data/home` is removed, and agents running with `HIVE_SHARED_AGENT_HOME=1` or as uid 0 are skipped. Copilot memory is server-side and has no local store. |
 
 | `drain_to_knowledge` | `false` | Before every non-resume kick, and before `clear_on_kick` wipes anything, read this agent's Claude `~/.claude/projects/*/memory/` (`MEMORY.md` plus topic files), Codex `$CODEX_HOME/memories*/` and the `## Gemini Added Memories` section of `~/.gemini/GEMINI.md`, and write each bullet or paragraph as a **draft** entry in the `bead-synth-wiki` vault (`knowledge.bead_synthesizer.vault_path`, default `/data/vaults/bead-synth-wiki`) with `source: cli-memory`, `agent: <name>`, `cli: <claude\|codex\|gemini>` and, when the Claude project slug ends in one of the agent's repos, `repo: <org/repo>`. Entries are deduplicated by a SHA-256 of the normalised text (`memhash`), so repeated drains and the same fact from several agents produce one entry, which gains an `agent:<name>` tag per draining agent; an entry an operator approved, deprecated or renamed is still a duplicate and keeps its state. A memory file whose facts did not all reach the vault (vault unwritable, 200-facts-per-drain cap) is copied to `/data/knowledge/auto-memory-spool/<agent>/` before the wipe and retried on the next drain ([#17056](https://github.com/hivecommons/hive/issues/17056)). Drafts never reach a kick until a human approves them ([#17033](https://github.com/hivecommons/hive/issues/17033)). Needs the in-process crux runtime. |
+| `drain_on_write` | `false` | Needs `drain_to_knowledge`. For Claude Code, Hive always seeds a `SessionEnd` hook with `drain_to_knowledge`; this adds a `PostToolUse` hook on `Write\|Edit\|MultiEdit` that drains a memory file under `~/.claude/projects/*/memory/` as soon as it is written, for long-lived sessions. Both run `hive memory-drain --cli claude --agent "$HIVE_AGENT"`, never fail the session, and are merged into the Claude settings Hive manages without touching your own `hooks` entries ([#17210](https://github.com/hivecommons/hive/issues/17210)). |
 
 Set `auto_memory: true` on a single agent to let it keep a private notebook while the rest of the fleet stays stateless between kicks. The knobs are independent: `auto_memory: true` with `clear_on_kick: true` gives a memory that lives for exactly one kick, and adding `drain_to_knowledge: true` is the "memory → beads" flow: the CLI may take notes during a turn, every note becomes a reviewable draft at the next kick, and the private store is then emptied. The log line per drain is `cli-memory: drained N facts from <agent> into bead-synth-wiki (dupes K, spooled S)`.
 
