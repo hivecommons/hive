@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/internal/testutil"
 	"github.com/hivecommons/hive/crux/logscrub"
 )
 
@@ -369,17 +370,11 @@ func (b *blockingAdviser) snapshot() ([]string, int) {
 func waitKnowledgeIdle(t *testing.T, m *Manager, agent string) {
 	t.Helper()
 	ka := m.knowledgeAdvisor.Load()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.Eventually(t, 5*time.Second, func() bool {
 		ka.mu.Lock()
-		busy := ka.inFlight[agent] != nil
-		ka.mu.Unlock()
-		if !busy {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("advise call still in flight")
+		defer ka.mu.Unlock()
+		return ka.inFlight[agent] == nil
+	}, "advise call still in flight")
 }
 
 func TestAdviseKnowledge_AsyncOneCallInFlight(t *testing.T) {
