@@ -125,14 +125,27 @@
     }
     function stageTrackerQueuePopDraw(nowMs) {
       const pop = document.getElementById('activity-monitor-queue-pop');
-      if (!pop || pop.hidden) return;
+      if (!pop) return;
+      const sheet = stageTrackerPopSheet('queue');
+      if (pop.hidden && !sheet) return;
       const html = stageTrackerQueuePopHtml(_stageTrackerQueueItems, nowMs || Date.now(), _stageTrackerPreparationQueues);
+      if (sheet) { stageTrackerPopSheetDraw(sheet, html); return; }
       if (pop.innerHTML !== html) pop.innerHTML = html;
     }
     function hamQueueToggle(open) {
       const pop = document.getElementById('activity-monitor-queue-pop');
       const chip = stageTrackerQueueChip();
       if (!pop) return false;
+      if (stageTrackerPopSheetPhone()) {
+        const sheet = stageTrackerPopSheet('queue');
+        const want = typeof open === 'boolean' ? open : !sheet;
+        pop.hidden = true;
+        if (want && !sheet) {
+          if (chip) chip.setAttribute('aria-expanded', 'true');
+          stageTrackerPopSheetOpen('queue', 'Merge queue', stageTrackerQueuePopHtml(_stageTrackerQueueItems, Date.now(), _stageTrackerPreparationQueues), chip);
+        } else if (!want && sheet && sheet.hiveDialogClose) sheet.hiveDialogClose();
+        return want;
+      }
       const want = typeof open === 'boolean' ? open : !!pop.hidden;
       pop.hidden = !want;
       if (chip) chip.setAttribute('aria-expanded', want ? 'true' : 'false');

@@ -31,14 +31,16 @@
   const controls = [...section.querySelectorAll('button, a[href], input, select, summary, [role="button"], [role="menuitem"], [tabindex]:not([tabindex="-1"]):not(.ham-row):not(.ham-sub)')]
     .filter(el => visible(el) && !inlineText(el) && !stripCell(el));
   // A compact control may extend its hit area with an absolutely positioned
-  // empty ::before (the progress pill, #17183): its tap target is the pseudo
-  // box, not the painted box. Negative insets grow the rect.
+  // empty ::before (the progress pill, #17183): negative insets grow the tap
+  // target past the painted box. Positive insets (the ?/⚙ ring drawn inside
+  // the --tap-target square) never shrink it. Layout size, not the client
+  // rect, so a one-shot transform animation (.ham-pill-moved) cannot fail it.
   const hitRect = el => {
-    const r = el.getBoundingClientRect();
+    const r = { width: el.offsetWidth || el.getBoundingClientRect().width, height: el.offsetHeight || el.getBoundingClientRect().height };
     const b = getComputedStyle(el, '::before');
     if (b.position !== 'absolute' || b.content !== '""' || getComputedStyle(el).position === 'static') return r;
-    const px = v => parseFloat(v) || 0;
-    return { width: r.width - px(b.left) - px(b.right), height: r.height - px(b.top) - px(b.bottom) };
+    const grow = v => Math.max(0, -(parseFloat(v) || 0));
+    return { width: r.width + grow(b.left) + grow(b.right), height: r.height + grow(b.top) + grow(b.bottom) };
   };
   const small = [];
   for (const el of controls) {
