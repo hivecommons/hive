@@ -20,8 +20,9 @@ import (
 // paused BUDGET work to volunteers and never fires before the budget is gone.
 //
 // contributor_first inverts the order for one lane. While at least one
-// connected, non-stale, non-failure-paused relay is acting as the role (and
-// the operator has not suspended contributions), the
+// connected, non-stale, non-failure-paused relay is acting as the role and
+// taking work (not in standby, not quota-held; see RoleCoverage in
+// pkg/dashboard), and the operator has not suspended contributions, the
 // governor WITHHOLDS the resident agent's kicks — at exactly the gates where it
 // withholds them for an exhausted budget. The relay is the primary worker; the
 // resident agent is the fallback, and it resumes on its normal cadence once no
@@ -77,6 +78,14 @@ type coverageRecord struct {
 	contributors []string
 	since        time.Time
 	lastSeen     time.Time
+	// announced is whether the "covering a contributor-first lane" line has
+	// been logged for this cover. Coverage is recorded whether or not the
+	// lane is flagged, so the usual order — a relay already covering, then the
+	// owner switching contributor_first on — finds the record already known;
+	// keying the line on a NEW record left that switch with no log line at
+	// all. Cleared while the lane is not flagged, so switching the flag off
+	// and on again announces again.
+	announced bool
 }
 
 // SetContributorCoverage replaces the governor's view of which roles connected
@@ -109,11 +118,19 @@ func (g *Governor) SetContributorCoverage(coverage map[string]ContributorCoverag
 		rec, known := g.coverage[role]
 		if !known {
 			rec = coverageRecord{since: now}
-			if g.contributorFirstLocked(role) && g.logger != nil {
+		}
+		switch flagged := g.contributorFirstLocked(role); {
+		case !flagged:
+			rec.announced = false
+		case !rec.announced:
+			// A new cover on a flagged lane, or the flag just switched on
+			// for a lane a relay was already covering.
+			rec.announced = true
+			if g.logger != nil {
 				g.logger.Info("contributor relay covering a contributor-first lane — withholding the resident agent's kicks",
 					"agent", role, "contributors", strings.Join(logins, ","))
 			}
-		} else if len(rec.contributors) == 0 && g.contributorFirstLocked(role) && g.logger != nil {
+		case len(rec.contributors) == 0 && g.logger != nil:
 			// Back within the grace window: coverage never really ended.
 			g.logger.Info("contributor relay returned within grace — resident agent stays withheld",
 				"agent", role, "contributors", strings.Join(logins, ","))

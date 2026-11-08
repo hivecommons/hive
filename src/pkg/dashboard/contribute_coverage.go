@@ -22,13 +22,24 @@ import (
 //     silently cannot keep the resident agent idle;
 //   - it is not in a failure-streak pause: a relay whose runtime keeps dying
 //     is connected but is not doing the lane's work;
+//   - it has not declared standby (standby_declare, accepted or not). A
+//     standby relay stays connected but never asks for ordinary work; it only
+//     takes what an owner dispatches to it by hand, so it drains nothing;
+//   - it has not reported a quota hold (quota_hold, capability
+//     quota_hold_v1). A relay whose quota guard is holding withholds `ready`
+//     and declines pushed work, so it is connected and covering nothing.
+//     Observed on 2026-11-08: a relay held at 15% of its weekly window kept
+//     the scanner lane "covered" while nobody worked it. A relay too old to
+//     send quota_hold is still counted, as before;
 //   - the operator has not suspended contributions (hub.contribute_suspended).
 //     The suspend switch refuses work to every relay while their sockets stay
 //     up, so a connected relay is then covering nothing; reporting it as
 //     coverage would turn "pause contributors" into "pause the lane".
 //
 // A relay that is busy on a task still counts — it is draining the lane,
-// which is the point. Whether the relay is ALLOWED the role (trust tier,
+// which is the point. Standby and quota hold do not wait for the task to end:
+// both mean the relay will not take the lane's NEXT item, which is what the
+// governor is deciding whether to withhold. Whether the relay is ALLOWED the role (trust tier,
 // grants, the delegatable list) was settled when the hub set c.role; nothing
 // is re-derived here.
 func (h *ContributeWSHub) RoleCoverage(now time.Time) map[string]governor.ContributorCoverage {
@@ -51,8 +62,9 @@ func (h *ContributeWSHub) RoleCoverage(now time.Time) map[string]governor.Contri
 		if c.profile != nil {
 			login = strings.TrimSpace(c.profile.GitHubUsername)
 		}
+		notTakingWork := c.standbyDeclared || len(c.standby) > 0 || c.quotaHeld
 		c.mu.Unlock()
-		if role == "" || !fresh || login == "" {
+		if role == "" || !fresh || login == "" || notTakingWork {
 			continue
 		}
 		candidates = append(candidates, candidate{role: role, login: login, identity: identityOf(c)})
