@@ -290,7 +290,7 @@ const prSlices = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'
 renderOverviewKPIs(status.repos, issueSlices, prSlices, { showKPIs: true });
 const pillEl = document.getElementById('overview-sidebar-badge');
 const tile = status.overviewTotals;
-assert.strictEqual(pillEl.textContent, tile.issues.forge + '/' + tile.prs.forge, 'pill mirrors the tile');
+assert.strictEqual(pillEl.textContent, 'BP = ' + tile.issues.forge + '/' + tile.prs.forge, 'pill mirrors the tile');
 assert.strictEqual(pillEl.hidden, false);
 assert.ok(pillEl.title.includes('stale since'), 'pill title names the last-good state: ' + pillEl.title);
 assert.strictEqual(tile.issues.forge, status.openItems.issues);

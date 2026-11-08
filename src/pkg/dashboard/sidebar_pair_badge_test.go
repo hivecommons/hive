@@ -14,14 +14,14 @@ import (
 func TestSidebarPairBadgeWiring(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`<span class="oc-nav-text">Overview</span><span id="overview-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>`,
+		`<span class="oc-nav-text">Overview</span><span id="overview-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>BP = 0/0</span></a>`,
 		`<span class="oc-nav-text">Governor</span><span id="governor-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>`,
 		`.oc-nav-count[hidden] { display: none; }`,
 		`function overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted)`,
-		`function sidebarPairBadgeText(issues, prs)`,
-		`function setSidebarPairBadge(el, issues, prs, title)`,
+		`function sidebarPairBadgeText(issues, prs, prefix)`,
+		`function setSidebarPairBadge(el, issues, prs, title, prefix)`,
 		`const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted);`,
-		`setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title);`,
+		`setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title, pill.prefix);`,
 		`if (data && data.actionableNow) setSidebarPairBadge(document.getElementById('governor-sidebar-badge'), issueCount, prCount, 'actionable: ' + issueCount + ' issues / ' + prCount + ' PRs')`,
 		// Contributors uses the roster response for both cards and counts.
 		`<span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count contributor-online-trigger" tabindex="0" role="link" aria-label="Contributors" data-keydown-action="ocNavigate" data-arg0="contributors-section" data-zero hidden>0/0</span></a>`,
@@ -61,7 +61,8 @@ func TestSidebarPairBadgeWiring(t *testing.T) {
 }
 
 // TestSidebarPairBadgeCounts executes the pure text helper under node:
-// the text is always "issues/prs" with non-numbers read as zero.
+// the text is always "issues/prs" with non-numbers read as zero, and only
+// a caller-supplied prefix ("BP = " on Overview, #17240) is prepended.
 func TestSidebarPairBadgeCounts(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -70,14 +71,14 @@ func TestSidebarPairBadgeCounts(t *testing.T) {
 	html := indexHTML(t)
 	script := strings.Join([]string{
 		jsFunc(t, html, "sidebarPairBadgeText"),
-		`const out = [sidebarPairBadgeText(3, 2), sidebarPairBadgeText(undefined, null), sidebarPairBadgeText('7', NaN)];
+		`const out = [sidebarPairBadgeText(3, 2), sidebarPairBadgeText(undefined, null), sidebarPairBadgeText('7', NaN), sidebarPairBadgeText(19, 4, 'BP = ')];
 		process.stdout.write(out.join('|'));`,
 	}, "\n")
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("node: %v\n%s", err, out)
 	}
-	if got, want := string(out), "3/2|0/0|7/0"; got != want {
+	if got, want := string(out), "3/2|0/0|7/0|BP = 19/4"; got != want {
 		t.Fatalf("sidebar pair badge counts = %q, want %q", got, want)
 	}
 }
