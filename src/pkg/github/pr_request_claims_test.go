@@ -489,3 +489,50 @@ func TestValidatePRRequestTargets_LookupErrorRefuses(t *testing.T) {
 		t.Fatalf("error = %v is a policy refusal; want a lookup error the watcher retries", err)
 	}
 }
+
+// A ledger row whose covering PR has since closed no longer blocks: the
+// live re-read, not the stale row, decides.
+func TestValidatePRRequestTargets_ClosedCoveringPRNoLongerBlocks(t *testing.T) {
+	srv := claimTargetServer(t, "closed")
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+	c.SetPRClaimLookup(ledgerLookupFor(IssueClaim{Repo: "r", Issue: 7, PRNumber: 8, PRRepo: "r", PRAuthor: "Karibhou", PRState: "open", ExternalAuthor: true, Closing: true}, true))
+
+	refused, err := c.validatePRRequestTargets(context.Background(), claimTargetRequest, time.Now())
+	if err != nil || len(refused) != 0 {
+		t.Fatalf("validatePRRequestTargets = %+v, %v; want a closed covering PR to release the target", refused, err)
+	}
+}
+
+// With issue claims on, the target's claim is read from the forge (marker
+// comment, then assignee), the path #17243 actually took.
+func TestValidatePRRequestTargets_IssueClaimsEnabledReadsForgeAssignee(t *testing.T) {
+	now := time.Now()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/7"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number": 7, "state": "open",
+				"updated_at": now.Add(-time.Minute).UTC().Format(time.RFC3339),
+				"assignees":  []map[string]any{{"login": "Karibhou"}},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+	c.SetIssueClaims(func() (bool, time.Duration) { return true, time.Hour })
+
+	refused, err := c.validatePRRequestTargets(context.Background(), claimTargetRequest, now)
+	reason, ok := prRequestPolicyReason(err)
+	if !ok || !strings.Contains(reason, "already claimed by Karibhou") {
+		t.Fatalf("error = %v (%q, policy=%v), want a claim refusal from the forge assignee", err, reason, ok)
+	}
+	if len(refused) != 1 || refused[0].Issue != 7 || refused[0].Holder != "Karibhou" {
+		t.Fatalf("refused = %+v, want #7 held by Karibhou", refused)
+	}
+}
