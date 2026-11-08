@@ -66,6 +66,8 @@ status.
 |---|---|
 | `--checkout-allow PREFIX,…`, `CRUX_CHECKOUT_ALLOWLIST` | repository URL prefixes `POST /v1/checkouts` may clone. **Unset means no checkout service.** |
 | `--checkout-dir PATH`, `CRUX_CHECKOUT_DIR` | where checkouts live. Default `<workdir>/checkouts`. |
+| `--checkout-max-bytes N`, `CRUX_CHECKOUT_MAX_BYTES` | server ceiling on `max_bytes`: a request asking for more is 400 `bad_request`; a request naming none gets the ceiling. Default 5 GiB. |
+| `CRUX_CHECKOUT_TOKEN` (env only) | HTTPS token for private repositories, handed to git through a credential helper. Never on a command line, in a record or in an error. |
 
 ## Semantics
 
@@ -80,9 +82,21 @@ and each request URL must be `https://` or `file://`, have a host (or a
 path, for `file`), and carry no userinfo, query or fragment; the request
 URL must start with an entry. An empty allowlist refuses everything. This
 is the shape of hive's `nousdeps` trust rules, ported without the
-per-package specifics. Private repositories therefore work only through
-whatever the server's own git credential helper provides; the API never
-accepts a credential.
+per-package specifics. The API never accepts a credential.
+
+**Private repositories.** The server may carry one HTTPS token,
+`CRUX_CHECKOUT_TOKEN` (`checkout.Config.Token`). It reaches git through a
+credential helper the service configures per invocation (`-c
+credential.helper=` to drop any host-wide helper, then an inline helper
+that answers `username=x-access-token` and the password from the child's
+`CRUX_CHECKOUT_GIT_TOKEN` environment), so the token is never an argument,
+never in the remote URL and never in a record; git failure output is
+passed through `logscrub` before it reaches an error. Every git child runs
+with `GIT_TERMINAL_PROMPT=0`, so a missing or wrong token fails the clone
+instead of hanging on a prompt. The helper answers only when a server
+asks, so public and `file://` repositories are unaffected. One token per
+server: scoping it per owner or minting it from hive's callback is left to
+a later slice.
 
 **Ownership via S0.** `owner` is recorded on every checkout. The caller's
 [principal](../crux-serve.md#caller-principals) decides what it may name:
@@ -109,7 +123,7 @@ is no pre-flight size query across the transports we allow. The cap is
 therefore *post-hoc*: the service clones (`--no-checkout`, plus
 `--single-branch` when `branches` is false), adds the worktree, then walks
 the regular files of the shared clone and the worktree and sums their
-sizes. Over `max_bytes` (default 5 GiB) it removes the worktree and
+sizes. Over `max_bytes` it removes the worktree and
 answers 413 `too_large` with both numbers; if the measurement itself
 fails it answers 501 `unsupported`. The bytes were already transferred
 and the shared clone is kept (a later request for the same repo reuses
@@ -117,6 +131,15 @@ it). `--filter=blob:limit=` partial clones would make the clone itself
 smaller but would also make the worktree need network at checkout time;
 that trade is not taken here and is deferred. The record stores both
 `max_bytes` and the measured `bytes`.
+
+The server bounds what a request may ask for: `checkout.Config.MaxBytes`
+(`--checkout-max-bytes`, `CRUX_CHECKOUT_MAX_BYTES`, default
+`DefaultMaxBytes` = 5 GiB) is a ceiling. A request whose `max_bytes`
+exceeds it is refused before any clone with 400 `bad_request`
+(`checkout.ErrAboveCeiling`, which also matches `ErrBadRequest`), naming
+both numbers; a request with no `max_bytes` gets the ceiling as its cap.
+A caller therefore cannot opt out of the operator's bound by asking for
+more.
 
 **Bound on live worktrees.** `checkout.Config.MaxCheckouts` (default 64)
 is the `sandbox.WorktreeManager` cap, counted as `.git` entries under the
@@ -151,6 +174,25 @@ must belong to the caller or the caller must be the operator (403
 does: a run is owned by the principal that created it, and only the owner
 or the operator may read or cancel it. While a run is live its checkout
 cannot be deleted (409 `conflict`); once the run settles, it can.
+
+**Kubernetes Job network (S2 follow-up).** The `job` backend takes
+`job_network: none | host | default` in the runs config. The default is
+`none`: before each Job the launcher creates a `NetworkPolicy` in the Job
+namespace, named after the Job and selecting its pod by the
+`hive.kubestellar.io/job=<name>` label, with `policyTypes: [Ingress,
+Egress]` and no rules — deny all, both ways — and deletes it when the
+Job is deleted (success, timeout, failed Job create) or when the Job is
+left behind for inspection. If the policy cannot be created the run is
+refused rather than started open. `host` sets `hostNetwork: true` (with
+`dnsPolicy: ClusterFirstWithHostNet`); `default` is the pod network with
+nothing added. The backend claims the `none` capability when
+`job_network` is `none` or the operator asserts `job_network_policy`
+(their own policy already denies egress). As with any NetworkPolicy, the
+isolation is only as real as the cluster's CNI: on a CNI that ignores
+policies the Job still has network, and the capability claim is the
+operator's to make honestly. `kubejob.Launcher` itself, shared with
+hive's agent sandbox, keeps `default` when `Network` is empty; only the
+contained-run backend defaults to `none`.
 
 ## S3. Human gate
 
@@ -397,7 +439,10 @@ a run's signals live and die with the run dir.
 ## Deliberately not in S1
 
 - TTL sweeper (recorded, not enforced).
-- `--filter=blob:limit=` partial clones; the cap is post-hoc only.
+- `--filter=blob:limit=` partial clones; the cap is post-hoc only (the
+  server ceiling bounds what may be asked, not what git transfers).
+- Per-owner or callback-minted checkout tokens; one `CRUX_CHECKOUT_TOKEN`
+  per server.
 - A per-owner allowlist; one list per server.
 - `ssh://` and `http://` repositories; `git@` syntax.
 - Anything about the hivecommons/crux repository or the publish path:
@@ -414,7 +459,9 @@ for runs are deferred and not scheduled.
 
 | Path | Role |
 |---|---|
-| `src/crux/checkout/` | `Service`, `Config`, `Record`, typed sentinels (`ErrBadRequest`, `ErrForbidden`, `ErrNotFound`, `ErrInUse`, `ErrMismatch`, `ErrTooLarge`, `ErrUnsupported`, `ErrGit`); store and index |
+| `src/crux/checkout/` | `Service`, `Config` (`MaxBytes` ceiling, `Token`), `Record`, typed sentinels (`ErrBadRequest`, `ErrAboveCeiling`, `ErrForbidden`, `ErrNotFound`, `ErrInUse`, `ErrMismatch`, `ErrTooLarge`, `ErrUnsupported`, `ErrGit`); store and index; credential-helper runner |
+| `src/crux/kubejob/` | `Options.Network` (`NetworkNone`, `NetworkHost`, `NetworkDefault`), per-Job deny-all `NetworkPolicy` lifecycle |
+| `src/crux/runs/config.go` | `job_network` (default `none` for the `job` backend), `job_network_policy` |
 | `src/crux/api/checkouts.go` | `PathCheckouts`, `CodeTooLarge`, `CodeUnsupported`, `CodeUpstream`, request/response types, `Client.{Create,List,Get,Delete}Checkout` |
 | `src/crux/serve/checkouts.go` | routes, ownership checks, error mapping; registered from `Server.Handler` after the runtime families and marked a work service for S0 |
 | `src/crux/serve/principal.go` | S0: `Principal`, `CallerFrom`, work-service gating |

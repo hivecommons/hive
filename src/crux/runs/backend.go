@@ -69,15 +69,22 @@ func BackendFromConfig(cfg Config) (*Backend, error) {
 			return nil, fmt.Errorf("%w: backend %q needs a job block", ErrConfig, BackendJob)
 		}
 		opts := jobOptions(*cfg.Job)
+		// The default is the contained run's, not the launcher's: a Config
+		// that skipped Defaults still isolates.
+		opts.Network = cfg.JobNetwork
+		if opts.Network == "" {
+			opts.Network = kubejob.NetworkNone
+		}
 		if err := opts.Validate(); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrConfig, err)
 		}
 		return &Backend{
 			Name:     BackendJob,
 			Launcher: &kubejob.Launcher{Options: opts},
-			// The Job manifest carries no network mode; only an operator's
-			// NetworkPolicy can enforce one, and only "none" is claimable.
-			Capabilities: Capabilities{NetworkNone: cfg.JobNetworkPolicy},
+			// "none" is claimable when the launcher isolates each run with
+			// its own NetworkPolicy (job_network none) or the operator
+			// asserts one of theirs does; "restricted" never is.
+			Capabilities: Capabilities{NetworkNone: opts.Network == kubejob.NetworkNone || cfg.JobNetworkPolicy},
 		}, nil
 	}
 	return nil, fmt.Errorf("%w: unknown backend %q", ErrConfig, cfg.Backend)
