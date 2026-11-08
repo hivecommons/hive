@@ -208,7 +208,7 @@ func proxyTrustingHTTPClient(timeout time.Duration) *http.Client {
 // unpacedProxyTrustingHTTPClient is proxyTrustingHTTPClient without the
 // slow-start pacer, for the App-JWT endpoints only.
 func unpacedProxyTrustingHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{Transport: githubUnpacedTransportChain(sharedProxyTrust.sharedTransport()), Timeout: timeout}
+	return &http.Client{Transport: githubAppJWTTransportChain(sharedProxyTrust.sharedTransport()), Timeout: timeout}
 }
 
 // newJWTClient builds a go-github client authenticated with an App JWT whose
@@ -216,7 +216,7 @@ func unpacedProxyTrustingHTTPClient(timeout time.Duration) *http.Client {
 // App-JWT / installation-token call must use this rather than gh.NewClient(nil)
 // so the mint verifies the MITM proxy's forged cert on a fresh-PVC boot.
 //
-// JWT calls bypass the slow-start pacer (githubUnpacedTransportChain): the
+// JWT calls bypass the slow-start pacer (githubAppJWTTransportChain): the
 // App endpoints are their own rate-limit bucket, and the installation-token
 // mint must not wait behind paced installation traffic.
 func newJWTClient(jwtToken, apiURL string) *gh.Client {

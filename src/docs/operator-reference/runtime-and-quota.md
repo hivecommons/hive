@@ -171,7 +171,15 @@ loops, so the proxy enforces two safeguards:
   that snapshot: responses whose `X-RateLimit-Limit` is 60 (GitHub's per-IP
   unauthenticated bucket, e.g. an agent's `gh` call without a token) or whose
   limit differs from the daemon's are ignored, so they cannot trip the floor
-  or the API budget mode.
+  or the API budget mode. App-JWT responses (installation-token mints and
+  installation discovery) are ignored too, because they describe the App's
+  own bucket. Readings are kept per rate-limit window, the
+  `X-RateLimit-Reset` they carry. When the daemon's responses report two
+  windows at once, the snapshot takes the lower `remaining` of the windows
+  reported in the last five minutes. The dashboard's GitHub API card
+  (`ghRateLimits.core`, including its `observed_at`) and the API budget
+  mode follow that window, not the process's first `GET /rate_limit`
+  reading after a restart.
 
 The proxy returns JSON shaped for the GitHub CLI:
 
