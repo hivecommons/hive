@@ -513,6 +513,9 @@ type Client struct {
 	// prReplyOptions tracks the PRs whose status comment carries the "Your
 	// move" section (pr_reply_options.go).
 	prReplyOptions prReplyOptions
+	// unparkReads is the un-park sweep's per-item read cache
+	// (issue_unpark_read_cache.go). Zero value is ready to use.
+	unparkReads unparkReadCache
 	// noPRParkChecks paces the issue stage sweep's look at stalled 010
 	// issues the hive may have answered without a PR (issue_no_pr_park.go).
 	noPRParkChecks noPRParkChecks
