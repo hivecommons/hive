@@ -206,6 +206,7 @@ ENV_UNSET=(
   -u HIVE_CONTAINER_OCI_RUNTIME -u CONTRIBUTOR_MODE -u HIVE_HUB
   -u HIVE_CONTRIBUTOR_IMAGE -u AGENT_MODEL -u AGENT_REASONING_EFFORT
   -u HIVE_CODEX_AUTO_USE_BANKED_RESET -u HIVE_SESSION -u HIVE_KRUN_KVM_DEVICE
+  -u HIVE_AGENT_ROLE
 )
 for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST \
   OPENAI_BASE_PATH GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL \
@@ -289,6 +290,11 @@ started_nothing() {
 arg_after() {
   local flag="$1"
   awk -v flag="$flag" '$0 == flag { getline; print; exit }' "$CAPTURE"
+}
+
+# The values passed with -e, one per line (NAME=value).
+env_args() {
+  awk '$0 == "-e" { getline; print }' "$CAPTURE"
 }
 
 echo ""
@@ -655,6 +661,31 @@ check "krun from contributor.env is a krun launch" "krun" "$(arg_after --runtime
 OUT="$(run_recipe docker codex)"; RC=$?
 check "krun from contributor.env with docker is refused" "1" "$RC"
 started_nothing "krun from contributor.env with docker"
+cp "$WORK/contributor.env.orig" "$FAKE_HOME/.config/hive/contributor.env"
+
+echo ""
+echo "-- HIVE_AGENT_ROLE reaches the contributor container --"
+# The relay reads HIVE_AGENT_ROLE to ask for a spoke-agent lane. Inside the
+# container contributor-agent.sh sources contributor.env without exporting
+# it, so the recipe's -e list is the only way the role reaches the relay.
+OUT="$(run_contributor docker HIVE_AGENT_ROLE=scanner)"; RC=$?
+check "launch with an exported role succeeds" "0" "$RC"
+check "an exported role is forwarded with -e" "HIVE_AGENT_ROLE=scanner" "$(env_args | grep "^HIVE_AGENT_ROLE=")"
+OUT="$(run_contributor podman)"; RC=$?
+check "launch with no role succeeds" "0" "$RC"
+if env_args | grep -q '^HIVE_AGENT_ROLE='; then
+  fail "no role means no HIVE_AGENT_ROLE argument"
+else
+  pass "no role means no HIVE_AGENT_ROLE argument"
+fi
+OUT="$(run_krun "" codex HIVE_AGENT_ROLE=quality)"; RC=$?
+check "krun launch with a role succeeds" "0" "$RC"
+check "krun forwards the role too" "HIVE_AGENT_ROLE=quality" "$(env_args | grep "^HIVE_AGENT_ROLE=")"
+cp "$FAKE_HOME/.config/hive/contributor.env" "$WORK/contributor.env.orig"
+printf '%s\n' 'HIVE_AGENT_ROLE=scanner' >> "$FAKE_HOME/.config/hive/contributor.env"
+OUT="$(run_contributor docker)"; RC=$?
+check "launch with the role only in contributor.env succeeds" "0" "$RC"
+check "a role set only in contributor.env is forwarded" "HIVE_AGENT_ROLE=scanner" "$(env_args | grep "^HIVE_AGENT_ROLE=")"
 cp "$WORK/contributor.env.orig" "$FAKE_HOME/.config/hive/contributor.env"
 
 echo ""

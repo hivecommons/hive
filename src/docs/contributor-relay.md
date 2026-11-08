@@ -1139,6 +1139,8 @@ export HIVE_AGENT_ROLE=quality
 just contribute-hive
 ```
 
+`HIVE_AGENT_ROLE` works in container, krun and local mode, either exported in the shell or set in `contributor.env`.
+
 The hive may override the request with an owner-assigned role. See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md) for tier, grant, and allow-list requirements.
 
 ## Admin: configuring the queue (Governor Config → Hub)

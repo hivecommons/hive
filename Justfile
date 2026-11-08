@@ -2315,6 +2315,7 @@ contribute-hive backend="" mode="docker": check-version
         "${PROVIDER_ENV_ARGS[@]}" \
         ${AGENT_MODEL:+-e AGENT_MODEL="${AGENT_MODEL}"} \
         ${AGENT_REASONING_EFFORT:+-e AGENT_REASONING_EFFORT="${AGENT_REASONING_EFFORT}"} \
+        ${HIVE_AGENT_ROLE:+-e HIVE_AGENT_ROLE="${HIVE_AGENT_ROLE}"} \
         ${CONTRIBUTOR_MODE:+-e CONTRIBUTOR_MODE="${CONTRIBUTOR_MODE}"} \
         ${HIVE_CODEX_AUTO_USE_BANKED_RESET:+-e HIVE_CODEX_AUTO_USE_BANKED_RESET="${HIVE_CODEX_AUTO_USE_BANKED_RESET}"} \
         ${HIVE_SESSION+-e HIVE_SESSION="${HIVE_SESSION}"} \
@@ -2323,6 +2324,10 @@ contribute-hive backend="" mode="docker": check-version
       #   empty string is the relay's opt-out of session labeling and must be
       #   forwarded, while an unset variable must stay unset so the relay
       #   defaults the session to the backend name (kubestellar/hive#5605).
+      # ^ HIVE_AGENT_ROLE (the spoke-agent lane the relay asks for) must be
+      #   forwarded here: contributor-agent.sh sources contributor.env without
+      #   exporting it, so neither a shell export nor a contributor.env line
+      #   would otherwise reach the relay. The hub still checks the role.
 
       echo "Container: ${CONTAINER_NAME}"
       echo "Limits:    ${CONTAINER_MEMORY} memory, ${CONTAINER_CPUS} CPUs"
