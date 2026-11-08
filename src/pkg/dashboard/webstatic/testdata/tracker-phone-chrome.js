@@ -52,7 +52,9 @@
       measurements.fixtureNote = note ? Math.round(rect(note).height + parseFloat(noteStyle.marginTop) + parseFloat(noteStyle.marginBottom)) : 0;
       measurements.chrome = Math.round(rect(first).top - rect(header).bottom - measurements.fixtureNote);
       assert(measurements.chrome <= maxChromePx, 'chrome between the section header and the first row is ' + measurements.chrome + 'px (max ' + maxChromePx + ')');
-      measurements.rowsFullyVisible = rows.filter(row => { const box = rect(row); return box.top >= navbar - 1 && box.bottom <= innerHeight + 1; }).length;
+      // The note also pushes every row down by its own height, so credit it
+      // back here too: a 375×667 phone shows the first row without it.
+      measurements.rowsFullyVisible = rows.filter(row => { const box = rect(row); return box.top >= navbar - 1 && box.bottom - measurements.fixtureNote <= innerHeight + 1; }).length;
       assert(measurements.rowsFullyVisible >= 1, 'at least one row is fully visible with the section header at the top of the viewport');
     }
     const sticky = document.getElementById('activity-monitor-sticky');

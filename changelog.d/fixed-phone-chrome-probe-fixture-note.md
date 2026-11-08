@@ -1,0 +1,1 @@
+- The Activity monitor phone-chrome acceptance probe credits the fixture-only provenance note back when counting fully visible rows, so the 375×667 run no longer fails every dashboard PR on a row the real render shows.
