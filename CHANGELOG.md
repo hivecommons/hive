@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.205.0)
+
+### Added
+
+- crux: saved run results complete, the seventh work service of the Crux work-services RFC ([hivecommons/crux#114](https://github.com/hivecommons/crux/issues/114) S7). A finished run can now be re-run with `POST /v1/runs/{id}/restart` (`crux --server … runs restart`): the server re-validates the request the run was accepted with as its original owner against the current configuration, links the two records (`restarted_from` / `restarted_by`), audits the restart with its reason, and refuses with `409 conflict` while the old run is still live so two drivers never resume one task. `GET /v1/runs` lists the caller's runs newest first (the operator's view is every run; `?status=` and `?limit=` narrow it), `GET /v1/runs/{id}/history` is the record's status transitions, and a `crux serve` restart now settles the `running` steps of an unfinished session to `unfinished` alongside the run. `crux runs list|restart|history` round out the CLI.
+
 ## 2026-11-08 (v5.204.1)
 
 ### Fixed
