@@ -10,7 +10,10 @@
   if (!dedicatedPreview) throw new Error('Use a dedicated published-preview tab, not the user’s live dashboard');
   const tolerance = 1;
   const MAX_MEDIAN_ROW_HEIGHT = 96;
-  const MIN_ROWS_IN_VIEW = 6;
+  // #17161 asks for six rows on a 844px-tall portrait phone; landscape phones
+  // (375 / 360px tall) get the same floor scaled to their height.
+  const PORTRAIT_HEIGHT = 844;
+  const MIN_ROWS_IN_VIEW = Math.max(1, Math.floor(6 * Math.min(1, innerHeight / PORTRAIT_HEIGHT)));
   const failures = [];
   const assert = (ok, message) => { if (!ok) failures.push(message); };
   const frame = () => new Promise(requestAnimationFrame);
@@ -35,7 +38,7 @@
     for (let j = i; j < boxes.length && boxes[j].bottom - boxes[i].top <= innerHeight + tolerance; j++) n++;
     inView = Math.max(inView, n);
   }
-  assert(inView >= MIN_ROWS_IN_VIEW, 'at least ' + MIN_ROWS_IN_VIEW + ' rows inside one viewport past the header: ' + inView);
+  assert(inView >= MIN_ROWS_IN_VIEW, 'at least ' + MIN_ROWS_IN_VIEW + ' rows inside one ' + innerHeight + 'px viewport past the header: ' + inView);
   for (const [index, row] of rows.entries()) {
     const bounds = row.getBoundingClientRect();
     // Lead actions and badges wrap onto their own line instead of being
