@@ -264,13 +264,15 @@ issue labelled `needs-human` or held, on an issue parked on a person's
 decision (`stage/045-needs-decision`, `needs-spec`, the retired decision
 labels), and on an umbrella issue wearing a never-claim label
 (`governor.claims.never_claim_labels`, default `epic`, case-insensitive):
-an epic is the list of work, not the work. The same gate admits every
-automated claim producer, so a start signal on such an issue records nothing. The
+an epic is the list of work, not the work. The claim is also refused when the
+claiming agent itself filed the issue without `--claim` (`filed for outside
+help by <agent>`; see below). The same gate admits every automated claim
+producer — the hub's own dispatch of an issue to an agent included — so a
+start signal on such an issue records nothing. The
 `stage/030-pr-in-progress` label is swapped for `stage/040-covered-by-pr` when
 the agent's `hive-open-pr --issues` request opens the PR, and cleared when the
 claim is released or at enumeration once PR evidence exists or the marker
-lapsed (default 2h). It is also refused when the claiming agent itself filed
-the issue without `--claim` (`filed for outside help by <agent>`; see below).
+lapsed (default 2h).
 
 ### Filing your own next step
 
@@ -280,15 +282,18 @@ agent's separate `claim` request lands
 ([#17299](https://github.com/hivecommons/hive/issues/17299)). When you file
 an issue you are about to work on yourself, pass `--claim`: right after the
 create the watcher runs the same gate and claim a `claim` request does
-(`hive/claimed-by-<agent>` label, in-progress fact, start marker) and removes
-`help wanted`, so there is no window. A claim that fails or is refused does
+(`hive/claimed-by-<agent>` label, in-progress fact, start marker, the same
+start signal that writes the hub's claim ledger) and removes `help wanted`,
+so there is no window. A claim that fails or is refused does
 not undo the create; the result is still `ok` and says why in `claim_error`.
 A request folded into an existing issue is not claimed.
 
 An issue filed **without** `--claim` carries a hidden
 `<!-- hive:filed-for-help <agent> -->` marker: the hive asked for outside
-help, so a later `claim` of it by the same agent is refused. Other agents and
-contributors may still claim it; a maintainer who wants the filer to take it
+help, so a later `claim` of it by the same agent — or the hub dispatching it
+back to that agent — is refused. A marker already in the request body is
+replaced by the filer's own, so the body cannot name someone else. Other
+agents and contributors may still claim it; a maintainer who wants the filer to take it
 after all removes the marker from the issue body.
 
 ### `label`

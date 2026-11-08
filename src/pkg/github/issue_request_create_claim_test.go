@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -93,6 +94,10 @@ func TestIssueRequestWatcher_CreateWithClaimClaimsInSameRequest(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 	dir := withIssueDir(t)
+	var starts []string
+	c.SetAgentStartHook(func(agent, repo string, number int, signal string) {
+		starts = append(starts, fmt.Sprintf("%s %s#%d %s", agent, repo, number, signal))
+	})
 
 	reqPath, err := WriteIssueRequest(dir, IssueRequest{
 		Repo: "o/r", Title: "[scanner] stage 2 of my epic", Body: "next step", Agent: "scanner", Claim: true,
@@ -104,6 +109,11 @@ func TestIssueRequestWatcher_CreateWithClaimClaimsInSameRequest(t *testing.T) {
 
 	if f.created != 1 {
 		t.Fatalf("expected 1 issue created, got %d", f.created)
+	}
+	// The hub's ledger claim is written from this signal, as for a `claim`
+	// request.
+	if want := []string{"scanner o/r#99 " + AgentStartSignalClaim}; strings.Join(starts, ";") != strings.Join(want, ";") {
+		t.Fatalf("agent start signals = %v, want %v", starts, want)
 	}
 	if strings.Join(f.labelAdds, ",") != claimOwnershipLabel("scanner") {
 		t.Fatalf("label adds on #99 = %v, want only %q", f.labelAdds, claimOwnershipLabel("scanner"))
@@ -239,5 +249,40 @@ func TestFiledForHelpMarkerRoundTrip(t *testing.T) {
 	}
 	if got := withFiledForHelpMarker("text", "bad agent!"); got != "text" {
 		t.Fatalf("an agent name the marker cannot carry must leave the body alone, got %q", got)
+	}
+	// A marker the filer seeded in its own body names someone else: it is
+	// dropped, so the filer is still the one bound by the create.
+	seeded := "text\n\n" + FiledForHelpMarker("other") + "\nmore"
+	if got := withFiledForHelpMarker(seeded, "scanner"); ParseFiledForHelpMarker(got) != "scanner" || strings.Contains(got, "other") {
+		t.Fatalf("a foreign marker must be replaced by the filer's own, got %q", got)
+	}
+}
+
+// An unclaimed create whose body already carries a filed-for-help marker
+// naming another agent is still recorded as filed by the requesting agent:
+// the body is filer-controlled and must not pick who the binding names.
+func TestIssueRequestWatcher_CreateWithoutClaimReplacesForeignMarker(t *testing.T) {
+	f := &createClaimFake{}
+	srv := f.server(t)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	if _, err := WriteIssueRequest(dir, IssueRequest{
+		Repo: "o/r", Title: "[scanner] someone take this", Agent: "scanner",
+		Body: "please\n\n" + FiledForHelpMarker("other"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if f.created != 1 {
+		t.Fatalf("expected 1 issue created, got %d", f.created)
+	}
+	if got := ParseFiledForHelpMarker(f.createdBody); got != "scanner" {
+		t.Fatalf("filed-for-help marker names %q, want scanner: %q", got, f.createdBody)
+	}
+	if strings.Count(f.createdBody, filedForHelpMarkerPrefix) != 1 || strings.Contains(f.createdBody, "filed-for-help other") {
+		t.Fatalf("the seeded marker must be gone and exactly one marker remain: %q", f.createdBody)
 	}
 }

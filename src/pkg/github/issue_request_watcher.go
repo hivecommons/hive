@@ -1029,6 +1029,9 @@ func (c *Client) claimCreatedIssue(ctx context.Context, req IssueRequest, fileUI
 	if err := c.claimIssueForAgent(ctx, req.Repo, res.Number, req.Agent, nowFn); err != nil {
 		return fail(err.Error())
 	}
+	// The same start signal a `claim` request raises, so the hub's ledger
+	// records the claim too (SetAgentStartHook), not only the labels.
+	c.notifyAgentStart(req.Agent, req.Repo, res.Number, AgentStartSignalClaim)
 	if err := stripHelpWanted(ctx, c, req.Repo, res.Number); err != nil {
 		c.logger.Warn("issue-request watcher: claimed new issue but removing help wanted failed",
 			slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("error", err.Error()))

@@ -217,8 +217,13 @@ func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, clie
 		// A fresh claim with no PR behind it is a dispatch: it also asks
 		// whether an open PR already fixes the issue (#14799). A renewal,
 		// a PR-backed start signal and the release tick's recheck of live
-		// claims do not — the holder's own PR is the open PR.
+		// claims do not — the holder's own PR is the open PR. A hive
+		// agent's own dispatch (Holder is the agent name) also refuses an
+		// issue that agent filed for outside help (hivecommons/hive#17299).
 		if _, held := ledger.Lookup(req.Repo, req.Issue); !held && !req.PRStarted {
+			if req.Kind == claims.KindAgent {
+				return gh.IssueStartBlockReason(ctx, req.Repo, req.Issue, req.Holder)
+			}
 			return gh.IssueDispatchBlockReason(ctx, req.Repo, req.Issue)
 		}
 		return gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)

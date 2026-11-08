@@ -47,7 +47,13 @@ func FiledForHelpMarker(agent string) string {
 	return filedForHelpMarkerPrefix + agent + " -->"
 }
 
-var filedForHelpMarkerRe = regexp.MustCompile(`<!--\s*hive:filed-for-help\s+([A-Za-z0-9_.-]+)\s*-->`)
+// filedForHelpAgentPattern is the agent-name alphabet the marker can carry.
+const filedForHelpAgentPattern = `[A-Za-z0-9_.-]+`
+
+var (
+	filedForHelpMarkerRe = regexp.MustCompile(`<!--\s*hive:filed-for-help\s+(` + filedForHelpAgentPattern + `)\s*-->`)
+	filedForHelpAgentRe  = regexp.MustCompile(`^` + filedForHelpAgentPattern + `$`)
+)
 
 // ParseFiledForHelpMarker returns the agent named by body's filed-for-help
 // marker, or "" when it has none.
@@ -59,14 +65,16 @@ func ParseFiledForHelpMarker(body string) string {
 	return m[1]
 }
 
-// withFiledForHelpMarker appends the filed-for-help marker for agent to body
-// unless body already carries one.
+// withFiledForHelpMarker appends the filed-for-help marker for agent to
+// body. Any marker already in body is dropped first: the body is the
+// filer's own text, so a pre-seeded marker naming someone else would
+// otherwise let the filer dodge the binding its unclaimed create makes.
 func withFiledForHelpMarker(body, agent string) string {
 	agent = strings.TrimSpace(agent)
-	if agent == "" || !filedForHelpMarkerRe.MatchString(FiledForHelpMarker(agent)) || ParseFiledForHelpMarker(body) != "" {
+	if agent == "" || !filedForHelpAgentRe.MatchString(agent) {
 		return body
 	}
-	body = strings.TrimRight(body, "\n")
+	body = strings.TrimRight(filedForHelpMarkerRe.ReplaceAllString(body, ""), "\n")
 	if body == "" {
 		return FiledForHelpMarker(agent)
 	}
@@ -240,7 +248,8 @@ func (c *Client) IssueDispatchBlockReason(ctx context.Context, repo string, numb
 }
 
 // IssueStartBlockReason is IssueDispatchBlockReason for a named agent's own
-// start (the `claim` relay request): it also refuses an issue that same agent
+// start (the `claim` relay request, the hub's dispatch of a KindAgent claim):
+// it also refuses an issue that same agent
 // filed for outside help (ClaimBlockReasonFiledForHelpPrefix,
 // hivecommons/hive#17299). A maintainer lets the filer take it after all by
 // removing the marker from the issue body.
