@@ -29,8 +29,8 @@ func (c *Engine) mergeForwardTrustedHumanFor(repo string) bool {
 	return c.mergeForwardTrustedHuman(repo)
 }
 
-// mergeForwardKey namespaces the per-head attempt in heldRunApprovals so it
-// never collides with the rebase-nudge or bot-takeover entries.
+// mergeForwardKey namespaces the per-head attempt in the sweep memory
+// (automerge_sweep_memory.go), which every lane's engine shares.
 func mergeForwardKey(prKey, headSHA string) string {
 	return prKey + "@" + headSHA + "#merge-forward"
 }
@@ -48,22 +48,15 @@ func mergeForwardWorkflowRefusedKey(prKey, headSHA string) string {
 
 func (c *Engine) mergeForwardWorkflowRefused(owner, repo string, number int, headSHA string) bool {
 	key := mergeForwardWorkflowRefusedKey(c.evaluatedHeadKey(owner, repo, number), headSHA)
-	c.heldRunApprovalsMu.Lock()
-	defer c.heldRunApprovalsMu.Unlock()
-	return c.heldRunApprovals[key]
+	return c.memory().hasOnce(key, c.clock())
 }
 
+// markMergeForwardOnce records key in the sweep memory and reports whether
+// this is its first use. The memory outlives the one-shot engine the
+// trusted-author lane runs on each tick, so a head is tried once per
+// process, not once per sweep.
 func (c *Engine) markMergeForwardOnce(key string) bool {
-	c.heldRunApprovalsMu.Lock()
-	defer c.heldRunApprovalsMu.Unlock()
-	if c.heldRunApprovals == nil {
-		c.heldRunApprovals = make(map[string]bool)
-	}
-	if c.heldRunApprovals[key] {
-		return false
-	}
-	c.heldRunApprovals[key] = true
-	return true
+	return c.memory().markOnce(key, c.clock())
 }
 
 // mergeForwardOrConflict handles a trusted-author PR GitHub reports as

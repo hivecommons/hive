@@ -209,7 +209,7 @@ func branchUpdateWorkflowRefusalReason(fork bool) string {
 	return autoMergeReasonWorkflowPermission
 }
 
-// branchUpdateWorkflowRefusedKey namespaces, in heldRunApprovals, GitHub's
+// branchUpdateWorkflowRefusedKey namespaces, in the sweep memory, GitHub's
 // workflow-file refusal of update-branch for one head on one base, as
 // mergeForwardWorkflowRefusedKey does for the merge-forward.
 func branchUpdateWorkflowRefusedKey(prKey, headSHA, baseSHA string) string {
@@ -221,9 +221,7 @@ func (c *Engine) branchUpdateWorkflowRefused(owner, repo string, number int, hea
 		return false
 	}
 	key := branchUpdateWorkflowRefusedKey(c.evaluatedHeadKey(owner, repo, number), headSHA, baseSHA)
-	c.heldRunApprovalsMu.Lock()
-	defer c.heldRunApprovalsMu.Unlock()
-	return c.heldRunApprovals[key]
+	return c.memory().hasOnce(key, c.clock())
 }
 
 func (c *Engine) markBranchUpdateWorkflowRefused(owner, repo string, number int, headSHA, baseSHA string) {

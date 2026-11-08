@@ -44,6 +44,9 @@ func integrationEligibilityProbe(ctx context.Context) bool {
 func (c *Engine) integrationReadOnlyOptions() Options {
 	options := c.integrationOptions
 	options.MutationBoundary = integrationEligibilityReadOnlyBoundary{}
+	// Its one-per-head marks (a merge-forward tried, a hold logged) must
+	// not reach the sweeps: the probe makes no write.
+	options.isolatedSweepMemory = true
 	options.StageTracker = NewStageTracker()
 	options.BasePreparation = NewBasePreparationStore("")
 	// A private held-run ledger: the contributor lane claims a head before it

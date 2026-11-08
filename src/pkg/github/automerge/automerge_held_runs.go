@@ -677,16 +677,7 @@ func (c *Engine) markRebaseNudged(owner, repo string, number int, headSHA string
 // and reports whether this is the first report.
 func (c *Engine) markTerminalHoldLogged(owner, repo string, number int, headSHA, reason string) bool {
 	key := c.evaluatedHeadKey(owner, repo, number) + "@" + strings.ToLower(headSHA) + "@" + reason
-	c.heldRunApprovalsMu.Lock()
-	defer c.heldRunApprovalsMu.Unlock()
-	if c.terminalHoldsLogged == nil {
-		c.terminalHoldsLogged = make(map[string]bool)
-	}
-	if c.terminalHoldsLogged[key] {
-		return false
-	}
-	c.terminalHoldsLogged[key] = true
-	return true
+	return c.memory().markHoldLogged(key, c.clock())
 }
 
 // reportTerminalHold logs a terminal hold once per PR head and reason, and
