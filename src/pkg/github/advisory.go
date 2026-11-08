@@ -72,10 +72,17 @@ func (c *Client) ProbeIssuesDisabled(ctx context.Context, owner, repo string) (*
 	if err != nil {
 		return nil, err
 	}
-	if ghRepo != nil && !ghRepo.GetHasIssues() {
-		return &IssuesDisabledError{Repo: owner + "/" + repo, Fork: ghRepo.GetFork()}, nil
+	return IssuesDisabledFor(owner, repo, ghRepo), nil
+}
+
+// IssuesDisabledFor classifies metadata already read for owner/repo the way
+// ProbeIssuesDisabled does: a non-nil *IssuesDisabledError when has_issues is
+// false, nil otherwise (including nil metadata).
+func IssuesDisabledFor(owner, repo string, meta *gh.Repository) *IssuesDisabledError {
+	if meta != nil && !meta.GetHasIssues() {
+		return &IssuesDisabledError{Repo: owner + "/" + repo, Fork: meta.GetFork()}
 	}
-	return nil, nil
+	return nil
 }
 
 // writeForbiddenMessage is GitHub's 403 body when an installation token may

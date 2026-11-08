@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v6.0.2)
+
+### Fixed
+
+- The GitHub ETag cache now keeps the hive's repeat reads, so they come back as free `304`s instead of being charged in full. The cache held 64 MiB of raw response bodies, and one closed-pull-request list page is about 2 MiB: on a hosted hive with 20 repos (2026-11-08) one variant of that list was 36 MiB across the repos, and the hive reads several variants every cycle. Each sweep pushed the rest of the working set out, so the cache sat at about 500 entries and, for example, the metrics collector's repo reads, which were unchanged, came back `304` only 12 times in 189. Bodies of 1 KiB or more are now held gzip-compressed (about 7x smaller), the entry bound is 16384, and `HIVE_GITHUB_ETAG_CACHE_MAX_MB` sets the byte bound for a hive that needs more. `etag_cache` in `/api/gh-rate-limits` and the status payload now also reports `bytes`, `max_bytes` and `evictions`.
+- github: the issue un-park sweep reuses an item's comment list and label timeline while the item's `updated_at` in the issue list has not moved, instead of re-reading both for every parked issue and waiting PR on every pass. The seven-day command window, repo-permission and label-trust checks still run on every pass against the reused data; an item is read again when it changes, when the read was taken within two minutes of its last update, after the sweep writes to it, and at least every six hours. On the knuckle hive these reads were the largest REST consumer (`hive:issue_unpark`: 878 comment and 363 timeline reads charged in 50 minutes).
+
 ## 2026-11-08 (v6.0.1)
 
 ### Fixed

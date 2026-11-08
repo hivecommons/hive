@@ -179,6 +179,8 @@ type Client struct {
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
 	workflowApprovals         workflowApprovalLedger
+	heldRunApprovals          HeldRunApprovals
+	installationPerms         installationPermissionCache
 	mergedClaimScanTransient  sync.Map        // repo -> true while its merged-PR scan is timing out
 	stageFacts                stageFactsState // out-of-cycle stage writes; see StageFacts
 	apiBudget                 apiBudgetState
@@ -202,6 +204,10 @@ type Client struct {
 	selfLoginPending    chan struct{} // closed when the in-flight GET /user completes
 	additionalBotLogins []string
 	noBotIdentityWarned sync.Once
+	// sharedState holds process-wide values other packages keep on the
+	// Client (SharedState), such as the automerge sweeps' once-per-head marks.
+	sharedStateMu sync.Mutex
+	sharedState   map[string]any
 	// approvalDesk is the RFC #4000 approval-desk consultation performed per PR
 	// by the self-authored auto-merge sweep. nil (the default) means the sweep
 	// behaves exactly as it did before the desk existed. Set by SetApprovalDesk
@@ -513,6 +519,9 @@ type Client struct {
 	// prReplyOptions tracks the PRs whose status comment carries the "Your
 	// move" section (pr_reply_options.go).
 	prReplyOptions prReplyOptions
+	// unparkReads is the un-park sweep's per-item read cache
+	// (issue_unpark_read_cache.go). Zero value is ready to use.
+	unparkReads unparkReadCache
 	// noPRParkChecks paces the issue stage sweep's look at stalled 010
 	// issues the hive may have answered without a PR (issue_no_pr_park.go).
 	noPRParkChecks noPRParkChecks
@@ -4403,6 +4412,12 @@ type ETagCacheInfo struct {
 	Hits    int64 `json:"hits"`
 	Misses  int64 `json:"misses"`
 	Entries int64 `json:"entries"`
+	// Bytes / MaxBytes / Evictions are the conditional-request cache's
+	// memory against its bound and how many entries the bounds pushed out
+	// (ETagCacheSnapshot). Unset for caches that do not report them.
+	Bytes     int64 `json:"bytes,omitempty"`
+	MaxBytes  int64 `json:"max_bytes,omitempty"`
+	Evictions int64 `json:"evictions,omitempty"`
 }
 
 type RateLimitEntry struct {
@@ -4466,9 +4481,8 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 		info.GraphQLPRBatch = c.prBatchStats
 		c.prBatchMu.Unlock()
 	}
-	hits, misses, entries := ETagCacheStats()
-	info.ETagCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
-	hits, misses, entries = PRDetailCacheStats()
+	info.ETagCache = ETagCacheSnapshot()
+	hits, misses, entries := PRDetailCacheStats()
 	info.PRDetailCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
 	info.Webhooks = WebhookHealthSnapshot()
 	info.TopConsumers = RESTTopConsumers(10)
