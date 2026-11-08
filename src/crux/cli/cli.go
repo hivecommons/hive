@@ -219,6 +219,11 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 		// there is no in-process form.
 		fmt.Fprintln(e.Stderr, "crux: gate needs --server ADDR (or CRUX_SERVER); gates are kept by a crux serve")
 		return ExitUsage
+	case "cmdlog":
+		// The command log is written by the runner inside a `crux serve`
+		// and read through its API, never from the file.
+		fmt.Fprintln(e.Stderr, "crux: cmdlog needs --server ADDR (or CRUX_SERVER); command logs are kept by a crux serve")
+		return ExitUsage
 	case "help", "-h", "--help":
 		fs := flag.NewFlagSet("crux", flag.ContinueOnError)
 		e.usage(fs)
@@ -358,6 +363,8 @@ Work services (no runtime; hivecommons/crux#114):
                                   $CRUX_CHECKOUT_ALLOWLIST gates which repos)
   gate open|list|answer|wait      human gates on a crux serve (--server only;
                                   'crux gate help' for flags)
+  cmdlog list|show <run>          the commands a contained run dispatched
+                                  (--server only; 'crux cmdlog help' for flags)
 
 While 'crux run' is in the foreground it serves <workdir>/crux.sock; ps, logs,
 kick and stop use that socket when present so they act on the live runtime.
