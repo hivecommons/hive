@@ -228,12 +228,18 @@ func inferenceBlockedStall(r slog.Record) bool {
 	return blocked
 }
 
-// stageDampenerSuppression reports whether r is the stage-label store refusing
-// a flapping transition ("stage transition suppressed by dampener"). That is
-// the dampener working as designed, not a runtime error; the WARN stays in
-// local logs (hivecommons/hive#17103).
+// stageDampenerSuppression reports whether r is a stage guard refusing a
+// flapping transition: the stage-label store's dampener ("stage transition
+// suppressed by dampener", hivecommons/hive#17103) or the stage engine's
+// same-head reversal guard ("stage flap suppressed", hivecommons/hive#17142).
+// Both are the guard working as designed, not a runtime error; the WARN stays
+// in local logs.
 func stageDampenerSuppression(r slog.Record) bool {
-	return strings.TrimSpace(r.Message) == "stage transition suppressed by dampener"
+	switch strings.TrimSpace(r.Message) {
+	case "stage transition suppressed by dampener", "stage flap suppressed":
+		return true
+	}
+	return false
 }
 
 // automergeMergeGuardSkip reports whether r is an automerge sweep lane
