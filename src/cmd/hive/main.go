@@ -7182,6 +7182,10 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run from inside an agent's pane by the jev-decide skill; see
 		// pkg/jev/cli.go. Talks only to the hive's loopback decision endpoint.
 		return true, jev.Run(args[1:], os.Stdin, stdout, stderr)
+	case memoryDrainSubcommand:
+		// Run as the agent by the Claude Code memory hooks Hive seeds; see
+		// memory_drain_cmd.go. Always exits 0.
+		return true, runMemoryDrain(args[1:], os.Stdin, stdout, stderr)
 	default:
 		return false, 0
 	}
