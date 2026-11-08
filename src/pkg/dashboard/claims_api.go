@@ -234,6 +234,36 @@ func coveringPRRepo(pr ghpkg.IssueClaim) string {
 	return pr.Repo
 }
 
+// recordCompletionPRClaim writes the PR a task_complete reported into the
+// duplicate-PR ledger IssueClaimed reads, once verifyReportedPRDetail has
+// confirmed it exists on the assigned repo and is this contributor's
+// (hivecommons/hive#17300). The ledger is otherwise only refreshed by the
+// eval-cycle scan and by PRs the hive's own client opens, so a PR the relay
+// opened with its own token minutes ago is usually missing from it — and the
+// lease revoke that follows the completion would then release the claim the
+// PR covers. Merged PRs are skipped: they hold nothing.
+func (h *ContributeWSHub) recordCompletionPRClaim(task *WSTaskAssign, prURL, username string, pr ghpkg.PRVerification) {
+	if task == nil || !pr.Verified || pr.Merged || task.Kind != "issue" || task.Number <= 0 || username == "" {
+		return
+	}
+	if task.SourceType != "" && task.SourceType != "github" {
+		return
+	}
+	if h.server == nil || h.server.deps == nil || h.server.deps.RecordIssueClaim == nil {
+		return
+	}
+	ref, err := ghpkg.ParsePRURL(prURL)
+	if err != nil || !strings.EqualFold(ref.FullName(), task.Repo) {
+		return
+	}
+	claim := ghpkg.IssueClaim{Repo: task.Repo, Issue: task.Number, PRRepo: ref.FullName(), PRNumber: ref.Number,
+		PRURL: prURL, PRAuthor: username, PRState: ghpkg.PRStateOpen, ExternalAuthor: true}
+	if err := h.server.deps.RecordIssueClaim(claim); err != nil {
+		h.logger.Warn("[claims] recording completion PR claim failed",
+			"repo", task.Repo, "issue", task.Number, "pr_url", prURL, "error", err.Error())
+	}
+}
+
 // sweepPRHeldClaims re-checks every contributor claim kept for a covering PR
 // (releaseClaimForLease, hivecommons/hive#17300): while the same PR still
 // covers the issue the hold is renewed; once it merged, closed, or stopped
@@ -250,8 +280,10 @@ func (h *ContributeWSHub) sweepPRHeldClaims() int {
 		if c.Kind != claims.KindContributor || c.PRNumber <= 0 || c.HolderID == "" {
 			continue
 		}
-		if pr, ok := h.coveringPRByHolder(c); ok && pr.PRNumber == c.PRNumber {
-			l.HoldForPR(c.HolderID, c.Key(), c.PRRepo, c.PRNumber)
+		// Any open PR by the holder that covers the issue keeps the hold, so
+		// closing PR A for a replacement PR B re-holds the claim for B.
+		if pr, ok := h.coveringPRByHolder(c); ok {
+			l.HoldForPR(c.HolderID, c.Key(), coveringPRRepo(pr), pr.PRNumber)
 			continue
 		}
 		for _, r := range l.ReleaseByHolderID(c.HolderID, claims.ReasonCoveringPRDone, c.Key()) {
