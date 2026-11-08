@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.190.0)
+
+### Added
+
+- Crux contained runs (`POST /v1/runs`, `crux runs start --checkout`) can execute in an S1 pinned checkout: the checkout's owner (or the operator) names its id, the run record carries it, and the checkout refuses deletion with 409 while the run is live. `/v1/runs` now admits lane project principals, with runs owned by and readable/cancellable only to their creator or the operator (hivecommons/crux#114 S1+S2).
+- Hives with no `knowledge.git_sources` now index their primary repo's knowledge dir (`bead_synthesizer.publish.path`, else `docs/knowledge/` or `src/docs/knowledge/`) as a seeded `<repo>-knowledge` project-layer git source, and `knowledge.primer.max_bytes` defaults to 8192 instead of 4096.
+
+### Fixed
+
+- fix(crux): move pane-analysis helpers out of agent/manager_kick.go to stay under the file-size ratchet
+
 ## 2026-11-08 (v5.189.3)
 
 ### Fixed
