@@ -2334,6 +2334,11 @@ function requestWork(hub, trigger, expectedConnectGeneration = null) {
     logSkippedWorkRequest(hub, trigger, 'standby mode');
     return false;
   }
+  // Ahead of startDeferredFix below: a relay that is exiting starts nothing.
+  if (shuttingDown) {
+    logSkippedWorkRequest(hub, trigger, 'the relay is shutting down');
+    return false;
+  }
   if (!hubScopeReady(hub)) return false;
   const conn = readyConnLabel(hub);
   if (expectedConnectGeneration !== null && hub.connectGeneration !== expectedConnectGeneration) {
@@ -2389,6 +2394,71 @@ function scheduleReadyRetry(hub, trigger) {
   }, TASK_UNAVAILABLE_RETRY_MS);
 }
 
+// ── Shutdown with a finished task still on the wire ─────────────────────────
+//
+// Observed live (2026-11-08): a relay logged a task's HIVE_VERDICT and the
+// no_work_needed it implied, a `docker stop` arrived about a second later, and
+// the hub never got task_complete — it booked "abandoned: connection lost" and
+// re-offered the issue, which was worked again 13 minutes later.
+//
+// The relay is synchronous from "Task ... completed" to the send: the label
+// calls are execSync and stopping the agent (quitLiveCLI) sleeps for at least
+// three seconds, all on the event loop. A signal that lands in that window is
+// therefore handled only AFTER the send, but the old handler then called
+// process.exit(0) at once, and process.exit does not wait for a socket write
+// still queued behind it. So a finished task's frame is the thing to wait for:
+// SHUTDOWN_HELD_FRAMES are sent with a write callback and tracked until it
+// fires, and the signal handler holds the exit while any are outstanding.
+//
+// The wait is bounded below the container runtime's default 10 s stop timeout
+// (docker and podman both SIGKILL after it). The handler can only run once the
+// synchronous finish has returned, which already spent about 3 s of that, so
+// 5 s keeps the whole shutdown inside the 10 s; a healthy socket drains in
+// milliseconds, so the deadline only matters for a wedged one.
+const SHUTDOWN_HELD_FRAMES = new Set(['task_complete', 'task_failed']);
+const SHUTDOWN_FLUSH_DEADLINE_MS = Number(process.env.HIVE_RELAY_SHUTDOWN_FLUSH_MS) || 5000;
+let shuttingDown = false;
+const unflushedHeldFrames = new Set();
+
+function sendHeldFrame(hub, msg, payload) {
+  let settle;
+  const entry = {
+    type: msg.type,
+    taskID: msg.task_id,
+    hubURL: hub.url,
+    flushed: new Promise(resolve => { settle = resolve; }),
+  };
+  // Added BEFORE the send, so a callback that fires synchronously still finds
+  // (and removes) it.
+  unflushedHeldFrames.add(entry);
+  const done = (err) => {
+    if (!unflushedHeldFrames.delete(entry)) return;
+    if (err) console.error(`The ${entry.type} frame for ${entry.taskID || '(no task)'} did not reach ${entry.hubURL || 'the hub'}: ${err.message || err}`);
+    settle();
+  };
+  try {
+    hub.ws.send(payload, done);
+  } catch (e) {
+    done(e);
+    throw e;
+  }
+}
+
+function waitForHeldFrames(deadlineAt) {
+  if (unflushedHeldFrames.size === 0) return Promise.resolve(true);
+  const remaining = deadlineAt - Date.now();
+  if (remaining <= 0) return Promise.resolve(false);
+  let timer = null;
+  const expired = new Promise(resolve => { timer = setTimeout(() => resolve('deadline'), remaining); });
+  const drained = Promise.all(Array.from(unflushedHeldFrames, e => e.flushed));
+  return Promise.race([drained, expired]).then(outcome => {
+    clearTimeout(timer);
+    if (outcome === 'deadline') return unflushedHeldFrames.size === 0;
+    // A decline sent during the wait is held too; go round again for it.
+    return waitForHeldFrames(deadlineAt);
+  });
+}
+
 function sendTo(hub, msg) {
   // #5715: a local-only task (the synthetic pr-review cycle) has no
   // server-issued lease, so an ownership frame naming it can only ever be
@@ -2414,6 +2484,8 @@ function sendTo(hub, msg) {
     if (hub.repoScope !== null || hub.scopeSent) msg = { ...msg, scope_version: hub.scopeVersion };
   }
   if (msg && msg.type === 'ready' && quotaHoldActive()) return;
+  // A relay on its way out must not ask for work it will never run.
+  if (msg && msg.type === 'ready' && shuttingDown) return;
   // #7996: same choke point for an expired CLI login — see enterLoginHold.
   if (msg && msg.type === 'ready' && loginHoldActive()) return;
   if (msg && msg.type === 'ready') {
@@ -2445,7 +2517,8 @@ function sendTo(hub, msg) {
       // answer it with a close nobody can attribute.
       console.error(`Frame ${msg.type} is still ${utf8Bytes(payload)} bytes after trimming (limit ${budget}) — the hub may close the connection with code 1009`);
     }
-    hub.ws.send(payload);
+    if (msg && SHUTDOWN_HELD_FRAMES.has(msg.type)) sendHeldFrame(hub, msg, payload);
+    else hub.ws.send(payload);
     // #7732: recorded only for a frame that actually left, so a `ready`
     // dropped on a closed socket does not look like an open question.
     if (msg && msg.type === 'ready') hub.readyOutstanding = true;
@@ -9767,6 +9840,14 @@ function handleMessage(data, hub) {
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hive disabled by contributor', failure_kind: 'environment' });
         break;
       }
+      // An assignment that answers the `ready` a just-finished task sent, and
+      // lands while the relay waits for that task's frame to leave: hand it
+      // straight back rather than start work the exit would abandon.
+      if (shuttingDown) {
+        console.log(`Declining ${taskKey(msg)} from ${hub.url} — the relay is shutting down`);
+        sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'contributor relay is shutting down', failure_kind: 'environment' });
+        break;
+      }
       // A standby assignment is pushed by the hub that acknowledged this relay's
       // standby; the relay is not polling, so that hub is never the active slot.
       const standbyPush = !!msg.standby_lane && hub.standbyAcked === true;
@@ -10273,8 +10354,37 @@ function cleanup() {
   }
 }
 
-process.on('SIGTERM', () => { cleanup(); process.exit(0); });
-process.on('SIGINT', () => { cleanup(); process.exit(0); });
+// Overridable in tests only, so the handler can be driven in-process.
+let exitProcess = (code) => process.exit(code);
+
+// SIGTERM/SIGINT. With no finished task's frame still on the wire this is the
+// old immediate cleanup-and-exit. With one (see SHUTDOWN_HELD_FRAMES), wait
+// for its write callback, bounded by SHUTDOWN_FLUSH_DEADLINE_MS, then exit.
+// shuttingDown is set first, so nothing asks for or accepts work meanwhile. A
+// second signal during the wait exits at once.
+function handleShutdownSignal(signal) {
+  if (shuttingDown) {
+    console.warn(`${signal} again while waiting to report a finished task — exiting now`);
+    cleanup();
+    exitProcess(0);
+    return;
+  }
+  shuttingDown = true;
+  if (unflushedHeldFrames.size === 0) {
+    cleanup();
+    exitProcess(0);
+    return;
+  }
+  const what = Array.from(unflushedHeldFrames, e => `${e.type} for ${e.taskID || '(no task)'} to ${e.hubURL || 'the hub'}`).join(', ');
+  console.log(`${signal}: waiting up to ${Math.round(SHUTDOWN_FLUSH_DEADLINE_MS / 1000)}s for ${what} to be written before exiting`);
+  waitForHeldFrames(Date.now() + SHUTDOWN_FLUSH_DEADLINE_MS).then(drained => {
+    if (!drained) console.warn(`${signal}: exiting with a finished task's frame still unwritten after ${SHUTDOWN_FLUSH_DEADLINE_MS}ms — the hub will book the task from the dropped connection`);
+    try { cleanup(); } finally { exitProcess(0); }
+  });
+}
+
+process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
+process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
 process.on('SIGUSR1', handleProfileSwitchSignal);
 
 // Last-resort backstop (kubestellar/hive#5655): the scoped token must never
@@ -10610,6 +10720,11 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     blockingPromptKey,
     getCLIState,
     setWs: (w) => { hubs[0].ws = w; },
+    handleShutdownSignal,
+    isShuttingDown: () => shuttingDown,
+    unflushedHeldFrameCount: () => unflushedHeldFrames.size,
+    SHUTDOWN_FLUSH_DEADLINE_MS,
+    __setExitProcess: (fn) => { exitProcess = fn; },
     getHubs: () => hubs,
     getReadyRetryArmed: (hub = hubs[0]) => !!(hub && hub.readyRetryTimer),
     // Peer-protocol compatibility (kubestellar/hive#2547). Exported so the

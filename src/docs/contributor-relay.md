@@ -2343,6 +2343,16 @@ of SIGKILL. The hub is not messaged on shutdown; the socket drop already books
 the release through the disconnect cooldown path
 ([#5097](https://github.com/hivecommons/hive/issues/5097)).
 
+One exception: a stop that lands just after a task finished. If the relay
+has already sent that task's `task_complete` or `task_failed` and the socket
+has not finished writing it, the relay waits up to 5 seconds
+(`HIVE_RELAY_SHUTDOWN_FLUSH_MS`) for the write before it exits. That is below
+the 10-second stop timeout of docker and podman. While it waits, it sends no
+`ready` and hands back any task it is offered. A second Ctrl-C or SIGTERM
+exits at once. In a container, the entrypoint waits for the relay before it
+ends the container, so the relay gets that time. Without the wait, the hub
+recorded a finished task as abandoned and offered the issue again.
+
 ## What the contributor image can run
 
 The image carries a deliberately small **repository-check baseline** on top of

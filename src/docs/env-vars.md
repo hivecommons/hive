@@ -569,6 +569,7 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `HIVE_LIVE_CLI_SHELL_WAIT_TIMEOUT_MS` | No | `5000` | Timeout, in milliseconds, for waiting until the tmux pane returns to a shell before respawning it during live-CLI recovery. |
 | `HIVE_LIVE_CLI_SHELL_WAIT_POLL_MS` | No | `250` | Poll interval, in milliseconds, while waiting for the tmux pane to return to a shell. |
 | `HIVE_LIVE_CLI_RESPAWN_SETTLE_MS` | No | `500` | Delay, in milliseconds, after `tmux respawn-pane -k` before the relay rechecks shell readiness. |
+| `HIVE_RELAY_SHUTDOWN_FLUSH_MS` | No | `5000` (5 s) | Longest the relay waits, on SIGTERM or Ctrl-C, for a finished task's `task_complete` or `task_failed` frame to be written before it exits. It applies only when such a frame is still being written; otherwise the relay exits at once. Keep it below the container runtime's stop timeout (10 s by default for docker and podman), which SIGKILLs the relay. |
 | `HIVE_CLAUDE_PROJECTS_DIR` | No | `$HOME/.claude/projects` | Claude transcript directory used for best-effort model auto-detection. The relay reads only tail bytes needed to find the latest model field. |
 | `HIVE_COPILOT_SESSIONS_DIR` | No | `$HOME/.copilot/session-state` | Copilot session-state directory used for best-effort model auto-detection. The relay reads only tail bytes needed to find the latest model field. |
 | `HIVE_BOB_DIR` | No | `$HOME/.bob` | Bob CLI home directory used for best-effort model auto-detection from local transcript state. |
