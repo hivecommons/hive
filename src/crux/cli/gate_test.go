@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
@@ -96,8 +97,14 @@ func TestGateOpenAnswerWait(t *testing.T) {
 	h, code = remote("list", "--status", "answered", "--json")
 	var list []api.Gate
 	if err := json.Unmarshal(h.stdout.Bytes(), &list); code != ExitOK || err != nil || len(list) != 1 || list[0].AnsweredBy != "kelly" ||
-		!list[0].OperatorOverride || list[0].Note != "green" || list[0].OpenedBy != "release-bot" || string(list[0].Context) != `{"pr":17}` {
+		!list[0].OperatorOverride || list[0].Note != "green" || list[0].OpenedBy != "release-bot" {
 		t.Fatalf("list: %d %v %s", code, err, h.stdout)
+	}
+	// The list output is indented, so the raw context carries that
+	// whitespace; compare it compacted.
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, list[0].Context); err != nil || compact.String() != `{"pr":17}` {
+		t.Fatalf("list context: %v %q", err, list[0].Context)
 	}
 
 	// Expiry is reported as its own outcome: nothing on stdout, exit 1.
