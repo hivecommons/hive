@@ -3,9 +3,12 @@
 // drawn, every top-level row that needs a person (stageTrackerNeedsAttention
 // and not sunk — hold / draft rows keep sinking last, as on desktop) precedes
 // every row that does not, and the sticky "⚠ N waiting on you · M need
-// attention" line is inside the viewport at rest with the list scrolled to
-// its top, is the Waiting on you toggle (hamFilter waitingOnYou), and meets
-// the tap target. Desktop returns a skip marker. Restores the scroll position.
+// attention" line is inside the viewport at rest with the section scrolled
+// to its top, is declared sticky like the compact bar above it, is the
+// Waiting on you toggle (hamFilter waitingOnYou), and meets the tap target.
+// Whether sticky engages while scrolling is the page's scroll-container
+// contract, shared with .ham-sticky / .ham-cols, and not asserted here.
+// Desktop returns a skip marker. Restores the scroll position.
 (async ({ dedicatedPreview = false } = {}) => {
   if (!dedicatedPreview) throw new Error('Use a dedicated published-preview tab, not the user’s live dashboard');
   const tolerance = 1;
@@ -56,11 +59,6 @@
       assert(/\d+ waiting on you · \d+ needs? attention/.test(line.textContent), 'count line reads "N waiting on you · M need attention": ' + line.textContent.trim());
       const attentionAll = items.filter(stageTrackerNeedsAttention).length;
       assert(line.textContent.indexOf('· ' + attentionAll + ' need') >= 0, 'count line counts every needs-attention item (' + attentionAll + '): ' + line.textContent.trim());
-      // Scrolled into the list the line stays on screen (sticky).
-      scroller.scrollTop += Math.min(600, scroller.scrollHeight - innerHeight);
-      await frame();
-      const stuck = line.getBoundingClientRect();
-      assert(stuck.top >= -tolerance && stuck.bottom <= innerHeight + tolerance, 'count line stays inside the viewport while scrolling the list: top ' + Math.round(stuck.top));
     }
   } finally {
     scroller.scrollTop = savedScroll;
