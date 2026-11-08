@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v6.3.1)
+
+### Fixed
+
+- Contributor-first lanes are no longer left unworked by a relay the hub will not hand work to, or has no work for. A relay whose trust tier is in `hub.disabled_tiers` (or whose access is revoked) is refused every task, and a relay whose requests keep being answered `no_matching_work` (or `repo_unmintable`) is connected and idle, but both still counted as covering their role, so the governor kept the resident agent's kicks withheld while nobody worked the lane. Seen on hive-wild-mole on 2026-11-08: a relay covered the scanner lane while every request for work it sent, about every 30 seconds, was answered `no_matching_work`. The hub now leaves a revoked or disabled-tier relay out of coverage, using the same check that refuses it work, and leaves out a relay with no task that has been answered "no work for you" for two minutes. A task or fix-pr task handed to the relay counts it again at once.
+- GitHub API budget: the dashboard's GitHub API card and the API budget mode now follow the core rate-limit window the hive's own responses are spending, not the first `GET /rate_limit` reading after a restart and not a stray reading from another window. After the 2026-11-08 18:30:53Z restart on a projectbluefin hive, the first reading (6945, reset 19:21:44Z) held the card at `observed_at` 18:30:55Z for most of an hour while the installation window (reset 18:56:25Z) was at 3195. Earlier that day, responses from the two windows alternated and the budget mode flipped between `normal` and `conserve` every few seconds. Readings are now kept per window (`X-RateLimit-Reset`): the snapshot takes the lowest `remaining` among windows reported in the last five minutes, the card and mode adopt that window, and `observed_at` keeps moving with each response. App-JWT responses (token mints, installation discovery) no longer move the snapshot. Conserve and critical thresholds, and what conserve sheds, are unchanged.
+
 ## 2026-11-08 (v6.3.0)
 
 ### Added
