@@ -267,9 +267,15 @@ async function main() {
   const activityFailures = [];
   const fixtureRoot = path.join(process.cwd(), 'src/pkg/dashboard/webstatic/testdata');
   const density = JSON.parse(fs.readFileSync(path.join(fixtureRoot, 'tracker-activity-density.json'), 'utf8'));
-  const probes = ['tracker-header-geometry', 'tracker-decision-interaction', 'tracker-phone-chrome', 'tracker-text-floor'].map(name => ({
+  const probes = ['tracker-header-geometry', 'tracker-decision-interaction', 'tracker-phone-chrome', 'tracker-phone-pill', 'tracker-text-floor'].map(name => ({
     name, source: fs.readFileSync(path.join(fixtureRoot, name + '.js'), 'utf8'),
   }));
+  // Phone tier (hivecommons/hive#17160): the chevron strip is hidden behind
+  // the progress pill, so the decision-trigger probes (they hover a chevron
+  // in the strip) have nothing to point at; the pill probe runs instead.
+  const PHONE_MEDIA = '(max-width: 640px), ((pointer: coarse) and (max-width: 820px))';
+  const STRIP_PROBES = new Set(['tracker-decision-interaction']);
+  const PILL_REQUIRED_VIEWPORT = '390x844@3';
   const event = process.env.GITHUB_EVENT_PATH ? JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};
   const provenance = { head: event.pull_request?.head?.sha || process.env.GITHUB_SHA || 'unpublished-local',
     checkoutSHA: process.env.GITHUB_SHA || 'unpublished-local',
@@ -493,7 +499,12 @@ async function main() {
           const capture = await screenshot(`${vp.name}-${theme}-activity-density-viewport.png`, true);
           const results = [{ probe: 'viewport-paint', ok: capture.painted, result: capture }];
           if (!capture.painted) activityFailures.push(vp.name + ' ' + theme + ' blank viewport capture');
+          const phone = await evaluate(`matchMedia(${JSON.stringify(PHONE_MEDIA)}).matches`);
           for (const probe of probes) {
+            if (phone && STRIP_PROBES.has(probe.name)) {
+              results.push({ probe: probe.name, ok: true, result: { skipped: 'phone tier: the chevron strip is in the pill sheet, see tracker-phone-pill' } });
+              continue;
+            }
             const result = await evaluate(`(async () => {
               try { return { ok: true, result: await (${probe.source})({ dedicatedPreview: true }) }; }
               catch (error) {
@@ -504,10 +515,18 @@ async function main() {
             })()`);
             results.push({ probe: probe.name, ...result });
             if (!result.ok) activityFailures.push(vp.name + ' ' + theme + ' ' + probe.name);
+            // 390×844 is the phone the pill was sized for: it must actually
+            // exercise the pill there, never pass by falling into the strip tier.
+            if (probe.name === 'tracker-phone-pill' && vp.name === PILL_REQUIRED_VIEWPORT && !(result.ok && result.result && result.result.phone === true && result.result.pills > 0)) {
+              activityFailures.push(vp.name + ' ' + theme + ' progress pill must replace the strip at 390x844');
+            }
           }
           let native;
-          try { native = await nativeDecisionInput(`${vp.name}-${theme}-activity`); }
-          catch (error) { native = { failures: [String(error.stack || error)] }; }
+          if (phone) native = { skipped: 'phone tier: decision trigger lives in the pill sheet', failures: [] };
+          else {
+            try { native = await nativeDecisionInput(`${vp.name}-${theme}-activity`); }
+            catch (error) { native = { failures: [String(error.stack || error)] }; }
+          }
           const nativeOK = native.failures.length === 0;
           results.push({ probe: 'native-CDP-pointer-keyboard', ok: nativeOK, result: native });
           if (!nativeOK) activityFailures.push(vp.name + ' ' + theme + ' native input');

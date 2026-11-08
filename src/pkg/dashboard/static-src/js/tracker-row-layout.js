@@ -268,7 +268,7 @@
           <div class="ham-strip-row">
             ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(pr, stages, ctx) : ''}
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
-            ${stageTrackerSinceHtml(pr, nowMs)}
+            ${stageTrackerSinceHtml(pr, nowMs)}${typeof stageTrackerPillHtml === 'function' ? stageTrackerPillHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx) : ''}
           </div>
           ${humanNote}${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, noteCtx, subKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(subKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}
         </div>`;

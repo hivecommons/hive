@@ -176,7 +176,7 @@
         <div class="ham-strip-row">
           ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
-          ${stageTrackerSinceHtml(shown, nowMs)}
+          ${stageTrackerSinceHtml(shown, nowMs)}${typeof stageTrackerPillHtml === 'function' ? stageTrackerPillHtml(shown, stages, range, nowMs, ctx) : ''}
         </div>${humanNote}${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, noteCtx, rowKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(rowKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${subs}
       </div>`;
     }

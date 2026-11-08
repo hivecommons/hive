@@ -9,7 +9,7 @@ const MAX_COMMITS = 1000;
 const MAX_AUTHOR_BATCH = 50;
 // This literal is inside the enrolled .github closure. A caller-supplied
 // preparedBy.sourceSHA must never choose a new executable verifier tree.
-const TRUSTED_SCRIPTS_TREE = 'c5b0932df6aad60b55468c5ece88c34e05733a91';
+const TRUSTED_SCRIPTS_TREE = 'e9e8cba179d9606c609cbaff837fc63693788aeb';
 const SOURCE = 'https://github.com/kubernetes-sigs/kubebuilder-release-tools/tree/012269a88fa4c034a0acf1ba84c26b195c0dbab4';
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
 const git = (args, cwd = process.cwd()) =>
