@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.199.0)
+
+### Added
+
+- The model-ranked knowledge advisor now persists one compact record per decision (agent, kick id, the kick's primed issue/PR refs, mode, arm `shadow|deliver|holdout`, outcome, slug; never the model's reason or pane text) to `/data/knowledge-advisor-decisions.jsonl`, and the retro lane reads that store in production, so beads get their real `AdvisorArm` instead of always `none` and the `holdout_percent` comparison can be read from `Lane.AdvisorArmSummary()` ([#17211](https://github.com/hivecommons/hive/issues/17211), part of [#17054](https://github.com/hivecommons/hive/issues/17054)).
+
+## 2026-11-08 (v5.198.0)
+
+### Added
+
+- **cli memory:** with `agents.cli_memory.drain_to_knowledge` on, Hive now seeds a Claude Code `SessionEnd` hook running the new `hive memory-drain --cli claude --agent "$HIVE_AGENT"` command, so a session's memory becomes draft knowledge (and the stored files are emptied) when the session ends; the new `agents.cli_memory.drain_on_write` key (default off, fleet-wide or per agent) adds a `PostToolUse` hook that does the same as soon as a memory file is written. Operator `hooks` entries are kept, and turning the keys off removes only Hive's entry (#17209, #17210).
+
 ## 2026-11-08 (v5.197.0)
 
 ### Added
