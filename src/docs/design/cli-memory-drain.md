@@ -1,8 +1,9 @@
 # Draining CLI auto-memory into draft knowledge (#17033)
 
-Status: **design only.** Nothing described here is implemented yet. The three
-open questions in #17033 are decided below; the work is cut into three
-implementation children, listed in [Implementation plan](#implementation-plan).
+Status: **phase 1 shipped, phases 2 and 3 open.** The three open questions in
+#17033 are decided below; the work is cut into three implementation children,
+listed in [Implementation plan](#implementation-plan). Phase 1 shipped with
+the differences recorded in [Phase 1 as shipped](#phase-1-as-shipped).
 
 All citations are against `origin/v5` at `7a929356`. The CLI-memory isolation
 and disable work this design builds on (#17031, #17032) is in open PRs
@@ -338,6 +339,31 @@ Child: #17056.
 - Tests: splitting per CLI, hash stability, dedup-adds-tag, a discarded fact is
   not revived, partial failure leaves the file, symlinked or shared stores are
   skipped, spool and retry, kick never blocked.
+
+#### Phase 1 as shipped
+
+Phase 1 landed in #17086 and the follow-up for #17056. Where the shipped code
+differs from the plan above, the shipped code is authoritative:
+
+- **Drain library.** The drain is `src/pkg/knowledge/climemory`, run in the
+  hive process and installed on the in-process runtime through
+  `crux.CLIMemoryDrainHost`, not an HTTP-only `src/crux/agent/memdrain`. It
+  writes into the `bead-synth-wiki` vault the Primer already reads, so the
+  Crux module still imports nothing from `src/pkg`.
+- **Names.** The config key is `agents.cli_memory.drain_to_knowledge`, and
+  the provenance tag is `cli-memory` (with `source: cli-memory` frontmatter)
+  rather than `auto-memory`.
+- **Dedup.** As designed: a duplicate in any state only gains the draining
+  agent's `agent:<name>` tag; its state is never reset.
+- **Store emptying.** The drain does not truncate the store; `clear_on_kick`
+  does. A file whose facts did not all reach the vault is **copied** to
+  `/data/knowledge/auto-memory-spool/<agent>/` before the wipe and retried on
+  the next drain, which gives the "partial failure loses nothing" property
+  without a second remover running as the agent.
+- **Create path.** `CreateFactRequest.state` and the `cli-memory` tag
+  allow-list on `POST /api/knowledge/create`, and `bd create --type knowledge`,
+  shipped as planned; a draft is written into the local channel named by
+  `layer`.
 
 ### Phase 2 — Claude Code `SessionEnd` and `PostToolUse` hooks
 

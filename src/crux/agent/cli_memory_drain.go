@@ -77,7 +77,7 @@ func cliMemoryDrainSources(agent *AgentProcess, backend string) []CLIMemorySourc
 // best-effort: a failed drain is logged and the kick proceeds. The one log
 // line per drain is
 //
-//	cli-memory: drained N facts from <agent> into <store> (dupes K)
+//	cli-memory: drained N facts from <agent> into <store> (dupes K, spooled S)
 func (m *Manager) drainCLIMemoryForKick(agent *AgentProcess, backend string) {
 	if !agent.Config.CLIMemory.DrainMemoryToKnowledge() {
 		return
@@ -97,8 +97,8 @@ func (m *Manager) drainCLIMemoryForKick(agent *AgentProcess, backend string) {
 		m.logger.Warn("cli-memory: drain failed before kick",
 			"agent", agent.Name, "store", res.Store, "drained", res.Drained, "error", res.Err)
 	}
-	m.logger.Info(fmt.Sprintf("cli-memory: drained %d facts from %s into %s (dupes %d)",
-		res.Drained, agent.Name, res.Store, res.Dupes),
+	m.logger.Info(fmt.Sprintf("cli-memory: drained %d facts from %s into %s (dupes %d, spooled %d)",
+		res.Drained, agent.Name, res.Store, res.Dupes, res.Spooled),
 		"agent", agent.Name, "store", res.Store, "drained", res.Drained,
-		"dupes", res.Dupes, "skipped", res.Skipped, "sources", len(sources))
+		"dupes", res.Dupes, "skipped", res.Skipped, "spooled", res.Spooled, "sources", len(sources))
 }

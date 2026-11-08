@@ -54,6 +54,9 @@ func TestInstallCLIMemoryDrainerWritesDraftsIntoBeadSynthVault(t *testing.T) {
 	cfg := bootKnowledgeConfig(t)
 	cfg.AgentsCLIMemory.DrainToKnowledge = true
 	cfg.Knowledge.BeadSynthesizer.TargetLayer = "team"
+	prevSpool := cliMemorySpoolDir
+	cliMemorySpoolDir = t.TempDir()
+	t.Cleanup(func() { cliMemorySpoolDir = prevSpool })
 	b := newBootKnowledgeBoot(t, cfg)
 	var log strings.Builder
 	b.logger = slog.New(slog.NewTextHandler(&log, nil))
