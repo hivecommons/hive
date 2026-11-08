@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +30,7 @@ func stubClaudeSeams(t *testing.T) string {
 	origWriteCreds := claudeWriteCreds
 	origExchange := claudeExchange
 	origRemove := claudeRemoveFile
+	origFetchProfile := claudeFetchProfile
 
 	claudeCredPath = filepath.Join(tmp, "credentials.json")
 	claudeTokenFilePath = filepath.Join(tmp, "claude-user-token")
@@ -38,6 +40,10 @@ func stubClaudeSeams(t *testing.T) string {
 		return nil, fmt.Errorf("exchange not stubbed")
 	}
 	claudeRemoveFile = func(path string) error { return nil }
+	// Never reach the real profile endpoint from a test.
+	claudeFetchProfile = func(context.Context, string) (claude.Profile, error) {
+		return claude.Profile{}, fmt.Errorf("profile not stubbed")
+	}
 
 	t.Cleanup(func() {
 		claudeCredPath = origCredPath
@@ -46,6 +52,7 @@ func stubClaudeSeams(t *testing.T) string {
 		claudeWriteCreds = origWriteCreds
 		claudeExchange = origExchange
 		claudeRemoveFile = origRemove
+		claudeFetchProfile = origFetchProfile
 	})
 	return tmp
 }
