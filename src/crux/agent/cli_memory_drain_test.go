@@ -46,6 +46,58 @@ func TestCLIMemoryDrainSources_ClassifiesStoresByCLI(t *testing.T) {
 	}
 }
 
+func TestCLIMemoryDrainSources_DropsStoresReachedThroughSymlinkedAncestors(t *testing.T) {
+	withSharedAgentHome(t)
+	prev := codexHomePrefix
+	codexHomePrefix = filepath.Join(t.TempDir(), ".codex-")
+	t.Cleanup(func() { codexHomePrefix = prev })
+
+	mk := func(p string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("- fact\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	home := interactiveHomePath("scanner")
+	projects := filepath.Join(home, ".claude", "projects")
+	// An honest store, and a second slug that is a symlink to it: inside the
+	// agent's own home, so it is drained once, at its resolved path.
+	own := filepath.Join(projects, "-data-agents-scanner", "memory")
+	mk(filepath.Join(own, "MEMORY.md"))
+	if err := os.Symlink(filepath.Join(projects, "-data-agents-scanner"), filepath.Join(projects, "-alias")); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	// A slug pointed at another agent's store, and a Gemini store whose
+	// .gemini directory is a symlink out of the home: both must be dropped.
+	victim := filepath.Join(interactiveHomePath("victim"), ".claude", "projects", "-data-agents-victim", "memory")
+	mk(filepath.Join(victim, "MEMORY.md"))
+	if err := os.Symlink(filepath.Dir(victim), filepath.Join(projects, "-data-agents-victim")); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	mk(filepath.Join(outside, geminiMemoryFileName))
+	if err := os.Symlink(outside, filepath.Join(home, ".gemini")); err != nil {
+		t.Fatal(err)
+	}
+
+	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
+	got := cliMemoryDrainSources(ap, "claude")
+	wantOwn, _ := filepath.EvalSymlinks(own)
+	var paths []string
+	for _, s := range got {
+		paths = append(paths, s.Path)
+		if s.Path != wantOwn || s.CLI != cliMemoryClaude {
+			t.Errorf("source %+v reaches outside the agent's resolved home (want only %s)", s, wantOwn)
+		}
+	}
+	if len(got) != 1 {
+		t.Fatalf("sources = %v, want the honest store once", paths)
+	}
+}
+
 func TestDrainCLIMemoryForKick_RunsDrainerBeforeWipeOnlyWhenEnabled(t *testing.T) {
 	withSharedAgentHome(t)
 	prev := codexHomePrefix

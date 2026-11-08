@@ -139,10 +139,12 @@ A file whose drain fails part-way is left untouched and retried on the next
 drain. That is safe because dedup makes the drain idempotent.
 
 Reads and the truncate follow the same rules as #17040's
-`cliMemoryStores`. Only stores private to the agent are drained; every path
-component is checked with `Lstat`, so a planted symlink is never followed. The
-truncate and remove run as the agent through the same `su-exec` path as
-`cliMemoryRemover`. A store that is still shared (a legacy whole-directory
+`cliMemoryStores`. Only stores private to the agent are drained. The plan
+was to `Lstat` every path component and to truncate and remove as the agent
+through the same `su-exec` path as `cliMemoryRemover`; as shipped, the drain
+runs in the hive process and instead opens every memory file through an
+`os.Root` anchored at its store (see "Phase 2 as shipped" below and #17251).
+A store that is still shared (a legacy whole-directory
 bridge, a UID 0 agent, `HIVE_SHARED_AGENT_HOME=1`) is **not** drained. It
 cannot be attributed to one agent, and truncating it would wipe other agents'
 memory. It is logged once per agent, exactly like `clear_on_kick`, and is left
@@ -418,6 +420,19 @@ shipped code differs from the plan above, the shipped code is authoritative:
   `$CLAUDE_CONFIG_DIR/projects/<slug>/memory/`). Its request carries
   `on_write`, which the hive answers as a no-op unless the agent has
   `drain_on_write`.
+- **Open through the store root (#17251).** The drain never reads or
+  truncates a memory file by path. Each `Source` is resolved with
+  `EvalSymlinks` and dropped unless it still lies under the agent's own
+  resolved home (a slug or `.claude` directory symlinked at another agent's
+  store is not drained). The store is then opened as an `os.Root` (the parent
+  directory for a single-file store such as `GEMINI.md`), checked with
+  `SameFile` against what `Lstat` saw, and every listed file is `Lstat`ed
+  through the root — a symlink entry is refused even when its target stays
+  inside the root — opened through it, required to be a regular file within
+  the size cap and the same inode `Lstat` reported, and `TruncateDrained`
+  truncates through that read descriptor. A path swapped for a symlink
+  between the listing and the open lands in `kept` and the drain error;
+  nothing outside the store is ever read or emptied.
 - **Keys.** The new key is `agents.cli_memory.drain_on_write`, fleet-wide and
   per agent, and it has no effect without `drain_to_knowledge`.
 - **Seeding.** Not through `seedJSONFile`, which never touches an existing
