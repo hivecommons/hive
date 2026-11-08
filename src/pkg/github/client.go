@@ -4403,6 +4403,12 @@ type ETagCacheInfo struct {
 	Hits    int64 `json:"hits"`
 	Misses  int64 `json:"misses"`
 	Entries int64 `json:"entries"`
+	// Bytes / MaxBytes / Evictions are the conditional-request cache's
+	// memory against its bound and how many entries the bounds pushed out
+	// (ETagCacheSnapshot). Unset for caches that do not report them.
+	Bytes     int64 `json:"bytes,omitempty"`
+	MaxBytes  int64 `json:"max_bytes,omitempty"`
+	Evictions int64 `json:"evictions,omitempty"`
 }
 
 type RateLimitEntry struct {
@@ -4466,9 +4472,8 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 		info.GraphQLPRBatch = c.prBatchStats
 		c.prBatchMu.Unlock()
 	}
-	hits, misses, entries := ETagCacheStats()
-	info.ETagCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
-	hits, misses, entries = PRDetailCacheStats()
+	info.ETagCache = ETagCacheSnapshot()
+	hits, misses, entries := PRDetailCacheStats()
 	info.PRDetailCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
 	info.Webhooks = WebhookHealthSnapshot()
 	info.TopConsumers = RESTTopConsumers(10)
