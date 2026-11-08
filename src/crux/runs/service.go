@@ -321,6 +321,12 @@ func (s *Service) validateWorkspace(caller Caller, req api.ContainedRunRequest, 
 		if !fullSHA.MatchString(wt.Commit) {
 			return &RequestError{"worktree.commit must be a full 40-hex commit SHA; a tag or branch name cannot pin the run"}
 		}
+		// The URL must already be canonical: git (libcurl for https, literally
+		// for file) resolves "..", so a prefix check on the raw string would
+		// otherwise admit "https://h/allowed/../other/repo".
+		if err := checkout.ValidateRepoURL(wt.Repo); err != nil {
+			return &RequestError{"worktree.repo: " + strings.TrimPrefix(err.Error(), checkout.ErrBadRequest.Error()+": ")}
+		}
 		if !repoAllowed(wt.Repo, s.Config.RepoAllowlist) {
 			return &ForbiddenError{fmt.Sprintf("repository %q is not on this server's repo_allowlist", wt.Repo)}
 		}
@@ -361,11 +367,12 @@ func (s *Service) resolveCheckout(caller Caller, id string, p *plan) error {
 	return nil
 }
 
-// repoAllowed reports whether repo starts with one of the allowlisted
-// URL prefixes.
+// repoAllowed reports whether repo falls under one of the allowlisted URL
+// prefixes on a segment boundary (checkout.PrefixMatches), so an entry
+// without a trailing slash does not admit "<entry>-evil/…".
 func repoAllowed(repo string, prefixes []string) bool {
 	for _, p := range prefixes {
-		if p = strings.TrimSpace(p); p != "" && strings.HasPrefix(repo, p) {
+		if p = strings.TrimSpace(p); p != "" && checkout.PrefixMatches(repo, p) {
 			return true
 		}
 	}
