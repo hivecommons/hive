@@ -762,8 +762,9 @@
     // Stateful: redraw the popover when it is open.
     function stageTrackerMergedPopDraw(txt, nowMs) {
       const pop = document.getElementById('activity-monitor-merged-pop');
+      if (!pop) return;
       const sheet = stageTrackerPopSheet('merged');
-      if (!pop || (pop.hidden && !sheet)) return;
+      if (pop.hidden && !sheet) return;
       const html = stageTrackerMergedPopHtml(txt || stageTrackerMergedText(_stageTrackerMerged, nowMs || Date.now(), 0), nowMs || Date.now());
       if (sheet) { stageTrackerPopSheetDraw(sheet, html); return; }
       if (pop.innerHTML !== html) pop.innerHTML = html;
@@ -772,13 +773,15 @@
     // (hiveWireDialog: Esc, ✕, backdrop) instead of the anchored popover;
     // the same tier as the CSS .modal-sheet rules.
     const STAGE_TRACKER_POP_SHEET_QUERY = '(max-width: 640px), ((pointer: coarse) and (max-width: 820px))';
+    // Open sheets by kind. Draw ticks consult this map, not the DOM: no
+    // document-wide query per tick, and Node harnesses whose document
+    // stub lacks querySelector keep working.
+    const _stageTrackerPopSheets = {};
     function stageTrackerPopSheetPhone() {
       return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !!window.matchMedia(STAGE_TRACKER_POP_SHEET_QUERY).matches;
     }
     function stageTrackerPopSheet(kind) {
-      // Node test harnesses stub document without querySelector.
-      if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return null;
-      return document.querySelector('.hive-dialog-overlay[data-ham-pop-sheet="' + kind + '"]');
+      return _stageTrackerPopSheets[kind] || null;
     }
     function stageTrackerPopSheetDraw(overlay, html) {
       const body = overlay.querySelector('.ham-pop-sheet-body');
@@ -794,8 +797,10 @@
         '<div id="' + id + '-title" class="hive-dialog-title">' + esc(title) + '</div>' +
         '<div class="modal-scroll ham-pop-sheet-body"></div></div>';
       document.body.appendChild(overlay);
+      _stageTrackerPopSheets[kind] = overlay;
       stageTrackerPopSheetDraw(overlay, html);
       hiveWireDialog(overlay, () => {
+        if (_stageTrackerPopSheets[kind] === overlay) delete _stageTrackerPopSheets[kind];
         if (!chip) return;
         chip.setAttribute('aria-expanded', 'false');
         if (chip.focus) chip.focus();

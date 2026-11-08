@@ -125,8 +125,9 @@
     }
     function stageTrackerQueuePopDraw(nowMs) {
       const pop = document.getElementById('activity-monitor-queue-pop');
+      if (!pop) return;
       const sheet = stageTrackerPopSheet('queue');
-      if (!pop || (pop.hidden && !sheet)) return;
+      if (pop.hidden && !sheet) return;
       const html = stageTrackerQueuePopHtml(_stageTrackerQueueItems, nowMs || Date.now(), _stageTrackerPreparationQueues);
       if (sheet) { stageTrackerPopSheetDraw(sheet, html); return; }
       if (pop.innerHTML !== html) pop.innerHTML = html;

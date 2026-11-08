@@ -352,6 +352,7 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerMergedInFlight"),
 		jsFunc(t, html, "stageTrackerMergedCountDraw"),
 		jsConstLine(t, html, "STAGE_TRACKER_POP_SHEET_QUERY"),
+		jsConstLine(t, html, "_stageTrackerPopSheets"),
 		jsFunc(t, html, "stageTrackerPopSheetPhone"),
 		jsFunc(t, html, "stageTrackerPopSheet"),
 		jsFunc(t, html, "stageTrackerPopSheetDraw"),
