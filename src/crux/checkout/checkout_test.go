@@ -324,7 +324,7 @@ func TestDeleteOwnershipAndInUse(t *testing.T) {
 func TestGitFailuresAreTyped(t *testing.T) {
 	repo, shas := fixtureRepo(t)
 	ctx := context.Background()
-	real := execRunner
+	real := execRunner("")
 	// Clone fails: typed ErrGit and the half-made source removed.
 	failClone := newTestService(t, repo, func(c *Config) {
 		c.Git = func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
@@ -531,5 +531,106 @@ func TestParseRepoRequiresCanonicalPath(t *testing.T) {
 		if err != nil && !errors.Is(err, ErrBadRequest) {
 			t.Errorf("parseRepo(%q) = %v, want ErrBadRequest", raw, err)
 		}
+	}
+}
+
+func TestServerCeilingBoundsTheRequestCap(t *testing.T) {
+	repo, shas := fixtureRepo(t)
+	ctx := context.Background()
+	svc := newTestService(t, repo, func(c *Config) { c.MaxBytes = 1 << 20 })
+	// A request above the ceiling is refused before any clone.
+	_, err := svc.Create(ctx, Request{Repo: repo, Commit: shas[0], Owner: "o", MaxBytes: 2 << 20})
+	if !errors.Is(err, ErrAboveCeiling) || !errors.Is(err, ErrBadRequest) || !strings.Contains(err.Error(), "at most 1048576") {
+		t.Fatalf("above ceiling = %v", err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(svc.cfg.Dir, sourceDirName)); len(entries) != 0 {
+		t.Fatalf("a refused request cloned: %v", entries)
+	}
+	// No request cap takes the ceiling; a smaller one is kept.
+	rec, err := svc.Create(ctx, Request{Repo: repo, Commit: shas[0], Owner: "o"})
+	if err != nil || rec.MaxBytes != 1<<20 {
+		t.Fatalf("default cap = %+v, %v", rec, err)
+	}
+	rec, err = svc.Create(ctx, Request{Repo: repo, Commit: shas[1], Owner: "o", MaxBytes: 1 << 19})
+	if err != nil || rec.MaxBytes != 1<<19 {
+		t.Fatalf("smaller cap = %+v, %v", rec, err)
+	}
+	if _, err := New(Config{Dir: t.TempDir(), MaxBytes: -1}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("negative ceiling = %v", err)
+	}
+	if plain := newTestService(t, repo, nil); plain.cfg.MaxBytes != DefaultMaxBytes {
+		t.Fatalf("ceiling default = %d", plain.cfg.MaxBytes)
+	}
+}
+
+func TestTokenReachesGitOnlyThroughTheCredentialHelper(t *testing.T) {
+	repo, shas := fixtureRepo(t)
+	ctx := context.Background()
+	const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	real := execRunner("")
+	var calls [][]string
+	svc := newTestService(t, repo, func(c *Config) {
+		c.Token = " " + token + " "
+		c.Git = func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			// Drop the helper config before running the real git, so the
+			// fixture (a file:// repo) is unaffected.
+			return real(ctx, dir, name, args[4:]...)
+		}
+	})
+	rec, err := svc.Create(ctx, Request{Repo: repo, Commit: shas[0], Owner: "o"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) == 0 {
+		t.Fatal("git never ran")
+	}
+	for _, call := range calls {
+		if call[0] != "git" || call[1] != "-c" || call[2] != "credential.helper=" || call[3] != "-c" || call[4] != "credential.helper="+credentialHelper {
+			t.Fatalf("git call lacks the helper: %q", call)
+		}
+		if strings.Contains(strings.Join(call, " "), token) {
+			t.Fatalf("token on the command line: %q", call)
+		}
+	}
+	if !strings.Contains(credentialHelper, "username="+TokenUser) || !strings.Contains(credentialHelper, "$"+tokenEnvVar) || strings.Contains(credentialHelper, token) {
+		t.Fatalf("helper = %q", credentialHelper)
+	}
+	// Records and the index never carry it.
+	data, _ := os.ReadFile(filepath.Join(svc.cfg.Dir, rec.ID+".json"))
+	index, _ := os.ReadFile(filepath.Join(svc.cfg.Dir, IndexName))
+	if strings.Contains(string(data), token) || strings.Contains(string(index), token) {
+		t.Fatal("token written to disk")
+	}
+	// Git output in an error is scrubbed, in case a server echoes it.
+	leaky := newTestService(t, repo, func(c *Config) {
+		c.Git = func(context.Context, string, string, ...string) ([]byte, error) {
+			return []byte("fatal: Authentication failed for 'https://x-access-token:" + token + "@github.com/o/r'"), errors.New("exit 128")
+		}
+	})
+	_, err = leaky.Create(ctx, Request{Repo: repo, Commit: shas[0], Owner: "o"})
+	if !errors.Is(err, ErrGit) || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "Authentication failed") {
+		t.Fatalf("leaky clone error = %v", err)
+	}
+	// A service without a token runs plain git.
+	plain := newTestService(t, repo, func(c *Config) {
+		c.Git = func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if args[0] == "-c" {
+				t.Fatalf("helper configured without a token: %q", args)
+			}
+			return real(ctx, dir, name, args...)
+		}
+	})
+	if _, err := plain.Create(ctx, Request{Repo: repo, Commit: shas[0], Owner: "o"}); err != nil {
+		t.Fatal(err)
+	}
+	// The default runner never prompts and carries the token for the helper.
+	out, err := execRunner(token)(ctx, t.TempDir(), "sh", "-c", "printf '%s|%s' \"$GIT_TERMINAL_PROMPT\" \"$"+tokenEnvVar+"\"")
+	if err != nil || string(out) != "0|"+token {
+		t.Fatalf("exec env = %q, %v", out, err)
+	}
+	out, err = execRunner("")(ctx, t.TempDir(), "sh", "-c", "printf '%s' \"${"+tokenEnvVar+"-unset}\"")
+	if err != nil || string(out) != "unset" {
+		t.Fatalf("exec env without token = %q, %v", out, err)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -70,20 +71,24 @@ func checkoutRecordToAPI(rec checkout.Record) api.Checkout {
 
 // newCheckoutService builds the service from the flag or environment
 // allowlist; nil with no error means no allowlist was given, so the
-// service stays off. inUse is the contained-run service's hook that keeps
-// a checkout with live runs from being deleted; nil means never in use.
-func newCheckoutService(allow, dir, workDir string, inUse func(id string) bool) (*checkout.Service, error) {
+// service stays off. maxBytes is the byte ceiling (zero reads
+// CRUX_CHECKOUT_MAX_BYTES, then the package default); the private-repo
+// token is read from CRUX_CHECKOUT_TOKEN only. inUse is the contained-run
+// service's hook that keeps a checkout with live runs from being deleted;
+// nil means never in use.
+func newCheckoutService(allow, dir string, maxBytes int64, workDir string, inUse func(id string) bool) (*checkout.Service, error) {
 	if allow == "" {
 		allow = os.Getenv(config.CheckoutAllowlistEnvVar)
 	}
 	if strings.TrimSpace(allow) == "" {
 		return nil, nil
 	}
-	if dir == "" {
-		dir = os.Getenv(config.CheckoutDirEnvVar)
-	}
-	if dir == "" {
-		dir = checkout.DefaultDir(workDir)
+	dir = checkoutDirFor(dir, workDir)
+	if maxBytes == 0 {
+		var err error
+		if maxBytes, err = checkoutMaxBytesFromEnv(); err != nil {
+			return nil, err
+		}
 	}
 	var prefixes []string
 	for _, p := range strings.Split(allow, ",") {
@@ -91,7 +96,21 @@ func newCheckoutService(allow, dir, workDir string, inUse func(id string) bool) 
 			prefixes = append(prefixes, p)
 		}
 	}
-	return checkout.New(checkout.Config{Dir: dir, AllowedRepos: prefixes, InUse: inUse})
+	return checkout.New(checkout.Config{Dir: dir, AllowedRepos: prefixes, MaxBytes: maxBytes, Token: os.Getenv(config.CheckoutTokenEnvVar), InUse: inUse})
+}
+
+// checkoutMaxBytesFromEnv parses CRUX_CHECKOUT_MAX_BYTES; unset is zero,
+// which the service turns into its default.
+func checkoutMaxBytesFromEnv() (int64, error) {
+	raw := strings.TrimSpace(os.Getenv(config.CheckoutMaxBytesEnvVar))
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s must be a positive byte count, got %q", config.CheckoutMaxBytesEnvVar, raw)
+	}
+	return n, nil
 }
 
 // cmdCheckout is the local `crux checkout`: the service on <workdir>.
@@ -103,8 +122,9 @@ func (e *Env) cmdCheckout(ctx context.Context, opts globalOptions, args []string
 	fs := e.subFlags("checkout " + args[0])
 	allow := fs.String("allow", "", "comma-separated repo URL prefixes this command may clone (default $"+config.CheckoutAllowlistEnvVar+")")
 	dir := fs.String("dir", "", "where checkouts live (default $"+config.CheckoutDirEnvVar+", then <workdir>/"+checkout.DirName+")")
+	ceiling := fs.Int64("max-bytes-ceiling", 0, "largest clone plus worktree this command may deliver (default $"+config.CheckoutMaxBytesEnvVar+", then 5 GiB)")
 	return e.checkout(ctx, func() (checkoutClient, error) {
-		svc, err := newCheckoutService(*allow, *dir, opts.workDir, nil)
+		svc, err := newCheckoutService(*allow, *dir, *ceiling, opts.workDir, nil)
 		if err == nil && svc == nil {
 			// No allowlist: a service that refuses every clone but can
 			// still list and remove what exists.

@@ -43,6 +43,7 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 	var checkoutAllow, checkoutDir string
 	fs.StringVar(&checkoutAllow, "checkout-allow", "", "comma-separated repo URL prefixes the pinned-checkout service may clone (default $"+config.CheckoutAllowlistEnvVar+"; none disables the service)")
 	fs.StringVar(&checkoutDir, "checkout-dir", "", "where pinned checkouts live (default $"+config.CheckoutDirEnvVar+", then <workdir>/"+checkout.DirName+")")
+	checkoutMaxBytes := fs.Int64("checkout-max-bytes", 0, "ceiling on a checkout's clone plus worktree in bytes, and the cap when a request names none (default $"+config.CheckoutMaxBytesEnvVar+", then 5 GiB); the private-repo token is $"+config.CheckoutTokenEnvVar)
 	fs.StringVar(&operatorName, "operator-name", "", "name of the principal behind the control token on work-services routes (default $"+config.ServeOperatorNameEnvVar+", then "+serve.DefaultOperatorName+")")
 	fs.StringVar(&laneConfig, "lanes-config", "", "opt-in durable lane configuration file (default $CRUX_LANES_CONFIG)")
 	var runsConfig string
@@ -52,7 +53,7 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 		return code
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(e.Stderr, "usage: crux serve [-socket PATH] [-listen HOST:PORT] [-token T] [-hive-callback ADDR] [-lanes-config PATH] [-operator-name NAME] [-checkout-allow PREFIXES] [-checkout-dir DIR] [-runs-config PATH]")
+		fmt.Fprintln(e.Stderr, "usage: crux serve [-socket PATH] [-listen HOST:PORT] [-token T] [-hive-callback ADDR] [-lanes-config PATH] [-operator-name NAME] [-checkout-allow PREFIXES] [-checkout-dir DIR] [-checkout-max-bytes N] [-runs-config PATH]")
 		return ExitUsage
 	}
 	if cfg.Token == "" {
@@ -126,7 +127,7 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 	srv.Runs = runSvc
 	// S1 and S2 are wired both ways: a run may execute in a checkout, and a
 	// checkout with a live run refuses deletion.
-	if checkouts, err := newCheckoutService(checkoutAllow, checkoutDir, opts.workDir, runSvc.InUse); err != nil {
+	if checkouts, err := newCheckoutService(checkoutAllow, checkoutDir, *checkoutMaxBytes, opts.workDir, runSvc.InUse); err != nil {
 		fmt.Fprintln(e.Stderr, "crux: checkouts:", err)
 		return ExitUsage
 	} else if checkouts != nil {

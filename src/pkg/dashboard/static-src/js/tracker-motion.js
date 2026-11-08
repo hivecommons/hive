@@ -815,6 +815,7 @@
         const src = stageTrackerRowSrcKey(r.html);
         const moved = stageTrackerRowHasMove(r.html);
         if (prev && !moved && stageTrackerRowSrcOf(prev) === src) { place(prev); out.kept++; continue; }
+        if (prev && !moved && typeof stageTrackerRowHoldsComposer === 'function' && stageTrackerRowHoldsComposer(prev)) { place(prev); out.kept++; continue; }
         if (prev && !moved && stageTrackerRowAnimating(prev)) { place(prev); out.deferred++; continue; }
         const node = stageTrackerRowNode(r.key, r.html);
         if (prev) { el.replaceChild(node, prev); out.replaced++; }
@@ -822,6 +823,12 @@
         place(node);
       }
       return out;
+    }
+    // A maintainer typing a note in this row: the refresh keeps the node
+    // (and the draft, and the caret); the row catches up on the next one.
+    function stageTrackerRowHoldsComposer(node) {
+      const a = typeof document !== 'undefined' ? document.activeElement : null;
+      return !!(a && a.classList && a.classList.contains('ham-notes-input') && node && typeof node.contains === 'function' && node.contains(a));
     }
     // A refresh that found a row mid-move re-renders once the move has
     // settled, so the row's incidental changes still land.
