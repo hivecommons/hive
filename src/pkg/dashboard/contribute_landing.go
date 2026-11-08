@@ -5402,12 +5402,18 @@ function renderClankers(list){
   try{ccRenderInterestRoster(list);}catch(e){console.error('interest roster render failed',e);}
   if(!el)return;
   // Keep drafts, focus and selection intact across fleet polls, including disconnects.
-  // Summaries above stay live; only the cards wait until the last form closes.
-  if(el.querySelector('.op-msg-form')){ccDeferredClankers=list;return;}
+  // Summaries above stay live; only the cards wait until the last form closes, or
+  // until the viewer lets go of text they selected in an agent pane.
+  if(el.querySelector('.op-msg-form')||ccPaneSelectionActive(el)){ccDeferredClankers=list;return;}
   ccDeferredClankers=null;
   if(!list.length){el.innerHTML='<div class="ops-empty">No contributor agents connected right now.</div>';return;}
+  var paneScrolls=ccPaneScrollsRead(el);
   el.innerHTML=list.map(function(c){
     var user=c.github_username||c.contributor_id||'contributor agent';
+    // Row key: the data-clanker attribute and the pane's open-state key. Declared
+    // first because the pane block below reads it; a later var left it undefined
+    // there, so an open pane closed on every 4-second poll.
+    var key=(c.github_username||c.contributor_id||'').toLowerCase();
     var av=c.github_username?'<img class="clanker-av" src="https://github.com/'+esc(c.github_username)+'.png" alt="">':'<span class="clanker-av"></span>';
     // Trust tier is now surfaced as a compact medallion beside the identity (below),
     // so drop it from the middot sub-line to avoid duplicating the same string.
@@ -5488,7 +5494,6 @@ function renderClankers(list){
     var statusText=st;
     if(busy&&c.role)statusText=st+' &middot; as '+esc(c.role);
     var statusPill='<span class="clanker-status '+st+'">'+statusText+'</span>';
-    var key=(c.github_username||c.contributor_id||'').toLowerCase();
     // Enter pop-in for a clanker we haven't seen in the previous render (army framing).
     var isNew=key&&!ccKnownClankers[key];
     var rowCls='clanker-row'+(isNew?' cc-enter':'');
@@ -5498,6 +5503,7 @@ function renderClankers(list){
       '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+knowLine+failLine+capsLine+protoLine+interestsLine+paneBlock+histLink+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
+  ccPaneScrollsRestore(el,paneScrolls);
 }
 // #12502 helpers: capacity / in-flight / idle / awaiting-rework lines. Each
 // returns '' when there is nothing to show.
@@ -5564,6 +5570,41 @@ onEl('clanker-list','toggle',function(e){
   var k=d.getAttribute('data-pane');if(!k)return;
   if(d.open)ccOpenPanes[k]=true;else delete ccOpenPanes[k];
 },true);
+// ccPaneSelectionActive reports whether the viewer has text selected inside an
+// agent pane in el. The fleet re-render replaces the <pre>, which drops the
+// selection, so renderClankers waits while one is held.
+function ccPaneSelectionActive(el){
+  var s=(typeof window!=='undefined'&&window.getSelection)?window.getSelection():null;
+  if(!s||s.isCollapsed||!s.rangeCount)return false;
+  return [s.anchorNode,s.focusNode].some(function(n){
+    if(n&&n.nodeType!==1)n=n.parentNode;
+    return !!(n&&n.closest&&n.closest('.clanker-pane')&&el.contains(n));
+  });
+}
+// The scroll offset of each open pane's <pre>, read just before the re-render
+// and put back after it, so a reader scrolled inside the tail stays put.
+function ccPaneScrollsRead(el){
+  var out={};
+  el.querySelectorAll('details.clanker-pane[open]').forEach(function(d){
+    var k=d.getAttribute('data-pane'),p=d.querySelector('pre');
+    if(k&&p&&p.scrollTop)out[k]=p.scrollTop;
+  });
+  return out;
+}
+function ccPaneScrollsRestore(el,scrolls){
+  el.querySelectorAll('details.clanker-pane[open]').forEach(function(d){
+    var k=d.getAttribute('data-pane'),p=d.querySelector('pre');
+    if(k&&p&&scrolls[k])p.scrollTop=scrolls[k];
+  });
+}
+// A fleet update held back for a pane selection is drawn once the selection
+// is gone. Cheap: nothing runs unless an update is actually waiting.
+document.addEventListener('selectionchange',function(){
+  if(ccDeferredClankers===null)return;
+  var el=document.getElementById('clanker-list');
+  if(!el||el.querySelector('.op-msg-form')||ccPaneSelectionActive(el))return;
+  renderClankers(ccDeferredClankers);
+});
 // The "run history" link is for every viewer, not just admins — the endpoint
 // it drives is the same public read as the activity rail. Registered
 // separately from the admin click handler below, which returns early for a

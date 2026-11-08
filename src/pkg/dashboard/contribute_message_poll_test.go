@@ -46,6 +46,9 @@ function esc(s) { return s; }
 function toast() {}
 function opsPoll() { polls++; }
 function ccLoadOperatorMessages() {}
+function ccPaneSelectionActive() { return false; }
+function ccPaneScrollsRead() { return {}; }
+function ccPaneScrollsRestore() {}
 let sent;
 function fetch(url, options) {
   sent = JSON.parse(options.body);
