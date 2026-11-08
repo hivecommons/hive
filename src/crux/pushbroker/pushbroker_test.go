@@ -73,6 +73,35 @@ func TestBrokerRejectsTokenLikeSecretInOutgoingDiff(t *testing.T) {
 	}
 }
 
+func TestBrokerRejectsSecretInBinaryClassifiedFiles(t *testing.T) {
+	const secret = "token=ghp_abcdefghijklmnopqrstuvwxyz\n"
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, dir string)
+	}{
+		{"nul-byte", func(t *testing.T, dir string) {
+			writeCommit(t, dir, "leak.dat", "\x00"+secret)
+		}},
+		{"gitattributes-diff", func(t *testing.T, dir string) {
+			writeCommit(t, dir, ".gitattributes", "* -diff\n")
+			writeCommit(t, dir, "leak.txt", secret)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			tc.setup(t, dir)
+			res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}}).Run(context.Background())
+			if err == nil || !res.SecretRejected {
+				t.Fatalf("SecretRejected=%v, err=%v", res.SecretRejected, err)
+			}
+			if want := "contains a github-token-shaped secret"; !strings.Contains(err.Error(), want) {
+				t.Fatalf("err=%q, want it to name %q", err, want)
+			}
+		})
+	}
+}
+
 // TestBrokerRejectsEveryExactShapeSecretInOutgoingDiff covers the shapes the
 // gate missed while it consulted only logscrub.TokenPattern: a committed AWS
 // key, private-key block or planted canary used to be brokered and published.
