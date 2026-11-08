@@ -211,6 +211,8 @@ jobs:
       run: bash scripts/test-compile-changelog.sh
     - name: Release notes extraction fallback (#5934)
       run: bash scripts/test-extract-release-notes.sh
+    - name: Release notes size cap under GitHub's body limit
+      run: bash scripts/test-release-notes-cap.sh
     - name: Standalone image-reference source of truth (#4206)
       run: bash deploy/test_standalone_image_refs.sh
     - name: Docker-socket containment guard (#3865)
