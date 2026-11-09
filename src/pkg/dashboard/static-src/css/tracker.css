@@ -434,7 +434,7 @@
        the muted field, the ring alone — with a small queued note; never a
        second amber chevron. Exactly one lit stage per row. */
     .ham-seg.ham-activity-track.ham-track-queued { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
-    .ham-seg.ham-activity-track .ham-track-note { margin-left: 3px; font-size: 0.78em; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ham-seg.ham-activity-track .ham-track-note { margin-left: var(--sp-1); font-size: var(--fs-2xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* The CI / Review glyph is a ring of steps (checks / perspectives,
        hivecommons/hive#16599): filled clockwise from twelve — done in the
        track's colour, failed red, the rest the muted track. While the
