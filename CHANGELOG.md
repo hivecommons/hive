@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v6.5.1)
+
+### Fixed
+
+- An approval or recorded decision now carries over the hive's own merge of the base branch when the base also edited a file the PR changes, as long as the edit is away from the PR's hunks: every hunk is still byte-for-byte what was approved and only its line numbers moved, so the workflow-path fence no longer re-arms and the PR no longer parks at `stage/085-needs-decision` waiting for a fresh approval of the same change (projectbluefin/utah-packages#924). Files under `.github/` still have to read exactly as approved, and a base merge that touched the PR's own hunks or their context lines still needs a new approval.
+
 ## 2026-11-09 (v6.5.0)
 
 ### Added
