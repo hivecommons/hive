@@ -7648,6 +7648,31 @@ const defaultRuntimeConfigFile = "/data/hive.yaml.runtime"
 // Removable one release after every live hive has written the new name.
 const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
 
+// ResolvedConfigPath is path with symlinks resolved, or path itself when it
+// cannot be resolved. On hosted spokes /etc/hive/hive.yaml links to
+// RuntimeConfigFile (#17468), so this names the file a boot actually read.
+func ResolvedConfigPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
+// PersistedConfigPath names the file whose content survives a restart and is
+// the next boot's input — the one an operator must edit. That is
+// RuntimeConfigFile whenever the hive has one (every container deployment
+// after its first boot), else the legacy name the entrypoint falls back to;
+// otherwise the loaded config path, resolved, is the only copy (a bare binary
+// on a host).
+func PersistedConfigPath(sourcePath string) string {
+	for _, p := range []string{RuntimeConfigFile, RuntimeConfigFileLegacy} {
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 {
+			return p
+		}
+	}
+	return ResolvedConfigPath(sourcePath)
+}
+
 // DashboardOverlayFile is where Save() persists a secret-free copy of the
 // dashboard-edited config on the PVC in Kubernetes mode. The copy-config
 // init container re-seeds /etc/hive/hive.yaml FROM THE CONFIGMAP on every

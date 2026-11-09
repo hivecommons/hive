@@ -1,0 +1,1 @@
+- Edits to `/etc/hive/hive.yaml` on hub-provisioned spokes now survive a pod restart: the config path is a link to the persisted `/data/hive.yaml.runtime` instead of a throwaway `emptyDir` copy. Startup logs which file is the boot source of truth, and `/api/config/export` reports it as `metadata.persisted_path`.

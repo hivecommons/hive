@@ -122,6 +122,26 @@ to `hive.yaml.runtime`. `Config.Save()` rewrites it on every save. With neither
 file and no seed, the entrypoint exits 1. The `copy-config` init container only
 seeds the config path when the PVC has no runtime config (#2402).
 
+**Which file to edit on a hosted spoke** ([#17468](https://github.com/hivecommons/hive/issues/17468)).
+`/etc/hive` is an `emptyDir`, so nothing written there survives a restart on
+its own. The three files are:
+
+| File | Role | Survives restart |
+|---|---|---|
+| `/data/hive.yaml.runtime` | the persisted boot source after first boot; `Config.Save()` writes it on every save | yes (PVC) |
+| `/data/hive.yaml.dashboard` | secret-free overlay merged over the ConfigMap seed **only** on a boot with no runtime config (first boot, reprovision) | yes (PVC) |
+| `/etc/hive/hive.yaml` | the config path the binary loads; once a runtime config exists, the init container makes it a **symlink** to `/data/hive.yaml.runtime` | only through the link |
+
+So editing `/etc/hive/hive.yaml` edits the runtime config, and `kubectl rollout
+restart` keeps the change. `Config.Save()` writes the config path in place
+(no temp-file rename), so saves do not replace the link. On first boot the
+path is still a plain copy of the seed until the next restart links it, and a
+spoke carrying only the legacy `hive.yaml.bak` is not linked (that file is
+never written). The binary logs `boot: config source of truth` at startup
+with `loaded_from`, `boot_source` (symlinks resolved) and `persisted_path`, and
+`/api/config/export` reports the same file as `metadata.persisted_path` —
+edit that one.
+
 **Outside Kubernetes it is a live boot input, and the source of truth.** There is no
 ConfigMap and no overlay in that mode, so the entrypoint restores this file over
 the config path on every boot (or points `HIVE_CONFIG` straight at it, and
