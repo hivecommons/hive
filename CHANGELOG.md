@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.209.6)
+
+### Fixed
+
+- Self-authored automerge sweeps no longer file repeated-error self-reports for expected destination merge contention; local warnings and reporting of other failures are preserved ([#17400](https://github.com/hivecommons/hive/issues/17400)).
+
 ## 2026-11-09 (v5.209.5)
 
 ### Fixed
