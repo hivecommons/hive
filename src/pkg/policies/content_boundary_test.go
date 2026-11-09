@@ -20,6 +20,7 @@ func TestPRCapablePoliciesProtectPublishableContent(t *testing.T) {
 		"outreach-full.md",
 		"quality-full.md",
 		"quality-holdgated.md",
+		"redteam-holdgated.md",
 		"scanner-automerge.md",
 		"scanner-full.md",
 		"scanner-holdgated.md",

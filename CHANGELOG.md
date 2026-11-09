@@ -11,6 +11,23 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.210.0)
+
+### Added
+
+- ci: advisory gremlins mutation-testing job comments surviving mutants on PRs that change Go code (#17349).
+
+### Fixed
+
+- crux: WaitReady now surfaces the health route's last answer (e.g. "tmux not found on PATH") instead of a bare deadline error, and returns promptly on a 503 unavailable verdict.
+- The dashboard `data_disk` check no longer warns every spoke on shared node-root image pressure: when `/data` reports an implausible size and the sampler falls back to the node root, that sample is informational below 95% and only still fails at ≥95%, where kubelet DiskPressure eviction hits the pod regardless of who owns the disk.
+
+## 2026-11-09 (v5.209.8)
+
+### Fixed
+
+- Crux `GET /v1/health` now reports a `tmux` field (where tmux resolves on PATH) and answers 503, with the full health body, when tmux is missing (the body also carries `error`/`code`, so `api.Client` callers and the supervisor see "tmux not found on PATH" rather than a bare 503): every agent runs in tmux, so a server without it cannot serve traffic and was reporting healthy ([hivecommons/crux#137](https://github.com/hivecommons/crux/issues/137)). Existing fields are unchanged; probes that treated any 200 as healthy now see the failure.
+
 ## 2026-11-09 (v5.209.7)
 
 ### Fixed

@@ -36,8 +36,11 @@ func TestACMMPacksAgentCounts(t *testing.T) {
 	// L5 and L6 also carry the `dedupe` lane (hivecommons/hive#11582): a daily
 	// cadence-kicked issue+PR duplicate triage that posts one consolidation
 	// checklist per repository.
+	//
+	// L5 and L6 also carry the opt-in `redteam` lane (hivecommons/hive#17420),
+	// paused in every mode until an operator scopes and schedules it.
 	expected := map[int]int{
-		1: 2, 2: 6, 3: 7, 4: 8, 5: 14, 6: 15, // reviewer at L2–L6 (#8023, #13574) + adjudicator (#9477) + dedupe (#11582) at L5/L6
+		1: 2, 2: 6, 3: 7, 4: 8, 5: 15, 6: 16, // reviewer at L2–L6 (#8023, #13574) + adjudicator (#9477) + dedupe (#11582) + redteam (#17420) at L5/L6
 	}
 	for _, p := range packs {
 		want, ok := expected[p.Level]

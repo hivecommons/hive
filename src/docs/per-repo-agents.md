@@ -22,7 +22,10 @@ agents:
 
 Leave `repos:` off and the agent serves the whole hive — that is the default,
 and what every agent did before this setting existed. **A hive with no scoped
-agents behaves exactly as it did before.**
+agents behaves exactly as it did before.** The one exception is the
+[red-team agent](redteam.md): an agent whose role or base name is `redteam`
+serves **no** repository until it is scoped, because its job is writing
+hostile text.
 
 ## When to use it
 

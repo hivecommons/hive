@@ -128,7 +128,7 @@ func TestOriginVocabularyIsConsistent(t *testing.T) {
 			t.Errorf("source %q missing from KnownOriginSources", must)
 		}
 	}
-	for _, lane := range []string{"reviewer", "scanner", "quality", "ci-maintainer", "sec-check", "architect", "guide", "strategist", "outreach", "dedupe", "supervisor", "tester"} {
+	for _, lane := range []string{"reviewer", "scanner", "quality", "ci-maintainer", "sec-check", "architect", "guide", "strategist", "outreach", "dedupe", "redteam", "supervisor", "tester"} {
 		if seen[lane] {
 			t.Errorf("agent lane %q must not be an origin source", lane)
 		}

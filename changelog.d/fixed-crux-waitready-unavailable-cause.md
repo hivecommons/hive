@@ -1,1 +1,0 @@
-- crux: WaitReady now surfaces the health route's last answer (e.g. "tmux not found on PATH") instead of a bare deadline error, and returns promptly on a 503 unavailable verdict.

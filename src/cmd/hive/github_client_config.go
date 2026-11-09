@@ -124,6 +124,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// pause taken in the dashboard narrows the very next enumeration and
 	// automerge sweep without a restart.
 	client.SetRepoPausedFunc(b.cfg.IsRepoPaused)
+	// Changed-digest rewrite floor (#17435); the eval cycle re-applies it
+	// from live config so a dashboard edit takes effect without a rebuild.
+	client.SetAdvisoryDigestMinInterval(b.cfg.Governor.Advisory.EffectiveDigestMinInterval())
 	client.SetScheduledBaseRefresh(func(repo string) bool { return b.cfg.AutoMerge.RequireCurrentBaseFor(repo) })
 	// Per-repo custom agents (#6204). A live predicate over the shared
 	// config, so the hive-open-pr / hive-merge / hive-open-issue relays
