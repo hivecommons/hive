@@ -3740,17 +3740,14 @@ func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 // bootWatchersDeps.
 func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// Watch hive.yaml for external changes and reload config when modified
-	b.configWatcher = deps.newConfigWatcher(b.configPath, func(newCfg *config.Config) {
-		b.cfgReloadMu.Lock()
-		prevACMMLevel := b.cfg.ACMMLevelOrZero()
-		nextACMMLevel := prevACMMLevel
-		defer func() {
-			b.publishSweepConfig()
-			b.cfgReloadMu.Unlock()
-			if prevACMMLevel != nextACMMLevel {
-				b.onACMMLevelChanged(prevACMMLevel, nextACMMLevel)
-			}
-		}()
+	// The watcher callback never waits for cfgReloadMu: submitConfigReload
+	// parks the config and whichever goroutine holds the lock applies it at
+	// its next safe point (hivecommons/hive#17467). reloadApply runs with
+	// cfgReloadMu held and returns the ACMM transition to fire after unlock.
+	b.reloadApply = func(newCfg *config.Config) (prevACMMLevel, nextACMMLevel int) {
+		prevACMMLevel = b.cfg.ACMMLevelOrZero()
+		nextACMMLevel = prevACMMLevel
+		defer b.publishSweepConfig()
 
 		// Preserve runtime-only fields that are not in the YAML
 		newCfg.HiveID = b.cfg.HiveID
@@ -3918,7 +3915,9 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		}
 
 		b.refreshDashboard()
-	}, b.logger)
+		return prevACMMLevel, nextACMMLevel
+	}
+	b.configWatcher = deps.newConfigWatcher(b.configPath, b.submitConfigReload, b.logger)
 	config.SetSaveObserver(b.configWatcher.SkipNext)
 	b.dashSrv.SetSkipReloadFunc(b.configWatcher.SkipNext)
 	deps.startConfigWatcher(b.ctx, b.configWatcher)
@@ -6033,16 +6032,17 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	if loopNow == nil {
 		loopNow = time.Now
 	}
-	b.cfgReloadMu.Lock()
+	b.lockCfg()
 	b.publishSweepConfig()
-	b.cfgReloadMu.Unlock()
+	b.unlockCfg()
 	if deps.startSweeps != nil {
 		defer deps.startSweeps(b)()
 	}
 	// Cadence is measured from the start, including the first (often slow)
 	// enumerate pass, not from completion of startup evaluation.
 	lastEnumerateAt := loopNow()
-	b.cfgReloadMu.Lock()
+	b.lockCfg()
+	initialCfgGen := b.cfgGeneration
 	initialTickStarted := time.Now()
 	b.evalCycles++
 	deps.runEval(b, nil, evalSourceEnumerate)
@@ -6062,8 +6062,8 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	if b.wd != nil {
 		b.wd.Tick(b.ctx)
 	}
-	deps.persist(b)
-	b.cfgReloadMu.Unlock()
+	b.persistCycleLocked(deps.persist, initialCfgGen)
+	b.unlockCfg()
 	b.logger.Info("governor tick complete", "tick_wall_s", time.Since(initialTickStarted).Seconds(),
 		"eval_s", initialEvalDuration.Seconds(), "rotation_s", initialRotationDuration.Seconds(), "sweeps_s", 0,
 		"source", evalSourceEnumerate.String(), "startup", true)
@@ -6085,7 +6085,8 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		if source == evalSourceEnumerate {
 			lastEnumerateAt = loopNow()
 		}
-		b.cfgReloadMu.Lock()
+		b.lockCfg()
+		cycleGen := b.cfgGeneration
 		b.publishSweepConfig()
 		restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 		for _, name := range restarted {
@@ -6171,7 +6172,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				b.logger.Info("retro lane filed advisory beads", "findings", n)
 			}
 		}
-		deps.persist(b)
+		b.persistCycleLocked(deps.persist, cycleGen)
 		effectiveEvalInterval, mode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
 		if effectiveEvalInterval != lastEvalInterval {
 			b.logger.Info("eval interval changed, resetting ticker",
@@ -6182,7 +6183,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		if b.evalLoop != nil {
 			b.evalLoop.setInterval(effectiveEvalInterval, mode)
 		}
-		b.cfgReloadMu.Unlock()
+		b.unlockCfg()
 		b.logger.Info("governor tick complete", "tick_wall_s", time.Since(tickStarted).Seconds(),
 			"eval_s", evalDuration.Seconds(), "rotation_s", rotationDuration.Seconds(), "sweeps_s", 0,
 			"source", source.String())
@@ -6300,11 +6301,12 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				tick(evalSourceCached)
 			} else {
 				// Keep this cycle lean: planning and delivery without sweeps.
-				b.cfgReloadMu.Lock()
+				b.lockCfg()
+				cycleGen := b.cfgGeneration
 				b.evalCycles++
 				deps.runEval(b, nil, evalSourceCached)
-				deps.persist(b)
-				b.cfgReloadMu.Unlock()
+				b.persistCycleLocked(deps.persist, cycleGen)
+				b.unlockCfg()
 			}
 			after, afterWho := b.gov.NextContinuousKickAt()
 			if backoff, stalled := wakeHold.observe(next, after, who, afterWho, wakeNow()); stalled {
@@ -6377,7 +6379,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			armContinuousWake()
 			armWebhookHealthRecheck()
 		case <-healthCh:
-			b.cfgReloadMu.Lock()
+			b.lockCfg()
 			effectiveEvalInterval, mode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
 			if effectiveEvalInterval != lastEvalInterval {
 				b.logger.Info("eval interval changed, resetting ticker",
@@ -6388,17 +6390,17 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			if b.evalLoop != nil {
 				b.evalLoop.setInterval(effectiveEvalInterval, mode)
 			}
-			b.cfgReloadMu.Unlock()
+			b.unlockCfg()
 			armWebhookHealthRecheck()
 		case <-wakeCh:
 			// The loop-top due check services this timer.
 			armContinuousWake()
 		case <-agentTickCh:
-			b.cfgReloadMu.Lock()
+			b.lockCfg()
 			govState := b.gov.GetState()
 			agentStatuses := b.agentMgr.AllStatuses()
 			payload := dashboard.BuildAgentOnlyStatus(govState, agentStatuses, b.cfg)
-			b.cfgReloadMu.Unlock()
+			b.unlockCfg()
 			b.dashSrv.BroadcastAgentStatus(payload)
 		}
 	}

@@ -1,0 +1,1 @@
+- Editing `hive.yaml` on a busy hive now takes effect: a config hot-reload no longer waits behind a whole governor cycle, it is applied before that cycle ends, and the cycle's state save no longer overwrites the reloaded config with the one it started from ([#17467](https://github.com/hivecommons/hive/issues/17467)).

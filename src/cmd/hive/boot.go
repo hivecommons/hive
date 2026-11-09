@@ -74,7 +74,27 @@ type boot struct {
 	// the governor loop's tick bodies that read cfg. Without it, a reload
 	// racing the fast agent-status tick crashed the process with "concurrent
 	// map read and map write" in buildConfiguredAgents.
+	//
+	// The governor loop holds it for a whole tick, so the watcher callback
+	// never waits for it: submitConfigReload parks the reload in
+	// pendingReload and the holder applies it at its next safe point via
+	// lockCfg/unlockCfg (hivecommons/hive#17467).
 	cfgReloadMu sync.Mutex
+	// cfgGeneration counts reloads swapped into cfg; guarded by cfgReloadMu.
+	// A governor tick compares it with the value it started from and skips
+	// its persist when a reload landed mid-tick.
+	cfgGeneration uint64
+	// reloadApply swaps a reloaded config into cfg and re-syncs the
+	// subsystems that cache it. Caller holds cfgReloadMu; it returns the
+	// ACMM level transition to fire once the lock is released.
+	reloadApply func(*config.Config) (prevACMMLevel, nextACMMLevel int)
+	// pendingACMM holds ACMM transitions applied under cfgReloadMu that
+	// unlockCfg fires after releasing it; guarded by cfgReloadMu.
+	pendingACMM [][2]int
+	// pendingReloadMu guards pendingReload, the newest reload the watcher
+	// delivered that has not been applied yet.
+	pendingReloadMu sync.Mutex
+	pendingReload   *config.Config
 	// sweepConfig is an immutable copy published outside long-running eval IO.
 	sweepConfig atomic.Pointer[config.Config]
 
