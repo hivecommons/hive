@@ -194,7 +194,8 @@
         "Dwell": null,
         "ContributorNudge": {
           "Enabled": null,
-          "RenudgeInterval": ""
+          "RenudgeInterval": "",
+          "CIFailureCooldown": ""
         },
         "PresenceWindow": "",
         "ContributorGraceOnline": "",

@@ -40,3 +40,38 @@ func TestHandleGovernorLabels_NudgeRepeatAfterRoundTrip(t *testing.T) {
 		t.Fatalf("empty must clear the override, got %q", got)
 	}
 }
+
+// governor.labels.stage.contributor_nudge.ci_failure_cooldown
+// (hivecommons/hive#17328) sits beside the nudge intervals on the Labels tab.
+func TestHandleGovernorLabels_CIFailureCooldownRoundTrip(t *testing.T) {
+	srv := newFullServer(t)
+	w := httptest.NewRecorder()
+	srv.handleGovernorLabels(w, ownerPUT(t, "/api/config/governor/labels", `{"stage_nudge_ci_failure_cooldown":" 2h "}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := srv.deps.Config.Governor.Labels.Stage.ContributorNudge.CIFailureCooldown; got != "2h" {
+		t.Fatalf("ci_failure_cooldown = %q, want trimmed 2h", got)
+	}
+	if got := decodeGovernorConfigGet(t, srv)["stageNudgeCICooldown"]; got != "2h" {
+		t.Fatalf("GET stageNudgeCICooldown = %v, want 2h", got)
+	}
+
+	w = httptest.NewRecorder()
+	srv.handleGovernorLabels(w, ownerPUT(t, "/api/config/governor/labels", `{"stage_nudge_ci_failure_cooldown":"-1h"}`))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("negative duration: code = %d, want 400; body = %s", w.Code, w.Body.String())
+	}
+	if got := srv.deps.Config.Governor.Labels.Stage.ContributorNudge.CIFailureCooldown; got != "2h" {
+		t.Fatalf("rejected save mutated ci_failure_cooldown to %q", got)
+	}
+
+	w = httptest.NewRecorder()
+	srv.handleGovernorLabels(w, ownerPUT(t, "/api/config/governor/labels", `{"stage_nudge_ci_failure_cooldown":""}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("clear: code = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := srv.deps.Config.Governor.Labels.Stage.ContributorNudge.CIFailureCooldown; got != "" {
+		t.Fatalf("empty must restore the default, got %q", got)
+	}
+}

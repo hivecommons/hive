@@ -114,13 +114,15 @@ func TestStoreNoteHold(t *testing.T) {
 func TestRouteHumanNamesWhoHeld(t *testing.T) {
 	base := Evidence{Head: "abc1234", Verdict: VerdictApproved, Checks: CheckSummary{Total: 3, Green: 3, Known: true}, DCO: DCOYes, Holds: []string{"hold"}, Cause: CauseDecision, SelfAuthored: true}
 	plain := RouteHuman(base)
-	if plain.Stage != NeedsDecision || strings.Join(plain.Reasons, "|") != "the `hold` label is set|"+decisionConsequenceReason || plain.Hold != nil {
+	// The lane rule (CauseDecision) owns 085; the hold rides it as a gate
+	// after the rule's own reason (hivecommons/hive#17327).
+	if plain.Stage != NeedsDecision || strings.Join(plain.Reasons, "|") != decisionConsequenceReason+"|the `hold` label is set" || plain.Hold != nil {
 		t.Fatalf("plain route = %+v", plain)
 	}
 	hive := base
 	hive.Hold = &HoldProvenance{By: HoldByHive, Source: HoldSourceReporterTrust, Reason: ReporterTrustReason(15017, "Karibhou", "CONTRIBUTOR")}
 	route := RouteHuman(hive)
-	if route.Reasons[0] != "the `hold` label was set by the hive itself: reporter trust (issue #15017 by @Karibhou, contributor)" || route.Hold != hive.Hold {
+	if route.Reasons[1] != "the `hold` label was set by the hive itself: reporter trust (issue #15017 by @Karibhou, contributor)" || route.Hold != hive.Hold {
 		t.Fatalf("hive-held route = %+v", route)
 	}
 	comment := DecisionComment(route)
@@ -131,7 +133,7 @@ func TestRouteHumanNamesWhoHeld(t *testing.T) {
 	person.Holds = []string{"do-not-merge", "hold"}
 	person.Hold = &HoldProvenance{By: "clubanderson", Source: HoldSourceLabel}
 	route = RouteHuman(person)
-	if strings.Join(route.Reasons, "|") != "the `do-not-merge` label is set|the `hold` label was set by @clubanderson|"+decisionConsequenceReason {
+	if strings.Join(route.Reasons, "|") != decisionConsequenceReason+"|the `do-not-merge` label is set|the `hold` label was set by @clubanderson" {
 		t.Fatalf("person-held route reasons = %q", route.Reasons)
 	}
 }

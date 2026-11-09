@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.207.2)
+
+### Fixed
+
+- The fleet selfreport feed no longer files a repository's oversized AGENTS.md as an unclassified runtime error, and the scheduler's injection-cap warning now reports the effective cap instead of the config default sentinel (#17318).
+
 ## 2026-11-09 (v5.207.1)
 
 ### Fixed
