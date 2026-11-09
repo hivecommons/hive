@@ -4337,6 +4337,8 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 			b.githubProxy.SetAgentGitHubBudgetNudgeFunc(b.agentMgr.SendGitHubAPIBudgetNudge)
 		}
 		dashboard.SetProxyViolationsProvider(b.githubProxy.Violations)
+		// Per-agent calls in the cap window, for the GitHub API budget panel.
+		dashboard.SetAgentGitHubCallsProvider(b.githubProxy.AgentGitHubCallsLastHour)
 		// Lets the dashboard narrow the LiteLLM model dropdown to the set the
 		// configured key is entitled to, learned by the proxy from a key-info
 		// probe or a "team not allowed" 403.

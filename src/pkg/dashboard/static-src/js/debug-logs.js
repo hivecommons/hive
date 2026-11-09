@@ -132,6 +132,7 @@
       core: 'Requests left in GitHub’s core REST rate limit for the current hour, out of the hourly limit for this credential (5,000 for a token; App installations may get more). GitHub resets the counter once an hour. The bar turns yellow at 25% free and red at 10%. Below the configured API reserve (default 800 requests) the governor enters conserve mode — it stretches the eval interval and skips optional steps such as recommendations and advisories; below the API critical floor (default 250) it stretches the interval further.',
       etag: 'Share of cacheable GitHub REST GETs answered 304 Not Modified because the hive re-sent a remembered ETag (If-None-Match). GitHub does not charge a 304 against the core rate limit, so a higher rate means more of the hive’s polling is free. Counted since the process started, not over the 1h window — a low rate right after a restart is normal while the cache warms. The 304 column below shows the same hits per caller.',
       etagFill: 'How full the ETag response cache is: remembered responses held, and gzip-compressed bytes against the configured cap (Settings → Forge App → ETag cache size, github.etag_cache_max_mb, default 128 MB). At the cap, each new store evicts the least recently used body, and a body evicted before its next poll costs a charged fetch instead of a free 304 — if the hit rate slides while this sits at the cap, raise the cap.',
+      agentCaps: 'Each agent may receive this many charged GitHub API responses through the API proxy in a sliding hour; past it the proxy answers 429 until the window frees up. Calls is what the proxy has counted against the cap in the last hour; an agent with no cap is not counted. The cap comes from the agent’s own setting (its General tab), its base agent for a replica or review head, or the fleet default (Settings → Forge App, agents.github_api_hourly_cap, default 300). Every agent draws on the one hourly bucket of the App installation, and below the agent reserve floor (github.agent_reserve_floor) agent reads are refused whatever their cap.',
     };
     function ghEtagCacheFillText(etag) {
       etag = etag || {};
@@ -164,6 +165,20 @@
         const endpoint = esc(c.endpoint || '');
         return `<tr><td class="gh-api-budget-col-caller" title="${caller}">${caller}</td><td class="gh-api-budget-col-endpoint" title="${endpoint}">${endpoint}</td><td class="gh-api-budget-col-num">${Number(c.charged) || 0}</td><td class="gh-api-budget-col-num">${Number(c.requests) || 0}</td><td class="gh-api-budget-col-num">${Number(c.not_modified) || 0}</td><td class="gh-api-budget-col-num">${Number(c.rate_limited) || 0}</td></tr>`;
       }).join('');
+      // Per-agent proxy caps (ghRateLimits.agent_caps): the cap the proxy
+      // applies now, where it comes from, and the calls counted against it in
+      // the current hour. An uncapped agent has no window, so no count.
+      const agentCaps = ghRate.agent_caps || ghRate.agentCaps || {};
+      const capText = n => Number(n) === 0 ? 'no cap' : String(Number(n) || 0);
+      const capFrom = r => r.source === 'agent' ? 'own setting' : (r.source === 'base_agent' ? 'from ' + (r.base_agent || 'base agent') : 'fleet default');
+      const capRows = (agentCaps.agents || []).map(r => {
+        const agent = esc(r.agent || '');
+        const cap = Number(r.cap) || 0;
+        const calls = Number(r.calls) || 0;
+        const used = cap > 0 ? Math.round((calls * 100) / cap) + '%' : '—';
+        return `<tr><td class="gh-api-budget-col-caller" title="${agent}">${agent}</td><td class="gh-api-budget-col-endpoint">${esc(capFrom(r))}</td><td class="gh-api-budget-col-num">${cap > 0 ? calls : '—'}</td><td class="gh-api-budget-col-num">${esc(capText(cap))}</td><td class="gh-api-budget-col-num">${used}</td></tr>`;
+      }).join('');
+      const fleetCap = agentCaps.fleet_cap === undefined ? 300 : agentCaps.fleet_cap;
       return `<div id="gh-api-budget-panel" class="gh-api-budget-card">
         <div class="gh-api-budget-label">GitHub API budget (1h)</div>
         <div class="gh-api-budget-row"><span>Core remaining${ghApiBudgetHelpMark('core', 'Core remaining')}</span><span class="gh-api-budget-strong">${core.remaining} / ${core.limit || '—'} (${core.remainingPct}% free)</span></div>
@@ -176,6 +191,13 @@
             <thead><tr><th class="gh-api-budget-col-caller">Caller</th><th class="gh-api-budget-col-endpoint">Endpoint</th><th class="gh-api-budget-col-num" title="Rate-limit points charged">Charged</th><th class="gh-api-budget-col-num" title="Requests">Req</th><th class="gh-api-budget-col-num" title="304 Not Modified (ETag hits)">304</th><th class="gh-api-budget-col-num" title="429 / rate-limited responses">429</th></tr></thead>
             <tbody>${rows || '<tr><td colspan="6" class="gh-api-budget-empty">No recent GitHub API traffic</td></tr>'}</tbody>
 
+          </table>
+        </div>
+        <div class="gh-api-budget-row mt-3"><span>Agent caps${ghApiBudgetHelpMark('agentCaps', 'Agent caps')}</span><span class="gh-api-budget-strong">fleet default ${esc(capText(fleetCap))}</span></div>
+        <div class="gh-api-budget-table-wrap" tabindex="0" role="region" aria-label="Agent GitHub API caps table">
+          <table id="gh-api-budget-agent-caps" class="gh-api-budget-table">
+            <thead><tr><th class="gh-api-budget-col-caller">Agent</th><th class="gh-api-budget-col-endpoint">Cap from</th><th class="gh-api-budget-col-num" title="Calls counted against the cap in the last hour">Calls</th><th class="gh-api-budget-col-num" title="Hourly cap">Cap</th><th class="gh-api-budget-col-num" title="Calls as a share of the cap">Used</th></tr></thead>
+            <tbody>${capRows || '<tr><td colspan="5" class="gh-api-budget-empty">No agents</td></tr>'}</tbody>
           </table>
         </div>
       </div>`;

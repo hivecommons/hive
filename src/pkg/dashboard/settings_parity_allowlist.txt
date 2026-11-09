@@ -57,7 +57,6 @@ agents.<key>.display_name # TODO #11854
 agents.<key>.emoji # TODO #11854
 agents.<key>.enabled # TODO #11854
 agents.<key>.explain_mode # TODO #11854
-agents.<key>.github_api_hourly_cap # TODO #11854
 agents.<key>.id # TODO #11854
 agents.<key>.include_repos # TODO #11854
 agents.<key>.jev_mode # TODO #11854
@@ -155,7 +154,6 @@ agents.cli_memory.auto_memory # TODO #11854
 agents.cli_memory.clear_on_kick # TODO #11854
 agents.cli_memory.drain_on_write # TODO #11854
 agents.cli_memory.drain_to_knowledge # TODO #11854
-agents.github_api_hourly_cap # TODO #11854
 agents.session_recycle.enabled # TODO #11854
 agents.session_recycle.max_age # TODO #11854
 agents.session_recycle.max_rss_mb # TODO #11854

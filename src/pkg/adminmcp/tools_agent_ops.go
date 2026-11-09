@@ -31,6 +31,7 @@ func DefaultWriteOps() []WriteOp {
 	ops := append(agentOps, repoOpsWriteOps()...)
 	ops = append(ops, fleetWriteOps()...)
 	ops = append(ops, stageTrackerWriteOps()...)
+	ops = append(ops, githubCapWriteOps()...)
 	return append(ops, governorWriteOps()...)
 }
 

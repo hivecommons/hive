@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -128,18 +129,28 @@ type githubAPISettings struct {
 	GraphQLPRBatchPageSize *int  `json:"graphql_pr_batch_page_size"`
 	AppAuthoredPRs         *bool `json:"app_authored_prs"`
 	AppSignedCommits       *bool `json:"app_signed_commits"`
+	// AgentGitHubAPIHourlyCap is agents.github_api_hourly_cap, the proxy's
+	// fleet default per-agent cap, edited on the Forge App tab beside
+	// agent_reserve_floor: a whole number sets it (0 = no cap), null removes
+	// the key so the default applies, absent leaves it alone. Raw so null and
+	// absent stay apart; see fleetAgentGitHubCap.
+	AgentGitHubAPIHourlyCap json.RawMessage `json:"agent_github_api_hourly_cap"`
 }
 
 func (b githubAPISettings) empty() bool {
 	return b.AgentReserveFloor == nil && b.APIReserve == nil && b.APICritical == nil && b.PRDetailTTLS == nil &&
 		b.ETagCacheMaxMB == nil && b.ETagCacheMaxEntries == nil &&
-		b.GraphQLPRBatch == nil && b.GraphQLPRBatchPageSize == nil && b.AppAuthoredPRs == nil && b.AppSignedCommits == nil
+		b.GraphQLPRBatch == nil && b.GraphQLPRBatchPageSize == nil && b.AppAuthoredPRs == nil && b.AppSignedCommits == nil &&
+		len(b.AgentGitHubAPIHourlyCap) == 0
 }
 
 // validate checks the request against the current github block with the
 // same bounds config.Validate enforces at boot, so the dialog cannot save a
 // value the next start would reject.
 func (b githubAPISettings) validate(cur config.GitHubConfig) error {
+	if _, _, err := b.fleetAgentGitHubCap(); err != nil {
+		return err
+	}
 	for _, f := range []struct {
 		v    *int
 		name string
@@ -272,7 +283,7 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.AppID == nil && body.InstallationID == nil && body.KeyFile == "" && body.PrivateKey == "" && body.SelfAuthorizationHold == nil && body.githubAPISettings.empty() {
-		jsonError(w, "at least one field required: app_id, installation_id, key_file, private_key, self_authorization_hold, agent_reserve_floor, api_reserve, api_critical, etag_cache_max_mb, etag_cache_max_entries, pr_detail_ttl_s, graphql_pr_batch, graphql_pr_batch_page_size, app_authored_prs, app_signed_commits", http.StatusBadRequest)
+		jsonError(w, "at least one field required: app_id, installation_id, key_file, private_key, self_authorization_hold, agent_reserve_floor, agent_github_api_hourly_cap, api_reserve, api_critical, etag_cache_max_mb, etag_cache_max_entries, pr_detail_ttl_s, graphql_pr_batch, graphql_pr_batch_page_size, app_authored_prs, app_signed_commits", http.StatusBadRequest)
 		return
 	}
 
@@ -357,8 +368,15 @@ func (s *Server) applyGitHubConfigUpdate(r *http.Request, body githubConfigUpdat
 	if body.ETagCacheMaxMB != nil || body.ETagCacheMaxEntries != nil {
 		github.SetETagCacheLimits(cfg.GitHub.EffectiveETagCacheMaxBytes(), cfg.GitHub.EffectiveETagCacheMaxEntries())
 	}
+	// The fleet agent cap is not in the github block, but the proxy reads it
+	// from this same live *Config on every request (main.go binds
+	// cfg.AgentGitHubAPIHourlyCap), so setting it here is the live apply.
+	auditNote := ""
+	if fleetCap, present, _ := body.githubAPISettings.fleetAgentGitHubCap(); present {
+		auditNote = applyFleetAgentGitHubCap(cfg, fleetCap)
+	}
 
-	result, err := s.finishGitHubConfigUpdateLocked(requestAuditUser(r), "")
+	result, err := s.finishGitHubConfigUpdateLocked(requestAuditUser(r), auditNote)
 	if err != nil {
 		if strings.Contains(err.Error(), "source path") {
 			s.logger.Error("github config update rejected: config has no source path, save would be an in-memory no-op")
@@ -367,6 +385,8 @@ func (s *Server) applyGitHubConfigUpdate(r *http.Request, body githubConfigUpdat
 		s.logger.Error("failed to persist github config", "error", err)
 		return nil, newGitHubConfigUpdateError("failed to save config", http.StatusInternalServerError)
 	}
+	result["agent_github_api_hourly_cap"] = cfg.FleetAgentGitHubAPIHourlyCap()
+	result["agent_github_api_hourly_cap_set"] = cfg.AgentsGitHubAPIHourlyCapSet
 	return result, nil
 }
 

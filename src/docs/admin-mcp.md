@@ -554,10 +554,16 @@ The keys and names whose values are shown:
   `governor.logging.max_backups`, `governor.logging.compress`,
   `governor.logging.kick_log_source`, `governor.logging.read_scan_max_mb`,
   `agents.*.backend`, `agents.*.model`, `agents.*.enabled`, `agents.*.paused`,
-  and the per-repository merge policy: `auto_merge.squash_only[*]`,
+  the API proxy's GitHub API hourly cap `agents.github_api_hourly_cap` and
+  `agents.*.github_api_hourly_cap`, and the per-repository merge policy: `auto_merge.squash_only[*]`,
   `auto_merge.require_current_base[*]` and `auto_merge.human_merge_paths.*[*]`
   (the path globs listed under each `owner/repo`). A `*` segment is one map key
   and `[*]` any list index.
+- **Per-agent GitHub API caps:** the result also carries
+  `agent_github_api_hourly_caps`, the API proxy's cap as this configuration
+  resolves it: `fleet` and `fleet_set` for `agents.github_api_hourly_cap`,
+  `agents` mapping each declared agent to the cap the proxy applies to it
+  (`0` = no cap), and `overrides` naming the agents with their own value.
 - **Environment names:** `HIVE_CONFIG`, `HIVE_ADMIN_MCP_ENABLE_WRITES`,
   `HIVE_ADMIN_MCP_PENDING_FILE`, `HOME`, `HOSTNAME`, `LANG`, `PATH`, `TZ`,
   `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT`
@@ -674,18 +680,38 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 
 ### Registered operations
 
-| Area                         | Operations                                                                                                                                                           |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Agents                       | `agent.pause`, `agent.resume`, `agent.nudge`, `agent.restart`, `agent.add`, `agent.remove`, `agent.model`, `agent.backend`, `agent.effort`, `agent.interaction_tier` |
-| Fleet                        | `fleet.autonomy_level`                                                                                                                                               |
-| Plans                        | `plan.propose`, `plan.approve`, `plan.reject`                                                                                                                        |
-| Governor                     | `governor.feature_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                     |
-| Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                      |
-| Activity monitor row actions | see below                                                                                                                                                            |
-| Budget                       | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                                     |
-| Contributors                 | `contributor.trust`, `contributor.agent_role`, `contributor.agent_role_grants`, `contributor.revoke`, `contributor.requeue`, `contributor.delete`                    |
-| Backup                       | `backup.create` (the archive itself is not returned through MCP)                                                                                                     |
-| Circuit breaker              | `circuit_breaker.engage`, `circuit_breaker.release`                                                                                                                  |
+| Area                         | Operations                                                                                                                                                                                          |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agents                       | `agent.pause`, `agent.resume`, `agent.nudge`, `agent.restart`, `agent.add`, `agent.remove`, `agent.model`, `agent.backend`, `agent.effort`, `agent.interaction_tier`, `agent.github_api_hourly_cap` |
+| GitHub                       | `github.agent_api_hourly_cap`                                                                                                                                                                       |
+| Fleet                        | `fleet.autonomy_level`                                                                                                                                                                              |
+| Plans                        | `plan.propose`, `plan.approve`, `plan.reject`                                                                                                                                                       |
+| Governor                     | `governor.feature_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                                    |
+| Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                                                     |
+| Activity monitor row actions | see below                                                                                                                                                                                           |
+| Budget                       | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                                                                    |
+| Contributors                 | `contributor.trust`, `contributor.agent_role`, `contributor.agent_role_grants`, `contributor.revoke`, `contributor.requeue`, `contributor.delete`                                                   |
+| Backup                       | `backup.create` (the archive itself is not returned through MCP)                                                                                                                                    |
+| Circuit breaker              | `circuit_breaker.engage`, `circuit_breaker.release`                                                                                                                                                 |
+
+The two GitHub API cap operations change the API proxy's per-agent hourly
+cap, the same settings as the dashboard's Forge App and agent General
+controls:
+
+- `agent.github_api_hourly_cap` takes `agent` and `cap`: a whole number, `0`
+  for no cap, or `inherit` to follow the fleet default. Set it on a base
+  agent; a replica or review head is refused, because it takes its base
+  agent's cap.
+- `github.agent_api_hourly_cap` takes `cap`: a whole number, `0` for no cap,
+  or `default` to remove `agents.github_api_hourly_cap` so the default of 300
+  applies.
+
+The preview reads the current value first. Raising a cap, removing one, or
+inheriting a higher fleet value is disclosed as widening, naming the App
+installation's shared hourly bucket and the agent reserve floor
+(`github.agent_reserve_floor`); lowering is not. When the current value cannot
+be read, the preview says the change may be widening. See
+[Changing the agent caps](operator-reference/runtime-and-quota.md#changing-the-agent-caps).
 
 The Activity monitor's row actions:
 

@@ -163,11 +163,13 @@ loops, so the proxy enforces two safeguards:
   minting is not agent-attributed and is not counted. Set the value to `0` to
   disable the fleet default, or set `agents.<name>.github_api_hourly_cap` to
   override one agent (`0` disables that agent's cap).
-  The override applies on its own, whether or not the fleet key is set. A
-  replica (`reviewer-2`, …) or review head takes its base agent's override
-  unless it has one of its own. The order is the agent's own value, then the
-  base agent's, then `agents.github_api_hourly_cap`, then the default of 300.
-  A config reload reaches the proxy without a restart.
+  The override applies whether or not the fleet key is set. A replica
+  (`reviewer-2`, …) or review head takes its base agent's override unless it
+  has one of its own. The order is the agent's own value, then the base
+  agent's, then `agents.github_api_hourly_cap`, then the default of 300. A
+  config reload reaches the proxy without a restart. Both can also be set
+  from the dashboard and the admin MCP; see
+  [Changing the agent caps](#changing-the-agent-caps).
 - `github.agent_reserve_floor` (default `400`) protects the shared core bucket.
   When the latest rate-limit reading shows `core.remaining` below the floor,
   agent read requests receive a proxy `429` even if the agent has not
@@ -232,6 +234,70 @@ GraphQL bucket. `/api/gh-rate-limits` reports these calls as caller
 for repositories, PRs, pages, REST fallbacks, errors, and the last GraphQL
 query cost. Per-PR REST reads still happen when the batch is disabled, a repo's
 GraphQL query fails, or GitHub returns `mergeable: UNKNOWN` for that PR.
+
+### Changing the agent caps
+
+Both caps can be changed without editing `hive.yaml`, which matters on a
+hub-managed spoke where the hub owns that file:
+
+- **Fleet default:** Settings → Forge App → *Agent GitHub API hourly cap*,
+  next to the agent reserve floor. A number sets
+  `agents.github_api_hourly_cap`, `0` removes the cap, and a blank field
+  removes the key so the default (`300`) applies again.
+- **One agent:** the agent's Settings → General tab → *GitHub API hourly cap*.
+  A number sets `agents.<name>.github_api_hourly_cap`, `0` removes the cap for
+  that agent, and a blank field goes back to the fleet default.
+- **Admin MCP:** `agent.github_api_hourly_cap` (`agent`, and `cap` as a number
+  or `inherit`) and `github.agent_api_hourly_cap` (`cap` as a number or
+  `default`), through `write_preview` and `write_confirm`. A preview that
+  raises a cap, removes one, or makes an agent inherit a higher fleet value
+  says so in its `widening_disclosure`. Lowering a cap is not widening.
+
+For example, a reviewer that runs out of calls overnight while the rest of the
+fleet stays at the default:
+
+```yaml
+agents:
+  github_api_hourly_cap: 300
+  reviewer:
+    github_api_hourly_cap: 600
+```
+
+**Which cap applies.** The first of these that is set wins, and `0` at any
+step means no cap:
+
+1. the agent's own `agents.<name>.github_api_hourly_cap`;
+2. for a replica or review head, its base agent's value;
+3. `agents.github_api_hourly_cap`;
+4. the default, `300`.
+
+**Replicas and review heads.** `reviewer-2` and a review head are copies of
+their base agent, rebuilt from it whenever the configuration loads. Set the cap
+on the base agent; the save rebuilds the copies at once, so they follow it
+straight away. Their own General tab shows the cap they inherit, read-only,
+and the endpoint refuses an override on them.
+
+**When it applies.** A save changes the running configuration the proxy reads,
+so the agent's next GitHub API request uses the new cap, with no restart or
+reload. Calls already counted in the current hour still count against it. The
+proxy only counts an agent's calls while it has a cap, so a cap switched on
+starts from an empty window.
+
+**Saving and audit.** The value is saved like any dashboard setting: to
+`hive.yaml`, the dashboard overlay and the runtime copy on the PVC, so it
+survives a restart. The audit log records `config_github` for the fleet value
+and `config_agent_general` for one agent, each with the old and new value.
+
+**The reserve floor still applies.** Every agent spends from the one hourly
+bucket of the App installation, which the daemon's scan, merge and review loops
+share. Raising or removing a cap does not lift `github.agent_reserve_floor`:
+once the bucket drops below the floor, agent reads are refused whatever their
+cap.
+
+**Seeing it.** Debug → GitHub API budget lists each agent's cap, where it comes
+from, and its calls in the current hour (`ghRateLimits.agent_caps` in
+`/api/status`). The admin MCP's `config_effective_read` shows both keys' values
+and each agent's effective cap under `agent_github_api_hourly_caps`.
 
 ### Webhook-driven PR cache invalidation
 

@@ -275,6 +275,8 @@
       gh33: function (event, A) { markDirty('general','sortOrder',parseInt(this.value,10)); },
       gh34: function (event, A) { markDirty('general','replicas',Math.max(1,Math.min(MAX_AGENT_REPLICAS,parseInt(this.value,10)||1)));this.value=Math.max(1,Math.min(MAX_AGENT_REPLICAS,parseInt(this.value,10)||1)); },
       gh35: function (event, A) { markDirty('general','staleTimeout',cadenceFromHuman(this.value));this.value=cadenceToHuman(cadenceFromHuman(this.value)); },
+      // GitHub API hourly cap (agents.<key>.github_api_hourly_cap): blank saves null, which inherits the fleet default; 0 = no cap.
+      githubApiCapChanged: function (event, A) { const raw=this.value.trim(); if(raw===''){markDirty('general','githubApiHourlyCap',null);return;} const n=Number(raw); if(!Number.isInteger(n)||n<0){showToast('GitHub API hourly cap must be a whole number of at least 0, or blank to inherit','error');return;} markDirty('general','githubApiHourlyCap',n); },
       // Contributor-first grace (#16518): blank or unparseable saves 0, which clears it to the 10m default.
       contributorFirstGraceChanged: function (event, A) { const secs=cadenceFromHuman(this.value);markDirty('general','contributorFirstGrace',secs);this.value=secs>0?cadenceToHuman(secs):''; },
       // Repo scope (#6204). An empty field is meaningful — it CLEARS the scope
