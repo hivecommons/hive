@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,12 @@ const (
 	MaxRetries = 5
 	// MaxPromptBytes bounds an inline prompt.
 	MaxPromptBytes = 1 << 20
+	// MaxPromptFileBytes bounds the workspace files the host reads whole: a
+	// prompt_path file (the run owner's) and a backend's answer file (the
+	// sandboxed agent's). Everything else a caller or an agent can shape
+	// is bounded; without this the two files were the one way to make the
+	// server allocate without limit.
+	MaxPromptFileBytes = 16 << 20
 	// workspaceDir is where prompts and backend answer files go inside the
 	// workspace, next to the agent sandbox's .hive.
 	workspaceDir = ".crux/steps"
@@ -162,9 +169,12 @@ func validate(host Host, req api.StepRequest) (plan, error) {
 		if err != nil {
 			return p, &RequestError{fmt.Sprintf("prompt_path %q: %v", req.PromptPath, err)}
 		}
-		data, err := root.ReadFile(rel)
+		data, err := readBounded(root, rel, MaxPromptFileBytes)
 		root.Close()
 		if err != nil {
+			if errors.Is(err, errFileTooLarge) {
+				return p, &RequestError{fmt.Sprintf("prompt_path %q is over %d bytes", req.PromptPath, MaxPromptFileBytes)}
+			}
 			// os.Root's escape error is unexported; a symlink leaving the
 			// workspace is reported like a lexical escape.
 			if strings.Contains(err.Error(), "escapes from parent") {
@@ -316,7 +326,7 @@ func runAttempt(ctx context.Context, host Host, store Store, step api.Step, p pl
 		out = Outcome{Status: api.StepBackendError, Reason: host.scrub(runErr.Error())}
 	default:
 		out = p.backend.Parse(spec, res, func(rel string) ([]byte, error) {
-			return root.ReadFile(filepath.FromSlash(rel))
+			return readBounded(root, filepath.FromSlash(rel), MaxPromptFileBytes)
 		})
 		out.Reason = host.scrub(out.Reason)
 	}
@@ -332,6 +342,28 @@ func runAttempt(ctx context.Context, host Host, store Store, step api.Step, p pl
 		_ = host.CmdLog.Ended(seq, end)
 	}
 	return a, out
+}
+
+// errFileTooLarge is readBounded's refusal of a file over its bound.
+var errFileTooLarge = errors.New("agentstep: file exceeds the size bound")
+
+// readBounded reads rel through root, refusing with errFileTooLarge once
+// more than max bytes are present, so a file in the workspace can never
+// make the host allocate without limit.
+func readBounded(root *os.Root, rel string, max int64) ([]byte, error) {
+	f, err := root.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, errFileTooLarge
+	}
+	return data, nil
 }
 
 // finish writes the terminal record and announces it on the run.
