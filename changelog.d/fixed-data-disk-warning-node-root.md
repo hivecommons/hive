@@ -1,0 +1,1 @@
+- The dashboard `data_disk` check no longer alerts every spoke on shared node-root image pressure; it reports the hive's own `/data` volume, and a root-filesystem fallback is shown as informational node-level pressure.

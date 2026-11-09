@@ -107,6 +107,12 @@ func dataDiskHealth(u dataDiskUsage) (status, detail string) {
 	freeGB := float64(u.TotalBytes-u.UsedBytes) / bytesPerGB
 	totalGB := float64(u.TotalBytes) / bytesPerGB
 	where := fmt.Sprintf("%s %.0f%% used (%.1f GB free of %.1f GB)", u.Path, pct, freeGB, totalGB)
+	if u.Path == rootFSPath {
+		// /data reported an implausible size, so this sample is the shared node
+		// boot volume: node-root pressure (e.g. stale images) is the operator's
+		// to fix and every spoke on the node would raise the same alert.
+		return "pass", where + " — shared node root (not the hive's /data volume); informational, node-level pressure is for the operator"
+	}
 	switch {
 	case pct >= dataDiskCriticalPct:
 		return "fail", where + " — critically full; kubelet DiskPressure eviction is imminent, free space or expand the volume now"
