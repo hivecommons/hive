@@ -99,6 +99,10 @@
     const STAGE_TRACKER_GROUP_DIST_STEPS = 4;
     var _stageTrackerGroup = STAGE_TRACKER_GROUP_DEFAULT;
     var _stageTrackerCollapsed = {};
+    // Shared-PR groups (a PR closing several listed issues): the secondary
+    // issues' rows collapsed under their primary, by the primary's row key.
+    const STAGE_TRACKER_SHARED_COLLAPSED_KEY = 'hive.tracker.shared.collapsed';
+    var _stageTrackerSharedCollapsed = {};
     function stageTrackerDefaultFilter() {
       return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, waitingOnYou: false, attentionFirst: true, age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
     }
