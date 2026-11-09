@@ -1,0 +1,1 @@
+- Activity Monitor: the issues one PR closes together are now one group of the list — the secondary rows sit right after their primary (indented on a rail), render from the primary's own PR snapshot, and fold under a caret on the primary's "also closes" pill (remembered in localStorage).

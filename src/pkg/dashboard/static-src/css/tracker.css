@@ -615,6 +615,22 @@
     .ham-also-closes { color: var(--muted); }
     .ham-also-closes a { color: inherit; text-decoration: none; }
     .ham-also-closes a:hover { color: var(--text); text-decoration: underline; }
+    /* Shared-PR group (one PR closing several listed issues): the secondary
+       issues a PR also closes sit right under their primary, indented, on
+       a rail that runs from the primary's pill to the last child's elbow.
+       The primary's "also closes" pill carries the fold caret. Tokens only. */
+    .ham-row.ham-shared-child { position: relative; padding-left: var(--sp-6); }
+    .ham-row.ham-shared-child::before { content: ''; position: absolute; left: var(--sp-3); top: 0; bottom: 0; border-left: var(--line-width) solid var(--line-strong); pointer-events: none; }
+    .ham-row.ham-shared-child.ham-shared-last::before { bottom: 50%; }
+    .ham-row.ham-shared-child::after { content: ''; position: absolute; left: var(--sp-3); top: 50%; width: var(--sp-3); border-top: var(--line-width) solid var(--line-strong); pointer-events: none; }
+    .ham-row.ham-shared-child + .ham-row.ham-shared-child { border-top-color: transparent; }
+    .ham-row.ham-shared-head + .ham-row.ham-shared-child { border-top-color: transparent; }
+    .ham-row.ham-shared-head { position: relative; }
+    .ham-row.ham-shared-head::before { content: ''; position: absolute; left: var(--sp-3); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--line-strong); pointer-events: none; }
+    .ham-shared-toggle { appearance: none; background: none; border: 0; padding: 0 var(--sp-1) 0 0; margin: 0; font: inherit; color: inherit; cursor: pointer; line-height: 1; vertical-align: baseline; }
+    .ham-shared-toggle:hover .ham-group-caret, .ham-shared-toggle:focus-visible .ham-group-caret { color: var(--text); }
+    .ham-shared-toggle:focus-visible { outline: var(--line-width) solid var(--line-strong); outline-offset: 1px; border-radius: var(--r-sm); }
+    .ham-shared-count { color: var(--text); }
     .ham-plan-body, .ham-plan-note { white-space: pre-wrap; }
     .ham-plan-note { color: var(--muted); font-size: var(--fs-xs); }
     .ham-seg.active .cue-acting-cap { margin-left: var(--sp-2); }

@@ -94,6 +94,26 @@
       const isIssue = item.kind === 'issue';
       const title = item.title || '';
       let prRefs = [], shown = item, range = null, subs = '', subRows = null, prTargetKey = '', basePill = '';
+      // Shared-PR group (stageTrackerSharedPRGroups in ctx.shared): the row
+      // heads a group when secondaries are drawn right under it; it is a
+      // child when it rides a PR drawn under a row of this list.
+      let sharedCls = '', sharedUnder = 0, sharedGroup = null;
+      if (isIssue && ctx.shared) {
+        const key = stageTrackerItemKey(item);
+        const kids = ctx.shared.children && ctx.shared.children[key];
+        const folded = !!(ctx.shared.collapsed && ctx.shared.collapsed[key]);
+        if (kids && kids.length) {
+          sharedGroup = { key, count: kids.length, collapsed: folded };
+          if (!folded) sharedCls += ' ham-shared-head';
+        }
+        const parentKey = ctx.shared.parentOf && ctx.shared.parentOf[key];
+        if (parentKey) {
+          sharedCls += ' ham-shared-child';
+          const sib = ctx.shared.children[parentKey] || [];
+          if (sib[sib.length - 1] === key) sharedCls += ' ham-shared-last';
+          sharedUnder = Number(String(parentKey).split('#').pop()) || 0;
+        }
+      }
       if (isIssue) {
         const linked = stageTrackerLinkedSorted(item, stages);
         // The primary (first-sorted) PR's base; an issue with no PR shows none.
@@ -112,7 +132,7 @@
             prTargetKey = stageTrackerItemKey(pr);
             const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
             const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
-            prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null))];
+            prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage, sharedGroup && ctx.shared.prs && ctx.shared.prs[sharedGroup.key] && ctx.shared.prs[sharedGroup.key][Number(lp.number)] ? sharedGroup : null) : (lineage || null))];
           }
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
@@ -176,7 +196,7 @@
       const rowKey = stageTrackerItemKey(item);
       const humanNote = typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(item, stages, nowMs, subRows, ctx, rowKey) : '';
       const noteCtx = humanNote && typeof stageTrackerNoteTakenCtx === 'function' ? stageTrackerNoteTakenCtx(ctx, rowKey) : ctx;
-      return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(item, stages, ctx) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
+      return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(item, stages, ctx) : ''}${sharedCls}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${sharedUnder ? ` data-ham-shared-under="${sharedUnder}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '') + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(item, hamNotesCtx(item)) : ''), prTargetKey)}
