@@ -193,6 +193,9 @@ func carryAdvisoryPostTime(entry *RegistryEntry, prev RegistryEntry) {
 // returns false — never a false alarm — matching the rule the codebase already
 // applies to StartedAt and GitHubAPIURL.
 func advisoryStale(e RegistryEntry, now time.Time) (stale bool, reason string) {
+	if e.ForgeUnreachable {
+		return false, ""
+	}
 	return advisoryStaleFromFreshness(e, advisoryFreshnessFor(e, now))
 }
 

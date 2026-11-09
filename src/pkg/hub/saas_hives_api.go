@@ -171,8 +171,12 @@ type MyHiveEntry struct {
 	// the tooltip cause. Both stay zero/empty for hives that are not in advisory
 	// mode, whose App cannot write, or that report an unknown timestamp — those
 	// must never show the pill.
-	AdvisoryStale       bool   `json:"advisoryStale,omitempty"`
-	AdvisoryStaleReason string `json:"advisoryStaleReason,omitempty"`
+	AdvisoryStale bool `json:"advisoryStale,omitempty"`
+	// ForgeUnreachableLabel is "forge unreachable (host)" when the latest beat
+	// reported ForgeUnreachable; the UI renders it in place of the generic
+	// failing-check / stale-advisory pills.
+	ForgeUnreachableLabel string `json:"forgeUnreachableLabel,omitempty"`
+	AdvisoryStaleReason   string `json:"advisoryStaleReason,omitempty"`
 
 	// AutoUpgradeBlocked is true when this hive has auto-upgrade ON but the hub
 	// will REFUSE to arm it: upgradeCollectible() is false, so the spoke cannot
@@ -1030,6 +1034,8 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		result[i].AdvisoryIssueActivity = advisoryIssueActivityFor(result[i].RegistryEntry, journeyNow)
 		result[i].BudgetHealth = budgetHealthFor(result[i].RegistryEntry)
 		result[i].GitHubAppHealth = githubAppHealthFor(result[i].RegistryEntry, journeyNow)
+
+		result[i].ForgeUnreachableLabel = forgeUnreachableLabel(result[i].RegistryEntry)
 
 		// Advisory-staleness pill, computed on read (same as Journey) so the
 		// gating — advisory-mode participation, app-can-write, past-threshold —
