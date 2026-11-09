@@ -148,3 +148,72 @@ func TestAgentGitHubBudgetCapWarnOncePerWindow(t *testing.T) {
 		t.Fatalf("WARNs after window reset = %d, want 2", got)
 	}
 }
+
+// The review relay sets aside a requires_human from a session the proxy cut
+// short (projectbluefin/utah-packages#959). It can only do that if the proxy
+// remembers, per agent, when it last refused a request: for the hourly cap
+// and for the reserve floor, and for nobody else.
+func TestAgentGitHubRefusedSinceRecordsCapAndReserveRefusals(t *testing.T) {
+	now := time.Date(2026, 11, 9, 1, 33, 0, 0, time.UTC)
+	remaining := 5000
+	p := &GitHubProxy{
+		githubBudget:       newAgentGitHubBudget(func() time.Time { return now }),
+		githubBudgetCap:    func(string) int { return 3 },
+		githubReserveFloor: func() int { return 400 },
+		githubReserveSnapshot: func() (int, time.Time, bool) {
+			return remaining, now.Add(10 * time.Minute), true
+		},
+	}
+	dispatched := now.Add(-20 * time.Minute)
+	for i := 0; i < 3; i++ {
+		if st := p.githubBudgetRefusal("reviewer", http.MethodGet, "/repos/o/r/pulls/1", true); st != nil {
+			t.Fatalf("request %d refused under the cap: %+v", i, st)
+		}
+		p.recordAgentGitHubBudget("reviewer", "/repos/o/r/pulls/1", http.StatusOK, 3)
+	}
+	if p.AgentGitHubRefusedSince("reviewer", dispatched) {
+		t.Fatal("an agent under its cap reads as refused")
+	}
+	if st := p.githubBudgetRefusal("reviewer", http.MethodGet, "/repos/o/r/pulls/1/files", true); st == nil || st.Reason != "cap" {
+		t.Fatalf("fourth request = %+v, want a cap refusal", st)
+	}
+	if !p.AgentGitHubRefusedSince("reviewer", dispatched) {
+		t.Fatal("the cap refusal was not recorded against the session that was running")
+	}
+	if !p.AgentGitHubRefusedSince("reviewer", now) {
+		t.Fatal("a refusal at the session start must count")
+	}
+	// The planner waits for the cap window to free before asking again, so
+	// the refusal carries its Retry-After: here the first of the three
+	// requests (all at now) leaves the sliding hour at now+1h.
+	if clears, refused := p.AgentGitHubRefusal("reviewer", dispatched); !refused || !clears.Equal(now.Add(agentGitHubBudgetWindow)) {
+		t.Fatalf("AgentGitHubRefusal = %v, %v, want refused until %v", clears, refused, now.Add(agentGitHubBudgetWindow))
+	}
+	if p.AgentGitHubRefusedSince("reviewer", now.Add(time.Second)) {
+		t.Fatal("a session asked after the refusal reads as refused")
+	}
+	if p.AgentGitHubRefusedSince("scanner", dispatched) {
+		t.Fatal("another agent's refusal leaked")
+	}
+
+	remaining = 100
+	if st := p.githubBudgetRefusal("scanner", http.MethodGet, "/repos/o/r/issues", true); st == nil || st.Reason != "reserve" {
+		t.Fatalf("scanner read below the floor = %+v, want a reserve refusal", st)
+	}
+	if !p.AgentGitHubRefusedSince("scanner", dispatched) {
+		t.Fatal("the reserve-floor refusal was not recorded")
+	}
+	if clears, _ := p.AgentGitHubRefusal("scanner", dispatched); !clears.Equal(now.Add(10 * time.Minute)) {
+		t.Fatalf("reserve refusal clears at %v, want the bucket reset %v", clears, now.Add(10*time.Minute))
+	}
+	if p.AgentGitHubRefusedSince(internalCallerName, dispatched) {
+		t.Fatal("the hive's own calls are never refused or recorded")
+	}
+	var nilProxy *GitHubProxy
+	if nilProxy.AgentGitHubRefusedSince("reviewer", dispatched) {
+		t.Fatal("a nil proxy reads as refused")
+	}
+	if _, refused := nilProxy.AgentGitHubRefusal("reviewer", dispatched); refused {
+		t.Fatal("a nil proxy's AgentGitHubRefusal reads as refused")
+	}
+}

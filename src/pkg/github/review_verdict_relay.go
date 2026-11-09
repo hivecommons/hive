@@ -123,6 +123,19 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 				slog.String("agent", req.Agent), slog.String("reason", reason))
 			continue
 		}
+		if reason, stopped := c.capStoppedReview(req, report, time.Now().UTC()); stopped {
+			// The proxy refused this agent's GitHub reads after the
+			// perspective was asked (its hourly cap or the reserve floor),
+			// so the requires_human is what a cut-short session says, in
+			// whatever words, not a judgement. Set aside like the
+			// unreadable case above: re-asked after review.pending_ttl
+			// (projectbluefin/utah-packages#959).
+			c.logger.Info("review-request watcher: requires_human from a review the GitHub proxy refused reads to is not recorded as a verdict; the perspective is re-asked after the pending TTL",
+				slog.String("repo", req.Repo), slog.Int("number", req.Number),
+				slog.String("perspective", string(report.Perspective)),
+				slog.String("agent", req.Agent), slog.String("reason", reason))
+			continue
+		}
 		if written, ok, dispatched := c.writeOneVerdict(ctx, req, report, dir, prHead, prSnapshot); ok {
 			recorded = append(recorded, written)
 			wake = wake || dispatched
