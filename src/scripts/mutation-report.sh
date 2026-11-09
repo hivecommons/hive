@@ -31,30 +31,49 @@ fi
 printf '%s\n' "$changed" > "$out_dir/changed.txt"
 pkgs=$(sed 's|^src/||; s|/[^/]*$||' "$out_dir/changed.txt" | sort -u)
 
+# gremlins mutates the whole subtree under a package, so drop packages that
+# have an ancestor already in the list to avoid mutating them twice.
+roots=""
+while IFS= read -r pkg; do
+  [ -n "$pkg" ] || continue
+  covered=0
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    case "$pkg" in "$r"/*) covered=1; break ;; esac
+  done <<< "$roots"
+  [ "$covered" -eq 1 ] || roots+="$pkg"$'\n'
+done <<< "$pkgs"
+pkgs="${roots%$'\n'}"
+
 i=0
 while IFS= read -r pkg; do
   [ -n "$pkg" ] || continue
   i=$((i + 1))
+  printf '%s\n' "$pkg" > "$out_dir/pkg-$i.dir"
   echo "::group::gremlins unleash ./$pkg"
   (cd src && gremlins unleash --timeout-coefficient "$coefficient" \
     --output "../$out_dir/pkg-$i.json" "./$pkg") || echo "gremlins exited non-zero for $pkg (advisory)"
   echo "::endgroup::"
 done <<< "$pkgs"
 
+# gremlins reports file_name relative to the package dir it was run on, so
+# re-anchor each survivor to a repo-relative path before matching changed.txt.
 survivors="$out_dir/survivors.tsv"
 : > "$survivors"
 for j in "$out_dir"/pkg-*.json; do
   [ -f "$j" ] || continue
-  jq -r '.files[]? | .file_name as $f | .mutations[]? | select(.status=="LIVED")
-         | [$f, .line, .type] | @tsv' "$j" >> "$survivors" 2>/dev/null || true
+  pkg=$(cat "${j%.json}.dir" 2>/dev/null || true)
+  jq -r --arg prefix "src/${pkg:+$pkg/}" \
+     '.files[]? | .file_name as $f | .mutations[]? | select(.status=="LIVED")
+      | [($prefix + ($f | ltrimstr("./"))), .line, .type] | @tsv' "$j" >> "$survivors" 2>/dev/null || true
 done
 
-# Keep only survivors in files the PR changed (gremlins reports module-relative paths).
+# Keep only survivors in files the PR changed.
 filtered="$out_dir/survivors-changed.tsv"
 : > "$filtered"
 while IFS=$'\t' read -r f line type; do
   [ -n "$f" ] || continue
-  if grep -qxF "src/${f#./}" "$out_dir/changed.txt" || grep -qxF "$f" "$out_dir/changed.txt"; then
+  if grep -qxF "$f" "$out_dir/changed.txt"; then
     printf '%s\t%s\t%s\n' "$f" "$line" "$type" >> "$filtered"
   fi
 done < "$survivors"
@@ -83,8 +102,10 @@ if [ -z "$pr_number" ] || [ -z "$repo" ]; then
   exit 0
 fi
 
+# Only upsert the bot's own report so another participant cannot pre-seat or
+# get overwritten by a comment that merely starts with the marker.
 id=$(gh api --paginate "repos/${repo}/issues/${pr_number}/comments" \
-  --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" 2>/dev/null | head -n 1 || true)
+  --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" 2>/dev/null | head -n 1 || true)
 if [ -n "$id" ]; then
   gh api -X PATCH "repos/${repo}/issues/comments/${id}" -F "body=@${body}" >/dev/null \
     || echo "::warning::could not edit mutation comment"
