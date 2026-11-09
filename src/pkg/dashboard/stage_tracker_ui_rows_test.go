@@ -546,7 +546,7 @@ assert.strictEqual(stageTrackerSortKey({ kind: 'pr', stage: 72 }, stages).anchor
 const head = stageTrackerHeaderHtml(stages);
 assert.deepStrictEqual(Array.from(head.matchAll(/<span class="ham-seg-t">(?:<svg[\s\S]*?<\/svg>)?([^<]*)<\/span>/g)).map(m => m[1]), ['Open', 'Actionable', 'Claimed', 'PR in progress', 'CI', 'Review', 'Merge queue']);
 // The Merge queue column wears the train icon (hover "Merge queue"), the
-// same railcar as the train header chip and the 080 chevron (#15395).
+// same merge sign as the train header chip and the 080 chevron (#15395, #17459).
 assert.ok(head.includes('<span class="ham-seg-t">' + stageTrackerTrainIconHtml('ham-ico ham-train-icon ham-col-ico') + 'Merge queue</span>'), head);
 assert.strictEqual((head.match(/<title>Merge queue<\/title>/g) || []).length, 1);
 assert.ok(head.includes('<span class="ham-since">since</span>'));

@@ -378,7 +378,9 @@ assert.strictEqual(stageTrackerTrainHeaderText(front.merge_train), 'merge train 
 const ico = stageTrackerTrainIconHtml('ham-train-icon');
 assert.ok(ico.startsWith('<svg class="ham-train-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor"'), ico);
 assert.ok(ico.includes('<title>Merge queue</title>') && ico.includes('aria-label="Merge queue"'), ico);
-assert.ok(ico.includes(STAGE_TRACKER_TRAIN_ICON_PATH) && (ico.match(/<circle/g) || []).length === 2, 'two wheels: ' + ico);
+// A merge sign (hivecommons/hive#17459): one path, an arrow shaft (V3), its
+// head (l3-3 3 3) and a lane curving in from the lower right (c…); no railcar.
+assert.ok(ico.includes(STAGE_TRACKER_TRAIN_ICON_PATH) && /<path [^>]*d="M6 14\.5V3M3 6l3-3 3 3M13 14\.5c/.test(ico) && !ico.includes('<circle') && !ico.includes('<rect'), 'merge sign: ' + ico);
 assert.strictEqual(STAGE_TRACKER_ICONS[80], STAGE_TRACKER_TRAIN_ICON_PATH);
 assert.ok(rows[0].html.includes(ico), rows[0].html);
 assert.strictEqual(stageTrackerTrainRowClass(front, null, second), ' ham-train ham-train-front');
