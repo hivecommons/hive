@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.207.0)
+
+### Added
+
+- `hive-open-issue --claim` files and claims a self-filed issue in one request (claimed-by label, `help wanted` removed, failures reported as `claim_error`); an issue a hive agent files without `--claim` is marked filed-for-outside-help and that agent's later claim of it is refused ([#17299](https://github.com/hivecommons/hive/issues/17299)).
+
 ## 2026-11-08 (v5.206.3)
 
 ### Fixed
