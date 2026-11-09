@@ -162,7 +162,12 @@ loops, so the proxy enforces two safeguards:
   is any proxied response other than `304 Not Modified`; the proxy's own token
   minting is not agent-attributed and is not counted. Set the value to `0` to
   disable the fleet default, or set `agents.<name>.github_api_hourly_cap` to
-  override one agent (`0` disables that agent's cap). Both can also be set
+  override one agent (`0` disables that agent's cap).
+  The override applies whether or not the fleet key is set. A replica
+  (`reviewer-2`, …) or review head takes its base agent's override unless it
+  has one of its own. The order is the agent's own value, then the base
+  agent's, then `agents.github_api_hourly_cap`, then the default of 300. A
+  config reload reaches the proxy without a restart. Both can also be set
   from the dashboard and the admin MCP; see
   [Changing the agent caps](#changing-the-agent-caps).
 - `github.agent_reserve_floor` (default `400`) protects the shared core bucket.

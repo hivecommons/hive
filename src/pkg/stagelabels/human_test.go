@@ -698,7 +698,9 @@ func TestDecisionQuestionPlaceholderMention(t *testing.T) {
 // TestRouteHumanForkGuard: a red check that refuses the PR only because it
 // is from a fork is a maintainer's, not the author's: 085 naming the check,
 // never the fixing stage, even before the reviewer answers. Any other red
-// check still sends the PR back to its author (hivecommons/hive#14273).
+// check still sends the PR back to its author (hivecommons/hive#14273). The
+// ask says a run on an earlier head does not cover this one: a rebase with
+// the same patch still changes the base (projectbluefin/utah-packages#917).
 func TestRouteHumanForkGuard(t *testing.T) {
 	e := readyEvidence()
 	e.Cause = CauseDecision
@@ -707,7 +709,7 @@ func TestRouteHumanForkGuard(t *testing.T) {
 	e.Checks = CheckSummary{Total: 5, Green: 4, Red: []string{"Canary"}, Known: true}
 	e.ForkGuard = []string{"Canary"}
 	r := RouteHuman(e)
-	const want = "check `Canary` refuses pull requests from a fork, so neither the author nor the hive can turn it green: a maintainer must push this branch to the repository (or run or approve it for head `abc1234` as the repository requires)"
+	const want = "check `Canary` refuses pull requests from a fork, so neither the author nor the hive can turn it green: a maintainer must push this branch to the repository (or run or approve it for head `abc1234` as the repository requires). A run that passed on an earlier head does not cover `abc1234`, even when the change itself is the same: a rebase or a merge of the base changes the code the check runs. The check's own failure message on this head says what to run"
 	if r.Stage != NeedsDecision || r.LaneReason != "" || !containsString(r.Reasons, want) {
 		t.Fatalf("fork-guard route = %+v", r)
 	}
@@ -716,6 +718,13 @@ func TestRouteHumanForkGuard(t *testing.T) {
 	}
 	if got := DecisionComment(r); !strings.Contains(got, want) {
 		t.Fatalf("DecisionComment = %q", got)
+	}
+	two := e
+	two.ForkGuard = []string{"Canary", "Publish"}
+	two.Checks.Red = []string{"Canary", "Publish"}
+	const wantTwo = "checks `Canary`, `Publish` refuse pull requests from a fork, so neither the author nor the hive can turn them green: a maintainer must push this branch to the repository (or run or approve them for head `abc1234` as the repository requires). A run that passed on an earlier head does not cover `abc1234`, even when the change itself is the same: a rebase or a merge of the base changes the code the checks run. Each check's own failure message on this head says what to run"
+	if r := RouteHuman(two); r.Stage != NeedsDecision || !containsString(r.Reasons, wantTwo) {
+		t.Fatalf("two fork-guard checks route = %+v", r)
 	}
 	e.Checks.Red = []string{"Canary", "unit"}
 	if r := RouteHuman(e); r.Stage != ReturnedToContributor || r.LaneReason != "check-failing:unit" || !containsString(r.Reasons, "red checks: unit") {
