@@ -62,3 +62,33 @@ func TestTokenTierForRole_ReviewerGainsNoModeCapability(t *testing.T) {
 		t.Error("ADVISORY reports CanMerge — the reviewer's safety asymmetry depends on this staying false")
 	}
 }
+
+// The sec-check role refines ISSUES_AND_PRS into a tier whose App token adds
+// Dependabot alerts read (#17426). It is scoped to that one role and mode:
+// every other contributor-tier agent, and a sec-check agent at any other mode,
+// keeps the plain mode tier.
+func TestTokenTierForRole_SecCheckGetsAlertsCapableTier(t *testing.T) {
+	if got := TokenTierForRole(ModeIssuesAndPRs, SecCheckRole); got != SecCheckTier {
+		t.Errorf("ISSUES_AND_PRS sec-check minted %q, want %q", got, SecCheckTier)
+	}
+	for _, role := range []string{"", "scanner", ReviewerRole} {
+		if got := TokenTierForRole(ModeIssuesAndPRs, role); got != "contributor" {
+			t.Errorf("ISSUES_AND_PRS %q minted %q, want contributor — only the sec-check role is refined", role, got)
+		}
+	}
+	for _, tc := range []struct {
+		mode AgentMode
+		want string
+	}{
+		{ModeAdvisory, "advisor"},
+		{ModeIssuesOnly, "newcomer"},
+		{ModeIssuesPRsMerge, "trusted"},
+	} {
+		if got := TokenTierForRole(tc.mode, SecCheckRole); got != tc.want {
+			t.Errorf("%v sec-check minted %q, want %q", tc.mode, got, tc.want)
+		}
+	}
+	if mode, ok := ModeForTokenTier(SecCheckTier); !ok || mode != ModeIssuesAndPRs {
+		t.Errorf("ModeForTokenTier(%q) = %v, %v; want ISSUES_AND_PRS, true", SecCheckTier, mode, ok)
+	}
+}
