@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -135,6 +137,7 @@ func TestReadBranchRules(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			resetBranchRulesClassicCacheForTest(t, time.Now, time.Hour)
 			client := branchRulesClient(t, tt.classicCode, tt.classicBody, tt.rulesCode, tt.rulesBody)
 			got := ReadBranchRules(context.Background(), client, "o", "r", "main", tt.config, tt.configKnown)
 			if got.Known != tt.wantKnown {
@@ -200,5 +203,112 @@ func TestClassifyRequiredCheck(t *testing.T) {
 		if got := ClassifyRequiredCheck(tt.status, tt.conclusion); got != tt.want {
 			t.Errorf("ClassifyRequiredCheck(%q,%q) = %q, want %q", tt.status, tt.conclusion, got, tt.want)
 		}
+	}
+}
+
+func resetBranchRulesClassicCacheForTest(t *testing.T, now func() time.Time, ttl time.Duration) {
+	t.Helper()
+	old := sharedBranchRulesClassicCache
+	sharedBranchRulesClassicCache = &branchRulesClassicCache{entries: map[string]branchRulesClassicEntry{}, now: now, ttl: ttl}
+	t.Cleanup(func() { sharedBranchRulesClassicCache = old })
+}
+
+// countingBranchRulesClient is branchRulesClient with per-endpoint call counts.
+func countingBranchRulesClient(t *testing.T, classicStatus int, classicBody string, rulesBody string) (*gh.Client, *int, *int) {
+	t.Helper()
+	classicCalls, rulesCalls := 0, 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/o/r/branches/main/protection/required_status_checks":
+			classicCalls++
+			w.WriteHeader(classicStatus)
+			_, _ = w.Write([]byte(classicBody))
+		case "/repos/o/r/rules/branches/main":
+			rulesCalls++
+			_, _ = w.Write([]byte(rulesBody))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(api.Close)
+	client := gh.NewClient(nil)
+	base, err := url.Parse(api.URL + "/")
+	if err != nil {
+		t.Fatalf("ParseURL: %v", err)
+	}
+	client.BaseURL = base
+	return client, &classicCalls, &rulesCalls
+}
+
+// The red-main sweep reads every active repo's rules each pass; an App
+// without Administration permission got a 403 from classic protection on
+// every read (~330 failed calls an hour on a live hive). The 403 is now
+// remembered for the TTL and replayed with the same result.
+func TestReadBranchRulesRemembersForbiddenClassicProtection(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	resetBranchRulesClassicCacheForTest(t, func() time.Time { return now }, time.Hour)
+	client, classicCalls, rulesCalls := countingBranchRulesClient(t, http.StatusForbidden, classicForbidden, rulesetStrict)
+
+	for i := 0; i < 3; i++ {
+		got := ReadBranchRules(context.Background(), client, "o", "r", "main", nil, false)
+		if !got.Known || !reflect.DeepEqual(got.SortedRequired(), []string{"test"}) {
+			t.Fatalf("read %d = %+v, want known {test}", i, got)
+		}
+		if !strings.HasPrefix(got.Reason, "classic branch protection unreadable (") || !strings.Contains(got.Reason, "403") {
+			t.Fatalf("read %d Reason = %q, want the 403 note", i, got.Reason)
+		}
+	}
+	if *classicCalls != 1 {
+		t.Fatalf("classic protection calls = %d, want 1 (403 remembered)", *classicCalls)
+	}
+	if *rulesCalls != 3 {
+		t.Fatalf("rules calls = %d, want 3 (rulesets still read every pass)", *rulesCalls)
+	}
+
+	now = now.Add(time.Hour + time.Second)
+	_ = ReadBranchRules(context.Background(), client, "o", "r", "main", nil, false)
+	if *classicCalls != 2 {
+		t.Fatalf("classic protection calls after TTL = %d, want 2", *classicCalls)
+	}
+}
+
+// A 404 that is not "Branch not protected" is remembered too, and the replay
+// still fails closed.
+func TestReadBranchRulesRemembersNotFoundClassicProtection(t *testing.T) {
+	resetBranchRulesClassicCacheForTest(t, time.Now, time.Hour)
+	client, classicCalls, _ := countingBranchRulesClient(t, http.StatusNotFound, `{"message":"Not Found"}`, rulesetStrict)
+	for i := 0; i < 2; i++ {
+		got := ReadBranchRules(context.Background(), client, "o", "r", "main", nil, false)
+		if got.Known || !strings.HasPrefix(got.Reason, "classic branch protection unreadable: ") {
+			t.Fatalf("read %d = %+v, want unknown with the classic 404", i, got)
+		}
+	}
+	if *classicCalls != 1 {
+		t.Fatalf("classic protection calls = %d, want 1 (404 remembered)", *classicCalls)
+	}
+}
+
+// "Branch not protected" is an answer, not a permission failure, and a 500 is
+// transient: neither is remembered.
+func TestReadBranchRulesDoesNotRememberOtherClassicAnswers(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"branch not protected", http.StatusNotFound, classicNotProtected},
+		{"server error", http.StatusInternalServerError, `{"message":"boom"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetBranchRulesClassicCacheForTest(t, time.Now, time.Hour)
+			client, classicCalls, _ := countingBranchRulesClient(t, tc.status, tc.body, rulesetStrict)
+			_ = ReadBranchRules(context.Background(), client, "o", "r", "main", nil, false)
+			_ = ReadBranchRules(context.Background(), client, "o", "r", "main", nil, false)
+			if *classicCalls != 2 {
+				t.Fatalf("classic protection calls = %d, want 2 (not remembered)", *classicCalls)
+			}
+		})
 	}
 }
