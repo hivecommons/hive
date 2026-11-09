@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.208.0)
+
+### Added
+
+- Added `github.Client.ProcessPRRequestDirOnce` to run one PR-request watcher pass on a given dir, authorizer and clock, with a regression test for epic-driven PRs on contributor-claimed, PR-covered issues (#17302).
+
 ## 2026-11-09 (v5.207.5)
 
 ### Changed
