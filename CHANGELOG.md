@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.207.5)
+
+### Changed
+
+- Activity Monitor: the issues one PR closes together are now one group of the list — the secondary rows sit right after their primary (indented on a rail), render from the primary's own PR snapshot, and fold under a caret on the primary's "also closes" pill (remembered in localStorage).
+
+### Fixed
+
+- Activity Monitor: a row lights exactly one stage chevron. When a push lands during review, CI is the lit chevron and Review is dim with a muted "re-review queued" note instead of a second amber chevron; the base-refresh detail line reads in plain words (no "preparation"/"unverified" jargon, each signal said once); the muted `stage ↓` pill now reads "stage reset" / "stage reset by push" (#17335).
+
 ## 2026-11-09 (v5.207.4)
 
 ### Changed
