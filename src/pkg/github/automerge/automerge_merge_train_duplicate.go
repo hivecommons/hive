@@ -190,8 +190,10 @@ func (c *Engine) planDuplicateHolds(ctx context.Context, plan *mergeTrainPlan, l
 	if len(candidate) == 0 {
 		return prs
 	}
-	claimants := c.claimantsForConflicts(ctx, owner, repo, prs)
-	c.forgetClosedMergeTrainWinners(lane, owner, repo, claimants)
+	claimants, whole := c.claimantsForConflicts(ctx, owner, repo, prs)
+	if whole {
+		c.forgetClosedMergeTrainWinners(lane, owner, repo, claimants)
+	}
 	prs = c.planClaimConflicts(ctx, plan, lane, owner, repo, displayRepo, prs, claimants, candidate)
 	byLine := map[string]map[int][]mergeTrainDuplicateCandidate{}
 	for _, pr := range prs {
@@ -220,22 +222,16 @@ func (c *Engine) planDuplicateHolds(ctx context.Context, plan *mergeTrainPlan, l
 			byIssue[issue] = append(byIssue[issue], cand)
 		}
 	}
-	winners := map[int]int{}
 	var holds []mergeTrainDuplicateHold
-	for _, byIssue := range byLine {
-		w, h, turns := mergeTrainDuplicatePicks(byIssue, c.mergeTrainRememberedWinners(lane, owner, repo, byIssue))
-		for issue, n := range w {
-			if winners[issue] == 0 {
-				winners[issue] = n
-			}
-		}
+	for line, byIssue := range byLine {
+		winners, h, turns := mergeTrainDuplicatePicks(byIssue, c.mergeTrainRememberedWinners(lane, owner, repo, line, byIssue))
+		c.rememberMergeTrainWinners(lane, owner, repo, line, displayRepo, winners)
 		holds = append(holds, h...)
 		for n, issues := range turns {
-			plan.deferIssueTurn(n, mergeTrainIssueTurn{Issues: issues})
+			plan.deferIssueTurn(n, mergeTrainIssueTurn{Base: line, Issues: issues})
 			c.debug("merge train: same-issue PR short of the merge gate; evaluated, held at the merge point", "repo", displayRepo, "pr", n, "issues", issues, "lane", plan.lane)
 		}
 	}
-	c.rememberMergeTrainWinners(lane, owner, repo, displayRepo, winners)
 	sort.Slice(holds, func(i, j int) bool { return holds[i].Number < holds[j].Number })
 	if len(holds) == 0 {
 		return prs
@@ -327,25 +323,27 @@ func (c *Engine) rememberClaimants(fullRepo string, prs []*gh.PullRequest) {
 // the forge-state snapshot when one is wired, else the full /pulls list
 // the lane's openPullRequests just fetched for this repo (remembered
 // before narrowing to targets); the lane's own list only when neither is
-// available (a bare Engine in tests).
-func (c *Engine) claimantsForConflicts(ctx context.Context, owner, repo string, prs []*gh.PullRequest) []*gh.PullRequest {
+// available (a bare Engine in tests). whole is false when a wired
+// forge-state read failed and the lane's own, possibly event-narrowed,
+// list stands in: absence from it does not mean a PR closed.
+func (c *Engine) claimantsForConflicts(ctx context.Context, owner, repo string, prs []*gh.PullRequest) (claimants []*gh.PullRequest, whole bool) {
 	if c == nil {
-		return prs
+		return prs, true
 	}
 	if c.openPRs == nil {
 		c.claimantsMu.Lock()
 		all, ok := c.claimants[owner+"/"+repo]
 		c.claimantsMu.Unlock()
 		if ok && len(all) > 0 {
-			return all
+			return all, true
 		}
-		return prs
+		return prs, true
 	}
 	all, skip, err := c.openPullRequests(ctx, owner, repo, nil)
 	if err != nil || skip != "" || len(all) == 0 {
-		return prs
+		return prs, false
 	}
-	return all
+	return all, true
 }
 
 // planClaimConflicts holds every lane candidate whose closing issue another
@@ -461,9 +459,10 @@ func (c *Engine) mergeTrainHeadTerminal(lane, owner, repo string, number int, sh
 // (hivecommons/hive#17439). Its row shows CI and review as they are; if
 // the head reaches the merge point it is held there instead of merging:
 // on an undecided claim conflict (Conflict.Other set), or behind the PR
-// that already holds the turn of one of Issues.
+// that already holds the turn of one of Issues on base branch Base.
 type mergeTrainIssueTurn struct {
 	Conflict mergeTrainClaimConflict
+	Base     string
 	Issues   []int
 }
 
@@ -510,19 +509,28 @@ func (c *Engine) mergeTrainIssueTurnHold(plan *mergeTrainPlan, number int, t mer
 		return mergeTrainClaimConflictReason(t.Conflict)
 	}
 	for _, issue := range t.Issues {
-		if w := c.claimMergeTrainIssueTurn(plan.lane, plan.owner, plan.repo, plan.displayRepo, issue, number); w != number {
+		if w := c.claimMergeTrainIssueTurn(plan.lane, plan.owner, plan.repo, t.Base, plan.displayRepo, issue, number); w != number {
 			return mergeTrainDuplicateReason(mergeTrainDuplicateHold{Number: number, Winner: w, Issue: issue})
 		}
 	}
 	return ""
 }
 
+// mergeTrainIssueWinnerKey keys the PR that holds issue's turn on one
+// base branch: release-line siblings never share a turn
+// (hivecommons/hive#17436). It extends the lane's verdict key, so
+// forgetClosedMergeTrainWinners still finds it by prefix.
+func mergeTrainIssueWinnerKey(lane, owner, repo, base string, issue int) string {
+	return mergeTrainVerdictKey(lane, owner, repo, issue) + "@" + base
+}
+
 // claimMergeTrainIssueTurn is the merge point's one-PR-per-issue check:
-// the PR that holds issue's turn when it is another; otherwise number
-// takes the turn — the first of the issue's PRs at the merge point keeps
-// the issue until it closes or is blocked for good — and is returned.
-func (c *Engine) claimMergeTrainIssueTurn(lane, owner, repo, displayRepo string, issue, number int) int {
-	key := mergeTrainVerdictKey(lane, owner, repo, issue)
+// the PR that holds issue's turn on base when it is another; otherwise
+// number takes the turn — the first of the issue's PRs at the merge point
+// keeps the issue until it closes or is blocked for good — and is
+// returned.
+func (c *Engine) claimMergeTrainIssueTurn(lane, owner, repo, base, displayRepo string, issue, number int) int {
+	key := mergeTrainIssueWinnerKey(lane, owner, repo, base, issue)
 	c.mergeTrainMu.Lock()
 	if w := c.mergeTrainIssueWinners[key]; w > 0 && w != number {
 		c.mergeTrainMu.Unlock()
@@ -535,14 +543,14 @@ func (c *Engine) claimMergeTrainIssueTurn(lane, owner, repo, displayRepo string,
 	c.mergeTrainIssueWinners[key] = number
 	c.mergeTrainMu.Unlock()
 	if !had {
-		c.info("merge train: first at the merge gate keeps the issue", "repo", displayRepo, "pr", number, "issue", issue, "lane", lane)
+		c.info("merge train: first at the merge gate keeps the issue", "repo", displayRepo, "pr", number, "issue", issue, "base", base, "lane", lane)
 	}
 	return number
 }
 
-// mergeTrainRememberedWinners reads the winner the lane kept on an earlier
-// pass for each issue two or more candidates close.
-func (c *Engine) mergeTrainRememberedWinners(lane, owner, repo string, byIssue map[int][]mergeTrainDuplicateCandidate) map[int]int {
+// mergeTrainRememberedWinners reads the winner the lane kept on base on
+// an earlier pass for each issue two or more candidates close.
+func (c *Engine) mergeTrainRememberedWinners(lane, owner, repo, base string, byIssue map[int][]mergeTrainDuplicateCandidate) map[int]int {
 	out := map[int]int{}
 	c.mergeTrainMu.Lock()
 	defer c.mergeTrainMu.Unlock()
@@ -550,23 +558,23 @@ func (c *Engine) mergeTrainRememberedWinners(lane, owner, repo string, byIssue m
 		if len(cands) < 2 {
 			continue
 		}
-		if w, ok := c.mergeTrainIssueWinners[mergeTrainVerdictKey(lane, owner, repo, issue)]; ok {
+		if w, ok := c.mergeTrainIssueWinners[mergeTrainIssueWinnerKey(lane, owner, repo, base, issue)]; ok {
 			out[issue] = w
 		}
 	}
 	return out
 }
 
-// rememberMergeTrainWinners stores this pass's pick per contested issue: a
-// winner is kept for the next pass; an issue nobody at the gate holds is
-// forgotten, so the first of its PRs at the merge point takes it. A new
-// winner is logged once.
-func (c *Engine) rememberMergeTrainWinners(lane, owner, repo, displayRepo string, winners map[int]int) {
+// rememberMergeTrainWinners stores this pass's pick on base per contested
+// issue: a winner is kept for the next pass; an issue nobody at the gate
+// holds is forgotten, so the first of its PRs at the merge point takes
+// it. A new winner is logged once.
+func (c *Engine) rememberMergeTrainWinners(lane, owner, repo, base, displayRepo string, winners map[int]int) {
 	type pick struct{ issue, winner, was int }
 	var picked []pick
 	c.mergeTrainMu.Lock()
 	for issue, w := range winners {
-		key := mergeTrainVerdictKey(lane, owner, repo, issue)
+		key := mergeTrainIssueWinnerKey(lane, owner, repo, base, issue)
 		was := c.mergeTrainIssueWinners[key]
 		if w <= 0 {
 			delete(c.mergeTrainIssueWinners, key)
@@ -583,7 +591,7 @@ func (c *Engine) rememberMergeTrainWinners(lane, owner, repo, displayRepo string
 	c.mergeTrainMu.Unlock()
 	sort.Slice(picked, func(i, j int) bool { return picked[i].issue < picked[j].issue })
 	for _, p := range picked {
-		c.info("merge train: same-issue winner picked at the merge gate", "repo", displayRepo, "issue", p.issue, "winner", p.winner, "previous", p.was, "lane", lane)
+		c.info("merge train: same-issue winner picked at the merge gate", "repo", displayRepo, "issue", p.issue, "base", base, "winner", p.winner, "previous", p.was, "lane", lane)
 	}
 }
 
