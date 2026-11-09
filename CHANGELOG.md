@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.209.8)
+
+### Fixed
+
+- Crux `GET /v1/health` now reports a `tmux` field (where tmux resolves on PATH) and answers 503, with the full health body, when tmux is missing (the body also carries `error`/`code`, so `api.Client` callers and the supervisor see "tmux not found on PATH" rather than a bare 503): every agent runs in tmux, so a server without it cannot serve traffic and was reporting healthy ([hivecommons/crux#137](https://github.com/hivecommons/crux/issues/137)). Existing fields are unchanged; probes that treated any 200 as healthy now see the failure.
+
 ## 2026-11-09 (v5.209.7)
 
 ### Fixed
