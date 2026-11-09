@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.211.1)
+
+### Changed
+
+- Activity Monitor: the **Merge queue** column header, its chevron, the merge-train chip and the Merge queue popover now wear a "merge" traffic-sign glyph (an up arrow with a lane curving in from the lower right, like the W4-1 road sign) instead of the railcar, which read as a tram front. Same inline SVG, `currentColor`, hover *Merge queue*.
+- Refreshed the model list-price table from OpenRouter (3 rows moved; list prices as of 2026-11-09); the Cost panel estimate now uses the new rates. The `kimi-k3` row keeps its prior value: the OpenRouter quote (0.192 in / 16.00 out) is a catalogue anomaly the reconciler's plausibility guard now holds for review.
+
+### Fixed
+
+- Dashboard: the page no longer drifts away from the section you are reading when other panels grow or shrink. A ResizeObserver-driven scroll stabilizer now pins the topmost visible section (or agent card) across every repaint path, not just the main status render.
+- An unreachable GitHub (Enterprise) host no longer makes every hub heartbeat stale: the github_auth health probe now runs under its own 3s sub-budget, reports its last cached result, and the heartbeat carries a new `forge_unreachable` field; the fleet-stats collector backs off exponentially up to 15 minutes during a forge outage and logs one WARN when it starts failing and one INFO on recovery instead of a WARN per retry ([#17427](https://github.com/hivecommons/hive/issues/17427)).
+- The merge train's one-PR-per-issue rule now groups candidates by base branch, so the same fix opened against two release lines (v5 and v6, both `Fixes #N`) is no longer held as a duplicate and shown as "needs human decision"; the same-issue claim-conflict pass likewise ignores claimants on another base branch. Two PRs for one issue on the same line still compete as before ([#17436](https://github.com/hivecommons/hive/issues/17436)).
+- Activity Monitor: while CI or review runs, the stage chevron keeps its neutral settled-current fill — the Open-column draft / blocked / New / stale tints no longer paint a second coloured chevron beside the running track (a draft PR with no stage read as slate Open + amber CI).
+
 ## 2026-11-09 (v5.211.0)
 
 ### Added

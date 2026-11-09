@@ -417,11 +417,17 @@ type mergeTrainPlan struct {
 	// on their current head: they hold no seat (hivecommons/hive#15825).
 	candidates map[int]*mergeTrainGroup
 	// duplicates are the PRs held out of every train this pass because
-	// another open PR fixes the same issue (one PR per issue).
+	// another open PR fixes the same issue (one PR per issue); only heads
+	// at the merge gate are held (hivecommons/hive#17439).
 	duplicates map[int]mergeTrainDuplicateHold
-	// claimConflicts are the candidates held because an open PR outside
-	// this lane claims the same issue and no decision is recorded.
+	// claimConflicts are the candidates at the merge gate held because an
+	// open PR outside this lane claims the same issue and no decision is
+	// recorded.
 	claimConflicts map[int]mergeTrainClaimConflict
+	// issueTurns are the same-issue PRs short of the merge gate: the lane
+	// evaluates them on their normal path and the merge point holds one
+	// rather than merging past either rule (hivecommons/hive#17439).
+	issueTurns map[int]mergeTrainIssueTurn
 }
 
 // group returns the train number rides in, if any.
@@ -479,10 +485,16 @@ func withMergeTrainCandidateHold(ctx context.Context, reason string) context.Con
 }
 
 // mergeTrainCandidateHold is the hold reason a merge point returns instead
-// of merging when the lane is evaluating a train candidate; "" otherwise.
+// of merging, "" to go on: a same-issue PR's turn (mergeTrainEvalContext)
+// first, then the hold of a train candidate.
 func mergeTrainCandidateHold(ctx context.Context) string {
 	if ctx == nil {
 		return ""
+	}
+	if turn, ok := ctx.Value(mergeTrainIssueTurnKey{}).(func() string); ok {
+		if reason := turn(); reason != "" {
+			return reason
+		}
 	}
 	reason, _ := ctx.Value(mergeTrainCandidateHoldKey{}).(string)
 	return reason
@@ -1007,6 +1019,11 @@ type mergeTrainState struct {
 	// the train (earliest first) and its loss is the ejection the log and
 	// the stage store report.
 	mergeTrainSeats map[string]mergeTrainSeat
+	// mergeTrainIssueWinners remembers, per lane and closing issue, the PR
+	// the one-PR-per-issue rule kept (hivecommons/hive#17439): it keeps the
+	// issue until it closes or its head is blocked for good, so a check
+	// that is red for a pass never flips the pick.
+	mergeTrainIssueWinners map[string]int
 	// mergeTrainNow is the planner's clock (tests inject one).
 	mergeTrainNow func() time.Time
 }
@@ -1188,12 +1205,17 @@ func mergeTrainBlockingReason(reason string) bool {
 
 // mergeTrainReadinessOf reads a lane verdict as a readiness tier: a merge
 // (""), a soak, a merge-queue wait or a release hold is ready — the head
-// would merge but for its turn; CI pending, no reviewer verdict yet or a
+// would merge but for its turn; so is a merge-point hold for the train or
+// for a same-issue PR (a lane verdict carries those only from the merge
+// point, hivecommons/hive#17439); CI pending, no reviewer verdict yet or a
 // review gate still waiting is unready; any other reason says nothing
 // about readiness (unknown).
 func mergeTrainReadinessOf(reason string) int {
-	if mt, ok := prstage.ParseMergeTrain(reason); ok && mt.State == prstage.MergeTrainStateAdmitted {
-		return mergeTrainReadinessReady
+	if mt, ok := prstage.ParseMergeTrain(reason); ok {
+		switch mt.State {
+		case prstage.MergeTrainStateAdmitted, prstage.MergeTrainStateDuplicateOf, prstage.MergeTrainStateClaimConflict:
+			return mergeTrainReadinessReady
+		}
 	}
 	switch {
 	case reason == "", strings.HasPrefix(reason, prstage.ContributorLaneReasonSoaking),
