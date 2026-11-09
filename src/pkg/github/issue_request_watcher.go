@@ -619,6 +619,29 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	}
 
 	resp := IssueResponse{At: nowFn().UTC().Format(time.RFC3339)}
+	// #17298: a request that starts work on an issue (a claim, or a comment
+	// announcing a start — the kick path for epic-driven work) is checked
+	// against the same claim-target gate as hive-open-pr before any write,
+	// and before notifyAgentStart books the start. An issue another principal
+	// has claimed, or covered with an open PR, is refused with a policy
+	// reason; a target that is a pull request is never refused (a start
+	// comment on a PR starts no issue); a failed lookup fails closed and is
+	// retried.
+	startSignal := issueRequestStartSignal(kind, req.Body)
+	if startSignal != "" {
+		refusal, blocked, gateErr := c.issueRequestStartTargetBlock(ctx, req, nowFn())
+		if gateErr != nil {
+			resp.OK = false
+			resp.Error = gateErr.Error()
+			c.failIssueRequest(path, req, kind, resp, gateErr, nowFn)
+			return
+		}
+		if blocked {
+			c.noticePRRequestTargetRefusal(ctx, issueRequestStartTargetAction(kind), refusal)
+			c.denyIssueRequest(path, req, issueRequestStartRefusedReason(kind, refusal), nowFn)
+			return
+		}
+	}
 	closedPR := false
 	switch kind {
 	case "claim":
@@ -899,23 +922,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	if err != nil {
 		resp.OK = false
 		resp.Error = err.Error()
-		if issueRequestFailureIsPermanent(err) {
-			c.quarantineFailedIssueRequest(path, req, kind, "permanent failure", resp, nowFn)
-			return
-		}
-		c.writeIssueResult(path, resp)
-		if why := c.issueNoteFailure(path, kind, nowFn, err); why != "" {
-			c.quarantineFailedIssueRequest(path, req, kind, why, resp, nowFn)
-			return
-		}
-		c.logger.Warn("issue-request watcher: request failed, will retry with backoff",
-			slog.String("repo", req.Repo), slog.String("kind", kind), slog.String("error", err.Error()))
-		c.observeIssueRequestStuck(path, req.Repo, kind, err, nowFn())
+		c.failIssueRequest(path, req, kind, resp, err, nowFn)
 		return
 	}
 
-	if signal := issueRequestStartSignal(kind, req.Body); signal != "" {
-		c.notifyAgentStart(req.Agent, req.Repo, req.Number, signal)
+	if startSignal != "" {
+		c.notifyAgentStart(req.Agent, req.Repo, req.Number, startSignal)
 	}
 
 	action := AuditActionAgentIssueCreated
@@ -1255,6 +1267,25 @@ func issueUnsubstitutedTemplatePlaceholder(text string) (string, bool) {
 
 func issueBodyHasMisEscapedNewlines(body string) bool {
 	return issueshape.BodyHasMisEscapedNewlines(body)
+}
+
+// failIssueRequest is the retry path for a request whose GitHub call or
+// lookup failed: a permanent failure is quarantined, anything else writes
+// the result and leaves the file for the next tick with backoff until the
+// stuck budget runs out.
+func (c *Client) failIssueRequest(path string, req IssueRequest, kind string, resp IssueResponse, err error, nowFn func() time.Time) {
+	if issueRequestFailureIsPermanent(err) {
+		c.quarantineFailedIssueRequest(path, req, kind, "permanent failure", resp, nowFn)
+		return
+	}
+	c.writeIssueResult(path, resp)
+	if why := c.issueNoteFailure(path, kind, nowFn, err); why != "" {
+		c.quarantineFailedIssueRequest(path, req, kind, why, resp, nowFn)
+		return
+	}
+	c.logger.Warn("issue-request watcher: request failed, will retry with backoff",
+		slog.String("repo", req.Repo), slog.String("kind", kind), slog.String("error", err.Error()))
+	c.observeIssueRequestStuck(path, req.Repo, kind, err, nowFn())
 }
 
 func (c *Client) denyIssueRequest(path string, req IssueRequest, reason string, nowFn func() time.Time) {
