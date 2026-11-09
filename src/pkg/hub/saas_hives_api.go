@@ -171,12 +171,14 @@ type MyHiveEntry struct {
 	// the tooltip cause. Both stay zero/empty for hives that are not in advisory
 	// mode, whose App cannot write, or that report an unknown timestamp — those
 	// must never show the pill.
-	AdvisoryStale bool `json:"advisoryStale,omitempty"`
+	AdvisoryStale       bool   `json:"advisoryStale,omitempty"`
+	AdvisoryStaleReason string `json:"advisoryStaleReason,omitempty"`
+
 	// ForgeUnreachableLabel is "forge unreachable (host)" when the latest beat
-	// reported ForgeUnreachable; the UI renders it in place of the generic
-	// failing-check / stale-advisory pills.
+	// reported ForgeUnreachable and the hive is still online; the UI renders it
+	// in place of the generic failing-check / stale-advisory pills. Empty once
+	// the hive goes offline (forgeUnreachableLabel), like AdvisoryStale.
 	ForgeUnreachableLabel string `json:"forgeUnreachableLabel,omitempty"`
-	AdvisoryStaleReason   string `json:"advisoryStaleReason,omitempty"`
 
 	// AutoUpgradeBlocked is true when this hive has auto-upgrade ON but the hub
 	// will REFUSE to arm it: upgradeCollectible() is false, so the spoke cannot

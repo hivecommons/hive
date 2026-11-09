@@ -11,9 +11,10 @@ func TestForgeUnreachableLabel(t *testing.T) {
 		e    RegistryEntry
 		want string
 	}{
-		{"host", RegistryEntry{ForgeUnreachable: true, GitHubHost: "github.ibm.com"}, "forge unreachable (github.ibm.com)"},
-		{"no host", RegistryEntry{ForgeUnreachable: true}, "forge unreachable"},
-		{"old spoke", RegistryEntry{GitHubHost: "github.ibm.com"}, ""},
+		{"host", RegistryEntry{Online: true, ForgeUnreachable: true, GitHubHost: "github.ibm.com"}, "forge unreachable (github.ibm.com)"},
+		{"no host", RegistryEntry{Online: true, ForgeUnreachable: true}, "forge unreachable"},
+		{"old spoke", RegistryEntry{Online: true, GitHubHost: "github.ibm.com"}, ""},
+		{"offline", RegistryEntry{ForgeUnreachable: true, GitHubHost: "github.ibm.com"}, ""},
 	}
 	for _, tc := range cases {
 		if got := forgeUnreachableLabel(tc.e); got != tc.want {
