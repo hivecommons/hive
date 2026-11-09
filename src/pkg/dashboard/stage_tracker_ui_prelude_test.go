@@ -160,6 +160,7 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerLinkedSupersededGone"),
 		jsFunc(t, html, "stageTrackerLinkedSupersededTip"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
+		jsFunc(t, html, "stageTrackerLinkedRiding"),
 		stageTrackerTierJS(t, html),
 		jsConstLine(t, html, "STAGE_TRACKER_COVERED_BY_PR"),
 		jsFunc(t, html, "stageTrackerLeadStage"),

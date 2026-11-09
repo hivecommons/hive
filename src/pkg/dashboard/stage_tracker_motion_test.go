@@ -278,6 +278,7 @@ func TestStageTrackerMotionDetector(t *testing.T) {
 		jsFunc(t, html, "stageTrackerLinkedSupersededGone"),
 		jsFunc(t, html, "stageTrackerLinkedSupersededTip"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
+		jsFunc(t, html, "stageTrackerLinkedRiding"),
 		jsConstLine(t, html, "STAGE_TRACKER_ATTENTION_STAGES"),
 		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_MODS"),
 		jsFunc(t, html, "stageTrackerRegressionHandled"),
@@ -312,6 +313,11 @@ const I = (n, stage, linked) => ({ kind: 'issue', repo: 'a/b', number: n, stage,
 // Column map: plain items, an issue riding its single covering PR, nested PRs keyed on their own.
 assert.deepStrictEqual(stageTrackerColMap([P(1, 50), I(2, 20), I(3, 20, [{ number: 9, stage: 30 }]), I(4, 20, [{ number: 7, stage: 50 }, { number: 8, stage: 80 }])], stages),
   { 'a/b/pr#1': 4, 'a/b/issue#2': 2, 'a/b/issue#3': 3, 'a/b/pr#9': 3, 'a/b/issue#4': 2, 'a/b/pr#7': 4, 'a/b/pr#8': 6 });
+// A PR closing two issues is drawn under the lower one (drawn_under); the
+// other issue still rides the PR's column — the lane is the PR's, not the
+// issue's own 030/040 (hivecommons/hive#17324).
+assert.deepStrictEqual(stageTrackerColMap([I(10, 40, [{ number: 12, stage: 95, drawn_under: 10 }]), I(11, 30, [{ number: 12, stage: 95, drawn_under: 10 }])], stages),
+  { 'a/b/issue#10': 6, 'a/b/pr#12': 6, 'a/b/issue#11': 6 }, 'the secondary issue lights the Merge queue column with the primary');
 assert.deepStrictEqual(stageTrackerColMap(null, stages), {});
 assert.deepStrictEqual(stageTrackerColMap([{ kind: 'pr', repo: 'a/b', number: 0 }, null], stages), {}, 'items without a number are skipped');
 
