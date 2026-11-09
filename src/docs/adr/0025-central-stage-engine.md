@@ -52,9 +52,9 @@ hub read that store and nothing else (`stageStoreOrShared`,
    `SyncIssueStageLabels` (`src/pkg/github/issue_stage_labels.go:205`,
    `src/pkg/github/issue_stage_labels.go:337`) from the enumeration bucket. PRs
    are staged by the automerge engine: each lane calls `recordStage`
-   (`src/pkg/github/automerge/automerge_stage_labels.go:365`), observations are
+   (`src/pkg/github/automerge/automerge_stage_labels.go:552`), observations are
    sorted by `stageLanePrecedence` (self 3 > trusted 2 > contributor 1,
-   `src/pkg/github/automerge/automerge_stage_labels.go:177`), each is classified
+   `src/pkg/github/automerge/automerge_stage_labels.go:245`), each is classified
    by `ClassifyStage` (`src/pkg/stageengine/derive_pr_classify.go:344`)
    into a ranked opinion (`prstage.RankNone..prstage.RankOwned`,
    `src/pkg/stageengine/prstage/types.go:145-148`), and
