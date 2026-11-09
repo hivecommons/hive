@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/agentsmd"
 	"github.com/hivecommons/hive/crux/skillreg"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/issueshape"
@@ -382,7 +383,7 @@ func (s *Scheduler) renderKnowledge(primer *knowledge.Primer, cfg *config.Config
 		return knowledgeInjection{}, nil
 	}
 
-	keywords := extractKeywords(issues)
+	keywords := extractKeywordsFor(cfg, issues)
 	if len(keywords) == 0 {
 		s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
 		return knowledgeInjection{}, nil
@@ -580,17 +581,29 @@ func kickContextFor(cfg *config.Config, agentName string, issues []github.Issue)
 	return kc
 }
 
-// extractKeywords pulls searchable terms from issue labels and titles.
+// extractKeywords pulls searchable terms from issue labels and titles, for a
+// hive with no agents of its own configured beyond the built-in lanes; see
+// extractKeywordsFor.
+func extractKeywords(issues []github.Issue) []string {
+	return extractKeywordsFor(nil, issues)
+}
+
+// extractKeywordsFor pulls searchable terms from issue labels and titles.
 // Title words are included because labels alone are often all noise
 // (triage/accepted, kind/bug) and produce zero keywords after filtering.
 //
-// The hive's own routing labels and the filer tag in hive-filed titles are
-// dropped: on utah-packages#879 they made up most of the query
-// (stage/010-actionable, agent/reviewer, "reviewer review backlog") and pulled
-// in review notes from unrelated repos. The issues' repositories are not search
-// terms; they ride in the kick context and rank the repo's own entries first
-// (kickContextFor).
-func extractKeywords(issues []github.Issue) []string {
+// What the hive itself puts on an item is dropped, because it says where the
+// item sits in the hive, not what it is about: its routing labels
+// (isNoiseLabel), its complexity tier, the "[<agent>]" filer tag on a title it
+// filed, and the "Review backlog" stem. On utah-packages#879 those made up
+// most of the query (stage/010-actionable, agent/reviewer, medium, "reviewer
+// review backlog") and pulled in review notes from unrelated repos.
+//
+// When nothing is left, the query falls back to the terms earlier releases
+// used (legacyKeywords), so no kick loses its knowledge section to the filter.
+// The issues' repositories are not search terms; they ride in the kick
+// context and rank the repo's own entries first (kickContextFor).
+func extractKeywordsFor(cfg *config.Config, issues []github.Issue) []string {
 	seen := make(map[string]bool)
 	var keywords []string
 	add := func(word string) {
@@ -608,13 +621,47 @@ func extractKeywords(issues []github.Issue) []string {
 			}
 		}
 
-		if issue.ComplexityTier != "" {
-			add(strings.ToLower(issue.ComplexityTier))
-		}
-
-		for _, word := range splitTitleWords(searchableTitle(issue.Title)) {
+		for _, word := range splitTitleWords(searchableTitle(cfg, issue.Title)) {
 			if !isNoiseWord(word) {
 				add(word)
+			}
+		}
+	}
+
+	if len(keywords) == 0 {
+		return legacyKeywords(issues)
+	}
+	return keywords
+}
+
+// legacyKeywords is the query earlier releases built: every label outside
+// noiseLabels, the complexity tier, and every title word. It is the fallback
+// for an issue whose own words are all hive routing.
+func legacyKeywords(issues []github.Issue) []string {
+	seen := make(map[string]bool)
+	var keywords []string
+
+	for _, issue := range issues {
+		for _, label := range issue.Labels {
+			lower := strings.ToLower(label)
+			if !seen[lower] && !noiseLabels[lower] {
+				keywords = append(keywords, lower)
+				seen[lower] = true
+			}
+		}
+
+		if issue.ComplexityTier != "" {
+			tier := strings.ToLower(issue.ComplexityTier)
+			if !seen[tier] {
+				keywords = append(keywords, tier)
+				seen[tier] = true
+			}
+		}
+
+		for _, word := range splitTitleWords(issue.Title) {
+			if !seen[word] && !isNoiseWord(word) {
+				keywords = append(keywords, word)
+				seen[word] = true
 			}
 		}
 	}
@@ -628,16 +675,44 @@ func extractKeywords(issues []github.Issue) []string {
 var reviewBacklogTitleRE = regexp.MustCompile(`^Review backlog \(([^)]+)\):\s*`)
 
 // searchableTitle is the part of an issue title that says what the issue is
-// about: the leading filer tag ("[reviewer]", "[scanner]") is dropped, and a
-// review backlog stem is cut down to its perspective, which names the kind of
-// finding ("security", "style"). The words "review backlog" match every
-// review-related entry in the vault whatever the repo.
-func searchableTitle(title string) string {
-	title = issueshape.StripAgentPrefix(title)
+// about. A leading "[<agent>]" tag is dropped only when it names a hive filer
+// (isHiveFiler): any lowercase word in brackets has the filer shape, and a
+// person's "[nvidia] driver fails to build" keeps "nvidia". A review backlog
+// stem is cut down to its perspective, which names the kind of finding
+// ("security", "style"); the words "review backlog" match every review-related
+// entry in the vault whatever the repo.
+func searchableTitle(cfg *config.Config, title string) string {
+	title = strings.TrimSpace(title)
+	if tag := issueshape.AgentPrefix(title); tag != "" && isHiveFiler(cfg, tag) {
+		title = issueshape.StripAgentPrefix(title)
+	}
 	if m := reviewBacklogTitleRE.FindStringSubmatch(title); m != nil {
 		title = m[1] + " " + title[len(m[0]):]
 	}
 	return title
+}
+
+// isHiveFiler reports whether tag names something that files issues for the
+// hive: a built-in lane (scanner, reviewer, …), another origin source
+// (selfreport, governor, …) or an agent configured on this hive.
+func isHiveFiler(cfg *config.Config, tag string) bool {
+	tag = strings.ToLower(strings.TrimSpace(tag))
+	if config.IsKnownOriginLane(tag) {
+		return true
+	}
+	for _, source := range config.KnownOriginSources() {
+		if tag == source {
+			return true
+		}
+	}
+	if cfg != nil {
+		for name := range cfg.Agents {
+			if strings.EqualFold(name, tag) || strings.EqualFold(cfg.BaseAgentName(name), tag) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // splitTitleWords extracts lowercase words from an issue title, dropping
@@ -694,27 +769,34 @@ var noiseLabels = map[string]bool{
 
 // noiseLabelPrefixes are the label families the hive and its review bots use
 // to route and gate work: where an item sits in the pipeline (stage/, needs-),
-// which lane holds it (agent/, hive/claimed-by-…, hive: churn-triaged), which
-// lane filed it (origin/), and review or merge state.
-// They say nothing about what the issue is about, and they are on most items,
-// so as search terms they match the same review and scanning entries for
-// every task.
+// which lane holds or filed it (agent/ and origin/, see isNoiseLabel;
+// hive/claimed-by-…; hive: churn-triaged), a hive's hold (hive-pause/<id>),
+// the author class (author/human, …), and review or merge state. They say
+// nothing about what the issue is about, and they are on most items, so as
+// search terms they match the same review and scanning entries for every task.
 var noiseLabelPrefixes = []string{
-	"stage/", "agent/", "hive/", "hive:", "origin/", "triage/", "size/",
-	"lifecycle/", "do-not-merge/", "needs-", "dco-signoff", "sentinel-",
+	"stage/", "hive/", "hive:", github.HiveHoldLabelPrefix, authorkind.Prefix,
+	"triage/", "size/", "lifecycle/", "do-not-merge/", "needs-", "dco-signoff",
+	"sentinel-",
 }
 
 // noiseControlLabels are single hive or review-bot labels outside those
-// families.
+// families. "epic" is the hive's default never-claim marker for trackers
+// (claims.DefaultNeverClaimLabels); "claimed" is its claim marker.
 var noiseControlLabels = map[string]bool{
 	"approved-direction": true,
 	"hive-review":        true,
 	"lgtm":               true,
 	"approved":           true,
+	"claimed":            true,
+	"epic":               true,
 }
 
 func isNoiseLabel(label string) bool {
 	if noiseLabels[label] || noiseControlLabels[label] {
+		return true
+	}
+	if config.IsAgentLaneLabel(label) || config.IsOriginLabel(label) {
 		return true
 	}
 	for _, prefix := range noiseLabelPrefixes {

@@ -27,16 +27,19 @@ memory.
    registerKnowledgeStores (cmd/hive/boot_knowledge_primer.go)
                               ▼
  ┌───────────────── Scheduler.primeKnowledge (pkg/scheduler/kick_priming.go) ───┐
- │ 1. extractKeywords ← titles + labels of the agent's first                    │
- │    maxIssuesToPrime (=5) queued issues, minus hive routing                   │
- │    labels (stage/, agent/, hive/, needs-, …) and the [agent] /               │
- │    "Review backlog (<perspective>):" title stem                              │
+ │ 1. extractKeywordsFor ← titles + labels of the agent's first                 │
+ │    maxIssuesToPrime (=5) queued issues, minus what the hive put              │
+ │    there: routing labels (stage/, agent/, origin/, hive/, needs-,            │
+ │    …), the complexity tier, a filer tag naming a hive agent and              │
+ │    the "Review backlog (<perspective>):" stem; if nothing is                 │
+ │    left, the pre-filter query (legacyKeywords)                               │
  │ 2. scope ← knowledge.agent_scopes[<agent>] (or base agent for a replica)     │
  │ 3. Primer.PrimeScoped (pkg/knowledge/primer.go)                              │
  │      search every layer/store → merge by layer precedence →                  │
  │      FilterByLifecycle (approved only) → scope.Filter →                      │
- │      Fisher-Rao rerank → +0.1 for entries tagged repo:<task repo> →          │
- │      type priority → cap at max_facts (25) →                                 │
+ │      Fisher-Rao rerank → type priority (within a type, +0.1 to               │
+ │      rank, not to confidence, for entries tagged repo:<task                  │
+ │      repo>) → cap at max_facts (25) →                                        │
  │      expandWithGraph (never past the scope) → Context7 hints                 │
  │ 4. PrimedKnowledge.Render (primer_render.go): "# Relevant Knowledge",        │
  │    grouped by type, whole facts dropped past max_bytes (8192),               │

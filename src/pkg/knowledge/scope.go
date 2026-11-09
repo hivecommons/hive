@@ -41,7 +41,7 @@ type KickContext struct {
 	// Repos are the primed issues' repositories as "<org>/<name>". They are
 	// not a scope dimension (Admits ignores them) and they select nothing:
 	// a fact tagged repo:<one of them> only ranks ahead of an otherwise equal
-	// fact about another repo (boostTaskRepos).
+	// fact of the same type about another repo (boostTaskRepos).
 	Repos []string
 }
 

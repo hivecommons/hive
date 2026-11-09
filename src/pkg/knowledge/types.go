@@ -299,6 +299,11 @@ type Fact struct {
 	Updated  time.Time `json:"-"`
 	BodySize int       `json:"-"`
 	Origin   string    `json:"-"`
+
+	// rankBoost is added to Confidence when PrimeForKick orders facts, for a
+	// fact about the kick's own repository (boostTaskRepos). It changes the
+	// order only, never the confidence a kick shows.
+	rankBoost float64
 }
 
 // Source tracks where a fact was extracted from.
