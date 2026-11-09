@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v6.4.6)
+
+### Fixed
+
+- **An issue the issue filter keeps off the agent queue no longer asks you to ADMIT it while an open pull request closes it.** The your-turn inbox listed projectbluefin/actions#733, a sec-check finding, as `agent_finding_not_admitted` ("add `triage/accepted`") while sec-check's own fix PR projectbluefin/actions#734, which closes it on merge, was open: the filter's rows carry no linked PRs, so the covered-by-PR rule never saw it. The dashboard now reads the closing references of the repository's open and held PRs it already has (no extra GitHub call) and shows such an issue as waiting on that PR ("Waits on PR #N, which closes it"); the ADMIT ask comes back if the PR closes unmerged.
+- The 085 comment on a fork PR parked on a fork-guarded check (such as a fork Canary) now follows the head. On projectbluefin/utah-packages#917 a maintainer's Canary passed on `8d7a655`, the author then rebased the same patch onto a newer `main` (`82ef790`), and the PR stayed at 085 while its comment still asked for a run on an earlier head. The comment is now rewritten in place for each new head while the PR stays parked, and it says that a run on an earlier head does not cover the new one, because a rebase or a merge of the base changes the code the check runs.
+- **The red-main sweep stops asking for classic branch protection the App cannot read.** `ReadBranchRules`, which the red-main sweep, the merge lane and the dashboard's merge-lane and ACMM views use for required checks, called `GET /repos/{o}/{r}/branches/{branch}/protection/required_status_checks` on every read. An App without Administration permission gets a 403 there every time, so on a live hive `hive:red_main` spent about 330 REST calls an hour on failures (it sweeps every active repo every 10 minutes). The answer was already being taken from the rulesets endpoint, which stays read every pass. A 403, or a 404 other than "Branch not protected", from classic protection is now remembered per repo and branch for `HIVE_REQUIRED_CHECKS_FORBIDDEN_TTL` (default 1h, the same knob the auto-merge required-checks cache uses) and replayed with the same result, so each repo costs one classic call an hour instead of six. "Branch not protected", 5xx and rate-limit errors are not remembered.
+
 ## 2026-11-09 (v6.4.5)
 
 ### Fixed
