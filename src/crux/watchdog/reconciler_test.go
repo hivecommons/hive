@@ -308,6 +308,9 @@ func fastSettings() Settings {
 	s.Mode = ModeHeal
 	s.ProbeInterval = 0 // every Tick sweeps; interval gating has its own test
 	s.RestartTimeout = 50 * time.Millisecond
+	// One sighting pages: the auth tests here assert the paging branch itself;
+	// the multi-poll streak guard has its own test (TestAuthLoginStreak).
+	s.LoginStreak = 1
 	return s
 }
 

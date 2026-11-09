@@ -225,9 +225,9 @@ type agentRecord struct {
 	// alert fire once, not every tick.
 	CrashLooping bool
 	// LastClass is the previous liveness verdict, for transition logging.
-	LastClass PaneClass
-	// restartInFlight is true while a restart goroutine is running; the
-	// reconciler never stacks a second restart on a wedged one.
+	LastClass   PaneClass
+	loginStreak int // consecutive polls showing login chrome; see classifyLocked
+	// restartInFlight: a restart goroutine is running; never stack another on a wedged one.
 	restartInFlight bool
 	// restartStartedAt dates the in-flight restart so a wedge past the hard
 	// timeout is alerted on (the control-plane guard for failure mode 4).
@@ -503,11 +503,11 @@ func (r *Reconciler) reconcileAgent(ctx context.Context, name string, now time.T
 		r.logger.Warn("watchdog: agent unobservable", "agent", name, "error", err)
 		return
 	}
-	cls := Classify(obs, now, r.snapshotSettings())
 	paused := r.fleet.IsPaused(name)
 
 	r.mu.Lock()
 	rec := r.recordLocked(name)
+	cls := r.classifyLocked(rec, obs, now)
 	if cls.Class != rec.LastClass {
 		r.logger.Info("watchdog: liveness transition",
 			"agent", name, "from", string(rec.LastClass), "to", string(cls.Class), "reason", cls.Reason)

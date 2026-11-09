@@ -42,6 +42,12 @@ type WatchdogLivenessConfig struct {
 	// window exists because a launching CLI legitimately passes through both
 	// states. "" = 5m.
 	ShellPromptAfter string `yaml:"shell_prompt_after,omitempty"`
+	// LoginStreak is how many consecutive watchdog polls must see login
+	// chrome before the pane is classified auth-required and an operator is
+	// paged; fewer sightings report Unknown. A relaunched CLI flashes login
+	// chrome while re-validating its token, so one sighting is not a logout.
+	// 0 = 3; 1 disables the guard.
+	LoginStreak int `yaml:"login_streak,omitempty"`
 }
 
 // WatchdogRestartConfig holds the CrashLoopBackOff-analog knobs.
