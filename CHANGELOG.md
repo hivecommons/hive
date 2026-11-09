@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.211.2)
+
+### Changed
+
+- A new [fork PR presubmit stall runbook](https://github.com/hivecommons/hive/blob/v5/src/docs/fork-pr-presubmit-stall-runbook.md) documents how to tell a missing Prow presubmit from a failing one and how to clear it with `/ok-to-test`, and what to do when dashboard-relayed `/lgtm` and `/approve` are rejected; the code fixes remain open in [#17451](https://github.com/hivecommons/hive/issues/17451).
+
+### Fixed
+
+- The sec-check agent's Dependabot alerts call no longer 403s once the GitHub App is granted the new read-only Dependabot alerts permission (documented in the GitHub App setup guide); existing installations must re-accept it once. Only the sec-check role's token requests the grant — other agents' tokens are unchanged.
+- hub: hives whose spoke reports `forge_unreachable` are labelled "forge unreachable (github_host)" instead of generic stale badges, and the condition no longer counts against their health or advisory status
+
 ## 2026-11-09 (v5.211.1)
 
 ### Changed
