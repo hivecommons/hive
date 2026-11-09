@@ -1,1 +1,0 @@
-- Self-authored automerge sweeps no longer file repeated-error self-reports for expected destination merge contention; local warnings and reporting of other failures are preserved ([#17400](https://github.com/hivecommons/hive/issues/17400)).
