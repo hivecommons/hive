@@ -1,0 +1,1 @@
+- The dashboard `data_disk` check no longer warns every spoke on shared node-root image pressure: when `/data` reports an implausible size and the sampler falls back to the node root, that sample is informational below 95% and only still fails at ≥95%, where kubelet DiskPressure eviction hits the pod regardless of who owns the disk.
