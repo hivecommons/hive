@@ -244,8 +244,11 @@ func Detect(in Input) Kind {
 // PAT (so it gets ordinary pull_request CI): its GitHub author is the PAT's
 // owner, but nobody will push to the branch by hand. Clanker routes it to
 // 072 and the adoption path instead of parking it at 071 on that person
-// (hivecommons/hive#17450). It is a body marker like rules 4–5 and grants
-// no more trust than they do.
+// (hivecommons/hive#17450). It is a forgeable body marker like rules 4–5,
+// with one step more trust: rules 4–5 never bypass the owner guard in
+// automerge's personAuthored, while rule 6 does, so an owner's PR carrying a
+// same-repo run line becomes adoptable. Only the owner (or whoever can edit
+// that PR's body) can produce one.
 func Explain(in Input) (Kind, string) {
 	author, app := normLogin(in.Author), normLogin(in.AppLogin)
 	if author != "" && app != "" && author == app {
