@@ -27,6 +27,30 @@
           <input type="text" id="cfg-contributor-first-grace" value="${grace > 0 ? cadenceToHuman(grace) : ''}" placeholder="10m" data-change-action="contributorFirstGraceChanged">
         </div>`;
     }
+    // The API proxy's GitHub API hourly cap for this agent
+    // (agents.<key>.github_api_hourly_cap). Blank inherits the fleet default
+    // (Settings → Forge App) and saves null; 0 removes the cap for this agent.
+    // A replica or review head is rebuilt from its base agent, so it shows the
+    // base agent's cap read-only and names where to change it.
+    function agentGitHubCapFieldHtml(g) {
+      const capLabel = n => Number(n) === 0 ? 'no cap' : String(n);
+      const fleet = g.githubApiHourlyCapFleet === undefined ? 300 : g.githubApiHourlyCapFleet;
+      const effective = g.githubApiHourlyCapEffective === undefined ? fleet : g.githubApiHourlyCapEffective;
+      const own = (g.githubApiHourlyCap === null || g.githubApiHourlyCap === undefined) ? '' : String(g.githubApiHourlyCap);
+      const tip = `How many charged GitHub API responses this agent may receive through the API proxy in a sliding hour before the proxy answers 429. Blank inherits the fleet default from Settings &rarr; Forge App; 0 removes the cap for this agent. Replicas and review heads of this agent use the same value. All agents draw on the one hourly bucket of the App installation, and the agent reserve floor still refuses agent reads when that bucket runs low. Applies without a restart.`;
+      const label = `GitHub API hourly cap ${yamlHint('agents.<key>.github_api_hourly_cap')} ${settingHelpMark('operator-reference/runtime-and-quota', 'github-api-quota', 'GitHub API hourly cap', tip)}`;
+      if (g.githubApiHourlyCapBase) {
+        return `<div class="config-field">
+          <label>${label}</label>
+          <div class="fs-sm" id="cfg-github-api-cap-inherited">${esc(capLabel(effective))} <span class="text-muted">— taken from <code>${esc(g.githubApiHourlyCapBase)}</code>; change it there</span></div>
+        </div>`;
+      }
+      return `<div class="config-field">
+          <label for="cfg-github-api-cap">${label}</label>
+          <input type="number" id="cfg-github-api-cap" min="0" step="1" value="${esc(own)}" placeholder="inherit fleet default (${esc(capLabel(fleet))})" data-change-action="githubApiCapChanged">
+          <div class="text-muted" style="font-size:0.7rem">Now: ${esc(capLabel(effective))}. Blank inherits the fleet default; 0 = no cap.</div>
+        </div>`;
+    }
     function renderAgentGeneral(g) {
       const agentName = _configState.agent || '';
       const isCreate = _configState.isCreate === true;
@@ -229,6 +253,7 @@
           <input type="text" id="cfg-agent-repos" value="${esc((g.repos || []).join(', '))}" placeholder="(empty = every repo in the hive)" data-change-action="gh39repos">
           <div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-2)">${(g.repos && g.repos.length) ? `🎯 scoped to ${g.repos.length} repo(s)` : 'hive-wide — serves every repo'}${(g.projectRepos && g.projectRepos.length) ? ` · this hive watches: ${esc(g.projectRepos.join(', '))}` : ''}</div>
         </div>
+        ${isCreate ? '' : agentGitHubCapFieldHtml(g)}
         <div class="config-field">
           <label>Lane Keywords ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Lane Keywords', `Comma-separated keywords for issue classification routing. Issues matching these keywords are routed to this agent.`)}</label>
           <input type="text" id="cfg-agent-lane-kw" value="${esc((g.laneKeywords || []).join(', '))}" placeholder="e.g. bug, triage, security" data-change-action="gh36">

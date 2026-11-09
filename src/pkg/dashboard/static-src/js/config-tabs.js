@@ -1873,6 +1873,17 @@
             <input id="forge-gh-${key}" type="number" min="0" step="1" value="${st[key] ? esc(String(st[key])) : ''}" placeholder="${esc(String(placeholder))}" ${owner ? '' : 'disabled'}>
             <div class="config-help">${help}${restart ? ' Requires restart.' : ' Applies without a restart.'}</div>
           </div>`;
+      // agents.github_api_hourly_cap sits here beside the agent reserve floor
+      // but differs from the num() fields: blank means the default (the key
+      // is removed) and 0 is a real value, no cap.
+      const capKey = 'agent_github_api_hourly_cap';
+      const capDefault = d.agent_github_api_hourly_cap || 300;
+      const fleetCapField = `
+          <div class="config-field">
+            <label for="forge-gh-${capKey}">Agent GitHub API hourly cap ${yamlHint('agents.github_api_hourly_cap')} ${settingHelpMark('operator-reference/runtime-and-quota', 'github-api-quota', 'Agent GitHub API hourly cap', 'How many charged GitHub API responses each agent may receive through the API proxy in a sliding hour before the proxy answers 429. 0 removes the cap; blank uses the default. An agent with its own value on its General tab keeps it, and replicas and review heads use their base agent’s value. Every agent draws on the one hourly bucket of the App installation, so a higher cap lets agents spend more of it; the agent reserve floor still refuses agent reads when that bucket runs low.')}</label>
+            <input id="forge-gh-${capKey}" type="number" min="0" step="1" value="${st.agent_github_api_hourly_cap_set ? esc(String(st[capKey])) : ''}" placeholder="${esc(String(capDefault))}" ${owner ? '' : 'disabled'}>
+            <div class="config-help">Charged GitHub API calls each agent may make through the proxy per sliding hour. 0 = no cap; blank = default (${esc(String(capDefault))}). Applies without a restart.</div>
+          </div>`;
       const toggle = (key, label, path, help, restart, mark) => `
           <div class="config-toggle mt-3">
             <div id="forge-gh-${key}" class="config-toggle-switch ${st[key] ? 'on' : ''} ${owner ? '' : 'disabled'}" data-action="${owner ? 'forgeGitHubToggle' : ''}" data-arg-types="t" role="switch" aria-checked="${st[key] ? 'true' : 'false'}"></div>
@@ -1894,6 +1905,9 @@
             ${num('api_reserve', 'API reserve', 'github.api_reserve', 800, 'Remaining core REST quota below which Hive skips optional sweeps (conserve mode). 0 uses the default (800).', true, settingHelpMark('operator-reference/sweeps-and-operations', 'github-api-budget-governor', 'API reserve', 'Below this many remaining core REST calls the governor enters conserve mode: optional sweeps are skipped and the eval interval is multiplied. 0 restores the default (800).'))}
             ${num('api_critical', 'API critical floor', 'github.api_critical', 250, 'Lower floor where Hive enters critical mode and stretches the eval interval further. Must be below the reserve. 0 uses the default (250).', true, settingHelpMark('operator-reference/sweeps-and-operations', 'github-api-budget-governor', 'API critical floor', 'Below this many remaining calls the governor also sheds unstick steps and stretches the eval interval 4x. Must stay below the reserve; 0 restores the default (250).'))}
             ${num('agent_reserve_floor', 'Agent reserve floor', 'github.agent_reserve_floor', d.agent_reserve_floor || 400, 'Agent reads through the API proxy get a 429 once the shared core bucket drops below this, so daemon merge and scan work is never starved.', true, settingHelpMark('operator-reference/runtime-and-quota', 'github-api-quota', 'Agent reserve floor', 'Protects the shared core bucket from agent traffic: once the latest rate-limit reading drops below the floor, agent reads through the API proxy are refused with a 429 until the bucket recovers. 0 uses the default.'))}
+          </div>
+          <div class="config-field-row">
+            ${fleetCapField}
           </div>
           <div class="config-field-row">
             ${num('pr_detail_ttl_s', 'PR detail cache TTL (seconds)', 'github.pr_detail_ttl_s', d.pr_detail_ttl_s || 1800, 'Reuses a PR detail response while the PR list still reports the same head SHA and updated_at. 0 uses the default.', false, settingHelpMark('operator-reference/README', 'notable-fields', 'PR detail cache TTL', 'How long a GET /pulls/{number} detail response is reused while the cheap PR list still reports the same head SHA and updated_at and GitHub has resolved mergeable_state. 0 uses the default.'))}
@@ -1926,6 +1940,20 @@
         const v = raw === '' ? 0 : parseInt(raw, 10);
         if (isNaN(v) || v < 0) { showToast(key + ' must be a non-negative number', 'error'); return; }
         if (v !== (st[key] || 0)) body[key] = v;
+      }
+      // Blank removes agents.github_api_hourly_cap (null), so the default
+      // applies; a number sets it, 0 included (no cap).
+      const capEl = document.getElementById('forge-gh-agent_github_api_hourly_cap');
+      if (capEl) {
+        const raw = (capEl.value || '').trim();
+        const wasSet = st.agent_github_api_hourly_cap_set === true;
+        if (raw === '') {
+          if (wasSet) body.agent_github_api_hourly_cap = null;
+        } else {
+          const v = Number(raw);
+          if (!Number.isInteger(v) || v < 0) { showToast('Agent GitHub API hourly cap must be a whole number of at least 0, or blank for the default', 'error'); return; }
+          if (!wasSet || v !== st.agent_github_api_hourly_cap) body.agent_github_api_hourly_cap = v;
+        }
       }
       for (const key of ['graphql_pr_batch', 'app_authored_prs', 'app_signed_commits']) {
         const el = document.getElementById('forge-gh-' + key);

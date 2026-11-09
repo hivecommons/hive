@@ -3238,6 +3238,9 @@ func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config
 			result["top_consumers"] = top
 		}
 	}
+	// Per-agent proxy caps and calls in the current hour (github_api_cap_view.go).
+	// Config and proxy only: present even before the first rate-limit reading.
+	result["agent_caps"] = buildAgentGitHubCaps(cfg)
 
 	return result
 }
