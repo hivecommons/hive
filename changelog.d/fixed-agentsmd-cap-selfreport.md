@@ -1,1 +1,0 @@
-- The fleet selfreport feed no longer files a repository's oversized AGENTS.md as an unclassified runtime error, and the scheduler's injection-cap warning now reports the effective cap instead of the config default sentinel (#17318).

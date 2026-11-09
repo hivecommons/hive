@@ -150,15 +150,38 @@ assert.strictEqual(strips(row).length, 1);
 assert.ok(row.includes('<span class="ham-detour">Remediating · fixer</span>') && row.includes('aria-label="Next move: hive"'), row);
 assert.deepStrictEqual(elsewhere(row), [], 'owner carries no elsewhere chip');
 
-// The other issue does not redraw the PR: its own strip (040 Covered by PR) and a chip pointing at the owner row.
+// The other issue does not redraw the PR (no PR column entry, no sub-row) and
+// chips to the owner row — but its strip rides the PR's stage all the same:
+// the lane is the PR's, not the issue's role (hivecommons/hive#17324).
 row = stageTrackerRowHtml(issue(14911, [lp(14921, 14910)]), stages, ctx);
 assert.strictEqual(prCol(row).length, 0, 'the PR column is empty, no second ↳ #14921 row: ' + row);
 assert.strictEqual(subs(row).length, 0);
 assert.strictEqual(strips(row).length, 1);
-assert.ok(strip(row).includes('<span class="ham-seg-t">PR in progress</span>') && strip(row).includes('title="Covered by PR'), 'the issue draws its own 040 stage (lit at the PR column): ' + strip(row));
+assert.ok(strip(row).includes('<span class="ham-detour">Remediating · fixer</span>'), 'the secondary rides the PR\'s 070 lane like the owner: ' + strip(row));
+assert.ok(!strip(row).includes('title="Covered by PR'), 'not the issue\'s own 040: ' + strip(row));
 assert.deepStrictEqual(elsewhere(row), [{ title: 'PR #14921 covers this issue too; its row is drawn under #14910', text: '↳ #14921 · under #14910' }]);
-assert.ok(!/<span class="ham-detour">(?:Fixing|Remediating)<\/span>/.test(strip(row)), 'no second lit remediation pill');
 assert.ok(tooltip(row).includes('Covering PR: #14921'), 'the row tooltip still names the covering PR');
+assert.strictEqual(stageTrackerLinkedRiding(issue(14911, [lp(14921, 14910)]), stages).number, 14921);
+assert.strictEqual(stageTrackerLinkedRiding(issue(14910, [lp(14921, 14910)]), stages), null, 'drawn here → not riding');
+assert.strictEqual(stageTrackerLinkedRiding(issue(14911, [lp(14921, 14910, { state: 'closed' })]), stages), null, 'a closed PR drawn elsewhere drives nothing');
+assert.strictEqual(stageTrackerLinkedRiding(issue(14911, [lp(14921, 14910, { stage: 50 }), lp(14922, 14910, { stage: 80 })]), stages).number, 14922, 'furthest along first');
+
+// hivecommons/hive#17324: PR #17308 closes #17292 (primary) and #17302; it
+// is soaking in the merge queue. Both rows light the Merge queue lane with
+// the soak word — #17302 used to show "Soaking" in the PR in progress lane.
+const soakUntil = new Date(now + 47000).toISOString();
+const soaking = (under) => ({ number: 17308, title: 'fix', url: 'https://x/17308', author: 'hive-bot', author_kind: 'hive', stage: 95, stage_since: since, drawn_under: under, head: 'head',
+  caption: 'Soaking', merge_gate: { state: 'soaking', soak_until: soakUntil, soak_remaining_seconds: 47 }, soak_remaining_seconds: 47, stage_actor: { kind: 'hive', login: '', why: 'the lane holds it for the soak' } });
+const primary = stageTrackerRowHtml(Object.assign(issue(17292, [soaking(17292)]), { stage: 40 }), stages, ctx);
+const secondary = stageTrackerRowHtml(Object.assign(issue(17302, [soaking(17292)]), { stage: 30 }), stages, ctx);
+const lit = (html) => (/<li class="ham-seg active[^"]*"[^>]*data-ham-stage="(\d+)"/.exec(strip(html)) || [])[1] || (/<li class="ham-seg active[^"]*"[^>]*title="([^"]*)"/.exec(strip(html)) || [])[1] || '';
+assert.strictEqual(prCol(primary).length, 1, primary);
+assert.strictEqual(prCol(secondary).length, 0, 'the secondary keeps its chip, not the PR title: ' + secondary);
+assert.deepStrictEqual(elsewhere(secondary).map(e => e.text), ['↳ #17308 · under #17292']);
+assert.ok(strip(primary).includes('Soaking'), 'primary soaks: ' + strip(primary));
+assert.ok(strip(secondary).includes('Soaking'), 'secondary soaks: ' + strip(secondary));
+assert.strictEqual(lit(secondary), lit(primary), 'the same chevron is lit on both rows: ' + lit(primary) + ' vs ' + lit(secondary));
+assert.ok(!strip(secondary).includes('<span class="ham-seg-t">PR in progress</span>'), 'the secondary no longer lights PR in progress: ' + strip(secondary));
 
 // Several PRs: the ones drawn here are sorted and drawn, the rest become chips.
 row = stageTrackerRowHtml(issue(14912, [lp(14921, 14910), lp(14930, 14912), lp(14931, 14912, { stage: 50 })]), stages, ctx);

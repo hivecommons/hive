@@ -780,6 +780,16 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    agent get interrupted?".
    `governor.labels.stage.contributor_nudge.enabled: false` turns the
    comment and the relay task off; the stage label still moves.
+   Failing checks are one class whatever the lane's prefix
+   (`check-failing`, `required-check-failing`, `optional-check-failing`),
+   keyed on the failing-check set (hivecommons/hive#17328): the marker adds
+   `checks=<digest> attempt=<n>`, the same set red on another head or a
+   check joining the set on the same head edits the comment (the relay is
+   not re-dispatched for the same head), and a *changed* set on a new head
+   within `governor.labels.stage.contributor_nudge.ci_failure_cooldown`
+   (default 6h) is folded into the comment too; after the cooldown it
+   counts as a fresh nudge. The ledger lives in the stage-label store, so
+   a restart does not re-nudge.
 2. Relay contributors (the author has a contributor profile and a live relay
    connection) also receive the diagnosis in their relay session as a
    `fix-pr` task with `priority: interrupt`. Presence = a relay heartbeat

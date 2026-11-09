@@ -3179,6 +3179,20 @@ type ContributorNudgeConfig struct {
 	// more (the documented cap is 2 nudges per PR and reason class). Unset
 	// defers to auto_merge.nudge_repeat_after (default 72h).
 	RenudgeInterval string `yaml:"renudge_interval,omitempty"`
+	// CIFailureCooldown is how long after a CI-failure nudge a changed
+	// failing-check set on a new head is folded into the PR's one nudge
+	// comment instead of counting as a fresh nudge
+	// (hivecommons/hive#17328). Default DefaultContributorNudgeCIFailureCooldown (6h).
+	CIFailureCooldown string `yaml:"ci_failure_cooldown,omitempty"`
+}
+
+// DefaultContributorNudgeCIFailureCooldown is
+// governor.labels.stage.contributor_nudge.ci_failure_cooldown's default.
+const DefaultContributorNudgeCIFailureCooldown = 6 * time.Hour
+
+// EffectiveCIFailureCooldown parses CIFailureCooldown with the 6h default.
+func (c ContributorNudgeConfig) EffectiveCIFailureCooldown() time.Duration {
+	return parseDurationOr(c.CIFailureCooldown, DefaultContributorNudgeCIFailureCooldown)
 }
 
 // IsEnabled reports whether the contributor nudge runs (default on).

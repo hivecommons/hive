@@ -524,6 +524,7 @@ governor:
       # contributor_nudge:              # stage/072: one @-mention comment per head + relay fix-pr interrupt (#12436)
       #   enabled: true
       #   renudge_interval: 24h         # second (and last) nudge; default = the stage dwell
+      #   ci_failure_cooldown: 6h       # a new head red on a different check set inside this window folds into the one nudge comment (#17328)
       # presence_window: 15m            # relay heartbeat this fresh = contributor online → relay interrupt, else comment only
       # contributor_grace_online: 2h    # nudge unanswered this long (online author) → stage/074 adoption
       # contributor_grace_offline: 15m  # same for offline / external authors (comment-only nudge)

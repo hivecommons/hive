@@ -92,6 +92,18 @@ type Record struct {
 	NudgeReason      string    `json:"nudge_reason,omitempty"`
 	NudgeReasonCount int       `json:"nudge_reason_count,omitempty"`
 	NudgeReasonAt    time.Time `json:"nudge_reason_at,omitempty"`
+	// NudgeCIChecks, NudgeCIHead, NudgeCIAt, NudgeCIAttempts and NudgeMode
+	// are the CI-failure nudge ledger (hivecommons/hive#17328): the sorted
+	// failing check names the one nudge comment currently lists, the head
+	// they were last seen on, when that set was last counted as a nudge
+	// (the ci_failure_cooldown clock), how many red heads the set has been
+	// seen on since, and the relay delivery mode of the last dispatch
+	// (reused by a same-head rewrite that does not re-dispatch).
+	NudgeCIChecks   []string  `json:"nudge_ci_checks,omitempty"`
+	NudgeCIHead     string    `json:"nudge_ci_head,omitempty"`
+	NudgeCIAt       time.Time `json:"nudge_ci_at,omitempty"`
+	NudgeCIAttempts int       `json:"nudge_ci_attempts,omitempty"`
+	NudgeMode       string    `json:"nudge_mode,omitempty"`
 	// AdoptedHead / AdoptedBy / AdoptedAt record the stage-074 adoption: the
 	// contributor head the hive adopted, the superseding App PR's number
 	// (0 while the attempt is recorded but no PR exists) and when. One
@@ -1463,9 +1475,15 @@ func (s *Store) MarkNudgedReason(key, reason string, n int, now time.Time) {
 // NudgeReasonSlug is the marker-safe reason class a contributor nudge is
 // keyed by: MentionCauseClass (so every red check is one "check-failing"
 // ask), lower-cased, with anything outside [a-z0-9._-] folded to '-';
-// an empty reason is "unknown".
+// an empty reason is "unknown". Every CI-failure prefix (required-,
+// optional-, plain check-failing) is the one NudgeReasonCIFailure class
+// (hivecommons/hive#17328): the lane's prefix flaps between them as checks
+// finish, and each flip used to count as a new class.
 func NudgeReasonSlug(reason string) string {
 	class := strings.ToLower(MentionCauseClass(reason))
+	if class == "optional-check-failing" {
+		class = NudgeReasonCIFailure
+	}
 	var b strings.Builder
 	for _, r := range class {
 		switch {
@@ -1480,6 +1498,37 @@ func NudgeReasonSlug(reason string) string {
 		return "unknown"
 	}
 	return slug
+}
+
+// NudgeReasonCIFailure is the NudgeReasonSlug of every CI-failure reason.
+const NudgeReasonCIFailure = "check-failing"
+
+// MarkNudgedCIFailure records the CI-failure nudge ledger after a nudge for
+// the check-failing class: checks is the failing set the comment now lists
+// (stored sorted), head the red head it was seen on, mode the relay
+// delivery mode, attempt the count the comment shows, and counted whether
+// this nudge started a new cooldown window (a fresh nudge, not a fold into
+// the existing comment).
+func (s *Store) MarkNudgedCIFailure(key string, checks []string, head, mode string, attempt int, counted bool, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	sorted := append([]string(nil), checks...)
+	slices.Sort(sorted)
+	if counted {
+		r.NudgeCIAt = now
+	}
+	r.NudgeCIChecks = sorted
+	r.NudgeCIHead = head
+	r.NudgeCIAttempts = attempt
+	if strings.TrimSpace(mode) != "" {
+		r.NudgeMode = mode
+	}
+	s.items[key] = r
+	s.dirty = true
 }
 
 // Adoption modes (Record.AdoptMode).
