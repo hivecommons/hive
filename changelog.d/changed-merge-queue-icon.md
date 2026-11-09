@@ -1,1 +1,0 @@
-- Activity Monitor: the **Merge queue** column header, its chevron, the merge-train chip and the Merge queue popover now wear a "merge" traffic-sign glyph (an up arrow with a lane curving in from the lower right, like the W4-1 road sign) instead of the railcar, which read as a tram front. Same inline SVG, `currentColor`, hover *Merge queue*.
