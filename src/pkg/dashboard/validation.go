@@ -70,6 +70,7 @@ var knownRoles = map[string]bool{
 	"strategist":    true,
 	"outreach":      true,
 	"brainstorm":    true,
+	"redteam":       true,
 	"worker":        true,
 }
 

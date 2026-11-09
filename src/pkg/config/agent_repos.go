@@ -39,6 +39,51 @@ func agentRepoKey(org, repo string) string {
 	return strings.ToLower(qualifyAgentRepo(org, repo))
 }
 
+// RedTeamRole is the role of the adversarial red-team lane (hivecommons/hive#17420).
+// Its whole job is writing hostile text, so it is the one lane whose scope
+// fails CLOSED: see AgentRequiresRepoScope.
+const RedTeamRole = "redteam"
+
+// AgentRequiresRepoScope reports whether the named agent may write only where
+// its repos: scope says, with an empty scope meaning NOWHERE rather than the
+// whole hive. Today that is the red-team lane, matched by role or by base name
+// so a hand-written roster entry that forgot the role is covered too.
+//
+// An unscoped red-team agent is therefore refused every repository by the
+// proxy and the relays and is handed no work in its kick. Pointing it at the
+// repository that holds the corpus it extends is a deliberate operator act.
+func (c *Config) AgentRequiresRepoScope(agent string) bool {
+	return c.IsRedTeamAgent(agent)
+}
+
+// IsRedTeamAgent reports whether the named agent (or the replica base it
+// derives from) is the red-team lane, by role or by base name. Besides the
+// fail-closed scope it drives the level-independent PR hold: a lane whose
+// output is attack text never gets an auto-merge path, even at L6, so the
+// policy's "every PR carries hold" promise is enforced by the relay and not
+// only by the prompt. An agent absent from the roster is still matched by
+// name, so a hand-written entry under the reserved name cannot slip through.
+func (c *Config) IsRedTeamAgent(agent string) bool {
+	if c == nil {
+		return false
+	}
+	ac, _ := c.scopeSourceFor(agent)
+	return requiresRepoScope(c.BaseAgentName(agent), ac)
+}
+
+func requiresRepoScope(baseName string, ac AgentConfig) bool {
+	return strings.EqualFold(strings.TrimSpace(ac.Role), RedTeamRole) ||
+		strings.EqualFold(strings.TrimSpace(baseName), RedTeamRole)
+}
+
+// AgentRepoRestricted reports whether the agent's work and writes are narrowed
+// at all: it declares a scope, or it is a lane whose missing scope means no
+// repositories (AgentRequiresRepoScope). Kick assembly uses it to decide
+// whether to filter the work lists.
+func (c *Config) AgentRepoRestricted(agent string) bool {
+	return c.AgentRepoScope(agent) != nil || c.AgentRequiresRepoScope(agent)
+}
+
 // AgentServesRepo reports whether the named agent is in scope for repo. It is
 // the single predicate every enforcement point asks — the MITM proxy, the
 // hive-open-pr/hive-merge relays, kick assembly and the dashboard — so there is
@@ -47,7 +92,9 @@ func agentRepoKey(org, repo string) string {
 // An unknown agent, an unscoped agent, and an empty repo all answer true: the
 // scope can only ever NARROW an agent that would otherwise serve everything,
 // and a caller that cannot name a repo must not be refused on a scope it could
-// not have violated.
+// not have violated. The one exception is an agent that requires a scope
+// (AgentRequiresRepoScope) and has none: it serves nothing, not even an
+// unnamed repo, because it has no scope it could be inside.
 func (c *Config) AgentServesRepo(agent, repo string) bool {
 	if c == nil {
 		return true
@@ -59,7 +106,7 @@ func (c *Config) AgentServesRepo(agent, repo string) bool {
 	agentReposMu.RLock()
 	defer agentReposMu.RUnlock()
 	if !ac.IsRepoScoped() {
-		return true
+		return !requiresRepoScope(c.BaseAgentName(agent), ac)
 	}
 	want := agentRepoKey(c.Project.Org, repo)
 	if want == "" {
@@ -109,6 +156,11 @@ func (c *Config) ReposForAgent(agent string) []string {
 	}
 	scope := c.AgentRepoScope(agent)
 	if len(scope) == 0 {
+		if c.AgentRequiresRepoScope(agent) {
+			// Non-nil on purpose: crux.ProjectContext.ReposFor reads nil as
+			// "unscoped" and would hand the agent every repo in $HIVE_REPOS.
+			return []string{}
+		}
 		return c.Project.Repos
 	}
 	out := make([]string, 0, len(c.Project.Repos))
@@ -258,13 +310,15 @@ func (c *Config) SetAgentReposAndSave(agent string, repos []string) (bool, error
 	return true, c.saveLocked()
 }
 
-// AgentRepoScopeWarnings reports scopes that cannot do what they say. Both
-// cases are inert rather than dangerous, and both are silent without this:
+// AgentRepoScopeWarnings reports scopes that cannot do what they say. These
+// cases are inert rather than dangerous, and all are silent without this:
 //
 //   - an entry naming a repo the hive does not watch (a typo, or a repo removed
-//     from project.repos after the agent was scoped to it), and
+//     from project.repos after the agent was scoped to it),
 //   - a scope whose entries ALL miss, which leaves the agent with no repos at
-//     all — it would still wake on its cadence and have nowhere to work.
+//     all — it would still wake on its cadence and have nowhere to work, and
+//   - a lane that requires a scope (AgentRequiresRepoScope) declaring none, so
+//     it is refused everywhere until the operator names its repository.
 //
 // Deliberately warnings and not validation errors: refusing to boot over a
 // stale scope entry would be a worse failure than an ignored one, and keeping
@@ -291,6 +345,10 @@ func AgentRepoScopeWarnings(cfg *Config) []string {
 	for _, name := range names {
 		scope := cfg.AgentRepoScope(name)
 		if len(scope) == 0 {
+			if cfg.AgentRequiresRepoScope(name) {
+				warnings = append(warnings, fmt.Sprintf(
+					"agent %q is a red-team lane with no repos: scope — it is refused every repository until scoped to the one holding its corpus", name))
+			}
 			continue
 		}
 		matched := 0

@@ -150,6 +150,37 @@ func TestSubstituteTemplate_FiltersIssuesToAgentRepos(t *testing.T) {
 	}
 }
 
+// An unscoped red-team lane (hivecommons/hive#17420) is handed no repository
+// and no work, and is told why: every write it makes is refused, so the kick
+// must not present repos or a queue it could act on.
+func TestKickForUnscopedRedTeamOffersNothing(t *testing.T) {
+	s := scopeScheduler(t, map[string]config.AgentConfig{
+		"redteam": {Backend: "claude", Role: config.RedTeamRole},
+	})
+	section := s.buildReposSectionFor("redteam")
+	for _, unwanted := range []string{"my-org/console", "my-org/dashboard", "my-org/docs", "currently paused"} {
+		if strings.Contains(section, unwanted) {
+			t.Errorf("unscoped red-team kick offered %q:\n%s", unwanted, section)
+		}
+	}
+	if !strings.Contains(section, "serves no repository until the operator sets its repos: scope") {
+		t.Errorf("unscoped red-team kick does not say why it has no repos:\n%s", section)
+	}
+
+	issues := []github.Issue{
+		{Repo: "console", Number: 1, Title: "console thing", URL: "u1"},
+		{Repo: "dashboard", Number: 2, Title: "dashboard thing", URL: "u2"},
+	}
+	actionable := &github.ActionableResult{Issues: github.IssueResultFromItems(issues)}
+	got, _ := s.substituteTemplateWithPolicy("${ISSUE_LIST}|${QUEUE_ISSUES}|${PROJECT_REPOS_LIST}|", actionable, "redteam", issues)
+	if strings.Contains(got, "console thing") || strings.Contains(got, "dashboard thing") {
+		t.Errorf("unscoped red-team kick listed work:\n%s", got)
+	}
+	if !strings.Contains(got, "|0|") || !strings.HasSuffix(got, "||") {
+		t.Errorf("unscoped red-team kick should count no queue and list no repos:\n%s", got)
+	}
+}
+
 func TestFormatMergeEligibleDataFor_FiltersByRepo(t *testing.T) {
 	data := []byte(`{"merge_eligible":[{"number":1,"repo":"console","title":"a"},{"number":2,"repo":"dashboard","title":"b"}]}`)
 
