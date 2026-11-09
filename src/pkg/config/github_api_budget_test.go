@@ -62,8 +62,9 @@ agents:
 	}
 }
 
-// A per-agent override applies on its own: the fleet key used to be required
-// too, so this left the reviewer at 300 (projectbluefin hive, 2026-11-09).
+// A per-agent override applies with the fleet key unset. applyDefaults fills
+// the fleet value in on every load, so this held before #17379 too; the test
+// pins it.
 func TestGitHubAPIBudgetOverrideWithoutFleetKey(t *testing.T) {
 	raw := `
 agents:
