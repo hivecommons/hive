@@ -25,6 +25,9 @@ func setupWSTest(t *testing.T) (*Server, *httptest.Server) {
 	t.Cleanup(func() { taskLedgerPersistenceEnabled = oldLedgerPersistence })
 
 	s := NewServer(0, slog.Default())
+	// Registered after the redirect so it runs first: a status publish starts a
+	// background review-question sweep that reads the redirected globals.
+	t.Cleanup(s.reviewQuestionAuto.wg.Wait)
 	s.registerContributeRoutes()
 	// Registered BEFORE the Close cleanup (cleanups run LIFO) so the order at
 	// teardown is: hub Close, then wait for every HandleWS to unwind, and only
