@@ -118,6 +118,91 @@ func TestAgentGitHubBudget429ShapeAndNudge(t *testing.T) {
 	}
 }
 
+// readAgentGitHubBudget429 writes st through writeAgentGitHubBudget429 and
+// returns the nudge typed into the pane and the 429 body's message.
+func readAgentGitHubBudget429(t *testing.T, now time.Time, st agentGitHubBudgetStatus) (nudge, message string, resp *http.Response) {
+	t.Helper()
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	p := &GitHubProxy{
+		githubBudget:      newAgentGitHubBudget(func() time.Time { return now }),
+		githubBudgetNudge: func(_, msg string) { nudge = msg },
+	}
+	done := make(chan bool, 1)
+	go func() { done <- p.writeAgentGitHubBudget429(server, st) }()
+	resp, err := http.ReadResponse(bufio.NewReader(client), nil)
+	if err != nil {
+		t.Fatalf("ReadResponse: %v", err)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	_ = resp.Body.Close()
+	if ok := <-done; !ok {
+		t.Fatal("writeAgentGitHubBudget429 returned false")
+	}
+	return nudge, body["message"], resp
+}
+
+// The agent's own hourly cap keeps its wording: agents (and the lane policies
+// that quote "hourly cap reached") stop GitHub reads for the session.
+func TestAgentGitHubBudgetCapRefusalWordingUnchanged(t *testing.T) {
+	now := time.Date(2026, 11, 8, 11, 35, 20, 0, time.UTC)
+	nudge, message, _ := readAgentGitHubBudget429(t, now, agentGitHubBudgetStatus{
+		Agent: "scanner", Count: 300, Cap: 300, RetryAfter: 900, Reason: "cap",
+	})
+	if want := "Stop polling GitHub. gh returned 429 hourly cap reached; stop all GitHub reads for this session and finish with local work."; nudge != want {
+		t.Fatalf("cap nudge = %q, want %q", nudge, want)
+	}
+	if want := "hive: agent GitHub API hourly cap reached (300/300); stop polling and continue with local work"; message != want {
+		t.Fatalf("cap message = %q, want %q", message, want)
+	}
+}
+
+// A refusal under github.agent_reserve_floor is the hive's shared budget, not
+// the agent's cap. On knuckle (2026-11-08 11:35:22Z) sec-check was refused at
+// 379/400, read "hourly cap reached ... stop all GitHub reads for this
+// session", and gave up its whole audit. The wording must say whose budget it
+// is, when it resets, and that the agent pauses rather than stops.
+func TestAgentGitHubBudgetReserveRefusalNamesSharedBudgetAndReset(t *testing.T) {
+	now := time.Date(2026, 11, 8, 11, 35, 22, 0, time.UTC)
+	nudge, message, resp := readAgentGitHubBudget429(t, now, agentGitHubBudgetStatus{
+		Agent: "sec-check", Count: 379, Cap: 400, RetryAfter: 1260, Reason: "reserve",
+		Method: http.MethodGet, Path: "/repos/o/r/contents/x",
+	})
+	if got := resp.Header.Get("Retry-After"); got != "1260" {
+		t.Fatalf("Retry-After = %q, want 1260", got)
+	}
+	for name, text := range map[string]string{"nudge": nudge, "message": message} {
+		for _, want := range []string{
+			"shared GitHub API budget is low (379 left, reserve floor 400)",
+			"2026-11-08T11:56:22Z",
+			"git fetch or clone may be too",
+			"local work",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("reserve %s = %q, want it to contain %q", name, text, want)
+			}
+		}
+		for _, bad := range []string{"hourly cap reached", "for this session", "Stop polling"} {
+			if strings.Contains(text, bad) {
+				t.Errorf("reserve %s = %q, must not contain %q", name, text, bad)
+			}
+		}
+	}
+	if !strings.Contains(nudge, "about 21 min") {
+		t.Errorf("reserve nudge = %q, want the wait in minutes", nudge)
+	}
+	if !strings.Contains(nudge, "do not end the task") {
+		t.Errorf("reserve nudge = %q, want it to say the task goes on", nudge)
+	}
+	if !strings.Contains(message, "Retry-After 1260s") {
+		t.Errorf("reserve message = %q, want the Retry-After seconds", message)
+	}
+}
+
 func TestAgentGitHubBudgetCapWarnOncePerWindow(t *testing.T) {
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	var buf bytes.Buffer

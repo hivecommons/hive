@@ -33,6 +33,7 @@ func TestUnreadableReviewReasonRecognisesRateLimitedReviews(t *testing.T) {
 		"Could not fetch the diff: gh returned 429 Too Many Requests.",
 		"Unable to read the PR files: API rate limit exceeded for installation.",
 		"I cannot read the diff; hive: agent GitHub API hourly cap reached (400/400).",
+		"Could not read the diff; hive: the hive's shared GitHub API budget is low (379 left, reserve floor 400); this is not this agent's own cap.",
 		"Could not read the diff: secondary rate-limit hit on every request.",
 	}
 	for _, summary := range others {
