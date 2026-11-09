@@ -2021,6 +2021,46 @@ about it:
 
 The expired-CLI-login hold is not reported this way yet.
 
+### A relay busy on another hive tells the hub (`busy_elsewhere_v1`)
+
+A relay subscribed to several hives works one task at a time. While that task
+belongs to hive B, hive A still sees a connected relay that answers heartbeats,
+holds its "Acting as" role and has been refused nothing. Before this, a relay
+acting as a role on A kept counting as
+[contributor-first](agent-configuration.md#contributor-first-lanes-contributor_first)
+cover there for as long as it worked B's tasks, so A's resident agent was held
+back while nobody worked A's lane.
+
+Every other hub that advertises `busy_elsewhere_v1` in
+`auth_ok.server_capabilities` now hears about it:
+
+```jsonc
+{ "type": "busy_elsewhere", "seq": 61, "state": "busy", "since": "2026-11-09T14:25:03Z" }
+{ "type": "busy_elsewhere", "seq": 62, "state": "clear" }
+```
+
+- The relay sends `busy` when it starts a task from another hive and `clear`
+  when that task completes, fails or is revoked. It sends each transition once
+  per connection, and restates a running task right after `auth_ok`, because a
+  new connection starts out not busy on the hub. The hive that owns the task
+  is never sent the frame.
+- The frame says only when the other task started. It never names the other
+  hive, repository or issue.
+- The hub records it on the connection and uses it only for contributor-first
+  coverage. It changes no lease, assignment or standby state. A relay this hub
+  has also handed a task or a fix-pr task still counts.
+- There is no timer on the hub. The flag goes away with the connection (a
+  socket close or a relay restart), and the relay's next `ready` to this hub
+  clears it, since a relay asks for work only when it holds none. A timer
+  would start counting a relay that is still busy on a long task again; a flag
+  left set by mistake only means the resident agent works the lane, which is
+  what happens without `contributor_first`.
+- A hub that does not advertise the token never receives the frame. A relay
+  that never sends it is read as not busy elsewhere. Either way the behaviour
+  is exactly what it was before.
+
+The local PR-review cycle belongs to no hive and is not reported.
+
 ### Provider adapter sources
 
 The `src/pkg/rotation` probers normalize each provider's usage into the reading
