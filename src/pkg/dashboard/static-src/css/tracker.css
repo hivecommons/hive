@@ -1217,6 +1217,11 @@
         box-sizing: border-box; min-height: var(--tap-target); min-width: var(--tap-target);
       }
       #activity-monitor-section .ham-notes-btn { font-size: var(--tap-glyph); padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
+      /* A needs-human / hold pill that opens the decision popover keeps its
+         one-line box so a card row stays under the #17161 height budget; the
+         hit area is padded out to the tap target like .ham-pill (#17453). */
+      #activity-monitor-section .ham-badge-mod.ham-decision-trigger { position: relative; }
+      #activity-monitor-section .ham-badge-mod.ham-decision-trigger::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) 0; }
       /* A card keeps its two-line head and its density (#17161): the 🗒
          shows on a phone only once the item has notes; the row's ⋯ menu
          carries "Maintainer notes…" for the rest. */
