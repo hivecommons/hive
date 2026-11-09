@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v6.4.4)
+
+### Fixed
+
+- **A contributor container now puts the hive's knowledge where its CLI starts, so Codex reads it.** The container linked the knowledge export (`~/agent.md`) as `~/AGENTS.md` and `~/CLAUDE.md`, but it launches the interactive CLI in `~/.local/state/hive/agent-cwd`, an empty directory that is not a git repository. Codex reads `AGENTS.md` only from the git root down to its working directory, plus its own `$CODEX_HOME/AGENTS.md`, so a Codex contributor ran every task without the export (a `projectbluefin/utah-packages#879` session carried the user's own `~/.codex/AGENTS.md` and none of the hive's). Claude worked only because it also reads `CLAUDE.md` from parent directories. The container now links into `HIVE_AGENT_CWD`, the way `just contribute-hive local` already did. It keeps each backend's global files in its own `$HOME` (`~/.bob/AGENTS.md`, the goose config seed, `~/.copilot`), never writes `$CODEX_HOME/AGENTS.md`, and removes its old `$HOME` links (only those that point at the export) so a CLI that reads parent directories does not load the export twice. Headless mode, whose CLI runs in the workspace, keeps the `$HOME` links. See [Where each backend reads its instructions](src/docs/contributor-relay.md#where-each-backend-reads-its-instructions).
+- **The hive log now says where a contributor's role guidance got its Relevant Knowledge.** The guidance render logged only the shared `knowledge: injected` line, which names the role and reads like a resident kick, so an off-topic `# Relevant Knowledge` section (for `projectbluefin/utah-packages#879`, entries about other repositories' PRs) could not be traced to its cause. Each guidance render now logs one `role guidance knowledge:` line: `primed from issue <repo>#<n>` with the search query and the number of matching entries, or `nothing primed` with the reason (no title or labels to search on, or nothing matched). There is no fallback to general entries, and the line says so. See [The knowledge share of a kick](src/docs/operator-reference/sweeps-and-operations.md).
+
 ## 2026-11-09 (v6.4.3)
 
 ### Fixed
