@@ -78,10 +78,13 @@ type reviewQuestionAutodecideMarker struct {
 type reviewQuestionAutodecide struct {
 	mu      sync.Mutex
 	running bool
-	lastAt  time.Time
-	path    string
-	loaded  bool
-	items   map[string]reviewQuestionAutodecideMarker
+	// wg tracks the background sweep so tests can drain it before restoring
+	// the package globals the sweep reads.
+	wg     sync.WaitGroup
+	lastAt time.Time
+	path   string
+	loaded bool
+	items  map[string]reviewQuestionAutodecideMarker
 }
 
 func (st *reviewQuestionAutodecide) filePath() string {
@@ -291,7 +294,9 @@ func (s *Server) maybeAutoDecideReviewQuestions(status *StatusPayload, now time.
 	if s.deps.Ctx != nil {
 		ctx = s.deps.Ctx
 	}
+	st.wg.Add(1)
 	go func() {
+		defer st.wg.Done()
 		defer func() {
 			st.mu.Lock()
 			st.running = false
