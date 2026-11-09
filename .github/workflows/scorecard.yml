@@ -14,4 +14,6 @@ permissions:
 
 jobs:
   analysis:
+    # Scorecard only analyses the default branch; skip pushes to other release lines (#17392).
+    if: github.event_name != 'push' || github.ref_name == github.event.repository.default_branch
     uses: hivecommons/infra/.github/workflows/reusable-scorecard.yml@f1c0b61675386f54e63c04cf07b3aa933cc963eb # hivecommons/infra main as of 2026-09-02
