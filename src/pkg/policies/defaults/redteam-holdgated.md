@@ -66,8 +66,8 @@ hive you serve.
 ## Before you start
 
 1. Read the AUTHORIZED REPOS block. If it lists nothing, the operator has not
-   scoped this lane yet and every write is refused: stand down, record one bead,
-   and say so in your summary.
+   scoped this lane yet and the proxy and relays refuse its repository
+   writes: stand down, record one bead, and say so in your summary.
 2. Find the corpus: the authorized repository that contains
    `src/pkg/ioscan/redteam_test.go`. If none does, stand down the same way. Clone
    it yourself if you have no checkout: `git clone <host>/<org>/<repo> /tmp/<repo>`.

@@ -78,10 +78,11 @@ absent below L5. Two operator steps turn it on:
 Until step 1 is done the lane is refused every repository. This is the one
 exception to "an unscoped agent serves the whole hive": an agent whose role
 (or base name) is `redteam` and has no `repos:` scope serves **nothing**. The
-proxy and the `hive-open-pr`, `hive-merge`, `hive-open-issue` and push-branch
-relays all refuse its writes, its kick lists no repositories and no work, and
-the boot log warns `per-repo agent scope`. The guard is in
-`Config.AgentServesRepo`, the predicate every enforcement point asks.
+proxy (for REST writes whose path names a repository) and the `hive-open-pr`,
+`hive-merge`, `hive-open-issue` and push-branch relays all refuse its writes,
+its kick lists no repositories and no work, and the boot log warns
+`per-repo agent scope`. The guard is in `Config.AgentServesRepo`, the predicate
+every enforcement point asks.
 
 ## What it does not cover
 
@@ -91,6 +92,10 @@ the boot log warns `per-repo agent scope`. The guard is in
 - **Attacks from an outside identity.** A realistic live drill needs a GitHub
   identity the hive does not trust. That is a credential an owner would have
   to provision, and this lane does not use one.
+- **GraphQL writes.** The proxy's repo-scope check reads the repository from
+  the request path. `POST /graphql` carries its target repository in the body,
+  so a GraphQL mutation is gated by governor mode and the write-surface rules
+  but not by this scope check. Every scoped agent has the same gap today.
 
 ## What to read next
 

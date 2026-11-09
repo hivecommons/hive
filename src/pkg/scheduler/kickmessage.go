@@ -829,7 +829,7 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 		case scoped:
 			b.WriteString("  (none — this agent is scoped to repos this hive does not watch, or every repo it serves is currently paused; tell the operator)\n")
 		case s.cfg.AgentRequiresRepoScope(agentName):
-			b.WriteString("  (none — this lane serves no repository until the operator sets its repos: scope; every write is refused, so stand down and say so in your summary)\n")
+			b.WriteString("  (none — this lane serves no repository until the operator sets its repos: scope; the proxy and relays refuse its repository writes, so stand down and say so in your summary)\n")
 		default:
 			b.WriteString("  (none — every repo this hive watches is currently paused)\n")
 		}
