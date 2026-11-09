@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v6.6.0)
+
+### Added
+
+- **Owner switch for admin MCP writes.** Settings → Channels now has an **Allow admin MCP writes** switch (`admin_mcp.writes_enabled`), so a hive's owner can turn the `/api/admin/mcp` write tools on or off from the dashboard. Before this, a hosted hive's owner had to ask the hub operator to set `HIVE_ADMIN_MCP_ENABLE_WRITES` on the Deployment. The switch is owner-only, audited as `config_admin_mcp_writes` (actor, old and new value), takes effect on the next MCP call with no restart, and turning it off refuses pending confirmations at `write_confirm`. Once used it overrides `HIVE_ADMIN_MCP_ENABLE_WRITES` in both directions; until then that variable decides as before, so existing hives keep their behaviour. **Use environment default** clears the switch again, so the variable (or the default, off) decides. The stdio `hive-admin-mcp` binary is unchanged and still reads only its own environment.
+
+### Fixed
+
+- fix(dashboard): drain review-question autodecide sweep before WS test cleanup (#17452)
+
 ## 2026-11-09 (v6.5.7)
 
 ### Fixed
