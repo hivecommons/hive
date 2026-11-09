@@ -1,10 +1,12 @@
 package automerge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -3176,6 +3178,62 @@ func TestDelegatedSupersedeRefusesPersonAuthoredPR(t *testing.T) {
 				t.Fatalf("request label kept after a terminal refusal: removed=%v", h.api.removed)
 			}
 		})
+	}
+}
+
+// The person-authored refusal runs every sweep, but its log line is kept to
+// once per PR head: projectbluefin/utah-packages#925 and #928 logged the
+// same head about once a minute. A new head is logged again, and the
+// refusal itself (tracker record, request label consumed) is unchanged on
+// the quiet pass.
+func TestPersonAuthoredAdoptionRefusalLoggedOncePerHead(t *testing.T) {
+	const line = "adoption refused, a person pushed this PR themselves"
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	defer done()
+	var logs bytes.Buffer
+	h.e.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	labels := []string{"stage/085-needs-decision", "author/human", delegatedecision.LabelAdoptSupersede}
+	humanPR := func(head string) *gh.PullRequest {
+		pr := adoptPR(7, head, labels...)
+		// No relay trailer: a person pushed it from their own machine.
+		pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\n")
+		return pr
+	}
+	pr := humanPR("aaa")
+
+	h.observe(pr, contributorLaneReasonNoReviewer)
+	if n := strings.Count(logs.String(), line); n != 1 {
+		t.Fatalf("first pass logged the refusal %d times, want 1:\n%s", n, logs.String())
+	}
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(pr, contributorLaneReasonNoReviewer)
+	if n := strings.Count(logs.String(), line); n != 1 {
+		t.Fatalf("same head logged the refusal again (%d lines):\n%s", n, logs.String())
+	}
+	// The refusal still ran on the quiet pass: only the log line changed.
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedAuthorPerson {
+		t.Fatalf("refusal not recorded on the second pass: %+v", rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("second pass did not run the refusal: removed=%v", h.api.removed)
+	}
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+		t.Fatalf("adopted a person's PR: pulls=%v refs=%v", h.adopt.pulls, h.adopt.refs)
+	}
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(humanPR("bbb"), contributorLaneReasonNoReviewer)
+	out := logs.String()
+	if n := strings.Count(out, line); n != 2 || !strings.Contains(out, "head=bbb") {
+		t.Fatalf("new head not logged once (%d lines):\n%s", n, out)
+	}
+	rec, _ = h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if rec.AdoptionBlocked("bbb") != stagelabels.AdoptBlockedAuthorPerson {
+		t.Fatalf("refusal not recorded for the new head: %+v", rec)
 	}
 }
 
