@@ -24,7 +24,7 @@ func TestForgeUnreachableLabel(t *testing.T) {
 
 func TestForgeUnreachable_NotCountedAgainstHealth(t *testing.T) {
 	e := RegistryEntry{
-		ID: "h1", Online: true, StatsStale: true, ACMMLevel: 3,
+		ID: "h1", Online: true, ACMMLevel: 3,
 		GitHubAppState: "unreachable", GitHubAppRequired: true,
 	}
 	rollup := agentFleetRollup{Known: 1, Running: 1, Expected: 1}
@@ -32,14 +32,31 @@ func TestForgeUnreachable_NotCountedAgainstHealth(t *testing.T) {
 	now := time.Now()
 
 	before := hiveHealthFor(e, rollup, app, 0, now)
-	if before.State != HealthStateUnknown {
-		t.Fatalf("baseline stale beat should be unknown, got %q", before.State)
+	if before.State != HealthStateRed {
+		t.Fatalf("baseline broken-app beat should be red, got %q", before.State)
 	}
 
 	e.ForgeUnreachable = true
 	after := hiveHealthFor(e, rollup, app, 0, now)
 	if after.State == HealthStateUnknown || after.State == HealthStateRed {
 		t.Fatalf("forge-unreachable hive must not be penalised, got %q (%s)", after.State, after.Reason)
+	}
+}
+
+// A beat carrying both flags still has cached stats: the hub must not assert
+// health from them, but it names the forge as the cause instead of a generic
+// stale verdict.
+func TestForgeUnreachable_StaleStatsStayUnknown(t *testing.T) {
+	e := RegistryEntry{
+		ID: "h1", Online: true, StatsStale: true, ForgeUnreachable: true, ACMMLevel: 3,
+	}
+	rollup := agentFleetRollup{Known: 1, Running: 1, Expected: 1}
+	v := hiveHealthFor(e, rollup, GitHubAppHealth{Bucket: ghAppBucketOK}, 0, time.Now())
+	if v.State != HealthStateUnknown {
+		t.Fatalf("stale stats must stay unknown even when forge unreachable, got %q", v.State)
+	}
+	if v.Reason != "heartbeat stats stale (forge unreachable)" {
+		t.Fatalf("reason = %q", v.Reason)
 	}
 }
 
