@@ -78,9 +78,11 @@ func (r *result) Changed() bool {
 
 // reconcile compares every table row against the catalogue and decides what
 // to write. Rows absent from the catalogue keep their current price and are
-// listed as unverified; priceTableDate moves to today when any price changed
-// or when the table is older than staleAfterDays (a successful "no change"
-// reconciliation is still a reconciliation).
+// listed as unverified; priceTableDate moves to today when any price changed,
+// when any quote was held for review (so the run yields a diff and the held
+// section reaches a human in a PR), or when the table is older than
+// staleAfterDays (a successful "no change" reconciliation is still a
+// reconciliation).
 func reconcile(t *table, c *catalogue, today string, staleAfterDays int) *result {
 	r := &result{OldDate: t.Date, NewDate: t.Date}
 	for _, e := range t.Entries {
@@ -118,6 +120,11 @@ func reconcile(t *table, c *catalogue, today string, staleAfterDays int) *result
 	switch {
 	case len(r.Changes) > 0:
 		r.NewDate = today
+	case len(r.Suspect) > 0:
+		// Without a diff the workflow opens no PR and the held section would
+		// never reach a reviewer (#17365).
+		r.NewDate = today
+		r.DateReason = fmt.Sprintf("no price was applied, but %d quote(s) were held for review; the date is bumped so this run opens a PR that puts the held rows in front of a human", len(r.Suspect))
 	case staleAfterDays > 0 && olderThan(t.Date, today, staleAfterDays):
 		r.NewDate = today
 		r.DateReason = fmt.Sprintf("no price moved, but the table was last reconciled on %s (more than %d days ago); the date is bumped to record this verification", t.Date, staleAfterDays)

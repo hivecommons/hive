@@ -324,6 +324,53 @@ func TestReconcileHoldsImplausibleQuote(t *testing.T) {
 	}
 }
 
+func TestReconcileHeldOnlyStillChanges(t *testing.T) {
+	// A fresh table whose only moving row is the corrupt one: nothing may be
+	// applied, yet the run must still produce a diff so the workflow opens a
+	// PR carrying the held section.
+	heldOnly := strings.Replace(suspectTable,
+		`"deepseek-chat":  {InputPerMTok: 0.2574, OutputPerMTok: 1.0287, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.2574},`,
+		`"deepseek-chat":  {InputPerMTok: 0.32, OutputPerMTok: 0.89, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.32},`, 1)
+	heldOnly = strings.Replace(heldOnly,
+		`"kimi-k2-7-code": {InputPerMTok: 0.95, OutputPerMTok: 4.00, CacheReadPerMTok: 0.19, CacheWritePerMTok: 0.95},`,
+		`"kimi-k2-7-code": {InputPerMTok: 0.60, OutputPerMTok: 3.50, CacheReadPerMTok: 0.16, CacheWritePerMTok: 0.60},`, 1)
+	tb, err := parseTable([]byte(heldOnly))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := reconcile(tb, suspectCatalogue(t), "2026-11-03", defaultStaleAfterDays)
+	if len(r.Changes) != 0 {
+		t.Fatalf("no legitimate row moves, got changes %+v", r.Changes)
+	}
+	if len(r.Suspect) != 1 || r.Suspect[0].Key != "kimi-k3" {
+		t.Fatalf("suspect = %+v, want only kimi-k3", r.Suspect)
+	}
+	if !r.Changed() || r.NewDate != "2026-11-03" {
+		t.Fatalf("held-only run must bump the date so a PR is opened: changed=%v date=%s", r.Changed(), r.NewDate)
+	}
+	if !strings.Contains(r.DateReason, "1 quote(s) were held for review") {
+		t.Errorf("DateReason = %q, want held explanation", r.DateReason)
+	}
+	out, err := applyChanges([]byte(heldOnly), tb, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`const priceTableDate = "2026-11-03"`,
+		`"kimi-k3":        {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.00},`,
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("output missing %q\n%s", want, out)
+		}
+	}
+	md := renderReport(r, "testdata/openrouter-suspect.json")
+	for _, want := range []string{"held for review; the date is bumped", "### Held for review (1)"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("report missing %q\n%s", want, md)
+		}
+	}
+}
+
 func TestReconcileCacheReadSameAsInputExempt(t *testing.T) {
 	tb, err := parseTable([]byte(fixtureTable))
 	if err != nil {
