@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v6.4.7)
+
+### Fixed
+
+- **A per-agent GitHub API hourly cap now applies without the fleet key.** `agents.<name>.github_api_hourly_cap` was read only when `agents.github_api_hourly_cap` was also set, so `agents.reviewer.github_api_hourly_cap: 600` on its own left the reviewer at the default 300. The override now applies on its own, and a replica or review head that has none of its own takes its base agent's. `0` still means no cap at either level. See [Runtime and quota](src/docs/operator-reference/runtime-and-quota.md).
+- **A session recycle no longer leaves Copilot agents on a bare `copilot` that asks approval for every command.** When a restart replaced a Copilot agent's session, a pane-poll tick still running for the old session could read the new, still-empty pane against the old start time, call it hung for hours, and start the hang diagnostic. The diagnostic killed the freshly relaunched session, typed `copilot` with no `--allow-all`, `--model` or deny flags, and returned at once because its context was already cancelled, so the agent ran that CLI until the next restart. On a hosted hive this happened to every Copilot agent at each 6-hour recycle; the architect then sat 4h50m at "Do you want to run this command?". The hang detector now skips a poller whose launch was cancelled, and the diagnostic re-checks under the manager lock before each step that touches the session.
+- **A sec-check turn that audits nothing is now recorded as blocked, not as a finished audit.** When sec-check had no checkout and its GitHub reads were refused, it wrote "security posture remains unassessed" and the hive counted the turn as an ordinary ended kick (seen on a hosted hive, 2026-11-08: 13 AIC, nothing audited). Both sec-check templates now tell the agent to end such a turn on `STAND DOWN — no repository audited: <reason>`. The kick-outcome classifier records that line as a stand-down, so the dashboard shows the turn as blocked, with the reason.
+
 ## 2026-11-09 (v6.4.6)
 
 ### Fixed
