@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.209.4)
+
+### Security
+
+- The maintainer-notes store (`/data/maintainer-notes.jsonl`, the private per-item notes the dashboard's Activity monitor shares between maintainers) is now created owner-only (0600) and an existing file left wider by an earlier release is tightened on its next write ([#17386](https://github.com/hivecommons/hive/issues/17386)). It was created 0644 under a world-traversable `/data`, so any agent UID on the spoke could read every note on every item — including deleted ones — rather than only the capped, per-item section a kick deliberately carries.
+
 ## 2026-11-09 (v5.209.3)
 
 ### Changed
