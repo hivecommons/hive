@@ -1607,10 +1607,14 @@ func (c *Engine) authorMaintainsRepo(ctx context.Context, obs stageObservation, 
 // this hive's owners — rather than by a clanker or a registered contributor
 // relay. Such a PR is never adopted on the hive's own initiative
 // (hivecommons/hive#15202); only an operator's explicit Adopt now takes it
-// over.
+// over. A PR one of the repository's own workflows opened under an owner's
+// PAT is not the owner's: nobody pushes to it by hand (hivecommons/hive#17450).
 func personAuthored(obs stageObservation, policy StageLabelPolicy) bool {
 	if obs.AuthorKind == authorkind.Human {
 		return true
+	}
+	if authorkind.WorkflowRun(obs.Body, obs.Owner+"/"+obs.Repo) {
+		return false
 	}
 	return policy.OwnerAuthor != nil && obs.Author != "" && policy.OwnerAuthor(obs.Author)
 }
