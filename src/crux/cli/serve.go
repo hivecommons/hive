@@ -214,7 +214,8 @@ func (e *Env) openRuns(workDir, path string) (*runs.Service, error) {
 	}
 	svc := runs.New(store, backend, cfg)
 	// S4: every dispatched command is appended to <run dir>/commands.jsonl
-	// by the runner, with the default head/tail output policy.
+	// by the runner, with the default head/tail output policy. It is set
+	// before Reconcile so a command left in flight gets its ended line.
 	svc.CmdLog = cmdlog.FileOpener(cmdlog.Policy{})
 	// S5: turn signals go to <run dir>/signals.jsonl. The book is set
 	// before Reconcile so a run left in flight gets its done signal.

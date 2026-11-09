@@ -120,9 +120,54 @@ func TestOpenResumesTheSeqCounter(t *testing.T) {
 	if err != nil || seq != 4 {
 		t.Fatalf("resumed seq = %d, %v", seq, err)
 	}
-	// The earlier log's open commands are not the new log's to end.
+	// Ended still refuses a seq this log never started, even one Open ended.
 	if err := second.Ended(1, End{}); !errors.Is(err, ErrUnknownSeq) {
 		t.Fatalf("Ended(1) on resumed = %v", err)
+	}
+}
+
+// A started line no writer will ever end (its runner died) is ended
+// unfinished by the next Open, so it cannot pin NextSeq for the rest of
+// the run (#17410).
+func TestOpenEndsACommandAnEarlierWriterLeftOpen(t *testing.T) {
+	dir := t.TempDir()
+	c := newClock()
+	first := openLog(t, dir, Policy{Now: c.tick})
+	orphan, err := first.Started(Start{Command: []string{"make", "test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq, err := first.Started(Start{Command: []string{"echo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Ended(seq, End{ExitCode: intp(0)}); err != nil {
+		t.Fatal(err)
+	}
+	second := openLog(t, dir, Policy{Now: c.tick})
+	page, err := Read(dir, 0, 0)
+	if err != nil || len(page.Commands) != 2 || page.NextSeq != seq || page.More {
+		t.Fatalf("page = %+v, %v", page, err)
+	}
+	rec := page.Commands[0]
+	if rec.Seq != orphan || rec.Status != api.CommandUnfinished || rec.EndedAt == nil || rec.ExitCode != nil || rec.Reason != OrphanReason || rec.DurationMs == nil || *rec.DurationMs != 750 {
+		t.Fatalf("orphan = %+v", rec)
+	}
+	if page.Commands[1].Status != api.CommandCompleted {
+		t.Fatalf("ended command = %+v", page.Commands[1])
+	}
+	// The orphan is ended once: reopening again appends nothing.
+	path := filepath.Join(dir, FileName)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openLog(t, dir, Policy{})
+	if after, err := os.ReadFile(path); err != nil || string(after) != string(before) {
+		t.Fatalf("second reopen rewrote the log: %q, %v", after, err)
+	}
+	if next, err := second.Started(Start{Command: []string{"y"}}); err != nil || next != seq+1 {
+		t.Fatalf("resumed seq = %d, %v", next, err)
 	}
 }
 
@@ -199,6 +244,71 @@ func TestReadNextSeqStopsBeforeFirstUnfinished(t *testing.T) {
 	page, err := Read(dir, 0, 0)
 	if err != nil || len(page.Commands) != 3 || page.NextSeq != 1 || page.Commands[1].Status != api.CommandUnfinished {
 		t.Fatalf("mixed page = %+v, %v", page, err)
+	}
+}
+
+// An ended line makes a record terminal whatever its status: a command
+// ended unfinished (exit never known) must not hold NextSeq back (#17410).
+func TestReadNextSeqPassesAnEndedUnfinishedRecord(t *testing.T) {
+	dir := t.TempDir()
+	l := openLog(t, dir, Policy{})
+	for i := range 4 {
+		seq, err := l.Started(Start{Command: []string{"cmd", string(rune('a' + i))}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		end := End{ExitCode: intp(0)}
+		if i == 1 {
+			end = End{Reason: "launcher error"}
+		}
+		if err := l.Ended(seq, end); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := Read(dir, 0, 0)
+	if err != nil || len(page.Commands) != 4 || page.NextSeq != 4 || page.More {
+		t.Fatalf("page = %+v, %v", page, err)
+	}
+	if rec := page.Commands[1]; rec.Status != api.CommandUnfinished || rec.EndedAt == nil || rec.ExitCode != nil {
+		t.Fatalf("ended unfinished = %+v", rec)
+	}
+	page, err = Read(dir, 0, 2)
+	if err != nil || len(page.Commands) != 2 || page.NextSeq != 2 || !page.More {
+		t.Fatalf("page 1 = %+v, %v", page, err)
+	}
+	page, err = Read(dir, page.NextSeq, 2)
+	if err != nil || len(page.Commands) != 2 || page.NextSeq != 4 || page.More {
+		t.Fatalf("page 2 = %+v, %v", page, err)
+	}
+}
+
+// More is set only on a page whose cursor moved: with an in-flight command
+// first on the page, the documented "page while More" loop would otherwise
+// re-request the same since_seq forever (#17410).
+func TestReadMoreOnlyWhenNextSeqAdvances(t *testing.T) {
+	dir := t.TempDir()
+	l := openLog(t, dir, Policy{})
+	for i := range 6 {
+		seq, err := l.Started(Start{Command: []string{"cmd", string(rune('a' + i))}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 1 {
+			continue
+		}
+		if err := l.Ended(seq, End{ExitCode: intp(0)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Seq 2 is in flight. The first page still moves the cursor past seq 1.
+	page, err := Read(dir, 0, 2)
+	if err != nil || len(page.Commands) != 2 || page.NextSeq != 1 || !page.More {
+		t.Fatalf("page 1 = %+v, %v", page, err)
+	}
+	// From there seq 2 leads the page and the cursor cannot move.
+	page, err = Read(dir, page.NextSeq, 2)
+	if err != nil || len(page.Commands) != 2 || page.Commands[0].Seq != 2 || page.NextSeq != 1 || page.More {
+		t.Fatalf("pinned page = %+v, %v", page, err)
 	}
 }
 
