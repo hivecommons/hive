@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.209.2)
+
+### Fixed
+
+- The crux serve request metrics and spans (`crux.serve.request.duration`, `crux.serve.requests`) now bound their HTTP method attribute to the standard set (GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, CONNECT, TRACE), recording anything else as `_OTHER`, as OTel HTTP semconv does for `http.request.method` ([hivecommons/crux#135](https://github.com/hivecommons/crux/issues/135)). Previously the client-supplied method was recorded verbatim, so any caller could mint unbounded metric series on the host's metrics backend simply by sending arbitrary method tokens.
+- The review-dispatch starvation-guard promotion WARN is no longer reported by the fleet feed as a repeated unclassified runtime error ([#17366](https://github.com/hivecommons/hive/issues/17366)).
+
 ## 2026-11-09 (v5.209.1)
 
 ### Security
