@@ -257,3 +257,48 @@ func TestFixTaskProgressIsNotRevoked(t *testing.T) {
 		t.Fatalf("task_revoke frames for %v, want only [not-mine] (never the in-flight fix task)", revoked)
 	}
 }
+
+// projectbluefin/utah-packages#972 (2026-11-09): the relay refused
+// fix-karibhou-1, the hub requeued it and served it again at the relay's
+// next ready as fix-karibhou-2 (a boundary fix on the same connection), and
+// the relay's progress for that retried task (14:50:21Z and 14:54:36Z, repo
+// empty, client_gen 1870) was answered with "task_progress resume rejected:
+// no matching server-issued lease" and task_revoke. Here the retry goes
+// through the real fail → requeue → boundary dispatch path, and its progress
+// carries no repo, as the relay's did: it must not be revoked. The first
+// task, which the relay failed, is no longer the relay's and still is.
+func TestRetriedBoundaryFixProgressIsNotRevoked(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	hub.fixAckGrace = time.Millisecond
+	fixPRStates(hub, nil)
+	server, client := wsPipe(t)
+	relay := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), time.Now())
+	relay.ws = server
+	sess := &wsSession{h: hub, conn: server, contributor: relay}
+	got := captureFixDispatch(hub)
+
+	hub.Nudge(context.Background(), fixNudge("utah-packages", 972, "Canary"))
+	if len(*got) != 1 {
+		t.Fatalf("dispatches = %d, want the nudge's interrupt", len(*got))
+	}
+	first := (*got)[0]
+	sess.handleTaskFailed(WSMessage{Type: "task_failed", TaskID: first.TaskID, Reason: "Hub is not the active polling slot"})
+	retry := hub.selectFixTask(relay)
+	if retry == nil || retry.Kind != taskKindFixPR || retry.TaskID == first.TaskID {
+		t.Fatalf("the relay's next ready must get the fix again under a new task id, got %+v", retry)
+	}
+
+	sess.handleTaskProgress(WSMessage{Type: "task_progress", TaskID: retry.TaskID, TaskGen: retry.TaskGen})
+	sess.handleTaskProgress(WSMessage{Type: "task_progress", TaskID: retry.TaskID, TaskGen: retry.TaskGen})
+	sess.handleTaskProgress(WSMessage{Type: "task_progress", TaskID: first.TaskID, TaskGen: first.TaskGen})
+	var revoked []string
+	for _, f := range readFrames(t, client, time.Second) {
+		if f["type"] == "task_revoke" {
+			id, _ := f["task_id"].(string)
+			revoked = append(revoked, id)
+		}
+	}
+	if len(revoked) != 1 || revoked[0] != first.TaskID {
+		t.Fatalf("task_revoke frames for %v, want only the failed first task %q (never the retried fix %q)", revoked, first.TaskID, retry.TaskID)
+	}
+}
