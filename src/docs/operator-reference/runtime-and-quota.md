@@ -163,6 +163,11 @@ loops, so the proxy enforces two safeguards:
   minting is not agent-attributed and is not counted. Set the value to `0` to
   disable the fleet default, or set `agents.<name>.github_api_hourly_cap` to
   override one agent (`0` disables that agent's cap).
+  The override applies on its own, whether or not the fleet key is set. A
+  replica (`reviewer-2`, …) or review head takes its base agent's override
+  unless it has one of its own. The order is the agent's own value, then the
+  base agent's, then `agents.github_api_hourly_cap`, then the default of 300.
+  A config reload reaches the proxy without a restart.
 - `github.agent_reserve_floor` (default `400`) protects the shared core bucket.
   When the latest rate-limit reading shows `core.remaining` below the floor,
   agent read requests receive the same proxy `429` even if the agent has not
