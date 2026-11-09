@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.209.5)
+
+### Fixed
+
+- crux cmdlog: a follower polling with next_seq now receives a command's ended record instead of seeing it as unfinished forever (#17398).
+
 ## 2026-11-09 (v5.209.4)
 
 ### Security
