@@ -51,6 +51,10 @@ fi
 
 base_ref="${BASE_REF:?BASE_REF is required}"
 coefficient="${MUTATION_TIMEOUT_COEFFICIENT:-3}"
+# Wall-clock budget for all gremlins runs; must stay below the job's
+# timeout-minutes so the report and comment are still written.
+budget="${MUTATION_BUDGET_SECONDS:-900}"
+deadline=$((SECONDS + budget))
 mkdir -p "$out_dir"
 
 changed=$(git diff --name-only --diff-filter=d "origin/${base_ref}...HEAD" -- 'src/*.go' \
@@ -91,9 +95,30 @@ while IFS= read -r pkg; do
   [ -n "$pkg" ] || continue
   i=$((i + 1))
   printf '%s\n' "$pkg" > "$out_dir/pkg-$i.dir"
-  echo "::group::gremlins unleash ./$pkg"
-  (cd src && gremlins unleash --timeout-coefficient "$coefficient" \
-    --output "../$out_dir/pkg-$i.json" "./$pkg") || echo "gremlins exited non-zero for $pkg (advisory)"
+  # gremlins mutates every file under ./$pkg; exclude the files the PR did not
+  # change so a one-line edit in a large package does not mutate all of it.
+  # Patterns are Go regexps matched against the path relative to ./$pkg.
+  excludes=()
+  while IFS= read -r f; do
+    grep -qxF "src/$f" "$out_dir/changed.txt" && continue
+    excludes+=(--exclude-files "^\\Q${f#"$pkg"/}\\E\$")
+  done < <(cd src && find "$pkg" -name '*.go' ! -name '*_test.go')
+  remaining=$((deadline - SECONDS))
+  if [ "$remaining" -le 0 ]; then
+    echo "Time budget spent; skipping $pkg."
+    printf '%s\n' "$pkg" >> "$out_dir/over-budget.txt"
+    continue
+  fi
+  echo "::group::gremlins unleash ./$pkg (${remaining}s left)"
+  (cd src && timeout --kill-after=30 "$remaining" gremlins unleash --timeout-coefficient "$coefficient" \
+    "${excludes[@]}" --output "../$out_dir/pkg-$i.json" "./$pkg")
+  rc=$?
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    echo "gremlins ran out of time budget for $pkg (advisory)"
+    printf '%s\n' "$pkg" >> "$out_dir/over-budget.txt"
+  elif [ "$rc" -ne 0 ]; then
+    echo "gremlins exited $rc for $pkg (advisory)"
+  fi
   echo "::endgroup::"
 done <<< "$pkgs"
 
@@ -130,7 +155,11 @@ done < "$survivors"
     echo "|---|---|---|"
     sort -t$'\t' -k1,1 -k2,2n "$filtered" | head -n 100 | awk -F'\t' '{printf "| `%s` | %s | %s |\n", $1, $2, $3}'
   else
-    echo "No surviving mutants in changed files (or the run hit its time budget before reporting any)."
+    echo "No surviving mutants in changed files."
+  fi
+  if [ -s "$out_dir/over-budget.txt" ]; then
+    echo
+    echo "Not fully reported (the ${budget}s time budget ran out): $(sed 's/.*/`&`/' "$out_dir/over-budget.txt" | paste -sd, - | sed 's/,/, /g')."
   fi
   echo
   echo "_Advisory only; this job never blocks the PR (#17349)._"
