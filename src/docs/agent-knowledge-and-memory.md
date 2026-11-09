@@ -161,6 +161,12 @@ flowchart LR
   600 characters), the runtime's scrubbed pane tail (`pane_lines`, verbatim)
   and each candidate as `slug — title — summary` with the same ≤300-character
   summary phase 1 would type. Entry bodies never reach the model.
+- **Endpoint path.** A bare host gets `/v1/chat/completions`, a base ending in
+  `/v1` gets `/chat/completions`, and an endpoint already ending in
+  `/chat/completions` is used as-is. For the Copilot API set the endpoint to
+  `https://api.githubcopilot.com` (which has no `/v1` prefix; use the full
+  `https://api.githubcopilot.com/chat/completions`) with
+  `api_key_file: /data/copilot-user-token`.
 - **Call.** One chat completion per decision: `temperature: 0`, about 120
   output tokens, `timeout_s`, and the `user` field set to
   `hive-knowledge-advisor:<agent>` so proxy spend logs attribute cost per

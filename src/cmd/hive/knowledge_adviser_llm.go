@@ -344,13 +344,27 @@ func buildKnowledgeAdviserLLMPrompt(kickSummary string, scope crux.KnowledgeScop
 	return b.String()
 }
 
+// knowledgeAdviserLLMURL maps the configured endpoint to the chat URL: a base
+// already ending in /chat/completions is used as-is (the Copilot API has no
+// /v1 prefix), a /v1 base gets /chat/completions, a bare host gets the full path.
+func knowledgeAdviserLLMURL(endpoint string) string {
+	base := strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	switch {
+	case strings.HasSuffix(base, "/chat/completions"):
+		return base
+	case strings.HasSuffix(base, "/v1"):
+		return base + "/chat/completions"
+	}
+	return base + "/v1/chat/completions"
+}
+
 func (d *knowledgeAdviserLLM) complete(ctx context.Context, r config.ResolvedAdvisorLLM, reqBody knowledgeAdviserLLMRequest) (knowledgeAdviserLLMResponse, error) {
 	var cr knowledgeAdviserLLMResponse
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return cr, fmt.Errorf("marshal knowledge advisor request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.Endpoint+"/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, knowledgeAdviserLLMURL(r.Endpoint), bytes.NewReader(body))
 	if err != nil {
 		return cr, fmt.Errorf("build knowledge advisor request: %w", err)
 	}
