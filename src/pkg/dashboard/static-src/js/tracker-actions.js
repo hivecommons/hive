@@ -34,7 +34,7 @@
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:delegate:rerun': 'Re-run decision', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
-      'decide:close-read': 'Close now',
+      'decide:close-read': 'Close now', 'decide:close-deferred': 'Close now',
       'decide:close-issue': 'Close issue',
       'decide:adopt': 'Adopt (hive takes over)',
       'decide:queue-merge': 'Approve and let hive merge', 'decide:merge-now': 'Merge now as maintainer',
@@ -474,6 +474,11 @@
       // (hivecommons/hive#15754).
       const advisory = typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
       if (advisory) out.push(Object.assign({ id: 'decide:close-read', label: STAGE_TRACKER_ACTION_LABELS['decide:close-read'], hint: stageTrackerAdvisoryCloseHint(advisory), lead: true }, stageTrackerActionAllowed('decide:close-read', ctx)));
+      // A PR the hive deferred whose deferral says a maintainer may close
+      // it now (hivecommons/hive#17347): "Close now" leads, the decision
+      // close path with the won't-fix verdict on the PR row itself.
+      const deferral = typeof stageTrackerDeferralOf === 'function' ? stageTrackerDeferralOf(item) : null;
+      if (deferral && deferral.close_ok) out.push(Object.assign({ id: 'decide:close-deferred', label: STAGE_TRACKER_ACTION_LABELS['decide:close-deferred'], hint: stageTrackerDeferralCloseHint(deferral), danger: true, lead: true }, stageTrackerActionAllowed('decide:close-deferred', ctx)));
       for (const a of lead) out.push(a);
       if (target) {
         const on = target === item ? '' : ' PR #' + (Number(target.number) || 0);
@@ -1329,6 +1334,7 @@
         case 'accept-triage': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/accept-triage', body: {} };
         case 'blocker:recheck': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/recheck', body: {} };
         case 'blocker:close-partial': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/close-partial', body: { comment: payload.comment || '' } };
+        case 'decide:close-deferred': return item.kind !== 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'close-wontfix', comment: payload.comment || '', type: 'pr' } };
         case 'decide:close-issue': return item.kind !== 'issue' || String(item.state || '').toLowerCase() === 'closed' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'close-issue', comment: payload.comment || '', type: 'issue' } };
       }
       if (id === 'decide:delegate' || id === 'decide:delegate:rerun') {
@@ -2119,6 +2125,10 @@
         }
         case 'decide:close-read':
           return (await stageTrackerAsk(id, 'confirm', { title: 'Close advisory', message: stageTrackerAdvisoryCloseMessage(items, refs, who), confirmLabel: 'Close' })) ? {} : null;
+        case 'decide:close-deferred': {
+          const v = await stageTrackerAsk(id, 'prompt', { title: 'Close deferred PR', label: stageTrackerDeferralCloseMessage(items, refs, who) + ' Comment (optional):', placeholder: 'Why this is closed', confirmLabel: 'Close', danger: true });
+          return v == null ? null : { comment: v };
+        }
         case 'decide:close-issue': {
           const item = items[0];
           // This destructive exact-issue action always asks; no confirmation opt-out.
@@ -2240,7 +2250,7 @@
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
-      'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-issue': 'Closing…',
+      'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-deferred': 'Closing…', 'decide:close-issue': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
     };
@@ -2260,7 +2270,7 @@
     }
     // The ledger name of a row action id (the inverse of the badge's
     // STAGE_TRACKER_ACTED_OPTION_ID), for a failure noted on the client.
-    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-read': 'close-read', 'decide:close-issue': 'close-issue', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
+    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-deferred': 'wontfix', 'decide:close-read': 'close-read', 'decide:close-issue': 'close-issue', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
     // A failed or refused action is noted on the row at once, so the
     // history badge turns red and its hover's first line names the reason
     // — the server's ledger only sees 5xx and refused answers, and a
@@ -2544,6 +2554,26 @@
     function stageTrackerAdvisoryOf(item) {
       return item && item.kind !== 'pr' && item.advisory && typeof item.advisory === 'object' ? item.advisory : null;
     }
+    // Pure: the hive's standing deferral of a PR row's current head
+    // (stage_tracker_deferral.go) while the PR in progress chevron reads
+    // Deferred, else null.
+    function stageTrackerDeferralOf(item) {
+      if (!item || item.kind !== 'pr' || !item.deferral || typeof item.deferral !== 'object') return null;
+      const code = item.code_activity;
+      const head = String(item.head || '');
+      if (!code || code.state !== 'deferred' || String(code.head || '') !== head || String(item.deferral.head || '') !== head) return null;
+      return item.deferral;
+    }
+    // The Close-now hint and confirm text of a deferred PR row.
+    function stageTrackerDeferralCloseHint(deferral) {
+      const s = deferral && Array.isArray(deferral.successors) ? deferral.successors : [];
+      return (s.length ? 'successor ' + s.join(', ') + ' · ' : '') + "closes as won't-fix";
+    }
+    function stageTrackerDeferralCloseMessage(items, refs, who) {
+      const d = items && items.length === 1 ? stageTrackerDeferralOf(items[0]) : null;
+      const s = d && Array.isArray(d.successors) && d.successors.length ? ' The work continues in ' + d.successors.join(', ') + '.' : '';
+      return 'Close ' + refs + ' now, as ' + who + '? ' + (d && d.actor ? d.actor : 'The hive') + ' deferred it and says a maintainer may close it.' + s + " It closes as won't-fix with an attributed note.";
+    }
     // A row action whose target mapping came up empty says so instead of
     // returning silently (hivecommons/hive#15436).
     function stageTrackerNothingToActOn(id, rows) {
@@ -2635,6 +2665,11 @@
         // (hivecommons/hive#15436 — the click used to map to nothing and
         // return without a request, a dialog or a toast).
         items = items.filter(stageTrackerAdvisoryOf);
+        if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
+      } else if (id === 'decide:close-deferred') {
+        // Close now acts on the deferred PR row itself: a deferral is not a
+        // decision park, so it has no decision target.
+        items = items.filter(it => { const d = stageTrackerDeferralOf(it); return !!(d && d.close_ok); });
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       } else if (id.indexOf('decide:') === 0) {
         // A row decides its parked PR when it has one (the issue's stage is
