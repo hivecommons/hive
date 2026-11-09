@@ -205,8 +205,10 @@ func TestDataDiskHealth_NodeRootIsInformational(t *testing.T) {
 		want string
 	}{
 		{"data volume high warns", dataVolumePath, 90, "warn"},
+		{"node root filling is informational", rootFSPath, 80, "pass"},
 		{"node root high is informational", rootFSPath, 90, "pass"},
-		{"node root critical is informational", rootFSPath, 99, "pass"},
+		{"node root critical still fails", rootFSPath, 95, "fail"},
+		{"node root nearly full still fails", rootFSPath, 99, "fail"},
 	}
 	for _, tc := range cases {
 		total := uint64(1000 << 20)

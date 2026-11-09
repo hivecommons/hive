@@ -109,8 +109,14 @@ func dataDiskHealth(u dataDiskUsage) (status, detail string) {
 	where := fmt.Sprintf("%s %.0f%% used (%.1f GB free of %.1f GB)", u.Path, pct, freeGB, totalGB)
 	if u.Path == rootFSPath {
 		// /data reported an implausible size, so this sample is the shared node
-		// boot volume: node-root pressure (e.g. stale images) is the operator's
-		// to fix and every spoke on the node would raise the same alert.
+		// boot volume. Below the critical tier, node-root pressure (e.g. stale
+		// images) is the operator's to fix and every spoke on the node would
+		// raise the same alert, so it stays informational. At the critical tier
+		// it is still a hard failure: kubelet nodefs eviction hits this pod
+		// regardless of who owns the disk.
+		if pct >= dataDiskCriticalPct {
+			return "fail", where + " — shared node root critically full; kubelet DiskPressure eviction is imminent for this pod, free node disk now"
+		}
 		return "pass", where + " — shared node root (not the hive's /data volume); informational, node-level pressure is for the operator"
 	}
 	switch {
