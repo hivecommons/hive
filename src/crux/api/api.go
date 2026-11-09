@@ -105,6 +105,9 @@ type Health struct {
 	// that restarted the server sees the uptime reset.
 	StartedAt     time.Time `json:"started_at"`
 	UptimeSeconds float64   `json:"uptime_seconds"`
+	// Tmux is where tmux resolves on PATH, "" when it does not. Every agent
+	// runs inside tmux, so the route answers 503 (with this body) when empty.
+	Tmux string `json:"tmux"`
 }
 
 // HiveCallback is the wire form of the callback client's status.
