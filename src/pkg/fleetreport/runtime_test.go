@@ -393,6 +393,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassGitHubFetchTransient, message: "channel commit date: fetch failed — the row will render without a timestamp"},
 		{class: ClassLabelProvisioningFailed, message: "issue stage labels: provisioning failed"},
 		{class: ClassAgentCLIRestartLoop, message: "agent CLI crashed or stuck on consent screen, restarting before kick"},
+		{class: ClassCopilotCLIHung, message: "copilot hung with no CLI prompt, running diagnostic"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 		{class: ClassCruxRuntimeUnavailable, message: "crux runtime unavailable: crux server unreachable at /run/hive/crux.sock"},
 	}
@@ -924,6 +925,22 @@ func TestIsBenignMessageKickUndeliverableBeforeRestart(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#17366: the starvation-guard promotion WARN is an
+// operational signal; exhausted dispatch must stay reportable.
+func TestIsBenignMessageReviewDispatchPromoted(t *testing.T) {
+	if !IsBenignMessage("review dispatch promoted: head starved of a reviewer walked ahead of the queue") {
+		t.Error("review dispatch promotion warning not benign")
+	}
+	for _, m := range []string{
+		"review dispatch exhausted; holding PR for a human",
+		"review fix forced",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("%q wrongly benign", m)
+		}
+	}
+}
+
 func TestIsBenignMessageStageHiveHeld(t *testing.T) {
 	if !IsBenignMessage("stage labels: PR waits on the hive past the stage dwell — reviewer lane needs attention") {
 		t.Error("hive-held stage dwell warning not benign")
@@ -1109,6 +1126,8 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"channel commit date: fetch failed — the row will render without a timestamp":          ClassGitHubFetchTransient,
 		"issue stage labels: provisioning failed":                                              ClassLabelProvisioningFailed,
 		"agent CLI crashed or stuck on consent screen, restarting before kick":                 ClassAgentCLIRestartLoop,
+		"copilot hung with no CLI prompt, running diagnostic":                                  ClassCopilotCLIHung,
+		"diagnostic: timed out waiting for copilot error output, relaunching agent":            ClassCopilotCLIHung,
 		"shared-ci rerun forbidden: the App installation lacks Actions write permission":       ClassSharedCIRerunForbidden,
 		"issue-claims: GitHub side effect failed":                                              ClassIssueClaimEffectFailed,
 		"SHA poll: commit message fetch non-200":                                               ClassSHAPollCommitMsgUnavail,

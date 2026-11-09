@@ -762,7 +762,7 @@ func TestFailClosedStatus500LogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
-// #16520: the base-refresh merge guard is a self-limiting skip, not a defect.
+// #16520, #17400: the base-refresh merge guard is a self-limiting skip, not a defect.
 func TestAutomergeMergeGuardSkipLogsWithoutFleetReport(t *testing.T) {
 	guard := []any{"repo", "hive", "pr", 16511, "reason", "base-refresh:merge-guard", "error", "destination merge already in progress"}
 	cases := []struct {
@@ -772,11 +772,16 @@ func TestAutomergeMergeGuardSkipLogsWithoutFleetReport(t *testing.T) {
 		want int
 	}{
 		{"merge guard", "automerge sweep skipped PR", guard, 0},
+		{"self-authored lane merge guard", "self-authored automerge sweep skipped PR", []any{"start", "6b1dd23f", "repo", "console", "pr", 24909, "reason", "base-refresh:merge-guard", "error", errors.New("destination merge already in progress")}, 0},
 		{"trusted lane merge guard", "trusted-author automerge sweep skipped PR", guard, 0},
 		{"contributor lane merge guard", "contributor-lane automerge sweep skipped PR", guard, 0},
 		{"other reason", "automerge sweep skipped PR", []any{"repo", "hive", "pr", 16511, "reason", "base-refresh", "error", "update branch: 422 conflict"}, 8},
 		{"guard reason other error", "automerge sweep skipped PR", []any{"repo", "hive", "pr", 16511, "reason", "base-refresh:merge-guard", "error", "boom"}, 8},
-		{"other message", "self-authored automerge sweep skipped PR", guard, 8},
+		{"self-authored other reason", "self-authored automerge sweep skipped PR", []any{"reason", "base-refresh", "error", "destination merge already in progress"}, 8},
+		{"self-authored guard other error", "self-authored automerge sweep skipped PR", []any{"reason", "base-refresh:merge-guard", "error", "merge destination changed under lease"}, 8},
+		{"self-authored missing reason", "self-authored automerge sweep skipped PR", []any{"error", "destination merge already in progress"}, 8},
+		{"self-authored missing error", "self-authored automerge sweep skipped PR", []any{"reason", "base-refresh:merge-guard"}, 8},
+		{"other message", "unrelated sweep skipped PR", guard, 8},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -784,11 +789,8 @@ func TestAutomergeMergeGuardSkipLogsWithoutFleetReport(t *testing.T) {
 			for i := 0; i < 8; i++ {
 				logger.Warn(tc.msg, tc.args...)
 			}
-			if tc.want == 0 && len(*seen) != 0 {
-				t.Errorf("produced observations: %+v", *seen)
-			}
-			if tc.want != 0 && len(*seen) == 0 {
-				t.Errorf("must remain reportable")
+			if len(*seen) != tc.want {
+				t.Errorf("produced %d observations, want %d: %+v", len(*seen), tc.want, *seen)
 			}
 			if n := strings.Count(out.String(), "\n"); n != 8 {
 				t.Errorf("wrapped handler saw %d records, want 8", n)

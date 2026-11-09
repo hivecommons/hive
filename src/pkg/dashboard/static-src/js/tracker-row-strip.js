@@ -493,10 +493,12 @@
       if (codeWorking && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_ACTIVE;
       // Evidence-based remediation (stage_tracker_remediation.go): the PR in
       // progress chevron pulses only while somebody is KNOWN to be on a red
-      // PR (kick / claim); "unassigned" is bright but still; a fix head
-      // pushed after the red signal is done-style with its word.
+      // PR (kick / claim); "unassigned" is bright but still; a head the hive
+      // deferred (hivecommons/hive#17347) is plain amber and still, its
+      // successors and reason in the tooltip; a fix head pushed after the
+      // red signal is done-style with its word.
       const codeOnHead = code && String(code.head || '') === String(item.head || '');
-      const remediation = codeOnHead && ['unassigned', 'remediating', 'fix_pushed'].includes(code.state) ? code.state : '';
+      const remediation = codeOnHead && ['unassigned', 'remediating', 'fix_pushed', 'deferred'].includes(code.state) ? code.state : '';
       if (remediation === 'remediating' && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_ACTIVE;
       const evidence = item.remediation && item.remediation.kind ? 'evidence: ' + item.remediation.kind + (item.remediation.actor ? ' by ' + item.remediation.actor : '') + (item.remediation.since ? ' since ' + item.remediation.since : '') + (item.remediation.source ? ' (' + item.remediation.source + ')' : '') : '';
       // Activation resolution (hivecommons/hive#16643): CI and Review are
@@ -567,6 +569,9 @@
           if (sg.number === 30 && item.code_activity && Number(item.display_column) === 30) {
             tip = (codeWorking ? code.caption : sg.detour ? sg.detour.text : 'Code activity unknown') + ' · head ' + (item.head || 'unknown') + ' · ' + (code.source || 'unavailable') + ' · observed ' + (code.observed_at || 'unknown') + ' · since ' + (code.since || 'unknown');
             if (code.detail) tip += ' · ' + code.detail;
+            // A deferral names where the work went (hivecommons/hive#17347).
+            if (remediation === 'deferred' && code.url) tip += ' · ' + code.url;
+            if (remediation === 'deferred' && item.deferral && item.deferral.close_ok) tip += ' · Close now is on the row';
             if (evidence) tip += ' · ' + evidence;
             if (code.blocker) tip += ' · ' + code.blocker;
             if (claimant) tip += ' · ' + stageTrackerClaimantLine(claimant, nowMs);
