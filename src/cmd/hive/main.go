@@ -4760,7 +4760,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// base_url and api_url — a GHE placeholder with base_url:"" but
 				// api_url: github.ibm.com must report github.ibm.com, not be
 				// silently rendered as github.com in the spokes table.
-				GitHubHost:               b.cfg.GitHub.HostLabel(),
+				GitHubHost: b.cfg.GitHub.HostLabel(),
+				// Read after Health above, so it reflects this beat's probe.
+				ForgeUnreachable:         b.dashSrv.ForgeUnreachable(),
 				GitHubAppRequired:        b.dashSrv.IsGitHubAppRequired(),
 				GitHubAppPermIssue:       b.dashSrv.GetGitHubAppPermIssue(),
 				GitHubAppState:           b.dashSrv.GetGitHubAppState(),

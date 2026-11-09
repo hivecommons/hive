@@ -276,3 +276,50 @@ func TestPlanDuplicateHoldsJudgesOnlyHeadsAtTheGate(t *testing.T) {
 		t.Fatalf("the old winner at the merge point = %+v ok=%v", mt, ok)
 	}
 }
+
+// The same fix opened against two release lines says "Fixes #N" twice and
+// is not a duplicate: neither PR is held and neither is a claim conflict
+// (hivecommons/hive#17436). Two PRs on the SAME line still compete.
+func TestPlanDuplicateHoldsGroupsByBaseBranch(t *testing.T) {
+	c := &Engine{}
+	t0 := time.Date(2026, 11, 9, 17, 0, 0, 0, time.UTC)
+	pr := func(n int, base string, at time.Time) *gh.PullRequest {
+		return &gh.PullRequest{Number: gh.Int(n), Title: gh.String("t"), Body: gh.String("Fixes #17392"), CreatedAt: &gh.Timestamp{Time: at}, MergeableState: gh.String("clean"), State: gh.String("open"), Base: &gh.PullRequestBranch{Ref: gh.String(base)}, Head: &gh.PullRequestBranch{SHA: gh.String("sha")}}
+	}
+	prs := []*gh.PullRequest{
+		pr(17414, "v5", t0),
+		pr(17415, "v6", t0.Add(time.Minute)),
+		pr(17420, "v6", t0.Add(2*time.Minute)),
+	}
+	// Every head is at the merge gate, so the rule judges them now.
+	for _, p := range prs {
+		c.noteMergeTrainOutcome(stageLaneSelf, "o", "r", p.GetNumber(), p.GetHead().GetSHA(), prstage.ContributorLaneReasonSoaking)
+	}
+	plan := &mergeTrainPlan{lane: "self", displayRepo: "o/r"}
+	kept := c.planDuplicateHolds(context.Background(), plan, stageLaneSelf, "o", "r", "o/r", prs, func(*gh.PullRequest) string { return "" })
+	if len(kept) != 2 || kept[0].GetNumber() != 17414 || kept[1].GetNumber() != 17415 {
+		t.Fatalf("kept = %v", kept)
+	}
+	if _, held := plan.duplicateOf(17415); held {
+		t.Fatal("a sibling on another base branch is not a duplicate")
+	}
+	if h, held := plan.duplicateOf(17420); !held || h.Winner != 17415 {
+		t.Fatalf("same-line duplicate hold = %+v held=%v", h, held)
+	}
+	if _, held := plan.claimConflictOf(17415); held {
+		t.Fatal("a sibling on another base branch is not a claim conflict")
+	}
+
+	// A prefilter refusal on the v5 sibling leaves it an open claimant, but
+	// it still does not conflict with the v6 PR on another line.
+	plan2 := &mergeTrainPlan{}
+	c.planDuplicateHolds(context.Background(), plan2, stageLaneSelf, "o", "r", "o/r", prs[:2], func(p *gh.PullRequest) string {
+		if p.GetNumber() == 17414 {
+			return "label:hold"
+		}
+		return ""
+	})
+	if _, held := plan2.claimConflictOf(17415); held {
+		t.Fatal("cross-line claimant must not hold the candidate")
+	}
+}
