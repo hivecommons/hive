@@ -832,7 +832,9 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		// not change who should fix it. Recorded so the tracker row says
 		// why. Only an explicit Adopt now (forced) takes it over.
 		store.NoteAdoptionBlocked(key, obs.HeadSHA, stagelabels.AdoptBlockedAuthorPerson, now)
-		c.info("stage labels: adoption refused, a person pushed this PR themselves; asking the author instead", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "author_kind", obs.AuthorKind.String(), "reason", reason, "requested", requested, "forced", forced)
+		if c.markPersonAdoptionRefusalLogged(obs, reason, requested, now) {
+			c.info("stage labels: adoption refused, a person pushed this PR themselves; asking the author instead", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "author_kind", obs.AuthorKind.String(), "reason", reason, "requested", requested, "forced", forced)
+		}
 		return 0, nil
 	}
 	if forced {
@@ -1780,6 +1782,17 @@ func personAuthored(obs stageObservation, policy StageLabelPolicy) bool {
 		return true
 	}
 	return policy.OwnerAuthor != nil && obs.Author != "" && policy.OwnerAuthor(obs.Author)
+}
+
+// markPersonAdoptionRefusalLogged records that the person-authored adoption
+// refusal was logged for this PR head, due reason and request, and reports
+// whether this is the first report. The refusal itself runs every sweep;
+// only its log line is kept to once per head, in the sweep memory the
+// one-shot lane engines share (projectbluefin/utah-packages#925 logged the
+// same head about once a minute).
+func (c *Engine) markPersonAdoptionRefusalLogged(obs stageObservation, reason string, requested bool, now time.Time) bool {
+	key := c.evaluatedHeadKey(obs.Owner, obs.Repo, obs.Number) + "@" + strings.ToLower(obs.HeadSHA) + "#adopt-refused-person@" + reason + "@requested=" + strconv.FormatBool(requested)
+	return c.memory().markHoldLogged(key, now)
 }
 
 // maintainerPolicy resolves the policy's maintainer rule ("" = adopt).
