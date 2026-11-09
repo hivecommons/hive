@@ -170,8 +170,8 @@ loops, so the proxy enforces two safeguards:
   A config reload reaches the proxy without a restart.
 - `github.agent_reserve_floor` (default `400`) protects the shared core bucket.
   When the latest rate-limit reading shows `core.remaining` below the floor,
-  agent read requests receive the same proxy `429` even if the agent has not
-  reached its personal cap. This keeps daemon merge/scan work from being
+  agent read requests receive a proxy `429` even if the agent has not
+  reached its personal cap, with its own wording (below). This keeps daemon merge/scan work from being
   starved by agent polling. Only readings from the hive's own bucket update
   that snapshot: responses whose `X-RateLimit-Limit` is 60 (GitHub's per-IP
   unauthenticated bucket, e.g. an agent's `gh` call without a token) or whose
@@ -196,15 +196,33 @@ loops, so the proxy enforces two safeguards:
   once. Bodies are stored gzip-compressed, so the cap is several times its
   size in raw JSON.
 
-The proxy returns JSON shaped for the GitHub CLI:
+The proxy returns JSON shaped for the GitHub CLI. For the agent's own hourly
+cap:
 
 ```json
 {"message":"hive: agent GitHub API hourly cap reached (N/cap); stop polling and continue with local work","documentation_url":"…docs/operator-reference.md#github-api-quota"}
 ```
 
+For the reserve floor, the message says the shared budget is low rather than
+that the agent hit its cap, and gives the time the shared bucket resets:
+
+```json
+{"message":"hive: the hive's shared GitHub API budget is low (N left, reserve floor F); this is not this agent's own cap. GitHub API reads are paused until <reset, RFC 3339 UTC> (Retry-After Ss), and git fetch or clone may be too; try again then and continue with local work meanwhile","documentation_url":"…docs/operator-reference.md#github-api-quota"}
+```
+
+Git fetch and clone travel over `github.com`, which the proxy tunnels without
+looking inside by default, so the floor does not reach them. When it
+intercepts `github.com` (`HIVE_PROXY_INJECT_GH_AUTH=true`, or a lane under
+`write_surface.enforce`), it counts `info/refs` and `git-upload-pack` as reads
+and refuses them below the floor too; hence "may be".
+
 It also sets `Retry-After` to when the one-hour window (or observed reset) can
-make progress, logs once at 80% of each agent window, and sends one
-stop-polling nudge per agent window. Hive-authored write relays are not
+make progress, logs once at 80% of each agent window, and sends one nudge per
+agent window. The cap nudge tells the agent to stop GitHub reads for the
+session. The reserve nudge tells it to pause GitHub reads until the reset time,
+carry on with local work, and not end the task over it. Both refusals log
+`agent GitHub API hourly cap reached`, told apart by the `reason` field
+(`cap` or `reserve`). Hive-authored write relays are not
 agent-attributed and are not capped by this path.
 
 Open-PR scans use `github.graphql_pr_batch` by default to move mergeability,

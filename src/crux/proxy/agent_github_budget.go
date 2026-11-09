@@ -26,6 +26,21 @@ type agentGitHubBudget struct {
 	events map[string][]time.Time
 	warned map[string]bool
 	nudged map[string]time.Time
+	// refused is the last refusal of each agent's GitHub request by its
+	// hourly cap or the shared reserve floor. The review relay reads it
+	// (AgentGitHubRefusedSince) to tell a review the proxy cut short from
+	// one that read the PR, and the review planner reads it
+	// (AgentGitHubRefusal) to tell an expiry the cap caused from one it did
+	// not, and to wait for the window to free before asking again.
+	refused map[string]agentGitHubRefusal
+}
+
+// agentGitHubRefusal is one refusal: when it happened, and when the
+// refusal's Retry-After said the agent could read again (the sliding hour
+// freeing a slot, or the shared bucket's reset).
+type agentGitHubRefusal struct {
+	at     time.Time
+	clears time.Time
 }
 
 func newAgentGitHubBudget(now func() time.Time) *agentGitHubBudget {
@@ -33,10 +48,11 @@ func newAgentGitHubBudget(now func() time.Time) *agentGitHubBudget {
 		now = time.Now
 	}
 	return &agentGitHubBudget{
-		now:    now,
-		events: make(map[string][]time.Time),
-		warned: make(map[string]bool),
-		nudged: make(map[string]time.Time),
+		now:     now,
+		events:  make(map[string][]time.Time),
+		warned:  make(map[string]bool),
+		nudged:  make(map[string]time.Time),
+		refused: make(map[string]agentGitHubRefusal),
 	}
 }
 
@@ -90,6 +106,39 @@ func (b *agentGitHubBudget) markNudged(agentName string) bool {
 	return true
 }
 
+// markRefused records that agentName was just refused a GitHub request
+// whose Retry-After was retryAfter seconds.
+func (b *agentGitHubBudget) markRefused(agentName string, retryAfter int) {
+	if b == nil || strings.TrimSpace(agentName) == "" {
+		return
+	}
+	now := b.now()
+	if retryAfter < 0 {
+		retryAfter = 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.refused == nil {
+		b.refused = make(map[string]agentGitHubRefusal)
+	}
+	b.refused[agentName] = agentGitHubRefusal{at: now, clears: now.Add(time.Duration(retryAfter) * time.Second)}
+}
+
+// refusedSince reports whether agentName was refused a GitHub request at or
+// after since and, if so, when the last refusal said it would clear.
+func (b *agentGitHubBudget) refusedSince(agentName string, since time.Time) (clears time.Time, refused bool) {
+	if b == nil || strings.TrimSpace(agentName) == "" {
+		return time.Time{}, false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	last, ok := b.refused[agentName]
+	if !ok || last.at.Before(since) {
+		return time.Time{}, false
+	}
+	return last.clears, true
+}
+
 func (b *agentGitHubBudget) pruneLocked(agentName string, now time.Time) []time.Time {
 	events := b.events[agentName]
 	cutoff := now.Add(-agentGitHubBudgetWindow)
@@ -140,10 +189,41 @@ func (p *GitHubProxy) agentGitHubReserveSnapshot() (remaining int, reset time.Ti
 	return 0, time.Time{}, false
 }
 
+// AgentGitHubRefusedSince reports whether the proxy refused one of
+// agentName's GitHub requests at or after since, because the agent reached
+// agents.github_api_hourly_cap or the shared bucket fell below
+// github.agent_reserve_floor. The review relay uses it to set aside a
+// requires_human from a review session the proxy cut short: the session
+// could not read what it needed, so its verdict is no verdict
+// (projectbluefin/utah-packages#959). The record lives in memory only; a
+// restart forgets it, as it forgets the counts.
+func (p *GitHubProxy) AgentGitHubRefusedSince(agentName string, since time.Time) bool {
+	_, refused := p.AgentGitHubRefusal(agentName, since)
+	return refused
+}
+
+// AgentGitHubRefusal is AgentGitHubRefusedSince plus when the last refusal
+// said the agent could read again: its Retry-After, which is when the
+// sliding hour frees a slot under the cap, or the shared bucket's reset
+// under the reserve floor. The review planner uses it so an expiry the cap
+// caused does not spend review.max_redispatch, and so the perspective is
+// asked again only once the agent can read.
+func (p *GitHubProxy) AgentGitHubRefusal(agentName string, since time.Time) (clears time.Time, refused bool) {
+	if p == nil || p.githubBudget == nil {
+		return time.Time{}, false
+	}
+	return p.githubBudget.refusedSince(agentName, since)
+}
+
 func (p *GitHubProxy) githubBudgetRefusal(agentName, method, path string, isRead bool) (status *agentGitHubBudgetStatus) {
 	if p == nil || agentName == "" || agentName == internalCallerName {
 		return nil
 	}
+	defer func() {
+		if status != nil {
+			p.githubBudget.markRefused(agentName, status.RetryAfter)
+		}
+	}()
 	cap := p.agentGitHubCap(agentName)
 	if cap > 0 && p.githubBudget != nil {
 		count, retryAfter, over := p.githubBudget.check(agentName, cap)
@@ -194,9 +274,10 @@ func (p *GitHubProxy) writeAgentGitHubBudget429(client netWriterConn, st agentGi
 	if st.RetryAfter <= 0 {
 		st.RetryAfter = 1
 	}
+	nudge, message := agentGitHubBudgetMessages(st, p.agentGitHubBudgetNow())
 	first := p.githubBudget != nil && p.githubBudget.markNudged(st.Agent)
 	if first && p.githubBudgetNudge != nil {
-		p.githubBudgetNudge(st.Agent, "Stop polling GitHub. gh returned 429 hourly cap reached; stop all GitHub reads for this session and finish with local work.")
+		p.githubBudgetNudge(st.Agent, nudge)
 	}
 	if p.logger != nil {
 		// Warn once per agent per cap window; repeats are expected and self-limiting.
@@ -208,7 +289,7 @@ func (p *GitHubProxy) writeAgentGitHubBudget429(client netWriterConn, st agentGi
 			"agent", st.Agent, "count", st.Count, "cap", st.Cap, "retry_after", st.RetryAfter, "reason", st.Reason)
 	}
 	payload, _ := json.Marshal(map[string]string{
-		"message":           "hive: agent GitHub API hourly cap reached (" + strconv.Itoa(st.Count) + "/" + strconv.Itoa(st.Cap) + "); stop polling and continue with local work",
+		"message":           message,
 		"documentation_url": githubAPICapDocsURL,
 	})
 	resp := &http.Response{
@@ -230,6 +311,51 @@ func (p *GitHubProxy) writeAgentGitHubBudget429(client netWriterConn, st agentGi
 		return false
 	}
 	return true
+}
+
+func (p *GitHubProxy) agentGitHubBudgetNow() time.Time {
+	if p != nil && p.githubBudget != nil && p.githubBudget.now != nil {
+		return p.githubBudget.now()
+	}
+	return time.Now()
+}
+
+// agentGitHubBudgetMessages returns the nudge typed into the agent's pane and
+// the 429 body gh prints for a budget refusal.
+//
+// The two refusals need different advice. "cap" is the agent's own
+// agents.github_api_hourly_cap: it has polled too much, so it stops GitHub
+// reads for the session. "reserve" is github.agent_reserve_floor: the App
+// installation's shared core bucket, which the daemon also spends, is nearly
+// empty. That is not the agent's doing and it ends at the bucket's reset, so
+// the agent pauses until then rather than giving up. Saying "hourly cap
+// reached ... for this session" there made sec-check abandon its whole audit
+// on knuckle (2026-11-08, refused at 379/400).
+//
+// The reserve wording warns that git fetch and clone may be refused too: by
+// default github.com is tunneled and never reaches this gate, but when it is
+// intercepted (HIVE_PROXY_INJECT_GH_AUTH, or a lane under
+// write_surface.enforce) agentGitHubRequestIsRead counts info/refs and
+// git-upload-pack as reads, so the floor refuses them as well.
+func agentGitHubBudgetMessages(st agentGitHubBudgetStatus, now time.Time) (nudge, message string) {
+	if st.Reason != "reserve" {
+		return "Stop polling GitHub. gh returned 429 hourly cap reached; stop all GitHub reads for this session and finish with local work.",
+			"hive: agent GitHub API hourly cap reached (" + strconv.Itoa(st.Count) + "/" + strconv.Itoa(st.Cap) + "); stop polling and continue with local work"
+	}
+	retry := st.RetryAfter
+	if retry <= 0 {
+		retry = 1
+	}
+	until := now.Add(time.Duration(retry) * time.Second).UTC().Format(time.RFC3339)
+	minutes := strconv.Itoa((retry + 59) / 60)
+	left := strconv.Itoa(st.Count) + " left, reserve floor " + strconv.Itoa(st.Cap)
+	nudge = "Pause GitHub reads until " + until + " (about " + minutes + " min), then try again. " +
+		"gh returned 429 because the hive's shared GitHub API budget is low (" + left + "), not because you reached your own cap. " +
+		"Until then gh and other GitHub API reads are refused, and git fetch or clone may be too; carry on with local work and do not end the task over this."
+	message = "hive: the hive's shared GitHub API budget is low (" + left + "); this is not this agent's own cap. " +
+		"GitHub API reads are paused until " + until + " (Retry-After " + strconv.Itoa(retry) + "s), and git fetch or clone may be too; " +
+		"try again then and continue with local work meanwhile"
+	return nudge, message
 }
 
 type netWriterConn interface {
