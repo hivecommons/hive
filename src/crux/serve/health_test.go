@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/crux/api"
@@ -27,6 +28,10 @@ func TestHealthTmuxMissingIs503(t *testing.T) {
 	newFamServer(t).expect(http.MethodGet, api.PathHealth, nil, http.StatusServiceUnavailable, &h)
 	if h.Tmux != "" || h.Version != api.Version {
 		t.Fatalf("health: %+v", h)
+	}
+	// The body is also an api.Error, so api.Client callers see the cause.
+	if h.Code != api.CodeUnavailable || !strings.Contains(h.Error, "tmux not found on PATH") {
+		t.Fatalf("health error: %+v", h)
 	}
 }
 

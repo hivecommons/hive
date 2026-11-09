@@ -391,7 +391,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 	status := http.StatusOK
 	if path, err := tmux.LookPath(); err != nil {
+		// The body doubles as an api.Error so api.Client reports the cause.
 		status = http.StatusServiceUnavailable
+		h.Error = fmt.Sprintf("tmux not found on PATH: %v", err)
+		h.Code = api.CodeUnavailable
 	} else {
 		h.Tmux = path
 	}
