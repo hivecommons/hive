@@ -559,7 +559,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			stageTrackerReviewFallbackState(it.ReviewActivity, stageTrackerReviewFallbackInputsFor(it, currentPR, len(expectedPerspectives) > 0))
 		}
 		activityItem.CIActivity, activityItem.ReviewActivity = it.CIActivity, it.ReviewActivity
-		activityItem.Deferral = stageTrackerDeferralFor(&activityItem, deferrals)
+		activityItem.Deferral = stageTrackerDeferralFor(&activityItem, deferrals, status.GitHubBaseURL)
 		stageTrackerApplyCodeActivity(&activityItem, dispatchState, status, now)
 		stageTrackerApplyRemediation(&activityItem, dispatchState, status, stageTrackerFixerAgent(cfg), now)
 		it.CodeActivity, it.Remediation, it.Deferral, it.ReviewActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.Remediation, activityItem.Deferral, activityItem.ReviewActivity, activityItem.DisplayColumn, activityItem.Caption

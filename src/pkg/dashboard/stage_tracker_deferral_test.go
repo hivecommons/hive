@@ -37,7 +37,7 @@ func deferredRedPR(now time.Time, entries ...AuditEntry) *StageTrackerItem {
 		}
 		return r
 	}
-	it.Deferral = stageTrackerDeferralFor(it, stageTrackerDeferrals(entries, qualify))
+	it.Deferral = stageTrackerDeferralFor(it, stageTrackerDeferrals(entries, qualify), "")
 	return it
 }
 
@@ -144,7 +144,7 @@ func TestStageTrackerDeferralPrecedence(t *testing.T) {
 		t.Fatalf("a deferral of an older head must not stand: %s %+v", it.CodeActivity.State, it.Deferral)
 	}
 	if stageTrackerDeferralFor(it, stageTrackerDeferrals([]AuditEntry{{Timestamp: now.Format(time.RFC3339), Action: github.AuditActionAgentPRDeferred, Repo: "org/repo", Target: 7,
-		Detail: deferralAuditDetail("abc1234def", "#1", "false", "Deferring.")}}, nil)) != nil {
+		Detail: deferralAuditDetail("abc1234def", "#1", "false", "Deferring.")}}, nil), "") != nil {
 		t.Fatal("stageTrackerDeferralFor binds a deferral to the head it was posted on")
 	}
 }
@@ -157,7 +157,7 @@ func TestStageTrackerDeferralsLatestWinsAndCrossRepoLink(t *testing.T) {
 		{Timestamp: now.Format(time.RFC3339), Action: github.AuditActionAgentPRDeferred, Repo: "org/repo", Target: 7, Detail: "repo=org/repo, number=7, reason=no head"},
 	}
 	it := &StageTrackerItem{Kind: "pr", Repo: "org/repo", Number: 7, Head: "ABC1234DEF", URL: "https://github.com/org/repo/pull/7"}
-	d := stageTrackerDeferralFor(it, stageTrackerDeferrals(entries, nil))
+	d := stageTrackerDeferralFor(it, stageTrackerDeferrals(entries, nil), "")
 	if d == nil || d.Reason != "second" || d.SuccessorURL != "https://github.com/other/lib/issues/12" {
 		t.Fatalf("latest headed deferral wins, cross-repo successor linked: %+v", d)
 	}

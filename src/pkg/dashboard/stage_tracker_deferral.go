@@ -123,7 +123,7 @@ func stageTrackerDeferrals(entries []AuditEntry, qualify func(string) string) ma
 // stageTrackerDeferralFor is the deferral standing on the row's current
 // head, with its first successor linked; nil when none does. A new head
 // clears a deferral: the hive has to decide again.
-func stageTrackerDeferralFor(it *StageTrackerItem, deferrals map[string]StageTrackerDeferral) *StageTrackerDeferral {
+func stageTrackerDeferralFor(it *StageTrackerItem, deferrals map[string]StageTrackerDeferral, githubBaseURL string) *StageTrackerDeferral {
 	if it == nil || it.Kind != "pr" || it.Head == "" || len(deferrals) == 0 {
 		return nil
 	}
@@ -132,37 +132,25 @@ func stageTrackerDeferralFor(it *StageTrackerItem, deferrals map[string]StageTra
 		return nil
 	}
 	if len(d.Successors) > 0 {
-		d.SuccessorURL = stageTrackerRefURL(it, d.Successors[0])
+		d.SuccessorURL = stageTrackerRefURL(it.Repo, d.Successors[0], githubBaseURL)
 	}
 	d.Successors = append([]string(nil), d.Successors...)
 	return &d
 }
 
-// stageTrackerRefURL is the GitHub page of ref ("#N" on the row's repo,
-// "owner/repo#N" elsewhere), derived from the row's PR URL; "" when the URL
-// is not shaped like "https://host/o/r/pull/N". GitHub redirects an issues
+// stageTrackerRefURL is the GitHub page of ref ("#N" on repo, "owner/repo#N"
+// elsewhere); "" when ref has no positive number. GitHub redirects an issues
 // URL to the pull request when N is one.
-func stageTrackerRefURL(it *StageTrackerItem, ref string) string {
-	repo, n, ok := strings.Cut(ref, "#")
-	if !ok || n == "" {
+func stageTrackerRefURL(repo, ref, githubBaseURL string) string {
+	refRepo, n, ok := strings.Cut(ref, "#")
+	num, err := strconv.Atoi(n)
+	if !ok || err != nil || num <= 0 {
 		return ""
 	}
-	i := strings.Index(it.URL, "/pull/")
-	if i < 0 {
-		return ""
+	if refRepo == "" {
+		refRepo = repo
 	}
-	if repo == "" {
-		return it.URL[:i] + "/issues/" + n
-	}
-	scheme := strings.Index(it.URL, "://")
-	if scheme < 0 {
-		return ""
-	}
-	host := strings.Index(it.URL[scheme+3:], "/")
-	if host < 0 {
-		return ""
-	}
-	return it.URL[:scheme+3+host] + "/" + repo + "/issues/" + n
+	return overviewItemURL("", refRepo, num, "issue", githubBaseURL)
 }
 
 // stageTrackerDeferredActivity is the PR in progress code activity of a
