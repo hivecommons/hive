@@ -53,13 +53,21 @@ const RedTeamRole = "redteam"
 // proxy and the relays and is handed no work in its kick. Pointing it at the
 // repository that holds the corpus it extends is a deliberate operator act.
 func (c *Config) AgentRequiresRepoScope(agent string) bool {
+	return c.IsRedTeamAgent(agent)
+}
+
+// IsRedTeamAgent reports whether the named agent (or the replica base it
+// derives from) is the red-team lane, by role or by base name. Besides the
+// fail-closed scope it drives the level-independent PR hold: a lane whose
+// output is attack text never gets an auto-merge path, even at L6, so the
+// policy's "every PR carries hold" promise is enforced by the relay and not
+// only by the prompt. An agent absent from the roster is still matched by
+// name, so a hand-written entry under the reserved name cannot slip through.
+func (c *Config) IsRedTeamAgent(agent string) bool {
 	if c == nil {
 		return false
 	}
-	ac, ok := c.scopeSourceFor(agent)
-	if !ok {
-		return false
-	}
+	ac, _ := c.scopeSourceFor(agent)
 	return requiresRepoScope(c.BaseAgentName(agent), ac)
 }
 

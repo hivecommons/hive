@@ -39,7 +39,7 @@ as strictly as misses. The lane:
    a defending lane can close the gap.
 
 A new miss lowers the scorecard baseline, so a red-team PR can only land when a
-human accepts the lower number. Every red-team PR carries `hold` at L5 and L6.
+human accepts the lower number. Every red-team PR carries `hold` at L5 and L6: the `hive-open-pr` relay applies the label server-side for any agent whose role or base name is `redteam`, regardless of ACMM level, so the prompt is not the only thing standing between the lane and auto-merge.
 
 ## What it never does
 
