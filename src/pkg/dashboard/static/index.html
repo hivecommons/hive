@@ -1827,6 +1827,14 @@
     .ham-seg.active.ham-open-advisory { background: var(--surface-2); color: var(--muted); }
     .ham-seg.active.ham-open-advisory .ham-seg-t::before { content: 'ⓘ'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
+    /* While a CI / Review track runs, the stage chevron is settled-current:
+       the neutral still location, icon only (rule 2, hivecommons/hive#16643).
+       That fill wins over the Open word tints above (draft slate, blocked
+       yellow, New blue, stale amber-red) and the held-gate amber, which are
+       declared later at equal specificity and would otherwise paint a second
+       coloured chevron beside the running track (hivecommons/hive#17461:
+       a draft PR with no stage read as slate Open + amber CI). */
+    .ham-seg.ham-seg.active.ham-settled-current { background: var(--surface-3); color: var(--text); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
     .ham-active-ico { display: none; }

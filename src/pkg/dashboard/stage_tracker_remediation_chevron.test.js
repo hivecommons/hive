@@ -40,6 +40,9 @@ const segments = new Function('stageTrackerAnchor', globals + `
 const STAGE_TRACKER_ACTIVE_WORD = {70: 'Fixing'};
 const STAGE_TRACKER_HUMAN_GATED = 85, STAGE_TRACKER_READY_FOR_HUMAN_MERGE = 90, STAGE_TRACKER_ADOPTED_BY_HIVE = 74;
 function stageTrackerSentinelInLane() { return false; }
+function stageTrackerOpenSince(it) { return { ms: Date.parse(it.created_at || '') || 0 }; }
+function stageTrackerShortAgo() { return '1d'; }
+const STAGE_TRACKER_OPEN_STALE_DAYS = 7;
 function stageTrackerUnauthorizedWord() { return ''; }
 function stageTrackerManualMergeWord() { return 'Ready for human merge'; }
 function stageTrackerAdoptedWord() { return 'Adopted by hive'; }
@@ -47,6 +50,7 @@ function stageTrackerAdoptedWord() { return 'Adopted by hive'; }
 const renderStrip = new Function('esc', 'stageTrackerSegments', 'stageTrackerActivityTrackHtml', globals + `
 const STAGE_TRACKER_MOTION_STATIC = 'static', STAGE_TRACKER_MOTION_ACTIVE = 'active';
 const STAGE_TRACKER_READY_FOR_HUMAN_MERGE = 90;
+const STAGE_TRACKER_DRAFT_TIP = 'Draft — the author is still working on it.';
 function stageTrackerActorKind() { return ''; }
 function stageTrackerActorTip() { return ''; }
 function stageTrackerMotion() { return STAGE_TRACKER_MOTION_STATIC; }
@@ -333,4 +337,32 @@ test('a stalled or stale-polled text-bearing track is plainly active: one amber 
     const words = m ? m[2].replace(/<[^>]+>/g, '').trim() : '';
     if (words) assert.ok(/\bactive\b/.test(m[1]) && !/\b(pending|todo|done|failing|ham-settled-current)\b/.test(m[1]), 'text without the one active fill: ' + m[1]);
   }
+});
+
+// hivecommons/hive#17461: a draft PR with no stage yet (Open column) whose CI
+// runs draws the Open chevron settled-current — icon only, neutral fill —
+// and the running track is the row's only coloured chevron. The Open word
+// tints (draft, blocked, New, stale) are declared after the settled rule at
+// equal specificity; the settled fill must still win.
+test('a draft Open PR with running CI: Open is settled-current and no Open tint repaints it', () => {
+  const c = cells(redPR({ stage: 0, modifiers: ['draft'], created_at: '2026-11-03T01:50:50Z',
+    ci_activity: { head: 'abc1234def', state: 'running', active: true, caption: 'CI 51/64 · 12 running', checks_passed: 51, checks_total: 64, source: 'checks', observed_at: '2026-11-04T02:40:00Z' },
+    review_activity: { head: 'abc1234def', state: 'not_started', caption: 'Review · draft, not requested', source: 'none', observed_at: '2026-11-04T02:40:00Z' } }));
+  assert.match(c[0], /^<li class="ham-seg active ham-settled-current ham-open-draft"/, 'Open keeps its draft class for the tooltip, settled while CI runs: ' + c[0]);
+  assert.doesNotMatch(c[0], /ham-chevron-copy/, 'settled-current Open is icon only');
+  assert.match(c[0], /title="Waiting on CI, running — /);
+  assert.equal(litCount(c.join('')), 1, 'the running CI track is the only lit chevron');
+  assert.match(c[4], /class="ham-seg ham-activity-track active[^"]*"[^]*CI 51\/64 · 13 running</);
+
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const css = fs.readFileSync(path.join(__dirname, 'static-src/css/tracker.css'), 'utf8');
+  const rules = Array.from(css.replace(/\/\*[^]*?\*\//g, '').matchAll(/([^{}]+)\{([^}]*)\}/g)).map(m => ({ sel: m[1].trim(), body: m[2] }));
+  const tints = rules.filter(r => /^\.ham-seg\.active\.(ham-open-\w+|ham-held)$/.test(r.sel) && /background/.test(r.body));
+  assert.ok(tints.length >= 4, 'the Open tints are still single-rule backgrounds: ' + tints.map(r => r.sel).join(' | '));
+  const settled = rules.findIndex(r => r.sel === '.ham-seg.ham-seg.active.ham-settled-current');
+  assert.ok(settled >= 0, 'a settled-current rule outranks the three-class tints');
+  assert.match(rules[settled].body, /background: var\(--surface-3\)/);
+  for (const t of tints) assert.ok(rules.indexOf(t) < settled, t.sel + ' is declared before the settled-current override');
+  for (const t of tints) assert.ok(t.sel.split('.').length - 1 < rules[settled].sel.split('.').length - 1, t.sel + ' has lower specificity than the settled-current override');
 });
