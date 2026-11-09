@@ -703,7 +703,8 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
 // decided → one lit chevron. #16268: waiting for the contributor, CI 7/11
 // unreported, review approved → exactly one. Three qualifying (fix running,
 // CI running, review running) → the tracks win and the stage chevron is
-// settled-current. The ≤2 invariant itself runs on every fixture above.
+// settled-current; CI leads and Review is dim with a queued note
+// (hivecommons/hive#17335). The one-lit invariant itself runs on every fixture above.
 {
   const seen = new Date(now - 60000).toISOString();
   const unreported = { head: 'f269349', state: 'missing', caption: "CI waiting · required check 'test' hasn't reported for this head yet", checks_passed: 7, checks_total: 11, blocker: 'test', source: 'checks', observed_at: seen };
@@ -723,7 +724,8 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
     code_activity: { head: 'f269349', state: 'remediating', caption: 'Remediating · scanner · 4m', actor: 'scanner', active: true, source: 'fix-dispatch', observed_at: seen },
     ci_activity: { head: 'f269349', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },
     review_activity: { head: 'f269349', state: 'reviewing', active: true, actor: 'reviewer-2', caption: 'Review working', perspectives_done: 2, perspectives_total: 5, source: 'dispatch', observed_at: seen } }, stages, ctx);
-  assert.strictEqual(lit(busy), 2, 'three qualify, two light: ' + strip(busy));
+  assert.strictEqual(lit(busy), 1, 'three qualify, one lights: ' + strip(busy));
+  assert.ok(/<li class="ham-seg ham-activity-track active" data-track="ci"[^>]*>[\s\S]*?CI 4\/11 · 7 running<\/span>/.test(busy) && /<li class="ham-seg ham-activity-track todo ham-track-queued" data-track="review" data-queued="true"(?![^>]*data-motion)[^>]*>[\s\S]*?<span class="ham-track-note">review in progress<\/span>/.test(busy), 'CI leads, Review is dim with its note: ' + strip(busy));
   // #16456: back in PR in progress with changes requested — one filled
   // chevron; CI 11/11 is green words (done), the review finding red words
   // (failing), neither a fill.
@@ -779,7 +781,10 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
 // waiting on workflow approval"; Review is the green ring alone. #427 (050,
 // swarm queued, CI passed): Review is the stage's own track, active even
 // while queued; CI is the green icon only. CI running + swarm adjudicating
-// lights both tracks with words, never a third.
+// lights CI alone — exactly one lit stage per row (hivecommons/hive#17335):
+// Review is dim with a muted "review in progress" note, and after a push
+// (issue #17292 / PR #17308: "CI 7/11 · 4 running" AND "Review 5/5 · adjudicating"
+// both amber) the note reads "re-review queued".
 {
   const seen = new Date(now - 60000).toISOString();
   const lit = (html) => litChevrons(strip(html));
@@ -811,8 +816,22 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
   const both = stageTrackerRowHtml({ repo: 'acme/promptargs', number: 427, kind: 'pr', stage: 50, display_column: 50, head: '9bdf058', author: 'hive[bot]', author_kind: 'hive',
     ci_activity: { head: '9bdf058', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },
     review_activity: { head: '9bdf058', state: 'adjudicating', active: true, caption: 'Review 5/5 · verdicts in · aggregating', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
-  assert.strictEqual(lit(both), 2, 'CI running + adjudicating: both tracks, no third: ' + strip(both));
-  assert.ok(both.includes('CI 4/11 · 7 running</span>') && both.includes('Review 5/5 · adjudicating</span>'), both);
+  assert.strictEqual(lit(both), 1, 'CI running + adjudicating: CI alone is lit: ' + strip(both));
+  assert.ok(both.includes('CI 4/11 · 7 running</span>') && !both.includes('Review 5/5 · adjudicating</span>'), both);
+  assert.ok(/<li class="ham-seg ham-activity-track todo ham-track-queued ham-current" data-track="review" data-queued="true"(?![^>]*data-motion)[^>]*>[\s\S]*?<span class="ham-track-note">review in progress<\/span>/.test(both) && both.includes('Review 5/5 · adjudicating · ') && both.includes(' · review in progress behind CI'), 'Review is dim, its words in the tooltip with the queued note: ' + both);
+  // hivecommons/hive#17335: @Karibhou pushed c15a343 to PR #17308 while the
+  // previous review was being re-adjudicated — the row lit CI 7/11 AND
+  // Review 5/5 amber at once. Now CI is the one lit chevron; Review is dim
+  // and reads "re-review queued".
+  const pushedAt = new Date(now - 3 * 60000).toISOString();
+  const pushed = stageTrackerRowHtml({ repo: 'hivecommons/hive', number: 17308, kind: 'pr', stage: 50, display_column: 50, head: 'c15a343', author: 'Karibhou', author_kind: 'human',
+    push: { state: 'pushed', login: 'Karibhou', sha: 'c15a343', since: pushedAt, next: 're-review' },
+    ci_activity: { head: 'c15a343', state: 'running', active: true, caption: 'CI running', checks_passed: 7, checks_total: 11, source: 'checks', observed_at: seen },
+    review_activity: { head: 'c15a343', state: 'adjudicating', active: true, caption: 'Review 5/5 · verdicts in · aggregating', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
+  assert.strictEqual(lit(pushed), 1, 'a push during review lights exactly one chevron: ' + strip(pushed));
+  assert.ok(/<li class="ham-seg ham-activity-track active ham-current" data-track="ci"[^>]*>[\s\S]*?CI 7\/11 · 4 running<\/span>/.test(pushed), 'CI is the lit chevron: ' + strip(pushed));
+  assert.ok(/<li class="ham-seg ham-activity-track todo ham-track-queued ham-current" data-track="review" data-queued="true"(?![^>]*data-motion)[^>]*>[\s\S]*?<span class="ham-track-note">re-review queued<\/span>/.test(pushed), 'Review is dim with the re-review note, no second amber: ' + strip(pushed));
+  assert.ok(pushed.includes(' · re-review queued behind CI'), 'the Review tooltip explains the demotion: ' + pushed);
 }
 // Merged: the lit cap is the only chevron with hover text.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);

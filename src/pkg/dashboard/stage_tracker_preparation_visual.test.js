@@ -105,7 +105,7 @@ test('original compact pill and connector decorate actual rows with FIFO help an
   assert.match(rows[3].html, /ham-train-last/);
   assert.match(rows[1].html, /data-ham-stage="70"/);
   assert.match(rows[2].html, /data-ham-stage="50"/);
-  assert.match(rows[2].html, /CI · checks pending · queued for base refresh behind PR #45 · ticket age 30m/);
+  assert.match(rows[2].html, /CI · checks pending · queued for base refresh behind PR #45 · ticket issued 30m ago/);
   assert.match(rows[1].html, /Review swarm requested; waiting for a verdict on the current head · preparing base/);
   assert.match(rows[3].html, /Waiting 2nd for preparation/);
   assert.doesNotMatch(html, /<li class="ham-preparation|<section|ham-preparation-rail|Preparation owner · unverified|data-ham-train=|overlapping files|Ready for merge/);
@@ -252,9 +252,31 @@ test('unverified owner gets a hollow node and concise current commentary, never 
   assert.match(rows[0].html, /2 confirmed PRs · recorded front: #45/);
   assert.match(rows[1].html, /ham-preparation-unverified/);
   assert.doesNotMatch(rows[1].html, /ham-train-front|OLD HEAD APPROVED|<span class="ham-badge"/);
-  assert.match(rows[1].html, /Head changed; current preparation unverified/);
+  assert.match(rows[1].html, /Recorded first for the base refresh · ticket issued for an earlier head · re-checked on refresh/);
   assert.match(rows[1].html, /Review swarm requested; waiting for a verdict on the current head/);
   assert.equal(ctx.stageTrackerPreparationChipHtml(f.owner), '');
+});
+
+// hivecommons/hive#17335: @Karibhou pushed c15a343 to PR #17308 while its
+// base-refresh ticket was still recorded for the old head. The detail line
+// read "push seen 3m ago → CI/re-review queued · Recorded preparation owner ·
+// unverified · Head changed; current preparation unverified · ticket age 4m".
+test('a push during review reads in operator words: no "preparation", no "unverified", said once', () => {
+  const { ctx } = load(), f = fixture();
+  f.owner.head = 'c15a343f00d';
+  f.owner.caption = 'push seen 3m ago → CI/re-review queued';
+  f.owner.push = { state: 'pushed', login: 'Karibhou', sha: 'c15a343f00d', since: new Date(NOW - 3 * 60000).toISOString(), next: 're-review' };
+  f.owner.ci_activity = { head: f.owner.head, state: 'running', active: true, checks_passed: 7, checks_total: 11 };
+  f.q.owner.state = 'unverified'; f.q.owner.current_head = f.owner.head;
+  f.q.owner.detail = 'Head changed; current preparation unverified';
+  f.q.owner.since = new Date(NOW - 4 * 60000).toISOString();
+  const html = render(ctx, f, [f.owner, f.first, f.second])[1].html;
+  const comment = html.match(/<div class="cue-event ham-preparation-comment"><span class="cue-event-body">(.*?)<\/span><\/div>/)[1];
+  assert.equal(comment, 'New push c15a343 by @Karibhou 3m ago → CI running, review will rerun · previous review no longer applies · Recorded first for the base refresh · ticket issued for an earlier head · re-checked on c15a343 · ticket issued 4m ago');
+  assert.doesNotMatch(comment, /preparation|unverified|ticket age|Head changed/i);
+  assert.equal((comment.match(/no longer applies|not yet confirmed|earlier head/g) || []).length, 2, 'each signal said once');
+  // The popover / help keep the same words.
+  assert.doesNotMatch(ctx.stageTrackerPreparationHelp(model(ctx, f)[0]), /\bunverified\b|ticket age|current preparation/);
 });
 
 test('unknown predecessor and exact repo/base/head mismatches never fabricate confirmed positions', () => {
@@ -267,7 +289,7 @@ test('unknown predecessor and exact repo/base/head mismatches never fabricate co
     const group = model(ctx, f)[0];
     assert.ok(group.unverified.some(e => e.ticket.number === 9));
     assert.equal(group.waiting[0].position, 0);
-    assert.match(content(render(ctx, f)), /Waiting for preparation · position unverified/);
+    assert.match(content(render(ctx, f)), /Waiting for preparation · position not yet confirmed/);
   }
 });
 
@@ -360,7 +382,7 @@ test('comments dedupe current captions, retain current event detail, and use no 
   const comment = html.match(/<div class="cue-event ham-preparation-comment">.*?<\/div>/)[0];
   assert.doesNotMatch(comment, /CI · checks pending/);
   assert.equal((html.match(/CI · checks pending<\/p>/g) || []).length, 1);
-  assert.match(comment, /ticket age 30m/);
+  assert.match(comment, /ticket issued 30m ago/);
   assert.doesNotMatch(comment, /data-at=|data-cue-key=/);
   assert.deepEqual(events, before);
   f.first.caption = 'CI · failing current check';
@@ -381,7 +403,7 @@ test('a lone ticket draws no train header: the owner row keeps its comment and r
   assert.deepEqual(rootKeys(rows), [REPO + '/pr#45']);
   assert.doesNotMatch(html, /ham-preparation-head|Preparation train|0 confirmed PRs/);
   assert.match(html, /ham-preparation-member/);
-  assert.match(html, /Recorded preparation owner · unverified/);
+  assert.match(html, /Recorded first for the base refresh · ticket matches the current open PR snapshot/i);
   rows = render(ctx, f, [], []);
   assert.doesNotMatch(content(rows), /ham-preparation-head/);
   f.q.waiting = [f.first.preparation];

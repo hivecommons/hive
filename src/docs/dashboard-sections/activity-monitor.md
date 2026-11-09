@@ -144,7 +144,7 @@ An Open issue waiting on a maintainer's triage reads **Triage needed · since 28
 
 At most one health chip sits over the strip's cap, with `+N` for the rest: `stalled`, `regressed`, `hold`, `needs-human`, `needs-decision` (“needs human decision”), `needs-triage` (“triage needed”), `needs-rebase`, `blocked` or `draft`. At 015 the chevron already names triage; before claim, a lingering `needs-triage` can be a chip (010/017/045). At 020+ it is stale and omitted from chip/stage text: `stale_labels` supplies a muted *Stale label* tooltip until the sweep removes it ([#14586](https://github.com/hivecommons/hive/issues/14586)).
 
-A genuine backward hop sets `regressed`; the first forward hop clears it. Lapsed claims 020→010, 030↔020 flicker and 040→010 after a partial merge are not regressions. A regression parked on a person is red. Otherwise it is a muted dashed **stage ↓**, yields to other modifiers and does not enter **Needs attention**: “the hive is handling it — no action needed; clears on the next forward step.” See [The regressed marker](../labels-and-control-signals.md#the-regressed-marker-when-it-is-set-when-it-clears).
+A genuine backward hop sets `regressed`; the first forward hop clears it. Lapsed claims 020→010, 030↔020 flicker and 040→010 after a partial merge are not regressions. A regression parked on a person is red. Otherwise it is a muted dashed **stage reset** — **stage reset by push** when a new head caused the fall ([#17335](https://github.com/hivecommons/hive/issues/17335)) — yields to other modifiers and does not enter **Needs attention**: “the hive is handling it — no action needed; clears on the next forward step.” See [The regressed marker](../labels-and-control-signals.md#the-regressed-marker-when-it-is-set-when-it-clears).
 
 The reason, actor, nudges, repository, flags and recent stage hops live on the `#N` tooltip (the PR link for a nested row). Titles wrap before their column edges and show full text on hover. Hairlines and whole-row hover keep the chip and age attached to the right row ([#14640](https://github.com/hivecommons/hive/issues/14640)). Passed/upcoming chevrons, kind/author icons, chips and `since` have no separate hover text.
 
@@ -270,8 +270,10 @@ A lone ticket draws no header: one owner (or one waiter) is the base-refresh loc
 holder, not a train, so its row comment carries the role and verification state and
 the header's count and front only appear once two recorded tickets share the base.
 A refreshed owner is the usual lone ticket — `update-branch` moves its head, so the
-ticket reads *Recorded preparation owner · unverified · Head changed* until it merges
-or is released; that is expected, not a dropped batch.
+ticket reads *Recorded first for the base refresh · ticket issued for an earlier head ·
+re-checked on <sha>* until it merges or is released; that is expected, not a dropped
+batch. The row never says *preparation* or *unverified* — those are the scheduler's
+words, kept in the data ([#17335](https://github.com/hivecommons/hive/issues/17335)).
 
 When several approved PRs to the same base touch the same files, the automerge lanes merge them one at a time ([#15117](https://github.com/hivecommons/hive/issues/15117)). The tracker renders every train contiguously, in merge order, with a thin left rail linking the rows and a header chip `🚆 merge train · 4 PRs · 1st: #15074` — the glyph is an inline-SVG railcar (14px, currentColor, hover *Merge queue*), the same icon the **Merge queue** column header and its chevrons wear; overlapping files are listed beside it. Pill wording per state is the PR's place in the queue (the owner's words — `front` and `queued-behind` appear nowhere a person reads): the head reads "Queued for merge · 1st of 4 · ~13m" (its own soak left plus the next pass); the others "Queued for merge · 2nd of 4 · ~4m", "Queued for merge · 3rd of 4", … (`1st 2nd 3rd 4th … 11th 12th 13th 21st`, always with the queue length, countdown to its turn); when the page draws more than one train each queue word ends with its train's tag — "Queued for merge · 1st of 2 · train main.go" (the first overlapping file's basename, else the head `#N`) — and the hover leads *Train of 2 PRs overlapping main.go; merges after #15567.*, so two "1st"s on one page tell apart (one train → no tag); the header and every member row of a train share one rail accent (`.ham-train-k0…k3`, cycling in page order); once the front merged and the hive is rebasing a conflicting sibling, "Rebasing · attempt 1/2"; when the loop guard (`auto_merge.merge_train.max_rebase_attempts`) is spent, "Needs human decision · rebase failed twice" at stage/085 with the decision option "Rebase, then merge as maintainer".
 
@@ -309,7 +311,7 @@ Issues on their own stages (Open, 010, 020, 045) keep every pill: a `needs-human
 | `hold` | actionable now | always, whether set by a person or Hive; release rules still depend on provenance |
 | `draft` | actionable now | always (the author's move) |
 | `stalled` | actionable now | always |
-| `regressed` | actionable now | always; muted `stage ↓` unless the row is parked on a person (see above) |
+| `regressed` | actionable now | always; muted `stage reset` (`stage reset by push` after a new head) unless the row is parked on a person (see above) |
 | `needs-rebase`, `blocked`, `triage needed`, `possible dupe` | actionable now | always |
 | `unauthorized` — `unauthorized:approve-workflow-runs` | actionable now | always — the carve-out: held workflow runs mean CI cannot even start, and waiting for the gate would waste the whole CI / review cycle (rationguard#397 at 072) |
 | `unauthorized` — any other step (merge, branch update, no step named) | merge gate | PR at stage/080 or later |
@@ -442,7 +444,7 @@ E.g. `At Merge queue — waiting on CI.` / `You chose Approve · 15:55 (5 min ag
 
 #### Legend — the three cues a row may carry
 
-The *state pill* says where the item is and what it is waiting on (`hold`, `needs human`, `stage ↓` …). The *working* cue on the lit chevron says Hive is doing something in that stage now; its tooltip explains the work. The *decision badge* (history mark with count) says a person acted here and what followed. These are separate signals: a recorded decision does not mean the requested effect happened.
+The *state pill* says where the item is and what it is waiting on (`hold`, `needs human`, `stage reset` …). The *working* cue on the lit chevron says Hive is doing something in that stage now; its tooltip explains the work. The *decision badge* (history mark with count) says a person acted here and what followed. These are separate signals: a recorded decision does not mean the requested effect happened.
 
 Plain words throughout — working / waiting on X / set back by Y / merged — nothing else blinks.
 
@@ -450,9 +452,9 @@ Plain words throughout — working / waiting on X / set back by Y / merged — n
 
 An *active* chevron is filled amber and carries words; an inactive one is its icon alone (CI / Review: the ring, green when the last run on this head passed, red when it failed, neutral when not yet run), with the counts in its tooltip. On every strip:
 
-1. **1 ≤ active ≤ 2.** At least one chevron is active — the column where the item is or where it is stuck.
+1. **Exactly one lit stage per row.** One chevron is active — the column where the item is or where it is stuck; later stages are shown dim, with a muted queued note when they are next ([#17335](https://github.com/hivecommons/hive/issues/17335): a push during review lit *CI 7/11 · 4 running* and *Review 5/5 · adjudicating* amber together).
 2. **CI and Review resolve first.** A track is active only while it genuinely runs on the current head (a check-run in progress or queued, a ring not yet full; a reviewer running or queued). If either runs, the PR is waiting on it: the stage chevron (PR in progress, Merge queue …) renders settled-current — filled but still, icon only, its words in the tooltip — and nothing else is active.
-3. **CI + Review is the only pair.** Two chevrons are active together only when both tracks run at once; every other combination is exactly one active chevron. The stage chevron is the ≥ 1 fallback: active only when no track is in motion.
+3. **CI leads Review.** When both tracks would light at once — CI running while the review is queued, in progress or being re-adjudicated — CI is the lit chevron and Review is dim with a small note (*re-review queued* after a push, *review in progress*, *review queued*); its words stay in the tooltip, ending *… behind CI*. The stage chevron is the fallback: active only when no track is in motion.
 4. **The PR in progress chevron speaks the PR's lifecycle** — draft, pushed, rebasing, *Unassigned · next: scanner*, *Waiting for @author · fix owed* — never a CI or review verdict. *CI failing*, *CI 4/11 · 1 failing* and *changes requested* are the CI and Review chevrons' words; the PR in progress tooltip keeps the red reason as detail.
 5. **The CI and Review tooltips state what the track waits on — never "activity unknown".** With no verdict and no reviewer in flight the spoke derives the Review statement from what it already knows, in this order: the PR is merged or closed (*Review · n/a (closed)*), it is a draft (*Review · draft, not requested*), CI on the head has not finished (*Review · waiting for CI*), CI is done and nobody started (*Review · not started · hive reviewer next*, or *· needs reviewer* when the repo has no hive reviewer lane). A settled verdict explains itself — *Changes requested by the hive reviewer: 1 perspective posted findings … · 12m ago · quality ✓ · security ✗: token logged* — and stays known as its observation ages. The one no-data wording, *Review · no data for head f269349 yet · refreshing* (CI: *CI · no checks observed for head … yet · refreshing*), appears only when the spoke has fetched nothing for the head, and names the next step.
 
