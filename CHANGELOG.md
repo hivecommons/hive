@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v6.5.6)
+
+### Fixed
+
+- The "stage labels: adoption refused, a person pushed this PR themselves; asking the author instead" line is now logged once per PR head (and per due reason and adoption request), not on every sweep. On projectbluefin it repeated about once a minute for the same two heads (utah-packages#925 and #928). Log only: the refusal still runs every sweep and records and consumes exactly what it did before, and a new push logs it again.
+
 ## 2026-11-09 (v6.5.5)
 
 ### Fixed
