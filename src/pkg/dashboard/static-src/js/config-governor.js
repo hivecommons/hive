@@ -707,6 +707,9 @@
       const nudgeRepeatAfter = (_configState.dirty.labels && _configState.dirty.labels.nudge_repeat_after !== undefined)
         ? _configState.dirty.labels.nudge_repeat_after
         : (_configState.data.nudgeRepeatAfter || '');
+      const stageNudgeCICooldown = (_configState.dirty.labels && _configState.dirty.labels.stage_nudge_ci_failure_cooldown !== undefined)
+        ? _configState.dirty.labels.stage_nudge_ci_failure_cooldown
+        : (_configState.data.stageNudgeCICooldown || '');
       const stagePresenceWindow = (_configState.dirty.labels && _configState.dirty.labels.stage_presence_window !== undefined)
         ? _configState.dirty.labels.stage_presence_window
         : (_configState.data.stagePresenceWindow || '');
@@ -787,6 +790,11 @@
           <label for="cfg-nudge-repeat-after">Re-nudge after ${yamlHint('auto_merge.nudge_repeat_after')}</label>
           <input type="text" id="cfg-nudge-repeat-after" value="${esc(nudgeRepeatAfter)}" placeholder="72h" data-change-action="markDirty" data-arg0="labels" data-arg1="nudge_repeat_after" data-arg-types="s,s,w">
           <div class="config-help">How long a contributor PR must stay red for the same reason before its one <code>hive:contributor-nudge</code> comment is rewritten a second (and last) time; empty = 72h.</div>
+        </div>
+        <div class="config-field">
+          <label for="cfg-stage-nudge-ci-cooldown">CI-failure nudge cooldown ${yamlHint('governor.labels.stage.contributor_nudge.ci_failure_cooldown')}</label>
+          <input type="text" id="cfg-stage-nudge-ci-cooldown" value="${esc(stageNudgeCICooldown)}" placeholder="6h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_nudge_ci_failure_cooldown" data-arg-types="s,s,w">
+          <div class="config-help">After a CI-failure nudge, a new head failing a different set of checks within this window is folded into the PR's existing <code>hive:contributor-nudge</code> comment instead of counting as a fresh nudge; empty = 6h.</div>
         </div>
         <div class="config-field">
           <label for="cfg-stage-presence-window">Contributor presence window ${yamlHint('governor.labels.stage.presence_window')}</label>
