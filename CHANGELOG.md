@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.209.0)
+
+### Added
+
+- Activity monitor: a red PR the hive deferred now reads **Deferred · waiting on #N** (first successor, `+N` for more; *Deferred · by scanner* when none is named) in plain amber instead of **Unassigned · next: …**, which sent operators to investigate work the hive had already decided ([#17347](https://github.com/hivecommons/hive/issues/17347)). The issue-request relay records a hive agent's PR comment that defers the PR (*Deferring …*, *Deferred …*, *Waiting on #N*) as an `agent_pr_deferred` audit entry bound to the PR's head, with the successors it names and the deferral's own words; the tooltip carries the reason, every successor and the first one's link. A fix kick, claim or push for the same head after the deferral returns the row to *Remediating* / *Fix pushed*, and a new head clears it. When the deferral says a maintainer may close the PR, the row leads with **Close now** (closes the PR as won't-fix with an attributed note).
+
 ## 2026-11-09 (v5.208.1)
 
 ### Fixed
