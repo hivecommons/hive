@@ -1,1 +1,0 @@
-- Watchdog no longer pages `PaneShowsLogin` for the sub-second login flash a relaunched Copilot CLI paints while re-validating its token: boot grace is now dated from the most recent CLI (re)launch, and login chrome must persist for `governor.watchdog.liveness.login_streak` consecutive polls (default 3) before `auth-required` is raised.
