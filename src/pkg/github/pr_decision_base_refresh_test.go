@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -407,6 +408,42 @@ func TestHeadIsBaseRefreshOfFailsClosedAtCompareFileCap(t *testing.T) {
 		}
 		if _, _, err := compareAllFiles(context.Background(), api, "hivecommons", "hive", "v5", newHead); want != (err == nil) || (!want && !errors.Is(err, ErrCompareFileCap)) {
 			t.Fatalf("%d files: compareAllFiles err = %v", n, err)
+		}
+	}
+}
+
+// A base merge that also edited a file the PR modifies, away from the PR's
+// hunks, leaves every hunk byte-for-byte the same at other line numbers: the
+// blob differs but the change is still the one approved
+// (projectbluefin/utah-packages#924). Anything more — a changed context
+// line or hunk length, a missing patch, a rename, any `.github/` file — is
+// still a different diff.
+func TestSameChangedFilesToleratesShiftedHunksOutsideDotGitHub(t *testing.T) {
+	const approved = "@@ -145,32 +145,82 @@ Verify a fix with `rebuild-rpms.yml`\n ctx\n-old\n+new\n ctx\n@@ -207,7 +257,7 @@ way as libcdio.\n ctx\n-a\n+b"
+	const shifted = "@@ -160,32 +160,82 @@ Verify a fix with `rebuild-rpms.yml`\n ctx\n-old\n+new\n ctx\n@@ -239,7 +289,7 @@ way as libcdio.\n ctx\n-a\n+b"
+	file := func(name, status, blob, patch string) []*gh.CommitFile {
+		f := refreshFile(name, blob, patch)
+		f.Status = gh.Ptr(status)
+		return []*gh.CommitFile{f}
+	}
+	const doc = "docs/skills/upstream-version-bumps.md"
+	if !sameChangedFiles(file(doc, "modified", "3604514", approved), file(doc, "modified", "4da6d8a", shifted)) {
+		t.Fatal("the same hunks at shifted line numbers must compare equal outside .github/")
+	}
+	noPatch := file(doc, "modified", "4da6d8a", "")
+	noPatch[0].Patch = nil
+	for name, tc := range map[string][2][]*gh.CommitFile{
+		"a context line changed":  {file(doc, "modified", "3604514", approved), file(doc, "modified", "4da6d8a", strings.Replace(shifted, " ctx\n@@", " main's line\n@@", 1))},
+		"a hunk length changed":   {file(doc, "modified", "3604514", approved), file(doc, "modified", "4da6d8a", strings.Replace(shifted, "+160,82", "+160,83", 1))},
+		"a section heading moved": {file(doc, "modified", "3604514", approved), file(doc, "modified", "4da6d8a", strings.Replace(shifted, "way as libcdio.", "way as libcue.", 1))},
+		"the patch was omitted":   {file(doc, "modified", "3604514", approved), noPatch},
+		"the file was renamed":    {file(doc, "renamed", "3604514", approved), file(doc, "renamed", "4da6d8a", shifted)},
+		"a workflow file":         {file(".github/workflows/bump.yml", "modified", "a0bbe66", approved), file(".github/workflows/bump.yml", "modified", "39b9f1e", shifted)},
+		"a nested action file":    {file("tools/.github/actions/x/action.yml", "modified", "a0bbe66", approved), file("tools/.github/actions/x/action.yml", "modified", "39b9f1e", shifted)},
+		"identical patch text":    {file(".github/workflows/bump.yml", "modified", "a0bbe66", approved), file(".github/workflows/bump.yml", "modified", "39b9f1e", approved)},
+	} {
+		if sameChangedFiles(tc[0], tc[1]) {
+			t.Errorf("%s: a different blob must not compare equal here", name)
 		}
 	}
 }
