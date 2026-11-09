@@ -118,7 +118,9 @@ func (l *Log) append(ln line) error {
 
 // Read folds runDir's log into records after sinceSeq (exclusive), at
 // most limit of them (DefaultPageSize when zero, MaxPageSize at most).
-// A started line with no ended line is an unfinished record.
+// A started line with no ended line is an unfinished record. NextSeq never
+// advances past an unfinished record, so a follower re-receives it until
+// it is terminal (idempotent by seq).
 func Read(runDir string, sinceSeq int64, limit int) (api.CommandPage, error) {
 	lines, err := readLines(filepath.Join(runDir, FileName))
 	if err != nil {
@@ -132,9 +134,6 @@ func Read(runDir string, sinceSeq int64, limit int) (api.CommandPage, error) {
 	}
 	bySeq := map[int64]*api.CommandRecord{}
 	for _, ln := range lines {
-		if ln.Seq <= sinceSeq {
-			continue
-		}
 		switch ln.Event {
 		case EventStarted:
 			bySeq[ln.Seq] = &api.CommandRecord{
@@ -153,6 +152,9 @@ func Read(runDir string, sinceSeq int64, limit int) (api.CommandPage, error) {
 	}
 	all := make([]api.CommandRecord, 0, len(bySeq))
 	for _, rec := range bySeq {
+		if rec.Seq <= sinceSeq {
+			continue
+		}
 		all = append(all, *rec)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Seq < all[j].Seq })
@@ -162,6 +164,12 @@ func Read(runDir string, sinceSeq int64, limit int) (api.CommandPage, error) {
 	}
 	if n := len(page.Commands); n > 0 {
 		page.NextSeq = page.Commands[n-1].Seq
+		for _, rec := range page.Commands {
+			if rec.Status == api.CommandUnfinished {
+				page.NextSeq = max(rec.Seq-1, sinceSeq)
+				break
+			}
+		}
 	}
 	return page, nil
 }
