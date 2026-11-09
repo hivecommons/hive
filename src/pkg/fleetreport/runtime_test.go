@@ -393,6 +393,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassGitHubFetchTransient, message: "channel commit date: fetch failed — the row will render without a timestamp"},
 		{class: ClassLabelProvisioningFailed, message: "issue stage labels: provisioning failed"},
 		{class: ClassAgentCLIRestartLoop, message: "agent CLI crashed or stuck on consent screen, restarting before kick"},
+		{class: ClassCopilotCLIHung, message: "copilot hung with no CLI prompt, running diagnostic"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 		{class: ClassCruxRuntimeUnavailable, message: "crux runtime unavailable: crux server unreachable at /run/hive/crux.sock"},
 	}
@@ -1109,6 +1110,8 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"channel commit date: fetch failed — the row will render without a timestamp":          ClassGitHubFetchTransient,
 		"issue stage labels: provisioning failed":                                              ClassLabelProvisioningFailed,
 		"agent CLI crashed or stuck on consent screen, restarting before kick":                 ClassAgentCLIRestartLoop,
+		"copilot hung with no CLI prompt, running diagnostic":                                  ClassCopilotCLIHung,
+		"diagnostic: timed out waiting for copilot error output, relaunching agent":            ClassCopilotCLIHung,
 		"shared-ci rerun forbidden: the App installation lacks Actions write permission":       ClassSharedCIRerunForbidden,
 		"issue-claims: GitHub side effect failed":                                              ClassIssueClaimEffectFailed,
 		"SHA poll: commit message fetch non-200":                                               ClassSHAPollCommitMsgUnavail,
