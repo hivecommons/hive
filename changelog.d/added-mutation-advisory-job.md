@@ -1,1 +1,0 @@
-- ci: advisory gremlins mutation-testing job comments surviving mutants on PRs that change Go code (#17349).
