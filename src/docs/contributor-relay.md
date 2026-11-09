@@ -959,6 +959,8 @@ The lists are positional: the first token belongs to the first hub, the second t
 
 The relay keeps a WebSocket and heartbeat for each subscribed hub, but shares one CLI/tmux session and works on only one task at a time. It rotates to another hub when the active hub has no assignable work. A task that is blocked on human action stays with its owning hub; the relay does not mix task state across hubs.
 
+Only the hub the relay is polling may hand it ordinary work; an assignment from any other hub is refused with `Hub is not the active polling slot`. A `fix-pr` task is the exception. It is rework on one of your own PRs, pushed by the hive that owns the PR, so the relay takes it from any subscribed hub, makes that hub its active one, and tells the other hives it is busy elsewhere (`busy_elsewhere_v1`). This also covers a fix the relay accepted and deferred behind a headless task: it starts when that task ends, wherever the polling slot is (projectbluefin/utah-packages#972). A hub that gets `Hub is not the active polling slot` for a fix from an older relay puts the fix back in the queue without counting a failed attempt, so such refusals never hand the PR to adoption.
+
 ### Named profiles instead of hand-edited lists (`hivectl hives`)
 
 Positional lists have no names, and one hand-edit that drops a field transposes every hub/token pair after it. `hivectl hives` ([#8097](https://github.com/hivecommons/hive/issues/8097)) saves the same set as named profiles in `~/.config/hive/profiles.yml` (mode 0600) and **generates** `contributor.env` from them, so the lists are aligned by construction and the relay keeps reading exactly the variables documented above:
