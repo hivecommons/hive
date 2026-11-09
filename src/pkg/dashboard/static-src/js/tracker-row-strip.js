@@ -205,6 +205,10 @@
     function stageTrackerStalledTrack(item) {
       const on = kind => { const a = item && item[kind + '_activity']; return a && item.head && a.head === item.head ? a.state || 'unknown' : 'unknown'; };
       if (typeof stageTrackerStageTrack === 'function' && stageTrackerStageTrack(item)) return '';
+      // A 085 PR a person acts on whose review already asked for that
+      // person (human_decision) is at Review: the ask came from the
+      // review, whatever CI has or has not reported (hivecommons/hive#17453).
+      if (on('review') === 'human_decision' && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) return 'review';
       if (on('ci') !== 'passing') return 'ci';
       return 'review';
     }
@@ -256,7 +260,12 @@
     function stageTrackerTrackRunning(item, kind) {
       const a = item && item[kind + '_activity'];
       if (!a || !item.head || a.head !== item.head) return false;
-      if (stageTrackerWaitingOnPerson(item)) return false;
+      // A 085 PR a person acts on (stageTrackerPersonActsOnPR) is parked,
+      // but checks genuinely running on its head are still motion: the CI
+      // track is its real stage and lights (hivecommons/hive#17453).
+      // Inferred motion (the ring count below) stays off for it.
+      const personActs = typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item);
+      if (stageTrackerWaitingOnPerson(item) && !personActs) return false;
       const moving = kind === 'ci' ? ['running', 'queued'] : ['reviewing', 'adjudicating', 'assigned'];
       if (a.active || moving.includes(a.state)) return true;
       // A CI ring that is not full is a running ring: checks counted on
@@ -374,7 +383,11 @@
       const queuedNote = queued && typeof stageTrackerQueuedTrackNote === 'function' ? stageTrackerQueuedTrackNote(item, kind) : '';
       // A demoted track is still: no pulse beside the lead.
       if (queued) active = false;
-      const cls = lit ? 'active' + (stalled ? ' ham-stalled' : '') : (finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : 'todo') + (queued ? ' ham-track-queued' : '');
+      // The lit track of a 085 PR a person acts on wears an amber marker
+      // (ham-human-gated): the chevron is the real stage, the gate is the
+      // needs-human pill beside it (hivecommons/hive#17453).
+      const humanGated = lit && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item);
+      const cls = lit ? 'active' + (stalled ? ' ham-stalled' : '') + (humanGated ? ' ham-human-gated' : '') : (finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : 'todo') + (queued ? ' ham-track-queued' : '');
       const approvalPending = kind === 'ci' && matches ? stageTrackerWorkflowApprovalPending(a) : 0;
       const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' ? 'Needs a person\'s decision' : '';
       const personIco = stalled && humanAction ? stageTrackerIcon('human', 'ham-ico ham-actor-ico', humanAction) : '';
@@ -432,6 +445,7 @@
         (matches && a.actor ? ' · actor ' + a.actor : '') +
         (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
         (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '') +
+        (humanGated && item.decision_needed && item.decision_needed.question && !String(tip).includes(String(item.decision_needed.question)) ? ' · needs a person: ' + String(item.decision_needed.question) : '') +
         (waitLead ? ' · hive is waiting on ' + waitLead.waitingOn + (waitLead.newHead && sha7 ? ' for new head ' + sha7 : '') : '') +
         (queuedNote ? ' · ' + queuedNote + ' behind ' + (lead === 'ci' ? 'CI' : 'Review') : '');
       const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
@@ -946,6 +960,15 @@
       const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
+      // A 085 PR a person acts on lights its real stage (CI / Review), so
+      // the chevron no longer says "Needs human decision": the ask rides
+      // here as the needs-decision pill (hivecommons/hive#17453). The server
+      // re-adds the modifier (stageTrackerApplyPersonActsOnPRPill); this
+      // covers a payload that predates it.
+      if (item.kind === 'pr' && mods.indexOf('needs-decision') < 0 && mods.indexOf('needs-human') < 0 && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) {
+        mods.push('needs-decision');
+        mods.sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
+      }
       if (!mods.length) return sentinel;
       // A regression the hive is working through yields the lead pill to any
       // other modifier and, alone, draws muted as "stage reset" rather than red.

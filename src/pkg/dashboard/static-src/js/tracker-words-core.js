@@ -60,14 +60,19 @@
     }
     // A PR parked at 085 because a person has to act ON THE PR (rerun CI,
     // approve workflow runs, resolve a permission, answer review findings
-    // or red checks still open on its head) is not queued, merging or
-    // merge-ready: it lights PR in progress, never Merge queue. Merge
-    // queue is only for rows actually queued / merging / merged, or a
-    // merge-ready PR (review approved, CI green on this head) parked on a
-    // merge decision. A bare 085 with no track evidence keeps the gate:
-    // the person decides there (hive#14821). Hive's own #16524 read
-    // "Awaiting human: rerun shared ci" under Merge queue with CI unknown
-    // and review findings open. Mirrors stageTrackerPersonActsOnPR in Go.
+    // or red / running checks still open on its head) is not queued,
+    // merging or merge-ready: it lights its REAL stage, CI / Review — the
+    // CI track while checks run or are red / unknown, the Review track
+    // while the verdict is pending — never Merge queue and never PR in
+    // progress; the gate is the needs-human pill (hivecommons/hive#17327,
+    // #17453). Merge queue is only for rows actually queued / merging /
+    // merged, or a merge-ready PR (review approved, CI green on this head)
+    // parked on a merge decision. A bare 085 with no track evidence keeps
+    // the gate: the person decides there (hive#14821). Hive's own #16524
+    // read "Awaiting human: rerun shared ci" under Merge queue with CI
+    // unknown and review findings open; #17442 read "Needs human ·
+    // decision" under PR in progress while CI ran. Mirrors
+    // stageTrackerPersonActsOnPR in Go.
     function stageTrackerPersonActsOnPR(item) {
       if (!item || (item.via_pr ? 'pr' : item.kind) !== 'pr' || Number(item.stage) !== STAGE_TRACKER_HUMAN_GATED) return false;
       if (item.merge_gate && item.merge_gate.state) return false;
