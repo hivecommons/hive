@@ -148,7 +148,7 @@ func TestStageTrackerSharedPRGroupWiring(t *testing.T) {
 		`ctx.shared = sharing ? Object.assign(stageTrackerSharedPRGroups(prepared, stages), { collapsed: _stageTrackerSharedCollapsed }) : null;`,
 		`const ordered = sharing ? stageTrackerSharedPRContiguous(prepared, stages, _stageTrackerSharedCollapsed) : prepared;`,
 		`if (foldedShared > 0) page.total += foldedShared;`,
-		`_stageTrackerSharedCollapsed = stageTrackerLoadSharedCollapsed();`,
+		`if (typeof stageTrackerLoadSharedCollapsed === 'function') _stageTrackerSharedCollapsed = stageTrackerLoadSharedCollapsed();`,
 		`function hamSharedToggle(key) {`,
 		`.ham-row.ham-shared-child {`, `.ham-row.ham-shared-head::before {`, `.ham-shared-toggle {`,
 	} {

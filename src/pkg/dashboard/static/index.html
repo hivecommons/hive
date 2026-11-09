@@ -1958,7 +1958,7 @@
     .ham-also-closes { color: var(--muted); }
     .ham-also-closes a { color: inherit; text-decoration: none; }
     .ham-also-closes a:hover { color: var(--text); text-decoration: underline; }
-    /* Shared-PR group (hivecommons/hive#17324 follow-up): the secondary
+    /* Shared-PR group (one PR closing several listed issues): the secondary
        issues a PR also closes sit right under their primary, indented, on
        a rail that runs from the primary's pill to the last child's elbow.
        The primary's "also closes" pill carries the fold caret. Tokens only. */
@@ -22137,7 +22137,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerLoadGrouping() {
       _stageTrackerGroup = stageTrackerGroupSetting();
       _stageTrackerCollapsed = stageTrackerLoadCollapsed();
-      _stageTrackerSharedCollapsed = stageTrackerLoadSharedCollapsed();
+      // Guarded: harnesses lift this function without the shared-PR fold.
+      if (typeof stageTrackerLoadSharedCollapsed === 'function') _stageTrackerSharedCollapsed = stageTrackerLoadSharedCollapsed();
     }
     function stageTrackerPrimaryRepo() { return (typeof window !== 'undefined' && window._primaryRepo) || ''; }
     function hamGroup(value) {

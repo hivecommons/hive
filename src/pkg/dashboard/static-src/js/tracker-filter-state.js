@@ -189,7 +189,8 @@
     function stageTrackerLoadGrouping() {
       _stageTrackerGroup = stageTrackerGroupSetting();
       _stageTrackerCollapsed = stageTrackerLoadCollapsed();
-      _stageTrackerSharedCollapsed = stageTrackerLoadSharedCollapsed();
+      // Guarded: harnesses lift this function without the shared-PR fold.
+      if (typeof stageTrackerLoadSharedCollapsed === 'function') _stageTrackerSharedCollapsed = stageTrackerLoadSharedCollapsed();
     }
     function stageTrackerPrimaryRepo() { return (typeof window !== 'undefined' && window._primaryRepo) || ''; }
     function hamGroup(value) {
