@@ -153,9 +153,6 @@ func mappingNode(node *yaml.Node) *yaml.Node {
 // or review head is built as a copy of the base, so it normally carries the
 // base's value already; the lookup also covers a base override set after the
 // copy was made), then agents.github_api_hourly_cap, then the default of 300.
-// The override used to be read only when the fleet key was set as well, so
-// agents.reviewer.github_api_hourly_cap: 600 on its own left the reviewer at
-// 300.
 func (c *Config) AgentGitHubAPIHourlyCap(agentName string) int {
 	if c == nil {
 		return DefaultAgentsGitHubAPIHourlyCap
