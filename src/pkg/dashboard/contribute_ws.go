@@ -993,6 +993,9 @@ type ContributeWSHub struct {
 	fixWaiters   int
 	fixFailures  map[string]string
 	fixAckGrace  time.Duration
+	// fixPRStateHook replaces fixPRStateOf's GitHub read of a queued PR's
+	// state (open, merged, closed); a test hook.
+	fixPRStateHook func(ctx context.Context, repo string, number int) (fixPRState, string, error)
 	// stageStore is the stage-label memory the fleet view reads "PRs returned
 	// to this contributor" from (hivecommons/hive#12502). Nil means the
 	// process-wide stagelabels.Shared(); tests inject an in-memory store.
@@ -4085,6 +4088,14 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 		// rejected: the relay is told to re-`ready` for fresh work.
 		if s.contributor.currentTask == nil {
 			if msg.TaskID == "" {
+				s.contributor.mu.Unlock()
+				return
+			}
+			// A fix-pr task handed out at a task boundary runs as the
+			// relay's primary task and reports progress like one, but it
+			// is tracked in fixTasks and holds no lease. It is not a resume
+			// claim: revoking it killed the fix mid-run.
+			if _, fix := s.contributor.fixTasks[msg.TaskID]; fix {
 				s.contributor.mu.Unlock()
 				return
 			}

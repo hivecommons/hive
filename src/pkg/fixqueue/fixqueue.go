@@ -400,17 +400,53 @@ func (s *Scheduler) Dispatch(user string, cap Capacity) *Dispatch {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.by[norm(user)]
-	if !ok || len(c.queue) == 0 || len(c.inflight) >= cap.Slots() {
+	if !ok || !s.dispatchableLocked(c, cap, false) {
 		return nil
 	}
-	if s.opts.Now().Before(c.queue[0].NotBefore) {
+	return s.pop(user, c, cap.Mode())
+}
+
+// dispatchableLocked holds the guards of Dispatch (boundary=false) and
+// DispatchAtBoundary (boundary=true).
+func (s *Scheduler) dispatchableLocked(c *contributor, cap Capacity, boundary bool) bool {
+	if len(c.queue) == 0 {
+		return false
+	}
+	if boundary {
+		return len(c.inflight) < cap.BoundarySlots()
+	}
+	if len(c.inflight) >= cap.Slots() || s.opts.Now().Before(c.queue[0].NotBefore) {
+		return false
+	}
+	return cap.Mode() != ModePreempt || (!c.preempted && !s.opts.Now().Before(c.focusUntil))
+}
+
+// Next returns the items the next Dispatch (boundary=false) or
+// DispatchAtBoundary (boundary=true) would hand out, without taking them:
+// the caller can check them before they leave the queue. nil when that call
+// would return nil.
+func (s *Scheduler) Next(user string, cap Capacity, boundary bool) []Item {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.by[norm(user)]
+	if !ok || !s.dispatchableLocked(c, cap, boundary) {
 		return nil
 	}
-	mode := cap.Mode()
-	if mode == ModePreempt && (c.preempted || s.opts.Now().Before(c.focusUntil)) {
-		return nil
+	head := c.queue[0]
+	out := []Item{head}
+	for _, q := range c.queue[1:] {
+		if coalesces(head, q) {
+			out = append(out, q)
+		}
 	}
-	return s.pop(user, c, mode)
+	return out
+}
+
+// coalesces reports whether queued item q joins head's fix task. A rerouted
+// PR (another author's) never shares a task with the owner's own PRs: its
+// prompt differs.
+func coalesces(head, q Item) bool {
+	return head.Cause.coalescable() && q.Cause == head.Cause && !head.Rerouted() && !q.Rerouted()
 }
 
 // DispatchAtBoundary hands user the next fix when their relay asked for its
@@ -421,7 +457,7 @@ func (s *Scheduler) DispatchAtBoundary(user string, cap Capacity) *Dispatch {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.by[norm(user)]
-	if !ok || len(c.queue) == 0 || len(c.inflight) >= cap.BoundarySlots() {
+	if !ok || !s.dispatchableLocked(c, cap, true) {
 		return nil
 	}
 	return s.pop(user, c, ModeBoundary)
@@ -433,9 +469,7 @@ func (s *Scheduler) pop(user string, c *contributor, mode Mode) *Dispatch {
 	d := &dispatch{mode: mode, items: map[string]Item{head.Key(): head}, at: s.opts.Now()}
 	rest := c.queue[:0:0]
 	for _, q := range c.queue[1:] {
-		// A rerouted PR (another author's) never shares a task with the
-		// owner's own PRs: its prompt differs.
-		if head.Cause.coalescable() && q.Cause == head.Cause && !head.Rerouted() && !q.Rerouted() {
+		if coalesces(head, q) {
 			d.items[q.Key()] = q
 			continue
 		}

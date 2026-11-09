@@ -418,3 +418,42 @@ func TestDispatchAt(t *testing.T) {
 		t.Fatalf("inflight=%+v", got)
 	}
 }
+
+// Next previews exactly what Dispatch / DispatchAtBoundary would hand out,
+// coalesced siblings included, and takes nothing; it is nil whenever they
+// would return nil.
+func TestNextPreviewsDispatchWithoutTakingIt(t *testing.T) {
+	c := newClock()
+	s := newSched(c)
+	cap := Capacity{Max: 1}
+	if got := s.Next("alice", cap, false); got != nil {
+		t.Fatalf("empty queue: Next = %v, want nil", keys(got))
+	}
+	shared := Cause{Check: "lint", Signature: "gofmt"}
+	a, b, other := red(1, 3*time.Hour, c), red(2, 2*time.Hour, c), red(3, time.Hour, c)
+	a.Cause, b.Cause = shared, shared
+	for _, it := range []Item{a, b, other} {
+		s.Enqueue("alice", it)
+	}
+	next := s.Next("alice", cap, false)
+	if !eq(keys(next), []int{1, 2}) {
+		t.Fatalf("Next = %v, want the head and its coalesced sibling [1 2]", keys(next))
+	}
+	if st := s.Status("alice", cap); st.Queued != 3 || st.InFlight != 0 {
+		t.Fatalf("Next must not take anything: %+v", st)
+	}
+	d := s.Dispatch("alice", cap)
+	if d == nil || !eq(keys(d.Items), keys(next)) {
+		t.Fatalf("Dispatch = %+v, want what Next previewed %v", d, keys(next))
+	}
+	// A preemption is in flight and capacity 1 is used: both previews are nil.
+	if got := s.Next("alice", cap, false); got != nil {
+		t.Fatalf("preemption in flight: Next = %v, want nil", keys(got))
+	}
+	if got := s.Next("alice", cap, true); got != nil {
+		t.Fatalf("boundary with the only slot busy: Next = %v, want nil", keys(got))
+	}
+	if got := s.Next("alice", Capacity{Max: 2}, true); !eq(keys(got), []int{3}) {
+		t.Fatalf("boundary with a free slot: Next = %v, want [3]", keys(got))
+	}
+}
