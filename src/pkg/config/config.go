@@ -211,7 +211,7 @@ type Config struct {
 	// AdminMCP holds the owner's switch for the HTTP admin MCP endpoint's
 	// write tools (Settings → Channels). Default empty → the
 	// HIVE_ADMIN_MCP_ENABLE_WRITES environment variable decides, as before.
-	AdminMCP AdminMCPConfig `yaml:"admin_mcp,omitempty" json:"admin_mcp,omitempty"`
+	AdminMCP AdminMCPConfig `yaml:"admin_mcp,omitempty" json:"admin_mcp,omitzero"`
 	// ConfigGuard is the `config:` block: how the config itself is loaded
 	// (hivecommons/hive#16438). See ConfigGuardConfig in gate_regression.go.
 	ConfigGuard ConfigGuardConfig `yaml:"config,omitempty" json:"config,omitempty"`
