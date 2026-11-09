@@ -17,6 +17,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -333,9 +334,19 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			Contents:     gh.Ptr("write"),
 			PullRequests: gh.Ptr("write"),
 			Metadata:     gh.Ptr("read"),
-			// Dependabot alerts: read lets the sec-check agent call
-			// dependabot/alerts. Optional like Workflows: the mint below
-			// retries without it when the installation has not accepted it.
+		}
+	case agentmode.SecCheckTier:
+		// The sec-check role refinement of the contributor tier (#17426,
+		// agentmode.TokenTierForRole): the contributor set plus Dependabot
+		// alerts read so the agent can call dependabot/alerts. Scoped to
+		// this one role so no other ISSUES_AND_PRS agent's token carries
+		// it. Optional like Workflows: the mint below retries without it
+		// when the installation has not accepted the App permission.
+		perms = &gh.InstallationPermissions{
+			Issues:              gh.Ptr("write"),
+			Contents:            gh.Ptr("write"),
+			PullRequests:        gh.Ptr("write"),
+			Metadata:            gh.Ptr("read"),
 			VulnerabilityAlerts: gh.Ptr("read"),
 		}
 	case "trusted", "merger":

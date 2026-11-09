@@ -9,6 +9,9 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 // These are the regression tests for #4677: agents could not open PRs
@@ -138,10 +141,47 @@ func TestScopedToken_WorkflowsFallbackWhenInstallationLacksGrant(t *testing.T) {
 	}
 }
 
-// The contributor tier requests Dependabot alerts read for the sec-check
-// agent, and degrades to a token without it when the installation has not
-// accepted the permission.
-func TestScopedToken_ContributorVulnerabilityAlertsWithFallback(t *testing.T) {
+// Only the sec-check role refinement of the contributor tier requests
+// Dependabot alerts read (#17426, least privilege): every other tier's token
+// must not carry it.
+func TestScopedToken_OnlySecCheckTierRequestsVulnerabilityAlerts(t *testing.T) {
+	var gotPerms map[string]string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		gotPerms = decodePermissions(t, r)
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":      "scoped-token",
+			"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	auth := newWorkflowsTestAuth(t, server.URL)
+
+	for _, tier := range []string{"advisor", "reviewer", "newcomer", "contributor", "trusted", "merger", crux.SharedUIDReadTokenTier} {
+		if _, err := auth.ScopedToken(context.Background(), tier); err != nil {
+			t.Fatalf("ScopedToken(%q): %v", tier, err)
+		}
+		if got, present := gotPerms["vulnerability_alerts"]; present {
+			t.Errorf("tier %q requests vulnerability_alerts=%q; only the sec-check tier may", tier, got)
+		}
+	}
+	if _, err := auth.ScopedToken(context.Background(), agentmode.SecCheckTier); err != nil {
+		t.Fatalf("ScopedToken(sec-check): %v", err)
+	}
+	if gotPerms["vulnerability_alerts"] != "read" {
+		t.Errorf("sec-check tier vulnerability_alerts = %q, want read", gotPerms["vulnerability_alerts"])
+	}
+	for _, perm := range []string{"contents", "issues", "pull_requests"} {
+		if gotPerms[perm] != "write" {
+			t.Errorf("sec-check tier %s = %q, want write (it is the contributor set plus alerts read)", perm, gotPerms[perm])
+		}
+	}
+}
+
+// The sec-check tier requests Dependabot alerts read and degrades to a token
+// without it when the installation has not accepted the permission.
+func TestScopedToken_SecCheckVulnerabilityAlertsWithFallback(t *testing.T) {
 	var requests []map[string]string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +201,7 @@ func TestScopedToken_ContributorVulnerabilityAlertsWithFallback(t *testing.T) {
 	defer server.Close()
 
 	auth := newWorkflowsTestAuth(t, server.URL)
-	if _, err := auth.ScopedToken(context.Background(), "contributor"); err != nil {
+	if _, err := auth.ScopedToken(context.Background(), agentmode.SecCheckTier); err != nil {
 		t.Fatalf("ScopedToken: %v", err)
 	}
 	if len(requests) != 2 {
@@ -181,7 +221,7 @@ func TestScopedToken_ContributorVulnerabilityAlertsWithFallback(t *testing.T) {
 // A repo-scope 422 (renamed / removed repository, #7869) is not a missing
 // permission grant: the contributor mint must fail on the first attempt so
 // the hub's one-mint-per-repo fall-through accounting still holds.
-func TestScopedToken_ContributorRepoScopeErrorDoesNotRetry(t *testing.T) {
+func TestScopedToken_SecCheckRepoScopeErrorDoesNotRetry(t *testing.T) {
 	var requests int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -193,7 +233,7 @@ func TestScopedToken_ContributorRepoScopeErrorDoesNotRetry(t *testing.T) {
 	defer server.Close()
 
 	auth := newWorkflowsTestAuth(t, server.URL)
-	if _, err := auth.ScopedTokenForRepos(context.Background(), "contributor", []string{"gone"}); err == nil {
+	if _, err := auth.ScopedTokenForRepos(context.Background(), agentmode.SecCheckTier, []string{"gone"}); err == nil {
 		t.Fatal("ScopedTokenForRepos: want the repo-scope error, got nil")
 	}
 	if requests != 1 {
