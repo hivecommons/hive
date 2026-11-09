@@ -80,6 +80,11 @@ func stageForkGuard(policy StageLabelPolicy, owner, repo string, number int, hea
 // read as the same guard, so it goes straight to the 085 park. A head with
 // any other red check keeps the author-facing route.
 //
+// With no guard on the record either (the PR's first red head, or a PR that
+// came to 072 for another reason first), the head's own check annotations
+// are classified once (foldUnclassifiedForkGuard), so a head red only on a
+// fork guard is parked before anyone asks its author to fix it.
+//
 // A guard recordStage already carried from the record's `fork-guard:` reason
 // (automerge_fork_guard_carry.go, ForkGuardCarried) is verified the same way:
 // it stands while the digest is unreadable or red only on the guard, and is
@@ -107,9 +112,6 @@ func (c *Engine) foldForkGuard(ctx context.Context, tracker *StageTracker, store
 	if ok && len(guard) == 0 {
 		guard = recordedForkGuard(rec, ok)
 	}
-	if !ok || len(guard) == 0 {
-		return
-	}
 	head := o.HeadSHA
 	red := false
 	for _, l := range list {
@@ -119,6 +121,12 @@ func (c *Engine) foldForkGuard(ctx context.Context, tracker *StageTracker, store
 		}
 	}
 	if !red {
+		return
+	}
+	if !ok || len(guard) == 0 {
+		// Nothing has classified this fork PR yet: read the head's own
+		// check annotations (projectbluefin/utah-packages#972).
+		c.foldUnclassifiedForkGuard(ctx, tracker, store, key, list, *o, now)
 		return
 	}
 	summary, known := c.headChecks(ctx, tracker, key, *o, now)

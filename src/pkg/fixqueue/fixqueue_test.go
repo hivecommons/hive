@@ -316,6 +316,39 @@ func TestRequeueFailedDispatchBacksOff(t *testing.T) {
 	}
 }
 
+// A dispatch the relay never started because it was not free (busy, or
+// polling another hive) goes back like a failed one but keeps its attempt
+// count (projectbluefin/utah-packages#972: one such refusal booked
+// attempts=1 toward the relay hand-off).
+func TestReturnKeepsAttempts(t *testing.T) {
+	c := newClock()
+	s := newSched(c)
+	s.Enqueue("ida", red(1, time.Hour, c))
+	d := s.Dispatch("ida", Capacity{Max: 1})
+	if d == nil {
+		t.Fatal("no dispatch")
+	}
+	if s.Return("ida", "nope", time.Minute) != nil || s.Return("zed", d.ID, time.Minute) != nil {
+		t.Fatal("unknown dispatch returned")
+	}
+	got := s.Return("ida", d.ID, time.Minute)
+	if len(got) != 1 || got[0].Attempts != 0 || !got[0].NotBefore.Equal(c.at.Add(time.Minute)) {
+		t.Fatalf("returned = %+v, want Attempts 0 and the backoff", got)
+	}
+	if st := s.Status("ida", Capacity{Max: 1}); st.Queued != 1 || st.InFlight != 0 {
+		t.Fatalf("status after return = %+v", st)
+	}
+	// A real failure after the refusal is still counted from zero.
+	c.advance(time.Minute)
+	d2 := s.Dispatch("ida", Capacity{Max: 1})
+	if d2 == nil {
+		t.Fatal("no retry after the backoff")
+	}
+	if got := s.Requeue("ida", d2.ID, time.Minute); len(got) != 1 || got[0].Attempts != 1 {
+		t.Fatalf("requeue after a return = %+v, want Attempts 1", got)
+	}
+}
+
 func TestCompleteDispatchAndPartialRemove(t *testing.T) {
 	c := newClock()
 	s := newSched(c)

@@ -1394,6 +1394,14 @@ A relay counts as covering the role only when all of these hold:
   tells the hub (`quota_hold_v1`, see
   [the contributor relay guide](contributor-relay.md#a-held-relay-tells-the-hub-quota_hold_v1));
   an older relay is still counted while held;
+- it is not busy on another hive. A relay subscribed to several hives works
+  one task at a time; while that task belongs to another hive it stays
+  connected here but asks this hive for nothing. A relay new enough to know
+  about this tells every other hive it is subscribed to (`busy_elsewhere_v1`, see
+  [the contributor relay guide](contributor-relay.md#a-relay-busy-on-another-hive-tells-the-hub-busy_elsewhere_v1))
+  and clears it when that task ends; its next request for work here clears it
+  too. A relay that this hive has also handed a task or a fix-pr task still
+  counts, and an older relay is still counted while busy elsewhere;
 - it is not in a failure-streak pause;
 - it has not used up its hourly or daily task allowance
   (`hub.tier_limits.<tier>.max_per_hour` / `max_per_day` for the

@@ -34,6 +34,15 @@ import (
 //     Observed on 2026-11-08: a relay held at 15% of its weekly window kept
 //     the scanner lane "covered" while nobody worked it. A relay too old to
 //     send quota_hold is still counted, as before;
+//   - it has not reported that it is busy on another hive (busy_elsewhere,
+//     capability busy_elsewhere_v1) while holding no task from this one. A
+//     relay subscribed to several hives works one task at a time; while that
+//     task belongs to another hive it heartbeats and keeps its role here but
+//     asks this hub for nothing. Observed on 2026-11-09: a relay set "Acting
+//     as: scanner" on one hive spent the next seven minutes on another hive's
+//     tasks and sent the first hive no ready. Its next ready here clears the
+//     report (see busyElsewhereLocked). A relay too old to send busy_elsewhere
+//     is still counted, as before;
 //   - it is not in a failure-streak pause: a relay whose runtime keeps dying
 //     is connected but is not doing the lane's work;
 //   - its identity has not used up its hourly or daily task allowance
@@ -60,7 +69,9 @@ import (
 // since. Standby, quota hold, a used-up allowance and a closed tier do not
 // wait for the task to end: each means the relay will not take the lane's NEXT
 // item, which is what the governor is deciding whether to withhold. (Holding
-// max_concurrent tasks is different: that relay is busy, and counts.) Whether
+// max_concurrent tasks is different: that relay is busy, and counts. So is a
+// relay busy on another hive that this hub has also handed a task or a fix-pr
+// task: it is working this lane too.) Whether
 // the relay is ALLOWED the role (trust tier, grants, the delegatable list) was
 // settled when the hub set c.role; nothing is re-derived here.
 func (h *ContributeWSHub) RoleCoverage(now time.Time) map[string]governor.ContributorCoverage {
@@ -84,7 +95,7 @@ func (h *ContributeWSHub) RoleCoverage(now time.Time) map[string]governor.Contri
 			login = strings.TrimSpace(c.profile.GitHubUsername)
 			tier = c.profile.TrustTier
 		}
-		notTakingWork := c.standbyDeclared || len(c.standby) > 0 || c.quotaHeld
+		notTakingWork := c.standbyDeclared || len(c.standby) > 0 || c.quotaHeld || c.busyElsewhereLocked()
 		queueEmpty := c.noWorkForWindowLocked(now)
 		c.mu.Unlock()
 		if role == "" || !fresh || login == "" || notTakingWork || queueEmpty {
@@ -188,6 +199,21 @@ func (c *ContributorConnection) noWorkForWindowLocked(now time.Time) bool {
 		return false
 	}
 	return now.Sub(c.lastIdleReasonSince) >= coverageNoWorkWindow
+}
+
+// busyElsewhereLocked reports whether c has said it is working another hive's
+// task (busy_elsewhere) and this hub has handed it no task of its own, primary
+// or fix-pr. The caller holds c.mu.
+//
+// There is no wall-clock expiry. The flag is per connection, so a socket close
+// or a relay restart drops it with the connection; the relay clears it when the
+// other task ends, and the relay's next ready here clears it too (handleReady).
+// A timeout would only re-count a relay that is still busy on a long task —
+// the bug this check exists to stop — while a flag left set by mistake errs
+// the safe way: the resident agent works the lane, as it would without
+// contributor_first.
+func (c *ContributorConnection) busyElsewhereLocked() bool {
+	return c.busyElsewhere && c.currentTask == nil && len(c.fixTasks) == 0
 }
 
 // contributionsSuspended mirrors the task-selection gate in

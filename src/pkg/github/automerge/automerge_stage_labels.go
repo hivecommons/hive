@@ -270,6 +270,10 @@ type StageTracker struct {
 	// last written and the head it was for (stageOwnerHolds). Unlike obs it
 	// survives drain: two sweeps reconcile alternate passes from one tracker.
 	owners map[string]stageOwner
+	// forkGuards remembers, per key, a fork head's red checks classified
+	// from their annotations (foldUnclassifiedForkGuard); created on first
+	// use.
+	forkGuards map[string]forkGuardRead
 }
 
 // stageOwner is the lane that set a PR's current stage, for which head, and

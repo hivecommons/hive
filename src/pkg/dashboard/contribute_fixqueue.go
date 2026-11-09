@@ -697,6 +697,20 @@ func (h *ContributeWSHub) failFixTask(c *ContributorConnection, msg WSMessage) b
 	}
 	user := c.profile.GitHubUsername
 	sched := h.fixQueue()
+	if relayDidNotTakeFix(msg) {
+		// The relay never started the fix (it was polling another hive):
+		// nothing about the PR failed, so no attempt is booked toward
+		// fixTaskMaxAttempts.
+		returned := sched.Return(user, msg.TaskID, fixTaskRetryBackoff)
+		for _, it := range returned {
+			h.logger.Info("[contribute-ws] fix-pr task not taken by the relay; requeued without counting an attempt", "username", user, "task", msg.TaskID, "pr", it.Key(), "attempts", it.Attempts, "retry_after", it.NotBefore, "reason", reason)
+		}
+		if len(returned) == 0 {
+			h.logger.Info("[contribute-ws] fix-pr task failed", "username", user, "task", msg.TaskID, "reason", reason)
+		}
+		h.pulseFixFailed(msg.TaskID, reason)
+		return true
+	}
 	requeued := sched.Requeue(user, msg.TaskID, fixTaskRetryBackoff)
 	if len(requeued) == 0 {
 		h.logger.Info("[contribute-ws] fix-pr task failed", "username", user, "task", msg.TaskID, "reason", reason)
@@ -712,6 +726,20 @@ func (h *ContributeWSHub) failFixTask(c *ContributorConnection, msg WSMessage) b
 	}
 	h.pulseFixFailed(msg.TaskID, reason)
 	return true
+}
+
+// relayRefusedNotActiveSlot is the task_failed reason a relay sends for an
+// assignment from a hive it is not polling (bin/contributor-relay.js, the
+// task_assign handler). Relays from before projectbluefin/utah-packages#972
+// send it for a fix-pr too.
+const relayRefusedNotActiveSlot = "Hub is not the active polling slot"
+
+// relayDidNotTakeFix reports a fix-pr task_failed that says the relay never
+// started the task because it was polling another hive, not that the fix
+// was tried. On projectbluefin/utah-packages#972 one such refusal booked
+// attempts=1, a third of the way to handing the PR to adoption.
+func relayDidNotTakeFix(msg WSMessage) bool {
+	return strings.EqualFold(strings.TrimSpace(msg.Reason), relayRefusedNotActiveSlot)
 }
 
 // relayFailureReason is the relay's own words for a task_failed.

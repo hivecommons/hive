@@ -959,6 +959,8 @@ The lists are positional: the first token belongs to the first hub, the second t
 
 The relay keeps a WebSocket and heartbeat for each subscribed hub, but shares one CLI/tmux session and works on only one task at a time. It rotates to another hub when the active hub has no assignable work. A task that is blocked on human action stays with its owning hub; the relay does not mix task state across hubs.
 
+Only the hub the relay is polling may hand it ordinary work; an assignment from any other hub is refused with `Hub is not the active polling slot`. A `fix-pr` task is the exception. It is rework on one of your own PRs, pushed by the hive that owns the PR, so the relay takes it from any subscribed hub, makes that hub its active one, and tells the other hives it is busy elsewhere (`busy_elsewhere_v1`). This also covers a fix the relay accepted and deferred behind a headless task: it starts when that task ends, wherever the polling slot is (projectbluefin/utah-packages#972). A hub that gets `Hub is not the active polling slot` for a fix from an older relay puts the fix back in the queue without counting a failed attempt, so such refusals never hand the PR to adoption.
+
 ### Named profiles instead of hand-edited lists (`hivectl hives`)
 
 Positional lists have no names, and one hand-edit that drops a field transposes every hub/token pair after it. `hivectl hives` ([#8097](https://github.com/hivecommons/hive/issues/8097)) saves the same set as named profiles in `~/.config/hive/profiles.yml` (mode 0600) and **generates** `contributor.env` from them, so the lists are aligned by construction and the relay keeps reading exactly the variables documented above:
@@ -2023,6 +2025,46 @@ about it:
   what it was before.
 
 The expired-CLI-login hold is not reported this way yet.
+
+### A relay busy on another hive tells the hub (`busy_elsewhere_v1`)
+
+A relay subscribed to several hives works one task at a time. While that task
+belongs to hive B, hive A still sees a connected relay that answers heartbeats,
+holds its "Acting as" role and has been refused nothing. Before this, a relay
+acting as a role on A kept counting as
+[contributor-first](agent-configuration.md#contributor-first-lanes-contributor_first)
+cover there for as long as it worked B's tasks, so A's resident agent was held
+back while nobody worked A's lane.
+
+Every other hub that advertises `busy_elsewhere_v1` in
+`auth_ok.server_capabilities` now hears about it:
+
+```jsonc
+{ "type": "busy_elsewhere", "seq": 61, "state": "busy", "since": "2026-11-09T14:25:03Z" }
+{ "type": "busy_elsewhere", "seq": 62, "state": "clear" }
+```
+
+- The relay sends `busy` when it starts a task from another hive and `clear`
+  when that task completes, fails or is revoked. It sends each transition once
+  per connection, and restates a running task right after `auth_ok`, because a
+  new connection starts out not busy on the hub. The hive that owns the task
+  is never sent the frame.
+- The frame says only when the other task started. It never names the other
+  hive, repository or issue.
+- The hub records it on the connection and uses it only for contributor-first
+  coverage. It changes no lease, assignment or standby state. A relay this hub
+  has also handed a task or a fix-pr task still counts.
+- There is no timer on the hub. The flag goes away with the connection (a
+  socket close or a relay restart), and the relay's next `ready` to this hub
+  clears it, since a relay asks for work only when it holds none. A timer
+  would start counting a relay that is still busy on a long task again; a flag
+  left set by mistake only means the resident agent works the lane, which is
+  what happens without `contributor_first`.
+- A hub that does not advertise the token never receives the frame. A relay
+  that never sends it is read as not busy elsewhere. Either way the behaviour
+  is exactly what it was before.
+
+The local PR-review cycle belongs to no hive and is not reported.
 
 ### Provider adapter sources
 
