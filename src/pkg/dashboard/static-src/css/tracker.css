@@ -137,6 +137,10 @@
     .ham-head-cols .ham-seg.ham-head-tools { align-items: flex-start; }
     .ham-head-cols .ham-seg.ham-head-tools:has(> .ham-badges:empty) { display: none; }
     .ham-head-cols .ham-badges > :is(button, a) { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    /* The short needs-human popover pill stays one line: breaking "needs
+       human decision" mid-pill grows a nested-PR row by a text line and a
+       landscape phone loses its second row (hivecommons/hive#17453). */
+    .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-needs-decision { white-space: nowrap; }
     .ham-head-cols .ham-badge { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
     .ham-head-main { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: var(--sp-3); min-width: 0; }
     .ham-head-main > .ham-badge { flex: 0 1 auto; }
