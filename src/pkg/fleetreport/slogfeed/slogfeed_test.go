@@ -527,6 +527,37 @@ func TestMergeCIRefusalLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestAgentsMdInjectionCapLogsWithoutFleetReport(t *testing.T) {
+	now := time.Date(2026, 11, 8, 20, 0, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	for i := 0; i < 6; i++ {
+		logger.Warn("agentsmd: AGENTS.md exceeded the injection cap; sections dropped whole",
+			"root", "/data/agentsmd-cache/projectbluefin/utah-packages", "cap_bytes", 16384,
+			"whole_file", false,
+			"omitted_sections", []string{"Conventions worth not rediscovering", "Sibling repository", "Canonical sources"},
+			"omitted_bytes", 5031)
+		now = now.Add(time.Minute)
+	}
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("AGENTS.md injection cap produced fleet evidence: %+v", ev)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 6 {
+		t.Fatalf("wrapped handler saw %d records, want 6: %s", n, out.String())
+	}
+	if !strings.Contains(out.String(), `"omitted_bytes":5031`) {
+		t.Fatalf("cap warning lost its diagnostics: %s", out.String())
+	}
+	const failure = "agentsmd: parse failed, skipping injection"
+	for i := 0; i < 5; i++ {
+		logger.Warn(failure)
+	}
+	if ev := tr.Evidence(); len(ev) != 1 || ev[0].Class != fleetreport.ClassUnclassifiedRepeated || ev[0].Message != failure || ev[0].Count != 5 {
+		t.Fatalf("parse failure should still produce fleet evidence: %+v", ev)
+	}
+}
+
 func TestHandlerSkipsContributorTierLimits(t *testing.T) {
 	for _, msg := range []string{
 		"[contribute-ws] refusing task: concurrency limit reached",
