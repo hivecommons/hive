@@ -183,6 +183,12 @@ func TestAgentGitHubRefusedSinceRecordsCapAndReserveRefusals(t *testing.T) {
 	if !p.AgentGitHubRefusedSince("reviewer", now) {
 		t.Fatal("a refusal at the session start must count")
 	}
+	// The planner waits for the cap window to free before asking again, so
+	// the refusal carries its Retry-After: here the first of the three
+	// requests (all at now) leaves the sliding hour at now+1h.
+	if clears, refused := p.AgentGitHubRefusal("reviewer", dispatched); !refused || !clears.Equal(now.Add(agentGitHubBudgetWindow)) {
+		t.Fatalf("AgentGitHubRefusal = %v, %v, want refused until %v", clears, refused, now.Add(agentGitHubBudgetWindow))
+	}
 	if p.AgentGitHubRefusedSince("reviewer", now.Add(time.Second)) {
 		t.Fatal("a session asked after the refusal reads as refused")
 	}
@@ -197,11 +203,17 @@ func TestAgentGitHubRefusedSinceRecordsCapAndReserveRefusals(t *testing.T) {
 	if !p.AgentGitHubRefusedSince("scanner", dispatched) {
 		t.Fatal("the reserve-floor refusal was not recorded")
 	}
+	if clears, _ := p.AgentGitHubRefusal("scanner", dispatched); !clears.Equal(now.Add(10 * time.Minute)) {
+		t.Fatalf("reserve refusal clears at %v, want the bucket reset %v", clears, now.Add(10*time.Minute))
+	}
 	if p.AgentGitHubRefusedSince(internalCallerName, dispatched) {
 		t.Fatal("the hive's own calls are never refused or recorded")
 	}
 	var nilProxy *GitHubProxy
 	if nilProxy.AgentGitHubRefusedSince("reviewer", dispatched) {
 		t.Fatal("a nil proxy reads as refused")
+	}
+	if _, refused := nilProxy.AgentGitHubRefusal("reviewer", dispatched); refused {
+		t.Fatal("a nil proxy's AgentGitHubRefusal reads as refused")
 	}
 }

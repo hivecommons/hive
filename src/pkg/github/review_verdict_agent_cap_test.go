@@ -26,16 +26,19 @@ type capRefusalRecord struct {
 	asked []time.Time
 }
 
-func (r *capRefusalRecord) refusedSince(agent string, since time.Time) bool {
+func (r *capRefusalRecord) refusedSince(agent string, since time.Time) (time.Time, bool) {
 	r.asked = append(r.asked, since)
-	return agent == r.agent && !r.at.Before(since)
+	if agent != r.agent || r.at.Before(since) {
+		return time.Time{}, false
+	}
+	return r.at.Add(10 * time.Minute), true
 }
 
-func withAgentGitHubRefusals(t *testing.T, fn func(agent string, since time.Time) bool) {
+func withAgentGitHubRefusals(t *testing.T, fn review.AgentGitHubRefusal) {
 	t.Helper()
-	old := agentGitHubRefusedSince()
-	SetAgentGitHubRefusedSinceFunc(fn)
-	t.Cleanup(func() { SetAgentGitHubRefusedSinceFunc(old) })
+	old := AgentGitHubRefusalFunc()
+	SetAgentGitHubRefusalFunc(fn)
+	t.Cleanup(func() { SetAgentGitHubRefusalFunc(old) })
 }
 
 func capStoppedReport(t *testing.T, repo string, num int, head string, perspectives []review.Perspective, verdict string) string {
@@ -163,6 +166,105 @@ func TestRecordReviewVerdictKeepsRequiresHumanWithoutARefusalInTheSession(t *tes
 			}, dir)
 			if len(recorded) != len(capStoppedPerspectives) {
 				t.Fatalf("recorded %d of %d verdicts: %+v", len(recorded), len(capStoppedPerspectives), recorded)
+			}
+		})
+	}
+}
+
+// One cap-stopped session is fine; the gap was what came after. The relay
+// set each requires_human aside, the row expired, and every expiry spent one
+// of review.max_redispatch's three tries, so a reviewer capped for about
+// 2h15m on projectbluefin/utah-packages#959's head still parked it as
+// review-dispatch-exhausted and asked a person. Four capped sessions in a row
+// now leave the head unheld and asked again; the same four sessions set
+// aside on wording alone, with no proxy refusal behind them, still exhaust
+// after three.
+func TestCapStoppedSessionsInARowDoNotExhaustTheRedispatchBudget(t *testing.T) {
+	const (
+		repo = "projectbluefin/utah-packages"
+		num  = 959
+		head = "d09267d5f3b0c2a1e4d6b8a9c7e5f3a1b2c4d6e8"
+	)
+	pr := review.PullRequest{Repo: repo, Number: num, Title: "firmware sources", Author: "hanthor", HeadSHA: head}
+	cases := []struct {
+		name      string
+		summaries map[review.Perspective]string
+		refused   bool
+		wantHold  int // the session after which the head is held; 0 = never within the run
+	}{
+		{"proxy refused every session", capStoppedSummaries959, true, 0},
+		{"set aside on wording, no proxy refusal", rateLimitedSummaries1116, false, review.DefaultMaxRedispatch},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Start far enough back that every session in the run is in
+			// the past, as the relay's lookback expects.
+			dispatched := time.Now().UTC().Add(-6 * time.Hour)
+			capStoppedDispatch(t, repo, num, head, dispatched)
+			var lastRefusal time.Time
+			refusal := func(agent string, since time.Time) (time.Time, bool) {
+				if !tc.refused || agent != "reviewer" || lastRefusal.Before(since) {
+					return time.Time{}, false
+				}
+				return lastRefusal.Add(10 * time.Minute), true
+			}
+			withAgentGitHubRefusals(t, refusal)
+			c := &Client{logger: testLogger()}
+			dir := t.TempDir()
+			for session := 1; session <= review.DefaultMaxRedispatch+1; session++ {
+				// The proxy refuses the session ten minutes in, and the
+				// session reports requires_human in its own words.
+				lastRefusal = dispatched.Add(10 * time.Minute)
+				var elems []string
+				for _, p := range capStoppedPerspectives {
+					elems = append(elems, verdictJSONWithSummary(t, repo, num, p, "requires_human", head, tc.summaries[p]))
+				}
+				recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{
+					Repo: repo, Number: num, Agent: "reviewer", Event: ReviewEventRecordVerdict,
+					Report: "[" + strings.Join(elems, ",") + "]",
+				}, dir)
+				if len(recorded) != 0 {
+					t.Fatalf("session %d: recorded %d verdicts from a set-aside session", session, len(recorded))
+				}
+
+				state, err := review.LoadDispatchState("")
+				if err != nil {
+					t.Fatalf("load dispatch state: %v", err)
+				}
+				artifact, err := review.Collect(dir, review.AggregateOptions{})
+				if err != nil {
+					t.Fatalf("Collect: %v", err)
+				}
+				now := dispatched.Add(review.DefaultPendingReviewTTL + time.Minute)
+				plan := review.PlanDispatch([]review.PullRequest{pr}, artifact, state, review.DispatchOptions{
+					RequireApproval:      true,
+					FanOut:               true,
+					CombinedPerspectives: true,
+					MaxParallelReviews:   5,
+					Agents:               []review.AgentCapability{{Name: "reviewer", Enabled: true, UsesKick: true, Role: "reviewer"}},
+					AgentGitHubRefusal:   AgentGitHubRefusalFunc(),
+					Now:                  now,
+				})
+				held := len(plan.Exhausted) > 0
+				if tc.wantHold == session {
+					if !held || len(plan.NewHuman) != 1 {
+						t.Fatalf("session %d: want the review-dispatch-exhausted hold, got exhausted=%+v new=%+v", session, plan.Exhausted, plan.NewHuman)
+					}
+					return
+				}
+				if held || len(plan.NewHuman) != 0 || len(plan.State.Human) != 0 {
+					t.Fatalf("session %d: a person was asked: exhausted=%+v human=%+v", session, plan.Exhausted, plan.State.Human)
+				}
+				if len(plan.ReviewKicks) != 1 {
+					t.Fatalf("session %d: review kicks = %d, want the head asked again", session, len(plan.ReviewKicks))
+				}
+				if err := review.WriteDispatchState("", plan.State); err != nil {
+					t.Fatalf("write dispatch state: %v", err)
+				}
+				dispatched = now
+			}
+			if tc.wantHold != 0 {
+				t.Fatalf("never reached the hold expected after session %d", tc.wantHold)
 			}
 		})
 	}

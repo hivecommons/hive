@@ -15,27 +15,32 @@ import (
 const agentCapSessionLookback = time.Hour
 
 var (
-	agentGitHubRefusedSinceMu sync.RWMutex
-	agentGitHubRefusedSinceFn func(agent string, since time.Time) bool
+	agentGitHubRefusalMu sync.RWMutex
+	agentGitHubRefusalFn review.AgentGitHubRefusal
 )
 
-// SetAgentGitHubRefusedSinceFunc installs (or, with nil, removes) the
+// SetAgentGitHubRefusalFunc installs (or, with nil, removes) the
 // process-wide answer to "did the hive's GitHub proxy refuse this agent a
-// request at or after since?", because the agent reached
+// request at or after since, and when did it say the agent could read
+// again?", for refusals because the agent reached
 // agents.github_api_hourly_cap or the shared bucket fell below
 // github.agent_reserve_floor. The proxy is one per process, built after the
-// GitHub client, so main.go installs its AgentGitHubRefusedSince once the
-// proxy exists. Unset, the review relay sets nothing aside on that ground.
-func SetAgentGitHubRefusedSinceFunc(fn func(agent string, since time.Time) bool) {
-	agentGitHubRefusedSinceMu.Lock()
-	agentGitHubRefusedSinceFn = fn
-	agentGitHubRefusedSinceMu.Unlock()
+// GitHub client, so main.go installs its AgentGitHubRefusal once the proxy
+// exists. Unset, the review relay sets nothing aside on that ground and the
+// planner counts every expiry against review.max_redispatch.
+func SetAgentGitHubRefusalFunc(fn review.AgentGitHubRefusal) {
+	agentGitHubRefusalMu.Lock()
+	agentGitHubRefusalFn = fn
+	agentGitHubRefusalMu.Unlock()
 }
 
-func agentGitHubRefusedSince() func(agent string, since time.Time) bool {
-	agentGitHubRefusedSinceMu.RLock()
-	defer agentGitHubRefusedSinceMu.RUnlock()
-	return agentGitHubRefusedSinceFn
+// AgentGitHubRefusalFunc is the installed proxy record, or nil. The review
+// planner passes it as review.DispatchOptions.AgentGitHubRefusal, so an
+// expiry the cap caused does not spend review.max_redispatch.
+func AgentGitHubRefusalFunc() review.AgentGitHubRefusal {
+	agentGitHubRefusalMu.RLock()
+	defer agentGitHubRefusalMu.RUnlock()
+	return agentGitHubRefusalFn
 }
 
 // capStoppedReview reports whether report is a requires_human from a review
@@ -53,8 +58,8 @@ func agentGitHubRefusedSince() func(agent string, since time.Time) bool {
 // session before this one; the cost of that is one more review, never a
 // verdict nobody read for.
 func (c *Client) capStoppedReview(req ReviewRequest, report review.PerspectiveReport, now time.Time) (string, bool) {
-	refusedSince := agentGitHubRefusedSince()
-	if refusedSince == nil {
+	refusal := AgentGitHubRefusalFunc()
+	if refusal == nil {
 		return "", false
 	}
 	agent := strings.TrimSpace(req.Agent)
@@ -69,7 +74,7 @@ func (c *Client) capStoppedReview(req ReviewRequest, report review.PerspectiveRe
 	if since.IsZero() || since.After(now) {
 		since = now.Add(-agentCapSessionLookback)
 	}
-	if !refusedSince(agent, since) {
+	if _, refused := refusal(agent, since); !refused {
 		return "", false
 	}
 	return reason, true
