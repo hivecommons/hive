@@ -382,7 +382,9 @@ func (c *Client) WaitReady(ctx context.Context, interval time.Duration) error {
 			return nil
 		} else if IsUnauthorized(err) || IsUnavailable(err) {
 			return err
-		} else {
+		} else if ctx.Err() == nil || lastErr == nil {
+			// A probe cut short by ctx ending is not a health answer; keep
+			// the last real one so the deadline error still names it.
 			lastErr = err
 		}
 		select {
