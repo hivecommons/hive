@@ -1,0 +1,1 @@
+- Dashboard: the page no longer drifts away from the section you are reading when other panels grow or shrink. A ResizeObserver-driven scroll stabilizer now pins the topmost visible section (or agent card) across every repaint path, not just the main status render.

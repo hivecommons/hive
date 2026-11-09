@@ -238,13 +238,16 @@
     const STAGE_TRACKER_TRAIN_STATE_QUEUED = 'queued-behind';
     const STAGE_TRACKER_TRAIN_STATE_REBASING = 'rebasing';
     const STAGE_TRACKER_TRAIN_STATE_EXHAUSTED = 'rebase-exhausted';
-    // The merge-queue icon: a side-view railcar on two wheels (14px,
-    // currentColor) — the owner read the old ⛓ as a scribble. One path for
-    // the Merge queue column header, the train header chip and the queue
-    // popover, so the picture means the same thing everywhere.
-    const STAGE_TRACKER_TRAIN_ICON_PATH = '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>';
+    // The merge-queue icon: a "merge" traffic sign (US W4-1) — an up arrow
+    // with a second lane curving in from the lower right and joining the
+    // shaft mid-height (14px, currentColor). The owner read the old ⛓ as a
+    // scribble and the railcar that replaced it as a tram front
+    // (hivecommons/hive#17459). One path for the Merge queue column header,
+    // the 080 chevron, the train header chip and the queue popover, so the
+    // picture means the same thing everywhere.
+    const STAGE_TRACKER_TRAIN_ICON_PATH = '<path stroke-width="2" d="M6 14.5V3M3 6l3-3 3 3M13 14.5c0-3.8-3.4-4.6-7-6.5"/>';
     const STAGE_TRACKER_TRAIN_ICON_TITLE = 'Merge queue';
-    // Pure: the inline-SVG train with its "Merge queue" hover.
+    // Pure: the inline-SVG merge sign with its "Merge queue" hover.
     function stageTrackerTrainIconHtml(cls, title) {
       const label = title || STAGE_TRACKER_TRAIN_ICON_TITLE;
       return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
