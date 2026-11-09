@@ -889,6 +889,13 @@ func IsGitHubUpstreamUnavailable(s string) bool {
 // exact-message exclusions matched in the function body below.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
+	// A repository's AGENTS.md outgrowing the injection cap is operator
+	// content enforcement working as designed (#12129), re-logged on every
+	// kick for that repo (#17318). The WARN stays in local logs; "agentsmd:
+	// parse failed, skipping injection" remains reportable.
+	if strings.TrimSpace(m) == "agentsmd: agents.md exceeded the injection cap; sections dropped whole" {
+		return true
+	}
 	// The bounded rebase loop hands an unresolved conflict to a person after
 	// its attempt cap. Repeated polls of that same handoff are expected, not
 	// a runtime defect (#16510). Keep other rebase failures reportable.
