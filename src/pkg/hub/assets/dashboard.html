@@ -3886,10 +3886,17 @@
        egress to the forge is not. */
     function forgeUnreachableSummary(h) {
       if (!h || !h.forgeUnreachableLabel) return '';
-      return '<span title="The spoke cannot reach its GitHub host from the pod; the hive itself is healthy" style="display:inline-block;margin-left:var(--sp-3);padding:var(--sp-0) var(--sp-3);' +
+      return amberNudgePill('The spoke cannot reach its GitHub host from the pod; the hive itself is healthy', h.forgeUnreachableLabel);
+    }
+
+    /* amberNudgePill is the shared "worth noticing, not a row failure" pill used
+       by the stale-advisory and forge-unreachable summaries. */
+    function amberNudgePill(title, label) {
+      var col = '#d29922';
+      return '<span title="' + esc(title) + '" style="display:inline-block;margin-left:var(--sp-3);padding:var(--sp-0) var(--sp-3);' +
         'border-radius:var(--r-pill);font-size:var(--fs-2xs);font-weight:600;line-height:1.5;cursor:help;white-space:nowrap;' +
-        'color:#d29922;background:rgba(210,153,34,0.12);border:1px solid rgba(210,153,34,0.35)">' +
-        esc(h.forgeUnreachableLabel) + '</span>';
+        'color:' + col + ';background:rgba(210,153,34,0.12);border:1px solid rgba(210,153,34,0.35)">' +
+        esc(label) + '</span>';
     }
 
     /* advisoryStaleSummary renders a small "stale advisory" pill next to the
@@ -3902,12 +3909,7 @@
        digest is an operator nudge, not a hard row failure. */
     function advisoryStaleSummary(h) {
       if (!h || !h.advisoryStale) return '';
-      var col = '#d29922';
-      var title = h.advisoryStaleReason || 'Advisory digest has gone stale';
-      return '<span title="' + esc(title) + '" style="display:inline-block;margin-left:var(--sp-3);padding:var(--sp-0) var(--sp-3);' +
-        'border-radius:var(--r-pill);font-size:var(--fs-2xs);font-weight:600;line-height:1.5;cursor:help;white-space:nowrap;' +
-        'color:' + col + ';background:rgba(210,153,34,0.12);border:1px solid rgba(210,153,34,0.35)">' +
-        'stale advisory</span>';
+      return amberNudgePill(h.advisoryStaleReason || 'Advisory digest has gone stale', 'stale advisory');
     }
 
     /* advisoryFindingsSummary renders the finding count from this hive's last
