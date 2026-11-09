@@ -9995,7 +9995,16 @@ function handleMessage(data, hub) {
       // A standby assignment is pushed by the hub that acknowledged this relay's
       // standby; the relay is not polling, so that hub is never the active slot.
       const standbyPush = !!msg.standby_lane && hub.standbyAcked === true;
-      if (!currentTask && !standbyPush && hub !== hubs[activeHubIndex]) {
+      // A fix-pr task is rework on this contributor's own PR, and it is
+      // pushed by the hive that owns the PR whichever hive the relay was
+      // polling. Refusing it from a non-active hub threw away a fix the relay
+      // had already accepted and deferred (projectbluefin/utah-packages#972,
+      // 2026-11-09: "Hub is not the active polling slot" the moment the
+      // headless primary ended). It is taken from any subscribed hub; the
+      // ordinary path below makes that hub the active slot and tells every
+      // other hive the relay is busy elsewhere.
+      const fixPush = msg.kind === FIX_PR_KIND;
+      if (!currentTask && !standbyPush && !fixPush && hub !== hubs[activeHubIndex]) {
         console.log(`Rejecting task ${taskDisplay(msg)} from ${hub.url} — hub is not the active polling slot`);
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hub is not the active polling slot' });
         break;

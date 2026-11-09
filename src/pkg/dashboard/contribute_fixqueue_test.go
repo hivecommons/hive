@@ -336,3 +336,46 @@ func TestFixQueueInstantRelayFailureIsNotDelivered(t *testing.T) {
 		t.Fatalf("leftover state: owners=%d waiters=%d failures=%d", owned, waiters, failures)
 	}
 }
+
+// projectbluefin/utah-packages#972 (2026-11-09 14:45:39Z): a relay polling
+// another hive refused the fix-pr with "Hub is not the active polling slot"
+// and the hub booked attempts=1 toward fixTaskMaxAttempts. The relay never
+// started the fix, so the refusal is requeued without counting: any number
+// of such refusals never hands the PR to adoption, and a real failure after
+// them still counts from zero.
+func TestFixQueuePollingSlotRefusalIsNotAnAttempt(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	hub.fixAckGrace = time.Millisecond
+	c := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), time.Now())
+	s := &wsSession{h: hub, contributor: c}
+	got := captureFixDispatch(hub)
+	hub.Nudge(context.Background(), fixNudge("r", 1, "build"))
+	if len(*got) != 1 {
+		t.Fatalf("dispatches = %d, want the nudge's interrupt", len(*got))
+	}
+
+	// The interrupt is refused, then every task-boundary retry is too.
+	taskID := (*got)[0].TaskID
+	for i := 0; i <= fixTaskMaxAttempts; i++ {
+		if i > 0 {
+			msg := hub.selectFixTask(c)
+			if msg == nil || msg.Kind != taskKindFixPR {
+				t.Fatalf("refusal %d: the queued fix must still be served, got %+v", i, msg)
+			}
+			taskID = msg.TaskID
+		}
+		s.handleTaskFailed(WSMessage{Type: "task_failed", TaskID: taskID, Reason: "Hub is not the active polling slot"})
+		if q := hub.FixQueueItems("alice"); len(q) != 1 || q[0].Attempts != 0 {
+			t.Fatalf("after refusal %d: queued = %+v, want the PR back with 0 attempts", i, q)
+		}
+	}
+
+	msg := hub.selectFixTask(c)
+	if msg == nil || msg.Kind != taskKindFixPR {
+		t.Fatalf("the fix left the queue after refusals only: %+v", msg)
+	}
+	s.handleTaskFailed(WSMessage{Type: "task_failed", TaskID: msg.TaskID, Message: "codex: session busy"})
+	if q := hub.FixQueueItems("alice"); len(q) != 1 || q[0].Attempts != 1 {
+		t.Fatalf("a real failure after refusals: queued = %+v, want 1 attempt", q)
+	}
+}
