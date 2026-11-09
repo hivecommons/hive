@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v6.4.3)
+
+### Fixed
+
+- **A contributor acting as an agent role now gets the assigned repository's `AGENTS.md` and the issue's relevant knowledge.** The role guidance from the previous fix took `AGENTS.md` and skills from the role's primary repository, so a contributor acting as scanner on `projectbluefin/common#1614` got the primary repository's instructions instead of `common`'s. It also left out the `# Relevant Knowledge` section entirely. The guidance is now built for the one assigned task (`Scheduler.BuildAgentGuidanceForTask`). Knowledge is primed from that issue's title and labels, and `AGENTS.md` and skills come from its repository. If the task names no repository, the primary repository is used, as before. Priming for a contributor records no kick summary or primed facts for the resident agent. Resident kicks are byte-identical. Standby dispatch gets the same guidance. See [What a contributor receives in a role](src/docs/contributor-trust-and-roles.md#what-a-contributor-receives-in-a-role).
+
 ## 2026-11-09 (v6.4.2)
 
 ### Fixed
