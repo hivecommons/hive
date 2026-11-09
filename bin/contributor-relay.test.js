@@ -17339,6 +17339,85 @@ test('#16463 standby acknowledgement does not outlive the connection it was gran
 });
 
 // ---------------------------------------------------------------------------
+// busy_elsewhere_v1: a relay working one hive's task tells its OTHER hives, so
+// they stop counting it as contributor-first cover. Observed on 2026-11-09: a
+// relay set "Acting as: scanner" on projectbluefin worked hivecommons tasks
+// from 14:25Z to 14:32Z and sent projectbluefin no ready.
+// ---------------------------------------------------------------------------
+
+function busyElsewhereFrames(sent) {
+  return sent.filter(m => m.type === 'busy_elsewhere');
+}
+
+function busyAuth(relay, hub, capabilities = ['busy_elsewhere_v1']) {
+  relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', server_capabilities: capabilities }), hub);
+}
+
+// Rotate the polling slot to hive B (as a task_unavailable from A would) and
+// take B's task through the real assignment handler.
+function takeTaskFromHubB(relay, hubs, taskId) {
+  relay.sendReadyForNextTask('unavailable');
+  relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: taskId, task_gen: 1, kind: 'issue', repo: 'org/b', number: 7, title: 'work on hive B' }), hubs[1]);
+  assert.strictEqual(relay.getCurrentTask() && relay.getCurrentTask().task_id, taskId, 'precondition: the relay took hive B\'s task');
+}
+
+test('busy_elsewhere_v1: another hive\'s task is reported to the other hive, restated on reconnect, and cleared when it finishes', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; const warn = console.warn;
+  console.log = () => {}; console.warn = () => {};
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    busyAuth(relay, hubs[0]); busyAuth(relay, hubs[1]);
+    assert.deepStrictEqual(busyElsewhereFrames([...sentA, ...sentB]), [], 'an idle relay is busy nowhere');
+
+    takeTaskFromHubB(relay, hubs, 'b-1');
+    const frames = busyElsewhereFrames(sentA);
+    assert.deepStrictEqual(frames.map(m => m.state), ['busy'], 'hive A must hear about hive B\'s task once');
+    assert.deepStrictEqual(Object.keys(frames[0]).sort(), ['seq', 'since', 'state', 'type'],
+      'the frame names no hive, repository or task: one hive learns nothing about another\'s work');
+    assert.ok(!Number.isNaN(Date.parse(frames[0].since)), `since must be a timestamp: ${frames[0].since}`);
+    assert.deepStrictEqual(busyElsewhereFrames(sentB), [], 'the hive that owns the task is never told it is busy elsewhere');
+
+    // A reconnect to hive A is a new connection that knows nothing: restate.
+    busyAuth(relay, hubs[0]);
+    assert.deepStrictEqual(busyElsewhereFrames(sentA).map(m => m.state), ['busy', 'busy']);
+
+    relay.finishCurrentTask({ completionSignal: 'verdict', summary: 'done', tmuxLines: [], prURL: null, noWork: null });
+    assert.deepStrictEqual(busyElsewhereFrames(sentA).map(m => m.state), ['busy', 'busy', 'clear'],
+      'finishing hive B\'s task must clear the report on hive A');
+    assert.deepStrictEqual(busyElsewhereFrames(sentB), []);
+  } finally { console.log = log; console.warn = warn; relay.setCurrentTask(null); teardown(relay); }
+});
+
+test('busy_elsewhere_v1: a revoked task clears the report', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; const warn = console.warn;
+  console.log = () => {}; console.warn = () => {};
+  try {
+    const { hubs, sentA } = attachHubSinks(relay);
+    busyAuth(relay, hubs[0]); busyAuth(relay, hubs[1]);
+    takeTaskFromHubB(relay, hubs, 'b-2');
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 'b-2', reason: 'operator stop' }), hubs[1]);
+    assert.strictEqual(relay.getCurrentTask(), null, 'precondition: the revoke ended the task');
+    assert.deepStrictEqual(busyElsewhereFrames(sentA).map(m => m.state), ['busy', 'clear']);
+  } finally { console.log = log; console.warn = warn; relay.setCurrentTask(null); teardown(relay); }
+});
+
+test('busy_elsewhere_v1: a hive that does not advertise the token never sees the frame', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; const warn = console.warn;
+  console.log = () => {}; console.warn = () => {};
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    busyAuth(relay, hubs[0], ['quota_hold_v1']); busyAuth(relay, hubs[1]);
+    takeTaskFromHubB(relay, hubs, 'b-3');
+    busyAuth(relay, hubs[0], ['quota_hold_v1']);
+    relay.finishCurrentTask({ completionSignal: 'verdict', summary: 'done', tmuxLines: [], prURL: null, noWork: null });
+    assert.deepStrictEqual(busyElsewhereFrames([...sentA, ...sentB]), [], 'an old hub must see exactly today\'s traffic');
+  } finally { console.log = log; console.warn = warn; relay.setCurrentTask(null); teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
 // quota_hold_v1: a held relay tells the hub, so it stops counting as
 // contributor-first cover. Observed on 2026-11-08: a relay acting as scanner
 // was held by its quota guard (weekly window 15% left, reserve 20%) while the

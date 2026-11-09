@@ -614,3 +614,104 @@ func TestRoleCoverage_FixTaskDispatchEndsNoWorkRun(t *testing.T) {
 		t.Fatalf("relay after its fix settled: RoleCoverage = %+v, want %+v", got, scannerAlice)
 	}
 }
+
+// A relay subscribed to several hives works one task at a time. Observed on
+// 2026-11-09: a relay set "Acting as: scanner" on projectbluefin spent
+// 14:25Z-14:32Z on hivecommons tasks and sent projectbluefin no ready. To that
+// hub it was a connected, role-holding relay with a fresh heartbeat that had
+// never been refused anything, which is exactly what the first assertion
+// below counts as cover. A relay that never sends busy_elsewhere (an older
+// one) is still read that way; one that reports the other hive's task covers
+// nothing until it reports the task finished.
+func TestRoleCoverage_BusyElsewhereRelayDoesNotCover(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	now := time.Now()
+	relay := coverageConn("Danathar", "scanner", now)
+	hub.mu.Lock()
+	hub.connections["relay"] = relay
+	hub.mu.Unlock()
+	session := &wsSession{h: hub, contributor: relay}
+
+	want := map[string]governor.ContributorCoverage{"scanner": {Contributors: []string{"Danathar"}}}
+	if got := hub.RoleCoverage(now); !reflect.DeepEqual(got, want) {
+		t.Fatalf("a role-holding relay that has sent no ready and no report: RoleCoverage = %+v, want %+v (today's reading)", got, want)
+	}
+
+	session.handleBusyElsewhere(WSMessage{Type: "busy_elsewhere", State: "busy", Since: now.UTC().Format(time.RFC3339)})
+	if got := hub.RoleCoverage(now); got != nil {
+		t.Fatalf("relay busy on another hive counted as cover: RoleCoverage = %+v, want nil", got)
+	}
+
+	session.handleBusyElsewhere(WSMessage{Type: "busy_elsewhere", State: "clear"})
+	if got := hub.RoleCoverage(now); !reflect.DeepEqual(got, want) {
+		t.Fatalf("after the other hive's task ended: RoleCoverage = %+v, want %+v", got, want)
+	}
+}
+
+// A relay busy on another hive that this hub has ALSO handed work (a primary
+// task, or a fix-pr task) is working this lane too, and counts.
+func TestRoleCoverage_BusyElsewhereWithThisHubsTaskStillCovers(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	now := time.Now()
+	relay := coverageConn("Danathar", "scanner", now)
+	hub.mu.Lock()
+	hub.connections["relay"] = relay
+	hub.mu.Unlock()
+	(&wsSession{h: hub, contributor: relay}).handleBusyElsewhere(WSMessage{Type: "busy_elsewhere", State: "busy"})
+	want := map[string]governor.ContributorCoverage{"scanner": {Contributors: []string{"Danathar"}}}
+
+	relay.mu.Lock()
+	relay.currentTask = &WSTaskAssign{TaskID: "t-1", Repo: "myorg/repo1", Number: 7}
+	relay.mu.Unlock()
+	if got := hub.RoleCoverage(now); !reflect.DeepEqual(got, want) {
+		t.Fatalf("busy elsewhere but holding this hub's task: RoleCoverage = %+v, want %+v", got, want)
+	}
+
+	relay.mu.Lock()
+	relay.currentTask = nil
+	relay.fixTasks = map[string]*WSTaskAssign{"fix-1": {TaskID: "fix-1", Repo: "myorg/repo1", Number: 8}}
+	relay.mu.Unlock()
+	if got := hub.RoleCoverage(now); !reflect.DeepEqual(got, want) {
+		t.Fatalf("busy elsewhere but holding this hub's fix-pr task: RoleCoverage = %+v, want %+v", got, want)
+	}
+
+	relay.mu.Lock()
+	relay.fixTasks = nil
+	relay.mu.Unlock()
+	if got := hub.RoleCoverage(now); got != nil {
+		t.Fatalf("busy elsewhere with nothing from this hub: RoleCoverage = %+v, want nil", got)
+	}
+}
+
+// The hub keeps no wall-clock expiry on busy_elsewhere; instead the relay's
+// next ready here clears it, because a relay asks only when it holds no task.
+// So a lost "clear" frame cannot keep a relay that is back asking this hub out
+// of coverage. Driven through the real ready handler.
+func TestRoleCoverage_ReadyClearsBusyElsewhere(t *testing.T) {
+	hub, _, relay, sess, read := noWorkRelay(t)
+	sess.handleBusyElsewhere(WSMessage{Type: "busy_elsewhere", State: "busy"})
+	if got := coverageAt(hub, relay, time.Now()); got != nil {
+		t.Fatalf("setup: busy-elsewhere relay must not cover, got %+v", got)
+	}
+
+	if f := sendReady(t, sess, read); f["type"] != "task_unavailable" {
+		t.Fatalf("setup: expected task_unavailable on an empty queue, got %v", f)
+	}
+	relay.mu.Lock()
+	busy := relay.busyElsewhere
+	relay.mu.Unlock()
+	if busy {
+		t.Fatal("a ready must clear busy_elsewhere")
+	}
+	if got := coverageAt(hub, relay, idleSince(relay).Add(30*time.Second)); !reflect.DeepEqual(got, scannerAlice) {
+		t.Fatalf("relay asking this hub again: RoleCoverage = %+v, want %+v", got, scannerAlice)
+	}
+}
+
+// The relay sends busy_elsewhere only to a hub that advertises the token, so
+// the hub must advertise it or the fix never reaches the wire.
+func TestServerCapabilities_AdvertisesBusyElsewhere(t *testing.T) {
+	if !testContainsString(serverCapabilities(), capBusyElsewhereV1) {
+		t.Fatalf("serverCapabilities() = %v, missing %q", serverCapabilities(), capBusyElsewhereV1)
+	}
+}

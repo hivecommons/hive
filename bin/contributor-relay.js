@@ -1776,6 +1776,10 @@ function makeHub(url, token, disabled = false, contributorId = '', repoScope = n
     // (quota_hold, capability quota_hold_v1). Reset on every auth_ok: a fresh
     // connection on the hub starts out not held.
     quotaHoldSent: false,
+    // What this hub's CURRENT connection was last told about this relay
+    // working ANOTHER hive's task (busy_elsewhere, capability
+    // busy_elsewhere_v1). Reset on every auth_ok, like quotaHoldSent.
+    busyElsewhereSent: false,
     // Set by handleTLSHostMismatch when the dialed host is not in the served
     // certificate; parks the hub (no reconnect loop) until contributor.env
     // changes. relocationAttempted bounds the hub-registry re-resolution to
@@ -1916,6 +1920,9 @@ function writeRelayStatus() {
   // Every quota hold transition already ends here (it changes relayReadiness),
   // so this is the one place the hub is told — see reportQuotaHold.
   reportQuotaHoldToHubs();
+  // Every currentTask transition (assign, complete, fail, revoke) ends here
+  // too, so the same holds for busy_elsewhere — see reportBusyElsewhere.
+  reportBusyElsewhereToHubs();
 }
 
 // ── Quota hold report (quota_hold_v1) ────────────────────────────────────────
@@ -1948,6 +1955,39 @@ function reportQuotaHold(hub) {
 
 function reportQuotaHoldToHubs() {
   for (const hub of hubs) reportQuotaHold(hub);
+}
+
+// ── Busy on another hive (busy_elsewhere_v1) ─────────────────────────────────
+// A relay subscribed to several hives works one primary task at a time. While
+// that task belongs to hive B, hive A still sees a connected relay that
+// heartbeats, holds its "Acting as" role and has been refused nothing, so A's
+// contributor-first gate (RoleCoverage) counted it as covering A's lane and
+// withheld A's resident agent while nobody worked that lane. Tell every OTHER
+// hub that advertises busy_elsewhere_v1 when such a task starts and when it
+// ends; a hub without the token never sees the frame, and keeps today's
+// reading. The frame carries only when the other task started — never which
+// hive, repository or issue — so one hive learns nothing about another's work.
+// The local review cycle belongs to no hub and is not reported.
+function busyElsewhereFor(hub) {
+  if (!currentTask || isLocalOnlyTask(currentTask)) return false;
+  const owner = currentTask._hub;
+  return !!owner && owner !== hub;
+}
+
+function reportBusyElsewhere(hub) {
+  if (!hub || !hub.authenticated || hub.disabled) return;
+  if (!Array.isArray(hub.serverCapabilities) || !hub.serverCapabilities.includes('busy_elsewhere_v1')) return;
+  const busy = busyElsewhereFor(hub);
+  if (busy === hub.busyElsewhereSent) return;
+  if (!hub.ws || hub.ws.readyState !== WebSocket.OPEN) return;
+  hub.busyElsewhereSent = busy;
+  sendTo(hub, busy
+    ? { type: 'busy_elsewhere', seq: nextSeq(), state: 'busy', since: currentTaskStartedAt || new Date().toISOString() }
+    : { type: 'busy_elsewhere', seq: nextSeq(), state: 'clear' });
+}
+
+function reportBusyElsewhereToHubs() {
+  for (const hub of hubs) reportBusyElsewhere(hub);
 }
 
 let progressInterval = null;
@@ -9810,6 +9850,10 @@ function handleMessage(data, hub) {
       // before anything else so contributor-first cover is right from the start.
       hub.quotaHoldSent = false;
       reportQuotaHold(hub);
+      // Same for busy_elsewhere: a new connection starts out not busy on the
+      // hub, so restate another hive's running task to it.
+      hub.busyElsewhereSent = false;
+      reportBusyElsewhere(hub);
       declareStandby(hub);
       hub.scopeSent = false;
       negotiateRepoScope(hub);

@@ -122,6 +122,15 @@ type ContributorConnection struct {
 	// when every lane it declared was rejected (a suspended standby key), so
 	// RoleCoverage must not count it as covering its role either way.
 	standbyDeclared bool
+	// busyElsewhere is the relay's own report (busy_elsewhere, capability
+	// busy_elsewhere_v1) that it is working a task from ANOTHER hive it is
+	// subscribed to. Such a relay heartbeats and keeps its role here but asks
+	// this hub for nothing until that task ends, so RoleCoverage skips it
+	// unless this hub has handed it work too. Set and cleared by the relay;
+	// also cleared by the relay's next `ready` here (a relay asks only when it
+	// holds no task), and it dies with the connection. A relay that never sends
+	// busy_elsewhere leaves it false, which is today's reading.
+	busyElsewhere bool
 	// quotaHeld is the relay's own report (quota_hold, capability
 	// quota_hold_v1) that its contributor quota guard or provider quota hold
 	// is withholding `ready`: the socket stays up and heartbeats, but the
@@ -559,6 +568,7 @@ type WSMessage struct {
 	Permissions                  []string                    `json:"permissions,omitempty"`
 	Reason                       string                      `json:"reason,omitempty"`
 	State                        string                      `json:"state,omitempty"`
+	Since                        string                      `json:"since,omitempty"`
 	ContributeNeedsDecisionLabel *string                     `json:"contribute_needs_decision_label,omitempty"`
 	OperatorMessage              *ContributorOperatorMessage `json:"operator_message,omitempty"`
 	// FailureKind is the OPTIONAL, client-declared cause of a task_failed
@@ -2595,6 +2605,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			s.handleStandbyRelease(msg)
 		case "quota_hold":
 			s.handleQuotaHold(msg)
+		case "busy_elsewhere":
+			s.handleBusyElsewhere(msg)
 		case "knowledge_state":
 			s.handleKnowledgeState(msg)
 		case "pong":
@@ -3294,6 +3306,43 @@ func (s *wsSession) handleQuotaHold(msg WSMessage) {
 	}
 }
 
+// handleBusyElsewhere records the relay's report that it has started or
+// finished working a task from another hive it is subscribed to (capability
+// busy_elsewhere_v1). The relay sends State "busy" when such a task starts and
+// "clear" when it ends; any other value reads as clear, which is what a hub
+// that never heard the message assumes. The flag only feeds RoleCoverage: it
+// changes no lease, assignment or standby state here.
+func (s *wsSession) handleBusyElsewhere(msg WSMessage) {
+	if s.contributor == nil {
+		return
+	}
+	busy := strings.EqualFold(strings.TrimSpace(msg.State), "busy")
+	s.contributor.mu.Lock()
+	changed := s.contributor.busyElsewhere != busy
+	s.contributor.busyElsewhere = busy
+	s.contributor.mu.Unlock()
+	if changed {
+		s.logBusyElsewhereChange(busy, msg.Since, "relay")
+	}
+}
+
+// logBusyElsewhereChange is the one log line for a busy_elsewhere transition.
+// since is client-supplied, so it is bounded like quota_hold's reason; source
+// names who cleared it ("relay" for the relay's own frame, "ready" when the
+// relay asked this hub for work).
+func (s *wsSession) logBusyElsewhereChange(busy bool, since, source string) {
+	since = strings.TrimSpace(since)
+	if len(since) > 40 {
+		since = since[:40]
+	}
+	s.h.logger.Info("[contribute-ws] contributor relay busy on another hive changed",
+		"id", s.contributor.connID,
+		"username", contributorUsername(s.contributor),
+		"busy_elsewhere", busy,
+		"since", since,
+		"source", source)
+}
+
 func normalizeStandbyLanes(lanes []string) []string {
 	if len(lanes) == 0 {
 		return []string{"all"}
@@ -3688,6 +3737,12 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 	// #12805: the scope version this ready was sent under; selection only
 	// proceeds when it matches the acknowledged scope (0 = not stated).
 	s.contributor.readyScopeVersion = msg.ScopeVersion
+	// A relay asks for work only when it holds no task, so a ready also says
+	// it is no longer busy on another hive (busy_elsewhere_v1). Clearing here
+	// means a lost "clear" frame cannot keep the relay out of coverage once it
+	// is back asking this hub.
+	wasBusyElsewhere := s.contributor.busyElsewhere
+	s.contributor.busyElsewhere = false
 	abandoned := s.contributor.currentTask
 	// #7317: captured under the same lock as currentTask so the run record
 	// below can report the task's real wall-clock duration. On the session
@@ -3707,6 +3762,9 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 	s.contributor.credentialDelivered = false
 	s.contributor.pendingExternalTask = nil
 	s.contributor.mu.Unlock()
+	if wasBusyElsewhere {
+		s.logBusyElsewhereChange(false, "", "ready")
+	}
 	if abandoned != nil {
 		// C4: the relay explicitly gave up this task, so revoke its
 		// server-issued lease — a later task_progress for it must not resurrect
