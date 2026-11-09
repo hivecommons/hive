@@ -453,6 +453,59 @@ func TestWatchdogObserveCarriesStartedAt(t *testing.T) {
 	if !obs.StartedAt.Equal(started) {
 		t.Fatalf("StartedAt = %v, want %v — without it boot grace cannot apply", obs.StartedAt, started)
 	}
+	if !obs.LastLaunchAt.IsZero() {
+		t.Fatalf("LastLaunchAt = %v, want zero before any CLI launch is recorded", obs.LastLaunchAt)
+	}
+}
+
+// TestWatchdogObserveCarriesLastLaunchAt pins the manager half of #17320: a
+// mid-life CLI relaunch must reach the classifier as LastLaunchAt, distinct
+// from the agent's original StartedAt, or the relaunch gets no boot grace and
+// its login-chrome flash pages an operator.
+func TestWatchdogObserveCarriesLastLaunchAt(t *testing.T) {
+	m, _ := newWatchdogTestManager(t, map[string]string{"a1": "copilot"})
+	started := time.Date(2026, 8, 23, 11, 30, 0, 0, time.UTC)
+	relaunched := started.Add(22 * time.Hour)
+	m.agents["a1"].StartedAt = &started
+	m.agents["a1"].lastCLILaunchAt = relaunched
+
+	obs, err := WatchdogFleet{M: m}.Observe("a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !obs.StartedAt.Equal(started) {
+		t.Fatalf("StartedAt = %v, want %v — a relaunch must not rewrite the agent's start", obs.StartedAt, started)
+	}
+	if !obs.LastLaunchAt.Equal(relaunched) {
+		t.Fatalf("LastLaunchAt = %v, want %v — without it a relaunch gets no boot grace", obs.LastLaunchAt, relaunched)
+	}
+}
+
+// TestMarkCLILaunchedLockedStampsEveryLaunchField guards the single write
+// point launchInTmux uses: StartedAt, the launch generation stale startup-kick
+// goroutines check, and the relaunch timestamp the watchdog dates boot grace
+// from must all move together.
+func TestMarkCLILaunchedLockedStampsEveryLaunchField(t *testing.T) {
+	m, _ := newWatchdogTestManager(t, map[string]string{"a1": "copilot"})
+	agent := m.agents["a1"]
+	first := time.Date(2026, 8, 23, 11, 30, 0, 0, time.UTC)
+	second := first.Add(22 * time.Hour)
+
+	m.mu.Lock()
+	gen := agent.launchGen
+	m.markCLILaunchedLocked(agent, first)
+	m.markCLILaunchedLocked(agent, second)
+	m.mu.Unlock()
+
+	if agent.StartedAt == nil || !agent.StartedAt.Equal(second) {
+		t.Fatalf("StartedAt = %v, want %v", agent.StartedAt, second)
+	}
+	if agent.launchGen != gen+2 {
+		t.Fatalf("launchGen = %d, want %d — one increment per launch", agent.launchGen, gen+2)
+	}
+	if !agent.lastCLILaunchAt.Equal(second) {
+		t.Fatalf("lastCLILaunchAt = %v, want %v", agent.lastCLILaunchAt, second)
+	}
 }
 
 func TestWatchdogFleetPauseRestartDelegation(t *testing.T) {
