@@ -17,7 +17,7 @@ import (
 // agent/reviewer kind/cleanup approved-direction reviewer review backlog
 // style …"), so review notes from other repos outranked anything about
 // utah-packages. The query keeps what the issue is about.
-func TestExtractKeywords_DropsHiveRoutingAndNamesTheRepo(t *testing.T) {
+func TestExtractKeywords_DropsHiveRouting(t *testing.T) {
 	issue := github.Issue{
 		Repo:   "projectbluefin/utah-packages",
 		Number: 879,
