@@ -2353,6 +2353,18 @@ func generationAccepted(clientGen, currentGen uint64, everFenced bool) bool {
 	return clientGen == currentGen
 }
 
+// relayLocalTaskIDPrefix is the task id prefix the contributor relay gives the
+// PR-review task it builds for itself (bin/contributor-relay.js,
+// LOCAL_TASK_ID_PREFIX; kubestellar/hive#5715). The hub never assigns it: hub
+// task ids start "ct-", "fix-" or "run-". Keep the two spellings identical.
+const relayLocalTaskIDPrefix = "pr-review-"
+
+// isRelayLocalTaskID reports whether taskID names a relay-local PR-review task.
+// It only picks a log level; it grants and refuses nothing.
+func isRelayLocalTaskID(taskID string) bool {
+	return strings.HasPrefix(taskID, relayLocalTaskIDPrefix)
+}
+
 func (h *ContributeWSHub) SetAssignedAgentRole(contributorID, assignedRole string, grants []string) {
 	if h == nil || contributorID == "" {
 		return
@@ -4867,7 +4879,17 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// after the handler had already cleared currentTask and the
 			// credential state, which made the bypass look like a no-op in the
 			// logs.
-			h.logger.Warn("[contribute-ws] task_complete for unassigned task ignored (assignment left intact)",
+			//
+			// A relay's own PR-review cycle is the expected case, not a
+			// warning: the relay builds that task locally, sends its
+			// task_complete on purpose, and relies on this branch ignoring it
+			// (bin/contributor-relay.js, LOCAL_TASK_ID_PREFIX). It stays at
+			// debug so it is still traceable; only the log level changes.
+			logUnassigned := h.logger.Warn
+			if isRelayLocalTaskID(msg.TaskID) {
+				logUnassigned = h.logger.Debug
+			}
+			logUnassigned("[contribute-ws] task_complete for unassigned task ignored (assignment left intact)",
 				"username", s.contributor.profile.GitHubUsername,
 				"task", msg.TaskID,
 			)
