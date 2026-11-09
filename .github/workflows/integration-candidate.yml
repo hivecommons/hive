@@ -552,7 +552,7 @@ jobs:
         set -euo pipefail
         JUST_VERSION=1.58.0
         JUST_SHA256=4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
-        curl -fsSL -o /tmp/just.tgz "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+        curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o /tmp/just.tgz "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
         echo "${JUST_SHA256}  /tmp/just.tgz" | sha256sum -c -
         tar -xzf /tmp/just.tgz -C /tmp just
         sudo install -m 0755 /tmp/just /usr/local/bin/just

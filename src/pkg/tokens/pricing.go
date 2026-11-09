@@ -40,7 +40,7 @@ import (
 //   - DeepSeek:            https://api-docs.deepseek.com/quick_start/pricing
 //   - Kimi:                https://platform.kimi.ai/docs/pricing/chat
 //   - Meta Llama / Gemini: representative OpenRouter/provider list prices
-const priceTableDate = "2026-11-02"
+const priceTableDate = "2026-11-09"
 
 // PriceTableDate returns the date the price table was last reconciled with
 // published list prices, so the UI can show "list prices as of <date>".
@@ -148,8 +148,8 @@ var modelPrices = map[string]ModelPrice{
 	"gpt-daybreak-red-latest":  {InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 1.00, CacheWritePerMTok: 12.50},
 
 	// ---- DeepSeek (common LiteLLM/OpenRouter routing target) ----
-	// deepseek-chat / V3: $0.27 in / $1.10 out; cache hit $0.07.
-	"deepseek-chat": {InputPerMTok: 0.2574, OutputPerMTok: 1.0287, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.2574},
+	// deepseek-chat: $0.32 in / $0.89 out (OpenRouter 2026-11-09); V3: $0.27 in / $1.10 out; cache hit $0.07.
+	"deepseek-chat": {InputPerMTok: 0.32, OutputPerMTok: 0.89, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.32},
 	"deepseek-v3":   {InputPerMTok: 0.27, OutputPerMTok: 1.10, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.27},
 	// deepseek-reasoner / R1: $0.55 in / $2.19 out; cache hit $0.14.
 	"deepseek-reasoner": {InputPerMTok: 0.55, OutputPerMTok: 2.19, CacheReadPerMTok: 0.14, CacheWritePerMTok: 0.55},
@@ -157,7 +157,7 @@ var modelPrices = map[string]ModelPrice{
 
 	// ---- Meta Llama 3.3 70B (representative hosted list price) ----
 	"llama-3-3-70b":               {InputPerMTok: 0.59, OutputPerMTok: 0.79, CacheReadPerMTok: 0.59, CacheWritePerMTok: 0.59},
-	"llama-3-3-70b-instruct":      {InputPerMTok: 0.10, OutputPerMTok: 0.32, CacheReadPerMTok: 0.10, CacheWritePerMTok: 0.10},
+	"llama-3-3-70b-instruct":      {InputPerMTok: 0.59, OutputPerMTok: 0.79, CacheReadPerMTok: 0.295, CacheWritePerMTok: 0.59},
 	"meta-llama-3-3-70b-instruct": {InputPerMTok: 0.59, OutputPerMTok: 0.79, CacheReadPerMTok: 0.59, CacheWritePerMTok: 0.59},
 
 	// ---- Google Gemini Flash / Pro (representative list prices) ----
@@ -191,7 +191,7 @@ var modelPrices = map[string]ModelPrice{
 	// a deterministic price entry instead of relying on the coarse fallback.
 	"grok-4-5":                 {InputPerMTok: 2.00, OutputPerMTok: 6.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 2.00},
 	"kimi-k3":                  {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.00},
-	"kimi-k2-7-code":           {InputPerMTok: 0.95, OutputPerMTok: 4.00, CacheReadPerMTok: 0.19, CacheWritePerMTok: 0.95},
+	"kimi-k2-7-code":           {InputPerMTok: 0.60, OutputPerMTok: 3.50, CacheReadPerMTok: 0.16, CacheWritePerMTok: 0.60},
 	"mai-code-1-flash-picker":  {InputPerMTok: 0.25, OutputPerMTok: 2.00, CacheReadPerMTok: 0.025, CacheWritePerMTok: 0.25},
 	"claude-opus-4-6-thinking": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
 	"gpt-oss-120b-medium":      {InputPerMTok: 0.15, OutputPerMTok: 0.60, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.15},
