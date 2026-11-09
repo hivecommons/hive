@@ -265,7 +265,8 @@
       "ProbeIntervalS": 45,
       "Liveness": {
         "StuckOverlayAfter": "10m",
-        "ShellPromptAfter": "3m"
+        "ShellPromptAfter": "3m",
+        "LoginStreak": 0
       },
       "Restart": {
         "Backoff": [
