@@ -524,7 +524,10 @@ if env -i \
 fi
 echo "contributor-agent Pi selection tests passed"
 
-rm -f "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md" "${HOME_DIR}/agent.pi-context.md"
+# The container links into the directory the CLI is launched from (the
+# HIVE_AGENT_CWD default under the temp HOME), not into $HOME itself.
+CONTAINER_AGENT_CWD="${HOME_DIR}/.local/state/hive/agent-cwd"
+rm -f "${CONTAINER_AGENT_CWD}/AGENTS.md" "${CONTAINER_AGENT_CWD}/CLAUDE.md" "${CONTAINER_AGENT_CWD}/agent.pi-context.md"
 PI_AGENT_MD="${HOME_DIR}/agent.md"
 cat >"$PI_AGENT_MD" <<'EOF'
 # Agent Knowledge
@@ -563,36 +566,36 @@ env -i \
   AGENT_BACKEND=pi \
   bash "${ROOT_DIR}/bin/contributor-agent.sh"
 
-if [[ "$(readlink "${HOME_DIR}/AGENTS.md")" != "${HOME_DIR}/agent.pi-context.md" ]]; then
+if [[ "$(readlink "${CONTAINER_AGENT_CWD}/AGENTS.md")" != "${CONTAINER_AGENT_CWD}/agent.pi-context.md" ]]; then
   echo "expected pi AGENTS.md to link to the budgeted Hive knowledge context" >&2
   exit 1
 fi
-if [[ "$(readlink "${HOME_DIR}/CLAUDE.md")" != "${HOME_DIR}/agent.pi-context.md" ]]; then
+if [[ "$(readlink "${CONTAINER_AGENT_CWD}/CLAUDE.md")" != "${CONTAINER_AGENT_CWD}/agent.pi-context.md" ]]; then
   echo "expected pi CLAUDE.md compatibility link to use the budgeted context" >&2
   exit 1
 fi
-if [[ ! -s "${HOME_DIR}/agent.pi-context.md" ]]; then
+if [[ ! -s "${CONTAINER_AGENT_CWD}/agent.pi-context.md" ]]; then
   echo "expected pi budgeted context file to be written" >&2
   exit 1
 fi
-if [[ "$(wc -c < "${HOME_DIR}/agent.pi-context.md")" -gt 480 ]]; then
+if [[ "$(wc -c < "${CONTAINER_AGENT_CWD}/agent.pi-context.md")" -gt 480 ]]; then
   echo "expected pi budgeted context to stay within the 120-token estimate" >&2
   exit 1
 fi
-grep -q "Target repo task guidance" "${HOME_DIR}/agent.pi-context.md" || {
+grep -q "Target repo task guidance" "${CONTAINER_AGENT_CWD}/agent.pi-context.md" || {
   echo "expected repo/task-scoped knowledge to survive budgeting" >&2
   exit 1
 }
-grep -q "Hive knowledge truncated: token budget reached" "${HOME_DIR}/agent.pi-context.md" || {
+grep -q "Hive knowledge truncated: token budget reached" "${CONTAINER_AGENT_CWD}/agent.pi-context.md" || {
   echo "expected pi budgeted context to carry the truncation marker" >&2
   exit 1
 }
-grep -q "hive knowledge" "${HOME_DIR}/agent.pi-context.md" || {
+grep -q "hive knowledge" "${CONTAINER_AGENT_CWD}/agent.pi-context.md" || {
   echo "expected pi budgeted context to point at on-demand knowledge fetching" >&2
   exit 1
 }
-target_line="$(grep -n "Target repo task guidance" "${HOME_DIR}/agent.pi-context.md" | head -n1 | cut -d: -f1)"
-generic_line="$(grep -n "Generic background" "${HOME_DIR}/agent.pi-context.md" | head -n1 | cut -d: -f1 || true)"
+target_line="$(grep -n "Target repo task guidance" "${CONTAINER_AGENT_CWD}/agent.pi-context.md" | head -n1 | cut -d: -f1)"
+generic_line="$(grep -n "Generic background" "${CONTAINER_AGENT_CWD}/agent.pi-context.md" | head -n1 | cut -d: -f1 || true)"
 if [[ -n "$generic_line" && "$generic_line" -lt "$target_line" ]]; then
   echo "expected repo/task-scoped knowledge to be ordered before global knowledge" >&2
   exit 1
@@ -615,7 +618,7 @@ if [[ "$(readlink "${HOME_DIR}/.bob/AGENTS.md")" != "$BOB_AGENT_MD" ]]; then
   echo "expected bob global AGENTS.md to link to the hive knowledge export" >&2
   exit 1
 fi
-if [[ "$(readlink "${HOME_DIR}/CLAUDE.md")" != "$BOB_AGENT_MD" ]]; then
+if [[ "$(readlink "${CONTAINER_AGENT_CWD}/CLAUDE.md")" != "$BOB_AGENT_MD" ]]; then
   echo "expected bob's compatibility CLAUDE.md link to be retained" >&2
   exit 1
 fi
@@ -660,7 +663,7 @@ echo "contributor-agent local-mode knowledge link dir tests passed"
 # OMP reads both of Hive's conventional knowledge-link names. The test hook
 # exits before launching tmux or the relay, so it proves the agent-owned seam
 # without reproducing any of its lifecycle.
-rm -f "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"
+rm -f "${CONTAINER_AGENT_CWD}/AGENTS.md" "${CONTAINER_AGENT_CWD}/CLAUDE.md"
 OMP_AGENT_MD="${HOME_DIR}/agent.md"
 env -i \
   PATH="${PATH}" \
@@ -671,7 +674,7 @@ env -i \
   AGENT_BACKEND=omp \
   bash "${ROOT_DIR}/bin/contributor-agent.sh"
 
-for link in "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"; do
+for link in "${CONTAINER_AGENT_CWD}/AGENTS.md" "${CONTAINER_AGENT_CWD}/CLAUDE.md"; do
   if [[ "$(readlink "$link")" != "$OMP_AGENT_MD" ]]; then
     echo "expected OMP knowledge link $link to target the Hive export" >&2
     exit 1
@@ -679,7 +682,7 @@ for link in "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"; do
 done
 
 # Omnigent orchestrates several harnesses, so it gets both link names too.
-rm -f "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"
+rm -f "${CONTAINER_AGENT_CWD}/AGENTS.md" "${CONTAINER_AGENT_CWD}/CLAUDE.md"
 OMNIGENT_AGENT_MD="${HOME_DIR}/agent.md"
 env -i \
   PATH="${PATH}" \
@@ -690,12 +693,123 @@ env -i \
   AGENT_BACKEND=omnigent \
   bash "${ROOT_DIR}/bin/contributor-agent.sh"
 
-for link in "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"; do
+for link in "${CONTAINER_AGENT_CWD}/AGENTS.md" "${CONTAINER_AGENT_CWD}/CLAUDE.md"; do
   if [[ "$(readlink "$link")" != "$OMNIGENT_AGENT_MD" ]]; then
     echo "expected Omnigent knowledge link $link to target the Hive export" >&2
     exit 1
   fi
 done
+
+# Container mode puts the knowledge export where the CLI starts, not in $HOME.
+# The interactive CLI is launched in HIVE_AGENT_CWD, an empty non-git
+# directory. Codex reads AGENTS.md only from the git root down to its cwd, plus
+# $CODEX_HOME/AGENTS.md, so links in $HOME never reached a Codex contributor
+# (projectbluefin/utah-packages#879's rollout had the export zero times).
+# Claude only worked because it reads CLAUDE.md from parent directories. The
+# test hook runs the same link_container_knowledge the entrypoint calls and
+# exits before anything is launched.
+CONTAINER_AGENT_MD="${HOME_DIR}/agent.md"
+printf '# Agent Knowledge\n\ncontainer knowledge export\n' >"$CONTAINER_AGENT_MD"
+mkdir -p "${HOME_DIR}/.codex"
+printf 'personal codex instructions, not hive knowledge\n' >"${HOME_DIR}/.codex/AGENTS.md"
+codex_global_before="$(cksum <"${HOME_DIR}/.codex/AGENTS.md")"
+rm -rf "${HOME_DIR}/.config/goose"
+run_container_link() {
+  # $1: AGENT_BACKEND. Any remaining args are extra `env` assignments.
+  local backend="$1"; shift
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_LINK_KNOWLEDGE=1 \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="$CONTAINER_AGENT_MD" \
+    AGENT_BACKEND="$backend" \
+    "$@" \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" >/dev/null
+}
+for backend in codex pi omp opencode kilo goose claude; do
+  rm -rf "$CONTAINER_AGENT_CWD"
+  # The old layout: an earlier start of this container linked into $HOME.
+  ln -sfn "$CONTAINER_AGENT_MD" "${HOME_DIR}/AGENTS.md"
+  ln -sfn "$CONTAINER_AGENT_MD" "${HOME_DIR}/CLAUDE.md"
+  run_container_link "$backend"
+  case "$backend" in
+    claude) want_name="CLAUDE.md" ;;
+    *) want_name="AGENTS.md" ;;
+  esac
+  want_target="$CONTAINER_AGENT_MD"
+  if [[ "$backend" == "pi" ]]; then want_target="${CONTAINER_AGENT_CWD}/agent.pi-context.md"; fi
+  got_target="$(readlink "${CONTAINER_AGENT_CWD}/${want_name}" || true)"
+  if [[ "$got_target" != "$want_target" ]]; then
+    echo "container mode (${backend}): expected ${CONTAINER_AGENT_CWD}/${want_name} -> ${want_target}, the directory the CLI starts in; got '${got_target}'" >&2
+    exit 1
+  fi
+  if ! grep -q "container knowledge export" "${CONTAINER_AGENT_CWD}/${want_name}"; then
+    echo "container mode (${backend}): ${CONTAINER_AGENT_CWD}/${want_name} does not resolve to the knowledge export" >&2
+    exit 1
+  fi
+  for name in AGENTS.md CLAUDE.md; do
+    if [[ -L "${HOME_DIR}/${name}" ]]; then
+      echo "container mode (${backend}): expected the old ${HOME_DIR}/${name} export link to be retired so a parent-walking CLI does not load the export twice" >&2
+      exit 1
+    fi
+  done
+  if [[ "$(cksum <"${HOME_DIR}/.codex/AGENTS.md")" != "$codex_global_before" || -L "${HOME_DIR}/.codex/AGENTS.md" ]]; then
+    echo "container mode (${backend}): the user's own ~/.codex/AGENTS.md must never be touched" >&2
+    exit 1
+  fi
+done
+# goose's provider/model seed is still a global file in the container's $HOME.
+if [[ ! -f "${HOME_DIR}/.config/goose/config.yaml" || -e "${CONTAINER_AGENT_CWD}/.config/goose/config.yaml" ]]; then
+  echo "container mode (goose): expected the goose config seed in \$HOME/.config/goose, not in the agent cwd" >&2
+  exit 1
+fi
+
+# Only links that point at the export are retired. A file of the operator's
+# own in $HOME, or a link to anything else, stays.
+rm -rf "$CONTAINER_AGENT_CWD"
+rm -f "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"
+printf 'operator notes\n' >"${HOME_DIR}/AGENTS.md"
+ln -sfn "${HOME_DIR}/.codex/AGENTS.md" "${HOME_DIR}/CLAUDE.md"
+run_container_link codex
+if [[ -L "${HOME_DIR}/AGENTS.md" || "$(cat "${HOME_DIR}/AGENTS.md")" != "operator notes" ]]; then
+  echo "container mode: an operator's own ~/AGENTS.md must be left alone" >&2
+  exit 1
+fi
+if [[ "$(readlink "${HOME_DIR}/CLAUDE.md")" != "${HOME_DIR}/.codex/AGENTS.md" ]]; then
+  echo "container mode: a ~/CLAUDE.md link to something other than the export must be left alone" >&2
+  exit 1
+fi
+rm -f "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"
+
+# Headless mode keeps $HOME: the relay spawns that CLI in the workspace under
+# $HOME, never in HIVE_AGENT_CWD, so moving its links would hide them.
+rm -rf "$CONTAINER_AGENT_CWD"
+run_container_link claude CONTRIBUTOR_MODE=headless
+if [[ "$(readlink "${HOME_DIR}/CLAUDE.md")" != "$CONTAINER_AGENT_MD" ]]; then
+  echo "headless container mode: expected the CLAUDE.md link to stay in \$HOME" >&2
+  exit 1
+fi
+if [[ -e "${CONTAINER_AGENT_CWD}/CLAUDE.md" ]]; then
+  echo "headless container mode: expected no links in the interactive agent cwd" >&2
+  exit 1
+fi
+rm -f "${HOME_DIR}/CLAUDE.md"
+
+# The entrypoint itself must link into the same HIVE_AGENT_CWD it launches
+# the CLI from, and must export it before linking.
+agent_src="${ROOT_DIR}/bin/contributor-agent.sh"
+cwd_assign_line="$(grep -n '^HIVE_AGENT_CWD="\$(contributor_agent_cwd)"$' "$agent_src" | cut -d: -f1 | head -1)"
+container_link_line="$(grep -n '^link_container_knowledge "\$AGENT_BACKEND" "\$AGENT_MD" "\$HIVE_AGENT_CWD"$' "$agent_src" | cut -d: -f1 | head -1)"
+if [[ -z "$cwd_assign_line" || -z "$container_link_line" || "$cwd_assign_line" -gt "$container_link_line" ]]; then
+  echo "container mode: the entrypoint must set HIVE_AGENT_CWD and then link the knowledge export into it; got assign=${cwd_assign_line:-none} link=${container_link_line:-none}" >&2
+  exit 1
+fi
+if grep -q '^link_backend_knowledge "\$AGENT_BACKEND" "\$AGENT_MD"$' "$agent_src"; then
+  echo "container mode: the entrypoint still links the knowledge export into \$HOME" >&2
+  exit 1
+fi
+echo "contributor-agent container knowledge placement tests passed"
 
 mkdir -p "${WORK_DIR}/omp-bin"
 cat >"${WORK_DIR}/omp-bin/omp" <<'OMP'

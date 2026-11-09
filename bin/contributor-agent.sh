@@ -214,8 +214,69 @@ if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH:-}" == "1" ]]; then
   exit 1
 fi
 
+# The directory the interactive CLI is launched from. The comment above the
+# tmux launch further down says why it is neither $HOME nor the workspace.
+contributor_agent_cwd() {
+  printf '%s\n' "${XDG_STATE_HOME:-${HOME}/.local/state}/hive/agent-cwd"
+}
+
+# Context filenames link_backend_knowledge can place in a directory. Used only
+# to retire the container's old $HOME links (below); never a user's own file.
+CONTAINER_KNOWLEDGE_LINK_NAMES=(CLAUDE.md AGENTS.md .goosehints .goose-instructions.md copilot-instructions.md COPILOT.md)
+
+# link_container_knowledge BACKEND AGENT_MD AGENT_CWD
+#
+# Places the knowledge export where the container's CLI actually reads it.
+#
+# Interactive mode launches the CLI in AGENT_CWD (an empty, non-git
+# directory under $HOME), so the context links go there, the same as
+# `just contribute-hive local` does (Justfile). They used to go into $HOME.
+# Claude still found ~/CLAUDE.md because it reads CLAUDE.md from every parent
+# directory, but Codex reads AGENTS.md only from the git root down to its cwd
+# (plus $CODEX_HOME/AGENTS.md, the user's own file, which Hive never writes),
+# so a Codex contributor ran every task with none of the hive's knowledge.
+# The backend's global files (~/.bob/AGENTS.md, the goose config seed,
+# ~/.copilot) still go into $HOME.
+#
+# The old $HOME links are removed once the new ones exist, but only symlinks
+# that point at this export: a CLI that walks parent directories (Claude, Pi)
+# would otherwise load the same export twice, once from AGENT_CWD and once
+# from $HOME.
+#
+# Headless mode is unchanged: the relay spawns that CLI in the workspace, not
+# in AGENT_CWD, so its links stay in $HOME.
+link_container_knowledge() {
+  local backend="$1"
+  local agent_md="$2"
+  local agent_cwd="$3"
+  local name link target
+
+  if [[ "${CONTRIBUTOR_MODE:-interactive}" == "headless" || "$agent_cwd" == "$HOME" ]]; then
+    link_backend_knowledge "$backend" "$agent_md" "$HOME"
+    return
+  fi
+
+  mkdir -p "$agent_cwd"
+  link_backend_knowledge "$backend" "$agent_md" "$agent_cwd" "$HOME"
+
+  for name in "${CONTAINER_KNOWLEDGE_LINK_NAMES[@]}"; do
+    link="${HOME}/${name}"
+    [[ -L "$link" ]] || continue
+    target="$(readlink "$link")"
+    if [[ "$target" == "$agent_md" || "$target" == "${HOME}/agent.pi-context.md" ]]; then
+      rm -f "$link"
+    fi
+  done
+}
+
 if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_LINK_KNOWLEDGE:-}" == "1" ]]; then
-  link_backend_knowledge "$AGENT_BACKEND" "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST:-${HOME}/agent.md}" "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_LINK_DIR:-$HOME}"
+  # With KNOWLEDGE_LINK_DIR set, call link_backend_knowledge directly, as
+  # `just contribute-hive local` does. Without it, run the container path.
+  if [[ -n "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_LINK_DIR:-}" ]]; then
+    link_backend_knowledge "$AGENT_BACKEND" "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST:-${HOME}/agent.md}" "$HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_LINK_DIR"
+  else
+    link_container_knowledge "$AGENT_BACKEND" "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST:-${HOME}/agent.md}" "$(contributor_agent_cwd)"
+  fi
   exit 0
 fi
 
@@ -608,8 +669,14 @@ fi
 AGENT_MD="${HOME}/agent.md"
 knowledge_export_sync_start "$AGENT_MD"
 
-# Make agent.md visible to the selected CLI backend.
-link_backend_knowledge "$AGENT_BACKEND" "$AGENT_MD"
+# Make agent.md visible to the selected CLI backend, in the directory the CLI
+# is launched from (HIVE_AGENT_CWD, exported here so the links and the launch
+# below agree on it; see the comment at the launch for why it is this
+# directory).
+HIVE_AGENT_CWD="$(contributor_agent_cwd)"
+export HIVE_AGENT_CWD
+mkdir -p "$HIVE_AGENT_CWD"
+link_container_knowledge "$AGENT_BACKEND" "$AGENT_MD" "$HIVE_AGENT_CWD"
 
 # Prepare a concrete workspace directory for the agent (kubestellar/hive#2545).
 # Previously the tmux session inherited the bare $HOME (/home/dev in the stock
@@ -665,8 +732,9 @@ fi
 # cwd grants nothing, the process runs as the user either way — but an empty
 # dedicated directory costs nothing and is not a git repo, which is what keeps
 # the agent from adopting its cwd as a checkout (#4168).
-export HIVE_AGENT_CWD="${XDG_STATE_HOME:-${HOME}/.local/state}/hive/agent-cwd"
-mkdir -p "$HIVE_AGENT_CWD"
+#
+# HIVE_AGENT_CWD itself is exported above, before the knowledge export is
+# linked into it, because that is where the CLI reads its context files.
 
 # Start the contributor's own quota reading publisher (hivecommons/hive#10299).
 #
