@@ -149,8 +149,8 @@ func TestUpdateBranchSkipsForkGuardedHead(t *testing.T) {
 // the PR sat at 085 on `fork-guard:Canary`, each in the first sweep after a
 // restart or a rate-limited pass left the index without an entry for the
 // head. With the index empty, the stage record's guard holds the update
-// while the guarded check is red on the head, lets it through once green,
-// and holds it while the head's checks cannot be read.
+// while the guarded check is red or still running on the head, lets it
+// through once green, and holds it while the head's checks cannot be read.
 func TestUpdateBranchHonoursRecordedForkGuard(t *testing.T) {
 	var updates []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -164,6 +164,11 @@ func TestUpdateBranchHonoursRecordedForkGuard(t *testing.T) {
 			switch strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/commits/"), "/check-runs") {
 			case "red":
 				_, _ = w.Write([]byte(`{"total_count":2,"check_runs":[{"id":1,"name":"Canary","status":"completed","conclusion":"failure"},{"id":2,"name":"unit","status":"completed","conclusion":"success"}]}`))
+			case "running":
+				// The maintainer's re-run is newer than the failure; an update would discard it.
+				_, _ = w.Write([]byte(`{"total_count":2,"check_runs":[{"id":1,"name":"Canary","status":"completed","conclusion":"failure"},{"id":4,"name":"Canary","status":"in_progress","conclusion":null}]}`))
+			case "queued":
+				_, _ = w.Write([]byte(`{"total_count":1,"check_runs":[{"id":5,"name":"Canary","status":"queued","conclusion":null}]}`))
 			case "green":
 				_, _ = w.Write([]byte(`{"total_count":2,"check_runs":[{"id":1,"name":"Canary","status":"completed","conclusion":"failure"},{"id":3,"name":"Canary","status":"completed","conclusion":"success"}]}`))
 			case "forbidden":
@@ -187,7 +192,7 @@ func TestUpdateBranchHonoursRecordedForkGuard(t *testing.T) {
 	ctx := context.Background()
 	fork := currentBaseTestPR(true, "task/475-libfdk-aac", "kylerankin", "behind")
 
-	for _, head := range []string{"red", "forbidden", "broken"} {
+	for _, head := range []string{"red", "running", "queued", "forbidden", "broken"} {
 		_, reason, err := e.updateBranchAndSkip(ctx, "acme/widget", "acme", "widget", 917, head, "base1", "behind", fork)
 		if err != nil || reason != "required-check-failing:Canary" || len(updates) != 0 {
 			t.Fatalf("head %s: reason=%q err=%v updates=%v, want the update held on Canary", head, reason, err, updates)

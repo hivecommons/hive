@@ -86,10 +86,11 @@ func carriedForkGuard(rec stagelabels.Record, ok bool, obs stageObservation) []s
 // (five in 22 hours). When it has nothing, the stage record's fork guard
 // (ForkGuardChecks, or a `fork-guard:` reason) is consulted. A remembered
 // guard may already be green, so it counts only for the checks whose latest
-// run on this head is red (failure or action_required); with every one green
-// the update goes ahead. When the head's checks cannot be read the guard
-// stands for this tick: skipping costs a tick, an update costs the
-// maintainer's run.
+// run on this head is red (failure or action_required) or still running
+// (queued or in_progress: that is the maintainer's run, and an update would
+// discard it); with every one green the update goes ahead. When the head's
+// checks cannot be read the guard stands for this tick: skipping costs a
+// tick, an update costs the maintainer's run.
 func (c *Engine) waitingForkGuard(ctx context.Context, owner, repo string, number int, head string) []string {
 	if checks := stageForkGuard(c.stagePolicy(), owner, repo, number, head); len(checks) > 0 {
 		return checks
@@ -102,17 +103,18 @@ func (c *Engine) waitingForkGuard(ctx context.Context, owner, repo string, numbe
 	if !ok || len(guard) == 0 || strings.TrimSpace(head) == "" {
 		return nil
 	}
-	red, err := c.forkGuardRedOnHead(ctx, owner, repo, head, guard)
+	held, err := c.forkGuardHeldOnHead(ctx, owner, repo, head, guard)
 	if err != nil {
 		c.warn("automerge: fork guard check state unreadable; holding the branch update this tick", "repo", owner+"/"+repo, "pr", number, "head", head, "checks", guard, "error", err)
 		return guard
 	}
-	return red
+	return held
 }
 
-// forkGuardRedOnHead is the guard checks whose latest run on head completed
-// failure or action_required, in guard order.
-func (c *Engine) forkGuardRedOnHead(ctx context.Context, owner, repo, head string, guard []string) ([]string, error) {
+// forkGuardHeldOnHead is the guard checks whose latest run on head has not
+// completed, or completed failure or action_required, in guard order. A
+// guard with no run on the head is not held.
+func (c *Engine) forkGuardHeldOnHead(ctx context.Context, owner, repo, head string, guard []string) ([]string, error) {
 	if c == nil || c.gh == nil {
 		return nil, hgithub.ErrNoGitHubClient
 	}
@@ -139,17 +141,21 @@ func (c *Engine) forkGuardRedOnHead(ctx context.Context, owner, repo, head strin
 		}
 		opts.Page = resp.NextPage
 	}
-	var red []string
+	var held []string
 	for _, name := range guard {
 		cr := latest[name]
-		if cr == nil || cr.GetStatus() != "completed" {
+		if cr == nil {
+			continue
+		}
+		if cr.GetStatus() != "completed" {
+			held = append(held, name)
 			continue
 		}
 		if conclusion := cr.GetConclusion(); conclusion == "failure" || conclusion == "action_required" {
-			red = append(red, name)
+			held = append(held, name)
 		}
 	}
-	return red, nil
+	return held, nil
 }
 
 // forkGuardEntryStale reports a PR parked at 085 on a fork guard whose 085
