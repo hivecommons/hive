@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v6.5.6)
+
+### Fixed
+
+- The "stage labels: adoption refused, a person pushed this PR themselves; asking the author instead" line is now logged once per PR head (and per due reason and adoption request), not on every sweep. On projectbluefin it repeated about once a minute for the same two heads (utah-packages#925 and #928). Log only: the refusal still runs every sweep and records and consumes exactly what it did before, and a new push logs it again.
+- The hub no longer logs a WARN every time a contributor relay finishes its own PR-review cycle. The relay builds that review task for itself with a `pr-review-` id the hub never assigns, and sends its `task_complete` on purpose; the hub correctly ignores it and leaves the real assignment alone, but logged each one as `[contribute-ws] task_complete for unassigned task ignored (assignment left intact)` at WARN, so the WARN feed filled with expected events (projectbluefin's hive logged 9 on 2026-11-09 alone, all `pr-review-` ids, across three contributors). That line now logs at DEBUG for `pr-review-` task ids, so it is still traceable. Nothing else changes: the assignment is still left intact, the decision is still recorded, and a completion for any other task the connection does not hold still logs at WARN.
+
 ## 2026-11-09 (v6.5.5)
 
 ### Fixed
