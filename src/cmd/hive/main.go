@@ -2058,9 +2058,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// (GetACMMLevel), NOT from a client flag — the gh-wrapper.sh tail that used
 	// to add the label was dead code after `exec hive-open-pr`. L1/L2 open no
 	// agent PRs (manual); non-outreach L6 PRs retain their existing automerge
-	// behavior.
+	// behavior. The red-team lane is held at every level (see shouldHoldAgentPR).
 	holdLabel := func(agentName, repo string) bool {
-		return shouldHoldAgentPR(agentName, repo, b.agentMgr.GetACMMLevel(), b.cfg.AgentOwnsRepo)
+		return shouldHoldAgentPR(agentName, repo, b.agentMgr.GetACMMLevel(), b.cfg.AgentOwnsRepo, b.cfg.IsRedTeamAgent)
 	}
 	selfAuthorizationHoldEnabled := b.selfAuthorizationHoldEnabled
 

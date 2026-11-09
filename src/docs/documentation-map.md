@@ -165,6 +165,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Telemetry agent](telemetry.md) — the L5/L6-only opt-in observability agent, ACMM level gating, and the `project_observability` opt-in flow.
 - [NPS feedback prompt](nps.md) - the dashboard's opt-in NPS question: what is collected (no user identity), how it reaches the hub (directly, or through the opt-in relay for standalone hives), why only hub admins can read it, and the `hub.nps_enabled` / `HIVE_NPS_ENABLED` switch.
 - [Operations agent](operations.md) — the L5/L6-only opt-in operational-readiness agent (health checks, SLOs, runbooks), ACMM level gating, and the `project_observability` opt-in flow.
+- [Red-team agent](redteam.md) — the L5/L6-only opt-in lane that plays a malicious contributor (human, AI, or one posing as the other) and extends the `ioscan` red-team corpus in hold-labelled PRs; refused every repository until its `repos:` scope is set.
 - [Custom dashboard stylesheets](custom-stylesheets.md) — operator-supplied CSS for the dashboard and public snapshot.
 - [Branding a hive](branding.md) — persistent per-deployment name, mark, and colours via `<data>/branding/branding.json` and `custom.css` (`HIVE_BRANDING_JSON`/`HIVE_BRANDING_CSS`); distinct from the per-request `?style=` stylesheets above.
 - [Portable AgentDefinition format](../AGENT-DEFINITION.md) — standalone YAML schema for importing/exporting agent definitions.
