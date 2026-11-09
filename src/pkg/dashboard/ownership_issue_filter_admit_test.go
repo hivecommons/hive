@@ -127,3 +127,58 @@ func TestRepoOwnershipAdmitsFilterRefusedRows(t *testing.T) {
 		t.Errorf("#1200 (a bot's, undecided) = %+v, want not your turn", d)
 	}
 }
+
+// projectbluefin/actions#733 (sec-check) sat in the inbox as ADMIT,
+// "add triage/accepted", while sec-check's own fix PR #734 closed it on
+// merge. A filter-refused issue an open or held PR of any author closes
+// waits on that PR, as an actionable issue with an open linked PR does. A
+// soft reference, or a closing reference to another repository's issue,
+// leaves the ADMIT ask.
+func TestRepoOwnershipFilterRefusedIssueClosedByOpenPRWaitsOnPR(t *testing.T) {
+	now := ownershipNow11565
+	const repoName = "projectbluefin/actions"
+	row := func(n int, labels ...string) github.RepoWorkIssue {
+		return github.RepoWorkIssue{Repo: repoName, Number: n, Labels: labels,
+			Bucket: repoWorkBucketFiltered, Reason: github.IssueFilterReason,
+			CreatedAt: now.Add(-24 * time.Hour), UpdatedAt: now.Add(-time.Hour)}
+	}
+	human := func(r github.RepoWorkIssue) github.RepoWorkIssue { r.AuthorIsHuman = true; return r }
+	pr := func(n int, app bool, closes ...github.PRLinkedIssue) github.PullRequest {
+		return github.PullRequest{Repo: repoName, Number: n, AppAuthored: app, LinkedIssues: closes,
+			CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-time.Hour)}
+	}
+	cfg := &config.Config{}
+	cfg.Project.IssueFilter.RequireLabels = []string{"triage/accepted"}
+	env := newOwnershipEnv(cfg, nil, "", now, nil)
+	env.selfAuthorizationHold = func(string) bool { return false }
+	repos := []FrontendRepo{{Name: "actions", Full: repoName,
+		NonActionableIssues: []any{
+			row(733, "agent/sec-check", "security"),         // hive PR #734 closes it
+			row(740, "agent/quality"),                       // a held outside PR #741 closes it
+			human(row(742, "kind/bug")),                     // a person's issue an outside PR #743 closes
+			row(744, "agent/quality", "approved-direction"), // decided, hive PR #734 closes it too
+			row(750, "agent/reviewer"),                      // PR #751 only refers to it
+			row(752, "agent/reviewer"),                      // #753 closes another repo's #752
+		},
+		OpenPrs: []any{
+			pr(734, true, github.PRLinkedIssue{Number: 733}, github.PRLinkedIssue{Number: 744}),
+			pr(743, false, github.PRLinkedIssue{Number: 742}),
+			pr(751, true, github.PRLinkedIssue{Number: 750, Via: github.PRLinkViaRefs}),
+			pr(753, true, github.PRLinkedIssue{Number: 752, Repo: "projectbluefin/other"}),
+		},
+		HeldPrs: []any{pr(741, false, github.PRLinkedIssue{Number: 740})},
+	}}
+	decideRepoOwnership(repos, config.DashboardIssueBandsConfig{}, env)
+	for n, closer := range map[int]string{733: "#734", 740: "#741", 742: "#743", 744: "#734"} {
+		d := ownershipFor(repos[0].Ownership, ownershipKindIssue, n)
+		if d == nil || d.YourTurn || !d.WaitingElsewhere || !strings.Contains(d.Reason, "Waits on PR "+closer) {
+			t.Errorf("#%d = %+v, want waiting on PR %s", n, d, closer)
+		}
+	}
+	for _, n := range []int{750, 752} {
+		d := ownershipFor(repos[0].Ownership, ownershipKindIssue, n)
+		if d == nil || !d.YourTurn || d.Verb != OwnershipVerbAdmit || d.ReasonCode != OwnershipReasonAgentFindingNotAdmitted {
+			t.Errorf("#%d = %+v, want ADMIT %s", n, d, OwnershipReasonAgentFindingNotAdmitted)
+		}
+	}
+}

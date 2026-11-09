@@ -126,6 +126,34 @@ func TestAppendTrailer(t *testing.T) {
 	if got := AppendTrailer("body", InvocationMeta{}); got != "body" {
 		t.Errorf("empty meta must not touch the body, got %q", got)
 	}
+	// A body that only mentions the prefix in its text is not signed
+	// (Danathar/arch-bootc#473 described the audit that reads the line).
+	prose := "The audit checks for a `— hive:` signature line.\n"
+	if got, want := AppendTrailer(prose, m), strings.TrimRight(prose, "\n")+"\n\n"+m.Trailer(); got != want {
+		t.Errorf("prose mention: AppendTrailer = %q, want %q", got, want)
+	}
+}
+
+// HasAttributionLine is the repos' agent-audit reading: a line whose first
+// characters are `— hive:`, not the prefix anywhere in the text.
+func TestHasAttributionLine(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{
+		{"Fixes #1\n\n— hive: agent=quality backend=copilot", true},
+		{"— hive: agent=scanner", true},
+		{"Fixes #1\r\n\r\n— hive: agent=quality\r\n", true},
+		{"Fixes #1\n\n— hive: agent=quality\n\n---\n🐝 **Hive Agent**: `quality` | **SHA:** `abc`", true},
+		{"The audit checks for a `— hive:` signature line.", false},
+		{"Quoted:\n> — hive: agent=quality", false},
+		{"Indented:\n    — hive: agent=quality", false},
+		{"", false},
+	} {
+		if got := HasAttributionLine(tc.body); got != tc.want {
+			t.Errorf("HasAttributionLine(%q) = %v, want %v", tc.body, got, tc.want)
+		}
+	}
 }
 
 func TestAttributionAuditDetail(t *testing.T) {

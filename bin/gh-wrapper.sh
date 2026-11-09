@@ -1710,7 +1710,10 @@ if [[ -n "$AGENT_NAME" ]]; then
       esac
     done
     ((n == 1)) || return 0
-    [[ "$val" == *"— hive:"* ]] && return 0
+    # Only a line that starts with `— hive:` is a signature, as the repos'
+    # agent audit reads it; a new body that merely mentions the prefix in its
+    # text (a PR about that audit) still gets the PR's line back.
+    [[ $'\n'"$val" == *$'\n— hive:'* ]] && return 0
     _extract_item
     local view_args=(pr view)
     [[ -n "$item_num" ]] && view_args+=("$item_num")
