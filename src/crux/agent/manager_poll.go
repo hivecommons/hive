@@ -352,7 +352,13 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			// the prompt out of the capture window for ~100s on a large kick,
 			// far longer than expiredTokenHangTimeoutSec has any reason to
 			// tolerate.
-			if agent.Config.Backend == "copilot" && !IsInferenceBackend(agent.BackendOverride) && agent.StartedAt != nil &&
+			//
+			// ctx.Err() gates it too: a tick still running when a restart
+			// cancelled this poller sees the relaunched, still-empty pane
+			// against the OLD StartedAt, so it reads as a session hung for
+			// hours. That session is the restart's, not this poller's (and
+			// runCopilotDiagnostic re-checks ctx under m.mu before touching it).
+			if ctx.Err() == nil && agent.Config.Backend == "copilot" && !IsInferenceBackend(agent.BackendOverride) && agent.StartedAt != nil &&
 				!agent.kickDelivering.Load() &&
 				time.Since(*agent.StartedAt).Seconds() >= expiredTokenHangTimeoutSec &&
 				!paneShowsCLIReady(filtered) {

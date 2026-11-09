@@ -2667,6 +2667,7 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		PendingTTL:            cfg.Review.PendingReviewTTL(),
 		PendingFixTTL:         cfg.Review.PendingReviewFixTTL(),
 		MaxRedispatch:         cfg.Review.EffectiveMaxRedispatch(),
+		AgentGitHubRefusal:    github.AgentGitHubRefusalFunc(),
 		HeadMaxRetries:        cfg.Review.HeadMaxRetries,
 		ProjectOrg:            cfg.Project.Org,
 		AIAuthor:              cfg.EffectiveAIAuthor(),
@@ -2705,7 +2706,7 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		// Warn once per PR while it keeps expiring (#13687).
 		key := prWarnKey(e.Repo, e.Number)
 		expiredNow[key] = struct{}{}
-		logger.Log(context.Background(), reviewExpiredWarn.level(key), "review pending expired", "repo", e.Repo, "pr", e.Number, "head", e.HeadSHA, "perspective", e.Perspective, "agent", e.Agent, "age", e.Age.Round(time.Second).String(), "expiries", e.Count)
+		logger.Log(context.Background(), reviewExpiredWarn.level(key), "review pending expired", "repo", e.Repo, "pr", e.Number, "head", e.HeadSHA, "perspective", e.Perspective, "agent", e.Agent, "age", e.Age.Round(time.Second).String(), "expiries", e.Count, "cap_caused", e.CapCaused)
 	}
 	reviewExpiredWarn.retain(expiredNow)
 	for _, h := range plan.Exhausted {
