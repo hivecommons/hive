@@ -324,6 +324,83 @@ func TestReconcileHoldsImplausibleQuote(t *testing.T) {
 	}
 }
 
+func TestReconcileHoldsZeroQuotes(t *testing.T) {
+	const kimiRow = `"kimi-k3":        {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.00},`
+	cases := []struct {
+		name      string
+		row       string
+		pricing   string
+		wantRules []string
+	}{
+		{
+			name:      "zero prompt against a priced input",
+			row:       kimiRow,
+			pricing:   `{"prompt": "0", "completion": "0.000016"}`,
+			wantRules: []string{"InputPerMTok moves more than 5× (3.00 → 0.00)"},
+		},
+		{
+			name:    "zero prompt with an extreme output",
+			row:     kimiRow,
+			pricing: `{"prompt": "0", "completion": "0.0001"}`,
+			wantRules: []string{
+				"InputPerMTok moves more than 5× (3.00 → 0.00)",
+				"OutputPerMTok moves more than 5× (15.00 → 100.00)",
+				"output/input ratio above 30 (100.00 / 3.00)",
+			},
+		},
+		{
+			name:    "zero prompt with a high cache read",
+			row:     strings.Replace(kimiRow, "CacheReadPerMTok: 0.30", "CacheReadPerMTok: 2.90", 1),
+			pricing: `{"prompt": "0", "completion": "0.000015", "input_cache_read": "0.0000029"}`,
+			wantRules: []string{
+				"InputPerMTok moves more than 5× (3.00 → 0.00)",
+				"cache read at or above 90% of input (2.90 vs 3.00)",
+			},
+		},
+		{
+			name:      "priced prompt against a zero input",
+			row:       strings.Replace(kimiRow, "InputPerMTok: 3.00", "InputPerMTok: 0.00", 1),
+			pricing:   `{"prompt": "0.000003", "completion": "0.000015", "input_cache_read": "0.0000003"}`,
+			wantRules: []string{"InputPerMTok moves more than 5× (0.00 → 3.00)"},
+		},
+		{
+			name:      "zero completion against a priced output",
+			row:       kimiRow,
+			pricing:   `{"prompt": "0.000003", "completion": "0", "input_cache_read": "0.0000003"}`,
+			wantRules: []string{"OutputPerMTok moves more than 5× (15.00 → 0.00)"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			table := strings.Replace(suspectTable, kimiRow, tc.row, 1)
+			tb, err := parseTable([]byte(table))
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := `{"data": [{"id": "moonshotai/kimi-k3", "pricing": ` + tc.pricing + `}]}`
+			c, err := parseOpenRouter([]byte(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := reconcile(tb, c, "2026-11-09", defaultStaleAfterDays)
+			for _, ch := range r.Changes {
+				if ch.Key == "kimi-k3" {
+					t.Fatalf("zero quote must be held, not applied: %+v", ch)
+				}
+			}
+			if len(r.Suspect) != 1 || r.Suspect[0].Key != "kimi-k3" {
+				t.Fatalf("suspect = %+v, want only kimi-k3", r.Suspect)
+			}
+			rules := strings.Join(r.Suspect[0].Rules, "\n")
+			for _, want := range tc.wantRules {
+				if !strings.Contains(rules, want) {
+					t.Errorf("rules missing %q:\n%s", want, rules)
+				}
+			}
+		})
+	}
+}
+
 func TestReconcileHeldOnlyStillChanges(t *testing.T) {
 	// A fresh table whose only moving row is the corrupt one: nothing may be
 	// applied, yet the run must still produce a diff so the workflow opens a

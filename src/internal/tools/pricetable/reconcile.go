@@ -247,7 +247,17 @@ func implausible(e entry, ch change) []string {
 	var rules []string
 	for _, name := range priceFields {
 		fc, ok := ch.Fields[name]
-		if !ok || fc.Old.Sign() <= 0 || fc.New.Sign() <= 0 {
+		if !ok {
+			continue
+		}
+		// A move to zero (or, for the two headline rates, away from it) is
+		// unbounded, so it trips the same rule as a move past the factor.
+		if (fc.Old.Sign() > 0 && fc.New.Sign() <= 0) ||
+			(fc.Old.Sign() <= 0 && fc.New.Sign() > 0 && (name == fieldInput || name == fieldOutput)) {
+			rules = append(rules, fmt.Sprintf("%s moves more than %d× (%s → %s)", name, maxMoveFactor, formatPrice(fc.Old), formatPrice(fc.New)))
+			continue
+		}
+		if fc.Old.Sign() <= 0 || fc.New.Sign() <= 0 {
 			continue
 		}
 		factor := new(big.Rat).Quo(fc.New, fc.Old)
@@ -257,6 +267,11 @@ func implausible(e entry, ch change) []string {
 	}
 	p := proposedFields(e, ch)
 	in, out, read := p[fieldInput].New, p[fieldOutput].New, p[fieldCacheRead].New
+	// A zero proposed input would skip the ratio checks, so judge against the
+	// current input instead.
+	if in.Sign() <= 0 {
+		in = p[fieldInput].Old
+	}
 	if in.Sign() > 0 {
 		if new(big.Rat).Quo(out, in).Cmp(big.NewRat(maxOutputInputRatio, 1)) > 0 {
 			rules = append(rules, fmt.Sprintf("output/input ratio above %d (%s / %s)", maxOutputInputRatio, formatPrice(out), formatPrice(in)))
