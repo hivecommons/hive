@@ -1612,6 +1612,10 @@ ATTR_OWN_LINE=$'New description.\n\n— hive: agent=quality backend=claude model
 _attr_run 'test-bot[bot]' "$ATTR_OLD_BODY" /dev/null -- pr edit "$ATTR_PR" --repo test/repo --body "$ATTR_OWN_LINE"
 _expect_edit_body "own PR, new body carries its own line: left as written" "$ATTR_OWN_LINE"
 
+ATTR_PROSE='The audit wants a `— hive:` signature line on every PR.'
+_attr_run 'test-bot[bot]' "$ATTR_OLD_BODY" /dev/null -- pr edit "$ATTR_PR" --repo test/repo --body "$ATTR_PROSE"
+_expect_edit_body "own PR, new body only mentions the prefix in its text: the line is re-appended" "${ATTR_PROSE}"$'\n\n'"$ATTR_TRAILER"
+
 _attr_run 'someone-else' "$ATTR_OLD_BODY" /dev/null -- pr edit "$ATTR_PR" --repo test/repo --body 'New description: 16 failures.'
 _expect_edit_body "a PR the hive did not open: body left as written" 'New description: 16 failures.'
 

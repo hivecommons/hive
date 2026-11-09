@@ -174,16 +174,18 @@ possible fields are `agent`, `backend`, `model`, `effort`, `<tool>=<version>`,
 `session`, and `requested_by`. The trailer is gated by
 `governor.attribution_trailer` (default ON), but the matching audit entry
 (`agent_pr_created` in `audit.jsonl`, same key=value pairs — see
-[audit-log.md](audit-log.md)) is written regardless of the toggle. The `— hive:`
-prefix doubles as the stacking guard: a request the watcher retries after a
-partial failure will not gain a second trailer. Do not write a `— hive:` line
-into your own body — the watcher will treat it as an existing trailer and skip
-its own.
+[audit-log.md](audit-log.md)) is written regardless of the toggle. A line that
+starts with `— hive:` doubles as the stacking guard: a request the watcher
+retries after a partial failure will not gain a second trailer. Do not start a
+line of your own body with `— hive:` — the watcher will treat it as an existing
+trailer and skip its own. Mentioning the prefix inside a sentence is fine: only
+a line that begins with it counts, which is also how the repositories' monthly
+agent audit reads it.
 
 A later `gh pr edit <n> --body …` (or `--body-file`, or `-F -`) on a PR the hive
 opened keeps the trailer. gh replaces the whole body, so the `gh` wrapper
-re-appends the PR's current `— hive:` line to the new text when that text has
-none of its own. A PR another account opened is edited exactly as written, and
+re-appends the PR's current `— hive:` line to the new text when no line of
+that text starts with `— hive:`. A PR another account opened is edited exactly as written, and
 a PR whose body has no trailer gets none. An edit made any other way, such as
 `gh api` against the pulls endpoint, bypasses the wrapper and can still drop
 the line.
