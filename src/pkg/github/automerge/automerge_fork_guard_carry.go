@@ -1,8 +1,12 @@
 package automerge
 
 import (
+	"context"
+	"slices"
 	"strings"
 
+	gh "github.com/google/go-github/v72/github"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -70,15 +74,88 @@ func carriedForkGuard(rec stagelabels.Record, ok bool, obs stageObservation) []s
 	return nil
 }
 
-// waitingForkGuard is the fork guard a fork PR head waits on, from the index
-// for this exact head: the check is red on it and only a maintainer's
-// exact-head run turns it green. A branch update would discard that run, so
-// the caller leaves the branch alone while this is non-empty; once the check
-// is green the index drops it and updates resume before merge. The stage
-// record is not consulted here: a guard it remembers may already be green,
-// and skipping on it would keep the PR parked on a check that passed.
-func (c *Engine) waitingForkGuard(owner, repo string, number int, head string) []string {
-	return stageForkGuard(c.stagePolicy(), owner, repo, number, head)
+// waitingForkGuard is the fork guard a fork PR head waits on: the check is
+// red on it and only a maintainer's exact-head run turns it green. A branch
+// update would discard that run, so the caller leaves the branch alone while
+// this is non-empty; once the check is green updates resume before merge.
+//
+// The index for this exact head answers first. It is process memory rebuilt
+// from each CI-enriched enumeration, so it is empty after a restart and has
+// no entry after a pass that could not read the check's annotations; on
+// projectbluefin/utah-packages#917 each such gap let a merge of main through
+// (five in 22 hours). When it has nothing, the stage record's fork guard
+// (ForkGuardChecks, or a `fork-guard:` reason) is consulted. A remembered
+// guard may already be green, so it counts only for the checks whose latest
+// run on this head is red (failure or action_required) or still running
+// (queued or in_progress: that is the maintainer's run, and an update would
+// discard it); with every one green the update goes ahead. When the head's
+// checks cannot be read the guard stands for this tick: skipping costs a
+// tick, an update costs the maintainer's run.
+func (c *Engine) waitingForkGuard(ctx context.Context, owner, repo string, number int, head string) []string {
+	if checks := stageForkGuard(c.stagePolicy(), owner, repo, number, head); len(checks) > 0 {
+		return checks
+	}
+	rec, ok := c.stageStoreOrShared().Get(stageKey(owner, repo, number))
+	guard := rec.ForkGuardChecks
+	if ok && len(guard) == 0 {
+		guard = recordedForkGuard(rec, ok)
+	}
+	if !ok || len(guard) == 0 || strings.TrimSpace(head) == "" {
+		return nil
+	}
+	held, err := c.forkGuardHeldOnHead(ctx, owner, repo, head, guard)
+	if err != nil {
+		c.warn("automerge: fork guard check state unreadable; holding the branch update this tick", "repo", owner+"/"+repo, "pr", number, "head", head, "checks", guard, "error", err)
+		return guard
+	}
+	return held
+}
+
+// forkGuardHeldOnHead is the guard checks whose latest run on head has not
+// completed, or completed failure or action_required, in guard order. A
+// guard with no run on the head is not held.
+func (c *Engine) forkGuardHeldOnHead(ctx context.Context, owner, repo, head string, guard []string) ([]string, error) {
+	if c == nil || c.gh == nil {
+		return nil, hgithub.ErrNoGitHubClient
+	}
+	ctx = hgithub.WithRESTCaller(ctx, "hive:automerge_sweep")
+	latest := map[string]*gh.CheckRun{}
+	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for {
+		runs, resp, err := c.gh.Checks.ListCheckRunsForRef(ctx, owner, repo, head, opts)
+		if err != nil {
+			return nil, err
+		}
+		if runs != nil {
+			for _, cr := range runs.CheckRuns {
+				if cr == nil || !slices.Contains(guard, cr.GetName()) {
+					continue
+				}
+				if prev := latest[cr.GetName()]; prev == nil || cr.GetID() > prev.GetID() {
+					latest[cr.GetName()] = cr
+				}
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	var held []string
+	for _, name := range guard {
+		cr := latest[name]
+		if cr == nil {
+			continue
+		}
+		if cr.GetStatus() != "completed" {
+			held = append(held, name)
+			continue
+		}
+		if conclusion := cr.GetConclusion(); conclusion == "failure" || conclusion == "action_required" {
+			held = append(held, name)
+		}
+	}
+	return held, nil
 }
 
 // forkGuardEntryStale reports a PR parked at 085 on a fork guard whose 085

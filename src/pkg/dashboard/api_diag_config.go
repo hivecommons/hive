@@ -137,6 +137,10 @@ type diagConfigResult struct {
 	Provenance    diagConfigProvenance `json:"provenance"`
 	Redactions    []logread.Redaction  `json:"redactions"`
 	ResultByteCap int                  `json:"result_byte_cap"`
+	// AgentGitHubCaps is the proxy's effective per-agent GitHub API hourly
+	// cap under this configuration (diag_github_api_caps.go): non-secret
+	// numbers, shown whatever the value list says.
+	AgentGitHubCaps *diagAgentGitHubCaps `json:"agent_github_api_hourly_caps,omitempty"`
 }
 
 const diagConfigNote = "Values are shown only for configuration keys and environment names on value_list, which lists keys known not to hold secrets; every other key or name is shown only as set or not set. Shown values are scrubbed as log lines are. The configuration file itself is never returned. layer names the layer that set each key (see provenance.layers); also_set_by lists lower layers it overrode."
@@ -220,6 +224,7 @@ func buildDiagConfig(in diagConfigInput) diagConfigResult {
 	}
 	if in.merged != nil {
 		res.Provenance.IdentityIssues = config.IdentitySetIssues(in.merged.GitHub)
+		res.AgentGitHubCaps = buildDiagAgentGitHubCaps(in.merged)
 	}
 	keys := diagConfigKeys(in, prov, scrub)
 	res.Env = diagEnvNames(in.environ, scrub)

@@ -22,8 +22,8 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `PUT` | `/api/config/variables/{name}` | Owner only | Variable Upsert | `pkg/dashboard/api.go:61` |
 | `DELETE` | `/api/config/variables/{name}` | Owner only | Variable Delete | `pkg/dashboard/api.go:62` |
 
-| `GET` | `/api/config/agent/{name}` | Dashboard auth/session | Agent Config Get | `pkg/dashboard/api.go:207` |
-| `PUT` | `/api/config/agent/{name}/general` | Owner only | Agent Config General | `pkg/dashboard/api.go:208` |
+| `GET` | `/api/config/agent/{name}` | Dashboard auth/session | Agent Config Get; `general` carries the API proxy's GitHub API hourly cap: `githubApiHourlyCap` (this agent's `agents.<name>.github_api_hourly_cap`, `null` = inherit), `githubApiHourlyCapEffective` (the cap the proxy applies now; 0 = no cap), `githubApiHourlyCapFleet` (the fleet default) and `githubApiHourlyCapBase` (the base agent of a replica or review head, else empty) | `pkg/dashboard/api.go:207` |
+| `PUT` | `/api/config/agent/{name}/general` | Owner only | Agent Config General; `githubApiHourlyCap` sets `agents.<name>.github_api_hourly_cap` (a whole number, 0 = no cap, `null` = inherit the fleet default), applies to the proxy without a restart and to the agent's replicas and review heads; refused (400) on a replica or review head. Audited as `config_agent_general` with the old and new cap | `pkg/dashboard/api.go:208` |
 | `PUT` | `/api/config/agent/{name}/cadences` | Owner only | Agent Config Cadences | `pkg/dashboard/api.go:209` |
 | `PUT` | `/api/config/agent/{name}/models` | Owner only | Agent Config Models | `pkg/dashboard/api.go:210` |
 | `PUT` | `/api/config/agent/{name}/pipeline` | Owner only | Agent Config Pipeline | `pkg/dashboard/api.go:211` |
@@ -73,8 +73,8 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `DELETE` | `/api/config/governor/agents/{name}` | Owner only | Governor Remove Agent | `pkg/dashboard/api.go:326` |
 | `PUT` | `/api/config/governor/repos` | Owner only | Governor Repos | `pkg/dashboard/api.go:327` |
 | `POST` | `/api/config/governor/repos/check-access` | Dashboard auth/session | Governor Repo Check Access | `pkg/dashboard/api.go:331` |
-| `PUT` | `/api/config/github` | Owner only | Config GitHub | `pkg/dashboard/api.go:332` |
-| `GET` | `/api/config/github/forge-apps` | Dashboard auth/session | Config GitHub Forge Apps | `pkg/dashboard/api.go:335` |
+| `PUT` | `/api/config/github` | Owner only | Config GitHub; `agent_github_api_hourly_cap` sets the fleet default `agents.github_api_hourly_cap` (a whole number, 0 = no cap, `null` = remove the key so the default 300 applies), applies to the proxy without a restart, audited as `config_github` with the old and new cap; the answer echoes `agent_github_api_hourly_cap` and `agent_github_api_hourly_cap_set` | `pkg/dashboard/api.go:332` |
+| `GET` | `/api/config/github/forge-apps` | Dashboard auth/session | Config GitHub Forge Apps; `settings.agent_github_api_hourly_cap` (the fleet default as applied) and `settings.agent_github_api_hourly_cap_set` (whether the key is written), with `settings.defaults.agent_github_api_hourly_cap` (300) | `pkg/dashboard/api.go:335` |
 | `GET` | `/api/config/sidebar` | Dashboard auth/session | Sidebar Get | `pkg/dashboard/api.go:394` |
 | `PUT` | `/api/config/sidebar` | Dashboard auth/session | Sidebar Set | `pkg/dashboard/api.go:395` |
 | `GET` | `/api/config/backends` | Dashboard auth/session | Backends | `pkg/dashboard/api.go:396` |

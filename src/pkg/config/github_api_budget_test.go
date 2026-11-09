@@ -61,3 +61,47 @@ agents:
 		t.Fatalf("cap = %d, want explicit zero", got)
 	}
 }
+
+// A per-agent override applies with the fleet key unset. applyDefaults fills
+// the fleet value in on every load, so this held before #17379 too; the test
+// pins it.
+func TestGitHubAPIBudgetOverrideWithoutFleetKey(t *testing.T) {
+	raw := `
+agents:
+  reviewer:
+    github_api_hourly_cap: 600
+  scanner:
+    enabled: true
+  quality:
+    github_api_hourly_cap: 0
+`
+	var cfg Config
+	if err := yaml.NewDecoder(strings.NewReader(raw)).Decode(&cfg); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	cfg.applyDefaults()
+	for agent, want := range map[string]int{"reviewer": 600, "scanner": DefaultAgentsGitHubAPIHourlyCap, "quality": 0} {
+		if got := cfg.AgentGitHubAPIHourlyCap(agent); got != want {
+			t.Errorf("%s cap = %d, want %d", agent, got, want)
+		}
+	}
+}
+
+// A replica takes its base agent's override, including one set on the base
+// after the replica entry was built, and its own override still wins.
+func TestGitHubAPIBudgetReplicaUsesBaseOverride(t *testing.T) {
+	six, nine := 600, 900
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{
+		"reviewer":   {},
+		"reviewer-2": {ReplicaOf: "reviewer"},
+		"reviewer-3": {ReplicaOf: "reviewer", GitHubAPIHourlyCap: &nine},
+	}}}
+	reviewer := cfg.Agents["reviewer"]
+	reviewer.GitHubAPIHourlyCap = &six
+	cfg.Agents["reviewer"] = reviewer
+	for agent, want := range map[string]int{"reviewer": 600, "reviewer-2": 600, "reviewer-3": 900, "scanner": DefaultAgentsGitHubAPIHourlyCap} {
+		if got := cfg.AgentGitHubAPIHourlyCap(agent); got != want {
+			t.Errorf("%s cap = %d, want %d", agent, got, want)
+		}
+	}
+}

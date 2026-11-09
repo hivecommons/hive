@@ -199,6 +199,14 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"sandboxEnabled":   agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
 			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
 			"replicas":         agentCfg.Replicas,
+			// The proxy's GitHub API hourly cap (agents.<key>.github_api_hourly_cap):
+			// this agent's own override (null = inherit), the cap the proxy
+			// applies now, the fleet default it inherits, and, for a replica
+			// or review head, the base agent it takes its cap from.
+			"githubApiHourlyCap":          agentCfg.GitHubAPIHourlyCap,
+			"githubApiHourlyCapEffective": s.deps.Config.AgentGitHubAPIHourlyCap(name),
+			"githubApiHourlyCapFleet":     s.deps.Config.FleetAgentGitHubAPIHourlyCap(),
+			"githubApiHourlyCapBase":      agentCfg.ReplicaOf,
 		},
 		"cadences":     cadences,
 		"models":       models,
@@ -418,11 +426,28 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// agents.<name>.github_api_hourly_cap (api_github_api_cap.go): a number,
+	// 0 for no cap, or null to inherit the fleet default. Only a base agent
+	// carries one; its replicas and review heads are copies rebuilt from it.
+	ghCap, ghCapPresent, ghCapErr := agentGitHubCapFromBody(body)
+	if ghCapErr != nil {
+		jsonError(w, ghCapErr.Error(), http.StatusBadRequest)
+		return
+	}
+	if base := s.deps.Config.Agents[name].ReplicaOf; ghCapPresent && base != "" {
+		jsonError(w, agentGitHubCapReplicaError(name, base).Error(), http.StatusBadRequest)
+		return
+	}
 
 	agentCfg := s.deps.Config.Agents[name]
 	// Captured before the field writes below, because leaving on-demand is a
 	// TRANSITION rather than a state: acting on it needs the previous value.
 	prevOnDemand := agentCfg.OnDemand
+	ghCapAudit := ""
+	if ghCapPresent {
+		ghCapAudit = agentGitHubOverrideLabel(agentCfg.GitHubAPIHourlyCap) + " -> " + agentGitHubOverrideLabel(ghCap)
+		agentCfg.GitHubAPIHourlyCap = ghCap
+	}
 	if v, ok := body["enabled"]; ok {
 		if b, ok := v.(bool); ok {
 			agentCfg.Enabled = b
@@ -941,7 +966,11 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	s.auditFromRequest(r, "config_agent_general", auditDetail("section", "general"), name)
+	generalAudit := auditDetail("section", "general")
+	if ghCapPresent {
+		generalAudit = auditDetail("section", "general", "github_api_hourly_cap", ghCapAudit)
+	}
+	s.auditFromRequest(r, "config_agent_general", generalAudit, name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }

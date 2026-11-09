@@ -147,15 +147,26 @@ func mappingNode(node *yaml.Node) *yaml.Node {
 	return node
 }
 
+// AgentGitHubAPIHourlyCap is the per-agent proxy cap on charged GitHub API
+// responses per sliding hour; 0 means no cap. An agent's own
+// agents.<name>.github_api_hourly_cap wins, then its base agent's (a replica
+// or review head is built as a copy of the base, so it normally carries the
+// base's value already; the lookup also covers a base override set after the
+// copy was made), then agents.github_api_hourly_cap, then the default of 300.
 func (c *Config) AgentGitHubAPIHourlyCap(agentName string) int {
 	if c == nil {
 		return DefaultAgentsGitHubAPIHourlyCap
 	}
-	if c.AgentsGitHubAPIHourlyCap == 0 && !c.AgentsGitHubAPIHourlyCapSet {
-		return DefaultAgentsGitHubAPIHourlyCap
-	}
 	if a, ok := c.Agents[agentName]; ok && a.GitHubAPIHourlyCap != nil {
 		return *a.GitHubAPIHourlyCap
+	}
+	if base := c.BaseAgentName(agentName); base != agentName {
+		if a, ok := c.Agents[base]; ok && a.GitHubAPIHourlyCap != nil {
+			return *a.GitHubAPIHourlyCap
+		}
+	}
+	if c.AgentsGitHubAPIHourlyCap == 0 && !c.AgentsGitHubAPIHourlyCapSet {
+		return DefaultAgentsGitHubAPIHourlyCap
 	}
 	return c.AgentsGitHubAPIHourlyCap
 }
