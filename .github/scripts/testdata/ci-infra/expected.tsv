@@ -16,6 +16,9 @@ infra-toolcache-clobbered-copyfile	infra:toolcache-clobbered
 infra-toolcache-clobbered-rmdir	infra:toolcache-clobbered
 infra-toolcache-clobbered-npm	infra:toolcache-clobbered
 infra-upstream-download-5xx	infra:upstream-download-5xx
+infra-upstream-download-5xx-buildkit	infra:upstream-download-5xx
+infra-upstream-download-5xx-golangci	infra:upstream-download-5xx
+code-upstream-download-404	code
 derived-shard-gate	derived
 code-compile-redeclared	code
 code-vet-undefined	code
