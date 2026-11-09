@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-08 (v5.206.3)
+
+### Fixed
+
+- contribute: when a relay contributor's lease ends while their own open PR covers the issue, the claim is now kept as a PR-held claim by the same contributor until that PR merges or closes, instead of being released with `lease revoked` and leaving the issue looking unclaimed to dispatch, the PR-request gate and the claim listing ([#17300](https://github.com/hivecommons/hive/issues/17300)).
+
 ## 2026-11-08 (v5.206.2)
 
 ### Fixed

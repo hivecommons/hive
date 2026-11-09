@@ -42,7 +42,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 `issue`):
 
 ```sh
-hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>]
+hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>] [--claim]
 hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--blocked-on-pr <n>]
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
@@ -62,6 +62,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue. Declaring it also exempts the request from the file-set, component and canonical-subject folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)), so `--no-consolidate` is not needed for a decomposition child |
 | `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated). Like `--parent`, declaring it exempts the request from the shared-path folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)) |
 | `--needs-decision` | — | issue | park the new issue on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)) |
+| `--claim` | — | issue | file the new issue **and** claim it for this agent in the same request (see [Filing your own next step](#filing-your-own-next-step)). The request carries `"claim": true`; the result reports `claimed`, or `claim_error` when the claim did not land |
 | `--no-consolidate` | — | issue | requires a non-empty reason; the watcher skips open-issue consolidation (same-subject, file-set and component folds) and files a new issue, echoing the reason as `consolidation_skipped_reason` in the result and logging it. Use it for unrelated work that only shares a file or component with an open issue ([#14360](https://github.com/hivecommons/hive/issues/14360)). The request carries `"no_consolidate_reason"`. A request that declares `--parent` or `--blocked-by` needs no reason: it is a distinct DAG node and never takes the file-set, component or canonical-subject folds, and a genuine create reports `consolidation_skipped_reason` as `parent` or `blocked_by` ([#16065](https://github.com/hivecommons/hive/issues/16065)) |
 | `--blocked-on-pr` | — | comment | park the issue on open PR `<n>` in the same repo: the watcher prefixes the note with `<!-- hive:blocked-on pr=owner/repo#n -->`, strips `@`-mentions from it, adds the `blocked` label and removes `help wanted` (see [Blocked on an unmerged PR](#blocked-on-an-unmerged-pr)) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
@@ -270,13 +271,46 @@ claim-target gate that refuses a `hive-open-pr` closing reference
 ([hive-open-pr.md](hive-open-pr.md#closes-n-on-an-issue-someone-else-is-working-is-rejected)),
 also applied to a relay comment that announces a start. The hive posts one
 notice on the issue (marker `<!-- hive:pr-request-claim-target -->`) saying
-what was asked, who holds it, and that the owner decides. The dispatch-block gate
-(`needs-human`, decision labels, never-claim labels) admits every
-automated claim producer, so a start signal on such an issue records nothing. The
+what was asked, who holds it, and that the owner decides. The claim is also
+refused when the claiming agent itself filed the issue without `--claim`
+(`filed for outside help by <agent>`; see below). The dispatch-block gate
+(`needs-human`, decision labels, never-claim labels) admits every automated
+claim producer — the hub's own dispatch of an issue to an agent included — so
+a start signal on such an issue records nothing. The
 `stage/030-pr-in-progress` label is swapped for `stage/040-covered-by-pr` when
 the agent's `hive-open-pr --issues` request opens the PR, and cleared when the
 claim is released or at enumeration once PR evidence exists or the marker
 lapsed (default 2h).
+
+### Filing your own next step
+
+An issue filed without `--claim` is open to anyone: the org's help-wanted
+automation advertises it, and a contributor can claim it before the filing
+agent's separate `claim` request lands
+([#17299](https://github.com/hivecommons/hive/issues/17299)). When you file
+an issue you are about to work on yourself, pass `--claim`: right after the
+create the watcher runs the same gate and claim a `claim` request does
+(`hive/claimed-by-<agent>` label, in-progress fact, start marker) and
+removes `help wanted`, so there is no window. The claim is a separate
+`claim` write: the lane's write allowlist must list `claim` as well as
+`create_issue`, or the issue is created and `claim_error` says why. The start signal it raises
+(`filed_claim`) also counts as the issue's kick listing on the hub, so the
+hub's claim ledger records the claim even though no kick ever named the
+new issue. A claim that fails or is refused does
+not undo the create; the result is still `ok` and says why in `claim_error`.
+A request folded into an existing issue is not claimed. When the create
+reuses an existing open issue (same-title `already_existed`), `--claim` claims
+that reused issue, the same outcome as an explicit `hive-open-issue claim` on it.
+
+An issue filed **without** `--claim` carries a hidden
+`<!-- hive:filed-for-help <agent> -->` marker: the hive asked for outside
+help, so a later `claim` of it by the same agent — or the hub dispatching it
+back to that agent — is refused. A marker already in the request body is
+replaced by the filer's own, so the body cannot name someone else. Other
+agents and contributors may still claim it; a maintainer who wants the filer to take it
+after all removes the marker from the issue body. Children filed with
+`--parent` are not marked: they are the hive's own decomposition output, and
+the next kick dispatches them normally.
 
 ### `label`
 
