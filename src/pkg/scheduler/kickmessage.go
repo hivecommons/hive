@@ -825,9 +825,12 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 		b.WriteString(fmt.Sprintf("  %s/%s\n", strings.TrimRight(host, "/"), full))
 	}
 	if len(active) == 0 {
-		if scoped {
+		switch {
+		case scoped:
 			b.WriteString("  (none — this agent is scoped to repos this hive does not watch, or every repo it serves is currently paused; tell the operator)\n")
-		} else {
+		case s.cfg.AgentRequiresRepoScope(agentName):
+			b.WriteString("  (none — this lane serves no repository until the operator sets its repos: scope; every write is refused, so stand down and say so in your summary)\n")
+		default:
 			b.WriteString("  (none — every repo this hive watches is currently paused)\n")
 		}
 	}

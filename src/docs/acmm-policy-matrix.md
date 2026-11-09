@@ -127,7 +127,7 @@ Delivery agents open GitHub issues — bugs, docs gaps, CI problems, security vu
 | brainstorm | advisory | `brainstorm-advisory.md` |
 | reviewer | converse | `reviewer-queue.md` |
 
-### L5 — Semi-Autonomous (Semi-Automated) (14 agents)
+### L5 — Semi-Autonomous (Semi-Automated) (15 agents)
 
 **Permission boundary:** agents open issues and PRs, but do not merge
 autonomously. Agent PRs get literal `hold` from the level gate for human
@@ -145,6 +145,10 @@ manual hold; `hive/<hive-id>` records provenance only.
   checklist per repository (near-duplicates, common root causes, unlinked
   PR/issue pairs and already-resolved items), parked with `--needs-decision`.
   It never closes or edits anyone else's items.
+- Redteam ([red-team agent](redteam.md)) is opt-in: paused in every mode, and
+  refused every repository until its `repos:` scope names the one holding the
+  `ioscan` red-team corpus. It adds measured attack cases there in
+  `hold`-labelled PRs and never posts attack text anywhere else.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -161,9 +165,10 @@ manual hold; `hive/<hive-id>` records provenance only.
 | dedupe | issues-only | `dedupe-issues.md` |
 | telemetry (paused) | holdgated | `telemetry-holdgated.md` |
 | operations (paused) | holdgated | `operations-holdgated.md` |
+| redteam (paused) | holdgated | `redteam-holdgated.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L6 — Autonomous (15 agents)
+### L6 — Autonomous (16 agents)
 
 **Permission boundary:** autonomous delivery lanes can open issues/PRs and
 eligible PRs can merge on green CI. Auto-merge is off below L6. Switching to
@@ -184,7 +189,8 @@ authority.
   de-escalates, recommends closure and may close escalated `needs-human` Hive
   PRs at L6, but never merges. Dedupe stays recommendation-only. Telemetry and
   operations stay paused and use `ISSUES_AND_PRS`, despite their `full`
-  template names; they never merge their own PRs.
+  template names; they never merge their own PRs. Redteam stays paused, keeps
+  its hold-gated template and labels every PR `hold`, even at L6.
 
 #### Review and decision gates
 
@@ -239,6 +245,7 @@ workflow is missing or `sentinel-alert` is present, Hive surfaces
 | dedupe | issues-only | `dedupe-issues.md` |
 | telemetry (paused) | full | `telemetry-full.md` |
 | operations (paused) | full | `operations-full.md` |
+| redteam (paused) | holdgated | `redteam-holdgated.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
 ## What hive will say on GitHub at each level
@@ -297,6 +304,7 @@ predate hive's first sight of, or write access to, the repo.
    Roster history: [#8023](https://github.com/hivecommons/hive/issues/8023)
    and [#13574](https://github.com/hivecommons/hive/issues/13574).
 8. **Telemetry and operations are L5/L6-only opt-in agents.** Below L5 they are absent from the pack roster and dashboard, do not spawn panes, and cannot be kicked. At L5–L6 they use a paused cadence in every governor mode until an operator opts in; they may open issues and PRs but never merge.
+9. **Redteam is an L5/L6-only opt-in agent that needs a scope.** It is paused in every governor mode, and with no `repos:` scope it serves no repository at all — the one agent for which an empty scope means nothing rather than everything. See [Red-team agent](redteam.md).
 
 ## ioscan hardening defaults per level
 
