@@ -10,7 +10,8 @@ name: Price table refresh
 # no key), maps each catalogue id onto the table's normalised keys with the
 # same tokens.NormalizeModelID the dashboard uses, rewrites only the literals
 # that moved, bumps priceTableDate, and writes a markdown report of every
-# change plus every row OpenRouter does not list (those keep their value).
+# change, every row OpenRouter does not list (those keep their value), and
+# every quote held for review as implausible.
 #
 # A non-empty diff becomes ONE PR on bot/price-table-refresh (refreshed in
 # place on later runs). It is deliberately NOT auto-merged: a human compares

@@ -6,8 +6,9 @@
 // no key required), maps each catalogue id onto the table's normalised keys
 // with the exact tokens.NormalizeModelID the dashboard uses for lookups,
 // rewrites only the literals whose value moved, bumps priceTableDate, and
-// writes a markdown report of every change plus every table row OpenRouter
-// could not vouch for. Rows OpenRouter does not list keep their current value.
+// writes a markdown report of every change, every table row OpenRouter
+// could not vouch for, and every quote held for review as implausible.
+// Rows OpenRouter does not list keep their current value.
 //
 // Usage (from src/):
 //
