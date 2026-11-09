@@ -296,6 +296,20 @@
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
       return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr', y, false) - stageTrackerAnchor(x.stage, stages, 'pr', x, false)) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
+    // Pure: the covering PR an issue row rides when every PR covering it is
+    // drawn under another row (its "↳ #N · under #M" chips): the furthest
+    // along of them (stageTrackerLinkedSorted's order), or null when one is
+    // drawn here or none covers it. The stage position is the PR's, not
+    // the issue's role — a secondary issue of a shared PR lights the same
+    // lane as the primary (soaking in the Merge queue, not "PR in progress"
+    // wearing the soak word; hivecommons/hive#17324) while its chip, not
+    // the PR title, names the PR.
+    function stageTrackerLinkedRiding(item, stages) {
+      if (!item || item.kind !== 'issue' || !Array.isArray(item.linked_prs) || stageTrackerLinkedSorted(item, stages).length) return null;
+      const elsewhere = item.linked_prs.filter(lp => lp && Number(lp.number) > 0 && !stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedSupersededGone(lp, item));
+      const first = stageTrackerLinkedSorted(Object.assign({}, item, { linked_prs: elsewhere.map(lp => Object.assign({}, lp, { drawn_under: 0 })) }), stages)[0];
+      return first ? elsewhere.find(lp => Number(lp.number) === Number(first.number)) || null : null;
+    }
 
     // Pure: a PR whose drawn_under issue is not a row of this page (filtered
     // out or on another page) would otherwise be drawn nowhere. The first
@@ -336,8 +350,9 @@
     // — its furthest covering PR, else the issue itself.
     function stageTrackerLead(item, stages) {
       const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
-      if (!linked.length) return { lead: item, kind: item.kind, stage: Number(item.stage) || 0, since: item.stage_since || '' };
-      const lp = linked[0];
+      // Guarded: test harnesses lift this function by name without stageTrackerLinkedRiding.
+      const lp = linked[0] || (typeof stageTrackerLinkedRiding === 'function' ? stageTrackerLinkedRiding(item, stages) : null);
+      if (!lp) return { lead: item, kind: item.kind, stage: Number(item.stage) || 0, since: item.stage_since || '' };
       return { lead: lp, kind: 'pr', stage: stageTrackerLeadStage(lp), since: lp.stage_since || item.stage_since || '' };
     }
     // List order: furthest along the strip first — a covered issue counts as

@@ -98,14 +98,22 @@
         const linked = stageTrackerLinkedSorted(item, stages);
         // The primary (first-sorted) PR's base; an issue with no PR shows none.
         if (linked.length) basePill = stageTrackerBasePillHtml(linked[0].base_ref, linked[0].number);
-        if (linked.length === 1) {
-          // One covering PR: a single entry whose strip the PR's stage drives.
-          const lp = linked[0];
-          const pr = stageTrackerLinkedPRItem(item, lp);
-          prTargetKey = stageTrackerItemKey(pr);
-          const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
-          const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null))];
+        // One covering PR drawn here, or every covering PR drawn under
+        // another row (hivecommons/hive#17324): a single entry whose strip
+        // the PR's stage drives. Only the PR drawn here takes the PR column;
+        // a PR drawn elsewhere is named by the "under #M" chip in the lead
+        // cell and the PR column stays empty.
+        // Guarded: test harnesses lift this function by name without stageTrackerLinkedRiding.
+        const riding = linked.length === 1 ? linked[0] : (!linked.length && typeof stageTrackerLinkedRiding === 'function' ? stageTrackerLinkedRiding(item, stages) : null);
+        if (riding) {
+          const lp = riding;
+          if (linked.length === 1) {
+            const pr = stageTrackerLinkedPRItem(item, lp);
+            prTargetKey = stageTrackerItemKey(pr);
+            const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
+            const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
+            prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null))];
+          }
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
             terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
