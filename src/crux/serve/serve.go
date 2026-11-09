@@ -34,6 +34,7 @@ import (
 	"github.com/hivecommons/hive/crux/internal/privatedir"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agent/tmux"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/checkout"
 	"github.com/hivecommons/hive/crux/config"
@@ -388,7 +389,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		hc := s.HiveCallback()
 		h.HiveCallback = &hc
 	}
-	s.writeJSON(w, http.StatusOK, h)
+	status := http.StatusOK
+	if path, err := tmux.LookPath(); err != nil {
+		// The body doubles as an api.Error so api.Client reports the cause.
+		status = http.StatusServiceUnavailable
+		h.Error = fmt.Sprintf("tmux not found on PATH: %v", err)
+		h.Code = api.CodeUnavailable
+	} else {
+		h.Tmux = path
+	}
+	s.writeJSON(w, status, h)
 }
 
 func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {
