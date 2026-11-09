@@ -111,7 +111,8 @@ type Health struct {
 	// Error and Code are set only on a non-2xx answer and share their wire
 	// keys with api.Error, so the 503 body also decodes as the Error that
 	// Client surfaces in a *StatusError: a caller polling health (the
-	// supervisor's WaitReady) sees "tmux not found on PATH", not a bare 503.
+	// supervisor's WaitReady) sees "tmux not found on PATH", not a bare 503:
+	// WaitReady returns that 503 at once instead of polling to its deadline.
 	Error string `json:"error,omitempty"`
 	Code  string `json:"code,omitempty"`
 }
