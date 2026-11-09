@@ -178,7 +178,18 @@ type ContributorConnection struct {
 	// (task_run_log.go). Zero when no task is active or the task was adopted
 	// via the resume path without a fresh assignment.
 	taskAssignedAt time.Time
-	lastPong       time.Time
+	// adoptedOnResume and resumedAssignedAt carry the run log's duration
+	// anchor for a task this connection adopted on the task_progress resume
+	// path (a socket flap, or a hub restart that restored the lease from
+	// disk). Such a connection never saw the assignment, so taskAssignedAt
+	// stays zero — and stays zero on purpose, because its other readers
+	// (the fast-failure streak, standby dispatch stamps, settle evidence)
+	// were written against that. resumedAssignedAt is the lease's ORIGINAL
+	// assignment time instead, zero when the lease predates that field;
+	// runStartLocked picks between the two. A fresh assignment clears both.
+	adoptedOnResume   bool
+	resumedAssignedAt time.Time
+	lastPong          time.Time
 	// tmuxOutput is the last pane snapshot the relay reported, and
 	// tmuxOutputTask is the task_id that report named (#7605). Every
 	// task_progress and task_complete frame overwrites both, so the pane on
@@ -1898,13 +1909,13 @@ func (h *ContributeWSHub) appendAbandonedRun(c *ContributorConnection, task *WST
 		AbandonCause:  cause,
 		Reason:        abandonReason(cause),
 	}
-	// Zero when the task was adopted on the resume path without a fresh
-	// assignment (see taskAssignedAt's comment). Left unset rather than
-	// reported as a 0-second run, which would read as an instant hand-back —
-	// the very thing an operator is trying to tell apart from a 26-minute
-	// stall.
-	if !assignedAt.IsZero() {
-		rec.DurationS = time.Since(assignedAt).Seconds()
+	// Zero when the task's start is unknown: a task adopted on the resume
+	// path from a lease written before leases recorded their assignment
+	// time (see runStartLocked). Left unset rather than reported as a
+	// 0-second run, which would read as an instant hand-back — the very
+	// thing an operator is trying to tell apart from a 26-minute stall.
+	if d, ok := runDurationSeconds(assignedAt, time.Now()); ok {
+		rec.DurationS = d
 	}
 	// #7317 item 3: the last pane the relay reported before it gave the task
 	// back or dropped off — for a stall this is the frozen screen itself, the
@@ -2667,7 +2678,7 @@ func (s *wsSession) releaseOnDisconnect() {
 		// #7317: see the `ready` path — captured under the same lock so the
 		// run record can carry how long the task was held before the socket
 		// died.
-		abandonedTaskAt := s.contributor.taskAssignedAt
+		abandonedTaskAt := s.contributor.runStartLocked()
 		s.contributor.currentTask = nil
 		// #2568: bump the generation on release so any late message from this
 		// now-defunct socket carrying the old generation is fenced.
@@ -3753,7 +3764,7 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 	// ~26 min is PANE_STALL_TIMEOUT_MS, ~10 min is CLI_READY_TIMEOUT_MS —
 	// which is the most diagnostic number in the record, and it was being
 	// discarded along with the rest of the abandonment.
-	abandonedAt := s.contributor.taskAssignedAt
+	abandonedAt := s.contributor.runStartLocked()
 	s.contributor.currentTask = nil
 	// #2568: bump the generation on release so a re-`ready` abandon fences any
 	// later message echoing the old generation for the just-abandoned task.
@@ -4015,6 +4026,7 @@ func (s *wsSession) handleTaskDeclined(msg WSMessage) {
 		contributor.currentTaskGen = h.nextTaskGen()
 		contributor.lastLeaseRenew = time.Time{}
 		contributor.taskAssignedAt = time.Time{}
+		contributor.clearResumeAnchorLocked()
 		contributor.currentPrompt = ""
 		contributor.currentLabels = nil
 		contributor.pendingToken = ""
@@ -4263,6 +4275,11 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			s.contributor.currentTaskGen = lease.gen
 			s.contributor.clearIdleReasonLocked()
 			s.contributor.lastLeaseRenew = time.Now()
+			// The run log measures this task from its ORIGINAL assignment,
+			// which the lease carries across a flap and a restart; a lease
+			// written before it recorded that time leaves the start unknown.
+			s.contributor.adoptedOnResume = true
+			s.contributor.resumedAssignedAt = lease.assignedAt
 			s.contributor.tmuxOutput = msg.TmuxOutput
 			s.contributor.tmuxOutputTask = lease.taskID
 			s.contributor.mu.Unlock()
@@ -4465,10 +4482,12 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 		hasTask := s.contributor.currentTask != nil && s.contributor.currentTask.TaskID == msg.TaskID
 		completedTask := s.contributor.currentTask
 		completedLabels := append([]string(nil), s.contributor.currentLabels...)
-		// Captured before the clear below so the run log can record the
-		// task's wall-clock duration. Zero when the task was adopted
-		// without a fresh assignment; the record then omits duration.
+		// Captured before the clear below. taskAssignedAt is zero for a
+		// task adopted on the resume path; runStart is the run log's
+		// duration anchor, which for such a task is the lease's original
+		// assignment time (zero, and duration omitted, when unknown).
 		taskAssignedAt := s.contributor.taskAssignedAt
+		runStart := s.contributor.runStartLocked()
 		// SECURITY (audit N9, CWE-862/639): clear ONLY when the reported
 		// task_id actually matches the held assignment.
 		//
@@ -4491,6 +4510,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			s.contributor.currentLabels = nil
 			s.contributor.tokenMintedAt = time.Time{}
 			s.contributor.taskAssignedAt = time.Time{}
+			s.contributor.clearResumeAnchorLocked()
 			// #2537: clear any pending/delivered credential state with the task.
 			s.contributor.pendingToken = ""
 			s.contributor.credentialDelivered = false
@@ -4793,8 +4813,8 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 					},
 				})
 			}
-			if !taskAssignedAt.IsZero() {
-				runRec.DurationS = time.Since(taskAssignedAt).Seconds()
+			if d, ok := runDurationSeconds(runStart, time.Now()); ok {
+				runRec.DurationS = d
 			}
 			h.auditRelay(s.contributor, agentaudit.AuditRelayTaskCompleted, completedTask,
 				"pr_url", verifiedPR, "verdict", verdict, "duration_s", int(runRec.DurationS),
@@ -4922,9 +4942,11 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 		}
 		hasTask := s.contributor.currentTask != nil && s.contributor.currentTask.TaskID == msg.TaskID
 		failedTask := s.contributor.currentTask
-		// Duration anchor for the run log, captured before the clear —
-		// same shape as task_complete above.
+		// Captured before the clear — same shape as task_complete above:
+		// runStart is the run log's duration anchor, taskAssignedAt the
+		// fresh-assignment stamp the fast-failure streak reads.
 		taskAssignedAt := s.contributor.taskAssignedAt
+		runStart := s.contributor.runStartLocked()
 		// SECURITY (audit N9, CWE-862/639): same hole as task_complete —
 		// clear only on a genuine TaskID match. Unconditionally, a failure
 		// naming any other task released the assignment while revokeLease
@@ -4935,6 +4957,7 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			s.contributor.currentTask = nil
 			s.contributor.tokenMintedAt = time.Time{}
 			s.contributor.taskAssignedAt = time.Time{}
+			s.contributor.clearResumeAnchorLocked()
 			// #2537: clear any pending/delivered credential state with the task.
 			s.contributor.pendingToken = ""
 			s.contributor.credentialDelivered = false
@@ -5031,8 +5054,8 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 				runRec.Repo = failedTask.Repo
 				runRec.Number = failedTask.Number
 			}
-			if !taskAssignedAt.IsZero() {
-				runRec.DurationS = time.Since(taskAssignedAt).Seconds()
+			if d, ok := runDurationSeconds(runStart, time.Now()); ok {
+				runRec.DurationS = d
 			}
 			h.auditRelay(s.contributor, agentaudit.AuditRelayTaskFailed, failedTask,
 				"class", failureKind, "duration_s", int(runRec.DurationS))

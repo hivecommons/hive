@@ -219,6 +219,49 @@ func deriveScenario(outcome, completionSignal, failureKind, abandonCause string)
 	}
 }
 
+// maxRecordedRunDuration is the longest duration_s the hub will write. No
+// real run comes near it: a lease lapses after leaseTTL without progress and
+// the relay's absolute task deadline defaults to four hours. A longer span can
+// only come from a bad start stamp (a clock that jumped, or a restored lease
+// written by a host whose clock was wrong), and an invented number is worse
+// than none for the per-backend duration stats readTaskRunStats builds.
+const maxRecordedRunDuration = 7 * 24 * time.Hour
+
+// runDurationSeconds is a run's wall-clock duration from its original
+// assignment to now, for TaskRunRecord.DurationS. ok is false when the start
+// is unknown (zero), later than now, or further back than
+// maxRecordedRunDuration: the caller then leaves duration_s off the record
+// (omitempty) rather than write a negative or absurd figure.
+func runDurationSeconds(start, now time.Time) (float64, bool) {
+	if start.IsZero() {
+		return 0, false
+	}
+	d := now.Sub(start)
+	if d < 0 || d > maxRecordedRunDuration {
+		return 0, false
+	}
+	return d.Seconds(), true
+}
+
+// runStartLocked is the run log's duration anchor for c's current task: the
+// lease's original assignment time for a task adopted on the resume path
+// (zero when that lease did not record it), otherwise the fresh assignment's
+// taskAssignedAt. The caller holds c.mu.
+func (c *ContributorConnection) runStartLocked() time.Time {
+	if c.adoptedOnResume {
+		return c.resumedAssignedAt
+	}
+	return c.taskAssignedAt
+}
+
+// clearResumeAnchorLocked forgets a resumed task's duration anchor. Called
+// wherever taskAssignedAt is set for a fresh assignment or cleared with the
+// task. The caller holds c.mu.
+func (c *ContributorConnection) clearResumeAnchorLocked() {
+	c.adoptedOnResume = false
+	c.resumedAssignedAt = time.Time{}
+}
+
 // appendTaskRun stamps, classifies, and appends one record. Best-effort by
 // contract: every failure path logs and returns — a task must never fail (or
 // block its read loop meaningfully) on telemetry.

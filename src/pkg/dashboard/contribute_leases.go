@@ -67,7 +67,17 @@ type taskLease struct {
 	// double-assignment guard's hold on the item to a post-restart grace window;
 	// since #7773 every unexpired lease is a hold (leasedIssueKeys), so this is
 	// diagnostic — it says where a lease came from, not what it does.
-	restored      bool
+	restored bool
+	// assignedAt is when the hub issued this task to its holder — the
+	// `now` recordLease was given, which selectTask and the standby
+	// dispatcher pass as the assignment's own timestamp. It is the run
+	// log's duration anchor for a task adopted on the resume path: the new
+	// connection has no assignment of its own, and without this the
+	// finished run's duration_s was simply dropped (see runStartedAt on
+	// ContributorConnection). Persisted, so the anchor survives a restart;
+	// zero for a lease written before it was recorded, or one minted
+	// outside recordLease, which means "start unknown".
+	assignedAt    time.Time
 	expiresAt     time.Time
 	mcpTokenID    string
 	mcpTokenHash  string
@@ -285,6 +295,7 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 		triageVerdict:   triageVerdict,
 		triageRationale: triageRationale,
 		workItem:        workItem.Normalized(),
+		assignedAt:      now,
 		expiresAt:       now.Add(leaseTTL),
 		stageRetries:    stageRetries,
 	}
@@ -1091,6 +1102,10 @@ type persistedLease struct {
 	// record unchanged.
 	StageRetries     int        `json:"stage_retries,omitempty"`
 	StageEscalatedAt *time.Time `json:"stage_escalated_at,omitempty"`
+	// AssignedAt is the task's original assignment time, the run log's
+	// duration anchor after a resume. omitempty and a pointer, so a lease
+	// written before it existed loads with the start unknown.
+	AssignedAt *time.Time `json:"assigned_at,omitempty"`
 	// Retirement tombstones share the atomic lease ledger, but never expire.
 	RetiredReason string `json:"retired_reason,omitempty"`
 }
@@ -1212,6 +1227,10 @@ func (h *ContributeWSHub) saveLeasesLocked() error {
 		if !l.stageEscalatedAt.IsZero() {
 			at := l.stageEscalatedAt
 			rec.StageEscalatedAt = &at
+		}
+		if !l.assignedAt.IsZero() {
+			at := l.assignedAt
+			rec.AssignedAt = &at
 		}
 		records = append(records, rec)
 	}
@@ -1378,6 +1397,9 @@ func (h *ContributeWSHub) loadLeases() {
 		}
 		if rec.StageEscalatedAt != nil {
 			l.stageEscalatedAt = *rec.StageEscalatedAt
+		}
+		if rec.AssignedAt != nil {
+			l.assignedAt = *rec.AssignedAt
 		}
 		h.leases[leaseKey(rec.Identity, rec.TaskID)] = l
 		if rec.Gen > maxGen {
