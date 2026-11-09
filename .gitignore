@@ -51,3 +51,6 @@ src/crux/.smoke/
 
 # scratch Chrome profile from src/scripts/dashboard-mobile-shots.mjs
 .chrome-dashboard-mobile-shots/
+
+# Python bytecode caches (e.g. from running .github/scripts locally)
+__pycache__/

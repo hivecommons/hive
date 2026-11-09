@@ -1,0 +1,37 @@
+2026-11-09T05:37:14.4726771Z ##[group]Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+2026-11-09T05:37:14.4727483Z with:
+2026-11-09T05:37:14.4727676Z   version: v2.13.1
+2026-11-09T05:37:14.4727888Z   working-directory: src
+2026-11-09T05:37:14.4728108Z   args: ./... ./crux/...
+2026-11-09T05:37:14.4728316Z   skip-cache: true
+2026-11-09T05:37:14.4728516Z   install-mode: binary
+2026-11-09T05:37:14.4728730Z   install-only: false
+2026-11-09T05:37:14.4731189Z   github-token: ***
+2026-11-09T05:37:14.4731396Z   verify: true
+2026-11-09T05:37:14.4731596Z   only-new-issues: false
+2026-11-09T05:37:14.4731818Z   skip-save-cache: false
+2026-11-09T05:37:14.4732049Z   cache-invalidation-interval: 7
+2026-11-09T05:37:14.4732310Z   problem-matchers: false
+2026-11-09T05:37:14.4732540Z env:
+2026-11-09T05:37:14.4732727Z   GO_CACHE_GUARD_BUILD_CACHE: job
+2026-11-09T05:37:14.4732976Z   GOTOOLCHAIN: local
+2026-11-09T05:37:14.4733182Z ##[endgroup]
+2026-11-09T05:37:14.6192548Z ##[group]Restore cache
+2026-11-09T05:37:14.6195197Z Skipping cache restoration
+2026-11-09T05:37:14.6196573Z ##[endgroup]
+2026-11-09T05:37:14.6197312Z ##[group]Install
+2026-11-09T05:37:14.6199693Z Finding needed golangci-lint version...
+2026-11-09T05:37:14.6203375Z Installation mode: binary
+2026-11-09T05:37:14.6204612Z Installing golangci-lint binary v2.13.1...
+2026-11-09T05:37:14.6206156Z Downloading binary https://github.com/golangci/golangci-lint/releases/download/v2.13.1/golangci-lint-2.13.1-linux-amd64.tar.gz ...
+2026-11-09T05:37:25.6552917Z Unexpected HTTP response: 504
+2026-11-09T05:37:25.6554716Z Waiting 10 seconds before trying again
+2026-11-09T05:37:35.6698842Z Unexpected HTTP response: 504
+2026-11-09T05:37:35.6699432Z Waiting 16 seconds before trying again
+2026-11-09T05:37:51.6850747Z ##[endgroup]
+2026-11-09T05:37:51.6936148Z ##[error]Failed to run: Error: Unexpected HTTP response: 504, Error: Unexpected HTTP response: 504
+    at /home/runner/work/_actions/golangci/golangci-lint-action/ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a/dist/run/index.js:12369:25
+    at Generator.next (<anonymous>)
+    at fulfilled (/home/runner/work/_actions/golangci/golangci-lint-action/ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a/dist/run/index.js:12270:58)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+2026-11-09T05:37:51.6947704Z ##[error]Unexpected HTTP response: 504
