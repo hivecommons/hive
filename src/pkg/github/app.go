@@ -429,7 +429,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 	defer cancel()
 	jwtClient := newJWTClient(jwtToken, a.apiURL)
 	installToken, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, installationID, opts)
-	if err != nil && perms.VulnerabilityAlerts != nil && perms.Workflows == nil {
+	if isPermissionNotGrantedMintError(err) && perms.VulnerabilityAlerts != nil && perms.Workflows == nil {
 		a.logger.Warn("scoped token mint with vulnerability_alerts:read failed; retrying without it — "+
 			"the sec-check Dependabot alerts call will 403 until the App grants Dependabot alerts read-only and the installation re-accepts it; see docs/github-app-setup.md",
 			"tier", tier, "error", err)
@@ -459,6 +459,22 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 
 	a.logger.Info("scoped token minted", "tier", tier, "repos", len(repos), "expires_at", installToken.GetExpiresAt().Format(time.RFC3339))
 	return installToken.GetToken(), nil
+}
+
+// isPermissionNotGrantedMintError reports whether an installation-token mint
+// was refused because the request named a permission the installation has
+// not accepted (GitHub answers 422 "The permissions requested are not granted
+// to this installation."). A timeout, a repo-scope 422 (IsRepoScopeMintError)
+// or any other failure is not that case and must not earn a second mint: the
+// retry would double the bounded mint window and break the one-mint-per-repo
+// accounting the hub relies on to exclude an unmintable repo.
+func isPermissionNotGrantedMintError(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil {
+		return false
+	}
+	return ghErr.Response.StatusCode == http.StatusUnprocessableEntity &&
+		strings.Contains(strings.ToLower(ghErr.Message), "permission")
 }
 
 // IsRepoScopeMintError reports whether an installation-token mint failed

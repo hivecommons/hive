@@ -177,3 +177,26 @@ func TestScopedToken_ContributorVulnerabilityAlertsWithFallback(t *testing.T) {
 		t.Errorf("retry pull_requests = %q, want write", requests[1]["pull_requests"])
 	}
 }
+
+// A repo-scope 422 (renamed / removed repository, #7869) is not a missing
+// permission grant: the contributor mint must fail on the first attempt so
+// the hub's one-mint-per-repo fall-through accounting still holds.
+func TestScopedToken_ContributorRepoScopeErrorDoesNotRetry(t *testing.T) {
+	var requests int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]any{"message": "There is at least one repository that does not exist or is not accessible to the parent installation."})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	auth := newWorkflowsTestAuth(t, server.URL)
+	if _, err := auth.ScopedTokenForRepos(context.Background(), "contributor", []string{"gone"}); err == nil {
+		t.Fatal("ScopedTokenForRepos: want the repo-scope error, got nil")
+	}
+	if requests != 1 {
+		t.Fatalf("mint requests = %d, want 1 (a repo-scope 422 must not trigger the permission fallback)", requests)
+	}
+}
