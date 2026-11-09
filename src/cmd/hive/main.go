@@ -4330,6 +4330,8 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		stopWriteCounters := b.githubProxy.StartWriteCounterPersistence(proxy.WriteCountersPath)
 		b.preShutdownHooks.add("flush-write-counters", stopWriteCounters)
 		b.githubProxy.SetAgentGitHubBudgetConfig(b.cfg.AgentGitHubAPIHourlyCap, b.cfg.GitHubAgentReserveFloor)
+		// A review whose reads this proxy refused is no verdict (projectbluefin/utah-packages#959).
+		github.SetAgentGitHubRefusedSinceFunc(b.githubProxy.AgentGitHubRefusedSince)
 		if b.agentMgr != nil {
 			b.githubProxy.SetAgentGitHubBudgetNudgeFunc(b.agentMgr.SendGitHubAPIBudgetNudge)
 		}

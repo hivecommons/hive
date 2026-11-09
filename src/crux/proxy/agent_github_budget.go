@@ -26,6 +26,11 @@ type agentGitHubBudget struct {
 	events map[string][]time.Time
 	warned map[string]bool
 	nudged map[string]time.Time
+	// refused is the last time each agent's GitHub request was refused by
+	// its hourly cap or the shared reserve floor. The review relay reads it
+	// (AgentGitHubRefusedSince) to tell a review the proxy cut short from
+	// one that read the PR.
+	refused map[string]time.Time
 }
 
 func newAgentGitHubBudget(now func() time.Time) *agentGitHubBudget {
@@ -33,10 +38,11 @@ func newAgentGitHubBudget(now func() time.Time) *agentGitHubBudget {
 		now = time.Now
 	}
 	return &agentGitHubBudget{
-		now:    now,
-		events: make(map[string][]time.Time),
-		warned: make(map[string]bool),
-		nudged: make(map[string]time.Time),
+		now:     now,
+		events:  make(map[string][]time.Time),
+		warned:  make(map[string]bool),
+		nudged:  make(map[string]time.Time),
+		refused: make(map[string]time.Time),
 	}
 }
 
@@ -90,6 +96,32 @@ func (b *agentGitHubBudget) markNudged(agentName string) bool {
 	return true
 }
 
+// markRefused records that agentName was just refused a GitHub request.
+func (b *agentGitHubBudget) markRefused(agentName string) {
+	if b == nil || strings.TrimSpace(agentName) == "" {
+		return
+	}
+	now := b.now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.refused == nil {
+		b.refused = make(map[string]time.Time)
+	}
+	b.refused[agentName] = now
+}
+
+// refusedSince reports whether agentName was refused a GitHub request at or
+// after since.
+func (b *agentGitHubBudget) refusedSince(agentName string, since time.Time) bool {
+	if b == nil || strings.TrimSpace(agentName) == "" {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	last, ok := b.refused[agentName]
+	return ok && !last.Before(since)
+}
+
 func (b *agentGitHubBudget) pruneLocked(agentName string, now time.Time) []time.Time {
 	events := b.events[agentName]
 	cutoff := now.Add(-agentGitHubBudgetWindow)
@@ -140,10 +172,30 @@ func (p *GitHubProxy) agentGitHubReserveSnapshot() (remaining int, reset time.Ti
 	return 0, time.Time{}, false
 }
 
+// AgentGitHubRefusedSince reports whether the proxy refused one of
+// agentName's GitHub requests at or after since, because the agent reached
+// agents.github_api_hourly_cap or the shared bucket fell below
+// github.agent_reserve_floor. The review relay uses it to set aside a
+// requires_human from a review session the proxy cut short: the session
+// could not read what it needed, so its verdict is no verdict
+// (projectbluefin/utah-packages#959). The record lives in memory only; a
+// restart forgets it, as it forgets the counts.
+func (p *GitHubProxy) AgentGitHubRefusedSince(agentName string, since time.Time) bool {
+	if p == nil || p.githubBudget == nil {
+		return false
+	}
+	return p.githubBudget.refusedSince(agentName, since)
+}
+
 func (p *GitHubProxy) githubBudgetRefusal(agentName, method, path string, isRead bool) (status *agentGitHubBudgetStatus) {
 	if p == nil || agentName == "" || agentName == internalCallerName {
 		return nil
 	}
+	defer func() {
+		if status != nil {
+			p.githubBudget.markRefused(agentName)
+		}
+	}()
 	cap := p.agentGitHubCap(agentName)
 	if cap > 0 && p.githubBudget != nil {
 		count, retryAfter, over := p.githubBudget.check(agentName, cap)
