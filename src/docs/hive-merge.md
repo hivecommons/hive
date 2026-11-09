@@ -1293,6 +1293,23 @@ recorded trusted decision on a PR's head (the tracker's Approve, or any
 what lifts the gate for that PR; closing the other ends it
 ([#15810](https://github.com/hivecommons/hive/issues/15810)).
 
+Both rules judge **heads at the merge gate only**: a head the lane last saw
+green with every required verdict recorded, the readiness a train seat needs
+([#17439](https://github.com/hivecommons/hive/issues/17439)). A same-issue
+PR whose CI is still running, or whose review is outstanding, is not held:
+the lane evaluates it on its normal path, so its row reads CI running /
+review pending, never *needs a pick* or *needs decision*. Should that head
+reach the merge point it is held there instead of merging — on an undecided
+claim conflict, or behind the PR that already holds its issue — and from the
+next pass it is held at the gate like any other. Within one lane the first
+PR at the merge point takes the issue; when several are already at the gate
+the pick is the usual green-first, then earlier-opened. The pick then
+**stands** until the kept PR closes or is blocked for good (a person merges
+it, not mergeable, a terminal required-check hold, a permanent merge
+refusal): a check that goes red mid-run no longer hands the issue to the
+other PR, so two PRs never point at each other. The kept PR is remembered in
+memory per lane and issue; a restart re-plans.
+
 ### Hive-authored superseding PRs auto-merge
 
 Owner rule (@clubanderson): *"if a pr is superseded by a pr that a hive
