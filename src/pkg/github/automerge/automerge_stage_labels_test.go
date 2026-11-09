@@ -415,9 +415,12 @@ func TestClassifyStageMapping(t *testing.T) {
 		{name: "soaking is pre-merge soak", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(remaining=30m)"}, want: stagelabels.PreMergeSoak, rank: stageRankOwned},
 		{name: "soak complete waiting on github is merge queue", obs: stageObservation{Lane: stageLaneContributor, Reason: "required-checks-expected"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 		{name: "merge pool", obs: stageObservation{Lane: stageLaneSelf, Reason: "head-changed-since-eval"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
-		{name: "hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "label:hold"}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		// A hold label or sentinel alert is a gate, not a stage
+		// (hivecommons/hive#17327): the opinion is a 090 candidate the
+		// route refines against the head's evidence.
+		{name: "hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "label:hold"}, want: stagelabels.ReadyForHumanMerge, rank: stageRankOwned},
 		{name: "workflow approval held", obs: stageObservation{Lane: stageLaneSelf, Reason: workflowApprovalRequiredPrefix + "build"}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
-		{name: "sentinel blocked", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		{name: "sentinel blocked", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked}, want: stagelabels.ReadyForHumanMerge, rank: stageRankOwned},
 		{name: "needs-rebase hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "excluded-label:needs-rebase", Labels: []string{"needs-rebase"}}, want: stagelabels.Fixing, rank: stageRankOwned},
 		{name: "no claim is a weak admission opinion", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim}, want: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission},
 		{name: "claim tier below require_tiers", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier}, want: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission},
@@ -672,12 +675,14 @@ func TestResolveStageAdmissionOpinions(t *testing.T) {
 		},
 		{
 			// A hold-class reason applies whoever the author is.
-			name: "trusted author sentinel-blocked is needs-decision",
+			// The sentinel gate is a 090 candidate owned by the contributor
+			// lane (hivecommons/hive#17327); the route rides the alert on it.
+			name: "trusted author sentinel-blocked is a held 090 candidate",
 			list: []stageObservation{
 				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
 				{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked, Detail: trusted},
 			},
-			stage: stagelabels.NeedsDecision, rank: stageRankOwned, author: stagelabels.RoleTrusted, lane: stageLaneContributor,
+			stage: stagelabels.ReadyForHumanMerge, rank: stageRankOwned, author: stagelabels.RoleTrusted, lane: stageLaneContributor,
 		},
 		{
 			// #13115: a requires_human verdict on an admission reason is 085,
@@ -1746,10 +1751,11 @@ func TestClassifyStageRedCheckIsRepairStageNever080Or100(t *testing.T) {
 			}
 		})
 	}
-	// Modifiers that park the PR still outrank a red optional check.
+	// A hold is a gate, not a stage (hivecommons/hive#17327): the red
+	// optional check is the head's real progress, so the author fixes it.
 	held := classifyStage(stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "label:hold", Detail: red})
-	if held.Stage != stagelabels.NeedsDecision || !held.Human {
-		t.Fatalf("held=%+v want needs-decision (human)", held)
+	if held.Stage != stagelabels.NeedsAuthor || held.Human || !strings.HasPrefix(held.Reason, stageReasonOptionalCheckFailing) {
+		t.Fatalf("held=%+v want needs-author on the red check", held)
 	}
 }
 

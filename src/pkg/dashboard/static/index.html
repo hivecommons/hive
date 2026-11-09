@@ -1800,6 +1800,10 @@
     .ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse 1.6s ease-in-out infinite; }
     .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }
     .ham-seg.active.ham-open-hold { background: var(--yellow); color: var(--surface-0); }
+    /* A 090 row a sentinel alert or hold label gates (hivecommons/hive#17327):
+       the Merge queue cell wears the pill amber — held, not queued, not red. */
+    .ham-seg.active.ham-held { background: var(--amber); color: var(--surface-0); }
+    .ham-seg.active.ham-held .ham-detour::before { content: '⏸'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-hold .ham-seg-t::before { content: '⏸'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-blocked { background: var(--yellow); color: var(--surface-0); }
     .ham-seg.active.ham-open-blocked .ham-seg-t::before { content: '⛔'; margin-right: var(--sp-1); }
@@ -17759,9 +17763,38 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return lines.length ? tip + lines.map(l => '\n   · ' + l).join('') : tip;
     }
     // Whether the item's lit chevron word carries the alert itself (a PR
-    // parked at 085, or an issue riding one): the chip then adds nothing.
+    // parked at 085, an issue riding one, or a 090 row the gate holds —
+    // see stageTrackerHeldWord): the chip then adds nothing.
     function stageTrackerSentinelInLane(item) {
-      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (Number(item.stage) || 0) === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || !!item.via_pr);
+      const st = Number(item && item.stage) || 0;
+      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (st === STAGE_TRACKER_NEEDS_DECISION || st === STAGE_TRACKER_READY_FOR_HUMAN_MERGE) && (item.kind === 'pr' || !!item.via_pr);
+    }
+    // A sentinel alert or a hold label is a gate on the PR's real stage,
+    // not a stage of its own (hivecommons/hive#17327): a green, reviewed
+    // PR stands in the Merge queue column at 090 and the column word says
+    // the gate — "Held · sentinel · confirm intent" / "Held · hold" —
+    // never "Queued for merge". '' when the row is not a held 090 PR.
+    const STAGE_TRACKER_HELD_SENTINEL_WORD = 'Held · sentinel · confirm intent';
+    const STAGE_TRACKER_HELD_HOLD_WORD = 'Held · hold';
+    const STAGE_TRACKER_HELD_NEVER_MERGES = 'Hive never merges this head while the gate stands.';
+    function stageTrackerHeldWord(item) {
+      if (!item || (Number(item.stage) || 0) !== STAGE_TRACKER_READY_FOR_HUMAN_MERGE || !(item.kind === 'pr' || item.via_pr)) return '';
+      if (item.sentinel_alert && !item.sentinel_notice) return STAGE_TRACKER_HELD_SENTINEL_WORD;
+      if ((Array.isArray(item.modifiers) && item.modifiers.indexOf('hold') >= 0) || (item.hold && item.hold.by)) return STAGE_TRACKER_HELD_HOLD_WORD;
+      return '';
+    }
+    // Pure: the held cell's hover — the gate's own reason (the sentinel
+    // tip, or who holds it and why), then the route reason and the rule.
+    function stageTrackerHeldTip(item, nowMs) {
+      const word = stageTrackerHeldWord(item);
+      if (!word) return '';
+      const lines = [word];
+      if (word === STAGE_TRACKER_HELD_SENTINEL_WORD) lines.push(stageTrackerSentinelTip(item));
+      else if (typeof stageTrackerHoldTip === 'function') { const ht = stageTrackerHoldTip(item, nowMs); if (ht) lines.push(ht); }
+      const reason = String(item.human_merge_reason_text || item.reason || '').trim();
+      if (reason && lines.indexOf(reason) < 0) lines.push(reason);
+      lines.push(STAGE_TRACKER_HELD_NEVER_MERGES);
+      return lines.filter(Boolean).join('\n');
     }
     // A returned PR (071/072) keeps its routing word — the human already
     // acted, nothing is owed by the maintainer — and carries the alert as
@@ -17891,6 +17924,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const detour = (!terminal && !pushedBack && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== STAGE_TRACKER_OPEN_FOR_DISCUSSION && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
         ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (typeof stageTrackerBlockerWord === 'function' && cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       if (detour && cur === 70 && !detour.sentinel && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
+      // A 090 row a sentinel alert or hold label gates: the Merge queue
+      // cell reads "Held · …" (amber), never "Queued" — the gate is a pill
+      // on the real stage, not a stage (hivecommons/hive#17327).
+      if (detour && cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && typeof stageTrackerHeldWord === 'function') {
+        const held = stageTrackerHeldWord(item);
+        if (held) { detour.text = held; detour.held = true; detour.sentinel = false; }
+      }
       // A bare "Needs human decision" (045 / 085) says why in the chevron
       // itself — "Needs human · edits CI workflows" — when a short reason
       // is known (rationguard#480: "what does 'needs human' mean?"). A
@@ -18741,9 +18781,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
         const sentinelSuffix = !!(sg.detour && sg.detour.sentinelSuffix);
+        const heldGate = !!(sg.detour && sg.detour.held);
         const fixPushed = sg.number === 30 && sg.state === 'done' && remediation === 'fix_pushed';
         const blockerNote = sg.state === 'done' && sg.blockerNote ? String(sg.blockerNote) : '';
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : '', heldGate ? 'ham-held' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         let gateCaption = '';
@@ -18767,6 +18808,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
           // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
           // The reason is the whole story; the stage description would only repeat it (hivecommons/hive#15394).
+          else if (heldGate && typeof stageTrackerHeldTip === 'function') tip = stageTrackerHeldTip(item, nowMs);
           else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim();
           // A refusal on an earlier head is history, not the word: the
           // chevron reads the live stage and the hover keeps "merge attempt
@@ -18850,7 +18892,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(noteTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span class="ham-chevron-copy"><span class="ham-seg-t">${esc(blockerNote)}</span></span>${stageTrackerIcon('human', 'ham-ico ham-actor-ico', 'Next move: human')}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(noteTip)}</span></span>`;
         } else inner = stageTrackerIcon(sg.number, 'ham-ico');
-        return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
+        return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : (heldGate ? ` aria-label="${esc(stageTrackerHeldTip(item, nowMs))}"` : ''))}>${inner}</li>`;
       }).join('');
     }
 

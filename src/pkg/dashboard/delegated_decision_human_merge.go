@@ -57,10 +57,19 @@ func delegatedHumanMergeOptions(in delegatedecision.Input, number int, mergerRol
 // decisionWhyMergerRole is the plain reason a merge button is greyed.
 const decisionWhyMergerRole = "merger role required"
 
+// delegatedHumanMergeGated reports whether a 090 PR is held by a gate — an
+// open sentinel alert or a hold-class label (hivecommons/hive#17327). The
+// stage is the head's real progress, not a merge licence: neither
+// human-merge shortcut below may approve, admit or adopt it; the policy
+// (sentinel question, rail-hold) answers as it did when the gate pinned 085.
+func delegatedHumanMergeGated(in delegatedecision.Input) bool {
+	return in.SentinelAlert || len(stagelabels.Holds(in.Labels)) > 0
+}
+
 // delegatedHumanMergeOutcome answers "Let hive decide" on a PR wearing the
 // 090 label without running the policy. ok=false for anything else.
 func (s *Server) delegatedHumanMergeOutcome(repoFull string, number int, itemType, user string, mergerRole bool, in delegatedecision.Input, req delegatedDecisionRequest) (delegatedOutcome, bool) {
-	if in.Kind != delegatedecision.KindPR || !slices.Contains(in.Labels, stagelabels.ReadyForHumanMerge.Label()) {
+	if in.Kind != delegatedecision.KindPR || !slices.Contains(in.Labels, stagelabels.ReadyForHumanMerge.Label()) || delegatedHumanMergeGated(in) {
 		return delegatedOutcome{}, false
 	}
 	reason := delegatedHumanMergeReason(in, req)
@@ -167,17 +176,17 @@ func (s *Server) delegatedHumanMergeReviewPassed(in delegatedecision.Input) bool
 
 // delegatedHumanMergeDecision decides a 090 PR held only for its author's
 // trust. ok=false leaves the answer to delegatedHumanMergeOutcome: another
-// 090 reason, a hive-authored PR, a sentinel alert (a person's call), the
-// delegating user's own PR, an approval the user's role cannot give, or an
+// 090 reason, a hive-authored PR, a sentinel alert or hold label (a
+// person's call, hivecommons/hive#17327), the delegating user's own PR, an approval the user's role cannot give, or an
 // adoption this hive has turned off.
 func (s *Server) delegatedHumanMergeDecision(in delegatedecision.Input, req delegatedDecisionRequest, user string, mergerRole bool) (delegatedecision.Decision, []string, bool) {
-	if in.Kind != delegatedecision.KindPR || !slices.Contains(in.Labels, stagelabels.ReadyForHumanMerge.Label()) {
+	if in.Kind != delegatedecision.KindPR || !slices.Contains(in.Labels, stagelabels.ReadyForHumanMerge.Label()) || delegatedHumanMergeGated(in) {
 		return delegatedecision.Decision{}, nil, false
 	}
 	if stageengineprstage.HumanMergeReason(delegatedHumanMergeReason(in, req)) != stageengineprstage.HumanMergeReasonUntrustedAuthor {
 		return delegatedecision.Decision{}, nil, false
 	}
-	if in.HiveAuthored || in.SentinelAlert || strings.EqualFold(strings.TrimSpace(in.Author), strings.TrimSpace(user)) {
+	if in.HiveAuthored || strings.EqualFold(strings.TrimSpace(in.Author), strings.TrimSpace(user)) {
 		return delegatedecision.Decision{}, nil, false
 	}
 	ref := "#" + strconv.Itoa(in.Number)

@@ -113,8 +113,15 @@ func TestClassifyStageHumanChangeRequestWinsOverSentinelPark(t *testing.T) {
 	for _, reason := range []string{contributorLaneReasonSentinelBlocked, "sentinel", contributorLaneReasonWorkflowPath} {
 		t.Run(reason, func(t *testing.T) {
 			parked := ClassifyStage(stageObservation{Lane: stageLaneContributor, Reason: reason, HeadSHA: goldenHead, Labels: []string{"sentinel-alert"}, AuthorKind: authorkind.Clanker})
-			if parked.Stage != stagelabels.NeedsDecision || !parked.Human {
-				t.Fatalf("no review: %+v, want 085", parked)
+			wantParked := stagelabels.NeedsDecision
+			if reason != contributorLaneReasonWorkflowPath {
+				// A sentinel alert is a gate, not a stage
+				// (hivecommons/hive#17327): the unreviewed head is a 090
+				// candidate RouteHuman refines against its evidence.
+				wantParked = stagelabels.ReadyForHumanMerge
+			}
+			if parked.Stage != wantParked || !parked.Human {
+				t.Fatalf("no review: %+v, want %s", parked, wantParked)
 			}
 			v := ClassifyStage(stageObservation{Lane: stageLaneContributor, Reason: reason, HeadSHA: goldenHead, Labels: []string{"sentinel-alert"}, Detail: reviewed, AuthorKind: authorkind.Clanker})
 			if v.Stage != stagelabels.ReturnedToContributor || v.Reason != autoMergeReasonHumanChangesRequested || v.Human {
@@ -125,8 +132,8 @@ func TestClassifyStageHumanChangeRequestWinsOverSentinelPark(t *testing.T) {
 				t.Fatalf("a person's PR goes to 071: %+v", human)
 			}
 			stale := ClassifyStage(stageObservation{Lane: stageLaneContributor, Reason: reason, HeadSHA: "newhead0000", Labels: []string{"sentinel-alert"}, Detail: reviewed, AuthorKind: authorkind.Clanker})
-			if stale.Stage != stagelabels.NeedsDecision {
-				t.Fatalf("a new head re-arms the park: %+v", stale)
+			if stale.Stage != wantParked || !stale.Human {
+				t.Fatalf("a new head re-arms the park: %+v, want %s", stale, wantParked)
 			}
 		})
 	}

@@ -183,3 +183,42 @@ func TestDelegatedHumanMergeDecisionPersonAuthoredNeverAdopts(t *testing.T) {
 		})
 	}
 }
+
+// TestDelegatedHumanMergeGatedPRIsNotDecided: a sentinel alert or a hold
+// label is a gate riding the PR's real stage (hivecommons/hive#17327), so a
+// green, reviewed PR wears the 090 label while held. Neither human-merge
+// shortcut may approve, admit or adopt it on "Let hive decide": both step
+// aside and the policy (sentinel question, rail-hold) answers as it did
+// when the gate pinned 085.
+func TestDelegatedHumanMergeGatedPRIsNotDecided(t *testing.T) {
+	srv := newDelegatedServer(t, &repoItemDecisionMock{})
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	base := delegatedecision.Input{
+		Repo: "testorg/testrepo", Number: 17327, Kind: delegatedecision.KindPR, Author: "clubanderson", OwnerAuthor: true,
+		Labels: []string{stagelabels.ReadyForHumanMerge.Label(), "role/newcomer"}, CIGreen: true,
+	}
+	req := delegatedDecisionRequest{Type: "pr", Reason: "contributor-lane:author-association"}
+	if d, _, ok := srv.delegatedHumanMergeDecision(base, req, "writer", true); !ok || d.Rule != delegatedHumanMergeApproveRule {
+		t.Fatalf("clean owner 090 PR should approve: ok=%v %+v", ok, d)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(in *delegatedecision.Input)
+	}{
+		{"sentinel alert", func(in *delegatedecision.Input) { in.SentinelAlert = true }},
+		{"hold label", func(in *delegatedecision.Input) { in.Labels = append(in.Labels, "hold") }},
+		{"do-not-merge label", func(in *delegatedecision.Input) { in.Labels = append(in.Labels, "do-not-merge/wip") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := base
+			in.Labels = append([]string(nil), base.Labels...)
+			tc.mutate(&in)
+			if d, notes, ok := srv.delegatedHumanMergeDecision(in, req, "writer", true); ok {
+				t.Fatalf("gated 090 PR decided by the human-merge path: %+v notes=%q", d, notes)
+			}
+			if out, ok := srv.delegatedHumanMergeOutcome("testorg/testrepo", in.Number, "pr", "writer", true, in, req); ok {
+				t.Fatalf("gated 090 PR answered by the human-merge outcome: %+v", out)
+			}
+		})
+	}
+}
