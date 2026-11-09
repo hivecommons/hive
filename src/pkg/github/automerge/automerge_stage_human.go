@@ -755,7 +755,9 @@ func joinNames(names []string) string {
 // to one this visit has not explained yet: the maintainer who cleared the
 // sentinel alert the comment named must be told the workflow-path fence is
 // what now holds the PR, not left reading a stale cause. Each distinct
-// cause is posted once per head. Returns the comments posted.
+// cause is posted once per head. A fork-guard park is also rewritten for a
+// new head within the visit, since its ask names the head
+// (forkGuardEntryStale). Returns the comments posted.
 func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, role stagelabels.Role, route stagelabels.Route) (int, error) {
 	rec, ok := store.Get(key)
 	if !ok || rec.Stage != route.Stage {
@@ -766,13 +768,18 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	if route.Stage == stagelabels.NeedsDecision && obs.Detail.VerdictKnown && obs.Detail.Verdict.DecisionRequested {
 		decisionKey = writeback.DecisionKey(obs.Detail.Verdict.RedundantOf, obs.Detail.Verdict.DecisionQuestion)
 	}
-	if rec.EntryCommentRepeatsDecision(decisionKey) {
+	// A fork-guard park names the one head a maintainer must run the check
+	// for, and the guard carries onto a new head without leaving 085, so
+	// the comment is rewritten for each new head instead of naming one the
+	// run would no longer prove (projectbluefin/utah-packages#917).
+	headBound := forkGuardEntryStale(rec, obs, route)
+	if !headBound && rec.EntryCommentRepeatsDecision(decisionKey) {
 		// Same question, new head (hivecommons/hive#15499): the person
 		// has it already; the tracker shows the current wording.
 		store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
 		return 0, nil
 	}
-	if rec.EntryCommented {
+	if rec.EntryCommented && !headBound {
 		if route.Stage != stagelabels.NeedsDecision || obs.HeadSHA == "" || cause == "" || rec.EntryCommentedHead != obs.HeadSHA {
 			return 0, nil
 		}
@@ -781,7 +788,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 			store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
 			return 0, nil
 		}
-	} else if obs.HeadSHA != "" && rec.EntryCommentExplains(obs.HeadSHA, cause) {
+	} else if !rec.EntryCommented && obs.HeadSHA != "" && rec.EntryCommentExplains(obs.HeadSHA, cause) {
 		// Same stage, head and cause already explained on an earlier visit.
 		store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
 		return 0, nil

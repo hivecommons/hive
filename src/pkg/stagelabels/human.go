@@ -514,17 +514,22 @@ func RouteHuman(e Evidence) Route {
 	}
 	var decide []string
 	if len(e.ForkGuard) > 0 {
-		subject, verb, it := "check", "refuses", "it"
+		subject, verb, it, runs, whose := "check", "refuses", "it", "the check runs", "The check's"
 		if len(e.ForkGuard) > 1 {
-			subject, verb, it = "checks", "refuse", "them"
+			subject, verb, it, runs, whose = "checks", "refuse", "them", "the checks run", "Each check's"
 		}
 		// The run a maintainer dispatches proves one exact head
 		// (projectbluefin/utah-packages#862), so the ask names it.
-		run := "approve the run"
+		run, stale := "approve the run", ""
 		if h := ShortSHA(e.Head); h != "" {
 			run = "run or approve " + it + " for head `" + h + "`"
+			// A rebase with a byte-identical patch still sits on a newer
+			// base, so the code the check runs differs. Whether an earlier
+			// run carries over is the repository's call, and a check still
+			// red on this head has said no (projectbluefin/utah-packages#917).
+			stale = ". A run that passed on an earlier head does not cover `" + h + "`, even when the change itself is the same: a rebase or a merge of the base changes the code " + runs + ". " + whose + " own failure message on this head says what to run"
 		}
-		decide = append(decide, subject+" `"+strings.Join(e.ForkGuard, "`, `")+"` "+verb+" pull requests from a fork, so neither the author nor the hive can turn "+it+" green: a maintainer must push this branch to the repository (or "+run+" as the repository requires)")
+		decide = append(decide, subject+" `"+strings.Join(e.ForkGuard, "`, `")+"` "+verb+" pull requests from a fork, so neither the author nor the hive can turn "+it+" green: a maintainer must push this branch to the repository (or "+run+" as the repository requires)"+stale)
 	}
 	approver := strings.TrimSpace(e.HumanApprover)
 	switch e.Verdict {

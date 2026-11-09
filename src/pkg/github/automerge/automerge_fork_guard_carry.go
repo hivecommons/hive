@@ -80,3 +80,19 @@ func carriedForkGuard(rec stagelabels.Record, ok bool, obs stageObservation) []s
 func (c *Engine) waitingForkGuard(owner, repo string, number int, head string) []string {
 	return stageForkGuard(c.stagePolicy(), owner, repo, number, head)
 }
+
+// forkGuardEntryStale reports a PR parked at 085 on a fork guard whose 085
+// entry comment was written for another head. The comment asks a
+// maintainer to run the check for one exact head, and a run proves only the
+// head it ran on: on projectbluefin/utah-packages#917 the maintainer's
+// Canary passed on 8d7a655, the author rebased to 82ef790 with the same
+// patch onto a newer base, and the carried guard kept the PR at 085 while
+// the comment still named an earlier head. Such a comment is rewritten in
+// place (an edit notifies nobody) so it always names the current head.
+func forkGuardEntryStale(rec stagelabels.Record, obs stageObservation, route stagelabels.Route) bool {
+	head := strings.TrimSpace(obs.HeadSHA)
+	return route.Stage == stagelabels.NeedsDecision && head != "" &&
+		strings.HasPrefix(strings.TrimSpace(obs.Reason), stageReasonForkGuard) &&
+		rec.EntryCommentedStage == stagelabels.NeedsDecision &&
+		rec.EntryCommentedHead != "" && rec.EntryCommentedHead != head
+}
