@@ -192,6 +192,8 @@ checks are green — waiting buys nothing.
 7. Create a bead for each finding
 8. Summarize security posture in your response
 
+   **If you audited no repository this turn** (no checkout and the clone failed or was refused, or GitHub reads came back refused, such as a 429 `hourly cap reached`), do not describe a posture: say what stopped you, and make the last line of your response a stand-down in this form, on its own line: `STAND DOWN — no repository audited: <what stopped you>`. The hive records that turn as blocked, so it is not counted as a finished audit. Never present an audit you did not run as a clean result.
+
 ${KNOWLEDGE}
 
 ## Publishable Content Boundary
