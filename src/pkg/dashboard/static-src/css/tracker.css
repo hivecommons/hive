@@ -429,6 +429,12 @@
     .ham-seg.ham-activity-track.active.ham-stalled { animation: none; }
     .ham-seg.ham-activity-track.active.ham-stalled::before { display: none; }
     .ham-seg.ham-activity-track.ham-stalled .ham-actor-ico { margin-left: var(--sp-1); flex: 0 0 auto; }
+    /* A track that would light but is not the row's lead (Review while CI
+       runs on a freshly pushed head, hivecommons/hive#17335) stays dim —
+       the muted field, the ring alone — with a small queued note; never a
+       second amber chevron. Exactly one lit stage per row. */
+    .ham-seg.ham-activity-track.ham-track-queued { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
+    .ham-seg.ham-activity-track .ham-track-note { margin-left: var(--sp-1); font-size: var(--fs-2xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* The CI / Review glyph is a ring of steps (checks / perspectives,
        hivecommons/hive#16599): filled clockwise from twelve — done in the
        track's colour, failed red, the rest the muted track. While the

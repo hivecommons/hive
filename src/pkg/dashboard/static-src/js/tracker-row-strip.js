@@ -273,6 +273,41 @@
       return total > 0 && done < total && !settledWords.includes(a.state);
     }
 
+    // Whether a CI / Review track would light on its own: it runs on the
+    // current head, it is the stage's own track (column 50), or it is the
+    // stalled blocker of a row with nothing in motion.
+    function stageTrackerTrackWouldLight(item, kind, current, stalledTrack) {
+      if (stageTrackerTrackRunning(item, kind)) return true;
+      if (current && typeof stageTrackerStageTrack === 'function' && stageTrackerStageTrack(item) === kind) return true;
+      return stalledTrack === kind;
+    }
+
+    // Pure: the ONE lit track of column 50 — exactly one chevron per row is
+    // the current stage. When both tracks would light (a push lands while
+    // the previous review is still being re-adjudicated: CI running AND
+    // Review adjudicating, hivecommons/hive#17335 under PR #17308), the
+    // earliest wins — CI — and Review is drawn dim with a "re-review
+    // queued" note instead of a second amber chevron. '' when neither
+    // track lights (the stage chevron is the row's one active chevron).
+    function stageTrackerLeadTrack(item, current, stalledTrack) {
+      return ['ci', 'review'].find(kind => stageTrackerTrackWouldLight(item, kind, current, stalledTrack)) || '';
+    }
+
+    // The muted note a demoted (would-light but not lead) track wears:
+    // "re-review queued" for a Review whose head was just pushed, "review
+    // in progress" while a reviewer genuinely runs beside CI, "review
+    // queued" / "CI queued" otherwise.
+    function stageTrackerQueuedTrackNote(item, kind) {
+      if (kind === 'ci') return 'CI queued';
+      const push = item && item.push;
+      const code = item && item.code_activity;
+      const newHead = !!((code && code.head === item.head && code.state === 'pushed') || (push && push.state === 'pushed' && push.sha === item.head) || (typeof stageTrackerHiveOwesReReview === 'function' && stageTrackerHiveOwesReReview(item)));
+      if (newHead) return 're-review queued';
+      const a = item && item.review_activity;
+      const st = a && a.head === item.head ? a.state : '';
+      return st === 'reviewing' || st === 'adjudicating' ? 'review in progress' : 'review queued';
+    }
+
     // Pure: "12m ago" beside a timestamp; "just now" under a minute.
     function stageTrackerAgoWord(atMs, nowMs) { const mins = Math.floor((nowMs - atMs) / 60000); return !Number.isFinite(mins) || mins < 1 ? 'just now' : mins < 60 ? mins + 'm ago' : mins < 1440 ? Math.floor(mins / 60) + 'h ago' : Math.floor(mins / 1440) + 'd ago'; }
     // Evidence is supplied independently by the backend. A native 050 label
@@ -307,7 +342,7 @@
       const settledState = ['approved', 'changes_requested', 'human_decision', 'passing', 'failing', 'skipped', 'missing', 'waiting_ci', 'not_started', 'not_requested', 'closed', 'unverified'].includes(state);
       const fresh = Number.isFinite(observed) && !stale;
       const known = matches && state !== 'unknown' && (settledState || fresh);
-      const active = known && fresh && a.active;
+      let active = known && fresh && a.active;
       const perspectives = matches && kind === 'review' && Array.isArray(a.perspectives) ? a.perspectives : [];
       const perspectiveMark = v => v === 'approve' ? '✓' : ['changes_requested', 'reject'].includes(v) ? '✗' : v === 'requires_human' ? 'requires human' : String(v || '?');
       const perspectiveLine = p => String(p.name || 'perspective') + ' ' + perspectiveMark(p.verdict) + (p.summary ? ': ' + p.summary : '');
@@ -317,18 +352,29 @@
       const finding = matches && (state === 'failing' || state === 'changes_requested');
       // A complete verdict parked on a person is settled (muted icon).
       const settled = matches && state === 'human_decision' && (!known || !a.active);
-      // ACTIVE = filled amber with its words; 1 ≤ active ≤ 2 on a row. A
-      // track is active while it genuinely runs on the current head, when
-      // it is the stage's own track (stageTrackerStageTrack), or when it is
-      // the stalled blocker of a row with nothing in motion (opts.stalled,
-      // still amber-muted). Everything else is the icon alone — green for
-      // a pass, red for a finding, neutral when not run or decided — with
-      // its count words in the tooltip (hivecommons/hive#16599).
+      // ACTIVE = filled amber with its words; exactly ONE active chevron on
+      // a row. A track would light while it genuinely runs on the current
+      // head, when it is the stage's own track (stageTrackerStageTrack), or
+      // when it is the stalled blocker of a row with nothing in motion
+      // (opts.stalled, still amber-muted) — but only the row's lead track
+      // (opts.lead, the earliest that would light; stageTrackerLeadTrack)
+      // is active. A demoted track is dim with a muted queued note
+      // (hivecommons/hive#17335: CI 7/11 and Review 5/5 both amber after a
+      // push). Everything else is the icon alone — green for a pass, red
+      // for a finding, neutral when not run or decided — with its count
+      // words in the tooltip (hivecommons/hive#16599).
       const running = stageTrackerTrackRunning(item, kind);
       const stageTrack = current && typeof stageTrackerStageTrack === 'function' && stageTrackerStageTrack(item) === kind;
       const stalled = !!(opts && opts.stalled) && current && !running;
-      const lit = running || stageTrack || stalled;
-      const cls = lit ? 'active' + (stalled ? ' ham-stalled' : '') : finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : 'todo';
+      const wouldLight = running || stageTrack || stalled;
+      // No lead named (harnesses lifting this function alone): this track leads itself.
+      const lead = opts && opts.lead ? opts.lead : (wouldLight ? kind : '');
+      const lit = wouldLight && lead === kind;
+      const queued = wouldLight && !lit;
+      const queuedNote = queued && typeof stageTrackerQueuedTrackNote === 'function' ? stageTrackerQueuedTrackNote(item, kind) : '';
+      // A demoted track is still: no pulse beside the lead.
+      if (queued) active = false;
+      const cls = lit ? 'active' + (stalled ? ' ham-stalled' : '') : (finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : 'todo') + (queued ? ' ham-track-queued' : '');
       const approvalPending = kind === 'ci' && matches ? stageTrackerWorkflowApprovalPending(a) : 0;
       const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' ? 'Needs a person\'s decision' : '';
       const personIco = stalled && humanAction ? stageTrackerIcon('human', 'ham-ico ham-actor-ico', humanAction) : '';
@@ -366,7 +412,7 @@
       const codeFresh = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
       if (!codeFresh) decided = decided.replace(/>(?:Fixing|Remediating)(?=\s|<)/g, '>Fix requested');
       const sha7 = item.head ? String(item.head).slice(0, 7) : '';
-      const lead = current && ownsPR && typeof stageTrackerTrackLead === 'function' ? stageTrackerTrackLead(item) : null;
+      const waitLead = current && ownsPR && typeof stageTrackerTrackLead === 'function' ? stageTrackerTrackLead(item) : null;
       // Only an active track carries words; an inactive one is its icon
       // (ring) in the pass / fail / neutral colour, words in the tooltip.
       const verdict = finished ? 'pass' : finding ? 'fail' : '';
@@ -386,10 +432,14 @@
         (matches && a.actor ? ' · actor ' + a.actor : '') +
         (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
         (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '') +
-        (lead ? ' · hive is waiting on ' + lead.waitingOn + (lead.newHead && sha7 ? ' for new head ' + sha7 : '') : '');
+        (waitLead ? ' · hive is waiting on ' + waitLead.waitingOn + (waitLead.newHead && sha7 ? ' for new head ' + sha7 : '') : '') +
+        (queuedNote ? ' · ' + queuedNote + ' behind ' + (lead === 'ci' ? 'CI' : 'Review') : '');
       const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
-      const copy = `<span class="ham-chevron-copy ham-track-state${lit ? '' : ' ham-track-verdict'}">${evidenceLink}</span>${personIco}`;
-      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}"${stalled ? ' data-stalled="true"' : ''} data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${verdict ? ` data-verdict="${verdict}"` : ''}${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
+      // The demoted track's note sits outside the copy span: inactive
+      // chevrons carry no words, only this muted queued note.
+      const queuedHtml = queuedNote ? `<span class="ham-track-note">${esc(queuedNote)}</span>` : '';
+      const copy = `<span class="ham-chevron-copy ham-track-state${lit ? '' : ' ham-track-verdict'}">${evidenceLink}</span>${queuedHtml}${personIco}`;
+      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}"${stalled ? ' data-stalled="true"' : ''}${queued ? ' data-queued="true"' : ''} data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${verdict ? ` data-verdict="${verdict}"` : ''}${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an
@@ -463,8 +513,12 @@
       // Column 50 is the row's phase and no track moves: one track is
       // filled stalled so the row always shows where it is (#16599).
       const stalledTrack = tracksRunning === 0 && segs.some(sg => sg.number === 50 && sg.state === 'active') && typeof stageTrackerStalledTrack === 'function' ? stageTrackerStalledTrack(item) : '';
+      // Exactly one lit track (hivecommons/hive#17335): the earliest that
+      // would light leads; the other is dim with a queued note.
+      const col50 = segs.find(sg => sg.number === 50);
+      const leadTrack = col50 && typeof stageTrackerLeadTrack === 'function' ? stageTrackerLeadTrack(item, col50.state === 'active', stalledTrack) : '';
       return segs.map(sg => {
-        if (sg.number === 50) return ['ci', 'review'].map(kind => stageTrackerActivityTrackHtml(item, kind, sg, sg.number < from || sg.number > to, nowMs, { stalled: stalledTrack === kind })).join('');
+        if (sg.number === 50) return ['ci', 'review'].map(kind => stageTrackerActivityTrackHtml(item, kind, sg, sg.number < from || sg.number > to, nowMs, { stalled: stalledTrack === kind, lead: leadTrack })).join('');
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
         const sentinelSuffix = !!(sg.detour && sg.detour.sentinelSuffix);
@@ -702,12 +756,14 @@
     // carries none of these and sits on a hive-driven stage is the hive's
     // to work through, so the dashboard must not dress it as a human call.
     const STAGE_TRACKER_HUMAN_MODS = ['hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-rebase', 'blocked', 'stalled'];
-    const STAGE_TRACKER_HANDLED_TEXT = 'stage ↓';
+    // The pill says what happened in words ("stage ↓" read as a sort glyph,
+    // hivecommons/hive#17335); after a push it says what caused the fall.
+    const STAGE_TRACKER_HANDLED_TEXT = 'stage reset', STAGE_TRACKER_HANDLED_PUSH_TEXT = 'stage reset by push';
     const STAGE_TRACKER_HANDLED_NOTE = 'the hive is handling it — no action needed; clears on the next forward step';
 
     // True when the item is regressed but nothing about it waits on a
     // person: no human-gate modifier and not on a human-gated stage. Such a
-    // row gets a muted "stage ↓" pill and stays out of "Needs attention".
+    // row gets a muted "stage reset" pill and stays out of "Needs attention".
     function stageTrackerRegressionHandled(item) {
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       if (mods.indexOf('regressed') < 0) return false;
@@ -887,10 +943,11 @@
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       if (!mods.length) return sentinel;
       // A regression the hive is working through yields the lead pill to any
-      // other modifier and, alone, draws muted as "stage ↓" rather than red.
+      // other modifier and, alone, draws muted as "stage reset" rather than red.
       const handled = stageTrackerRegressionHandled(item);
       if (handled && mods.length > 1) mods.push(mods.shift());
-      let text = handled && mods[0] === 'regressed' ? STAGE_TRACKER_HANDLED_TEXT : (STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '));
+      const pushReset = !!(item.push && item.push.state === 'pushed') || /\b(push|new head|head changed)\b/i.test(String(item.regressed_reason || ''));
+      let text = handled && mods[0] === 'regressed' ? (pushReset ? STAGE_TRACKER_HANDLED_PUSH_TEXT : STAGE_TRACKER_HANDLED_TEXT) : (STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '));
       // A hold the stage-label pass could attribute names who set it and why
       // ("Held by hive · reporter trust (issue #N by @X, contributor)"), so the
       // operator is not left reading "hold +1" (hivecommons/hive#15020).

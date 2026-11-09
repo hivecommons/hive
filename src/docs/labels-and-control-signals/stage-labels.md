@@ -247,7 +247,8 @@ How the chip renders depends on whether a person is in the loop. On a
 hive-driven stage with no human-gate modifier (`hold`, `needs-human`,
 `needs-decision`, `needs-rebase`, `blocked`, `stalled`) and off the
 human-gated stages (045 / 071 / 072 / 085 / 090), it draws as a muted,
-dashed `stage ↓` pill whose hover text names the fall and ends "the hive is
+dashed `stage reset` pill (`stage reset by push` when a new head caused the
+fall) whose hover text names the fall and ends "the hive is
 handling it — no action needed; clears on the next forward step", and the
 row stays out of **Needs attention** and keeps its ordinary headline. Only a
 regression on a human-gated row keeps the red `regressed` pill and the
