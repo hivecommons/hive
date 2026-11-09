@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // stubForgeProbe installs healthTokenProbeFn and a short forgeProbeBudget for
@@ -86,13 +88,8 @@ func TestProbeGitHubToken_DeadForgeBoundedAndCached(t *testing.T) {
 	}
 
 	close(release)
-	deadline := time.Now().Add(5 * time.Second)
-	for s.ForgeUnreachable() {
-		if time.Now().After(deadline) {
-			t.Fatal("ForgeUnreachable() never cleared after the probe completed")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	testutil.Eventually(t, 5*time.Second, func() bool { return !s.ForgeUnreachable() },
+		"ForgeUnreachable() never cleared after the probe completed")
 	got := s.probeGitHubToken()
 	if !got.Known || got.Err != nil || got.TimedOut {
 		t.Fatalf("after recovery probe = %+v, want known success", got)
