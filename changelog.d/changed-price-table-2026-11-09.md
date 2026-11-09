@@ -1,1 +1,0 @@
-- Refreshed the model list-price table from OpenRouter (3 rows moved; list prices as of 2026-11-09); the Cost panel estimate now uses the new rates. The `kimi-k3` row keeps its prior value: the OpenRouter quote (0.192 in / 16.00 out) is a catalogue anomaly the reconciler's plausibility guard now holds for review.
