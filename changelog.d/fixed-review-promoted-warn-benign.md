@@ -1,0 +1,1 @@
+- The review-dispatch starvation-guard promotion WARN is no longer reported by the fleet feed as a repeated unclassified runtime error ([#17366](https://github.com/hivecommons/hive/issues/17366)).
