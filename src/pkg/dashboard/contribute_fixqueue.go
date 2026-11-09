@@ -415,6 +415,13 @@ func (h *ContributeWSHub) forgetFixOwner(user, key string) {
 // asked for its next task (nothing running); the first dispatched message is
 // returned so the caller can reply with it instead of an issue.
 func (h *ContributeWSHub) dispatchFixes(user string, conns []*ContributorConnection, boundary bool) *WSMessage {
+	msg, _ := h.dispatchFixesHeld(user, conns, boundary)
+	return msg
+}
+
+// dispatchFixesHeld is dispatchFixes that also reports whether dispatch
+// stopped because a queued PR's state could not be read (dropClosedFixes).
+func (h *ContributeWSHub) dispatchFixesHeld(user string, conns []*ContributorConnection, boundary bool) (*WSMessage, bool) {
 	var target *ContributorConnection
 	var targetPong time.Time
 	for _, c := range conns {
@@ -429,11 +436,12 @@ func (h *ContributeWSHub) dispatchFixes(user string, conns []*ContributorConnect
 		}
 	}
 	if target == nil {
-		return nil
+		return nil, false
 	}
 	sched := h.fixQueue()
 	cap := h.fixCapacity(target)
 	var first *WSMessage
+	held := false
 	for {
 		next := sched.Next(user, cap, boundary)
 		if len(next) == 0 {
@@ -441,6 +449,7 @@ func (h *ContributeWSHub) dispatchFixes(user string, conns []*ContributorConnect
 		}
 		dropped, hold := h.dropClosedFixes(user, next)
 		if hold {
+			held = true
 			break
 		}
 		if dropped {
@@ -469,13 +478,14 @@ func (h *ContributeWSHub) dispatchFixes(user string, conns []*ContributorConnect
 			break
 		}
 	}
-	return first
+	return first, held
 }
 
 // dropClosedFixes checks the PRs about to be dispatched to user. A PR that
 // merged or closed since it was queued leaves the queue (logged), so no
 // relay is sent to rework it. hold is true when a PR's state could not be
-// read: nothing is dispatched this tick, and the next one asks again.
+// read: no fix is dispatched this tick (the relay gets ordinary work at a
+// boundary, see selectFixTask), and the next one asks again.
 func (h *ContributeWSHub) dropClosedFixes(user string, items []fixqueue.Item) (dropped, hold bool) {
 	sched := h.fixQueue()
 	for _, it := range items {
@@ -616,15 +626,23 @@ func (h *ContributeWSHub) selectFixTask(c *ContributorConnection) *WSMessage {
 	if !sched.Pending(user) {
 		return nil
 	}
-	if msg := h.dispatchFixes(user, []*ContributorConnection{c}, true); msg != nil {
+	msg, held := h.dispatchFixesHeld(user, []*ContributorConnection{c}, true)
+	if msg != nil {
 		return msg
 	}
 	if !sched.Pending(user) {
 		// Every queued fix was for a PR that has since merged or closed.
 		return nil
 	}
-	// Fixes are queued but every slot is busy (or a PR's state could not be
-	// read this tick): no new work until one finishes.
+	if held {
+		// A queued PR's state could not be read this tick (GitHub trouble or
+		// a low API budget). The fix stays queued and is tried again on the
+		// next ready; meanwhile the relay takes ordinary work rather than
+		// sitting idle. The worst case is a fix that starts a little late.
+		return nil
+	}
+	// Fixes are queued but every slot is busy: no new work until one
+	// finishes.
 	return h.taskUnavailable(taskUnavailableFixInFlight)
 }
 

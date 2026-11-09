@@ -147,8 +147,9 @@ func TestFixQueueNudgeForMergedPRDispatchesNothing(t *testing.T) {
 	}
 }
 
-// When the PR's state cannot be read nothing is dispatched (and no new work
-// is offered in its place); the next boundary asks again.
+// When the PR's state cannot be read the fix is not dispatched and stays
+// queued, and the relay is not held idle: selectFixTask returns nothing, so
+// the ready handler offers ordinary work. The next boundary asks again.
 func TestFixQueueHoldsDispatchWhenPRStateUnreadable(t *testing.T) {
 	hub, _ := covK2Hub(t)
 	if err := saveContributorProfile(&ContributorProfile{GitHubUsername: "alice", TrustTier: "contributor"}); err != nil {
@@ -160,9 +161,8 @@ func TestFixQueueHoldsDispatchWhenPRStateUnreadable(t *testing.T) {
 		return fixPRStateUnchecked, "", errors.New("GET pulls/5: 502")
 	}
 	c := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), time.Now())
-	msg := hub.selectFixTask(c)
-	if msg == nil || msg.Type != "task_unavailable" || msg.Reason != taskUnavailableFixInFlight {
-		t.Fatalf("selectFixTask = %+v, want task_unavailable/%s while the state is unreadable", msg, taskUnavailableFixInFlight)
+	if msg := hub.selectFixTask(c); msg != nil {
+		t.Fatalf("selectFixTask = %+v, want nil (ordinary work offered) while the state is unreadable", msg)
 	}
 	if len(*got) != 0 || hub.FixQueueStatus("alice").Queued != 1 {
 		t.Fatalf("dispatches=%d status=%+v, want nothing dispatched and the fix still queued", len(*got), hub.FixQueueStatus("alice"))
