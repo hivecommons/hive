@@ -825,6 +825,24 @@ nor one touching `.github/workflows/**`. The App needs **Actions: Read and
 write** for the call; without it the approve fails, is logged once per head,
 and the PR waits for a person as before.
 
+The lane also asks Prow to start presubmits for any admitted author
+(hivecommons/hive#17474). On a Prow-managed repository (Prow's labels such as
+`size/*` or `needs-ok-to-test`, or its `[APPROVALNOTIFIER]` comment) the
+trigger plugin runs presubmits for a non-member's fork PR only after a trusted
+user comments `/ok-to-test`, so #17359 sat green on GitHub Actions while Tide
+reported `Jobs … have not succeeded`. While such a fork head is not green, the
+author's `author_association` is not `OWNER`, `MEMBER` or `COLLABORATOR`, the
+PR has no `ok-to-test` label and Prow has reported no presubmit status on the
+head (a status other than `tide` from the account that reports `tide`), the
+lane posts `/ok-to-test` once per head with the same per-head marker and
+mutation-boundary dedupe as the trusted-lane command. If Prow replies
+`Cannot trigger testing until a trusted user`, the lane logs it once with
+`skipped=prow-rejects-bot-commands`, leaves one
+`<!-- hive-ok-to-test-rejected -->` needs-human note and never posts the
+command on that PR again; making the App a Prow trusted user is the
+repository's Prow configuration. The merge-request relay's read-only
+evaluation posts nothing.
+
 A PR merges through this tier only when all of the following hold:
 
 - The PR author is admitted by one of three paths:

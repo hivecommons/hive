@@ -386,7 +386,7 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 		}
 	}
 	full := owner + "/" + name
-	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor, ProwManaged: prowManagedLabels(labels)}
+	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor, ProwManaged: ProwManagedLabels(labels)}
 	if opts.HumanChangeRequests != nil {
 		if head == "" {
 			return event, ErrPullRequestHeadUnknown
@@ -477,10 +477,10 @@ func (c *Client) reportOperatorPullRequestApproval(ctx context.Context, owner, n
 	return ctx.Err()
 }
 
-// prowManagedLabels reports whether labels carry Prow's plugin markers:
+// ProwManagedLabels reports whether labels carry Prow's plugin markers:
 // the approve plugin's `approved`, size's `size/*`, the `do-not-merge/*`
 // family and trigger's `ok-to-test` / `needs-ok-to-test`.
-func prowManagedLabels(labels []string) bool {
+func ProwManagedLabels(labels []string) bool {
 	for _, l := range labels {
 		l = strings.ToLower(strings.TrimSpace(l))
 		switch {

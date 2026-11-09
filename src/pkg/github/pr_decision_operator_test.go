@@ -315,8 +315,8 @@ func TestProwManagedLabels(t *testing.T) {
 		{[]string{"lgtm", "role/trusted", PRNeedsDecisionStageLabel}, false},
 		{nil, false},
 	} {
-		if got := prowManagedLabels(tc.labels); got != tc.want {
-			t.Errorf("prowManagedLabels(%v) = %v, want %v", tc.labels, got, tc.want)
+		if got := ProwManagedLabels(tc.labels); got != tc.want {
+			t.Errorf("ProwManagedLabels(%v) = %v, want %v", tc.labels, got, tc.want)
 		}
 	}
 }
