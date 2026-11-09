@@ -30,16 +30,15 @@ memory.
  │ 1. extractKeywordsFor ← titles + labels of the agent's first                 │
  │    maxIssuesToPrime (=5) queued issues, minus what the hive put              │
  │    there: routing labels (stage/, agent/, origin/, hive/, needs-,            │
- │    …), the complexity tier, a filer tag naming a hive agent and              │
- │    the "Review backlog (<perspective>):" stem; if nothing is                 │
- │    left, the pre-filter query (legacyKeywords)                               │
+ │    never-claim, Prow's, …), the complexity tier, a filer tag                 │
+ │    naming a hive agent and the "Review backlog (<p>):" stem; when            │
+ │    that leaves nothing, or matches no entry in step 3, the search            │
+ │    uses the pre-filter query instead (legacyKeywords)                        │
  │ 2. scope ← knowledge.agent_scopes[<agent>] (or base agent for a replica)     │
  │ 3. Primer.PrimeScoped (pkg/knowledge/primer.go)                              │
  │      search every layer/store → merge by layer precedence →                  │
  │      FilterByLifecycle (approved only) → scope.Filter →                      │
- │      Fisher-Rao rerank → type priority (within a type, +0.1 to               │
- │      rank, not to confidence, for entries tagged repo:<task                  │
- │      repo>) → cap at max_facts (25) →                                        │
+ │      Fisher-Rao rerank → type priority → cap at max_facts (25) →             │
  │      expandWithGraph (never past the scope) → Context7 hints                 │
  │ 4. PrimedKnowledge.Render (primer_render.go): "# Relevant Knowledge",        │
  │    grouped by type, whole facts dropped past max_bytes (8192),               │

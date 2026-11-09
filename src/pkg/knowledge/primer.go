@@ -3,7 +3,6 @@ package knowledge
 import (
 	"context"
 	"log/slog"
-	"path"
 	"sort"
 	"strings"
 	"time"
@@ -164,7 +163,7 @@ func (p *Primer) PrimeForKick(ctx context.Context, scope *TOCScope, kc KickConte
 		merged = scope.Filter(merged)
 	}
 	merged, scopedOut := FilterByKickContext(merged, kc)
-	reranked := boostTaskRepos(p.rerankFisherRao(query, merged), kc.Repos)
+	reranked := p.rerankFisherRao(query, merged)
 	prioritized := p.applyPriority(reranked)
 
 	if len(prioritized) > p.config.MaxFacts {
@@ -237,40 +236,6 @@ func (p *Primer) rerankFisherRao(query string, facts []Fact) []Fact {
 	return facts
 }
 
-// taskRepoBoost is added to the ranking score of a fact tagged with the
-// kick's own repository. It is a nudge, not a gate: a fact about another repo
-// that matches the work clearly better still ranks first.
-const taskRepoBoost = 0.1
-
-// boostTaskRepos marks the facts whose repo:<name> tag (FactRepo) names one of
-// repos, so applyPriority ranks them ahead of an otherwise equal fact within
-// the same type. It sets rankBoost only: Confidence, which the kick shows, is
-// untouched. Every fact was already selected by relevance; the tag is never a
-// reason to show one. A tag holding a bare repository name, as a code map
-// configured by path is tagged, matches the task repo's name part.
-func boostTaskRepos(facts []Fact, repos []string) []Fact {
-	if len(repos) == 0 {
-		return facts
-	}
-	for i := range facts {
-		tagged := FactRepo(facts[i])
-		if tagged == "" {
-			continue
-		}
-		for _, repo := range repos {
-			name := repo
-			if !strings.Contains(tagged, "/") {
-				name = path.Base(repo)
-			}
-			if strings.EqualFold(tagged, name) {
-				facts[i].rankBoost = taskRepoBoost
-				break
-			}
-		}
-	}
-	return facts
-}
-
 // mergeWithPrecedence deduplicates facts by slug, keeping the version from the
 // highest-precedence layer (personal > project > org > community).
 func (p *Primer) mergeWithPrecedence(facts []Fact) []Fact {
@@ -289,8 +254,7 @@ func (p *Primer) mergeWithPrecedence(facts []Fact) []Fact {
 	return result
 }
 
-// applyPriority sorts facts by configured type priority, then by confidence
-// plus any task-repo rank boost (boostTaskRepos).
+// applyPriority sorts facts by configured type priority, then by confidence.
 func (p *Primer) applyPriority(facts []Fact) []Fact {
 	priorityMap := make(map[string]int)
 	for i, typ := range p.config.Priority {
@@ -310,7 +274,7 @@ func (p *Primer) applyPriority(facts []Fact) []Fact {
 		if pi != pj {
 			return pi < pj
 		}
-		return facts[i].Confidence+facts[i].rankBoost > facts[j].Confidence+facts[j].rankBoost
+		return facts[i].Confidence > facts[j].Confidence
 	})
 
 	return facts
