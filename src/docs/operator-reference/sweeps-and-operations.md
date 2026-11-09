@@ -896,6 +896,14 @@ level=INFO msg="knowledge: injected 3900 bytes from 7 entries (skipped 3 for cap
 
 `injected_bytes` / `entries` are the rendered `# Relevant Knowledge` block; `skipped_for_cap` counts relevant facts dropped whole because they did not fit `knowledge.primer.max_bytes` (`cap_bytes`); `agents_md_bytes` and `skills_bytes` are the repository `AGENTS.md` block and the requested-skills block that share the kick. A zero line (`primed=true`, 0 entries) means priming ran and found nothing relevant — the signal that the store lacks entries for that lane's work. The line is not emitted when knowledge is disabled or there was nothing to prime, so a hive without a knowledge store does not log a zero on every kick. Read it against `src/docs/knowledge-entries.md` when deciding whether a fact belongs in `AGENTS.md` (paid on every kick) or in a scoped entry (paid only when it matches).
 
+A contributor's role guidance (a role-delegated task, or donated standby work) is primed from its one assigned issue, and the same `knowledge: injected` line names only the role. So that render also logs where its knowledge came from:
+
+```
+level=INFO msg="role guidance knowledge: primed from issue projectbluefin/docs#12 (query=\"sidebar anchor links broken\", hits=3)" agent=scanner repo=projectbluefin/docs number=12 source=issue query="sidebar anchor links broken" hits=3 entries=3 skipped_for_cap=0 injected_bytes=812
+```
+
+`query` is the whole search: the issue's labels, its complexity tier when set, and the words of its title (never its body or its repository). `hits` is how many entries matched before the byte cap. When nothing is primed, the line says why, with `source=none`: the issue gave no title or labels to search on, or no entry matched the query. There is no fallback to general entries, so a guidance section that looks off-topic was primed from the issue; read its `query` to see which words picked those entries.
+
 **Maintainer notes in the kick.** When a maintainer has left [notes](../dashboard.md#maintainer-notes) on an item the kick lists, the scheduler appends one `# Maintainer notes` section — a `## owner/repo#N` block per noted item, newest note first, each capped at 1 KiB with "… and N more note(s) on the dashboard" when the rest did not fit. The notes come from the spoke's `/data/maintainer-notes.jsonl`, never from GitHub, and the section is omitted entirely when no listed item has any, so an unused feature costs no bytes.
 
 ### What consumes tokens while agents are paused

@@ -71,7 +71,7 @@ Workspace "confinement" is a `cd`, not a boundary:
 
 - Relay (`contribute-hive ... local`): `HIVE_WORKSPACE_DIR` is exported and the
   tmux pane is started with `-c "$HIVE_WORKSPACE_DIR"`
-  (`bin/contributor-agent.sh:624-641`). That sets the pane's initial working
+  (`bin/contributor-agent.sh:691-708`). That sets the pane's initial working
   directory only; nothing stops the CLI process — running as the contributor's
   own uid — from reading or writing any path that uid can reach.
 - Hub-pod agents: `launchInTmux` starts the session with `new-session -d -s

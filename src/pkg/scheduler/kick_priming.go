@@ -267,6 +267,11 @@ type knowledgeInjection struct {
 	SkippedForCap int
 	CapBytes      int
 	Primed        bool
+	// Keywords is the search query the primer ran (empty when the issues
+	// gave none, so nothing was searched). Hits is how many entries the
+	// search returned before the byte cap.
+	Keywords []string
+	Hits     int
 }
 
 // primeKnowledge queries the wiki layers for facts relevant to the given issues
@@ -311,7 +316,8 @@ func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue)
 // primed from that issue alone. It records nothing for the resident agent —
 // no KickSummary and no KickPrimedSlugs — because no resident kick was sent:
 // writing either would move the resident session's advisor identity and make
-// its advisor hold back facts its own kick never carried.
+// its advisor hold back facts its own kick never carried. It logs one line
+// naming the issue, the query and the hits (logTaskKnowledgeSource).
 func (s *Scheduler) primeKnowledgeForTask(agentName string, task github.Issue) knowledgeInjection {
 	s.mu.RLock()
 	primer := s.primer
@@ -321,7 +327,48 @@ func (s *Scheduler) primeKnowledgeForTask(agentName string, task github.Issue) k
 		return knowledgeInjection{}
 	}
 	inj, _ := s.renderKnowledge(primer, cfg, agentName, []github.Issue{task})
+	s.logTaskKnowledgeSource(agentName, task, inj)
 	return inj
+}
+
+// logTaskKnowledgeSource says where a role guidance render's "# Relevant
+// Knowledge" came from. The shared "knowledge: injected" line names only the
+// role, so on its own it reads like a resident kick and cannot tell an
+// on-topic section from one primed by generic words. There is no fallback to
+// general entries: a task whose issue gives no keywords, or whose search
+// matches nothing, gets no section, and this line says which.
+func (s *Scheduler) logTaskKnowledgeSource(agentName string, task github.Issue, inj knowledgeInjection) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	ref := "(no assigned issue)"
+	if task.Repo != "" || task.Number != 0 {
+		ref = fmt.Sprintf("issue %s#%d", task.Repo, task.Number)
+	}
+	query := strings.Join(inj.Keywords, " ")
+	var msg, source string
+	switch {
+	case len(inj.Keywords) == 0:
+		source = "none"
+		msg = fmt.Sprintf("role guidance knowledge: nothing primed, %s has no title or labels to search on", ref)
+	case inj.Hits == 0:
+		source = "none"
+		msg = fmt.Sprintf("role guidance knowledge: nothing primed, no entry matched %s (query=%q); there is no fallback to general entries", ref, query)
+	default:
+		source = "issue"
+		msg = fmt.Sprintf("role guidance knowledge: primed from %s (query=%q, hits=%d)", ref, query, inj.Hits)
+	}
+	s.logger.Info(msg,
+		"agent", agentName,
+		"repo", task.Repo,
+		"number", task.Number,
+		"source", source,
+		"query", query,
+		"hits", inj.Hits,
+		"entries", inj.Entries,
+		"skipped_for_cap", inj.SkippedForCap,
+		"injected_bytes", inj.Bytes,
+	)
 }
 
 // renderKnowledge is the side-effect-free core both primers share: it queries
@@ -357,6 +404,8 @@ func (s *Scheduler) renderKnowledge(primer *knowledge.Primer, cfg *config.Config
 		SkippedForCap: omitted.Facts,
 		CapBytes:      primer.MaxBytes(),
 		Primed:        true,
+		Keywords:      keywords,
+		Hits:          len(primed.Facts),
 	}
 	if omitted.Any() {
 		// The render carries its own marker; this is the operator-side half so

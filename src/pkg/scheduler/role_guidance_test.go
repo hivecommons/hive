@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"bytes"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -270,5 +272,96 @@ func TestBuildAgentGuidanceForTaskWithoutRepoFallsBackToPrimary(t *testing.T) {
 	}
 	if !strings.Contains(g, "WRITING-GUIDE-MARKER") {
 		t.Errorf("guidance lost the writing guide")
+	}
+}
+
+// taskKnowledgeSourceLines returns the decoded "role guidance knowledge: …"
+// records a scheduler wrote to buf.
+func taskKnowledgeSourceLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("bad log line %q: %v", line, err)
+		}
+		if msg, _ := rec["msg"].(string); strings.HasPrefix(msg, "role guidance knowledge: ") {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// A role guidance render says where its "# Relevant Knowledge" came from: the
+// assigned issue (with the query it built and how many entries matched), or
+// nothing, and why. The shared "knowledge: injected" line names only the role,
+// so without this an operator cannot tell a task-primed section from a
+// resident kick's, or see the query that picked off-topic entries.
+func TestBuildAgentGuidanceForTaskLogsKnowledgeSource(t *testing.T) {
+	tests := []struct {
+		name       string
+		task       github.Issue
+		wantMsg    string
+		wantSource string
+		wantHits   float64
+	}{
+		{
+			name:       "primed from the assigned issue",
+			task:       guidanceTask,
+			wantMsg:    `role guidance knowledge: primed from issue golden-org/docs#1614 (query="sidebar anchor links broken", hits=1)`,
+			wantSource: "issue",
+			wantHits:   1,
+		},
+		{
+			name:       "an issue whose search matches nothing primes nothing, with no fallback",
+			task:       github.Issue{Repo: "golden-org/docs", Number: 1615, Title: "Kernel panic resuming laptop"},
+			wantMsg:    `role guidance knowledge: nothing primed, no entry matched issue golden-org/docs#1615 (query="kernel panic resuming laptop"); there is no fallback to general entries`,
+			wantSource: "none",
+		},
+		{
+			name:       "no assigned issue",
+			task:       github.Issue{},
+			wantMsg:    "role guidance knowledge: nothing primed, (no assigned issue) has no title or labels to search on",
+			wantSource: "none",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := guidanceScheduler(t, "")
+			withTaskRepoAndKnowledge(t, s)
+			var buf bytes.Buffer
+			s.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+			g := s.BuildAgentGuidanceForTask("scanner", tc.task)
+			lines := taskKnowledgeSourceLines(t, &buf)
+			if len(lines) != 1 {
+				t.Fatalf("got %d role guidance knowledge lines, want 1:\n%s", len(lines), buf.String())
+			}
+			rec := lines[0]
+			if rec["msg"] != tc.wantMsg {
+				t.Errorf("msg = %q\nwant  %q", rec["msg"], tc.wantMsg)
+			}
+			if rec["source"] != tc.wantSource || rec["hits"] != tc.wantHits || rec["agent"] != "scanner" {
+				t.Errorf("source=%v hits=%v agent=%v, want source=%s hits=%v agent=scanner", rec["source"], rec["hits"], rec["agent"], tc.wantSource, tc.wantHits)
+			}
+			if primed := strings.Contains(g, "# Relevant Knowledge"); primed != (tc.wantSource == "issue") {
+				t.Errorf("guidance has Relevant Knowledge = %v, but the log says source=%s", primed, tc.wantSource)
+			}
+		})
+	}
+}
+
+// A resident kick never writes the role guidance line.
+func TestResidentKickWritesNoTaskKnowledgeSourceLine(t *testing.T) {
+	s := guidanceScheduler(t, "")
+	withTaskRepoAndKnowledge(t, s)
+	var buf bytes.Buffer
+	s.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	_ = s.primeKnowledge("scanner", []github.Issue{guidanceTask})
+	if lines := taskKnowledgeSourceLines(t, &buf); len(lines) != 0 {
+		t.Errorf("resident priming wrote %d role guidance knowledge lines:\n%s", len(lines), buf.String())
 	}
 }

@@ -59,7 +59,7 @@ Nothing new is needed on the read side.
 - **Per-agent scope.** `knowledge.agent_scopes`
   (`src/pkg/config/knowledge_config.go:43-46`) binds an agent to layers,
   repos, types, tags and admitted states. It is resolved for the kick primer in
-  `primeKnowledge` (`src/pkg/scheduler/kick_priming.go:256-305`). See
+  `primeKnowledge` (`src/pkg/scheduler/kick_priming.go:261-310`). See
   [Scoped knowledge table of contents](../knowledge-toc.md).
 - **A write path.** `POST /api/knowledge/create`
   (`src/pkg/dashboard/api.go:389`, handler at

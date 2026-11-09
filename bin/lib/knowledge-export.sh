@@ -409,18 +409,32 @@ PY
   printf '%s\n' "$budgeted_agent_md"
 }
 
-# link_backend_knowledge symlinks the knowledge export $2 under every context
-# filename backend $1 reads, inside $3. The container entrypoint links into
-# $HOME (the CLI's home inside the image); `just contribute-hive local` links
-# into $HIVE_AGENT_CWD, the directory the CLI is started from, because on the
-# host $HOME is the user's real home and the CLIs read these names from their
-# working directory (#14521). Backend config files are only seeded when the
-# destination is $HOME, i.e. in the container.
+# link_backend_knowledge BACKEND AGENT_MD [DEST_DIR] [HOME_DIR]
+#
+# Symlinks the knowledge export AGENT_MD under every context filename BACKEND
+# reads from its working directory, inside DEST_DIR (default $HOME). For the
+# interactive CLI both entrypoints pass $HIVE_AGENT_CWD, the directory the CLI
+# is started from: the CLIs read these names from their cwd (Codex reads
+# AGENTS.md only from the git root down to its cwd, and HIVE_AGENT_CWD is not a
+# git repo), so a link anywhere else can be silently ignored (#14521).
+#
+# HOME_DIR is where the backend's own global files go: the ~/.bob/AGENTS.md
+# global context file, the ~/.config/goose seed and ~/.copilot. It defaults to
+# $HOME only when DEST_DIR is $HOME. `just contribute-hive local` passes no
+# HOME_DIR, so nothing is written into the user's real home; the container
+# entrypoint passes its own $HOME (link_container_knowledge in
+# bin/contributor-agent.sh). Nothing here ever writes $CODEX_HOME/AGENTS.md,
+# which is the user's own file.
 link_backend_knowledge() {
   local backend="$1"
   local agent_md="$2"
   local dest_dir="${3:-$HOME}"
+  local home_dir="${4:-}"
   local backend_agent_md="$agent_md"
+
+  if [[ -z "$home_dir" && "$dest_dir" == "$HOME" ]]; then
+    home_dir="$HOME"
+  fi
 
   mkdir -p "$dest_dir"
 
@@ -429,7 +443,7 @@ link_backend_knowledge() {
       ln -sf "$agent_md" "${dest_dir}/CLAUDE.md"
       ;;
     copilot)
-      [[ "$dest_dir" == "$HOME" ]] && mkdir -p "${HOME}/.copilot"
+      if [[ -n "$home_dir" ]]; then mkdir -p "${home_dir}/.copilot"; fi
       ln -sf "$agent_md" "${dest_dir}/copilot-instructions.md"
       ln -sf "$agent_md" "${dest_dir}/COPILOT.md"
       ln -sf "$agent_md" "${dest_dir}/CLAUDE.md"
@@ -445,20 +459,20 @@ link_backend_knowledge() {
       ln -sf "$agent_md" "${dest_dir}/.goose-instructions.md"
       ln -sf "$agent_md" "${dest_dir}/CLAUDE.md"
       # The provider/model seed is container-only: on the host the user's own
-      # ~/.config/goose is theirs, and the links above live in HIVE_AGENT_CWD.
-      if [[ "$dest_dir" == "$HOME" ]]; then
-        mkdir -p "${HOME}/.config/goose"
+      # ~/.config/goose is theirs, so local mode passes no HOME_DIR.
+      if [[ -n "$home_dir" ]]; then
+        mkdir -p "${home_dir}/.config/goose"
         # Write the config only if the contributor/derived image hasn't provided one,
         # so a downstream can add Goose extensions (MCP servers) or other settings
         # without it being clobbered on every start. (kubestellar/hive#2393 item 3.)
-        if [ ! -f "${HOME}/.config/goose/config.yaml" ]; then
-          cat > "${HOME}/.config/goose/config.yaml" <<GOOSECFG
+        if [ ! -f "${home_dir}/.config/goose/config.yaml" ]; then
+          cat > "${home_dir}/.config/goose/config.yaml" <<GOOSECFG
 GOOSE_PROVIDER: ${GOOSE_PROVIDER:-ollama}
 GOOSE_MODEL: ${GOOSE_MODEL:-phi4}
 GOOSECFG
           echo "Goose config: provider=${GOOSE_PROVIDER:-ollama} model=${GOOSE_MODEL:-phi4}"
         else
-          echo "Goose config: keeping existing ${HOME}/.config/goose/config.yaml"
+          echo "Goose config: keeping existing ${home_dir}/.config/goose/config.yaml"
         fi
       fi
       ;;
@@ -479,8 +493,9 @@ GOOSECFG
       # Bobshell 1.0.6 defaults to AGENTS.md and documents ~/.bob/AGENTS.md as
       # its global context file. It does not load ~/CLAUDE.md. Keep the latter
       # compatibility link while also installing the export where Bob reads it.
-      mkdir -p "${dest_dir}/.bob"
-      ln -sf "$agent_md" "${dest_dir}/.bob/AGENTS.md"
+      local bob_dir="${home_dir:-$dest_dir}"
+      mkdir -p "${bob_dir}/.bob"
+      ln -sf "$agent_md" "${bob_dir}/.bob/AGENTS.md"
       ln -sf "$agent_md" "${dest_dir}/CLAUDE.md"
       ;;
     agy)
