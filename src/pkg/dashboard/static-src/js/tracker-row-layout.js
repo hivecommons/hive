@@ -188,19 +188,30 @@
     // hive#15806) — on the PR drawn here, "also closes #A, #B" naming the
     // other listed open issues it resolves, every number a link; past
     // three it reads "#A, #B, #C +N" and the hover names every title.
-    function stageTrackerAlsoClosesChipHtml(lp) {
+    // With `group` ({ key, count, collapsed }: the primary row's key and how
+    // many secondary rows this list draws right under it), the pill is also
+    // the group's fold: a caret button ahead of the words (▾ expanded, ▸
+    // folded; hamSharedToggle(key), remembered in localStorage) — the
+    // secondaries' rows follow this one (stageTrackerSharedPRContiguous).
+    function stageTrackerAlsoClosesChipHtml(lp, group) {
       const list = Array.isArray(lp && lp.also_closes) ? lp.also_closes.filter(li => li && Number(li.number) > 0) : [];
       if (!list.length) return '';
       const shown = list.slice(0, 3);
       const links = shown.map(li => `<a href="${esc(li.url || '#')}" target="_blank" rel="noopener">#${Number(li.number)}</a>`).join(', ');
       const more = list.length > shown.length ? ' +' + (list.length - shown.length) : '';
-      const tip = 'this PR also resolves ' + list.map(li => '#' + Number(li.number) + (li.title ? ' (' + li.title + ')' : '')).join(', ');
-      return `<span class="ham-badge ham-also-closes" title="${esc(tip)}">also closes ${links}${more}</span>`;
+      let tip = 'this PR also resolves ' + list.map(li => '#' + Number(li.number) + (li.title ? ' (' + li.title + ')' : '')).join(', ');
+      if (!group || !(Number(group.count) > 0)) return `<span class="ham-badge ham-also-closes" title="${esc(tip)}">also closes ${links}${more}</span>`;
+      const n = Number(group.count);
+      const rows = n + (n === 1 ? ' issue row' : ' issue rows');
+      tip += group.collapsed ? ' · ' + rows + ' folded under this row; click the caret to show' : ' · ' + rows + ' drawn under this row; click the caret to fold';
+      const label = (group.collapsed ? 'Show ' : 'Fold ') + rows + ' this PR also closes';
+      return `<span class="ham-badge ham-also-closes ham-shared-head-pill${group.collapsed ? ' ham-shared-folded' : ''}" title="${esc(tip)}"><button type="button" class="ham-shared-toggle" data-action="hamSharedToggle" data-arg0="${esc(group.key)}" data-stop="1" aria-expanded="${group.collapsed ? 'false' : 'true'}" aria-label="${esc(label)}"><span class="ham-group-caret" aria-hidden="true">${group.collapsed ? '▸' : '▾'}</span></button>also closes ${links}${more}${group.collapsed ? ` <span class="ham-shared-count">+${n}</span>` : ''}</span>`;
     }
     // Pure: the lineage-style chips of a covering PR drawn under an issue —
     // its lineage / adopted-from chip, then the also-closes chip; null = none.
-    function stageTrackerLinkedChipsHtml(lp, lineage) {
-      const also = typeof stageTrackerAlsoClosesChipHtml === 'function' ? stageTrackerAlsoClosesChipHtml(lp) : '';
+    // `group`: see stageTrackerAlsoClosesChipHtml.
+    function stageTrackerLinkedChipsHtml(lp, lineage, group) {
+      const also = typeof stageTrackerAlsoClosesChipHtml === 'function' ? stageTrackerAlsoClosesChipHtml(lp, group) : '';
       const out = [lineage || '', also].filter(Boolean).join(' ');
       return out || null;
     }

@@ -1958,6 +1958,22 @@
     .ham-also-closes { color: var(--muted); }
     .ham-also-closes a { color: inherit; text-decoration: none; }
     .ham-also-closes a:hover { color: var(--text); text-decoration: underline; }
+    /* Shared-PR group (hivecommons/hive#17324 follow-up): the secondary
+       issues a PR also closes sit right under their primary, indented, on
+       a rail that runs from the primary's pill to the last child's elbow.
+       The primary's "also closes" pill carries the fold caret. Tokens only. */
+    .ham-row.ham-shared-child { position: relative; padding-left: var(--sp-6); }
+    .ham-row.ham-shared-child::before { content: ''; position: absolute; left: var(--sp-3); top: 0; bottom: 0; border-left: var(--line-width) solid var(--line-strong); pointer-events: none; }
+    .ham-row.ham-shared-child.ham-shared-last::before { bottom: 50%; }
+    .ham-row.ham-shared-child::after { content: ''; position: absolute; left: var(--sp-3); top: 50%; width: var(--sp-3); border-top: var(--line-width) solid var(--line-strong); pointer-events: none; }
+    .ham-row.ham-shared-child + .ham-row.ham-shared-child { border-top-color: transparent; }
+    .ham-row.ham-shared-head + .ham-row.ham-shared-child { border-top-color: transparent; }
+    .ham-row.ham-shared-head { position: relative; }
+    .ham-row.ham-shared-head::before { content: ''; position: absolute; left: var(--sp-3); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--line-strong); pointer-events: none; }
+    .ham-shared-toggle { appearance: none; background: none; border: 0; padding: 0 var(--sp-1) 0 0; margin: 0; font: inherit; color: inherit; cursor: pointer; line-height: 1; vertical-align: baseline; }
+    .ham-shared-toggle:hover .ham-group-caret, .ham-shared-toggle:focus-visible .ham-group-caret { color: var(--text); }
+    .ham-shared-toggle:focus-visible { outline: var(--line-width) solid var(--line-strong); outline-offset: 1px; border-radius: var(--r-sm); }
+    .ham-shared-count { color: var(--text); }
     .ham-plan-body, .ham-plan-note { white-space: pre-wrap; }
     .ham-plan-note { color: var(--muted); font-size: var(--fs-xs); }
     .ham-seg.active .cue-acting-cap { margin-left: var(--sp-2); }
@@ -16396,6 +16412,89 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       });
       return out;
     }
+    /* ---- Shared-PR groups (pure; run under node by
+       stage_tracker_shared_pr_group_test.go) ------------------------------
+       A PR that closes several listed issues is drawn once, under its
+       primary (drawn_under); the other issues ride it from their own rows
+       (stageTrackerLinkedRiding, hivecommons/hive#17324). Those rows belong
+       together: #17292 (primary), #17302 (secondary) and PR #17308 are one
+       flow, yet the lead sort scattered them with an unrelated row between.
+       The group is one unit of the list — the secondaries sit right after
+       their primary, in the lead order among themselves, and the group sorts
+       by the primary — and shares ONE PR snapshot: a secondary's listing of
+       the PR is replaced by the primary's own entry, so both strips light
+       from the same object of the same payload tick. A secondary whose
+       primary is not a row of this list (filtered out, other page) stays a
+       standalone row exactly as before. */
+    // Pure: the primary row a secondary follows — { key, pr } — or null.
+    // Guarded: harnesses lift this file without stageTrackerLinkedRiding.
+    function stageTrackerSharedPRParent(it, stages, keys) {
+      if (!it || it.kind !== 'issue' || typeof stageTrackerLinkedRiding !== 'function') return null;
+      const lp = stageTrackerLinkedRiding(it, stages);
+      const under = Number(lp && lp.drawn_under) || 0;
+      if (!under) return null;
+      const key = stageTrackerItemKey({ repo: it.repo, kind: 'issue', number: under });
+      return keys[key] ? { key, pr: Number(lp.number) || 0 } : null;
+    }
+    // Pure: the groups of a row list — { parentOf: { childKey: parentKey },
+    // children: { parentKey: [childKey…] }, prs: { parentKey: { prNumber:
+    // true } } } — children in list order. Only rows of the list count.
+    function stageTrackerSharedPRGroups(rows, stages) {
+      rows = Array.isArray(rows) ? rows.filter(Boolean) : [];
+      const keys = {};
+      rows.forEach(it => { if (it.kind === 'issue' && Number(it.number) > 0) keys[stageTrackerItemKey(it)] = it; });
+      const out = { parentOf: {}, children: {}, prs: {} };
+      rows.forEach(it => {
+        const p = stageTrackerSharedPRParent(it, stages, keys);
+        if (!p) return;
+        const k = stageTrackerItemKey(it);
+        if (k === p.key) return;
+        out.parentOf[k] = p.key;
+        (out.children[p.key] = out.children[p.key] || []).push(k);
+        (out.prs[p.key] = out.prs[p.key] || {})[p.pr] = true;
+      });
+      return out;
+    }
+    // Pure: a secondary row rebound to its primary's listing of the shared
+    // PR — the same object, drawn_under kept — so the two strips cannot
+    // disagree. The row itself is copied; the payload stays the server's.
+    function stageTrackerSharedPRRebind(child, parent, prNumber) {
+      const own = Array.isArray(parent && parent.linked_prs) ? parent.linked_prs.find(lp => lp && Number(lp.number) === prNumber) : null;
+      if (!own || !Array.isArray(child.linked_prs)) return child;
+      const shared = Object.assign({}, own, { drawn_under: Number(parent.number) || 0, also_closes: null });
+      return Object.assign({}, child, { linked_prs: child.linked_prs.map(lp => lp && Number(lp.number) === prNumber ? shared : lp) });
+    }
+    // Pure: the list with every shared-PR group contiguous — primary, then
+    // its secondaries (rebound) — in the primary's place; a group whose
+    // primary is folded (collapsed[parentKey]) is its primary alone.
+    function stageTrackerSharedPRContiguous(rows, stages, collapsed) {
+      rows = Array.isArray(rows) ? rows : [];
+      const groups = stageTrackerSharedPRGroups(rows, stages);
+      if (!Object.keys(groups.parentOf).length) return rows;
+      const byKey = {};
+      rows.forEach(it => { if (it) byKey[stageTrackerItemKey(it)] = it; });
+      const emitted = {};
+      const out = [];
+      const emit = (it) => {
+        if (!it) { out.push(it); return; }
+        const k = stageTrackerItemKey(it);
+        if (emitted[k]) return;
+        emitted[k] = true;
+        out.push(it);
+        if (collapsed && collapsed[k]) { (groups.children[k] || []).forEach(ck => { emitted[ck] = true; }); return; }
+        (groups.children[k] || []).forEach(ck => {
+          const child = byKey[ck];
+          if (!child || emitted[ck]) return;
+          const pr = Number(Object.keys(groups.prs[k] || {}).find(n => Array.isArray(child.linked_prs) && child.linked_prs.some(lp => lp && Number(lp.number) === Number(n) && Number(lp.drawn_under) === Number(it.number)))) || 0;
+          emit(pr ? stageTrackerSharedPRRebind(child, it, pr) : child);
+        });
+      };
+      rows.forEach(it => { if (it && groups.parentOf[stageTrackerItemKey(it)]) return; emit(it); });
+      // A secondary whose primary never emitted (a cycle) keeps its own place.
+      rows.forEach(it => { if (it && !emitted[stageTrackerItemKey(it)]) emit(it); });
+      return out;
+    }
+
     // Pure: the member numbers of a train the page does not show, given the
     // train's record (ahead + size on the last member tells the whole
     // queue when the view carries it) and the numbers shown under the
@@ -16619,6 +16718,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_GROUP_DIST_STEPS = 4;
     var _stageTrackerGroup = STAGE_TRACKER_GROUP_DEFAULT;
     var _stageTrackerCollapsed = {};
+    // Shared-PR groups (a PR closing several listed issues): the secondary
+    // issues' rows collapsed under their primary, by the primary's row key.
+    const STAGE_TRACKER_SHARED_COLLAPSED_KEY = 'hive.tracker.shared.collapsed';
+    var _stageTrackerSharedCollapsed = {};
     function stageTrackerDefaultFilter() {
       return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, waitingOnYou: false, attentionFirst: true, age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
     }
@@ -19934,19 +20037,30 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // hive#15806) — on the PR drawn here, "also closes #A, #B" naming the
     // other listed open issues it resolves, every number a link; past
     // three it reads "#A, #B, #C +N" and the hover names every title.
-    function stageTrackerAlsoClosesChipHtml(lp) {
+    // With `group` ({ key, count, collapsed }: the primary row's key and how
+    // many secondary rows this list draws right under it), the pill is also
+    // the group's fold: a caret button ahead of the words (▾ expanded, ▸
+    // folded; hamSharedToggle(key), remembered in localStorage) — the
+    // secondaries' rows follow this one (stageTrackerSharedPRContiguous).
+    function stageTrackerAlsoClosesChipHtml(lp, group) {
       const list = Array.isArray(lp && lp.also_closes) ? lp.also_closes.filter(li => li && Number(li.number) > 0) : [];
       if (!list.length) return '';
       const shown = list.slice(0, 3);
       const links = shown.map(li => `<a href="${esc(li.url || '#')}" target="_blank" rel="noopener">#${Number(li.number)}</a>`).join(', ');
       const more = list.length > shown.length ? ' +' + (list.length - shown.length) : '';
-      const tip = 'this PR also resolves ' + list.map(li => '#' + Number(li.number) + (li.title ? ' (' + li.title + ')' : '')).join(', ');
-      return `<span class="ham-badge ham-also-closes" title="${esc(tip)}">also closes ${links}${more}</span>`;
+      let tip = 'this PR also resolves ' + list.map(li => '#' + Number(li.number) + (li.title ? ' (' + li.title + ')' : '')).join(', ');
+      if (!group || !(Number(group.count) > 0)) return `<span class="ham-badge ham-also-closes" title="${esc(tip)}">also closes ${links}${more}</span>`;
+      const n = Number(group.count);
+      const rows = n + (n === 1 ? ' issue row' : ' issue rows');
+      tip += group.collapsed ? ' · ' + rows + ' folded under this row; click the caret to show' : ' · ' + rows + ' drawn under this row; click the caret to fold';
+      const label = (group.collapsed ? 'Show ' : 'Fold ') + rows + ' this PR also closes';
+      return `<span class="ham-badge ham-also-closes ham-shared-head-pill${group.collapsed ? ' ham-shared-folded' : ''}" title="${esc(tip)}"><button type="button" class="ham-shared-toggle" data-action="hamSharedToggle" data-arg0="${esc(group.key)}" data-stop="1" aria-expanded="${group.collapsed ? 'false' : 'true'}" aria-label="${esc(label)}"><span class="ham-group-caret" aria-hidden="true">${group.collapsed ? '▸' : '▾'}</span></button>also closes ${links}${more}${group.collapsed ? ` <span class="ham-shared-count">+${n}</span>` : ''}</span>`;
     }
     // Pure: the lineage-style chips of a covering PR drawn under an issue —
     // its lineage / adopted-from chip, then the also-closes chip; null = none.
-    function stageTrackerLinkedChipsHtml(lp, lineage) {
-      const also = typeof stageTrackerAlsoClosesChipHtml === 'function' ? stageTrackerAlsoClosesChipHtml(lp) : '';
+    // `group`: see stageTrackerAlsoClosesChipHtml.
+    function stageTrackerLinkedChipsHtml(lp, lineage, group) {
+      const also = typeof stageTrackerAlsoClosesChipHtml === 'function' ? stageTrackerAlsoClosesChipHtml(lp, group) : '';
       const out = [lineage || '', also].filter(Boolean).join(' ');
       return out || null;
     }
@@ -20263,6 +20377,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const isIssue = item.kind === 'issue';
       const title = item.title || '';
       let prRefs = [], shown = item, range = null, subs = '', subRows = null, prTargetKey = '', basePill = '';
+      // Shared-PR group (stageTrackerSharedPRGroups in ctx.shared): the row
+      // heads a group when secondaries are drawn right under it; it is a
+      // child when it rides a PR drawn under a row of this list.
+      let sharedCls = '', sharedUnder = 0, sharedGroup = null;
+      if (isIssue && ctx.shared) {
+        const key = stageTrackerItemKey(item);
+        const kids = ctx.shared.children && ctx.shared.children[key];
+        const folded = !!(ctx.shared.collapsed && ctx.shared.collapsed[key]);
+        if (kids && kids.length) {
+          sharedGroup = { key, count: kids.length, collapsed: folded };
+          if (!folded) sharedCls += ' ham-shared-head';
+        }
+        const parentKey = ctx.shared.parentOf && ctx.shared.parentOf[key];
+        if (parentKey) {
+          sharedCls += ' ham-shared-child';
+          const sib = ctx.shared.children[parentKey] || [];
+          if (sib[sib.length - 1] === key) sharedCls += ' ham-shared-last';
+          sharedUnder = Number(String(parentKey).split('#').pop()) || 0;
+        }
+      }
       if (isIssue) {
         const linked = stageTrackerLinkedSorted(item, stages);
         // The primary (first-sorted) PR's base; an issue with no PR shows none.
@@ -20281,7 +20415,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             prTargetKey = stageTrackerItemKey(pr);
             const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
             const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
-            prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null))];
+            prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage, sharedGroup && ctx.shared.prs && ctx.shared.prs[sharedGroup.key] && ctx.shared.prs[sharedGroup.key][Number(lp.number)] ? sharedGroup : null) : (lineage || null))];
           }
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
@@ -20345,7 +20479,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const rowKey = stageTrackerItemKey(item);
       const humanNote = typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(item, stages, nowMs, subRows, ctx, rowKey) : '';
       const noteCtx = humanNote && typeof stageTrackerNoteTakenCtx === 'function' ? stageTrackerNoteTakenCtx(ctx, rowKey) : ctx;
-      return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(item, stages, ctx) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
+      return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(item, stages, ctx) : ''}${sharedCls}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${sharedUnder ? ` data-ham-shared-under="${sharedUnder}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '') + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(item, hamNotesCtx(item)) : ''), prTargetKey)}
@@ -21985,9 +22119,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (out[repo]) delete out[repo]; else out[repo] = true;
       return out;
     }
+    // The shared-PR groups a viewer folded (hive.tracker.shared.collapsed):
+    // { 'owner/repo/issue#M': true } by the primary row's key, same shape
+    // and lifecycle as the per-repo collapsed set.
+    function stageTrackerLoadSharedCollapsed() {
+      try {
+        const o = JSON.parse(localStorage.getItem(STAGE_TRACKER_SHARED_COLLAPSED_KEY) || '{}');
+        if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+        const out = {};
+        for (const k of Object.keys(o)) if (o[k]) out[k] = true;
+        return out;
+      } catch { return {}; }
+    }
+    function stageTrackerSaveSharedCollapsed(c) {
+      try { localStorage.setItem(STAGE_TRACKER_SHARED_COLLAPSED_KEY, JSON.stringify(c || {})); } catch {}
+    }
     function stageTrackerLoadGrouping() {
       _stageTrackerGroup = stageTrackerGroupSetting();
       _stageTrackerCollapsed = stageTrackerLoadCollapsed();
+      _stageTrackerSharedCollapsed = stageTrackerLoadSharedCollapsed();
     }
     function stageTrackerPrimaryRepo() { return (typeof window !== 'undefined' && window._primaryRepo) || ''; }
     function hamGroup(value) {
@@ -21999,6 +22149,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function hamGroupToggle(repo) {
       _stageTrackerCollapsed = stageTrackerToggleCollapsed(_stageTrackerCollapsed, repo);
       stageTrackerSaveCollapsed(_stageTrackerCollapsed);
+      renderStageTracker();
+    }
+    // The caret on a primary row's "also closes #N" pill: fold or unfold
+    // the secondary issues' rows drawn under it (key = the primary's row key).
+    function hamSharedToggle(key) {
+      _stageTrackerSharedCollapsed = stageTrackerToggleCollapsed(_stageTrackerSharedCollapsed, key);
+      stageTrackerSaveSharedCollapsed(_stageTrackerSharedCollapsed);
       renderStageTracker();
     }
     // A row's repo chip: filter to that repo, or back to all when it already is.
@@ -22766,7 +22923,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
       const sorted = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f, { phone: stageTrackerPhone() }));
-      const ordered = typeof stageTrackerPreparationOrderRows === 'function' ? stageTrackerPreparationOrderRows(d, sorted, stages) : sorted;
+      const prepared = typeof stageTrackerPreparationOrderRows === 'function' ? stageTrackerPreparationOrderRows(d, sorted, stages) : sorted;
+      // Shared-PR groups last, so a secondary issue always sits right after
+      // its primary whatever the lead sort or train put between them; the
+      // groups a viewer folded leave their secondaries out of the list.
+      ctx.shared = Object.assign(stageTrackerSharedPRGroups(prepared, stages), { collapsed: _stageTrackerSharedCollapsed });
+      const ordered = stageTrackerSharedPRContiguous(prepared, stages, _stageTrackerSharedCollapsed);
+      const foldedShared = prepared.length - ordered.length;
       // A TV display (display=1&density=tv) shows the rows that fit the
       // screen, ungrouped, with "+N more" in place of the pager.
       const tv = typeof stageTrackerDisplayTv === 'function' && stageTrackerDisplayTv();
@@ -22777,6 +22940,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
           : stageTrackerPage(ordered, f);
       if (!tv && page.page !== f.page) f.page = page.page;
+      // A folded secondary is not filtered out: it counts toward the total.
+      if (foldedShared > 0) page.total += foldedShared;
       // The rows this render draws (this page, group headers aside), for
       // stageTrackerPRListedOwnRow: a covered issue defers to its PR's row
       // only when that row is actually on screen. Kept beside the payload,

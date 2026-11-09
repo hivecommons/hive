@@ -171,9 +171,25 @@
       if (out[repo]) delete out[repo]; else out[repo] = true;
       return out;
     }
+    // The shared-PR groups a viewer folded (hive.tracker.shared.collapsed):
+    // { 'owner/repo/issue#M': true } by the primary row's key, same shape
+    // and lifecycle as the per-repo collapsed set.
+    function stageTrackerLoadSharedCollapsed() {
+      try {
+        const o = JSON.parse(localStorage.getItem(STAGE_TRACKER_SHARED_COLLAPSED_KEY) || '{}');
+        if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+        const out = {};
+        for (const k of Object.keys(o)) if (o[k]) out[k] = true;
+        return out;
+      } catch { return {}; }
+    }
+    function stageTrackerSaveSharedCollapsed(c) {
+      try { localStorage.setItem(STAGE_TRACKER_SHARED_COLLAPSED_KEY, JSON.stringify(c || {})); } catch {}
+    }
     function stageTrackerLoadGrouping() {
       _stageTrackerGroup = stageTrackerGroupSetting();
       _stageTrackerCollapsed = stageTrackerLoadCollapsed();
+      _stageTrackerSharedCollapsed = stageTrackerLoadSharedCollapsed();
     }
     function stageTrackerPrimaryRepo() { return (typeof window !== 'undefined' && window._primaryRepo) || ''; }
     function hamGroup(value) {
@@ -185,6 +201,13 @@
     function hamGroupToggle(repo) {
       _stageTrackerCollapsed = stageTrackerToggleCollapsed(_stageTrackerCollapsed, repo);
       stageTrackerSaveCollapsed(_stageTrackerCollapsed);
+      renderStageTracker();
+    }
+    // The caret on a primary row's "also closes #N" pill: fold or unfold
+    // the secondary issues' rows drawn under it (key = the primary's row key).
+    function hamSharedToggle(key) {
+      _stageTrackerSharedCollapsed = stageTrackerToggleCollapsed(_stageTrackerSharedCollapsed, key);
+      stageTrackerSaveSharedCollapsed(_stageTrackerSharedCollapsed);
       renderStageTracker();
     }
     // A row's repo chip: filter to that repo, or back to all when it already is.

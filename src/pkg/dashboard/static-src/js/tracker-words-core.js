@@ -698,6 +698,89 @@
       });
       return out;
     }
+    /* ---- Shared-PR groups (pure; run under node by
+       stage_tracker_shared_pr_group_test.go) ------------------------------
+       A PR that closes several listed issues is drawn once, under its
+       primary (drawn_under); the other issues ride it from their own rows
+       (stageTrackerLinkedRiding, hivecommons/hive#17324). Those rows belong
+       together: #17292 (primary), #17302 (secondary) and PR #17308 are one
+       flow, yet the lead sort scattered them with an unrelated row between.
+       The group is one unit of the list — the secondaries sit right after
+       their primary, in the lead order among themselves, and the group sorts
+       by the primary — and shares ONE PR snapshot: a secondary's listing of
+       the PR is replaced by the primary's own entry, so both strips light
+       from the same object of the same payload tick. A secondary whose
+       primary is not a row of this list (filtered out, other page) stays a
+       standalone row exactly as before. */
+    // Pure: the primary row a secondary follows — { key, pr } — or null.
+    // Guarded: harnesses lift this file without stageTrackerLinkedRiding.
+    function stageTrackerSharedPRParent(it, stages, keys) {
+      if (!it || it.kind !== 'issue' || typeof stageTrackerLinkedRiding !== 'function') return null;
+      const lp = stageTrackerLinkedRiding(it, stages);
+      const under = Number(lp && lp.drawn_under) || 0;
+      if (!under) return null;
+      const key = stageTrackerItemKey({ repo: it.repo, kind: 'issue', number: under });
+      return keys[key] ? { key, pr: Number(lp.number) || 0 } : null;
+    }
+    // Pure: the groups of a row list — { parentOf: { childKey: parentKey },
+    // children: { parentKey: [childKey…] }, prs: { parentKey: { prNumber:
+    // true } } } — children in list order. Only rows of the list count.
+    function stageTrackerSharedPRGroups(rows, stages) {
+      rows = Array.isArray(rows) ? rows.filter(Boolean) : [];
+      const keys = {};
+      rows.forEach(it => { if (it.kind === 'issue' && Number(it.number) > 0) keys[stageTrackerItemKey(it)] = it; });
+      const out = { parentOf: {}, children: {}, prs: {} };
+      rows.forEach(it => {
+        const p = stageTrackerSharedPRParent(it, stages, keys);
+        if (!p) return;
+        const k = stageTrackerItemKey(it);
+        if (k === p.key) return;
+        out.parentOf[k] = p.key;
+        (out.children[p.key] = out.children[p.key] || []).push(k);
+        (out.prs[p.key] = out.prs[p.key] || {})[p.pr] = true;
+      });
+      return out;
+    }
+    // Pure: a secondary row rebound to its primary's listing of the shared
+    // PR — the same object, drawn_under kept — so the two strips cannot
+    // disagree. The row itself is copied; the payload stays the server's.
+    function stageTrackerSharedPRRebind(child, parent, prNumber) {
+      const own = Array.isArray(parent && parent.linked_prs) ? parent.linked_prs.find(lp => lp && Number(lp.number) === prNumber) : null;
+      if (!own || !Array.isArray(child.linked_prs)) return child;
+      const shared = Object.assign({}, own, { drawn_under: Number(parent.number) || 0, also_closes: null });
+      return Object.assign({}, child, { linked_prs: child.linked_prs.map(lp => lp && Number(lp.number) === prNumber ? shared : lp) });
+    }
+    // Pure: the list with every shared-PR group contiguous — primary, then
+    // its secondaries (rebound) — in the primary's place; a group whose
+    // primary is folded (collapsed[parentKey]) is its primary alone.
+    function stageTrackerSharedPRContiguous(rows, stages, collapsed) {
+      rows = Array.isArray(rows) ? rows : [];
+      const groups = stageTrackerSharedPRGroups(rows, stages);
+      if (!Object.keys(groups.parentOf).length) return rows;
+      const byKey = {};
+      rows.forEach(it => { if (it) byKey[stageTrackerItemKey(it)] = it; });
+      const emitted = {};
+      const out = [];
+      const emit = (it) => {
+        if (!it) { out.push(it); return; }
+        const k = stageTrackerItemKey(it);
+        if (emitted[k]) return;
+        emitted[k] = true;
+        out.push(it);
+        if (collapsed && collapsed[k]) { (groups.children[k] || []).forEach(ck => { emitted[ck] = true; }); return; }
+        (groups.children[k] || []).forEach(ck => {
+          const child = byKey[ck];
+          if (!child || emitted[ck]) return;
+          const pr = Number(Object.keys(groups.prs[k] || {}).find(n => Array.isArray(child.linked_prs) && child.linked_prs.some(lp => lp && Number(lp.number) === Number(n) && Number(lp.drawn_under) === Number(it.number)))) || 0;
+          emit(pr ? stageTrackerSharedPRRebind(child, it, pr) : child);
+        });
+      };
+      rows.forEach(it => { if (it && groups.parentOf[stageTrackerItemKey(it)]) return; emit(it); });
+      // A secondary whose primary never emitted (a cycle) keeps its own place.
+      rows.forEach(it => { if (it && !emitted[stageTrackerItemKey(it)]) emit(it); });
+      return out;
+    }
+
     // Pure: the member numbers of a train the page does not show, given the
     // train's record (ahead + size on the last member tells the whole
     // queue when the view carries it) and the numbers shown under the
