@@ -97,8 +97,10 @@ const (
 
 // stageTrackerRemediationEvidence is the one place pickup evidence is read.
 // Each source is independent; the most recent evidence wins so a kick that
-// follows a push (the agent iterating) reads as remediating again.
-func stageTrackerRemediationEvidence(it *StageTrackerItem, dispatch review.DispatchState, status *StatusPayload, redSince, now time.Time) *StageTrackerRemediation {
+// follows a push (the agent iterating) reads as remediating again. On a
+// deferred head (deferred) an agent's comment is the deferral or a note
+// about it, never pickup.
+func stageTrackerRemediationEvidence(it *StageTrackerItem, dispatch review.DispatchState, status *StatusPayload, redSince, now time.Time, deferred bool) *StageTrackerRemediation {
 	var best *StageTrackerRemediation
 	consider := func(c *StageTrackerRemediation) {
 		if c == nil || c.Actor == "" {
@@ -113,7 +115,7 @@ func stageTrackerRemediationEvidence(it *StageTrackerItem, dispatch review.Dispa
 		}
 	}
 	consider(remediationFromFixDispatch(it, dispatch, status, now))
-	consider(remediationFromAgentNow(it, status, redSince, now))
+	consider(remediationFromAgentNow(it, status, redSince, now, deferred))
 	consider(remediationFromClaimant(it, redSince))
 	consider(remediationFromRework(it))
 	consider(remediationFromPush(it, redSince))
@@ -134,8 +136,8 @@ func remediationFromFixDispatch(it *StageTrackerItem, dispatch review.DispatchSt
 
 // remediationFromAgentNow: a working hive agent whose current action is on
 // this PR and landed after the red signal. Review actions are the review
-// swarm's, not a fix.
-func remediationFromAgentNow(it *StageTrackerItem, status *StatusPayload, redSince, now time.Time) *StageTrackerRemediation {
+// swarm's, not a fix; on a deferred head (deferred) neither is a comment.
+func remediationFromAgentNow(it *StageTrackerItem, status *StatusPayload, redSince, now time.Time, deferred bool) *StageTrackerRemediation {
 	if status == nil {
 		return nil
 	}
@@ -144,6 +146,7 @@ func remediationFromAgentNow(it *StageTrackerItem, status *StatusPayload, redSin
 		action := worker.LastAction
 		if worker.Busy != "working" || worker.Paused || action == nil || !action.Current || !agentCausedAuditActions[action.Action] ||
 			action.Action == github.AuditActionPRReviewed || action.Action == github.AuditActionAgentReviewRequested ||
+			(deferred && action.Action == github.AuditActionAgentCommentCreated) ||
 			action.Number != it.Number || !strings.EqualFold(qualify(action.Repo), it.Repo) {
 			continue
 		}
@@ -264,9 +267,16 @@ func stageTrackerShortAge(since *time.Time, now time.Time) string {
 // a PR whose current head is red (or that sits in a 07x fix stage) it
 // replaces the code activity with the evidence-based remediation word and
 // records the evidence on the item. Observed code work (fixing) and a
-// same-head CI retry keep their own, more specific words.
+// same-head CI retry keep their own, more specific words. A hive deferral
+// of the head (it.Deferral, set by the caller) reads Deferred unless pickup
+// evidence is newer than it; it.Deferral survives only on a Deferred row.
 func stageTrackerApplyRemediation(it *StageTrackerItem, dispatch review.DispatchState, status *StatusPayload, fixer string, now time.Time) {
 	it.Remediation = nil
+	deferral := it.Deferral
+	it.Deferral = nil
+	if deferral != nil && !strings.EqualFold(deferral.Head, it.Head) {
+		deferral = nil
+	}
 	if it.Kind != "pr" || it.Head == "" || it.Superseded != nil || it.Stage == trackerNumberNeedsDecision || it.Stage >= trackerNumberAwaitingMerge {
 		return
 	}
@@ -281,12 +291,15 @@ func stageTrackerApplyRemediation(it *StageTrackerItem, dispatch review.Dispatch
 	}
 	// A 07x row whose head carries no red verdict yet and a push marker: the
 	// push IS the new head (stageTrackerPushFor binds it to the current
-	// head). Its native word stands; the push is the evidence.
+	// head). Its native word stands; the push is the evidence — unless the
+	// hive deferred that head after it landed.
 	if redWord == stageTrackerFixRequestedWord && out.State == "pushed" && it.Push != nil {
-		it.Remediation = remediationFromPush(it, time.Time{})
-		return
+		if push := remediationFromPush(it, time.Time{}); deferral == nil || stageTrackerPickupAfter(push, deferral) {
+			it.Remediation = push
+			return
+		}
 	}
-	ev := stageTrackerRemediationEvidence(it, dispatch, status, redSince, now)
+	ev := stageTrackerRemediationEvidence(it, dispatch, status, redSince, now, deferral != nil)
 	it.Remediation = ev
 	if out.State == "fixing" && out.Active {
 		return
@@ -303,6 +316,12 @@ func stageTrackerApplyRemediation(it *StageTrackerItem, dispatch review.Dispatch
 		redAt = " at " + redSince.UTC().Format(time.RFC3339)
 	}
 	switch {
+	case deferral != nil && !stageTrackerPickupAfter(ev, deferral):
+		// The hive decided this head: its deferral and successors are the
+		// PR's state, not an absence of pickup (hivecommons/hive#17347).
+		out = stageTrackerDeferredActivity(it, deferral, redWord, redSince)
+		it.Remediation, it.Deferral = nil, deferral
+		it.DisplayColumn = trackerNumberPRInProgress
 	case ev != nil && ev.Kind == remediationKindPush:
 		out = &StageTrackerActivity{Head: it.Head, State: codeStateFixPushed, Actor: ev.Actor, Source: ev.Source, Since: ev.Since}
 		out.Caption = "Fix pushed " + stageTrackerShortSHA(ev.Head) + " · re-review pending"
@@ -356,9 +375,19 @@ func stageTrackerApplyRemediation(it *StageTrackerItem, dispatch review.Dispatch
 	it.CodeActivity = out
 	if it.Stage == trackerNumberFixing && it.Superseded == nil &&
 		(it.Caption == "" || strings.HasPrefix(it.Caption, "Waiting for fixer") || strings.HasPrefix(it.Caption, "New head pushed") ||
-			strings.HasPrefix(it.Caption, "Remediating") || strings.HasPrefix(it.Caption, "Fixing")) {
+			strings.HasPrefix(it.Caption, "Remediating") || strings.HasPrefix(it.Caption, "Fixing") || strings.HasPrefix(it.Caption, prProgressDeferredWord)) {
 		it.Caption = out.Caption
 	}
+}
+
+// stageTrackerPickupAfter reports whether pickup evidence landed after the
+// deferral: a later kick, claim or push for the same head outranks it.
+// Undated evidence does not.
+func stageTrackerPickupAfter(ev *StageTrackerRemediation, d *StageTrackerDeferral) bool {
+	if ev == nil || ev.Since == nil {
+		return false
+	}
+	return d.Since == nil || ev.Since.After(*d.Since)
 }
 
 // stageTrackerAdoptHumanDecision: a review verdict that asked for a human

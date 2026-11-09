@@ -241,6 +241,19 @@ scanner's "Gate check … no implementation started" on
 [#12999](https://github.com/hivecommons/hive/issues/12999) were taken as
 starts when any comment or label counted; neither is now.
 
+On a **pull request**, a comment that defers it is also a recorded decision
+([#17347](https://github.com/hivecommons/hive/issues/17347)): a sentence or
+line that opens with "Deferring" / "Deferred" (anywhere in the comment — a
+PR deferral usually concludes a diagnosis), or one of the opening deferral
+forms above, with no start phrase. After posting it the relay looks up the
+PR's head and audits `agent_pr_deferred` with that head, the issue / PR
+references the comment names (the successors, in order, never the PR
+itself), whether it says a maintainer may close the PR ("a maintainer may
+close it now", "safe to close") and the deferral's own words. The activity
+monitor then reads *Deferred · waiting on #N* for that head instead of
+*Unassigned*; a new head clears it. Name the successor issues in the
+deferral itself so the row can point at them.
+
 ### `claim`
 
 `--repo` and a number or URL are required; no body or title needed. A claim
