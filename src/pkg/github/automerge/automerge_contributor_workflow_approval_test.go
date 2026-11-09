@@ -333,15 +333,51 @@ func TestContributorLaneWorkflowFenceApprovalCarriesOverHiveBaseRefresh(t *testi
 	}
 	hiveBaseMerge := baseMerge(testHiveAppBotLogin, "web-flow", true)
 	approvedReview := []map[string]any{ownerApprovedReview("clubanderson", approvedHead)}
+	// docFile is a non-workflow file the PR also edits. Main editing the same
+	// doc above the PR's hunk changes the doc's blob and shifts the hunk's
+	// line numbers; editing next to the hunk changes its context lines too
+	// (projectbluefin/utah-packages#924 and #900).
+	docFile := func(blob, patch string) map[string]any {
+		return map[string]any{"filename": "docs/skills/upstream-version-bumps.md", "status": "modified", "sha": blob, "additions": 1, "deletions": 1, "changes": 2, "patch": patch}
+	}
+	const docPatch = "@@ -145,4 +145,4 @@ Verify a fix\n ctx one\n-old line\n+new line\n ctx two"
+	withDoc := func(diff []map[string]any, doc map[string]any) []map[string]any {
+		return append(append([]map[string]any{}, diff...), doc)
+	}
 	for _, tc := range []struct {
-		name        string
-		reviews     []map[string]any
-		comments    []map[string]any
-		headCommit  map[string]any
-		currentDiff []map[string]any
-		wantReason  string
-		wantMarker  string
+		name         string
+		reviews      []map[string]any
+		comments     []map[string]any
+		headCommit   map[string]any
+		approvedDiff []map[string]any
+		currentDiff  []map[string]any
+		wantReason   string
+		wantMarker   string
 	}{
+		{
+			name:         "a base merge that also edited another file the PR changes, away from its hunks, carries the approval",
+			reviews:      approvedReview,
+			headCommit:   hiveBaseMerge,
+			approvedDiff: withDoc(workflowDiff("blobA"), docFile("docOld", docPatch)),
+			currentDiff:  withDoc(workflowDiff("blobA"), docFile("docNew", "@@ -160,4 +160,4 @@ Verify a fix\n ctx one\n-old line\n+new line\n ctx two")),
+			wantMarker:   "<!-- hive:workflow-approval head=sha7 by=clubanderson from=sha6 -->",
+		},
+		{
+			name:         "a base merge that changed the context of the PR's hunk in another file re-arms the fence",
+			reviews:      approvedReview,
+			headCommit:   hiveBaseMerge,
+			approvedDiff: withDoc(workflowDiff("blobA"), docFile("docOld", docPatch)),
+			currentDiff:  withDoc(workflowDiff("blobA"), docFile("docNew", "@@ -160,4 +160,4 @@ Verify a fix\n ctx one\n-old line\n+new line\n main's new line")),
+			wantReason:   contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:         "a base merge that edited the workflow file away from the PR's hunks still re-arms the fence",
+			reviews:      approvedReview,
+			headCommit:   hiveBaseMerge,
+			approvedDiff: workflowDiff("blobA"),
+			currentDiff:  []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified", "sha": "blobA2", "additions": 3, "deletions": 1, "changes": 4, "patch": "@@ -9 +9,3 @@\n-old\n+new\n+steps\n+run"}},
+			wantReason:   contributorLaneReasonWorkflowPath,
+		},
 		{
 			name:        "review on the approved head carries over the hive's base merge",
 			reviews:     approvedReview,
@@ -417,7 +453,11 @@ func TestContributorLaneWorkflowFenceApprovalCarriesOverHiveBaseRefresh(t *testi
 			fx.reviews = tc.reviews
 			fx.prComments = tc.comments
 			fx.headCommit = tc.headCommit
-			fx.compareFiles = map[string][]map[string]any{approvedHead: workflowDiff("blobA"), "sha7": tc.currentDiff}
+			approvedDiff := tc.approvedDiff
+			if approvedDiff == nil {
+				approvedDiff = workflowDiff("blobA")
+			}
+			fx.compareFiles = map[string][]map[string]any{approvedHead: approvedDiff, "sha7": tc.currentDiff}
 			fx.compareMergeBase = map[string]string{approvedHead: "base1", "sha7": baseTip}
 			api := newContributorLaneAPI(t, &fx)
 			defer api.Close()

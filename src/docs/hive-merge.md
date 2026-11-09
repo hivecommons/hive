@@ -409,7 +409,14 @@ a merge commit authored by the App, committed by GitHub (`web-flow`) or the
 App and carrying a signature GitHub verified, whose parents are the decided
 head and a commit on the base branch, and whose three-dot diff against the
 base is file-for-file (name, status, blob, line counts, patch) identical to
-the decided head's. An App login GitHub derived from an unsigned commit's
+the decided head's. One difference is allowed: when the base branch also
+edited a file the PR modifies, away from the PR's hunks, that file's blob
+differs but every hunk (context, added and removed lines, lengths, section
+heading) is the same and only its line numbers moved; that still counts as
+identical
+([projectbluefin/utah-packages#924](https://github.com/projectbluefin/utah-packages/pull/924)).
+A file under any `.github/` directory gets no such allowance: a workflow or
+action file must read exactly as decided. An App login GitHub derived from an unsigned commit's
 author email does not count, and a compare that lists GitHub's 300-file cap
 cannot be verified, so neither carries
 ([#16860](https://github.com/hivecommons/hive/issues/16860)). Up to five such refreshes may stack before any gate reads
@@ -1040,8 +1047,12 @@ A PR merges through this tier only when all of the following hold:
   head, or the hive's own audit marker for it; the approver must still be
   trusted. A contributor commit re-arms the fence even when it leaves the
   workflow files alone (the existing head-bound rule), as do a rebase, a
-  base merge pushed by anyone but the App, and a base merge that changed a
-  file the PR also changes. A typed `/hive decision approve` that
+  base merge pushed by anyone but the App, a base merge that changed the
+  PR's own hunks, and a base merge that changed anything in a `.github/`
+  file the PR also changes. A base merge that edited some other file the PR
+  changes only away from the PR's hunks (the hunks identical, their line
+  numbers moved) still carries
+  ([projectbluefin/utah-packages#924](https://github.com/projectbluefin/utah-packages/pull/924)). A typed `/hive decision approve` that
   releases the fence while the swarm's `requires_human` verdict asks for a
   person is also recorded as the answer to that question on the head, as
   the dashboard's approval is, so the owner of their own PR (whom GitHub

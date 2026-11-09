@@ -268,8 +268,12 @@ func (c *Engine) workflowFenceApproval(ctx context.Context, owner, repo string, 
 // waits for a fresh approval every time the base moves (projectbluefin/utah
 // #1111). The approver must still be a trusted merger. Any other head
 // change — a contributor commit, even one leaving the workflow files alone;
-// a rebase; a base merge by anyone but the App; a base merge that changed a
-// file the PR also changes — carries nothing and the fence stays armed.
+// a rebase; a base merge by anyone but the App; a base merge that changed
+// the PR's own hunks, or changed anything at all in a `.github/` file the PR
+// also changes — carries nothing and the fence stays armed. A base merge
+// that edited another file the PR changes only where the PR's hunks do not
+// reach (the hunks identical, only their line numbers moved) still carries
+// (projectbluefin/utah-packages#924).
 func (c *Engine) workflowFenceCarriedApproval(ctx context.Context, owner, repo string, pr *gh.PullRequest, number int, headSHA, appLogin string, reviews []*gh.PullRequestReview, comments []*gh.IssueComment) (workflowApproval, bool) {
 	baseRef := strings.TrimSpace(pr.GetBase().GetRef())
 	if c.gh == nil || appLogin == "" || baseRef == "" {

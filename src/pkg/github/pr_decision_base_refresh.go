@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,8 +64,10 @@ type BaseRefreshChecker struct {
 // GitHub-verified merge commit created by the App (appBotLogin, see
 // CommitIsVerifiedAppMerge) whose parents are oldHead
 // and a commit on baseRef, and whose three-dot diff against baseRef is
-// file-for-file identical to oldHead's (a compare at GitHub's 300-file cap
-// cannot show that and is false). That is exactly the head the
+// file-for-file identical to oldHead's (sameChangedFiles: hunks that only
+// moved to other line numbers in a file outside `.github/` still count as
+// identical; a compare at GitHub's 300-file cap cannot show any of that and
+// is false). That is exactly the head the
 // require_current_base gate produces when it merges the base into the
 // branch: the PR's content is unchanged, only its base moved. Any other
 // head change — a content commit (even one that also merged the base), a
@@ -241,6 +244,17 @@ func compareAllFiles(ctx context.Context, api BaseRefreshRepos, owner, repo, bas
 // sameChangedFiles reports whether two three-dot diffs touch the same files
 // the same way: name, status, rename source, resulting blob, line counts
 // and — when GitHub returned it for both — the patch text itself.
+//
+// One difference in the resulting blob is tolerated (sameHunksAtShiftedLines):
+// the base branch also edited a file the PR modifies, somewhere the PR's
+// hunks do not reach, so every hunk is byte-for-byte the same — context
+// lines, added and removed lines, hunk lengths — and only its line numbers
+// moved. That is still exactly the change the person approved
+// (projectbluefin/utah-packages#924: main edited a doc the PR also edits, 15
+// lines above the PR's hunks). A file under `.github/` never gets that
+// tolerance: a workflow or action file must read exactly as approved,
+// because a base edit elsewhere in it (its triggers, its permissions) can
+// change what the approved lines do.
 func sameChangedFiles(a, b []*gh.CommitFile) bool {
 	if len(a) != len(b) {
 		return false
@@ -264,14 +278,86 @@ func sameChangedFiles(a, b []*gh.CommitFile) bool {
 		if x.GetFilename() != y.GetFilename() || x.GetStatus() != y.GetStatus() || x.GetPreviousFilename() != y.GetPreviousFilename() {
 			return false
 		}
-		if x.GetSHA() != y.GetSHA() || x.GetAdditions() != y.GetAdditions() || x.GetDeletions() != y.GetDeletions() || x.GetChanges() != y.GetChanges() {
+		if x.GetAdditions() != y.GetAdditions() || x.GetDeletions() != y.GetDeletions() || x.GetChanges() != y.GetChanges() {
 			return false
+		}
+		if x.GetSHA() != y.GetSHA() {
+			if !sameHunksAtShiftedLines(x, y) {
+				return false
+			}
+			continue
 		}
 		if x.Patch != nil && y.Patch != nil && x.GetPatch() != y.GetPatch() {
 			return false
 		}
 	}
 	return true
+}
+
+// baseDriftHunkHeaderRE reads a unified-diff hunk header: the two start
+// lines, the two optional lengths, and the trailing section heading.
+var baseDriftHunkHeaderRE = regexp.MustCompile(`^@@ -\d+(,\d+)? \+\d+(,\d+)? @@(.*)$`)
+
+// sameHunksAtShiftedLines reports whether two entries for the same file,
+// whose resulting blobs differ, carry the same hunks moved to other line
+// numbers: both are plain modifications of a path outside any `.github/`
+// directory, GitHub returned a patch for both, and the patches are equal
+// once each hunk header's two start lines are dropped (hunk lengths and
+// section headings still have to match). Anything else — a missing or
+// empty patch, a header that does not parse, a rename, a `.github/` path —
+// is false.
+func sameHunksAtShiftedLines(x, y *gh.CommitFile) bool {
+	if !strings.EqualFold(x.GetStatus(), "modified") || !strings.EqualFold(y.GetStatus(), "modified") {
+		return false
+	}
+	for _, name := range []string{x.GetFilename(), x.GetPreviousFilename(), y.GetFilename(), y.GetPreviousFilename()} {
+		if underDotGitHub(name) {
+			return false
+		}
+	}
+	if x.Patch == nil || y.Patch == nil || x.GetPatch() == "" || y.GetPatch() == "" {
+		return false
+	}
+	px, okx := patchWithoutHunkStarts(x.GetPatch())
+	py, oky := patchWithoutHunkStarts(y.GetPatch())
+	return okx && oky && px == py
+}
+
+// underDotGitHub reports a path inside a `.github/` directory at any depth.
+func underDotGitHub(name string) bool {
+	name = strings.TrimSpace(name)
+	return strings.HasPrefix(name, ".github/") || strings.Contains(name, "/.github/")
+}
+
+// patchWithoutHunkStarts rewrites each hunk header of a unified-diff patch
+// to keep only its lengths and section heading ("@@ -,3 +,5 @@ heading"),
+// so two patches of the same hunks at different line numbers read the same.
+// false when a header does not parse or there is no hunk at all.
+func patchWithoutHunkStarts(patch string) (string, bool) {
+	lines := strings.Split(patch, "\n")
+	hunks := 0
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "@@") {
+			continue
+		}
+		m := baseDriftHunkHeaderRE.FindStringSubmatch(line)
+		if m == nil {
+			return "", false
+		}
+		oldLen, newLen := strings.TrimPrefix(m[1], ","), strings.TrimPrefix(m[2], ",")
+		if oldLen == "" {
+			oldLen = "1"
+		}
+		if newLen == "" {
+			newLen = "1"
+		}
+		lines[i] = "@@ -," + oldLen + " +," + newLen + " @@" + m[3]
+		hunks++
+	}
+	if hunks == 0 {
+		return "", false
+	}
+	return strings.Join(lines, "\n"), true
 }
 
 // CommitByGitHubLogin reports whether the commit's GitHub-attributed author
