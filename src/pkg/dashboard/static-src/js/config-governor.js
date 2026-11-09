@@ -1868,16 +1868,40 @@
 
     // The admin_mcp.writes_enabled switch. Once used it decides in both
     // directions; while unset, HIVE_ADMIN_MCP_ENABLE_WRITES on the hive
-    // process decides (writesSource says which). The PUT is owner-only on the
-    // server; a viewer known not to be the owner sees the switch disabled.
+    // process decides (writesSource says which). "Use environment default"
+    // sends writesFollowEnv to clear it again. The two are mutually exclusive
+    // on the server, so each replaces the other in the dirty bag. The PUT is
+    // owner-only on the server; a viewer known not to be the owner sees the
+    // controls disabled.
+    function toggleAdminMcpWrites(el) {
+      if (!el || el.classList.contains('disabled')) return;
+      const isOn = el.classList.toggle('on');
+      el.setAttribute('aria-checked', isOn ? 'true' : 'false');
+      const st = channelsGroupState('adminMcp');
+      if (st) st.writesEnabled = isOn;
+      markDirty('channels', 'adminMcp', { writesEnabled: isOn });
+    }
+
+    function resetAdminMcpWritesToEnv(el) {
+      if (el && el.disabled) return;
+      const st = channelsGroupState('adminMcp');
+      if (st) {
+        st.writesEnabled = !!st.envWritesOn;
+        st.writesSource = st.envWritesSet ? 'env' : 'default';
+      }
+      markDirty('channels', 'adminMcp', { writesFollowEnv: true });
+      if (_configState.tab === 'Channels') renderConfigTab('Channels');
+    }
+
     function renderGovChannelsAdminMcp(mcp) {
       const on = !!mcp.writesEnabled;
       const envName = esc(mcp.writesEnv || 'HIVE_ADMIN_MCP_ENABLE_WRITES');
       const readOnly = !!window._hiveRole && window._hiveRole !== 'owner';
       const writes = on ? statusBadgeHTML('ready', 'writes enabled', 'Writes enabled', 'done') : statusBadgeHTML('idle', 'read-only', 'Read-only', 'idle');
+      const fallback = mcp.envWritesSet ? `env: ${mcp.envWritesOn ? 'on' : 'off'}` : 'default: off';
       let source;
       if (mcp.writesSource === 'config') {
-        source = `Set by this switch, which overrides <code>${envName}</code>${mcp.envWritesSet ? ` (that variable is ${mcp.envWritesOn ? 'on' : 'off'} on the hive process)` : ''}.`;
+        source = `Set by this switch, which overrides <code>${envName}</code>. Without it: ${fallback}. <button type="button" class="hv-btn btn-secondary" data-action="resetAdminMcpWritesToEnv" data-arg-types="t" ${readOnly ? 'disabled' : ''}>Use environment default</button>`;
       } else if (mcp.writesSource === 'env') {
         source = `Currently ${on ? 'on' : 'off'} from <code>${envName}</code> on the hive process; using this switch overrides it.`;
       } else {
@@ -1886,8 +1910,8 @@
       return `
         <div class="config-subgroup">Admin MCP ${settingHelpMark('admin-mcp', 'http-endpoint', 'Admin MCP', `The admin MCP endpoint lets an external agent (Claude Code, Bob CLI…) operate this hive. It is always registered. Its write tools are off until the owner turns them on here or with an environment variable on the hive process.`)}</div>
         <div class="config-toggle mt-3">
-          <div class="config-toggle-switch ${on ? 'on' : ''} ${readOnly ? 'disabled' : ''}" data-action="${readOnly ? '' : 'toggleChannelsFlag'}" data-arg0="adminMcp" data-arg1="writesEnabled" data-arg-types="t,s,s" data-disabled="${readOnly ? 'true' : 'false'}" role="switch" aria-checked="${on ? 'true' : 'false'}" aria-disabled="${readOnly ? 'true' : 'false'}"></div>
-          <span class="config-toggle-label">Allow admin MCP writes ${yamlHint('admin_mcp.writes_enabled')} ${settingHelpMark('admin-mcp', 'writes', 'Allow admin MCP writes', `Turns the write tools (write_preview, write_confirm) of this hive's /api/admin/mcp endpoint on or off. Owner only and audited. It takes effect on the next MCP call with no restart, and turning it off refuses any pending confirmation. Once used it overrides HIVE_ADMIN_MCP_ENABLE_WRITES in both directions; until then that variable decides. A caller with a read-only role still cannot write. The stdio hive-admin-mcp binary keeps its own variable.`)}</span>
+          <div class="config-toggle-switch ${on ? 'on' : ''} ${readOnly ? 'disabled' : ''}" data-action="${readOnly ? '' : 'toggleAdminMcpWrites'}" data-arg-types="t" data-disabled="${readOnly ? 'true' : 'false'}" role="switch" aria-checked="${on ? 'true' : 'false'}" aria-disabled="${readOnly ? 'true' : 'false'}"></div>
+          <span class="config-toggle-label">Allow admin MCP writes ${yamlHint('admin_mcp.writes_enabled')} ${settingHelpMark('admin-mcp', 'writes', 'Allow admin MCP writes', `Turns the write tools (write_preview, write_confirm) of this hive's /api/admin/mcp endpoint on or off. Owner only and audited. It takes effect on the next MCP call with no restart, and turning it off refuses any pending confirmation. Once used it overrides HIVE_ADMIN_MCP_ENABLE_WRITES in both directions; until then that variable decides, and Use environment default hands the decision back to it (or to the default, off). A caller with a read-only role still cannot write. The stdio hive-admin-mcp binary keeps its own variable.`)}</span>
         </div>
         <div class="config-help">Endpoint <code>${esc(mcp.endpoint || '/api/admin/mcp')}</code> · ${writes} · ${source}${readOnly ? ' Only the owner can change this.' : ''}</div>`;
     }

@@ -49,10 +49,15 @@ type channelsSettingsBody struct {
 }
 
 // channelsAdminMCPBody carries the owner's switch for the HTTP admin MCP
-// endpoint's write tools. A value overrides HIVE_ADMIN_MCP_ENABLE_WRITES in
-// both directions; see Server.adminMCPWritesState.
+// endpoint's write tools. WritesEnabled sets admin_mcp.writes_enabled, which
+// overrides HIVE_ADMIN_MCP_ENABLE_WRITES in both directions; see
+// Server.adminMCPWritesState. WritesFollowEnv clears it back to nil so the
+// environment (or the default, off) decides again. JSON null cannot be told
+// apart from an absent key on a *bool, hence the explicit flag; sending both
+// is a 400.
 type channelsAdminMCPBody struct {
-	WritesEnabled *bool `json:"writesEnabled"`
+	WritesEnabled   *bool `json:"writesEnabled"`
+	WritesFollowEnv bool  `json:"writesFollowEnv"`
 }
 
 type channelsMentionsBody struct {
@@ -179,12 +184,14 @@ func (s *Server) handleChannelsSettingsPut(w http.ResponseWriter, r *http.Reques
 		s.logger.Error("failed to persist config after channels update", "error", err)
 	}
 	s.auditFromRequest(r, "config_channels", auditDetail("section", "channels"), "")
-	if next := s.deps.Config.AdminMCP.WritesEnabled; next != nil && (prevStored == nil || *prevStored != *next) {
+	if adminMCPWritesStoredChanged(prevStored, s.deps.Config.AdminMCP.WritesEnabled) {
 		// Its own sensitive audit row: who changed the admin MCP write
-		// switch, from what (and where that came from) to what.
+		// switch (set it, or reset it to follow the environment), from what
+		// to what, and where each value came from.
+		nextWrites, nextSource := s.adminMCPWritesState()
 		s.auditFromRequest(r, "config_admin_mcp_writes", auditDetail(
 			"old", onOff(prevWrites), "old_source", prevSource,
-			"new", onOff(*next), "new_source", adminMCPWritesSourceConfig,
+			"new", onOff(nextWrites), "new_source", nextSource,
 		), "")
 	}
 	if s.deps.ChannelsConfigApplied != nil {
@@ -194,12 +201,26 @@ func (s *Server) handleChannelsSettingsPut(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, s.channelsSettingsPayload(s.deps.Config))
 }
 
+// adminMCPWritesStoredChanged reports whether a save changed the stored
+// admin_mcp.writes_enabled: set from nil, reset to nil, or flipped.
+func adminMCPWritesStoredChanged(prev, next *bool) bool {
+	if prev == nil || next == nil {
+		return (prev == nil) != (next == nil)
+	}
+	return *prev != *next
+}
+
 // applyChannelsSettings validates body against a copy of cfg and commits the
 // copy's channel sections only when every validator passes.
 func applyChannelsSettings(cfg *config.Config, body channelsSettingsBody) error {
 	next := *cfg
 	next.Notifications = cloneNotificationsForChannels(cfg.Notifications)
 
+	if b := body.AdminMCP; b != nil {
+		if b.WritesFollowEnv && b.WritesEnabled != nil {
+			return fmt.Errorf("adminMcp: send writesEnabled or writesFollowEnv, not both")
+		}
+	}
 	if err := applyChannelsMentions(&next, body.GitHubMentions); err != nil {
 		return err
 	}
@@ -212,9 +233,15 @@ func applyChannelsSettings(cfg *config.Config, body channelsSettingsBody) error 
 	if err := applyChannelsEscalation(&next, body.EscalationEmail, body.EscalationPush); err != nil {
 		return err
 	}
-	if body.AdminMCP != nil && body.AdminMCP.WritesEnabled != nil {
-		v := *body.AdminMCP.WritesEnabled
-		next.AdminMCP.WritesEnabled = &v
+	if b := body.AdminMCP; b != nil {
+		switch {
+		case b.WritesFollowEnv:
+			// nil + omitempty: the key is dropped from every persisted layer.
+			next.AdminMCP.WritesEnabled = nil
+		case b.WritesEnabled != nil:
+			v := *b.WritesEnabled
+			next.AdminMCP.WritesEnabled = &v
+		}
 	}
 
 	cfg.GitHub.Mentions = next.GitHub.Mentions

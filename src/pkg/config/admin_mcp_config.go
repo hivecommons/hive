@@ -12,7 +12,10 @@ type AdminMCPConfig struct {
 	// on the hive process decides exactly as before: 1/true/yes/on turns
 	// writes on, anything else (or unset) leaves them off. A non-nil value
 	// overrides that environment variable in both directions, so the env is
-	// only the default. The value is read on every MCP request, including
-	// write_confirm, so turning it off refuses pending confirmations at once.
+	// only the default. The owner can also reset it to nil from the same tab
+	// ("Use environment default"); omitempty then drops the key from every
+	// persisted layer, so a restart does not bring the old value back. The
+	// value is read on every MCP request, including write_confirm, so turning
+	// writes off refuses pending confirmations at once.
 	WritesEnabled *bool `yaml:"writes_enabled,omitempty" json:"writes_enabled,omitempty"`
 }

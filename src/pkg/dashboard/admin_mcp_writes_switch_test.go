@@ -216,3 +216,105 @@ func TestAdminMCPConfirmRefusedAfterWritesSwitchTurnedOff(t *testing.T) {
 		t.Fatalf("writes = %d, want 1", writes)
 	}
 }
+
+// "Use environment default" (writesFollowEnv) resets the switch to nil, so
+// HIVE_ADMIN_MCP_ENABLE_WRITES (or the default, off) decides again. Only the
+// owner may reset; a reset on an already-nil switch is a no-op with no audit
+// row; sending it together with writesEnabled is a 400 that changes nothing.
+// Before this change the body had no writesFollowEnv field, so a reset was
+// silently ignored and the stored value kept deciding.
+func TestChannelsSettingsAdminMCPWritesResetFollowsEnv(t *testing.T) {
+	t.Setenv(adminMCPWritesEnvName, "1")
+	s, _ := apiServer(t)
+	reset := map[string]any{"adminMcp": map[string]any{"writesFollowEnv": true}}
+
+	// Already nil: accepted, nothing changes, nothing audited.
+	if rec := channelsPutAs(s, "alice", config.RoleOwner, true, reset); rec.Code != http.StatusOK {
+		t.Fatalf("reset on nil status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.AdminMCP.WritesEnabled != nil {
+		t.Fatal("reset on nil stored a value")
+	}
+	if rows := adminMCPWritesAuditRows(s); len(rows) != 0 {
+		t.Fatalf("reset on an already-nil switch was audited: %+v", rows)
+	}
+
+	off := false
+	s.deps.Config.AdminMCP.WritesEnabled = &off
+
+	// Both fields at once is a 400 and leaves the switch alone.
+	both := map[string]any{"adminMcp": map[string]any{"writesFollowEnv": true, "writesEnabled": true}}
+	if rec := channelsPutAs(s, "alice", config.RoleOwner, true, both); rec.Code != http.StatusBadRequest {
+		t.Fatalf("both fields status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if v := s.deps.Config.AdminMCP.WritesEnabled; v == nil || *v {
+		t.Fatalf("a rejected PUT changed the switch to %v", v)
+	}
+
+	// A non-owner reset is refused.
+	if rec := channelsPutAs(s, "mallory", config.RoleReadWrite, false, reset); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owner reset status = %d, want 403", rec.Code)
+	}
+	if v := s.deps.Config.AdminMCP.WritesEnabled; v == nil || *v {
+		t.Fatalf("a refused reset changed the switch to %v", v)
+	}
+	if rows := adminMCPWritesAuditRows(s); len(rows) != 0 {
+		t.Fatalf("refused or rejected PUTs were audited: %+v", rows)
+	}
+
+	// The owner's reset returns to the env value (on) and is audited.
+	rec := channelsPutAs(s, "alice", config.RoleOwner, true, reset)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner reset status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.AdminMCP.WritesEnabled != nil {
+		t.Fatalf("owner reset left %v stored", *s.deps.Config.AdminMCP.WritesEnabled)
+	}
+	if on, source := s.adminMCPWritesState(); !on || source != adminMCPWritesSourceEnv {
+		t.Fatalf("after reset state = (%v, %q), want env on", on, source)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if mcp := channelsSection(t, resp, "adminMcp"); mcp["writesEnabled"] != true || mcp["writesSource"] != adminMCPWritesSourceEnv {
+		t.Fatalf("after reset adminMcp = %#v", mcp)
+	}
+	rows := adminMCPWritesAuditRows(s)
+	if len(rows) != 1 || rows[0].User != "alice" || rows[0].Detail != "old=off, old_source=config, new=on, new_source=env" {
+		t.Fatalf("reset audit rows = %+v", rows)
+	}
+
+	// With no env, a reset falls back to the default, off.
+	t.Setenv(adminMCPWritesEnvName, "")
+	yes := true
+	s.deps.Config.AdminMCP.WritesEnabled = &yes
+	if rec := channelsPutAs(s, "alice", config.RoleOwner, true, reset); rec.Code != http.StatusOK {
+		t.Fatalf("second reset status = %d", rec.Code)
+	}
+	if on, source := s.adminMCPWritesState(); on || source != adminMCPWritesSourceDefault {
+		t.Fatalf("reset with no env = (%v, %q), want default off", on, source)
+	}
+	if rows := adminMCPWritesAuditRows(s); len(rows) != 2 || rows[1].Detail != "old=on, old_source=config, new=off, new_source=default" {
+		t.Fatalf("second reset audit rows = %+v", rows)
+	}
+}
+
+// A reset that turns writes off (config true, no env) makes write_confirm
+// refuse a confirmation previewed while the switch was on.
+func TestAdminMCPConfirmRefusedAfterResetTurnsWritesOff(t *testing.T) {
+	t.Setenv(adminMCPWritesEnvName, "")
+	t.Setenv("HIVE_ADMIN_MCP_PENDING_FILE", t.TempDir()+"/pending.json")
+	s, _ := apiServer(t)
+	on := true
+	s.deps.Config.AdminMCP.WritesEnabled = &on
+	owner := adminMCPAs(t, s.mux, map[string]string{"X-Hive-User": "alice", "X-Hive-Role": config.RoleOwner, ownerRoleVerifiedHeader: "true"})
+
+	id := confirmationID(t, owner(rescanPreview))
+	if rec := channelsPutAs(s, "alice", config.RoleOwner, true, map[string]any{"adminMcp": map[string]any{"writesFollowEnv": true}}); rec.Code != http.StatusOK {
+		t.Fatalf("reset status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := owner(rescanConfirm(id)); !strings.Contains(got, "admin MCP writes are disabled") {
+		t.Fatalf("confirm after the reset = %s, want writes disabled", got)
+	}
+}

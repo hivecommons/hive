@@ -25351,7 +25351,7 @@
           "System"
         ],
         "summary": "Update inbound channel settings",
-        "description": "Partial update: each top-level surface object is optional and, inside it, absent fields are left unchanged. Secret fields treat an empty string as clear and a masked • echo as keep. The body is validated against a copy of the live config (allowed_commands vocabulary, poll_interval duration, summoner logins, enabled bots must have credentials) and committed only when valid, then the mention poller and escalation dispatcher hot-reload. adminMcp.writesEnabled sets admin_mcp.writes_enabled, which turns the admin MCP endpoint's write tools on or off on the next request and overrides HIVE_ADMIN_MCP_ENABLE_WRITES in both directions; each change is audited as config_admin_mcp_writes. Requires owner role.",
+        "description": "Partial update: each top-level surface object is optional and, inside it, absent fields are left unchanged. Secret fields treat an empty string as clear and a masked • echo as keep. The body is validated against a copy of the live config (allowed_commands vocabulary, poll_interval duration, summoner logins, enabled bots must have credentials) and committed only when valid, then the mention poller and escalation dispatcher hot-reload. adminMcp.writesEnabled sets admin_mcp.writes_enabled, which turns the admin MCP endpoint's write tools on or off on the next request and overrides HIVE_ADMIN_MCP_ENABLE_WRITES in both directions; adminMcp.writesFollowEnv: true clears it so the env (or the default, off) decides again, and sending both is a 400. Each change is audited as config_admin_mcp_writes. Requires owner role.",
         "requestBody": {
           "required": true,
           "content": {
@@ -25401,6 +25401,10 @@
                       "writesEnabled": {
                         "type": "boolean",
                         "description": "Owner switch for admin MCP writes (admin_mcp.writes_enabled). Overrides HIVE_ADMIN_MCP_ENABLE_WRITES once set."
+                      },
+                      "writesFollowEnv": {
+                        "type": "boolean",
+                        "description": "true clears admin_mcp.writes_enabled so HIVE_ADMIN_MCP_ENABLE_WRITES (or the default, off) decides again. Cannot be sent with writesEnabled."
                       }
                     }
                   }

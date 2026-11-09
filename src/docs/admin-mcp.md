@@ -660,8 +660,10 @@ Writes are off until someone turns them on.
   used, the switch overrides `HIVE_ADMIN_MCP_ENABLE_WRITES` in both directions.
   Until then that variable on the hive process decides, as before: `1`, `true`,
   `yes` or `on` turns writes on, and anything else, or no variable, leaves them
-  off. A hosted hive's owner no longer needs the hub operator to set the
-  variable.
+  off. **Use environment default**, shown while the switch is in effect, clears
+  it again so the variable (or the default, off) decides; the tab shows what
+  that would give before you save, and the reset is audited the same way. A
+  hosted hive's owner no longer needs the hub operator to set the variable.
 - **On the stdio binary**, `HIVE_ADMIN_MCP_ENABLE_WRITES` in the binary's own
   environment is the only switch. It is a local process with no hive config,
   and its writes call the hive's REST endpoints with the dashboard token, so
