@@ -1,0 +1,1 @@
+- The knowledge advisor_llm endpoint is now path-aware: an endpoint already ending in `/chat/completions` is used as-is and a `/v1` base gets `/chat/completions`, so the Copilot chat API (`https://api.githubcopilot.com/chat/completions`) works without a `?_=` query hack. Bare-host endpoints behave as before.
