@@ -1,0 +1,1 @@
+- The sec-check agent's Dependabot alerts call no longer 403s once the GitHub App is granted the new read-only Dependabot alerts permission (documented in the GitHub App setup guide); existing installations must re-accept it.

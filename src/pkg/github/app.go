@@ -333,6 +333,10 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			Contents:     gh.Ptr("write"),
 			PullRequests: gh.Ptr("write"),
 			Metadata:     gh.Ptr("read"),
+			// Dependabot alerts: read lets the sec-check agent call
+			// dependabot/alerts. Optional like Workflows: the mint below
+			// retries without it when the installation has not accepted it.
+			VulnerabilityAlerts: gh.Ptr("read"),
 		}
 	case "trusted", "merger":
 		perms = &gh.InstallationPermissions{
@@ -425,6 +429,15 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 	defer cancel()
 	jwtClient := newJWTClient(jwtToken, a.apiURL)
 	installToken, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, installationID, opts)
+	if err != nil && perms.VulnerabilityAlerts != nil && perms.Workflows == nil {
+		a.logger.Warn("scoped token mint with vulnerability_alerts:read failed; retrying without it — "+
+			"the sec-check Dependabot alerts call will 403 until the App grants Dependabot alerts read-only and the installation re-accepts it; see docs/github-app-setup.md",
+			"tier", tier, "error", err)
+		perms.VulnerabilityAlerts = nil
+		alertsCtx, alertsCancel := mintContext(ctx)
+		defer alertsCancel()
+		installToken, _, err = jwtClient.Apps.CreateInstallationToken(alertsCtx, installationID, opts)
+	}
 	if err != nil && perms.Workflows != nil {
 		// The installation has likely not accepted the Workflows permission
 		// on the App yet — GitHub refuses to mint a token requesting a
@@ -796,6 +809,7 @@ func installationPermissionMap(p *gh.InstallationPermissions) map[string]string 
 	put("metadata", p.GetMetadata())
 	put("pull_requests", p.GetPullRequests())
 	put("secrets", p.GetSecrets())
+	put("vulnerability_alerts", p.GetVulnerabilityAlerts())
 	put("workflows", p.GetWorkflows())
 	return out
 }

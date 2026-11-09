@@ -137,3 +137,43 @@ func TestScopedToken_WorkflowsFallbackWhenInstallationLacksGrant(t *testing.T) {
 		}
 	}
 }
+
+// The contributor tier requests Dependabot alerts read for the sec-check
+// agent, and degrades to a token without it when the installation has not
+// accepted the permission.
+func TestScopedToken_ContributorVulnerabilityAlertsWithFallback(t *testing.T) {
+	var requests []map[string]string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		perms := decodePermissions(t, r)
+		requests = append(requests, perms)
+		if perms["vulnerability_alerts"] != "" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]any{"message": "The permissions requested are not granted to this installation."})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":      "scoped-token-contributor",
+			"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	auth := newWorkflowsTestAuth(t, server.URL)
+	if _, err := auth.ScopedToken(context.Background(), "contributor"); err != nil {
+		t.Fatalf("ScopedToken: %v", err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("mint requests = %d, want 2", len(requests))
+	}
+	if requests[0]["vulnerability_alerts"] != "read" {
+		t.Errorf("first mint vulnerability_alerts = %q, want read", requests[0]["vulnerability_alerts"])
+	}
+	if _, present := requests[1]["vulnerability_alerts"]; present {
+		t.Errorf("retry still requests vulnerability_alerts: %v", requests[1])
+	}
+	if requests[1]["pull_requests"] != "write" {
+		t.Errorf("retry pull_requests = %q, want write", requests[1]["pull_requests"])
+	}
+}
