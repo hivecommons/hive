@@ -70,7 +70,9 @@ func (s *Server) handleAdminMCP(w http.ResponseWriter, r *http.Request) {
 		userAgent:     r.Header.Get("User-Agent"),
 	}
 	adminmcp.NewHandler(provider,
-		adminmcp.WithWritesEnabled(adminMCPWritesEnabled()),
+		// Read per request, so the Settings → Channels switch takes effect on
+		// the next call (write_confirm included) with no restart.
+		adminmcp.WithWritesEnabled(s.adminMCPWritesEnabled()),
 		adminmcp.WithWritesUnavailable(s.adminMCPWritesUnavailableReason(provider)),
 		adminmcp.WithActor(provider.user),
 		adminmcp.WithPendingStore(adminmcp.NewFilePendingStore(adminMCPPendingPath())),
@@ -391,14 +393,50 @@ func (r *discardingWriteRecorder) statusCode() int {
 func (r *discardingWriteRecorder) bodyBytes() []byte { return r.body.Bytes() }
 func (r *discardingWriteRecorder) bytesWritten() int { return r.bytes }
 
-// adminMCPEndpointPath and adminMCPWritesEnvName are surfaced read-only on
-// the Settings → Channels tab; the admin MCP server has no hive.yaml section.
+// adminMCPEndpointPath and adminMCPWritesEnvName are surfaced on the
+// Settings → Channels tab next to the admin_mcp.writes_enabled switch.
 const (
 	adminMCPEndpointPath  = "/api/admin/mcp"
 	adminMCPWritesEnvName = "HIVE_ADMIN_MCP_ENABLE_WRITES"
 )
 
-func adminMCPWritesEnabled() bool {
+// Where the HTTP endpoint's writes setting comes from, as reported in the
+// Settings → Channels payload (adminMcp.writesSource).
+const (
+	adminMCPWritesSourceConfig  = "config"  // the owner set admin_mcp.writes_enabled
+	adminMCPWritesSourceEnv     = "env"     // HIVE_ADMIN_MCP_ENABLE_WRITES is set
+	adminMCPWritesSourceDefault = "default" // neither: writes are off
+)
+
+// adminMCPWritesEnabled reports whether the HTTP admin MCP endpoint's write
+// tools are on for this request; see adminMCPWritesState.
+func (s *Server) adminMCPWritesEnabled() bool {
+	on, _ := s.adminMCPWritesState()
+	return on
+}
+
+// adminMCPWritesState resolves the HTTP endpoint's writes setting and where
+// it came from. The owner's admin_mcp.writes_enabled, once set from
+// Settings → Channels, decides in both directions. While it is nil (never
+// set), HIVE_ADMIN_MCP_ENABLE_WRITES decides exactly as before, so a hive
+// keeps its current behaviour until someone uses the switch. Unset
+// everywhere is off. Who may write is still decided per caller by
+// adminMCPWritesUnavailableReason.
+func (s *Server) adminMCPWritesState() (bool, string) {
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		if v := s.deps.Config.AdminMCP.WritesEnabled; v != nil {
+			return *v, adminMCPWritesSourceConfig
+		}
+	}
+	if strings.TrimSpace(os.Getenv(adminMCPWritesEnvName)) != "" {
+		return adminMCPWritesEnabledFromEnv(), adminMCPWritesSourceEnv
+	}
+	return false, adminMCPWritesSourceDefault
+}
+
+// adminMCPWritesEnabledFromEnv is the environment default for the HTTP
+// endpoint: 1/true/yes/on turns writes on, anything else leaves them off.
+func adminMCPWritesEnabledFromEnv() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(adminMCPWritesEnvName))) {
 	case "1", "true", "yes", "on":
 		return true

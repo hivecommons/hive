@@ -66,7 +66,7 @@ reachability, and the two shapes are not exclusive. The honest accounting:
 - The endpoint **is** a new authenticated write surface on the hub, which `pkg/taskmcp` is not —
   that one is read-only. It exposes no authority the dashboard REST API does not already give
   the same credential, but it is new request-handling code on the hub and should be read as
-  such. Every write on both transports is gated by the preview-and-confirm contract. The contract now exists, but writes still fail closed unless the operator explicitly enables them (`HIVE_ADMIN_MCP_ENABLE_WRITES=1`).
+  such. Every write on both transports is gated by the preview-and-confirm contract. The contract now exists, but writes still fail closed unless they are explicitly enabled: on the HTTP endpoint by the owner's `admin_mcp.writes_enabled` switch (Settings → Channels) or, while that is unset, `HIVE_ADMIN_MCP_ENABLE_WRITES=1`; on the stdio binary by `HIVE_ADMIN_MCP_ENABLE_WRITES=1`.
 - Because it is served by the hub, the endpoint needs no authentication of its own: the existing
   `authenticate` path already resolves a dashboard token to owner. Unlike `pkg/taskmcp` it needs
   no lease minting, no per-lease scoping and no revocation record, because the credential is the
@@ -89,7 +89,7 @@ Phase 3 adds the reusable contract that phases 4–6 extend. The MCP exposes two
 - `write_preview` takes an `operation` name and operation-specific `args`. It calls the registered `WriteOp`'s `Preview`, returns the exact REST method/path/body that would be used, the expected effects, and a widening disclosure. It also persists a one-use pending confirmation with an id and expiry.
 - `write_confirm` takes that `confirmation_id`, reloads it from the durable store, verifies that it has not expired, belongs to the same hive, and still describes the same registered operation, then executes the saved REST request.
 
-Writes are disabled by default on both transports. Set `HIVE_ADMIN_MCP_ENABLE_WRITES=1` to enable them. Pending confirmations are durable: the dashboard endpoint stores them in `/data/admin-mcp-pending-confirmations.json` by default, and the stdio binary stores them under the user's config directory; both support `HIVE_ADMIN_MCP_PENDING_FILE` as an explicit path. The confirmation is not a capability for any other action: it is action-bound, hive-bound, one-use, and time-limited.
+Writes are disabled by default on both transports. On the dashboard endpoint the owner enables them with `admin_mcp.writes_enabled` (Settings → Channels, owner-only, audited as `config_admin_mcp_writes`). That key overrides `HIVE_ADMIN_MCP_ENABLE_WRITES` in both directions once set; while it is nil the environment variable decides as before (`1`/`true`/`yes`/`on` is on, anything else off). The owner can reset it to nil (`writesFollowEnv` on `PUT /api/config/channels`), and the key is then omitted from every persisted layer. The endpoint reads the setting on every request, `write_confirm` included, so turning writes off refuses a confirmation that was previewed while they were on. The stdio binary has no hive config and reads only `HIVE_ADMIN_MCP_ENABLE_WRITES` from its own environment; its writes call the dashboard REST API with the dashboard token, so the dashboard switch does not govern them. Pending confirmations are durable: the dashboard endpoint stores them in `/data/admin-mcp-pending-confirmations.json` by default, and the stdio binary stores them under the user's config directory; both support `HIVE_ADMIN_MCP_PENDING_FILE` as an explicit path. The confirmation is not a capability for any other action: it is action-bound, hive-bound, one-use, and time-limited.
 
 The write contract deliberately goes through existing dashboard REST endpoints. A client never sends `X-Hive-User`, `X-Hive-Role`, or `X-Hive-Owner-Role-Verified`. A hive refusal from the underlying endpoint is returned as a `hive-refusal` result with the status and original response body preserved rather than rewritten as a client-side authorization decision.
 
@@ -105,7 +105,7 @@ The endpoint still checks up front whether a write can succeed for the current c
 |---|---|---|
 | `HIVE_ADMIN_MCP_HIVES` | yes | JSON array of `{"name","address","token"}` roster entries. `token` is that hive's dashboard token, so treat this value as a secret. Names must be unique. |
 | `HIVE_ADMIN_MCP_ACTIVE` | no | Name of the hive that is active at start-up; defaults to the first roster entry. The `select_hive` tool switches the single active hive at runtime. |
-| `HIVE_ADMIN_MCP_ENABLE_WRITES` | no | `1`/`true`/`yes`/`on` enables the preview-and-confirm write tools. |
+| `HIVE_ADMIN_MCP_ENABLE_WRITES` | no | `1`/`true`/`yes`/`on` enables the preview-and-confirm write tools. This is the binary's only switch; the dashboard's `admin_mcp.writes_enabled` applies to the HTTP endpoint, not to the binary. |
 | `HIVE_ADMIN_MCP_PENDING_FILE` | no | Path of the durable pending-confirmation store. |
 
 The binary keeps one API client per roster entry for the life of the process.

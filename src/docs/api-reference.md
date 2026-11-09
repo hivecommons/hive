@@ -236,8 +236,8 @@ History point limits, timestamp cutoffs, incremental cost reads and ETag/304 beh
 | `PUT` | `/api/config/advisor` | Owner only | Advisor Config Set (fleet-wide settings; only fields present in body change) | `pkg/dashboard/api.go:67` |
 | `PUT` | `/api/config/advisor/roles` | Owner only | Advisor Model Roles Set (replaces named model_roles map; roles in use cannot be removed) | `pkg/dashboard/api.go:68` |
 | `PUT` | `/api/config/advisor/agent/{name}` | Owner only | Advisor Agent Override Set (set or clear one agent's override; null/empty clears it) | `pkg/dashboard/api.go:69` |
-| `GET` | `/api/config/channels` | Owner only | Settings → Channels payload (GitHub mention/Actions triggers, chat bots, escalation sinks, read-only dashboard chat and admin MCP status, mention-eligible agents); secrets masked | `pkg/dashboard/api.go:249` |
-| `PUT` | `/api/config/channels` | Owner only | Partial update of the same surfaces; validated against a copy so a 400 applies nothing; masked echo keeps a secret, empty clears it; hot-reloads mention poller and escalation sinks | `pkg/dashboard/api.go:250` |
+| `GET` | `/api/config/channels` | Owner only | Settings → Channels payload (GitHub mention/Actions triggers, chat bots, escalation sinks, read-only dashboard chat status, admin MCP status with the effective `writesEnabled` and its `writesSource` (`config`, `env` or `default`), mention-eligible agents); secrets masked | `pkg/dashboard/api.go:249` |
+| `PUT` | `/api/config/channels` | Owner only | Partial update of the same surfaces, plus `adminMcp.writesEnabled` (the `admin_mcp.writes_enabled` switch, which overrides `HIVE_ADMIN_MCP_ENABLE_WRITES` once set) or `adminMcp.writesFollowEnv: true` (clears it so the env or the default decides; sending both is a 400); a change is audited as `config_admin_mcp_writes`; validated against a copy so a 400 applies nothing; masked echo keeps a secret, empty clears it; hot-reloads mention poller and escalation sinks | `pkg/dashboard/api.go:250` |
 
 ## Agents and controls
 

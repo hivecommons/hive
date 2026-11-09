@@ -40,7 +40,7 @@ func TestDiscardingWriteRecorder(t *testing.T) {
 func TestAdminMCPWritesEnabledParsesEnv(t *testing.T) {
 	for raw, want := range map[string]bool{"1": true, " TRUE ": true, "yes": true, "On": true, "": false, "0": false, "nope": false} {
 		t.Setenv("HIVE_ADMIN_MCP_ENABLE_WRITES", raw)
-		if got := adminMCPWritesEnabled(); got != want {
+		if got := adminMCPWritesEnabledFromEnv(); got != want {
 			t.Errorf("%q: got %v want %v", raw, got, want)
 		}
 	}
