@@ -1,1 +1,0 @@
-- Activity Monitor: a secondary issue that shares a PR with another issue (its row shows the compact "↳ #PR · under #primary" chip) now lights the PR's lane — CI / Review, Merge queue (soaking), Merged — like the primary row, instead of wearing the PR's stage word in the "PR in progress" lane (hivecommons/hive#17324).

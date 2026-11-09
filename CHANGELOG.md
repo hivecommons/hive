@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.207.3)
+
+### Fixed
+
+- dashboard: the Recent merges popover is 52rem wide (was capped at 34rem) so PR titles read instead of ellipsising; it stays right-anchored under the Merged pill, capped to the viewport and its bar, and the phone full-width sheet is unchanged.
+- Activity Monitor: a secondary issue that shares a PR with another issue (its row shows the compact "↳ #PR · under #primary" chip) now lights the PR's lane — CI / Review, Merge queue (soaking), Merged — like the primary row, instead of wearing the PR's stage word in the "PR in progress" lane (hivecommons/hive#17324).
+- Watchdog no longer pages `PaneShowsLogin` for the sub-second login flash a relaunched Copilot CLI paints while re-validating its token: boot grace is now dated from the most recent CLI (re)launch, and login chrome must persist for `governor.watchdog.liveness.login_streak` consecutive polls (default 3) before `auth-required` is raised.
+
 ## 2026-11-09 (v5.207.2)
 
 ### Fixed
