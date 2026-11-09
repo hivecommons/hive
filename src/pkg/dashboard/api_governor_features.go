@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/retro"
@@ -684,6 +685,7 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		StalenessDays     *int                              `json:"staleness_days"`
 		PRAutoClose       *bool                             `json:"pr_autoclose"`
 		UpdateIntervalS   *int                              `json:"update_interval_s"`
+		DigestMinInterval *string                           `json:"digest_min_interval"`
 		PostRetryBackoffS *int                              `json:"post_retry_backoff_s"`
 		Target            *string                           `json:"target"`
 		LinearIssue       *string                           `json:"linear_issue"`
@@ -723,6 +725,19 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		jsonError(w, fmt.Sprintf("update_interval_s must be 0 (default cadence) or between %d and %d seconds",
 			config.MinAdvisoryUpdateIntervalS, config.MaxAdvisoryUpdateIntervalS), http.StatusBadRequest)
 		return
+	}
+	// digest_min_interval (hivecommons/hive#17435) is a Go duration; empty
+	// restores the 1h default and "0" disables the floor, so only the shape
+	// is validated here.
+	if body.DigestMinInterval != nil {
+		v := strings.TrimSpace(*body.DigestMinInterval)
+		if v != "" {
+			if _, err := time.ParseDuration(v); err != nil {
+				jsonError(w, "digest_min_interval must be a Go duration such as 1h or 30m (empty restores the 1h default, 0 disables)", http.StatusBadRequest)
+				return
+			}
+		}
+		body.DigestMinInterval = &v
 	}
 	if body.QueueHealth != nil {
 		qh := body.QueueHealth
@@ -779,6 +794,9 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 	if body.UpdateIntervalS != nil {
 		cfg.Governor.Advisory.UpdateIntervalS = *body.UpdateIntervalS
 	}
+	if body.DigestMinInterval != nil {
+		cfg.Governor.Advisory.DigestMinInterval = *body.DigestMinInterval
+	}
 	if body.PostRetryBackoffS != nil {
 		cfg.Governor.Advisory.PostRetryBackoffS = *body.PostRetryBackoffS
 	}
@@ -805,6 +823,7 @@ func advisorySectionResponse(cfg *config.Config) map[string]interface{} {
 		"staleness_days":       a.StalenessDays,
 		"pr_autoclose":         a.PRAutoCloseEnabled(),
 		"update_interval_s":    a.UpdateIntervalS,
+		"digest_min_interval":  a.DigestMinInterval,
 		"post_retry_backoff_s": a.PostRetryBackoffS,
 		"queue_health": map[string]interface{}{
 			"blocked_pr_pct":        a.QueueHealth.BlockedPRPct,

@@ -533,6 +533,14 @@ type Client struct {
 	// logged at Warn in this process; later cycles log it at Debug (#16439).
 	// Guarded by advisoryMu.
 	advisoryForeignDigestWarned map[string]bool
+	// advisoryDigestMinInterval is the floor between two writes of a CHANGED
+	// digest to the same target (governor.advisory.digest_min_interval,
+	// #17435); 0 disables the gate. advisoryDigestLastWrite records, per
+	// "owner/repo#issue", when this process last wrote the digest, so the
+	// gate holds even while the listed comment's updated_at lags the PATCH.
+	// Both guarded by advisoryMu.
+	advisoryDigestMinInterval time.Duration
+	advisoryDigestLastWrite   map[string]time.Time
 	// hiveIdentity records which accounts count as "this hive" for the
 	// self-authorization gate (pr_self_authorization.go, #5117). It is optional
 	// — the gate recognises the App bot without it — and exists so an issue

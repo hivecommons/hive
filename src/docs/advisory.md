@@ -18,6 +18,7 @@ governor:
     staleness_days: 7
     pr_autoclose: true
     update_interval_s: 0  # 0 = default (~60s cycle); 30–3600 to slow the refresh
+    digest_min_interval: 1h  # a CHANGED digest is rewritten at most this often; 0 = every changed cycle
     target: github        # github (default) | linear
     linear_issue: ""      # required when target is linear, e.g. ONB-123
 ```
@@ -362,6 +363,23 @@ Details worth knowing:
   stalled digest.
 - Values outside the band are rejected by the dashboard API and clamped (with
   a one-time warning in the hive log) when hand-edited into `hive.yaml`.
+
+### One comment, rewritten at most hourly
+
+The digest lives in exactly one comment per advisory issue, anchored by an
+`<!-- hive:advisory-digest updates=N -->` marker and closed by an
+`Updated N times · last <timestamp>` footer; the counter is read back from the
+comment itself, so it continues across restarts. `update_interval_s` paces how
+often the hive *checks*; `governor.advisory.digest_min_interval` (default `1h`,
+**Settings → Advisory → Rewrite floor for a changed digest**) bounds how often
+a *changed* body is actually written. Live counts in the Advice block drift on
+every eval cycle, which used to rewrite the comment every ~5 minutes; now the
+first change after the window is written and later drift waits for the next
+window. An unchanged digest never writes. The baseline is the comment's own
+`updated_at` on GitHub, so a restarted governor never reposts inside the
+window; `0` disables the floor. The governor log line
+`advisory digest comment written` marks the cycles that really reached GitHub
+(`posted advisory digest` is logged for every healthy cycle, skipped or not).
 
 ## Where the digest is posted
 
