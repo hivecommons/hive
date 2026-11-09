@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v6.5.3)
+
+### Fixed
+
+- A relay subscribed to several hives no longer refuses a `fix-pr` task for its contributor's own PR because it was polling another hive. On projectbluefin/utah-packages#972 (2026-11-09) the relay accepted a fix at 14:42:58Z, deferred it behind a headless task, and refused it with `Hub is not the active polling slot` the moment that task ended at 14:45:39Z; the hub booked a failed attempt and a five-minute retry. The relay now takes a `fix-pr` from any subscribed hub, makes that hub its active one and tells the other hives it is busy elsewhere, and the hub puts a fix refused for the polling slot back in its queue without counting an attempt. Ordinary work from a hive the relay is not polling is still refused.
+- A fork PR whose only red check is a maintainer-run fork guard (such as a fork-gated Canary) is parked for a maintainer at `stage/085-needs-decision` on its first red head, instead of being sent back to its author first. On projectbluefin/utah-packages#972 (2026-11-09) the PR was opened from a fork at 14:41:50Z, its Canary refused it at 14:42:24Z with "This is expected, not something the author can fix", and at 14:45:32Z the hive nudged the author with `required-check-failing:Canary` and queued relay rework, because neither the fork-guard index (not yet read for that head) nor the stage record (never parked on a guard) knew about it; the PR reached 085 only at 14:50:57Z. The stage pass now reads such a head's own check annotations once, with the index's rule, and records the guard for later heads. A fork head with any other red check still goes to its author.
+
 ## 2026-11-09 (v6.5.2)
 
 ### Fixed
