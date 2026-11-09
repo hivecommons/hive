@@ -5,8 +5,10 @@
 //
 // The log is one commands.jsonl file in the run's directory. Each command
 // contributes a "started" line when it is dispatched and an "ended" line
-// when its exit is known; a command with no "ended" line is unfinished,
-// never guessed. Readers fold the two into one api.CommandRecord per seq.
+// once the runtime stops waiting on it, carrying the exit when it is
+// known; a command with no "ended" line is in flight and reads as
+// unfinished, never guessed. Readers fold the two into one
+// api.CommandRecord per seq.
 //
 // Honest scope: a record says how the command was observed in its
 // capture field. The S2 runner records what it hands to the sandbox
@@ -33,6 +35,10 @@ const (
 	EventStarted = "started"
 	EventEnded   = "ended"
 )
+
+// OrphanReason is the reason on the unfinished ended line Open appends
+// for a command whose started line an earlier writer never ended.
+const OrphanReason = "the log was reopened with no exit recorded for this command (the runtime restarted, or its ended write failed); the exit is not knowable"
 
 // Output policy defaults: how much of each stream a record keeps. The
 // full output stays with the run (runs.StdoutArtifact); the record keeps

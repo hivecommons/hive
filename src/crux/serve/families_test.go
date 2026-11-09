@@ -884,6 +884,7 @@ func TestServeWithoutHostOrBackground(t *testing.T) {
 	if len(rt.Background()) != 0 {
 		t.Fatal("background loops started while disabled")
 	}
+	t.Setenv("PATH", fakeTmuxDir(t))
 	var h api.Health
 	newFamServer(t).expect(http.MethodGet, api.PathHealth, nil, http.StatusOK, &h)
 	if len(h.Background) != 0 {
