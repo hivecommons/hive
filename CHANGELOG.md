@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.209.8)
+
+### Fixed
+
+- Crux `GET /v1/health` now reports a `tmux` field (where tmux resolves on PATH) and answers 503, with the full health body, when tmux is missing (the body also carries `error`/`code`, so `api.Client` callers and the supervisor see "tmux not found on PATH" rather than a bare 503): every agent runs in tmux, so a server without it cannot serve traffic and was reporting healthy ([hivecommons/crux#137](https://github.com/hivecommons/crux/issues/137)). Existing fields are unchanged; probes that treated any 200 as healthy now see the failure.
+
+## 2026-11-09 (v5.209.7)
+
+### Fixed
+
+- Crux's command log (`GET /v1/runs/{id}/cmdlog`) no longer pins a follower's `next_seq` forever ([#17410](https://github.com/hivecommons/hive/issues/17410)). A command that ended `unfinished` (the launcher failed without an exit the runtime could read) is now terminal, so `next_seq` moves past it; a command left in flight by a runner that died is ended `unfinished` when its log is next opened, which `crux serve` now does for every run it reconciles at start; and `more` is never true on a page whose `next_seq` did not move, so a "page while `more`" loop such as `crux cmdlog list --all` can no longer spin on the same request.
+
 ## 2026-11-09 (v5.209.6)
 
 ### Fixed

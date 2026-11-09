@@ -87,6 +87,10 @@ func TestLogStatusFollowsTheOutcome(t *testing.T) {
 			if rec.Status != tc.want || (tc.exit == nil) != (rec.ExitCode == nil) || (tc.exit != nil && *tc.exit != *rec.ExitCode) || rec.EndedAt == nil {
 				t.Fatalf("record = %+v want %s exit=%v", rec, tc.want, tc.exit)
 			}
+			// Every outcome is terminal, unfinished included: a follower moves on.
+			if page.NextSeq != rec.Seq || page.More {
+				t.Fatalf("page = %+v", page)
+			}
 		})
 	}
 }
@@ -103,6 +107,34 @@ func TestCommandsWithoutALogIsAnEmptyPage(t *testing.T) {
 	}
 	if _, err := f.svc.Commands("run_missing", 0, 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing run = %v", err)
+	}
+}
+
+// A command the previous process dispatched and never ended is ended
+// unfinished at restart, so a follower's next_seq is not pinned on it
+// forever (#17410).
+func TestReconcileEndsTheCommandARunLeftInFlight(t *testing.T) {
+	f := withCmdLog(newFixture(t, blocking()))
+	rec, _, err := f.svc.Store.Create(runstate.Record{Owner: "operator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := f.svc.CmdLog(f.svc.Store.Path(rec.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := log.Started(cmdlog.Start{Command: []string{"make"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	page, err := f.svc.Commands(rec.ID, 0, 0)
+	if err != nil || len(page.Commands) != 1 || page.NextSeq != 1 || page.More {
+		t.Fatalf("Commands = %+v, %v", page, err)
+	}
+	if got := page.Commands[0]; got.Status != api.CommandUnfinished || got.EndedAt == nil || got.ExitCode != nil || got.Reason != cmdlog.OrphanReason {
+		t.Fatalf("record = %+v", got)
 	}
 }
 

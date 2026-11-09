@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
+)
 
 func TestShouldHoldAgentPR(t *testing.T) {
 	// ownsRepo models config.AgentOwnsRepo: the hive manages "hive" and
@@ -31,9 +35,45 @@ func TestShouldHoldAgentPR(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldHoldAgentPR(tt.agent, tt.repo, tt.level, tt.ownsRepo); got != tt.want {
+			if got := shouldHoldAgentPR(tt.agent, tt.repo, tt.level, tt.ownsRepo, nil); got != tt.want {
 				t.Fatalf("shouldHoldAgentPR(%q, %q, %d) = %v, want %v", tt.agent, tt.repo, tt.level, got, tt.want)
 			}
 		})
+	}
+}
+
+// The red-team lane (hivecommons/hive#17420) is held at every level, including
+// L6, by the alwaysHold predicate the relay wires to config.IsRedTeamAgent —
+// matched by role, by base name, and through a replica.
+func TestShouldHoldAgentPRHoldsRedTeamAtEveryLevel(t *testing.T) {
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{
+		"redteam":       {Role: config.RedTeamRole},
+		"adversary":     {Role: config.RedTeamRole},
+		"adversary-2":   {ReplicaOf: "adversary"},
+		"scanner":       {Role: "scanner"},
+		"redteam-named": {},
+	}}}
+	ownsRepo := func(_, _ string) bool { return true }
+	tests := []struct {
+		agent string
+		level int
+		want  bool
+	}{
+		{agent: "redteam", level: 6, want: true},
+		{agent: "adversary", level: 6, want: true},
+		{agent: "adversary-2", level: 6, want: true},
+		{agent: "redteam", level: 2, want: true},
+		{agent: "scanner", level: 6, want: false},
+		{agent: "redteam-named", level: 6, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.agent, func(t *testing.T) {
+			if got := shouldHoldAgentPR(tt.agent, "hive", tt.level, ownsRepo, cfg.IsRedTeamAgent); got != tt.want {
+				t.Fatalf("shouldHoldAgentPR(%q, L%d) = %v, want %v", tt.agent, tt.level, got, tt.want)
+			}
+		})
+	}
+	if shouldHoldAgentPR("redteam", "hive", 6, ownsRepo, nil) {
+		t.Fatal("nil alwaysHold must add no reason to hold")
 	}
 }
