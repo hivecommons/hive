@@ -148,7 +148,7 @@ var modelPrices = map[string]ModelPrice{
 	"gpt-daybreak-red-latest":  {InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 1.00, CacheWritePerMTok: 12.50},
 
 	// ---- DeepSeek (common LiteLLM/OpenRouter routing target) ----
-	// deepseek-chat / V3: $0.27 in / $1.10 out; cache hit $0.07.
+	// deepseek-chat: $0.32 in / $0.89 out (OpenRouter 2026-11-09); V3: $0.27 in / $1.10 out; cache hit $0.07.
 	"deepseek-chat": {InputPerMTok: 0.32, OutputPerMTok: 0.89, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.32},
 	"deepseek-v3":   {InputPerMTok: 0.27, OutputPerMTok: 1.10, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.27},
 	// deepseek-reasoner / R1: $0.55 in / $2.19 out; cache hit $0.14.
@@ -190,7 +190,7 @@ var modelPrices = map[string]ModelPrice{
 	// These reuse the closest sibling tier so every offered dropdown value has
 	// a deterministic price entry instead of relying on the coarse fallback.
 	"grok-4-5":                 {InputPerMTok: 2.00, OutputPerMTok: 6.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 2.00},
-	"kimi-k3":                  {InputPerMTok: 0.192, OutputPerMTok: 16.00, CacheReadPerMTok: 0.182, CacheWritePerMTok: 0.192},
+	"kimi-k3":                  {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.00},
 	"kimi-k2-7-code":           {InputPerMTok: 0.60, OutputPerMTok: 3.50, CacheReadPerMTok: 0.16, CacheWritePerMTok: 0.60},
 	"mai-code-1-flash-picker":  {InputPerMTok: 0.25, OutputPerMTok: 2.00, CacheReadPerMTok: 0.025, CacheWritePerMTok: 0.25},
 	"claude-opus-4-6-thinking": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
