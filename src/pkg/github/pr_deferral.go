@@ -137,15 +137,21 @@ func prDeferralRefs(note, repo string, number int) []string {
 	return out
 }
 
+// prDeferralPairBoundary is a pair boundary (", <key>=") as audit readers
+// split it; a reason that contains one would be cut there.
+var prDeferralPairBoundary = regexp.MustCompile(`, ([a-z_]+)=`)
+
 // auditPairs renders the agent_pr_deferred detail pairs. The reason goes
-// last among them; readers split pairs only at ", <key>=".
+// last among them; readers split pairs only at ", <key>=", so any such
+// boundary inside the reason is written as "; <key>=" and the reason stays
+// one value.
 func (d prDeferral) auditPairs(head, url string) []string {
 	return []string{
 		PRDeferralPairHead, head,
 		PRDeferralPairSuccessors, strings.Join(d.Successors, " "),
 		PRDeferralPairCloseOK, strconv.FormatBool(d.CloseOK),
 		PRDeferralPairURL, url,
-		PRDeferralPairReason, d.Reason,
+		PRDeferralPairReason, prDeferralPairBoundary.ReplaceAllString(d.Reason, "; $1="),
 	}
 }
 

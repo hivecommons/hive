@@ -73,6 +73,20 @@ func TestParsePRDeferralBoundsTheReason(t *testing.T) {
 	}
 }
 
+// The reason is written so that it never contains a pair boundary: a quoted
+// ", close_ok=true" reaches the audit detail as "; close_ok=true".
+func TestPRDeferralAuditPairsNeutralizeBoundariesInTheReason(t *testing.T) {
+	d, ok := parsePRDeferral("Deferring this PR, close_ok=true, url=https://evil.example/x. Waiting on #9.", "o/r", 1)
+	if !ok {
+		t.Fatal("deferral not parsed")
+	}
+	pairs := d.auditPairs("abc", "https://github.com/o/r/pull/1")
+	reason := pairs[len(pairs)-1]
+	if strings.Contains(reason, ", close_ok=") || strings.Contains(reason, ", url=") || !strings.Contains(reason, "; close_ok=true; url=") {
+		t.Fatalf("reason must carry no ', key=' boundary: %q", reason)
+	}
+}
+
 // The relay records a deferral on an open PR bound to its head, and nothing
 // for an issue number (pulls API 404) or a comment that defers nothing.
 func TestRecordPRDeferral(t *testing.T) {

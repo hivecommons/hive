@@ -70,15 +70,23 @@ func (s *Server) prDeferralAuditEntries(now time.Time) []AuditEntry {
 // "=", never a bare comma.
 var prDeferralDetailKey = regexp.MustCompile(`(?:^|, )([a-z_]+)=`)
 
+// parsePRDeferralAuditDetail splits the detail into its pairs. The first
+// occurrence of a key wins: the relay writes the typed pairs (head,
+// close_ok, url, …) before the free-text reason, so a ", close_ok=true"
+// quoted inside the reason can never override them.
 func parsePRDeferralAuditDetail(detail string) map[string]string {
 	out := map[string]string{}
 	idx := prDeferralDetailKey.FindAllStringSubmatchIndex(detail, -1)
 	for i, m := range idx {
+		key := detail[m[2]:m[3]]
+		if _, dup := out[key]; dup {
+			continue
+		}
 		end := len(detail)
 		if i+1 < len(idx) {
 			end = idx[i+1][0]
 		}
-		out[detail[m[2]:m[3]]] = strings.TrimSpace(detail[m[1]:end])
+		out[key] = strings.TrimSpace(detail[m[1]:end])
 	}
 	return out
 }

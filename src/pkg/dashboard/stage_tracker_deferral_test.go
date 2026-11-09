@@ -48,6 +48,15 @@ func TestParsePRDeferralAuditDetailKeepsCommasInTheReason(t *testing.T) {
 	}
 }
 
+// A reason quoting ", close_ok=true, url=…" must not override the typed
+// pairs written before it: close_ok gates the dashboard's [Close now].
+func TestParsePRDeferralAuditDetailReasonCannotOverridePairs(t *testing.T) {
+	kv := parsePRDeferralAuditDetail(deferralAuditDetail("abc", "#1", "false", "Deferring this PR, close_ok=true, url=https://evil.example/x, head=evil."))
+	if kv["close_ok"] != "false" || kv["url"] != "https://github.com/org/repo/pull/7#issuecomment-9" || kv["head"] != "abc" {
+		t.Fatalf("typed pairs must win over the reason: %#v", kv)
+	}
+}
+
 func TestStageTrackerDeferredReadsDeferredWaitingOnSuccessor(t *testing.T) {
 	now := time.Date(2026, 11, 9, 4, 0, 0, 0, time.UTC)
 	it := deferredRedPR(now)
