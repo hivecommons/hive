@@ -179,20 +179,58 @@ func (h *ContributeWSHub) openPRIndex() openPRIndex {
 	return idx
 }
 
+// vouches reports whether the snapshot's PR list for repo is complete, so
+// that a PR missing from it has left (closed answers for the repo).
+func (idx openPRIndex) vouches(repo string) bool {
+	return idx.repos[strings.ToLower(strings.TrimSpace(repo))]
+}
+
 // closed reports whether the snapshot shows repo#number as no longer open:
 // the repo's PR list is complete and does not carry it
 // (hivecommons/hive#14708).
 func (idx openPRIndex) closed(repo string, number int) bool {
-	if !idx.repos[strings.ToLower(strings.TrimSpace(repo))] {
+	if !idx.vouches(repo) {
 		return false
 	}
 	return !idx.prs[stagelabels.Key(repo, number)]
 }
 
+// pendingReworkUnseenBound is how long a 072/074 stage record may go
+// without a stage pass observing its PR and still count as owed rework,
+// for a repo the open-PR index cannot vouch for (right after a hub
+// restart, before the repo listings complete). The stage pass re-observes
+// every listed open PR each sweep and persists LastSeen at least every
+// stagelabels.LastSeenPersistEvery, so an open PR's record is minutes old
+// even after a restart. A PR a person closed or merged leaves the listing
+// and its record stops moving, but Prune keeps it for 14 days; without
+// this bound every such record read as owed rework until the listings
+// completed. The bound is stage 072's own stalled dwell (24h): a record
+// no pass has touched for a whole 072 dwell is not evidence of an open PR,
+// and an outage shorter than a day keeps an open PR on the card.
+var pendingReworkUnseenBound = stagelabels.ReturnedToContributor.Dwell()
+
+// owedRework reports whether a 072/074 stage record for repo#number still
+// counts as rework the contributor owes. A record the store marks
+// superseded is finished work (the stage tracker drops it the same way,
+// hivecommons/hive#14471). Where the open-PR index vouches for the repo it
+// decides (hivecommons/hive#14708); elsewhere a record no stage pass has
+// seen for pendingReworkUnseenBound is left out.
+func owedRework(open openPRIndex, repo string, number int, rec stagelabels.Record, now time.Time) bool {
+	if rec.Superseded() {
+		return false
+	}
+	if open.vouches(repo) {
+		return !open.closed(repo, number)
+	}
+	return rec.LastSeen.IsZero() || now.Sub(rec.LastSeen) <= pendingReworkUnseenBound
+}
+
 // fleetReworkFor builds the rework view for one connection. Call with c.mu
 // held; it takes only the fix scheduler's and stage store's own locks. open
 // drops PRs that have merged or closed: stage records outlive a PR whose
-// close the stage sweep never observed (hivecommons/hive#14708).
+// close the stage sweep never observed (hivecommons/hive#14708). Where open
+// cannot vouch for a repo, owedRework drops stage records no pass has seen
+// for pendingReworkUnseenBound instead.
 func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool, open openPRIndex) FleetRework {
 	var out FleetRework
 	store := h.stageStoreOrShared()
@@ -263,6 +301,7 @@ func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool, o
 			inFlightKeys[it.Key()] = true
 		}
 	}
+	now := time.Now()
 	pending := map[string]FleetReworkPR{}
 	for _, it := range queued {
 		if inFlightKeys[it.Key()] || open.closed(it.Repo, it.Number) {
@@ -286,7 +325,7 @@ func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool, o
 			continue
 		}
 		repo, number := splitStageKey(ai.Key)
-		if repo == "" || number == 0 || open.closed(repo, number) {
+		if repo == "" || number == 0 || !owedRework(open, repo, number, ai.Record, now) {
 			continue
 		}
 		pr := FleetReworkPR{Repo: repo, Number: number, Stage: ai.Record.Stage.Label()}
@@ -303,7 +342,7 @@ func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool, o
 			continue
 		}
 		repo, number := splitStageKey(ai.Key)
-		if repo == "" || number == 0 || open.closed(repo, number) {
+		if repo == "" || number == 0 || !owedRework(open, repo, number, ai.Record, now) {
 			continue
 		}
 		pr := FleetReworkPR{Repo: repo, Number: number, Stage: ai.Record.Stage.Label(), State: FleetReworkStateAdopted}
