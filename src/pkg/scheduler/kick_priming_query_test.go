@@ -46,7 +46,7 @@ func TestSearchableTitle(t *testing.T) {
 }
 
 func TestIsNoiseLabel_HiveRoutingFamilies(t *testing.T) {
-	for _, l := range []string{"stage/010-actionable", "agent/reviewer", "hive/claimed-by-scanner", "triage/needs-information",
+	for _, l := range []string{"stage/010-actionable", "agent/reviewer", "hive/claimed-by-scanner", "hive: churn-triaged", "origin/governor", "triage/needs-information",
 		"size/l", "needs-human", "do-not-merge/hold", "dco-signoff: yes", "sentinel-alert", "approved-direction", "hive-review", "lgtm"} {
 		if !isNoiseLabel(l) {
 			t.Errorf("%q is a hive routing label and should not be a search term", l)

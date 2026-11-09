@@ -694,13 +694,14 @@ var noiseLabels = map[string]bool{
 
 // noiseLabelPrefixes are the label families the hive and its review bots use
 // to route and gate work: where an item sits in the pipeline (stage/, needs-),
-// which lane holds it (agent/, hive/claimed-by-…), and review or merge state.
+// which lane holds it (agent/, hive/claimed-by-…, hive: churn-triaged), which
+// lane filed it (origin/), and review or merge state.
 // They say nothing about what the issue is about, and they are on most items,
 // so as search terms they match the same review and scanning entries for
 // every task.
 var noiseLabelPrefixes = []string{
-	"stage/", "agent/", "hive/", "triage/", "size/", "lifecycle/",
-	"do-not-merge/", "needs-", "dco-signoff", "sentinel-",
+	"stage/", "agent/", "hive/", "hive:", "origin/", "triage/", "size/",
+	"lifecycle/", "do-not-merge/", "needs-", "dco-signoff", "sentinel-",
 }
 
 // noiseControlLabels are single hive or review-bot labels outside those
