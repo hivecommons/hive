@@ -146,6 +146,7 @@ func TestStageTrackerHoldProvenanceJS(t *testing.T) {
 		"function stageTrackerItemKey(it) { return it.repo + '/' + it.kind + '#' + it.number; }",
 		"function stageTrackerDecisionTriggerHtml(decision, inner, tip, cls) { return '<button class=\"' + cls + ' ham-decision-trigger\" data-ham-decision=\"' + esc(decision.key) + '\">' + inner + '</button>'; }",
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_PRIORITY"),
+		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_MODS"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
 		jsConstLine(t, html, "STAGE_TRACKER_HANDLED_TEXT"),
 		jsConstLine(t, html, "STAGE_TRACKER_DRAFT_TIP"),
@@ -199,6 +200,9 @@ assert.ok(!rpill.includes('+1'), 'one pill, not duplicated: ' + rpill);
 const served = stageTrackerChipsHtml(Object.assign({}, running, { modifiers: ['needs-decision'] }));
 assert.strictEqual((served.match(/ham-mod-needs-decision/g) || []).length, 1, served);
 assert.ok(!served.includes('+1'), served);
+// A pill that already names the person owed (unauthorized, hold) stands in: no needs-decision stacked behind it.
+const gated = stageTrackerChipsHtml(Object.assign({}, running, { modifiers: ['unauthorized'] }));
+assert.ok(!gated.includes('ham-mod-needs-decision') && !gated.includes('+1'), gated);
 // A merge-ready 085 twin (approved + CI green) is the gate's: no invented pill.
 const ready = stageTrackerChipsHtml(Object.assign({}, running, { ci_activity: { head: 'c0ffee1', state: 'passing' }, review_activity: { head: 'c0ffee1', state: 'approved' } }));
 assert.ok(!ready.includes('ham-mod-needs-decision'), ready);

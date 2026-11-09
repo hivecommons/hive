@@ -19401,8 +19401,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // the chevron no longer says "Needs human decision": the ask rides
       // here as the needs-decision pill (hivecommons/hive#17453). The server
       // re-adds the modifier (stageTrackerApplyPersonActsOnPRPill); this
-      // covers a payload that predates it.
-      if (item.kind === 'pr' && mods.indexOf('needs-decision') < 0 && mods.indexOf('needs-human') < 0 && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) {
+      // covers a payload that predates it. Any pill that already names the
+      // person owed (unauthorized, hold …) stands in for it.
+      if (item.kind === 'pr' && !mods.some(m => STAGE_TRACKER_HUMAN_MODS.indexOf(m) >= 0) && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) {
         mods.push('needs-decision');
         mods.sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       }
