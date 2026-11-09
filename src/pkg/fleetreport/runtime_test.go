@@ -925,6 +925,22 @@ func TestIsBenignMessageKickUndeliverableBeforeRestart(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#17366: the starvation-guard promotion WARN is an
+// operational signal; exhausted dispatch must stay reportable.
+func TestIsBenignMessageReviewDispatchPromoted(t *testing.T) {
+	if !IsBenignMessage("review dispatch promoted: head starved of a reviewer walked ahead of the queue") {
+		t.Error("review dispatch promotion warning not benign")
+	}
+	for _, m := range []string{
+		"review dispatch exhausted; holding PR for a human",
+		"review fix forced",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("%q wrongly benign", m)
+		}
+	}
+}
+
 func TestIsBenignMessageStageHiveHeld(t *testing.T) {
 	if !IsBenignMessage("stage labels: PR waits on the hive past the stage dwell — reviewer lane needs attention") {
 		t.Error("hive-held stage dwell warning not benign")
