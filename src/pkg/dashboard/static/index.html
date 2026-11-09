@@ -22927,8 +22927,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Shared-PR groups last, so a secondary issue always sits right after
       // its primary whatever the lead sort or train put between them; the
       // groups a viewer folded leave their secondaries out of the list.
-      ctx.shared = Object.assign(stageTrackerSharedPRGroups(prepared, stages), { collapsed: _stageTrackerSharedCollapsed });
-      const ordered = stageTrackerSharedPRContiguous(prepared, stages, _stageTrackerSharedCollapsed);
+      // Guarded: test harnesses lift renderStageTracker without tracker-words-core.
+      const sharing = typeof stageTrackerSharedPRContiguous === 'function';
+      ctx.shared = sharing ? Object.assign(stageTrackerSharedPRGroups(prepared, stages), { collapsed: _stageTrackerSharedCollapsed }) : null;
+      const ordered = sharing ? stageTrackerSharedPRContiguous(prepared, stages, _stageTrackerSharedCollapsed) : prepared;
       const foldedShared = prepared.length - ordered.length;
       // A TV display (display=1&density=tv) shows the rows that fit the
       // screen, ungrouped, with "+N more" in place of the pager.

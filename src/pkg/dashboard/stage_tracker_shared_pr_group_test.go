@@ -145,8 +145,8 @@ assert.deepStrictEqual(stageTrackerLoadSharedCollapsed(), {}, 'a malformed value
 func TestStageTrackerSharedPRGroupWiring(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`ctx.shared = Object.assign(stageTrackerSharedPRGroups(prepared, stages), { collapsed: _stageTrackerSharedCollapsed });`,
-		`const ordered = stageTrackerSharedPRContiguous(prepared, stages, _stageTrackerSharedCollapsed);`,
+		`ctx.shared = sharing ? Object.assign(stageTrackerSharedPRGroups(prepared, stages), { collapsed: _stageTrackerSharedCollapsed }) : null;`,
+		`const ordered = sharing ? stageTrackerSharedPRContiguous(prepared, stages, _stageTrackerSharedCollapsed) : prepared;`,
 		`if (foldedShared > 0) page.total += foldedShared;`,
 		`_stageTrackerSharedCollapsed = stageTrackerLoadSharedCollapsed();`,
 		`function hamSharedToggle(key) {`,
