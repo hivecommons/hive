@@ -163,7 +163,7 @@ func (p *Primer) PrimeForKick(ctx context.Context, scope *TOCScope, kc KickConte
 		merged = scope.Filter(merged)
 	}
 	merged, scopedOut := FilterByKickContext(merged, kc)
-	reranked := p.rerankFisherRao(query, merged)
+	reranked := boostTaskRepos(p.rerankFisherRao(query, merged), kc.Repos)
 	prioritized := p.applyPriority(reranked)
 
 	if len(prioritized) > p.config.MaxFacts {
@@ -233,6 +233,38 @@ func (p *Primer) rerankFisherRao(query string, facts []Fact) []Fact {
 		return facts[i].Confidence > facts[j].Confidence
 	})
 
+	return facts
+}
+
+// taskRepoBoost is added to the rerank score of a fact tagged with the kick's
+// own repository. It is a nudge, not a gate: a fact about another repo that
+// matches the work clearly better still ranks first.
+const taskRepoBoost = 0.1
+
+// boostTaskRepos lifts the facts tagged repo:<org>/<name> for one of repos
+// (the knowledge-entries convention) and re-sorts by score. Every fact was
+// already selected by relevance; the tag is never a reason to show one.
+func boostTaskRepos(facts []Fact, repos []string) []Fact {
+	if len(repos) == 0 || len(facts) == 0 {
+		return facts
+	}
+	want := make(map[string]bool, len(repos))
+	for _, r := range repos {
+		if r = strings.ToLower(strings.TrimSpace(r)); r != "" {
+			want["repo:"+r] = true
+		}
+	}
+	for i := range facts {
+		for _, tag := range facts[i].Tags {
+			if want[strings.ToLower(strings.TrimSpace(tag))] {
+				facts[i].Confidence = clampScore(facts[i].Confidence + taskRepoBoost)
+				break
+			}
+		}
+	}
+	sort.SliceStable(facts, func(i, j int) bool {
+		return facts[i].Confidence > facts[j].Confidence
+	})
 	return facts
 }
 

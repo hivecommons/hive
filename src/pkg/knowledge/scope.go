@@ -31,15 +31,22 @@ func (s *FactScope) IsZero() bool {
 }
 
 // KickContext is what the primer knows about the work a kick is for. The
-// scheduler fills Lane and Labels from the lane name and the primed issues;
-// Paths is filled only by callers that know which files are being touched.
+// scheduler fills Lane, Labels and Repos from the lane name and the primed
+// issues; Paths is filled only by callers that know which files are being
+// touched.
 type KickContext struct {
 	Lane   string
 	Labels []string
 	Paths  []string
+	// Repos are the primed issues' repositories as "<org>/<name>". They are
+	// not a scope dimension (Admits ignores them) and they select nothing:
+	// a fact tagged repo:<one of them> only ranks ahead of an otherwise equal
+	// fact about another repo (boostTaskRepos).
+	Repos []string
 }
 
-// IsZero reports whether the context carries nothing to match on.
+// IsZero reports whether the context carries nothing a fact's scope can
+// match on. Repos are not a scope dimension, so they do not count.
 func (kc KickContext) IsZero() bool {
 	return kc.Lane == "" && len(kc.Labels) == 0 && len(kc.Paths) == 0
 }

@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/hivecommons/hive/crux/agentsmd"
 	"github.com/hivecommons/hive/crux/skillreg"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
@@ -555,11 +557,17 @@ func (s *Scheduler) KickSummary(agentName string) (KickSummary, bool) {
 // against (#17045): the base lane name (a replica resolves to the agent it
 // replicates) and the union of the primed issues' labels. File paths are not
 // known on the kick path, so entries scoped by paths alone wait for a caller
-// that has them.
+// that has them. It also carries the issues' repositories, which rank entries
+// tagged with them ahead of other repos' entries but admit nothing.
 func kickContextFor(cfg *config.Config, agentName string, issues []github.Issue) knowledge.KickContext {
 	kc := knowledge.KickContext{Lane: cfg.BaseAgentName(agentName)}
 	seen := make(map[string]bool)
+	seenRepo := make(map[string]bool)
 	for _, issue := range issues {
+		if repo := strings.ToLower(strings.TrimSpace(issue.Repo)); strings.Contains(repo, "/") && !seenRepo[repo] {
+			seenRepo[repo] = true
+			kc.Repos = append(kc.Repos, repo)
+		}
 		for _, label := range issue.Labels {
 			lower := strings.ToLower(strings.TrimSpace(label))
 			if lower == "" || seen[lower] {
@@ -575,36 +583,61 @@ func kickContextFor(cfg *config.Config, agentName string, issues []github.Issue)
 // extractKeywords pulls searchable terms from issue labels and titles.
 // Title words are included because labels alone are often all noise
 // (triage/accepted, kind/bug) and produce zero keywords after filtering.
+//
+// The hive's own routing labels and the filer tag in hive-filed titles are
+// dropped: on utah-packages#879 they made up most of the query
+// (stage/010-actionable, agent/reviewer, "reviewer review backlog") and pulled
+// in review notes from unrelated repos. The issues' repositories are not search
+// terms; they ride in the kick context and rank the repo's own entries first
+// (kickContextFor).
 func extractKeywords(issues []github.Issue) []string {
 	seen := make(map[string]bool)
 	var keywords []string
+	add := func(word string) {
+		if !seen[word] {
+			keywords = append(keywords, word)
+			seen[word] = true
+		}
+	}
 
 	for _, issue := range issues {
 		for _, label := range issue.Labels {
 			lower := strings.ToLower(label)
-			if !seen[lower] && !isNoiseLabel(lower) {
-				keywords = append(keywords, lower)
-				seen[lower] = true
+			if !isNoiseLabel(lower) {
+				add(lower)
 			}
 		}
 
 		if issue.ComplexityTier != "" {
-			tier := strings.ToLower(issue.ComplexityTier)
-			if !seen[tier] {
-				keywords = append(keywords, tier)
-				seen[tier] = true
-			}
+			add(strings.ToLower(issue.ComplexityTier))
 		}
 
-		for _, word := range splitTitleWords(issue.Title) {
-			if !seen[word] && !isNoiseWord(word) {
-				keywords = append(keywords, word)
-				seen[word] = true
+		for _, word := range splitTitleWords(searchableTitle(issue.Title)) {
+			if !isNoiseWord(word) {
+				add(word)
 			}
 		}
 	}
 
 	return keywords
+}
+
+// reviewBacklogTitleRE matches the stem the hive puts on its review backlog
+// items, "Review backlog (<perspective>): <finding>" (pkg/github
+// reviewBacklogIssueTitle).
+var reviewBacklogTitleRE = regexp.MustCompile(`^Review backlog \(([^)]+)\):\s*`)
+
+// searchableTitle is the part of an issue title that says what the issue is
+// about: the leading filer tag ("[reviewer]", "[scanner]") is dropped, and a
+// review backlog stem is cut down to its perspective, which names the kind of
+// finding ("security", "style"). The words "review backlog" match every
+// review-related entry in the vault whatever the repo.
+func searchableTitle(title string) string {
+	title = issueshape.StripAgentPrefix(title)
+	if m := reviewBacklogTitleRE.FindStringSubmatch(title); m != nil {
+		title = m[1] + " " + title[len(m[0]):]
+	}
+	return title
 }
 
 // splitTitleWords extracts lowercase words from an issue title, dropping
@@ -659,6 +692,34 @@ var noiseLabels = map[string]bool{
 	"hold":             true,
 }
 
+// noiseLabelPrefixes are the label families the hive and its review bots use
+// to route and gate work: where an item sits in the pipeline (stage/, needs-),
+// which lane holds it (agent/, hive/claimed-by-…), and review or merge state.
+// They say nothing about what the issue is about, and they are on most items,
+// so as search terms they match the same review and scanning entries for
+// every task.
+var noiseLabelPrefixes = []string{
+	"stage/", "agent/", "hive/", "triage/", "size/", "lifecycle/",
+	"do-not-merge/", "needs-", "dco-signoff", "sentinel-",
+}
+
+// noiseControlLabels are single hive or review-bot labels outside those
+// families.
+var noiseControlLabels = map[string]bool{
+	"approved-direction": true,
+	"hive-review":        true,
+	"lgtm":               true,
+	"approved":           true,
+}
+
 func isNoiseLabel(label string) bool {
-	return noiseLabels[label]
+	if noiseLabels[label] || noiseControlLabels[label] {
+		return true
+	}
+	for _, prefix := range noiseLabelPrefixes {
+		if strings.HasPrefix(label, prefix) {
+			return true
+		}
+	}
+	return false
 }
