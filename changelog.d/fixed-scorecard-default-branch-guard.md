@@ -1,1 +1,0 @@
-- ci: Scorecard `push` runs on non-default release branches are skipped instead of failing; `schedule` and `workflow_dispatch` runs are unchanged ([#17392](https://github.com/hivecommons/hive/issues/17392)).
