@@ -1780,7 +1780,7 @@
         <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 10px">
           Observes each agent's actual terminal rather than its configured state, and can restart agents that are running but dead.
         </p>
-        <p class="config-help">YAML keys: <code>governor.watchdog.enabled</code>, <code>governor.watchdog.mode</code>, <code>governor.watchdog.auth_probe</code>, <code>governor.watchdog.probe_interval_s</code>, <code>governor.watchdog.liveness.shell_prompt_after</code>, <code>governor.watchdog.liveness.stuck_overlay_after</code>, <code>governor.watchdog.readiness.no_production_for</code>, <code>governor.watchdog.restart.backoff[]</code>, <code>governor.watchdog.restart.crash_loop_after</code>, <code>governor.watchdog.restart.healthy_reset</code>.</p>
+        <p class="config-help">YAML keys: <code>governor.watchdog.enabled</code>, <code>governor.watchdog.mode</code>, <code>governor.watchdog.auth_probe</code>, <code>governor.watchdog.probe_interval_s</code>, <code>governor.watchdog.liveness.login_streak</code>, <code>governor.watchdog.liveness.shell_prompt_after</code>, <code>governor.watchdog.liveness.stuck_overlay_after</code>, <code>governor.watchdog.readiness.no_production_for</code>, <code>governor.watchdog.restart.backoff[]</code>, <code>governor.watchdog.restart.crash_loop_after</code>, <code>governor.watchdog.restart.healthy_reset</code>.</p>
         ${pausedBanner}${healBanner}${observeBanner}
         ${renderWatchdogActivityShell()}
         <div class="config-field-row">

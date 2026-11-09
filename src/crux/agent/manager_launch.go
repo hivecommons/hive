@@ -313,8 +313,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	agent.LastError = ""
 	agent.copilotModelFallbackRequested = ""
 	agent.lastLaunchFailureBanner = ""
-	agent.StartedAt = &now
-	agent.launchGen++
+	m.markCLILaunchedLocked(agent, now)
 	m.logger.Info("audit: agent started",
 		"name", agent.Name,
 		"backend", backend,

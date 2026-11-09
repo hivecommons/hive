@@ -427,9 +427,10 @@ type AgentProcess struct {
 	// this as "Waiting on CI" instead of "Working" so a stalled-on-CI agent
 	// no longer looks indistinguishable from one making progress.
 	AwaitingCI                  bool
-	TransientNudges             int // total transient-API-error nudges sent (surfaced to the dashboard)
-	launchGen                   int // increments per launch; stale deliverStartupKick goroutines check it and drop
-	lastInferKickMarks          int // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	TransientNudges             int       // total transient-API-error nudges sent (surfaced to the dashboard)
+	launchGen                   int       // increments per launch; stale deliverStartupKick goroutines check it and drop
+	lastCLILaunchAt             time.Time // when the CLI was last typed into the pane; dates watchdog boot grace on relaunch (#17320)
+	lastInferKickMarks          int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
 	ProviderErrorClass          string
 	ProviderErrorLine           string
 	ProviderErrorBackoffUntil   time.Time
