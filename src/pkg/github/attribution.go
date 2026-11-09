@@ -358,11 +358,13 @@ func ParseRunTrailers(body string) (runKey, planRef string) {
 }
 
 // AppendTrailer appends the visible trailer to body, blank-line separated.
-// No-op when the trailer is empty or the body already carries one — a request
-// the watcher retries after a partial failure must not stack trailers.
+// No-op when the trailer is empty or the body already has a trailer line
+// (HasAttributionLine) — a request the watcher retries after a partial
+// failure must not stack trailers. A body that only mentions `— hive:` in its
+// text still gets the line.
 func AppendTrailer(body string, m InvocationMeta) string {
 	t := m.Trailer()
-	if t == "" || strings.Contains(body, AttributionTrailerPrefix) {
+	if t == "" || HasAttributionLine(body) {
 		return body
 	}
 	body = strings.TrimRight(body, "\n")
@@ -370,6 +372,23 @@ func AppendTrailer(body string, m InvocationMeta) string {
 		return t
 	}
 	return body + "\n\n" + t
+}
+
+// HasAttributionLine reports whether body has a line that starts with the
+// `— hive:` prefix: the signature line itself, read the way the repos' monthly
+// agent audit reads it (a line whose first characters are `— hive:`). A body
+// that only mentions `— hive:` in its text has none. Danathar/arch-bootc#473
+// and Danathar/atomic-image-builder#640 and #678 described that audit, so
+// their text named the prefix; AppendTrailer, which tested for the prefix
+// anywhere, took that for a signature and opened them unsigned, and the audit
+// then failed on them.
+func HasAttributionLine(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSuffix(line, "\r"), AttributionTrailerPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // HasAttributionTrailer reports whether body carries the visible `— hive:`
