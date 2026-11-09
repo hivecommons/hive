@@ -3893,7 +3893,7 @@
        by the stale-advisory and forge-unreachable summaries. */
     function amberNudgePill(title, label) {
       var col = '#d29922';
-      return '<span title="' + esc(title) + '" style="display:inline-block;margin-left:var(--sp-3);padding:var(--sp-0) var(--sp-3);' +
+      return '<span title="' + escAttr(title) + '" style="display:inline-block;margin-left:var(--sp-3);padding:var(--sp-0) var(--sp-3);' +
         'border-radius:var(--r-pill);font-size:var(--fs-2xs);font-weight:600;line-height:1.5;cursor:help;white-space:nowrap;' +
         'color:' + col + ';background:rgba(210,153,34,0.12);border:1px solid rgba(210,153,34,0.35)">' +
         esc(label) + '</span>';

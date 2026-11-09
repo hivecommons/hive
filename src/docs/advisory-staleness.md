@@ -15,6 +15,11 @@ never re-derives it.
 
 ## The gates
 
+0. **Forge unreachable** — a beat carrying `ForgeUnreachable` is never stale,
+   whatever the digest's age or error. The spoke cannot reach its GitHub host
+   from the pod, so an ageing digest is a symptom of the egress fault rather
+   than a wedge of its own; the row shows a `forge unreachable (github_host)`
+   pill instead (#17433).
 1. **Participation** — no post time *and* no error means "not an advisory hive
    (or a spoke too old to report)". Unknown, never stale.
 2. **Reported error** — flagged with its cause, unless the App is still
@@ -49,6 +54,7 @@ never re-derives it.
 | Pure PR/merge hive | Suppressed | Suppressed | unchanged (expected suppression) |
 | Every agent paused or off-schedule, digest ageing | Flagged stale — the pause itself lit the pill | Suppressed — no agents, no findings, no digest | Gate 3 (`allAgentsQuietByDesign`, #4528); counted as `hidden_stale` in diagnostics |
 | Spoke heartbeat collect timed out, beat carries cached/minimal stats (`statsStale`) | `advisory-stale` alert raised from the last-good `advisoryLastPostedAt` while fresh digests were posting | No fleet alert — the post time is not a fresh observation | The hub alert rule skips `StatsStale` beats (#12842); health verdict already reads "heartbeat stats stale" |
+| Spoke cannot reach its GitHub host from the pod (`ForgeUnreachable`) | Generic stale pills lit the row while the real fault was cluster egress | No stale-advisory pill — the row shows `forge unreachable (github_host)` instead | `advisoryStale` returns early on `ForgeUnreachable` beats (#17433) |
 
 ## Diagnostics
 
