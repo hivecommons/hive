@@ -17418,6 +17418,75 @@ test('busy_elsewhere_v1: a hive that does not advertise the token never sees the
 });
 
 // ---------------------------------------------------------------------------
+// projectbluefin/utah-packages#972 (2026-11-09): the projectbluefin hive sent
+// Karibhou's relay a fix-pr preempt for its own PR at 14:42:58Z while the
+// relay was busy. The relay accepted it and deferred it behind the headless
+// primary, then refused it at 14:45:39Z with "Hub is not the active polling
+// slot" the moment the primary ended, because the polling slot was on another
+// hive. A fix-pr is taken from any subscribed hub.
+// ---------------------------------------------------------------------------
+
+test('#972 a fix-pr pushed by a non-active hub to an idle relay is taken, and the other hive hears busy_elsewhere', () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_CONTRIBUTOR_QUOTA_GUARD: 'off' } });
+  const log = console.log; const warn = console.warn;
+  console.log = () => {}; console.warn = () => {};
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    busyAuth(relay, hubs[0]); busyAuth(relay, hubs[1]);
+    relay.setCurrentTask(null);
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-karibhou-1', { mode: 'preempt' })), hubs[1]);
+    assert.ok(!sentB.some(m => m.type === 'task_failed' && m.task_id === 'fix-karibhou-1'),
+      `the fix must not be refused for the polling slot: ${JSON.stringify(sentB.filter(m => m.type === 'task_failed'))}`);
+    const task = relay.getCurrentTask();
+    assert.strictEqual(task && task.task_id, 'fix-karibhou-1', 'the fix becomes the current task');
+    assert.strictEqual(task._hub, hubs[1], 'the fix belongs to the hive that sent it');
+    assert.deepStrictEqual(busyElsewhereFrames(sentA).map(m => m.state), ['busy'],
+      'the hive the relay was polling must hear that it is busy elsewhere');
+    assert.deepStrictEqual(busyElsewhereFrames(sentB), [], 'the hive that owns the fix is never told it is busy elsewhere');
+
+    // Finishing the fix clears the report on the other hive.
+    relay.finishCurrentTask({ completionSignal: 'verdict', summary: 'done', tmuxLines: [], prURL: null, noWork: null });
+    assert.deepStrictEqual(busyElsewhereFrames(sentA).map(m => m.state), ['busy', 'clear']);
+  } finally { console.log = log; console.warn = warn; relay.setCurrentTask(null); teardown(relay); }
+});
+
+test('#972 a fix-pr deferred behind a headless primary runs when the primary ends, even with the polling slot on another hive', () => {
+  const relay = loadRelay({ backend: 'claude', mode: 'headless', env: { ...MULTI_HUB_ENV, HIVE_MAX_PARALLEL_FIXES: '0', HIVE_CONTRIBUTOR_QUOTA_GUARD: 'off' }, execFileResult: { defer: true } });
+  const log = console.log; const warn = console.warn;
+  console.log = () => {}; console.warn = () => {};
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    busyAuth(relay, hubs[0]); busyAuth(relay, hubs[1]);
+    relay.setCurrentTask({ task_id: 'pr-review-1794235343201', task_gen: 0, kind: 'pr-review', repo: 'org/a', number: 0, title: 'local review' });
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-karibhou-1', { mode: 'preempt' })), hubs[1]);
+    assert.deepStrictEqual(relay.fixPRState().deferred, ['fix-karibhou-1'], 'precondition: the fix waits behind the headless primary');
+    assert.ok(sentB.some(m => m.type === 'task_accepted' && m.task_id === 'fix-karibhou-1'), 'precondition: the relay accepted the fix');
+
+    // The primary ends and the relay asks hive A (its polling slot) for work.
+    relay.setCurrentTask(null);
+    relay.requestWork(hubs[0], 'headless_task_complete');
+    assert.ok(!sentB.some(m => m.type === 'task_failed' && m.task_id === 'fix-karibhou-1'),
+      `an accepted fix must not be refused when it starts: ${JSON.stringify(sentB.filter(m => m.type === 'task_failed'))}`);
+    const task = relay.getCurrentTask();
+    assert.strictEqual(task && task.task_id, 'fix-karibhou-1', 'the deferred fix runs');
+    assert.strictEqual(task._hub, hubs[1]);
+    assert.deepStrictEqual(relay.fixPRState().deferred, []);
+    assert.deepStrictEqual(busyElsewhereFrames(sentA).map(m => m.state), ['busy'],
+      'the hive the relay was polling must hear that it is busy elsewhere');
+  } finally { console.log = log; console.warn = warn; relay.setCurrentTask(null); teardown(relay); }
+});
+
+test('#972 the polling-slot refusal still applies to ordinary work from a non-active hub', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    const { hubs, sentB } = attachHubSinks(relay);
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'issue-1', kind: 'issue', repo: 'foo/bar', number: 2, title: 'y' }), hubs[1]);
+    assert.strictEqual(relay.getCurrentTask(), null);
+    assert.ok(sentB.some(m => m.type === 'task_failed' && m.task_id === 'issue-1' && m.reason === 'Hub is not the active polling slot'));
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
 // quota_hold_v1: a held relay tells the hub, so it stops counting as
 // contributor-first cover. Observed on 2026-11-08: a relay acting as scanner
 // was held by its quota guard (weekly window 15% left, reserve 20%) while the
