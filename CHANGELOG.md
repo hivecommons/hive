@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v6.4.2)
+
+### Fixed
+
+- The "agent pane · N lines" disclosure on an Operations contributor card now stays open until you close it. The fleet list redraws every card every 4 seconds, and the pane's open state was meant to survive that, but the row key it was stored under was declared further down the function, so it was always empty and the pane snapped shut on the next poll ([#7317](https://github.com/hivecommons/hive/issues/7317) added the pane). While you have text selected inside a pane, the cards now wait to redraw until you let go of the selection, and an open pane keeps its scroll position across redraws.
+
 ## 2026-11-08 (v6.4.1)
 
 ### Fixed
