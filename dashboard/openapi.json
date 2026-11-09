@@ -25276,7 +25276,7 @@
           "System"
         ],
         "summary": "Get inbound channel settings",
-        "description": "Returns the Settings → Channels payload: github.mentions and github.actions trigger settings, chat bot surfaces (discord, slack, matrix, telegram, msteams), escalation email/push sinks, read-only dashboardChat and adminMcp status, and the per-agent mention eligibility list. Secrets are never echoed; each has a has* boolean instead. Requires owner role.",
+        "description": "Returns the Settings → Channels payload: github.mentions and github.actions trigger settings, chat bot surfaces (discord, slack, matrix, telegram, msteams), escalation email/push sinks, read-only dashboardChat status, adminMcp status (endpoint, the effective writesEnabled, and writesSource: config when the owner set admin_mcp.writes_enabled, env when HIVE_ADMIN_MCP_ENABLE_WRITES decides, default when neither is set), and the per-agent mention eligibility list. Secrets are never echoed; each has a has* boolean instead. Requires owner role.",
         "responses": {
           "200": {
             "description": "Channel settings",
@@ -25351,7 +25351,7 @@
           "System"
         ],
         "summary": "Update inbound channel settings",
-        "description": "Partial update: each top-level surface object is optional and, inside it, absent fields are left unchanged. Secret fields treat an empty string as clear and a masked • echo as keep. The body is validated against a copy of the live config (allowed_commands vocabulary, poll_interval duration, summoner logins, enabled bots must have credentials) and committed only when valid, then the mention poller and escalation dispatcher hot-reload. Requires owner role.",
+        "description": "Partial update: each top-level surface object is optional and, inside it, absent fields are left unchanged. Secret fields treat an empty string as clear and a masked • echo as keep. The body is validated against a copy of the live config (allowed_commands vocabulary, poll_interval duration, summoner logins, enabled bots must have credentials) and committed only when valid, then the mention poller and escalation dispatcher hot-reload. adminMcp.writesEnabled sets admin_mcp.writes_enabled, which turns the admin MCP endpoint's write tools on or off on the next request and overrides HIVE_ADMIN_MCP_ENABLE_WRITES in both directions; each change is audited as config_admin_mcp_writes. Requires owner role.",
         "requestBody": {
           "required": true,
           "content": {
@@ -25394,6 +25394,15 @@
                   "escalationPush": {
                     "type": "object",
                     "additionalProperties": true
+                  },
+                  "adminMcp": {
+                    "type": "object",
+                    "properties": {
+                      "writesEnabled": {
+                        "type": "boolean",
+                        "description": "Owner switch for admin MCP writes (admin_mcp.writes_enabled). Overrides HIVE_ADMIN_MCP_ENABLE_WRITES once set."
+                      }
+                    }
                   }
                 }
               }

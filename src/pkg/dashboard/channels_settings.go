@@ -3,6 +3,7 @@ package dashboard
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -13,8 +14,9 @@ import (
 // Settings → Channels (hivecommons/hive#12984): one tab for every inbound
 // trigger surface that used to be yaml-only — GitHub @-mentions and the
 // Actions trigger, the chat bots (Discord, Slack, Matrix, Telegram, Teams),
-// the escalation email/push sinks, plus read-only status for dashboard chat
-// and the admin MCP endpoint, which have no hive.yaml knobs of their own.
+// the escalation email/push sinks, the owner's switch for admin MCP writes
+// (admin_mcp.writes_enabled), plus read-only status for dashboard chat, which
+// has no hive.yaml knobs of its own.
 //
 // Contract, shared with the other settings writers: every field is a pointer
 // or nil-able slice, so an absent key leaves that setting untouched. Secrets
@@ -43,6 +45,14 @@ type channelsSettingsBody struct {
 	MSTeams         *channelsTeamsBody    `json:"msteams"`
 	EscalationEmail *channelsEmailBody    `json:"escalationEmail"`
 	EscalationPush  *channelsPushBody     `json:"escalationPush"`
+	AdminMCP        *channelsAdminMCPBody `json:"adminMcp"`
+}
+
+// channelsAdminMCPBody carries the owner's switch for the HTTP admin MCP
+// endpoint's write tools. A value overrides HIVE_ADMIN_MCP_ENABLE_WRITES in
+// both directions; see Server.adminMCPWritesState.
+type channelsAdminMCPBody struct {
+	WritesEnabled *bool `json:"writesEnabled"`
 }
 
 type channelsMentionsBody struct {
@@ -143,7 +153,7 @@ func (s *Server) handleChannelsSettingsGet(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	jsonResponse(w, channelsSettingsPayload(s.deps.Config))
+	jsonResponse(w, s.channelsSettingsPayload(s.deps.Config))
 }
 
 func (s *Server) handleChannelsSettingsPut(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +169,8 @@ func (s *Server) handleChannelsSettingsPut(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	prevWrites, prevSource := s.adminMCPWritesState()
+	prevStored := s.deps.Config.AdminMCP.WritesEnabled
 	if err := applyChannelsSettings(s.deps.Config, body); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -167,11 +179,19 @@ func (s *Server) handleChannelsSettingsPut(w http.ResponseWriter, r *http.Reques
 		s.logger.Error("failed to persist config after channels update", "error", err)
 	}
 	s.auditFromRequest(r, "config_channels", auditDetail("section", "channels"), "")
+	if next := s.deps.Config.AdminMCP.WritesEnabled; next != nil && (prevStored == nil || *prevStored != *next) {
+		// Its own sensitive audit row: who changed the admin MCP write
+		// switch, from what (and where that came from) to what.
+		s.auditFromRequest(r, "config_admin_mcp_writes", auditDetail(
+			"old", onOff(prevWrites), "old_source", prevSource,
+			"new", onOff(*next), "new_source", adminMCPWritesSourceConfig,
+		), "")
+	}
 	if s.deps.ChannelsConfigApplied != nil {
 		s.deps.ChannelsConfigApplied()
 	}
 	s.refreshAndPersist()
-	jsonResponse(w, channelsSettingsPayload(s.deps.Config))
+	jsonResponse(w, s.channelsSettingsPayload(s.deps.Config))
 }
 
 // applyChannelsSettings validates body against a copy of cfg and commits the
@@ -192,11 +212,16 @@ func applyChannelsSettings(cfg *config.Config, body channelsSettingsBody) error 
 	if err := applyChannelsEscalation(&next, body.EscalationEmail, body.EscalationPush); err != nil {
 		return err
 	}
+	if body.AdminMCP != nil && body.AdminMCP.WritesEnabled != nil {
+		v := *body.AdminMCP.WritesEnabled
+		next.AdminMCP.WritesEnabled = &v
+	}
 
 	cfg.GitHub.Mentions = next.GitHub.Mentions
 	cfg.GitHub.Actions = next.GitHub.Actions
 	cfg.Notifications = next.Notifications
 	cfg.Escalation = next.Escalation
+	cfg.AdminMCP = next.AdminMCP
 	return nil
 }
 
@@ -572,9 +597,17 @@ func durationOrEmpty(d time.Duration) string {
 	return d.String()
 }
 
-func channelsSettingsPayload(cfg *config.Config) map[string]any {
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
+}
+
+func (s *Server) channelsSettingsPayload(cfg *config.Config) map[string]any {
 	m := cfg.GitHub.Mentions
 	a := cfg.GitHub.Actions
+	writesOn, writesSource := s.adminMCPWritesState()
 	out := map[string]any{
 		"githubMentions": map[string]any{
 			"enabled":                 m.Enabled,
@@ -620,8 +653,11 @@ func channelsSettingsPayload(cfg *config.Config) map[string]any {
 		},
 		"adminMcp": map[string]any{
 			"endpoint":      adminMCPEndpointPath,
-			"writesEnabled": adminMCPWritesEnabled(),
+			"writesEnabled": writesOn,
+			"writesSource":  writesSource,
 			"writesEnv":     adminMCPWritesEnvName,
+			"envWritesSet":  strings.TrimSpace(os.Getenv(adminMCPWritesEnvName)) != "",
+			"envWritesOn":   adminMCPWritesEnabledFromEnv(),
 		},
 		"mentionAgents": channelsMentionAgents(cfg),
 	}

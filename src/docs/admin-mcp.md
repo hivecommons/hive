@@ -308,11 +308,14 @@ rebuilding after each hub upgrade.
 | ------------------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `HIVE_ADMIN_MCP_HIVES`         | Yes      | JSON array of `{"name","address","token"}`. All three fields are required and names must be unique. The binary exits with an error otherwise.                                                              |
 | `HIVE_ADMIN_MCP_ACTIVE`        | No       | Name of the hive active at start. Defaults to the first entry; an unknown name is an error.                                                                                                                |
-| `HIVE_ADMIN_MCP_ENABLE_WRITES` | No       | `1`, `true`, `yes` or `on` turns write tools on. Anything else leaves them off.                                                                                                                            |
+| `HIVE_ADMIN_MCP_ENABLE_WRITES` | No       | `1`, `true`, `yes` or `on` turns write tools on. Anything else leaves them off. On the stdio binary this is the only switch.                                                                               |
 | `HIVE_ADMIN_MCP_PENDING_FILE`  | No       | Where pending write confirmations are stored. Default on stdio: `<user config dir>/hive/admin-mcp-pending-confirmations.json`. Default on the HTTP endpoint: `/data/admin-mcp-pending-confirmations.json`. |
 
 The dashboard process also reads `HIVE_ADMIN_MCP_ENABLE_WRITES` and
-`HIVE_ADMIN_MCP_PENDING_FILE` for the HTTP endpoint.
+`HIVE_ADMIN_MCP_PENDING_FILE` for the HTTP endpoint. There,
+`HIVE_ADMIN_MCP_ENABLE_WRITES` is only the default: once the owner uses the
+Settings → Channels switch (`admin_mcp.writes_enabled`), the switch decides. See
+[Writes](#writes).
 
 ## Several hives
 
@@ -647,9 +650,25 @@ owner. Treat the token as owner access to all of the evidence above.
 
 ## Writes
 
-Writes are off unless `HIVE_ADMIN_MCP_ENABLE_WRITES` is set on the process that
-serves the MCP. Writes are also unavailable to a caller whose role on the hive
-is read-only.
+Writes are off until someone turns them on.
+
+- **On the HTTP endpoint** (`/api/admin/mcp`), the hive's owner turns them on
+  or off with **Allow admin MCP writes** on Settings → Channels. It is stored as
+  `admin_mcp.writes_enabled`, applies on the next MCP call with no restart, and
+  each change is recorded in the audit log as `config_admin_mcp_writes` with
+  who made it and the old and new value. Only the owner can change it. Once
+  used, the switch overrides `HIVE_ADMIN_MCP_ENABLE_WRITES` in both directions.
+  Until then that variable on the hive process decides, as before: `1`, `true`,
+  `yes` or `on` turns writes on, and anything else, or no variable, leaves them
+  off. A hosted hive's owner no longer needs the hub operator to set the
+  variable.
+- **On the stdio binary**, `HIVE_ADMIN_MCP_ENABLE_WRITES` in the binary's own
+  environment is the only switch. It is a local process with no hive config,
+  and its writes call the hive's REST endpoints with the dashboard token, so
+  the dashboard switch does not apply to it.
+
+Writes are also unavailable to a caller whose role on the hive is read-only,
+whatever the switch says.
 
 Every write takes two steps:
 
@@ -657,7 +676,9 @@ Every write takes two steps:
    `confirmation_id`, an expiry, and a description of what would happen.
 2. **`write_confirm`** with the `confirmation_id`. The confirmation is
    single-use and expires after 10 minutes. Only the caller who previewed a
-   write can confirm it.
+   write can confirm it. The HTTP endpoint checks the writes switch again at
+   this step, so a confirmation previewed before the owner turned writes off is
+   refused.
 
 ### Who a write runs as
 
@@ -734,16 +755,16 @@ combining other operations.
 
 ## Troubleshooting
 
-| Symptom                                                        | Cause and fix                                                                                                                                                                                                                                    |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| "confirmation was previewed by another caller"                 | Only the caller who ran `write_preview` can confirm it. Preview the write again yourself.                                                                                                                                                        |
-| A write is refused, or `metadata.preview.enabled` is `false`   | Read the note on the write tools, or the reason `exclusion_catalogue` returns. Set `HIVE_ADMIN_MCP_ENABLE_WRITES=1` on the serving process; otherwise the caller has a read-only role on this hive, or the request carries no verified identity. |
-| `select_hive` fails: "unreachable host"                        | Check the address and network.                                                                                                                                                                                                                   |
-| `select_hive` fails: "wrong dashboard token"                   | The roster token does not match that hive.                                                                                                                                                                                                       |
-| `select_hive` fails: "direct-route spoke refused shared token" | That spoke needs per-user access and cannot be administered with a token.                                                                                                                                                                        |
-| 401 or 403 from a hive hosted by the hub                       | The GitHub token is invalid or expired, or your login has no role on that hive. Check the token with `curl -sH "Authorization: Bearer <token>" https://api.github.com/user`, and ask the hive's owner for access.                                |
-| 405 on the HTTP endpoint                                       | You sent a GET; use POST.                                                                                                                                                                                                                        |
-| Confirmation expired, or wrong hive                            | Run `write_preview` again on the hive you want to change.                                                                                                                                                                                        |
+| Symptom                                                        | Cause and fix                                                                                                                                                                                                                                                                                                                                                                                                               |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "confirmation was previewed by another caller"                 | Only the caller who ran `write_preview` can confirm it. Preview the write again yourself.                                                                                                                                                                                                                                                                                                                                   |
+| A write is refused, or `metadata.preview.enabled` is `false`   | Read the note on the write tools, or the reason `exclusion_catalogue` returns. On the HTTP endpoint, ask the owner to turn on **Allow admin MCP writes** on Settings → Channels (it overrides `HIVE_ADMIN_MCP_ENABLE_WRITES` once used). On the stdio binary, set `HIVE_ADMIN_MCP_ENABLE_WRITES=1` in its environment. Otherwise the caller has a read-only role on this hive, or the request carries no verified identity. |
+| `select_hive` fails: "unreachable host"                        | Check the address and network.                                                                                                                                                                                                                                                                                                                                                                                              |
+| `select_hive` fails: "wrong dashboard token"                   | The roster token does not match that hive.                                                                                                                                                                                                                                                                                                                                                                                  |
+| `select_hive` fails: "direct-route spoke refused shared token" | That spoke needs per-user access and cannot be administered with a token.                                                                                                                                                                                                                                                                                                                                                   |
+| 401 or 403 from a hive hosted by the hub                       | The GitHub token is invalid or expired, or your login has no role on that hive. Check the token with `curl -sH "Authorization: Bearer <token>" https://api.github.com/user`, and ask the hive's owner for access.                                                                                                                                                                                                           |
+| 405 on the HTTP endpoint                                       | You sent a GET; use POST.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Confirmation expired, or wrong hive                            | Run `write_preview` again on the hive you want to change.                                                                                                                                                                                                                                                                                                                                                                   |
 
 For the design record behind this feature, see
 [`design/admin-mcp.md`](design/admin-mcp.md).

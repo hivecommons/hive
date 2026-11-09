@@ -735,8 +735,10 @@ Prerequisites:
   hub proxy proof, internal header), or any caller on a direct-route spoke,
   sees `writes_enabled: false` with a `writes_unavailable_reason`
   ([Write contract](design/admin-mcp.md#write-contract-phase-3)).
-- Writes are off by default. Set `HIVE_ADMIN_MCP_ENABLE_WRITES=1` on the hive
-  process for the endpoint write steps.
+- Writes are off by default. For the endpoint write steps, turn on **Allow
+  admin MCP writes** on Settings → Channels (`admin_mcp.writes_enabled`), or set
+  `HIVE_ADMIN_MCP_ENABLE_WRITES=1` on the hive process while that switch is
+  unused.
 - For the stdio half, build `hive-admin-mcp` from `src/cmd/hive-admin-mcp` and
   set `HIVE_ADMIN_MCP_HIVES` to a roster naming the live hive plus at least one
   other entry, with `HIVE_ADMIN_MCP_ACTIVE` (or roster order) making the
