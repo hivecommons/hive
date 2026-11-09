@@ -814,6 +814,7 @@ means the situation cannot occur at that level.
 | Agent finding the issue filter refuses whose every cited permalink (`…/blob/<sha>/<path>#L<n>`, same repository) is gone from the default branch: none of the cited lines of 16 to 400 characters is still a line of the file. A file the default branch no longer has is not enough (a rename or move keeps the lines), nor is a citation with no such line or a path the pinned commit lacks. The enumeration checks it for up to 3 findings per repository per pass and trusts a result for 6 hours; the evidence lines read at a pinned SHA are kept (never the file), and a citation that settles as unknown costs no further reads | Yours — `CLOSE` (`cited_lines_gone`, naming the citation: close it, or admit it if the finding still holds) | same | same | same |
 | Issue covered by an open PR | Not yours — the PR closes it on merge | same | same | same |
 | Issue parked on a decision (`needs_decision`) that an open or held PR authored by this hive's App closes (GitHub closing reference) | Not yours — "Waits on hive PR #N, which closes it"; the park label stays, so the ask comes back if the PR closes unmerged. A closing PR by anyone else leaves it `DECIDE` | same | same | same |
+| Issue the issue filter refuses that an open or held PR of any author closes (GitHub closing reference), unless the TRIAGE row above applies first | Not yours — "Waits on PR #N, which closes it"; none of the filter's `ADMIT` rows apply, and the ask comes back if the PR closes unmerged | same | same | same |
 | `blocked` with an open GitHub blocked-by link | Not yours — waiting on the linked item | same | same | same |
 | Actionable `blocked` issue with no blocked-by link recorded | As the unclaimed row until it has had no activity for the stale period, then Yours — `REVIEW` (`blocked_unexplained`: name the blocker or lift the label). Held and filtered issues keep their earlier row: their links are not read | same | same | same |
 | `Epic` · `2-discussing` · `needs-triage` on an issue | As the unclaimed row — still in the agent queue | same | same | same |
@@ -840,7 +841,8 @@ has had no activity for the stale period, then `CLOSE`
 (8b) an agent finding whose cited lines are gone from the default branch →
 `CLOSE` (`cited_lines_gone`);
 (9) agent-filed and unacknowledged where acknowledgment is required →
-`TRIAGE`; (9b) an issue the issue filter refuses that carries
+`TRIAGE`; (9b) an issue the issue filter refuses that an open or held PR
+closes → Not yours ("Waits on PR #N, which closes it"); otherwise one that carries
 `approved-direction` → `ADMIT` (`decided_not_admitted`), that an agent filed
 → `ADMIT` (`agent_finding_not_admitted`), or that a person filed → `ADMIT`
 (`person_issue_not_admitted`); (10) for a pull request with a hold, the hold sources decide and no

@@ -144,3 +144,110 @@ func TestUpdateBranchSkipsForkGuardedHead(t *testing.T) {
 		t.Fatalf("same-repo head: err=%v updates=%v, want an update", err, updates)
 	}
 }
+
+// projectbluefin/utah-packages#917: the maintainer's fork Canary passed on
+// one head, the author rebased the same patch onto a newer base, and the
+// carried guard kept the PR at 085 without a stage change. The 085 comment
+// still asked for a run on the earlier head. It is now rewritten in place
+// for the new head (no second comment), and left alone on a repeat pass.
+func TestForkGuardEntryCommentFollowsNewHead(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}, statefulComments: true}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 9, 4, 0, 0, 0, time.UTC)}
+	indexed := map[string]bool{"8d7a655aaaa": true}
+	policy := StageLabelPolicy{Enabled: true, ForkGuard: func(repo string, number int, head string) []string {
+		if indexed[head] {
+			return []string{"Canary"}
+		}
+		return nil
+	}}
+	e := newNudgeEngine(t, srv.URL, clock, nil, policy)
+	ctx := context.Background()
+	key := stageKey("acme", "widget", 917)
+	pass := func(head string) {
+		t.Helper()
+		api.reset()
+		pr := nudgePR(917, head)
+		pr.Head.Repo = &gh.Repository{FullName: gh.Ptr("kylerankin/widget")}
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, "required-check-failing:Canary", false, nil)
+		e.noteStageRole("acme", "widget", 917, stagelabels.RoleContributor)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if rec, _ := e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.NeedsDecision || rec.Reason != stageReasonForkGuard+"Canary" {
+			t.Fatalf("head %s: record %s %q, want 085 fork-guard", head, rec.Stage, rec.Reason)
+		}
+	}
+
+	entries := func(bodies []string) []string {
+		var out []string
+		for _, b := range bodies {
+			if strings.HasPrefix(b, stagelabels.DecisionCommentMarker) {
+				out = append(out, b)
+			}
+		}
+		return out
+	}
+
+	pass("8d7a655aaaa")
+	if got := entries(api.comments); len(got) != 1 || !strings.Contains(got[0], "for head `8d7a655`") {
+		t.Fatalf("first 085 comment = %q", api.comments)
+	}
+
+	// The rebase: same patch, newer base, new head the index has not read.
+	clock.advance(time.Hour)
+	pass("82ef790bbbb")
+	if got := entries(api.comments); len(got) != 0 {
+		t.Fatalf("new head posted another 085 comment instead of editing: %q", got)
+	}
+	edits := entries(api.commentEdits)
+	if len(edits) != 1 || !strings.Contains(edits[0], "for head `82ef790`") ||
+		!strings.Contains(edits[0], "does not cover `82ef790`") || strings.Contains(edits[0], "8d7a655") {
+		t.Fatalf("085 comment not rewritten for the new head: %q", api.commentEdits)
+	}
+	if rec, _ := e.stageStoreOrShared().Get(key); rec.EntryCommentedHead != "82ef790bbbb" {
+		t.Fatalf("entry head = %q, want the new head", rec.EntryCommentedHead)
+	}
+
+	// Same head again: nothing to rewrite (commentEdits is cumulative).
+	clock.advance(5 * time.Minute)
+	pass("82ef790bbbb")
+	if got := entries(api.comments); len(got) != 0 || len(entries(api.commentEdits)) != 1 {
+		t.Fatalf("repeat pass rewrote the comment: comments=%q edits=%q", api.comments, api.commentEdits)
+	}
+}
+
+func TestForkGuardEntryStale(t *testing.T) {
+	parked := stagelabels.Record{Stage: stagelabels.NeedsDecision, EntryCommented: true, EntryCommentedHead: "old", EntryCommentedStage: stagelabels.NeedsDecision}
+	route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
+	obs := stageObservation{HeadSHA: "new", Reason: stageReasonForkGuard + "Canary"}
+	if !forkGuardEntryStale(parked, obs, route) {
+		t.Fatal("fork-guard park on a new head must be stale")
+	}
+	same := obs
+	same.HeadSHA = "old"
+	other := obs
+	other.Reason = "sentinel"
+	ready := route
+	ready.Stage = stagelabels.ReadyForHumanMerge
+	never := parked
+	never.EntryCommentedHead = ""
+	for name, tc := range map[string]struct {
+		rec   stagelabels.Record
+		obs   stageObservation
+		route stagelabels.Route
+	}{
+		"same head":           {parked, same, route},
+		"another 085 cause":   {parked, other, route},
+		"not an 085 route":    {parked, obs, ready},
+		"never commented yet": {never, obs, route},
+	} {
+		if forkGuardEntryStale(tc.rec, tc.obs, tc.route) {
+			t.Errorf("%s: stale, want not", name)
+		}
+	}
+}

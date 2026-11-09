@@ -531,8 +531,13 @@ type issueOwnershipInput struct {
 	// whose GitHub closing references name a parked (non-actionable)
 	// issue, from hiveClosingPRFor; 0 when there is none.
 	hiveClosingPR int
-	createdAt     time.Time
-	updatedAt     time.Time
+	// closingPR is an open or held pull request by any author whose GitHub
+	// closing references name a non-actionable issue, from
+	// openClosingPRFor; 0 when there is none. Only the issue filter's
+	// refusal (9b) reads it.
+	closingPR int
+	createdAt time.Time
+	updatedAt time.Time
 
 	// citedLinesGone is RepoWorkIssue.CitedLinesGone for a non-actionable
 	// row.
@@ -663,6 +668,16 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 	// approved at 20:31Z on 11-05; the un-park reply said "still outside the
 	// agent queue", and no inbox listed it.
 	if in.bucket == repoWorkBucketFiltered && in.bucketReason == github.IssueFilterReason {
+		// An open pull request that closes the issue on merge already does
+		// the work admitting it would queue: the issue waits on that PR,
+		// as rule (4) has an actionable issue with an open linked PR wait.
+		// The issue filter's rows carry no LinkedPRs, so the closing
+		// reference is read from the repo's open PRs. projectbluefin/actions#733
+		// (sec-check) asked for triage/accepted while sec-check's own PR
+		// #734, which closes it on merge, was open.
+		if in.closingPR > 0 {
+			return waitingElsewhereFor(fmt.Sprintf("Waits on PR #%d, which closes it", in.closingPR))
+		}
 		if labels[ownershipLabelApprovedDirection] {
 			return yourTurn(OwnershipReasonDecidedNotAdmitted, "Decided, but the issue filter keeps it off the agent queue — "+env.admitPhrase())
 		}
@@ -986,6 +1001,9 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				decisionBlocker: decisionBlockerFor(nonEmpty(item.Repo, repoName)+"#"+strconv.Itoa(item.Number), item.OpenBlockers, decisionParks, repoName),
 			}
 			in.hiveClosingPR = hiveClosingPRFor(*repo, repoName, item.Number)
+			if in.bucket == repoWorkBucketFiltered && in.bucketReason == github.IssueFilterReason {
+				in.closingPR = openClosingPRFor(*repo, repoName, item.Number)
+			}
 			decision := withReleaseAction(decideIssueOwnershipGated(in, env), item.OwnerStep, env.releaseOnApproveFor(in.repo))
 			record(ownershipKindIssue, item.Number, item.URL, decision, item.CreatedAt, item.UpdatedAt)
 		}
