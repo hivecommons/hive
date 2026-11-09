@@ -55,6 +55,13 @@ var prDeferralSentence = regexp.MustCompile(`(?im)(?:^|[.!?][ \t]+)[^\w\n]*(?:(?
 	`(?:[^.!?\n]|[.!?][^\s.!?])*[.!?]?` +
 	`|[.!?]|[ \t]*$))`)
 
+// prDeferralOpensWithVerb matches a comment that opens with the defer verb.
+// prDeferralSentence has already judged such an opening (object or
+// punctuation required), so the commentDeferral fallback must not re-admit
+// it; the fallback is for the other issue-deferral forms ("Not starting",
+// "blocked on #N", "waiting on #N", "deferred this cycle", …).
+var prDeferralOpensWithVerb = regexp.MustCompile(`(?i)^\W*(?:(?:status|update)\s*:\W*)?deferr(?:ed|ing)\b`)
+
 // prDeferralCloseOK matches a deferral that says a person may close the PR
 // now ("a maintainer may also close it now", "safe to close").
 var prDeferralCloseOK = regexp.MustCompile(`(?i)\b(?:maintainers?|owners?|you|a\s+person)\s+(?:may|can|could)\s+(?:also\s+|safely\s+|just\s+)?close\s+(?:it|this|the\s+PR)\b|\bsafe\s+to\s+close\b`)
@@ -92,7 +99,7 @@ func parsePRDeferral(body, repo string, number int) (prDeferral, bool) {
 		return prDeferral{}, false
 	}
 	m := prDeferralSentence.FindStringSubmatch(note)
-	if m == nil && !commentDeferral.MatchString(note) {
+	if m == nil && (prDeferralOpensWithVerb.MatchString(note) || !commentDeferral.MatchString(note)) {
 		return prDeferral{}, false
 	}
 	// A deferral sentence that says why ("Deferring this PR (dependabot-
