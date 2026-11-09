@@ -88,6 +88,8 @@ type CommandRecord struct {
 // CommandPage is GET /v1/runs/{id}/cmdlog. NextSeq is the seq to pass as
 // since_seq for the following page; More says one exists now. A caller
 // following a live run keeps polling with NextSeq after More is false.
+// NextSeq never advances past an unfinished record, so a follower
+// re-receives it until it is terminal (idempotent by seq).
 type CommandPage struct {
 	Run      string          `json:"run"`
 	Commands []CommandRecord `json:"commands"`

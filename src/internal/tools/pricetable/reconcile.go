@@ -27,6 +27,32 @@ type unverified struct {
 	Reason string
 }
 
+// Plausibility thresholds. A quote that trips any of them is held for a human
+// instead of applied: a catalogue defect transcribed faithfully looks exactly
+// like a real price move otherwise (#17364).
+const (
+	// maxMoveFactor is the largest move, in either direction, one field may
+	// make against the current table value.
+	maxMoveFactor = 5
+	// maxOutputInputRatio is the largest plausible output/input price ratio.
+	maxOutputInputRatio = 30
+	// maxCacheReadShareNum/Den express the cache-read share of input (90%) at
+	// or above which a cache-read rate is implausible, unless the current row
+	// already prices cache reads at the input rate.
+	maxCacheReadShareNum = 9
+	maxCacheReadShareDen = 10
+)
+
+// suspect is a catalogue quote held back because it looks implausible. Fields
+// carries every price field, Old being the current table value and New the
+// value the quote would have produced.
+type suspect struct {
+	Key      string
+	SourceID string
+	Fields   map[string]fieldChange
+	Rules    []string
+}
+
 // result is the outcome of one reconciliation.
 type result struct {
 	OldDate string
@@ -37,6 +63,9 @@ type result struct {
 	Changes    []change
 	Verified   []string
 	Unverified []unverified
+	// Suspect rows keep their current value; the quote tripped a plausibility
+	// rule and needs a human decision.
+	Suspect []suspect
 	// Notes are per-row remarks that did not block a change (for example a
 	// cache-write rate the source publishes with different semantics).
 	Notes []string
@@ -49,9 +78,11 @@ func (r *result) Changed() bool {
 
 // reconcile compares every table row against the catalogue and decides what
 // to write. Rows absent from the catalogue keep their current price and are
-// listed as unverified; priceTableDate moves to today when any price changed
-// or when the table is older than staleAfterDays (a successful "no change"
-// reconciliation is still a reconciliation).
+// listed as unverified; priceTableDate moves to today when any price changed,
+// when any quote was held for review (so the run yields a diff and the held
+// section reaches a human in a PR), or when the table is older than
+// staleAfterDays (a successful "no change" reconciliation is still a
+// reconciliation).
 func reconcile(t *table, c *catalogue, today string, staleAfterDays int) *result {
 	r := &result{OldDate: t.Date, NewDate: t.Date}
 	for _, e := range t.Entries {
@@ -69,6 +100,11 @@ func reconcile(t *table, c *catalogue, today string, staleAfterDays int) *result
 			notes = append(notes, fmt.Sprintf("`%s`: not listed by the source; priced via its base model `%s` (%s)", e.Key, via, q.SourceID))
 		}
 		r.Notes = append(r.Notes, notes...)
+		if rules := implausible(e, ch); len(rules) > 0 {
+			r.Suspect = append(r.Suspect, suspect{Key: e.Key, SourceID: q.SourceID, Fields: proposedFields(e, ch), Rules: rules})
+			r.Notes = append(r.Notes, fmt.Sprintf("`%s`: quote from `%s` held, current value kept: %s", e.Key, q.SourceID, strings.Join(rules, "; ")))
+			continue
+		}
 		if len(ch.Fields) > 0 {
 			r.Changes = append(r.Changes, ch)
 		} else {
@@ -77,12 +113,18 @@ func reconcile(t *table, c *catalogue, today string, staleAfterDays int) *result
 	}
 	sort.Slice(r.Changes, func(i, j int) bool { return r.Changes[i].Key < r.Changes[j].Key })
 	sort.Slice(r.Unverified, func(i, j int) bool { return r.Unverified[i].Key < r.Unverified[j].Key })
+	sort.Slice(r.Suspect, func(i, j int) bool { return r.Suspect[i].Key < r.Suspect[j].Key })
 	sort.Strings(r.Verified)
 	sort.Strings(r.Notes)
 
 	switch {
 	case len(r.Changes) > 0:
 		r.NewDate = today
+	case len(r.Suspect) > 0:
+		// Without a diff the workflow opens no PR and the held section would
+		// never reach a reviewer (#17365).
+		r.NewDate = today
+		r.DateReason = fmt.Sprintf("no price was applied, but %d quote(s) were held for review; the date is bumped so this run opens a PR that puts the held rows in front of a human", len(r.Suspect))
 	case staleAfterDays > 0 && olderThan(t.Date, today, staleAfterDays):
 		r.NewDate = today
 		r.DateReason = fmt.Sprintf("no price moved, but the table was last reconciled on %s (more than %d days ago); the date is bumped to record this verification", t.Date, staleAfterDays)
@@ -181,6 +223,68 @@ func diffEntry(e entry, q quote) (change, []string) {
 	return ch, notes
 }
 
+// proposedFields lists every price field of e with the value the change would
+// give it (equal to the current one when the field does not move).
+func proposedFields(e entry, ch change) map[string]fieldChange {
+	out := make(map[string]fieldChange, len(priceFields))
+	for _, name := range priceFields {
+		cur := e.Fields[name].Value
+		next := cur
+		if fc, ok := ch.Fields[name]; ok {
+			next = fc.New
+		}
+		out[name] = fieldChange{Old: cur, New: next}
+	}
+	return out
+}
+
+// implausible names the plausibility rules the proposed change trips; it is
+// empty for a row that does not move or whose move looks like a real one.
+func implausible(e entry, ch change) []string {
+	if len(ch.Fields) == 0 {
+		return nil
+	}
+	var rules []string
+	for _, name := range priceFields {
+		fc, ok := ch.Fields[name]
+		if !ok {
+			continue
+		}
+		// A move to zero (or, for the two headline rates, away from it) is
+		// unbounded, so it trips the same rule as a move past the factor.
+		if (fc.Old.Sign() > 0 && fc.New.Sign() <= 0) ||
+			(fc.Old.Sign() <= 0 && fc.New.Sign() > 0 && (name == fieldInput || name == fieldOutput)) {
+			rules = append(rules, fmt.Sprintf("%s moves more than %d× (%s → %s)", name, maxMoveFactor, formatPrice(fc.Old), formatPrice(fc.New)))
+			continue
+		}
+		if fc.Old.Sign() <= 0 || fc.New.Sign() <= 0 {
+			continue
+		}
+		factor := new(big.Rat).Quo(fc.New, fc.Old)
+		if factor.Cmp(big.NewRat(maxMoveFactor, 1)) > 0 || factor.Cmp(big.NewRat(1, maxMoveFactor)) < 0 {
+			rules = append(rules, fmt.Sprintf("%s moves more than %d× (%s → %s)", name, maxMoveFactor, formatPrice(fc.Old), formatPrice(fc.New)))
+		}
+	}
+	p := proposedFields(e, ch)
+	in, out, read := p[fieldInput].New, p[fieldOutput].New, p[fieldCacheRead].New
+	// A zero proposed input would skip the ratio checks, so judge against the
+	// current input instead.
+	if in.Sign() <= 0 {
+		in = p[fieldInput].Old
+	}
+	if in.Sign() > 0 {
+		if new(big.Rat).Quo(out, in).Cmp(big.NewRat(maxOutputInputRatio, 1)) > 0 {
+			rules = append(rules, fmt.Sprintf("output/input ratio above %d (%s / %s)", maxOutputInputRatio, formatPrice(out), formatPrice(in)))
+		}
+		share := new(big.Rat).Quo(read, in)
+		sameAsInput := p[fieldCacheRead].Old.Cmp(p[fieldInput].Old) == 0
+		if !sameAsInput && share.Cmp(big.NewRat(maxCacheReadShareNum, maxCacheReadShareDen)) >= 0 {
+			rules = append(rules, fmt.Sprintf("cache read at or above %d%% of input (%s vs %s)", maxCacheReadShareNum*100/maxCacheReadShareDen, formatPrice(read), formatPrice(in)))
+		}
+	}
+	return rules
+}
+
 // renderReport writes the markdown summary used as the PR body.
 func renderReport(r *result, source string) string {
 	var b strings.Builder
@@ -212,6 +316,26 @@ func renderReport(r *result, source string) string {
 				}
 			}
 			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	if len(r.Suspect) > 0 {
+		fmt.Fprintf(&b, "### Held for review (%d)\n\n", len(r.Suspect))
+		b.WriteString("The source quoted these rows implausibly, so they keep their current value. Treat each as a question about the source's data, not a change: check the vendor's price page, then edit the table by hand if the quote is right.\n\n")
+		b.WriteString("| model | source id | input | output | cache read | cache write | rule |\n")
+		b.WriteString("|---|---|---|---|---|---|---|\n")
+		for _, s := range r.Suspect {
+			fmt.Fprintf(&b, "| `%s` | `%s` |", s.Key, s.SourceID)
+			for _, name := range priceFields {
+				fc := s.Fields[name]
+				if fc.Old.Cmp(fc.New) != 0 {
+					fmt.Fprintf(&b, " %s → proposed %s |", formatPrice(fc.Old), formatPrice(fc.New))
+				} else {
+					fmt.Fprintf(&b, " %s |", formatPrice(fc.Old))
+				}
+			}
+			fmt.Fprintf(&b, " %s |\n", strings.Join(s.Rules, "; "))
 		}
 		b.WriteString("\n")
 	}
