@@ -90,6 +90,7 @@ const (
 	ClassGitHubFetchTransient       = "github_fetch_transient"
 	ClassLabelProvisioningFailed    = "label_provisioning_failed"
 	ClassAgentCLIRestartLoop        = "agent_cli_restart_loop"
+	ClassCopilotCLIHung             = "copilot_cli_hung"
 	ClassTranscriptScanSlow         = "transcript_scan_slow"
 	ClassSharedCIRerunForbidden     = "shared_ci_rerun_forbidden"
 	ClassIssueClaimEffectFailed     = "issue_claim_effect_failed"
@@ -208,6 +209,7 @@ var Classes = map[string]ClassSpec{
 	ClassGitHubFetchTransient:       {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"channel commit date: fetch failed"}},
 	ClassLabelProvisioningFailed:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"issue stage labels: provisioning failed"}},
 	ClassAgentCLIRestartLoop:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"agent cli crashed or stuck on consent screen"}},
+	ClassCopilotCLIHung:             {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"copilot hung with no cli prompt", "diagnostic: timed out waiting for copilot error output"}},
 	ClassSharedCIRerunForbidden:     {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"shared-ci rerun forbidden"}},
 	ClassIssueClaimEffectFailed:     {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"issue-claims: github side effect failed"}},
 	ClassTranscriptScanSlow:         {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"transcript activity scan outlived its interval"}},
