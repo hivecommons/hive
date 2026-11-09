@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 )
 
 type advisoryAPIResponse struct {
@@ -12,6 +13,7 @@ type advisoryAPIResponse struct {
 	StalenessDays     int                         `json:"staleness_days"`
 	PRAutoClose       bool                        `json:"pr_autoclose"`
 	UpdateIntervalS   int                         `json:"update_interval_s"`
+	DigestMinInterval string                      `json:"digest_min_interval"`
 	PostRetryBackoffS int                         `json:"post_retry_backoff_s"`
 	QueueHealth       advisoryQueueHealthResponse `json:"queue_health"`
 }
@@ -108,6 +110,7 @@ func TestGovAdvisory_Validation(t *testing.T) {
 		{"negative update interval", map[string]any{"update_interval_s": -60}},
 		{"update interval below minimum", map[string]any{"update_interval_s": 5}},
 		{"update interval above maximum", map[string]any{"update_interval_s": 86400}},
+		{"digest min interval not a duration", map[string]any{"digest_min_interval": "soon"}},
 		{"negative queue health", map[string]any{"queue_health": map[string]any{"blocked_pr_pct": -1}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,6 +122,31 @@ func TestGovAdvisory_Validation(t *testing.T) {
 
 	if rec := doPutRaw(s, "/api/config/governor/advisory", "not json"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad body: expected 400, got %d", rec.Code)
+	}
+}
+
+// TestGovAdvisory_DigestMinIntervalRoundTrip pins the #17435 knob: unset is
+// reported empty (the 1h default), a duration round-trips, and the stored
+// value resolves through EffectiveDigestMinInterval.
+func TestGovAdvisory_DigestMinIntervalRoundTrip(t *testing.T) {
+	s := govServer(t)
+	if got := getAdvisorySettings(t, s); got.DigestMinInterval != "" {
+		t.Fatalf("untouched digest_min_interval = %q, want empty (default)", got.DigestMinInterval)
+	}
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"digest_min_interval": " 30m "}); rec.Code != http.StatusOK {
+		t.Fatalf("put digest_min_interval: %d — %s", rec.Code, rec.Body.String())
+	}
+	if got := getAdvisorySettings(t, s); got.DigestMinInterval != "30m" {
+		t.Fatalf("digest_min_interval = %q, want trimmed 30m", got.DigestMinInterval)
+	}
+	if d := s.deps.Config.Governor.Advisory.EffectiveDigestMinInterval(); d != 30*time.Minute {
+		t.Fatalf("effective = %v, want 30m", d)
+	}
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"digest_min_interval": "0"}); rec.Code != http.StatusOK {
+		t.Fatalf("put 0: %d — %s", rec.Code, rec.Body.String())
+	}
+	if d := s.deps.Config.Governor.Advisory.EffectiveDigestMinInterval(); d != 0 {
+		t.Fatalf("effective after 0 = %v, want disabled", d)
 	}
 }
 
