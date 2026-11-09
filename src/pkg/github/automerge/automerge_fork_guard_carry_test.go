@@ -145,6 +145,76 @@ func TestUpdateBranchSkipsForkGuardedHead(t *testing.T) {
 	}
 }
 
+// projectbluefin/utah-packages#917: five merges of main in 22 hours while
+// the PR sat at 085 on `fork-guard:Canary`, each in the first sweep after a
+// restart or a rate-limited pass left the index without an entry for the
+// head. With the index empty, the stage record's guard holds the update
+// while the guarded check is red or still running on the head, lets it
+// through once green, and holds it while the head's checks cannot be read.
+func TestUpdateBranchHonoursRecordedForkGuard(t *testing.T) {
+	var updates []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/update-branch"):
+			updates = append(updates, r.URL.Path)
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/check-runs"):
+			switch strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/commits/"), "/check-runs") {
+			case "red":
+				_, _ = w.Write([]byte(`{"total_count":2,"check_runs":[{"id":1,"name":"Canary","status":"completed","conclusion":"failure"},{"id":2,"name":"unit","status":"completed","conclusion":"success"}]}`))
+			case "running":
+				// The maintainer's re-run is newer than the failure; an update would discard it.
+				_, _ = w.Write([]byte(`{"total_count":2,"check_runs":[{"id":1,"name":"Canary","status":"completed","conclusion":"failure"},{"id":4,"name":"Canary","status":"in_progress","conclusion":null}]}`))
+			case "queued":
+				_, _ = w.Write([]byte(`{"total_count":1,"check_runs":[{"id":5,"name":"Canary","status":"queued","conclusion":null}]}`))
+			case "green":
+				_, _ = w.Write([]byte(`{"total_count":2,"check_runs":[{"id":1,"name":"Canary","status":"completed","conclusion":"failure"},{"id":3,"name":"Canary","status":"completed","conclusion":"success"}]}`))
+			case "forbidden":
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"message":"Resource not accessible by integration"}`))
+			default:
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"message":"boom"}`))
+			}
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
+			_, _ = w.Write([]byte(`{"number":917,"head":{"sha":"new"},"mergeable_state":"clean"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 8, 6, 0, 0, 0, time.UTC)}
+	policy := StageLabelPolicy{Enabled: true, ForkGuard: func(string, int, string) []string { return nil }}
+	e := newNudgeEngine(t, srv.URL+"/", clock, nil, policy)
+	e.stageStoreOrShared().Observe(stageKey("acme", "widget", 917), stagelabels.NeedsDecision, stageReasonForkGuard+"Canary")
+	ctx := context.Background()
+	fork := currentBaseTestPR(true, "task/475-libfdk-aac", "kylerankin", "behind")
+
+	for _, head := range []string{"red", "running", "queued", "forbidden", "broken"} {
+		_, reason, err := e.updateBranchAndSkip(ctx, "acme/widget", "acme", "widget", 917, head, "base1", "behind", fork)
+		if err != nil || reason != "required-check-failing:Canary" || len(updates) != 0 {
+			t.Fatalf("head %s: reason=%q err=%v updates=%v, want the update held on Canary", head, reason, err, updates)
+		}
+	}
+	if _, _, err := e.updateBranchAndSkip(ctx, "acme/widget", "acme", "widget", 917, "green", "base1", "behind", fork); err != nil || len(updates) != 1 {
+		t.Fatalf("Canary green on the head: err=%v updates=%v, want one update", err, updates)
+	}
+
+	// The record's ForkGuardChecks name the guard without a fork-guard reason.
+	e.stageStoreOrShared().Observe(stageKey("acme", "widget", 921), stagelabels.ReturnedToContributor, "required-check-failing:Canary")
+	e.stageStoreOrShared().NoteForkGuard(stageKey("acme", "widget", 921), []string{"Canary"})
+	if _, reason, err := e.updateBranchAndSkip(ctx, "acme/widget", "acme", "widget", 921, "red", "base1", "behind", fork); err != nil || reason != "required-check-failing:Canary" || len(updates) != 1 {
+		t.Fatalf("record ForkGuardChecks: reason=%q err=%v updates=%v, want the update held", reason, err, updates)
+	}
+
+	// A same-repo head is never held by the record.
+	if _, _, err := e.updateBranchAndSkip(ctx, "acme/widget", "acme", "widget", 917, "red", "base1", "behind", currentBaseTestPR(false, "feature", "alice", "behind")); err != nil || len(updates) != 2 {
+		t.Fatalf("same-repo head: err=%v updates=%v, want an update", err, updates)
+	}
+}
+
 // projectbluefin/utah-packages#917: the maintainer's fork Canary passed on
 // one head, the author rebased the same patch onto a newer base, and the
 // carried guard kept the PR at 085 without a stage change. The 085 comment

@@ -916,7 +916,7 @@ func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, re
 	}
 	fork := c.isForkPR(pr)
 	if fork {
-		if checks := c.waitingForkGuard(owner, repo, number, headSHA); len(checks) > 0 {
+		if checks := c.waitingForkGuard(ctx, owner, repo, number, headSHA); len(checks) > 0 {
 			// projectbluefin/utah-packages#862: 13 merge-of-main heads while
 			// the PR waited on a maintainer's exact-head Canary run; each one
 			// discarded the run it waited for.
