@@ -16,9 +16,10 @@ import (
 // they sit on the global providers, which are OTel's delegating no-ops until a
 // host registers an SDK provider, so recording costs nothing by default.
 //
-// Attributes are bounded: the HTTP method (standard set, else _OTHER), the mux route pattern (for example
-// "GET /v1/agents/{name}", never the concrete path or an agent name; routeUnmatched
-// when no route matched) and the status class. Never a path, token or body.
+// Attributes are bounded: the HTTP method (standard set, else _OTHER), the mux
+// route pattern (for example "GET /v1/agents/{name}", never the concrete path or
+// an agent name; routeUnmatched when no route matched) and the status class.
+// Never a path, token or body.
 const (
 	instrumentationName = "github.com/hivecommons/hive/crux/serve"
 
