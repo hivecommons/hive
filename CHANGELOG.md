@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.207.1)
+
+### Fixed
+
+- hive-open-pr and the PR-request watcher now refuse a Fixes/Closes target that another principal has claimed or covered with an open PR, and post one deduplicated notice on the issue; the same gate denies a claim or start comment on such an issue before the start is booked (#17298).
+
 ## 2026-11-09 (v5.207.0)
 
 ### Added

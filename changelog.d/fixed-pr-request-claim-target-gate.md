@@ -1,1 +1,0 @@
-- hive-open-pr and the PR-request watcher now refuse a Fixes/Closes target that another principal has claimed or covered with an open PR, and post one deduplicated notice on the issue; the same gate denies a claim or start comment on such an issue before the start is booked (#17298).
