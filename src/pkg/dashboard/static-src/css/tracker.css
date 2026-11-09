@@ -457,6 +457,10 @@
     .ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse 1.6s ease-in-out infinite; }
     .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }
     .ham-seg.active.ham-open-hold { background: var(--yellow); color: var(--surface-0); }
+    /* A 090 row a sentinel alert or hold label gates (hivecommons/hive#17327):
+       the Merge queue cell wears the pill amber — held, not queued, not red. */
+    .ham-seg.active.ham-held { background: var(--amber); color: var(--surface-0); }
+    .ham-seg.active.ham-held .ham-detour::before { content: '⏸'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-hold .ham-seg-t::before { content: '⏸'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-blocked { background: var(--yellow); color: var(--surface-0); }
     .ham-seg.active.ham-open-blocked .ham-seg-t::before { content: '⛔'; margin-right: var(--sp-1); }

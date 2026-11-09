@@ -232,3 +232,56 @@ func TestSweepSelfAuthoredAutoMergesCountsCandidateFetchErrorsAsSkips(t *testing
 		t.Fatalf("result = %+v, want the failing candidate counted and skipped", result)
 	}
 }
+
+// TestPrefilterGatedPRAt090IsRefused: a sentinel alert or a hold label is a
+// gate, not a stage (hivecommons/hive#17327) — a green, reviewed PR now
+// wears stage/090-ready-for-human-merge with the gate as a pill. The lanes
+// refuse the merge on the label itself, never on the stage number, so the
+// 090 label buys the PR nothing while the gate stands.
+func TestPrefilterGatedPRAt090IsRefused(t *testing.T) {
+	c := newPrefilterEngine(t)
+	ready := "stage/090-ready-for-human-merge"
+	contributor := func(labels ...string) *gh.PullRequest {
+		return selfAuthoredListPR(func(pr *gh.PullRequest) {
+			pr.User = &gh.User{Login: gh.Ptr("mallory")}
+			pr.AuthorAssociation = gh.Ptr("CONTRIBUTOR")
+			for _, l := range labels {
+				pr.Labels = append(pr.Labels, &gh.Label{Name: gh.Ptr(l)})
+			}
+		})
+	}
+	policy := defaultContributorLanePolicy()
+	if got := c.prefilterContributorLanePR(contributor(ready), policy); got != "" {
+		t.Fatalf("plain 090 contributor PR: prefilter = %q, want it to pass", got)
+	}
+	for _, tc := range []struct {
+		name   string
+		labels []string
+		want   string
+	}{
+		{"sentinel alert", []string{ready, "sentinel-alert"}, contributorLaneReasonSentinelBlocked},
+		{"hold", []string{ready, "hold"}, "label:hold"},
+		{"do-not-merge", []string{ready, "do-not-merge/hold"}, "label:do-not-merge/hold"},
+	} {
+		if got := c.prefilterContributorLanePR(contributor(tc.labels...), policy); got != tc.want {
+			t.Fatalf("%s at 090: prefilter = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	// The self-authored (hive) lane: its own PR at 090 with a hold.
+	hive := selfAuthoredListPR(func(pr *gh.PullRequest) {
+		pr.Labels = []*gh.Label{{Name: gh.Ptr(ready)}, {Name: gh.Ptr("hold")}}
+	})
+	if got := c.prefilterSelfAuthoredPR(hive); got != "label:hold" {
+		t.Fatalf("held hive PR at 090: prefilter = %q, want label:hold", got)
+	}
+	// The trusted-author lane: a hold stops it too (the sentinel label is a
+	// notice, not a gate, for trusted authors — see
+	// TestPrefilterTrustedAuthorPRSentinelAlertAllowed).
+	trusted := selfAuthoredListPR(func(pr *gh.PullRequest) {
+		pr.User = &gh.User{Login: gh.Ptr("alice")}
+		pr.Labels = []*gh.Label{{Name: gh.Ptr(ready)}, {Name: gh.Ptr("hold")}}
+	})
+	if got := c.prefilterTrustedAuthorPR("acme", "widget", trusted, TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"}); got != "label:hold" {
+		t.Fatalf("held trusted PR at 090: prefilter = %q, want label:hold", got)
+	}
+}

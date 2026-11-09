@@ -181,6 +181,7 @@ func TestStageTrackerDeferredPillsJS(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_PRIORITY"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
+		jsConstLine(t, html, "STAGE_TRACKER_READY_FOR_HUMAN_MERGE"),
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIL_HOPS"),
 		jsFunc(t, html, "stageTrackerStageWord"),

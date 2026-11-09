@@ -627,12 +627,24 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 // sentinel alert the comment named must be told the workflow-path fence is
 // what now holds the PR, not left reading a stale cause. Each distinct
 // cause is posted once per head. Returns the comments posted.
+// readyEntryCause is the entry-comment cause of a 090 route with no
+// reasons of its own (trust is the only objection).
+var readyEntryCause = stagelabels.EntryCause([]string{"ready for a human merge"})
+
 func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, role stagelabels.Role, route stagelabels.Route) (int, error) {
 	rec, ok := store.Get(key)
 	if !ok || rec.Stage != route.Stage {
 		return 0, nil
 	}
 	cause := stagelabels.EntryCause(route.Reasons)
+	if route.Stage == stagelabels.ReadyForHumanMerge && cause == "" {
+		// A plain ready route has no reasons; give it a cause of its own
+		// so that a gate lifted on the same head (held → ready,
+		// hivecommons/hive#17327) reads as a cause change and the "Held:"
+		// line is rewritten, while a return to 090 on the same head stays
+		// quiet as before.
+		cause = readyEntryCause
+	}
 	decisionKey := ""
 	if route.Stage == stagelabels.NeedsDecision && obs.Detail.VerdictKnown && obs.Detail.Verdict.DecisionRequested {
 		decisionKey = writeback.DecisionKey(obs.Detail.Verdict.RedundantOf, obs.Detail.Verdict.DecisionQuestion)
@@ -644,7 +656,11 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 		return 0, nil
 	}
 	if rec.EntryCommented {
-		if route.Stage != stagelabels.NeedsDecision || obs.HeadSHA == "" || cause == "" || rec.EntryCommentedHead != obs.HeadSHA {
+		// A 085 or 090 comment is re-explained when its cause changes on
+		// the same head: at 090 a gate — sentinel alert, hold label — is
+		// lifted or set (hivecommons/hive#17327), and the "Held:" line must
+		// follow; the edit-in-place below keeps it to one comment.
+		if (route.Stage != stagelabels.NeedsDecision && route.Stage != stagelabels.ReadyForHumanMerge) || obs.HeadSHA == "" || cause == "" || rec.EntryCommentedHead != obs.HeadSHA {
 			return 0, nil
 		}
 		if rec.EntryCommentExplains(obs.HeadSHA, cause) {
