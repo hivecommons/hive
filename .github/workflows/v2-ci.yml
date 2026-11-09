@@ -1032,6 +1032,8 @@ jobs:
       # had passed. The releases CDN stayed up throughout; a pinned URL with a
       # checksum has no API dependency at all. Bump the version and hash
       # together, deliberately.
+      # The CDN itself still 504s transiently (#17357), hence the curl
+      # --retry flags; sha256sum still gates whatever is fetched.
       - name: Install just
         run: |
           set -euo pipefail
