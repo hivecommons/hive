@@ -116,12 +116,25 @@ func mergeTrainDuplicateReason(h mergeTrainDuplicateHold) string {
 	return prstage.MergeTrain{State: prstage.MergeTrainStateDuplicateOf, Front: h.Winner, Position: h.Issue}.Reason()
 }
 
+// mergeTrainSameLine reports whether two PRs target the same base branch.
+// The one-PR-per-issue rule only compares PRs on the same line: the same
+// fix opened against v5 and v6 both says "Fixes #N", and that is the
+// release-line process, not a duplicate (hivecommons/hive#17436). A PR
+// with no base recorded compares as the same line so partial fixtures
+// keep their old behaviour.
+func mergeTrainSameLine(a, b *gh.PullRequest) bool {
+	ab, bb := a.GetBase().GetRef(), b.GetBase().GetRef()
+	return ab == "" || bb == "" || ab == bb
+}
+
 // planDuplicateHolds runs the one-PR-per-issue rule over the lane's
 // candidates before the trains are grouped: the held PRs leave the
-// candidate list and the plan remembers who each one yields to.
+// candidate list and the plan remembers who each one yields to. PRs are
+// grouped by base branch first, so siblings on different release lines
+// never compete.
 func (c *Engine) planDuplicateHolds(ctx context.Context, plan *mergeTrainPlan, lane, owner, repo, displayRepo string, prs []*gh.PullRequest, prefilter func(*gh.PullRequest) string) []*gh.PullRequest {
 	prs = c.planClaimConflicts(ctx, plan, owner, repo, displayRepo, prs, prefilter)
-	byIssue := map[int][]mergeTrainDuplicateCandidate{}
+	byLine := map[string]map[int][]mergeTrainDuplicateCandidate{}
 	for _, pr := range prs {
 		if pr == nil || pr.GetNumber() <= 0 || !mergeTrainCandidate(prefilter(pr)) {
 			continue
@@ -135,11 +148,21 @@ func (c *Engine) planDuplicateHolds(ctx context.Context, plan *mergeTrainPlan, l
 			CreatedAt: pr.GetCreatedAt().Time,
 			Green:     !mergeTrainDirty(pr.GetMergeableState()) && !c.mergeTrainHeadBlocked(lane, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
 		}
+		line := pr.GetBase().GetRef()
+		byIssue := byLine[line]
+		if byIssue == nil {
+			byIssue = map[int][]mergeTrainDuplicateCandidate{}
+			byLine[line] = byIssue
+		}
 		for _, issue := range issues {
 			byIssue[issue] = append(byIssue[issue], cand)
 		}
 	}
-	holds := mergeTrainDuplicateHolds(byIssue)
+	var holds []mergeTrainDuplicateHold
+	for _, byIssue := range byLine {
+		holds = append(holds, mergeTrainDuplicateHolds(byIssue)...)
+	}
+	sort.Slice(holds, func(i, j int) bool { return holds[i].Number < holds[j].Number })
 	if len(holds) == 0 {
 		return prs
 	}
@@ -287,7 +310,7 @@ func (c *Engine) planClaimConflicts(ctx context.Context, plan *mergeTrainPlan, o
 		for _, issue := range mergeTrainClosedIssues(pr, displayRepo) {
 			for _, other := range byIssue[issue] {
 				o := other.GetNumber()
-				if o == n || candidate[o] || mergeTrainAdoptionPair(pr, other) {
+				if o == n || candidate[o] || mergeTrainAdoptionPair(pr, other) || !mergeTrainSameLine(pr, other) {
 					continue
 				}
 				if _, ok := c.recordedDecisionFor(ctx, owner, repo, n, pr.GetBase().GetRef(), pr.GetHead().GetSHA()); ok {

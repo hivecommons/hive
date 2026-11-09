@@ -11,6 +11,22 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.211.0)
+
+### Added
+
+- **Red-team agent (`redteam`, opt-in at L5/L6).** A new lane plays a malicious contributor — a human, an AI, or one posing as the other — and writes the issues, PR bodies, review comments and RFC text such an actor would use to get agents to write malicious code or lower the hive's defenses. It measures them against the deterministic defenses by adding attack cases and benign controls to the `ioscan` red-team corpus in `hold`-labelled PRs, with each outcome recorded as observed, and never posts attack text anywhere else ([#17420](https://github.com/hivecommons/hive/issues/17420)). It ships paused in every governor mode, and an agent whose role or base name is `redteam` serves **no** repository until it has a `repos:` scope: the proxy and every write relay refuse it, its kick lists no repositories or work, and the boot log warns. Scope it to the repository holding the corpus and give it a cadence to turn it on; see `src/docs/redteam.md`.
+
+### Changed
+
+- Advisory digest: the one `hive:advisory-digest` comment on the pinned advisory issue is edited in place (marker + `Updated N times · last <ts>` footer, counter read back from the comment) and a *changed* digest is rewritten at most once per `governor.advisory.digest_min_interval` (default `1h`, Settings → Advisory). Unchanged digests never write; the baseline is the comment's own `updated_at` on GitHub, so a restart does not repost inside the window. On hive's own spoke this collapses a rewrite every ~5 minutes into one per hour. New log line `advisory digest comment written` marks real writes.
+
+### Fixed
+
+- ci(scorecard): skip push runs on non-default branches (v5) (#17414)
+- The ingress-nginx error backend (`src/deploy/k8s/error-pages.yaml`) now reflects an intercepted 403 or 404 as that status with a dedicated "Page not found" document (HTML or JSON by caller) instead of falling through to the 503 "Hive is restarting" page with an auto-refresh. With the controller's global `custom-http-errors` list including 404, every missing URL on the hub had been served as a 503, which Google Search Console reported as Soft 404 and which told visitors a healthy hub was down ([#17431](https://github.com/hivecommons/hive/issues/17431)). The global list is documented as `502,503,504`.
+- ci: Scorecard `push` runs on non-default release branches are skipped instead of failing; `schedule` and `workflow_dispatch` runs are unchanged ([#17392](https://github.com/hivecommons/hive/issues/17392)).
+
 ## 2026-11-09 (v5.210.0)
 
 ### Added

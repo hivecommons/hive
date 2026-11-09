@@ -1827,6 +1827,14 @@
     .ham-seg.active.ham-open-advisory { background: var(--surface-2); color: var(--muted); }
     .ham-seg.active.ham-open-advisory .ham-seg-t::before { content: 'ⓘ'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
+    /* While a CI / Review track runs, the stage chevron is settled-current:
+       the neutral still location, icon only (rule 2, hivecommons/hive#16643).
+       That fill wins over the Open word tints above (draft slate, blocked
+       yellow, New blue, stale amber-red) and the held-gate amber, which are
+       declared later at equal specificity and would otherwise paint a second
+       coloured chevron beside the running track (hivecommons/hive#17461:
+       a draft PR with no stage read as slate Open + amber CI). */
+    .ham-seg.ham-seg.active.ham-settled-current { background: var(--surface-3); color: var(--text); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
     .ham-active-ico { display: none; }
@@ -15961,13 +15969,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_TRAIN_STATE_QUEUED = 'queued-behind';
     const STAGE_TRACKER_TRAIN_STATE_REBASING = 'rebasing';
     const STAGE_TRACKER_TRAIN_STATE_EXHAUSTED = 'rebase-exhausted';
-    // The merge-queue icon: a side-view railcar on two wheels (14px,
-    // currentColor) — the owner read the old ⛓ as a scribble. One path for
-    // the Merge queue column header, the train header chip and the queue
-    // popover, so the picture means the same thing everywhere.
-    const STAGE_TRACKER_TRAIN_ICON_PATH = '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>';
+    // The merge-queue icon: a "merge" traffic sign (US W4-1) — an up arrow
+    // with a second lane curving in from the lower right and joining the
+    // shaft mid-height (14px, currentColor). The owner read the old ⛓ as a
+    // scribble and the railcar that replaced it as a tram front
+    // (hivecommons/hive#17459). One path for the Merge queue column header,
+    // the 080 chevron, the train header chip and the queue popover, so the
+    // picture means the same thing everywhere.
+    const STAGE_TRACKER_TRAIN_ICON_PATH = '<path stroke-width="2" d="M6 14.5V3M3 6l3-3 3 3M13 14.5c0-3.8-3.4-4.6-7-6.5"/>';
     const STAGE_TRACKER_TRAIN_ICON_TITLE = 'Merge queue';
-    // Pure: the inline-SVG train with its "Merge queue" hover.
+    // Pure: the inline-SVG merge sign with its "Merge queue" hover.
     function stageTrackerTrainIconHtml(cls, title) {
       const label = title || STAGE_TRACKER_TRAIN_ICON_TITLE;
       return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
@@ -18155,9 +18166,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // as one duplicated glyph (operator, 2026-11-03).
       50: '<path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>',
       ci: '<path d="M5.5 1.5h5M6.5 1.5v4.6L2.6 12.9a1 1 0 0 0 .9 1.6h9a1 1 0 0 0 .9-1.6L9.5 6.1V1.5"/><path d="M4.4 10.5h7.2"/>',
-      // Merge queue: the same railcar as the column header and train chip
+      // Merge queue: the same merge sign as the column header and train chip
       // (STAGE_TRACKER_TRAIN_ICON_PATH in tracker-words.js; a test keeps them equal).
-      80: '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>',
+      80: '<path stroke-width="2" d="M6 14.5V3M3 6l3-3 3 3M13 14.5c0-3.8-3.4-4.6-7-6.5"/>',
       100: '<path d="M3 5h10M3 8h10M3 11h10"/>',
       110: '<path d="M3 8l3 3 7-7"/>',
       history: '<path d="M2 8a6 6 0 1 0 6-6 6.5 6.5 0 0 0-4.5 1.83L2 5.33"/><path d="M2 2v3.33h3.33"/><path d="M8 4.67V8l2.67 1.33"/>',
@@ -47237,6 +47248,116 @@ function burnAreaChart() {
       } else {
         if (!_hashScrollPending) restoreScrollAnchor(scrollAnchor);
       }
+    }
+    // ── Scroll stabilizer ──────────────────────────────────────────────
+    // render() pins the reader's section across its own repaint, but the
+    // page has many other repaint paths (SSE panel updates, lazy section
+    // loads, sparkline replays, pane polls) and each of them can change the
+    // height of content above the viewport, dragging what the reader is
+    // looking at up or down. Browser-native scroll anchoring does not help
+    // here: it gives up whenever the anchor node itself is replaced, which
+    // is exactly what an innerHTML rerender does.
+    //
+    // This keeps one live anchor (same shape as captureScrollAnchor: the
+    // topmost visible section, or the first visible agent card by key) and
+    // re-applies it from a ResizeObserver. ResizeObserver callbacks run
+    // after layout and before paint, so the correction lands in the same
+    // frame as the shift and the reader never sees the page move. Because
+    // the correction is delta-based against a persistent node, it composes
+    // with native anchoring instead of double-counting it.
+    const SCROLL_STABILIZER_MIN_DELTA_PX = 1;
+    let _ssAnchor = null;
+    let _ssCaptureQueued = false;
+    let _ssSelfScroll = false;
+    let _ssObserver = null;
+    let _ssDomObserver = null;
+
+    function _ssSuppressed() {
+      // A hash/sidebar navigation is settling: ocSettleScroll owns the
+      // scroll until it is done, and we must not fight it.
+      if (typeof _hashScrollPending !== 'undefined' && _hashScrollPending) return true;
+      if (typeof _ocScrollSettleCancel !== 'undefined' && _ocScrollSettleCancel) return true;
+      return false;
+    }
+
+    function _ssCapture() {
+      _ssCaptureQueued = false;
+      if (typeof captureScrollAnchor !== 'function') return;
+      _ssAnchor = window.scrollY > 0 ? captureScrollAnchor() : null;
+    }
+
+    function _ssQueueCapture() {
+      if (_ssCaptureQueued) return;
+      _ssCaptureQueued = true;
+      requestAnimationFrame(_ssCapture);
+    }
+
+    // Returns the vertical delta the anchor has drifted by, or 0.
+    function _ssDrift(anchor) {
+      if (!anchor) return 0;
+      if (anchor.cardKey && anchor.el && anchor.el.isConnected) {
+        const safeKey = (window.CSS && CSS.escape) ? CSS.escape(anchor.cardKey) : String(anchor.cardKey).replace(/["\\]/g, '\\$&');
+        const card = anchor.el.querySelector(`.agent-card[data-agent="${safeKey}"]`);
+        if (card && card.getClientRects().length) return card.getBoundingClientRect().top - anchor.cardTop;
+      }
+      if (anchor.el && anchor.el.isConnected && anchor.el.getClientRects().length) {
+        return anchor.el.getBoundingClientRect().top - anchor.top;
+      }
+      return 0;
+    }
+
+    function _ssCorrect() {
+      if (_ssSuppressed() || !_ssAnchor || window.scrollY <= 0) { _ssQueueCapture(); return; }
+      const delta = _ssDrift(_ssAnchor);
+      if (Math.abs(delta) >= SCROLL_STABILIZER_MIN_DELTA_PX) {
+        const before = window.scrollY;
+        _ssSelfScroll = true;
+        window.scrollBy(0, delta);
+        // Clamped at an edge: no scroll event will follow, so clear the flag.
+        if (window.scrollY === before) _ssSelfScroll = false;
+      }
+      // Content may have changed which section is topmost; refresh the
+      // anchor so the next shift is measured from where the reader is now.
+      _ssQueueCapture();
+    }
+
+    function _ssObserveSections() {
+      if (!_ssObserver) return;
+      const sections = document.querySelectorAll('[data-dashboard-section]');
+      for (let i = 0; i < sections.length; i++) _ssObserver.observe(sections[i]);
+    }
+
+    function initScrollStabilizer() {
+      if (_ssObserver || typeof ResizeObserver === 'undefined') return;
+      _ssObserver = new ResizeObserver(_ssCorrect);
+      _ssObserver.observe(document.documentElement);
+      if (document.body) _ssObserver.observe(document.body);
+      _ssObserveSections();
+      // Sections that are rendered later (lazy panels) must be observed too;
+      // observe() is idempotent so re-walking on any subtree change is safe.
+      if (typeof MutationObserver !== 'undefined') {
+        let walkQueued = false;
+        _ssDomObserver = new MutationObserver(function() {
+          if (walkQueued) return;
+          walkQueued = true;
+          requestAnimationFrame(function() { walkQueued = false; _ssObserveSections(); });
+        });
+        _ssDomObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
+      }
+      // The reader's own scrolling moves the anchor; our corrections do not.
+      window.addEventListener('scroll', function() {
+        if (_ssSelfScroll) { _ssSelfScroll = false; return; }
+        _ssQueueCapture();
+      }, { passive: true });
+      // A viewport resize changes every rect; re-measure instead of correcting.
+      window.addEventListener('resize', function() { _ssAnchor = null; _ssQueueCapture(); }, { passive: true });
+      _ssQueueCapture();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initScrollStabilizer);
+    } else {
+      initScrollStabilizer();
     }
     // ── Inception section ──
     let _inceptionState = null;
