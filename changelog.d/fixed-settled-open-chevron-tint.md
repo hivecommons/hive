@@ -1,0 +1,1 @@
+- Activity Monitor: while CI or review runs, the stage chevron keeps its neutral settled-current fill — the Open-column draft / blocked / New / stale tints no longer paint a second coloured chevron beside the running track (a draft PR with no stage read as slate Open + amber CI).
