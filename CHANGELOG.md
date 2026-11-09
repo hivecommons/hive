@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v6.5.5)
+
+### Fixed
+
+- The contributor card on Operations no longer lists closed or merged PRs as "N PRs awaiting rework (not yet dispatched)" right after a hub restart. Stage records stay in the store for 14 days after a PR leaves the listings, and until a repo's open-PR listing was complete again the card counted every one of them as owed rework: on projectbluefin, after the 2026-11-09 upgrade, one contributor's card went from 1 to 7 PRs, all closed or merged by a maintainer 9-13 days earlier, and another's showed 17 with 14 closed. While a repo's listing cannot vouch, the card now counts a 072/074 record only if a stage pass saw the PR within the 072 stalled dwell (24h), so a freshly returned PR still shows; a record the store marks superseded never counts, and a complete listing still decides as before (hivecommons/hive#14708). Display only: nothing was dispatched.
+
 ## 2026-11-09 (v6.5.4)
 
 ### Fixed
