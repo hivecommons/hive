@@ -1,0 +1,1 @@
+- dashboard: the Recent merges popover is 52rem wide (was capped at 34rem) so PR titles read instead of ellipsising; it stays right-anchored under the Merged pill, capped to the viewport and its bar, and the phone full-width sheet is unchanged.
