@@ -95,3 +95,75 @@ func unreadableTestReport(p Perspective, v Verdict, summary string, findings []o
 	r.Findings = findings
 	return r
 }
+
+// Summaries the reviewer wrote on 2026-11-09 after the proxy refused its
+// GitHub reads at its 300/h cap. Each parked its PR at 085, because none says
+// "could not read" in the words UnreadableReviewReason knows.
+var capStoppedSummaries = []string{
+	// projectbluefin/utah-packages#959 @d09267d
+	"Previous review had no findings to re-check. Read the full PR diff and 11-file delta; commit history identifies the delta as a merge of main containing #957. No concrete new correctness defect found. GitHub reads stopped at the user's request after the hourly cap; head-file surroundings, source-lock consumers, build behavior and head-specific tests could not be verified. Requires completion of those checks before correctness approval.",
+	"Previous review had no findings to re-check. Delta documentation distinguishes recipe import from build, publication and runtime proof, consistent with the backlog record. No verified documentation defect found. Claims about HTTP rejection, source fallback behavior and build-root dependencies could not be checked against their consumers after GitHub reads stopped; documentation assessment remains incomplete.",
+	"Previous review had no findings to re-check. Delta adds pinned firmware sources and a driver options file through a merge of main. No verified secret, injection or permission regression found in the diff. Source verification consumers and driver-option behavior could not be inspected after GitHub reads were stopped at the user's request; security assessment remains incomplete, not evidence of a vulnerability.",
+	// projectbluefin/utah#1161 @615fe80
+	"Correctness not assessed: GitHub returned HTTP 429 before PR body or diff could be read. Available checkout is utah-packages, lacks requested head, and no Utah checkout was located. Requires review with repository access; no defect or CI claim asserted.",
+	"Documentation currency not assessed: GitHub API cap prevented reading changes and related documentation; requested head unavailable locally. Cannot determine whether operator-facing descriptions remain accurate.",
+	"Security not assessed: GitHub API hourly cap prevented reading PR body, diff, and review threads; requested repository and head unavailable locally. Cannot evaluate secret exposure or trust-boundary changes without code.",
+}
+
+func TestCapStoppedReviewReasonDoesNotDependOnWording(t *testing.T) {
+	for _, summary := range capStoppedSummaries {
+		r := unreadableTestReport(PerspectiveCorrectness, VerdictRequiresHuman, summary, nil)
+		if _, ok := UnreadableReviewReason(r); ok {
+			t.Fatalf("test premise: the wording match recognises %q", summary)
+		}
+		reason, ok := CapStoppedReviewReason(r)
+		if !ok {
+			t.Errorf("requires_human from a cut-short session not set aside: %q", summary)
+			continue
+		}
+		if reason != summary {
+			t.Errorf("reason = %q, want the reviewer's summary", reason)
+		}
+	}
+	// projectbluefin/finpilot#659: the cut-short session asked the owner for
+	// "a review with access to the proposed changes".
+	asked := unreadableTestReport(PerspectiveCorrectness, VerdictRequiresHuman, "", nil)
+	asked.DecisionRequested = true
+	asked.DecisionQuestion = "obtain a review with access to the proposed changes before deciding whether to merge."
+	if reason, ok := CapStoppedReviewReason(asked); !ok || reason != asked.DecisionQuestion {
+		t.Errorf("decision question from a cut-short session = %q, %v; want set aside with the question as reason", reason, ok)
+	}
+}
+
+func TestCapStoppedReviewReasonKeepsJudgements(t *testing.T) {
+	summary := capStoppedSummaries[0]
+	cases := []struct {
+		name   string
+		report PerspectiveReport
+	}{
+		{"approve is a judgement", unreadableTestReport(PerspectiveSecurity, VerdictApprove, summary, nil)},
+		{"changes_requested is a judgement", unreadableTestReport(PerspectiveSecurity, VerdictChangesRequested, summary, nil)},
+		{"an in-scope finding means it read and judged something", unreadableTestReport(PerspectiveSecurity, VerdictRequiresHuman, summary,
+			[]outputschema.Finding{{Title: "secret leaks into logs", Severity: outputschema.SeverityHigh, File: "a.go", Line: 3}})},
+	}
+	for _, tc := range cases {
+		if reason, ok := CapStoppedReviewReason(tc.report); ok {
+			t.Errorf("%s: set aside (%q), want kept", tc.name, reason)
+		}
+	}
+	marked := unreadableTestReport(PerspectiveSecurity, VerdictRequiresHuman, summary, nil)
+	marked.DecisionRiskHigh = true
+	if _, ok := CapStoppedReviewReason(marked); ok {
+		t.Error("the reviewer's explicit high-risk marker was overridden")
+	}
+	redundant := unreadableTestReport(PerspectiveIntentAlignment, VerdictRequiresHuman, summary, nil)
+	redundant.RedundantOf = 957
+	if _, ok := CapStoppedReviewReason(redundant); ok {
+		t.Error("an already-landed report was set aside")
+	}
+	outOfScope := unreadableTestReport(PerspectiveSecurity, VerdictRequiresHuman, summary,
+		[]outputschema.Finding{{Title: "pre-existing", Severity: outputschema.SeverityLow, ReviewScope: "out-of-scope"}})
+	if _, ok := CapStoppedReviewReason(outOfScope); !ok {
+		t.Error("an out-of-scope note kept a cut-short requires_human as a verdict")
+	}
+}

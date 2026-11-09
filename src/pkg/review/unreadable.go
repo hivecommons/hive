@@ -78,3 +78,47 @@ func UnreadableReviewReason(r PerspectiveReport) (string, bool) {
 	}
 	return "", false
 }
+
+// CapStoppedReviewReason reports whether r is a requires_human that the
+// relay should set aside because the hive proxy refused the reviewer's
+// GitHub reads during the session (its agents.github_api_hourly_cap or the
+// shared reserve floor). The caller supplies that fact from the proxy's own
+// record; this decides only whether the report is the kind such a refusal
+// can produce. It returns the reviewer's summary as the reason.
+//
+// UnreadableReviewReason needs the reviewer to say, in words it knows, that
+// a rate limit kept it from reading. Reviewers do not keep to those words:
+// on projectbluefin/utah-packages#959 (2026-11-09) the reviewer wrote
+// "GitHub reads stopped at the user's request after the hourly cap; …
+// could not be verified", and on projectbluefin/utah#1161 "not assessed:
+// GitHub API cap prevented reading". Each parked its PR at 085. The cap
+// event itself is the evidence, so the wording does not matter here.
+//
+// The report must:
+//   - be requires_human (an approve or changes_requested is a judgement);
+//   - not carry the reviewer's explicit high-risk marker;
+//   - raise no in-scope finding (a finding is something it read and judged);
+//   - not name a PR that already carries the change (RedundantOf), which the
+//     hive's own already-landed close acts on.
+//
+// A decision question does not keep it: a session the proxy cut short asks
+// for "a review with access to the changes" (projectbluefin/finpilot#659),
+// and a real question is asked again by the re-review that reads the PR.
+func CapStoppedReviewReason(r PerspectiveReport) (string, bool) {
+	if r.Verdict != VerdictRequiresHuman || r.DecisionRiskHigh || r.RedundantOf > 0 {
+		return "", false
+	}
+	for _, f := range r.Findings {
+		if InScopeFinding(f) {
+			return "", false
+		}
+	}
+	reason := strings.TrimSpace(r.Summary)
+	if reason == "" {
+		reason = strings.TrimSpace(r.DecisionQuestion)
+	}
+	if reason == "" {
+		reason = "requires_human from a review session the hive proxy refused GitHub reads"
+	}
+	return reason, true
+}

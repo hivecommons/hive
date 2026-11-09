@@ -235,6 +235,16 @@ type DispatchOptions struct {
 	// before the PR is held for a human instead of re-kicked. Zero means
 	// DefaultMaxRedispatch.
 	MaxRedispatch int
+	// AgentGitHubRefusal, when set, is the hive GitHub proxy's record of the
+	// agents it refused for agents.github_api_hourly_cap or
+	// github.agent_reserve_floor. An expiry whose every row went to an agent
+	// refused after the row was sent is the cap's doing, not the
+	// reviewer's: it waits for the refusal to clear and counts against
+	// MaxCapRedispatch instead of MaxRedispatch (see expireCapCaused).
+	AgentGitHubRefusal AgentGitHubRefusal
+	// MaxCapRedispatch caps the expiries the agent cap caused for one head.
+	// Zero means DefaultMaxCapRedispatch.
+	MaxCapRedispatch int
 	// PendingFixTTL is how long a pending fix row stays authoritative with
 	// no new head before the next bounded attempt replaces it
 	// (review.pending_fix_ttl). Zero means
@@ -285,6 +295,11 @@ type DispatchState struct {
 	// bounded number of retries and then a human hold, rather than either an
 	// indefinite stall or an endless re-kick.
 	Redispatches []RedispatchCount `json:"redispatches,omitempty"`
+	// CapRedispatches counts, per head, the expiries the agent GitHub API
+	// cap caused (expireCapCaused). They are kept apart from Redispatches so
+	// a reviewer capped for a few hours does not spend max_redispatch and
+	// ask a person, while a reviewer capped for good still ends in a hold.
+	CapRedispatches []RedispatchCount `json:"cap_redispatches,omitempty"`
 	// Review heads (hivecommons/hive#13542). HeadRetries counts each
 	// (PR head, perspective, head)'s expiries against review.head_max_retries;
 	// MissingHeads are the heads that ran out while another head answered,
@@ -370,8 +385,12 @@ type ExpiredPending struct {
 	Agent       string
 	Dispatched  time.Time
 	Age         time.Duration
-	// Count is the head's expiry count after this one.
+	// Count is the head's expiry count after this one: its max_redispatch
+	// count, or its cap count when CapCaused.
 	Count int
+	// CapCaused marks an expiry the agent GitHub API cap caused; it counts
+	// against MaxCapRedispatch, not MaxRedispatch.
+	CapCaused bool
 }
 
 // WithheldFix is a fix kick the planner declined to dispatch. It carries what
@@ -1421,7 +1440,9 @@ func (o DispatchOptions) effectiveMaxRedispatch() int {
 // them, and reports whether it dropped any. Each cycle that drops something
 // counts one expiry against the head; once the count reaches MaxRedispatch
 // the entries are left in place (so nothing is re-kicked) and the PR is held
-// for a human with a HoldReasonDispatchExhausted reason.
+// for a human with a HoldReasonDispatchExhausted reason. An expiry the agent
+// GitHub API cap caused waits for the cap and counts against
+// MaxCapRedispatch instead (capCausedExpiry, expireCapCaused).
 //
 // An entry with no dispatched_at has no measurable age and is never expired.
 func (p *DispatchPlan) expirePending(pr PullRequest, opts DispatchOptions, now time.Time) bool {
@@ -1442,6 +1463,12 @@ func (p *DispatchPlan) expirePending(pr PullRequest, opts DispatchOptions, now t
 	}
 	if len(expired) == 0 {
 		return false
+	}
+	if capCaused, wait := capCausedExpiry(expired, opts, ttl, now); capCaused {
+		if wait {
+			return false
+		}
+		return p.expireCapCaused(pr, expired, opts, ttl, now)
 	}
 	idx := redispatchIndex(p.State.Redispatches, pr)
 	if idx < 0 {
@@ -1466,6 +1493,13 @@ func (p *DispatchPlan) expirePending(pr PullRequest, opts DispatchOptions, now t
 		p.Exhausted = append(p.Exhausted, hold)
 		return false
 	}
+	p.dropExpiredPending(pr, ttl, now)
+	return true
+}
+
+// dropExpiredPending removes this head's pending entries that outlived ttl,
+// so pendingMissingPerspectives asks those perspectives again.
+func (p *DispatchPlan) dropExpiredPending(pr PullRequest, ttl time.Duration, now time.Time) {
 	kept := p.State.Pending[:0]
 	for _, e := range p.State.Pending {
 		if samePRHead(e.Repo, e.Number, e.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) && !e.Dispatched.IsZero() && now.Sub(e.Dispatched) >= ttl {
@@ -1474,7 +1508,6 @@ func (p *DispatchPlan) expirePending(pr PullRequest, opts DispatchOptions, now t
 		kept = append(kept, e)
 	}
 	p.State.Pending = kept
-	return true
 }
 
 // redispatchExhausted reports whether this head already spent its
@@ -2214,6 +2247,13 @@ func pruneState(state DispatchState, prs []PullRequest, org string) DispatchStat
 		}
 	}
 	state.Redispatches = redispatches
+	var capRedispatches []RedispatchCount
+	for _, r := range state.CapRedispatches {
+		if openHeads[reviewKey(r.Repo, r.Number, r.HeadSHA, "")] {
+			capRedispatches = append(capRedispatches, r)
+		}
+	}
+	state.CapRedispatches = capRedispatches
 	var starved []RevisitStarvation
 	for _, s := range state.RevisitStarved {
 		if openHeads[reviewKey(s.Repo, s.Number, s.HeadSHA, "")] {
