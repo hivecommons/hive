@@ -2,14 +2,55 @@
 # Advisory mutation report for the Go packages a PR touches (#17349, Phase 1).
 # Runs gremlins on each changed package, then upserts ONE <!-- hive-mutation -->
 # PR comment listing surviving (LIVED) mutants in changed files. Never fails.
+#
+# Two phases so the token never shares an environment with PR-controlled code:
+#   mutation-report.sh run    runs gremlins (no GH_TOKEN) and writes
+#                             $out_dir/comment.md
+#   mutation-report.sh post   reads comment.md and upserts the PR comment
+#                             (needs GH_TOKEN, PR_NUMBER, GITHUB_REPOSITORY)
 set -uo pipefail
 
-base_ref="${BASE_REF:?BASE_REF is required}"
-pr_number="${PR_NUMBER:-}"
-repo="${GITHUB_REPOSITORY:-}"
-coefficient="${MUTATION_TIMEOUT_COEFFICIENT:-3}"
+phase="${1:-run}"
 marker='<!-- hive-mutation -->'
 out_dir="${MUTATION_OUT_DIR:-mutation-out}"
+body="$out_dir/comment.md"
+
+post_comment() {
+  local pr_number="${PR_NUMBER:-}" repo="${GITHUB_REPOSITORY:-}"
+  if [ ! -s "$body" ]; then
+    echo "No mutation report at $body; nothing to post."
+    return 0
+  fi
+  if [ -z "$pr_number" ] || [ -z "$repo" ]; then
+    echo "PR_NUMBER/GITHUB_REPOSITORY unset; not posting a comment."
+    return 0
+  fi
+  # Only upsert the bot's own report so another participant cannot pre-seat or
+  # get overwritten by a comment that merely starts with the marker.
+  local id
+  id=$(gh api --paginate "repos/${repo}/issues/${pr_number}/comments" \
+    --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" 2>/dev/null | head -n 1 || true)
+  if [ -n "$id" ]; then
+    gh api -X PATCH "repos/${repo}/issues/comments/${id}" -F "body=@${body}" >/dev/null \
+      || echo "::warning::could not edit mutation comment"
+  else
+    gh api -X POST "repos/${repo}/issues/${pr_number}/comments" -F "body=@${body}" >/dev/null \
+      || echo "::warning::could not post mutation comment"
+  fi
+}
+
+case "$phase" in
+  post) post_comment; exit 0 ;;
+  run) ;;
+  *) echo "usage: $0 [run|post]" >&2; exit 0 ;;
+esac
+
+if [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
+  echo "::warning::GH_TOKEN/GITHUB_TOKEN is set during the mutation run; the token must only be given to the post phase"
+fi
+
+base_ref="${BASE_REF:?BASE_REF is required}"
+coefficient="${MUTATION_TIMEOUT_COEFFICIENT:-3}"
 mkdir -p "$out_dir"
 
 changed=$(git diff --name-only --diff-filter=d "origin/${base_ref}...HEAD" -- 'src/*.go' \
@@ -78,7 +119,6 @@ while IFS=$'\t' read -r f line type; do
   fi
 done < "$survivors"
 
-body="$out_dir/comment.md"
 {
   echo "$marker"
   echo "### Mutation testing (advisory)"
@@ -96,21 +136,4 @@ body="$out_dir/comment.md"
   echo "_Advisory only; this job never blocks the PR (#17349)._"
 } > "$body"
 cat "$body"
-
-if [ -z "$pr_number" ] || [ -z "$repo" ]; then
-  echo "PR_NUMBER/GITHUB_REPOSITORY unset; not posting a comment."
-  exit 0
-fi
-
-# Only upsert the bot's own report so another participant cannot pre-seat or
-# get overwritten by a comment that merely starts with the marker.
-id=$(gh api --paginate "repos/${repo}/issues/${pr_number}/comments" \
-  --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" 2>/dev/null | head -n 1 || true)
-if [ -n "$id" ]; then
-  gh api -X PATCH "repos/${repo}/issues/comments/${id}" -F "body=@${body}" >/dev/null \
-    || echo "::warning::could not edit mutation comment"
-else
-  gh api -X POST "repos/${repo}/issues/${pr_number}/comments" -F "body=@${body}" >/dev/null \
-    || echo "::warning::could not post mutation comment"
-fi
 exit 0

@@ -33,12 +33,19 @@ jobs:
           go-version-file: src/go.mod
       - name: Install gremlins
         run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+      # The mutation run executes PR-controlled test code, so it gets no token:
+      # it only writes mutation-out/comment.md. The token is scoped to the
+      # separate comment-upsert step below.
       - name: Run mutation report
         env:
-          GH_TOKEN: ${{ github.token }}
           BASE_REF: ${{ github.base_ref }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           export PATH="$(go env GOPATH)/bin:$PATH"
-          bash src/scripts/mutation-report.sh
+          bash src/scripts/mutation-report.sh run
+      - name: Upsert mutation comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash src/scripts/mutation-report.sh post
