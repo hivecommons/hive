@@ -339,6 +339,22 @@ func (c *Client) ProcessPRRequestsOnce(ctx context.Context) {
 	c.processPRRequests(ctx, time.Now)
 }
 
+// ProcessPRRequestDirOnce runs one watcher pass over dir with authz as the
+// request authorizer and nowFn as the clock — a StartPRRequestWatcher tick
+// without the ticker. Test entry point for packages that drive the watcher
+// end to end against their own clocks (pkg/dashboard's claimed-target
+// regression, hivecommons/hive#17302). A nil nowFn is time.Now.
+func (c *Client) ProcessPRRequestDirOnce(ctx context.Context, dir string, authz PRRequestAuthorizer, nowFn func() time.Time) {
+	if c == nil {
+		return
+	}
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	c.prAuthz = authz
+	c.processPRRequestsInDir(ctx, nowFn, dir)
+}
+
 func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func() time.Time) {
 	if !c.prRetries.allows(path, nowFn()) {
 		return
