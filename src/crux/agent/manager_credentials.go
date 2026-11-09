@@ -129,9 +129,53 @@ func matchesAuthError(output string) bool {
 	return false
 }
 
+// lockIfDiagnosticCurrent takes m.mu and reports whether ctx, the per-launch
+// context of the session the diagnostic was started for, is still live. On
+// false it has released the lock again.
+//
+// A restart cancels that context under m.mu before it kills the session and
+// launches a new one, so checking it under the same lock is the one reliable
+// way to tell "this is still the hung session" from "a restart already
+// replaced it". The diagnostic must never touch a replaced session: its
+// bare `copilot` has no --allow-all, no --model and no deny flags, and the
+// relaunch it destroyed is never retried.
+func (m *Manager) lockIfDiagnosticCurrent(ctx context.Context, agent *AgentProcess) bool {
+	m.mu.Lock()
+	if ctx.Err() == nil {
+		return true
+	}
+	m.mu.Unlock()
+	m.logger.Info("diagnostic: skipped, the session was relaunched since the hang was seen", "agent", agent.Name)
+	return false
+}
+
+// runCopilotDiagnostic replaces a hung copilot session with a bare `copilot`
+// to read its startup error, then relaunches the agent.
+//
+// ctx is the per-launch context of the poller that saw the hang. Every step
+// that touches the session runs under m.mu after re-checking ctx (see
+// lockIfDiagnosticCurrent). Without that, a poller tick still in flight
+// when a session recycle restarted the agent read the new, still-empty pane
+// against the OLD StartedAt (about 6h, far past the hang timeout), started
+// this diagnostic with an already-cancelled ctx, killed the relaunched
+// session and typed bare `copilot`, and then returned at once on ctx.Done —
+// leaving the agent on a CLI that asks approval for every shell command
+// (live: knuckle architect sat 4h50m at "Do you want to run this command?",
+// 2026-11-08; every copilot agent hit it at each 6h recycle).
 func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess) {
+	if !m.lockIfDiagnosticCurrent(ctx, agent) {
+		return
+	}
 	m.tmuxSendKeysForAgent(agent, "C-c", "")
+	m.mu.Unlock()
 	time.Sleep(paneCaptureSleep)
+
+	// Kill, recreate and type under the lock, the way launchInTmux does, so a
+	// restart can neither start between the check and the kill nor have its
+	// fresh session killed by this one.
+	if !m.lockIfDiagnosticCurrent(ctx, agent) {
+		return
+	}
 	// Only sweep by UID when isolation gave this agent a real per-agent UID.
 	// agent.UID==0 (isolation off or agent missing from the UID map) would
 	// otherwise ask killAgentProcesses to match root — the internal floor guard
@@ -142,18 +186,21 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 
 	if err := m.ensureTmuxSession(agent); err != nil {
+		m.mu.Unlock()
 		m.logger.Warn("diagnostic: failed to create tmux session", "agent", agent.Name, "error", err)
 		return
 	}
 
 	binary, err := backendBinary("copilot")
 	if err != nil {
+		m.mu.Unlock()
 		m.logger.Warn("diagnostic: copilot binary not found", "error", err)
 		return
 	}
 	m.tmuxSendLiteralForAgent(agent, fmt.Sprintf("HOME=/data/home %s", binary))
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)
+	m.mu.Unlock()
 
 	m.logger.Info("diagnostic: launched bare copilot to capture error", "agent", agent.Name)
 
