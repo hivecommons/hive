@@ -1,0 +1,1 @@
+- `hive-open-issue --claim` files and claims a self-filed issue in one request (claimed-by label, `help wanted` removed, failures reported as `claim_error`); an issue a hive agent files without `--claim` is marked filed-for-outside-help and that agent's later claim of it is refused ([#17299](https://github.com/hivecommons/hive/issues/17299)).

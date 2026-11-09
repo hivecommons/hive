@@ -148,6 +148,13 @@ type IssueRequest struct {
 	// label and removes `help wanted`. The blocked sweep lifts the label when
 	// the PR merges or closes.
 	BlockedOnPR int `json:"blocked_on_pr,omitempty"` // comment only
+	// Claim makes an "issue" request file AND claim the new issue for Agent
+	// in one request (hivecommons/hive#17299): right after the create the
+	// watcher performs the same claim a "claim" request does and takes
+	// `help wanted` off, so an agent's own next step is never open to
+	// others in between. Without it, the created issue carries a
+	// filed-for-help marker and a later claim of it by Agent is refused.
+	Claim bool `json:"claim,omitempty"` // issue only
 }
 
 // IssueResponse is written next to a consumed request as <name>.result.json.
@@ -204,6 +211,12 @@ type IssueResponse struct {
 	// names each one that could not be, with the reason (#9839).
 	BlockedByLinked []int    `json:"blocked_by_linked,omitempty"`
 	BlockedByErrors []string `json:"blocked_by_errors,omitempty"`
+	// Claimed reports that an "issue" request with Claim set also claimed
+	// the issue it created (#17299). ClaimError names why it did not; the
+	// issue is still created and the request is still OK, so the agent
+	// reads it here instead of assuming the claim landed.
+	Claimed    bool   `json:"claimed,omitempty"`
+	ClaimError string `json:"claim_error,omitempty"`
 }
 
 // IssueRequestAuthorizer mirrors PRRequestAuthorizer: it receives the claimed
@@ -595,6 +608,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			return
 		}
 	}
+	if kind == "issue" && !req.Claim && req.Parent == 0 {
+		// Filed unclaimed = filed for outside help (#17299): the filer's
+		// later claim is refused by IssueStartBlockReason. --parent children
+		// are the hive's own decomposition backlog, so they stay unmarked.
+		body = withFiledForHelpMarker(body, req.Agent)
+	}
 	if c.attributionTrailerOn() {
 		body = AppendTrailer(body, meta)
 	}
@@ -604,7 +623,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	switch kind {
 	case "claim":
 		var reason string
-		reason, err = c.IssueDispatchBlockReason(ctx, req.Repo, req.Number)
+		reason, err = c.IssueStartBlockReason(ctx, req.Repo, req.Number, req.Agent)
 		if err != nil {
 			break // Retry a failed lookup; never claim on unknown labels.
 		}
@@ -623,20 +642,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				verificationClaimCooldown.String()+" ago and nothing has changed since; do not re-verify it, and open a PR without a claim if you intend to fix it", nowFn)
 			return
 		}
-		// Apply a namespaced ownership label (App bots can't be assignees),
-		// journaled against a fresh read so a second claim on an issue whose
-		// earlier label lapsed is written, not replayed (hivecommons/hive#12512).
-		// The stage — stage/020-claimed when the in-progress mark is on;
-		// 030 needs PR evidence — is a fact for the stage engine (see
-		// issue_inprogress.go).
-		err = c.AddLabelsFresh(ctx, req.Repo, req.Number, claimOwnershipLabel(req.Agent))
-		if err == nil {
-			err = c.submitInProgressFact(ctx, req.Repo, req.Number, req.Agent, nowFn())
-		}
+		err = c.claimIssueForAgent(ctx, req.Repo, req.Number, req.Agent, nowFn)
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
-			c.markInProgressStarted(ctx, req.Repo, req.Number, req.Agent, nowFn())
 		}
 	case "comment":
 		// A verification marker already on the issue means this comment was
@@ -698,7 +707,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if err == nil && parkBlocked {
 			err = c.AddLabels(ctx, req.Repo, req.Number, []string{BlockedLabel})
 			if err == nil {
-				err = c.RemoveLabel(ctx, req.Repo, req.Number, helpWantedLabel)
+				err = stripHelpWanted(ctx, c, req.Repo, req.Number)
 			}
 		}
 		if err == nil {
@@ -881,6 +890,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 						slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("blocker", e))
 				}
 			}
+			if req.Claim {
+				resp.Claimed, resp.ClaimError = c.claimCreatedIssue(ctx, req, fileUID, res, meta, nowFn)
+			}
 		}
 	}
 
@@ -957,6 +969,79 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		slog.Int("number", resp.Number), slog.Bool("reused", resp.AlreadyExisted),
 		slog.Bool("consolidated", resp.Consolidated),
 		slog.String("agent", req.Agent))
+}
+
+// claimIssueForAgent is the write half of a claim, shared by the "claim"
+// request and an "issue" request with Claim set. It applies a namespaced
+// ownership label (App bots can't be assignees), journaled against a fresh
+// read so a second claim on an issue whose earlier label lapsed is written,
+// not replayed (hivecommons/hive#12512). The stage — stage/020-claimed when
+// the in-progress mark is on; 030 needs PR evidence — is a fact for the
+// stage engine (see issue_inprogress.go).
+func (c *Client) claimIssueForAgent(ctx context.Context, repo string, number int, agent string, nowFn func() time.Time) error {
+	if err := c.AddLabelsFresh(ctx, repo, number, claimOwnershipLabel(agent)); err != nil {
+		return err
+	}
+	if err := c.submitInProgressFact(ctx, repo, number, agent, nowFn()); err != nil {
+		return err
+	}
+	c.markInProgressStarted(ctx, repo, number, agent, nowFn())
+	return nil
+}
+
+// claimCreatedIssue claims the issue an "issue" request with Claim set just
+// created (hivecommons/hive#17299), under the same authorization, allowlist
+// and start gate as a "claim" request, then takes `help wanted` off: an
+// issue its filer is working is not open for outside help. The create has
+// already happened, so a failure never fails or retries the request; it is
+// returned as the result's claim_error.
+func (c *Client) claimCreatedIssue(ctx context.Context, req IssueRequest, fileUID int, res CreateIssueResult, meta InvocationMeta, nowFn func() time.Time) (bool, string) {
+	fail := func(why string) (bool, string) {
+		c.logger.Warn("issue-request watcher: issue created but not claimed",
+			slog.String("repo", req.Repo), slog.Int("number", res.Number),
+			slog.String("agent", req.Agent), slog.String("reason", why))
+		return false, "issue created but not claimed: " + why
+	}
+	if res.Consolidated {
+		return fail(fmt.Sprintf("the request was folded into existing issue #%d as a comment; claim that issue with `hive-open-issue claim` if it is yours to work", res.Number))
+	}
+	if res.Number <= 0 {
+		return fail("the create returned no issue number")
+	}
+	if strings.TrimSpace(req.Agent) == "" {
+		return fail("the request names no agent")
+	}
+	if c.issueAuthz == nil {
+		return fail("no authorizer configured (fail closed)")
+	}
+	if err := c.issueAuthz(req.Agent, fileUID, "claim"); err != nil {
+		return fail(err.Error())
+	}
+	if reason, refused := c.refuseWrite(req.Agent, WriteOpClaim, req.Repo, res.Number); refused {
+		return fail(reason)
+	}
+	reason, err := c.IssueStartBlockReason(ctx, req.Repo, res.Number, req.Agent)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if reason != "" {
+		return fail("issue claim refused: " + reason)
+	}
+	if err := c.claimIssueForAgent(ctx, req.Repo, res.Number, req.Agent, nowFn); err != nil {
+		return fail(err.Error())
+	}
+	// The hub's ledger records the claim from this signal (SetAgentStartHook),
+	// not only the labels. It is not the plain `claim` signal: the hub only
+	// ledgers a start on an issue a kick listed to the agent, and nothing
+	// listed an issue the agent itself just filed, so this signal says
+	// "treat the filing as the listing".
+	c.notifyAgentStart(req.Agent, req.Repo, res.Number, AgentStartSignalFiledClaim)
+	if err := stripHelpWanted(ctx, c, req.Repo, res.Number); err != nil {
+		c.logger.Warn("issue-request watcher: claimed new issue but removing help wanted failed",
+			slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("error", err.Error()))
+	}
+	c.recordWriteAudit(AuditActionIssueClaimed, meta, WriteTarget{Repo: req.Repo, Number: res.Number}, "url", res.URL)
+	return true, ""
 }
 
 type issueDecisionDowngrade struct {
@@ -2118,7 +2203,7 @@ func subjectMatchFindingComment(title, body string) string {
 	b.WriteString("**Consolidated finding.** This was filed as a separate issue; it has the same subject as this one, so it was folded in here instead. Address it together with this issue.\n\n### ")
 	b.WriteString(title)
 	b.WriteString("\n\n")
-	b.WriteString(body)
+	b.WriteString(stripFiledForHelpMarker(body))
 	return b.String()
 }
 
@@ -2138,7 +2223,7 @@ func consolidatedFindingComment(title, body string, files map[string]bool) strin
 	b.WriteString("), so it was folded in here instead. Address it in the same PR as this issue — two PRs editing the same files would conflict.\n\n### ")
 	b.WriteString(title)
 	b.WriteString("\n\n")
-	b.WriteString(body)
+	b.WriteString(stripFiledForHelpMarker(body))
 	return b.String()
 }
 
@@ -2167,7 +2252,7 @@ func foldedComponentFindingComment(title, body, path string, openSiblings, close
 	b.WriteString("`, so it was folded into the oldest of them instead of opening another. Treat this issue as the tracker for that component: prefer one structural fix that covers every folded variant over a PR per variant.\n\n### ")
 	b.WriteString(title)
 	b.WriteString("\n\n")
-	b.WriteString(body)
+	b.WriteString(stripFiledForHelpMarker(body))
 	return b.String()
 }
 

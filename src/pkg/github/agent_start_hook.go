@@ -43,6 +43,12 @@ const (
 	// branch or pull request the work lives on (`<!-- hive:start
 	// branch=<name> -->` / `pr=<n>`): PR evidence, like a PR request.
 	AgentStartSignalBranch = "branch"
+	// AgentStartSignalFiledClaim is an "issue" request with Claim set
+	// (hivecommons/hive#17299): the agent filed the issue as its own next
+	// step and claimed it in the same request. No kick ever listed the new
+	// issue to the agent, so a consumer that only claims on a listed issue
+	// treats this signal as the listing too; otherwise it is a claim.
+	AgentStartSignalFiledClaim = "filed_claim"
 )
 
 // StartSignalIsPREvidence reports whether signal says a pull request is

@@ -316,6 +316,40 @@ check "--needs-decision refusal writes no request" "" "$(find_req needsdecisionc
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
+# --- Section 3f: --claim files and claims in one request (#17299) ---
+run_script "claimcreatebot" --repo "hiveorg/widgets" --title "My next step" --body "stage 2 of my epic" --claim
+REQ_FILE="$(find_req claimcreatebot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT="$(python3 -c "import json,sys; r=json.load(open(sys.argv[1])); print(r.get('kind'), r.get('claim'))" "$REQ_FILE")"
+  check "--claim on a create sets claim in the issue request" "issue True" "$GOT"
+else
+  echo "  FAIL: request file not created for --claim test"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+run_script "noclaimcreatebot" --repo "hiveorg/widgets" --title "Outside help wanted" --body "b"
+REQ_FILE="$(find_req noclaimcreatebot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT="$(python3 -c "import json,sys; print('claim' in json.load(open(sys.argv[1])))" "$REQ_FILE")"
+  check "no --claim omits the field" "False" "$GOT"
+else
+  echo "  FAIL: request file not created for no --claim test"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+set +e
+run_script "claimcommentbot" comment --repo "hiveorg/widgets" 5 --body "x" --claim >/dev/null 2>&1
+BAD_RC=$?
+set -e
+check "--claim on a non-create is refused (exit 2)" "2" "$BAD_RC"
+check "--claim refusal writes no request" "" "$(find_req claimcommentbot)"
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
 # --no-consolidate <reason> carries the reason; an empty reason or a non-create is refused.
 run_script "noconsolbot" --repo "hiveorg/widgets" --title "Unrelated" --body "b" --no-consolidate "different work"
 REQ_FILE="$(find_req noconsolbot)"
