@@ -976,6 +976,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	c.writeIssueResult(path, resp)
 	_ = os.Remove(path)
 	c.issueClearRetry(path)
+	if kind == "comment" && !resp.AlreadyExisted {
+		// A deferral on a PR is a decision the activity monitor shows
+		// ("Deferred · waiting on #N"), not an absence of pickup (#17347).
+		c.recordPRDeferral(ctx, req, meta, resp.URL)
+	}
 	c.logger.Info("issue-request watcher: request completed",
 		slog.String("repo", req.Repo), slog.String("kind", kind),
 		slog.Int("number", resp.Number), slog.Bool("reused", resp.AlreadyExisted),

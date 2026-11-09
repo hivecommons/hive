@@ -163,7 +163,7 @@ func stageTrackerReauthorMotion(it *StageTrackerItem, rec stageTrackerReauthorRe
 	}
 	it.Caption, it.Actor = stageTrackerReauthorCaption(rec.OldPR), authorKindHive
 	it.DisplayColumn = trackerNumberPRInProgress
-	it.Remediation = &StageTrackerRemediation{Actor: authorKindHive, Kind: remediationKindKick, Since: timePtr(since), Source: stageTrackerReauthorSource}
+	it.Remediation, it.Deferral = &StageTrackerRemediation{Actor: authorKindHive, Kind: remediationKindKick, Since: timePtr(since), Source: stageTrackerReauthorSource}, nil
 	detail := "The hive's fixer gave up on #" + strconv.Itoa(rec.OldPR)
 	if rec.Attempts > 0 {
 		detail += " after " + strconv.Itoa(rec.Attempts) + " attempts"

@@ -103,6 +103,26 @@ test('fix pushed: PR in progress is done-style with its word while CI / Review i
   assert.match(c[4], /ham-current/, 'CI track is current');
 });
 
+// hivecommons/hive#17347: a head the hive deferred is a decision with an
+// owner and successors, not "Unassigned": plain amber, still, its first
+// successor in the word and the reason, all successors and the link in the
+// tooltip.
+test('deferred: PR in progress is plain amber and still, names the successor, and carries the reason and link', () => {
+  const item = redPR({ display_column: 30,
+    deferral: { head: 'abc1234def', actor: 'scanner', successors: ['#17345', '#17344'], close_ok: true },
+    code_activity: { head: 'abc1234def', state: 'deferred', caption: 'Deferred · waiting on #17345 +1', actor: 'scanner', source: 'hive-deferral', since: '2026-11-04T02:25:00Z', url: 'https://github.com/org/repo/issues/17345',
+      detail: 'scanner deferred head abc1234 at 2026-11-04T02:25:00Z: Deferring this PR (dependabot-authored). Waiting on #17345, #17344.' } });
+  const pr = cells(item)[3];
+  assert.match(pr, /class="ham-seg active[^"]*ham-remediation-deferred/);
+  assert.doesNotMatch(pr, /ham-remediation-unassigned/, 'never the unassigned red mix');
+  assert.match(pr, /data-remediation="deferred"/);
+  assert.match(pr, /Deferred · waiting on #17345 \+1/);
+  assert.doesNotMatch(pr, /data-motion="active"/, 'a decision, not work in motion: no pulse');
+  assert.match(pr, /Waiting on #17345, #17344/);
+  assert.match(pr, /https:\/\/github\.com\/org\/repo\/issues\/17345/);
+  assert.match(pr, /Close now is on the row/);
+});
+
 test('a red PR with a stale code head renders no remediation attributes', () => {
   const item = redPR({ display_column: 30, code_activity: { head: 'older', state: 'unassigned', caption: 'Unassigned · next: scanner' } });
   const html = renderStrip(item, stages, null, now, {});

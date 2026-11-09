@@ -224,6 +224,56 @@ func TestPromptPathReadsFromTheWorkspace(t *testing.T) {
 	}
 }
 
+func TestPromptPathOverTheBoundIsRefused(t *testing.T) {
+	f := newFixture(t, answers(`{"verdict":"pass"}`))
+	// A sparse file: the bound is on bytes present, not bytes on disk.
+	if err := os.WriteFile(filepath.Join(f.host.Workspace, "task.md"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(f.host.Workspace, "task.md"), MaxPromptFileBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	req := f.process("", okSchema)
+	req.PromptPath = "task.md"
+	_, err := Run(context.Background(), f.host, req)
+	var reqErr *RequestError
+	if !errors.As(err, &reqErr) || !strings.Contains(err.Error(), "over") {
+		t.Fatalf("err = %v, want *RequestError naming the bound", err)
+	}
+	if len(f.launcher.prompts) != 0 {
+		t.Fatalf("an oversize prompt file reached the step: %q", f.launcher.prompts)
+	}
+}
+
+func TestOversizeAnswerFileIsNotReadIntoMemory(t *testing.T) {
+	stdout := strings.Join([]string{
+		`{"type":"item.completed","item":{"type":"agent_message","text":"{\"verdict\":\"pass\"}"}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}`,
+	}, "\n")
+	launcher := &fakeLauncher{}
+	launcher.results = append(launcher.results, func(_ context.Context, spec sandbox.LaunchSpec) (sandbox.Result, error) {
+		// The sandboxed agent writes the answer file codex was told to
+		// produce (--output-last-message '<rel>'), here far over the bound.
+		line := spec.Command[len(spec.Command)-1]
+		rest := line[strings.Index(line, "--output-last-message '")+len("--output-last-message '"):]
+		rel := rest[:strings.Index(rest, "'")]
+		path := filepath.Join(spec.Workspace, filepath.FromSlash(rel))
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			return sandbox.Result{}, err
+		}
+		if err := os.Truncate(path, MaxPromptFileBytes+1); err != nil {
+			return sandbox.Result{}, err
+		}
+		return sandbox.Result{Stdout: stdout}, nil
+	})
+	f := newFixture(t, launcher)
+	step := f.run(api.StepRequest{Backend: "codex", Prompt: "judge", OutputSchema: json.RawMessage(okSchema)})
+	// The file is refused and the last agent_message on stdout stands in.
+	if step.Status != api.StepSucceeded || string(step.Answer) != `{"verdict":"pass"}` {
+		t.Fatalf("step = %+v", step)
+	}
+}
+
 func TestPromptPathSymlinkOutsideWorkspaceIsRefused(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks need privileges on windows")

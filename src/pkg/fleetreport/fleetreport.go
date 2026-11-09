@@ -815,6 +815,15 @@ var benignSubstrings = []string{
 	// defect anyway (hivecommons/hive#15313). Kicks that keep failing after
 	// the restart are reported under kick_failed_repeatedly instead.
 	"busy-no-activity restart not yet attempted, not self-reporting",
+	// The review-dispatch promotion WARN (src/cmd/hive/main_sweeps.go) fires
+	// when the starvation guard walks a head that has been starved of a
+	// reviewer for ReviewWaitStarvationCycles ahead of the queue: the guard
+	// working as designed, an operational signal about the reviewer lane.
+	// The warn-once dampener re-arms whenever a PR leaves the promoted set
+	// and the WARN is per PR, so a backed-up lane filed it as a repeated
+	// runtime defect (hivecommons/hive#17366). Exhausted dispatch and forced
+	// fixes keep their own messages and stay reportable.
+	"review dispatch promoted: head starved of a reviewer",
 }
 
 // rateLimitSubstrings are lower-case fragments that mark a GitHub rate-limit

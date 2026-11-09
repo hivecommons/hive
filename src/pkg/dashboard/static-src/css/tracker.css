@@ -370,9 +370,12 @@
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
     /* Evidence-based remediation on the PR in progress chevron: a red PR
-       nobody has picked up is bright and still; a pushed fix head is a
-       done-style step that keeps its word (stage_tracker_remediation.go). */
+       nobody has picked up is bright and still; a head the hive deferred
+       is plain amber, a decision rather than an absence (hivecommons/hive#17347);
+       a pushed fix head is a done-style step that keeps its word
+       (stage_tracker_remediation.go). */
     .ham-seg.active.ham-remediation-unassigned { background: color-mix(in srgb, var(--amber) 70%, var(--red)); }
+    .ham-seg.active.ham-remediation-deferred { background: var(--amber); }
     .ham-seg.done.ham-fix-pushed { color: var(--green); }
 /* A done decision column that still names the blocker a person must
    clear while a covering PR drives the strip (hivecommons/docs#612). */

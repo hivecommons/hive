@@ -11,6 +11,49 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.209.6)
+
+### Fixed
+
+- Self-authored automerge sweeps no longer file repeated-error self-reports for expected destination merge contention; local warnings and reporting of other failures are preserved ([#17400](https://github.com/hivecommons/hive/issues/17400)).
+
+## 2026-11-09 (v5.209.5)
+
+### Fixed
+
+- crux cmdlog: a follower polling with next_seq now receives a command's ended record instead of seeing it as unfinished forever (#17398).
+
+## 2026-11-09 (v5.209.4)
+
+### Security
+
+- The maintainer-notes store (`/data/maintainer-notes.jsonl`, the private per-item notes the dashboard's Activity monitor shares between maintainers) is now created owner-only (0600) and an existing file left wider by an earlier release is tightened on its next write ([#17386](https://github.com/hivecommons/hive/issues/17386)). It was created 0644 under a world-traversable `/data`, so any agent UID on the spoke could read every note on every item — including deleted ones — rather than only the capped, per-item section a kick deliberately carries.
+
+## 2026-11-09 (v5.209.3)
+
+### Changed
+
+- The weekly price-table refresh now holds implausible OpenRouter quotes (a field moving more than 5×, an output/input ratio above 30, or a cache-read rate at or above 90% of input) instead of applying them: the current row is kept, `priceTableDate` is still bumped so the run opens a refresh PR even when no other row moved, and that PR lists the row under "Held for review" with the rule that fired, so a catalogue defect like the `kimi-k3` row in #17354 reaches a human as a question rather than a change (#17364).
+
+## 2026-11-09 (v5.209.2)
+
+### Fixed
+
+- The crux serve request metrics and spans (`crux.serve.request.duration`, `crux.serve.requests`) now bound their HTTP method attribute to the standard set (GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, CONNECT, TRACE), recording anything else as `_OTHER`, as OTel HTTP semconv does for `http.request.method` ([hivecommons/crux#135](https://github.com/hivecommons/crux/issues/135)). Previously the client-supplied method was recorded verbatim, so any caller could mint unbounded metric series on the host's metrics backend simply by sending arbitrary method tokens.
+- The review-dispatch starvation-guard promotion WARN is no longer reported by the fleet feed as a repeated unclassified runtime error ([#17366](https://github.com/hivecommons/hive/issues/17366)).
+
+## 2026-11-09 (v5.209.1)
+
+### Security
+
+- Crux agent steps now refuse a `prompt_path` file, and ignore a codex answer file, over 16 MiB (`agentstep.MaxPromptFileBytes`): both were read whole into the crux server's memory with no bound, so a run owner or the sandboxed agent itself could make the host allocate without limit; an oversize prompt file is a 400 naming the bound and an oversize answer file falls back to the last message on stdout, as a missing one already did.
+
+## 2026-11-09 (v5.209.0)
+
+### Added
+
+- Activity monitor: a red PR the hive deferred now reads **Deferred · waiting on #N** (first successor, `+N` for more; *Deferred · by scanner* when none is named) in plain amber instead of **Unassigned · next: …**, which sent operators to investigate work the hive had already decided ([#17347](https://github.com/hivecommons/hive/issues/17347)). The issue-request relay records a hive agent's PR comment that defers the PR (*Deferring …*, *Deferred …*, *Waiting on #N*) as an `agent_pr_deferred` audit entry bound to the PR's head, with the successors it names and the deferral's own words; the tooltip carries the reason, every successor and the first one's link. A fix kick, claim or push for the same head after the deferral returns the row to *Remediating* / *Fix pushed*, and a new head clears it. When the deferral says a maintainer may close the PR, the row leads with **Close now** (closes the PR as won't-fix with an attributed note).
+
 ## 2026-11-09 (v5.208.1)
 
 ### Fixed
