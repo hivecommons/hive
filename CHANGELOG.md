@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.209.1)
+
+### Security
+
+- Crux agent steps now refuse a `prompt_path` file, and ignore a codex answer file, over 16 MiB (`agentstep.MaxPromptFileBytes`): both were read whole into the crux server's memory with no bound, so a run owner or the sandboxed agent itself could make the host allocate without limit; an oversize prompt file is a 400 naming the bound and an oversize answer file falls back to the last message on stdout, as a missing one already did.
+
 ## 2026-11-09 (v5.209.0)
 
 ### Added
