@@ -1,0 +1,1 @@
+- crux cmdlog: `next_seq` no longer pins forever on an ended command whose exit was never learned, and a runner restart closes commands it left open, so cmdlog followers always make progress ([#17410](https://github.com/hivecommons/hive/issues/17410)).

@@ -22,6 +22,9 @@ const (
 	// two policy windows of output plus the command line.
 	scanBuffer   = 64 * 1024
 	maxLineBytes = 16 * 1024 * 1024
+	// orphanReason is written on the ended line Open appends for a command
+	// the previous runner left open.
+	orphanReason = "runner restarted before the command ended"
 )
 
 // Log is the Recorder over one run's commands.jsonl. It appends only;
@@ -45,9 +48,33 @@ func Open(runDir string, pol Policy) (*Log, error) {
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
+	started := map[int64]time.Time{}
 	for _, ln := range lines {
 		if ln.Seq >= l.next {
 			l.next = ln.Seq + 1
+		}
+		switch ln.Event {
+		case EventStarted:
+			started[ln.Seq] = ln.At
+		case EventEnded:
+			delete(started, ln.Seq)
+		}
+	}
+	// A started seq with no ended line belonged to a runner that is gone;
+	// close it so it is a terminal record, not a permanent pin on NextSeq.
+	orphans := make([]int64, 0, len(started))
+	for seq := range started {
+		orphans = append(orphans, seq)
+	}
+	sort.Slice(orphans, func(i, j int) bool { return orphans[i] < orphans[j] })
+	for _, seq := range orphans {
+		now := l.pol.Now()
+		ms := now.Sub(started[seq]).Milliseconds()
+		if err := l.append(line{
+			Seq: seq, Event: EventEnded, At: now, DurationMs: &ms,
+			Status: api.CommandUnfinished, Reason: orphanReason,
+		}); err != nil {
+			return nil, err
 		}
 	}
 	return l, nil
@@ -119,8 +146,9 @@ func (l *Log) append(ln line) error {
 // Read folds runDir's log into records after sinceSeq (exclusive), at
 // most limit of them (DefaultPageSize when zero, MaxPageSize at most).
 // A started line with no ended line is an unfinished record. NextSeq never
-// advances past an unfinished record, so a follower re-receives it until
-// it is terminal (idempotent by seq).
+// advances past a record that has no ended line yet, so a follower
+// re-receives it until it is terminal (idempotent by seq). A record with an
+// ended line is terminal whatever its status says.
 func Read(runDir string, sinceSeq int64, limit int) (api.CommandPage, error) {
 	lines, err := readLines(filepath.Join(runDir, FileName))
 	if err != nil {
@@ -165,7 +193,7 @@ func Read(runDir string, sinceSeq int64, limit int) (api.CommandPage, error) {
 	if n := len(page.Commands); n > 0 {
 		page.NextSeq = page.Commands[n-1].Seq
 		for _, rec := range page.Commands {
-			if rec.Status == api.CommandUnfinished {
+			if rec.EndedAt == nil {
 				page.NextSeq = max(rec.Seq-1, sinceSeq)
 				break
 			}

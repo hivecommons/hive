@@ -202,6 +202,64 @@ func TestReadNextSeqStopsBeforeFirstUnfinished(t *testing.T) {
 	}
 }
 
+func TestReadNextSeqAdvancesPastEndedUnfinished(t *testing.T) {
+	dir := t.TempDir()
+	l := openLog(t, dir, Policy{})
+	for i := range 2 {
+		seq, err := l.Started(Start{Command: []string{"cmd", string(rune('a' + i))}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		end := End{}
+		if i == 1 {
+			end = End{ExitCode: intp(0)}
+		}
+		if err := l.Ended(seq, end); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := Read(dir, 0, 0)
+	if err != nil || len(page.Commands) != 2 || page.Commands[0].Status != api.CommandUnfinished || page.NextSeq != 2 {
+		t.Fatalf("page = %+v, %v", page, err)
+	}
+}
+
+func TestReadMoreWithUnendedFirstClampsToSinceSeq(t *testing.T) {
+	dir := t.TempDir()
+	l := openLog(t, dir, Policy{})
+	if _, err := l.Started(Start{Command: []string{"open"}}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		seq, _ := l.Started(Start{Command: []string{"done"}})
+		if err := l.Ended(seq, End{ExitCode: intp(0)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := Read(dir, 0, 2)
+	if err != nil || !page.More || page.NextSeq != 0 {
+		t.Fatalf("page = %+v, %v", page, err)
+	}
+}
+
+func TestOpenClosesOrphanedStartedLines(t *testing.T) {
+	dir := t.TempDir()
+	first := openLog(t, dir, Policy{})
+	seq, err := first.Started(Start{Command: []string{"orphan"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openLog(t, dir, Policy{})
+	page, err := Read(dir, 0, 0)
+	if err != nil || len(page.Commands) != 1 {
+		t.Fatalf("page = %+v, %v", page, err)
+	}
+	rec := page.Commands[0]
+	if rec.Status != api.CommandUnfinished || rec.EndedAt == nil || rec.Reason == "" || page.NextSeq != seq {
+		t.Fatalf("record = %+v, next_seq = %d", rec, page.NextSeq)
+	}
+}
+
 func TestOutputKeepsHeadAndTailPerPolicy(t *testing.T) {
 	dir := t.TempDir()
 	l := openLog(t, dir, Policy{HeadBytes: 4, TailBytes: 3})
