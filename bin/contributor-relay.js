@@ -5007,12 +5007,25 @@ function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// fixPRRunningWhere says where this relay is already running fix-pr task
+// taskId, or null. One fix-pr task runs in exactly one place: a second
+// task_assign with the same task_id (a hub that delivered it twice) must not
+// start it again as the primary task or in a parallel session.
+function fixPRRunningWhere(taskId) {
+  if (!taskId) return null;
+  if (currentTask && currentTask.task_id === taskId) return 'as the primary task';
+  if (parallelFixes.has(taskId)) return 'in a parallel fix session';
+  if (preemptingFix && preemptingFix.task_id === taskId) return 'as the fix preempting the primary task';
+  if (deferredFixes.some(d => d.task.task_id === taskId)) return 'deferred until the current task ends';
+  return null;
+}
+
 // handleFixPRInterrupt decides spawn / preempt / defer for a fix-pr task that
 // arrived while currentTask is running.
 function handleFixPRInterrupt(msg, hub) {
-  if (parallelFixes.has(msg.task_id) || deferredFixes.some(d => d.task.task_id === msg.task_id)
-    || (preemptingFix && preemptingFix.task_id === msg.task_id)) {
-    console.log(`Ignoring duplicate fix-pr ${sanitizeHubText(msg.task_id)} — already handling it`);
+  const where = fixPRRunningWhere(msg.task_id);
+  if (where) {
+    console.log(`Ignoring duplicate fix-pr ${sanitizeHubText(msg.task_id)} — already running it ${where}`);
     return;
   }
   noteTaskAttemptStart(hub, msg);
@@ -10016,6 +10029,10 @@ function handleMessage(data, hub) {
         handleFixPRInterrupt(msg, hub);
         break;
       }
+      if (msg.kind === FIX_PR_KIND && fixPRRunningWhere(msg.task_id)) {
+        console.log(`Ignoring duplicate fix-pr ${sanitizeHubText(msg.task_id)} — already running it ${fixPRRunningWhere(msg.task_id)}`);
+        break;
+      }
       if (currentTask) {
         console.log(`Rejecting task ${taskDisplay(msg)} from ${hub.url} — already working on ${taskDisplay(currentTask)}`);
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Already has active task' });
@@ -10108,6 +10125,7 @@ function handleMessage(data, hub) {
       writeRelayStatus();
       activeHubIndex = hubs.indexOf(hub);
       console.log(`Task assigned: ${sanitizeHubText(msg.kind)} ${sanitizeHubText(taskDisplay(msg))} — ${sanitizeHubText(msg.title)} (from ${hub.url})`);
+      if (msg.kind === FIX_PR_KIND) console.log(`fix-pr ${fixPRLabel(msg)}: running as the primary task (no task was running)`);
       if (msg.github_token) {
         injectGhToken(msg.github_token);
         tokenExpiresAt = msg.token_expires_at ? new Date(msg.token_expires_at).getTime() : null;
@@ -10871,6 +10889,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     FIX_PR_DONE_MARKER,
     FIX_PR_FAILED_MARKER,
     fixPRState,
+    fixPRRunningWhere,
     scanPaneForFixMarkers,
     relaySupportsParallelFixes,
     blockingPromptKey,

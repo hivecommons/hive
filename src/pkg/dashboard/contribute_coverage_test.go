@@ -603,7 +603,7 @@ func TestRoleCoverage_FixTaskDispatchEndsNoWorkRun(t *testing.T) {
 	relay.mu.Unlock()
 	hub.sendFixTask(relay, "alice", &fixqueue.Dispatch{ID: "fix-1", Mode: fixqueue.ModeBoundary, Items: []fixqueue.Item{
 		{Repo: "myorg/repo1", Number: 7, URL: "https://github.com/myorg/repo1/pull/7", Title: "red PR"},
-	}})
+	}}, true)
 	if got := coverageAt(hub, relay, later); !reflect.DeepEqual(got, scannerAlice) {
 		t.Fatalf("relay working a fix task: RoleCoverage = %+v, want %+v", got, scannerAlice)
 	}

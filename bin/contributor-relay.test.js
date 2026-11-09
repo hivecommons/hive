@@ -15600,6 +15600,58 @@ test('#12436 headless primary: a preempt fix is deferred and runs before the nex
   } finally { console.log = log; teardown(relay); }
 });
 
+// hivecommons/hive#17385 (2026-11-09): the hub delivered one boundary fix-pr
+// task twice. The relay started the first copy as its primary task and the
+// second in a parallel fix session, so the same fix ran in two places.
+test('#17385 a fix-pr task_id delivered twice runs once, as the primary task', () => {
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_MAX_PARALLEL_FIXES: '1', HIVE_CONTRIBUTOR_QUOTA_GUARD: 'off' }, execFileResult: { defer: true } });
+  const log = console.log;
+  const lines = [];
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    const hub = relay.getHubs()[0];
+    const sent = [];
+    hub.ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+    relay.setCurrentTask(null);
+    const boundary = FIX_PR_TASK('fix-danathar-1', { priority: 'queued', mode: 'boundary' });
+    relay.handleMessage(JSON.stringify(boundary), hub);
+    assert.strictEqual(relay.getCurrentTask() && relay.getCurrentTask().task_id, 'fix-danathar-1', 'the first copy becomes the primary task');
+    const spawnsBefore = relay.__execFileCalls.length;
+    relay.handleMessage(JSON.stringify(boundary), hub);
+    assert.deepStrictEqual(relay.fixPRState().parallel, [], 'the second copy must not start a parallel fix session');
+    assert.strictEqual(relay.__execFileCalls.length, spawnsBefore, 'no parallel child spawned for the duplicate');
+    assert.strictEqual(relay.getCurrentTask().task_id, 'fix-danathar-1');
+    assert.strictEqual(sent.filter(m => m.type === 'task_accepted' && m.task_id === 'fix-danathar-1').length, 1, `accepted once: ${JSON.stringify(sent)}`);
+    assert.ok(!sent.some(m => m.type === 'task_failed' && m.task_id === 'fix-danathar-1'), 'the duplicate is ignored, not failed back');
+    assert.ok(lines.some(l => /running as the primary task/.test(l)), `log names the path taken: ${lines.join('\n')}`);
+    assert.ok(lines.some(l => /Ignoring duplicate fix-pr fix-danathar-1 — already running it as the primary task/.test(l)), lines.join('\n'));
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#17385 a fix-pr task_id already in a parallel session is not also started as the primary task', () => {
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_MAX_PARALLEL_FIXES: '1', HIVE_CONTRIBUTOR_QUOTA_GUARD: 'off' }, execFileResult: { defer: true } });
+  const log = console.log;
+  const lines = [];
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    const hub = relay.getHubs()[0];
+    const sent = [];
+    hub.ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+    relay.setCurrentTask({ task_id: 't-primary', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 1, title: 'primary' });
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-r')), hub);
+    assert.deepStrictEqual(relay.fixPRState().parallel, ['fix-r']);
+    // The primary ends while the fix still runs; the same task arrives again.
+    relay.setCurrentTask(null);
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-r')), hub);
+    assert.strictEqual(relay.getCurrentTask(), null, 'the duplicate must not become the primary task');
+    assert.deepStrictEqual(relay.fixPRState().parallel, ['fix-r']);
+    assert.strictEqual(sent.filter(m => m.type === 'task_accepted' && m.task_id === 'fix-r').length, 1, JSON.stringify(sent));
+    assert.ok(lines.some(l => /Ignoring duplicate fix-pr fix-r — already running it in a parallel fix session/.test(l)), lines.join('\n'));
+    assert.strictEqual(relay.fixPRRunningWhere('fix-r'), 'in a parallel fix session');
+    assert.strictEqual(relay.fixPRRunningWhere('other'), null);
+  } finally { console.log = log; teardown(relay); }
+});
+
 (async () => {
   for (const [name, fn] of only ? tests.filter(([n]) => n.includes(only)) : tests) {
     try {

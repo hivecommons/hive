@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -236,6 +237,9 @@ func TestRepoItemReroutePickupLapseFallsBackToAdoptNow(t *testing.T) {
 	srv, store := takeoverServer(t, mock)
 	hub := srv.contributeHub
 	hub.fixDispatched = func(_ *ContributorConnection, _ WSMessage) {}
+	// org/other#1 is a fixture the GitHub mock does not serve: report it
+	// open so the dispatch check keeps it.
+	hub.fixPRStateHook = func(context.Context, string, int) (fixPRState, string, error) { return fixPRStateOpen, "", nil }
 	// bee2 is online but already holds a task: the reroute queues behind it.
 	c := fixConn(hub, "bee2", fixCaps(capFixPRInterrupt), time.Now())
 	c.mu.Lock()

@@ -2,11 +2,15 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/fixqueue"
+	"github.com/hivecommons/hive/pkg/forgestate"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
 )
 
@@ -55,6 +59,25 @@ const (
 	// leaves the fix queue and the stage engine's re-nudge / adoption path
 	// takes over.
 	fixTaskMaxAttempts = 3
+
+	// fixPRStateRESTCaller tags the one PR read a fix dispatch may make
+	// when the state cache cannot answer.
+	fixPRStateRESTCaller = "hive:contribute_fix_dispatch"
+	// fixPRStateTimeout bounds that read.
+	fixPRStateTimeout = 10 * time.Second
+)
+
+// fixPRState is what the hub knows about a queued PR right before it is
+// handed to a relay.
+type fixPRState int
+
+const (
+	// fixPRStateUnchecked: no GitHub client or no owner/name to read (a
+	// hub built without one, as in unit tests); dispatch as before.
+	fixPRStateUnchecked fixPRState = iota
+	fixPRStateOpen
+	// fixPRStateGone: merged, closed or deleted; the fix is dropped.
+	fixPRStateGone
 )
 
 // WSFixPR is one red PR inside a fix-pr task_assign.
@@ -285,13 +308,10 @@ func (h *ContributeWSHub) Nudge(_ context.Context, n automerge.ContributorNudge)
 		return out
 	}
 	item := fixqueue.Item{
-		Repo: n.Display, Number: n.Number, HeadSHA: n.HeadSHA, Title: n.Title, URL: n.URL,
+		Repo: nudgeFixRepo(n), Number: n.Number, HeadSHA: n.HeadSHA, Title: n.Title, URL: n.URL,
 		OpenedAt: n.OpenedAt, HumanChangesRequested: n.HumanChangesRequested,
 		Cause:   fixqueue.Cause{Check: firstOf(n.FailingChecks), Signature: n.Reason},
 		Summary: strings.Join(append(append([]string(nil), n.FailingChecks...), n.ReviewAsks...), "; "),
-	}
-	if item.Repo == "" {
-		item.Repo = n.Owner + "/" + n.Repo
 	}
 	sched := h.fixQueue()
 	sched.Enqueue(author, item)
@@ -309,9 +329,29 @@ func (h *ContributeWSHub) Nudge(_ context.Context, n automerge.ContributorNudge)
 			}
 		}
 	}
+	if _, held := h.FixWorkFor(author, item.Repo, item.Number); !held {
+		// The dispatch check found the PR merged or closed and dropped it.
+		out.Mode = string(fixqueue.ModeComment)
+	}
 	st := sched.Status(author, fixqueue.Capacity{Max: 1})
 	out.QueueDepth = st.Queued
 	return out
+}
+
+// nudgeFixRepo is the owner/name a nudged PR is queued under. Resolve keys
+// on owner/name, and the relay records the fix task's repo as the one it
+// is authorized for, so the queue never takes the bare configured name the
+// nudge's Display carries on a hive whose repos are listed without the org
+// (that spelling left a merged PR in the queue: Resolve could not find it).
+func nudgeFixRepo(n automerge.ContributorNudge) string {
+	owner, repo := strings.TrimSpace(n.Owner), strings.TrimSpace(n.Repo)
+	if owner != "" && repo != "" {
+		return owner + "/" + repo
+	}
+	if display := strings.TrimSpace(n.Display); display != "" {
+		return display
+	}
+	return owner + "/" + repo
 }
 
 // Resolve implements automerge.ContributorNudgeSink: the PR left stage 072.
@@ -375,6 +415,13 @@ func (h *ContributeWSHub) forgetFixOwner(user, key string) {
 // asked for its next task (nothing running); the first dispatched message is
 // returned so the caller can reply with it instead of an issue.
 func (h *ContributeWSHub) dispatchFixes(user string, conns []*ContributorConnection, boundary bool) *WSMessage {
+	msg, _ := h.dispatchFixesHeld(user, conns, boundary)
+	return msg
+}
+
+// dispatchFixesHeld is dispatchFixes that also reports whether dispatch
+// stopped because a queued PR's state could not be read (dropClosedFixes).
+func (h *ContributeWSHub) dispatchFixesHeld(user string, conns []*ContributorConnection, boundary bool) (*WSMessage, bool) {
 	var target *ContributorConnection
 	var targetPong time.Time
 	for _, c := range conns {
@@ -389,12 +436,26 @@ func (h *ContributeWSHub) dispatchFixes(user string, conns []*ContributorConnect
 		}
 	}
 	if target == nil {
-		return nil
+		return nil, false
 	}
 	sched := h.fixQueue()
 	cap := h.fixCapacity(target)
 	var first *WSMessage
+	held := false
 	for {
+		next := sched.Next(user, cap, boundary)
+		if len(next) == 0 {
+			break
+		}
+		dropped, hold := h.dropClosedFixes(user, next)
+		if hold {
+			held = true
+			break
+		}
+		if dropped {
+			// The queue changed under the preview: look again.
+			continue
+		}
 		var d *fixqueue.Dispatch
 		if boundary {
 			d = sched.DispatchAtBoundary(user, cap)
@@ -404,7 +465,11 @@ func (h *ContributeWSHub) dispatchFixes(user string, conns []*ContributorConnect
 		if d == nil {
 			break
 		}
-		msg := h.sendFixTask(target, user, d)
+		// At a boundary the `ready` handler ships the returned message
+		// itself; pushing it here as well delivered the same task twice,
+		// and the relay ran it both as its primary task and in a parallel
+		// fix session.
+		msg := h.sendFixTask(target, user, d, !boundary)
 		if first == nil {
 			first = &msg
 		}
@@ -413,11 +478,91 @@ func (h *ContributeWSHub) dispatchFixes(user string, conns []*ContributorConnect
 			break
 		}
 	}
-	return first
+	return first, held
 }
 
-// sendFixTask builds and pushes the fix-pr task_assign for d.
-func (h *ContributeWSHub) sendFixTask(c *ContributorConnection, user string, d *fixqueue.Dispatch) WSMessage {
+// dropClosedFixes checks the PRs about to be dispatched to user. A PR that
+// merged or closed since it was queued leaves the queue (logged), so no
+// relay is sent to rework it. hold is true when a PR's state could not be
+// read: no fix is dispatched this tick (the relay gets ordinary work at a
+// boundary, see selectFixTask), and the next one asks again.
+func (h *ContributeWSHub) dropClosedFixes(user string, items []fixqueue.Item) (dropped, hold bool) {
+	sched := h.fixQueue()
+	for _, it := range items {
+		state, reason, err := h.fixPRStateOf(context.Background(), it.Repo, it.Number)
+		if err != nil {
+			h.logger.Warn("[contribute-ws] fix queue: could not read the PR's state; holding the dispatch", "username", user, "pr", it.Key(), "error", err)
+			return dropped, true
+		}
+		if state != fixPRStateGone {
+			continue
+		}
+		sched.Remove(user, it.Repo, it.Number)
+		h.forgetFixOwner(user, it.Key())
+		h.logger.Info("[contribute-ws] fix queue: dropped a PR that is no longer open", "username", user, "pr", it.Key(), "state", reason, "head", shortSHA(it.HeadSHA))
+		dropped = true
+	}
+	return dropped, false
+}
+
+// fixPRStateOf answers whether repo#number is still open, from the state
+// cache when it holds the repo (a cached copy inside its freshness bound
+// costs nothing; an older one is re-read once), else with one PR read.
+// reason says "merged" or "closed" for a gone PR. A read that fails is an
+// error, never "open".
+func (h *ContributeWSHub) fixPRStateOf(ctx context.Context, repo string, number int) (fixPRState, string, error) {
+	if h.fixPRStateHook != nil {
+		return h.fixPRStateHook(ctx, repo, number)
+	}
+	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		return fixPRStateUnchecked, "", nil
+	}
+	owner, name, ok := strings.Cut(strings.TrimSpace(repo), "/")
+	if !ok || owner == "" || name == "" || number <= 0 {
+		return fixPRStateUnchecked, "", nil
+	}
+	client := h.server.deps.GHClient
+	ctx, cancel := context.WithTimeout(github.WithRESTCaller(ctx, fixPRStateRESTCaller), fixPRStateTimeout)
+	defer cancel()
+	if view := client.ForgeStateView(); view != nil {
+		if _, held := view.Snapshot(repo); held {
+			_, open, err := view.ReadThrough(ctx, repo, forgestate.KindPR, number, 0)
+			switch {
+			case err == nil && open:
+				return fixPRStateOpen, "", nil
+			case err == nil:
+				// The cache holds open PRs only: absent after a fresh read
+				// means merged, closed or deleted.
+				return fixPRStateGone, "merged or closed", nil
+			case !errors.Is(err, forgestate.ErrStale) && !errors.Is(err, forgestate.ErrNotReady) && !errors.Is(err, forgestate.ErrUnknownRepo):
+				return fixPRStateUnchecked, "", err
+			}
+			// A stale or not-yet-ready cache made no call: read the PR below.
+		}
+	}
+	gh := client.GoGitHub()
+	if gh == nil {
+		return fixPRStateUnchecked, "", nil
+	}
+	pr, resp, err := gh.PullRequests.Get(ctx, owner, name, number)
+	if err != nil {
+		if resp != nil && resp.Response != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone) {
+			return fixPRStateGone, "not found", nil
+		}
+		return fixPRStateUnchecked, "", err
+	}
+	switch {
+	case pr.GetMerged() || !pr.GetMergedAt().Time.IsZero():
+		return fixPRStateGone, "merged", nil
+	case !strings.EqualFold(pr.GetState(), "open"):
+		return fixPRStateGone, "closed", nil
+	}
+	return fixPRStateOpen, "", nil
+}
+
+// sendFixTask builds the fix-pr task_assign for d and, when push is true,
+// sends it on c (a boundary dispatch is sent by the `ready` handler).
+func (h *ContributeWSHub) sendFixTask(c *ContributorConnection, user string, d *fixqueue.Dispatch, push bool) WSMessage {
 	prs := make([]WSFixPR, 0, len(d.Items))
 	for _, it := range d.Items {
 		pr := WSFixPR{Repo: it.Repo, Number: it.Number, URL: it.URL, HeadSHA: it.HeadSHA, Title: it.Title, Reason: it.Cause.Signature,
@@ -461,7 +606,7 @@ func (h *ContributeWSHub) sendFixTask(c *ContributorConnection, user string, d *
 	if h.fixDispatched != nil {
 		h.fixDispatched(c, msg)
 	}
-	if c.ws != nil {
+	if push && c.ws != nil {
 		if err := c.send(msg); err != nil {
 			h.logger.Warn("[contribute-ws] fix-pr task send failed", "username", user, "task", d.ID, "error", err)
 		}
@@ -481,10 +626,23 @@ func (h *ContributeWSHub) selectFixTask(c *ContributorConnection) *WSMessage {
 	if !sched.Pending(user) {
 		return nil
 	}
-	if msg := h.dispatchFixes(user, []*ContributorConnection{c}, true); msg != nil {
+	msg, held := h.dispatchFixesHeld(user, []*ContributorConnection{c}, true)
+	if msg != nil {
 		return msg
 	}
-	// Fixes are queued but every slot is busy: no new work until one finishes.
+	if !sched.Pending(user) {
+		// Every queued fix was for a PR that has since merged or closed.
+		return nil
+	}
+	if held {
+		// A queued PR's state could not be read this tick (GitHub trouble or
+		// a low API budget). The fix stays queued and is tried again on the
+		// next ready; meanwhile the relay takes ordinary work rather than
+		// sitting idle. The worst case is a fix that starts a little late.
+		return nil
+	}
+	// Fixes are queued but every slot is busy: no new work until one
+	// finishes.
 	return h.taskUnavailable(taskUnavailableFixInFlight)
 }
 
