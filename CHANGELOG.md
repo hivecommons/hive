@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-09 (v5.207.4)
+
+### Changed
+
+- Contributor nudge: CI-failure nudges are keyed on the failing-check set, not the lane's reason prefix — the same set on a new head or a check joining the set on the same head edits the PR's one `hive:contributor-nudge` comment (no relay re-dispatch for the same head), and a changed set within `governor.labels.stage.contributor_nudge.ci_failure_cooldown` (default 6h) folds into it instead of counting as a fresh nudge. The ledger persists in the stage-label store across restarts.
+- activity monitor: sentinel alerts and `hold`-class labels are gates, not stages — a PR's column now follows its real progress (CI, Review, Merge queue) and the gate rides along as an amber **Held · sentinel · confirm intent** / **Held · hold** pill with the route reason in its tooltip and the decision popover, instead of pinning every such PR at `stage/085-needs-decision`; the gate stays a hard merge stop (lanes and the dashboard's human-merge shortcuts refuse on the label itself, never on the stage) and the 090 entry comment says "Held: …" (hivecommons/hive#17327).
+
 ## 2026-11-09 (v5.207.3)
 
 ### Fixed
