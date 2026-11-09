@@ -16,7 +16,7 @@ import (
 // they sit on the global providers, which are OTel's delegating no-ops until a
 // host registers an SDK provider, so recording costs nothing by default.
 //
-// Attributes are bounded: the HTTP method, the mux route pattern (for example
+// Attributes are bounded: the HTTP method (standard set, else _OTHER), the mux route pattern (for example
 // "GET /v1/agents/{name}", never the concrete path or an agent name; routeUnmatched
 // when no route matched) and the status class. Never a path, token or body.
 const (
@@ -30,6 +30,8 @@ const (
 	statusClass2xx = "2xx"
 	statusClass4xx = "4xx"
 	statusClass5xx = "5xx"
+
+	methodOther = "_OTHER"
 )
 
 var (
@@ -100,6 +102,19 @@ func statusClass(status int) string {
 	}
 }
 
+// boundedMethod maps a client-supplied method onto the standard set, and
+// everything else onto _OTHER, as OTel HTTP semconv does for
+// http.request.method.
+func boundedMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodOptions, http.MethodConnect, http.MethodTrace:
+		return method
+	default:
+		return methodOther
+	}
+}
+
 // instrument records one request's span, duration and count around next. It
 // wraps the mux itself so the matched pattern is known once next returns.
 func instrument(next http.Handler) http.Handler {
@@ -124,7 +139,7 @@ func instrument(next http.Handler) http.Handler {
 			route = routeUnmatched
 		}
 		attrs := []attribute.KeyValue{
-			attrMethod.String(r.Method),
+			attrMethod.String(boundedMethod(r.Method)),
 			attrRoute.String(route),
 			attrStatusClass.String(statusClass(status)),
 		}
