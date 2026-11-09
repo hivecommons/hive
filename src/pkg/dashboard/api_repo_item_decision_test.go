@@ -450,3 +450,19 @@ func TestRepoItemDecisionWordingNeverSaysSweep(t *testing.T) {
 		}
 	}
 }
+
+// A Prow rejection of the relayed commands must not read as "approved"
+// (hivecommons/hive#17475).
+func TestRepoItemApproveResultSurfacesProwRejection(t *testing.T) {
+	out := &RowActionResult{}
+	repoItemApproveResult(out, 17359, repoItemApproveFacts{User: "alice", ProwRejected: true})
+	if strings.HasPrefix(out.Outcome, "Approved #") || !strings.Contains(out.Outcome, "recorded in hive") {
+		t.Fatalf("outcome = %q, want the hive-only approval wording", out.Outcome)
+	}
+	if got := strings.Join(out.Posted, "\n"); !strings.Contains(got, "Prow rejected") || strings.Contains(got, "`/lgtm` posted") {
+		t.Fatalf("posted = %q, want Prow's rejection named", got)
+	}
+	if !strings.Contains(out.Next, "OWNERS reviewer") {
+		t.Fatalf("next = %q, want the OWNERS note", out.Next)
+	}
+}
