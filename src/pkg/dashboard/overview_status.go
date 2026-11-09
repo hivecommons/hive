@@ -90,10 +90,21 @@ func parkedIssueLinkedPRs(repo FrontendRepo, repoName string, number int) []gith
 // number, or 0. A reference found only in the text (Refs, a mention) does
 // not count: it does not close the issue on merge.
 func hiveClosingPRFor(repo FrontendRepo, repoName string, number int) int {
+	return closingPRFor(repo, repoName, number, true)
+}
+
+// openClosingPRFor is hiveClosingPRFor for a pull request by any author: the
+// first open or held pull request of repo whose GitHub closing references
+// name issue number, or 0.
+func openClosingPRFor(repo FrontendRepo, repoName string, number int) int {
+	return closingPRFor(repo, repoName, number, false)
+}
+
+func closingPRFor(repo FrontendRepo, repoName string, number int, hiveOnly bool) int {
 	for _, rows := range [][]any{repo.OpenPrs, repo.HeldPrs} {
 		for _, raw := range rows {
 			entry, ok := frontendPullRequest(raw)
-			if !ok || !entry.pr.AppAuthored {
+			if !ok || (hiveOnly && !entry.pr.AppAuthored) {
 				continue
 			}
 			for _, closes := range entry.pr.LinkedIssues {
