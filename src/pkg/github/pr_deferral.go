@@ -40,11 +40,20 @@ const prDeferralReasonMax = 300
 // prDeferralSentence matches a sentence or line that opens with
 // "Deferring"/"Deferred" (after markdown and an optional "Status:" or
 // "Update:" label), up to its closing punctuation; a dot inside a token
-// ("docs/a.md") does not end it. A PR deferral is the conclusion of a
-// diagnosis, so it usually closes the comment ("… a maintainer may also
-// close it now. Deferring.") rather than opening it, unlike an issue
-// deferral (commentDeferral), which only looks at how the comment starts.
-var prDeferralSentence = regexp.MustCompile(`(?im)(?:^|[.!?][ \t]+)[^\w\n]*(?:(?:status|update)\s*:[^\w\n]*)?(deferr(?:ed|ing)\b(?:[^.!?\n]|[.!?][^\s.!?])*[.!?]?)`)
+// ("docs/a.md") does not end it. The verb must defer the PR itself: it
+// stands alone ("Deferring."), is followed by punctuation ("Deferring: …",
+// "Deferring (…)") or takes the PR or a wait as its object ("Deferring this
+// PR", "Deferred until …", "Deferred to #N"). "Deferred the flaky-test
+// cleanup to #12." in a fixer's status note defers something else. A PR
+// deferral is the conclusion of a diagnosis, so it usually closes the
+// comment ("… a maintainer may also close it now. Deferring.") rather than
+// opening it, unlike an issue deferral (commentDeferral), which only looks
+// at how the comment starts.
+var prDeferralSentence = regexp.MustCompile(`(?im)(?:^|[.!?][ \t]+)[^\w\n]*(?:(?:status|update)\s*:[^\w\n]*)?` +
+	`(deferr(?:ed|ing)(?:` +
+	`(?:[ \t]+(?:this|it|the[ \t]+(?:PR|pull[ \t]+request)|until|pending|to|for[ \t]+now|in[ \t]+favou?r[ \t]+of)\b|[ \t]*[^\w\s.!?])` +
+	`(?:[^.!?\n]|[.!?][^\s.!?])*[.!?]?` +
+	`|[.!?]|[ \t]*$))`)
 
 // prDeferralCloseOK matches a deferral that says a person may close the PR
 // now ("a maintainer may also close it now", "safe to close").

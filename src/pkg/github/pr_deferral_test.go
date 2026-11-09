@@ -42,6 +42,9 @@ func TestParsePRDeferral(t *testing.T) {
 		{"start-now overrides the deferral", "Deferred earlier; no longer blocked, working on it now.", false, "", nil, false},
 		{"a progress note is not a deferral", "Pushed a fix for the compile check; see #17345.", false, "", nil, false},
 		{"deferred mid-sentence is not a deferral", "The bump was not deferred by the compiler guard.", false, "", nil, false},
+		{"a fixer's note deferring something else is not a PR deferral", "Fix pushed. Deferred the follow-up to #12. Re-running CI.", false, "", nil, false},
+		{"a mid-comment deferral of the PR to a successor", "Rebased onto v5. Deferred to #17345, which supersedes this.", true,
+			"Deferred to #17345, which supersedes this.", []string{"#17345"}, false},
 		{"html entities, anchors and word-adjacent hashes are not references", "Deferring: blocked upstream &#123; see docs/a.md#L12, x#5 and #7.", true,
 			"Deferring: blocked upstream &#123; see docs/a.md#L12, x#5 and #7.", []string{"#7"}, false},
 	} {

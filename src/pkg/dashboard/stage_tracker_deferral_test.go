@@ -116,12 +116,14 @@ func TestStageTrackerDeferralPrecedence(t *testing.T) {
 	if it.CodeActivity.State != codeStateDeferred || it.Remediation != nil {
 		t.Fatalf("earlier kick yields to the deferral: %s %+v", it.CodeActivity.State, it.Remediation)
 	}
-	// The deferring agent's own comment (or a later note) is not pickup.
-	status := &StatusPayload{Agents: []FrontendAgent{{Name: "scanner", Busy: "working", LastAction: &FrontendAgentLastAction{Repo: "org/repo", Number: 7, Action: github.AuditActionAgentCommentCreated, Current: true, At: now.Add(-time.Minute).Format(time.RFC3339Nano)}}}}
-	it = deferredRedPR(now)
-	stageTrackerApplyRemediation(it, review.DispatchState{}, status, "scanner", now)
-	if it.CodeActivity.State != codeStateDeferred {
-		t.Fatalf("an agent comment on a deferred head is not pickup: %s", it.CodeActivity.State)
+	// The deferring agent's own comment or label (or a later note) is not pickup.
+	for _, action := range []string{github.AuditActionAgentCommentCreated, github.AuditActionAgentLabelApplied} {
+		status := &StatusPayload{Agents: []FrontendAgent{{Name: "scanner", Busy: "working", LastAction: &FrontendAgentLastAction{Repo: "org/repo", Number: 7, Action: action, Current: true, At: now.Add(-time.Minute).Format(time.RFC3339Nano)}}}}
+		it = deferredRedPR(now)
+		stageTrackerApplyRemediation(it, review.DispatchState{}, status, "scanner", now)
+		if it.CodeActivity.State != codeStateDeferred {
+			t.Fatalf("%s on a deferred head is not pickup: %s", action, it.CodeActivity.State)
+		}
 	}
 	// A claim after the deferral is pickup.
 	it = deferredRedPR(now)

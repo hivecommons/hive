@@ -136,7 +136,8 @@ func remediationFromFixDispatch(it *StageTrackerItem, dispatch review.DispatchSt
 
 // remediationFromAgentNow: a working hive agent whose current action is on
 // this PR and landed after the red signal. Review actions are the review
-// swarm's, not a fix; on a deferred head (deferred) neither is a comment.
+// swarm's, not a fix; on a deferred head (deferred) neither is a comment or
+// a label, which the deferring run itself posts.
 func remediationFromAgentNow(it *StageTrackerItem, status *StatusPayload, redSince, now time.Time, deferred bool) *StageTrackerRemediation {
 	if status == nil {
 		return nil
@@ -146,7 +147,7 @@ func remediationFromAgentNow(it *StageTrackerItem, status *StatusPayload, redSin
 		action := worker.LastAction
 		if worker.Busy != "working" || worker.Paused || action == nil || !action.Current || !agentCausedAuditActions[action.Action] ||
 			action.Action == github.AuditActionPRReviewed || action.Action == github.AuditActionAgentReviewRequested ||
-			(deferred && action.Action == github.AuditActionAgentCommentCreated) ||
+			(deferred && (action.Action == github.AuditActionAgentCommentCreated || action.Action == github.AuditActionAgentLabelApplied)) ||
 			action.Number != it.Number || !strings.EqualFold(qualify(action.Repo), it.Repo) {
 			continue
 		}
