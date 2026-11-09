@@ -177,6 +177,13 @@ without triggering the catch-all (`failClosedStatus500`, `pkg/fleetreport/slogfe
 The PR is retried next tick; other errors on those log lines and HTTP 500s
 elsewhere remain reportable.
 
+The queued, self-authored, trusted-author and contributor-lane automerge sweeps
+also skip reporting when `reason=base-refresh:merge-guard` accompanies
+`destination merge already in progress` (`automergeMergeGuardSkip`,
+`pkg/fleetreport/slogfeed/slogfeed.go`, hivecommons/hive#17400). This is expected
+contention with an in-flight destination merge, retried next tick. The warning
+stays in local logs; other skip reasons and errors remain reportable.
+
 The generic feed also skips the exact `review pending expired` message: it
 records the review planner's bounded retry, and a burst across unrelated PRs
 must not become a repeated-error report. The original expiry log and its
