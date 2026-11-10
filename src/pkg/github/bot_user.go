@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 // botUserLookupTimeout bounds the one-off bot user lookup behind
@@ -137,4 +139,26 @@ func (c *Client) cachedSelfLogin() string {
 	c.selfLoginMu.Lock()
 	defer c.selfLoginMu.Unlock()
 	return c.selfLogin
+}
+
+// learnSelfLogin records the author of a comment this client just created.
+// GitHub answers a create with the comment, so its author is the account the
+// client's token posts as: known even for an App installation token, which
+// cannot call GET /user, and even when the configured identity names a
+// different App slug. Without it, a hive posting under an unconfigured login
+// never recognised its own once-only markers and answered the same comment on
+// every sweep.
+func (c *Client) learnSelfLogin(created *gh.IssueComment) {
+	if c == nil || created == nil {
+		return
+	}
+	login := strings.TrimSpace(created.GetUser().GetLogin())
+	if login == "" {
+		return
+	}
+	c.selfLoginMu.Lock()
+	defer c.selfLoginMu.Unlock()
+	if c.selfLogin == "" {
+		c.selfLogin = login
+	}
 }
