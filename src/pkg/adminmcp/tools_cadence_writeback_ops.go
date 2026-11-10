@@ -653,7 +653,7 @@ func (writebackKindPolicyOp) PreviewWithProvider(ctx context.Context, args map[s
 	}
 
 	var changes []settingChange
-	var widen, narrow, changed, dashboardLossy []string
+	var widen, narrow, changed []string
 	for _, kind := range named {
 		cur, present := st.Kinds[kind]
 		next, err := applyWritebackKindChange(kind, cur, present, req[kind])
@@ -719,15 +719,11 @@ func (writebackKindPolicyOp) PreviewWithProvider(ctx context.Context, args map[s
 	var kept []string
 	for k, ov := range after {
 		kindsBody[k] = writebackKindOverrideBody(ov)
-		if ov.UnlabeledMinLevel != nil || ov.OwnOnly != nil {
-			dashboardLossy = append(dashboardLossy, k)
-		}
 		if _, isNamed := req[k]; !isNamed {
 			kept = append(kept, k)
 		}
 	}
 	sort.Strings(kept)
-	sort.Strings(dashboardLossy)
 
 	effects := make([]string, 0, len(changes)+5)
 	for _, c := range changes {
@@ -741,9 +737,6 @@ func (writebackKindPolicyOp) PreviewWithProvider(ctx context.Context, args map[s
 		"Hive saves it through Settings → Features (PUT /api/config/governor/features, writebackKinds), records a config_governor_features audit entry, and the write-back gate applies it from its next decision, with no restart. That endpoint replaces the whole override map, so this write sends every override with the change merged in. "+keptNote,
 		"The effective policy shown ignores writeback.unsolicited.min_level, which when set still raises every kind's level, and writeback.per_repo, which still sets each repository's mode.",
 	)
-	if len(dashboardLossy) > 0 {
-		effects = append(effects, "Settings → Features' write-back kind table edits only min_level and require_label, and saving an edit there rewrites every kind's override from that table: it would drop unlabeled_min_level and own_only from "+strings.Join(dashboardLossy, ", ")+". Change those through this operation or hive.yaml.")
-	}
 	effects = append(effects, "This write itself posts, labels, closes and merges nothing.")
 
 	narrowNote := ""
