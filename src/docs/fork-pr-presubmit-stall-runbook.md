@@ -22,6 +22,8 @@ gh pr view <n> --repo <org>/<repo> --comments | grep -i -E "tide|not mergeable|r
 
 ## 2. Start the presubmits
 
+The contributor lane now posts `/ok-to-test` itself, once per head, on a fork PR it admitted whose author is not an org member or collaborator ([#17474](https://github.com/hivecommons/hive/issues/17474); see [hive-merge.md](hive-merge.md)). This step is needed only when that did not help: the PR carries the hive's `needs-human` note saying Prow rejected the App (`Cannot trigger testing until a trusted user`), or the lane did not admit the PR.
+
 A human with write access comments on the PR. This is Prow's `/ok-to-test` (trigger plugin, shows as Tide `Jobs X, Y have not succeeded`), not the same-repo `hive-ok-to-test` GitHub Actions workflow (shows as `workflow-approval-required:<ctx>`; see [github-app-setup.md](github-app-setup.md)), which never covers fork heads:
 
 ```text
@@ -43,8 +45,10 @@ ask that owner to comment `/approve`.
 
 ## 4. Permanent fixes (not done by this runbook)
 
-- Post `/ok-to-test` once when the hive opens or pushes to a fork PR for a
-  non-member agent, or add contributor agents to the Prow trusted org or team.
+- Done in #17474: the contributor lane posts `/ok-to-test` once per head on an
+  admitted non-member fork PR. Making the hive App (or contributor agents) a
+  Prow trusted user remains a Prow configuration choice; until then Prow
+  rejects the App's command and step 2 applies.
 - Relay `/lgtm` and `/approve` with the approving human's token, or add the
   hive App to `OWNERS`; surface Prow's rejection reply on the board instead of
   showing "approved".

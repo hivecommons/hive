@@ -995,8 +995,8 @@ const (
 )
 
 // stageTrackerRegistryAuthorKind overlays the contributor-hub registry on
-// an inferred author kind, mirroring pkg/authorkind rule 6 (RelayKnown →
-// Clanker) so the tracker row and its claimant agree with the stage
+// an inferred author kind, mirroring pkg/authorkind's registry rule
+// (RelayKnown → Clanker) so the tracker row and its claimant agree with the stage
 // engine's own classification (hivecommons/hive#16015). An author/<kind>
 // label and a hive (App-authored) verdict are stronger and stand; a
 // registered contributor's login otherwise reads clanker, source registry.
