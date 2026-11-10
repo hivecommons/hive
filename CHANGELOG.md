@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.3)
+
+### Fixed
+
+- The knowledge advisor_llm endpoint is now path-aware: an endpoint already ending in `/chat/completions` is used as-is and a `/v1` base gets `/chat/completions`, so the Copilot chat API (`https://api.githubcopilot.com/chat/completions`) works without a `?_=` query hack. Bare-host endpoints behave as before.
+
 ## 2026-11-09 (v5.211.2)
 
 ### Changed
