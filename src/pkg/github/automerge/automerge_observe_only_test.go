@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,7 +124,9 @@ func TestObserveOnlyPassStagesAutoMergeOffRepoWithoutWrites(t *testing.T) {
 				BasePreparation:      NewBasePreparationStore(""),
 				RepoAutoMergeEnabled: func(string) bool { return false },
 				RepoAutoMergeSwitchedOff: func(repo string) bool {
-					return tc.acmmAllowed && repo == "acme/widget"
+					// The lanes pass the transport's display name (here
+					// the short "widget"); config.RepoPolicyFor accepts both.
+					return tc.acmmAllowed && (strings.EqualFold(repo, "widget") || strings.EqualFold(repo, "acme/widget"))
 				},
 				TrustedAuthorPolicy: func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true} },
 				TrustedAuthorizer: func(login, requireRole string) TrustedAuthorDecision {
