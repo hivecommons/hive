@@ -18,7 +18,6 @@
     // words come from the hive's sentinel (possible security override,
     // privilege escalation or codebase damage), so a maintainer reads the
     // security reason before the row's "needs human".
-    const STAGE_TRACKER_SENTINEL_WORD = 'Sentinel alert · needs human';
     const STAGE_TRACKER_SENTINEL_CHIP = 'sentinel';
     const STAGE_TRACKER_SENTINEL_TIP = 'Sentinel flagged security-relevant changes';
     const STAGE_TRACKER_SENTINEL_TIP_FALLBACK = 'possible security override, privilege escalation or codebase damage — a maintainer must review before merge';

@@ -73,6 +73,8 @@ func TestOperatorActionFromBody(t *testing.T) {
 		{"hold", `{}`, operatorActionRequest{}, false},
 		{"accept-triage", ``, operatorActionRequest{Action: operatorActionAcceptTriage}, true},
 		{"send-to-human", `{"reason":"needs a human eye"}`, operatorActionRequest{Action: operatorActionMarkNeedsHuman, Note: "needs a human eye"}, true},
+		{"sentinel-confirm", `{"comment":" reviewed the diff "}`, operatorActionRequest{Action: operatorActionConfirmSentinel, Note: "reviewed the diff"}, true},
+		{"sentinel-confirm", ``, operatorActionRequest{Action: operatorActionConfirmSentinel}, true},
 		{"labels", `{}`, operatorActionRequest{}, false},
 	}
 	for _, c := range cases {

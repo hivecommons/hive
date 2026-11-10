@@ -316,7 +316,6 @@
        status token the sentinel pill on the repo card already uses. */
     .ham-badge-sentinel { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-badge-sentinel.ham-sentinel-notice { color: var(--status-info); border-color: color-mix(in srgb, var(--status-info) 55%, transparent); }
-    .ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }
     /* 072 adoption chip (maintainer-policy, hive PR 14524): "waiting on @author (maintainer, offline 26h) — adopt?" */
     .ham-badge-adoption { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
     /* "supersedes N": the closed original a live PR replaced (hive PR 15135 follow-up). Muted — a trace, not a call to act. */
@@ -476,12 +475,10 @@
     .ham-seg.active.ham-open-hold { background: var(--yellow); color: var(--surface-0); }
     /* A 090 row a sentinel alert or hold label gates (hivecommons/hive#17327):
        the Merge queue cell wears the pill amber — held, not queued, not red. */
-    .ham-seg.active.ham-held { background: var(--amber); color: var(--surface-0); }
-    .ham-seg.active.ham-held .ham-detour::before { content: '⏸'; margin-right: var(--sp-1); }
     /* A 085 PR a person acts on lights its real stage — the CI / Review
        track — and that track wears an amber marker; the gate itself is the
        needs-human pill beside the row (hivecommons/hive#17453). */
-    .ham-seg.ham-activity-track.active.ham-human-gated { outline: var(--focus-ring-width) solid var(--amber); outline-offset: calc(-1 * var(--focus-ring-width)); }
+    .ham-seg.active.ham-human-gated { outline: var(--focus-ring-width) solid var(--amber); outline-offset: calc(-1 * var(--focus-ring-width)); }
     .ham-seg.active.ham-open-hold .ham-seg-t::before { content: '⏸'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-blocked { background: var(--yellow); color: var(--surface-0); }
     .ham-seg.active.ham-open-blocked .ham-seg-t::before { content: '⛔'; margin-right: var(--sp-1); }
@@ -981,6 +978,28 @@
     /* Busy (Let hive decide gathering its preview) also sets aria-disabled, so this
        compound rule sits after the disabled one and wins: the working colour, not faint/dashed. */
     .ham-lead-act[aria-busy="true"][aria-disabled="true"] { cursor: progress; opacity: 1; border-style: solid; border-color: var(--cue-work); background: color-mix(in srgb, var(--cue-work) 10%, transparent); color: var(--cue-work); }
+    /* One human-gate control per gated row: a segmented pill whose left
+       segment names the reasons (👤 Needs human · review, sentinel) and whose
+       right segments are the verbs those reasons determine. Replaces the
+       scattered sentinel chip + Approve + Let hive decide + needs-human pill. */
+    .ham-human-gate { display: inline-flex; align-items: stretch; max-width: 100%; border: var(--line-width) solid color-mix(in srgb, var(--amber) 60%, var(--line-subtle)); border-radius: var(--r-pill); background: color-mix(in srgb, var(--amber) 8%, var(--panel)); font-size: var(--fs-xs); line-height: 1.5; vertical-align: middle; }
+    .ham-human-gate > .ham-gate-status { display: inline-flex; align-items: center; gap: var(--sp-1); min-width: 0; padding: 0 var(--sp-2) 0 var(--sp-3); border: 0; border-radius: var(--r-pill) 0 0 var(--r-pill); background: transparent; color: var(--amber); font: inherit; font-weight: var(--fw-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ham-human-gate > .ham-gate-status > .ham-mod-word { overflow: hidden; text-overflow: ellipsis; }
+    .ham-human-gate > button.ham-gate-status { cursor: pointer; }
+    .ham-human-gate > button.ham-gate-status:hover, .ham-human-gate > button.ham-gate-status:focus-visible { text-decoration: underline; outline: none; }
+    .ham-human-gate > .ham-gate-act { border-radius: 0; border-top: 0; border-bottom: 0; border-right: 0; border-left-color: color-mix(in srgb, var(--amber) 35%, transparent); margin: 0; }
+    .ham-human-gate > .ham-gate-act.ham-act-secondary, .ham-human-gate > .ham-gate-more { --ham-act-fill: transparent; --ham-act-ink: var(--text); }
+    .ham-human-gate > .ham-gate-act:last-child, .ham-human-gate > .ham-gate-more:last-child { border-radius: 0 var(--r-pill) var(--r-pill) 0; }
+    .ham-human-gate > .ham-gate-act:hover, .ham-human-gate > .ham-gate-act:focus-visible { box-shadow: none; background: color-mix(in srgb, var(--amber) 22%, transparent); filter: none; }
+    .ham-human-gate > .ham-gate-act.ham-act-primary:hover, .ham-human-gate > .ham-gate-act.ham-act-primary:focus-visible { filter: brightness(1.12); }
+    .ham-human-gate > .ham-gate-more { padding-inline: var(--sp-2); }
+    .ham-human-gate > .ham-gate-more::after { content: none; }
+    .ham-human-gate > .ham-gate-more[aria-expanded="true"] { background: color-mix(in srgb, var(--amber) 22%, transparent); }
+    .ham-human-gate.ham-gate-settling { opacity: 0.75; border-style: dashed; }
+    .ham-human-gate.ham-gate-settling > .ham-gate-status { color: var(--cue-work); }
+    .ham-gate-menu[hidden] { display: none; }
+    /* The passive "decision pending on #N" chip is a link to the primary row. */
+    .ham-decision-pending[data-ham-scroll-to] { text-decoration: underline dotted; text-underline-offset: var(--sp-1); }
     /* The technical background folds behind one collapsed Details. */
     .ham-decision-details { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-decision-details > summary { cursor: pointer; color: var(--text-faint); }
@@ -1008,6 +1027,8 @@
       /* Stacked head: the ask pill is its person icon alone (#17453). */
       .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-ask > .ham-mod-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
       .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-ask > .ham-mod-ico { margin-right: 0; }
+      .ham-head-cols .ham-human-gate > .ham-gate-status > .ham-mod-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      .ham-head-cols .ham-human-gate > .ham-gate-status { position: relative; padding-right: var(--sp-2); }
       .ham-row .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-row .ham-seg.cap { flex-basis: 2em; }
       .ham-since { width: 3em; }
@@ -1240,6 +1261,10 @@
          one-line box so a card row stays under the #17161 height budget; the
          hit area is padded out to the tap target like .ham-pill (#17453). */
       #activity-monitor-section .ham-badge-mod.ham-decision-trigger { position: relative; }
+      /* Gate segments keep the one-line pill; each segment pads its hit area
+         out to the tap target so the phone harness sees ≥44×44. */
+      #activity-monitor-section .ham-human-gate > .ham-gate-act, #activity-monitor-section .ham-human-gate > .ham-gate-more, #activity-monitor-section .ham-human-gate > button.ham-gate-status { position: relative; min-width: var(--tap-target); min-height: 0; padding-block: var(--sp-2); }
+      #activity-monitor-section .ham-human-gate > .ham-gate-act::before, #activity-monitor-section .ham-human-gate > .ham-gate-more::before, #activity-monitor-section .ham-human-gate > button.ham-gate-status::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) 0; }
       #activity-monitor-section .ham-badge-mod.ham-decision-trigger::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) calc((100% - var(--tap-target)) / 2); }
       /* A card keeps its two-line head and its density (#17161): the 🗒
          shows on a phone only once the item has notes; the row's ⋯ menu

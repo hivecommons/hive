@@ -64,11 +64,15 @@ assert.strictEqual(stageTrackerNeedsHumanWord(pr480), 'Needs human · edits CI w
 assert.strictEqual(stageTrackerNeedsHumanShort({ stage: 85, stage_actor: { kind: 'human', why: 'a human decision is owed — the reviewer asked for a design note. Then more.' } }), 'the reviewer asked for a design note');
 assert.strictEqual(stageTrackerNeedsHumanWord({ stage: 85, modifiers: ['needs-decision'] }), '');
 
-// rationguard#480: the 085 chevron names the reason, not a bare "Needs human decision".
+// rationguard#480: "Needs human" is never a chevron word (hivecommons/hive#17470):
+// the 085 chevron reads its real column and the reason rides in the one
+// human-gate pill, whose hover is the question itself.
 let row = stageTrackerRowHtml(pr480, stages, ctx);
-assert.ok(text(strip(row)).includes('Needs human · edits CI workflows'), 'the 085 caption carries the short reason: ' + text(strip(row)));
 const detour = (/<span class="ham-detour(?: ham-has-holder)?">([^<]*)</.exec(strip(row)) || [])[1];
-assert.strictEqual(detour, 'Needs human · edits CI workflows', 'the visible chevron word, not "Needs human decision"');
+assert.strictEqual(detour, 'Merge queue', 'the visible chevron word is the column, not "Needs human …"');
+assert.ok(!text(strip(row).split('<p class="ham-current-stage">')[0].replace(/<span [^>]*class="config-tooltip[^"]*"[^>]*>[\s\S]*?<\/span>/g, '')).includes('Needs human'), text(strip(row)));
+assert.strictEqual((row.match(/class="ham-human-gate"/g) || []).length, 1, 'one gate control: ' + row);
+assert.ok(row.includes('Needs human · decision') && row.includes('it edits CI workflow files'), 'the gate names the reason and hovers the question: ' + row);
 
 // rationguard#431: "blocked" only because its PR waits at 085 reads "decision on #480".
 row = stageTrackerRowHtml(issue431, stages, ctx);
