@@ -71,7 +71,12 @@ func TestStageTrackerDeferredReadsDeferredWaitingOnSuccessor(t *testing.T) {
 	if ca.URL != "https://github.com/org/repo/issues/17345" || ca.Actor != "scanner" || ca.Since == nil || !ca.Since.Equal(now.Add(-20*time.Minute)) {
 		t.Fatalf("the successor is linked and the deferral dated: url=%q actor=%q since=%v", ca.URL, ca.Actor, ca.Since)
 	}
-	for _, want := range []string{deferralReason[:len(deferralReason)-1], "Waiting on #17345, #17344.", "a new head clears it", "may close it now", "Changes requested"} {
+	// The tooltip leads with the why: the reason's first sentence (hivecommons/hive#17500).
+	firstSentence := deferralReason[:strings.Index(deferralReason, ". Deferring.")+1]
+	if !strings.HasPrefix(ca.Detail, firstSentence+" scanner deferred head ") {
+		t.Fatalf("detail must lead with the reason: %q", ca.Detail)
+	}
+	for _, want := range []string{"Waiting on #17345, #17344.", "a new head clears it", "may close it now", "Changes requested"} {
 		if !strings.Contains(ca.Detail, want) {
 			t.Fatalf("detail misses %q: %q", want, ca.Detail)
 		}
@@ -96,6 +101,47 @@ func TestStageTrackerDeferredWithoutSuccessorsNamesWhoDeferred(t *testing.T) {
 	}
 	if it.Deferral == nil || it.Deferral.CloseOK {
 		t.Fatalf("close is offered only when the deferral says so: %+v", it.Deferral)
+	}
+}
+
+// hivecommons/hive#17500: hive#17471 read "Deferred · by scanner" while its
+// only red check was the fleet-wide `mutation` incident #17463. The relay's
+// incident pair makes the row say so, link the incident and promise the
+// lift; the successor list (which also names #17463) does not lead.
+func TestStageTrackerDeferredToSharedCIIncidentReadsWaitingOnSharedCI(t *testing.T) {
+	now := time.Date(2026, 11, 10, 1, 30, 0, 0, time.UTC)
+	reason := "No PR-side repair; deferring until that incident closes."
+	detail := "repo=org/repo, number=7, head=abc1234def, successors=#17463, close_ok=false, url=https://github.com/org/repo/pull/7#issuecomment-9, incident=17463, reason=" + reason + ", agent=scanner, backend=copilot"
+	entries := []AuditEntry{{Timestamp: now.Add(-20 * time.Minute).Format(time.RFC3339), Action: github.AuditActionAgentPRDeferred, Agent: "scanner", Repo: "org/repo", Target: 7, Detail: detail}}
+	it := deferredRedPR(now, entries...)
+	it.CIActivity = &StageTrackerActivity{Head: it.Head, State: "failing", ChecksFailing: []string{"mutation"}, Since: it.CIActivity.Since}
+	if it.Deferral == nil || it.Deferral.Incident != 17463 || it.Deferral.IncidentURL != "https://github.com/org/repo/issues/17463" {
+		t.Fatalf("incident pair read and linked: %+v", it.Deferral)
+	}
+	stageTrackerApplyRemediation(it, review.DispatchState{}, nil, "scanner", now)
+	ca := it.CodeActivity
+	if ca.State != codeStateDeferred || ca.Caption != "Waiting on shared CI · #17463" || ca.URL != "https://github.com/org/repo/issues/17463" {
+		t.Fatalf("shared-CI word: state=%s caption=%q url=%q", ca.State, ca.Caption, ca.URL)
+	}
+	if !strings.HasPrefix(ca.Detail, "`mutation` is failing fleet-wide; tracked in #17463. Lifts automatically when that issue closes. scanner deferred head abc1234 at ") || !strings.Contains(ca.Detail, reason) {
+		t.Fatalf("detail: %q", ca.Detail)
+	}
+	if it.Caption != ca.Caption {
+		t.Fatalf("070 caption follows the code word: %q", it.Caption)
+	}
+}
+
+func TestStageTrackerFirstSentence(t *testing.T) {
+	cases := map[string]string{
+		"Deferring.": "Deferring.",
+		"Deferring this PR (dependabot-authored). Waiting on #9.": "Deferring this PR (dependabot-authored).",
+		"See docs/a.md for why; deferring until #17463. closes":   "See docs/a.md for why; deferring until #17463.",
+		"no punctuation at all":                                   "no punctuation at all.",
+	}
+	for in, want := range cases {
+		if got := stageTrackerFirstSentence(in); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
 	}
 }
 
