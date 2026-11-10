@@ -102,6 +102,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 	c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
 	verdict := c.contributorLaneVerdictFor(owner+"/"+repo, number, evaluatedHeadSHA)
+	// Trusted-bot lane: the swarm verdict is advisory (safety is the repo's
+	// CI), so a requires_human on a dependency bump never derives 085.
+	verdict = c.trustedBotLaneVerdict(displayRepo, number, evaluatedHeadSHA, lane, verdict)
 	c.noteStageVerdict(owner, repo, number, verdict)
 	priorApprover, _ := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, evaluatedHeadSHA, verdict)
 	priorChecked := verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true})
@@ -150,7 +153,8 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, reason, nil
 	}
 	headPushedAt := c.headPushedAt(ctx, owner, repo, number, evaluatedHeadSHA, pr)
-	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, evaluatedHeadSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
+	ciState, _, err := c.commitCIForPRSkipping(ctx, owner, repo, baseBranch, evaluatedHeadSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx), nil)
+	green, reason := ciState.Green, ciState.Reason
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
 	}
@@ -166,6 +170,18 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		green, reason, err = c.recheckSkippedByDesign(ctx, displayRepo, owner, repo, baseBranch, pr, number, evaluatedHeadSHA, headPushedAt, reason)
 		if err != nil {
 			return AutoMergeSweepEvent{}, reason, err
+		}
+	}
+	if !green {
+		// auto_merge.required_checks may name a check this repo never runs
+		// (automerge_trusted_bot_lane.go): gate on the checks that do report,
+		// or surface the absent check by name.
+		green, reason, err = c.recheckRequiredCheckNeverReported(ctx, displayRepo, owner, repo, baseBranch, pr, number, evaluatedHeadSHA, headPushedAt, ciState, reason)
+		if err != nil {
+			return AutoMergeSweepEvent{}, reason, err
+		}
+		if strings.HasPrefix(reason, requiredCheckNeverReportedPrefix) {
+			return AutoMergeSweepEvent{}, reason, nil
 		}
 	}
 	if !green {

@@ -157,6 +157,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// TrustedBotAuthors is the FULL desired list; an empty (non-nil) list
 		// disables the trusted-bot lane, absent leaves it untouched.
 		TrustedBotAuthors []string `json:"trusted_bot_authors"`
+		// TrustedBotSkipReview is auto_merge.trusted_bot_skip_review: the
+		// review swarm's verdict is advisory on the trusted-bot lane.
+		TrustedBotSkipReview *bool `json:"trusted_bot_skip_review"`
 		// BotTakeoverEnabled is auto_merge.bot_takeover.enabled; flat so the
 		// dialog's plain toggle can stage it.
 		BotTakeoverEnabled *bool `json:"bot_takeover_enabled"`
@@ -319,6 +322,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.TrustedBotAuthors != nil {
 		cfg.AutoMerge.TrustedBotAuthors = normalizeBotLoginList(body.TrustedBotAuthors)
 	}
+	if body.TrustedBotSkipReview != nil {
+		v := *body.TrustedBotSkipReview
+		cfg.AutoMerge.TrustedBotSkipReview = &v
+	}
 	if body.BotTakeoverEnabled != nil {
 		v := *body.BotTakeoverEnabled
 		cfg.AutoMerge.BotTakeover.Enabled = &v
@@ -453,6 +460,7 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"no_ci_ok":                     noCIOK,
 		"trusted_bot_authors":          trustedBots,
 		"trusted_bot_authors_set":      am.TrustedBotAuthors != nil,
+		"trusted_bot_skip_review":      am.TrustedBotSkipsReview(),
 		"bot_takeover_enabled":         am.BotTakeover.IsEnabled(),
 		"require_current_base_default": am.CurrentBaseDefaultEnabled(),
 		"require_current_base":         emptyIfNilStrings(am.RequireCurrentBase),

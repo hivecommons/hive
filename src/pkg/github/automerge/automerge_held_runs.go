@@ -589,7 +589,7 @@ func headOlderThan(now func() time.Time, headPushedAt time.Time, grace time.Dura
 // isTerminalRequiredCheckHold reports whether reason is a hold polling cannot
 // cure (held for approval, runs never created, or never-ran after a nudge).
 func isTerminalRequiredCheckHold(reason string) bool {
-	return strings.HasPrefix(reason, workflowApprovalRequiredPrefix) || strings.HasPrefix(reason, requiredCheckNeverStartedPrefix) || strings.HasPrefix(reason, requiredCheckNeverRanPrefix)
+	return strings.HasPrefix(reason, workflowApprovalRequiredPrefix) || strings.HasPrefix(reason, requiredCheckNeverStartedPrefix) || strings.HasPrefix(reason, requiredCheckNeverRanPrefix) || strings.HasPrefix(reason, requiredCheckNeverReportedPrefix)
 }
 
 // isAutofixPushedDependabotHead reports whether pr is a trusted-lane

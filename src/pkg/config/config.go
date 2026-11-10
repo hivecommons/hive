@@ -8591,6 +8591,14 @@ type AutoMergeConfig struct {
 	// (`trusted_bot_authors: []`) disables the lane. Matched case-insensitively
 	// by exact login, e.g. "dependabot[bot]".
 	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
+	// TrustedBotSkipReview makes the review swarm's verdict advisory for PRs
+	// authored by a TrustedBotAuthors login. The trusted-bot lane's contract
+	// is "safety is established by CI": a dependency bump a reviewer routed
+	// to requires_human must not park at "needs a person" when its required
+	// checks are green. nil/unset means true; set false to let a
+	// requires_human / changes_requested swarm verdict hold trusted-bot PRs
+	// exactly like the App's own.
+	TrustedBotSkipReview *bool `yaml:"trusted_bot_skip_review,omitempty" json:"trusted_bot_skip_review,omitempty"`
 	// BotTakeover lets the sweep re-author a trusted `github-actions[bot]` PR
 	// whose required `pull_request` checks can never run because the bot
 	// opened it with a workflow GITHUB_TOKEN (#12003). The App pushes the
@@ -9160,6 +9168,13 @@ func (a AutoMergeConfig) TrustedBotAuthorSet() map[string]bool {
 		set[login] = true
 	}
 	return set
+}
+
+// TrustedBotSkipsReview reports whether the review swarm's verdict is
+// advisory for trusted-bot lane PRs (auto_merge.trusted_bot_skip_review,
+// default true).
+func (a AutoMergeConfig) TrustedBotSkipsReview() bool {
+	return a.TrustedBotSkipReview == nil || *a.TrustedBotSkipReview
 }
 
 func (t TrustedAuthorAutoMergeConfig) EffectiveRequireRole() string {

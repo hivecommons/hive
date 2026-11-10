@@ -202,6 +202,9 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				c.reconcileNativeQueueGate(ctx, stageLaneSelf, owner, repoName, pr, reason)
 				c.recordStage(stageLaneSelf, repo, owner, repoName, pr, reason, merged, err)
 			}
+			// tier names the lane on every skip/hold line so an operator can
+			// grep a trusted bot's PR by `"tier":"trusted-bot"`.
+			tier := c.selfAuthoredSweepTier(pr)
 			if _, held := train.duplicateOf(number); held {
 				result.Skipped++
 				repoSkipped++
@@ -224,7 +227,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				continue
 			}
 			if reason, handled := c.mergeTrainFront(ctx, train, pr); handled {
-				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[autoMergeReasonMergeTrainRebasing]++
@@ -282,9 +285,9 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			}
 			if reason := c.detectTrustedRegistryClankerWorkflowApprovalRequired(ctx, repo, owner, repoName, pr); reason != "" {
 				if isTerminalRequiredCheckHold(reason) {
-					c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason)
+					c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason, "tier", tier)
 				} else {
-					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				}
 				result.Skipped++
 				repoSkipped++
@@ -293,7 +296,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				continue
 			}
 			if reason := c.prefilterSelfAuthoredPR(pr); reason != "" {
-				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++
@@ -323,10 +326,10 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			if reason != "" {
 				if isTerminalRequiredCheckHold(reason) || isPermanentMergeRefusal(reason) {
 					if c.markTerminalHoldLogged(owner, repoName, number, pr.GetHead().GetSHA(), reason) {
-						c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason)
+						c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason, "tier", tier)
 					}
 				} else {
-					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				}
 				result.Skipped++
 				repoSkipped++
