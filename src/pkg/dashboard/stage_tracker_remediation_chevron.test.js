@@ -127,6 +127,20 @@ test('deferred: PR in progress is plain amber and still, names the successor, an
   assert.match(pr, /Close now is on the row/);
 });
 
+// hivecommons/hive#17500: a deferral to a shared-CI incident says so in the
+// word, links the incident, and the tooltip promises the lift.
+test('deferred to a shared-CI incident: the word is Waiting on shared CI with the incident linked', () => {
+  const item = redPR({ display_column: 30,
+    deferral: { head: 'abc1234def', actor: 'scanner', successors: ['#17463'], incident: 17463, incident_url: 'https://github.com/org/repo/issues/17463' },
+    code_activity: { head: 'abc1234def', state: 'deferred', caption: 'Waiting on shared CI · #17463', actor: 'scanner', source: 'hive-deferral', since: '2026-11-10T01:13:00Z', url: 'https://github.com/org/repo/issues/17463',
+      detail: '`mutation` is failing fleet-wide; tracked in #17463. Lifts automatically when that issue closes. scanner deferred head abc1234 at 2026-11-10T01:13:00Z.' } });
+  const pr = cells(item)[3];
+  assert.match(pr, /ham-remediation-deferred/);
+  assert.match(pr, /Waiting on shared CI · <a class="ham-incident-link" href="https:\/\/github\.com\/org\/repo\/issues\/17463"[^>]*>#17463<\/a>/);
+  assert.doesNotMatch(pr, /Deferred · by/);
+  assert.match(pr, /Lifts automatically when that issue closes/);
+});
+
 test('a red PR with a stale code head renders no remediation attributes', () => {
   const item = redPR({ display_column: 30, code_activity: { head: 'older', state: 'unassigned', caption: 'Unassigned · next: scanner' } });
   const html = renderStrip(item, stages, null, now, {});

@@ -33,7 +33,7 @@ func TestStageTrackerActivityRequiredCI(t *testing.T) {
 				Head: "head", Source: "github-check-runs", ObservedAt: &now, RequiredKnown: tc.known, Required: []string{"build"}, StatusesKnown: true,
 				RequiredSource: "protection", RequiredChecks: []github.PRRequiredCheck{{Name: "build", AppKnown: true}},
 				Checks: []github.PRActivityCheck{{Name: "build", State: tc.state, Conclusion: tc.conclusion},
-					{Name: "tide", State: "queued"}, {Name: "optional", State: "completed", Conclusion: "failure"}},
+					{Name: "lint", State: "queued"}, {Name: "optional", State: "completed", Conclusion: "failure"}},
 			}}
 			got := stageTrackerCIActivity(pr, now)
 			if got.State != tc.want || got.Active != (tc.want == "running" || tc.want == "queued") {
@@ -739,4 +739,56 @@ func TestTrackerAggregateSignOffOnly(t *testing.T) {
 			t.Errorf("%s: wrongly recognised as sign-off only", name)
 		}
 	}
+}
+
+func TestStageTrackerActivityCIExcludesMergeGateContexts(t *testing.T) {
+	now := time.Date(2026, 11, 9, 18, 0, 0, 0, time.UTC)
+	green := func(name string) github.PRActivityCheck {
+		return github.PRActivityCheck{Name: name, State: "completed", Conclusion: "success"}
+	}
+	build := func(gate string, gateState string, extra ...github.PRActivityCheck) github.PullRequest {
+		required := []string{"build", "test", gate}
+		bindings := []github.PRRequiredCheck{{Name: "build", AppKnown: true}, {Name: "test", AppKnown: true}, {Name: gate, AppKnown: true}}
+		checks := append([]github.PRActivityCheck{green("build"), green("test"), {Name: gate, State: gateState, Kind: "commit_status"}}, extra...)
+		return github.PullRequest{HeadSHA: "head", CIActivity: &github.PRCIActivity{
+			Head: "head", Source: "github-check-runs", ObservedAt: &now, RequiredKnown: true, Required: required,
+			RequiredSource: "protection", RequiredChecks: bindings, Checks: checks, StatusesKnown: true,
+		}}
+	}
+	for _, gate := range []string{"tide", "dco", "DCO"} {
+		t.Run(gate+" pending is not a test", func(t *testing.T) {
+			pr := build(gate, "pending")
+			got := stageTrackerCIActivity(pr, now)
+			if got.State != "passing" || got.Active || got.ChecksTotal != 2 || got.ChecksPassed != 2 || len(got.ChecksPending) != 0 {
+				t.Fatalf("%s counted toward CI: %+v", gate, got)
+			}
+			if got.Caption != "CI green · all 2 required checks passed" {
+				t.Fatalf("caption = %q", got.Caption)
+			}
+			// The caller's activity keeps the gate for merge eligibility.
+			if len(pr.CIActivity.Required) != 3 || len(pr.CIActivity.Checks) != 3 {
+				t.Fatalf("activity mutated: %+v", pr.CIActivity)
+			}
+		})
+	}
+	t.Run("real pending check still counts", func(t *testing.T) {
+		pr := build("tide", "pending", github.PRActivityCheck{Name: "lint", State: "in_progress"})
+		pr.CIActivity.Required = append(pr.CIActivity.Required, "lint")
+		pr.CIActivity.RequiredChecks = append(pr.CIActivity.RequiredChecks, github.PRRequiredCheck{Name: "lint", AppKnown: true})
+		got := stageTrackerCIActivity(pr, now)
+		if got.State != "running" || !got.Active || got.ChecksTotal != 3 || got.ChecksPassed != 2 {
+			t.Fatalf("real check dropped: %+v", got)
+		}
+		if got.Caption != "CI running · 'lint' pending" {
+			t.Fatalf("caption = %q", got.Caption)
+		}
+	})
+	t.Run("required set unknown", func(t *testing.T) {
+		pr := github.PullRequest{HeadSHA: "head", CIActivity: &github.PRCIActivity{Head: "head", Source: "github-check-runs", ObservedAt: &now,
+			Checks: []github.PRActivityCheck{green("build"), {Name: "tide", State: "pending", Kind: "commit_status"}}}}
+		got := stageTrackerCIActivity(pr, now)
+		if got.State != "unknown" || got.Active || got.ChecksTotal != 1 || got.ChecksPassed != 1 || len(got.ChecksPending) != 0 {
+			t.Fatalf("tide counted on head without required set: %+v", got)
+		}
+	})
 }

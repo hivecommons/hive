@@ -32,6 +32,11 @@ const (
 	PRDeferralPairCloseOK    = "close_ok"
 	PRDeferralPairURL        = "url"
 	PRDeferralPairReason     = "reason"
+	// PRDeferralPairIncident is the [shared-ci] incident issue the deferral
+	// waits on (`<!-- hive-shared-ci-<n> -->` in the comment), when any. The
+	// dashboard reads it as "Waiting on shared CI · #N"; absent, the
+	// deferral is the agent's own decision (hivecommons/hive#17500).
+	PRDeferralPairIncident = "incident"
 )
 
 // prDeferralReasonMax bounds the reason carried in the audit detail.
@@ -40,7 +45,9 @@ const prDeferralReasonMax = 300
 // prDeferralSentence matches a sentence or line that opens with
 // "Deferring"/"Deferred" (after markdown and an optional "Status:" or
 // "Update:" label), up to its closing punctuation; a dot inside a token
-// ("docs/a.md") does not end it. The verb must defer the PR itself: it
+// ("docs/a.md") does not end it. A semicolon opens a sentence too: the
+// scanner's shared-CI deferral reads "No PR-side repair; deferring until
+// that incident closes." (hivecommons/hive#17500). The verb must defer the PR itself: it
 // stands alone ("Deferring."), is followed by punctuation ("Deferring: …",
 // "Deferring (…)") or takes the PR or a wait as its object ("Deferring this
 // PR", "Deferred until …", "Deferred to #N"). "Deferred the flaky-test
@@ -49,7 +56,7 @@ const prDeferralReasonMax = 300
 // comment ("… a maintainer may also close it now. Deferring.") rather than
 // opening it, unlike an issue deferral (commentDeferral), which only looks
 // at how the comment starts.
-var prDeferralSentence = regexp.MustCompile(`(?im)(?:^|[.!?][ \t]+)[^\w\n]*(?:(?:status|update)\s*:[^\w\n]*)?` +
+var prDeferralSentence = regexp.MustCompile(`(?im)(?:^|[.!?;][ \t]+)[^\w\n]*(?:(?:status|update)\s*:[^\w\n]*)?` +
 	`(deferr(?:ed|ing)(?:` +
 	`(?:[ \t]+(?:this|it|the[ \t]+(?:PR|pull[ \t]+request)|until|pending|to|for[ \t]+now|in[ \t]+favou?r[ \t]+of)\b|[ \t]*[^\w\s.!?])` +
 	`(?:[^.!?\n]|[.!?][^\s.!?])*[.!?]?` +
@@ -83,6 +90,9 @@ type prDeferral struct {
 	Reason     string
 	Successors []string
 	CloseOK    bool
+	// Incident is the shared-CI incident issue number the comment's
+	// `<!-- hive-shared-ci-<n> -->` marker names; 0 when none.
+	Incident int
 }
 
 // parsePRDeferral reports whether body, a hive agent's comment on repo's
@@ -115,6 +125,7 @@ func parsePRDeferral(body, repo string, number int) (prDeferral, bool) {
 		Reason:     prDeferralTrim(reason),
 		Successors: prDeferralRefs(note, repo, number),
 		CloseOK:    prDeferralCloseOK.MatchString(note),
+		Incident:   newestSharedCIMarker([]string{body}),
 	}, true
 }
 
@@ -162,13 +173,16 @@ var prDeferralPairBoundary = regexp.MustCompile(`, ([a-z_]+)=`)
 // boundary inside the reason is written as "; <key>=" and the reason stays
 // one value.
 func (d prDeferral) auditPairs(head, url string) []string {
-	return []string{
+	pairs := []string{
 		PRDeferralPairHead, head,
 		PRDeferralPairSuccessors, strings.Join(d.Successors, " "),
 		PRDeferralPairCloseOK, strconv.FormatBool(d.CloseOK),
 		PRDeferralPairURL, url,
-		PRDeferralPairReason, prDeferralPairBoundary.ReplaceAllString(d.Reason, "; $1="),
 	}
+	if d.Incident > 0 {
+		pairs = append(pairs, PRDeferralPairIncident, strconv.Itoa(d.Incident))
+	}
+	return append(pairs, PRDeferralPairReason, prDeferralPairBoundary.ReplaceAllString(d.Reason, "; $1="))
 }
 
 // recordPRDeferral audits a relayed comment that defers an open pull

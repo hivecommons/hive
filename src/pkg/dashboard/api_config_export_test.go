@@ -207,3 +207,54 @@ func TestConfigExportFilenameHeader(t *testing.T) {
 		t.Fatalf("Content-Disposition = %q, want %q", got, want)
 	}
 }
+
+// TestConfigExportReportsPersistedPath pins #17468: on a hosted spoke
+// /etc/hive/hive.yaml is a link into the PVC, and the export must name the
+// persisted file — not the emptyDir path — so operators edit the right one.
+func TestConfigExportReportsPersistedPath(t *testing.T) {
+	srv, dir := configExportFixture(t)
+	runtimePath := filepath.Join(dir, "hive.yaml.runtime")
+	oldRuntime := config.RuntimeConfigFile
+	config.RuntimeConfigFile = runtimePath
+	t.Cleanup(func() { config.RuntimeConfigFile = oldRuntime })
+
+	linkDir := filepath.Join(dir, "etc-hive")
+	if err := os.MkdirAll(linkDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(linkDir, "hive.yaml")
+	if err := os.Symlink(runtimePath, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	srv.deps.Config.SourcePath = linkPath
+
+	export := func() map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/config/export", nil)
+		markOwnerRequest(req)
+		rec := httptest.NewRecorder()
+		srv.handleConfigExport(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		return decodeConfigExport(t, rec)["metadata"].(map[string]any)
+	}
+
+	if err := os.WriteFile(runtimePath, []byte("acmm_level: 3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := export()["persisted_path"]; got != runtimePath {
+		t.Fatalf("persisted_path = %v, want the PVC runtime config %s", got, runtimePath)
+	}
+
+	// No runtime config (a bare binary on a host): the loaded file is the
+	// only copy, so it is the persisted path.
+	if err := os.Remove(runtimePath); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(dir, "hive.yaml")
+	srv.deps.Config.SourcePath = plain
+	if got := export()["persisted_path"]; got != plain {
+		t.Fatalf("persisted_path = %v, want the loaded config %s when no runtime config exists", got, plain)
+	}
+}
