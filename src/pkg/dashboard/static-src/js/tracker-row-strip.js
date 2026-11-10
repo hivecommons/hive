@@ -1022,7 +1022,11 @@
       // of a native tooltip.
       // A hive-set hold is a decision too (release or keep): its pill opens the same popover.
       const decision = (mods[0] === 'needs-human' || mods[0] === 'needs-decision' || decisionPR || (holdPill && item.hold && item.hold.by === 'hive')) && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
-      if (decision) return sentinel + stageTrackerDecisionTriggerHtml(decision, inner, tip, 'ham-badge ham-badge-mod ' + cls);
+      // The ask pill wears the person icon; in the stacked head layout the
+      // words fold into the icon so a nested PR's title keeps its line and
+      // the popover / hover still carry the question (hivecommons/hive#17453).
+      const askIco = askable && typeof stageTrackerIcon === 'function' ? stageTrackerIcon('human', 'ham-ico ham-mod-ico') : '';
+      if (decision) return sentinel + stageTrackerDecisionTriggerHtml(decision, askIco ? askIco + `<span class="ham-mod-word">${inner}</span>` : inner, tip, 'ham-badge ham-badge-mod ' + cls + (askIco ? ' ham-mod-ask' : ''));
       // No popover to open (the ask is the issue's own while a covering
       // PR drives the strip): the pill is a button that reveals the row's
       // "Needs human: …" note line and carries the full reason as its hover.

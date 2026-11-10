@@ -156,6 +156,8 @@ func TestStageTrackerHoldProvenanceJS(t *testing.T) {
 		jsFunc(t, html, "stageTrackerDecisionOf"),
 		jsFunc(t, html, "stageTrackerHoldPill"),
 		jsFunc(t, html, "stageTrackerHoldTip"),
+		jsConstBlock(t, html, "STAGE_TRACKER_ICONS"),
+		jsFunc(t, html, "stageTrackerIcon"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
 		stageTrackerManualMergeJS(t, html),
 	}, "\n")+`
@@ -194,6 +196,7 @@ const running = { repo: 'hivecommons/hive', kind: 'pr', number: 17442, stage: 85
   review_activity: { head: 'c0ffee1', state: 'human_decision', perspectives_done: 5, perspectives_total: 5 } };
 const rpill = stageTrackerChipsHtml(running);
 assert.ok(rpill.includes('ham-mod-needs-decision') && rpill.includes('>needs human decision<'), rpill);
+assert.ok(rpill.includes('ham-mod-ask') && rpill.includes('ham-mod-ico') && rpill.includes('<span class="ham-mod-word">needs human decision</span>'), 'the ask pill wears the person icon with its words foldable: ' + rpill);
 assert.ok(rpill.includes('ham-decision-trigger') && rpill.includes('data-ham-decision="hivecommons/hive/pr#17442"'), rpill);
 assert.ok(!rpill.includes('+1'), 'one pill, not duplicated: ' + rpill);
 // The server already carrying the modifier adds nothing twice.

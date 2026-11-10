@@ -141,6 +141,8 @@
        human decision" mid-pill grows a nested-PR row by a text line and a
        landscape phone loses its second row (hivecommons/hive#17453). */
     .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-needs-decision { white-space: nowrap; }
+    .ham-badge-mod.ham-mod-ask { position: relative; }
+    .ham-badge-mod .ham-mod-ico { vertical-align: text-bottom; margin-right: var(--sp-1); }
     .ham-head-cols .ham-badge { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
     .ham-head-main { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: var(--sp-3); min-width: 0; }
     .ham-head-main > .ham-badge { flex: 0 1 auto; }
@@ -993,6 +995,9 @@
       .ham-head-cols .ham-strip > .ham-seg { grid-column: 1 / -1; grid-row: auto; padding: 0; }
       .ham-head-cols .ham-head-lead:empty { display: none; }
       .ham-head-cols > .ham-since { display: none; }
+      /* Stacked head: the ask pill is its person icon alone (#17453). */
+      .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-ask > .ham-mod-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-ask > .ham-mod-ico { margin-right: 0; }
       .ham-row .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-row .ham-seg.cap { flex-basis: 2em; }
       .ham-since { width: 3em; }
@@ -1225,7 +1230,7 @@
          one-line box so a card row stays under the #17161 height budget; the
          hit area is padded out to the tap target like .ham-pill (#17453). */
       #activity-monitor-section .ham-badge-mod.ham-decision-trigger { position: relative; }
-      #activity-monitor-section .ham-badge-mod.ham-decision-trigger::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) 0; }
+      #activity-monitor-section .ham-badge-mod.ham-decision-trigger::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) calc((100% - var(--tap-target)) / 2); }
       /* A card keeps its two-line head and its density (#17161): the 🗒
          shows on a phone only once the item has notes; the row's ⋯ menu
          carries "Maintainer notes…" for the rest. */
