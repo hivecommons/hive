@@ -414,13 +414,20 @@
       // and selected so saving never drops it silently.
       const amProjectRepos = Array.isArray(am.project_repos) ? am.project_repos : [];
       const amRepoPolicySize = Math.min(Math.max(amProjectRepos.length || 3, 3), 8);
+      // A bare name (no_ci_ok and allow_unprotected_base keep what hive.yaml
+      // says) selects the project repository of that name.
       const amRepoPolicyOptions = (configured) => {
         const list = Array.isArray(configured) ? configured : [];
         const selected = new Set(list.map(r => String(r).toLowerCase()));
+        const has = (r) => { const full = String(r).toLowerCase(); return selected.has(full) || selected.has(full.slice(full.indexOf('/') + 1)); };
         const known = new Set(amProjectRepos.map(r => String(r).toLowerCase()));
-        return amProjectRepos.map(r => `<option value="${esc(r)}"${selected.has(String(r).toLowerCase()) ? ' selected' : ''}>${esc(r)}</option>`).join('')
-          + list.filter(r => !known.has(String(r).toLowerCase())).map(r => `<option value="${esc(r)}" selected>${esc(r)}</option>`).join('');
+        const knownNames = new Set(Array.from(known).map(r => r.slice(r.indexOf('/') + 1)));
+        return amProjectRepos.map(r => `<option value="${esc(r)}"${has(r) ? ' selected' : ''}>${esc(r)}</option>`).join('')
+          + list.filter(r => { const v = String(r).toLowerCase(); return !known.has(v) && (v.includes('/') || !knownNames.has(v)); }).map(r => `<option value="${esc(r)}" selected>${esc(r)}</option>`).join('');
       };
+      // auto_merge.allow_unprotected_base is a deprecated no-op; its select
+      // renders only while the list is set, so an owner can see and clear it.
+      const amUnprotectedBase = Array.isArray(am.allow_unprotected_base) ? am.allow_unprotected_base : [];
       const amHumanMergePaths = (am.human_merge_paths && typeof am.human_merge_paths === 'object') ? am.human_merge_paths : {};
       const amHumanMergePathRepos = amProjectRepos.concat(Object.keys(amHumanMergePaths).filter(k => !amProjectRepos.some(r => String(r).toLowerCase() === k.toLowerCase())));
       const amHumanMergePathsFor = (repo) => {
@@ -585,6 +592,14 @@
               <label for="am-squash-only">Squash only ${yamlHint('auto_merge.squash_only')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Squash only', `Listed repos forbid merge commits. Elsewhere a role/trusted PR mixing the contributor's commits with the hive's own signed-off fixes merges with a merge commit; in a listed repo it parks at stage/085 and the note names this key.`)}</label>
               <select id="am-squash-only" multiple size="${amRepoPolicySize}" data-change-action="markDirtyAutoMergeRepoPolicy" class="am-trusted-authors-repos">${amRepoPolicyOptions(am.squash_only)}</select>
             </div>
+            <div class="config-field mt-4">
+              <label for="am-no-ci-ok">Merge with no CI ${yamlHint('auto_merge.no_ci_ok')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Merge with no CI', `Off for every repository by default. A listed repository&apos;s pull requests can merge with no CI checks at all: when GitHub reports no statuses, no check runs and no workflow runs, the merge-request relay counts that as green instead of refusing it. Only for repositories with no CI by design. Red or pending CI still blocks.`)}</label>
+              <select id="am-no-ci-ok" multiple size="${amRepoPolicySize}" data-change-action="markDirtyAutoMergeRepoPolicy" class="am-trusted-authors-repos">${amRepoPolicyOptions(am.no_ci_ok)}</select>
+            </div>
+            ${amUnprotectedBase.length ? `<div class="config-field mt-4">
+              <label for="am-allow-unprotected-base">Unprotected base (no effect) ${yamlHint('auto_merge.allow_unprotected_base')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Unprotected base (no effect)', `Deprecated and ignored: the hive merges into any branch the App can write, protected or not, after positive CI evidence. Shown only because this list is set; deselect a repository to remove it.`)}</label>
+              <select id="am-allow-unprotected-base" multiple size="${amRepoPolicySize}" data-change-action="markDirtyAutoMergeRepoPolicy" class="am-trusted-authors-repos">${amRepoPolicyOptions(am.allow_unprotected_base)}</select>
+            </div>` : ''}
             <div class="config-field mt-4" id="am-human-merge-paths">
               <label>Paths a person must merge ${yamlHint('auto_merge.human_merge_paths')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Paths a person must merge', `Comma-separated glob patterns per repo (same syntax as intent.guardrail_path_patterns), for example .github/workflows/**. Every App merge path refuses a PR touching one, adds hold and posts one comment; a person must merge it. Leave a repo empty for no such paths.`)}</label>
               ${amHumanMergePathRepos.length ? amHumanMergePathRepos.map(r => `<div class="config-field mt-3 am-human-merge-path-row" data-repo="${esc(r)}">
@@ -602,7 +617,7 @@
                 <input type="text" class="am-pin-only-authors" aria-label="Trusted authors for ${esc(r)}" value="${esc(p.trusted_authors.join(', '))}" placeholder="trusted authors: renovate[bot]" data-change-action="markDirtyAutoMergePinOnly">
               </div>`; }).join('') : '<p class="am-trusted-authors-note">Set paths a person must merge for a repository first; its pin-only exception is edited here.</p>'}
             </div>
-            <p class="config-help">Select nothing (or leave paths empty) to turn a rule off for every repo. YAML keys: <code>auto_merge.require_current_base[]</code>, <code>auto_merge.squash_only[]</code>, <code>${esc('auto_merge.human_merge_paths.<key>')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.enabled')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.paths[]')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.kinds[]')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.trusted_authors[]')}</code>.</p>
+            <p class="config-help">Select nothing (or leave paths empty) to turn a rule off for every repo. YAML keys: <code>auto_merge.require_current_base[]</code>, <code>auto_merge.squash_only[]</code>, <code>auto_merge.no_ci_ok[]</code>, <code>auto_merge.allow_unprotected_base[]</code>,<code>${esc('auto_merge.human_merge_paths.<key>')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.enabled')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.paths[]')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.kinds[]')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.trusted_authors[]')}</code>.</p>
           </div>
           <div class="config-field" id="am-trusted-authors">
             <label>Trusted-author auto-merge ${settingHelpMark('hive-merge', 'trusted-author-auto-merge', 'Trusted-author auto-merge', `Operator opt-in for human-authored PRs: Hive may merge a green PR only when the author holds the configured hive role and, when required, GitHub says the author has push/maintain/admin permission on that repository. Fork PRs from non-members are blocked, excluded labels and CHANGES_REQUESTED reviews block, and the head SHA is re-checked at merge.`)}</label>
@@ -1659,21 +1674,36 @@
     }
 
     // renderGovDecisionsDelegateSection renders the "Let hive decide"
-    // settings (decisions.delegate): the hive-wide switch and the LLM step.
-    // Values are marked dirty under 'decisions-delegate', which saveConfig
-    // PUTs to /api/config/decisions/delegate (owner only). The
-    // per-repository overrides (decisions.delegate.repos) are listed here
-    // read-only; they change in hive.yaml or through the admin MCP
+    // settings (decisions.delegate): the hive-wide switch, the LLM step, the
+    // per-repository overrides and the effect timeout. Values are marked dirty
+    // under 'decisions-delegate', which saveConfig PUTs to
+    // /api/config/decisions/delegate (owner only) through
+    // decisionsDelegateSaveBody, the same endpoint as the admin MCP
     // decisions.delegate_settings operation.
     function renderGovDecisionsDelegateSection(dd) {
       dd = dd || {};
       const llm = dd.llm || {};
       const on = dd.enabled !== false;
       const llmOn = llm.enabled === true;
-      const repos = Object.entries(dd.repos || {}).sort((a, b) => a[0].localeCompare(b[0]));
-      const repoText = repos.length
-        ? repos.map(([r, v]) => `${esc(r)} ${v && v.enabled ? 'on' : 'off'}`).join(' · ')
-        : 'none, so every repository follows the switch above';
+      // One row per project repository plus any saved override for a
+      // repository outside project.repos; a staged choice wins over the
+      // saved one so a re-render keeps it.
+      const ddProjectRepos = Array.isArray(dd.project_repos) ? dd.project_repos : [];
+      const ddSaved = (dd.repos && typeof dd.repos === 'object') ? dd.repos : {};
+      const ddStaged = ((_configState.dirty || {})['decisions-delegate'] || {}).repos || {};
+      const ddRowRepos = ddProjectRepos.concat(Object.keys(ddSaved).filter(k => !ddProjectRepos.some(r => decisionsDelegateSameRepo(r, k))).sort());
+      const ddRowValue = (repo) => {
+        const sk = Object.keys(ddStaged).find(k => decisionsDelegateSameRepo(k, repo));
+        if (sk !== undefined) return ddStaged[sk] === true ? 'on' : (ddStaged[sk] === false ? 'off' : '');
+        const ck = Object.keys(ddSaved).find(k => decisionsDelegateSameRepo(k, repo));
+        const v = ck !== undefined ? ddSaved[ck] : null;
+        return v && v.enabled === true ? 'on' : (v && v.enabled === false ? 'off' : '');
+      };
+      const ddRepoRows = ddRowRepos.map(r => {
+        const cur = ddRowValue(r);
+        const choices = [['', `hive-wide (${on ? 'on' : 'off'})`], ['on', 'on'], ['off', 'off']];
+        return `<tr class="dd-repo-row" data-repo="${esc(r)}"><td><code>${esc(r)}</code></td><td><select aria-label="Let hive decide for ${esc(r)}" data-change-action="markDirtyDecisionsDelegateRepo" data-arg0="${esc(r)}" data-arg-types="s,v">${choices.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></td></tr>`;
+      }).join('');
       const readyNote = llmOn && dd.llm_reviewer_ready === false
         ? '<div class="config-help">No reviewer endpoint or model is configured (governor.trajectory or governor.litellm), so every decision keeps the rules\' reversible default until one is.</div>' : '';
       const maskedNote = llm.model_masked
@@ -1692,6 +1722,9 @@
           ${readyNote}
           <div class="config-field"><label>Decider model ${yamlHint('decisions.delegate.llm.model')} ${settingHelpMark('settings', 'features', 'Decider model', `Model for the decider turn. Empty uses the governor reviewer model. A model name only: the key belongs to the reviewer endpoint, and a value that looks like a key is refused.`)}</label><input type="text" value="${esc(llm.model || '')}" placeholder="${esc(dd.llm_model_effective || 'reviewer model')}" data-change-action="markDirty" data-arg0="decisions-delegate" data-arg1="llm_model" data-arg-types="s,s,w"></div>
           ${maskedNote}
-          <div class="config-help">Per-repository overrides ${yamlHint('decisions.delegate.repos')}: ${repoText}. Change them in hive.yaml or with the admin MCP decisions.delegate_settings operation.</div>
+          <div class="config-field" id="dd-effect-timeout"><label>Effect timeout ${yamlHint('decisions.delegate.effect_timeout')} ${settingHelpMark('settings', 'features', 'Effect timeout', `How long a recorded decision may go without its expected effect (the park lifted, a merge, a close, a new commit) before a repeat Let hive decide reports it as stuck, with the plain reason and the next actions. A duration above zero such as 30m or 2h; empty uses the default of 30m.`)}</label><input type="text" value="${esc(dd.effect_timeout || '')}" placeholder="${esc(dd.effect_timeout_effective || '30m0s')}" data-change-action="markDirty" data-arg0="decisions-delegate" data-arg1="effect_timeout" data-arg-types="s,s,w"></div>
+          <div class="config-field" id="dd-repo-overrides"><label>Per-repository overrides ${yamlHint('decisions.delegate.repos')} ${settingHelpMark('settings', 'features', 'Per-repository overrides', `Turn Let hive decide on or off for one repository, whatever the hive-wide switch says; hive-wide follows the switch above. The per-repository setting also gates the reviewer-question sweep there. Saving sends every repository&apos;s override, so overrides set in hive.yaml or through the admin MCP are kept.`)}</label>
+            ${ddRowRepos.length ? `<table class="am-fence-repo-table"><thead><tr><th>Repository</th><th>Let hive decide</th></tr></thead><tbody>${ddRepoRows}</tbody></table>` : '<p class="am-trusted-authors-note">No repositories in project.repos yet.</p>'}
+          </div>
         </div>`;
     }

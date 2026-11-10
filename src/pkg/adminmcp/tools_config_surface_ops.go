@@ -27,8 +27,9 @@ import (
 // ErrConfirmationStale when it no longer matches, so a confirm never
 // overwrites a change somebody made in between.
 //
-// decisions.delegate ("Let hive decide": enabled, per-repo, llm) has no
-// dashboard write endpoint, so it has no operation here.
+// decisions.delegate ("Let hive decide": enabled, per-repo, llm,
+// effect_timeout) is written through PUT /api/config/decisions/delegate by
+// its own operation, decisions.delegate_settings (tools_decisions_ops.go).
 const (
 	WriteOpProjectIssueFilter = "project.issue_filter"
 	WriteOpSentinelSettings   = "sentinel.settings"

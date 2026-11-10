@@ -507,7 +507,17 @@ The same section's **Per-repository merge policy** block edits
 hive's `project.repos`. Saving writes each key in full as `owner/repo` (the form
 the sweep matches); an empty selection clears it, and a repo outside
 `project.repos` or a malformed glob is refused with a 400. The sweep reads all
-three live, so a change applies on the next pass without a restart. An
+three live, so a change applies on the next pass without a restart.
+
+The block also edits **Merge with no CI** (`auto_merge.no_ci_ok`): a listed
+repository's pull requests can merge with no CI checks at all, because the
+merge-request relay counts "no statuses, no check runs and no workflow runs"
+as green there. Red or pending CI still blocks. While the deprecated
+`auto_merge.allow_unprotected_base` list is set, it is shown too, marked as
+having no effect, so an owner can clear it. Saving sends a list only when its
+selection changed, and then in full; a bare repository name from `hive.yaml`
+shows as that repository selected. The admin MCP changes the same keys with
+`auto_merge.update`. An
 update-branch of an approved PR keeps its swarm approve when the base's changes
 miss every PR file: the review planner re-stamps the verdict onto the merge
 head instead of holding it at `review-gate:no-review-bundle`, and CI still
