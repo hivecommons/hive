@@ -1139,6 +1139,110 @@ func (k *KnowledgeAPI) DisconnectGitSource(url, subpath string) error {
 	return nil
 }
 
+// ErrGitSourceNotFound reports that no connected git source matches the
+// requested url+subpath identity.
+var ErrGitSourceNotFound = errors.New("git source not found")
+
+// ErrGitSourceConflict reports that a different connected git source already
+// owns the requested url+subpath identity.
+var ErrGitSourceConflict = errors.New("git source already connected")
+
+// UpdateGitSourceMetadata changes the display name and layer of the git source
+// identified by url+subpath in place. The clone, index and sync loop are kept,
+// so correcting a name or layer never re-clones.
+func (k *KnowledgeAPI) UpdateGitSourceMetadata(url, subpath, name string, layer LayerType) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for i, gs := range k.gitSources {
+		cfg := gs.Config()
+		if cfg.URL != url || cfg.Subpath != subpath {
+			continue
+		}
+		cfg.Name = name
+		cfg.Layer = layer
+		k.gitSources[i] = gs.withConfig(cfg)
+		k.logger.Info("git source metadata updated", "url", url, "subpath", subpath, "name", name, "layer", layer)
+		return nil
+	}
+	return fmt.Errorf("%w: %s (subpath: %s)", ErrGitSourceNotFound, url, subpath)
+}
+
+// ReplaceGitSource swaps the git source identified by oldURL+oldSubpath for a
+// freshly cloned and indexed source described by config. The old source keeps
+// serving until the new one is ready, so a failed clone leaves it in place.
+// When the identity is unchanged (only the branch moved) the two share a clone
+// directory, which is discarded first because reusing it would only pull the
+// old branch; if that fresh clone fails the old source is re-cloned.
+func (k *KnowledgeAPI) ReplaceGitSource(ctx context.Context, oldURL, oldSubpath string, config GitSourceConfig) error {
+	config.URL = strings.TrimSpace(config.URL)
+	if err := ValidateGitSourceURLContext(ctx, config.URL); err != nil {
+		return fmt.Errorf("invalid git source url: %w", err)
+	}
+	sameIdentity := config.URL == oldURL && config.Subpath == oldSubpath
+
+	var old *GitSource
+	k.mu.RLock()
+	for _, gs := range k.gitSources {
+		cfg := gs.Config()
+		if cfg.URL == oldURL && cfg.Subpath == oldSubpath {
+			old = gs
+		} else if cfg.URL == config.URL && cfg.Subpath == config.Subpath {
+			k.mu.RUnlock()
+			return fmt.Errorf("%w: %s (subpath: %s)", ErrGitSourceConflict, config.URL, config.Subpath)
+		}
+	}
+	k.mu.RUnlock()
+	if old == nil {
+		return fmt.Errorf("%w: %s (subpath: %s)", ErrGitSourceNotFound, oldURL, oldSubpath)
+	}
+
+	gs := newGitSourceForConnect(config, knowledgeBaseDir, k.logger)
+	if sameIdentity {
+		if err := os.RemoveAll(gs.CloneDir()); err != nil {
+			return fmt.Errorf("git source %s: clearing clone: %w", config.Name, err)
+		}
+	}
+	if err := initGitSourceForConnect(gs, ctx); err != nil {
+		if sameIdentity {
+			k.restoreGitSource(ctx, old)
+		}
+		return err
+	}
+
+	k.swapGitSource(oldURL, oldSubpath, gs)
+	go startGitSourceSyncLoopForConnect(gs, ctx)
+	k.logger.Info("git source replaced",
+		"old_url", oldURL, "old_subpath", oldSubpath,
+		"url", config.URL, "subpath", config.Subpath, "branch", gs.Config().Branch)
+	return nil
+}
+
+// restoreGitSource re-clones old after a same-directory replacement failed,
+// so the caller is left with the source it had before the edit.
+func (k *KnowledgeAPI) restoreGitSource(ctx context.Context, old *GitSource) {
+	cfg := old.Config()
+	restored := newGitSourceForConnect(cfg, knowledgeBaseDir, k.logger)
+	_ = os.RemoveAll(restored.CloneDir())
+	if err := initGitSourceForConnect(restored, ctx); err != nil {
+		k.logger.Error("git source restore after failed edit", "url", cfg.URL, "subpath", cfg.Subpath, "error", err)
+		return
+	}
+	k.swapGitSource(cfg.URL, cfg.Subpath, restored)
+	go startGitSourceSyncLoopForConnect(restored, ctx)
+}
+
+func (k *KnowledgeAPI) swapGitSource(url, subpath string, gs *GitSource) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for i, cur := range k.gitSources {
+		if cur.Config().URL == url && cur.Config().Subpath == subpath {
+			k.gitSources[i] = gs
+			return
+		}
+	}
+	k.gitSources = append(k.gitSources, gs)
+}
+
 // GitSources returns info about all connected git sources.
 func (k *KnowledgeAPI) GitSources() []GitSourceInfo {
 	infos := make([]GitSourceInfo, len(k.gitSources))

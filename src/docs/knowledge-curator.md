@@ -117,7 +117,7 @@ source is `Ready` and its current page count.
 
 ### Static config vs. the runtime API
 
-`GET/POST/DELETE /api/knowledge/git-sources` (owner-role only,
+`GET/POST/PUT/DELETE /api/knowledge/git-sources` (mutations owner-role only,
 `pkg/dashboard/api_knowledge.go:980-986,988-1070,1072-1114`) manage sources at runtime
 and are the *same* underlying list as `knowledge.git_sources` in
 `hive.yaml` — not a separate system:
@@ -132,6 +132,11 @@ and are the *same* underlying list as `knowledge.git_sources` in
   boot.
 - `DELETE` disconnects the live source and removes matching entries from
   `Config.Knowledge.GitSources`, then persists (`api_knowledge.go:1100-1110`).
+- `PUT` edits the live source identified by `url`+`subpath` (the dashboard's
+  **Edit** button). A `name`/`layer` change updates it in place without
+  re-cloning; a `new_url`, `new_subpath` or `branch` change swaps in a fresh
+  clone in the same request. The matching config entry is rewritten and
+  persisted, and one `knowledge_git_source_update` audit row is written.
 - Editing `git_sources:` directly in `hive.yaml` takes effect on the next
   process restart (main.go's startup loop at `cmd/hive/main.go:2421-2467`);
   it does not hot-reload while the process is running. Use the API for a

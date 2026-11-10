@@ -133,6 +133,26 @@ func (g *GitSource) Config() GitSourceConfig {
 	return g.config
 }
 
+// withConfig returns a copy of g that shares its clone, index and store but
+// reports cfg, so a metadata edit never mutates a source other goroutines are
+// reading. Only name/layer edits may use it: the clone is not touched.
+func (g *GitSource) withConfig(cfg GitSourceConfig) *GitSource {
+	g.mu.RLock()
+	store, ready := g.store, g.ready
+	g.mu.RUnlock()
+	if store != nil {
+		store.SetName(cfg.Name)
+	}
+	return &GitSource{
+		config:   cfg,
+		cloneDir: g.cloneDir,
+		indexDir: g.indexDir,
+		store:    store,
+		logger:   g.logger,
+		ready:    ready,
+	}
+}
+
 // CloneDir returns the local filesystem path where the repo is cloned.
 func (g *GitSource) CloneDir() string {
 	return g.cloneDir

@@ -5874,6 +5874,9 @@
     .kb-vault-status-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-4); }
     .kb-vault-status-label { font-size: 0.72rem; color: var(--muted); }
     .kb-vault-status-value { font-size: 0.78rem; font-weight: 600; color: var(--fg); }
+    .field-invalid { border-color: var(--red) !important; }
+    .field-error { color: var(--red); font-size: var(--fs-xs); margin-top: var(--sp-1); }
+    #kb-gs-cancel[hidden] { display: none; }
     @media (max-width: 768px) { .kb-layout { grid-template-columns: 1fr; } }
 
     /* Collapsible advisory sections (#1546) */
@@ -45760,6 +45763,9 @@ function burnAreaChart() {
     let _kbServerPaged = false;
     let _kbHasMore = false;
     let _kbRequest = 0;
+    // {url, subpath} of the git source loaded into the Add Git Source form by
+    // Edit; null while the form adds a new source. Reset on every re-render.
+    let _kbGitSourceEditing = null;
     const KB_POLL_MS = 30000;
     const KB_LAYER_ICONS = { personal: '🔒', project: '📁', org: '🏢', community: '🌍' };
     const KB_LAYER_LABELS = { personal: 'Personal', project: 'Project', org: 'Org', community: 'Community' };
@@ -47308,8 +47314,8 @@ function burnAreaChart() {
               </select>
             </label>
           </div>
-          <label class="muted-note">Content
-            <textarea id="kb-import-content" rows="24" style="width:100%;margin-top:var(--sp-2);padding:var(--sp-4);border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg);font-size:0.78rem;font-family:var(--font-mono);resize:vertical;min-height:320px" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(',')..."></textarea>
+          <label class="muted-note">Content <span aria-hidden="true">*</span>
+            <textarea id="kb-import-content" required aria-required="true" rows="24" style="width:100%;margin-top:var(--sp-2);padding:var(--sp-4);border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg);font-size:0.78rem;font-family:var(--font-mono);resize:vertical;min-height:320px" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(',')..."></textarea>
           </label>
           <div style="display:flex;align-items:center;gap:10px;margin-top:var(--sp-2)">
             <label style="font-size:0.72rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:var(--sp-2)">
@@ -47343,9 +47349,9 @@ function burnAreaChart() {
       const layer = document.getElementById('kb-import-layer')?.value;
       const format = document.getElementById('kb-import-format')?.value;
 
-      if (!content) { await hiveAlert('Content is required'); return; }
-      if (!layer) { await hiveAlert('Pick a channel to import into, or create one with "+ New channel".'); return; }
-      if (layer === RESERVED_KB_CHANNEL) { await hiveAlert(RESERVED_KB_CHANNEL + ' is reserved for automation. Choose or create another channel.'); return; }
+      if (!content) { kbFieldError(document.getElementById('kb-import-content'), 'Content is required'); return; }
+      if (!layer) { kbFieldError(document.getElementById('kb-import-layer'), 'Pick a channel to import into, or create one with "+ New channel".'); return; }
+      if (layer === RESERVED_KB_CHANNEL) { kbFieldError(document.getElementById('kb-import-layer'), RESERVED_KB_CHANNEL + ' is reserved for automation. Choose or create another channel.'); return; }
 
       try {
         const r = await fetch('/api/knowledge/import', {
@@ -47505,17 +47511,21 @@ function burnAreaChart() {
             html += ` ↗</a>`;
             html += ` &middot; ${escapeHtml(gs.layer)} &middot; ${gs.pages} pages &middot; ${statusText}</div>`;
             html += '</div>';
+            html += '<div class="row-end">';
+            html += `<button class="hv-btn btn-secondary nous-btn btn-sm" data-action="kbEditGitSource" data-arg0="${escapeHtml(gs.url)}" data-arg1="${escapeHtml(gs.subpath || '')}" data-arg2="${escapeHtml(gs.name || '')}" data-arg3="${escapeHtml(gs.branch || '')}" data-arg4="${escapeHtml(gs.layer || '')}" title="Load this source into the form below to correct it">Edit</button>`;
             html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="gh18" data-arg0="${escapeHtml(gs.url)}" data-arg1="${escapeHtml(gs.subpath || '')}">Remove</button>`;
+            html += '</div>';
             html += '</div>';
           }
         } else {
           html += '<div class="empty-dashed">No git sources yet.</div>';
         }
 
-        html += '<details open class="kb-sources-add"><summary class="summary-label">Add Git Source</summary>';
+        _kbGitSourceEditing = null;
+        html += '<details open id="kb-gs-form" class="kb-sources-add"><summary class="summary-label">Add Git Source</summary>';
         html += '<div class="stack kb-sources-form">';
-        html += '<input id="kb-gs-url" type="text" class="kb-search-box" placeholder="https://github.com/org/repo">';
-        html += '<input id="kb-gs-name" type="text" class="kb-search-box" placeholder="Display name">';
+        html += '<input id="kb-gs-url" type="text" class="kb-search-box" required aria-required="true" placeholder="Repository URL * (https://github.com/org/repo)">';
+        html += '<input id="kb-gs-name" type="text" class="kb-search-box" required aria-required="true" placeholder="Display name *">';
         html += '<input id="kb-gs-subpath" type="text" class="kb-search-box" placeholder="Subpath (e.g. docs/skills)">';
         html += '<input id="kb-gs-branch" type="text" class="kb-search-box" placeholder="Branch (default: main)">';
         html += `<select id="kb-gs-layer" class="field-input">
@@ -47525,7 +47535,8 @@ function burnAreaChart() {
           <option value="personal">Personal</option>
         </select>`;
         html += '<div class="row-end">';
-        html += '<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbAddGitSource">Clone &amp; Index</button>';
+        html += '<button type="button" id="kb-gs-cancel" class="hv-btn btn-secondary nous-btn" hidden data-action="kbCancelGitSourceEdit">Cancel</button>';
+        html += '<button id="kb-gs-submit" class="hv-btn btn-primary nous-btn btn-blue" data-action="kbAddGitSource">Clone &amp; Index</button>';
         html += '</div></div></details>';
         html += '</div>';
 
@@ -47551,7 +47562,7 @@ function burnAreaChart() {
 
         html += '<details open class="kb-sources-add"><summary class="summary-label">Add Subscription</summary>';
         html += '<div class="stack kb-sources-form">';
-        html += '<input id="kb-sub-url" type="text" class="kb-search-box" placeholder="https://wiki.example.com/mcp">';
+        html += '<input id="kb-sub-url" type="text" class="kb-search-box" required aria-required="true" placeholder="URL * (https://wiki.example.com/mcp)">';
         html += `<input id="kb-sub-name" type="text" class="kb-search-box" placeholder="Display name">`;
         html += `<select id="kb-sub-layer" class="field-input">
           <option value="project">Project</option>
@@ -47598,7 +47609,7 @@ function burnAreaChart() {
 
         html += '<details open class="kb-sources-add"><summary class="summary-label">Import Document</summary>';
         html += '<div class="stack kb-sources-form">';
-        html += '<input id="kb-doc-url" type="text" class="kb-search-box" placeholder="https://arxiv.org/pdf/2309.06180">';
+        html += '<input id="kb-doc-url" type="text" class="kb-search-box" required aria-required="true" placeholder="URL * (https://arxiv.org/pdf/2309.06180)">';
         html += '<input id="kb-doc-name" type="text" class="kb-search-box" placeholder="Name (optional, derived from URL)">';
         html += `<select id="kb-doc-layer" class="field-input">
           <option value="project">Project</option>
@@ -47658,7 +47669,7 @@ function burnAreaChart() {
           <option value="markdown" selected>Markdown</option>
           <option value="json">JSON</option>
         </select>`;
-        html += '<textarea id="kb-import-content" rows="8" class="kb-sources-textarea" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(\',\')..."></textarea>';
+        html += '<textarea id="kb-import-content" rows="8" class="kb-sources-textarea" required aria-required="true" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(\',\')..."></textarea>';
         html += '<div class="row-between kb-sources-actions">';
         html += '<label class="kb-sources-file"><span>or load from file:</span><input type="file" accept=".md,.json,.txt" data-change-action="kbLoadFile" data-arg-types="t"></label>';
         html += '<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbSubmitImport">Import</button>';
@@ -47674,6 +47685,70 @@ function burnAreaChart() {
       }
     }
 
+    function kbClearFieldError(el) {
+      if (!el) return;
+      el.classList.remove('field-invalid');
+      el.removeAttribute('aria-invalid');
+      const next = el.nextElementSibling;
+      if (next && next.classList.contains('field-error')) next.remove();
+    }
+
+    // Marks a required input invalid, shows msg directly under it and focuses it; clears on the next edit.
+    function kbFieldError(el, msg) {
+      if (!el) { showToast(msg, 'error'); return; }
+      kbClearFieldError(el);
+      el.classList.add('field-invalid');
+      el.setAttribute('aria-invalid', 'true');
+      const err = document.createElement('div');
+      err.className = 'field-error';
+      err.setAttribute('role', 'alert');
+      err.textContent = msg;
+      el.insertAdjacentElement('afterend', err);
+      el.addEventListener('input', () => kbClearFieldError(el), { once: true });
+      el.addEventListener('change', () => kbClearFieldError(el), { once: true });
+      el.focus();
+    }
+
+    function kbGitSourceSubmitLabel() {
+      return _kbGitSourceEditing ? 'Save' : 'Clone & Index';
+    }
+
+    function kbEditGitSource(url, subpath, name, branch, layer) {
+      _kbGitSourceEditing = { url, subpath: subpath || '' };
+      const fields = { 'kb-gs-url': url, 'kb-gs-name': name, 'kb-gs-subpath': subpath, 'kb-gs-branch': branch };
+      for (const id of Object.keys(fields)) {
+        const input = document.getElementById(id);
+        if (!input) continue;
+        input.value = fields[id] || '';
+        kbClearFieldError(input);
+      }
+      const layerSel = document.getElementById('kb-gs-layer');
+      if (layerSel) layerSel.value = layer || 'project';
+      const form = document.getElementById('kb-gs-form');
+      if (form) form.open = true;
+      const btn = document.getElementById('kb-gs-submit');
+      if (btn) btn.textContent = kbGitSourceSubmitLabel();
+      const cancel = document.getElementById('kb-gs-cancel');
+      if (cancel) cancel.hidden = false;
+      document.getElementById('kb-gs-url')?.focus();
+    }
+
+    function kbCancelGitSourceEdit() {
+      _kbGitSourceEditing = null;
+      for (const id of ['kb-gs-url', 'kb-gs-name', 'kb-gs-subpath', 'kb-gs-branch']) {
+        const input = document.getElementById(id);
+        if (!input) continue;
+        input.value = '';
+        kbClearFieldError(input);
+      }
+      const layerSel = document.getElementById('kb-gs-layer');
+      if (layerSel) layerSel.value = 'project';
+      const btn = document.getElementById('kb-gs-submit');
+      if (btn) btn.textContent = kbGitSourceSubmitLabel();
+      const cancel = document.getElementById('kb-gs-cancel');
+      if (cancel) cancel.hidden = true;
+    }
+
     async function kbAddGitSource() {
       const url = document.getElementById('kb-gs-url')?.value?.trim();
       const name = document.getElementById('kb-gs-name')?.value?.trim();
@@ -47681,24 +47756,28 @@ function burnAreaChart() {
       const branch = document.getElementById('kb-gs-branch')?.value?.trim();
       const layer = document.getElementById('kb-gs-layer')?.value;
 
-      if (!url) { await hiveAlert('Repository URL is required'); return; }
-      if (!name) { await hiveAlert('Display name is required'); return; }
+      if (!url) { kbFieldError(document.getElementById('kb-gs-url'), 'Repository URL is required'); return; }
+      if (!name) { kbFieldError(document.getElementById('kb-gs-name'), 'Display name is required'); return; }
 
-      const btn = document.querySelector('#kb-subs-content button[onclick="kbAddGitSource()"]');
-      if (btn) { btn.disabled = true; btn.textContent = 'Cloning...'; }
+      const editing = _kbGitSourceEditing;
+      const btn = document.getElementById('kb-gs-submit');
+      if (btn) { btn.disabled = true; btn.textContent = editing ? 'Saving...' : 'Cloning...'; }
 
       try {
+        const payload = editing
+          ? { url: editing.url, subpath: editing.subpath, new_url: url, new_subpath: subpath || '', name, branch: branch || 'main', layer }
+          : { url, name, subpath: subpath || '', branch: branch || 'main', layer };
         const r = await fetch('/api/knowledge/git-sources', {
-          method: 'POST', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ url, name, subpath: subpath || '', branch: branch || 'main', layer }),
+          method: editing ? 'PUT' : 'POST', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify(payload),
         });
-        if (!r.ok) { const e = await r.json(); await hiveAlert(e.error || 'Failed to add git source'); return; }
+        if (!r.ok) { const e = await r.json(); await hiveAlert(e.error || (editing ? 'Failed to save git source' : 'Failed to add git source')); return; }
         kbLoadSubscriptions();
         fetchKnowledgeStats();
       } catch (e) {
         await hiveAlert('Error: ' + e.message);
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Clone & Index'; }
+        if (btn) { btn.disabled = false; btn.textContent = kbGitSourceSubmitLabel(); }
       }
     }
 
@@ -47720,7 +47799,7 @@ function burnAreaChart() {
       const name = document.getElementById('kb-sub-name')?.value?.trim();
       const layer = document.getElementById('kb-sub-layer')?.value;
 
-      if (!url) { await hiveAlert('URL is required'); return; }
+      if (!url) { kbFieldError(document.getElementById('kb-sub-url'), 'URL is required'); return; }
 
       try {
         const r = await fetch('/api/knowledge/subscriptions', {
@@ -47752,7 +47831,7 @@ function burnAreaChart() {
       const name = document.getElementById('kb-doc-name')?.value?.trim();
       const layer = document.getElementById('kb-doc-layer')?.value;
 
-      if (!url) { await hiveAlert('Document URL is required'); return; }
+      if (!url) { kbFieldError(document.getElementById('kb-doc-url'), 'Document URL is required'); return; }
 
       const btn = document.querySelector('#kb-subs-content button[onclick="kbImportDocFromModal()"]');
       if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }

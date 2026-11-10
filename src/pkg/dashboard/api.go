@@ -451,6 +451,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/git-sources", s.handleGitSourcesList)
 	s.mux.HandleFunc("POST /api/knowledge/git-sources", s.handleGitSourcesConnect)
 	s.mux.HandleFunc("DELETE /api/knowledge/git-sources", s.handleGitSourcesDisconnect)
+	s.mux.HandleFunc("PUT /api/knowledge/git-sources", s.handleGitSourcesUpdate)
 	s.mux.HandleFunc("POST /api/knowledge/obsidian/sync", s.handleObsidianSync)
 	s.mux.HandleFunc("GET /api/knowledge/documents", s.handleDocumentsList)
 	s.mux.HandleFunc("POST /api/knowledge/documents", s.handleDocumentsImport)

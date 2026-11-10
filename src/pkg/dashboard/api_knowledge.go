@@ -1264,6 +1264,167 @@ func (s *Server) handleGitSourcesDisconnect(w http.ResponseWriter, r *http.Reque
 	jsonResponse(w, map[string]interface{}{"ok": true, "removed": req.URL})
 }
 
+// handleGitSourcesUpdate edits the connected git source identified by
+// {url, subpath}. Omitted fields keep their current value; new_url and
+// new_subpath move the source. A name/layer-only edit updates metadata in
+// place without touching the clone, while a url/branch/subpath change swaps in
+// a freshly cloned source in this one request, so correcting a typo no longer
+// needs Remove + re-add.
+func (s *Server) handleGitSourcesUpdate(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
+	if s.deps.Knowledge == nil {
+		jsonError(w, "knowledge not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		URL        string  `json:"url"`
+		Subpath    string  `json:"subpath"`
+		NewURL     *string `json:"new_url"`
+		NewSubpath *string `json:"new_subpath"`
+		Name       string  `json:"name"`
+		Branch     string  `json:"branch"`
+		Layer      string  `json:"layer"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	req.URL = strings.TrimSpace(req.URL)
+	if req.URL == "" {
+		jsonError(w, "url is required", http.StatusBadRequest)
+		return
+	}
+
+	var current *knowledge.GitSourceInfo
+	for _, gs := range s.deps.Knowledge.GitSources() {
+		if gs.URL == req.URL && gs.Subpath == req.Subpath {
+			current = &gs
+			break
+		}
+	}
+	if current == nil {
+		jsonError(w, fmt.Sprintf("git source not found: %s (subpath: %s)", req.URL, req.Subpath), http.StatusNotFound)
+		return
+	}
+
+	next := knowledge.GitSourceConfig{
+		Name:    current.Name,
+		URL:     current.URL,
+		Branch:  current.Branch,
+		Subpath: current.Subpath,
+		Layer:   current.Layer,
+	}
+	if req.NewURL != nil {
+		next.URL = strings.TrimSpace(*req.NewURL)
+	}
+	if req.NewSubpath != nil {
+		next.Subpath = *req.NewSubpath
+	}
+	if req.Name != "" {
+		next.Name = req.Name
+	}
+	if req.Branch != "" {
+		next.Branch = req.Branch
+	}
+	if req.Layer != "" {
+		next.Layer = knowledge.LayerType(req.Layer)
+	}
+
+	if next.URL == "" {
+		jsonError(w, "url must not be empty", http.StatusBadRequest)
+		return
+	}
+	if next.URL != current.URL {
+		if err := knowledge.ValidateGitSourceURLContext(r.Context(), next.URL); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if strings.Contains(next.Name, "..") || strings.ContainsAny(next.Name, "/\\") {
+		jsonError(w, "invalid name", http.StatusBadRequest)
+		return
+	}
+	if strings.HasPrefix(next.Branch, "-") {
+		jsonError(w, "branch must not start with '-'", http.StatusBadRequest)
+		return
+	}
+	if next.Subpath != "" && (strings.HasPrefix(next.Subpath, "-") || strings.Contains(next.Subpath, "..")) {
+		jsonError(w, "subpath must not start with '-' or contain '..'", http.StatusBadRequest)
+		return
+	}
+
+	recloned := next.URL != current.URL || next.Subpath != current.Subpath || next.Branch != current.Branch
+	var err error
+	if recloned {
+		err = s.deps.Knowledge.ReplaceGitSource(s.deps.Ctx, current.URL, current.Subpath, next)
+	} else {
+		err = s.deps.Knowledge.UpdateGitSourceMetadata(current.URL, current.Subpath, next.Name, next.Layer)
+	}
+	switch {
+	case errors.Is(err, knowledge.ErrGitSourceNotFound):
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	case errors.Is(err, knowledge.ErrGitSourceConflict):
+		jsonError(w, err.Error(), http.StatusConflict)
+		return
+	case err != nil:
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	updated := false
+	sources := make([]config.GitSourceConfigYAML, 0, len(s.deps.Config.Knowledge.GitSources)+1)
+	for _, gs := range s.deps.Config.Knowledge.GitSources {
+		if gs.URL == current.URL && gs.Subpath == current.Subpath {
+			if updated {
+				continue
+			}
+			updated = true
+			gs.Name = next.Name
+			gs.Layer = string(next.Layer)
+			if recloned {
+				gs.URL = next.URL
+				gs.Subpath = next.Subpath
+				gs.Branch = next.Branch
+			}
+		} else if recloned && gs.URL == next.URL && gs.Subpath == next.Subpath {
+			continue
+		}
+		sources = append(sources, gs)
+	}
+	if !updated {
+		sources = append(sources, config.GitSourceConfigYAML{
+			Name:    next.Name,
+			URL:     next.URL,
+			Branch:  next.Branch,
+			Subpath: next.Subpath,
+			Layer:   string(next.Layer),
+		})
+	}
+	s.deps.Config.Knowledge.GitSources = sources
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after git source update", "error", err)
+	}
+
+	s.auditFromRequest(r, "knowledge_git_source_update", auditDetail(
+		"name", next.Name, "url", next.URL, "subpath", next.Subpath,
+		"previous_url", current.URL, "previous_subpath", current.Subpath,
+		"recloned", strconv.FormatBool(recloned)), "")
+	jsonResponse(w, map[string]interface{}{
+		"ok":       true,
+		"name":     next.Name,
+		"url":      next.URL,
+		"subpath":  next.Subpath,
+		"branch":   next.Branch,
+		"layer":    next.Layer,
+		"recloned": recloned,
+	})
+}
+
 func (s *Server) ensureKnowledge() bool {
 	if s.deps == nil {
 		return false

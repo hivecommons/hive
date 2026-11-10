@@ -165,5 +165,8 @@
     .kb-vault-status-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-4); }
     .kb-vault-status-label { font-size: 0.72rem; color: var(--muted); }
     .kb-vault-status-value { font-size: 0.78rem; font-weight: 600; color: var(--fg); }
+    .field-invalid { border-color: var(--red) !important; }
+    .field-error { color: var(--red); font-size: var(--fs-xs); margin-top: var(--sp-1); }
+    #kb-gs-cancel[hidden] { display: none; }
     @media (max-width: 768px) { .kb-layout { grid-template-columns: 1fr; } }
 

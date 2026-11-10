@@ -2013,6 +2013,14 @@ a{color:var(--cc-accent)}
 </div>
 
 <div class="endpoint">
+<span class="method">PUT</span><span class="path">/api/knowledge/git-sources</span>
+<div class="desc">Edit a git source identified by url+subpath — a name/layer change updates in place; a new_url/new_subpath/branch change re-clones</div>
+<pre>curl -X PUT -H "Authorization: ******" -H "Content-Type: application/json" \
+  -d '{"url":"https://github.com/org/repo","subpath":"docs","name":"team-docs","layer":"org"}' \
+  %s/api/knowledge/git-sources</pre>
+</div>
+
+<div class="endpoint">
 <span class="method">DELETE</span><span class="path">/api/knowledge/git-sources</span>
 <div class="desc">Remove a git source</div>
 <pre>curl -X DELETE -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -2088,7 +2096,7 @@ a{color:var(--cc-accent)}
 <pre>curl -X POST -d '{"github_username":"you"}' %s/api/contribute/register</pre>
 </div>
 
-</body></html>`, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL)
+</body></html>`, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL)
 }
 
 func (s *Server) contributorsDirOrDefault() string {
