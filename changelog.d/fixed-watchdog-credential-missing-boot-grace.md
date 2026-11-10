@@ -1,1 +1,0 @@
-- Watchdog no longer raises a "CredentialMissing" credential-failure alert (and fleet self-report) for Claude login chrome seen inside the boot grace window (#17573).
