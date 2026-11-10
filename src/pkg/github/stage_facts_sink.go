@@ -170,7 +170,7 @@ func (c *Client) enrichStageFacts(ctx context.Context, f stageengine.Facts) (sta
 	// instead of 072 returned-to-contributor. Resolve it the way the sweep
 	// does: App login, agent/ stamp, body markers.
 	if f.Author.Kind == authorkind.Unknown && f.Ref.Kind == stagelabels.PRItem {
-		f.Author.Kind = authorkind.Detect(authorkind.Input{Author: issue.GetUser().GetLogin(), AppLogin: c.AppBotLogin(), Labels: f.Labels, Body: issue.GetBody(), Repo: f.Ref.Owner + "/" + f.Ref.Repo})
+		f.Author.Kind = authorkind.Detect(authorkind.Input{Author: issue.GetUser().GetLogin(), AppLogin: c.AppBotLogin(), Labels: f.Labels, Body: issue.GetBody(), PRURL: issue.GetHTMLURL()})
 	}
 	return f, nil
 }

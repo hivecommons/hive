@@ -1613,7 +1613,7 @@ func personAuthored(obs stageObservation, policy StageLabelPolicy) bool {
 	if obs.AuthorKind == authorkind.Human {
 		return true
 	}
-	if authorkind.WorkflowRun(obs.Body, obs.Owner+"/"+obs.Repo) {
+	if authorkind.WorkflowRun(obs.Body, obs.URL) {
 		return false
 	}
 	return policy.OwnerAuthor != nil && obs.Author != "" && policy.OwnerAuthor(obs.Author)

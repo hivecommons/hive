@@ -2946,10 +2946,10 @@ func TestPersonAuthoredWorkflowRunUnderOwnerPAT(t *testing.T) {
 		obs  stageObservation
 		want bool
 	}{
-		{"workflow run of this repo", stageObservation{Owner: "hivecommons", Repo: "hive", Author: "clubanderson", AuthorKind: authorkind.Clanker, Body: run}, false},
-		{"owner by hand", stageObservation{Owner: "hivecommons", Repo: "hive", Author: "clubanderson", AuthorKind: authorkind.Clanker, Body: "fixes it"}, true},
-		{"workflow run of another repo", stageObservation{Owner: "acme", Repo: "widgets", Author: "clubanderson", AuthorKind: authorkind.Clanker, Body: run}, true},
-		{"human kind wins", stageObservation{Owner: "hivecommons", Repo: "hive", Author: "clubanderson", AuthorKind: authorkind.Human, Body: run}, true},
+		{"workflow run of this repo", stageObservation{URL: "https://github.com/hivecommons/hive/pull/17354", Author: "clubanderson", AuthorKind: authorkind.Clanker, Body: run}, false},
+		{"owner by hand", stageObservation{URL: "https://github.com/hivecommons/hive/pull/17354", Author: "clubanderson", AuthorKind: authorkind.Clanker, Body: "fixes it"}, true},
+		{"workflow run of another repo", stageObservation{URL: "https://github.com/acme/widgets/pull/1", Author: "clubanderson", AuthorKind: authorkind.Clanker, Body: run}, true},
+		{"human kind wins", stageObservation{URL: "https://github.com/hivecommons/hive/pull/17354", Author: "clubanderson", AuthorKind: authorkind.Human, Body: run}, true},
 	}
 	for _, tc := range cases {
 		if got := personAuthored(tc.obs, policy); got != tc.want {
