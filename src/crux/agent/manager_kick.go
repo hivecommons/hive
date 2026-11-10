@@ -103,8 +103,7 @@ func (m *Manager) SendKick(name string, message string) (err error) {
 	// (the default). SendKick has no context parameter, so this span roots at
 	// Background; it still captures the kick leg of the governor→agent
 	// lifecycle. Ended before delivery bookkeeping via defer.
-	_, span := m.startSpan(context.Background(), "agent.send_kick",
-		attribute.String("agent.name", name))
+	_, span := m.startSpan(context.Background(), "agent.send_kick")
 	defer span.End()
 
 	// Kick duration/outcome metrics; role stays kickRoleUnknown until the
@@ -120,6 +119,7 @@ func (m *Manager) SendKick(name string, message string) (err error) {
 		return fmt.Errorf("agent %s not found", name)
 	}
 	role = name
+	span.SetAttributes(attribute.String("agent.name", role))
 
 	if m.agentSandboxEnabledLocked(agent) {
 		return m.startSandboxKickLocked(agent, message)
