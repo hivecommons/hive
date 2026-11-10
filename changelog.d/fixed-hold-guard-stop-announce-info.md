@@ -1,1 +1,0 @@
-- The hold guard now announces that it stopped keeping a held PR mergeable at INFO instead of WARN; several held fork PRs stopping in one pass no longer trips the `unclassified_error_repeated` self-report, and the person-facing note on the PR is unchanged (#17520).

@@ -255,3 +255,31 @@ func stageTrackerNeedsRebase(it StageTrackerItem) bool {
 	}
 	return it.RebaseMerge != nil && it.RebaseMerge.State != "" && it.RebaseMerge.State != "merged" && it.RebaseMerge.State != "failed"
 }
+
+// decisionForAutoMergeOffNew: a 000-new pull request on a repo whose
+// auto-merge is off (stageTrackerAutoMergeOffNew), whose merge verdict
+// says GitHub would take the merge. No lane stages or merges anything
+// there, so the row asks a person to merge, like 090 · auto-merge off:
+// Merge now as maintainer leads, and "Approve and let hive merge" is
+// offered greyed, since no merge pass runs on the repo.
+func decisionForAutoMergeOffNew(it StageTrackerItem, held bool) *StageTrackerDecision {
+	ref := "#" + strconv.Itoa(it.Number)
+	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByLane, BlockerReason: stageTrackerAutoMergeOffBlockerReason}
+	d.Question = "Auto-merge is off for this repo, so a person merges it."
+	d.Blocker = sentence(stageTrackerAutoMergeOffGateText)
+	details := []string{"Hive never stages or merges pull requests on this repo; a maintainer merges here or on GitHub."}
+	if held {
+		details = append(details, decisionHeldBlocker(it.Hold))
+	}
+	d.Detail = stageTrackerSayOnce(d.Question, details...)
+	mergeNow := decisionMergeNowOption(it, held)
+	queue := decisionOption(decisionActionQueueMerge, decisionQueueMergeLabel, false, "Auto-merge is off for this repo; hive never merges here — merge it now as maintainer")
+	closeWontfix := decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, "")
+	closeWontfix.Consequence = "Closes " + ref + " without merging"
+	d.Options = append(decisionHumanMergeLeadOptions(mergeNow, queue), closeWontfix, decisionHoldOption(held))
+	return d
+}
+
+// stageTrackerAutoMergeOffBlockerReason is the lane token every merge sweep
+// logs when it skips a repo whose auto-merge is off.
+const stageTrackerAutoMergeOffBlockerReason = "repo-auto-merge-disabled"

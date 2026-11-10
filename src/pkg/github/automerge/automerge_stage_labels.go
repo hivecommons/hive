@@ -421,6 +421,9 @@ func (t *StageTracker) drain() [][]stageObservation {
 				o.Detail.DCOGate, o.Detail.DCOGateHead = detail.DCOGate, detail.DCOGateHead
 				o.Detail.SquashSignoffGate = detail.SquashSignoffGate
 			}
+			if detail.MergeableStateHead != "" && detail.MergeableStateHead == o.HeadSHA {
+				o.Detail.MergeableState, o.Detail.MergeableStateHead = detail.MergeableState, detail.MergeableStateHead
+			}
 			list = append(list, o)
 		}
 		sort.Slice(list, func(i, j int) bool { return stageLanePrecedence[list[i].Lane] > stageLanePrecedence[list[j].Lane] })
@@ -703,9 +706,14 @@ func (c *Engine) noteStagePR(owner, repo string, number int, pr *gh.PullRequest)
 		return
 	}
 	comments := pr.GetComments() + pr.GetReviewComments()
+	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
+	head := strings.TrimSpace(pr.GetHead().GetSHA())
 	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
 		// A fresh fetch already includes any comment credited before it.
 		d.Comments, d.CommentsKnown, d.OwnComments = comments, true, 0
+		if head != "" {
+			d.MergeableState, d.MergeableStateHead = mergeableState, head
+		}
 	})
 }
 

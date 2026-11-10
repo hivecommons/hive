@@ -465,7 +465,7 @@ conflict reason and the contributor lane's soak — and
 | no verdict for this head yet, or nothing has reported on the head (just pushed) and the verdict is not already `requires_human` | `050-review-pending` — never 090 without a current-head approve |
 | verdict `requires_human` at the head (even on a fresh head nothing has reported on yet, [#13115](https://github.com/hivecommons/hive/issues/13115)), sentinel alert, hold-class label, no reviewer configured, or a non-trust human-only lane rule | `085-needs-decision` + one entry comment naming the decision ("Needs a decision, not a merge: a sentinel alert is open on this PR.") |
 | checks still running / unreadable, a required check (branch protection or ruleset) with nothing reported on the head (a PR opened with `GITHUB_TOKEN` triggers no workflow; projectbluefin/utah#1074), or the lane's soak not yet elapsed | `060-reviewed` (not 095: that stage means the lane has *admitted* the head, which a trust-blocked PR never is) |
-| everything above clean and only trust in the way | `090-ready-for-human-merge` + one entry comment: "Ready for a human merge: verdict approved @abc1234, 55/55 checks green, DCO yes, soak 1h0m0s elapsed. Blocked only by `role/newcomer` (below require_tiers)." |
+| everything above clean and only trust in the way | `090-ready-for-human-merge` + one entry comment: "Ready for a human merge: verdict approved @abc1234, 55/55 checks green, DCO yes, soak 1h0m0s elapsed. Blocked only by `role/newcomer` (below require_tiers)." When GitHub reports the head behind a base that requires up-to-date branches, the stage is still 090, but the comment adds "behind `main`" to the digest, says "Blocked by" instead of "Blocked only by", and says GitHub will not merge the head until `main` is merged into it ([projectbluefin/common#1619](https://github.com/projectbluefin/common/issues/1619)) |
 
 The entry comments are posted once per stage visit (a flip 085 ↔ 090 is a
 new visit) and never as a GitHub review: the hive does not approve on a
@@ -944,7 +944,14 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    queued `fix-pr` task, and after the `072` dwell (24h) since the nudge on
    that head it parks at `085` as `adoption-stalled:fork-rehome-refused`
    with one note asking a maintainer to review it and bring it in or close
-   it (once per head and reason, retried on later sweeps until GitHub
+   it. When the hive can read why it could not update the fork, the note
+   names the one action instead: if the base changed a file under
+   `.github/workflows/` since the branch was cut (GitHub refuses any App
+   push to a fork that carries a workflow change, whatever the App is
+   granted on the base repository), a person brings the branch up to date
+   with **Update branch** or `gh pr update-branch` (or merges the base in
+   locally when it conflicts); if the fork allows no maintainer edits, the
+   author turns them on or pushes the fix (the note posts once per head and reason, retried on later sweeps until GitHub
    accepts it; an errored lane's weak 080 does not lift it). A new head from the author re-arms the normal path. An explicit
    owner-delegated adoption request is still recorded and parks at once.
    - `reason=dco-rehome` (always `mode=supersede`) — not a fresh adoption

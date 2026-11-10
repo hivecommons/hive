@@ -308,6 +308,46 @@ someone re-runs it. The shared-CI rerun sweep
 |---|---|---|
 | `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes. |
 
+## Stale-red base refresh (`stale_red_base_refresh`)
+
+A PR that went red on a check its base branch also broke stays red after the
+base is fixed: re-running the check reuses the old merge ref, so only a new
+head picks the fix up. On projectbluefin/actions#544 `pytest` failed on a
+baseline pin that main fixed in #734; the PR sat red and behind for six hours
+until a person pressed "Update branch", and `pytest` then passed. The
+automerge lanes already refresh PRs the hive adopted (stage 074); the eval
+cycle's stale-red base refresh (`src/cmd/hive/stale_red_base_refresh.go`,
+`src/pkg/github/stale_red_base_refresh.go`) covers every other open PR, also
+in repositories with auto-merge off:
+
+- A candidate is red on named checks with CI settled, not deferred to an open
+  `[shared-ci]` incident, not red on the base too, and behind its base. Every
+  check that failed on its head must have completed green on the current base
+  tip; a check the base never runs, or has not finished yet, does not count.
+  No guess is made about which files a check depends on.
+- It merges the base in with `update-branch`, pinned to the evaluated head
+  (the same merge commit the "Update branch" button makes). It posts nothing.
+- It skips drafts, held and exempt PRs, fork PRs with "allow edits by
+  maintainers" off, dependency-bot branches (the bot rebases them), PRs at
+  `stage/072-returned-to-contributor` (the author's hive pushes there) and at
+  `stage/074-adopted-by-hive` (the adoption recovery owns them). Repositories
+  in `auto_merge.require_current_base` are left to the automerge preparation
+  front.
+- Each update goes through the write-back gate as `base_refresh`: allowed on
+  hive-authored PRs, and on other PRs at L6 with the opt-in label by default.
+  `writeback.kinds.base_refresh.unlabeled_min_level: 6` lets it reach every
+  PR at L6.
+- A pass runs at most every 5 minutes and makes at most 2 updates per
+  repository and 6 in all. A (PR, head, base tip) it has settled is not tried
+  again until the head or the base moves. A conflict, an already-current
+  branch or a GitHub refusal (fork not editable, a workflow file the App may
+  not push) is logged and left for a person. Each update is logged as
+  `stale-red base refresh` and audited as `stale-red-base-refresh`, and the
+  stuck-PR reaper does not kick a fixer for that PR in the same cycle.
+- It is an unstick step (`stale_red_base_refresh` in
+  `api_budget.unstick_steps`): it keeps running in `conserve` and is shed only
+  in `critical` and on cached-snapshot cycles.
+
 ## Open-PR dispatch guard and duplicate-fix sweep (`scanner`)
 
 An issue whose fix is already open must not be dispatched again
@@ -457,6 +497,7 @@ that level, the power the write-back exists to govern?
 | Code scanning sweep (`pkg/github/code_scanning.go`, `pkg/codescanning`) | hourly sweep (`code_scanning`, opt-in per repo) | **new** grouped issues from code scanning alerts, alert-table body edits, one closing comment + close when every alert is fixed or dismissed | the hive's own `hive/code-scanning` issues in repos with `code_scanning` on | `issue_file` → L3, no label (own items); see [code-scanning.md](../code-scanning.md) |
 | Shared-CI rerun (`shared_ci_rerun.go`) | CI failure watcher | `rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment | PRs with failed shared workflows | `ci_rerun` → L6 + label |
 | Transient-CI rerun (`transient_ci_rerun.go`) | eval cycle, before the stuck-PR reaper | `rerun-failed-jobs`, once per head, no comment | hive-authored red PRs whose every failing run carries `hive-ci-transient` | `ci_rerun` (own items: allowed unless the repo is paused, off or issues-only) |
+| Stale-red base refresh (`cmd/hive/stale_red_base_refresh.go`, `pkg/github/stale_red_base_refresh.go`) | eval cycle, before the stuck-PR reaper, at most every 5 min | **branch push** (`update-branch` merge of the base), once per head and base tip, no comment | red PRs behind their base whose every failing check is green on the base tip; not drafts, held, non-editable forks, dependency-bot branches, 072 or 074 | `base_refresh` → hive-authored PRs, else L6 + label |
 | Level hold, self-authorization & reporter-trust releases (`pr_level_hold.go`, `automerge/self_authorization_release.go`, `reporter_trust_release.go`) | PR watcher | `hold` label add/remove | agent PRs | own items (hive-authored) — not gated |
 | Migrations & retirements (`hive_hold_migration.go`, `hive_id_label_retire.go`, `claimed_by_human_migration.go`, `origin_labels.go`) | boot, one-shot | label renames | items carrying hive labels | opted in by carrying hive labels |
 
@@ -733,6 +774,7 @@ push re-arms it.
 | `sentinel.label` | `sentinel-alert` | Label added to untrusted flagged PRs (created red if missing). Neutral on purpose: it means "look closely", not "malicious". This configured label is also added to Hive's hold/exclude set and blocks Hive approval plus every auto-merge lane until a human removes it. |
 | `sentinel.trusted_authors_block` | `false` | When `false`, trusted author findings are notice-only: comment, audit/dashboard record, no label, no approval/merge block. Set `true` to add the blocking label for trusted authors too. A PR the hive opens to supersede an adopted contributor PR (body line `Supersedes #N (…; original commits by @login preserved).`) is judged by the adopted PR's author, not by the App: its code is that author's, so an untrusted author's flagged head gets the label on the App's PR too. A maintainer who removed the label from the adopted PR at the same head is not asked again; any later head is judged afresh. |
 | `sentinel.sensitive_paths` | shipped defaults (`sentinel.DefaultSensitivePaths`) | Glob list (same syntax as `intent.guardrail_path_patterns`; `**` crosses directories) that **replaces** the defaults when set. Defaults cover OWNERS/CODEOWNERS/MAINTAINERS, SECURITY.md, GOVERNANCE.md, `.github/workflows/**`, actions, dependabot, codeql, rulesets, CI config, Makefile/Justfile, pre-commit hooks, `policies/**`, `hive.yaml*`, `gh-wrapper*`, proxy rules, Dockerfiles, `install.sh`, dependency manifests and lockfiles, release workflows, `.env*`/key material, `deploy/**`, Terraform, Helm/k8s manifests. |
+| `project.repo_policies[].sentinel_sensitive_paths` | unset = `sentinel.sensitive_paths` | One repository's own sensitive-path list. It replaces the hive-wide list for that repository's pull requests only, stricter or looser, and a change to `sentinel.sensitive_paths` does not reach it. `[]` matches nothing. Set in hive.yaml. Like any Sentinel setting, it applies to heads Sentinel evaluates after the change. |
 | `sentinel.disabled_behaviors` | empty | Rule names from the table above to switch off. Unknown names are rejected. |
 | `sentinel.exempt_logins` | empty | GitHub logins never flagged (e.g. a release bot). Use sparingly. |
 | `sentinel.repos` | empty = all watched repos | Optional `owner/repo` allow-list. |
@@ -918,7 +960,7 @@ Spoke GitHub App installations share one core REST bucket across the scan loop a
 | Mode | Condition | Default behavior |
 | --- | --- | --- |
 | `normal` | `remaining >= github.api_reserve` | Full eval fan-out. Optional sweeps run every `governor.optional_sweep_every_n_cycles` cycles (default `1`). |
-| `conserve` | `remaining < github.api_reserve` (default `800`) | Critical paths and unstick steps (escalation, SHA hold, supersession sweep, shared-CI rerun) continue; optional advisory/recommendation/duplicate/review-thread/collector enrichment sweeps are skipped. Eval interval is multiplied by `governor.conserve_interval_multiplier` (default `2`). |
+| `conserve` | `remaining < github.api_reserve` (default `800`) | Critical paths and unstick steps (escalation, SHA hold, supersession sweep, shared-CI rerun, stale-red base refresh) continue; optional advisory/recommendation/duplicate/review-thread/collector enrichment sweeps are skipped. Eval interval is multiplied by `governor.conserve_interval_multiplier` (default `2`). |
 | `critical` | `remaining < github.api_critical` (default `250`) | Same shedding as conserve plus the unstick steps, with the eval interval stretched by `4x`. |
 
 Mode exits use hysteresis: Hive leaves conserve/critical only after quota rises above the threshold plus 100 calls or after the reset time passes. The effective interval is capped by `governor.eval_interval_max_s` (default `1800`). `/api/status` and `/api/gh-rate-limits` expose `api_budget` with the mode, remaining/limit/reset, mode `since`, `skipped_steps`, `unstick_steps` and `enrichment_steps`; the dashboard shows an API budget pill beside the GitHub rate-limit display.

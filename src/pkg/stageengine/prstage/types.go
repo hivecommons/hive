@@ -101,6 +101,14 @@ type Detail struct {
 	// there. Only repositories that carry that workflow run it, so the
 	// sign-off attribution notes name it only where it is.
 	SquashSignoffGate bool
+	// MergeableState is GitHub's mergeable_state ("behind", "clean",
+	// "blocked", …, lower-cased; "" when unknown) from a lane's fresh PR
+	// fetch this cycle, for MergeableStateHead only. GitHub reports
+	// "behind" only when the base requires up-to-date branches, so the
+	// 090 entry comment names it instead of calling trust the only
+	// blocker (projectbluefin/common#1619).
+	MergeableState     string
+	MergeableStateHead string
 }
 
 // RedCheck returns the first red non-required check on head, or "".

@@ -235,6 +235,11 @@ type ContributorLanePolicy struct {
 	// repository's auto_merge.human_merge_paths; anything else (the default,
 	// "all") fences every such edit. See automerge_workflow_fence_scope.go.
 	WorkflowFenceScope string
+	// WorkflowFenceScopeForRepo, when set, resolves the scope for one
+	// "owner/repo", applying project.repo_policies[].workflow_fence_scope
+	// over WorkflowFenceScope. nil means every repository uses
+	// WorkflowFenceScope.
+	WorkflowFenceScopeForRepo func(repo string) string
 }
 
 // Contributor-lane auto-promotion scopes; mirrors

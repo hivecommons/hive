@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
@@ -59,6 +60,11 @@ type StageTrackerNew struct {
 	Gates             []StageTrackerGate `json:"gates"`
 	// Text is the row caption: "New · waiting for <mover> (next pass in Nm)".
 	Text string `json:"text"`
+	// AutoMergeOff marks a pull request on a repo whose auto-merge is off
+	// (the repo's setting, or a hive below ACMM L6): no hive pass will
+	// stage or merge it, so the narration names a person's merge instead
+	// of a stage-label pass that never comes.
+	AutoMergeOff bool `json:"auto_merge_off,omitempty"`
 }
 
 // stageTrackerIsNew reports whether a finished row is a 000-new item: no
@@ -248,4 +254,65 @@ func (s *Server) issueFilterConfig() *config.IssueFilterConfig {
 		return nil
 	}
 	return &s.deps.Config.Project.IssueFilter
+}
+
+// stageTrackerAutoMergeOffGateText is the merge gate of a 000-new pull
+// request on a repo whose auto-merge is off. Below ACMM L6 every repo
+// reads off (config.RepoAutoMergeEnabled), and the sentence says so.
+const stageTrackerAutoMergeOffGateText = "auto-merge is off for this repo (its auto-merge setting, or the hive is below ACMM L6) — a person merges it"
+
+// stageTrackerAutoMergeOffNew rewrites the 000-new narration of a pull
+// request on a repo whose auto-merge is off. Every merge lane skips such a
+// repo before it records anything, so no stage-label pass ever places the
+// PR: the "waiting for the stage-label pass (next pass due now)" caption
+// and its countdown were never true there (projectbluefin/server#626 read
+// it for four days). The narration drops the countdown, names the person's
+// merge as the last gate and carries the governor's merge verdict.
+//
+// next_mover is the maintainer only when the verdict is a hand merge
+// (outstanding: GitHub would take the merge and only the repo switch, or a
+// hive-side gate on top of it, holds it); the row then carries a decision
+// whose lead is Merge now as maintainer (decisionForAutoMergeOffNew). Any
+// other PR is still in CI / review, and the hive stays the next mover as
+// before, without the false promise of a stage pass.
+func stageTrackerAutoMergeOffNew(n *StageTrackerNew, verdict *github.MergeVerdict) *StageTrackerNew {
+	if n == nil {
+		return nil
+	}
+	out := *n
+	out.AutoMergeOff = true
+	out.NextPassAt, out.NextPassInSeconds = nil, 0
+	reason := ""
+	if verdict != nil {
+		reason = strings.TrimSpace(verdict.Reason)
+	}
+	mergeGate := StageTrackerGate{Name: StageTrackerGateHumanMerge, State: StageTrackerGateLater, Text: stageTrackerAutoMergeOffGateText}
+	for _, g := range n.Gates {
+		// A breaking-titled or needs-owner-merge PR keeps that rule beside
+		// the switch (hivecommons/hive#15442).
+		if g.Name == StageTrackerGateHumanMerge && g.Text != "" {
+			mergeGate.Text = g.Text + "; " + stageTrackerAutoMergeOffGateText
+		}
+	}
+	if verdict != nil && verdict.HandMerge && verdict.State == github.MergeVerdictOutstanding {
+		out.NextMover = StageTrackerMoverMaintainer
+		out.NextMoverText = "a person's merge (" + stageTrackerAutoMergeOffGateText + ")"
+		mergeGate.State = StageTrackerGateNext
+		verdictText := "GitHub would accept the merge"
+		if reason != "" {
+			verdictText += "; hive's merge verdict: " + reason
+		}
+		out.Gates = []StageTrackerGate{{Name: "merge-verdict", State: StageTrackerGateDone, Text: verdictText}, mergeGate}
+		out.Text = "New · auto-merge off — a person merges it"
+		return &out
+	}
+	out.NextMover = StageTrackerMoverHive
+	out.NextMoverText = "CI and review; no hive pass stages or merges it here"
+	reviewText := "CI and review run on the head"
+	if reason != "" {
+		reviewText += "; hive's merge verdict: " + reason
+	}
+	out.Gates = []StageTrackerGate{{Name: "review", State: StageTrackerGateNext, Text: reviewText}, mergeGate}
+	out.Text = "New · not staged (auto-merge off) — waiting for CI and review; a person merges it"
+	return &out
 }
