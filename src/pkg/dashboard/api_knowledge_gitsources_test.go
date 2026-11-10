@@ -131,6 +131,9 @@ case "$*" in
   *pull*)
     exit "${HIVE_FAKE_GIT_PULL_EXIT:-0}"
     ;;
+  *ls-remote*)
+    printf 'ref: refs/heads/main\tHEAD\n'
+    ;;
 esac
 exit 0
 `
@@ -182,7 +185,7 @@ func TestGitSourcesConnectSuccessPersistsAndDedupes(t *testing.T) {
 				"name": "docs",
 			},
 			want: []config.GitSourceConfigYAML{
-				{Name: "docs", Layer: "project"},
+				{Name: "docs", Branch: "main", Layer: "project"},
 			},
 		},
 		{
@@ -308,8 +311,8 @@ func TestGitSourcesDisconnectSuccessFiltersAndPersists(t *testing.T) {
 	}
 
 	want := []config.GitSourceConfigYAML{
-		{Name: "root-docs", URL: url, Layer: "project"},
-		{Name: "other-docs", URL: otherURL, Layer: "project"},
+		{Name: "root-docs", URL: url, Branch: "main", Layer: "project"},
+		{Name: "other-docs", URL: otherURL, Branch: "main", Layer: "project"},
 	}
 	if got := deps.Config.Knowledge.GitSources; len(got) != len(want) {
 		t.Fatalf("remaining git sources = %+v, want %+v", got, want)
