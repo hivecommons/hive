@@ -960,7 +960,7 @@ func (c *Engine) stageAuthorKind(obs stageObservation, policy StageLabelPolicy, 
 			}
 		}
 	}
-	in := authorkind.Input{Author: obs.Author, AppLogin: appLogin, HiveID: policy.HiveID, Labels: labels, Body: obs.Body, RelayKnown: relayKnown}
+	in := authorkind.Input{Author: obs.Author, AppLogin: appLogin, HiveID: policy.HiveID, Labels: labels, Body: obs.Body, RelayKnown: relayKnown, PRURL: obs.URL}
 	if !in.RelayKnown && policy.RelayKnown != nil && obs.Author != "" {
 		in.RelayKnown = policy.RelayKnown(obs.Author)
 	}

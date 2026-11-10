@@ -45,6 +45,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"dashboard.(*Server).handleRepoItemAdoptNow":              {Class: NotificationClassStatus},
 	"dashboard.(*Server).handleRepoItemBlockerClosePartial":   {Class: NotificationClassStatus},
 	"dashboard.(*Server).handleRepoItemDecision":              {Class: NotificationClassStatus},
+	"dashboard.(*Server).handleRepoItemSentinelConfirm":       {Class: NotificationClassStatus},
 	"dashboard.(*Server).handleReviewQueueSupersededClose":    {Class: NotificationClassStatus},
 	"dashboard.(*Server).mirrorPlanWith":                      {Class: NotificationClassStatus},
 	"github.(*Client).CloseIssueForConfiguredLinePR":          {Class: NotificationClassStatus},

@@ -209,6 +209,10 @@
       // person (human_decision) is at Review: the ask came from the
       // review, whatever CI has or has not reported (hivecommons/hive#17453).
       if (on('review') === 'human_decision' && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) return 'review';
+      // 060 reviewed with every check on the head concluded: the review is
+      // the row's own stage, so Review is the lit chevron; CI is its
+      // blocker only when a check is red (hivecommons/hive#17508).
+      if (Number(item.stage) === 60 && on('ci') !== 'failing') return 'review';
       if (on('ci') !== 'passing') return 'ci';
       return 'review';
     }
@@ -278,7 +282,10 @@
       // waiting on checks, whatever its cached counts say.
       if ((item.decision_needed && item.decision_needed.question) || item.human_attention) return false;
       const total = Number(a.checks_total) || 0, done = (Number(a.checks_passed) || 0) + (Number(a.checks_failed) || 0);
-      const settledWords = ['passing', 'failing', 'skipped', 'missing', 'human_decision'];
+      // The backend's own `unknown` (an ambiguous required run, statuses
+      // not read) is not motion either: a 2/3 ring with a never-reported
+      // check lit CI for eight hours on a green head (hivecommons/hive#17508).
+      const settledWords = ['passing', 'failing', 'skipped', 'missing', 'human_decision', 'unknown'];
       return total > 0 && done < total && !settledWords.includes(a.state);
     }
 
@@ -386,7 +393,7 @@
       // The lit track of a 085 PR a person acts on wears an amber marker
       // (ham-human-gated): the chevron is the real stage, the gate is the
       // needs-human pill beside it (hivecommons/hive#17453).
-      const humanGated = lit && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item);
+      const humanGated = lit && !(opts && opts.gateElsewhere) && ((typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) || (typeof stageTrackerHumanGateReasons === 'function' && stageTrackerHumanGateReasons(item).length > 0));
       const cls = lit ? 'active' + (stalled ? ' ham-stalled' : '') + (humanGated ? ' ham-human-gated' : '') : (finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : 'todo') + (queued ? ' ham-track-queued' : '');
       const approvalPending = kind === 'ci' && matches ? stageTrackerWorkflowApprovalPending(a) : 0;
       const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' ? 'Needs a person\'s decision' : '';
@@ -534,14 +541,15 @@
       const col50 = segs.find(sg => sg.number === 50);
       const leadTrack = col50 && typeof stageTrackerLeadTrack === 'function' ? stageTrackerLeadTrack(item, col50.state === 'active', stalledTrack) : '';
       return segs.map(sg => {
-        if (sg.number === 50) return ['ci', 'review'].map(kind => stageTrackerActivityTrackHtml(item, kind, sg, sg.number < from || sg.number > to, nowMs, { stalled: stalledTrack === kind, lead: leadTrack })).join('');
+        if (sg.number === 50) return ['ci', 'review'].map(kind => stageTrackerActivityTrackHtml(item, kind, sg, sg.number < from || sg.number > to, nowMs, { stalled: stalledTrack === kind, lead: leadTrack, gateElsewhere: !!(ctx && ctx.gateElsewhere) })).join('');
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
-        const sentinel = !!(sg.detour && sg.detour.sentinel);
-        const sentinelSuffix = !!(sg.detour && sg.detour.sentinelSuffix);
-        const heldGate = !!(sg.detour && sg.detour.held);
+        // The one bar-level sign of a human gate: the lit chevron's amber
+        // outline. The reasons and verbs live in the human-gate pill; a
+        // secondary row of a shared PR (ctx.gateElsewhere) wears neither.
+        const gateHere = sg.state === 'active' && !sg.cap && !(ctx && ctx.gateElsewhere) && typeof stageTrackerHumanGateReasons === 'function' && stageTrackerHumanGateReasons(item).length > 0;
         const fixPushed = sg.number === 30 && sg.state === 'done' && remediation === 'fix_pushed';
         const blockerNote = sg.state === 'done' && sg.blockerNote ? String(sg.blockerNote) : '';
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : '', heldGate ? 'ham-held' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', gateHere ? 'ham-human-gated' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         let gateCaption = '';
@@ -565,7 +573,6 @@
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
           // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
           // The reason is the whole story; the stage description would only repeat it (hivecommons/hive#15394).
-          else if (heldGate && typeof stageTrackerHeldTip === 'function') tip = stageTrackerHeldTip(item, nowMs);
           else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim();
           // A refusal on an earlier head is history, not the word: the
           // chevron reads the live stage and the hover keeps "merge attempt
@@ -574,10 +581,6 @@
           if (priorNote) tip += ' — ' + priorNote;
           if (actorTip && !sg.cap) tip += actorTip;
           if (claimant && !sg.cap) tip += ' · ' + stageTrackerClaimantLine(claimant, nowMs);
-          // The sentinel's reason leads the lane tooltip so the security
-          // implication is read before the stage mechanics.
-          if (sentinel) tip = stageTrackerSentinelTip(item) + ' — ' + tip;
-          else if (sentinelSuffix) tip = tip + ' — ' + stageTrackerSentinelTip(item);
           // Working or waiting leads: what happens now, or what it waits on.
           if (!sg.cap && typeof stageTrackerCueLead === 'function') tip = stageTrackerCueLead(item, worker, nowMs) + tip;
           if (sg.number === 30 && item.code_activity && Number(item.display_column) === 30) {
@@ -636,9 +639,11 @@
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           const caption = gateWord || word;
           const text = decision ? stageTrackerDecisionTriggerHtml(decision, caption, fullTip) : caption;
-          // Deferred to a running track: the icon alone (a decision trigger
-          // keeps its button, since the popover lives in the word).
-          const content = waitingOnTracks && !sg.cap && !decision ? stageTrackerIcon(sg.number, 'ham-ico') : `${gateCue}${workIco}<span class="ham-chevron-copy">${text}</span>${actorIco || holderIco || progressIco}`;
+          // Deferred to a running track: the icon alone. A decision's
+          // popover rides the human-gate pill's status segment then, so no
+          // dim "Needs human …" words sit in the PR-in-progress slot
+          // (hivecommons/hive#17470).
+          const content = waitingOnTracks && !sg.cap ? stageTrackerIcon(sg.number, 'ham-ico') : `${gateCue}${workIco}<span class="ham-chevron-copy">${text}</span>${actorIco || holderIco || progressIco}`;
           // A decision's dialog is its sole hover/focus detail surface.
           inner = decision ? `<span class="ham-chevron-info ham-chevron-decision">${content}</span>` : `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${content}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}</span></span>`;
         } else if (fixPushed) {
@@ -656,7 +661,7 @@
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(noteTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span class="ham-chevron-copy"><span class="ham-seg-t">${esc(blockerNote)}</span></span>${stageTrackerIcon('human', 'ham-ico ham-actor-ico', 'Next move: human')}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(noteTip)}</span></span>`;
         } else inner = stageTrackerIcon(sg.number, 'ham-ico');
-        return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : (heldGate ? ` aria-label="${esc(stageTrackerHeldTip(item, nowMs))}"` : ''))}>${inner}</li>`;
+        return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}>${inner}</li>`;
       }).join('');
     }
 
@@ -779,6 +784,8 @@
     // carries none of these and sits on a hive-driven stage is the hive's
     // to work through, so the dashboard must not dress it as a human call.
     const STAGE_TRACKER_HUMAN_MODS = ['hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-rebase', 'blocked', 'stalled'];
+    // The modifiers the one human-gate pill absorbs when a row renders it.
+    const STAGE_TRACKER_GATE_MODS = ['hold', 'needs-human', 'needs-decision'];
     // The pill says what happened in words ("stage ↓" read as a sort glyph,
     // hivecommons/hive#17335); after a push it says what caused the fall.
     const STAGE_TRACKER_HANDLED_TEXT = 'stage reset', STAGE_TRACKER_HANDLED_PUSH_TEXT = 'stage reset by push';
@@ -920,7 +927,7 @@
       return `<span ${attrs}>${esc(text)}</span>`;
     }
     function stageTrackerSentinelChipHtml(item) {
-      if (!item || !item.sentinel_alert || stageTrackerSentinelInLane(item) || stageTrackerSentinelAsSuffix(item) || stageTrackerDeferredMods(item).indexOf(STAGE_TRACKER_SENTINEL_CHIP) >= 0) return '';
+      if (!item || !item.sentinel_alert || stageTrackerDeferredMods(item).indexOf(STAGE_TRACKER_SENTINEL_CHIP) >= 0) return '';
       const label = item.sentinel_notice ? 'Informational security notice' : 'Sentinel alert';
       return `<span class="ham-badge ham-badge-sentinel${item.sentinel_notice ? ' ham-sentinel-notice' : ''}" title="${esc(stageTrackerSentinelTip(item))}" aria-label="${esc(label + ' — ' + stageTrackerSentinelTip(item))}">${esc(STAGE_TRACKER_SENTINEL_CHIP)}</span>`;
     }
@@ -962,7 +969,10 @@
       const parked = Number(lp.stage) === STAGE_TRACKER_NEEDS_DECISION || (Array.isArray(lp.modifiers) && lp.modifiers.indexOf('needs-decision') >= 0) || !!(lp.decision_needed && lp.decision_needed.question);
       return parked ? lp : null;
     }
-    function stageTrackerChipsHtml(item) {
+    function stageTrackerChipsHtml(item, opts) {
+      // opts.gate: the row renders the one human-gate pill, which carries the
+      // sentinel / hold / needs-human reasons itself — those chips step aside.
+      const gated = !!(opts && opts.gate);
       // A row Hive cannot finish on its own: the server's your-turn decision
       // (item.finisher, from the status refresh rather than the current step)
       // says a person must act, now or at a gate further on such as a
@@ -970,15 +980,20 @@
       // The chip already says a person must act, so the needs-human and
       // needs-decision pills beside it would only repeat it ("🧑 needs a
       // person" next to "needs human"); they fold into the chip's hover.
+      // When the human-gate pill is rendered it already carries the ask, so
+      // the person chip steps aside with the other gate chips.
       const why = [item.finisher_verb, item.finisher_reason].filter(Boolean).join(' — ');
-      const isPerson = item.finisher === 'person';
+      const isPerson = item.finisher === 'person' && !gated;
       const personMod = m => isPerson && (m === 'needs-human' || m === 'needs-decision');
       const allMods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const folded = allMods.filter(personMod).map(m => STAGE_TRACKER_MOD_TEXT[m] || m.replace(/-/g, ' '));
       const person = isPerson
         ? `<span class="ham-badge ham-finisher-person" title="${esc('Hive cannot finish this on its own' + (why ? ': ' + why : '') + (folded.length ? ' · also flagged: ' + folded.join(', ') : ''))}">🧑 needs a person</span>` : '';
-      const sentinel = person + stageTrackerSentinelChipHtml(item) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
-      const mods = allMods.filter(m => !personMod(m))
+      // The informational notice is not a gate reason, so its chip stays.
+      const sentinel = person + (gated && !item.sentinel_notice ? '' : stageTrackerSentinelChipHtml(item)) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
+      const mods = allMods.slice()
+        .filter(m => !personMod(m))
+        .filter(m => !gated || STAGE_TRACKER_GATE_MODS.indexOf(m) < 0)
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       // A 085 PR a person acts on lights its real stage (CI / Review), so
       // the chevron no longer says "Needs human decision": the ask rides
@@ -986,7 +1001,7 @@
       // re-adds the modifier (stageTrackerApplyPersonActsOnPRPill); this
       // covers a payload that predates it. Any pill that already names the
       // person owed (unauthorized, hold …) stands in for it.
-      if (item.kind === 'pr' && !mods.some(m => STAGE_TRACKER_HUMAN_MODS.indexOf(m) >= 0) && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) {
+      if (!gated && item.kind === 'pr' && !mods.some(m => STAGE_TRACKER_HUMAN_MODS.indexOf(m) >= 0) && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) {
         mods.push('needs-decision');
         mods.sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       }
@@ -1074,7 +1089,7 @@
       approve: 'Approve', 'give-direction': 'Give direction', 'close-superseded': 'Close as superseded', wontfix: "Close as won't-fix", 'close-read': 'Closed', 'close-issue': 'Close issue',
       'let-hive-decide': 'Let hive decide', hold: 'Hold', release: 'Release hold', 'accept-triage': 'Accept triage', 'mark-needs-human': 'Mark needs-human',
       'queue-merge': 'Approve and let hive merge', 'merge-now': 'Merge now as maintainer',
-      adopt: 'Adopt', 'adopt-now': 'Adopt now', reroute: 'Reroute to another clanker',
+      adopt: 'Adopt', 'adopt-now': 'Adopt now', reroute: 'Reroute to another clanker', 'confirm-sentinel': 'Confirm safe',
       // Historical ledger entries only: the hive now re-authors its own
       // exhausted PRs itself and a person's rewrite of a contributor PR is adopt.
       're-author': 'Re-author (now: adopt)',

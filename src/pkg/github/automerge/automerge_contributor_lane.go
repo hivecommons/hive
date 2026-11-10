@@ -1642,6 +1642,11 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return eval, reason, err
 	}
 	if !green {
+		if !relay {
+			// A non-member fork head on a Prow repo gets no presubmits until
+			// someone posts /ok-to-test (#17474); the relay stays read-only.
+			c.requestProwPresubmitsForFork(ctx, displayRepo, owner, repo, pr, number, headSHA)
+		}
 		if contributorHeldRunsReason(reason) {
 			_, reason = c.approveHeldRunsForRegistryTrusted(ctx, displayRepo, owner, repo, pr, number, headSHA, claim, policy, files, reason)
 		}

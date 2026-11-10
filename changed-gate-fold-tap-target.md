@@ -1,0 +1,1 @@
+Activity Monitor: the human-gate pill folds its verbs at render time (three on the strip tier, one plus `…` at ≤1100px), keeps the folded verbs in a template until `…` opens, and gives the `…` button its 44px tap target — the row holds no hidden buttons for the header-geometry probe to reject.

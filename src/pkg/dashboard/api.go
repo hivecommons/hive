@@ -365,6 +365,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/items/{number}", s.handleRepoItemDetail)
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/hold", s.recordOperatorAction(s.handleRepoItemHold))
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decision", s.recordOperatorAction(s.handleRepoItemDecision))
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/sentinel-confirm", s.recordOperatorAction(s.handleRepoItemSentinelConfirm))
 	// Per-item maintainer notes shared across the hive's maintainers
 	// (api_maintainer_notes.go); never written to GitHub.
 	s.mux.HandleFunc("GET /api/notes", s.handleMaintainerNotesList)

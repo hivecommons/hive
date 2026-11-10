@@ -272,10 +272,11 @@
       const subKey = stageTrackerItemKey(pr);
       const humanNote = typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(pr, stages, nowMs, undefined, ctx, subKey) : '';
       const noteCtx = humanNote && typeof stageTrackerNoteTakenCtx === 'function' ? stageTrackerNoteTakenCtx(ctx, subKey) : ctx;
+      const prGate = typeof stageTrackerHumanGateHtml === 'function' ? stageTrackerHumanGateHtml(pr, pr, nowMs) : '';
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(pr, stages, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + stageTrackerChipsHtml(pr) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : '') + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(pr, hamNotesCtx(pr)) : ''))}
+            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + stageTrackerChipsHtml(pr, { gate: !!prGate }) + (prGate || (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : '')) + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(pr, hamNotesCtx(pr)) : ''))}
           </div>
           <div class="ham-strip-row">
             ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(pr, stages, ctx) : ''}
