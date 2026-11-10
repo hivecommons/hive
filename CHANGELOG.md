@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.17)
+
+### Fixed
+
+- crux: `crux serve` request metrics now record `1xx` and `3xx` status classes instead of lumping redirects and informational responses in with `2xx`, and a panicking handler is counted as a `5xx` sample with an error-status span (the span is ended while the panic unwinds, and the panic still propagates to net/http), so redirect-heavy routes no longer inflate the success ratio and crashing handlers no longer vanish from metrics ([hivecommons/crux#142](https://github.com/hivecommons/crux/issues/142)).
+
 ## 2026-11-10 (v5.211.16)
 
 ### Fixed
