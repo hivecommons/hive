@@ -15,22 +15,12 @@ import (
 
 const healthCheckProjectOrg = "project_org"
 
-// placeholderOrgPrefixes are the org-name prefixes a slot placeholder carries:
-// the pool's "available-" and the legacy "placeholder" form.
-var placeholderOrgPrefixes = []string{"available-", "placeholder"}
-
 // projectOrgHealth grades project.org. ok=false when it does not apply: an
-// unclaimed slot (no repo yet) legitimately carries the placeholder org.
+// unclaimed slot (no repo yet) legitimately carries the placeholder org. The
+// prefix list is config.PlaceholderOrgPrefixes, shared with fleetreport so the
+// two can never disagree about what counts as a pool slot.
 func projectOrgHealth(p config.ProjectConfig) (status, detail string, ok bool) {
-	org := strings.ToLower(strings.TrimSpace(p.Org))
-	placeholder := false
-	for _, pre := range placeholderOrgPrefixes {
-		if strings.HasPrefix(org, pre) {
-			placeholder = true
-			break
-		}
-	}
-	if !placeholder {
+	if !config.IsPlaceholderOrg(p.Org) {
 		return "", "", false
 	}
 	repo := strings.TrimSpace(p.PrimaryRepo)
