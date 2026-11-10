@@ -616,7 +616,11 @@
         const progressActor = typeof stageTrackerPRProgressActor === 'function' && active && !sg.cap && sg.number === STAGE_TRACKER_PR_COLUMN && !sg.detour && !gateWord ? stageTrackerPRProgressActor(item, wordText) : null;
         const progressHolderHtml = holderHtml || (progressActor ? `<span class="ham-holder"> · ${esc(progressActor.who)}</span>` : '');
         const progressIco = progressActor && !actorIco && !holderIco ? stageTrackerIcon(progressActor.kind, 'ham-ico ham-actor-ico', 'Working the PR: ' + progressActor.kind + ' ' + progressActor.who) : '';
-        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${esc(sg.detour.text)}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${progressHolderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${progressHolderHtml}${reasonHtml}</span>`);
+        // A deferral to a shared-CI incident links the incident in its
+        // word, "Waiting on shared CI · #17463" (hivecommons/hive#17500).
+        const incident = sg.detour && sg.number === 30 && remediation === 'deferred' && item.deferral && Number(item.deferral.incident) > 0 && item.deferral.incident_url ? '#' + Number(item.deferral.incident) : '';
+        const detourText = incident && sg.detour.text.indexOf(incident) >= 0 ? esc(sg.detour.text).replace(esc(incident), `<a class="ham-incident-link" href="${esc(item.deferral.incident_url)}" target="_blank" rel="noopener" title="${esc('Shared-CI incident ' + incident)}">${esc(incident)}</a>`) : (sg.detour ? esc(sg.detour.text) : '');
+        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${detourText}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${progressHolderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${progressHolderHtml}${reasonHtml}</span>`);
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.

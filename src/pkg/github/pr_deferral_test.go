@@ -91,6 +91,25 @@ func TestPRDeferralAuditPairsNeutralizeBoundariesInTheReason(t *testing.T) {
 	}
 }
 
+// A deferral stamped with the shared-CI marker carries the incident number
+// as its own pair, ahead of the reason (hivecommons/hive#17500).
+func TestPRDeferralAuditPairsCarryTheSharedCIIncident(t *testing.T) {
+	body := "The red `mutation` check here is the advisory job hitting its 20-minute limit, the same across sibling PRs — tracked in #17463, not caused by this diff. No PR-side repair; deferring until that incident closes.\n\n<!-- hive-shared-ci-17463 -->"
+	d, ok := parsePRDeferral(body, "o/r", 17471)
+	if !ok || d.Incident != 17463 {
+		t.Fatalf("incident = %d ok=%v, want 17463", d.Incident, ok)
+	}
+	pairs := d.auditPairs("abc", "https://github.com/o/r/pull/17471")
+	joined := strings.Join(pairs, ",")
+	if !strings.Contains(joined, PRDeferralPairIncident+",17463,"+PRDeferralPairReason+",") {
+		t.Fatalf("incident pair must precede the reason: %q", joined)
+	}
+	plain, _ := parsePRDeferral("Deferring this PR (dependabot-authored).", "o/r", 1)
+	if plain.Incident != 0 || strings.Contains(strings.Join(plain.auditPairs("abc", ""), ","), PRDeferralPairIncident) {
+		t.Fatalf("no marker, no incident pair: %v", plain.auditPairs("abc", ""))
+	}
+}
+
 // The relay records a deferral on an open PR bound to its head, and nothing
 // for an issue number (pulls API 404) or a comment that defers nothing.
 func TestRecordPRDeferral(t *testing.T) {

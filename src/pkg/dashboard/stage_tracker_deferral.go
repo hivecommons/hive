@@ -23,6 +23,12 @@ const codeStateDeferred = "deferred"
 // prProgressDeferredWord leads the deferred chevron word.
 const prProgressDeferredWord = "Deferred"
 
+// prProgressSharedCIWord leads the word of a deferral that waits on a
+// [shared-ci] incident: "Waiting on shared CI · #N" (hivecommons/hive#17500).
+// "Deferred · by scanner" said nothing about why; the incident is the why,
+// and it lifts on its own when the incident closes.
+const prProgressSharedCIWord = "Waiting on shared CI"
+
 // prDeferralAuditLookback bounds how far back a deferral is read. A
 // deferral stands while its head does; a fortnight-old head nobody moved is
 // the same decision.
@@ -52,6 +58,12 @@ type StageTrackerDeferral struct {
 	// CloseOK is true when the deferral says a maintainer may close the PR
 	// now: the row then offers Close now.
 	CloseOK bool `json:"close_ok,omitempty"`
+	// Incident is the [shared-ci] incident issue (same repository) the
+	// deferral waits on, from the relay's incident pair; 0 when the
+	// deferral is the agent's own decision.
+	Incident int `json:"incident,omitempty"`
+	// IncidentURL links the incident issue on GitHub.
+	IncidentURL string `json:"incident_url,omitempty"`
 }
 
 func (s *Server) prDeferralAuditEntries(now time.Time) []AuditEntry {
@@ -115,6 +127,9 @@ func stageTrackerDeferrals(entries []AuditEntry, qualify func(string) string) ma
 		}
 		d.Successors = strings.Fields(kv[github.PRDeferralPairSuccessors])
 		d.CloseOK, _ = strconv.ParseBool(kv[github.PRDeferralPairCloseOK])
+		if n, err := strconv.Atoi(kv[github.PRDeferralPairIncident]); err == nil && n > 0 {
+			d.Incident = n
+		}
 		out[github.ReviewQueueKey(repo, e.Target)] = d
 	}
 	return out
@@ -133,6 +148,9 @@ func stageTrackerDeferralFor(it *StageTrackerItem, deferrals map[string]StageTra
 	}
 	if len(d.Successors) > 0 {
 		d.SuccessorURL = stageTrackerRefURL(it.Repo, d.Successors[0], githubBaseURL)
+	}
+	if d.Incident > 0 {
+		d.IncidentURL = stageTrackerRefURL(it.Repo, "#"+strconv.Itoa(d.Incident), githubBaseURL)
 	}
 	d.Successors = append([]string(nil), d.Successors...)
 	return &d
@@ -154,12 +172,43 @@ func stageTrackerRefURL(repo, ref, githubBaseURL string) string {
 }
 
 // stageTrackerDeferredActivity is the PR in progress code activity of a
-// deferred head: "Deferred · waiting on #17345 +1" (first successor, then
-// how many more), or "Deferred · by scanner" when it names none.
+// deferred head. A deferral to a shared-CI incident reads "Waiting on shared
+// CI · #17463", linked to the incident, and its detail names the failing
+// check and that it lifts when the incident closes. Any other deferral
+// reads "Deferred · waiting on #17345 +1" (first successor, then how many
+// more) or "Deferred · by scanner" when it names none, and its detail leads
+// with the agent's own reason.
 func stageTrackerDeferredActivity(it *StageTrackerItem, d *StageTrackerDeferral, redWord string, redSince time.Time) *StageTrackerActivity {
 	out := &StageTrackerActivity{Head: it.Head, State: codeStateDeferred, Actor: d.Actor, Source: "hive-deferral", Since: d.Since, URL: d.SuccessorURL}
 	if out.URL == "" {
 		out.URL = d.URL
+	}
+	who := d.Actor
+	if who == "" {
+		who = "the hive"
+	}
+	facts := who + " deferred head " + stageTrackerShortSHA(it.Head)
+	if d.Since != nil {
+		facts += " at " + d.Since.UTC().Format(time.RFC3339)
+	}
+	redAt := ""
+	if !redSince.IsZero() {
+		redAt = " at " + redSince.UTC().Format(time.RFC3339)
+	}
+	standing := redWord + redAt + " stands on this head; a fix kick, claim or push after the deferral returns it to Remediating, and a new head clears it."
+	if d.Incident > 0 {
+		ref := "#" + strconv.Itoa(d.Incident)
+		out.Caption = prProgressSharedCIWord + " · " + ref
+		if d.IncidentURL != "" {
+			out.URL = d.IncidentURL
+		}
+		detail := stageTrackerFailingChecksPhrase(it) + " is failing fleet-wide; tracked in " + ref + ". Lifts automatically when that issue closes."
+		detail += " " + facts + "."
+		if d.Reason != "" {
+			detail += " " + stageTrackerFirstSentence(d.Reason)
+		}
+		out.Detail = detail + " " + standing
+		return out
 	}
 	out.Caption = prProgressDeferredWord
 	switch {
@@ -171,30 +220,58 @@ func stageTrackerDeferredActivity(it *StageTrackerItem, d *StageTrackerDeferral,
 	case d.Actor != "":
 		out.Caption += " · by " + d.Actor
 	}
-	who := d.Actor
-	if who == "" {
-		who = "the hive"
-	}
-	detail := who + " deferred head " + stageTrackerShortSHA(it.Head)
-	if d.Since != nil {
-		detail += " at " + d.Since.UTC().Format(time.RFC3339)
-	}
+	detail := ""
 	if d.Reason != "" {
-		detail += ": " + strings.TrimRight(d.Reason, " .") + "."
-	} else {
-		detail += "."
+		// The why leads: the word alone ("Deferred · by scanner") says
+		// nothing about it (hivecommons/hive#17500).
+		detail = stageTrackerFirstSentence(d.Reason) + " "
 	}
+	detail += facts + "."
 	if len(d.Successors) > 0 {
 		detail += " Waiting on " + strings.Join(d.Successors, ", ") + "."
 	}
-	redAt := ""
-	if !redSince.IsZero() {
-		redAt = " at " + redSince.UTC().Format(time.RFC3339)
-	}
-	detail += " " + redWord + redAt + " stands on this head; a fix kick, claim or push after the deferral returns it to Remediating, and a new head clears it."
+	detail += " " + standing
 	if d.CloseOK {
 		detail += " The deferral says a maintainer may close it now."
 	}
 	out.Detail = detail
 	return out
+}
+
+// stageTrackerFailingChecksPhrase names the red checks on the row's head
+// in backticks ("`mutation`", "`lint` and `test`"); "CI" when the CI
+// activity records none by name.
+func stageTrackerFailingChecksPhrase(it *StageTrackerItem) string {
+	a := it.CIActivity
+	if a == nil || !strings.EqualFold(a.Head, it.Head) || len(a.ChecksFailing) == 0 {
+		return "CI"
+	}
+	names := make([]string, len(a.ChecksFailing))
+	for i, n := range a.ChecksFailing {
+		names[i] = "`" + n + "`"
+	}
+	if len(names) == 1 {
+		return names[0]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// stageTrackerFirstSentence is the first sentence of a deferral reason,
+// ending in a period: the tooltip's one-line why. A dot inside a token
+// ("docs/a.md", "#17463.") does not end it; a bare "Deferring." is kept as
+// is.
+func stageTrackerFirstSentence(reason string) string {
+	s := strings.TrimSpace(reason)
+	for i := 0; i < len(s); i++ {
+		if s[i] != '.' && s[i] != '!' && s[i] != '?' {
+			continue
+		}
+		if i+1 == len(s) {
+			return s
+		}
+		if s[i+1] == ' ' || s[i+1] == '\n' {
+			return s[:i+1]
+		}
+	}
+	return strings.TrimRight(s, " ") + "."
 }

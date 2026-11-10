@@ -382,6 +382,8 @@
        (stage_tracker_remediation.go). */
     .ham-seg.active.ham-remediation-unassigned { background: color-mix(in srgb, var(--amber) 70%, var(--red)); }
     .ham-seg.active.ham-remediation-deferred { background: var(--amber); }
+    /* The shared-CI incident a deferral waits on is a link in the word (hivecommons/hive#17500). */
+    .ham-seg.active.ham-remediation-deferred .ham-incident-link { color: inherit; text-decoration: underline; text-underline-offset: 0.15em; }
     .ham-seg.done.ham-fix-pushed { color: var(--green); }
 /* A done decision column that still names the blocker a person must
    clear while a covering PR drives the strip (hivecommons/docs#612). */
