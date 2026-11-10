@@ -18,6 +18,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hivestate"
 )
 
@@ -437,12 +438,18 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 
 // onboardingOnlyCondition reports whether ev is the expected state of a hive
 // that has not been onboarded yet rather than a fleet defect (#17593). An
-// unclaimed hosted slot has no project.org, so it legitimately has no GitHub
-// App installation; the dashboard already surfaces that as the
-// github_app_not_installed onboarding banner. Once an org is configured, a
+// unclaimed hosted slot has no real project.org — either none at all, or the
+// synthetic "available-<id>" / legacy "placeholder" org the pool replenisher
+// seeds and the hub templates into the spoke hive.yaml — so it legitimately
+// has no GitHub App installation; the dashboard already surfaces that as the
+// github_app_not_installed onboarding banner. Once a real org is configured, a
 // missing installation is a real misconfiguration and is still reported.
 func onboardingOnlyCondition(obs Observation, ev Evidence) bool {
-	return ev.Class == ClassGitHubAppNotInstalled && strings.TrimSpace(obs.ProjectOrg) == ""
+	if ev.Class != ClassGitHubAppNotInstalled {
+		return false
+	}
+	org := strings.TrimSpace(obs.ProjectOrg)
+	return org == "" || config.IsPlaceholderOrg(org)
 }
 
 // BuildObservationReports converts detector findings into reports consumed by

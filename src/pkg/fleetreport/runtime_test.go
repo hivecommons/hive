@@ -256,8 +256,11 @@ func TestEvaluateRuntimeEvidenceReEmitsUntilPostedAndRecovers(t *testing.T) {
 	}
 }
 
-// An unclaimed hive (no project.org) has no GitHub App installation by
-// design; that is the onboarding banner's job, not a fleet issue (#17593).
+// An unclaimed hive has no GitHub App installation by design; that is the
+// onboarding banner's job, not a fleet issue (#17593). "Unclaimed" is either
+// no project.org at all or the synthetic "available-<id>" / legacy
+// "placeholder" org the pool seeds — the hive that filed #17593 carried
+// project.org=available-lke648397-260827-boq9, not an empty org.
 func TestEvaluateGitHubAppNotInstalledSkippedOnUnclaimedHive(t *testing.T) {
 	now := time.Date(2026, 11, 10, 18, 0, 0, 0, time.UTC)
 	appEv := Evidence{Class: ClassGitHubAppNotInstalled, Component: "github-client", Severity: "medium", Count: 1, Message: "github app installation id is unset: minting scoped token for guide: installation_id is 0", Attributable: true}
@@ -270,8 +273,13 @@ func TestEvaluateGitHubAppNotInstalledSkippedOnUnclaimedHive(t *testing.T) {
 	}{
 		{name: "unclaimed hive skips app-not-installed", org: "", evidence: []Evidence{appEv}, wantClasses: nil},
 		{name: "whitespace org counts as unclaimed", org: "  ", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "pool placeholder org (#17593 hive) counts as unclaimed", org: "available-lke648397-260827-boq9", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "placeholder org prefix is case-insensitive", org: " Available-OKE-07 ", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "legacy placeholder org counts as unclaimed", org: "placeholder-org", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "placeholder org still reports other classes", org: "available-lke648397-260827-boq9", evidence: []Evidence{appEv, panicEv}, wantClasses: []string{ClassPanicRecovered}},
 		{name: "unclaimed hive still reports other classes", org: "", evidence: []Evidence{appEv, panicEv}, wantClasses: []string{ClassPanicRecovered}},
 		{name: "org configured still reports app-not-installed", org: "acme", evidence: []Evidence{appEv}, wantClasses: []string{ClassGitHubAppNotInstalled}},
+		{name: "real org merely containing the prefix is still reported", org: "unavailable-corp", evidence: []Evidence{appEv}, wantClasses: []string{ClassGitHubAppNotInstalled}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -285,6 +293,42 @@ func TestEvaluateGitHubAppNotInstalledSkippedOnUnclaimedHive(t *testing.T) {
 				t.Fatalf("report classes = %v, want %v", got, tc.wantClasses)
 			}
 		})
+	}
+}
+
+// A hive that already carries an open github_app_not_installed tracker from a
+// pre-fix release (the unclaimed slot that filed #17593) must, on its first
+// evaluation after upgrade, close that tracker out via the ordinary recovery
+// path even though the runtime condition itself persists — the same way a
+// class that stops being known is retired. The resulting "self-recovered"
+// comment on the issue is the suppression taking effect, not a real fix.
+func TestEvaluateGitHubAppNotInstalledOpenTrackerRetiresOnUnclaimedHive(t *testing.T) {
+	now := time.Date(2026, 11, 10, 18, 0, 0, 0, time.UTC)
+	appEv := Evidence{Class: ClassGitHubAppNotInstalled, Component: "github-client", Severity: "medium", Count: 1, Message: "github app installation id is unset: minting scoped token for guide: installation_id is 0", Attributable: true}
+	fp := RuntimeFingerprint(appEv.Class, appEv.Message)
+	prev := State{Open: map[string]OpenIssue{
+		fp: {Number: 17593, PostedAt: now.Add(-time.Hour), Trigger: TriggerRuntimeError, Class: ClassGitHubAppNotInstalled, Component: appEv.Component},
+	}}
+	obs := Observation{EpochStart: now, HiveID: "hive-a", Version: "v6.12.6", HiveSlug: "hosted-available-lke648397-260827-boq9", ProjectOrg: "available-lke648397-260827-boq9", Evidence: []Evidence{appEv}, Now: now}
+	res := Evaluate(obs, prev, false)
+	if len(res.Reports) != 0 {
+		t.Fatalf("suppressed class still reported: %#v", res.Reports)
+	}
+	if len(res.Recoveries) != 1 || res.Recoveries[0].Fingerprint != fp || res.Recoveries[0].Trigger != TriggerRuntimeError || res.Recoveries[0].Class != ClassGitHubAppNotInstalled || !res.Recoveries[0].Recovered {
+		t.Fatalf("recoveries = %#v, want one for the stale #17593 tracker", res.Recoveries)
+	}
+	if !strings.Contains(res.Recoveries[0].Body, "self-recovered: yes") {
+		t.Fatalf("recovery body = %q", res.Recoveries[0].Body)
+	}
+	// Once the publisher has marked the tracker recovered, later passes stay
+	// quiet: the suppressed class never re-opens it.
+	st := res.State
+	o := st.Open[fp]
+	o.Recovered = true
+	st.Open[fp] = o
+	again := Evaluate(obs, st, false)
+	if len(again.Reports) != 0 || len(again.Recoveries) != 0 {
+		t.Fatalf("second pass = reports %#v recoveries %#v", again.Reports, again.Recoveries)
 	}
 }
 
