@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.23)
+
+### Fixed
+
+- Knowledge panel: Add Git Source, Add Subscription, Import Document and Import now show required-field errors inline under the offending input (red border, focus, `role="alert"` message) instead of a transient info toast, and required inputs are marked; fixes Clone & Index appearing to do nothing with an empty name or URL (#17587, part of #17583).
+
 ## 2026-11-10 (v5.211.22)
 
 ### Fixed
