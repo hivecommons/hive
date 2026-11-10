@@ -83,7 +83,9 @@ func (c *Engine) PRApproveReply(ctx context.Context, displayRepo string, number 
 		}
 		diffReason := ""
 		if contributor {
-			diffReason = contributorLaneDiffReason(files)
+			// The lane's own merge fence, scoped the same way
+			// (automerge_workflow_fence_scope.go).
+			diffReason = c.contributorLaneMergeFence(c.currentContributorLanePolicy(), owner, repo, number, head, files)
 		}
 		// The same pin-only exception the sweep lanes apply (#16266), so the
 		// reply never contradicts what the lane will do on its next pass.

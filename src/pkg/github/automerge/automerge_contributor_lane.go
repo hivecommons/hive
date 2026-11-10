@@ -230,6 +230,11 @@ type ContributorLanePolicy struct {
 	// (auto_merge.contributor_lane.owner_approval_releases_workflow_fence,
 	// default on). See automerge_contributor_workflow_approval.go.
 	OwnerApprovalReleasesWorkflowFence bool
+	// WorkflowFenceScope is auto_merge.contributor_lane.workflow_fence_scope:
+	// "human_merge_paths" fences only workflow / action edits that match the
+	// repository's auto_merge.human_merge_paths; anything else (the default,
+	// "all") fences every such edit. See automerge_workflow_fence_scope.go.
+	WorkflowFenceScope string
 }
 
 // Contributor-lane auto-promotion scopes; mirrors
@@ -1436,6 +1441,11 @@ type contributorLaneEval struct {
 	// workflowApprover is the trusted merger whose approval released the
 	// workflow-path fence for headSHA ("" when the fence did not trip).
 	workflowApprover string
+	// workflowUnfenced is set when the head edits CI workflow / action files
+	// that workflow_fence_scope left outside the fence, so a merge GitHub
+	// refuses for want of `workflows: write` is handled like a released
+	// fence's (workflowFenceMergeUnauthorized).
+	workflowUnfenced bool
 	// soakStartedAt / soakRemaining are the soak clock the lane holds
 	// headSHA on when the skip reason is contributorLaneReasonSoaking:
 	// when the head was first seen green and how long is left. The reason
@@ -1540,7 +1550,19 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	if err != nil {
 		return eval, contributorLaneReasonFilesEvidence, err
 	}
-	if reason := contributorLaneDiffReason(files); reason != "" {
+	// The merge fence for this head, with the workflow-path verdict scoped by
+	// workflow_fence_scope (automerge_workflow_fence_scope.go). A workflow
+	// edit the scope waives still stays fenced once the App has been refused
+	// this head's merge for want of `workflows: write`.
+	diffReason := c.contributorLaneMergeFence(policy, owner, repo, number, headSHA, files)
+	if diffReason == "" && contributorLaneTouchesWorkflowFiles(files) {
+		if c.workflowMergeRefusedOnRecord(ctx, displayRepo, owner, repo, pr, number, headSHA) {
+			diffReason = contributorLaneReasonWorkflowPath
+		} else {
+			eval.workflowUnfenced = true
+		}
+	}
+	if reason := diffReason; reason != "" {
 		// contributorLaneDiffReason names only the first fence, and the
 		// owner-approval release lifts the workflow fence alone: a head that
 		// also removes tests merged on that approval with its test removal

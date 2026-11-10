@@ -191,6 +191,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			AutoPromotionScope                 *string  `json:"auto_promotion_scope"`
 			ApproveHeldRunsForRegistryTrusted  *bool    `json:"approve_held_runs_for_registry_trusted"`
 			OwnerApprovalReleasesWorkflowFence *bool    `json:"owner_approval_releases_workflow_fence"`
+			WorkflowFenceScope                 *string  `json:"workflow_fence_scope"`
 		} `json:"contributor_lane"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -274,6 +275,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	var contributorLaneLabels []string
 	var contributorLaneTiers []string
 	var contributorLaneScope string
+	var contributorLaneWorkflowFenceScope string
 	if body.ContributorLane != nil {
 		if body.ContributorLane.SoakMinutes != nil && *body.ContributorLane.SoakMinutes < 0 {
 			jsonError(w, "contributor_lane.soak_minutes must be 0 (default 30) or greater", http.StatusBadRequest)
@@ -307,6 +309,16 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			contributorLaneScope = scope.EffectiveAutoPromotionScope()
+		}
+		if body.ContributorLane.WorkflowFenceScope != nil {
+			// An unknown value is refused here; the lane reads anything but
+			// human_merge_paths as the full fence (EffectiveWorkflowFenceScope).
+			scope := config.ContributorLaneAutoMergeConfig{WorkflowFenceScope: *body.ContributorLane.WorkflowFenceScope}
+			if err := scope.Validate(); err != nil {
+				jsonError(w, "contributor_lane.workflow_fence_scope must be one of "+strings.Join(config.ContributorLaneWorkflowFenceScopes, ", "), http.StatusBadRequest)
+				return
+			}
+			contributorLaneWorkflowFenceScope = scope.EffectiveWorkflowFenceScope()
 		}
 	}
 
@@ -424,6 +436,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.ContributorLane.AutoPromotionScope != nil {
 			cfg.AutoMerge.ContributorLane.AutoPromotionScope = contributorLaneScope
+		}
+		if body.ContributorLane.WorkflowFenceScope != nil {
+			cfg.AutoMerge.ContributorLane.WorkflowFenceScope = contributorLaneWorkflowFenceScope
 		}
 	}
 	syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
@@ -554,6 +569,8 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 			"grantable_tiers":                        config.ContributorLaneGrantableTiers,
 			"approve_held_runs_for_registry_trusted": cl.EffectiveApproveHeldRunsForRegistryTrusted(),
 			"owner_approval_releases_workflow_fence": cl.EffectiveOwnerApprovalReleasesWorkflowFence(),
+			"workflow_fence_scope":                   cl.EffectiveWorkflowFenceScope(),
+			"workflow_fence_scopes":                  config.ContributorLaneWorkflowFenceScopes,
 		},
 	}
 }
