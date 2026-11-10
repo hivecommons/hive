@@ -4,11 +4,12 @@ import "github.com/hivecommons/hive/pkg/config"
 
 // submitConfigReload is the config watcher's callback. The governor loop
 // holds cfgReloadMu for a whole tick (minutes on a busy spoke), so waiting
-// for it starved hot-reload, and the tick's persist (persistState, whose
-// Config.ReconcilePausedAndSave rewrites hive.yaml from the in-memory config)
-// then saved the stale config over the operator's edit
-// (hivecommons/hive#17467). The reload is parked instead: applied now when
-// the lock is free, otherwise by the holder at its next safe point. Only the
+// for it starved hot-reload, and every save made from the in-memory config
+// in the meantime (the tick's persistState, whose
+// Config.ReconcilePausedAndSave rewrites hive.yaml) wrote the pre-reload
+// config over the operator's edit (hivecommons/hive#17467). The reload is
+// parked instead: applied now when the lock is free, otherwise by the holder
+// at its next safe point, which is always before the tick's persist. Only the
 // newest parked reload is applied; each one is a full file.
 //
 // Savers that run without cfgReloadMu (heartbeat callbacks, dashboard
@@ -98,7 +99,6 @@ func (b *boot) applyPendingReloadLocked() {
 		return
 	}
 	prev, next := b.reloadApply(newCfg)
-	b.cfgGeneration++
 	if prev != next {
 		b.pendingACMM = append(b.pendingACMM, [2]int{prev, next})
 	}
@@ -113,21 +113,13 @@ func (b *boot) applyPendingReloadLocked() {
 	}
 }
 
-// persistCycleLocked is a governor tick's persist. persistState ends in
+// persistCycleLocked is a governor tick's persist. persistState writes the
+// governor snapshot and reach counters and ends in
 // Config.ReconcilePausedAndSave, which rewrites hive.yaml from the in-memory
-// config. It first applies any parked reload, then skips the save when a
-// reload landed since the tick started at cycleGen: the tick's state was
-// built against the replaced config, and the operator's edit must reach disk
-// untouched. The next tick persists from the reloaded config. Caller holds
-// cfgReloadMu.
-func (b *boot) persistCycleLocked(persist func(*boot), cycleGen uint64) {
+// config. Any parked reload is applied first, so the save writes the
+// reloaded config rather than the one the tick started from, and the
+// governor state is still saved this tick. Caller holds cfgReloadMu.
+func (b *boot) persistCycleLocked(persist func(*boot)) {
 	b.applyPendingReloadLocked()
-	if b.cfgGeneration != cycleGen {
-		if b.logger != nil {
-			b.logger.Info("config reloaded during governor cycle; skipping this cycle's persist so the reload is not overwritten",
-				"cycle_generation", cycleGen, "generation", b.cfgGeneration)
-		}
-		return
-	}
 	persist(b)
 }

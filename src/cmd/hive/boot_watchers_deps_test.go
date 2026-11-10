@@ -284,13 +284,8 @@ func TestBootWatchersWith_ReloadDefersWhileConfigLockHeld(t *testing.T) {
 		b.unlockCfg()
 		t.Fatal("reload mutated cfg while the governor loop held cfgReloadMu")
 	}
-	gen := b.cfgGeneration
-
 	b.unlockCfg()
 	if !sameStringSlice(cfg.Project.Repos, []string{"widgets", "reloaded"}) {
 		t.Fatalf("repos = %v after the lock was released, want the reloaded list", cfg.Project.Repos)
-	}
-	if b.cfgGeneration != gen+1 {
-		t.Fatalf("cfgGeneration = %d after reload, want %d", b.cfgGeneration, gen+1)
 	}
 }

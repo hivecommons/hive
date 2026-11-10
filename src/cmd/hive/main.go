@@ -6042,7 +6042,6 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	// enumerate pass, not from completion of startup evaluation.
 	lastEnumerateAt := loopNow()
 	b.lockCfg()
-	initialCfgGen := b.cfgGeneration
 	initialTickStarted := time.Now()
 	b.evalCycles++
 	deps.runEval(b, nil, evalSourceEnumerate)
@@ -6062,7 +6061,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	if b.wd != nil {
 		b.wd.Tick(b.ctx)
 	}
-	b.persistCycleLocked(deps.persist, initialCfgGen)
+	b.persistCycleLocked(deps.persist)
 	b.unlockCfg()
 	b.logger.Info("governor tick complete", "tick_wall_s", time.Since(initialTickStarted).Seconds(),
 		"eval_s", initialEvalDuration.Seconds(), "rotation_s", initialRotationDuration.Seconds(), "sweeps_s", 0,
@@ -6086,7 +6085,6 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			lastEnumerateAt = loopNow()
 		}
 		b.lockCfg()
-		cycleGen := b.cfgGeneration
 		b.publishSweepConfig()
 		restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 		for _, name := range restarted {
@@ -6172,7 +6170,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				b.logger.Info("retro lane filed advisory beads", "findings", n)
 			}
 		}
-		b.persistCycleLocked(deps.persist, cycleGen)
+		b.persistCycleLocked(deps.persist)
 		effectiveEvalInterval, mode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
 		if effectiveEvalInterval != lastEvalInterval {
 			b.logger.Info("eval interval changed, resetting ticker",
@@ -6302,10 +6300,9 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			} else {
 				// Keep this cycle lean: planning and delivery without sweeps.
 				b.lockCfg()
-				cycleGen := b.cfgGeneration
 				b.evalCycles++
 				deps.runEval(b, nil, evalSourceCached)
-				b.persistCycleLocked(deps.persist, cycleGen)
+				b.persistCycleLocked(deps.persist)
 				b.unlockCfg()
 			}
 			after, afterWho := b.gov.NextContinuousKickAt()
@@ -6339,7 +6336,11 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		select {
 		case <-b.ctx.Done():
 			b.logger.Info("shutting down, persisting state")
-			deps.persist(b)
+			// Under the config lock, so a reload being applied cannot race
+			// the final save and the save writes the newest config.
+			b.lockCfg()
+			b.persistCycleLocked(deps.persist)
+			b.unlockCfg()
 			return
 		case <-ticker.Chan():
 			tick(evalSourceEnumerate)

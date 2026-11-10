@@ -80,10 +80,6 @@ type boot struct {
 	// pendingReload and the holder applies it at its next safe point via
 	// lockCfg/unlockCfg (hivecommons/hive#17467).
 	cfgReloadMu sync.Mutex
-	// cfgGeneration counts reloads swapped into cfg; guarded by cfgReloadMu.
-	// A governor tick compares it with the value it started from and skips
-	// its persist when a reload landed mid-tick.
-	cfgGeneration uint64
 	// reloadApply swaps a reloaded config into cfg and re-syncs the
 	// subsystems that cache it. Caller holds cfgReloadMu; it returns the
 	// ACMM level transition to fire once the lock is released.
