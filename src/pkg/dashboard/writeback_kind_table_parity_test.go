@@ -65,7 +65,9 @@ function parseRows(markup) {
     const ov = /data-wb-override="([^"]*)"/.exec(m[2]);
     if (ov) dataset.wbOverride = decode(ov[1]);
     const controls = {};
-    const input = /<input[^>]*class="wb-kind-level"[^>]*>/.exec(m[3]);
+    // Quote-aware: data-setting-key values carry "<key>", whose ">" would
+    // end a naive [^>]* match before value= and disabled.
+    const input = /<input(?:"[^"]*"|[^">])*class="wb-kind-level"(?:"[^"]*"|[^">])*>/.exec(m[3]);
     if (input) {
       const v = / value="([^"]*)"/.exec(input[0]);
       controls['.wb-kind-level'] = { value: v ? decode(v[1]) : '', disabled: / disabled[ >]/.test(input[0]) };
