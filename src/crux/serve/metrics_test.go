@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -136,8 +137,12 @@ func TestRequestMetricsBoundTheMethod(t *testing.T) {
 
 func TestStatusClassBoundaries(t *testing.T) {
 	for status, want := range map[int]string{
+		http.StatusContinue:            statusClass1xx,
+		199:                            statusClass1xx,
 		http.StatusOK:                  statusClass2xx,
-		399:                            statusClass2xx,
+		299:                            statusClass2xx,
+		http.StatusFound:               statusClass3xx,
+		399:                            statusClass3xx,
 		http.StatusBadRequest:          statusClass4xx,
 		499:                            statusClass4xx,
 		http.StatusInternalServerError: statusClass5xx,
@@ -269,4 +274,63 @@ func TestRecordedStatusIsTheOneTheClientSaw(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRedirectIsCountedAs3xx(t *testing.T) {
+	reader := useTestMetrics(t)
+	instrument(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/elsewhere", http.StatusFound)
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if got := collectStatusClasses(t, reader); len(got) != 1 || got[0] != statusClass3xx {
+		t.Errorf("status classes = %v, want [%s]", got, statusClass3xx)
+	}
+}
+
+// net/http recovers a handler panic above instrument, so the span and the
+// sample must be recorded while the panic unwinds, and the panic must still
+// propagate.
+func TestPanickingHandlerIsRecordedAs5xx(t *testing.T) {
+	exp := useTestTracer(t)
+	reader := useTestMetrics(t)
+	h := instrument(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }))
+
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	}()
+	if recovered != "boom" {
+		t.Fatalf("recovered = %v, want the handler's panic re-raised", recovered)
+	}
+	if got := collectStatusClasses(t, reader); len(got) != 1 || got[0] != statusClass5xx {
+		t.Errorf("status classes = %v, want [%s]", got, statusClass5xx)
+	}
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("spans = %d, want the panicking request's span ended", len(spans))
+	}
+	if spans[0].Status.Code != codes.Error {
+		t.Errorf("span status = %v, want error", spans[0].Status.Code)
+	}
+}
+
+func collectStatusClasses(t *testing.T, reader *sdkmetric.ManualReader) []string {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	var classes []string
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if sum, ok := m.Data.(metricdata.Sum[int64]); ok {
+				for _, dp := range sum.DataPoints {
+					class, _ := dp.Attributes.Value(attrStatusClass)
+					classes = append(classes, class.AsString())
+				}
+			}
+		}
+	}
+	return classes
 }
