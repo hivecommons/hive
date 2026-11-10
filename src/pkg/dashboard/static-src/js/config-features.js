@@ -427,6 +427,21 @@
         const key = Object.keys(amHumanMergePaths).find(k => k.toLowerCase() === String(repo).toLowerCase());
         return key && Array.isArray(amHumanMergePaths[key]) ? amHumanMergePaths[key] : [];
       };
+      // project.repo_policies[].workflow_fence_scope: one row per watched
+      // repository; '' is "use the hive-wide scope". A staged choice wins
+      // over the saved one so a re-render keeps it.
+      const amFenceRepoStaged = ((((_configState.dirty || {})['auto-merge'] || {}).contributor_lane || {}).workflow_fence_scope_repos) || {};
+      const amFenceRepoScope = (repo) => {
+        const staged = Object.keys(amFenceRepoStaged).find(k => k.toLowerCase() === String(repo).toLowerCase());
+        if (staged !== undefined) return amFenceRepoStaged[staged] || '';
+        const o = amContributorLaneFenceScopeRepos.find(x => String(x.repo).toLowerCase() === String(repo).toLowerCase());
+        return o ? String(o.workflow_fence_scope || '') : '';
+      };
+      const amFenceRepoRows = amProjectRepos.map(r => {
+        const cur = amFenceRepoScope(r);
+        const choices = [['', `hive-wide (${amContributorLaneFenceScope})`]].concat(amContributorLaneFenceScopes.map(v => [v, v]));
+        return `<tr class="am-fence-repo-row" data-repo="${esc(r)}"><td><code>${esc(r)}</code></td><td><select aria-label="Workflow fence scope for ${esc(r)}" data-change-action="markDirtyFenceScopeRepo" data-arg0="${esc(r)}" data-arg-types="s,v">${choices.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></td><td>${amHumanMergePathsFor(r).length ? 'yes' : 'none, so it keeps the full fence'}</td></tr>`;
+      }).join('');
       // auto_merge.human_merge_pin_only: one row per repository that has
       // human-merge paths or already holds an exception (it only ever lifts a
       // human-merge-path hold, so elsewhere it would never apply).
@@ -676,7 +691,12 @@
               <label for="am-contributor-lane-workflow-fence-scope">Workflow fence scope ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Workflow fence scope', `Which CI workflow / action edits wait for an owner's approval of the head before the contributor lane merges them. all (the default) fences every edit under .github/workflows or .github/actions. human_merge_paths fences only an edit to a file that is also in that repository's Human-merge paths, so routine workflow edits (pin bumps, permission tightening) go through review, CI and soak like any other change. A repository with no Human-merge paths keeps the full fence, and a renamed workflow file always trips it. Held fork CI runs are still never approved for a workflow edit, and Sentinel and the tests-removed fence still apply.`)}</label>
               <select id="am-contributor-lane-workflow-fence-scope" data-change-action="gh104">${amContributorLaneFenceScopeOptions}</select>
               <p class="am-trusted-authors-note">With <code>human_merge_paths</code>, list every workflow, reusable workflow and local action your release workflows use in Human-merge paths: an edit to an unlisted one merges after review without an owner's approval.</p>
-              <p class="am-trusted-authors-note">Per-repository overrides ${yamlHint('project.repo_policies[].workflow_fence_scope')}: ${amContributorLaneFenceScopeReposText}. A listed repository uses its own scope; this setting does not apply to it. Overrides are set in hive.yaml.</p>
+              <p class="am-trusted-authors-note">Per-repository overrides: ${amContributorLaneFenceScopeReposText}. A listed repository uses its own scope; this setting does not apply to it.</p>
+            </div>
+            <div class="config-field mt-4" id="am-fence-scope-repos">
+              <label>Workflow fence scope per repository ${yamlHint('project.repo_policies[].workflow_fence_scope')} ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Workflow fence scope per repository', `Gives one repository its own workflow fence scope, so you can loosen the fence only where that repository's maintainer agrees. hive-wide (the default) follows Workflow fence scope above; all or human_merge_paths replaces it for that repository alone, and a later change to the hive-wide scope does not reach it. Choose hive-wide again to clear the override. human_merge_paths still keeps the full fence in a repository with no Human-merge paths. Saving changes only the repositories you changed here, and it is recorded in the audit log.`)}</label>
+              ${amProjectRepos.length ? `<table class="am-fence-repo-table"><thead><tr><th>Repository</th><th>Scope</th><th>Human-merge paths</th></tr></thead><tbody>${amFenceRepoRows}</tbody></table>` : '<p class="am-trusted-authors-note">No repositories in project.repos yet.</p>'}
+              <p class="am-trusted-authors-note">Hive-wide scope: <code>${esc(amContributorLaneFenceScope)}</code>. A repository set to human_merge_paths lets workflow edits outside its Human-merge paths merge without an owner Approve.</p>
             </div>
             <div class="config-field mt-4">
               <label for="am-contributor-lane-exclude-labels">Excluded labels</label>

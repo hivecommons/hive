@@ -984,6 +984,23 @@
       const snPaths = Array.isArray(sn.sensitivePaths) ? sn.sensitivePaths : [];
       const snRepoPaths = Array.isArray(sn.repoSensitivePaths) ? sn.repoSensitivePaths : [];
       const snRepoPathsText = snRepoPaths.length ? snRepoPaths.map(o => `<code>${esc(o.repo)}</code>: ${(Array.isArray(o.sensitivePaths) && o.sensitivePaths.length) ? o.sensitivePaths.map(p => `<code>${esc(p)}</code>`).join(' ') : 'no globs (matches nothing)'}`).join('; ') : 'none';
+      /* project.repo_policies[].sentinel_sensitive_paths: one row per watched
+         repository. null is "use the hive-wide list", [] flags no path. A
+         staged choice wins over the saved one so a re-render keeps it. */
+      const snRepoStaged = (((_configState.dirty || {}).security || {}).sentinel || {}).repoSensitivePaths || {};
+      const snWatchedRepos = Array.isArray((_configState.data || {}).repos) ? (_configState.data || {}).repos : [];
+      const snRepoOwn = (repo) => {
+        const staged = Object.keys(snRepoStaged).find(k => k.toLowerCase() === String(repo).toLowerCase());
+        if (staged !== undefined) return snRepoStaged[staged];
+        const o = snRepoPaths.find(x => String(x.repo).toLowerCase() === String(repo).toLowerCase());
+        return o ? (Array.isArray(o.sensitivePaths) ? o.sensitivePaths : []) : null;
+      };
+      const snRepoRows = snWatchedRepos.map(r => {
+        const own = snRepoOwn(r);
+        const mode = own === null ? 'hive' : (own.length ? 'own' : 'none');
+        const modes = [['hive', 'hive-wide list'], ['own', 'own list'], ['none', 'flag no paths']];
+        return `<tr class="sn-repo-paths-row" data-repo="${esc(r)}"><td><code>${esc(r)}</code></td><td><select class="sn-repo-paths-mode" aria-label="Sentinel sensitive files for ${esc(r)}" data-change-action="markSentinelRepoPathsRow" data-arg-types="t" ${sn.enabled ? '' : 'disabled'}>${modes.map(([v, l]) => `<option value="${v}"${v === mode ? ' selected' : ''}>${l}</option>`).join('')}</select></td><td><textarea rows="3" class="mono sn-repo-paths-list" aria-label="Sensitive files for ${esc(r)}, one glob per line" data-change-action="markSentinelRepoPathsRow" data-arg-types="t" ${sn.enabled && mode === 'own' ? '' : 'disabled'}>${esc((mode === 'own' ? own : snPaths).join('\n'))}</textarea></td></tr>`;
+      }).join('');
       const snBehaviors = (sn.behaviors || []).map(b => `
         <div class="config-toggle">
           <div class="config-toggle-switch ${b.enabled ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelBehavior" data-rule="${esc(b.name)}"></div>
@@ -1005,7 +1022,11 @@
         <div class="config-field">
           <label>Sensitive files ${yamlHint('sentinel.sensitive_paths[]')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
           <textarea rows="8" class="mono" data-change-action="gh83" ${sn.enabled ? '' : 'disabled'}>${esc(snPaths.join('\n'))}</textarea>
-          <p class="muted-xs">Per-repository lists ${yamlHint('project.repo_policies[].sentinel_sensitive_paths[]')}: ${snRepoPathsText}. A listed repository uses its own list instead of this one. Per-repository lists are set in hive.yaml.</p>
+          <p class="muted-xs">Per-repository lists ${yamlHint('project.repo_policies[].sentinel_sensitive_paths[]')}: ${snRepoPathsText}. A listed repository uses its own list instead of this one.</p>
+        </div>
+        <div class="config-field" id="sn-repo-sensitive-paths">
+          <label>Sensitive files per repository ${yamlHint('project.repo_policies[].sentinel_sensitive_paths[]')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Sensitive files per repository', `Gives one repository its own sensitive-file list, so you can stop flagging files such as lockfiles only where that repository's maintainer agrees. hive-wide list (the default) uses Sensitive files above; own list replaces it for that repository alone, one glob per line, and a later change to the hive-wide list does not reach it; flag no paths stops the sensitive_path rule there (other rules still run). Choose hive-wide list again to clear the override. Saving changes only the repositories you changed here, and it is recorded in the audit log.`)}</label>
+          ${snWatchedRepos.length ? `<table class="sn-repo-paths-table"><thead><tr><th>Repository</th><th>Uses</th><th>Globs</th></tr></thead><tbody>${snRepoRows}</tbody></table>` : '<p class="muted-xs">No repositories in project.repos yet.</p>'}
         </div>
         <div class="config-field">
           <label>Behaviors ${yamlHint('sentinel.disabled_behaviors[]')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Behaviors', `Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.`)}</label>

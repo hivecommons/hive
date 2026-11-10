@@ -755,10 +755,16 @@ other role.
 - `sentinel.settings` changes Sentinel's `sensitive_paths`,
   `disabled_behaviors`, `exempt_logins` and `trusted_authors_block`. A
   repository with its own list
-  (`project.repo_policies[].sentinel_sensitive_paths`, set in hive.yaml)
-  keeps it: the preview names those repositories and the hive-wide globs
-  their lists leave out, and does not change them. A per-repository list
-  added or changed after the preview refuses the confirm.
+  (`project.repo_policies[].sentinel_sensitive_paths`) keeps it when
+  `sensitive_paths` changes: the preview names those repositories and the
+  hive-wide globs their lists leave out. A per-repository list added or
+  changed after the preview refuses the confirm.
+- `sentinel.settings` also sets one repository's own list, with
+  `repo_sensitive_paths`: `{"owner/repo": [every glob for it]}`. `[]` flags
+  no path there, and `null` removes the repository's list so it uses the
+  hive-wide list again. Only the repositories you name change; the
+  hive-wide list does not. A blank or malformed glob, or a repository that
+  is not in `project.repos`, is refused.
 
 Each list takes a change, not a new list: `{"add": [...], "remove": [...]}`,
 or `{"clear": true}` to empty it first. For example, to turn reporter trust on
@@ -785,7 +791,9 @@ The preview says plainly when a change lets more through:
   a triage label.
 - **Fewer pull requests flagged by Sentinel:** sensitive paths removed, a
   behavior disabled, an exempt login added, or `trusted_authors_block` turned
-  off. The preview names the pull requests that would no longer be held.
+  off. The preview names the pull requests that would no longer be held. For
+  a repository's own list it names the globs per repository, for example
+  `Sentinel stops flagging Justfile, **/requirements*.txt in org/a`.
 
 On a hive managed by a hub, the issue filter preview also says the change may
 be overwritten. If the hub's record for the hive carries an issue filter, the
@@ -863,6 +871,14 @@ only.
   "trusted_authors": [...]}`; `null` removes it. An enabled exception needs
   `human_merge_paths` for the repository, set already or in the same change.
   An unknown field is refused.
+- **One repository's workflow fence scope:**
+  `{"contributor_lane": {"workflow_fence_scope_repos": {"org/a": "human_merge_paths"}}}`
+  gives `org/a` its own scope (`project.repo_policies[].workflow_fence_scope`,
+  `all` or `human_merge_paths`); `null` removes it so the repository uses the
+  hive-wide `workflow_fence_scope` again. The endpoint takes this map per
+  repository, so the preview sends only the repositories that change; the
+  hive-wide scope is never changed. A hive too old to take it says so, and
+  the preview is refused.
 - **Entries you do not name are kept.** The endpoint replaces each list and
   map it is sent, so the preview reads the current settings and sends the
   merged whole value. It shows every change before and after.
@@ -876,7 +892,14 @@ only.
   a pin-only exception on, or giving it more paths, kinds or trusted authors,
   is widening too, and the preview names what merges as a result, for example
   "pin bumps (action-sha) to .github/workflows/*.yml in org/a by renovate[bot]
-  will merge without a hand merge". Removing any of those is not.
+  will merge without a hand merge". Removing any of those is not. A
+  repository whose fence scope becomes `human_merge_paths` (its own, or the
+  hive-wide one after its own is removed) is named: "workflow edits outside
+  human-merge paths in org/a merge without an owner Approve". The preview
+  also reminds that a repository with no `human_merge_paths` entry keeps the
+  full fence, and names the repositories in the change that have none. The
+  hive-wide scope and the human-merge paths it read are part of the stale
+  check.
 - It never merges a pull request.
 
 `decisions.delegate_settings` changes the "Let hive decide" settings

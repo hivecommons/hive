@@ -54,6 +54,7 @@ const (
 	amList
 	amRepoPaths
 	amPinOnly
+	amFenceScopeRepos // per-repository map, sent as a patch (tools_automerge_fence_repos.go)
 )
 
 // amEntry is how a list's entries are compared.
@@ -136,11 +137,14 @@ var autoMergeFields = []amField{
 	{key: "contributor_lane.auto_promotion_scope", kind: amEnum, enum: config.ContributorLaneAutoPromotionScopes, widen: amWidenScope, why: "merges in every repository count toward automatic promotion"},
 	{key: "contributor_lane.approve_held_runs_for_registry_trusted", kind: amBool, widen: amWidenOn, why: "the hive approves held workflow runs for registry-trusted authors"},
 	{key: "contributor_lane.owner_approval_releases_workflow_fence", kind: amBool, widen: amWidenOn, why: "an owner's approval lets the lane merge workflow-file changes"},
+	// Widening is named in amFenceReposFinish, which also needs the hive-wide
+	// scope and the human-merge paths.
+	{key: amFenceReposKey, kind: amFenceScopeRepos},
 }
 
 func (autoMergeUpdateOp) Name() string { return WriteOpAutoMergeUpdate }
 func (autoMergeUpdateOp) Description() string {
-	return "Change merge settings (auto_merge) through PATCH /api/config/auto-merge, the endpoint the dashboard's merge controls use. Owner only. Pass only what changes, shaped like the endpoint's body. A list takes {\"add\": [...], \"remove\": [...]}; human_merge_paths takes {\"owner/repo\": [every pattern for that repository]}, with null or [] removing that repository. human_merge_pin_only takes {\"owner/repo\": {\"enabled\": true, \"paths\": [...], \"kinds\": [...], \"trusted_authors\": [...]}}, the whole exception for that repository, with null removing it; the repository needs human_merge_paths. The preview reads the current settings and sends each changed list or map whole, keeping every entry you did not name, shows each change before and after, and says which changes let the hive merge more on its own. write_confirm refuses if any of those settings changed after the preview. This operation never merges a pull request."
+	return "Change merge settings (auto_merge) through PATCH /api/config/auto-merge, the endpoint the dashboard's merge controls use. Owner only. Pass only what changes, shaped like the endpoint's body. A list takes {\"add\": [...], \"remove\": [...]}; human_merge_paths takes {\"owner/repo\": [every pattern for that repository]}, with null or [] removing that repository. human_merge_pin_only takes {\"owner/repo\": {\"enabled\": true, \"paths\": [...], \"kinds\": [...], \"trusted_authors\": [...]}}, the whole exception for that repository, with null removing it; the repository needs human_merge_paths. contributor_lane.workflow_fence_scope_repos takes {\"owner/repo\": \"all\" | \"human_merge_paths\"}, one repository's own workflow fence scope, with null returning it to the hive-wide scope; only the named repositories change. The preview reads the current settings and sends each changed list or map whole, keeping every entry you did not name, shows each change before and after, and says which changes let the hive merge more on its own. write_confirm refuses if any of those settings changed after the preview. This operation never merges a pull request."
 }
 
 func (autoMergeUpdateOp) InputSchema() map[string]any {
@@ -175,6 +179,8 @@ func (f *amField) schema() map[string]any {
 		return map[string]any{"type": "string", "description": "A duration such as 3m or 1h30m."}
 	case amEnum:
 		return map[string]any{"type": "string", "enum": f.enum}
+	case amFenceScopeRepos:
+		return amFenceReposSchema()
 	case amRepoPaths:
 		return map[string]any{"type": "object", "description": "owner/repo to every glob pattern that repository should hold; null or [] removes the repository. Repositories you do not name are kept.", "additionalProperties": map[string]any{"anyOf": []any{list, map[string]any{"type": "null"}}}}
 	case amPinOnly:
@@ -242,6 +248,7 @@ func (autoMergeUpdateOp) PreviewWithProvider(ctx context.Context, args map[strin
 		"This changes which pull requests the merge sweeps may merge from now on. It merges nothing itself.",
 		"write_confirm reads these settings again and refuses if any of them changed after this preview.",
 	}
+	effects = append(effects, plan.effects...)
 	if len(plan.unchanged) > 0 {
 		effects = append(effects, "Already as requested, so not sent: "+strings.Join(plan.unchanged, ", ")+".")
 	}
@@ -282,6 +289,9 @@ type amPlanned struct {
 	before any
 	after  any
 	notes  []string
+	// fenceHiveWide is the hive-wide workflow_fence_scope, which a
+	// per-repository fence scope row names when the repository has none.
+	fenceHiveWide string
 }
 
 type amPlan struct {
@@ -289,6 +299,7 @@ type amPlan struct {
 	unchanged   []string
 	body        map[string]any
 	fingerprint string
+	effects     []string // extra preview effects a change adds
 }
 
 type amRow struct {
@@ -300,6 +311,9 @@ type amRow struct {
 // per repository that changes, so a preview names repositories as values
 // rather than as keys.
 func (c amPlanned) rows() []amRow {
+	if c.field.kind == amFenceScopeRepos {
+		return amFenceReposRows(c, c.fenceHiveWide)
+	}
 	if c.field.kind == amPinOnly {
 		before := autoMergePinOnlyValue(c.before)
 		after, _ := c.after.(map[string]autoMergePinOnlyEntry)
@@ -402,6 +416,9 @@ func planAutoMergeUpdate(ctx context.Context, args map[string]any, provider Prov
 		if !ok {
 			return amPlan{}, fmt.Errorf("this hive's merge settings do not report %s, so the change cannot be previewed against its current value; the hive may run an older build", f.key)
 		}
+		if f.kind == amFenceScopeRepos {
+			before = amFenceRepoOverrides(before)
+		}
 		after, err := f.apply(before, a.raw, projectRepos)
 		if err != nil {
 			return amPlan{}, err
@@ -410,7 +427,11 @@ func planAutoMergeUpdate(ctx context.Context, args map[string]any, provider Prov
 			plan.unchanged = append(plan.unchanged, f.key)
 			continue
 		}
-		setSetting(plan.body, f.key, after)
+		send := after
+		if f.kind == amFenceScopeRepos {
+			send = amFenceReposPatch(amFenceRepoOverrides(before), amFenceRepoOverrides(after))
+		}
+		setSetting(plan.body, f.key, send)
 		beforeValues[f.key] = before
 		plan.changes = append(plan.changes, amPlanned{field: f, before: before, after: after, notes: f.widening(before, after, projectRepos)})
 	}
@@ -418,6 +439,9 @@ func planAutoMergeUpdate(ctx context.Context, args map[string]any, provider Prov
 		return amPlan{}, fmt.Errorf("nothing would change: %s already as requested", strings.Join(plan.unchanged, ", "))
 	}
 	if err := autoMergeCheckPinOnlyGuarded(plan, current); err != nil {
+		return amPlan{}, err
+	}
+	if err := amFenceReposFinish(&plan, current, beforeValues); err != nil {
 		return amPlan{}, err
 	}
 	plan.fingerprint = settingsFingerprint(beforeValues)
@@ -519,6 +543,8 @@ func (f *amField) apply(before, raw any, projectRepos []string) (any, error) {
 		return applyRepoPaths(before, raw, projectRepos)
 	case amPinOnly:
 		return autoMergeApplyPinOnly(before, raw, projectRepos)
+	case amFenceScopeRepos:
+		return amFenceReposApply(before, raw, projectRepos)
 	default:
 		return f.applyList(before, raw, projectRepos)
 	}
