@@ -375,6 +375,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if c.Governor.CIFailureKickCooldownS < 0 {
 		return fmt.Errorf("governor.ci_failure_kick_cooldown_s must be at least 0")
 	}
+	if c.Governor.DependencyBotRebaseAfterS < 0 {
+		return fmt.Errorf("governor.dependency_bot_rebase_after_s must be at least 0")
+	}
 	if c.Governor.MergeTrainStallWarnS < 0 {
 		return fmt.Errorf("governor.merge_train_stall_warn_s must be at least 0")
 	}

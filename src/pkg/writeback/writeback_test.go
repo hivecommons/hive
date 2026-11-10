@@ -394,3 +394,46 @@ func TestRepoPausedRefusesEveryKind(t *testing.T) {
 		t.Fatal("nil gate must never report paused")
 	}
 }
+
+// bot_rebase_request ticks a dependency bot's rebase box or asks Dependabot
+// to recreate its PR, which makes the bot rewrite the branch: it defaults to
+// the base_refresh policy (L6 with the opt-in label), the settings table and
+// the admin MCP list it from the registry, and an operator can widen it.
+func TestBotRebaseRequestKindDefaults(t *testing.T) {
+	if !IsKind("bot_rebase_request") {
+		t.Fatal("bot_rebase_request is not a known kind")
+	}
+	c := Config{}
+	if p := c.Policy(KindBotRebaseRequest); p != c.Policy(KindBaseRefresh) || p.MinLevel != 6 || !p.RequireLabel || p.UnlabeledMinLevel != 0 || p.OwnOnly {
+		t.Fatalf("default policy = %+v, want base_refresh's L6 with the opt-in label", p)
+	}
+	listed := false
+	for _, row := range c.EffectiveKinds() {
+		listed = listed || row.Kind == KindBotRebaseRequest
+	}
+	if !listed {
+		t.Fatal("bot_rebase_request missing from EffectiveKinds (the Settings kind table)")
+	}
+
+	level := 6
+	g := New(Config{}, Deps{LevelFor: func(string) int { return level }}, "")
+	bot := Item{Number: 9, IsPR: true, Author: "renovate[bot]"}
+	if d := g.Decide("acme/widget", bot, KindBotRebaseRequest); d.Allowed || d.Reason != ReasonNeedsLabel {
+		t.Fatalf("L6 without the label: %+v, want refused for the label", d)
+	}
+	labeled := bot
+	labeled.Labels = []string{DefaultOptInLabel}
+	if d := g.Decide("acme/widget", labeled, KindBotRebaseRequest); !d.Allowed {
+		t.Fatalf("L6 with the label: %+v, want allowed", d)
+	}
+	level = 5
+	if d := g.Decide("acme/widget", labeled, KindBotRebaseRequest); d.Allowed {
+		t.Fatalf("L5 with the label: %+v, want refused", d)
+	}
+	six := 6
+	g.SetConfig(Config{Kinds: map[string]KindPolicyOverride{"bot_rebase_request": {UnlabeledMinLevel: &six}}})
+	level = 6
+	if d := g.Decide("acme/widget", bot, KindBotRebaseRequest); !d.Allowed {
+		t.Fatalf("L6 without the label after unlabeled_min_level: 6: %+v, want allowed", d)
+	}
+}

@@ -99,6 +99,9 @@ func depBotHandoffResolved(rec depBotConflictRecord, pr github.PullRequest) bool
 		// A new head re-creates the checks; a check that completes green
 		// lets automerge merge (closed is handled by the caller).
 		return pr.HeadSHA != "" && pr.HeadSHA != rec.HeadSHA
+	case depBotHandoffStranded:
+		// The bot (or a person) moved the head, or the PR caught up.
+		return (pr.HeadSHA != "" && pr.HeadSHA != rec.HeadSHA) || depBotStuckResolved(pr)
 	default:
 		return depBotConflictResolved(pr)
 	}

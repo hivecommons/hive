@@ -106,5 +106,6 @@ func InternalWriteAuditActions() []string {
 		AuditActionHiveIDLabelRetired,
 		AuditActionReporterTrustWaitNoticed,
 		AuditActionReporterTrustWaitCleared,
+		AuditActionDependencyBotRebaseRequested,
 	}
 }

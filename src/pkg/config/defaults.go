@@ -36,6 +36,10 @@ const (
 	DefaultOptionalSweepEveryNCycles  = 1
 )
 
+// DefaultDependencyBotRebaseAfterS is governor.dependency_bot_rebase_after_s
+// when unset: 4 hours.
+const DefaultDependencyBotRebaseAfterS = 4 * 60 * 60
+
 const (
 	MaxAgentReplicas = 5
 
