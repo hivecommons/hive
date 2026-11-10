@@ -522,8 +522,13 @@ func (c *Engine) prefilterContributorLanePR(pr *gh.PullRequest, policy Contribut
 		return contributorLaneReasonNoAuthor
 	}
 	// The App's own PRs and allow-listed bots belong to the self-authored
-	// lane; a claim marker can never make them contributor work.
-	if _, ok := c.sweepLaneForAuthor(author); ok {
+	// lane; a claim marker can never make them contributor work. A trusted
+	// bot is handed off under its own reason so the log names the lane that
+	// owns it rather than calling the operator's bot "app-authored".
+	if lane, ok := c.sweepLaneForAuthor(author); ok {
+		if lane == laneTrustedBot {
+			return trustedBotLaneSkipReason
+		}
 		return contributorLaneReasonAppAuthored
 	}
 	// author_association is deliberately not checked here: a verified claim
@@ -1341,7 +1346,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	c.noteStagePR(owner, repo, number, pr)
 	if reason := c.sentinelBlockedUnlessHumanChangesRequested(caller, owner, repo, pr, c.prefilterContributorLanePR(pr, policy)); reason != "" {
-		if reason == contributorLaneReasonAppAuthored {
+		if reason == contributorLaneReasonAppAuthored || reason == trustedBotLaneSkipReason {
 			c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
 		} else {
 			c.noteRegistryRole(owner, repo, number, hgithub.SafeGetLogin(pr.GetUser()), policy)

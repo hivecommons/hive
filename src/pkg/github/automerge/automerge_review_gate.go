@@ -247,7 +247,9 @@ func (c *Engine) mergeReviewGate(ctx context.Context, displayRepo, owner, repo, 
 		verdict = gate.Verdict(fullRepo, number, head)
 	}
 	outcome := reviewGateOutcome(verdict)
-	enforce := mode == ReviewGateModeEnforce
+	// The trusted-bot lane records the swarm verdict but never holds on it
+	// while auto_merge.trusted_bot_skip_review is on: CI is its safety gate.
+	enforce := mode == ReviewGateModeEnforce && !c.trustedBotReviewAdvisory(lane)
 	humanApprover, overrode := "", ""
 	if enforce && outcome != ReviewGateOutcomeApproved {
 		// A trusted human's APPROVED review on exactly this head outranks
