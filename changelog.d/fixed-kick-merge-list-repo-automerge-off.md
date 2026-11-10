@@ -1,1 +1,0 @@
-- A resident agent's kick no longer lists PRs on repos with auto-merge switched off as MERGE-ELIGIBLE; they move to NEEDS MAINTAINER MERGE with the reason, so the scanner stops spending a kick on hive-merge requests the relay always refuses.

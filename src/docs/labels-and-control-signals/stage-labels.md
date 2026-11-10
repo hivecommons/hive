@@ -944,7 +944,14 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    queued `fix-pr` task, and after the `072` dwell (24h) since the nudge on
    that head it parks at `085` as `adoption-stalled:fork-rehome-refused`
    with one note asking a maintainer to review it and bring it in or close
-   it (once per head and reason, retried on later sweeps until GitHub
+   it. When the hive can read why it could not update the fork, the note
+   names the one action instead: if the base changed a file under
+   `.github/workflows/` since the branch was cut (GitHub refuses any App
+   push to a fork that carries a workflow change, whatever the App is
+   granted on the base repository), a person brings the branch up to date
+   with **Update branch** or `gh pr update-branch` (or merges the base in
+   locally when it conflicts); if the fork allows no maintainer edits, the
+   author turns them on or pushes the fix (the note posts once per head and reason, retried on later sweeps until GitHub
    accepts it; an errored lane's weak 080 does not lift it). A new head from the author re-arms the normal path. An explicit
    owner-delegated adoption request is still recorded and parks at once.
    - `reason=dco-rehome` (always `mode=supersede`) — not a fresh adoption

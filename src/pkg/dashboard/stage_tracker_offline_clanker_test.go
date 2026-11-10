@@ -30,7 +30,10 @@ func offlineClankerFixture(t *testing.T, now time.Time, lastSeen time.Time) (*Se
 		}
 		return automerge.ContributorPresence{Registered: true, Online: false, LastSeen: lastSeen}, true
 	}
-	s.deps = &Dependencies{Config: &config.Config{}}
+	// L6 with auto-merge on: the lanes run, so an unclassified PR waits for
+	// the stage-label pass (below L6 it reads auto-merge off instead).
+	level := 6
+	s.deps = &Dependencies{Config: &config.Config{ACMMLevel: &level}}
 	status := minimalPayload()
 	status.HiveID = "hive"
 	status.Repos = []FrontendRepo{{
