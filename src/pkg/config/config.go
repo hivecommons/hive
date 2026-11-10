@@ -5211,6 +5211,12 @@ type DashboardStageTrackerConfig struct {
 	// age takes the muted-stale tone (hivecommons/hive#15784). 0 means the
 	// default (4); a negative value never marks the wait stale.
 	WaitingPushStaleH int `yaml:"waiting_push_stale_h,omitempty" json:"waiting_push_stale_h,omitempty"`
+	// CIActivityStaleM is how many minutes a head's CI snapshot may claim a
+	// check still running or queued before the tracker re-lists the head's
+	// check runs on its next build, whatever the batch cache or ETag says
+	// (hivecommons/hive#17508). 0 means the default (10); a negative value
+	// disables the re-list.
+	CIActivityStaleM int `yaml:"ci_activity_stale_m,omitempty" json:"ci_activity_stale_m,omitempty"`
 	// ToastInfoS is how many seconds the activity monitor's informational
 	// toasts (action results, waiting-on-human nudges, the merge banner)
 	// stay up before dismissing themselves (hivecommons/hive#15813).
@@ -5354,6 +5360,23 @@ func (c *Config) StageTrackerWebhookRefreshDebounce() time.Duration {
 		return time.Duration(c.Dashboard.StageTracker.WebhookRefreshDebounceMS) * time.Millisecond
 	}
 	return defaultStageTrackerWebhookRefreshDebounce
+}
+
+// defaultStageTrackerCIActivityStale is dashboard.stage_tracker.ci_activity_stale_m's default.
+const defaultStageTrackerCIActivityStale = 10 * time.Minute
+
+// StageTrackerCIActivityStale is the effective
+// dashboard.stage_tracker.ci_activity_stale_m as a duration: how old a CI
+// snapshot that still claims a check running or queued may be before the
+// tracker re-lists the head's check runs. 0 disables the re-list.
+func (c *Config) StageTrackerCIActivityStale() time.Duration {
+	if c == nil || c.Dashboard.StageTracker.CIActivityStaleM == 0 {
+		return defaultStageTrackerCIActivityStale
+	}
+	if c.Dashboard.StageTracker.CIActivityStaleM < 0 {
+		return 0
+	}
+	return time.Duration(c.Dashboard.StageTracker.CIActivityStaleM) * time.Minute
 }
 
 // StageTrackerCacheTTL is the effective dashboard.stage_tracker.cache_ttl_s:

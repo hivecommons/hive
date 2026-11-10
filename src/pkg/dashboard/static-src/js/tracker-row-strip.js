@@ -209,6 +209,10 @@
       // person (human_decision) is at Review: the ask came from the
       // review, whatever CI has or has not reported (hivecommons/hive#17453).
       if (on('review') === 'human_decision' && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) return 'review';
+      // 060 reviewed with every check on the head concluded: the review is
+      // the row's own stage, so Review is the lit chevron; CI is its
+      // blocker only when a check is red (hivecommons/hive#17508).
+      if (Number(item.stage) === 60 && on('ci') !== 'failing') return 'review';
       if (on('ci') !== 'passing') return 'ci';
       return 'review';
     }
@@ -278,7 +282,10 @@
       // waiting on checks, whatever its cached counts say.
       if ((item.decision_needed && item.decision_needed.question) || item.human_attention) return false;
       const total = Number(a.checks_total) || 0, done = (Number(a.checks_passed) || 0) + (Number(a.checks_failed) || 0);
-      const settledWords = ['passing', 'failing', 'skipped', 'missing', 'human_decision'];
+      // The backend's own `unknown` (an ambiguous required run, statuses
+      // not read) is not motion either: a 2/3 ring with a never-reported
+      // check lit CI for eight hours on a green head (hivecommons/hive#17508).
+      const settledWords = ['passing', 'failing', 'skipped', 'missing', 'human_decision', 'unknown'];
       return total > 0 && done < total && !settledWords.includes(a.state);
     }
 

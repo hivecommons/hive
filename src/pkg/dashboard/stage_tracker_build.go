@@ -467,6 +467,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// a head the cycle never listed counts from the deliveries alone
 		// (hivecommons/hive#16521).
 		activityPR.CIActivity = github.HeadCIActivity(activityPR.Repo, pr.HeadSHA, pr.CIActivity)
+		s.stageTrackerRelistStaleCI(activityPR, now)
 		it.CIActivity = stageTrackerCIActivity(activityPR, now)
 		var bundle *evidence.Bundle
 		if evidenceVerifier != nil && pr.HeadSHA != "" {
@@ -1078,4 +1079,24 @@ func stageTrackerSinceUnblock(it *StageTrackerItem, rec stagelabels.Record, hasR
 	}
 	t := rec.UnblockedAt
 	it.StageSince = &t
+}
+
+// stageTrackerRelistStaleCI asks for one fresh check-run listing of a head
+// whose CI snapshot still claims a check running or queued after
+// dashboard.stage_tracker.ci_activity_stale_m (default 10). The cycle's
+// listing can outlive the checks it describes — the GraphQL batch skips a
+// clean repository, an ETag replays — and nothing else re-reads a head
+// whose PR has not changed; promptargs#467 rendered `CI 2/3 · running` for
+// eight hours after every check had passed (hivecommons/hive#17508). The
+// listing is coalesced and budget-aware; it lands in the webhook CI
+// evidence store for the next build.
+func (s *Server) stageTrackerRelistStaleCI(pr github.PullRequest, now time.Time) bool {
+	if s == nil || s.deps == nil || s.deps.GHClient == nil || pr.HeadSHA == "" {
+		return false
+	}
+	maxAge := s.deps.Config.StageTrackerCIActivityStale()
+	if !github.CIActivityStale(pr.CIActivity, now, maxAge) {
+		return false
+	}
+	return s.deps.GHClient.RequestHeadCIRelist(pr.Repo, pr.Number, pr.HeadSHA, pr.BaseRef, maxAge)
 }
