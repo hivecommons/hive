@@ -408,6 +408,9 @@ returns a `board_unavailable` refusal instead of an empty board; an item preview
 read the board says so (`on_board: "unknown"`) rather than reporting the item as absent.
 **`delegated_decision_status`** reads `GET .../items/{number}/decide-delegated`, the job a
 "Let hive decide" starts, so the outcome of `repository.item_delegate` can be read back.
+Once the job has left memory (30 minutes after it ends, or with a restart) the answer comes
+from the operator-action ledger with `from_ledger: true`; a job a restart cut short reads
+`failed` (interrupted by a hive restart, not resumed) instead of a 404.
 
 **`governor_setup_proposal`** (hive#10034) answers "set up these governors for me" for a new
 hive. It reads `GET /api/config/governor`, which already carries the repo count, cadence

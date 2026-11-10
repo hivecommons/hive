@@ -372,7 +372,7 @@ func (s *Server) autoDecideReviewQuestion(ctx context.Context, c reviewQuestionC
 	s.delegatedJobs.plans.forget(c.Repo, c.Number)
 	if err := s.operatorActions().Record(c.Repo, c.Number, OperatorAction{
 		Action: operatorActionLetHiveDecide, Actor: hiveID, At: now, Outcome: operatorActionOutcomePending,
-		HeadSHA: c.Head, Stage: trackerNumberNeedsDecision, Note: "auto: " + reason,
+		HeadSHA: c.Head, Stage: trackerNumberNeedsDecision, Note: "auto: " + reason, JobID: job.ID,
 	}); err != nil {
 		s.reviewQuestionLogger().Warn("operator action ledger write failed", "path", operatorActionsPath, "error", err)
 	}
