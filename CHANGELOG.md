@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.6)
+
+### Fixed
+
+- Agent: the token-restart give-up diagnosis ("the agent is still at a login prompt") now logs once per give-up episode instead of once per pane flap; the per-boot re-arm keeps the latch while the rolling 24h restart window is still full (#17483).
+
 ## 2026-11-10 (v5.211.5)
 
 ### Fixed
