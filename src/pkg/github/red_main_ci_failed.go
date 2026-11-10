@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
@@ -45,7 +46,8 @@ type CIFailedRun struct {
 type ciFailedState struct {
 	want func() bool
 	emit func(context.Context, CIFailedRun)
-	// seen maps ciFailedSeenKey(repo, check) to the head SHA last reported.
+	// seen maps ciFailedSeenKey(repo, check) to the ciFailedSeenRun (head
+	// SHA and check suite) last decided.
 	// In memory: a restart may report a still-red SHA once more.
 	seen map[string]string
 }
@@ -90,6 +92,13 @@ func ciFailedSeenKey(repoKey, check string) string {
 	return strings.ToLower(repoKey) + "\x00" + check
 }
 
+// ciFailedSeenRun identifies a decided run by head SHA and check suite, so a
+// default-branch run of the check on a SHA whose pull request run was
+// skipped is still reported.
+func ciFailedSeenRun(cr *gh.CheckRun) string {
+	return cr.GetHeadSHA() + "\x00" + strconv.FormatInt(cr.GetCheckSuite().GetID(), 10)
+}
+
 // observeCIFailed reports, through emit, each run in runs (redCheckRunsForRef
 // on the default branch tip) that concluded failure or timed_out on a head SHA
 // not yet reported for that check. A run is reported only when its check
@@ -114,7 +123,7 @@ func (c *Client) observeCIFailed(ctx context.Context, emit func(context.Context,
 		if cr == nil || !ciFailedConclusion(cr.GetConclusion()) || cr.GetHeadSHA() == "" {
 			continue
 		}
-		if c.redMain.ciFailed.seen[ciFailedSeenKey(key, check)] == cr.GetHeadSHA() {
+		if c.redMain.ciFailed.seen[ciFailedSeenKey(key, check)] == ciFailedSeenRun(cr) {
 			continue
 		}
 		fresh = append(fresh, check)
@@ -138,16 +147,19 @@ func (c *Client) observeCIFailed(ctx context.Context, emit func(context.Context,
 			}
 			suiteBranches[sha] = branches
 		}
-		if branches[cr.GetCheckSuite().GetID()] != branch {
-			c.logger.Debug("ci.failed: failing run is not a default-branch run; skipping", "repo", key, "check", check, "sha", sha)
-			continue
-		}
+		// Either way the run on sha is decided, so it is recorded: a pull
+		// request's failing run left on the tip must not re-read the check
+		// suites on every pass.
 		c.redMainMu.Lock()
 		if c.redMain.ciFailed.seen == nil || len(c.redMain.ciFailed.seen) >= ciFailedSeenMax {
 			c.redMain.ciFailed.seen = map[string]string{}
 		}
-		c.redMain.ciFailed.seen[ciFailedSeenKey(key, check)] = sha
+		c.redMain.ciFailed.seen[ciFailedSeenKey(key, check)] = ciFailedSeenRun(cr)
 		c.redMainMu.Unlock()
+		if branches[cr.GetCheckSuite().GetID()] != branch {
+			c.logger.Debug("ci.failed: failing run is not a default-branch run; skipping", "repo", key, "check", check, "sha", sha)
+			continue
+		}
 		emit(ctx, CIFailedRun{
 			Repo:       repo,
 			Branch:     branch,
