@@ -152,6 +152,7 @@ var (
 		"supersession_sweep",
 		"shared_ci_rerun",
 		"escalation",
+		"stale_red_base_refresh",
 	}
 	APIBudgetEnrichmentSteps = []string{
 		"advisory_ensure",

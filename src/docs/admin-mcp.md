@@ -752,7 +752,12 @@ other role.
   `needs_decision`, `needs_spec`), and `reporter_trust` (`enabled`,
   `trusted_associations`, `trusted_logins`, `untrusted_require_labels`).
 - `sentinel.settings` changes Sentinel's `sensitive_paths`,
-  `disabled_behaviors`, `exempt_logins` and `trusted_authors_block`.
+  `disabled_behaviors`, `exempt_logins` and `trusted_authors_block`. A
+  repository with its own list
+  (`project.repo_policies[].sentinel_sensitive_paths`, set in hive.yaml)
+  keeps it: the preview names those repositories and the hive-wide globs
+  their lists leave out, and does not change them. A per-repository list
+  added or changed after the preview refuses the confirm.
 
 Each list takes a change, not a new list: `{"add": [...], "remove": [...]}`,
 or `{"clear": true}` to empty it first. For example, to turn reporter trust on

@@ -110,6 +110,12 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		if err := ValidateMaxOpenHeldPRs(fmt.Sprintf("project.repo_policies: repo %q", rp.Repo), rp.MaxOpenHeldPRs); err != nil {
 			return err
 		}
+		if err := ValidateRepoSentinelSensitivePaths(fmt.Sprintf("project.repo_policies: repo %q", rp.Repo), rp.SentinelSensitivePaths); err != nil {
+			return err
+		}
+		if err := ValidateRepoWorkflowFenceScope(fmt.Sprintf("project.repo_policies: repo %q", rp.Repo), rp.WorkflowFenceScope); err != nil {
+			return err
+		}
 	}
 	if err := ValidateMergeFrontTimeout("project", c.Project.MergeFrontTimeout); err != nil {
 		return err

@@ -114,7 +114,18 @@ func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorL
 			ApproveHeldRunsForRegistryTrusted:  p.EffectiveApproveHeldRunsForRegistryTrusted(),
 			OwnerApprovalReleasesWorkflowFence: p.EffectiveOwnerApprovalReleasesWorkflowFence(),
 			WorkflowFenceScope:                 p.EffectiveWorkflowFenceScope(),
+			WorkflowFenceScopeForRepo:          repoWorkflowFenceScopeFunc(cfg),
 		}
+	}
+}
+
+// repoWorkflowFenceScopeFunc resolves the contributor lane's workflow fence
+// scope for one "owner/repo": its project.repo_policies[].workflow_fence_scope
+// override, else the hive-wide auto_merge.contributor_lane.workflow_fence_scope.
+func repoWorkflowFenceScopeFunc(cfg *config.Config) func(repo string) string {
+	return func(repo string) string {
+		scope, _ := cfg.RepoWorkflowFenceScope(repo)
+		return scope
 	}
 }
 

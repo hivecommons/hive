@@ -86,6 +86,11 @@ const (
 	KindIssueFile Kind = "issue_file"
 	// KindCIRerun re-runs a workflow or posts `/ok-to-test` on a PR.
 	KindCIRerun Kind = "ci_rerun"
+	// KindBaseRefresh merges the base branch into a red PR that is behind
+	// it, when every failing check on the PR is green on the base tip: the
+	// base has fixed what the PR's CI tripped on, and only a new head runs
+	// that check again. It pushes a merge commit and posts nothing.
+	KindBaseRefresh Kind = "base_refresh"
 )
 
 // KindPolicy is the per-kind rule. A write of this kind on an item the hive
@@ -142,6 +147,7 @@ func DefaultKinds() map[Kind]KindPolicy {
 		KindWelcomeComment:       {MinLevel: 5, RequireLabel: true, UnlabeledMinLevel: 6},
 		KindIssueFile:            {MinLevel: 3},
 		KindCIRerun:              {MinLevel: 6, RequireLabel: true},
+		KindBaseRefresh:          {MinLevel: 6, RequireLabel: true},
 	}
 }
 

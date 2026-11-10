@@ -58,6 +58,12 @@ type SentinelSweepOptions struct {
 	LabelColor       string
 	LabelDescription string
 	Evaluator        sentinel.Config
+	// SensitivePathsForRepo, when set, returns the sensitive-path globs for
+	// one "owner/repo" (project.repo_policies[].sentinel_sensitive_paths over
+	// sentinel.sensitive_paths); its result replaces Evaluator.SensitivePaths
+	// for that repository's pull requests. nil means every repository uses
+	// Evaluator.SensitivePaths.
+	SensitivePathsForRepo func(repo string) []string
 	// TrustedAuthor classifies authors with the same predicate used by the
 	// auto-merge exception lanes: the Hive App, trusted bots and owner-tier
 	// authorized users. nil means no author is trusted.
@@ -79,6 +85,17 @@ type SentinelSweepOptions struct {
 	// strict no-op. PRs the sentinel skips (unchanged heads, exempt authors)
 	// are not observed.
 	PatchObserver func(SentinelPatchObservation)
+}
+
+// sentinelEvaluatorForRepo is the evaluator config for one "owner/repo":
+// Evaluator with SensitivePaths taken from SensitivePathsForRepo when that is
+// set. A non-nil empty result is kept as-is, so it matches nothing.
+func (opts SentinelSweepOptions) sentinelEvaluatorForRepo(repo string) sentinel.Config {
+	cfg := opts.Evaluator
+	if opts.SensitivePathsForRepo != nil {
+		cfg.SensitivePaths = opts.SensitivePathsForRepo(repo)
+	}
+	return cfg
 }
 
 // SentinelPatchObservation is what PatchObserver sees: the pushed head's
@@ -674,7 +691,7 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	if opts.PatchObserver != nil {
 		c.observeSentinelPatch(ctx, owner, repo, pr, files, opts.PatchObserver)
 	}
-	findings := sentinel.Evaluate(sentinel.PR{Author: author, Title: pr.GetTitle(), Files: files}, opts.Evaluator)
+	findings := sentinel.Evaluate(sentinel.PR{Author: author, Title: pr.GetTitle(), Files: files}, opts.sentinelEvaluatorForRepo(owner+"/"+repo))
 	if len(findings) == 0 {
 		return SentinelSweepEvent{}, false, nil
 	}

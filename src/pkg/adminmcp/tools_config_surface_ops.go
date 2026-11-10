@@ -842,8 +842,46 @@ type sentinelState struct {
 	DisabledBehaviors     []string `json:"disabled_behaviors"`
 	ExemptLogins          []string `json:"exempt_logins"`
 	TrustedAuthorsBlock   bool     `json:"trusted_authors_block"`
-	label                 string
-	defaultPaths          []string
+	// RepoOverrides are the repositories whose own list
+	// (repo_policies[].sentinel_sensitive_paths) replaces sensitive_paths. A
+	// change to sensitive_paths does not reach them, and an override added,
+	// changed or removed after the preview refuses the confirm.
+	RepoOverrides []sentinelRepoPathsOverride `json:"repo_sensitive_paths"`
+	label         string
+	defaultPaths  []string
+}
+
+// sentinelRepoPathsOverride is one repository's own Sentinel sensitive-path
+// list, as Settings → Security reports it.
+type sentinelRepoPathsOverride struct {
+	Repo           string   `json:"repo"`
+	SensitivePaths []string `json:"sensitive_paths"`
+}
+
+// readSentinelRepoOverrides parses security.sentinel.repoSensitivePaths. A
+// hive older than per-repo overrides sends none, which reads as no override.
+func readSentinelRepoOverrides(raw any) []sentinelRepoPathsOverride {
+	items, _ := raw.([]any)
+	var out []sentinelRepoPathsOverride
+	for _, item := range items {
+		m, _ := item.(map[string]any)
+		repo, _ := m["repo"].(string)
+		paths, ok := stringsField(m, "sensitivePaths")
+		if strings.TrimSpace(repo) == "" || !ok {
+			continue
+		}
+		out = append(out, sentinelRepoPathsOverride{Repo: repo, SensitivePaths: paths})
+	}
+	return out
+}
+
+// sentinelOverrideRepos names the repositories with their own list.
+func sentinelOverrideRepos(overrides []sentinelRepoPathsOverride) []string {
+	out := make([]string, 0, len(overrides))
+	for _, o := range overrides {
+		out = append(out, o.Repo)
+	}
+	return out
 }
 
 func readSentinelState(ctx context.Context, provider Provider) (sentinelState, error) {
@@ -891,6 +929,7 @@ func readSentinelState(ctx context.Context, provider Provider) (sentinelState, e
 			st.DisabledBehaviors = append(st.DisabledBehaviors, name)
 		}
 	}
+	st.RepoOverrides = readSentinelRepoOverrides(sc["repoSensitivePaths"])
 	st.label, _ = sc["label"].(string)
 	if strings.TrimSpace(st.label) == "" {
 		st.label = config.DefaultSentinelLabel
@@ -912,7 +951,7 @@ func sentinelBehaviorDescriptions() (map[string]string, []string) {
 
 func (sentinelSettingsOp) Name() string { return WriteOpSentinelSettings }
 func (sentinelSettingsOp) Description() string {
-	return "Change Sentinel's sensitive_paths, disabled_behaviors, exempt_logins and trusted_authors_block through PUT /api/config/governor/security, the endpoint Settings → Security saves through. Each list takes {add, remove, clear}: the preview reads the current lists, shows each before → after and sends the merged list, and write_confirm is refused if the settings changed since the preview. A change that flags fewer pull requests is disclosed as widening and names which pull requests would no longer be held. Owner only: the endpoint refuses any other role. It removes no label from any pull request."
+	return "Change Sentinel's sensitive_paths, disabled_behaviors, exempt_logins and trusted_authors_block through PUT /api/config/governor/security, the endpoint Settings → Security saves through. Each list takes {add, remove, clear}: the preview reads the current lists, shows each before → after and sends the merged list, and write_confirm is refused if the settings changed since the preview. A change that flags fewer pull requests is disclosed as widening and names which pull requests would no longer be held. A repository with its own list (project.repo_policies[].sentinel_sensitive_paths, set in hive.yaml) keeps it: the preview names those repositories and what their lists leave out, and this operation does not change them. Owner only: the endpoint refuses any other role. It removes no label from any pull request."
 }
 func (sentinelSettingsOp) InputSchema() map[string]any {
 	_, names := sentinelBehaviorDescriptions()
@@ -1027,6 +1066,9 @@ func (sentinelSettingsOp) PreviewWithProvider(ctx context.Context, args map[stri
 		} else if before.SensitivePathsDefault {
 			notes = append(notes, "sensitive_paths was following the shipped defaults; it is now saved as this explicit list, so globs a later Hive release adds to the defaults will not apply to this hive.")
 		}
+		if len(before.RepoOverrides) > 0 {
+			notes = append(notes, "Not changed by this write: "+listLabel(sentinelOverrideRepos(before.RepoOverrides))+" use their own sensitive-path list (hive.yaml repo_policies[].sentinel_sensitive_paths), so the hive-wide sensitive_paths does not apply to them.")
+		}
 		after.SensitivePaths = effective
 		if !sameList(before.SensitivePaths, effective, foldExact) || before.SensitivePathsDefault != after.SensitivePathsDefault {
 			changes = append(changes, settingChange{Field: "sentinel.sensitive_paths", Before: before.SensitivePaths, After: effective})
@@ -1097,11 +1139,15 @@ func (sentinelSettingsOp) PreviewWithProvider(ctx context.Context, args map[stri
 func sentinelDisclosure(before, after sentinelState, descriptions map[string]string) string {
 	var fewer, more []string
 	pathsAdded, pathsRemoved := listDiff(before.SensitivePaths, after.SensitivePaths, foldExact)
+	where := ""
+	if len(before.RepoOverrides) > 0 {
+		where = " (except in " + listLabel(sentinelOverrideRepos(before.RepoOverrides)) + ", which keep their own list)"
+	}
 	if len(pathsRemoved) > 0 {
-		fewer = append(fewer, "a pull request whose only sensitive-path match is "+listLabel(pathsRemoved)+" is no longer flagged by the sensitive_path rule (other rules still look at it)")
+		fewer = append(fewer, "a pull request"+where+" whose only sensitive-path match is "+listLabel(pathsRemoved)+" is no longer flagged by the sensitive_path rule (other rules still look at it)")
 	}
 	if len(pathsAdded) > 0 {
-		more = append(more, "pull requests touching "+listLabel(pathsAdded)+" are flagged by the sensitive_path rule")
+		more = append(more, "pull requests"+where+" touching "+listLabel(pathsAdded)+" are flagged by the sensitive_path rule")
 	}
 	disabled, enabled := listDiff(before.DisabledBehaviors, after.DisabledBehaviors, foldCase)
 	for _, name := range disabled {
@@ -1127,8 +1173,26 @@ func sentinelDisclosure(before, after sentinelState, descriptions map[string]str
 	if len(more) > 0 {
 		moreNote = " Also: " + strings.Join(more, "; ") + "."
 	}
+	moreNote += sentinelRepoOverrideStanding(before.RepoOverrides, after.SensitivePaths)
 	if len(fewer) > 0 {
 		return "Widening: fewer pull requests flagged by Sentinel, which narrows its protection. " + capitalize(strings.Join(fewer, "; ")) + ". The " + before.label + " label holds a pull request from Hive approval and every auto-merge lane until a maintainer removes it, so these pull requests would no longer be held for a maintainer." + moreNote
 	}
 	return "No widening: Sentinel flags every pull request it flags today." + moreNote
+}
+
+// sentinelRepoOverrideStanding names, for each repository with its own
+// sensitive-path list, the hive-wide globs that list leaves out: a widening
+// already in force there, which this write does not change.
+func sentinelRepoOverrideStanding(overrides []sentinelRepoPathsOverride, hiveWide []string) string {
+	var parts []string
+	for _, o := range overrides {
+		_, leftOut := listDiff(hiveWide, o.SensitivePaths, foldExact)
+		if len(leftOut) > 0 {
+			parts = append(parts, o.Repo+" does not flag "+listLabel(leftOut))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " Already in force and not changed by this write (per-repository lists): " + strings.Join(parts, "; ") + "."
 }
