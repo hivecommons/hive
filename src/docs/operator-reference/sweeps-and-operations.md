@@ -520,6 +520,10 @@ The gate is per write-back *kind*. Each kind has a minimum ACMM level and
 whether the review opt-in label (`review.require_labels`, default
 `hive-review`) is required on the PR; both are overridable per kind under
 `writeback.kinds.<kind>.{min_level, require_label, unlabeled_min_level}`.
+An owner changes these under Settings → Features, or with the admin MCP
+operation `writeback.kind_policy`, which also sets `unlabeled_min_level` and
+`own_only` and keeps the overrides of kinds it does not name
+([admin-mcp.md](../admin-mcp.md#registered-operations)).
 The rationale for each default is the same question: does the hive have, at
 that level, the power the write-back exists to govern?
 
