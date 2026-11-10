@@ -19890,10 +19890,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // The chip already says a person must act, so the needs-human and
       // needs-decision pills beside it would only repeat it ("🧑 needs a
       // person" next to "needs human"); they fold into the chip's hover.
-      // When the human-gate pill is rendered it already carries the ask, so
-      // the person chip steps aside with the other gate chips.
       const why = [item.finisher_verb, item.finisher_reason].filter(Boolean).join(' — ');
-      const isPerson = item.finisher === 'person' && !gated;
+      const isPerson = item.finisher === 'person';
       const personMod = m => isPerson && (m === 'needs-human' || m === 'needs-decision');
       const allMods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const folded = allMods.filter(personMod).map(m => STAGE_TRACKER_MOD_TEXT[m] || m.replace(/-/g, ' '));

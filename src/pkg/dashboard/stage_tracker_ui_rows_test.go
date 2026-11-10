@@ -905,9 +905,9 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 128, kind: 'pr', stage
 assert.ok(row.includes('title="Hive cannot finish this on its own: DECIDE — Waiting on a decision · also flagged: needs human, needs human decision">🧑 needs a person</span>'), 'folded pills are named on the chip: ' + row);
 assert.ok(!row.includes('ham-mod-needs-human') && !row.includes('ham-mod-needs-decision'), 'no repeated pill beside the chip: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 129, kind: 'pr', stage: 85, finisher: 'person', modifiers: ['needs-human', 'hold'] }, stages, ctx);
-assert.ok(row.includes('ham-mod-hold') && !row.includes('ham-mod-needs-human') && !row.includes(' +1'), 'only the repeated pill folds; hold keeps its own, with no +1 for the folded one: ' + row);
+assert.ok(row.includes('ham-human-gate') && row.includes('Needs human · decision, hold') && !row.includes('ham-mod-hold">hold</span>') && !row.includes('ham-mod-needs-human') && !row.includes(' +1'), 'only the repeated pill folds; hold rides the human-gate pill, with no +1 for the folded one: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 130, kind: 'pr', stage: 85, finisher: 'hive', modifiers: ['needs-human'] }, stages, ctx);
-assert.ok(row.includes('ham-mod-needs-human') && !row.includes('ham-finisher-person'), 'without the chip the needs-human pill stays: ' + row);
+assert.ok(row.includes('ham-human-gate') && row.includes('Needs human · decision') && !row.includes('ham-finisher-person'), 'without the chip the needs-human gate pill stays: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 122, kind: 'issue', stage: 40, finisher: 'elsewhere', linked_prs: [{ number: 123, stage: 50, finisher: 'person', finisher_verb: 'REVIEW', finisher_reason: approval }] }, stages, ctx);
 assert.ok(row.includes('ham-finisher-person'), 'an issue riding one PR takes the PR answer: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 124, kind: 'issue', stage: 40, finisher: 'person', linked_prs: [{ number: 125, stage: 50, finisher: 'hive' }] }, stages, ctx);
