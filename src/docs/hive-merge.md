@@ -525,6 +525,29 @@ miss every PR file: the review planner re-stamps the verdict onto the merge
 head instead of holding it at `review-gate:no-review-bundle`, and CI still
 re-runs on that head (see [Delta re-review](review-swarm.md#delta-re-review-reviewdelta_rereview-reviewdelta_trivial_lines-reviewdelta_max_age)).
 
+Every login on that list — a Settings toggle or a typed-in custom bot — is
+owned by the trusted-bot lane: the contributor lane hands it off as
+`trusted-bot-lane` (never `contributor-lane:app-authored`), and every
+`automerge skip` / `automerge hold` line the self-authored sweep logs carries
+`tier=trusted-bot` so a stuck bot PR can be grepped by lane. The lane's
+contract is "safety is established by CI", so the review swarm's verdict on
+a trusted bot's PR is **advisory** by default: a `requires_human`,
+decision-requested or `changes_requested` verdict is recorded on the
+evidence bundle and logged (`trusted-bot lane: review verdict advisory`)
+but neither holds the merge nor parks the PR at "needs a person". Set
+`auto_merge.trusted_bot_skip_review: false` to make bot PRs obey the swarm
+exactly like the App's own; a trusted human's `changes_requested` review
+always holds regardless. When `auto_merge.required_checks` names a check
+the repo never produces (for example `build-gate` declared hive-wide but
+absent on a docs repo), the lane does not wait forever: if at least one
+other check reports on the head and none is red or still running, it merges
+on "every reported check green" and warns once per repo per hour
+(`trusted-bot lane: required check "build-gate" never reported on
+<owner>/<repo>`); if nothing else reports, the PR is held with
+`required-check-never-reported:<check>`, which the Activity Monitor shows as
+the human-gate reason. Declare the repo's real set under
+`auto_merge.repos.<repo>.required_checks` to clear either condition.
+
 ### Event-driven sweeps on the ForgeState cache
 
 With `forgestate.enabled: true` the three sweep lanes (self-authored,

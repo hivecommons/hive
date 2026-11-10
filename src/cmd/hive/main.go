@@ -2385,6 +2385,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// Read through b.cfg on every sweep tick so a config reload of
 	// auto_merge.trusted_bot_authors takes effect without a restart.
 	autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
+	autoMergeOpts.TrustedBotSkipReview = func() bool { return b.cfg.AutoMerge.TrustedBotSkipsReview() }
 	autoMergeOpts.BotTakeoverEnabled = func() bool { return b.cfg.AutoMerge.BotTakeover.IsEnabled() }
 	// A dependency-bot PR parked on a terminal required-check hold is handed
 	// to a person by the governor's dependency-bot sweep (#12379).

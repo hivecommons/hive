@@ -170,6 +170,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// map, replaced whole like HumanMergePaths: an empty (non-nil) map
 		// clears it, absent leaves it untouched.
 		HumanMergePinOnly map[string]config.PinOnlyException `json:"human_merge_pin_only"`
+		// TrustedBotSkipReview is auto_merge.trusted_bot_skip_review: the
+		// review swarm's verdict is advisory on the trusted-bot lane.
+		TrustedBotSkipReview *bool `json:"trusted_bot_skip_review"`
 		// BotTakeoverEnabled is auto_merge.bot_takeover.enabled; flat so the
 		// dialog's plain toggle can stage it.
 		BotTakeoverEnabled *bool `json:"bot_takeover_enabled"`
@@ -425,6 +428,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.HumanMergePinOnly != nil {
 		cfg.AutoMerge.HumanMergePinOnly = humanMergePinOnly
 	}
+	if body.TrustedBotSkipReview != nil {
+		v := *body.TrustedBotSkipReview
+		cfg.AutoMerge.TrustedBotSkipReview = &v
+	}
 	if body.BotTakeoverEnabled != nil {
 		v := *body.BotTakeoverEnabled
 		cfg.AutoMerge.BotTakeover.Enabled = &v
@@ -611,6 +618,7 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"project_repos":                projectRepos,
 		"trusted_bot_authors":          trustedBots,
 		"trusted_bot_authors_set":      am.TrustedBotAuthors != nil,
+		"trusted_bot_skip_review":      am.TrustedBotSkipsReview(),
 		"bot_takeover_enabled":         am.BotTakeover.IsEnabled(),
 		"require_current_base_default": am.CurrentBaseDefaultEnabled(),
 		"skip_current_base":            emptyIfNilStrings(am.SkipCurrentBase),

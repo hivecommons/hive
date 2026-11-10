@@ -95,6 +95,11 @@ type CommitCIState struct {
 	// the required-check set is unknown or empty and server-side enforcement is
 	// authoritative.
 	IgnoredMetaContexts []string
+	// RequiredFromConfig is true when the required set the walk gated on came
+	// from auto_merge.required_checks rather than the branch's protection
+	// (CommitCIOptions.RequiredKnownFromConfig), so a MissingRequired name
+	// may simply not exist on this repo.
+	RequiredFromConfig bool
 	// MissingRequired lists the config/protection-declared required check
 	// names (when that set is known) for which NO status and NO check run
 	// exists on the SHA. A required check that has not been created yet is
@@ -476,6 +481,7 @@ func HeadCommitPushedAt(ctx context.Context, client *gh.Client, owner, repo, sha
 // ("status-check" or "check-runs").
 func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha string, opts CommitCIOptions) (CommitCIState, error) {
 	var st CommitCIState
+	st.RequiredFromConfig = opts.RequiredKnownFromConfig
 	if client == nil {
 		st.Reason = "status-check"
 		return st, ErrNoGitHubClient
