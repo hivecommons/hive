@@ -116,31 +116,45 @@ func (c *Client) RequestRenovateRebase(ctx context.Context, repo string, number 
 	return state, nil
 }
 
+// PostBotCommand posts command, verbatim and alone, as a comment on PR
+// number, at most once per head: the mutation journal keys the operation on
+// (PR, head SHA, command), so the same command on a later head is a new
+// operation rather than a replay of the first. It is the one poster for the
+// commands the hive sends a dependency bot (the automerge sweep's
+// `@dependabot rebase` nudge and the dependency-bot sweep's
+// `@dependabot recreate`); a bot parses the comment as a command, so it
+// carries no marker. onPosted, when set, runs once the comment is created.
+// Callers own any write-back gate check.
+func PostBotCommand(ctx context.Context, boundary effects.Boundary, client *gh.Client, owner, repo string, number int, headSHA, command, actor, restCaller string, onPosted func()) error {
+	_, err := effects.Execute(ctx, boundary, effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindIssueComment,
+		Target: strconv.Itoa(number),
+		Actor:  actor,
+		Inputs: map[string]string{"head_sha": headSHA, "body": effects.StableDigest(command)},
+	}, func(ctx context.Context) (effects.Result, error) {
+		comment, _, apiErr := client.Issues.CreateComment(WithRESTCaller(ctx, restCaller), owner, repo, number, &gh.IssueComment{Body: gh.Ptr(command)})
+		if apiErr != nil {
+			return effects.Result{}, effects.NotApplied(apiErr)
+		}
+		if onPosted != nil {
+			onPosted()
+		}
+		return effects.Result{Provenance: comment.GetHTMLURL()}, nil
+	})
+	return err
+}
+
 // PostDependabotRecreate comments DependabotRecreateCommand on a Dependabot
-// PR, at most once per head: the mutation journal keys the comment on the
-// head SHA, so the same command on a later head is a new operation rather
-// than a replay of the first. The caller must have consulted the write-back
-// gate (bot_rebase_request).
+// PR, at most once per head (PostBotCommand). The caller must have consulted
+// the write-back gate (bot_rebase_request).
 func (c *Client) PostDependabotRecreate(ctx context.Context, repo string, number int, headSHA string) error {
 	if c == nil || c.client == nil {
 		return ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
 	full := owner + "/" + repoName
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
-		Repo:   full,
-		Kind:   effects.KindIssueComment,
-		Target: strconv.Itoa(number),
-		Actor:  "dependency-bot-sweep",
-		Inputs: map[string]string{"head_sha": strings.ToLower(headSHA), "body": effects.StableDigest(DependabotRecreateCommand)},
-	}, func(ctx context.Context) (effects.Result, error) {
-		comment, resp, apiErr := c.client.Issues.CreateComment(WithRESTCaller(ctx, "hive:dependency_bot_rebase"), owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(DependabotRecreateCommand)}) // writeback:gated — the dependency-bot sweep consults WritebackAllowed (bot_rebase_request) before calling
-		c.noteWritebackOutcome(full, resp, apiErr)
-		if apiErr != nil {
-			return effects.Result{}, effects.NotApplied(apiErr)
-		}
-		return effects.Result{Provenance: comment.GetHTMLURL()}, nil
-	})
+	err := PostBotCommand(ctx, c.mutationBoundary(), c.client, owner, repoName, number, strings.ToLower(headSHA), DependabotRecreateCommand, "dependency-bot-sweep", "hive:dependency_bot_rebase", nil)
 	c.recordNotificationWrite(ctx, notificationWrite{kind: notificationWriteComment, repo: full, item: number, body: DependabotRecreateCommand, class: NotificationClassProtocolCommand, err: err})
 	if err != nil {
 		return err

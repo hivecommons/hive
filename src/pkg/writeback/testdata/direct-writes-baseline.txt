@@ -11,7 +11,7 @@ raw pkg/github/automerge/automerge_contributor_held_runs.go 1
 raw pkg/github/automerge/automerge_contributor_lane.go 3
 raw pkg/github/automerge/automerge_contributor_nudge.go 1
 raw pkg/github/automerge/automerge_contributor_workflow_approval.go 1
-raw pkg/github/automerge/automerge_held_runs.go 3
+raw pkg/github/automerge/automerge_held_runs.go 2
 raw pkg/github/automerge/automerge_merge_commit.go 1
 raw pkg/github/automerge/automerge_merge_forward.go 1
 raw pkg/github/automerge/automerge_signoff_attribution.go 1
@@ -24,6 +24,7 @@ raw pkg/github/automerge/reporter_trust_release.go 2
 raw pkg/github/automerge/self_authorization_release.go 2
 raw pkg/github/client.go 12
 raw pkg/github/close_on_merge.go 3
+raw pkg/github/dependency_bot_rebase.go 1
 raw pkg/github/duplicate_sweep.go 2
 raw pkg/github/fleet_report.go 2
 raw pkg/github/gfi_forge.go 1
