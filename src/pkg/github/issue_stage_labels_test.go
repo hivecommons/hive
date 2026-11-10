@@ -1354,3 +1354,104 @@ func TestNoteArchivedWrite(t *testing.T) {
 		t.Fatal("archived repo not memoised")
 	}
 }
+
+// hivecommons/hive#17582: a 403 "Resource not accessible by integration" on a
+// label write memoises the repo as label-forbidden (not archived); a rate
+// limit 403 memoises neither.
+func TestEnsureStageLabelFamilyForbiddenMemo(t *testing.T) {
+	cases := []struct {
+		name          string
+		message       string
+		wantForbidden bool
+		wantArchived  bool
+	}{
+		{"integration", "Resource not accessible by integration", true, false},
+		{"archived", "Repository was archived so is read-only.", false, true},
+		{"rate limit", "API rate limit exceeded", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				mu.Lock()
+				calls++
+				mu.Unlock()
+				if r.Method == http.MethodPost {
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte(`{"message":"` + tc.message + `"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`[]`))
+			}))
+			t.Cleanup(srv.Close)
+			c := NewClientForTest(srv.URL, "acme", []string{"widgets"}, testLogger())
+			if err := c.ensureStageLabelFamily(context.Background(), "acme/widgets"); err == nil {
+				t.Fatal("want the refusal surfaced")
+			}
+			if got := c.stageLabelForbidden.has("acme/widgets"); got != tc.wantForbidden {
+				t.Fatalf("stageLabelForbidden = %v, want %v", got, tc.wantForbidden)
+			}
+			if got := c.stageArchived.has("acme/widgets"); got != tc.wantArchived {
+				t.Fatalf("stageArchived = %v, want %v", got, tc.wantArchived)
+			}
+		})
+	}
+}
+
+// The sweep pays one refused create for an App without label access, logs the
+// distinct warning once, and skips the repo on later sweeps.
+func TestSyncIssueStageLabels_LabelForbiddenRepoSkippedOnLaterSweeps(t *testing.T) {
+	fake := newIssueStageServer(t)
+	var mu sync.Mutex
+	labelCalls := 0
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/repos/acme/widgets/labels") {
+			w.Header().Set("Content-Type", "application/json")
+			mu.Lock()
+			labelCalls++
+			mu.Unlock()
+			if r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"message":"Resource not accessible by integration"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		fake.srv.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.Close)
+
+	var logMu sync.Mutex
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(lockedWriter{mu: &logMu, w: &logs}, nil))
+	c := NewClientForTest(front.URL, "acme", []string{"widgets"}, logger)
+	c.SetIssueStageLabels(func() IssueStagePolicy { return IssueStagePolicy{Enabled: true} })
+	store := stagelabels.NewStore("", stageNow)
+	result := &ActionableResult{}
+	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 1, Labels: []string{"bug"}}})
+	fake.seed(result)
+	ResetRateLimitPacingForTest()
+	resetRESTAccountingForTest(t, stageNow())
+
+	for sweep := 1; sweep <= 2; sweep++ {
+		SyncIssueStageLabelsWith(context.Background(), c, result, store, stageNow(), logger, nil)
+	}
+	mu.Lock()
+	got := labelCalls
+	mu.Unlock()
+	if got != 2 {
+		t.Fatalf("label API calls across two sweeps = %d, want 2 (one list + one refused create)", got)
+	}
+	logMu.Lock()
+	out := logs.String()
+	logMu.Unlock()
+	if n := strings.Count(out, "GitHub App cannot write labels in this repository"); n != 1 {
+		t.Fatalf("forbidden warning logged %d times, want 1:\n%s", n, out)
+	}
+	if strings.Contains(out, "provisioning failed") {
+		t.Fatalf("forbidden repo must not log the generic provisioning failure:\n%s", out)
+	}
+}
