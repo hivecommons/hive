@@ -139,9 +139,9 @@ Kick *timing* lives in `pkg/governor`; kick *text* is built in `pkg/scheduler`.
   `deps.newTicker(initialEvalInterval)` at `src/cmd/hive/main.go:5772`, loop at
   `src/cmd/hive/main.go:6112`, evaluation via `deps.runEval` at
   `src/cmd/hive/main.go:5956` (`runEvalCycle`, `src/cmd/hive/main_eval_cycle.go:471`),
-  message assembly via `sched.BuildKickMessagesWithSkips` at `src/cmd/hive/main_eval_cycle.go:1094`
+  message assembly via `sched.BuildKickMessagesWithSkips` at `src/cmd/hive/main_eval_cycle.go:1107`
   (`src/pkg/scheduler/kickmessage.go:261`), and delivery via
-  `agentMgr.SendKick` wired into `dispatchAgentKicks` at `src/cmd/hive/main_eval_cycle.go:1580`.
+  `agentMgr.SendKick` wired into `dispatchAgentKicks` at `src/cmd/hive/main_eval_cycle.go:1593`.
 
 This matters for the RFC: the scheduler is already **stateless with respect to
 turns**. It does not hold a continuation, does not await turn *N* before
