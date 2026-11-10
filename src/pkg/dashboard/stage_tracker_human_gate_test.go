@@ -225,3 +225,68 @@ assert.strictEqual(link[2], 'hivecommons/hive/issue#17451');
 assert.strictEqual(link[3], 'decision pending on #17480');
 `)
 }
+
+// TestStageTrackerHumanGateFoldsOnStackedHead pins the render-time fold from
+// #17515: at the stacked-head breakpoint (STAGE_TRACKER_GATE_FOLD_QUERY) the
+// pill keeps ONE verb inline and parks the rest in the … template, while
+// the strip tier still shows STAGE_TRACKER_GATE_VISIBLE. The node harness
+// has no matchMedia, so without a stub this arm never ran.
+func TestStageTrackerHumanGateFoldsOnStackedHead(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+"\n"+
+		jsFunc(t, html, "stageTrackerHumanAttentionOf")+"\n"+
+		jsFunc(t, html, "stageTrackerNeedsHumanAsk")+"\n"+
+		jsFunc(t, html, "stageTrackerHoldPill")+"\n"+
+		jsFunc(t, html, "stageTrackerHoldTip")+"\n"+
+		stageTrackerRowsFixtureJS+`
+const seen = new Date(now - 60000).toISOString();
+const inlineVerbs = (html) => Array.from(html.split('<template')[0].matchAll(/<button type="button" class="ham-lead-act ham-gate-act" [^>]*>([^<]*)<\/button>/g)).map(m => m[1]);
+const menuVerbs = (html) => { const tpl = /<template class="ham-gate-menu-tpl">([\s\S]*?)<\/template>/.exec(html); return tpl ? Array.from(tpl[1].matchAll(/role="menuitem"[^>]*>([^<]*)<\/button>/g)).map(m => m[1]) : []; };
+const seenQueries = [];
+let stacked = true;
+window.matchMedia = (q) => { seenQueries.push(q); return { matches: stacked && q === STAGE_TRACKER_GATE_FOLD_QUERY, addEventListener() {} }; };
+
+const question = 'This PR edits the release workflow. Should a maintainer sign off on the permissions change?';
+const four = { repo: 'hivecommons/hive', number: 17481, kind: 'pr', stage: 85, head: '4f1c2e9', author: 'hive[bot]', author_kind: 'hive', modifiers: ['needs-decision'],
+  caption: 'Needs human decision', decision_needed: { question, asked_by: 'reviewer', since: seen, options: [{ action: 'decide:approve', label: 'Approve', enabled: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] },
+  sentinel_alert: true, sentinel_reason: 'touches .github/workflows (+1 more)',
+  ci_activity: { head: '4f1c2e9', state: 'running', active: true, caption: 'CI 61/73 · 12 running', checks_passed: 61, checks_total: 73, source: 'checks', observed_at: seen },
+  review_activity: { head: '4f1c2e9', state: 'human_decision', caption: 'Review 5/5 · needs human decision', blocker: question, perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: seen } };
+const three = { repo: 'hivecommons/hive', number: 17480, kind: 'pr', stage: 85, head: 'd3c1de0', author: 'hive[bot]', author_kind: 'hive', modifiers: ['needs-decision'], caption: 'Needs human decision',
+  decision_needed: { question: 'Which fix?', asked_by: 'the hive', since: seen, options: [{ action: 'decide:approve', label: 'Approve', enabled: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
+const two = { repo: 'hivecommons/crux', number: 140, kind: 'pr', stage: 90, head: 'c0ffee1', author: 'hive[bot]', author_kind: 'hive', reason: 'a sentinel alert is open on this PR', sentinel_alert: true, sentinel_reason: 'touches release signing (+2 more)',
+  ci_activity: { head: 'c0ffee1', state: 'running', active: true, caption: 'CI 18/19 · tide running', checks_passed: 18, checks_total: 19, source: 'checks', observed_at: seen },
+  review_activity: { head: 'c0ffee1', state: 'approved', caption: 'Review approved', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: seen } };
+
+// Stacked head: one verb inline, the rest behind …, nothing duplicated.
+assert.strictEqual(stageTrackerHumanGateVisible(), 1, 'the fold query matched, so one verb rides inline');
+assert.ok(seenQueries.includes('(max-width: 1100px)'), 'the fold is asked of the stacked-head breakpoint: ' + seenQueries);
+let row = stageTrackerRowHtml(four, stages, ctx);
+assert.deepStrictEqual(inlineVerbs(row), ['Approve'], 'four verbs: only the first is inline: ' + row);
+assert.deepStrictEqual(menuVerbs(row), ['Request changes…', 'Let hive decide', 'Confirm safe'], 'the other three wait in the template, in pill order');
+assert.ok(row.includes('data-ham-gate-more') && row.includes('title="Request changes… · Let hive decide · Confirm safe"'), 'the … lists what it folds: ' + row);
+row = stageTrackerRowHtml(three, stages, ctx);
+assert.deepStrictEqual(inlineVerbs(row), ['Decide…'], 'three verbs fold too on the stacked head: ' + row);
+assert.deepStrictEqual(menuVerbs(row), ['Approve as-is', 'Let hive decide']);
+row = stageTrackerRowHtml(two, stages, ctx);
+assert.deepStrictEqual(inlineVerbs(row), ['Confirm safe']);
+assert.deepStrictEqual(menuVerbs(row), ['Let hive decide'], 'even a two-verb pill keeps one line');
+assert.strictEqual((row.match(/ham-gate-more-wrap/g) || []).length, 1, 'exactly one … per pill');
+
+// Strip tier (query does not match): back to three inline; the … only
+// appears once a fourth verb exists.
+stacked = false;
+assert.strictEqual(stageTrackerHumanGateVisible(), STAGE_TRACKER_GATE_VISIBLE);
+row = stageTrackerRowHtml(three, stages, ctx);
+assert.deepStrictEqual(inlineVerbs(row), ['Decide…', 'Approve as-is', 'Let hive decide']);
+assert.ok(!row.includes('data-ham-gate-more') && !row.includes('<template'), 'no … and no template when nothing folds: ' + row);
+row = stageTrackerRowHtml(four, stages, ctx);
+assert.deepStrictEqual(inlineVerbs(row), ['Approve', 'Request changes…', 'Let hive decide']);
+assert.deepStrictEqual(menuVerbs(row), ['Confirm safe']);
+
+// No matchMedia at all (the harness default, and any non-browser caller):
+// the strip tier count, never a throw.
+delete window.matchMedia;
+assert.strictEqual(stageTrackerHumanGateVisible(), STAGE_TRACKER_GATE_VISIBLE);
+`)
+}
