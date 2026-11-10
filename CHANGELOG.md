@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.7.0)
+
+### Added
+
+- **The contributor lane's workflow fence can be limited to release-critical workflows.** A new owner-only setting, `auto_merge.contributor_lane.workflow_fence_scope` (Settings → Features → Auto Merge → Contributor-lane auto-merge → **Workflow fence scope**), chooses which CI workflow / action edits wait for an owner's approval of the current head. `all`, the default, keeps today's behaviour: every edit under `.github/workflows/**` or `.github/actions/**` does. `human_merge_paths` fences only a file that also matches the repository's `auto_merge.human_merge_paths`, so routine edits such as pin bumps and permission tightening go through review, CI and soak instead of needing a fresh Approve after every push. It fails closed: a repository with no `human_merge_paths` entry keeps the full fence, a renamed workflow file always trips it, and a merge GitHub refuses for want of the App's Workflows permission parks the head for a person. The tests-removed fence, Sentinel, the human-merge hold, the guard that never approves held fork CI runs for a workflow edit, and adoption's refusal to publish workflow edits upstream are unchanged. The stage notes, the merge asks and `/hive approve` replies all read the same scoped fence as the lane. Sentinel's default `sensitive_path` list still labels these PRs `sentinel-alert`; see [hive-merge.md](src/docs/hive-merge.md#contributor-lane-auto-merge).
+
 ## 2026-11-09 (v6.6.0)
 
 ### Added
