@@ -139,7 +139,7 @@ History point limits, timestamp cutoffs, incremental cost reads and ETag/304 beh
 
 | `GET` | `/api/config/agent/{name}` | Dashboard auth/session | Agent Config Get | `pkg/dashboard/api.go:207` |
 | `PUT` | `/api/config/agent/{name}/general` | Owner only | Agent Config General | `pkg/dashboard/api.go:208` |
-| `PUT` | `/api/config/agent/{name}/cadences` | Owner only | Agent Config Cadences | `pkg/dashboard/api.go:209` |
+| `PUT` | `/api/config/agent/{name}/cadences` | Owner only | Agent Config Cadences; each mode sent becomes operator-owned (`governor.cadence_owners`). Wrapped by the admin MCP `agent.cadences` operation | `pkg/dashboard/api.go:209` |
 | `PUT` | `/api/config/agent/{name}/models` | Owner only | Agent Config Models | `pkg/dashboard/api.go:210` |
 | `PUT` | `/api/config/agent/{name}/pipeline` | Owner only | Agent Config Pipeline | `pkg/dashboard/api.go:211` |
 | `PUT` | `/api/config/agent/{name}/hooks` | Owner only | Agent Config Hooks | `pkg/dashboard/api.go:212` |
@@ -212,7 +212,7 @@ History point limits, timestamp cutoffs, incremental cost reads and ETag/304 beh
 | `PUT` | `/api/config/write-surface` | Owner only | Replace the lane write allowlist; `{"allowlist": {}}` clears it; unknown operation or bad lane name is a 400 with nothing changed | `pkg/dashboard/api.go:566` |
 | `GET` | `/api/config/review` | Dashboard auth/session | Review Config Get | `pkg/dashboard/api.go:253` |
 | `PUT` | `/api/config/review` | Owner only | Review Config Set | `pkg/dashboard/api.go:256` |
-| `PUT` | `/api/config/governor/features` | Owner only | Governor Features | `pkg/dashboard/api.go:262` |
+| `PUT` | `/api/config/governor/features` | Owner only | Governor Features; `writebackKinds` replaces the whole `writeback.kinds` map (a kind sent as `null` or `{}` is dropped). Wrapped by the admin MCP `governor.feature_settings` and `writeback.kind_policy` operations | `pkg/dashboard/api.go:262` |
 | `GET` | `/api/config/governor/general-advanced` | Owner only | Governor General Advanced Get | `pkg/dashboard/api.go:263` |
 | `PUT` | `/api/config/governor/general-advanced` | Owner only | Governor General Advanced Set | `pkg/dashboard/api.go:264` |
 | `GET` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Get | `pkg/dashboard/api.go:268` |
