@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.5)
+
+### Fixed
+
+- Editing `hive.yaml` on a busy hive now takes effect: a config hot-reload no longer waits behind a whole governor cycle but is applied before that cycle's state persist, so the persist (which also rewrites `hive.yaml`) saves the reloaded config instead of the one the cycle started from, and the shutdown persist now takes the config lock so it cannot race a reload. If any other save (hub heartbeat, dashboard, agent pause) wrote the pre-reload config to `hive.yaml` while the reload was waiting, the reloaded config is saved back once it is applied ([#17467](https://github.com/hivecommons/hive/issues/17467)).
+
 ## 2026-11-10 (v5.211.4)
 
 ### Fixed
