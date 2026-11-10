@@ -1,0 +1,1 @@
+- Stage engine: a PR observed on a repo whose auto-merge is off (`repo-auto-merge-disabled`) is now staged from its head evidence (050 / 07x / 085, or 090 "auto-merge off" when approved and green) instead of being dropped as a lane hand-off (#17565).

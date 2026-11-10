@@ -251,7 +251,7 @@ func StageHumanApprovalReason(d stageDetail, head string) string {
 
 // stageHandoffReasons are reasons that mean "not this lane's PR".
 var stageHandoffReasons = map[string]bool{
-	"not-app-authored": true, trustedBotLaneSkipReason: true, "repo-auto-merge-disabled": true,
+	"not-app-authored": true, trustedBotLaneSkipReason: true,
 	trustedAuthorReasonAppAuthored: true, contributorLaneReasonAppAuthored: true, contributorLaneReasonNoAuthor: true, "missing-head-sha": true,
 	"fetch-pr": true, "fetch-pr-recheck": true,
 	// A merge to the destination was in flight, so the lane did not look at
@@ -470,6 +470,48 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		}
 		if v, ok := HumanChangeRequestStage(o); ok {
 			return v
+		}
+		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: stageRankOwned, Human: true}, humanApprovalReason)
+	}
+	if reason == "repo-auto-merge-disabled" {
+		// Auto-merge is off for the repo (hivecommons/hive#17565): nothing
+		// will merge the head, so its stage comes from the head's own
+		// evidence and is never 080, 095 or 100. Approved and green parks
+		// at 090 under the lane reason, the "auto-merge off" human merge.
+		if HasLabelFold(o.Labels, "needs-rebase") {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+		}
+		if v, ok := HumanChangeRequestStage(o); ok {
+			return v
+		}
+		if VerdictBlocks(o.Detail) {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: StageVerdictReason(o.Detail)}
+		}
+		if v, ok := RequiresHumanStage(o, stageRankOwned); ok {
+			return v
+		}
+		if d := o.Detail; d.VerdictKnown && d.Verdict.DecisionRequested && (strings.TrimSpace(d.HumanApprover) == "" || strings.TrimSpace(d.HumanApprovalHead) != strings.TrimSpace(o.HeadSHA)) {
+			// An approve verdict that still asks a question is not ready
+			// for a merge click: the person owes the decision first.
+			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: StageVerdictReason(d)}
+		}
+		if v, ok := SharedCIDeferredStage(o); ok {
+			return v
+		}
+		if v, ok := BaseBranchRedStage(o); ok {
+			return v
+		}
+		if v, ok := ForkGuardStage(o); ok {
+			return v
+		}
+		if name := o.Detail.RedCheck(o.HeadSHA); name != "" {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
+		}
+		if o.Detail.SentinelAlert || len(stagelabels.Holds(o.Labels)) > 0 {
+			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+		}
+		if !AuthorSideDone(o) && humanApprovalReason == "" {
+			return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
 		}
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: stageRankOwned, Human: true}, humanApprovalReason)
 	}
