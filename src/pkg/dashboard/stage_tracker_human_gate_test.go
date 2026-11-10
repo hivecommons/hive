@@ -15,6 +15,7 @@ func stageTrackerHumanGateJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_GATE_WORD"),
 		jsConstLine(t, html, "STAGE_TRACKER_GATE_SETTLING"),
 		jsConstLine(t, html, "STAGE_TRACKER_GATE_VISIBLE"),
+		jsConstLine(t, html, "STAGE_TRACKER_GATE_FOLD_QUERY"),
 		jsConstBlock(t, html, "STAGE_TRACKER_GATE_VERBS"),
 		jsConstLine(t, html, "STAGE_TRACKER_GATE_ORDER"),
 		jsConstLine(t, html, "STAGE_TRACKER_GATE_PR_ONLY"),
@@ -28,6 +29,7 @@ func stageTrackerHumanGateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerHumanGateTip"),
 		jsFunc(t, html, "stageTrackerHumanGateVerbState"),
 		jsFunc(t, html, "stageTrackerHumanGateVerbHtml"),
+		jsFunc(t, html, "stageTrackerHumanGateVisible"),
 		jsFunc(t, html, "stageTrackerHumanGateHtml"),
 	}, "\n")
 }
@@ -130,8 +132,8 @@ assert.strictEqual(reasons(row), 'review sentinel', 'review verdict + sentinel a
 assert.strictEqual(gateWord(row), 'Needs human · review, sentinel');
 assert.ok(gateTip(row).includes(question.replace(/\?/g, '?')) && gateTip(row).includes('touches .github/workflows'), 'the status hover is the question and the rule: ' + gateTip(row));
 assert.deepStrictEqual(verbs(row), ['Approve', 'Request changes…', 'Let hive decide', 'Confirm safe'], 'union of the review and sentinel verb sets, de-duplicated');
-assert.ok(row.includes('data-ham-gate-overflow="1"') && /<div class="ham-menu ham-gate-menu"[^>]*>[\s\S]*?Confirm safe/.test(row), 'the fourth verb folds into the … menu: ' + row);
-assert.ok(!/data-ham-gate-inline[^>]*>Confirm safe/.test(row) && /data-ham-gate-inline[^>]*>Let hive decide/.test(row), 'menu copies of inline verbs are marked for the phone tier');
+assert.ok(row.includes('data-ham-gate-more') && /<template class="ham-gate-menu-tpl"><div class="ham-menu ham-gate-menu"[^>]*>[\s\S]*?Confirm safe/.test(row), 'the fourth verb waits in the … menu template: ' + row);
+assert.ok(!/ham-gate-menu-tpl[\s\S]*Let hive decide/.test(row), 'the menu holds only the folded verbs, not copies of the inline ones');
 assert.ok(!row.includes('ham-badge-sentinel') && !row.includes('ham-mod-needs-decision') && !row.includes('ham-lead-pill'), 'no sentinel chip, needs-decision pill or loose lead buttons beside the gate: ' + row);
 assert.ok(row.includes('<p class="ham-current-stage">') && row.includes('Needs human decision'), 'the expander line still names the decision');
 
@@ -170,8 +172,8 @@ assert.strictEqual(gates(row), 1, row);
 assert.strictEqual(reasons(row), 'decision');
 assert.deepStrictEqual(verbs(row), ['Decide…', 'Approve as-is', 'Let hive decide']);
 assert.ok(gateTip(row).includes('Two fixes are possible'), gateTip(row));
-assert.ok(row.includes('data-ham-gate-overflow="0"'), 'three verbs need no overflow on the strip tier (the … is the phone tier\'s fold)');
-assert.strictEqual((row.match(/ham-gate-act-rest/g) || []).length, 2, 'the verbs after the first fold on the phone tier');
+assert.ok(!row.includes('data-ham-gate-more'), 'three verbs need no … on the strip tier');
+assert.strictEqual((row.match(/class="ham-lead-act ham-gate-act[^"]*"/g) || []).length, 3, 'all three verbs are inline');
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured ham-human-gated', 'todo cap'], strip(row));
 assert.ok(row.includes('<span class="ham-detour">Merge queue</span>'), 'the chevron reads its column: ' + strip(row));
 

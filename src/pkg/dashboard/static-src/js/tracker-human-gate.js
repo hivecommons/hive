@@ -25,6 +25,7 @@
     const STAGE_TRACKER_GATE_WORD = 'Needs human';
     const STAGE_TRACKER_GATE_SETTLING = 'settling…';
     const STAGE_TRACKER_GATE_VISIBLE = 3;
+    const STAGE_TRACKER_GATE_FOLD_QUERY = '(max-width: 1100px)';
     // Reason → verbs, in the order they stand on the pill. The same reason
     // always offers the same verbs (the maintainer's "consistent way").
     const STAGE_TRACKER_GATE_VERBS = {
@@ -134,16 +135,23 @@
       if (lead) return { enabled: lead.enabled !== false, why: lead.enabled === false ? String(lead.why || '') : '' };
       return typeof stageTrackerActionAllowed === 'function' ? stageTrackerActionAllowed(id, ctx) : { enabled: true, why: '' };
     }
-    // more: a menu item. inline: this menu item doubles a verb that is also
-    // drawn inline on the strip tier (the phone tier hides the inline copy
-    // and shows this one). rest: an inline verb after the first (the phone
-    // tier folds it into the … menu).
-    function stageTrackerHumanGateVerbHtml(item, v, state, more, inline, rest) {
+    function stageTrackerHumanGateVerbHtml(item, v, state, more) {
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
       const tip = state.enabled ? v.posts : state.why;
       const attrs = `data-ham-act="${esc(v.id)}"${state.enabled ? '' : ' aria-disabled="true"'}${tip ? ` title="${esc(tip)}"` : ''} aria-label="${esc(v.label + (ref ? ' — ' + ref : ''))}"`;
-      if (more) return `<button type="button" role="menuitem" class="ham-menu-item ham-lead-act ham-gate-act" ${attrs} tabindex="-1"${inline ? ' data-ham-gate-inline' : ''}>${esc(v.label)}</button>`;
-      return `<button type="button" class="ham-lead-act ham-gate-act${rest ? ' ham-gate-act-rest' : ''}" ${attrs}>${esc(v.label)}</button>`;
+      if (more) return `<button type="button" role="menuitem" class="ham-menu-item ham-lead-act ham-gate-act" ${attrs} tabindex="-1">${esc(v.label)}</button>`;
+      return `<button type="button" class="ham-lead-act ham-gate-act" ${attrs}>${esc(v.label)}</button>`;
+    }
+    // How many verbs ride inline: three on the strip tier; one on the
+    // stacked head (≤ 1100px, which includes the phone card) so the pill
+    // stays one line and leaves the title its room — the rest fold behind
+    // the … menu. Rows re-render when the viewport crosses the breakpoint.
+    function stageTrackerHumanGateVisible() {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(STAGE_TRACKER_GATE_FOLD_QUERY).matches ? 1 : STAGE_TRACKER_GATE_VISIBLE;
+    }
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      const mq = window.matchMedia(STAGE_TRACKER_GATE_FOLD_QUERY);
+      if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => { if (typeof renderStageTracker === 'function') renderStageTracker(); });
     }
     // Pure: the pill. '' when the row has no gate. The status segment is
     // the decision popover's trigger when the row carries a decision, else
@@ -183,15 +191,14 @@
       const status = decision && typeof stageTrackerDecisionTriggerHtml === 'function'
         ? stageTrackerDecisionTriggerHtml(decision, inner, tip, 'ham-gate-status ham-mod-ask')
         : `<span class="ham-gate-status ham-mod-ask" title="${esc(tip)}" aria-label="${esc(text + ' — ' + tip)}">${inner}</span>`;
-      const shownVerbs = verbs.slice(0, STAGE_TRACKER_GATE_VISIBLE);
-      const moreVerbs = verbs.slice(STAGE_TRACKER_GATE_VISIBLE);
-      const acts = shownVerbs.map((v, i) => stageTrackerHumanGateVerbHtml(item, v, stageTrackerHumanGateVerbState(v.id, shown, ctx, leads), false, false, i > 0)).join('');
-      // The … menu holds every verb after the first: on the strip tier CSS
-      // shows only the ones past STAGE_TRACKER_GATE_VISIBLE (and hides the
-      // button when there are none); the phone tier shows the first verb
-      // inline and the rest here, so the pill stays one line (#17161).
-      const menuVerbs = verbs.slice(1);
-      const more = menuVerbs.length ? `<span class="ham-gate-more-wrap" data-ham-gate-overflow="${moreVerbs.length}"><button type="button" class="ham-lead-act ham-gate-act ham-gate-more" data-ham-gate-more aria-haspopup="menu" aria-expanded="false" aria-label="More ways to settle this gate" title="${esc(menuVerbs.map(v => v.label).join(' · '))}">…</button><div class="ham-menu ham-gate-menu" role="menu" aria-label="More ways to settle this gate" hidden>${menuVerbs.map((v, i) => stageTrackerHumanGateVerbHtml(item, v, stageTrackerHumanGateVerbState(v.id, shown, ctx, leads), true, i + 1 < STAGE_TRACKER_GATE_VISIBLE)).join('')}</div></span>` : '';
+      const visibleCount = stageTrackerHumanGateVisible();
+      const shownVerbs = verbs.slice(0, visibleCount);
+      const moreVerbs = verbs.slice(visibleCount);
+      const acts = shownVerbs.map(v => stageTrackerHumanGateVerbHtml(item, v, stageTrackerHumanGateVerbState(v.id, shown, ctx, leads), false)).join('');
+      // The menu's items wait in a <template> (no hidden buttons in the row;
+      // the header-geometry harness hit-tests every button it finds) and are
+      // stamped into the wrap the first time the … opens.
+      const more = moreVerbs.length ? `<span class="ham-gate-more-wrap"><button type="button" class="ham-lead-act ham-gate-act ham-gate-more" data-ham-gate-more aria-haspopup="menu" aria-expanded="false" aria-label="More ways to settle this gate" title="${esc(moreVerbs.map(v => v.label).join(' · '))}">…</button><template class="ham-gate-menu-tpl"><div class="ham-menu ham-gate-menu" role="menu" aria-label="More ways to settle this gate" hidden>${moreVerbs.map(v => stageTrackerHumanGateVerbHtml(item, v, stageTrackerHumanGateVerbState(v.id, shown, ctx, leads), true)).join('')}</div></template></span>` : '';
       const key = typeof stageTrackerItemKey === 'function' ? stageTrackerItemKey(item) : '';
       return `<span class="ham-human-gate" data-ham-gate="${esc(key)}" data-ham-gate-reasons="${esc(reasons.map(r => r.key).join(' '))}" role="group" aria-label="${esc(text)}">${status}${acts}${more}</span>`;
     }
@@ -215,7 +222,8 @@
         const b = e.target.closest ? e.target.closest('[data-ham-gate-more]') : null;
         if (!b) { if (!(e.target.closest && e.target.closest('.ham-gate-menu'))) closeAll(); return; }
         e.preventDefault(); e.stopPropagation();
-        const menu = b.nextElementSibling;
+        let menu = b.nextElementSibling;
+        if (menu && menu.tagName === 'TEMPLATE') { const stamped = menu.content.firstElementChild.cloneNode(true); menu.replaceWith(stamped); menu = stamped; }
         const open = menu && menu.hidden;
         closeAll();
         if (menu && open) { menu.hidden = false; b.setAttribute('aria-expanded', 'true'); const first = menu.querySelector('[role="menuitem"]'); if (first) first.focus(); }
