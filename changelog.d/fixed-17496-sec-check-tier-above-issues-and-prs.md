@@ -1,0 +1,1 @@
+- Security: a `sec-check` agent configured at `ISSUES_PRS_MERGE` (or `autonomous`) now mints a new `sec-check-trusted` token tier — the trusted set plus Dependabot alerts read — so `dependabot/alerts` no longer returns 403; the grant stays optional and role-scoped. ([#17496](https://github.com/hivecommons/hive/issues/17496))
