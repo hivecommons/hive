@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -41,6 +42,44 @@ func TestStageTrackerPayloadKeepsStandingMetaIssues(t *testing.T) {
 	}
 	if tr.OpenIssues != 3 || tr.OpenPRs != 1 {
 		t.Fatalf("open = %d issues / %d PRs, want 3 / 1 (the Overview tile's total)", tr.OpenIssues, tr.OpenPRs)
+	}
+}
+
+// End to end: projectbluefin/ps-printer-app#50, mergeraptor[bot]'s
+// Dependency Dashboard wearing needs-human, reaches the payload in the
+// dependency_dashboard bucket with the needs-human pill, and the
+// waiting_on_human block (the badge, the topbar pill, the MCP's
+// waiting_on_you) leaves it out. A needs-human issue that is ordinary
+// work still counts.
+func TestStageTrackerStandingMetaIssueIsNotWaitingOnYou(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 30, 0, 0, time.UTC)
+	s := newTestServer()
+	status := minimalPayload()
+	status.Repos = []FrontendRepo{{
+		Name: "ps-printer-app", Full: "projectbluefin/ps-printer-app",
+		NonActionableIssues: []any{
+			github.RepoWorkIssue{Repo: "projectbluefin/ps-printer-app", Number: 50, Title: "Dependency Dashboard", Author: "mergeraptor[bot]", Labels: []string{"triage/accepted", "kind/cleanup", "needs-human"}, Bucket: repoWorkBucketDependencyDashboard, Reason: "Dependency dashboard control panel"},
+			github.RepoWorkIssue{Repo: "projectbluefin/ps-printer-app", Number: 51, Title: "Printer list is empty", Author: "pat", Labels: []string{"kind/bug", "needs-human"}, Bucket: repoWorkBucketFiltered, Reason: "Parked for human review"},
+		},
+	}}
+	s.UpdateStatus(status)
+	tr := s.buildStageTracker(s.status, nil, now)
+
+	deps := trackerItem(t, tr, "issue", 50)
+	if deps.Bucket != repoWorkBucketDependencyDashboard {
+		t.Fatalf("#50 bucket = %q, want %q", deps.Bucket, repoWorkBucketDependencyDashboard)
+	}
+	if !slices.Contains(deps.Modifiers, modNeedsHuman) {
+		t.Fatalf("#50 modifiers = %v, want the needs-human pill (the input this test guards against)", deps.Modifiers)
+	}
+	if deps.WaitingOnYou || deps.WaitKind != "" {
+		t.Errorf("#50 waiting_on_you/wait_kind = %v/%q, want false/\"\"", deps.WaitingOnYou, deps.WaitKind)
+	}
+	if work := trackerItem(t, tr, "issue", 51); !work.WaitingOnYou || work.WaitKind != waitKindApproveNeeded {
+		t.Errorf("#51 waiting_on_you/wait_kind = %v/%q, want true/%q", work.WaitingOnYou, work.WaitKind, waitKindApproveNeeded)
+	}
+	if tr.WaitingOnHuman.Count != 1 || len(tr.WaitingOnHuman.Items) != 1 || tr.WaitingOnHuman.Items[0].Number != 51 {
+		t.Errorf("waiting_on_human = %+v, want only #51", tr.WaitingOnHuman)
 	}
 }
 

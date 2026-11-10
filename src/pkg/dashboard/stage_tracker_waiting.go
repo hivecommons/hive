@@ -71,12 +71,13 @@ type StageTrackerWaitingItem struct {
 var stageTrackerReturnedStages = []int{stagelabels.NeedsAuthor.Number(), stagelabels.ReturnedToContributor.Number()}
 
 // stageTrackerWaitKind classifies the human wait on it, "" when the item
-// waits on nobody the operator is answerable for. Hold, advisories and
-// already-decided rows never count: hold is the operator's own choice,
-// an advisory asks for nothing, and a decided row is the hive's to act
-// on next.
+// waits on nobody the operator is answerable for. Hold, advisories,
+// standing meta issues and already-decided rows never count: hold is the
+// operator's own choice, an advisory asks for nothing, a bot Dependency
+// Dashboard is a control panel whatever labels it wears, and a decided
+// row is the hive's to act on next.
 func stageTrackerWaitKind(it StageTrackerItem) (kind, who string) {
-	if stageTrackerOnHold(it) || it.Advisory != nil || it.Decided != nil {
+	if stageTrackerOnHold(it) || it.Advisory != nil || it.Decided != nil || stageTrackerWaitStandingMeta(it) {
 		return "", ""
 	}
 	switch {
@@ -102,6 +103,20 @@ func stageTrackerWaitKind(it StageTrackerItem) (kind, who string) {
 		return waitKindOther, waitWhoOperator
 	}
 	return "", ""
+}
+
+// stageTrackerWaitStandingMeta reports whether it is a standing meta
+// issue: a bot Dependency Dashboard or the Hive Advisory Report, which the
+// enumeration files under the dependency_dashboard / hive_advisory buckets
+// (github.standingMetaIssueKindFor: bot author plus dashboard title, or
+// the advisory title / label). The SPA never draws one
+// (stageTrackerIsStandingMeta) and the stage engine derives no stage for
+// it (hivecommons/hive#16833), but a needs-human label a triage bot or a
+// maintainer sweep put on it still made it "approve-needed" here, so the
+// badge, the topbar pill and the MCP's waiting_on_you counted rows the
+// monitor does not show (projectbluefin/common#245).
+func stageTrackerWaitStandingMeta(it StageTrackerItem) bool {
+	return it.Kind == "issue" && (it.Bucket == repoWorkBucketDependencyDashboard || it.Bucket == repoWorkBucketHiveAdvisory)
 }
 
 // stageTrackerContributorGraceElapsed reports whether a row returned to

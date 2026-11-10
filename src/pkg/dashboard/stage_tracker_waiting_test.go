@@ -104,3 +104,33 @@ func TestStageTrackerWaitingOnHuman_ReturnedOfflineSignals(t *testing.T) {
 		}
 	}
 }
+
+// A standing meta issue waits on nobody, whatever it wears: the four
+// Renovate Dependency Dashboards on projectbluefin (common#245,
+// gutenprint-printer-app#45, hplip-printer-app#42, ps-printer-app#50)
+// carry needs-human from a triage bot and were listed as approve-needed.
+// A sidelined issue in any other bucket still counts.
+func TestStageTrackerWaitingOnHuman_SkipsStandingMetaIssues(t *testing.T) {
+	items := []StageTrackerItem{
+		{Repo: "projectbluefin/common", Number: 245, Kind: "issue", Author: "renovate[bot]", Bucket: repoWorkBucketDependencyDashboard, Modifiers: []string{modNeedsHuman}},
+		{Repo: "projectbluefin/hplip-printer-app", Number: 42, Kind: "issue", Author: "mergeraptor[bot]", Bucket: repoWorkBucketDependencyDashboard, Stage: stagelabels.IssueNeedsDecision.Number(), Modifiers: []string{modNeedsHuman}},
+		{Repo: "o/r", Number: 53, Kind: "issue", Bucket: repoWorkBucketHiveAdvisory, Modifiers: []string{modNeedsDecision}},
+		// control: a needs-human issue in the filtered bucket is a real ask.
+		{Repo: "o/r", Number: 54, Kind: "issue", Bucket: repoWorkBucketFiltered, Modifiers: []string{modNeedsHuman}},
+		// the bucket only marks issues; a PR is classified as before.
+		{Repo: "o/r", Number: 60, Kind: "pr", Bucket: repoWorkBucketDependencyDashboard, Stage: 60, Modifiers: []string{modNeedsHuman}},
+	}
+	got := stageTrackerWaitingOnHuman(items)
+	if got.Count != 2 || len(got.Items) != 2 {
+		t.Fatalf("count = %d (%+v), want 2 (#54 and PR #60)", got.Count, got.Items)
+	}
+	for _, it := range items {
+		standing := it.Kind == "issue" && it.Number != 54
+		if it.WaitingOnYou == standing {
+			t.Errorf("%s#%d (bucket %s): waiting_on_you = %v, want %v", it.Repo, it.Number, it.Bucket, it.WaitingOnYou, !standing)
+		}
+		if !standing && it.WaitKind != waitKindApproveNeeded {
+			t.Errorf("%s#%d: wait_kind = %q, want %q", it.Repo, it.Number, it.WaitKind, waitKindApproveNeeded)
+		}
+	}
+}
