@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.8.0)
+
+### Added
+
+- **Admin MCP: change merge settings through preview and confirm.** The new `auto_merge.update` write operation wraps `PATCH /api/config/auto-merge`, so an owner can change `squash_only`, `require_current_base`, `human_merge_paths`, the native merge queue, trusted authors, the contributor lane and the other merge settings without opening the dashboard. Lists take `add`/`remove` and `human_merge_paths` takes one repository at a time; the preview reads the current settings and sends each changed list or map whole, so entries you did not name are kept, shows every change before and after, and says when a change lets the hive merge more on its own. `write_confirm` refuses if any of those settings changed after the preview. The operation never merges a pull request.
+- **The pin-only exception can be set from the dashboard and admin MCP.** `auto_merge.human_merge_pin_only`, which lets a pull request whose only change is a version or digest pin bump on a human-merge path merge without a hand merge, is now on `PUT`/`PATCH /api/config/auto-merge` (whole map, owner only), in **Settings → Features → Auto-merge** next to the human-merge paths, and in the admin MCP `auto_merge.update` operation one repository at a time. It is validated with the same rules `hive.yaml` loads under, refused for a repository with no `human_merge_paths`, saved like the other merge settings and applied without a restart, including to the merge-request relay. The MCP preview names what turning one on or widening it lets merge. What counts as a pin bump, and every other merge gate, is unchanged.
+
 ## 2026-11-10 (v6.7.0)
 
 ### Added
