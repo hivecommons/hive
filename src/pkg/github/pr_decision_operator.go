@@ -115,21 +115,26 @@ var (
 )
 
 // awaitProwRejection reads the PR's comments for Prow's rejection of the
-// hive commands just posted: once when wait is false, otherwise polling for
-// up to prowReplyWindow since Prow answers a few seconds after the post.
+// hive commands just posted: once when wait is false, otherwise polling
+// every prowReplyInterval with a final read at the end of prowReplyWindow,
+// since Prow answers a few seconds after the post.
 func (c *Client) awaitProwRejection(ctx context.Context, owner, name string, number int, wait bool) bool {
 	deadline := time.Now().Add(prowReplyWindow)
 	for {
 		if rejected, err := c.prowRejectedHiveCommands(ctx, owner, name, number); err == nil && rejected {
 			return true
 		}
-		if !wait || !time.Now().Add(prowReplyInterval).Before(deadline) {
+		if !wait {
+			return false
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
 			return false
 		}
 		select {
 		case <-ctx.Done():
 			return false
-		case <-time.After(prowReplyInterval):
+		case <-time.After(min(prowReplyInterval, remaining)):
 		}
 	}
 }
