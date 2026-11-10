@@ -37,6 +37,9 @@ type PRActivityCheck struct {
 	AppID      *int64     `json:"app_id,omitempty"`
 	Head       string     `json:"head,omitempty"`
 	Kind       string     `json:"kind,omitempty"`
+	// Description is a commit status's own sentence (Tide's "Not mergeable.
+	// Jobs … have not succeeded."); check runs leave it empty.
+	Description string `json:"description,omitempty"`
 }
 
 // With AppKnown, nil or -1 is a forge-observed any-App constraint.
@@ -130,6 +133,7 @@ func (a *PRCIActivity) addCommitStatuses(statuses []*gh.RepoStatus, observedAt t
 		check := PRActivityCheck{
 			Name: status.GetContext(), State: "completed", URL: status.GetTargetURL(),
 			ID: status.GetID(), NodeID: status.GetNodeID(), Head: a.Head, Kind: "commit_status",
+			Description: status.GetDescription(),
 		}
 		switch status.GetState() {
 		case "success":

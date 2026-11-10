@@ -5211,6 +5211,12 @@ type DashboardStageTrackerConfig struct {
 	// age takes the muted-stale tone (hivecommons/hive#15784). 0 means the
 	// default (4); a negative value never marks the wait stale.
 	WaitingPushStaleH int `yaml:"waiting_push_stale_h,omitempty" json:"waiting_push_stale_h,omitempty"`
+	// CIActivityStaleM is how many minutes a head's CI snapshot may claim a
+	// check still running or queued before the tracker re-lists the head's
+	// check runs on its next build, whatever the batch cache or ETag says
+	// (hivecommons/hive#17508). 0 means the default (10); a negative value
+	// disables the re-list.
+	CIActivityStaleM int `yaml:"ci_activity_stale_m,omitempty" json:"ci_activity_stale_m,omitempty"`
 	// ToastInfoS is how many seconds the activity monitor's informational
 	// toasts (action results, waiting-on-human nudges, the merge banner)
 	// stay up before dismissing themselves (hivecommons/hive#15813).
@@ -5354,6 +5360,23 @@ func (c *Config) StageTrackerWebhookRefreshDebounce() time.Duration {
 		return time.Duration(c.Dashboard.StageTracker.WebhookRefreshDebounceMS) * time.Millisecond
 	}
 	return defaultStageTrackerWebhookRefreshDebounce
+}
+
+// defaultStageTrackerCIActivityStale is dashboard.stage_tracker.ci_activity_stale_m's default.
+const defaultStageTrackerCIActivityStale = 10 * time.Minute
+
+// StageTrackerCIActivityStale is the effective
+// dashboard.stage_tracker.ci_activity_stale_m as a duration: how old a CI
+// snapshot that still claims a check running or queued may be before the
+// tracker re-lists the head's check runs. 0 disables the re-list.
+func (c *Config) StageTrackerCIActivityStale() time.Duration {
+	if c == nil || c.Dashboard.StageTracker.CIActivityStaleM == 0 {
+		return defaultStageTrackerCIActivityStale
+	}
+	if c.Dashboard.StageTracker.CIActivityStaleM < 0 {
+		return 0
+	}
+	return time.Duration(c.Dashboard.StageTracker.CIActivityStaleM) * time.Minute
 }
 
 // StageTrackerCacheTTL is the effective dashboard.stage_tracker.cache_ttl_s:
@@ -7545,6 +7568,14 @@ func (c *Config) saveLocked() error {
 	// replaces the inode — the host file is never updated, so acmm_level
 	// and other runtime changes are lost on container restart.
 	//
+	// #17468: the same in-place write is what keeps hosted spokes durable.
+	// There the copy-config init container makes SourcePath
+	// (/etc/hive/hive.yaml, an emptyDir) a symlink to RuntimeConfigFile on
+	// the PVC; O_WRONLY|O_TRUNC follows the link and writes the PVC file,
+	// whereas a temp-file+rename would replace the link with a regular
+	// emptyDir file and silently revert the fix. Pinned by
+	// TestSaveThroughSymlinkKeepsLink — do not switch this to a rename.
+	//
 	// #3961: a source-path failure must NOT abort the save. On deployments
 	// that mount the config read-only (a ConfigMap mounted straight at
 	// /etc/hive/hive.yaml — the issue's k3s case), this write can NEVER
@@ -7576,10 +7607,15 @@ func (c *Config) saveLocked() error {
 		}
 	}
 
-	// Persist the runtime config to the PVC. In K8s this is a recovery copy
-	// (the ConfigMap seed plus the overlay is authoritative); in Docker/LXC
-	// it IS the boot-time source of truth, since there is no ConfigMap and
-	// no overlay there. The entrypoint decides which applies.
+	// Persist the runtime config to the PVC. In K8s this is the boot input
+	// after first boot (#2392): the entrypoint boots from it and the seed +
+	// overlay merge runs only when it is absent. On hosted spokes
+	// SourcePath already links to it (#17468), so this write is the same
+	// file a second time; it still matters on the restart right after
+	// first boot and on legacy-.bak-only spokes, where the config path is
+	// a plain copy. In Docker/LXC it IS the boot-time source of truth,
+	// since there is no ConfigMap and no overlay there. The entrypoint
+	// decides which applies.
 	//
 	// Always written under the new name. The legacy file is never written,
 	// renamed or removed here — see RuntimeConfigFileLegacy.
@@ -7661,13 +7697,41 @@ const defaultRuntimeConfigFile = "/data/hive.yaml.runtime"
 // Removable one release after every live hive has written the new name.
 const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
 
+// ResolvedConfigPath is path with symlinks resolved, or path itself when it
+// cannot be resolved. On hosted spokes /etc/hive/hive.yaml links to
+// RuntimeConfigFile (#17468), so this names the file a boot actually read.
+func ResolvedConfigPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
+// PersistedConfigPath names the file whose content survives a restart and is
+// the next boot's input — the one an operator must edit. That is
+// RuntimeConfigFile whenever the hive has one (every container deployment
+// after its first boot), else the legacy name the entrypoint falls back to;
+// otherwise the loaded config path, resolved, is the only copy (a bare binary
+// on a host).
+func PersistedConfigPath(sourcePath string) string {
+	for _, p := range []string{RuntimeConfigFile, RuntimeConfigFileLegacy} {
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 {
+			return p
+		}
+	}
+	return ResolvedConfigPath(sourcePath)
+}
+
 // DashboardOverlayFile is where Save() persists a secret-free copy of the
-// dashboard-edited config on the PVC in Kubernetes mode. The copy-config
-// init container re-seeds /etc/hive/hive.yaml FROM THE CONFIGMAP on every
-// pod boot, so without this overlay every dashboard save (LiteLLM
-// endpoint, notifications, agent tweaks, ...) silently vanished on the
-// next restart or upgrade. The entrypoint merges this file over the
-// ConfigMap seed at boot; the ConfigMap stays authoritative for the
+// dashboard-edited config on the PVC in Kubernetes mode. Before #2402 the
+// copy-config init container re-seeded /etc/hive/hive.yaml from the
+// ConfigMap on every pod boot, so without this overlay every dashboard save
+// (LiteLLM endpoint, notifications, agent tweaks, ...) silently vanished on
+// the next restart or upgrade. Since #2402 the runtime config is the boot
+// input once it exists (and since #17468 the config path links to it), so
+// the overlay is consumed only on a boot with no runtime config — first
+// boot or a reprovision onto a fresh PVC — where the entrypoint merges it
+// over the ConfigMap seed; the ConfigMap stays authoritative there for the
 // hub/admin-managed keys (acmm_level, hub.is_public).
 //
 // A package var (not const) only so tests can point it at a temp dir; it

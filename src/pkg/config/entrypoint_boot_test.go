@@ -42,6 +42,16 @@ func runBootPreludeRO(t *testing.T, env map[string]string, files map[string]stri
 // and not just what it logged.
 func runBootPreludeRoot(t *testing.T, env map[string]string, files map[string]string, readOnly []string) (string, string) {
 	t.Helper()
+	return runBootPreludeLinked(t, env, files, readOnly, nil)
+}
+
+// runBootPreludeLinked is runBootPreludeRoot that also creates symlinks under
+// the temp root before the prelude runs: links maps a root-relative link path
+// to a root-relative target. It exists for the hosted-spoke layout (#17468),
+// where the copy-config init container links the config path to the PVC
+// runtime config and the two are one file.
+func runBootPreludeLinked(t *testing.T, env map[string]string, files map[string]string, readOnly []string, links map[string]string) (string, string) {
+	t.Helper()
 	src, err := os.ReadFile(entrypointPath)
 	if err != nil {
 		testutil.SkipfUnlessRequired(t, "entrypoint.sh not readable from this package: %v", err)
@@ -67,6 +77,15 @@ func runBootPreludeRoot(t *testing.T, env map[string]string, files map[string]st
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for rel, target := range links {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(root, target), p); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -206,6 +225,41 @@ func TestK8sBootsFromRuntimeConfigNotTheSeed(t *testing.T) {
 	}
 	if strings.Contains(out, "overlay merged over ConfigMap seed") {
 		t.Fatalf("the per-boot merge still ran; the ConfigMap must be a seed only:\n%s", out)
+	}
+}
+
+// TestK8sLinkedConfigPathBootsFromRuntimeConfig pins the hosted-spoke steady
+// state from #17468: the copy-config init container links the config path to
+// the PVC runtime config, so the two are one file. Before the `-ef` guard,
+// `cp` refused ("are the same file") and the boot fell into the read-only
+// branch — exporting HIVE_CONFIG and logging "config path read-only" on a
+// spoke whose config path was perfectly writable, which is the misleading
+// message #17468 set out to remove.
+func TestK8sLinkedConfigPathBootsFromRuntimeConfig(t *testing.T) {
+	out, root := runBootPreludeLinked(t,
+		map[string]string{"KUBERNETES_SERVICE_HOST": "10.0.0.1"},
+		map[string]string{"data/hive.yaml.runtime": "acmm_level: 5\n"},
+		nil,
+		map[string]string{"etc/hive/hive.yaml": "data/hive.yaml.runtime"})
+	if !strings.Contains(out, "links to it") {
+		t.Fatalf("a config path linked to the runtime config was not recognised as the same file:\n%s", out)
+	}
+	if strings.Contains(out, "config path read-only") {
+		t.Fatalf("the linked config path was treated as read-only — cp refused the same-file copy and the -ef guard did not catch it (#17468):\n%s", out)
+	}
+	// The link is what makes operator edits to the config path durable, so
+	// the prelude must leave it in place, pointing at the persisted file.
+	cfgPath := filepath.Join(root, "etc/hive/hive.yaml")
+	runtimePath := filepath.Join(root, "data/hive.yaml.runtime")
+	target, err := os.Readlink(cfgPath)
+	if err != nil {
+		t.Fatalf("the prelude replaced the config-path symlink with a regular file; edits to it are lost on restart (#17468): %v\n%s", err, out)
+	}
+	if target != runtimePath {
+		t.Fatalf("config path links to %q after boot, want %q", target, runtimePath)
+	}
+	if b, _ := os.ReadFile(runtimePath); string(b) != "acmm_level: 5\n" {
+		t.Fatalf("runtime config was rewritten during boot; got %q", b)
 	}
 }
 

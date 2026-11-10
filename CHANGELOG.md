@@ -11,6 +11,41 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.10)
+
+### Changed
+
+- Activity Monitor: every row a person must settle now carries exactly one human-gate control — a segmented `👤 Needs human · <reasons>` pill whose verbs are fixed per reason (review: Approve · Request changes… · Let hive decide; decision: Decide… · Approve as-is · Let hive decide; sentinel: Confirm safe · Let hive decide; hold: Release hold · Let hive decide; stacked reasons union, ≤ 3 visible + `…`). "Needs human", "Held · sentinel" and "Sentinel alert · needs human" never ride a chevron any more — the lit chevron is the real stage with the amber outline — the scattered `sentinel` chip / `Approve ▸` / `Let hive decide ▸` are folded into the pill, secondary rows of a shared PR render no gate (their *decision pending on #N* chip links to the primary row), and a new `POST /api/repos/{owner}/{repo}/items/{number}/sentinel-confirm` endpoint gives a sentinel alert its own answer (hivecommons/hive#17470).
+
+## 2026-11-10 (v5.211.9)
+
+### Fixed
+
+- Dashboard: the Activity Monitor's CI chevron no longer stays lit as running after every check on the head has concluded. A required check that never produced a run is a settled word (*hasn't reported*), never inferred motion from a part-filled tally; at `060 reviewed` with all reported checks concluded, Review is the lit chevron and CI is its blocker only when red. A CI snapshot that still claims a check running or queued after `dashboard.stage_tracker.ci_activity_stale_m` (default 10 minutes) is re-listed from GitHub on the next tracker build regardless of the batch cache, ETag or stage. ([#17508](https://github.com/hivecommons/hive/issues/17508))
+
+## 2026-11-10 (v5.211.8)
+
+### Fixed
+
+- Security: a `sec-check` agent configured at `ISSUES_PRS_MERGE` (or `autonomous`) now mints a new `sec-check-trusted` token tier — the trusted set plus Dependabot alerts read — so `dependabot/alerts` no longer returns 403; the grant stays optional and role-scoped. ([#17496](https://github.com/hivecommons/hive/issues/17496))
+- Edits to `/etc/hive/hive.yaml` on hub-provisioned spokes provisioned (or re-applied) after this change now survive a pod restart: the config path is a link to the persisted `/data/hive.yaml.runtime` instead of a throwaway `emptyDir` copy; existing spokes need their deployment re-applied (hub upgrades do not rewrite the init command). Startup logs which file is the boot source of truth, and `/api/config/export` reports it as `metadata.persisted_path`.
+
+## 2026-11-10 (v5.211.7)
+
+### Fixed
+
+- CI: the advisory `mutation` check now mutates only the lines a PR adds (`gremlins --diff`, run from inside each changed package so paths match) instead of every file under the changed package, so PRs touching large packages such as `pkg/dashboard` or `pkg/github` no longer hit the 20-minute job limit and show a red check that never judged the change. ([#17463](https://github.com/hivecommons/hive/issues/17463))
+- Dashboard: an Approve on a Prow repo now reads Prow's reply to the relayed `/lgtm` + `/approve` and says Prow rejected them instead of showing "approved" (#17475, part of #17451).
+- Dashboard: when a required check on a Prow repository has never reported (or is only a pending commit status), the stage tracker's CI chevron now quotes Tide's status description in its tooltip ("Not mergeable. Jobs … have not succeeded.") and links to Tide's page when the check has no link of its own, so a presubmit that never ran no longer looks like a failing check. Tide stays out of the pass/fail tally. ([#17476](https://github.com/hivecommons/hive/issues/17476))
+- Activity Monitor: the CI chevron no longer counts Prow's `tide` merge-gate status (or `enforce-guardrails` / DCO) as a check, so a PR whose tests are all green reads `CI 18/18` instead of `CI 18/19 · 'tide' running` and the lit stage moves on to Review / Merge queue; merge eligibility still enforces the gates.
+- Activity Monitor: a PR deferred to a fleet-wide `[shared-ci]` incident now reads *Waiting on shared CI · #N* with the incident linked and a tooltip that names the failing check and promises the lift, instead of *Deferred · by scanner*; a plain deferral's tooltip leads with the agent's reason. The shared-CI rerun sweep now treats a newest run that concluded `cancelled` (a job cut off by `timeout-minutes`) as red, re-runs it once when the incident closes and comments *Shared-CI incident #N closed — re-running `<check>`* (`<!-- hive-shared-ci-lifted-N -->`), so a PR like hive#17471 no longer sits deferred after the incident is over (#17500).
+
+## 2026-11-10 (v5.211.6)
+
+### Fixed
+
+- Agent: the token-restart give-up diagnosis ("the agent is still at a login prompt") now logs once per give-up episode instead of once per pane flap; the per-boot re-arm keeps the latch while the rolling 24h restart window is still full (#17483).
+
 ## 2026-11-10 (v5.211.5)
 
 ### Fixed

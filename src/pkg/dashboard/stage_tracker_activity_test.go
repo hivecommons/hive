@@ -33,7 +33,7 @@ func TestStageTrackerActivityRequiredCI(t *testing.T) {
 				Head: "head", Source: "github-check-runs", ObservedAt: &now, RequiredKnown: tc.known, Required: []string{"build"}, StatusesKnown: true,
 				RequiredSource: "protection", RequiredChecks: []github.PRRequiredCheck{{Name: "build", AppKnown: true}},
 				Checks: []github.PRActivityCheck{{Name: "build", State: tc.state, Conclusion: tc.conclusion},
-					{Name: "tide", State: "queued"}, {Name: "optional", State: "completed", Conclusion: "failure"}},
+					{Name: "lint", State: "queued"}, {Name: "optional", State: "completed", Conclusion: "failure"}},
 			}}
 			got := stageTrackerCIActivity(pr, now)
 			if got.State != tc.want || got.Active != (tc.want == "running" || tc.want == "queued") {
@@ -58,6 +58,55 @@ func TestStageTrackerActivityRequiredCI(t *testing.T) {
 		if got := stageTrackerCIActivity(pr, now); !got.Active || got.State != "running" {
 			t.Fatalf("a stale poll dimmed running CI: %+v", got)
 		}
+	}
+}
+
+// A required Prow presubmit that never ran has no check run to link to;
+// Tide's commit status carries the reason. The CI track borrows Tide's
+// description and link so it reads differently from a failing check, and
+// Tide itself never enters the tally (hivecommons/hive#17476).
+func TestStageTrackerCIActivityTideExplainsMissingPresubmit(t *testing.T) {
+	now := time.Date(2026, 11, 9, 21, 0, 0, 0, time.UTC)
+	const tideDesc = "Not mergeable. Jobs native-queue-policy, verify PR contents have not succeeded."
+	const tideURL = "https://prow.example/tide"
+	fixture := func(verify ...github.PRActivityCheck) github.PullRequest {
+		checks := append([]github.PRActivityCheck{
+			{Name: "build", State: "completed", Conclusion: "success", URL: "https://ci.example/build"},
+			{Name: "tide", State: "pending", Kind: "commit_status", URL: tideURL, Description: tideDesc},
+		}, verify...)
+		return github.PullRequest{HeadSHA: "head", CIActivity: &github.PRCIActivity{
+			Head: "head", Source: "github-check-runs", ObservedAt: &now, StatusesKnown: true, StatusesObservedAt: &now,
+			RequiredKnown: true, RequiredSource: "protection", Required: []string{"build", "verify PR contents"},
+			RequiredChecks: []github.PRRequiredCheck{{Name: "build", AppKnown: true}, {Name: "verify PR contents", AppKnown: true}},
+			Checks:         checks,
+		}}
+	}
+
+	got := stageTrackerCIActivity(fixture(), now)
+	if got.State != "missing" || got.ChecksTotal != 2 || got.ChecksPassed != 1 || got.ChecksFailed != 0 {
+		t.Fatalf("never-ran presubmit: %+v, want missing 1/2 with tide uncounted", got)
+	}
+	if got.URL != tideURL || !strings.Contains(got.Detail, tideDesc) || !strings.Contains(got.Detail, "verify PR contents is a Prow presubmit") {
+		t.Fatalf("never-ran presubmit carries no Tide link or words: url=%q detail=%q", got.URL, got.Detail)
+	}
+
+	// A pending Prow job keeps the link to its own run; Tide's words ride along.
+	got = stageTrackerCIActivity(fixture(github.PRActivityCheck{Name: "verify PR contents", State: "pending", Kind: "commit_status", URL: "https://prow.example/job/1"}), now)
+	if got.State != "queued" || got.URL != "https://prow.example/job/1" || !strings.Contains(got.Detail, tideDesc) {
+		t.Fatalf("pending presubmit: %+v", got)
+	}
+
+	// A failing check is a failing check: its own link, no Tide sentence.
+	got = stageTrackerCIActivity(fixture(github.PRActivityCheck{Name: "verify PR contents", State: "completed", Conclusion: "failure", URL: "https://ci.example/verify"}), now)
+	if got.State != "failing" || got.URL != "https://ci.example/verify" || strings.Contains(got.Detail, "Tide") {
+		t.Fatalf("failing check borrowed Tide: %+v", got)
+	}
+
+	// Tide in the pool says nothing worth showing.
+	pr := fixture()
+	pr.CIActivity.Checks[1].State, pr.CIActivity.Checks[1].Conclusion = "completed", "success"
+	if got = stageTrackerCIActivity(pr, now); got.URL != "" || strings.Contains(got.Detail, "Tide") {
+		t.Fatalf("mergeable Tide still annotated: %+v", got)
 	}
 }
 
@@ -689,5 +738,152 @@ func TestTrackerAggregateSignOffOnly(t *testing.T) {
 		if trackerAggregateSignOffOnly(agg) {
 			t.Errorf("%s: wrongly recognised as sign-off only", name)
 		}
+	}
+}
+
+func TestStageTrackerActivityCIExcludesMergeGateContexts(t *testing.T) {
+	now := time.Date(2026, 11, 9, 18, 0, 0, 0, time.UTC)
+	green := func(name string) github.PRActivityCheck {
+		return github.PRActivityCheck{Name: name, State: "completed", Conclusion: "success"}
+	}
+	build := func(gate string, gateState string, extra ...github.PRActivityCheck) github.PullRequest {
+		required := []string{"build", "test", gate}
+		bindings := []github.PRRequiredCheck{{Name: "build", AppKnown: true}, {Name: "test", AppKnown: true}, {Name: gate, AppKnown: true}}
+		checks := append([]github.PRActivityCheck{green("build"), green("test"), {Name: gate, State: gateState, Kind: "commit_status"}}, extra...)
+		return github.PullRequest{HeadSHA: "head", CIActivity: &github.PRCIActivity{
+			Head: "head", Source: "github-check-runs", ObservedAt: &now, RequiredKnown: true, Required: required,
+			RequiredSource: "protection", RequiredChecks: bindings, Checks: checks, StatusesKnown: true,
+		}}
+	}
+	for _, gate := range []string{"tide", "dco", "DCO"} {
+		t.Run(gate+" pending is not a test", func(t *testing.T) {
+			pr := build(gate, "pending")
+			got := stageTrackerCIActivity(pr, now)
+			if got.State != "passing" || got.Active || got.ChecksTotal != 2 || got.ChecksPassed != 2 || len(got.ChecksPending) != 0 {
+				t.Fatalf("%s counted toward CI: %+v", gate, got)
+			}
+			if got.Caption != "CI green · all 2 required checks passed" {
+				t.Fatalf("caption = %q", got.Caption)
+			}
+			// The caller's activity keeps the gate for merge eligibility.
+			if len(pr.CIActivity.Required) != 3 || len(pr.CIActivity.Checks) != 3 {
+				t.Fatalf("activity mutated: %+v", pr.CIActivity)
+			}
+		})
+	}
+	t.Run("real pending check still counts", func(t *testing.T) {
+		pr := build("tide", "pending", github.PRActivityCheck{Name: "lint", State: "in_progress"})
+		pr.CIActivity.Required = append(pr.CIActivity.Required, "lint")
+		pr.CIActivity.RequiredChecks = append(pr.CIActivity.RequiredChecks, github.PRRequiredCheck{Name: "lint", AppKnown: true})
+		got := stageTrackerCIActivity(pr, now)
+		if got.State != "running" || !got.Active || got.ChecksTotal != 3 || got.ChecksPassed != 2 {
+			t.Fatalf("real check dropped: %+v", got)
+		}
+		if got.Caption != "CI running · 'lint' pending" {
+			t.Fatalf("caption = %q", got.Caption)
+		}
+	})
+	t.Run("required set unknown", func(t *testing.T) {
+		pr := github.PullRequest{HeadSHA: "head", CIActivity: &github.PRCIActivity{Head: "head", Source: "github-check-runs", ObservedAt: &now,
+			Checks: []github.PRActivityCheck{green("build"), {Name: "tide", State: "pending", Kind: "commit_status"}}}}
+		got := stageTrackerCIActivity(pr, now)
+		if got.State != "unknown" || got.Active || got.ChecksTotal != 1 || got.ChecksPassed != 1 || len(got.ChecksPending) != 0 {
+			t.Fatalf("tide counted on head without required set: %+v", got)
+		}
+	})
+}
+
+// hivecommons/promptargs#467 at stage/060-reviewed: branch protection
+// requires build-and-test (22), (24) and (26); only (24) and (26) exist on
+// the head (both green, with DCO, FOSSA, mutation and friends), Tide is
+// pending. The CI chevron read `CI 2/3 · running` for eight hours
+// (hivecommons/hive#17508). A required name with no run on the head is a
+// settled "missing", never motion, whether or not commit statuses were read;
+// the tally counts what GitHub reports.
+func TestStageTrackerCIActivityNeverReportedRequiredIsSettled(t *testing.T) {
+	observed := time.Date(2026, 11, 9, 18, 24, 40, 0, time.UTC)
+	now := observed.Add(8 * time.Hour)
+	actions := int64(15368)
+	done := func(name string) github.PRActivityCheck {
+		return github.PRActivityCheck{Name: name, State: "completed", Conclusion: "success", Head: "045b8e1", AppID: &actions, Since: &observed}
+	}
+	for _, statusesKnown := range []bool{true, false} {
+		pr := github.PullRequest{HeadSHA: "045b8e1", BaseRef: "main", CIActivity: &github.PRCIActivity{
+			Head: "045b8e1", Source: "github-check-runs", ObservedAt: &observed, StatusesKnown: statusesKnown,
+			RequiredKnown: true, RequiredSource: "protection",
+			Required: []string{"build-and-test (22)", "build-and-test (24)", "build-and-test (26)"},
+			RequiredChecks: []github.PRRequiredCheck{
+				{Name: "build-and-test (22)", AppKnown: true, AppID: &actions},
+				{Name: "build-and-test (24)", AppKnown: true, AppID: &actions},
+				{Name: "build-and-test (26)", AppKnown: true, AppID: &actions},
+			},
+			Checks: []github.PRActivityCheck{
+				done("build-and-test (24)"), done("build-and-test (26)"), done("DCO"), done("mutation"), done("verify"), done("FOSSA"), done("copilot-automation"),
+				{Name: "tide", State: "pending", Kind: "commit_status", Head: "045b8e1", Description: "Not mergeable. Needs lgtm, approved labels."},
+			},
+		}}
+		got := stageTrackerCIActivity(pr, now)
+		// Statuses read: missing. Not read: unknown (a status could still
+		// provide it) — either way settled, never active.
+		want := "missing"
+		if !statusesKnown {
+			want = "unknown"
+		}
+		if got.Active || got.State != want || got.Blocker != "build-and-test (22)" {
+			t.Fatalf("statusesKnown=%v: never-reported required check = %+v, want settled %s", statusesKnown, got, want)
+		}
+		if !strings.HasPrefix(got.Caption, "CI waiting · required check 'build-and-test (22)' hasn't reported") {
+			t.Fatalf("statusesKnown=%v: caption = %q", statusesKnown, got.Caption)
+		}
+		if got.ChecksTotal != 3 || got.ChecksPassed != 2 || got.ChecksFailed != 0 || len(got.ChecksPending) != 1 {
+			t.Fatalf("statusesKnown=%v: tally = %d/%d failed=%d pending=%v", statusesKnown, got.ChecksPassed, got.ChecksTotal, got.ChecksFailed, got.ChecksPending)
+		}
+		if strings.Contains(got.Caption, "running") || strings.Contains(got.Caption, "no conclusion") {
+			t.Fatalf("statusesKnown=%v: caption claims motion or ambiguity: %q", statusesKnown, got.Caption)
+		}
+		// Every check GitHub reports is concluded: nothing claims motion,
+		// so no stale re-list is owed however old the snapshot.
+		if github.CIActivityClaimsMotion(pr.CIActivity) || github.CIActivityStale(pr.CIActivity, now, 10*time.Minute) {
+			t.Fatalf("statusesKnown=%v: a concluded head claims motion", statusesKnown)
+		}
+	}
+}
+
+// A snapshot that still says a check runs is re-listed once it is older
+// than dashboard.stage_tracker.ci_activity_stale_m; a fresh one, a
+// concluded one, or one whose only motion is Tide's pending status is not.
+func TestStageTrackerRelistsStaleRunningCI(t *testing.T) {
+	now := time.Date(2026, 11, 10, 2, 50, 0, 0, time.UTC)
+	running := func(age time.Duration, checks ...github.PRActivityCheck) *github.PRCIActivity {
+		at := now.Add(-age)
+		return &github.PRCIActivity{Head: "head", Source: "github-check-runs", ObservedAt: &at, Checks: checks}
+	}
+	inProgress := github.PRActivityCheck{Name: "build-and-test (22)", State: "in_progress"}
+	green := github.PRActivityCheck{Name: "build-and-test (24)", State: "completed", Conclusion: "success"}
+	tide := github.PRActivityCheck{Name: "tide", State: "pending", Kind: "commit_status"}
+	for _, tc := range []struct {
+		name string
+		a    *github.PRCIActivity
+		want bool
+	}{
+		{"running for 17m", running(17*time.Minute, inProgress, green), true},
+		{"queued for 17m", running(17*time.Minute, github.PRActivityCheck{Name: "lint", State: "queued"}), true},
+		{"running for 3m", running(3*time.Minute, inProgress), false},
+		{"all concluded for 8h", running(8*time.Hour, green), false},
+		{"only tide pending for 8h", running(8*time.Hour, green, tide), false},
+		{"no observation time", &github.PRCIActivity{Head: "head", Checks: []github.PRActivityCheck{inProgress}}, false},
+	} {
+		if got := github.CIActivityStale(tc.a, now, 10*time.Minute); got != tc.want {
+			t.Errorf("%s: stale = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if github.CIActivityStale(running(time.Hour, inProgress), now, 0) {
+		t.Errorf("a disabled guard (0) relisted")
+	}
+
+	s := &Server{deps: &Dependencies{}}
+	pr := github.PullRequest{Repo: "hivecommons/promptargs", Number: 467, HeadSHA: "head", CIActivity: running(17*time.Minute, inProgress)}
+	if s.stageTrackerRelistStaleCI(pr, now) {
+		t.Fatalf("relisted with no GitHub client")
 	}
 }

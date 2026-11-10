@@ -426,6 +426,7 @@ func webhookCIChecks(event string, p webhookEventPayload) []PRActivityCheck {
 		check := PRActivityCheck{
 			Name: strings.TrimSpace(p.Context), State: "completed", URL: p.TargetURL,
 			ID: p.ID, NodeID: p.NodeID, Head: strings.TrimSpace(p.SHA), Kind: "commit_status",
+			Description: p.Description,
 		}
 		switch p.State {
 		case "success":
@@ -558,6 +559,9 @@ type ciRefetcher struct {
 	newTimer func(d time.Duration, f func()) ciRefetchTimer
 	fetch    func(ctx context.Context, t ciRefetchTarget) error
 	ctx      func() context.Context
+	// relisted is when each head was last relisted for a stale snapshot
+	// (RequestHeadCIRelist).
+	relisted map[ciHeadKey]time.Time
 	// flushes counts debounce windows that fired (tests).
 	flushes int
 }

@@ -646,6 +646,15 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	b.logger = deps.fileLogger(b.cfg)
 	slog.SetDefault(b.logger)
 
+	// #17468: one line naming the file this boot actually read. On hosted
+	// spokes /etc/hive/hive.yaml is a symlink into the PVC, so the resolved
+	// path is the persisted file an operator must edit.
+	b.logger.Info("boot: config source of truth",
+		"loaded_from", b.configPath,
+		"boot_source", config.ResolvedConfigPath(b.configPath),
+		"persisted_path", config.PersistedConfigPath(b.configPath),
+	)
+
 	// Load or generate a unique Hive ID for this instance
 	b.cfg.HiveID = deps.hiveID(b.logger)
 	_ = os.Setenv("HIVE_ID", b.cfg.HiveID) // valid key/value; Setenv cannot fail on Unix

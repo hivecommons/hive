@@ -175,7 +175,7 @@ func TestWebhookCIChecksStatusAndWorkflowJob(t *testing.T) {
 	c.ciRefetch = &ciRefetcher{newTimer: func(_ time.Duration, f func()) ciRefetchTimer { return &ciTestTimer{} }}
 	c.storePRDetail("repo", 3, testPRDetail(3, "sha-3", clock.now, "clean"))
 
-	status := []byte(`{"id":91,"node_id":"SC_91","sha":"sha-3","state":"success","context":"dco","target_url":"https://dco/3","created_at":"2026-10-08T12:00:00Z","repository":{"full_name":"org/repo"}}`)
+	status := []byte(`{"id":91,"node_id":"SC_91","sha":"sha-3","state":"success","context":"dco","description":"DCO signed","target_url":"https://dco/3","created_at":"2026-10-08T12:00:00Z","repository":{"full_name":"org/repo"}}`)
 	res, err := c.HandleWebhookEvent("status", status)
 	if err != nil || res.CIEvidence == nil || res.CIEvidence.Applied != 1 {
 		t.Fatalf("status delivery: res=%+v err=%v", res.CIEvidence, err)
@@ -193,7 +193,7 @@ func TestWebhookCIChecksStatusAndWorkflowJob(t *testing.T) {
 	for _, check := range got.Checks {
 		byName[check.Name] = check
 	}
-	if dco := byName["dco"]; dco.Kind != "commit_status" || dco.State != "completed" || dco.Conclusion != "success" || dco.NodeID != "SC_91" {
+	if dco := byName["dco"]; dco.Kind != "commit_status" || dco.State != "completed" || dco.Conclusion != "success" || dco.NodeID != "SC_91" || dco.Description != "DCO signed" {
 		t.Fatalf("dco = %+v", dco)
 	}
 	if gate := byName["gate"]; gate.AppID == nil || *gate.AppID != githubActionsAppID || gate.Conclusion != "success" || gate.URL != "https://gh/job/501" {
@@ -300,5 +300,41 @@ func TestWebhookCIRefetchListsHeadOnceAndRecordsListing(t *testing.T) {
 	c.FlushWebhookCIRefetch()
 	if listings != 1 {
 		t.Fatalf("cancelled context still listed: %d", listings)
+	}
+}
+
+// A tracker build that finds a head's CI snapshot still claiming motion past
+// the stale window asks for one coalesced listing of that head, bypassing
+// the batch cache; the same head is not relisted again within the window,
+// so a genuinely long-running check costs one listing per window, not one
+// per build (hivecommons/hive#17508).
+func TestRequestHeadCIRelistCoalescesPerHead(t *testing.T) {
+	c, clock := setupWebhookCacheTest(t)
+	t.Cleanup(ResetCIEvidenceForTest(clock.Now))
+	var fired func()
+	c.ciRefetch = &ciRefetcher{newTimer: func(_ time.Duration, f func()) ciRefetchTimer { fired = f; return &ciTestTimer{} }}
+	var fetched []ciRefetchTarget
+	c.ciRefetch.fetch = func(_ context.Context, t ciRefetchTarget) error { fetched = append(fetched, t); return nil }
+
+	if !c.RequestHeadCIRelist("hivecommons/promptargs", 467, "045b8e1", "main", 10*time.Minute) {
+		t.Fatalf("first stale request not queued")
+	}
+	if c.RequestHeadCIRelist("hivecommons/promptargs", 467, "045b8e1", "main", 10*time.Minute) {
+		t.Fatalf("a head relisted seconds ago was queued again")
+	}
+	if c.ciRefetch.pendingCount() != 1 || fired == nil {
+		t.Fatalf("pending=%d timer armed=%v, want one coalesced listing", c.ciRefetch.pendingCount(), fired != nil)
+	}
+	fired()
+	if len(fetched) != 1 || fetched[0].head != "045b8e1" || fetched[0].number != 467 || fetched[0].baseRef != "main" {
+		t.Fatalf("fetched = %+v, want one listing of 045b8e1 for #467 on main", fetched)
+	}
+
+	clock.now = clock.now.Add(11 * time.Minute)
+	if !c.RequestHeadCIRelist("hivecommons/promptargs", 467, "045b8e1", "main", 10*time.Minute) {
+		t.Fatalf("a head still claiming motion past the window was not relisted again")
+	}
+	if c.RequestHeadCIRelist("hivecommons/promptargs", 0, "045b8e1", "main", 10*time.Minute) || c.RequestHeadCIRelist("hivecommons/promptargs", 467, "", "main", 10*time.Minute) {
+		t.Fatalf("a request without a PR number or head was queued")
 	}
 }

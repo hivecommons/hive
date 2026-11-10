@@ -127,6 +127,20 @@ test('deferred: PR in progress is plain amber and still, names the successor, an
   assert.match(pr, /Close now is on the row/);
 });
 
+// hivecommons/hive#17500: a deferral to a shared-CI incident says so in the
+// word, links the incident, and the tooltip promises the lift.
+test('deferred to a shared-CI incident: the word is Waiting on shared CI with the incident linked', () => {
+  const item = redPR({ display_column: 30,
+    deferral: { head: 'abc1234def', actor: 'scanner', successors: ['#17463'], incident: 17463, incident_url: 'https://github.com/org/repo/issues/17463' },
+    code_activity: { head: 'abc1234def', state: 'deferred', caption: 'Waiting on shared CI · #17463', actor: 'scanner', source: 'hive-deferral', since: '2026-11-10T01:13:00Z', url: 'https://github.com/org/repo/issues/17463',
+      detail: '`mutation` is failing fleet-wide; tracked in #17463. Lifts automatically when that issue closes. scanner deferred head abc1234 at 2026-11-10T01:13:00Z.' } });
+  const pr = cells(item)[3];
+  assert.match(pr, /ham-remediation-deferred/);
+  assert.match(pr, /Waiting on shared CI · <a class="ham-incident-link" href="https:\/\/github\.com\/org\/repo\/issues\/17463"[^>]*>#17463<\/a>/);
+  assert.doesNotMatch(pr, /Deferred · by/);
+  assert.match(pr, /Lifts automatically when that issue closes/);
+});
+
 test('a red PR with a stale code head renders no remediation attributes', () => {
   const item = redPR({ display_column: 30, code_activity: { head: 'older', state: 'unassigned', caption: 'Unassigned · next: scanner' } });
   const html = renderStrip(item, stages, null, now, {});
@@ -291,9 +305,17 @@ test('#16539 shape: a queued swarm reads 0/5 and, as the stage\'s own track, is 
 // hivecommons/hive#16631: a CI ring that is not full is a running ring.
 // 13/19 with checks still pending is active with its count beside the
 // running Review; only a complete 19/19 ring is the silent green glyph.
+// The backend says running/queued whenever a check is in motion; its own
+// `unknown` beside a part-filled ring (a required name with no run, statuses
+// unread) is settled, not inferred motion (hivecommons/hive#17508).
 test('#16628 shape: CI 13/19 with pending checks + review in progress → both tracks active with words', () => {
   const review = { head: 'abc1234def', state: 'reviewing', active: true, caption: 'Review 0/5 · in progress', perspectives_done: 0, perspectives_total: 5, source: 'dispatch', observed_at: seen };
-  for (const state of ['running', 'unknown', 'queued']) {
+  const unknown = cells(redPR({ display_column: 50, stage: 50,
+    ci_activity: { head: 'abc1234def', state: 'unknown', caption: 'CI waiting', checks_passed: 13, checks_total: 19, source: 'checks', observed_at: seen },
+    review_activity: review }));
+  assert.doesNotMatch(unknown[4], /class="ham-seg ham-activity-track active ham-current"/, 'unknown: a part-filled ring with no motion reported is not lit');
+  assert.equal(litCount(unknown.join('')), 1, 'unknown: only Review is in motion');
+  for (const state of ['running', 'queued']) {
     const c = cells(redPR({ display_column: 50, stage: 50,
       ci_activity: { head: 'abc1234def', state, caption: 'CI ' + state, checks_passed: 13, checks_total: 19, source: 'checks', observed_at: seen },
       review_activity: review }));

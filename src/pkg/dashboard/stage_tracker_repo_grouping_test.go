@@ -170,6 +170,7 @@ func stageTrackerRepoGroupingHarness(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerTrailText"),
 		jsFunc(t, html, "stageTrackerTooltip"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
+		stageTrackerHumanGateJS(t, html),
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),
 		jsFunc(t, html, "stageTrackerSinceHtml"),
 		jsFunc(t, html, "stageTrackerSubRowHtml"),

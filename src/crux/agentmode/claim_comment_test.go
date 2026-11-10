@@ -50,6 +50,9 @@ func TestModeForTokenTier_InvertsTokenTier(t *testing.T) {
 	if got, ok := ModeForTokenTier("merger"); !ok || got != ModeIssuesPRsMerge {
 		t.Errorf("merger tier = %v,%v; want ISSUES_PRS_MERGE", got, ok)
 	}
+	if got, ok := ModeForTokenTier(SecCheckTrustedTier); !ok || got != ModeIssuesPRsMerge {
+		t.Errorf("sec-check-trusted tier = %v,%v; want ISSUES_PRS_MERGE", got, ok)
+	}
 	if got, ok := ModeForTokenTier("revoked"); ok || got != ModeAdvisory || got.CanComment() {
 		t.Errorf("unknown tier = %v,%v; must fail closed to ADVISORY", got, ok)
 	}
