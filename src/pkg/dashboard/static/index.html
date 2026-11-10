@@ -2325,15 +2325,14 @@
        segment names the reasons (👤 Needs human · review, sentinel) and whose
        right segments are the verbs those reasons determine. Replaces the
        scattered sentinel chip + Approve + Let hive decide + needs-human pill. */
-    .ham-human-gate { display: inline-flex; align-items: stretch; max-width: 100%; border: var(--line-width) solid color-mix(in srgb, var(--amber) 60%, var(--line-subtle)); border-radius: var(--r-pill); background: color-mix(in srgb, var(--amber) 8%, var(--panel)); font-size: var(--fs-xs); line-height: 1.5; vertical-align: middle; }
-    .ham-human-gate > .ham-gate-status { display: inline-flex; align-items: center; gap: var(--sp-1); min-width: 0; padding: 0 var(--sp-2) 0 var(--sp-3); border: 0; border-radius: var(--r-pill) 0 0 var(--r-pill); background: transparent; color: var(--amber); font: inherit; font-weight: var(--fw-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ham-human-gate { display: inline-flex; align-items: stretch; max-width: 100%; overflow: hidden; border: var(--line-width) solid color-mix(in srgb, var(--amber) 60%, var(--line-subtle)); border-radius: var(--r-pill); background: color-mix(in srgb, var(--amber) 8%, var(--panel)); font-size: var(--fs-xs); line-height: 1.5; vertical-align: middle; }
+    .ham-human-gate > .ham-gate-status { display: inline-flex; align-items: center; gap: var(--sp-1); min-width: 0; padding: 0 var(--sp-2) 0 var(--sp-3); border: 0; background: transparent; color: var(--amber); font: inherit; font-weight: var(--fw-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ham-human-gate > .ham-gate-status > .ham-mod-word { overflow: hidden; text-overflow: ellipsis; }
     .ham-human-gate > button.ham-gate-status { cursor: pointer; }
     .ham-human-gate > button.ham-gate-status:hover, .ham-human-gate > button.ham-gate-status:focus-visible { text-decoration: underline; outline: none; }
-    .ham-human-gate > .ham-gate-act { border-radius: 0; border-top: 0; border-bottom: 0; border-right: 0; border-left-color: color-mix(in srgb, var(--amber) 35%, transparent); margin: 0; }
+    .ham-human-gate > .ham-gate-act { --ham-gate-seg-radius: 0; border-radius: var(--ham-gate-seg-radius); border-top: 0; border-bottom: 0; border-right: 0; border-left-color: color-mix(in srgb, var(--amber) 35%, transparent); margin: 0; }
     .ham-human-gate > .ham-gate-act.ham-act-secondary, .ham-human-gate > .ham-gate-more { --ham-act-fill: transparent; --ham-act-ink: var(--text); }
-    .ham-human-gate > .ham-gate-act:last-child, .ham-human-gate > .ham-gate-more:last-child { border-radius: 0 var(--r-pill) var(--r-pill) 0; }
-    .ham-human-gate > .ham-gate-act:hover, .ham-human-gate > .ham-gate-act:focus-visible { box-shadow: none; background: color-mix(in srgb, var(--amber) 22%, transparent); filter: none; }
+        .ham-human-gate > .ham-gate-act:hover, .ham-human-gate > .ham-gate-act:focus-visible { box-shadow: none; background: color-mix(in srgb, var(--amber) 22%, transparent); filter: none; }
     .ham-human-gate > .ham-gate-act.ham-act-primary:hover, .ham-human-gate > .ham-gate-act.ham-act-primary:focus-visible { filter: brightness(1.12); }
     .ham-human-gate > .ham-gate-more { padding-inline: var(--sp-2); }
     .ham-human-gate > .ham-gate-more::after { content: none; }

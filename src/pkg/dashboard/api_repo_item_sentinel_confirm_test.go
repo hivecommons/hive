@@ -67,7 +67,7 @@ func TestRepoItemSentinelConfirmAuthorizationCommentAndLabel(t *testing.T) {
 	if got := strings.Join(mock.removed, ","); got != config.DefaultSentinelLabel {
 		t.Fatalf("removed = %q, want only the sentinel label", got)
 	}
-	if resp.Result == nil || resp.Result.Action != rowActionSentinelConfirmed || resp.Result.Target != "testorg/testrepo#7" || !strings.Contains(resp.Result.Outcome, "@writer") || !strings.Contains(resp.Result.Outcome, config.DefaultSentinelLabel) {
+	if resp.Result == nil || resp.Result.Action != rowActionSentinelConfirmed || resp.Result.Target.Repo != "testorg/testrepo" || resp.Result.Target.Number != 7 || !strings.Contains(resp.Result.Outcome, "@writer") || !strings.Contains(resp.Result.Outcome, config.DefaultSentinelLabel) {
 		t.Fatalf("result = %+v", resp.Result)
 	}
 
