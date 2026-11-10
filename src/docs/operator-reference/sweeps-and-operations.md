@@ -277,7 +277,14 @@ someone re-runs it. The shared-CI rerun sweep
 (`src/pkg/github/shared_ci_rerun.go`) closes that gap every ~15 minutes:
 
 - It lists `[shared-ci]` issues closed in the last 72h in each watched repo,
-  ignoring ones closed as "not planned". With none, it makes no other calls.
+  ignoring ones closed as "not planned". The title is not the only way in:
+  an open PR's newest `<!-- hive-shared-ci-<n> -->` marker names its
+  incident, and the sweep fetches that issue by number (once per pass) and
+  accepts it on the same closed/not-"not planned"/72h terms whatever its
+  title — #17463 was filed as "mutation failing across hivecommons/hive"
+  and the prefix-only sweep never saw it close (hivecommons/hive#17500).
+  The relay's issue-create path now also stamps `[shared-ci]` and the
+  `shared-ci` label on any issue titled `<check> failing across <owner/repo>`.
 - For each open PR whose newest shared-CI marker names one of those incidents,
   it re-runs the failed jobs (`POST .../actions/runs/{id}/rerun-failed-jobs`)
   of the newest run per workflow on the PR head when that run concluded

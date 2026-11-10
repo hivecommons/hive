@@ -1484,6 +1484,10 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	// Review backlog (security): …`). Hive-internal filers and the watcher
 	// both land here, so a caller cannot forget it; AgentIssueTitle is idempotent
 	// for a title an agent already tagged.
+	// A shared-CI incident gets its `[shared-ci]` prefix and label here,
+	// whatever the filer typed: the rerun sweep and the deferral markers
+	// key off the incident, so a dropped prefix must not hide one.
+	title, labels = normalizeSharedCIIncidentIssue(title, labels)
 	title = issueshape.AgentIssueTitle(req.TitleFiler(), title)
 	// Same posture and same placement as validateRepoRef above: a request that
 	// is still carrying its template cannot become a useful issue, and unlike a

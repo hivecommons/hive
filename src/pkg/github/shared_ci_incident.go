@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
+
+	"github.com/hivecommons/hive/pkg/issueshape"
 )
 
 // sharedCIMarkerRE matches the hidden marker a fix lane stamps on the single
@@ -72,4 +75,47 @@ func (c *Client) openSharedCIIncident(ctx context.Context, pr *PullRequest, stat
 		return 0
 	}
 	return incident
+}
+
+// SharedCIIncidentLabel is the label every shared-CI incident issue carries,
+// alongside the `[shared-ci]` title prefix the policies ask for.
+const SharedCIIncidentLabel = "shared-ci"
+
+// sharedCIIncidentTitleRE matches the incident title shape the policies
+// dictate, `<check> failing across <owner>/<repo>`, after any leading
+// `[tag]`. Group 1 is the leading tag (empty when none), group 2 the subject.
+var sharedCIIncidentTitleRE = regexp.MustCompile(`^\s*(?:\[([^\]\n]+)\]\s*)?(\S.*?\s+failing\s+across\s+[\w.-]+/[\w.-]+)\s*$`)
+
+// normalizeSharedCIIncidentIssue returns title and labels for an issue that
+// is a shared-CI incident — its title has the `<check> failing across
+// <owner>/<repo>` shape or it carries SharedCIIncidentLabel — with the
+// `[shared-ci]` prefix in front and the label present; any other issue
+// comes back unchanged. Incident #17463 was filed as "mutation failing
+// across hivecommons/hive" and so was never seen as an incident by the
+// title-prefix path of the rerun sweep (hivecommons/hive#17500).
+func normalizeSharedCIIncidentIssue(title string, labels []string) (string, []string) {
+	labelled := false
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l), SharedCIIncidentLabel) {
+			labelled = true
+			break
+		}
+	}
+	m := sharedCIIncidentTitleRE.FindStringSubmatch(title)
+	if m == nil && !labelled {
+		return title, labels
+	}
+	subject := strings.TrimSpace(title)
+	if m != nil {
+		subject = m[2]
+		if tag := strings.TrimSpace(m[1]); tag != "" && !strings.EqualFold(tag, "shared-ci") && !issueshape.IsFilerTag(tag) {
+			subject = "[" + tag + "] " + subject
+		}
+	} else if strings.HasPrefix(strings.ToLower(subject), "[shared-ci]") {
+		subject = strings.TrimSpace(subject[len("[shared-ci]"):])
+	}
+	if !labelled {
+		labels = append(append([]string(nil), labels...), SharedCIIncidentLabel)
+	}
+	return "[shared-ci] " + subject, labels
 }

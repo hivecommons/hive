@@ -80,7 +80,70 @@ type SharedCIRerunResult struct {
 type sharedCIRerunSeen struct {
 	updatedAt time.Time
 	incidents string
-	block     SharedCIRerunBlock
+	// marker is the incident the PR's newest shared-CI marker named when
+	// its comments were last read, so later passes can ask whether that
+	// incident has closed without re-reading the comments.
+	marker int
+	block  SharedCIRerunBlock
+}
+
+// sharedCIIncidentLookup is one pass's view of which incidents in a repo
+// have closed inside the lookback. It starts from the `[shared-ci]`-titled
+// issues and grows as PR markers name incidents filed without the prefix
+// (hive#17463 was "mutation failing across hivecommons/hive"): an incident is
+// recognised by the fact that a PR carries its marker, and fetched by
+// number, at most once per pass (hivecommons/hive#17500).
+type sharedCIIncidentLookup struct {
+	c           *Client
+	owner, repo string
+	since       time.Time
+	closed      map[int]bool
+	checked     map[int]bool
+}
+
+// resolve reports whether incident n closed (not as "not planned") at or
+// after since, fetching the issue when the title-prefix list did not carry it.
+func (l *sharedCIIncidentLookup) resolve(ctx context.Context, n int) (bool, error) {
+	if n <= 0 {
+		return false, nil
+	}
+	if l.closed[n] {
+		return true, nil
+	}
+	if l.checked[n] {
+		return false, nil
+	}
+	l.checked[n] = true
+	issue, resp, err := l.c.client.Issues.Get(ctx, l.owner, l.repo, n)
+	if err != nil {
+		if resp != nil && resp.StatusCode == 404 {
+			return false, nil
+		}
+		return false, fmt.Errorf("fetching shared-CI incident %s/%s#%d: %w", l.owner, l.repo, n, err)
+	}
+	if !sharedCIIncidentClosedSince(issue, l.since) {
+		return false, nil
+	}
+	l.closed[n] = true
+	return true, nil
+}
+
+func (l *sharedCIIncidentLookup) key() string { return sharedCIIncidentSetKey(l.closed) }
+
+// sharedCIIncidentClosedSince reports whether issue is an incident the sweep
+// acts on: an issue (not a PR) closed at or after since, and not as "not
+// planned" — matching .github/scripts/pr-auto-update.sh: nothing was fixed.
+func sharedCIIncidentClosedSince(issue *gh.Issue, since time.Time) bool {
+	if issue == nil || issue.IsPullRequest() {
+		return false
+	}
+	if strings.EqualFold(issue.GetStateReason(), "not_planned") {
+		return false
+	}
+	if issue.GetState() != "closed" && issue.ClosedAt == nil {
+		return false
+	}
+	return issue.ClosedAt != nil && !issue.GetClosedAt().Time.Before(since)
 }
 
 // SharedCIRerunBlock is an observed permission refusal, not a CI verdict.
@@ -97,17 +160,6 @@ func (c *Client) SharedCIRerunBlocked(repo string, number int, head string) (Sha
 	defer c.sharedCIRerunMu.Unlock()
 	seen := c.sharedCIRerunSeen[fmt.Sprintf("%s/%s#%d", owner, name, number)]
 	return seen.block, seen.block.RunID != 0 && seen.block.HeadSHA == head
-}
-
-func (c *Client) hasSharedCIRerunBlocks(owner, repo string) bool {
-	c.sharedCIRerunMu.Lock()
-	defer c.sharedCIRerunMu.Unlock()
-	for key, seen := range c.sharedCIRerunSeen {
-		if strings.HasPrefix(key, owner+"/"+repo+"#") && seen.block.RunID != 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // SweepSharedCIReruns re-runs the failed jobs on open PRs that a fix lane
@@ -141,15 +193,14 @@ func (c *Client) SweepSharedCIReruns(ctx context.Context, opts SharedCIRerunOpti
 			break
 		}
 		owner, repoName := c.splitRepo(repo)
-		closed, err := c.recentlyClosedSharedCIIncidents(ctx, owner, repoName, now.Add(-lookback))
+		since := now.Add(-lookback)
+		closed, err := c.recentlyClosedSharedCIIncidents(ctx, owner, repoName, since)
 		if err != nil {
 			return result, err
 		}
-		if len(closed) == 0 && !c.hasSharedCIRerunBlocks(owner, repoName) {
-			continue
-		}
-		result.Incidents += len(closed)
-		incidentKey := sharedCIIncidentSetKey(closed)
+		lookup := &sharedCIIncidentLookup{c: c, owner: owner, repo: repoName, since: since, closed: closed, checked: map[int]bool{}}
+		// No early exit on an empty title-prefix list: an incident filed
+		// without the prefix is only discoverable through a PR's marker.
 		prs, err := c.listOpenPRsForSupersessionSweep(ctx, owner, repoName)
 		if err != nil {
 			return result, err
@@ -162,8 +213,9 @@ func (c *Client) SweepSharedCIReruns(ctx context.Context, opts SharedCIRerunOpti
 				continue
 			}
 			result.Seen++
-			event, ok, err := c.trySharedCIRerun(ctx, repo, owner, repoName, pr, closed, incidentKey)
+			event, ok, err := c.trySharedCIRerun(ctx, repo, owner, repoName, pr, lookup)
 			if err != nil {
+				result.Incidents += len(lookup.closed)
 				return result, err
 			}
 			if !ok {
@@ -175,6 +227,7 @@ func (c *Client) SweepSharedCIReruns(ctx context.Context, opts SharedCIRerunOpti
 				opts.Audit(event)
 			}
 		}
+		result.Incidents += len(lookup.closed)
 	}
 	return result, nil
 }
@@ -203,10 +256,7 @@ func (c *Client) recentlyClosedSharedCIIncidents(ctx context.Context, owner, rep
 			if !strings.HasPrefix(strings.TrimSpace(issue.GetTitle()), sharedCIIncidentTitlePrefix) {
 				continue
 			}
-			if strings.EqualFold(issue.GetStateReason(), "not_planned") {
-				continue
-			}
-			if issue.ClosedAt == nil || issue.GetClosedAt().Time.Before(since) {
+			if !sharedCIIncidentClosedSince(issue, since) {
 				continue
 			}
 			out[issue.GetNumber()] = true
@@ -269,7 +319,7 @@ func pendingSharedCIReruns(texts []string, closed map[int]bool) []int {
 	return out
 }
 
-func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName string, pr *gh.PullRequest, closed map[int]bool, incidentKey string) (SharedCIRerunEvent, bool, error) {
+func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName string, pr *gh.PullRequest, lookup *sharedCIIncidentLookup) (SharedCIRerunEvent, bool, error) {
 	if labels := labelNames(pr.Labels); c.isHeld(labels) || c.isExempt(labels) {
 		return SharedCIRerunEvent{}, false, nil
 	}
@@ -278,15 +328,24 @@ func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName str
 	c.sharedCIRerunMu.Lock()
 	prev, known := c.sharedCIRerunSeen[seenKey]
 	c.sharedCIRerunMu.Unlock()
-	if known && prev.incidents == incidentKey && prev.updatedAt.Equal(updatedAt) && prev.block.RunID == 0 {
-		return SharedCIRerunEvent{}, false, nil
+	if known && prev.updatedAt.Equal(updatedAt) && prev.block.RunID == 0 {
+		// The PR has not changed; the incident its marker names may have.
+		if _, err := lookup.resolve(ctx, prev.marker); err != nil {
+			return SharedCIRerunEvent{}, false, err
+		}
+		if prev.incidents == lookup.key() {
+			return SharedCIRerunEvent{}, false, nil
+		}
 	}
+	marker := 0
+	closed := lookup.closed
+	incidentKey := lookup.key()
 	markSeen := func() {
 		c.sharedCIRerunMu.Lock()
 		if c.sharedCIRerunSeen == nil {
 			c.sharedCIRerunSeen = map[string]sharedCIRerunSeen{}
 		}
-		c.sharedCIRerunSeen[seenKey] = sharedCIRerunSeen{updatedAt: updatedAt, incidents: incidentKey}
+		c.sharedCIRerunSeen[seenKey] = sharedCIRerunSeen{updatedAt: updatedAt, incidents: incidentKey, marker: marker}
 		c.sharedCIRerunMu.Unlock()
 	}
 	markBlocked := func(runID int64) {
@@ -296,7 +355,7 @@ func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName str
 			c.sharedCIRerunSeen = map[string]sharedCIRerunSeen{}
 		}
 		c.sharedCIRerunSeen[seenKey] = sharedCIRerunSeen{
-			updatedAt: updatedAt, incidents: incidentKey,
+			updatedAt: updatedAt, incidents: incidentKey, marker: marker,
 			block: SharedCIRerunBlock{HeadSHA: pr.GetHead().GetSHA(), RunID: runID},
 		}
 	}
@@ -309,6 +368,13 @@ func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName str
 	for _, cm := range comments {
 		texts = append(texts, cm.GetBody())
 	}
+	// The newest marker names the incident this PR is deferred to; an
+	// incident filed without the `[shared-ci]` prefix is found only here.
+	marker = newestSharedCIMarker(texts)
+	if _, err := lookup.resolve(ctx, marker); err != nil {
+		return SharedCIRerunEvent{}, false, err
+	}
+	incidentKey = lookup.key()
 	if prev.block.RunID != 0 && prev.block.HeadSHA == pr.GetHead().GetSHA() {
 		// Discovery's lookback must not strand an already-observed refusal.
 		// Keep its incident eligible without broadening discovery for other PRs.

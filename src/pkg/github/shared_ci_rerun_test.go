@@ -20,6 +20,24 @@ type sharedCIRerunIssue struct {
 	StateReason string
 	ClosedAt    time.Time
 	IsPR        bool
+	// Open keeps the issue out of the closed list and serves it as open
+	// from GET /issues/{n}.
+	Open bool
+}
+
+func (is sharedCIRerunIssue) json() map[string]any {
+	item := map[string]any{"number": is.Number, "title": is.Title, "state": "closed", "closed_at": is.ClosedAt.Format(time.RFC3339)}
+	if is.Open {
+		item["state"] = "open"
+		delete(item, "closed_at")
+	}
+	if is.StateReason != "" {
+		item["state_reason"] = is.StateReason
+	}
+	if is.IsPR {
+		item["pull_request"] = map[string]any{"url": "x"}
+	}
+	return item
 }
 
 type sharedCIRerunRun struct {
@@ -49,6 +67,7 @@ type sharedCIRerunFake struct {
 	commentLists map[int]int
 	forbidRerun  bool
 	forbidAfter  int
+	issueGets    int
 }
 
 func newSharedCIRerunFake(t *testing.T, issues []sharedCIRerunIssue, prs []*sharedCIRerunPR) (*httptest.Server, *sharedCIRerunFake) {
@@ -58,6 +77,7 @@ func newSharedCIRerunFake(t *testing.T, issues []sharedCIRerunIssue, prs []*shar
 		f.prs[pr.Number] = pr
 	}
 	commentsRE := regexp.MustCompile(`^/repos/org/repo/issues/(\d+)/comments$`)
+	issueRE := regexp.MustCompile(`^/repos/org/repo/issues/(\d+)$`)
 	rerunRE := regexp.MustCompile(`^/repos/org/repo/actions/runs/(\d+)/rerun-failed-jobs$`)
 	fullRerunRE := regexp.MustCompile(`^/repos/org/repo/actions/runs/(\d+)/rerun$`)
 	updated := "2026-10-15T00:00:00Z"
@@ -71,16 +91,22 @@ func newSharedCIRerunFake(t *testing.T, issues []sharedCIRerunIssue, prs []*shar
 			}
 			out := []map[string]any{}
 			for _, is := range f.issues {
-				item := map[string]any{"number": is.Number, "title": is.Title, "state": "closed", "closed_at": is.ClosedAt.Format(time.RFC3339)}
-				if is.StateReason != "" {
-					item["state_reason"] = is.StateReason
+				if is.Open {
+					continue
 				}
-				if is.IsPR {
-					item["pull_request"] = map[string]any{"url": "x"}
-				}
-				out = append(out, item)
+				out = append(out, is.json())
 			}
 			_ = json.NewEncoder(w).Encode(out)
+		case issueRE.MatchString(r.URL.Path) && r.Method == http.MethodGet:
+			n, _ := strconv.Atoi(issueRE.FindStringSubmatch(r.URL.Path)[1])
+			f.issueGets++
+			for _, is := range f.issues {
+				if is.Number == n {
+					_ = json.NewEncoder(w).Encode(is.json())
+					return
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
 		case r.URL.Path == "/repos/org/repo/pulls" && r.Method == http.MethodGet:
 			out := []map[string]any{}
 			for n := 1; n <= 100; n++ {
@@ -183,7 +209,9 @@ func TestSweepSharedCIReruns_RerunsStampedPRsOncePerIncident(t *testing.T) {
 	now := sharedCIRerunNow()
 	issues := []sharedCIRerunIssue{
 		{Number: 500, Title: "[shared-ci] test (rest 1/5) failing across org/repo", ClosedAt: now.Add(-time.Hour)},
-		{Number: 501, Title: "unrelated bug", ClosedAt: now.Add(-time.Hour)},
+		// Filed without the prefix, yet PR 4 was deferred to it: the marker,
+		// not the title, says it is an incident (hivecommons/hive#17500).
+		{Number: 501, Title: "lint failing across org/repo", ClosedAt: now.Add(-time.Hour)},
 	}
 	prs := []*sharedCIRerunPR{
 		{Number: 1, SHA: "aaaaaaaaaa", Comments: []string{"deferring\n<!-- hive-shared-ci-500 -->"}, Runs: []sharedCIRerunRun{failedRun(11, 1), {ID: 12, WorkflowID: 2, RunNumber: 1, Attempt: 1, Status: "completed", Conclusion: "success"}}},
@@ -202,19 +230,22 @@ func TestSweepSharedCIReruns_RerunsStampedPRsOncePerIncident(t *testing.T) {
 		t.Fatalf("sweep: %v", err)
 	}
 	reruns, posted, lists := fake.snap()
-	if !reflect.DeepEqual(reruns, []int64{11}) {
-		t.Fatalf("reruns = %v, want [11] (only PR 1's failed workflow)", reruns)
+	if !reflect.DeepEqual(reruns, []int64{11, 41}) {
+		t.Fatalf("reruns = %v, want [11 41] (PR 1's and PR 4's failed workflows)", reruns)
 	}
-	if res.Incidents != 1 || len(res.Rerun) != 1 || res.Rerun[0].Number != 1 {
+	if res.Incidents != 2 || len(res.Rerun) != 2 || res.Rerun[0].Number != 1 || res.Rerun[1].Number != 4 {
 		t.Fatalf("result = %+v", res)
 	}
-	if len(audited) != 1 || !reflect.DeepEqual(audited[0].Incidents, []int{500}) || !reflect.DeepEqual(audited[0].RunIDs, []int64{11}) {
+	if len(audited) != 2 || !reflect.DeepEqual(audited[0].Incidents, []int{500}) || !reflect.DeepEqual(audited[0].RunIDs, []int64{11}) || !reflect.DeepEqual(audited[1].Incidents, []int{501}) {
 		t.Fatalf("audit = %+v", audited)
 	}
 	if len(posted[1]) != 1 || !strings.Contains(posted[1][0], "<!-- hive-shared-ci-rerun-500 -->") || !strings.Contains(posted[1][0], "#500") {
 		t.Fatalf("PR 1 marker comment = %q", posted[1])
 	}
-	for _, n := range []int{2, 3, 4, 5} {
+	if len(posted[4]) != 1 || !strings.Contains(posted[4][0], "<!-- hive-shared-ci-lifted-501 -->") {
+		t.Fatalf("PR 4 marker comment = %q", posted[4])
+	}
+	for _, n := range []int{2, 3, 5} {
 		if len(posted[n]) != 0 {
 			t.Fatalf("PR %d got a comment: %q", n, posted[n])
 		}
@@ -229,7 +260,7 @@ func TestSweepSharedCIReruns_RerunsStampedPRsOncePerIncident(t *testing.T) {
 		t.Fatalf("second sweep: %v", err)
 	}
 	reruns, _, lists = fake.snap()
-	if len(reruns) != 1 || len(res.Rerun) != 0 {
+	if len(reruns) != 2 || len(res.Rerun) != 0 {
 		t.Fatalf("second pass re-ran again: reruns=%v result=%+v", reruns, res)
 	}
 	if lists[2] != listsBefore {
@@ -253,9 +284,94 @@ func TestSweepSharedCIReruns_IgnoresNotPlannedStaleAndPRIncidents(t *testing.T) 
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
-	reruns, _, lists := fake.snap()
-	if res.Incidents != 0 || len(reruns) != 0 || lists[1] != 0 {
-		t.Fatalf("expected no work: result=%+v reruns=%v lists=%d", res, reruns, lists[1])
+	reruns, posted, lists := fake.snap()
+	if res.Incidents != 0 || len(reruns) != 0 || len(posted[1]) != 0 || lists[1] != 1 {
+		t.Fatalf("expected no re-run (one comment read to find the marker): result=%+v reruns=%v posted=%d lists=%d", res, reruns, len(posted[1]), lists[1])
+	}
+}
+
+// Incident #17463 was filed as "mutation failing across hivecommons/hive"
+// without the `[shared-ci]` prefix, yet the scanner stamped its marker on
+// #17471; the title-prefix path never saw it close. An incident is now
+// recognised by the marker a PR carries: the sweep fetches it by number,
+// re-runs once when it is closed, and stays quiet while it is open — one
+// issue GET per pass, no re-reading of the unchanged PR's comments.
+func TestSweepSharedCIReruns_LiftsDeferralToAnIncidentFiledWithoutThePrefix(t *testing.T) {
+	now := sharedCIRerunNow()
+	issues := []sharedCIRerunIssue{{Number: 17463, Title: "[scanner] mutation failing across org/repo", Open: true}}
+	prs := []*sharedCIRerunPR{{
+		Number: 1, SHA: "41dda120fa", Comments: []string{"deferring until that incident closes.\n\n<!-- hive-shared-ci-17463 -->"},
+		Runs: []sharedCIRerunRun{{ID: 59, WorkflowID: 7, RunNumber: 59, Attempt: 1, Status: "completed", Conclusion: "cancelled"}},
+	}}
+	srv, fake := newSharedCIRerunFake(t, issues, prs)
+	c := newTestClient(t, srv, "org", []string{"org/repo"})
+	opts := SharedCIRerunOptions{Now: sharedCIRerunNow}
+
+	res, err := c.SweepSharedCIReruns(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("sweep while open: %v", err)
+	}
+	_, posted, lists := fake.snap()
+	if res.Incidents != 0 || len(res.Rerun) != 0 || len(posted[1]) != 0 || lists[1] != 1 || fake.issueGets != 1 {
+		t.Fatalf("open incident: nothing re-run, one issue GET: result=%+v posted=%d lists=%d gets=%d", res, len(posted[1]), lists[1], fake.issueGets)
+	}
+
+	fake.mu.Lock()
+	fake.issues[0].Open = false
+	fake.issues[0].ClosedAt = now.Add(-30 * time.Minute)
+	fake.mu.Unlock()
+	res, err = c.SweepSharedCIReruns(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("sweep after close: %v", err)
+	}
+	_, posted, lists = fake.snap()
+	fake.mu.Lock()
+	full := append([]int64(nil), fake.fullReruns...)
+	gets := fake.issueGets
+	fake.mu.Unlock()
+	if res.Incidents != 1 || !reflect.DeepEqual(full, []int64{59}) || len(posted[1]) != 1 || gets != 2 {
+		t.Fatalf("closed incident lifts the deferral: result=%+v full=%v posted=%d gets=%d", res, full, len(posted[1]), gets)
+	}
+	if lists[1] != 2 {
+		t.Fatalf("comments read once per decision, got %d", lists[1])
+	}
+	if !strings.Contains(posted[1][0], "<!-- hive-shared-ci-lifted-17463 -->") || !strings.Contains(posted[1][0], "Shared-CI incident #17463 closed") {
+		t.Fatalf("lift comment: %q", posted[1][0])
+	}
+
+	res, err = c.SweepSharedCIReruns(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("third sweep: %v", err)
+	}
+	_, posted, _ = fake.snap()
+	fake.mu.Lock()
+	full = append([]int64(nil), fake.fullReruns...)
+	fake.mu.Unlock()
+	if len(res.Rerun) != 0 || len(full) != 1 || len(posted[1]) != 1 {
+		t.Fatalf("third pass must lift nothing: result=%+v full=%v posted=%d", res, full, len(posted[1]))
+	}
+}
+
+func TestNormalizeSharedCIIncidentIssue(t *testing.T) {
+	cases := []struct {
+		title      string
+		labels     []string
+		wantTitle  string
+		wantLabels []string
+	}{
+		{"mutation failing across hivecommons/hive", []string{"help wanted"}, "[shared-ci] mutation failing across hivecommons/hive", []string{"help wanted", "shared-ci"}},
+		{"[scanner] mutation failing across hivecommons/hive", nil, "[shared-ci] mutation failing across hivecommons/hive", []string{"shared-ci"}},
+		{"[shared-ci] lint failing across org/repo", []string{"shared-ci"}, "[shared-ci] lint failing across org/repo", []string{"shared-ci"}},
+		{"[Flaky] e2e failing across org/repo", nil, "[shared-ci] [Flaky] e2e failing across org/repo", []string{"shared-ci"}},
+		{"Baseline broken on main", []string{"shared-ci"}, "[shared-ci] Baseline broken on main", []string{"shared-ci"}},
+		{"[scanner] Review backlog (security): 3 PRs", []string{"origin/scanner"}, "[scanner] Review backlog (security): 3 PRs", []string{"origin/scanner"}},
+		{"tests are failing across the board", nil, "tests are failing across the board", nil},
+	}
+	for _, tc := range cases {
+		gotTitle, gotLabels := normalizeSharedCIIncidentIssue(tc.title, tc.labels)
+		if gotTitle != tc.wantTitle || !reflect.DeepEqual(gotLabels, tc.wantLabels) {
+			t.Errorf("normalize(%q, %v) = %q, %v; want %q, %v", tc.title, tc.labels, gotTitle, gotLabels, tc.wantTitle, tc.wantLabels)
+		}
 	}
 }
 
