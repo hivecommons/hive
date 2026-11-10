@@ -630,8 +630,7 @@ Phase 5 registers the fleet-level write operations under that contract:
   it read, so a change made between preview and confirm refuses the confirm
   (`ErrConfirmationStale`) instead of being overwritten. A change that admits more issues without triage, or
   that makes Sentinel flag fewer pull requests, is disclosed as widening, and the Sentinel
-  disclosure names the pull requests that would no longer be held. `decisions.delegate` has
-  no dashboard write endpoint and so no operation.
+  disclosure names the pull requests that would no longer be held.
 - `auto_merge.update` wraps `PATCH /api/config/auto-merge`, the endpoint behind the dashboard's
   merge settings. That endpoint replaces every list and map it is sent whole (`squash_only`,
   `require_current_base`, `human_merge_paths`, the native merge queue's repos and bases, the

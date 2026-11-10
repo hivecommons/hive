@@ -786,9 +786,7 @@ cannot tell from its side whether the record carries one.
 
 Neither operation itself adds or removes a label, approves, or merges
 anything. Turning reporter trust on does make later scans mark each held
-issue as waiting for triage, with a label and a one-time comment. The
-"Let hive decide" settings (`decisions.delegate`) have no dashboard write
-endpoint, so admin MCP cannot change them.
+issue as waiting for triage, with a label and a one-time comment.
 
 `auto_merge.update` changes merge settings, the same settings as the
 dashboard's merge controls, through `PATCH /api/config/auto-merge`. It is owner
