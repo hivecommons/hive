@@ -1,1 +1,0 @@
-- Bot Dependency Dashboards and the Hive Advisory Report no longer count as "Waiting on you" (approve-needed) when a triage bot labels them `needs-human`: the badge, topbar pill and the MCP's `waiting_on_you` now match the activity monitor, which never draws those issues.

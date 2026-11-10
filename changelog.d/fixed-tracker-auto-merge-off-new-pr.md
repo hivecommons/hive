@@ -1,1 +1,0 @@
-- Activity Monitor: a new pull request on a repo whose auto-merge is off (or on any repo of a hive below ACMM L6) no longer reads "waiting for the stage-label pass (next pass due now)", since no merge lane runs there to stage it; the row says a person merges it, shows the merge verdict, and, when GitHub would take the merge, offers **Merge now as maintainer** as its lead action.

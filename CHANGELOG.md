@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.11.0)
+
+### Added
+
+- When one check fails on several open PRs in a repository (`shared_ci_issues.min_prs`, default 3) or trips the red-main breaker, the hive now files one `[shared-ci] <check> failing across <owner/repo>` tracking issue itself, naming the check, the PRs and a log excerpt, and keeps its own issue up to date; before, only an agent triaging one of the red PRs filed it, so a check red on every contributor and bot PR in a repo could go unreported for a day. An incident someone else filed is left alone; disable with `shared_ci_issues.enabled: false`.
+
+### Fixed
+
+- A "Let hive decide" job that a hive restart or upgrade cut short is now marked failed ("interrupted by a hive restart before it finished, and not resumed") with an audit entry, instead of staying "pending" forever, and the job status endpoint (and admin MCP `delegated_decision_status`) answers the item's last result from the operator-action ledger instead of a 404 once the job has left memory. Nothing is re-run after a restart.
+- A fork PR the hive cannot finish because its base changed `.github/workflows/` now parks at `085` with the one action that unblocks it (a person runs **Update branch** or `gh pr update-branch`, or merges the base in locally on a conflict), instead of asking a maintainer to bring the change into the repository or close it; a fork without maintainer edits names the author's step (projectbluefin/common#1611).
+- The 090 "Ready for a human merge" comment no longer says "Blocked only by" the author's trust tier when GitHub reports the head behind a base that requires up-to-date branches: it names the base merge as a second blocker and stops offering "(or merge)" (projectbluefin/common#1619).
+- Activity Monitor: a new pull request on a repo whose auto-merge is off (or on any repo of a hive below ACMM L6) no longer reads "waiting for the stage-label pass (next pass due now)", since no merge lane runs there to stage it; the row says a person merges it, shows the merge verdict, and, when GitHub would take the merge, offers **Merge now as maintainer** as its lead action.
+- Bot Dependency Dashboards and the Hive Advisory Report no longer count as "Waiting on you" (approve-needed) when a triage bot labels them `needs-human`: the badge, topbar pill and the MCP's `waiting_on_you` now match the activity monitor, which never draws those issues.
+
 ## 2026-11-10 (v6.10.0)
 
 ### Added

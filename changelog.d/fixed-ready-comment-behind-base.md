@@ -1,1 +1,0 @@
-- The 090 "Ready for a human merge" comment no longer says "Blocked only by" the author's trust tier when GitHub reports the head behind a base that requires up-to-date branches: it names the base merge as a second blocker and stops offering "(or merge)" (projectbluefin/common#1619).
