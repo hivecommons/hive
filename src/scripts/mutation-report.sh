@@ -1,20 +1,71 @@
 #!/usr/bin/env bash
-# Advisory mutation report for the Go packages a PR touches (#17349, Phase 1).
+# Mutation report for the Go packages a PR touches (#17349).
 # Runs gremlins on the lines each changed package's diff adds (#17463), then
-# upserts ONE <!-- hive-mutation --> PR comment listing surviving (LIVED)
-# mutants in changed files. Never fails.
+# upserts ONE <!-- hive-mutation --> PR comment listing surviving (LIVED) and
+# uncovered (NOT_COVERED) mutants in changed files.
 #
-# Two phases so the token never shares an environment with PR-controlled code:
-#   mutation-report.sh run    runs gremlins (no GH_TOKEN) and writes
-#                             $out_dir/comment.md
-#   mutation-report.sh post   reads comment.md and upserts the PR comment
-#                             (needs GH_TOKEN, PR_NUMBER, GITHUB_REPOSITORY)
+# Three phases so the token never shares an environment with PR-controlled code:
+#   mutation-report.sh run      runs gremlins (no GH_TOKEN) and writes
+#                               $out_dir/comment.md and $out_dir/verdict.
+#                               Always exits 0.
+#   mutation-report.sh post     reads comment.md and upserts the PR comment
+#                               (needs GH_TOKEN, PR_NUMBER, GITHUB_REPOSITORY)
+#   mutation-report.sh verdict  exits 1 when $out_dir/verdict is `lived` or
+#                               `misrouted`; `uncovered` only warns (silenced
+#                               by a `mutation/acknowledged` label in
+#                               PR_LABELS, comma-separated). Phase 2 of #17349:
+#                               a workflow that wants to block runs this phase
+#                               as its own step.
+#
+# Verdicts, in precedence order:
+#   misrouted  a mutant on a line the PR added was SKIPPED, so gremlins did not
+#              recognise the diff for that file. Mutants on unchanged lines are
+#              always SKIPPED under --diff, so that count alone proves nothing:
+#              only a SKIPPED mutant inside an added range does. A diff with no
+#              mutable operator at all (a unary `!`, a bare `return`) produces
+#              zero mutants legitimately and is `pass`, not `misrouted`.
+#   lived      a mutant in a changed file survived the tests.
+#   uncovered  a mutant in a changed file is not reached by any test.
+#   pass       everything else, including "nothing to mutate".
 set -uo pipefail
 
 phase="${1:-run}"
 marker='<!-- hive-mutation -->'
 out_dir="${MUTATION_OUT_DIR:-mutation-out}"
 body="$out_dir/comment.md"
+verdict_file="$out_dir/verdict"
+
+has_label() {
+  local want="$1" labels="${PR_LABELS:-}" l
+  IFS=',' read -r -a arr <<< "$labels"
+  for l in "${arr[@]}"; do
+    [ "$(printf '%s' "$l" | sed 's/^ *//; s/ *$//')" = "$want" ] && return 0
+  done
+  return 1
+}
+
+verdict_phase() {
+  local v
+  v=$(cat "$verdict_file" 2>/dev/null || echo pass)
+  case "$v" in
+    misrouted)
+      echo "::error::mutation: a mutant on a line this PR added was SKIPPED; gremlins did not match the diff for that file (see the <!-- hive-mutation --> comment)"
+      return 1 ;;
+    lived)
+      echo "::error::mutation: surviving mutant(s) in changed files; the code ran under tests but no test fails when it changes (see the <!-- hive-mutation --> comment)"
+      return 1 ;;
+    uncovered)
+      if has_label 'mutation/acknowledged'; then
+        echo "mutation: uncovered mutant(s) in changed files acknowledged via the mutation/acknowledged label."
+      else
+        echo "::warning::mutation: mutant(s) in changed files are not reached by any test (see the <!-- hive-mutation --> comment); a maintainer may apply mutation/acknowledged"
+      fi
+      return 0 ;;
+    *)
+      echo "mutation: $v"
+      return 0 ;;
+  esac
+}
 
 post_comment() {
   local pr_number="${PR_NUMBER:-}" repo="${GITHUB_REPOSITORY:-}"
@@ -42,8 +93,9 @@ post_comment() {
 
 case "$phase" in
   post) post_comment; exit 0 ;;
+  verdict) verdict_phase; exit $? ;;
   run) ;;
-  *) echo "usage: $0 [run|post]" >&2; exit 0 ;;
+  *) echo "usage: $0 [run|post|verdict]" >&2; exit 0 ;;
 esac
 
 if [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
@@ -68,10 +120,22 @@ changed="${kept%$'\n'}"
 
 if [ -z "$changed" ]; then
   echo "No changed non-test Go files; skipping mutation run."
+  echo pass > "$verdict_file"
   exit 0
 fi
 
 printf '%s\n' "$changed" > "$out_dir/changed.txt"
+
+# Added-line ranges per changed file (file<TAB>start<TAB>end), from the same
+# merge-base diff gremlins reads. A SKIPPED mutant inside one of these ranges
+# means gremlins did not recognise the file as changed.
+added="$out_dir/added.tsv"
+: > "$added"
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  git diff -U0 "origin/${base_ref}...HEAD" -- "$f" \
+    | awk -v f="$f" '/^@@ / { split($3, p, ","); s = substr(p[1], 2) + 0; n = (p[2] == "" ? 1 : p[2] + 0); if (n > 0) printf "%s\t%d\t%d\n", f, s, s + n - 1 }' >> "$added"
+done <<< "$changed"
 pkgs=$(sed 's|^src/||; s|/[^/]*$||' "$out_dir/changed.txt" | sort -u)
 
 # gremlins mutates the whole subtree under a package, so drop packages that
@@ -107,42 +171,79 @@ while IFS= read -r pkg; do
 done <<< "$pkgs"
 
 # gremlins reports file_name relative to the package dir it was run on, so
-# re-anchor each survivor to a repo-relative path before matching changed.txt.
-survivors="$out_dir/survivors.tsv"
-: > "$survivors"
+# re-anchor every mutant to a repo-relative path before matching changed.txt.
+# Only mutants in files the PR changed are kept: file<TAB>line<TAB>type<TAB>status.
+mutants="$out_dir/mutants-changed.tsv"
+: > "$mutants"
 for j in "$out_dir"/pkg-*.json; do
   [ -f "$j" ] || continue
   pkg=$(cat "${j%.json}.dir" 2>/dev/null || true)
   jq -r --arg prefix "src/${pkg:+$pkg/}" \
-     '.files[]? | .file_name as $f | .mutations[]? | select(.status=="LIVED")
-      | [($prefix + ($f | ltrimstr("./"))), .line, .type] | @tsv' "$j" >> "$survivors" 2>/dev/null || true
+     '.files[]? | .file_name as $f | .mutations[]?
+      | [($prefix + ($f | ltrimstr("./"))), .line, .type, .status] | @tsv' "$j" 2>/dev/null \
+  | while IFS=$'\t' read -r f line type status; do
+      [ -n "$f" ] || continue
+      grep -qxF "$f" "$out_dir/changed.txt" && printf '%s\t%s\t%s\t%s\n' "$f" "$line" "$type" "$status"
+    done >> "$mutants"
 done
 
-# Keep only survivors in files the PR changed.
 filtered="$out_dir/survivors-changed.tsv"
-: > "$filtered"
-while IFS=$'\t' read -r f line type; do
-  [ -n "$f" ] || continue
-  if grep -qxF "$f" "$out_dir/changed.txt"; then
-    printf '%s\t%s\t%s\n' "$f" "$line" "$type" >> "$filtered"
-  fi
-done < "$survivors"
+uncovered="$out_dir/uncovered-changed.tsv"
+misrouted="$out_dir/misrouted-changed.tsv"
+awk -F'\t' '$4=="LIVED" {print $1"\t"$2"\t"$3}' "$mutants" > "$filtered"
+awk -F'\t' '$4=="NOT COVERED" {print $1"\t"$2"\t"$3}' "$mutants" > "$uncovered"
+# A SKIPPED mutant whose line the PR added: gremlins saw the file but not its diff.
+awk -F'\t' 'NR==FNR { if ($1 != "") { n[$1]++; s[$1,n[$1]]=$2; e[$1,n[$1]]=$3 } ; next }
+  $4=="SKIPPED" { for (k=1; k<=n[$1]; k++) if ($2+0 >= s[$1,k]+0 && $2+0 <= e[$1,k]+0) { print $1"\t"$2"\t"$3; break } }' \
+  "$added" "$mutants" > "$misrouted"
+mutated=$(awk -F'\t' '$4=="LIVED" || $4=="KILLED" || $4=="NOT COVERED" || $4=="TIMED OUT" {c++} END {print c+0}' "$mutants")
+skipped=$(awk -F'\t' '$4=="SKIPPED" {c++} END {print c+0}' "$mutants")
+added_lines=$(awk -F'\t' '{c += $3 - $2 + 1} END {print c+0}' "$added")
+
+if [ -s "$misrouted" ]; then verdict=misrouted
+elif [ -s "$filtered" ]; then verdict=lived
+elif [ -s "$uncovered" ]; then verdict=uncovered
+else verdict=pass
+fi
+echo "$verdict" > "$verdict_file"
+
+table() { sort -t$'\t' -k1,1 -k2,2n "$1" | head -n 100 | awk -F'\t' '{printf "| `%s` | %s | %s |\n", $1, $2, $3}'; }
 
 {
   echo "$marker"
-  echo "### Mutation testing (advisory)"
+  echo "### Mutation testing"
   echo
+  if [ -s "$misrouted" ]; then
+    echo "⚠️ **$(wc -l < "$misrouted" | tr -d ' ') mutant(s) on lines this PR added were SKIPPED**: gremlins did not recognise the diff for these files, so nothing below can be trusted. This is a tooling fault (diff path matching), not a test gap."
+    echo
+    echo "| File | Line | Mutation |"
+    echo "|---|---|---|"
+    table "$misrouted"
+    echo
+  fi
   if [ -s "$filtered" ]; then
     echo "gremlins found **$(wc -l < "$filtered" | tr -d ' ') surviving mutant(s)** in changed files: the code ran under tests, but changing it did not fail any test."
     echo
     echo "| File | Line | Mutation |"
     echo "|---|---|---|"
-    sort -t$'\t' -k1,1 -k2,2n "$filtered" | head -n 100 | awk -F'\t' '{printf "| `%s` | %s | %s |\n", $1, $2, $3}'
-  else
-    echo "No surviving mutants in changed files (or the run hit its time budget before reporting any)."
+    table "$filtered"
+    echo
+  fi
+  if [ -s "$uncovered" ]; then
+    echo "**$(wc -l < "$uncovered" | tr -d ' ') mutant(s) in changed files are not reached by any test** (NOT COVERED). A maintainer may apply the \`mutation/acknowledged\` label to accept this."
+    echo
+    echo "| File | Line | Mutation |"
+    echo "|---|---|---|"
+    table "$uncovered"
+    echo
+  fi
+  if [ "$mutated" -eq 0 ] && [ ! -s "$misrouted" ]; then
+    echo "No mutants in changed files: the $added_lines added line(s) contain no operator gremlins can mutate ($skipped mutant(s) on unchanged lines skipped as expected)."
+  elif [ ! -s "$filtered" ] && [ ! -s "$uncovered" ] && [ ! -s "$misrouted" ]; then
+    echo "All $mutated mutant(s) in changed files were killed."
   fi
   echo
-  echo "_Advisory only; this job never blocks the PR (#17349)._"
+  echo "_Verdict: \`$verdict\` (#17349)._"
 } > "$body"
 cat "$body"
 exit 0
