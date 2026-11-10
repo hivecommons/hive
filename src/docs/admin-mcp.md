@@ -712,6 +712,8 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | Fleet                        | `fleet.autonomy_level`                                                                                                                                                                              |
 | Plans                        | `plan.propose`, `plan.approve`, `plan.reject`                                                                                                                                                       |
 | Governor                     | `governor.feature_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                                    |
+| Issue filter                 | `project.issue_filter`                                                                                                                                                                              |
+| Sentinel                     | `sentinel.settings`                                                                                                                                                                                 |
 | Merge settings               | `auto_merge.update`                                                                                                                                                                                 |
 | Let hive decide              | `decisions.delegate_settings`                                                                                                                                                                       |
 | Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                                                     |
@@ -739,6 +741,54 @@ installation's shared hourly bucket and the agent reserve floor
 (`github.agent_reserve_floor`); lowering is not. When the current value cannot
 be read, the preview says the change may be widening. See
 [Changing the agent caps](operator-reference/runtime-and-quota.md#changing-the-agent-caps).
+
+The issue filter and Sentinel operations change the same settings as
+Settings → Labels and Settings → Security, through the endpoints those tabs
+save with. Only the hive's owner can confirm them: the endpoint refuses any
+other role.
+
+- `project.issue_filter` changes `project.issue_filter`: `require_labels`, the
+  `hard_suppress_labels` buckets (`needs_human`, `needs_direction`,
+  `needs_decision`, `needs_spec`), and `reporter_trust` (`enabled`,
+  `trusted_associations`, `trusted_logins`, `untrusted_require_labels`).
+- `sentinel.settings` changes Sentinel's `sensitive_paths`,
+  `disabled_behaviors`, `exempt_logins` and `trusted_authors_block`.
+
+Each list takes a change, not a new list: `{"add": [...], "remove": [...]}`,
+or `{"clear": true}` to empty it first. For example, to turn reporter trust on
+and trust one more reporter:
+
+```json
+{"operation": "project.issue_filter",
+ "args": {"reporter_trust": {"enabled": true, "trusted_logins": {"add": ["ext-maint"]}}}}
+```
+
+The preview reads the current settings, shows each list before and after, and
+sends the merged list. Removing an entry that is not there is refused. If the
+settings change between the preview and the confirm, the confirm is refused
+and nothing is written; preview again. Emptying a list that has a default (a
+hard-suppress bucket, `trusted_associations`, `untrusted_require_labels`,
+`sensitive_paths`) puts the default back, and the preview shows it.
+
+The preview says plainly when a change lets more through:
+
+- **More issues admitted without triage:** `require_labels` cleared or given
+  another label, reporter trust turned off, trusted logins, associations or
+  triage labels added, or a hard-suppress label removed. Turning reporter
+  trust on is not widening: it makes issues from untrusted reporters wait for
+  a triage label.
+- **Fewer pull requests flagged by Sentinel:** sensitive paths removed, a
+  behavior disabled, an exempt login added, or `trusted_authors_block` turned
+  off. The preview names the pull requests that would no longer be held.
+
+On a hive managed by a hub, the issue filter preview also says the change may
+be overwritten. If the hub's record for the hive carries an issue filter, the
+next heartbeat replaces the whole filter with the hub's copy, and the hive
+cannot tell from its side whether the record carries one.
+
+Neither operation itself adds or removes a label, approves, or merges
+anything. Turning reporter trust on does make later scans mark each held
+issue as waiting for triage, with a label and a one-time comment.
 
 `auto_merge.update` changes merge settings, the same settings as the
 dashboard's merge controls, through `PATCH /api/config/auto-merge`. It is owner

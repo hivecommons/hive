@@ -623,6 +623,15 @@ Phase 5 registers the fleet-level write operations under that contract:
   of the change in operator terms — a lower effective threshold engages a busier mode at a
   shallower queue, which raises agent cadence and spend — because the number alone does not tell
   an owner what it buys.
+- `project.issue_filter` and `sentinel.settings` wrap `PUT /api/config/governor/labels` and
+  `PUT /api/config/governor/security` for the issue filter's and Sentinel's lists. Both
+  endpoints replace a list they are sent, so each op takes `{add, remove, clear}` per list,
+  reads the current values at preview, and sends the merged list. They reuse the
+  `auto_merge.update` stale-preview check: each op's `ConfirmGuard` fingerprints the settings
+  it read, so a change made between preview and confirm refuses the confirm
+  (`ErrConfirmationStale`) instead of being overwritten. A change that admits more issues without triage, or
+  that makes Sentinel flag fewer pull requests, is disclosed as widening, and the Sentinel
+  disclosure names the pull requests that would no longer be held.
 - `auto_merge.update` wraps `PATCH /api/config/auto-merge`, the endpoint behind the dashboard's
   merge settings. That endpoint replaces every list and map it is sent whole (`squash_only`,
   `require_current_base`, `human_merge_paths`, the native merge queue's repos and bases, the
