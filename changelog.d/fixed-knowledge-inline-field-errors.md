@@ -1,0 +1,1 @@
+- Knowledge panel: Add Git Source, Add Subscription, Import Document and Import now show required-field errors inline under the offending input (red border, focus, `role="alert"` message) instead of a transient info toast, and required inputs are marked; fixes Clone & Index appearing to do nothing with an empty name or URL (#17587, part of #17583).
