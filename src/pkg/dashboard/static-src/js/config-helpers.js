@@ -431,6 +431,26 @@
       }
     }
 
+    // Settings → Features → Auto-merge → Pin bumps that skip the hand merge.
+    // Stages auto_merge.human_merge_pin_only in full, one entry per row; a
+    // row that is off with nothing filled in drops out.
+    function markDirtyAutoMergePinOnly() {
+      const policies = {};
+      document.querySelectorAll('#am-human-merge-pin-only .am-pin-only-row').forEach(row => {
+        const enabled = row.querySelector('.am-pin-only-enabled');
+        const paths = row.querySelector('.am-pin-only-paths');
+        const authors = row.querySelector('.am-pin-only-authors');
+        const entry = {
+          enabled: !!(enabled && enabled.checked),
+          paths: splitConfigLines(paths ? paths.value : ''),
+          kinds: Array.from(row.querySelectorAll('.am-pin-only-kind')).filter(k => k.checked).map(k => k.value),
+          trusted_authors: splitConfigLines(authors ? authors.value : '')
+        };
+        if (row.dataset.repo && (entry.enabled || entry.paths.length || entry.kinds.length || entry.trusted_authors.length)) policies[row.dataset.repo] = entry;
+      });
+      markDirty('auto-merge', 'human_merge_pin_only', policies);
+    }
+
     function markDirtyContributorLane() {
       const enabled = document.getElementById('am-contributor-lane-enabled');
       const verdict = document.getElementById('am-contributor-lane-require-reviewer-verdict');

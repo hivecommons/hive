@@ -746,8 +746,12 @@ only.
   `{"squash_only": {"add": ["org/c"]}}` or
   `{"contributor_lane": {"repos": {"remove": ["org/a"]}}}`. A list takes `add`
   and `remove`. `human_merge_paths` takes `owner/repo` and every pattern that
-  repository should hold; `null` or `[]` removes the repository. An unknown
-  field is refused.
+  repository should hold; `null` or `[]` removes the repository.
+  `human_merge_pin_only` takes `owner/repo` and that repository's whole
+  pin-only exception, `{"enabled": true, "paths": [...], "kinds": [...],
+  "trusted_authors": [...]}`; `null` removes it. An enabled exception needs
+  `human_merge_paths` for the repository, set already or in the same change.
+  An unknown field is refused.
 - **Entries you do not name are kept.** The endpoint replaces each list and
   map it is sent, so the preview reads the current settings and sends the
   merged whole value. It shows every change before and after.
@@ -757,9 +761,12 @@ only.
 - **Widening is disclosed.** The preview says when a change lets the hive
   merge more on its own: turning on the trusted-author lane, removing a
   human-merge path, adding a repository to the native merge queue, emptying a
-  repository allow-list (empty means every repository), and the like.
-- It never merges a pull request. `human_merge_pin_only` is not on this
-  endpoint, so it is still set in the hive configuration file.
+  repository allow-list (empty means every repository), and the like. Turning
+  a pin-only exception on, or giving it more paths, kinds or trusted authors,
+  is widening too, and the preview names what merges as a result, for example
+  "pin bumps (action-sha) to .github/workflows/*.yml in org/a by renovate[bot]
+  will merge without a hand merge". Removing any of those is not.
+- It never merges a pull request.
 
 The Activity monitor's row actions:
 

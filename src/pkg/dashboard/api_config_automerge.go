@@ -166,6 +166,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		SquashOnly         []string            `json:"squash_only"`
 		RequireCurrentBase []string            `json:"require_current_base"`
 		HumanMergePaths    map[string][]string `json:"human_merge_paths"`
+		// HumanMergePinOnly is the FULL desired auto_merge.human_merge_pin_only
+		// map, replaced whole like HumanMergePaths: an empty (non-nil) map
+		// clears it, absent leaves it untouched.
+		HumanMergePinOnly map[string]config.PinOnlyException `json:"human_merge_pin_only"`
 		// BotTakeoverEnabled is auto_merge.bot_takeover.enabled; flat so the
 		// dialog's plain toggle can stage it.
 		BotTakeoverEnabled *bool `json:"bot_takeover_enabled"`
@@ -246,6 +250,21 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		humanMergePaths = paths
+	}
+	var humanMergePinOnly map[string]config.PinOnlyException
+	if body.HumanMergePinOnly != nil {
+		// A new or changed exception is checked against the human-merge paths
+		// this write leaves in place: the ones in the body when it sends them.
+		pathsAfter := s.deps.Config.AutoMerge.HumanMergePaths
+		if body.HumanMergePaths != nil {
+			pathsAfter = humanMergePaths
+		}
+		policies, msg := s.autoMergeHumanMergePinOnly(body.HumanMergePinOnly, s.deps.Config.AutoMerge.HumanMergePinOnly, pathsAfter)
+		if msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+		humanMergePinOnly = policies
 	}
 	var trustedAuthorRepos []string
 	var trustedAuthorLabels []string
@@ -363,6 +382,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.HumanMergePaths != nil {
 		cfg.AutoMerge.HumanMergePaths = humanMergePaths
 	}
+	if body.HumanMergePinOnly != nil {
+		cfg.AutoMerge.HumanMergePinOnly = humanMergePinOnly
+	}
 	if body.BotTakeoverEnabled != nil {
 		v := *body.BotTakeoverEnabled
 		cfg.AutoMerge.BotTakeover.Enabled = &v
@@ -430,7 +452,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after auto-merge update", "error", err)
-		if body.NativeMergeQueue != nil || body.MergeTrain != nil {
+		// A pin-only exception lets PRs past a human-merge hold, so one that
+		// cannot be saved is not left running until the next restart drops it.
+		if body.NativeMergeQueue != nil || body.MergeTrain != nil || body.HumanMergePinOnly != nil {
 			cfg.AutoMerge = previousAutoMerge
 			syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
 			jsonError(w, "failed to persist auto-merge settings", http.StatusInternalServerError)
@@ -477,6 +501,13 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 	if humanMergePaths == nil {
 		humanMergePaths = map[string][]string{}
 	}
+	humanMergePinOnly := make(map[string]config.PinOnlyException, len(am.HumanMergePinOnly))
+	for repo, policy := range am.HumanMergePinOnly {
+		policy.Paths = emptyIfNilStrings(policy.Paths)
+		policy.Kinds = emptyIfNilStrings(policy.Kinds)
+		policy.TrustedAuthors = emptyIfNilStrings(policy.TrustedAuthors)
+		humanMergePinOnly[repo] = policy
+	}
 	projectRepos := make([]string, 0, len(cfg.Project.Repos))
 	for _, repo := range cfg.Project.Repos {
 		if full := config.QualifyRepo(cfg.Project.Org, repo); full != "" {
@@ -516,6 +547,8 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"squash_only":                  squashOnly,
 		"require_current_base":         requireCurrentBase,
 		"human_merge_paths":            humanMergePaths,
+		"human_merge_pin_only":         humanMergePinOnly,
+		"pin_only_kinds":               config.PinOnlyKinds,
 		"project_repos":                projectRepos,
 		"trusted_bot_authors":          trustedBots,
 		"trusted_bot_authors_set":      am.TrustedBotAuthors != nil,
@@ -642,6 +675,16 @@ func syncAutoMergePolicyToGitHubClient(cfg *config.Config, ghClient *ghpkg.Clien
 	ghClient.SetMergeRequestAllowUnprotectedBaseRepos(cfg.AutoMerge.AllowUnprotectedBaseSet())
 	ghClient.SetMergeRequestNoCIAllowedRepos(cfg.AutoMerge.NoCIOKSet())
 	ghClient.SetHumanMergePaths(cfg.AutoMerge.HumanMergePaths)
+	// The merge-request relay holds its own copy of the pin-only exception
+	// (cmd/hive's syncAutoMergePolicyToGitHubClient installs it the same way
+	// on boot and reload); the sweep lanes and /approve read cfg directly.
+	pinOnly := make(map[string]ghpkg.PinOnlySpec)
+	for repo := range cfg.AutoMerge.HumanMergePinOnly {
+		if ex, enabled := cfg.AutoMerge.HumanMergePinOnlyFor(repo); enabled {
+			pinOnly[repo] = ghpkg.PinOnlySpec{Enabled: true, Paths: ex.Paths, Kinds: ex.Kinds, TrustedAuthors: ex.TrustedAuthors}
+		}
+	}
+	ghClient.SetHumanMergePinOnly(pinOnly)
 	ghClient.SetAutoMergeMinHeadAge(cfg.AutoMerge.EffectiveMinHeadAge())
 }
 
@@ -718,6 +761,92 @@ func (s *Server) autoMergeHumanMergePaths(paths map[string][]string) (map[string
 		return nil, ""
 	}
 	return out, ""
+}
+
+// autoMergeHumanMergePinOnly validates auto_merge.human_merge_pin_only sent by
+// the dashboard or admin MCP. Keys follow autoMergeWatchedRepo; each list is
+// trimmed and de-duplicated; a disabled entry with nothing in it is dropped;
+// the result must pass config.ValidateHumanMergePinOnly, the rule hive.yaml
+// loads under. An enabled entry the write adds or changes also needs
+// human_merge_paths for its repository (pathsAfter), because the exception
+// only ever lifts a human-merge-path hold: without one it would never apply.
+// A non-empty msg is the 400 to return.
+func (s *Server) autoMergeHumanMergePinOnly(in, current map[string]config.PinOnlyException, pathsAfter map[string][]string) (map[string]config.PinOnlyException, string) {
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := map[string]config.PinOnlyException{}
+	seen := map[string]bool{}
+	for _, k := range keys {
+		full, msg := s.autoMergeWatchedRepo("human_merge_pin_only", strings.TrimSpace(k))
+		if msg != "" {
+			return nil, msg
+		}
+		if seen[strings.ToLower(full)] {
+			return nil, "human_merge_pin_only names " + full + " twice"
+		}
+		seen[strings.ToLower(full)] = true
+		policy := config.PinOnlyException{
+			Enabled:        in[k].Enabled,
+			Paths:          dedupeTrimmedStrings(in[k].Paths),
+			Kinds:          dedupeTrimmedStrings(in[k].Kinds),
+			TrustedAuthors: dedupeTrimmedStrings(in[k].TrustedAuthors),
+		}
+		if !policy.Enabled && len(policy.Paths)+len(policy.Kinds)+len(policy.TrustedAuthors) == 0 {
+			continue
+		}
+		out[full] = policy
+	}
+	if err := (config.AutoMergeConfig{HumanMergePinOnly: out}).ValidateHumanMergePinOnly(); err != nil {
+		return nil, err.Error()
+	}
+	guarded := config.AutoMergeConfig{HumanMergePaths: pathsAfter}
+	for _, repo := range sortedPinOnlyRepos(out) {
+		policy := out[repo]
+		if !policy.Enabled || pinOnlyUnchanged(current, repo, policy) {
+			continue
+		}
+		if len(guarded.HumanMergePathsFor(repo)) == 0 {
+			return nil, "human_merge_pin_only: " + repo + " has no human_merge_paths, so a pin-only exception there would never apply; set its human-merge paths first"
+		}
+	}
+	if len(out) == 0 {
+		return nil, ""
+	}
+	return out, ""
+}
+
+// pinOnlyUnchanged reports whether current already holds policy for repo, so
+// an entry the write sends back untouched is not re-checked.
+func pinOnlyUnchanged(current map[string]config.PinOnlyException, repo string, policy config.PinOnlyException) bool {
+	for k, was := range current {
+		if strings.EqualFold(strings.TrimSpace(k), repo) {
+			return was.Enabled == policy.Enabled && slices.Equal(was.Paths, policy.Paths) &&
+				slices.Equal(was.Kinds, policy.Kinds) && slices.Equal(was.TrustedAuthors, policy.TrustedAuthors)
+		}
+	}
+	return false
+}
+
+func sortedPinOnlyRepos(m map[string]config.PinOnlyException) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func dedupeTrimmedStrings(list []string) []string {
+	var out []string
+	for _, v := range normalizeAutoMergeRepoList(list) {
+		if !slices.Contains(out, v) {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func emptyIfNilStrings(list []string) []string {

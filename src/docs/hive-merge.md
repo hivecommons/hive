@@ -246,9 +246,12 @@ schema or classifier APIs grants permission to merge or clears a hold. Native
 required checks and producer bindings, freshness, current reviews, substantive
 objections, unrelated holds and configured soak must remain independent gates.
 
-Operators stage the key in the controller's configured `hive.yaml` seed, not in
-the image repository (reload behaviour is documented in the operator reference
-linked above). On an image that contains #16266 and #16265, reloading the seed
+Owners set the key from **Settings → Features → Auto-merge → Pin bumps that
+skip the hand merge**, through `human_merge_pin_only` on `PUT`/`PATCH
+/api/config/auto-merge`, or with the admin MCP operation `auto_merge.update`;
+it applies without a restart. It can also be staged in the controller's
+configured `hive.yaml` seed, not in the image repository (reload behaviour is
+documented in the operator reference linked above). On an image that contains #16266 and #16265, reloading the seed
 enables the sweep, `/approve`, and `hive-merge` relay exception at once. Non-GitHub
 forge relays retain the existing fail-closed human-merge-path policy.
 

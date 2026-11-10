@@ -280,7 +280,7 @@ Go callers keep reading `cfg.Agents`, `cfg.Governor.Gateways` and so on through 
 | `config.refuse_gate_regression` | `false` | Safety-gate regression guard ([#16438](https://github.com/hivecommons/hive/issues/16438)). At boot the hive compares the effective config against any previous runtime overlay still on the PVC (`/data/hive.yaml.runtime`, an operator's `hive.yaml.runtime.bak`, `/data/hive.yaml.dashboard`) for `review.require_labels`, `project.issue_filter.require_labels`, `project.paused_repos` and `writeback.per_repo` modes. A gate the overlay carried that the effective config lacks or loosens — typically a boot from the ConfigMap seed after the overlay was moved aside — is logged once per gate as `WARN safety gate dropped: <gate> (was <value>) — effective config has <value>`, listed in `/api/status` under `config.gate_regressions`, and shown as a banner at the top of Settings. `true` makes it fatal: the hive exits (code 21) with the gates named instead of running with weaker gates. Set it in the overlay itself; the ConfigMap seed is the file the regression usually comes from. Legacy `/data/hive.yaml.bak` is not consulted — it is frozen at the rename and would warn forever about gates removed on purpose. |
 | `auto_merge.allow_unprotected_base` | Deprecated no-op. | Accepted so older configs keep loading. `hive-merge` now merges into any protected or unprotected branch the App can write, subject to the CI-evidence gate and GitHub's own merge rules. |
 | `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
-| `auto_merge.human_merge_pin_only` | Unset (off); enforced by the automerge sweep lanes and `/approve` (#16266), and by the `hive-merge` relay (#16265), which additionally requires the requested head SHA to match the PR head before and after fetching files. | Per-repo schema for `enabled`, `paths`, `kinds` (`action-sha`, `image-digest`, `version-pin`) and `trusted_authors`. Enabled entries require all three lists. The sweep does not place a human-merge-path hold on a PR whose author is in `trusted_authors`, whose complete diff (every changed file, guarded or not) is pin replacements, whose every commit is authored by a `trusted_authors` login with a GitHub-verified signature, and whose every new action SHA resolves in its upstream action repository (the `# vN` tag points at it, or it is on the default branch; #16399); it never clears an existing hold. See [hive-merge.md](../hive-merge.md) for grammar, restrictions and outstanding integration/deployment requirements (#16242). |
+| `auto_merge.human_merge_pin_only` | Unset (off); enforced by the automerge sweep lanes and `/approve` (#16266), and by the `hive-merge` relay (#16265), which additionally requires the requested head SHA to match the PR head before and after fetching files. | Per-repo schema for `enabled`, `paths`, `kinds` (`action-sha`, `image-digest`, `version-pin`) and `trusted_authors`. Enabled entries require all three lists. The sweep does not place a human-merge-path hold on a PR whose author is in `trusted_authors`, whose complete diff (every changed file, guarded or not) is pin replacements, whose every commit is authored by a `trusted_authors` login with a GitHub-verified signature, and whose every new action SHA resolves in its upstream action repository (the `# vN` tag points at it, or it is on the default branch; #16399); it never clears an existing hold. Owners set it per repository from **Settings → Features → Auto-merge** or with the admin MCP operation `auto_merge.update`; an enabled entry is refused for a repository with no `human_merge_paths`. See [hive-merge.md](../hive-merge.md) for grammar, restrictions and outstanding integration/deployment requirements (#16242). |
 | `auto_merge.human_merge_paths` | Unset (off). | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge. Applies to every merge lane (App self-merge, trusted-author, label-queued, merge-request relay) whatever the intent tier; a matching PR is held with one comment, and an incomplete changed-file list fails closed. Details in the sweep key table below. |
 | `auto_merge.human_merge_title_prefixes` | `["⚠️", "⚠"]` | Title prefixes (after trimming) that mark a PR as a breaking change a person must merge. Every auto-merge lane and the merge train skip the PR; the tracker parks it at 090 *Ready for human merge · human merge*. Set to `[]` to disable. |
 | `auto_merge.human_merge_labels` | `["needs-owner-merge"]` | Labels (case-insensitive) that mark a PR a person must merge; same effect as the title prefixes. Set to `[]` to disable. |
@@ -561,11 +561,11 @@ advanced into the merge path.
 | `auto_merge.contributor_lane.exclude_labels` | `hold`, `do-not-merge`, `needs-human`, `blocked`, `needs-rebase` | Labels that keep a PR out of contributor-lane auto-merge (`do-not-merge/*` always excluded). |
 
 Owners can edit `auto_merge.trusted_authors.*`, `auto_merge.contributor_lane.*`,
-`auto_merge.require_current_base`, `auto_merge.squash_only` and
-`auto_merge.human_merge_paths` from **Settings → Features → Auto-merge** (the
-last three under **Per-repository merge policy**, picking from `project.repos`
-and saving each value as `owner/repo`; a repo outside `project.repos` is
-refused). The dashboard writes the same
+`auto_merge.require_current_base`, `auto_merge.squash_only`,
+`auto_merge.human_merge_paths` and `auto_merge.human_merge_pin_only` from
+**Settings → Features → Auto-merge** (the last four under **Per-repository
+merge policy**, picking from `project.repos` and saving each value as
+`owner/repo`; a repo outside `project.repos` is refused). The dashboard writes the same
 owner-only `/api/config/auto-merge` overlay as the other auto-merge controls, so
 hosted spoke changes survive restarts without editing `hive.yaml`.
 
@@ -603,14 +603,25 @@ auto_merge:
 | `kinds` | Explicit subset of `action-sha`, `image-digest`, `version-pin`; unknown kinds rejected. Required when enabled. An `action-sha` pin is admitted only when the upstream repo's `tags/<version comment>` (annotated tags dereferenced) points at the new SHA, or, without a comment, the SHA is an ancestor of the upstream default branch; any lookup failure holds. |
 | `trusted_authors` | Explicit author allowlist; required when enabled. Matched against the PR author login and against the author login of every commit behind the head; each commit must also be committed by GitHub (`web-flow`) or by a trusted login and carry a GitHub-verified signature, since GitHub verifies the committer, not the author (web-flow-committed bot commits qualify; human authors must commit and sign as themselves). Not permission to trust arbitrary bot-looking logins. |
 
-Edit the controller's active `hive.yaml` seed, not the consumer image repo.
-The config file watcher loads the seed plus dashboard overlay after a debounced
-file change and logs `config reloaded from file`; a rejected reload logs
-`config reload failed` and does not install the change. See
-[config layering](../config-layering.md) for seed/overlay precedence. Do not
-assume the dashboard auto-merge editor exposes this new map. Verify both relay
-and sweep lookups use the reloaded configuration before relying on it; use a
-controller restart on the verified image if the running version lacks live wiring.
+**Setting it.** On a build that has the editor, owners set the exception from
+**Settings → Features → Auto-merge → Pin bumps that skip the hand merge**, one
+row per repository that has paths a person must merge: on/off, the paths, the
+kinds and the trusted authors. The same value goes through `PUT`/`PATCH
+/api/config/auto-merge` as `human_merge_pin_only` (the whole map, like
+`human_merge_paths`; `{}` clears it) or through the admin MCP operation
+`auto_merge.update`, which changes one repository and keeps the others. The
+endpoint checks it with the same rules `hive.yaml` loads under and refuses an
+enabled entry it adds or changes for a repository with no `human_merge_paths`,
+where the exception would never apply. It saves to the dashboard overlay and
+applies at once, with no restart: the sweep lanes and `/approve` read it on
+every evaluation, and the write refreshes the merge-request relay's copy. A
+change that cannot be saved is rolled back.
+
+On an older build, edit the controller's active `hive.yaml` seed, not the
+consumer image repo. The config file watcher loads the seed plus dashboard
+overlay after a debounced file change and logs `config reloaded from file`; a
+rejected reload logs `config reload failed` and does not install the change.
+See [config layering](../config-layering.md) for seed/overlay precedence.
 
 Qualification requires a complete exact-head diff and trusted author, not just
 SHA-shaped text. The exception never bypasses native required checks or producer
