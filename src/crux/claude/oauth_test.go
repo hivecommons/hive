@@ -352,6 +352,48 @@ func TestWriteCredentialsIsAtomic(t *testing.T) {
 	}
 }
 
+// A sign-in is how an operator recovers a fleet whose shared credential path
+// was turned into a symlink to itself (an older credential-bridge repair did
+// this on a live v6 hive) or to a file that no longer exists. WriteCredentials
+// renames its temp file over the path, which replaces the symlink itself, so
+// the path ends up a regular file holding the new tokens.
+func TestWriteCredentialsReplacesSelfAndDanglingSymlinks(t *testing.T) {
+	cases := []struct {
+		name   string
+		linkTo func(path string) string
+	}{
+		{"self-referencing", func(path string) string { return path }},
+		{"dangling", func(path string) string { return filepath.Join(filepath.Dir(path), "gone", ".credentials.json") }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".credentials.json")
+			if err := os.Symlink(c.linkTo(path), path); err != nil {
+				t.Fatal(err)
+			}
+			tokens := &OAuthTokens{
+				AccessToken:  "fake-recovered-access",
+				RefreshToken: "fake-recovered-refresh",
+				ExpiresAt:    time.Now().Add(time.Hour).UnixMilli(),
+			}
+			if err := WriteCredentials(tokens, path); err != nil {
+				t.Fatalf("WriteCredentials over a %s symlink: %v", c.name, err)
+			}
+			info, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !info.Mode().IsRegular() {
+				t.Fatalf("credentials path is still not a regular file (mode %v)", info.Mode())
+			}
+			got := LoadTokens(path)
+			if got == nil || got.AccessToken != "fake-recovered-access" || got.RefreshToken != "fake-recovered-refresh" {
+				t.Fatalf("credentials file does not hold the written tokens: %+v", got)
+			}
+		})
+	}
+}
+
 // An expired token must read as absent: handing an expired token to an agent
 // produces confusing 401s instead of a clean re-auth prompt.
 func TestReadAccessTokenRejectsExpiredToken(t *testing.T) {
