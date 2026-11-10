@@ -894,6 +894,33 @@ func TestRepoAutoMergeEnabledFailsClosedBelowL6(t *testing.T) {
 	}
 }
 
+func TestRepoAutoMergeSwitchedOffIsL6ExplicitOffOnly(t *testing.T) {
+	f := false
+	tr := true
+	level := SelfMergeMinACMMLevel
+	cfg := &Config{ACMMLevel: &level, Project: ProjectConfig{
+		Org: "acme",
+		RepoPolicies: []RepoPolicy{
+			{Repo: "api", AutoMerge: &f},
+			{Repo: "web", AutoMerge: &tr},
+		},
+	}}
+	if !cfg.RepoAutoMergeSwitchedOff("api") || !cfg.RepoAutoMergeSwitchedOff("ACME/API") {
+		t.Fatal("auto_merge=false at L6 is switched off")
+	}
+	if cfg.RepoAutoMergeSwitchedOff("acme/web") || cfg.RepoAutoMergeSwitchedOff("other") {
+		t.Fatal("auto_merge=true or no override is not switched off")
+	}
+	below := SelfMergeMinACMMLevel - 1
+	cfg.ACMMLevel = &below
+	if cfg.RepoAutoMergeEnabled("api") || cfg.RepoAutoMergeSwitchedOff("api") {
+		t.Fatal("below L6 auto-merge is off everywhere but no repo counts as switched off")
+	}
+	if (*Config)(nil).RepoAutoMergeSwitchedOff("acme/api") {
+		t.Fatal("nil config is not switched off")
+	}
+}
+
 func TestSetSelfAuthorizationHoldForRepos(t *testing.T) {
 	cfg := &Config{
 		SourcePath: writeTempConfig(t, "project:\n  org: acme\n  repos: [api]\ngithub:\n  token: ghp_tok\nagents:\n  bot:\n    backend: claude\n"),

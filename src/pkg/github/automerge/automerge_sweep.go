@@ -156,6 +156,12 @@ type Options struct {
 	// RepoAutoMergeEnabled returns the live per-repo auto-merge switch. nil
 	// preserves default-on behavior.
 	RepoAutoMergeEnabled func(repo string) bool
+	// RepoAutoMergeSwitchedOff reports a repo an owner switched off with
+	// auto_merge: false at L6 (config.RepoAutoMergeSwitchedOff). Only such a
+	// repo gets the observe-only staging pass (hivecommons/hive#17552);
+	// below L6, where RepoAutoMergeEnabled is false everywhere, nothing is
+	// staged. nil means no repo is observed.
+	RepoAutoMergeSwitchedOff func(repo string) bool
 	// QueueOnApproveAndUnhold returns the live per-repo
 	// auto_merge.queue_on_approve_and_unhold opt-in at the hive's ACMM level
 	// (hivecommons/hive#13629). repo is owner/repo. nil means off.
@@ -303,6 +309,10 @@ type Options struct {
 	// instead of the transport's shared one: a read-only evaluation must
 	// not mark a head as tried (automerge_sweep_memory.go).
 	isolatedSweepMemory bool
+	// observeOnly builds the engine for a lane's observe-only pass on a
+	// repo whose auto-merge is off (automerge_observe_only.go): it records
+	// stage evidence and refuses every write.
+	observeOnly bool
 }
 
 // Engine owns the automerge sweep policy state.
@@ -396,6 +406,7 @@ type Engine struct {
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
+	repoAutoMergeSwitchedOff          func(repo string) bool
 	queueOnApproveAndUnhold           func(repo string) bool
 	repoOnGitHub                      func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
@@ -497,6 +508,8 @@ type Engine struct {
 	fixDispatch              func(repo string, number int, head string) (review.FixDispatchStatus, bool)
 	hotspotRecorder          HotspotRecorder
 	integrationFilesObserved func(repo, head string, files []string)
+	// observeOnly: see Options.observeOnly. The write helpers check it.
+	observeOnly bool
 	mergeTrainState
 }
 
@@ -532,6 +545,7 @@ func New(transport Transport, opts Options) *Engine {
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
+		repoAutoMergeSwitchedOff:          opts.RepoAutoMergeSwitchedOff,
 		queueOnApproveAndUnhold:           opts.QueueOnApproveAndUnhold,
 		repoOnGitHub:                      opts.RepoOnGitHub,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
@@ -569,6 +583,7 @@ func New(transport Transport, opts Options) *Engine {
 		fixDispatch:                       opts.FixDispatchStatus,
 		hotspotRecorder:                   opts.HotspotRecorder,
 		integrationFilesObserved:          opts.IntegrationFilesObserved,
+		observeOnly:                       opts.observeOnly,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}
@@ -629,6 +644,16 @@ func (c *Engine) repoAutoMergeAllowed(repo string) bool {
 		return true
 	}
 	return c.repoAutoMergeEnabled(repo)
+}
+
+// repoObservedOnly reports whether the lanes stage repo without merging on
+// it: an owner switched its auto-merge off at L6. A repo auto-merge refuses
+// for any other reason (below L6, bad merge_strategy) is skipped as before.
+func (c *Engine) repoObservedOnly(repo string) bool {
+	if c == nil || c.repoAutoMergeSwitchedOff == nil || c.repoAutoMergeAllowed(repo) {
+		return false
+	}
+	return c.repoAutoMergeSwitchedOff(repo)
 }
 
 // activeRepos is Repositories() minus the repos under an operator pause

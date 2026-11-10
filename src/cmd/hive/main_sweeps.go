@@ -907,6 +907,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.RequiredChecksForRepo = cfg.AutoMerge.RequiredCheckSetForRepo
 		opts.MinHeadAge = cfg.AutoMerge.EffectiveMinHeadAge()
 		opts.RepoAutoMergeEnabled = func(repo string) bool { return cfg.RepoAutoMergeEnabled(repo) }
+		opts.RepoAutoMergeSwitchedOff = func(repo string) bool { return cfg.RepoAutoMergeSwitchedOff(repo) }
 		opts.QueueOnApproveAndUnhold = func(repo string) bool {
 			return cfg.AutoMerge.QueueOnApproveAndUnholdAllowed(repo, cfg.ACMMLevel)
 		}

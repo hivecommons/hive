@@ -2371,6 +2371,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
 	autoMergeOpts.MinHeadAge = b.cfg.AutoMerge.EffectiveMinHeadAge()
 	autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
+	autoMergeOpts.RepoAutoMergeSwitchedOff = func(repo string) bool { return b.cfg.RepoAutoMergeSwitchedOff(repo) }
 	autoMergeOpts.RepoOnGitHub = func(repo string) bool { return b.cfg.RepoOnGitHub(repo) }
 	// Read through b.cfg on every sweep tick so a config reload of
 	// auto_merge.trusted_bot_authors takes effect without a restart.

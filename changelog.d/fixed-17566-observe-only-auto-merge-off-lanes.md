@@ -1,0 +1,1 @@
+- Merge lanes: pull requests on a repo an owner switched off with `auto_merge: false` at L6 now get a stage record every pass (090 "auto-merge off" once approved and green) from an observe-only pass that never merges, enqueues, updates a branch, rebases or otherwise writes to GitHub; hives below L6 are unchanged.

@@ -787,6 +787,19 @@ func (c *Config) RepoAutoMergeEnabled(repo string) bool {
 	return true
 }
 
+// RepoAutoMergeSwitchedOff reports whether an owner switched this repo's
+// auto-merge off with `project.repo_policies[].auto_merge: false` at L6 or
+// above. It is the observe-only staging predicate (hivecommons/hive#17552):
+// below L6 RepoAutoMergeEnabled is false for every repo, but those hives
+// are not staged, so this is narrower than !RepoAutoMergeEnabled.
+func (c *Config) RepoAutoMergeSwitchedOff(repo string) bool {
+	if c == nil || c.ACMMLevelOrZero() < SelfMergeMinACMMLevel {
+		return false
+	}
+	rp, ok := c.RepoPolicyFor(repo)
+	return ok && rp.AutoMerge != nil && !*rp.AutoMerge
+}
+
 // SetRepoAutoMergeForRepoAndSave records, clears, and persists one repo's
 // auto-merge override. nil clears the override so the repo inherits default ON.
 func (c *Config) SetRepoAutoMergeForRepoAndSave(repo string, enabled *bool) (bool, error) {

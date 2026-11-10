@@ -979,8 +979,13 @@ func (c *Engine) stageAuthorKind(obs stageObservation, policy StageLabelPolicy, 
 // on the next pass. Seen on the hive spoke for
 // every maintainer PR; the fix is to treat an incomplete drain as no
 // opinion rather than to trust the weak one.
+//
+// A repo an owner switched off at L6 is no exception: every lane observes
+// it in an observe-only pass (automerge_observe_only.go), so the same lanes
+// must have spoken before a weak opinion there is acted on. Any other repo
+// the lanes skip has no lanes to wait for.
 func (c *Engine) missingStageLanes(displayRepo string, list []stageObservation) []string {
-	if c == nil || !c.repoAutoMergeAllowed(displayRepo) {
+	if c == nil || (!c.repoAutoMergeAllowed(displayRepo) && !c.repoObservedOnly(displayRepo)) {
 		return nil
 	}
 	seen := make(map[string]bool, len(list))
