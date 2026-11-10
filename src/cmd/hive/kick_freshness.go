@@ -61,6 +61,14 @@ func freshenKickMessages(ctx context.Context, guard github.IrreversibleGuard, ac
 						reason = "stale snapshot"
 						stale++
 					case errors.Is(err, github.ErrItemNotOpen):
+						// The re-read found the item closed or merged: the guard
+						// doing its job, not a fault. The snapshot keeps serving the
+						// stale copy until the cache catches up, so this repeats
+						// every cycle; at WARN the slog feed filed it as an
+						// unclassified repeated error (#17518). The withheld-kick
+						// summary below still counts it as closed.
+						reason = "closed"
+						level = slog.LevelInfo
 						closed++
 					default:
 						readErrors++
