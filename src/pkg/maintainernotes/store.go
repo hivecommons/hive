@@ -40,8 +40,12 @@ const (
 	// FileName is the JSONL file under DefaultDataDir.
 	FileName = "maintainer-notes.jsonl"
 
-	idBytes        = 12
-	fileMode       = 0o644
+	idBytes = 12
+	// fileMode is owner-only: the notes are maintainer-private, and every
+	// agent on the spoke runs as its own UID in the hive's primary group,
+	// so group- or world-read would hand each agent every note on every
+	// item (the kick section is the deliberate, capped, per-item exposure).
+	fileMode       = 0o600
 	dirMode        = 0o755
 	maxListAll     = 5000
 	scanBufInitial = 64 << 10
@@ -303,6 +307,14 @@ func (s *Store) appendLine(n Note) error {
 		return err
 	}
 	defer f.Close()
+	// A file an earlier release created wider than fileMode is tightened
+	// on its next write, so an existing spoke is repaired without a
+	// migration step.
+	if fi, err := f.Stat(); err == nil && fi.Mode().Perm()&^fileMode != 0 {
+		if err := f.Chmod(fileMode); err != nil {
+			return err
+		}
+	}
 	data, err := json.Marshal(n)
 	if err != nil {
 		return err

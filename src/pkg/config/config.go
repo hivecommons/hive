@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/hivecommons/hive/pkg/writeback"
 )
@@ -16,6 +17,17 @@ import (
 // pause is silently lost. Pausing 7 agents in quick succession reliably left
 // only the last 1-2 on the PVC. Serializing every Save() closes the race.
 var saveMu sync.Mutex
+
+// saveSeq counts the config file writes this process has started. A reload
+// that cannot be applied yet records it when it is parked; a different value
+// when it is finally applied means some other saver rewrote hive.yaml from the
+// pre-reload config in between (hivecommons/hive#17467).
+var saveSeq atomic.Uint64
+
+// SaveSeq reports the number of config file writes started by this process:
+// every Config.Save, SetAgentPausedAndSave and ReconcilePausedAndSave that
+// reached the write stage, from any goroutine.
+func SaveSeq() uint64 { return saveSeq.Load() }
 
 var (
 	saveObserverMu sync.Mutex

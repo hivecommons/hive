@@ -1428,6 +1428,9 @@ func runEvalCycle(
 			// The App is the sole advisory-digest writer (#1927): a user-token
 			// failure must never drive the App banner, so every banner hook
 			// below is fed exclusively by the App's own error.
+			// digest_min_interval is read live like the other advisory knobs
+			// (#17435): a dashboard edit applies from the next cycle.
+			ghClient.SetAdvisoryDigestMinInterval(advCfg.EffectiveDigestMinInterval())
 			publishAdvisoryDigest(ctx, md, digest, advisoryPublishRoute{
 				target:         advisoryTarget,
 				linearIssue:    advisoryLinearIssue,

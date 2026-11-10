@@ -426,6 +426,7 @@ func webhookCIChecks(event string, p webhookEventPayload) []PRActivityCheck {
 		check := PRActivityCheck{
 			Name: strings.TrimSpace(p.Context), State: "completed", URL: p.TargetURL,
 			ID: p.ID, NodeID: p.NodeID, Head: strings.TrimSpace(p.SHA), Kind: "commit_status",
+			Description: p.Description,
 		}
 		switch p.State {
 		case "success":

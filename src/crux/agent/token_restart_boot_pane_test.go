@@ -76,9 +76,11 @@ func TestPollerUsesTokenRestartCapResetGate(t *testing.T) {
 	if !strings.Contains(string(src), "shouldResetTokenRestartCap(") {
 		t.Fatal("pollTmuxOutputForAgent must call shouldResetTokenRestartCap; otherwise the boot pane re-arms the restart storm (#8711)")
 	}
-	if strings.Contains(string(src), "agent.tokenRestartAttempts = 0\n\t\t\t\tagent.tokenRestartGaveUp = false") &&
-		!strings.Contains(string(src), "if agent.shouldResetTokenRestartCap") {
-		t.Fatal("poller resets token restart attempts without the cap reset gate")
+	if !strings.Contains(string(src), "agent.rearmTokenRestartCap(") {
+		t.Fatal("pollTmuxOutputForAgent must re-arm via rearmTokenRestartCap; an inline reset wipes the give-up latch on every pane flap (#17483)")
+	}
+	if strings.Contains(string(src), "agent.tokenRestartGaveUp = false") {
+		t.Fatal("poller clears tokenRestartGaveUp inline instead of through rearmTokenRestartCap (#17483)")
 	}
 }
 
@@ -92,8 +94,7 @@ func (a *AgentProcess) simulatePollTick(t *testing.T, pane []string, startedAt *
 	} else {
 		*loginStreak = 0
 		if a.shouldResetTokenRestartCap(hasCLI, startedAt, now) {
-			a.tokenRestartAttempts = 0
-			a.tokenRestartGaveUp = false
+			a.rearmTokenRestartCap(now)
 		}
 	}
 	if !showsLogin || *loginStreak < loginStreakRestartMin {
@@ -234,20 +235,25 @@ func TestTokenRestartCapReArmsAfterGenuineRecovery(t *testing.T) {
 	loginStreak := 0
 	a.simulatePollTick(t, readyPane, &started, now, &loginStreak)
 
-	if a.tokenRestartGaveUp {
-		t.Fatal("latch survived a genuine recovery: a real login would never re-enable the nudge")
-	}
 	if a.tokenRestartAttempts != 0 {
 		t.Fatalf("attempts = %d after recovery, want 0", a.tokenRestartAttempts)
 	}
 	// The per-boot cap is re-armed, but the rolling 24h budget was spent by
 	// the three restarts above (#12466): a nudge inside the window still
-	// gives up, and a nudge once the window has rolled on fires again.
+	// gives up, so the give-up latch must hold through the recovery or that
+	// give-up would re-log the WARN once per pane flap (#17483). A nudge once
+	// the window has rolled on fires again and drops the latch.
+	if !a.tokenRestartGaveUp {
+		t.Fatal("latch cleared by a recovery inside the window: the next give-up would re-log the diagnosis (#17483)")
+	}
 	if got := a.decideTokenRestart(now); got != tokenRestartGiveUp {
 		t.Fatalf("after recovery inside the window: got %v, want giveUp", got)
 	}
 	if got := a.decideTokenRestart(now.Add(tokenRestartWindow + time.Second)); got != tokenRestartFire {
 		t.Fatalf("after recovery and a full window: got %v, want fire", got)
+	}
+	if a.tokenRestartGaveUp {
+		t.Fatal("latch survived a fresh fire after the window drained: a real login would never re-enable the nudge")
 	}
 }
 

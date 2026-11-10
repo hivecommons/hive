@@ -67,10 +67,10 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/claims` | Dashboard auth | Every live worker claim (`{enabled, claims:[…]}`); `enabled:false` when `claims.enabled: false` | `pkg/dashboard/claims_api.go:53` |
-| `GET` | `/api/claims/{owner}/{repo}/{number}` | Dashboard auth | `{held, claim}` for one issue | `pkg/dashboard/claims_api.go:54` |
-| `POST` | `/api/claims/{owner}/{repo}/{number}` | Signed-in / hub-proxied / GitHub-token caller claims as a **human** under their login; a verified owner token claims as the owner | Body `{force, ttl_s, session}`. 200 with `outcome` `claimed`/`renewed`/`taken_over`; 409 with `outcome` `held` (same rank, retry with `force`) or `refused` (higher rank holds it) and a `hint` | `pkg/dashboard/claims_api.go:55` |
-| `DELETE` | `/api/claims/{owner}/{repo}/{number}` | Same identity rules | Body `{force, reason}`. Releases your claim or a lower-ranked holder's; `force` with a verified owner role releases regardless of holder | `pkg/dashboard/claims_api.go:56` |
+| `GET` | `/api/claims` | Dashboard auth | Every live worker claim (`{enabled, claims:[…]}`); `enabled:false` when `claims.enabled: false` | `pkg/dashboard/claims_api.go:54` |
+| `GET` | `/api/claims/{owner}/{repo}/{number}` | Dashboard auth | `{held, claim}` for one issue | `pkg/dashboard/claims_api.go:55` |
+| `POST` | `/api/claims/{owner}/{repo}/{number}` | Signed-in / hub-proxied / GitHub-token caller claims as a **human** under their login; a verified owner token claims as the owner | Body `{force, ttl_s, session}`. 200 with `outcome` `claimed`/`renewed`/`taken_over`; 409 with `outcome` `held` (same rank, retry with `force`) or `refused` (higher rank holds it) and a `hint` | `pkg/dashboard/claims_api.go:56` |
+| `DELETE` | `/api/claims/{owner}/{repo}/{number}` | Same identity rules | Body `{force, reason}`. Releases your claim or a lower-ranked holder's; `force` with a verified owner role releases regardless of holder | `pkg/dashboard/claims_api.go:57` |
 
 ### `/api/v1` contributor subpaths
 

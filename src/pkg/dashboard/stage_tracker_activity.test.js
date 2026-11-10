@@ -28,7 +28,7 @@ function constLine(source, name) {
   return match[0];
 }
 const trackConsts = ['STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER', 'STAGE_TRACKER_PENDING_CHECKS_NAMED', 'STAGE_TRACKER_WORKFLOW_APPROVAL_TIP', 'STAGE_TRACKER_RING_SEGMENT_GAP_MAX', 'STAGE_TRACKER_RING_RADIUS', 'STAGE_TRACKER_RING_GAP_DEG'].map(name => constLine(strip, name)).join('\n');
-const trackFns = ['stageTrackerHiveOwesReReview', 'stageTrackerTrackLead', 'stageTrackerWaitingOnPerson', 'stageTrackerTrackRunning', 'stageTrackerWorkflowApprovalPending', 'stageTrackerRingSvg', 'stageTrackerStalledTrack', 'stageTrackerQueueAheadWord', 'stageTrackerStageTrack', 'stageTrackerHiveOwnsRepair', 'stageTrackerTrackWord', 'stageTrackerAgoWord', 'stageTrackerActivityTrackHtml'].map(name => fn(strip, name)).join('\n');
+const trackFns = ['stageTrackerHiveOwesReReview', 'stageTrackerTrackLead', 'stageTrackerWaitingOnPerson', 'stageTrackerTrackRunning', 'stageTrackerWorkflowApprovalPending', 'stageTrackerRingSvg', 'stageTrackerStalledTrack', 'stageTrackerQueueAheadWord', 'stageTrackerStageTrack', 'stageTrackerHiveOwnsRepair', 'stageTrackerTrackWord', 'stageTrackerAgoWord', 'stageTrackerQueuedTrackNote', 'stageTrackerActivityTrackHtml'].map(name => fn(strip, name)).join('\n');
 const track = new Function('esc', 'stageTrackerIcon', trackConsts + '\n' + trackFns + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
 const getAnchor = new Function(globals + anchor + ';return stageTrackerAnchor;')();
 const header = new Function('esc', 'stageTrackerIcon', globals + fn(strip, 'stageTrackerHeaderHtml') + ';return stageTrackerHeaderHtml;')(esc, () => '');
@@ -123,7 +123,7 @@ function stageTrackerActorKind() { return ''; }
 function stageTrackerActorTip() { return ''; }
 function stageTrackerMotion() { return STAGE_TRACKER_MOTION_STATIC; }
 function stageTrackerIcon(n) { return '<svg data-icon="' + n + '"></svg>'; }
-` + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerStageTrack') + fn(strip, 'stageTrackerStalledTrack') + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track, ...Object.values(helpers));
+` + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerStageTrack') + fn(strip, 'stageTrackerStalledTrack') + fn(strip, 'stageTrackerTrackWouldLight') + fn(strip, 'stageTrackerLeadTrack') + fn(strip, 'stageTrackerQueuedTrackNote') + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track, ...Object.values(helpers));
 const renderStrip = makeStripRenderer();
 
 function physicalTracks(item) {
@@ -531,8 +531,11 @@ test('current phase, running activity, failure and successful completion are ind
     const cells = physicalTracks(livePR({ ci_activity: activity(state, caption, running) }));
     assert.ok(cells.ci.includes('ham-activity-track ' + cls + ' ham-current'), state + ' → ' + cls + ': ' + cells.ci);
     assert.equal(cells.ci.includes('data-motion="active"'), running);
-    // The stage's own track (review, 050) is active with words (#16599).
-    assert.match(cells.review, /active ham-current[^]*data-activity-state="unknown"/);
+    // The stage's own track (review, 050) is active with words (#16599) —
+    // unless CI runs, when CI leads and Review is dim with a queued note
+    // (exactly one lit chevron, hivecommons/hive#17335).
+    if (running) assert.match(cells.review, /todo ham-track-queued ham-current[^]*data-activity-state="unknown"[^]*<span class="ham-track-note">review queued<\/span>/);
+    else assert.match(cells.review, /active ham-current[^]*data-activity-state="unknown"/);
   }
   const admitted = physicalTracks(livePR({ stage: 80, ci_activity: activity('passing', 'CI green · all 2 required checks passed'), review_activity: activity('approved', 'Review approved') }));
   assert.doesNotMatch(admitted.ci + admitted.review, /ham-current|aria-current/);
@@ -905,7 +908,7 @@ test('#16484: count grammar — CI passed/total and Review done/total across eve
   assert.equal(word({ head: 'h' }, 'review', false), '');
 });
 
-test('#16484: the three screenshot rows — both tracks lit with counts, swarm requested, red CI beside a done review', () => {
+test('#16484: the three screenshot rows — CI leads with counts, swarm requested dim behind it, red CI beside a done review', () => {
   const head = 'd3c0824304d4c97b8ee76a267fb1e91f6d4c79a4';
   const fresh = (state, extra = {}) => ({ head, state, caption: state, source: 'cache', observed_at: new Date(now).toISOString(), ...extra });
   const text = cell => cell.match(/aria-describedby="[^"]+">([^]*?)<span id=/)[1].replace(/<[^>]*>/g, '');
@@ -925,11 +928,14 @@ test('#16484: the three screenshot rows — both tracks lit with counts, swarm r
   // #16491: review swarm requested, no bundle yet; CI shows its count.
   cells = physicalTracks(livePR({ head, stage: 50, display_column: 50,
     ci_activity: fresh('running', { checks_passed: 2, checks_total: 14 }), review_activity: fresh('unassigned', { perspectives_done: 0, perspectives_total: 5, blocker: 'no reviewer free' }) }));
-  // #16599: at 050 the Review column is the stage's own track → active with
-  // words even while only queued; CI runs beside it (two lit).
-  assert.equal(cls(cells.review), 'active'); assert.equal(text(cells.review), 'Review 0/5 · queued');
-  assert.doesNotMatch(cells.review, /data-motion/, 'queued is lit but still');
+  // #16599: at 050 the Review column is the stage's own track, but CI runs
+  // beside it and leads — exactly one lit chevron (hivecommons/hive#17335):
+  // Review is dim with a muted "review queued" note, its words in the tooltip.
   assert.equal(cls(cells.ci), 'active'); assert.equal(text(cells.ci), 'CI 2/14 · 12 running');
+  assert.equal(cls(cells.review), 'todo'); assert.match(cells.review, /ham-track-queued/);
+  assert.match(cells.review, /ham-track-verdict"><svg [^]*?<\/svg><\/span><span class="ham-track-note">review queued<\/span>/, 'no words on the dim track, only the muted note');
+  assert.match(cells.review, /aria-label="[^"]*Review: Review 0\/5 · queued · [^"]*· review queued behind CI"/);
+  assert.doesNotMatch(cells.review, /data-motion/, 'a demoted track is still');
   // #16268: CI failed native-queue-policy, review approved, held.
   cells = physicalTracks(livePR({ head, stage: 70, display_column: 50, modifiers: ['hold'], hold: { by: 'hanthor', pill: 'Held by @hanthor' },
     ci_activity: fresh('failing', { checks_passed: 13, checks_total: 14, checks_failed: 1, checks_failing: ['native-queue-policy'], blocker: 'native-queue-policy' }),

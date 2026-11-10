@@ -107,6 +107,77 @@ func TestSaveNoAgents(t *testing.T) {
 	}
 }
 
+// TestSaveThroughSymlinkKeepsLink pins the write strategy the #17468 fix
+// depends on. On hosted spokes the copy-config init container makes the
+// config path (/etc/hive/hive.yaml, an emptyDir) a symlink to the PVC
+// runtime config. Save() must write THROUGH that link in place: a
+// temp-file+rename would replace the symlink with a regular emptyDir file,
+// and the next pod restart would silently revert the fix.
+func TestSaveThroughSymlinkKeepsLink(t *testing.T) {
+	dir := t.TempDir()
+	etcDir := filepath.Join(dir, "etc", "hive")
+	dataDir := filepath.Join(dir, "data")
+	for _, d := range []string{etcDir, dataDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtimePath := filepath.Join(dataDir, "hive.yaml.runtime")
+	cfgPath := filepath.Join(etcDir, "hive.yaml")
+	if err := os.WriteFile(runtimePath, []byte("old: content\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(runtimePath, cfgPath); err != nil {
+		t.Fatal(err)
+	}
+
+	origOverlay, origRuntime := DashboardOverlayFile, RuntimeConfigFile
+	DashboardOverlayFile = filepath.Join(dataDir, "hive.yaml.dashboard")
+	RuntimeConfigFile = runtimePath
+	t.Cleanup(func() { DashboardOverlayFile, RuntimeConfigFile = origOverlay, origRuntime })
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+
+	level := 4
+	cfg := &Config{
+		SourcePath: cfgPath,
+		Project:    ProjectConfig{Org: "testorg", Name: "test"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		},
+		ACMMLevel: &level,
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save through symlinked config path: %v", err)
+	}
+
+	fi, err := os.Lstat(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("Save() replaced the config-path symlink with a regular file (#17468) — mode %v", fi.Mode())
+	}
+	if target, err := os.Readlink(cfgPath); err != nil || target != runtimePath {
+		t.Fatalf("config path links to %q (err %v), want %q", target, err, runtimePath)
+	}
+
+	data, err := os.ReadFile(runtimePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) == "old: content\n" || !strings.Contains(string(data), "testorg") {
+		t.Fatalf("runtime config was not written through the link: %q", data)
+	}
+	// What the config path reads is byte-identical to the persisted file.
+	viaLink, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(viaLink) != string(data) {
+		t.Fatal("config path and runtime config diverged after Save()")
+	}
+}
+
 func TestSaveReadOnlyDir(t *testing.T) {
 	breakPVCLayers(t) // with working PVC layers Save() would return nil
 	dir := t.TempDir()

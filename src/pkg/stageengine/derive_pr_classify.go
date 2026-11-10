@@ -287,13 +287,13 @@ var stageAdmissionReasons = map[string]int{
 var stageNeedsHumanReasons = map[string]bool{
 	contributorLaneReasonWorkflowPath: true, contributorLaneReasonTestsRemoved: true,
 	contributorLaneReasonNoReviewer: true, contributorLaneReasonReviewOff: true,
-	contributorLaneReasonReporterTrustHold: true, contributorLaneReasonSentinelBlocked: true,
-	contributorLaneReasonNoAppBotLogin: true, contributorLaneReasonFilesEvidence: true,
+	contributorLaneReasonReporterTrustHold: true,
+	contributorLaneReasonNoAppBotLogin:     true, contributorLaneReasonFilesEvidence: true,
 	autoMergeReasonHumanMergePath: true, autoMergeReasonHumanMergePathEvidence: true,
 	autoMergeReasonIntentUnauthorized: true, autoMergeReasonIntentEvidence: true,
 	autoMergeReasonWorkflowPermission: true, autoMergeReasonForkWorkflowUpdate: true,
 	"approval-desk-withheld": true, "author-permission-missing": true, "fork-non-member": true,
-	"held": true, "label:hold": true, "label:needs-human": true, "exempt-label": true, "sentinel": true,
+	"label:needs-human": true, "exempt-label": true,
 	autoMergeReasonNoAppBotLogin: true, "self-authorization-hold-released": true,
 	// GitHub refused the merge for a reason no retry cures: branch
 	// protection wants a person's approving review, or the repository has
@@ -305,6 +305,19 @@ var stageNeedsHumanReasons = map[string]bool{
 	// is matched here, before the native-merge-queue prefix keeps the rest
 	// at 100.
 	prstage.AutoMergeReasonNativeQueueMethod: true,
+}
+
+// stageHeldGateReasons are the lane reasons that are gates, not stages
+// (owner rule, hivecommons/hive#17327): an open sentinel alert or a
+// hold-class label stops the merge for as long as it stands, but says
+// nothing about how far the head has come. The stage is the head's real
+// progress — CI running or red, a reviewer's question, or 090 once the
+// head is green and reviewed — and the gate rides it as a pill; the
+// Merge queue column reads "held", never "queued", because the lane
+// refuses the merge on the label itself (automerge_sweep_trusted,
+// automerge_contributor_lane), not on the stage number.
+var stageHeldGateReasons = map[string]bool{
+	"held": true, "label:hold": true, "sentinel": true, contributorLaneReasonSentinelBlocked: true,
 }
 
 // stageMergeQueueReasons are reasons reached only after every gate passed,
@@ -471,6 +484,29 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		if v, ok := HumanChangeRequestStage(o); ok {
 			return v
 		}
+		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: stageRankOwned, Human: true}, humanApprovalReason)
+	}
+	if stageHeldGateReasons[reason] {
+		if HasLabelFold(o.Labels, "needs-rebase") {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+		}
+		if v, ok := HumanChangeRequestStage(o); ok {
+			// A trusted maintainer answered the gate on this head and asked
+			// for changes: the author acts next (hivecommons/hive#15159).
+			return v
+		}
+		if v, ok := RequiresHumanStage(o, stageRankOwned); ok {
+			return v
+		}
+		if VerdictBlocks(o.Detail) {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: StageVerdictReason(o.Detail)}
+		}
+		if name := o.Detail.RedCheck(o.HeadSHA); name != "" {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
+		}
+		// A 090 candidate: passDecision refines it through RouteHuman
+		// against the head's evidence (pending CI → 060, no verdict → 050)
+		// and rides the gate on the result as a pill, never as the stage.
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: stageRankOwned, Human: true}, humanApprovalReason)
 	}
 	// An open issue the PR closes is held or parked on a person:

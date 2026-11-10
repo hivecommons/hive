@@ -1,6 +1,6 @@
 level: 6
 name: Autonomous
-description: 'Autonomous operation. Fifteen agents run the complete roster: existing autonomous lanes can open issues, create PRs, and auto-merge on green CI, while outreach handles community engagement. Reviewer remains advisory, adjudicator repairs or closes escalated hive PRs without merging, dedupe posts a daily consolidation checklist of duplicate and overlapping issues and PRs, brainstorm stays advisory, and telemetry/operations remain opt-in/paused and never merge their own PRs.
+description: 'Autonomous operation. Sixteen agents run the complete roster: existing autonomous lanes can open issues, create PRs, and auto-merge on green CI, while outreach handles community engagement. Reviewer remains advisory, adjudicator repairs or closes escalated hive PRs without merging, dedupe posts a daily consolidation checklist of duplicate and overlapping issues and PRs, brainstorm stays advisory, telemetry/operations remain opt-in/paused and never merge their own PRs, and the redteam lane is opt-in/paused and hold-labels every PR.
 
   '
 governor:
@@ -55,6 +55,7 @@ governor:
       dedupe: 24h
       telemetry: paused
       operations: paused
+      redteam: paused
     busy:
       supervisor: paused
       scanner: 1h
@@ -68,6 +69,7 @@ governor:
       dedupe: 24h
       telemetry: paused
       operations: paused
+      redteam: paused
     quiet:
       supervisor: paused
       scanner: 1h
@@ -83,6 +85,7 @@ governor:
       dedupe: 24h
       telemetry: paused
       operations: paused
+      redteam: paused
     idle:
       supervisor: paused
       scanner: 1h
@@ -98,6 +101,7 @@ governor:
       dedupe: 24h
       telemetry: paused
       operations: paused
+      redteam: paused
 agents:
 - name: supervisor
   display_name: Supervisor
@@ -500,3 +504,35 @@ agents:
   lane_keywords: [healthz, readyz, readiness, slo-, sli-, service-level-objective, service-level-indicator, error-budget, runbook, incident-response, rollback, alerting]
   interactions: Opens issues and PRs for operational-practice improvements; never merges its own PRs.
   knowledge_use: Reads reliability goals and operational conventions from the knowledge base.
+- name: redteam
+  display_name: red team
+  role: redteam
+  description: 'Adversarial red-team lane (hivecommons/hive#17420). Plays a malicious
+    contributor (a human, an AI, or one posing as the other) and writes the issues,
+    PR bodies, review comments and RFC text such an actor would use to get agents to
+    write malicious code or lower the hive''s defenses. Measures them against the
+    deterministic defenses by extending the ioscan red-team corpus in hold-gated PRs,
+    recording each outcome as observed. Never posts a payload anywhere else. Opt-in:
+    paused in every mode, and refused every repository until its repos: scope names
+    the one holding the corpus.
+
+    '
+  emoji: "🎭"
+  color: '#c0392b'
+  sort_order: 67
+  backend: copilot
+  model: claude-sonnet-4-6
+  bead_role: worker
+  mode: ISSUES_AND_PRS
+  kick_template: redteam-holdgated.md
+  include_repos: true
+  stale_timeout: 100800  # 28h — must exceed the 24h cadence the opt-in guide suggests
+  interactions: 'Opens hold-labelled PRs that add attack cases and benign controls to the
+    ioscan red-team corpus, and at most one issue per run naming missed case IDs. Never
+    files payload text in an issue, PR body, comment or bead; never merges or removes hold.
+
+    '
+  knowledge_use: 'Reads the existing corpus, the ioscan rules and the published red-team
+    results so each run probes a gap instead of repeating a covered shape.
+
+    '

@@ -978,7 +978,7 @@ You don't have to design a roster. Hive ships six **ACMM packs** (see [What is a
 
 Applying a level **reconciles the whole roster**, not just the diff: missing agents are created (as overlay files in `/data/agent-configs/`), existing agents are merged — pack values fill blanks, but your explicit `backend:`, `model:`, and `enabled: false` always win — and the level's `kick_template`, `mode` and `on_demand` are updated so the agent's *policy* matches the level (an `on_demand` you toggled yourself in the agent's settings dialog is operator-owned and left alone; leaving on-demand starts the agent, entering it stops it). One caveat for `backend:` edited by hand in `hive.yaml` or `hive.yaml.runtime` after a pack has been applied: the edit is honoured only when that agent entry carries **no** `backend_owner:` line, so delete the owner line (`pack` or `operator`) alongside your `backend:` change, and the next apply stamps the kept backend `backend_owner: operator` (#13221). A failed agent doesn't abort the rest; the level is only recorded as cleanly applied when every agent reconciled. One exception to "pack values fill blanks": a `backend:` the pack itself wrote may be moved onto the hive's inference gateway, as described under [Disabling a backend spoke-wide](#disabling-a-backend-spoke-wide) ([#14678](https://github.com/hivecommons/hive/issues/14678)). A failed agent doesn't abort the rest; the level is only recorded as cleanly applied when every agent reconciled.
 
-The L5 roster is the canonical worked example — twelve agents, nine on the governor timer, two opt-in agents paused in every governor mode, plus one on demand:
+The L5 roster is the canonical worked example — thirteen agents, nine on the governor timer, three opt-in agents paused in every governor mode, plus one on demand:
 
 | Agent | | Mode | Cadence (all governor modes) |
 |---|---|---|---|
@@ -994,6 +994,7 @@ The L5 roster is the canonical worked example — twelve agents, nine on the gov
 | experimenter ⚗️ | self-improvement experiment campaigns through an engine (default Nous, inline); never files issues/PRs, never promotes | not in any pack — opt in by hand | 24h suggested |
 | telemetry 📡 | managed-project instrumentation | ISSUES_AND_PRS | paused |
 | operations 🚨 | managed-project operational practice | ISSUES_AND_PRS | paused |
+| redteam 🎭 | measured attacks on hive defenses ([red-team agent](redteam.md)) | ISSUES_AND_PRS | paused |
 | brainstorm 💡 | ideation | ADVISORY | on demand |
 
 At L5, every agent PR gets a `hold` label automatically. The system proposes; it does not merge autonomously.
@@ -1039,6 +1040,8 @@ After an initial telemetry advisory run, platforms mentioned in its findings are
 preselected as suggestions in the tab. They remain unsaved until an operator
 reviews them and clicks **Save**; after that, the persisted declaration governs
 future telemetry and operations work.
+
+Redteam is also L5/L6-only and paused until an operator opts in from **Agents → Cadences**. Unlike any other agent it also needs a `repos:` scope: without one it is refused every repository. See [Red-team agent](redteam.md#turning-it-on).
 
 ## Live-linked agent definitions (`definition_source`)
 

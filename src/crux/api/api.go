@@ -105,6 +105,16 @@ type Health struct {
 	// that restarted the server sees the uptime reset.
 	StartedAt     time.Time `json:"started_at"`
 	UptimeSeconds float64   `json:"uptime_seconds"`
+	// Tmux is where tmux resolves on PATH, "" when it does not. Every agent
+	// runs inside tmux, so the route answers 503 (with this body) when empty.
+	Tmux string `json:"tmux"`
+	// Error and Code are set only on a non-2xx answer and share their wire
+	// keys with api.Error, so the 503 body also decodes as the Error that
+	// Client surfaces in a *StatusError: a caller polling health (the
+	// supervisor's WaitReady) sees "tmux not found on PATH", not a bare 503:
+	// WaitReady returns that 503 at once instead of polling to its deadline.
+	Error string `json:"error,omitempty"`
+	Code  string `json:"code,omitempty"`
 }
 
 // HiveCallback is the wire form of the callback client's status.
@@ -257,4 +267,7 @@ const (
 	// holds; the runtime does not replace definitions.
 	CodeConflict = "conflict"
 	CodeRuntime  = "runtime_error"
+	// CodeUnavailable is a server that is up but cannot serve: GET /v1/health
+	// answers 503 with it when tmux is missing from PATH.
+	CodeUnavailable = "unavailable"
 )

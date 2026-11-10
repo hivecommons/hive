@@ -948,8 +948,9 @@ func decideClaimConflict(in Input, ref string) (Decision, bool) {
 }
 
 // decideTrainDuplicate resolves a same-issue pair the merge queue split
-// (hivecommons/hive#15395). The queue's pick stands: a green head beats a
-// red one, the earlier-opened wins among equals. Deciding on the held PR
+// (hivecommons/hive#15395). The queue's pick stands: it picks between
+// heads at the merge gate and keeps the pick until the kept PR closes or
+// is blocked for good (hivecommons/hive#17439). Deciding on the held PR
 // closes it as superseded by the kept one, with a comment; deciding on
 // the kept PR releases it and names the duplicate the queue holds. A
 // paused repo only gets the recommendation.
@@ -982,7 +983,7 @@ func decideTrainDuplicate(in Input, ref string) (Decision, bool) {
 		held := fmt.Sprintf("#%d", other.Number)
 		if in.Conflicting || in.CIRed() || in.DCOMissing {
 			return recommendOnly(RuleOnePRPerIssue,
-				fmt.Sprintf("the merge queue kept %s over %s%s, but %s is not mergeable now (%s); the queue re-picks on its next pass", ref, held, issue, ref, mergeBlockers(in)),
+				fmt.Sprintf("the merge queue kept %s over %s%s, but %s is not mergeable now (%s); the queue keeps it until it closes or is blocked for good", ref, held, issue, ref, mergeBlockers(in)),
 				"fix "+ref+" ("+mergeBlockers(in)+"), or decide on "+held+" to let it supersede this one"), true
 		}
 		return releasePR(RuleOnePRPerIssue,

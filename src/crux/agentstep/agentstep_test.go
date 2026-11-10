@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -221,6 +222,114 @@ func TestPromptPathReadsFromTheWorkspace(t *testing.T) {
 	if f.launcher.prompts[0] != "from file" {
 		t.Fatalf("prompt = %q", f.launcher.prompts[0])
 	}
+}
+
+func TestPromptPathOverTheBoundIsRefused(t *testing.T) {
+	f := newFixture(t, answers(`{"verdict":"pass"}`))
+	// A sparse file: the bound is on bytes present, not bytes on disk.
+	if err := os.WriteFile(filepath.Join(f.host.Workspace, "task.md"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(f.host.Workspace, "task.md"), MaxPromptFileBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	req := f.process("", okSchema)
+	req.PromptPath = "task.md"
+	_, err := Run(context.Background(), f.host, req)
+	var reqErr *RequestError
+	if !errors.As(err, &reqErr) || !strings.Contains(err.Error(), "over") {
+		t.Fatalf("err = %v, want *RequestError naming the bound", err)
+	}
+	if len(f.launcher.prompts) != 0 {
+		t.Fatalf("an oversize prompt file reached the step: %q", f.launcher.prompts)
+	}
+}
+
+func TestOversizeAnswerFileIsNotReadIntoMemory(t *testing.T) {
+	stdout := strings.Join([]string{
+		`{"type":"item.completed","item":{"type":"agent_message","text":"{\"verdict\":\"pass\"}"}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}`,
+	}, "\n")
+	launcher := &fakeLauncher{}
+	launcher.results = append(launcher.results, func(_ context.Context, spec sandbox.LaunchSpec) (sandbox.Result, error) {
+		// The sandboxed agent writes the answer file codex was told to
+		// produce (--output-last-message '<rel>'), here far over the bound.
+		line := spec.Command[len(spec.Command)-1]
+		rest := line[strings.Index(line, "--output-last-message '")+len("--output-last-message '"):]
+		rel := rest[:strings.Index(rest, "'")]
+		path := filepath.Join(spec.Workspace, filepath.FromSlash(rel))
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			return sandbox.Result{}, err
+		}
+		if err := os.Truncate(path, MaxPromptFileBytes+1); err != nil {
+			return sandbox.Result{}, err
+		}
+		return sandbox.Result{Stdout: stdout}, nil
+	})
+	f := newFixture(t, launcher)
+	step := f.run(api.StepRequest{Backend: "codex", Prompt: "judge", OutputSchema: json.RawMessage(okSchema)})
+	// The file is refused and the last agent_message on stdout stands in.
+	if step.Status != api.StepSucceeded || string(step.Answer) != `{"verdict":"pass"}` {
+		t.Fatalf("step = %+v", step)
+	}
+}
+
+func TestPromptPathSymlinkOutsideWorkspaceIsRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	f := newFixture(t, answers(`{"verdict":"pass"}`))
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("host-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(f.host.Workspace, "task.md")); err != nil {
+		t.Fatal(err)
+	}
+	req := f.process("", okSchema)
+	req.PromptPath = "task.md"
+	_, err := Run(context.Background(), f.host, req)
+	var reqErr *RequestError
+	if !errors.As(err, &reqErr) {
+		t.Fatalf("err = %v, want *RequestError", err)
+	}
+	if strings.Contains(err.Error(), "host-secret") || len(f.launcher.prompts) != 0 {
+		t.Fatalf("outside file reached the step: %v, prompts %q", err, f.launcher.prompts)
+	}
+}
+
+func TestSymlinkedCruxDirCannotRedirectThePromptWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	f := newFixture(t, answers(`{"verdict":"pass"}`))
+	outside := t.TempDir()
+	link := filepath.Join(f.host.Workspace, filepath.FromSlash(workspaceDir))
+	if err := os.MkdirAll(filepath.Dir(link), 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	step := Step(t, f)
+	if step.Status != api.StepBackendError {
+		t.Fatalf("status = %q, want %q", step.Status, api.StepBackendError)
+	}
+	var found []string
+	_ = filepath.WalkDir(outside, func(p string, d os.DirEntry, _ error) error {
+		if p != outside {
+			found = append(found, p)
+		}
+		return nil
+	})
+	if len(found) != 0 {
+		t.Fatalf("wrote outside the workspace: %v", found)
+	}
+}
+
+func Step(t *testing.T, f *fixture) api.Step {
+	t.Helper()
+	return f.run(f.process("hello", okSchema))
 }
 
 func TestRequestRefusals(t *testing.T) {

@@ -287,11 +287,17 @@ someone re-runs it. The shared-CI rerun sweep
 - For each open PR whose newest shared-CI marker names one of those incidents,
   it re-runs the failed jobs (`POST .../actions/runs/{id}/rerun-failed-jobs`)
   of the newest run per workflow on the PR head when that run concluded
-  `failure` or `timed_out`, using the hive's App/daemon credential. It pushes
+  `failure` or `timed_out`, using the hive's App/daemon credential. A newest
+  run that concluded `cancelled` — how a job cut off by its `timeout-minutes`
+  is recorded, the shape of the `mutation` incident #17463 — is red too and
+  is re-run whole (`POST .../actions/runs/{id}/rerun`), since it has no
+  "failed" job for the other endpoint (hivecommons/hive#17500). It pushes
   nothing to the branch, so it applies to every author; PRs with a hold or
   `do-not-merge` label are skipped.
-- It then posts one comment carrying `<!-- hive-shared-ci-rerun-<n> -->`,
-  which keeps the PR to one re-run per incident. A PR with nothing red on its
+- It then posts one comment, *Shared-CI incident #N closed — re-running
+  `<check>`*, carrying `<!-- hive-shared-ci-rerun-<n> -->` and
+  `<!-- hive-shared-ci-lifted-<n> -->`; either marker keeps the PR to one
+  re-run per incident. A PR with nothing red on its
   head gets no comment. At most 10 PRs are re-run per pass; each re-run is
   logged as `shared-ci rerun repo=… pr=… incident=#…` and audited as
   `shared-ci-rerun`.

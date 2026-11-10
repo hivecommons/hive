@@ -38,8 +38,8 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 | Operation (`op`) | Entry point | Agent script | Audit action on success | Audited? | Typed `repo` / `target`? |
 | --- | --- | --- | --- | :---: | :---: |
 | `open_pr` | `pr_request_watcher.go` (`/var/run/hive-metrics/pr-requests`) | `hive-open-pr` | `agent_pr_created` | yes | yes / PR number |
-| `create_issue` | `issue_request_watcher.go` kind `issue` (`.../issue-requests`) | `hive-open-issue` | `agent_issue_created` (or `agent_issue_rejected_duplicate` / `agent_issue_prior_art_refused`) | yes | yes / issue number |
-| `comment` | `issue_request_watcher.go` kind `comment` | `hive-open-issue comment` | `agent_comment_created` | yes | yes / issue or PR number |
+| `create_issue` | `issue_request_watcher.go` kind `issue` (`.../issue-requests`) | `hive-open-issue` | `agent_issue_created` (or `agent_issue_rejected_duplicate` / `agent_issue_prior_art_refused`). With `--claim` the create is followed by a `claim` of the new issue, gated separately on `claim` (lane allowlist, `refuseWrite`), audited as `agent_issue_claimed`, and removing `help wanted`; the create stands when the claim is refused and the result reports `claim_error` | yes | yes / issue number |
+| `comment` | `issue_request_watcher.go` kind `comment` | `hive-open-issue comment` | `agent_comment_created`; a comment that defers an open PR is also audited as `agent_pr_deferred` with the PR head, successors and reason (no extra write) | yes | yes / issue or PR number |
 | `claim` | `issue_request_watcher.go` kind `claim` | `hive-open-issue claim` | `agent_issue_claimed` (adds `hive/claimed-by-<agent>` + `hive/in-progress` and one timestamped `hive:claim` marker comment; the pr-request watcher and enumeration sweep remove `hive/in-progress`) | yes | yes / issue number |
 | `close_issue` | `issue_request_watcher.go` kind `close` | `hive-open-issue close` | `agent_issue_closed` (`pr_closed` when the number is a PR) | yes | yes / issue or PR number |
 | `label` | `issue_request_watcher.go` kind `label` (`.../issue-requests`) | `hive-open-issue label` (also reached by `gh issue edit --add-label`/`--remove-label` and `gh pr edit --add-label`/`--remove-label`, which the `gh` wrapper translates into this relay) | `agent_label_applied` | yes | yes / issue or PR number |
@@ -51,7 +51,11 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 
 Side effects performed on the same path are covered by the parent operation's
 allowlist entry. For example, `open_pr` can also apply the `hold` label, post
-the level-hold notice, and re-author the branch as a signed commit.
+the level-hold notice, and re-author the branch as a signed commit. The one
+exception is `hive-open-issue --claim`: the claim it performs after the create
+is a distinct `claim` write, not a side effect of `create_issue`, so a lane
+allowlisted for `create_issue` alone gets the issue created and `claim_error`
+set (hivecommons/hive#17299).
 
 ### `review` is COMMENT-only on contributor pull requests
 
@@ -156,7 +160,7 @@ writes no entry.
 | Attribution trailer reconcile | `attribution.go` (`ReconcilePRAttribution`) | yes (`pr_attribution_reconciled`) | yes |
 | Task-list sweep closes | `task_list_sweep.go` | yes (`task-list-sweep-closed`) | yes |
 | Supersession sweep (notice, `hive/superseded` close, own-PR update-branch + body `Closes`→`Refs` rewrite, `needs-human` + `Parked` fact on escalation) | `pr_supersession_sweep.go`, `pr_supersession_autoclose.go`, `pr_supersession_resolve.go` | yes (`supersession-sweep-*`) | yes |
-| Shared-CI rerun (`rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment) | `shared_ci_rerun.go` | yes (`shared-ci-rerun`) | yes |
+| Shared-CI rerun (`rerun-failed-jobs`, or `rerun` for a `cancelled` run; `hive-shared-ci-rerun-<n>` + `hive-shared-ci-lifted-<n>` comment) | `shared_ci_rerun.go` | yes (`shared-ci-rerun`) | yes |
 | Transient-CI rerun (`rerun-failed-jobs` on a hive PR whose failing runs carry `hive-ci-transient`, once per head, no comment) | `transient_ci_rerun.go` | yes (`transient-ci-rerun`) | yes |
 | Open-PR dispatch guard (`has-open-pr` label on a refused issue) and duplicate-fix sweep (one `hive:duplicate-fix` comment; `hive/superseded` close of the later hive PR, or `needs-human` + `Parked` fact on escalation) | `open_pr_links.go`, `pr_duplicate_fix_sweep.go` | yes (`duplicate-fix-*`) | yes |
 | Duplicate-PR sweep suggestions | `duplicate_sweep.go` | yes (`duplicate-sweep-suggested`) | yes (target = surviving PR) |

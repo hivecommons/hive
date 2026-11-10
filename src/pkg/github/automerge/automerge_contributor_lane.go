@@ -481,7 +481,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			}
 			result.Candidates++
 			c.sweepClock.evaluating(displayRepo, number)
-			event, reason, err := c.trySweepContributorLanePR(withMergeTrainCandidateHold(mergeDecisionPriority(ctx), c.mergeTrainCandidateReason(train, number)), displayRepo, owner, repoName, number, policy)
+			event, reason, err := c.trySweepContributorLanePR(c.mergeTrainEvalContext(mergeDecisionPriority(ctx), train, number), displayRepo, owner, repoName, number, policy)
 			c.sweepClock.evaluated()
 			if err == nil {
 				c.noteMergeTrainOutcome(stageLaneContributor, owner, repoName, number, pr.GetHead().GetSHA(), reason)

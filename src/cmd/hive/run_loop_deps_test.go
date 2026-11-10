@@ -170,6 +170,99 @@ func TestRunLoopWithRunsFirstCycleThenTicks(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#17467: a hot-reload delivered while a governor tick holds
+// cfgReloadMu must not wait for the tick and must be applied before that
+// tick's persist, so the persist saves the reloaded config (not the one the
+// tick started from) and the governor state is not deferred a tick. The
+// shutdown persist also saves the reloaded config.
+func TestRunLoopWithAppliesMidCycleReloadWithoutClobbering(t *testing.T) {
+	b, log, cancel := newLoopBoot(t, 60, 0)
+	b.reloadApply = func(newCfg *config.Config) (int, int) {
+		*b.cfg = *newCfg
+		return 0, 0
+	}
+	gov := newFakeTicker()
+	h := &loopHarness{startupOK: true, pending: []*fakeTicker{gov}, persisted: make(chan struct{}, 8)}
+	deps := h.deps()
+
+	var persistedRepos [][]string
+	basePersist := deps.persist
+	deps.persist = func(b *boot) {
+		persistedRepos = append(persistedRepos, append([]string(nil), b.cfg.Project.Repos...))
+		basePersist(b)
+	}
+	baseEval := deps.runEval
+	deps.runEval = func(b *boot, restarted []string, source evalCycleSource) {
+		baseEval(b, restarted, source)
+		if len(h.evals) != 2 {
+			return
+		}
+		// The watcher fires on its own goroutine while this tick holds
+		// cfgReloadMu; it must return without waiting for the tick.
+		newCfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"alpha": {Enabled: true}}}}
+		newCfg.Governor.EvalIntervalS = 60
+		newCfg.Project.Repos = []string{"reloaded"}
+		submitted := make(chan struct{})
+		go func() {
+			b.submitConfigReload(newCfg)
+			close(submitted)
+		}()
+		select {
+		case <-submitted:
+		case <-time.After(5 * time.Second):
+			t.Error("config reload blocked behind the governor tick")
+		}
+		if sameStringSlice(b.cfg.Project.Repos, []string{"reloaded"}) {
+			t.Error("reload mutated cfg while the eval cycle was running")
+		}
+	}
+
+	done := runLoopAsync(b, deps)
+	<-h.persisted // startup cycle
+	gov.fire()    // reload lands mid-tick and is applied before its persist
+	<-h.persisted
+	cancel()
+	waitDone(t, done)
+
+	if !sameStringSlice(b.cfg.Project.Repos, []string{"reloaded"}) {
+		t.Fatalf("repos = %v, want the reloaded config applied", b.cfg.Project.Repos)
+	}
+	// startup cycle, the tick the reload landed in, shutdown.
+	if len(persistedRepos) != 3 || len(persistedRepos[0]) != 0 ||
+		!sameStringSlice(persistedRepos[1], []string{"reloaded"}) || !sameStringSlice(persistedRepos[2], []string{"reloaded"}) {
+		t.Fatalf("persisted repos per save = %v, want [[] [reloaded] [reloaded]]", persistedRepos)
+	}
+	if !strings.Contains(log.String(), "config reload deferred") {
+		t.Fatalf("deferred reload not logged:\n%s", log.String())
+	}
+}
+
+// hivecommons/hive#17467: the shutdown persist takes cfgReloadMu, so it cannot
+// save while a reload is being applied.
+func TestRunLoopWithShutdownPersistTakesConfigLock(t *testing.T) {
+	b, _, cancel := newLoopBoot(t, 60, 0)
+	gov := newFakeTicker()
+	h := &loopHarness{startupOK: true, pending: []*fakeTicker{gov}, persisted: make(chan struct{}, 8)}
+	done := runLoopAsync(b, h.deps())
+	<-h.persisted // startup cycle
+
+	b.lockCfg()
+	cancel()
+	select {
+	case <-h.persisted:
+		b.unlockCfg()
+		t.Fatal("shutdown persist ran while cfgReloadMu was held")
+	case <-time.After(100 * time.Millisecond):
+	}
+	b.unlockCfg()
+	select {
+	case <-h.persisted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown persist did not run after cfgReloadMu was released")
+	}
+	waitDone(t, done)
+}
+
 // staticFleet is a watchdog.Fleet with no agents, so Tick is a no-op and the
 // test only exercises runLoop's mode re-resolution.
 type staticFleet struct{}

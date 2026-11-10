@@ -21,6 +21,10 @@
 # upstream-download-5xx (2026-10-07, run 37638156130): a tool download from
 # github.com releases (curl -f in "Install just") got an HTTP 5xx - a transient
 # upstream outage. 4xx is deliberately NOT matched: a 404 is a wrong version pin.
+# 2026-11-09 (#17351, release-asset 504 outage) added two shapes: curl inside
+# `docker build`, where BuildKit prefixes each line with "#<step> <secs> " (run
+# 42568390991), and golangci-lint-action's "Unexpected HTTP response: 504"
+# (run 42568320263).
 #
 # Every class below was observed on the self-hosted pool on 2026-09-29; the
 # fixtures under testdata/ci-infra/ are real excerpts from those jobs.
@@ -47,7 +51,8 @@ toolcache-clobbered	step	: (npm|node|go): command not found$
 runner-lost	annotation	The runner has received a shutdown signal
 test-list-empty	step	^##\[error\]go test -list produced no test functions
 test-list-empty	silent-step	\bgo test\b.*\s-list\b
-upstream-download-5xx	step	^curl: \(22\) The requested URL returned error: 5\d\d$
+upstream-download-5xx	step	^(?:#\d+ \d+(?:\.\d+)? )?curl: \(22\) The requested URL returned error: 5\d\d$
+upstream-download-5xx	step	^##\[error\]Unexpected HTTP response: 5\d\d$
 
 # Reserved class `derived`: the job failed only to REPORT that other jobs
 # failed (v2 Tests' shard gate). Keep these rows last.

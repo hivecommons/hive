@@ -211,6 +211,12 @@ func stageTrackerDecisionNeededWith(it StageTrackerItem, verdict *review.Aggrega
 		return decisionForBlocker(it, held, bctx)
 	case it.Kind == "pr" && (it.Stage == stagelabels.NeedsDecision.Number() || slices.Contains(it.Modifiers, modNeedsDecision)):
 		return decisionForPR(it, verdict, sentinelLabel, held)
+	case it.Kind == "pr" && it.Stage == stagelabels.ReadyForHumanMerge.Number() && it.SentinelAlert && !it.SentinelNotice:
+		// The sentinel is a gate on the PR's real stage, not a stage of its
+		// own (hivecommons/hive#17327): a green, reviewed head sits in the
+		// merge queue as "held" and asks the sentinel question — Approve,
+		// give direction, or close — never "ready to merge".
+		return decisionForPR(it, verdict, sentinelLabel, held)
 	case it.Kind == "pr" && it.Stage == stagelabels.ReadyForHumanMerge.Number():
 		return decisionForHumanMerge(it, held)
 	case it.Kind == "issue" && it.Mirrored:

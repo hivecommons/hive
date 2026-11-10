@@ -1315,7 +1315,7 @@ human-authored PR → `stage/071-needs-author`, on a clanker PR →
 review or `/hive decision <text>` on a hive-authored PR's current head →
 `stage/070-fixing` with reason `human-changes-requested` and one fix kick
 carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041)),
-hold / sentinel alert → `stage/085-needs-decision`, hive-authored PR whose fix
+hold / sentinel alert → a **gate on the PR's real stage**, not a stage of its own (the column follows CI / review / merge-queue progress, the Merge queue cell reads *Held · sentinel · confirm intent* / *Held · hold*, and the lanes refuse the merge on the label itself — a parked PR never merges unattended, [#17327](https://github.com/hivecommons/hive/issues/17327)), hive-authored PR whose fix
 dispatch is refused with `fix-attempts-exhausted` → `stage/085-needs-decision`
 with reason `fixer-exhausted:<N>` and a once-per-head decision comment (re-author /
 hand to a person / close as not planned; a stale `decision-answered` cannot pull it
@@ -1494,6 +1494,23 @@ recorded trusted decision on a PR's head (the tracker's Approve, or any
 `/hive decision` on it — the downstream gates still judge the merge) is
 what lifts the gate for that PR; closing the other ends it
 ([#15810](https://github.com/hivecommons/hive/issues/15810)).
+
+Both rules judge **heads at the merge gate only**: a head the lane last saw
+green with every required verdict recorded, the readiness a train seat needs
+([#17439](https://github.com/hivecommons/hive/issues/17439)). A same-issue
+PR whose CI is still running, or whose review is outstanding, is not held:
+the lane evaluates it on its normal path, so its row reads CI running /
+review pending, never *needs a pick* or *needs decision*. Should that head
+reach the merge point it is held there instead of merging — on an undecided
+claim conflict, or behind the PR that already holds its issue — and from the
+next pass it is held at the gate like any other. Within one lane the first
+PR at the merge point takes the issue; when several are already at the gate
+the pick is the usual green-first, then earlier-opened. The pick then
+**stands** until the kept PR closes or is blocked for good (a person merges
+it, not mergeable, a terminal required-check hold, a permanent merge
+refusal): a check that goes red mid-run no longer hands the issue to the
+other PR, so two PRs never point at each other. The kept PR is remembered in
+memory per lane and issue; a restart re-plans.
 
 ### Hive-authored superseding PRs auto-merge
 

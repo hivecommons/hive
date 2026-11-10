@@ -2,6 +2,7 @@ package automerge
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -40,33 +41,82 @@ func TestMergeTrainDuplicateWinner(t *testing.T) {
 	}
 }
 
-func TestMergeTrainDuplicateHolds(t *testing.T) {
+// The one-PR-per-issue rule picks only between heads at the merge gate
+// and keeps its pick until the winner is blocked for good
+// (hivecommons/hive#17439): a head still running CI is neither picked nor
+// held — it claims the issue's turn at the merge point instead.
+func TestMergeTrainDuplicatePicks(t *testing.T) {
 	t0 := time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)
-	byIssue := map[int][]mergeTrainDuplicateCandidate{
-		15396: {{Number: 15402, CreatedAt: t0, Green: true}, {Number: 15407, CreatedAt: t0.Add(time.Hour), Green: true}},
-		15300: {{Number: 15320, CreatedAt: t0, Green: false}, {Number: 15330, CreatedAt: t0.Add(time.Hour), Green: true}},
-		15999: {{Number: 15350, CreatedAt: t0, Green: true}},
+	cand := func(n, min int, atGate bool) mergeTrainDuplicateCandidate {
+		return mergeTrainDuplicateCandidate{Number: n, CreatedAt: t0.Add(time.Duration(min) * time.Minute), Green: atGate, AtGate: atGate}
 	}
-	got := mergeTrainDuplicateHolds(byIssue)
-	want := []mergeTrainDuplicateHold{{Number: 15320, Winner: 15330, Issue: 15300}, {Number: 15407, Winner: 15402, Issue: 15396}}
-	if len(got) != len(want) {
-		t.Fatalf("holds = %+v, want %+v", got, want)
+	terminal := func(c mergeTrainDuplicateCandidate) mergeTrainDuplicateCandidate {
+		c.Terminal = true
+		return c
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("hold[%d] = %+v, want %+v", i, got[i], want[i])
-		}
+	for _, tc := range []struct {
+		name       string
+		cands      []mergeTrainDuplicateCandidate
+		remembered int
+		winner     int
+		held       []int
+		turns      []int
+	}{
+		{"both at the gate: the earlier wins, the later is held", []mergeTrainDuplicateCandidate{cand(15407, 30, true), cand(15402, 0, true)}, 0, 15402, []int{15407}, nil},
+		{"CI running on both: nobody is picked or held", []mergeTrainDuplicateCandidate{cand(15402, 0, false), cand(15407, 30, false)}, 0, 0, nil, []int{15402, 15407}},
+		{"only the later at the gate: it takes the issue, the earlier is not held", []mergeTrainDuplicateCandidate{cand(15402, 0, false), cand(15407, 30, true)}, 0, 15407, nil, []int{15402}},
+		{"remembered winner with a red check keeps the issue", []mergeTrainDuplicateCandidate{cand(15402, 0, false), cand(15407, 30, true)}, 15402, 15402, []int{15407}, nil},
+		{"remembered winner blocked for good lets it go", []mergeTrainDuplicateCandidate{terminal(cand(15402, 0, false)), cand(15407, 30, true)}, 15402, 15407, nil, []int{15402}},
+		{"remembered winner gone: re-picked at the gate", []mergeTrainDuplicateCandidate{cand(15407, 30, true), cand(15410, 60, true)}, 15402, 15407, []int{15410}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			winners, holds, turns := mergeTrainDuplicatePicks(map[int][]mergeTrainDuplicateCandidate{15396: tc.cands}, map[int]int{15396: tc.remembered})
+			if winners[15396] != tc.winner {
+				t.Fatalf("winner = #%d, want #%d", winners[15396], tc.winner)
+			}
+			var held []int
+			for _, h := range holds {
+				if h.Winner != tc.winner || h.Issue != 15396 {
+					t.Fatalf("hold %+v, want behind #%d for #15396", h, tc.winner)
+				}
+				held = append(held, h.Number)
+			}
+			if !slices.Equal(held, tc.held) {
+				t.Fatalf("held = %v, want %v", held, tc.held)
+			}
+			var turned []int
+			for n, issues := range turns {
+				if !slices.Equal(issues, []int{15396}) {
+					t.Fatalf("turn of #%d = %v", n, issues)
+				}
+				turned = append(turned, n)
+			}
+			slices.Sort(turned)
+			if !slices.Equal(turned, tc.turns) {
+				t.Fatalf("turns = %v, want %v", turned, tc.turns)
+			}
+		})
 	}
-	reason := mergeTrainDuplicateReason(want[1])
-	if reason != "merge-train:duplicate-of#15402:15396/0:0/0:" {
-		t.Fatalf("reason = %q", reason)
+
+	// A PR closing two issues is held on the first it loses and claims no
+	// turn on the other; an issue only one PR closes is no contest.
+	winners, holds, turns := mergeTrainDuplicatePicks(map[int][]mergeTrainDuplicateCandidate{
+		15300: {cand(15320, 0, true), cand(15330, 60, true)},
+		15301: {cand(15330, 60, true), cand(15340, 90, false)},
+		15999: {cand(15350, 0, true)},
+	}, nil)
+	if len(holds) != 1 || holds[0] != (mergeTrainDuplicateHold{Number: 15330, Winner: 15320, Issue: 15300}) {
+		t.Fatalf("holds = %+v", holds)
 	}
-	m, ok := prstage.ParseMergeTrain(reason)
-	if !ok || m.State != prstage.MergeTrainStateDuplicateOf || m.Front != 15402 || m.Position != 15396 {
-		t.Fatalf("parse = %+v ok=%v", m, ok)
+	if len(turns) != 1 || !slices.Equal(turns[15340], []int{15301}) {
+		t.Fatalf("turns = %v", turns)
 	}
-	if s := m.Sentence(); s != "duplicate of #15402 for issue #15396; superseded by #15402 — the merge queue carries one PR per issue; close it or let the delegate decide" {
-		t.Fatalf("sentence = %q", s)
+	if _, contested := winners[15999]; contested || winners[15301] != 15330 {
+		t.Fatalf("winners = %v", winners)
+	}
+	mt, ok := prstage.ParseMergeTrain(mergeTrainDuplicateReason(holds[0]))
+	if !ok || mt.State != prstage.MergeTrainStateDuplicateOf || mt.Front != 15320 || mt.Position != 15300 {
+		t.Fatalf("reason parsed %+v ok=%v", mt, ok)
 	}
 }
 
@@ -86,6 +136,9 @@ func TestPlanDuplicateHoldsFiltersCandidates(t *testing.T) {
 		pr(15411, "Fixes #15397", t0, "clean"),
 	}
 	plan := &mergeTrainPlan{lane: "self", displayRepo: "o/r"}
+	for _, p := range prs {
+		c.noteMergeTrainOutcome(stageLaneSelf, "o", "r", p.GetNumber(), p.GetHead().GetSHA(), "")
+	}
 	kept := c.planDuplicateHolds(context.Background(), plan, stageLaneSelf, "o", "r", "o/r", prs, func(*gh.PullRequest) string { return "" })
 	if len(kept) != 3 || kept[0].GetNumber() != 15407 {
 		t.Fatalf("kept = %v", kept)
@@ -151,5 +204,122 @@ func TestPlanMergeTrainsHoldsSameIssueDuplicate(t *testing.T) {
 	mt, ok := prstage.ParseMergeTrain(c.mergeTrainDuplicateSkip(plan, 15407))
 	if !ok || mt.State != prstage.MergeTrainStateDuplicateOf || mt.Front != 15402 || mt.Position != 15396 {
 		t.Fatalf("skip reason parsed %+v ok=%v", mt, ok)
+	}
+}
+
+// hivecommons/hive#17439: #17414 and #17415 fixed one issue and, with CI
+// at 19/64, both read "needs human decision" while the winner flipped on
+// every red check. A head short of the merge gate is not held: the lane
+// evaluates it, so its row reads CI running. The first to reach the merge
+// point keeps the issue; the other is held there and, at the gate, held
+// behind it. A red check on the winner does not flip the pick; a block no
+// re-run clears does.
+func TestPlanDuplicateHoldsJudgesOnlyHeadsAtTheGate(t *testing.T) {
+	c := &Engine{}
+	t0 := time.Date(2026, 11, 9, 17, 0, 0, 0, time.UTC)
+	early, late := claimPR(17414, "hive-app[bot]", "Fixes #17392", t0), claimPR(17415, "hive-app[bot]", "Fixes #17392", t0.Add(time.Minute))
+	prs := []*gh.PullRequest{early, late}
+	note := func(pr *gh.PullRequest, reason string) {
+		c.noteMergeTrainOutcome(stageLaneSelf, "o", "r", pr.GetNumber(), pr.GetHead().GetSHA(), reason)
+	}
+	plan := func() *mergeTrainPlan {
+		p := &mergeTrainPlan{lane: stageLaneSelf, displayRepo: "o/r", owner: "o", repo: "r"}
+		c.planDuplicateHolds(context.Background(), p, stageLaneSelf, "o", "r", "o/r", prs, func(*gh.PullRequest) string { return "" })
+		return p
+	}
+	atMergePoint := func(p *mergeTrainPlan, pr *gh.PullRequest) string {
+		return mergeTrainCandidateHold(c.mergeTrainEvalContext(context.Background(), p, pr.GetNumber()))
+	}
+
+	note(early, "required-check-failing:lint")
+	note(late, "required-check-pending:build")
+	p := plan()
+	if p.duplicates != nil || p.claimConflicts != nil {
+		t.Fatalf("held while CI runs: dup=%v conflict=%v", p.duplicates, p.claimConflicts)
+	}
+	if _, turn := p.issueTurnOf(17414); !turn {
+		t.Fatal("the red head carries no turn to the merge point")
+	}
+	if r := atMergePoint(p, late); r != "" {
+		t.Fatalf("first at the merge point held: %q", r)
+	}
+	held := atMergePoint(p, early)
+	if mt, ok := prstage.ParseMergeTrain(held); !ok || mt.State != prstage.MergeTrainStateDuplicateOf || mt.Front != 17415 || mt.Position != 17392 {
+		t.Fatalf("second at the merge point = %q", held)
+	}
+
+	note(late, prstage.ContributorLaneReasonSoaking)
+	note(early, held)
+	p = plan()
+	if h, ok := p.duplicateOf(17414); !ok || h.Winner != 17415 || h.Issue != 17392 {
+		t.Fatalf("at the gate behind the first: %+v held=%v", h, ok)
+	}
+	if _, ok := p.duplicateOf(17415); ok {
+		t.Fatal("the winner is held")
+	}
+
+	note(late, "required-check-failing:build")
+	p = plan()
+	if h, ok := p.duplicateOf(17414); !ok || h.Winner != 17415 {
+		t.Fatalf("a red check flipped the pick: %+v held=%v", h, ok)
+	}
+
+	note(late, "not-mergeable")
+	p = plan()
+	if _, ok := p.duplicateOf(17414); ok {
+		t.Fatal("a winner blocked for good still holds the issue")
+	}
+	if r := atMergePoint(p, early); r != "" {
+		t.Fatalf("the new winner is held at the merge point: %q", r)
+	}
+	if mt, ok := prstage.ParseMergeTrain(atMergePoint(p, late)); !ok || mt.State != prstage.MergeTrainStateDuplicateOf || mt.Front != 17414 {
+		t.Fatalf("the old winner at the merge point = %+v ok=%v", mt, ok)
+	}
+}
+
+// The same fix opened against two release lines says "Fixes #N" twice and
+// is not a duplicate: neither PR is held and neither is a claim conflict
+// (hivecommons/hive#17436). Two PRs on the SAME line still compete.
+func TestPlanDuplicateHoldsGroupsByBaseBranch(t *testing.T) {
+	c := &Engine{}
+	t0 := time.Date(2026, 11, 9, 17, 0, 0, 0, time.UTC)
+	pr := func(n int, base string, at time.Time) *gh.PullRequest {
+		return &gh.PullRequest{Number: gh.Int(n), Title: gh.String("t"), Body: gh.String("Fixes #17392"), CreatedAt: &gh.Timestamp{Time: at}, MergeableState: gh.String("clean"), State: gh.String("open"), Base: &gh.PullRequestBranch{Ref: gh.String(base)}, Head: &gh.PullRequestBranch{SHA: gh.String("sha")}}
+	}
+	prs := []*gh.PullRequest{
+		pr(17414, "v5", t0),
+		pr(17415, "v6", t0.Add(time.Minute)),
+		pr(17420, "v6", t0.Add(2*time.Minute)),
+	}
+	// Every head is at the merge gate, so the rule judges them now.
+	for _, p := range prs {
+		c.noteMergeTrainOutcome(stageLaneSelf, "o", "r", p.GetNumber(), p.GetHead().GetSHA(), prstage.ContributorLaneReasonSoaking)
+	}
+	plan := &mergeTrainPlan{lane: "self", displayRepo: "o/r"}
+	kept := c.planDuplicateHolds(context.Background(), plan, stageLaneSelf, "o", "r", "o/r", prs, func(*gh.PullRequest) string { return "" })
+	if len(kept) != 2 || kept[0].GetNumber() != 17414 || kept[1].GetNumber() != 17415 {
+		t.Fatalf("kept = %v", kept)
+	}
+	if _, held := plan.duplicateOf(17415); held {
+		t.Fatal("a sibling on another base branch is not a duplicate")
+	}
+	if h, held := plan.duplicateOf(17420); !held || h.Winner != 17415 {
+		t.Fatalf("same-line duplicate hold = %+v held=%v", h, held)
+	}
+	if _, held := plan.claimConflictOf(17415); held {
+		t.Fatal("a sibling on another base branch is not a claim conflict")
+	}
+
+	// A prefilter refusal on the v5 sibling leaves it an open claimant, but
+	// it still does not conflict with the v6 PR on another line.
+	plan2 := &mergeTrainPlan{}
+	c.planDuplicateHolds(context.Background(), plan2, stageLaneSelf, "o", "r", "o/r", prs[:2], func(p *gh.PullRequest) string {
+		if p.GetNumber() == 17414 {
+			return "label:hold"
+		}
+		return ""
+	})
+	if _, held := plan2.claimConflictOf(17415); held {
+		t.Fatal("cross-line claimant must not hold the candidate")
 	}
 }

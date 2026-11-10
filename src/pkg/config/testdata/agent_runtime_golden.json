@@ -194,7 +194,8 @@
         "Dwell": null,
         "ContributorNudge": {
           "Enabled": null,
-          "RenudgeInterval": ""
+          "RenudgeInterval": "",
+          "CIFailureCooldown": ""
         },
         "PresenceWindow": "",
         "ContributorGraceOnline": "",
@@ -265,7 +266,8 @@
       "ProbeIntervalS": 45,
       "Liveness": {
         "StuckOverlayAfter": "10m",
-        "ShellPromptAfter": "3m"
+        "ShellPromptAfter": "3m",
+        "LoginStreak": 0
       },
       "Restart": {
         "Backoff": [

@@ -624,3 +624,36 @@ func TestReleaseAgentClaimsDropsOnlyThatAgentsClaims(t *testing.T) {
 		t.Fatal("ReleaseComment must stamp at=")
 	}
 }
+
+// A contributor claim whose holder's PR covers the issue is kept as a PR-held
+// claim rather than dropped with the lease (hivecommons/hive#17300).
+func TestHoldForPRKeepsClaimWithPREvidence(t *testing.T) {
+	var claimed []Claim
+	l, now := newTestLedger(t, Hooks{OnClaimed: func(c Claim, _ Outcome) { claimed = append(claimed, c) }})
+	if _, err := l.Claim(Request{Repo: "o/r", Issue: 9, Holder: "karibhou", HolderID: "c-k#a", Kind: KindContributor}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l.HoldForPR("someone-else", Key("o/r", 9), "o/r", 12); ok {
+		t.Fatal("another holder must not convert the claim")
+	}
+	held, ok := l.HoldForPR("c-k#a", Key("o/r", 9), "o/r", 12)
+	if !ok || !held.PRStarted || held.PRRepo != "o/r" || held.PRNumber != 12 || held.Holder != "karibhou" || held.Kind != KindContributor {
+		t.Fatalf("HoldForPR = %+v ok=%v", held, ok)
+	}
+	if held.ExpiresAt != now.Add(DefaultMaxTTL) {
+		t.Fatalf("expires=%v want +%v", held.ExpiresAt, DefaultMaxTTL)
+	}
+	got, ok := l.Lookup("o/r", 9)
+	if !ok || got.HolderID != "c-k#a" || got.PRNumber != 12 || !got.PRStarted {
+		t.Fatalf("ledger claim = %+v ok=%v", got, ok)
+	}
+	if len(claimed) != 2 || !claimed[1].PRStarted {
+		t.Fatalf("OnClaimed must fire once for the conversion: %+v", claimed)
+	}
+	if _, ok := l.HoldForPR("c-k#a", Key("o/r", 9), "o/r", 12); !ok || len(claimed) != 2 {
+		t.Fatalf("a renewal of the same PR hold must not re-fire OnClaimed: %d", len(claimed))
+	}
+	if _, ok := l.HoldForPR("c-k#a", Key("o/r", 10), "o/r", 12); ok {
+		t.Fatal("no claim on the key must report false")
+	}
+}

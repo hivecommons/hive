@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -39,15 +41,42 @@ type Log struct {
 
 // Open returns the Log for runDir, resuming the seq counter from a file
 // that already exists so a restarted runner never reuses a number.
+//
+// A run has one live writer at a time (a contained run dispatches one
+// command; a session's steps run one at a time), so a started seq with no
+// ended line on disk belongs to a writer that is gone and will never end
+// it. Open appends an unfinished ended line with OrphanReason for each,
+// so a crash leaves a terminal record instead of one that pins every
+// follower's NextSeq behind it for the rest of the run.
 func Open(runDir string, pol Policy) (*Log, error) {
 	l := &Log{path: filepath.Join(runDir, FileName), pol: pol.defaults(), next: 1, open: map[int64]time.Time{}}
 	lines, err := readLines(l.path)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
+	// orphans folds the lines the way Read does: a started line opens its
+	// seq, a later ended line closes it.
+	orphans := map[int64]time.Time{}
 	for _, ln := range lines {
 		if ln.Seq >= l.next {
 			l.next = ln.Seq + 1
+		}
+		switch ln.Event {
+		case EventStarted:
+			orphans[ln.Seq] = ln.At
+		case EventEnded:
+			delete(orphans, ln.Seq)
+		}
+	}
+	if len(orphans) == 0 {
+		return l, nil
+	}
+	now := l.pol.Now()
+	reason := l.pol.Scrub(OrphanReason)
+	for _, seq := range slices.Sorted(maps.Keys(orphans)) {
+		ms := now.Sub(orphans[seq]).Milliseconds()
+		if err := l.append(line{Seq: seq, Event: EventEnded, At: now, DurationMs: &ms, Status: api.CommandUnfinished, Reason: reason}); err != nil {
+			return nil, err
 		}
 	}
 	return l, nil
@@ -118,7 +147,13 @@ func (l *Log) append(ln line) error {
 
 // Read folds runDir's log into records after sinceSeq (exclusive), at
 // most limit of them (DefaultPageSize when zero, MaxPageSize at most).
-// A started line with no ended line is an unfinished record.
+// A started line with no ended line is an unfinished record still in
+// flight. NextSeq never advances past an in-flight record, so a follower
+// re-receives it until its ended line lands (idempotent by seq); a record
+// with an ended line is terminal whatever its status, an unfinished one
+// whose exit was never known included. More is false on a page whose
+// NextSeq could not move past sinceSeq, so a pager never re-requests the
+// same page in a loop.
 func Read(runDir string, sinceSeq int64, limit int) (api.CommandPage, error) {
 	lines, err := readLines(filepath.Join(runDir, FileName))
 	if err != nil {
@@ -132,9 +167,6 @@ func Read(runDir string, sinceSeq int64, limit int) (api.CommandPage, error) {
 	}
 	bySeq := map[int64]*api.CommandRecord{}
 	for _, ln := range lines {
-		if ln.Seq <= sinceSeq {
-			continue
-		}
 		switch ln.Event {
 		case EventStarted:
 			bySeq[ln.Seq] = &api.CommandRecord{
@@ -153,6 +185,9 @@ func Read(runDir string, sinceSeq int64, limit int) (api.CommandPage, error) {
 	}
 	all := make([]api.CommandRecord, 0, len(bySeq))
 	for _, rec := range bySeq {
+		if rec.Seq <= sinceSeq {
+			continue
+		}
 		all = append(all, *rec)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Seq < all[j].Seq })
@@ -162,7 +197,14 @@ func Read(runDir string, sinceSeq int64, limit int) (api.CommandPage, error) {
 	}
 	if n := len(page.Commands); n > 0 {
 		page.NextSeq = page.Commands[n-1].Seq
+		for _, rec := range page.Commands {
+			if rec.EndedAt == nil {
+				page.NextSeq = max(rec.Seq-1, sinceSeq)
+				break
+			}
+		}
 	}
+	page.More = page.More && page.NextSeq > sinceSeq
 	return page, nil
 }
 

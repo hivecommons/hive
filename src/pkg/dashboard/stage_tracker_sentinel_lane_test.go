@@ -30,6 +30,11 @@ func stageTrackerSentinelJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerSentinelTip"),
 		jsFunc(t, html, "stageTrackerSentinelInLane"),
 		jsFunc(t, html, "stageTrackerSentinelAsSuffix"),
+		jsConstLine(t, html, "STAGE_TRACKER_HELD_SENTINEL_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_HELD_HOLD_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_HELD_NEVER_MERGES"),
+		jsFunc(t, html, "stageTrackerHeldWord"),
+		jsFunc(t, html, "stageTrackerHeldTip"),
 		jsFunc(t, html, "stageTrackerReturnedAuthor"),
 		jsFunc(t, html, "stageTrackerToolingSuffix"),
 		jsFunc(t, html, "stageTrackerReturnedWord"),
@@ -301,6 +306,12 @@ func TestStageTrackerSentinelLaneWiring(t *testing.T) {
 		`function stageTrackerSentinelChipHtml(item)`,
 		`function stageTrackerSentinelPreface(items)`,
 		`sentinel || sentinelSuffix ? 'ham-sentinel' : ''`,
+		`heldGate ? 'ham-held' : ''`,
+		`const STAGE_TRACKER_HELD_SENTINEL_WORD = 'Held · sentinel · confirm intent';`,
+		`const STAGE_TRACKER_HELD_HOLD_WORD = 'Held · hold';`,
+		`function stageTrackerHeldWord(item)`,
+		`function stageTrackerHeldTip(item, nowMs)`,
+		`.ham-seg.active.ham-held { background: var(--amber); color: var(--surface-0); }`,
 		`.ham-badge-sentinel { color: var(--status-error);`,
 		`.ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }`,
 		`const sentinel = id.indexOf('decide:') === 0 ? stageTrackerSentinelPreface(items) : '';`,
@@ -501,6 +512,27 @@ assert.ok(whyNested.includes('Awaiting human merge · workflow files · approved
 assert.strictEqual(stageTrackerManualMergeWord({ manual_merge: true, human_merge_reason: 'breaking-change' }), 'Ready for human merge · human merge');
 const breaking = stageTrackerRowHtml(P('o/r', 403, 90, { manual_merge: true, human_merge_reason: 'breaking-change', human_merge_reason_text: 'Breaking change — owner merges' }), stages, ctx);
 assert.ok(breaking.includes('<span class="ham-detour">Ready for human merge · human merge</span>') && !breaking.includes('Awaiting human merge'), 'breaking-change 090 word: ' + breaking);
+
+// hivecommons/hive#17327: a sentinel alert or hold label is a gate on the
+// PR's real stage. A green, reviewed, flagged PR stands at 090 and its Merge
+// queue cell reads "Held · sentinel · confirm intent" (amber ham-held, never
+// red ham-sentinel, never "Queued for merge"), the tooltip carries the
+// sentinel reason and the never-merges rule, and no sentinel chip repeats it.
+assert.strictEqual(stageTrackerHeldWord(P('o/r', 1, 90, flagged)), 'Held · sentinel · confirm intent');
+assert.strictEqual(stageTrackerHeldWord(P('o/r', 1, 90, { modifiers: ['hold'], hold: { by: 'clubanderson', reason: 'wait for the release' } })), 'Held · hold');
+assert.strictEqual(stageTrackerHeldWord(P('o/r', 1, 90, { sentinel_alert: true, sentinel_notice: true })), '', 'the trusted-author notice is not a gate');
+assert.strictEqual(stageTrackerHeldWord(P('o/r', 1, 85, flagged)), '', 'only the 090 row wears the held word');
+assert.strictEqual(stageTrackerHeldWord(P('o/r', 1, 90)), '');
+assert.ok(stageTrackerSentinelInLane(P('o/r', 1, 90, flagged)), 'the held 090 word carries the alert: no chip');
+const heldSentinel = stageTrackerRowHtml(P('o/r', 17327, 90, Object.assign({ reason: 'a sentinel alert is open on this PR' }, flagged)), stages, ctx);
+assert.ok(heldSentinel.includes('<span class="ham-detour">Held · sentinel · confirm intent</span>'), 'held 090 word: ' + heldSentinel);
+assert.ok(heldSentinel.includes('ham-held') && !heldSentinel.includes('ham-sentinel"') && !heldSentinel.includes('ham-sentinel ') , 'amber held class, not the red sentinel one: ' + heldSentinel);
+assert.ok(!heldSentinel.includes('Queued for merge') && !heldSentinel.includes('Ready for human merge'), 'never queued / ready: ' + heldSentinel);
+assert.ok(heldSentinel.includes(TIP) && heldSentinel.includes('Hive never merges this head while the gate stands.'), 'tooltip carries the reason and the rule: ' + heldSentinel);
+assert.ok(!heldSentinel.includes('ham-badge-sentinel'), 'no sentinel chip beside the held word: ' + heldSentinel);
+const heldHold = stageTrackerRowHtml(P('o/r', 17328, 90, { modifiers: ['hold'], hold: { by: 'clubanderson', reason: 'wait for the release', since: '2026-11-08T09:00:00Z' }, reason: 'held by label hold' }), stages, ctx);
+assert.ok(heldHold.includes('<span class="ham-detour">Held · hold</span>') && heldHold.includes('ham-held') && !heldHold.includes('Queued for merge'), 'held-by-label 090 word: ' + heldHold);
+assert.ok(heldHold.includes('Held by @clubanderson · wait for the release'), 'hold tooltip names the holder: ' + heldHold);
 
 // Decide… preface: one line per flagged PR, nothing for clean ones.
 assert.strictEqual(stageTrackerSentinelPreface([P('o/r', 109, 85, flagged), P('o/r', 104, 85)]), '⚠ o/r#109 — ' + TIP);

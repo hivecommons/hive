@@ -137,6 +137,12 @@
     .ham-head-cols .ham-seg.ham-head-tools { align-items: flex-start; }
     .ham-head-cols .ham-seg.ham-head-tools:has(> .ham-badges:empty) { display: none; }
     .ham-head-cols .ham-badges > :is(button, a) { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    /* The short needs-human popover pill stays one line: breaking "needs
+       human decision" mid-pill grows a nested-PR row by a text line and a
+       landscape phone loses its second row (hivecommons/hive#17453). */
+    .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-needs-decision { white-space: nowrap; }
+    .ham-badge-mod.ham-mod-ask { position: relative; }
+    .ham-badge-mod .ham-mod-ico { vertical-align: text-bottom; margin-right: var(--sp-1); }
     .ham-head-cols .ham-badge { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
     .ham-head-main { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: var(--sp-3); min-width: 0; }
     .ham-head-main > .ham-badge { flex: 0 1 auto; }
@@ -372,9 +378,14 @@
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
     /* Evidence-based remediation on the PR in progress chevron: a red PR
-       nobody has picked up is bright and still; a pushed fix head is a
-       done-style step that keeps its word (stage_tracker_remediation.go). */
+       nobody has picked up is bright and still; a head the hive deferred
+       is plain amber, a decision rather than an absence (hivecommons/hive#17347);
+       a pushed fix head is a done-style step that keeps its word
+       (stage_tracker_remediation.go). */
     .ham-seg.active.ham-remediation-unassigned { background: color-mix(in srgb, var(--amber) 70%, var(--red)); }
+    .ham-seg.active.ham-remediation-deferred { background: var(--amber); }
+    /* The shared-CI incident a deferral waits on is a link in the word (hivecommons/hive#17500). */
+    .ham-seg.active.ham-remediation-deferred .ham-incident-link { color: inherit; text-decoration: underline; text-underline-offset: 0.15em; }
     .ham-seg.done.ham-fix-pushed { color: var(--green); }
 /* A done decision column that still names the blocker a person must
    clear while a covering PR drives the strip (hivecommons/docs#612). */
@@ -431,6 +442,12 @@
     .ham-seg.ham-activity-track.active.ham-stalled { animation: none; }
     .ham-seg.ham-activity-track.active.ham-stalled::before { display: none; }
     .ham-seg.ham-activity-track.ham-stalled .ham-actor-ico { margin-left: var(--sp-1); flex: 0 0 auto; }
+    /* A track that would light but is not the row's lead (Review while CI
+       runs on a freshly pushed head, hivecommons/hive#17335) stays dim —
+       the muted field, the ring alone — with a small queued note; never a
+       second amber chevron. Exactly one lit stage per row. */
+    .ham-seg.ham-activity-track.ham-track-queued { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
+    .ham-seg.ham-activity-track .ham-track-note { margin-left: var(--sp-1); font-size: var(--fs-2xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* The CI / Review glyph is a ring of steps (checks / perspectives,
        hivecommons/hive#16599): filled clockwise from twelve — done in the
        track's colour, failed red, the rest the muted track. While the
@@ -459,6 +476,14 @@
     .ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse 1.6s ease-in-out infinite; }
     .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }
     .ham-seg.active.ham-open-hold { background: var(--yellow); color: var(--surface-0); }
+    /* A 090 row a sentinel alert or hold label gates (hivecommons/hive#17327):
+       the Merge queue cell wears the pill amber — held, not queued, not red. */
+    .ham-seg.active.ham-held { background: var(--amber); color: var(--surface-0); }
+    .ham-seg.active.ham-held .ham-detour::before { content: '⏸'; margin-right: var(--sp-1); }
+    /* A 085 PR a person acts on lights its real stage — the CI / Review
+       track — and that track wears an amber marker; the gate itself is the
+       needs-human pill beside the row (hivecommons/hive#17453). */
+    .ham-seg.ham-activity-track.active.ham-human-gated { outline: var(--focus-ring-width) solid var(--amber); outline-offset: calc(-1 * var(--focus-ring-width)); }
     .ham-seg.active.ham-open-hold .ham-seg-t::before { content: '⏸'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-blocked { background: var(--yellow); color: var(--surface-0); }
     .ham-seg.active.ham-open-blocked .ham-seg-t::before { content: '⛔'; margin-right: var(--sp-1); }
@@ -473,6 +498,14 @@
     .ham-seg.active.ham-open-advisory { background: var(--surface-2); color: var(--muted); }
     .ham-seg.active.ham-open-advisory .ham-seg-t::before { content: 'ⓘ'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
+    /* While a CI / Review track runs, the stage chevron is settled-current:
+       the neutral still location, icon only (rule 2, hivecommons/hive#16643).
+       That fill wins over the Open word tints above (draft slate, blocked
+       yellow, New blue, stale amber-red) and the held-gate amber, which are
+       declared later at equal specificity and would otherwise paint a second
+       coloured chevron beside the running track (hivecommons/hive#17461:
+       a draft PR with no stage read as slate Open + amber CI). */
+    .ham-seg.ham-seg.active.ham-settled-current { background: var(--surface-3); color: var(--text); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
     .ham-active-ico { display: none; }
@@ -623,6 +656,22 @@
     .ham-also-closes { color: var(--muted); }
     .ham-also-closes a { color: inherit; text-decoration: none; }
     .ham-also-closes a:hover { color: var(--text); text-decoration: underline; }
+    /* Shared-PR group (one PR closing several listed issues): the secondary
+       issues a PR also closes sit right under their primary, indented, on
+       a rail that runs from the primary's pill to the last child's elbow.
+       The primary's "also closes" pill carries the fold caret. Tokens only. */
+    .ham-row.ham-shared-child { position: relative; padding-left: var(--sp-6); }
+    .ham-row.ham-shared-child::before { content: ''; position: absolute; left: var(--sp-3); top: 0; bottom: 0; border-left: var(--line-width) solid var(--line-strong); pointer-events: none; }
+    .ham-row.ham-shared-child.ham-shared-last::before { bottom: 50%; }
+    .ham-row.ham-shared-child::after { content: ''; position: absolute; left: var(--sp-3); top: 50%; width: var(--sp-3); border-top: var(--line-width) solid var(--line-strong); pointer-events: none; }
+    .ham-row.ham-shared-child + .ham-row.ham-shared-child { border-top-color: transparent; }
+    .ham-row.ham-shared-head + .ham-row.ham-shared-child { border-top-color: transparent; }
+    .ham-row.ham-shared-head { position: relative; }
+    .ham-row.ham-shared-head::before { content: ''; position: absolute; left: var(--sp-3); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--line-strong); pointer-events: none; }
+    .ham-shared-toggle { appearance: none; background: none; border: 0; padding: 0 var(--sp-1) 0 0; margin: 0; font: inherit; color: inherit; cursor: pointer; line-height: 1; vertical-align: baseline; }
+    .ham-shared-toggle:hover .ham-group-caret, .ham-shared-toggle:focus-visible .ham-group-caret { color: var(--text); }
+    .ham-shared-toggle:focus-visible { outline: var(--line-width) solid var(--line-strong); outline-offset: 1px; border-radius: var(--r-sm); }
+    .ham-shared-count { color: var(--text); }
     .ham-plan-body, .ham-plan-note { white-space: pre-wrap; }
     .ham-plan-note { color: var(--muted); font-size: var(--fs-xs); }
     .ham-seg.active .cue-acting-cap { margin-left: var(--sp-2); }
@@ -745,7 +794,13 @@
     .ham-merged-count .ham-merged-n .ham-odo-col .ham-odo-d { height: 1.5em; line-height: 1.5; }
     body.light-mode .ham-merged-count .ham-merged-n .ham-odo-col { color: var(--text); }
     body.light-mode .ham-merged-count .ham-merged-n .ham-odo { --ham-odo-track: color-mix(in srgb, var(--panel) 96%, black); }
-    .ham-merged-pop { position: absolute; right: var(--sp-2); top: calc(var(--full-size) - var(--sp-1)); min-width: 22rem; max-width: 34rem; max-height: 60vh; overflow: auto; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-radius: var(--r-lg); background: var(--panel-strong); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); color: var(--text); z-index: var(--z-cue-flight); }
+    /* Recent merges: a 52rem card (was capped at 34rem) so PR titles read
+       instead of ellipsising at ~40 chars; the title column is the only
+       flexible one, so the width goes to it. Right-anchored under the pill
+       it grows leftward, capped to the viewport and to the sticky bar it
+       sits in (which clips its overflow). The phone tier is a separate
+       .ham-pop-sheet dialog and is not affected. */
+    .ham-merged-pop { position: absolute; right: var(--sp-2); top: calc(var(--full-size) - var(--sp-1)); width: 52rem; max-width: min(calc(100vw - 2rem), calc(100% - 2 * var(--sp-2))); max-height: 60vh; overflow: auto; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-radius: var(--r-lg); background: var(--panel-strong); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); color: var(--text); z-index: var(--z-cue-flight); }
     .ham-merged-pop-head { display: flex; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-3); font-weight: var(--fw-semibold); }
     .ham-merged-pop-head .ham-merged-pop-sum { color: var(--text-faint); font-weight: var(--fw-medium); }
     .ham-merged-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
@@ -754,6 +809,7 @@
     .ham-merged-list .ham-merged-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ham-merged-list .ham-merged-meta { color: var(--text-faint); white-space: nowrap; font-size: var(--fs-xs); }
     .ham-merged-pop .ham-empty { padding: var(--sp-2) 0; }
+    .ham-queue-pop { width: auto; min-width: 22rem; max-width: 34rem; }
     .ham-merged-pop-foot { margin-top: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); }
     .ham-merged-list .ham-merged-repo { display: none; }
     @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
@@ -961,6 +1017,9 @@
       .ham-head-cols .ham-strip > .ham-seg { grid-column: 1 / -1; grid-row: auto; padding: 0; }
       .ham-head-cols .ham-head-lead:empty { display: none; }
       .ham-head-cols > .ham-since { display: none; }
+      /* Stacked head: the ask pill is its person icon alone (#17453). */
+      .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-ask > .ham-mod-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-ask > .ham-mod-ico { margin-right: 0; }
       .ham-row .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-row .ham-seg.cap { flex-basis: 2em; }
       .ham-since { width: 3em; }
@@ -1189,6 +1248,11 @@
         box-sizing: border-box; min-height: var(--tap-target); min-width: var(--tap-target);
       }
       #activity-monitor-section .ham-notes-btn { font-size: var(--tap-glyph); padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
+      /* A needs-human / hold pill that opens the decision popover keeps its
+         one-line box so a card row stays under the #17161 height budget; the
+         hit area is padded out to the tap target like .ham-pill (#17453). */
+      #activity-monitor-section .ham-badge-mod.ham-decision-trigger { position: relative; }
+      #activity-monitor-section .ham-badge-mod.ham-decision-trigger::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) calc((100% - var(--tap-target)) / 2); }
       /* A card keeps its two-line head and its density (#17161): the 🗒
          shows on a phone only once the item has notes; the row's ⋯ menu
          carries "Maintainer notes…" for the rest. */

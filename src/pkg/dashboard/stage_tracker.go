@@ -333,6 +333,10 @@ type StageTrackerItem struct {
 	// Remediation is the pickup evidence behind a red PR's code activity
 	// (stage_tracker_remediation.go); absent while nobody has picked it up.
 	Remediation *StageTrackerRemediation `json:"remediation,omitempty"`
+	// Deferral is the hive's standing deferral of the current head
+	// (stage_tracker_deferral.go); set only while the PR in progress
+	// chevron reads "Deferred".
+	Deferral *StageTrackerDeferral `json:"deferral,omitempty"`
 	// DisplayColumn is presentation only; native stages, filters and merge gates remain unchanged.
 	DisplayColumn int                           `json:"display_column,omitempty"`
 	Preparation   *StageTrackerPreparation      `json:"preparation,omitempty"`

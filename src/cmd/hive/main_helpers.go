@@ -431,6 +431,19 @@ func maintainHeldPRMergeability(
 					"repo", repo, "pr", pr.Number, "expected_head", head, "error", err)
 				continue
 			}
+			if github.IsBaseRefreshAwaitingAdmission(err) {
+				if state == "dirty" {
+					// The preparation front does not tell the human about
+					// held PRs; a dirty held PR is a real conflict and still
+					// gets its notice.
+					stopHeldPRUpdate(ctx, writer, store, repo, pr, holdguard.UpdateStopConflict, err, logger)
+					continue
+				}
+				// Policy deferral, not a failure: it recurs every tick by design.
+				logger.Debug("hold guard: held PR base refresh deferred to the automerge preparation front",
+					"repo", repo, "pr", pr.Number, "mergeable_state", state)
+				continue
+			}
 			switch github.ClassifyBranchUpdateError(err, pr.FromFork) {
 			case github.BranchUpdateWorkflowPermission:
 				stopHeldPRUpdate(ctx, writer, store, repo, pr, holdguard.UpdateStopWorkflowPermission, err, logger)

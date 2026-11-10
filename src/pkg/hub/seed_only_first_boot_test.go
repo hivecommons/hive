@@ -33,6 +33,15 @@ func initCommand(t *testing.T) string {
 // it echoed plus whether the seed was copied over the config path.
 func runInit(t *testing.T, files map[string]string) (string, bool) {
 	t.Helper()
+	out, copied, _ := runInitIn(t, files)
+	return out, copied
+}
+
+// runInitIn is runInit that also returns the temp root, for assertions on
+// what the command left at the config path. "copied" means the config path
+// now reads as the SEED — a symlink to the runtime config is not a copy.
+func runInitIn(t *testing.T, files map[string]string) (string, bool, string) {
+	t.Helper()
 	root := t.TempDir()
 	for rel, content := range files {
 		p := filepath.Join(root, rel)
@@ -53,10 +62,10 @@ func runInit(t *testing.T, files map[string]string) (string, bool) {
 
 	out, _ := exec.Command("sh", "-c", cmd).CombinedOutput()
 	copied := false
-	if b, err := os.ReadFile(filepath.Join(root, "etc/hive/hive.yaml")); err == nil && len(b) > 0 {
+	if b, err := os.ReadFile(filepath.Join(root, "etc/hive/hive.yaml")); err == nil && len(b) > 0 && string(b) == files["etc/hive-seed/hive.yaml"] {
 		copied = true
 	}
-	return string(out), copied
+	return string(out), copied, root
 }
 
 // TestSeedIsCopiedOnlyOnFirstBoot pins phase 3: the ConfigMap is a SEED, not a
@@ -93,6 +102,37 @@ func TestSeedIsCopiedOnlyOnFirstBoot(t *testing.T) {
 		}
 	})
 
+	// #17468: /etc/hive is an emptyDir, so a regular file there is a cache
+	// that loses every operator edit on restart. In steady state the config
+	// path must BE the persisted runtime config — a symlink — so editing the
+	// path every runbook names edits the file the next boot reads.
+	t.Run("steady state: config path links to the PVC runtime config", func(t *testing.T) {
+		files := map[string]string{"data/hive.yaml.runtime": "acmm_level: 5\n"}
+		for k, v := range seed {
+			files[k] = v
+		}
+		out, _, root := runInitIn(t, files)
+		cfgPath := filepath.Join(root, "etc/hive/hive.yaml")
+		runtimePath := filepath.Join(root, "data/hive.yaml.runtime")
+		target, err := os.Readlink(cfgPath)
+		if err != nil {
+			t.Fatalf("config path is not a symlink — edits to it are lost on restart (#17468): %v\n%s", err, out)
+		}
+		if target != runtimePath {
+			t.Fatalf("config path links to %q, want the runtime config %q", target, runtimePath)
+		}
+		if !strings.Contains(out, "config-path-linked-to-runtime") {
+			t.Errorf("link not reported: %s", out)
+		}
+		// An edit through the config path lands in the persisted file.
+		if err := os.WriteFile(cfgPath, []byte("acmm_level: 4\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := os.ReadFile(runtimePath); string(b) != "acmm_level: 4\n" {
+			t.Fatalf("edit via the config path did not reach the runtime config; runtime = %q", b)
+		}
+	})
+
 	// THE MIGRATION CASE. ~16 of 50 live spokes still carry only the legacy
 	// hive.yaml.bak. Keying first-boot detection on the new name alone would
 	// treat every one of them as new and re-seed a hive that has real config.
@@ -107,6 +147,11 @@ func TestSeedIsCopiedOnlyOnFirstBoot(t *testing.T) {
 		}
 		if !strings.Contains(out, "legacy-runtime-config-exists-for-recovery") {
 			t.Errorf("legacy runtime config not reported: %s", out)
+		}
+		// The legacy file is never written (config.RuntimeConfigFileLegacy);
+		// linking it would make every Config.Save write it.
+		if strings.Contains(out, "config-path-linked-to-runtime") {
+			t.Errorf("config path was linked on a legacy-only spoke: %s", out)
 		}
 	})
 
