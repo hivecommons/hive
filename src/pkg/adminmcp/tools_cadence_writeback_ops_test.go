@@ -289,10 +289,15 @@ func TestWritebackKindPolicyOpKeepsUntouchedKinds(t *testing.T) {
 		t.Fatalf("request = %s %s %s, want PUT /api/config/governor/features %s", preview.Request.Method, preview.Request.Path, bodyJSON(t, preview.Request.Body), want)
 	}
 	effects := strings.Join(preview.Effects, "\n")
-	for _, s := range []string{"writeback.kinds.base_refresh: no override → {unlabeled_min_level: 6}", "L6 with the opt-in label → L6, any item", "(stage_label) are sent unchanged", "would drop unlabeled_min_level and own_only from base_refresh"} {
+	for _, s := range []string{"writeback.kinds.base_refresh: no override → {unlabeled_min_level: 6}", "L6 with the opt-in label → L6, any item", "(stage_label) are sent unchanged"} {
 		if !strings.Contains(effects, s) {
 			t.Errorf("effects lack %q:\n%s", s, effects)
 		}
+	}
+	// Settings → Features' kind table now edits and keeps all four fields,
+	// so the preview no longer warns that a dashboard save would drop them.
+	if strings.Contains(effects, "would drop") {
+		t.Errorf("effects still warn that the dashboard drops fields:\n%s", effects)
 	}
 	if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); err != nil {
 		t.Fatalf("confirm: %v", err)

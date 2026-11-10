@@ -140,11 +140,17 @@
         const k = String(row.kind || ''); const p = row.policy || {}; const ov = overrides[k] || {};
         const scope = p.own_only ? 'hive-authored only' : (p.require_label ? 'opt-in label' : 'any item');
         const unl = p.unlabeled_min_level ? ` · without label L${esc(String(p.unlabeled_min_level))}` : '';
-        return `<tr data-wb-kind="${esc(k)}">
+        const unlOptions = [0, 1, 2, 3, 4, 5, 6].map(n => `<option value="${n}" ${ov.unlabeled_min_level === n ? 'selected' : ''}>${n ? 'L' + n : '0 (off)'}</option>`).join('');
+        // data-wb-override carries the override this row was rendered from,
+        // so markDirtyWritebackKinds keeps any field whose control is absent
+        // or disabled here (an own-only kind's level and label) on save.
+        return `<tr data-wb-kind="${esc(k)}" data-wb-override="${esc(JSON.stringify(ov))}">
           <td><code>${esc(k)}</code></td>
           <td>${esc(scope)}${unl}</td>
           <td><input type="number" min="0" max="6" step="1" class="wb-kind-level" data-setting-key="writeback.kinds.<key>.min_level" value="${esc(ov.min_level != null ? String(ov.min_level) : '')}" placeholder="${esc(String(p.min_level || 0))}" ${p.own_only ? 'disabled title="hive-authored items only; the ACMM floor is the hold-gate level"' : ''} data-change-action="markDirtyWritebackKinds" aria-label="${esc(k)} minimum level"></td>
           <td>${p.own_only ? '—' : `<select class="wb-kind-label" data-setting-key="writeback.kinds.<key>.require_label" data-change-action="markDirtyWritebackKinds" aria-label="${esc(k)} requires opt-in label"><option value="" ${ov.require_label == null ? 'selected' : ''}>default (${p.require_label ? 'yes' : 'no'})</option><option value="true" ${ov.require_label === true ? 'selected' : ''}>yes</option><option value="false" ${ov.require_label === false ? 'selected' : ''}>no</option></select>`}</td>
+          <td>${p.own_only ? '—' : `<select class="wb-kind-unlabeled" data-setting-key="writeback.kinds.<key>.unlabeled_min_level" data-change-action="markDirtyWritebackKinds" aria-label="${esc(k)} level without the opt-in label"><option value="" ${ov.unlabeled_min_level == null ? 'selected' : ''}>default (${p.unlabeled_min_level ? 'L' + esc(String(p.unlabeled_min_level)) : 'off'})</option>${unlOptions}</select>`}</td>
+          <td><select class="wb-kind-own" data-setting-key="writeback.kinds.<key>.own_only" data-change-action="markDirtyWritebackKinds" aria-label="${esc(k)} writes on hive-authored items only"><option value="" ${ov.own_only == null ? 'selected' : ''}>default (${p.own_only ? 'yes' : 'no'})</option><option value="true" ${ov.own_only === true ? 'selected' : ''}>yes</option><option value="false" ${ov.own_only === false ? 'selected' : ''}>no</option></select></td>
         </tr>`;
       }).join('');
       return `
@@ -157,8 +163,8 @@
           <div class="config-toggle" data-setting-key="writeback.unsolicited.require_labels"><div class="config-toggle-switch ${f.writebackRequireLabels !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="writebackRequireLabels"></div><span class="config-toggle-label">Only PRs carrying the review opt-in label ${settingHelpMark('settings', 'features', 'Write-back requires opt-in label', `When on (default), unsolicited write-backs on a foreign PR also need the review opt-in label (${esc(optIn)}, from review.require_labels). Turning it off lets each kind's level floor alone decide.`)}</span></div>
           <div class="config-toggle" data-setting-key="writeback.unsolicited.backfill"><div class="config-toggle-switch ${f.writebackBackfill ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="writebackBackfill"></div><span class="config-toggle-label">Backfill pre-existing items ${settingHelpMark('settings', 'features', 'Write-back backfill', `Off (default): when hive first sees a repo, or first gains write access to one, PRs and issues created before that moment are never written to unsolicited. On: process them like new items.`)}</span></div>
           <div class="config-field"><label>Per-repo mode ${yamlHint('writeback.per_repo')} ${settingHelpMark('settings', 'features', 'Write-back per-repo mode', `One <code>owner/name=mode</code> per line. Modes: ${esc(modes.join(', '))}. <code>off</code> writes nothing unsolicited there; <code>issues-only</code> allows only hive-filed issues (e.g. a repo listed so the deps agent can file regressions); <code>labels-only</code> allows labels but no comments; <code>full</code> skips the level and label gates for that repo. Empty lines clear.`)}</label><textarea rows="3" spellcheck="false" data-setting-key="writeback.per_repo.<key>.mode" placeholder="torch-spyre/torch-spyre=issues-only" data-change-action="markDirtyWritebackPerRepo" data-arg-types="v">${esc(perRepoText)}</textarea></div>
-          <details class="config-field"><summary>Per-kind matrix ${yamlHint('writeback.kinds.<kind>.{min_level,require_label}')} ${settingHelpMark('settings', 'features', 'Write-back per-kind matrix', `What hive will say on GitHub at each ACMM level. Each kind has a minimum level and whether the opt-in label is required; leave a cell empty to keep the default shown as placeholder.`)}</summary>
-            <table class="qa-table" id="wb-kind-table"><thead><tr><th>Kind</th><th>Scope</th><th>Min level</th><th>Opt-in label</th></tr></thead><tbody>${rows}</tbody></table>
+          <details class="config-field"><summary>Per-kind matrix ${yamlHint('writeback.kinds.<kind>.{min_level,require_label,unlabeled_min_level,own_only}')} ${settingHelpMark('settings', 'features', 'Write-back per-kind matrix', `What hive will say on GitHub at each ACMM level. Each kind has a minimum level, whether the opt-in label is required, the level from which it also writes on items without that label, and whether it writes on hive-authored items only. Leave a cell empty or on default to keep the value shown. Saving sends every kind's override from this table; a field you did not change is kept.`)}</summary>
+            <table class="qa-table" id="wb-kind-table"><thead><tr><th>Kind</th><th>Scope</th><th>Min level</th><th>Opt-in label</th><th>Without label ${settingHelpMark('settings', 'features', 'Write-back level without the opt-in label', `<code>unlabeled_min_level</code>: from this ACMM level the kind also writes on items that do not carry the opt-in label (the sentinel's "L5 with the label, L6 without"). 0 (off) never admits an unlabelled item; default keeps the value shown. Only matters while the kind requires the label.`)}</th><th>Hive-authored only ${settingHelpMark('settings', 'features', 'Write-back hive-authored only', `<code>own_only</code>: yes means the kind writes only on PRs and issues hive opened, never on anyone else's at any level, and the level and label cells no longer apply. Default keeps the value shown.`)}</th></tr></thead><tbody>${rows}</tbody></table>
           </details>
           <div class="qa-schedule">
             <div class="qa-schedule-label">Suppressed write-backs (last 24h): <span id="wb-suppressed-count">…</span></div>
@@ -179,13 +185,29 @@
       markDirty('features', 'writebackPerRepo', out);
     }
 
+    // The Features endpoint replaces the whole writeback.kinds map, so every
+    // row is rebuilt here. Each starts from the override it was rendered with
+    // (data-wb-override) and only a live control changes its field: a field
+    // with no control on the row, or a disabled one, is sent unchanged.
     function markDirtyWritebackKinds() {
       const out = {};
       document.querySelectorAll('#wb-kind-table tr[data-wb-kind]').forEach(tr => {
-        const kind = tr.dataset.wbKind; const lvl = tr.querySelector('.wb-kind-level'); const lab = tr.querySelector('.wb-kind-label');
-        const ov = {};
-        if (lvl && !lvl.disabled && lvl.value !== '') ov.min_level = +lvl.value;
-        if (lab && lab.value !== '') ov.require_label = lab.value === 'true';
+        const kind = tr.dataset.wbKind;
+        let ov = {};
+        try { ov = Object.assign({}, JSON.parse(tr.dataset.wbOverride || '{}')); } catch (e) { ov = {}; }
+        const level = (el, field) => {
+          if (!el || el.disabled) return;
+          if (el.value === '') delete ov[field]; else ov[field] = +el.value;
+        };
+        const flag = (el, field) => {
+          if (!el || el.disabled) return;
+          if (el.value === '') delete ov[field]; else ov[field] = el.value === 'true';
+        };
+        level(tr.querySelector('.wb-kind-level'), 'min_level');
+        flag(tr.querySelector('.wb-kind-label'), 'require_label');
+        level(tr.querySelector('.wb-kind-unlabeled'), 'unlabeled_min_level');
+        flag(tr.querySelector('.wb-kind-own'), 'own_only');
+        Object.keys(ov).forEach(field => { if (ov[field] == null) delete ov[field]; });
         out[kind] = Object.keys(ov).length ? ov : null;
       });
       markDirty('features', 'writebackKinds', out);
