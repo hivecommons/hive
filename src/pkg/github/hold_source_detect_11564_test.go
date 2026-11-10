@@ -14,9 +14,13 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 type holdSourceFake struct {
@@ -24,8 +28,11 @@ type holdSourceFake struct {
 	mu       sync.Mutex
 	comments map[int][]map[string]any
 	events   map[int][]map[string]any
-	reads    int
-	writes   []string
+	// files is what GET /pulls/N/files answers (GET /pulls/N reports head
+	// "sha" and that many changed files); a PR not listed answers 404.
+	files  map[int][]string
+	reads  int
+	writes []string
 }
 
 func (f *holdSourceFake) handler(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +46,24 @@ func (f *holdSourceFake) handler(w http.ResponseWriter, r *http.Request) {
 	}
 	var number int
 	var kind string
+	if rest, ok := strings.CutPrefix(r.URL.Path, "/repos/acme/widget/pulls/"); ok {
+		f.reads++
+		n, _ := strconv.Atoi(strings.TrimSuffix(rest, "/files"))
+		files, listed := f.files[n]
+		switch {
+		case !listed:
+			w.WriteHeader(http.StatusNotFound)
+		case strings.HasSuffix(rest, "/files"):
+			out := []map[string]any{}
+			for _, name := range files {
+				out = append(out, map[string]any{"filename": name, "status": "modified"})
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "head": map[string]string{"sha": "sha"}, "changed_files": len(files)})
+		}
+		return
+	}
 	if _, err := fmt.Sscanf(r.URL.Path, "/repos/acme/widget/issues/%d/%s", &number, &kind); err != nil {
 		f.t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
@@ -76,7 +101,7 @@ func newHoldSourceTest(t *testing.T) (*holdSourceFake, *Client) {
 	HoldSourcesPath = filepath.Join(t.TempDir(), HoldSourcesFile)
 	t.Cleanup(func() { HoldSourcesPath = old })
 
-	f := &holdSourceFake{t: t, comments: map[int][]map[string]any{}, events: map[int][]map[string]any{}}
+	f := &holdSourceFake{t: t, comments: map[int][]map[string]any{}, events: map[int][]map[string]any{}, files: map[int][]string{}}
 	srv := httptest.NewServer(http.HandlerFunc(f.handler))
 	t.Cleanup(srv.Close)
 	t.Cleanup(func() {
@@ -169,6 +194,54 @@ func TestHoldSources_HumanMergePathNotice(t *testing.T) {
 	f.comments[15] = []map[string]any{holdSourceComment(testHiveAppBotLogin, HumanMergePathComment([]string{".github/workflows/ci.yml"}))}
 	appHeld(f, 15)
 	assertHoldSources(t, detectPRHoldSources(t, c, 15, holdSourceT0, "hold"), HoldSourceHumanMergePath)
+}
+
+// The human-merge-path notice stays on the thread for good; the source holds
+// only while the current head still touches a configured path. A dependency
+// bot that moves the workflow change to another PR leaves a head that touches
+// none, and the hold is no longer listed as a human-merge-path hold.
+func TestHoldSources_HumanMergePathNoticeFollowsTheCurrentHead(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		paths map[string][]string
+		files []string
+		want  []string
+	}{
+		{name: "head still touches the path", paths: map[string][]string{"acme/widget": {".github/workflows/**"}}, files: []string{".github/workflows/release.yml", "package.json"}, want: []string{HoldSourceHumanMergePath}},
+		{name: "head no longer touches the path", paths: map[string][]string{"acme/widget": {".github/workflows/**"}}, files: []string{"package.json", "renovate.json"}, want: []string{HoldSourceUnknown}},
+		{name: "no paths configured", files: []string{"package.json"}, want: []string{HoldSourceHumanMergePath}},
+		{name: "files unreadable", paths: map[string][]string{"acme/widget": {".github/workflows/**"}}, want: []string{HoldSourceHumanMergePath}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, c := newHoldSourceTest(t)
+			c.SetHumanMergePaths(tc.paths)
+			f.comments[40] = []map[string]any{holdSourceComment(testHiveAppBotLogin, HumanMergePathComment([]string{".github/workflows/release.yml"}))}
+			if tc.files != nil {
+				f.files[40] = tc.files
+			}
+			appHeld(f, 40)
+			assertHoldSources(t, detectPRHoldSources(t, c, 40, holdSourceT0, "hold"), tc.want...)
+		})
+	}
+}
+
+func TestOtherHoldSourcesForPR(t *testing.T) {
+	humanMergeNotice := &gh.IssueComment{Body: gh.Ptr(HumanMergePathComment([]string{".github/workflows/release.yml"})), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}}
+	reporterTrustNotice := &gh.IssueComment{Body: gh.Ptr(ReporterTrustNoticeMarker + "\nHeld for maintainer sign-off."), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}}
+
+	_, c := newHoldSourceTest(t)
+	if got := c.OtherHoldSourcesForPR("acme/widget", 41, []string{"hold"}, []*gh.IssueComment{humanMergeNotice}); len(got) != 0 {
+		t.Fatalf("human-merge-path hold alone: other sources = %v, want none", got)
+	}
+	assertHoldSources(t, c.OtherHoldSourcesForPR("acme/widget", 41, []string{"hold"}, []*gh.IssueComment{humanMergeNotice, reporterTrustNotice}), HoldSourceReporterTrust)
+	assertHoldSources(t, c.OtherHoldSourcesForPR("acme/widget", 41, []string{"hold", "on-hold"}, []*gh.IssueComment{humanMergeNotice}), HoldSourceUnknown)
+	if err := RecordHoldSource(HoldKindPR, "acme/widget", 41, HoldSourceHoldguard); err != nil {
+		t.Fatal(err)
+	}
+	assertHoldSources(t, c.OtherHoldSourcesForPR("acme/widget", 41, []string{"hold"}, []*gh.IssueComment{humanMergeNotice}), HoldSourceHoldguard)
+
+	var nilClient *Client
+	assertHoldSources(t, nilClient.OtherHoldSourcesForPR("acme/widget", 41, []string{"hold"}, nil), HoldSourceUnknown)
 }
 
 func TestHoldSources_NoticeFromNonAppAuthorIsIgnored(t *testing.T) {

@@ -7,8 +7,84 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
+
+// CurrentHumanMergePathMatches reads PR number's current head and its
+// complete changed-file list, and returns the head SHA and the changed files
+// that match patterns, with the matcher every merge lane uses
+// (intent.HumanMergePathMatches). An unreadable PR or an incomplete file list
+// is an error: the caller cannot tell that a human-merge-path hold's reason is
+// gone, and must keep treating it as present.
+func CurrentHumanMergePathMatches(ctx context.Context, client *gh.Client, owner, repo string, number int, patterns []string) (string, []string, error) {
+	if client == nil || len(patterns) == 0 {
+		return "", nil, fmt.Errorf("human-merge-path check: no client or no paths configured")
+	}
+	pr, _, err := client.PullRequests.Get(ctx, owner, repo, number)
+	if err != nil {
+		return "", nil, fmt.Errorf("fetching PR head: %w", err)
+	}
+	files, err := ListPRChangedFiles(ctx, client, owner, repo, pr)
+	if err != nil {
+		return "", nil, err
+	}
+	return pr.GetHead().GetSHA(), intent.HumanMergePathMatches(files, patterns), nil
+}
+
+// humanMergePathNoLongerApplies reports whether PR number's current head
+// provably touches none of the repo's auto_merge.human_merge_paths: paths are
+// configured, the complete changed-file list was read, and no file matches.
+// Anything it cannot establish answers false, so the hold source stays.
+func (c *Client) humanMergePathNoLongerApplies(ctx context.Context, owner, repo string, number int) bool {
+	patterns := c.humanMergePathsFor(owner + "/" + repo)
+	if len(patterns) == 0 || c.client == nil {
+		return false
+	}
+	_, matches, err := CurrentHumanMergePathMatches(ctx, c.client, owner, repo, number, patterns)
+	return err == nil && len(matches) == 0
+}
+
+// OtherHoldSourcesForPR lists what else, besides the human-merge-path
+// refusal, explains the hold on PR number of repo ("owner/name"): this hive's
+// pause label, the reporter-trust extra label, any other hold label, Hive's
+// local hold record and every Hive App hold notice among comments. It makes no
+// GitHub call. The stage-label pass lifts a hold whose human-merge-path reason
+// is gone only when this is empty, so a hold with a second reason stays. A
+// nil client answers unknown.
+func (c *Client) OtherHoldSourcesForPR(repo string, number int, labels []string, comments []*gh.IssueComment) []string {
+	if c == nil {
+		return []string{HoldSourceUnknown}
+	}
+	var rest []string
+	for _, label := range labels {
+		if !strings.EqualFold(strings.TrimSpace(label), HumanMergePathHoldLabel) {
+			rest = append(rest, label)
+		}
+	}
+	set := map[string]bool{}
+	class := c.classifyHoldLabels(rest)
+	if class.paused {
+		set[HoldSourceDashboardPause] = true
+	}
+	if class.reporterTrust {
+		set[HoldSourceReporterTrust] = true
+	}
+	if class.otherHeld {
+		set[HoldSourceUnknown] = true
+	}
+	holdSourcesMu.Lock()
+	ledger := readHoldSourceLedgerLocked(HoldSourcesPath)
+	holdSourcesMu.Unlock()
+	for src := range ledger.Applied[holdSourceKey(HoldKindPR, repo, number)] {
+		set[src] = true
+	}
+	for src := range c.holdNoticeSources(comments) {
+		set[src] = true
+	}
+	delete(set, HoldSourceHumanMergePath)
+	return orderedHoldSources(set)
+}
 
 func validHumanMergeHead(head string) bool {
 	if len(head) != 40 {
