@@ -474,7 +474,9 @@ func HeadCommitPushedAt(ctx context.Context, client *gh.Client, owner, repo, sha
 // real CI statuses/check-runs still block so the sweep does not race in-flight
 // CI, while known metadata contexts are ignored. Without that option, or when
 // RequiredKnownEmpty says the server enforces nothing, completed failures
-// still block locally (the older fail-closed positive-evidence policy).
+// still block locally (the older fail-closed positive-evidence policy),
+// except a cancelled check run, which carries no verdict when the required
+// set is unknown.
 // Later blockers are still walked after the first so that Evidence and
 // MissingRequired are complete for the caller. A non-nil error means the
 // evidence could not be gathered; Reason then names the failing API
@@ -657,6 +659,13 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 				requiredSuccess[name] = true
 			}
 		case "neutral", "skipped":
+		case "cancelled":
+			// A cancelled run (e.g. an advisory job that hit its timeout)
+			// carries no verdict of its own, like opaqueWorkflowRuns. With the
+			// required set known it is still a required failure.
+			if requiredKnown {
+				block("required-check-failing:" + name)
+			}
 		default:
 			if requiredKnown {
 				block("required-check-failing:" + name)

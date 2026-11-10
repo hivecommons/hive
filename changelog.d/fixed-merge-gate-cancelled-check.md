@@ -1,0 +1,1 @@
+- Merge requests: a cancelled check (for example the 20-minute advisory mutation job timing out) no longer blocks the merge gate when the base branch's required checks cannot be read; GitHub still enforces the real required checks at merge time. Failed and timed-out checks still block (hivecommons/hive#17598).

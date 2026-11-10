@@ -150,6 +150,25 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 			want: "pending: head pushed 1m0s ago (< min_head_age)",
 		},
 		{
+			name: "cancelled advisory check carries no verdict when the required set is unknown",
+			checks: []map[string]string{
+				{"name": "build", "status": "completed", "conclusion": "success"},
+				{"name": "mutation", "status": "completed", "conclusion": "cancelled"},
+			},
+			opts:      CommitCIOptions{RequireEvidence: true},
+			wantGreen: true,
+		},
+		{
+			name: "failure still blocks next to a cancelled check when the required set is unknown",
+			checks: []map[string]string{
+				{"name": "build", "status": "completed", "conclusion": "success"},
+				{"name": "mutation", "status": "completed", "conclusion": "cancelled"},
+				{"name": "lint", "status": "completed", "conclusion": "failure"},
+			},
+			opts: CommitCIOptions{RequireEvidence: true},
+			want: "check-failure",
+		},
+		{
 			name: "failure with known-empty required set blocks locally",
 			checks: []map[string]string{
 				{"name": "build", "status": "completed", "conclusion": "failure"},
