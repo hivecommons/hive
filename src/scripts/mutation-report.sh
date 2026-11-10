@@ -52,6 +52,10 @@ fi
 
 base_ref="${BASE_REF:?BASE_REF is required}"
 coefficient="${MUTATION_TIMEOUT_COEFFICIENT:-3}"
+# Wall-clock budget for all gremlins runs. Stays under the job's
+# timeout-minutes (20) minus checkout/install, because GitHub reports a
+# timeout-minutes kill as a `cancelled` check-run and the report is lost (#17605).
+budget="${MUTATION_BUDGET_SECONDS:-900}"
 mkdir -p "$out_dir"
 out_abs=$(cd "$out_dir" && pwd)
 
@@ -95,14 +99,30 @@ pkgs="${roots%$'\n'}"
 # --diff) the whole package is mutated and the job times out (#17463). Coverage
 # chdirs to the module root, so the output path must be absolute.
 i=0
+skipped=""
+cut_off=""
+start=$SECONDS
 while IFS= read -r pkg; do
   [ -n "$pkg" ] || continue
   i=$((i + 1))
+  remaining=$((budget - (SECONDS - start)))
+  if [ "$remaining" -le 0 ]; then
+    echo "Time budget (${budget}s) exhausted; skipping $pkg"
+    skipped+="${skipped:+, }\`$pkg\`"
+    continue
+  fi
   printf '%s\n' "$pkg" > "$out_dir/pkg-$i.dir"
   echo "::group::gremlins unleash ./$pkg --diff origin/${base_ref}"
   (cd "src/$pkg" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.relative GIT_CONFIG_VALUE_0=true \
-    gremlins unleash --timeout-coefficient "$coefficient" --diff "origin/${base_ref}" \
-    --output "$out_abs/pkg-$i.json") || echo "gremlins exited non-zero for $pkg (advisory)"
+    timeout "$remaining" gremlins unleash --timeout-coefficient "$coefficient" --diff "origin/${base_ref}" \
+    --output "$out_abs/pkg-$i.json")
+  rc=$?
+  if [ "$rc" -eq 124 ]; then
+    echo "gremlins hit the time budget in $pkg; its report is partial (advisory)"
+    cut_off+="${cut_off:+, }\`$pkg\`"
+  elif [ "$rc" -ne 0 ]; then
+    echo "gremlins exited non-zero for $pkg (advisory)"
+  fi
   echo "::endgroup::"
 done <<< "$pkgs"
 
@@ -140,6 +160,13 @@ done < "$survivors"
     sort -t$'\t' -k1,1 -k2,2n "$filtered" | head -n 100 | awk -F'\t' '{printf "| `%s` | %s | %s |\n", $1, $2, $3}'
   else
     echo "No surviving mutants in changed files (or the run hit its time budget before reporting any)."
+  fi
+  if [ -n "$skipped$cut_off" ]; then
+    echo
+    note="_Time budget (${budget}s) exhausted:"
+    [ -z "$skipped" ] || note+=" skipped $skipped;"
+    [ -z "$cut_off" ] || note+=" $cut_off was cut off mid-run;"
+    echo "${note%;}._"
   fi
   echo
   echo "_Advisory only; this job never blocks the PR (#17349)._"
