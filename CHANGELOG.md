@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.9.0)
+
+### Added
+
+- **Admin MCP can change the issue filter and Sentinel settings.** Two new write operations, `project.issue_filter` (`require_labels`, the `hard_suppress_labels` buckets, and reporter trust: `enabled`, `trusted_associations`, `trusted_logins`, `untrusted_require_labels`) and `sentinel.settings` (`sensitive_paths`, `disabled_behaviors`, `exempt_logins`, `trusted_authors_block`), save through the same owner-only endpoints as Settings → Labels and Settings → Security. Lists are edited with `add`/`remove`/`clear`: the preview reads the current values, shows each list before and after, and sends the merged list, and `write_confirm` is refused if those settings changed since the preview. A change that admits more issues without triage, or makes Sentinel flag fewer pull requests, is disclosed as widening, and the Sentinel preview names the pull requests that would no longer be held. On a hub-managed hive the issue filter preview warns that the hub may overwrite the change. See [Admin MCP → Writes](src/docs/admin-mcp.md#writes).
+- **"Let hive decide" settings can be changed from the dashboard and admin MCP.** The new owner-only `GET`/`PUT /api/config/decisions/delegate` reads and changes `decisions.delegate`: the hive-wide switch, per-repository overrides, the LLM step (`llm.enabled`, `llm.model`) and `effect_timeout`. Settings → Features gains a *Let hive decide* block with the switch, the LLM toggle and the model. The new admin MCP operation `decisions.delegate_settings` changes one repository at a time without dropping the others, shows each change before and after, says when turning on the LLM step sends item text to a model or when a repository opens to Let hive decide, and is refused if the settings changed after the preview. A key-like `llm.model` is refused and never returned. Changes apply without a restart; nothing here starts a decision or merges anything.
+
 ## 2026-11-10 (v6.8.0)
 
 ### Added
