@@ -29,6 +29,11 @@ package automerge
 // The tests-removed fence, Sentinel, the human-merge hold and the pin-only
 // exception are untouched.
 //
+// A repository can override the hive-wide scope with
+// project.repo_policies[].workflow_fence_scope; the policy's
+// WorkflowFenceScopeForRepo resolves it per pull request, so every reader
+// below sees the PR's own repository's scope.
+//
 // Every merge-side reader (the lane, the stage engine's explanations via
 // headDiffFence, the merge asks via headManualMergeRule, `/hive approve`)
 // goes through contributorLaneMergeFence, so they cannot disagree.
@@ -44,10 +49,16 @@ import (
 )
 
 // workflowFenceScopedToHumanMergePaths reports whether the policy limits the
-// workflow-path fence to human_merge_paths. Anything but that exact value
-// (any case) is the full fence.
-func (p ContributorLanePolicy) workflowFenceScopedToHumanMergePaths() bool {
-	return strings.EqualFold(strings.TrimSpace(p.WorkflowFenceScope), config.ContributorLaneWorkflowFenceScopeHumanMergePaths)
+// workflow-path fence to human_merge_paths for repo ("owner/repo"): the
+// repository's project.repo_policies[].workflow_fence_scope when
+// WorkflowFenceScopeForRepo resolves one, else WorkflowFenceScope. Anything
+// but that exact value (any case) is the full fence.
+func (p ContributorLanePolicy) workflowFenceScopedToHumanMergePaths(repo string) bool {
+	scope := p.WorkflowFenceScope
+	if p.WorkflowFenceScopeForRepo != nil {
+		scope = p.WorkflowFenceScopeForRepo(repo)
+	}
+	return strings.EqualFold(strings.TrimSpace(scope), config.ContributorLaneWorkflowFenceScopeHumanMergePaths)
 }
 
 // contributorLaneWorkflowFiles returns the changed files that are CI
@@ -76,7 +87,7 @@ func contributorLaneTouchesWorkflowFiles(files []intent.ChangedFile) bool {
 // head's merge for want of `workflows: write`, or when a workflow / action
 // file matches the repository's human_merge_paths.
 func (c *Engine) workflowFenceCovers(policy ContributorLanePolicy, owner, repo string, number int, headSHA string, files []intent.ChangedFile) bool {
-	if !policy.workflowFenceScopedToHumanMergePaths() {
+	if !policy.workflowFenceScopedToHumanMergePaths(owner + "/" + repo) {
 		return true
 	}
 	patterns := c.currentHumanMergePaths(owner + "/" + repo)
@@ -113,7 +124,7 @@ func (c *Engine) contributorLaneMergeFence(policy ContributorLanePolicy, owner, 
 // re-read when the scope, the repository's human_merge_paths or the
 // head's workflows-permission refusal changes.
 func (c *Engine) workflowFenceScopeKey(policy ContributorLanePolicy, owner, repo string, number int, headSHA string) string {
-	if !policy.workflowFenceScopedToHumanMergePaths() {
+	if !policy.workflowFenceScopedToHumanMergePaths(owner + "/" + repo) {
 		return config.ContributorLaneWorkflowFenceScopeAll
 	}
 	key := config.ContributorLaneWorkflowFenceScopeHumanMergePaths + "\x00" + strings.Join(c.currentHumanMergePaths(owner+"/"+repo), "\x00")

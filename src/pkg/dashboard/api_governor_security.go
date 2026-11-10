@@ -423,14 +423,21 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"sandboxedAgents":                    sandboxed,
 		"totalAgents":                        len(cfg.Agents),
 		"sandboxWarnings":                    sandboxWarnings,
-		"sentinel":                           sentinelSectionResponse(cfg.Sentinel),
+		"sentinel":                           sentinelSectionResponse(cfg.Sentinel, cfg.SentinelSensitivePathsRepoOverrides()),
 	}
 }
 
 // sentinelSectionResponse renders the suspicious-activity block. It sends
 // the EFFECTIVE sensitive-path list plus whether that list is the shipped
 // default, so the UI can show the defaults pre-filled and offer a reset.
-func sentinelSectionResponse(sc config.SentinelConfig) map[string]interface{} {
+// repoSensitivePaths lists the repositories whose repo_policies override
+// replaces that list; the hive-wide list (and a change to it) does not apply
+// to them.
+func sentinelSectionResponse(sc config.SentinelConfig, overrides []config.RepoSensitivePathsOverride) map[string]interface{} {
+	repoPaths := make([]map[string]interface{}, 0, len(overrides))
+	for _, o := range overrides {
+		repoPaths = append(repoPaths, map[string]interface{}{"repo": o.Repo, "sensitivePaths": nonNilStrings(o.Paths)})
+	}
 	rules := config.SentinelBehaviors()
 	behaviors := make([]map[string]interface{}, 0, len(rules))
 	disabled := map[string]bool{}
@@ -450,6 +457,7 @@ func sentinelSectionResponse(sc config.SentinelConfig) map[string]interface{} {
 		"sensitivePaths":        sc.EffectiveSensitivePaths(),
 		"sensitivePathsDefault": sc.SensitivePaths == nil,
 		"defaultSensitivePaths": config.DefaultSentinelSensitivePaths(),
+		"repoSensitivePaths":    repoPaths,
 		"behaviors":             behaviors,
 		"exemptLogins":          nonNilStrings(sc.ExemptLogins),
 		"trustedAuthorsBlock":   sc.TrustedAuthorsBlock,

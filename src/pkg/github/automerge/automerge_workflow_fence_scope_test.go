@@ -342,3 +342,83 @@ func TestPRApproveReplyWorkflowFenceScope(t *testing.T) {
 		})
 	}
 }
+
+// project.repo_policies[].workflow_fence_scope overrides the hive-wide
+// scope for one repository, either way, and a repository without an override
+// keeps the hive-wide value. The lane resolves it through the same config
+// resolver the hive wires in (config.RepoWorkflowFenceScope). On v6 tip the
+// policy has no per-repo resolver, so the "override loosens" case stops at
+// workflow-path and the "override tightens" case merges.
+func TestContributorLaneWorkflowFenceScopeRepoOverride(t *testing.T) {
+	lintEdit := []map[string]any{{"filename": ".github/workflows/lint.yml", "status": "modified", "additions": 2, "deletions": 1}}
+	for _, tc := range []struct {
+		name       string
+		hiveWide   string
+		policies   []config.RepoPolicy
+		paths      func(string) []string
+		wantReason string
+		wantMerges int
+	}{
+		{
+			name:       "override loosens: hive-wide all, widget human_merge_paths",
+			hiveWide:   config.ContributorLaneWorkflowFenceScopeAll,
+			policies:   []config.RepoPolicy{{Repo: "widget", WorkflowFenceScope: config.ContributorLaneWorkflowFenceScopeHumanMergePaths}},
+			paths:      humanPathsFor("acme/widget", testReleaseWorkflow),
+			wantMerges: 1,
+		},
+		{
+			name:       "override tightens: hive-wide human_merge_paths, widget all",
+			hiveWide:   config.ContributorLaneWorkflowFenceScopeHumanMergePaths,
+			policies:   []config.RepoPolicy{{Repo: "acme/widget", WorkflowFenceScope: config.ContributorLaneWorkflowFenceScopeAll}},
+			paths:      humanPathsFor("acme/widget", testReleaseWorkflow),
+			wantReason: contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:       "another repo's override leaves widget on the hive-wide scope",
+			hiveWide:   config.ContributorLaneWorkflowFenceScopeAll,
+			policies:   []config.RepoPolicy{{Repo: "other", WorkflowFenceScope: config.ContributorLaneWorkflowFenceScopeHumanMergePaths}},
+			paths:      humanPathsFor("acme/widget", testReleaseWorkflow),
+			wantReason: contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:       "unknown override falls back to the hive-wide scope",
+			hiveWide:   config.ContributorLaneWorkflowFenceScopeAll,
+			policies:   []config.RepoPolicy{{Repo: "widget", WorkflowFenceScope: "release_only"}},
+			paths:      humanPathsFor("acme/widget", testReleaseWorkflow),
+			wantReason: contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:       "override to human_merge_paths keeps the full fence without human_merge_paths",
+			hiveWide:   config.ContributorLaneWorkflowFenceScopeAll,
+			policies:   []config.RepoPolicy{{Repo: "widget", WorkflowFenceScope: config.ContributorLaneWorkflowFenceScopeHumanMergePaths}},
+			paths:      humanPathsFor("acme/other", testReleaseWorkflow),
+			wantReason: contributorLaneReasonWorkflowPath,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Project.Org = "acme"
+			cfg.Project.RepoPolicies = tc.policies
+			cfg.AutoMerge.ContributorLane.WorkflowFenceScope = tc.hiveWide
+			fx := validContributorFixture()
+			fx.files = lintEdit
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			policy.WorkflowFenceScope = cfg.AutoMerge.ContributorLane.EffectiveWorkflowFenceScope()
+			policy.WorkflowFenceScopeForRepo = func(repo string) string {
+				scope, _ := cfg.RepoWorkflowFenceScope(repo)
+				return scope
+			}
+			clock := &contributorLaneClock{at: mustParseTime(t, "2026-10-27T13:00:00Z")}
+			engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock), HumanMergePaths: tc.paths})
+			_, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reason != tc.wantReason || fx.merges != tc.wantMerges {
+				t.Fatalf("reason=%q merges=%d, want %q/%d (comments=%v)", reason, fx.merges, tc.wantReason, tc.wantMerges, fx.allComments)
+			}
+		})
+	}
+}
