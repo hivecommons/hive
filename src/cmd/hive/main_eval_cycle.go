@@ -816,6 +816,19 @@ func runEvalCycle(
 		}
 		reran := rerunTransientTriagedPRs(ctx, cfg, ghClient, actionable, escalatedPRs, audit, logger)
 		reapSkip = reaperSkipAfterRerun(escalatedPRs, reran)
+		// A red PR whose failing checks are green on its base tip needs only
+		// the base merged in (projectbluefin/actions#544); the reaper does
+		// not also kick a fixer for a head the merge replaces.
+		if !budgetDecision.SkipUnstick {
+			var refreshAudit func(string, int, string)
+			if dashSrv != nil {
+				refreshAudit = func(repo string, number int, detail string) {
+					dashSrv.AuditLogRecord("system", "stale-red-base-refresh", detail, "", repo, number)
+				}
+			}
+			refreshed := refreshStaleRedBehindPRs(ctx, cfg, ghClient, actionable, refreshAudit, logger, time.Now())
+			reapSkip = reaperSkipAfterRerun(reapSkip, refreshed)
+		}
 	}
 	reapStuckRedPRs(cfg, actionable, reapSkip, agentKicker{mgr: agentMgr},
 		agentAvailability(cfg, agentMgr), logger)
