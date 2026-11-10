@@ -190,7 +190,7 @@ func TestScopedToken_OnlySecCheckTierRequestsVulnerabilityAlerts(t *testing.T) {
 
 // The sec-check-trusted tier (#17496) is the trusted set plus Dependabot
 // alerts read, and degrades to a token without only the alerts grant (keeping
-// Workflows) when the installation has not accepted it.
+// Workflows) when the installation has accepted Workflows but not alerts.
 func TestScopedToken_SecCheckTrustedTierAlertsWithFallback(t *testing.T) {
 	var requests []map[string]string
 	mux := http.NewServeMux()
@@ -231,6 +231,97 @@ func TestScopedToken_SecCheckTrustedTierAlertsWithFallback(t *testing.T) {
 	}
 	if requests[1]["workflows"] != "write" {
 		t.Errorf("retry workflows = %q, want write (only the alerts grant is dropped)", requests[1]["workflows"])
+	}
+}
+
+// An installation that accepted Dependabot alerts but not Workflows (#4677,
+// #17496): GitHub's 422 does not name the refused permission, so the broker
+// must not conclude the alerts grant is missing. The final token keeps
+// vulnerability_alerts:read and drops only workflows.
+func TestScopedToken_SecCheckTrustedTierKeepsAlertsWhenWorkflowsRefused(t *testing.T) {
+	var requests []map[string]string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		perms := decodePermissions(t, r)
+		requests = append(requests, perms)
+		if perms["workflows"] != "" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]any{"message": "The permissions requested are not granted to this installation."})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":      "scoped-token-alerts",
+			"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	auth := newWorkflowsTestAuth(t, server.URL)
+	token, err := auth.ScopedToken(context.Background(), agentmode.SecCheckTrustedTier)
+	if err != nil {
+		t.Fatalf("ScopedToken: %v", err)
+	}
+	if token != "scoped-token-alerts" {
+		t.Fatalf("token = %q, want the alerts-capable mint's token", token)
+	}
+	if len(requests) != 3 {
+		t.Fatalf("mint requests = %d, want 3 (with both, without alerts, without workflows)", len(requests))
+	}
+	last := requests[len(requests)-1]
+	if last["vulnerability_alerts"] != "read" {
+		t.Errorf("final mint vulnerability_alerts = %q, want read (the grant is accepted; only workflows was refused)", last["vulnerability_alerts"])
+	}
+	if _, present := last["workflows"]; present {
+		t.Errorf("final mint still requests workflows: %v", last)
+	}
+	for _, perm := range []string{"contents", "issues", "pull_requests"} {
+		if last[perm] != "write" {
+			t.Errorf("final mint %s = %q, want write", perm, last[perm])
+		}
+	}
+}
+
+// An installation that accepted neither Workflows nor Dependabot alerts still
+// mints the bare trusted set for the sec-check-trusted tier.
+func TestScopedToken_SecCheckTrustedTierDropsBothWhenNeitherGranted(t *testing.T) {
+	var requests []map[string]string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		perms := decodePermissions(t, r)
+		requests = append(requests, perms)
+		if perms["workflows"] != "" || perms["vulnerability_alerts"] != "" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]any{"message": "The permissions requested are not granted to this installation."})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":      "scoped-token-bare",
+			"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	auth := newWorkflowsTestAuth(t, server.URL)
+	token, err := auth.ScopedToken(context.Background(), agentmode.SecCheckTrustedTier)
+	if err != nil {
+		t.Fatalf("ScopedToken: %v", err)
+	}
+	if token != "scoped-token-bare" {
+		t.Fatalf("token = %q, want the bare trusted mint's token", token)
+	}
+	if len(requests) != 4 {
+		t.Fatalf("mint requests = %d, want 4", len(requests))
+	}
+	last := requests[len(requests)-1]
+	for _, perm := range []string{"workflows", "vulnerability_alerts"} {
+		if _, present := last[perm]; present {
+			t.Errorf("final mint still requests %s: %v", perm, last)
+		}
+	}
+	if last["contents"] != "write" {
+		t.Errorf("final mint contents = %q, want write", last["contents"])
 	}
 }
 

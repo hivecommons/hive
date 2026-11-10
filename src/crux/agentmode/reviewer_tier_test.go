@@ -34,6 +34,7 @@ func TestTokenTierForRole_HigherModesAreUnchanged(t *testing.T) {
 	}{
 		{ModeIssuesOnly, "newcomer"},
 		{ModeIssuesAndPRs, "contributor"},
+		{ModeIssuesPRsMerge, "trusted"},
 	} {
 		if got := TokenTierForRole(tc.mode, ReviewerRole); got != tc.want {
 			t.Errorf("%v reviewer minted %q, want %q — the role must not override a higher mode", tc.mode, got, tc.want)
