@@ -143,9 +143,12 @@ func TestStageTrackerFixingAfterMergeFailedColumn(t *testing.T) {
 // TestStageTrackerPersonActsOnPRColumn replays hive's own #16524: a PR
 // parked at 085 under hive:unauthorized (a maintainer must rerun shared
 // CI on GitHub) with CI unknown and review findings open. The ask is a
-// person's move ON THE PR, so its chevron is PR in progress and the
-// Merge queue column is empty — the gate is only for rows queued /
-// merging / merged, or a merge-ready PR parked on a merge decision.
+// person's move ON THE PR, so its chevron is the PR's REAL stage — the
+// CI / Review column — and the Merge queue column is empty: the gate is
+// only for rows queued / merging / merged, or a merge-ready PR parked on
+// a merge decision. The human gate itself is the needs-decision pill,
+// never a PR in progress chevron (hivecommons/hive#17453, replaying
+// #17442: 085 with CI running and the review verdict pending).
 func TestStageTrackerPersonActsOnPRColumn(t *testing.T) {
 	head := "7879a51f276a0f9aa5adc995d9d09a74487bbcf4"
 	ci := func(state string) *StageTrackerActivity { return &StageTrackerActivity{Head: head, State: state} }
@@ -160,19 +163,22 @@ func TestStageTrackerPersonActsOnPRColumn(t *testing.T) {
 		mut  func(*StageTrackerItem)
 		want int
 	}{
-		{"#16524 as served", func(*StageTrackerItem) {}, trackerColumnPR},
-		{"unauthorized step, no track evidence", func(it *StageTrackerItem) { it.CIActivity, it.ReviewActivity = nil, nil }, trackerColumnPR},
+		{"#16524 as served", func(*StageTrackerItem) {}, trackerColumnReview},
+		{"unauthorized step, no track evidence", func(it *StageTrackerItem) { it.CIActivity, it.ReviewActivity = nil, nil }, trackerColumnReview},
 		{"unauthorized step on a merge-ready head", func(it *StageTrackerItem) { it.CIActivity, it.ReviewActivity = ci("passing"), review("approved") }, trackerColumnMergeGate},
-		{"decision with review findings open", func(it *StageTrackerItem) { it.Reason, it.UnauthorizedStep = "", "" }, trackerColumnPR},
+		{"decision with review findings open", func(it *StageTrackerItem) { it.Reason, it.UnauthorizedStep = "", "" }, trackerColumnReview},
 		{"decision with CI red, review approved", func(it *StageTrackerItem) {
 			it.Reason, it.UnauthorizedStep, it.CIActivity, it.ReviewActivity = "", "", ci("failing"), review("approved")
-		}, trackerColumnPR},
-		{"approved decision with CI running on the head keeps the gate", func(it *StageTrackerItem) {
+		}, trackerColumnReview},
+		{"#17442: decision with CI running, review verdict pending (#17453)", func(it *StageTrackerItem) {
+			it.Number, it.Reason, it.UnauthorizedStep, it.CIActivity, it.ReviewActivity = 17442, "", "", ci("running"), review("human_decision")
+		}, trackerColumnReview},
+		{"approved decision with CI running on the head is at CI, not the gate (#17453)", func(it *StageTrackerItem) {
 			it.Reason, it.UnauthorizedStep, it.CIActivity, it.ReviewActivity = "", "", ci("running"), review("approved")
-		}, trackerColumnMergeGate},
-		{"approved decision with CI queued on the head keeps the gate", func(it *StageTrackerItem) {
+		}, trackerColumnReview},
+		{"approved decision with CI queued on the head is at CI, not the gate (#17453)", func(it *StageTrackerItem) {
 			it.Reason, it.UnauthorizedStep, it.CIActivity, it.ReviewActivity = "", "", ci("queued"), review("approved")
-		}, trackerColumnMergeGate},
+		}, trackerColumnReview},
 		{"bare 085 decision keeps the gate (#14821)", func(it *StageTrackerItem) {
 			it.Reason, it.UnauthorizedStep, it.CIActivity, it.ReviewActivity = "", "", nil, nil
 		}, trackerColumnMergeGate},
@@ -202,5 +208,25 @@ func TestStageTrackerPersonActsOnPRColumn(t *testing.T) {
 	caption, actor := stageTrackerCaption(stagelabels.NeedsDecision, "unauthorized:rerun-shared-ci", "clubanderson", "pr", false, stagelabels.Record{}, false, 0, head)
 	if !strings.Contains(caption, "Waiting for a maintainer · rerun shared ci on GitHub") || strings.Contains(caption, "Awaiting human") || actor != "maintainer" {
 		t.Fatalf("caption %q actor %q", caption, actor)
+	}
+	// The ask rides as the needs-decision pill once the head's tracks are
+	// known (hivecommons/hive#17453): added when a person acts on the PR,
+	// never duplicated, and left alone on a merge-ready or queued row.
+	pill := live()
+	pill.Number, pill.Reason, pill.UnauthorizedStep, pill.CIActivity, pill.ReviewActivity = 17442, "", "", ci("running"), review("human_decision")
+	pill.Modifiers = []string{modStalled}
+	stageTrackerApplyPersonActsOnPRPill(&pill)
+	if strings.Join(pill.Modifiers, ",") != modStalled+","+modNeedsDecision {
+		t.Fatalf("#17442 modifiers %v, want [%s %s]", pill.Modifiers, modStalled, modNeedsDecision)
+	}
+	stageTrackerApplyPersonActsOnPRPill(&pill)
+	if strings.Join(pill.Modifiers, ",") != modStalled+","+modNeedsDecision {
+		t.Fatalf("#17442 modifiers duplicated: %v", pill.Modifiers)
+	}
+	ready := live()
+	ready.Reason, ready.UnauthorizedStep, ready.CIActivity, ready.ReviewActivity = "", "", ci("passing"), review("approved")
+	stageTrackerApplyPersonActsOnPRPill(&ready)
+	if len(ready.Modifiers) != 0 {
+		t.Fatalf("merge-ready 085 grew modifiers %v", ready.Modifiers)
 	}
 }
