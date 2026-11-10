@@ -45,9 +45,12 @@
       // next to its 2nd-place sibling in Merge queue (hivecommons/hive#15395).
       if (item && item.merge_train && item.merge_train.state && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
       // A person owes a step on the PR itself (085 under hive:unauthorized,
-      // not merge-ready): PR in progress, with the merge-queue chevron
-      // empty (hivecommons/hive#16524).
-      if (kind === 'pr' && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) return STAGE_TRACKER_PR_COLUMN;
+      // a reviewer's question, CI running or red on the head — not
+      // merge-ready): the row lights its REAL stage, CI / Review, with the
+      // merge-queue chevron empty and PR in progress passed; the human gate
+      // rides as the needs-human pill, never as a chevron of its own
+      // (hivecommons/hive#16524, #17327, #17453).
+      if (kind === 'pr' && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) return 50;
       if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS || cur === STAGE_TRACKER_OPEN_FOR_DISCUSSION) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;

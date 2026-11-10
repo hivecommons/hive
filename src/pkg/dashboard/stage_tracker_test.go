@@ -539,8 +539,11 @@ func TestStageTrackerEndpoint(t *testing.T) {
 		t.Fatalf("pr103 history = %+v, want the second hop marked as the 100 → 050 fall", h)
 	}
 
+	// A label-only 085 PR with no merge-ready evidence on its head lights
+	// its real stage (CI / Review), so the ask rides as the needs-decision
+	// pill (hivecommons/hive#17453).
 	pr104 := trackerItem(t, resp, "pr", 104)
-	if pr104.Stage != 85 || pr104.StageSince != nil || len(pr104.History) != 0 || hasMod(pr104, modNeedsDecision) || pr104.Actor != "maintainer" {
+	if pr104.Stage != 85 || pr104.StageSince != nil || len(pr104.History) != 0 || !hasMod(pr104, modNeedsDecision) || pr104.Actor != "maintainer" {
 		t.Fatalf("label-only pr104 = %+v", pr104)
 	}
 
