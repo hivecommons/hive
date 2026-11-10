@@ -121,7 +121,7 @@ type WriteOp interface {
 }
 ```
 
-A write op may also implement `PreviewWithProvider(ctx, args, provider)` to read live hive state for its preview; `PreviewWrite` prefers it over `Preview`, which remains the provider-less fallback.
+A write op may also implement `PreviewWithProvider(ctx, args, provider)` to read live hive state for its preview; `PreviewWrite` prefers it over `Preview`, which remains the provider-less fallback. An op whose request is built from that state also implements `ConfirmGuard(ctx, args, provider)` and sets `StateFingerprint` on its preview, which is stored with the confirmation: `write_confirm` reads the state again and refuses with `ErrConfirmationStale`, writing nothing, when the fingerprint no longer matches.
 
 The preview returns a `WritePreview` containing the operator-facing summary, widening disclosure, and the REST `WriteRequest` to execute on confirmation. Keep new operations in their own files (for example `tools_agent_ops.go`, `tools_fleet_ops.go`, `tools_repo_ops.go`) so later phases can add operations without editing unrelated operation groups. Phase 3 registered `agent.pause` and `agent.resume`. Phase 4 extends the same `tools_agent_ops.go` group with `agent.nudge`, `agent.restart`, `agent.add`, `agent.remove`, `agent.model`, `agent.backend`, `agent.effort`, and `agent.interaction_tier`; it also adds the read-only `agent_nudge_status` lookup for `GET /api/kick/{agent}/status`. Nudge previews include the prompt verbatim in the confirmation message, because that text is typed into an agent CLI session. Interaction-tier previews carry explicit widening disclosure because `ISSUES_ONLY`, `ISSUES_AND_PRS`, and `ISSUES_PRS_MERGE` grant progressively broader GitHub authority.
 
@@ -534,6 +534,7 @@ start-up script, its process launch, PIDs, signal handling and exit codes are un
 | plan propose | `POST /api/plan/from-issue` | **deliberately not owner** — ioscan + ACMM L5 floor |
 | plan approve / reject | `POST /api/plan/{epicID}/approve`, `.../reject` | `requireOwnerRole` |
 | feature settings | `PUT /api/config/governor/features` | `requireOwnerRole`; pointer fields, nil means unchanged |
+| merge settings | `PATCH /api/config/auto-merge` | `requireOwnerRole` on the read and the write; every list and map is a full replace |
 | repository pause / resume | `POST /api/repos/pause`, `/api/repos/resume` | `requireRepoPausePermission` → `canToggleRepoHold` |
 | item hold | `POST /api/repos/{owner}/{repo}/items/{number}/hold` | `canToggleRepoHold` |
 | re-evaluate now | `POST /api/repos/rescan` | none beyond write access |
@@ -621,6 +622,20 @@ Phase 5 registers the fleet-level write operations under that contract:
   of the change in operator terms — a lower effective threshold engages a busier mode at a
   shallower queue, which raises agent cadence and spend — because the number alone does not tell
   an owner what it buys.
+- `auto_merge.update` wraps `PATCH /api/config/auto-merge`, the endpoint behind the dashboard's
+  merge settings. That endpoint replaces every list and map it is sent whole (`squash_only`,
+  `require_current_base`, `human_merge_paths`, the native merge queue's repos and bases, the
+  trusted-author and contributor-lane repos and labels), so a one-repository change sent as is
+  would wipe the others. The op takes changes instead (`add`/`remove` per list, one repository's
+  human-merge paths set or unset), reads the current settings through `settings_read` section
+  `auto_merge` while previewing, and sends the merged whole value; the preview shows each change
+  before and after. Its `ConfirmGuard` fingerprints the before-value of every field it sends, so
+  a setting changed between preview and confirm refuses the confirm instead of being overwritten.
+  The preview names each change that lets the hive merge more on its own (a lane turned on, a
+  human-merge path removed, a repository added to an allow-list or an allow-list emptied, which
+  means every repository). Both the read and the write are owner only at the endpoint, and the
+  op merges nothing itself. `human_merge_pin_only` has no field on the endpoint, so the op
+  cannot reach it.
 
 The Activity monitor's row actions are registered as the `repository.rescan` and
 `repository.item_*` operations, each sending the request the dashboard's button sends

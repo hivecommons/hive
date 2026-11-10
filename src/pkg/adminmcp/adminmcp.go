@@ -496,6 +496,15 @@ type providerPreviewOp interface {
 	PreviewWithProvider(ctx context.Context, args map[string]any, provider Provider) (WritePreview, error)
 }
 
+// confirmGuardOp is implemented by write ops whose request was built from
+// live hive state read at preview time (auto_merge.update sends whole lists
+// merged into the current settings). ConfirmWrite asks it for that state's
+// fingerprint again and refuses when it no longer matches the preview's
+// StateFingerprint, so a request built from stale state is never sent.
+type confirmGuardOp interface {
+	ConfirmGuard(ctx context.Context, args map[string]any, provider Provider) (string, error)
+}
+
 func (h *Handler) PreviewWrite(ctx context.Context, args map[string]any) (any, error) {
 	if !h.writesUsable() {
 		return nil, h.writesDisabledErr()
@@ -590,6 +599,15 @@ func (h *Handler) ConfirmWrite(ctx context.Context, args map[string]any) (any, e
 	if err := CheckRequestPath(pending.Preview.Request.Path); err != nil {
 		return nil, err
 	}
+	if guarded, ok := op.(confirmGuardOp); ok {
+		current, err := guarded.ConfirmGuard(ctx, pending.Args, h.Provider)
+		if err != nil {
+			return nil, err
+		}
+		if pending.Preview.StateFingerprint == "" || current != pending.Preview.StateFingerprint {
+			return nil, ErrConfirmationStale
+		}
+	}
 	result, err := h.WriteClient.ExecuteWrite(ctx, pending.Preview.Request)
 	if err != nil {
 		return nil, err
@@ -623,7 +641,7 @@ func pendingValueNeedsFreshConfirm(v any) bool {
 // caller of write_preview and would otherwise duplicate the args (up to a
 // 10 000-char nudge prompt) in every stored entry (#9162).
 func persistedPendingPreview(preview WritePreview) WritePreview {
-	return WritePreview{Operation: preview.Operation, Target: scrubOutboundString(preview.Target), Request: scrubPendingPreview(preview).Request}
+	return WritePreview{Operation: preview.Operation, Target: scrubOutboundString(preview.Target), Request: scrubPendingPreview(preview).Request, StateFingerprint: preview.StateFingerprint}
 }
 
 func scrubPendingPreview(preview WritePreview) WritePreview {
