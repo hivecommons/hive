@@ -500,11 +500,11 @@ func maintainHeldPRMergeability(
 }
 
 // heldPRUpdateStopAnnounced remembers, for the life of the process, the
-// held-PR update stop the guard last warned about and the person-facing note
+// held-PR update stop the guard last announced and the person-facing note
 // it last posted, per PR. The ledger carries both across restarts, but its
 // entry can be dropped and re-snapshotted between passes (a hold that lifts
 // and returns), losing the stop and the note together — without this the
-// guard re-warned, and could re-post the note, every pass
+// guard re-announced, and could re-post the note, every pass
 // (hivecommons/hive#16103). Keyed on repo#pr with the last announced tuple as
 // the value, so each held PR holds exactly one entry however often its head or
 // base moves (hivecommons/hive#16106).
@@ -545,7 +545,7 @@ func stopHeldPRUpdate(ctx context.Context, writer forge.IssueWriter, store *hold
 	} else {
 		st.warnHead, st.warnBase, st.warnReason = pr.HeadSHA, pr.BaseSHA, reason
 		heldPRUpdateStopAnnounced.Store(stopKey, st)
-		logger.Warn("hold guard: stopped keeping held PR mergeable until its head or base moves", args...)
+		logger.Info("hold guard: stopped keeping held PR mergeable until its head or base moves", args...)
 	}
 	noteHeldPRUpdateStopped(ctx, writer, store, repo, pr, reason, logger)
 }
