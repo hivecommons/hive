@@ -289,7 +289,7 @@ func TestWritebackKindPolicyOpKeepsUntouchedKinds(t *testing.T) {
 		t.Fatalf("request = %s %s %s, want PUT /api/config/governor/features %s", preview.Request.Method, preview.Request.Path, bodyJSON(t, preview.Request.Body), want)
 	}
 	effects := strings.Join(preview.Effects, "\n")
-	for _, s := range []string{"writeback.kinds.base_refresh: no override → {unlabeled_min_level: 6}", "L6 with the opt-in label → L6 with the opt-in label, L6 without", "(stage_label) are sent unchanged", "would drop unlabeled_min_level and own_only from base_refresh"} {
+	for _, s := range []string{"writeback.kinds.base_refresh: no override → {unlabeled_min_level: 6}", "L6 with the opt-in label → L6, any item", "(stage_label) are sent unchanged", "would drop unlabeled_min_level and own_only from base_refresh"} {
 		if !strings.Contains(effects, s) {
 			t.Errorf("effects lack %q:\n%s", s, effects)
 		}
