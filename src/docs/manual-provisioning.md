@@ -1393,14 +1393,14 @@ spec:
       # ── init containers — REQUIRED. The ConfigMap is mounted read-only at
       # /etc/hive-seed and copied into a WRITABLE emptyDir at /etc/hive. The hive
       # process must WRITE /etc/hive/hive.yaml at runtime (on first boot the entrypoint
-      # seeds it, then merges the PVC overlay over it; later boots restore it from
+      # seeds it, then merges the PVC overlay over it; later boots link it to
       # /data/hive.yaml.runtime; the dashboard's Save writes it). Mounting the ConfigMap DIRECTLY at /etc/hive makes it read-only and
       # every config save fails with "open /etc/hive/hive.yaml: read-only file
       # system" — and dashboard-installed GitHub App auth / ACMM changes are lost.
       initContainers:
       - name: copy-config
         image: ${IMAGE}
-        command: ["sh","-c","if [ -s /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; elif [ -s /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied-first-boot; fi"]
+        command: ["sh","-c","if [ -s /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; ln -sf /data/hive.yaml.runtime /etc/hive/hive.yaml && echo config-path-linked-to-runtime || echo config-path-link-failed; elif [ -s /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied-first-boot; fi"]
         volumeMounts:
         - { name: config,          mountPath: /etc/hive-seed, readOnly: true }
         - { name: config-writable, mountPath: /etc/hive }
@@ -1627,8 +1627,9 @@ entrypoint:
 2. merges the PVC dashboard overlay `/data/hive.yaml.dashboard` **over** it, and
 3. writes `/data/hive.yaml.runtime`.
 
-On **every later boot** it copies `/data/hive.yaml.runtime` over
-`/etc/hive/hive.yaml` and boots from that; the seed is not used and the overlay
+On **every later boot** the init container symlinks `/etc/hive/hive.yaml` to
+`/data/hive.yaml.runtime` (a spoke with only the legacy `.bak` is not linked, and
+the entrypoint copies it over instead) and the hive boots from that; the seed is not used and the overlay
 merge does not run. With neither file and no seed, it exits 1.
 
 The dashboard's `Config.Save()` writes the effective source, the dashboard

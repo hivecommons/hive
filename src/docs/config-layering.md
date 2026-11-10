@@ -114,11 +114,11 @@ ambiguity cost real debugging time.
 
 **On Kubernetes it is the boot input after the first boot** (#2392). When a
 non-empty `/data/hive.yaml.runtime` (or the legacy `hive.yaml.bak`) exists, the
-binary boots from it: the `copy-config` init container has already made the
-config path a symlink to `hive.yaml.runtime` (#17468), and the entrypoint
-boots through that link; on a spoke that is not linked (legacy `hive.yaml.bak`
-only, or the restart right after first boot) the entrypoint copies the runtime
-config over the config path instead. Either way the ConfigMap seed
+binary boots from it, either directly through the `/etc/hive/hive.yaml` link
+(on a spoke whose `copy-config` init container carries the #17468 `ln -sf`;
+the entrypoint then skips the copy) or, on a spoke not yet linked (older init
+command, or legacy `hive.yaml.bak` only), by the entrypoint copying the runtime
+config over the config path. Either way the ConfigMap seed
 is not used and the overlay merge does not run. Only when neither exists (first
 boot, or a hive reprovisioned onto a PVC without one) does the entrypoint start
 from the seed, merge `/data/hive.yaml.dashboard` over it, and *write* the result
@@ -126,7 +126,7 @@ to `hive.yaml.runtime`. `Config.Save()` rewrites it on every save. With neither
 file and no seed, the entrypoint exits 1. The `copy-config` init container only
 seeds the config path when the PVC has no runtime config (#2402).
 
-**Outside Kubernetes `hive.yaml.runtime` is a live boot input, and the source of truth.** There is no
+**Outside Kubernetes, `hive.yaml.runtime` is a live boot input, and the source of truth.** There is no
 ConfigMap and no overlay in that mode, so the entrypoint restores this file over
 the config path on every boot (or points `HIVE_CONFIG` straight at it, and
 pins the same path into the launch argv as `--config`, when the config path is
@@ -149,12 +149,22 @@ its own. The three files are:
 | `/data/hive.yaml.dashboard` | secret-free overlay merged over the ConfigMap seed **only** on a boot with no runtime config (first boot, reprovision) | yes (PVC) |
 | `/etc/hive/hive.yaml` | the config path the binary loads; once a runtime config exists, the init container makes it a **symlink** to `/data/hive.yaml.runtime` | only through the link |
 
-So editing `/etc/hive/hive.yaml` edits the runtime config, and `kubectl rollout
-restart` keeps the change. `Config.Save()` writes the config path in place
-(no temp-file rename), so saves do not replace the link. On first boot the
-path is still a plain copy of the seed until the next restart links it, and a
-spoke carrying only the legacy `hive.yaml.bak` is not linked (that file is
-never written). The binary logs `boot: config source of truth` at startup
+On a spoke provisioned (or whose deployment manifest was re-applied) after
+#17468, editing `/etc/hive/hive.yaml` edits the runtime config, and `kubectl
+rollout restart` keeps the change. `Config.Save()` writes the config path in
+place (no temp-file rename), so saves do not replace the link. The link exists
+only where the init container carries the `ln -sf`: it is written into the
+provision manifest, and hub upgrades (`kubectl set image`) do not rewrite the
+init command, so spokes provisioned earlier keep the old `cp`-only command and
+lose edits to `/etc/hive/hive.yaml` on restart. A spoke carrying only the
+legacy `hive.yaml.bak` is never linked (that file is never written), and on
+first boot the path is a plain copy of the seed until the next restart.
+
+To check, read the `boot: config source of truth` log line: if `boot_source`
+differs from `persisted_path`, the path is **not** linked, so edit
+`persisted_path` instead. To pick up the new init command, re-apply the
+deployment; inspect the current one with the jsonpath one-liner in
+[HUB_DISASTER_RECOVERY.md](../../docs/HUB_DISASTER_RECOVERY.md). The binary logs `boot: config source of truth` at startup
 with `loaded_from`, `boot_source` (symlinks resolved) and `persisted_path`, and
 `/api/config/export` reports the same file as `metadata.persisted_path` —
 edit that one.
