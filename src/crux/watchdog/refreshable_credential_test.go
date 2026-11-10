@@ -188,3 +188,29 @@ func TestAuthHealableClearsAStandingAlert(t *testing.T) {
 		t.Fatal("alert is sticky: it must clear once the credential is usable again, not wait for the pane to stop showing login chrome")
 	}
 }
+
+// TestAuthCredentialMissingHonoursLoginBootGrace: the per-agent probe reports
+// known-absent for claude only because the pane showed login chrome. Inside
+// boot grace the classifier declines that sighting, so the credential-missing
+// branch must not raise the alert it was declining (#17573).
+func TestAuthCredentialMissingHonoursLoginBootGrace(t *testing.T) {
+	clock := newFakeClock()
+	fleet := newFakeFleet("a1")
+	fleet.setObs("a1", Observation{
+		Backend: "claude", SessionExists: true,
+		Pane: loginPane, ShowsLoginPrompt: true,
+		StartedAt: clock.Now(),
+		AuthKnown: true, AuthAvailable: false,
+	})
+	alerter := newFakeAlerter()
+	r := newTestReconciler(t, fastSettings(), fleet, alerter, clock)
+	r.Tick(context.Background())
+
+	auth, _ := FindCondition(r.Conditions("a1"), ConditionAuthenticated)
+	if auth.Status == ConditionFalse {
+		t.Fatalf("Authenticated = %+v, want not False inside boot grace", auth)
+	}
+	if alerter.has(authAlertID("a1")) {
+		t.Fatal("paged an operator for login chrome inside boot grace")
+	}
+}

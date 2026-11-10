@@ -792,6 +792,12 @@ func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observa
 	// standing operator alert must be cleared.
 	healable := cls.Class == ClassAuthRequired && obs.CredentialProven
 
+	// The classifier withheld ClassAuthRequired for login chrome (boot grace).
+	// For claude the per-agent probe only answers known-absent from that same
+	// pane signal (AgentAuthState), so CredentialMissing would re-page the
+	// very sighting the classifier just declined to act on.
+	loginChromeSuppressed := obs.ShowsLoginPrompt && cls.Class != ClassAuthRequired
+
 	if healable {
 		// A login screen over a credential that demonstrably still works is
 		// the token-restart heal's case, not an operator's — the same division
@@ -814,7 +820,7 @@ func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observa
 		status = ConditionFalse
 		reason = "PaneShowsLogin"
 		message = cls.Reason
-	} else if obs.AuthKnown && !obs.AuthAvailable {
+	} else if obs.AuthKnown && !obs.AuthAvailable && !loginChromeSuppressed {
 		// The manager's owner-aware per-agent credential probe (#4619/#4641)
 		// says the credential file is definitively absent for an agent whose
 		// backend requires interactive auth.
