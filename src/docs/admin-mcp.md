@@ -851,11 +851,11 @@ change between the preview and the confirm, the confirm is refused; preview
 again. Neither operation kicks an agent, labels, approves or merges anything
 itself.
 
-The dashboard's write-back kind table edits only `min_level` and
-`require_label`, and saving an edit there rewrites every kind's override from
-the table, which drops `unlabeled_min_level` and `own_only`. The
-`writeback.kind_policy` preview warns when an override it writes carries
-either.
+The dashboard's write-back kind table (Settings → Features → Write-back
+containment) edits the same four fields. Saving there sends every kind's
+override from the table, and a field nobody changed on the page is sent as
+it was, so an override written by `writeback.kind_policy` survives a later
+dashboard edit.
 
 `auto_merge.update` changes merge settings, the same settings as the
 dashboard's merge controls, through `PATCH /api/config/auto-merge`. It is owner
