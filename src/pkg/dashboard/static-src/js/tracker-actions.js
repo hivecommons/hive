@@ -43,6 +43,8 @@
       open: 'Open on GitHub', copy: 'Copy link',
       'open:app-settings': 'Grant the App permission', 'blocker:recheck': 'Re-check permissions', 'blocker:patch': 'Prepare the patch for a person to push',
       'blocker:close-partial': 'Mark partially-addressed and close', 'blocker:wait': 'Keep waiting',
+      // The human-gate pill's reason-bound verbs (hivecommons/hive#17470).
+      'gate:decide': 'Decide', 'gate:request-changes': 'Request changes', 'gate:confirm-sentinel': 'Confirm safe',
     };
     // Actions that end with a commit on the base branch — the lead
     // "Approve and let hive merge" (the hive's sweep merges on its next
@@ -983,8 +985,14 @@
         const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
         const item = key ? stageTrackerItemByKey(_stageTracker, key) : null;
         if (!item) return;
-        stageTrackerDecisionRun(item, b.dataset.hamAct);
+        const run = stageTrackerDecisionRun(item, b.dataset.hamAct);
+        // A human-gate verb that went through reads "settling…" on its pill
+        // until the next snapshot re-renders the row (hivecommons/hive#17470).
+        if (b.classList.contains('ham-gate-act') && run && typeof run.then === 'function' && typeof stageTrackerHumanGateSettling === 'function') {
+          run.then(r => { if (r && !r.cancelled && Array.isArray(r.results) && r.results.length && r.results.every(x => x && x.ok)) stageTrackerHumanGateSettling(b); }, () => {});
+        }
       });
+      if (typeof stageTrackerWireHumanGate === 'function') stageTrackerWireHumanGate(el);
       // Cmd/Ctrl- or Shift-click anywhere on a row (not on its links or
       // buttons) selects it too.
       el.addEventListener('click', e => {
@@ -1359,6 +1367,14 @@
       if (stageTrackerActionBase(id) === 'decide:reroute') {
         const to = payload.to || stageTrackerRerouteTargetOf(id) || STAGE_TRACKER_REROUTE_ANY;
         return { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'reroute', to, comment: payload.comment || '', type } };
+      }
+      // The human-gate verbs: Decide… and Request changes… are directions
+      // (the "/hive decision …" carrier); Confirm safe clears the sentinel.
+      if (id === 'gate:decide' || id === 'gate:request-changes') {
+        return { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'direction', comment: payload.comment || '', type } };
+      }
+      if (id === 'gate:confirm-sentinel') {
+        return { url: '/api/repos/' + seg + '/items/' + n + '/sentinel-confirm', body: { comment: payload.comment || '', type } };
       }
       if (id.indexOf('decide:') === 0) {
         const body = { decision: id.slice('decide:'.length), comment: payload.comment || '', type };
@@ -2104,6 +2120,21 @@
             return (await stageTrackerAsk(id, 'confirm', { title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: preface + 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge queue takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel })) ? {} : null;
           }
           return (await stageTrackerAsk(id, 'confirm', { title: 'Approve direction', message: 'Record "/hive approve" on ' + refs + ' as ' + who + '? The hive un-parks the issue' + (items.length > 1 ? 's' : '') + ' and carries on; nothing is merged.', confirmLabel: 'Approve' })) ? {} : null;
+        case 'gate:decide': {
+          // The reviewer's question leads the modal, pre-filled; the answer is required.
+          const dec = typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(items[0]) : null;
+          const q = (dec && dec.item && dec.item.decision_needed && dec.item.decision_needed.question) || (items[0] && items[0].human_attention && items[0].human_attention.reason) || '';
+          const v = await hivePrompt({ title: 'Decide — ' + refs, label: preface + (q ? 'Question: ' + q + '\n\n' : '') + 'Your decision (posted as "/hive decision …"; the hive carries on with it)', placeholder: 'e.g. take option B and keep the API as is', validate: s => s ? true : 'A decision is required', confirmLabel: 'Send' });
+          return v == null ? null : { comment: v };
+        }
+        case 'gate:request-changes': {
+          const v = await hivePrompt({ title: 'Request changes — ' + refs, label: preface + 'What should change on ' + refs + '? (posted as "/hive decision …"; ' + stageTrackerDirectionCarrier(items) + ' pushes a new head)', placeholder: 'e.g. drop the retry loop and keep the flag', validate: s => s ? true : 'The requested change is required', confirmLabel: 'Send' });
+          return v == null ? null : { comment: v };
+        }
+        case 'gate:confirm-sentinel': {
+          const v = await stageTrackerAsk(id, 'prompt', { title: 'Confirm safe — ' + refs, label: preface + 'Confirm the sentinel finding is intended: this comments your confirmation on ' + refs + ' and removes the sentinel label so the lane may continue. Note (optional)', placeholder: 'e.g. the workflow edit is the point of this PR', confirmLabel: 'Confirm safe', danger: true });
+          return v == null ? null : { comment: v };
+        }
         case 'decide:direction': {
           // The direction is required, so this prompt is never skipped.
           const v = await hivePrompt(prs
@@ -2253,11 +2284,12 @@
       'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-deferred': 'Closing…', 'decide:close-issue': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
+      'gate:decide': 'Sending your decision…', 'gate:request-changes': 'Requesting changes…', 'gate:confirm-sentinel': 'Confirming safe…',
     };
     const STAGE_TRACKER_ACTION_WORDS = {
       adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
       merged: 'merged', 'queued-for-merge': 'queued for merge — hive merges it on its next pass once CI is green', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
-      held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
+      held: 'held', released: 'hold released', 'sentinel-confirmed': 'sentinel confirmed safe', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
     };
     // Once the server has answered, a terminal action's caption says so
@@ -2270,7 +2302,7 @@
     }
     // The ledger name of a row action id (the inverse of the badge's
     // STAGE_TRACKER_ACTED_OPTION_ID), for a failure noted on the client.
-    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-deferred': 'wontfix', 'decide:close-read': 'close-read', 'decide:close-issue': 'close-issue', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
+    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-deferred': 'wontfix', 'decide:close-read': 'close-read', 'decide:close-issue': 'close-issue', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute', 'gate:decide': 'give-direction', 'gate:request-changes': 'give-direction', 'gate:confirm-sentinel': 'confirm-sentinel' };
     // A failed or refused action is noted on the row at once, so the
     // history badge turns red and its hover's first line names the reason
     // — the server's ledger only sees 5xx and refused answers, and a

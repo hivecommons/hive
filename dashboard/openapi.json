@@ -29148,6 +29148,122 @@
         }
       }
     },
+    "/api/repos/{owner}/{repo}/items/{number}/sentinel-confirm": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Confirm a sentinel finding safe on one issue or pull request from the activity monitor",
+        "description": "Backs the human-gate pill's Confirm safe verb on a row carrying the sentinel label. Posts a comment marked `<!-- hive:sentinel-confirmed -->` naming the signed-in operator (plus their words when given), then removes the configured sentinel label so the merge gate no longer holds the item; when the label is already gone the comment is still posted and the response says alreadyClear. Same authorisation as the hold toggle plus a signed-in GitHub user; every confirmation is written to the audit log as repo_item_sentinel_confirm.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "comment": {
+                    "type": "string",
+                    "description": "Optional: why the finding is safe; posted with the confirmation"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "issue",
+                      "pr"
+                    ],
+                    "description": "Row kind for the result wording; defaults to issue"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Finding confirmed safe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "The configured sentinel label"
+                    },
+                    "removed": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Sentinel labels removed from the item"
+                    },
+                    "alreadyClear": {
+                      "type": "boolean",
+                      "description": "No sentinel label was on the item; only the comment was posted"
+                    },
+                    "result": {
+                      "type": "object",
+                      "description": "Shared row-action outcome for the dashboard toast"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body"
+          },
+          "401": {
+            "description": "GitHub user session required"
+          },
+          "403": {
+            "description": "Repository write permission required"
+          },
+          "502": {
+            "description": "GitHub mutation failed"
+          },
+          "503": {
+            "description": "GitHub client not configured"
+          }
+        }
+      }
+    },
     "/api/notes": {
       "get": {
         "tags": [

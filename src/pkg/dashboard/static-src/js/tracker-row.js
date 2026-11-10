@@ -11,33 +11,26 @@
       const curStage = byNum[cur] || {};
       const anchor = stageTrackerAnchor(cur, stages, item.via_pr ? 'pr' : item.kind, item);
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
-      const sentinelLane = stageTrackerSentinelInLane(item);
       // A 071 / 072 row whose author has pushed is back with the hive: the
       // chevron reads the column's own word ("CI / Review"), not "Needs
       // @author" (hivecommons/hive#15784). Guarded: the harnesses load by name.
       const pushedBack = (cur === 71 || cur === 72) && typeof stageTrackerPushedBack === 'function' && stageTrackerPushedBack(item);
       const detour = (!terminal && !pushedBack && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== STAGE_TRACKER_OPEN_FOR_DISCUSSION && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (typeof stageTrackerBlockerWord === 'function' && cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
-      if (detour && cur === 70 && !detour.sentinel && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
-      // A 090 row a sentinel alert or hold label gates: the Merge queue
-      // cell reads "Held · …" (amber), never "Queued" — the gate is a pill
-      // on the real stage, not a stage (hivecommons/hive#17327).
-      if (detour && cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && typeof stageTrackerHeldWord === 'function') {
-        const held = stageTrackerHeldWord(item);
-        if (held) { detour.text = held; detour.held = true; detour.sentinel = false; }
-      }
-      // A bare "Needs human decision" (045 / 085) says why in the chevron
-      // itself — "Needs human · edits CI workflows" — when a short reason
-      // is known (rationguard#480: "what does 'needs human' mean?"). A
-      // word already carrying its why (Blocked · …, Waiting for @x · …,
-      // the train, the sentinel) stands.
-      if (detour && (cur === STAGE_TRACKER_NEEDS_DECISION || cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION) && !detour.sentinel && detour.text === STAGE_TRACKER_ACTIVE_WORD[cur] && typeof stageTrackerNeedsHumanWord === 'function') {
-        const nh = stageTrackerNeedsHumanWord(item);
-        if (nh) detour.text = nh;
+        ? { text: (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (typeof stageTrackerBlockerWord === 'function' && cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) } : null;
+      if (detour && cur === 70 && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
+      // A human gate (sentinel alert, hold label, a reviewer's question, a
+      // needs-decision park) is never a chevron word: the bar lights the
+      // real stage with the amber ham-human-gated outline and the one
+      // human-gate pill beside it names the reasons and carries the verbs
+      // (hivecommons/hive#17470: "needs human, approve, let hive decide all
+      // in the same line"). A 085 PR that is merge-ready still anchors at
+      // the Merge queue column and reads that column's own word there.
+      if (detour && cur === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || item.via_pr) && detour.text === STAGE_TRACKER_ACTIVE_WORD[cur]) {
+        detour.text = String((byNum[anchor] || {}).short || (byNum[anchor] || {}).label || detour.text);
+        detour.gate = true;
       }
       if (detour && (cur === 71 || cur === 72) && typeof stageTrackerReturnedWord === 'function') {
         detour.text = stageTrackerReturnedWord(item, detour.text);
-        detour.sentinelSuffix = stageTrackerSentinelAsSuffix(item);
       }
       const code = item.code_activity;
       const codeMatches = code && String(code.head || '') === String(item.head || '');
@@ -46,7 +39,7 @@
       const clock = Number(nowMs) || Date.now();
       const codeWorking = codeMatches && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
       const codeCaption = codeMatches ? (!codeWorking && code.state === 'fixing' ? 'Fix task assigned · activity unknown' : (code.state === 'fixing' ? String(code.caption || '').replace(/^Fixing\b/, 'Remediating') : code.caption)) : 'Code activity unknown';
-      if (detour && !code && cur === 70 && !detour.sentinel) detour.text = 'Waiting for fixer · activity unknown';
+      if (detour && !code && cur === 70) detour.text = 'Waiting for fixer · activity unknown';
       if (detour && code && [70, 71, 72].includes(cur)) detour.text = codeCaption || detour.text;
       if (detour && code && cur === 74 && codeWorking) detour.text += ' · ' + codeCaption;
       if (detour && code && cur === 74 && !codeWorking) {
