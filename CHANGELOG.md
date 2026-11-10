@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.4)
+
+### Fixed
+
+- Activity Monitor: a PR parked at `stage/085-needs-decision` whose head is short of merge-ready (checks running, red or unreported; review verdict pending or asking for a person) now lights its real stage — the CI or Review track, with an amber human-gated marker — and carries the ask as the **needs human decision** pill (question in the hover, decision popover on click) instead of forcing a *Needs human · decision* chevron into the PR in progress column while CI and Review spun dim (#17442, #17416). PR in progress is passed, Merge queue stays empty; one lit stage per row.
+
 ## 2026-11-10 (v5.211.3)
 
 ### Fixed
