@@ -190,6 +190,13 @@ type Evidence struct {
 	// problem with the PR itself.
 	HiveSuperseder         bool
 	HiveSupersederHardStop string
+	// BehindBase names the base branch when GitHub reports the head
+	// "behind" it ("" otherwise). GitHub says "behind" only when the base
+	// requires up-to-date branches, so GitHub will not merge this head until
+	// the base is merged in: the 090 comment names it instead of calling trust
+	// the only blocker (projectbluefin/common#1619). It never changes the
+	// stage: the trust decision is still the person's to make.
+	BehindBase string
 }
 
 // Hard-stop tokens for a hive-authored superseding PR: the only reasons
@@ -318,6 +325,9 @@ type Route struct {
 	// Hold carries the `hold` provenance into the 085 comment so it can
 	// name who set the hold and offer release / keep (hivecommons/hive#15020).
 	Hold *HoldProvenance
+	// BehindBase is Evidence.BehindBase on a trust-blocked 090: the 090
+	// comment then says the branch must be brought up to date as well.
+	BehindBase string
 }
 
 // Lane-vocabulary reasons RouteHuman emits for the fixing stages.
@@ -623,7 +633,7 @@ func RouteHuman(e Evidence) Route {
 		}
 		return route
 	}
-	return Route{Stage: ReadyForHumanMerge, Summary: summary, HumanApprover: approver}
+	return Route{Stage: ReadyForHumanMerge, Summary: summary, HumanApprover: approver, BehindBase: strings.TrimSpace(e.BehindBase)}
 }
 
 // decisionQuestionPlaceholderMentionRE matches the policy example's
@@ -692,6 +702,9 @@ func summarize(e Evidence) string {
 	if e.Conflict {
 		parts = append(parts, "merge conflict")
 	}
+	if base := strings.TrimSpace(e.BehindBase); base != "" {
+		parts = append(parts, "behind `"+base+"`")
+	}
 	if e.Soak > 0 {
 		if e.SoakElapsed >= e.Soak {
 			parts = append(parts, "soak "+e.Soak.Round(time.Minute).String()+" elapsed")
@@ -753,7 +766,9 @@ func EntryCommentUpdated(body string, at time.Time) string {
 //	DCO yes, soak 2h elapsed. Blocked only by `role/newcomer` (below
 //	require_tiers).
 //
-// blockedBy is the prose for the trust cause ("" when unknown).
+// blockedBy is the prose for the trust cause ("" when unknown). A head
+// behind a base that requires up-to-date branches (r.BehindBase) reads
+// "Blocked by …" and names the base merge as well (readyCommentBehindTail).
 //
 // An approved manual-merge route (r.ManualMerge) names the lane rule and
 // the approver instead of a trust cause, and tells the person the one step
@@ -782,12 +797,36 @@ func ReadyComment(r Route, blockedBy string) string {
 		return b.String()
 	}
 	if blockedBy = strings.TrimSpace(blockedBy); blockedBy != "" {
-		b.WriteString(" Blocked only by ")
+		b.WriteString(readyCommentBlockedLead(r))
 		b.WriteString(blockedBy)
 		b.WriteString(".")
 	}
-	b.WriteString("\n\n<sub>The hive never approves on your behalf: `/lgtm` `/approve` (or merge) if you accept it.</sub>")
+	b.WriteString(readyCommentBehindTail(r))
 	return b.String()
+}
+
+// readyCommentBlockedLead opens the trust clause of the 090 comment. Trust
+// is the only blocker unless the head is behind a base that requires
+// up-to-date branches (projectbluefin/common#1619).
+func readyCommentBlockedLead(r Route) string {
+	if strings.TrimSpace(r.BehindBase) != "" {
+		return " Blocked by "
+	}
+	return " Blocked only by "
+}
+
+// readyCommentBehindTail ends the trust-blocked 090 comment. A head behind
+// a base that requires up-to-date branches is one GitHub will not merge
+// until the base is merged in, so the comment says so and no longer offers
+// "(or merge)" (projectbluefin/utah#1072 read "Blocked only by
+// `role/untrusted`" while BEHIND).
+func readyCommentBehindTail(r Route) string {
+	base := strings.TrimSpace(r.BehindBase)
+	if base == "" {
+		return "\n\n<sub>The hive never approves on your behalf: `/lgtm` `/approve` (or merge) if you accept it.</sub>"
+	}
+	return " The branch is also behind `" + base + "`, which requires up-to-date branches: GitHub will not merge this head until `" + base + "` is merged into it." +
+		"\n\n<sub>The hive never approves on your behalf: `/lgtm` `/approve` if you accept it; the branch still has to be brought up to date before it can merge.</sub>"
 }
 
 // DecisionComment renders the 085 entry comment naming what is owed.

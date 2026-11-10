@@ -187,6 +187,22 @@ func humanConflict(obs stageObservation) bool {
 		obs.AuthorKind == authorkind.Human && humanConflictReasons[obs.LaneReason]
 }
 
+// humanBehindBase names obs's base branch when a lane's fresh PR fetch this
+// cycle read GitHub's mergeable_state "behind" for exactly this head, and
+// "" otherwise. GitHub reports "behind" only when the base requires
+// up-to-date branches, so a human merge is refused until the base is merged
+// in; the 090 comment says so instead of calling trust the only blocker
+// (projectbluefin/common#1619, utah#1072).
+func humanBehindBase(obs stageObservation) string {
+	if obs.HeadSHA == "" || obs.Detail.MergeableStateHead != obs.HeadSHA || obs.Detail.MergeableState != "behind" {
+		return ""
+	}
+	if base := strings.TrimSpace(obs.BaseRef); base != "" {
+		return base
+	}
+	return "base"
+}
+
 // supersededCheckTTL bounds how often the hive-authored superseded check
 // re-reads a PR that stays parked on a person at the same head.
 const supersededCheckTTL = humanChecksTTL
@@ -491,6 +507,7 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	if requester := strings.TrimSpace(obs.Detail.HumanChangeRequester); requester != "" && obs.HeadSHA != "" && strings.TrimSpace(obs.Detail.HumanChangeRequestHead) == obs.HeadSHA {
 		e.HumanChangeRequester = requester
 	}
+	e.BehindBase = humanBehindBase(obs)
 	if obs.Reason == autoMergeReasonMergeRefusedReview {
 		// GitHub wants an approving review, and someone's change request
 		// still stands: the ask is that reviewer's re-review, not an
