@@ -1383,7 +1383,12 @@ code would run as trusted. So a fork PR the hive cannot push to is not
 adopted at all: it stays at `072` with its author's nudge and queued `fix-pr`
 task, and only after the `072` dwell (24h) since the nudge on that head does
 it park at `085` as `adoption-stalled:fork-rehome-refused` with a maintainer
-ask. In-place adoption on the fork's own branch (when the contributor allows
+ask. The ask names the cause when the hive can read it: a base-side change
+under `.github/workflows/` (GitHub refuses any App push to a fork that
+carries one, whatever the App is granted, so a person runs **Update branch**
+or `gh pr update-branch`, or merges the base in locally on a conflict), or a
+fork that allows no maintainer edits (the author turns them on or pushes).
+In-place adoption on the fork's own branch (when the contributor allows
 maintainer edits) is unchanged; if such an adoption later needs a re-home,
 the hive records the refusal and the next pass parks it at `085` with the
 same ask. When adoption is in-place on the contributor PR's own
