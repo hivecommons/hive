@@ -398,6 +398,13 @@ func (s *Server) handleRepoItemDecideDelegated(w http.ResponseWriter, r *http.Re
 // issue with two or more open nested PRs is decided per PR (see
 // delegatedDecisionRequest.PRs); anything else is decided as one item.
 func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string, number int, itemType, user string, mergerRole bool, req delegatedDecisionRequest) {
+	if s.logger != nil {
+		jobID := ""
+		if job, ok := s.delegatedJobs.get(key); ok {
+			jobID = job.ID
+		}
+		s.logger.Info("delegated decision started", "repo", repoFull, "number", number, "type", itemType, "requester", user, "job", jobID)
+	}
 	if itemType == "issue" {
 		if prs := s.delegatedNestedOpenPRs(repoFull, number, req.PRs); len(prs) >= delegatedFanOutMinPRs {
 			s.runDelegatedDecisionPerPR(ctx, key, repoFull, number, prs, user, mergerRole, req)
@@ -423,6 +430,13 @@ func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string,
 // action ledger so the row's decision badge can show what hive did next.
 func (s *Server) settleDelegatedJob(key, repoFull string, number int) {
 	if done, ok := s.delegatedJobs.get(key); ok {
+		if s.logger != nil {
+			verdict := ""
+			if done.Decision != nil {
+				verdict = string(done.Decision.Verdict)
+			}
+			s.logger.Info("delegated decision ended", "repo", repoFull, "number", number, "job", done.ID, "status", done.Status, "verdict", verdict, "error", done.Error)
+		}
 		s.settleOperatorAction(repoFull, number, &done)
 	}
 }
