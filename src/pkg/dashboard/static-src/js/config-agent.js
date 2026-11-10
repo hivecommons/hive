@@ -162,12 +162,15 @@
           </div>
         </div>
         <div class="config-field">
-          <label>Operating Mode ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Operating Mode', `Controls what GitHub actions this agent can take. ADVISORY: beads only. ISSUES_ONLY: open issues, no PRs. ISSUES_AND_PRS: issues + PRs. ISSUES_PRS_MERGE: full auto-merge. Leave blank to use the ACMM level default.`)}</label>
+          <label>Operating Mode ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Operating Mode', `Controls what GitHub actions this agent can take. ADVISORY: beads only. ISSUES_ONLY: open issues, no PRs. ISSUES_AND_PRS: issues + PRs. ISSUES_PRS_MERGE: full auto-merge. NO_GITHUB: the legacy name for ADVISORY, which the API and the admin MCP still accept; listed only for an agent that has it. Leave blank to use the ACMM level default.`)}</label>
           ${(() => {
-            const allModes = ['ADVISORY','ISSUES_ONLY','ISSUES_AND_PRS','ISSUES_PRS_MERGE'];
+            const current = g.mode || '';
+            // NO_GITHUB is a legacy alias for ADVISORY. It is offered only when
+            // the agent already has it, so the select shows the real mode
+            // instead of falling back to the level default.
+            const allModes = ['ADVISORY','ISSUES_ONLY','ISSUES_AND_PRS','ISSUES_PRS_MERGE'].concat(current === 'NO_GITHUB' ? ['NO_GITHUB'] : []);
             const statusAgent = ((window._lastStatus || {}).agents || []).find(sa => sa.name === agentName);
             const dflt = statusAgent ? statusAgent.defaultMode : '';
-            const current = g.mode || '';
             return '<select id="cfg-agent-mode" data-change-action="markDirty" data-arg0="general" data-arg1="mode" data-arg-types="s,s,v">'
               + '<option value=""' + (!current ? ' selected' : '') + '>— use level default' + (dflt ? ' (' + modeEmoji(dflt) + ' ' + dflt + ')' : '') + '</option>'
               + allModes.map(m => '<option value="' + m + '"' + (current === m ? ' selected' : '') + '>' + modeEmoji(m) + ' ' + m + (m === dflt ? ' (default)' : '') + '</option>').join('')

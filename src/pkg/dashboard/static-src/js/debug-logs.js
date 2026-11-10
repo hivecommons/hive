@@ -559,7 +559,7 @@
     document.getElementById('logs-agent-select')?.addEventListener('change', () => { _logsData = {}; fetchAgentLogs(); });
     // setInterval(fetchAgentLogs) — deferred to _deferredInit
 
-    const MODE_EMOJIS = {'ADVISORY':'📝','ISSUES_ONLY':'🎫','ISSUES_AND_PRS':'🔧','ISSUES_PRS_MERGE':'🚀'};
+    const MODE_EMOJIS = {'ADVISORY':'📝','ISSUES_ONLY':'🎫','ISSUES_AND_PRS':'🔧','ISSUES_PRS_MERGE':'🚀','NO_GITHUB':'📝'};
     function modeEmoji(mode) { return MODE_EMOJIS[mode] || ''; }
     function modeLabel(a) {
       if (!a.mode) return '—';

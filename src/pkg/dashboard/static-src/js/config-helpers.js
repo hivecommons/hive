@@ -438,6 +438,8 @@
       };
       if (this && this.id === 'am-require-current-base') markDirty('auto-merge', 'require_current_base', selected('am-require-current-base'));
       if (this && this.id === 'am-squash-only') markDirty('auto-merge', 'squash_only', selected('am-squash-only'));
+      if (this && this.id === 'am-no-ci-ok') markDirty('auto-merge', 'no_ci_ok', selected('am-no-ci-ok'));
+      if (this && this.id === 'am-allow-unprotected-base') markDirty('auto-merge', 'allow_unprotected_base', selected('am-allow-unprotected-base'));
       if (this && this.classList && this.classList.contains('am-human-merge-path-input')) {
         const paths = {};
         document.querySelectorAll('#am-human-merge-paths .am-human-merge-path-row').forEach(row => {
@@ -506,6 +508,69 @@
       const staged = ((_configState.dirty || {})['auto-merge'] || {}).contributor_lane || {};
       const repos = Object.assign({}, staged.workflow_fence_scope_repos || {}, { [repo]: value ? value : null });
       markDirty('auto-merge', 'contributor_lane', Object.assign({}, staged, { workflow_fence_scope_repos: repos }));
+    }
+
+    // Settings → Features → Let hive decide → per-repository overrides. A row
+    // edit is staged as {repo: true | false | null}; null means "follow the
+    // hive-wide switch". decisionsDelegateSaveBody merges it into the saved map.
+    function markDirtyDecisionsDelegateRepo(repo, value) {
+      const staged = ((_configState.dirty || {})['decisions-delegate'] || {}).repos || {};
+      const next = value === 'on' ? true : (value === 'off' ? false : null);
+      markDirty('decisions-delegate', 'repos', Object.assign({}, staged, { [repo]: next }));
+    }
+
+    // decisionsDelegateSameRepo: owner/repo keys match case-insensitively, and
+    // a bare name (hive.yaml may use one) matches the repository of that name.
+    function decisionsDelegateSameRepo(a, b) {
+      const x = String(a || '').toLowerCase();
+      const y = String(b || '').toLowerCase();
+      if (x === y) return true;
+      if (x.includes('/') && y.includes('/')) return false;
+      return x.slice(x.indexOf('/') + 1) === y.slice(y.indexOf('/') + 1);
+    }
+
+    // decisionsDelegateReposBody is the repos map a save sends. PUT
+    // /api/config/decisions/delegate replaces the map whole, so it carries
+    // every saved override plus the staged row edits, never the edited rows
+    // alone; a row set back to hive-wide drops out.
+    function decisionsDelegateReposBody(saved, staged) {
+      const out = {};
+      Object.entries(saved || {}).forEach(([repo, v]) => {
+        if (v && typeof v.enabled === 'boolean') out[repo] = { enabled: v.enabled };
+      });
+      Object.entries(staged || {}).forEach(([repo, v]) => {
+        Object.keys(out).forEach(k => { if (decisionsDelegateSameRepo(k, repo)) delete out[k]; });
+        if (v === true || v === false) out[repo] = { enabled: v };
+      });
+      return out;
+    }
+
+    // decisionsDelegateEffectTimeoutValid mirrors the server's check: empty
+    // (the default), or a Go duration above zero such as 30m, 1h30m or 2h.
+    function decisionsDelegateEffectTimeoutValid(raw) {
+      const s = String(raw || '').trim();
+      if (!s) return true;
+      if (!/^\+?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:ns|us|µs|μs|ms|s|m|h))+$/.test(s)) return false;
+      return /[1-9]/.test(s);
+    }
+
+    // decisionsDelegateSaveBody builds the PUT body from the staged values.
+    // Only staged fields are sent; an absent field is left alone by the server.
+    function decisionsDelegateSaveBody(values, savedRepos) {
+      const body = {};
+      if (values.enabled !== undefined) body.enabled = values.enabled;
+      if (values.llm_enabled !== undefined || values.llm_model !== undefined) {
+        body.llm = {};
+        if (values.llm_enabled !== undefined) body.llm.enabled = values.llm_enabled;
+        if (values.llm_model !== undefined) body.llm.model = values.llm_model;
+      }
+      if (values.repos !== undefined) body.repos = decisionsDelegateReposBody(savedRepos, values.repos);
+      if (values.effect_timeout !== undefined) {
+        const raw = String(values.effect_timeout || '').trim();
+        if (!decisionsDelegateEffectTimeoutValid(raw)) throw new Error('Let hive decide effect timeout must be a duration above zero, such as 30m or 2h, or empty for the default (30m)');
+        body.effect_timeout = raw;
+      }
+      return body;
     }
 
     function markDirtyPerspectives() {

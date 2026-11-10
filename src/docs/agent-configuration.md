@@ -285,6 +285,8 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
     enabled: true                # default true; set false to keep it configured but off
     mode: ISSUES_AND_PRS         # GitHub interaction tier: ADVISORY | ISSUES_ONLY |
                                  #   ISSUES_AND_PRS | ISSUES_PRS_MERGE
+                                 #   (NO_GITHUB is a legacy alias for ADVISORY; the
+                                 #   dashboard lists it only for an agent that has it)
     converse: true               # let this agent comment on issues/PRs and leave PR
                                  #   reviews, INDEPENDENTLY of mode. Off by default.
                                  #   See "Conversation is not a tier" below.
