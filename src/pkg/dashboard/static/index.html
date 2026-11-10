@@ -67517,6 +67517,7 @@ function burnAreaChart() {
         </div>
         ${renderGovReplanSection((_configState.data || {}).replan || {})}
         ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}
+        ${renderGovDecisionsDelegateSection((_configState.data || {}).decisions_delegate || {})}
 
         <div class="settings-subsection">
           <div class="settings-subsection-title">Superseded PR grace ${settingHelpMark('settings', 'features', 'Superseded PR grace', `Timing of the superseded-PR sweep.`)}</div>
@@ -68084,6 +68085,44 @@ function burnAreaChart() {
           </div>
         </div>
         `)}`;
+    }
+
+    // renderGovDecisionsDelegateSection renders the "Let hive decide"
+    // settings (decisions.delegate): the hive-wide switch and the LLM step.
+    // Values are marked dirty under 'decisions-delegate', which saveConfig
+    // PUTs to /api/config/decisions/delegate (owner only). The
+    // per-repository overrides (decisions.delegate.repos) are listed here
+    // read-only; they change in hive.yaml or through the admin MCP
+    // decisions.delegate_settings operation.
+    function renderGovDecisionsDelegateSection(dd) {
+      dd = dd || {};
+      const llm = dd.llm || {};
+      const on = dd.enabled !== false;
+      const llmOn = llm.enabled === true;
+      const repos = Object.entries(dd.repos || {}).sort((a, b) => a[0].localeCompare(b[0]));
+      const repoText = repos.length
+        ? repos.map(([r, v]) => `${esc(r)} ${v && v.enabled ? 'on' : 'off'}`).join(' · ')
+        : 'none, so every repository follows the switch above';
+      const readyNote = llmOn && dd.llm_reviewer_ready === false
+        ? '<div class="config-help">No reviewer endpoint or model is configured (governor.trajectory or governor.litellm), so every decision keeps the rules\' reversible default until one is.</div>' : '';
+      const maskedNote = llm.model_masked
+        ? '<div class="config-help">The stored model looks like an API key, so it is hidden. Enter a model name to replace it.</div>' : '';
+      return `
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Let hive decide ${settingHelpMark('settings', 'features', 'Let hive decide', `The activity monitor's Let hive decide action: the hive decides a needs-decision item as the owner's delegate and records it as a person's decision would be.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${on ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="decisions-delegate" data-key="enabled"></div>
+            <span class="config-toggle-label">Let hive decide enabled ${yamlHint('decisions.delegate.enabled')} ${settingHelpMark('settings', 'features', 'Let hive decide enabled', `On by default. Off greys out Let hive decide hive-wide, refuses it through the API and the admin MCP, and stops the reviewer-question sweep from deciding on its own. A per-repository override wins over this switch. Applies without a restart. It never merges anything: a delegated decision records a verdict, and merging stays with the merge settings.`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${llmOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="decisions-delegate" data-key="llm_enabled"></div>
+            <span class="config-toggle-label">Ask a model when the rules cannot decide ${yamlHint('decisions.delegate.llm.enabled')} ${settingHelpMark('settings', 'features', 'Ask a model when the rules cannot decide', `Off by default. When on, an item the rules leave at the reversible default is sent to the model: its title, body, comments and linked items go to the governor reviewer endpoint, and the model's verdict passes the same safety rails as a rule decision. Any failure keeps the reversible default. This spends tokens on each such decision.`)}</span>
+          </div>
+          ${readyNote}
+          <div class="config-field"><label>Decider model ${yamlHint('decisions.delegate.llm.model')} ${settingHelpMark('settings', 'features', 'Decider model', `Model for the decider turn. Empty uses the governor reviewer model. A model name only: the key belongs to the reviewer endpoint, and a value that looks like a key is refused.`)}</label><input type="text" value="${esc(llm.model || '')}" placeholder="${esc(dd.llm_model_effective || 'reviewer model')}" data-change-action="markDirty" data-arg0="decisions-delegate" data-arg1="llm_model" data-arg-types="s,s,w"></div>
+          ${maskedNote}
+          <div class="config-help">Per-repository overrides ${yamlHint('decisions.delegate.repos')}: ${repoText}. Change them in hive.yaml or with the admin MCP decisions.delegate_settings operation.</div>
+        </div>`;
     }
     async function prepareIntegrationExecutionIdentity() {
       const target = document.getElementById('integration-execution-identity');
@@ -71648,6 +71687,23 @@ function burnAreaChart() {
             });
             if (!ioRes.ok) throw new Error(await saveErrorMessage(ioRes));
             _configState.data.integration_orchestration = await ioRes.json();
+          } else if (_configState.type === 'governor' && section === 'decisions-delegate') {
+            // decisions.delegate is a TOP-LEVEL config block; it saves through
+            // its own owner-only /api/config/decisions/delegate endpoint.
+            const ddBody = {};
+            if (values.enabled !== undefined) ddBody.enabled = values.enabled;
+            if (values.llm_enabled !== undefined || values.llm_model !== undefined) {
+              ddBody.llm = {};
+              if (values.llm_enabled !== undefined) ddBody.llm.enabled = values.llm_enabled;
+              if (values.llm_model !== undefined) ddBody.llm.model = values.llm_model;
+            }
+            const ddRes = await fetch('/api/config/decisions/delegate', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(ddBody)
+            });
+            if (!ddRes.ok) throw new Error(await saveErrorMessage(ddRes));
+            _configState.data.decisions_delegate = await ddRes.json().catch(() => _configState.data.decisions_delegate);
           } else if (_configState.type === 'governor' && section === 'convergence') {
             // convergence is a TOP-LEVEL config block, not under governor —
             // it saves through its own owner-only /api/config/convergence

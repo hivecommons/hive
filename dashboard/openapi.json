@@ -11009,6 +11009,167 @@
         }
       }
     },
+    "/api/config/decisions/delegate": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Let hive decide settings (decisions.delegate)",
+        "description": "Returns decisions.delegate with defaults resolved: the hive-wide switch, per-repository overrides, the LLM step and the effect timeout. The block holds no secret; a stored llm.model that looks like a key is masked. Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "decisions.delegate settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Hive-wide switch with the default resolved (unset = on)."
+                    },
+                    "enabled_set": {
+                      "type": "boolean",
+                      "description": "Whether decisions.delegate.enabled is set explicitly."
+                    },
+                    "repos": {
+                      "type": "object",
+                      "description": "Per-repository overrides keyed by owner/repo (or a bare repository name). A repository not listed follows the hive-wide enabled.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "llm": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean",
+                          "description": "The LLM step for cases the rules leave at the reversible default (unset = off)."
+                        },
+                        "model": {
+                          "type": "string",
+                          "description": "Model override; empty means the governor reviewer model. Empty when masked."
+                        },
+                        "model_masked": {
+                          "type": "boolean",
+                          "description": "True when the stored model looks like an API key and is not returned."
+                        }
+                      }
+                    },
+                    "llm_reviewer_ready": {
+                      "type": "boolean",
+                      "description": "Whether the decider turn has a reviewer endpoint and a model to call. The endpoint and its key are never returned."
+                    },
+                    "llm_model_effective": {
+                      "type": "string",
+                      "description": "The model the decider turn uses: the override, else the reviewer model."
+                    },
+                    "effect_timeout": {
+                      "type": "string",
+                      "description": "decisions.delegate.effect_timeout as set; empty means the default."
+                    },
+                    "effect_timeout_effective": {
+                      "type": "string",
+                      "description": "The effect timeout in force (default 30m)."
+                    },
+                    "project_repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "project.repos as owner/repo, for qualifying bare names."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires owner role"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Update Let hive decide settings (decisions.delegate)",
+        "description": "Updates decisions.delegate. Absent fields are unchanged; repos, when sent, replaces the whole override map. Unknown fields are refused. The change is saved, audited as config_decisions_delegate and applies without a restart. It starts no decision and merges nothing. Requires owner role.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "repos": {
+                    "type": "object",
+                    "description": "The FULL override map; absent leaves it unchanged, {} clears it. An entry with enabled null is dropped. A new key must name a repository in project.repos.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean",
+                          "nullable": true,
+                          "description": "null drops the override, so the repository follows the hive-wide switch"
+                        }
+                      }
+                    }
+                  },
+                  "llm": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "model": {
+                        "type": "string",
+                        "description": "A model name only; a value that looks like an API key or token is refused. Empty clears the override."
+                      }
+                    }
+                  },
+                  "effect_timeout": {
+                    "type": "string",
+                    "description": "A Go duration above zero, or empty for the default (30m)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated (same shape as GET)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown field, invalid repository, key-like or malformed model, or invalid effect_timeout; nothing is changed"
+          },
+          "403": {
+            "description": "Requires owner role"
+          },
+          "500": {
+            "description": "The change could not be saved; nothing is changed"
+          }
+        }
+      }
+    },
     "/api/config/governor/replan": {
       "get": {
         "tags": [

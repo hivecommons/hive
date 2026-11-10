@@ -16,6 +16,7 @@ import (
 var featuresTabRenderers = []string{
 	"renderGovFeatures",
 	"renderGovReplanSection",
+	"renderGovDecisionsDelegateSection",
 }
 
 // featuresTabControl matches the two shapes a labelled control takes in the
