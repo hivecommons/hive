@@ -843,13 +843,7 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 			m.logger.Warn("github app installation id is unset — per-agent scoped token NOT delivered, this agent's GitHub writes (gh + git push) will FAIL; set github.installation_id or install the App on the hive's org so discovery resolves it",
 				"agent", agent.Name, "tier", tier, "error", err)
 		}
-		// An unclaimed hosted placeholder slot has no repos and no org install
-		// by design; that is the expected pre-onboarding state, the dashboard
-		// onboarding banner already surfaces it, and a fleet selfreport about
-		// a slot nobody owns is noise (#17600).
-		if m.hasGitHubTarget(agent.Name) {
-			m.observeCondition(crux.ClassGitHubAppNotInstalled, agent.Name, "github app installation id is unset: "+err.Error(), "")
-		}
+		m.observeCondition(crux.ClassGitHubAppNotInstalled, agent.Name, "github app installation id is unset: "+err.Error(), "")
 	} else if err != nil {
 		// Be precise about the blast radius. Since audit H3 the shared-cache
 		// fallback is GONE: gh-wrapper.sh and git-credential-hive.sh no
@@ -872,13 +866,6 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 	if agent.UID > 0 {
 		m.issueAgentMintToken(agent.Name, tier, agent.UID)
 	}
-}
-
-// hasGitHubTarget reports whether the hive has any repo configured, i.e. it
-// is no longer an unclaimed placeholder slot. It reads the live accessors, not
-// the boot-time snapshot fields, so a hive claimed via heartbeat is seen.
-func (m *Manager) hasGitHubTarget(agent string) bool {
-	return len(m.project.ReposFor(agent)) > 0 || strings.TrimSpace(m.project.PrimaryRepoFor(agent)) != ""
 }
 
 // agentTokenCacheEnabled keeps the shared-UID read path opt-in and App-only.

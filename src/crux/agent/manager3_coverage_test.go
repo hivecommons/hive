@@ -534,7 +534,7 @@ func TestAgentEnvPairs_DirectBackendBypassesProxyForLoopback(t *testing.T) {
 func TestMintAgentTokenUnlocked_AppNotInstalledWarnsOnce(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
-	m := NewManager(map[string]config.AgentConfig{"cxa": {Backend: "claude"}}, logger, ProjectContext{Repos: []string{"acme/widgets"}})
+	m := NewManager(map[string]config.AgentConfig{"cxa": {Backend: "claude"}}, logger, ProjectContext{})
 	fm := &fakeMinter{err: fmt.Errorf("minting scoped token for cxa: %w", crux.ErrGitHubAppNotInstalled)}
 	m.SetAppAuth(fm)
 	rec := recordConditions(t, m)
@@ -561,52 +561,5 @@ func TestMintAgentTokenUnlocked_AppNotInstalledWarnsOnce(t *testing.T) {
 	m.mintAgentTokenUnlocked(context.Background(), agent)
 	if len(rec.clears(crux.ClassGitHubAppNotInstalled)) != 1 {
 		t.Error("successful mint did not clear the not-installed condition")
-	}
-}
-
-func TestMintAgentTokenUnlocked_AppNotInstalledUnclaimedSlotNotReported(t *testing.T) {
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, nil))
-	m := NewManager(map[string]config.AgentConfig{"cxa": {Backend: "claude"}}, logger, ProjectContext{})
-	fm := &fakeMinter{err: fmt.Errorf("minting scoped token for cxa: %w", crux.ErrGitHubAppNotInstalled)}
-	m.SetAppAuth(fm)
-	rec := recordConditions(t, m)
-	m.mu.Lock()
-	agent := m.agents["cxa"]
-	agent.UID = 2001
-	m.mu.Unlock()
-
-	m.mintAgentTokenUnlocked(context.Background(), agent)
-	m.mintAgentTokenUnlocked(context.Background(), agent)
-
-	if got := strings.Count(buf.String(), "github app installation id is unset"); got != 1 {
-		t.Errorf("unset-installation warning logged %d times, want 1", got)
-	}
-	if got := len(rec.observations(crux.ClassGitHubAppNotInstalled)); got != 0 {
-		t.Errorf("not-installed observations = %d, want 0", got)
-	}
-	if got := len(rec.observations(crux.ClassGitHubAppTokenMintFailed)); got != 0 {
-		t.Errorf("generic mint-failed observations = %d, want 0", got)
-	}
-}
-
-func TestMintAgentTokenUnlocked_AppNotInstalledReportsWhenClaimedAfterBoot(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
-	// Snapshot fields are empty (boot-time placeholder) but the live accessor
-	// already resolves a repo, as after a heartbeat claim.
-	m := NewManager(map[string]config.AgentConfig{"cxa": {Backend: "claude"}}, logger, ProjectContext{
-		AgentRepos: func(string) []string { return []string{"acme/widgets"} },
-	})
-	m.SetAppAuth(&fakeMinter{err: fmt.Errorf("minting scoped token for cxa: %w", crux.ErrGitHubAppNotInstalled)})
-	rec := recordConditions(t, m)
-	m.mu.Lock()
-	agent := m.agents["cxa"]
-	agent.UID = 2001
-	m.mu.Unlock()
-
-	m.mintAgentTokenUnlocked(context.Background(), agent)
-
-	if got := len(rec.observations(crux.ClassGitHubAppNotInstalled)); got != 1 {
-		t.Errorf("not-installed observations = %d, want 1", got)
 	}
 }
