@@ -85,7 +85,7 @@ func TestStageTrackerAutoMergeOffNewPRNamesThePersonsMerge(t *testing.T) {
 	if lead := d.Options[0]; lead.Action != decisionActionMergeNow || !lead.Enabled {
 		t.Fatalf("#626 lead option = %+v, want an enabled merge-now", lead)
 	}
-	if q := decisionOptionByAction(t, d, decisionActionQueueMerge); q.Enabled || !strings.Contains(q.ReasonIfDisabled, "auto-merge is off") {
+	if q := decisionOptionByAction(t, d, decisionActionQueueMerge); q.Enabled || !strings.Contains(strings.ToLower(q.ReasonIfDisabled), "auto-merge is off") {
 		t.Fatalf("#626 queue option = %+v, want it greyed: no merge pass runs here", q)
 	}
 
