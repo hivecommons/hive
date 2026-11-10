@@ -349,7 +349,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			Metadata:            gh.Ptr("read"),
 			VulnerabilityAlerts: gh.Ptr("read"),
 		}
-	case "trusted", "merger":
+	case "trusted", "merger", agentmode.SecCheckTrustedTier:
 		perms = &gh.InstallationPermissions{
 			Issues:       gh.Ptr("write"),
 			Contents:     gh.Ptr("write"),
@@ -366,6 +366,12 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			// token without it and logs the missing grant instead of
 			// breaking every trusted-tier mint.
 			Workflows: gh.Ptr("write"),
+		}
+		if tier == agentmode.SecCheckTrustedTier {
+			// The sec-check role refinement of trusted (#17496): adds
+			// Dependabot alerts read, optional like Workflows (the mint
+			// below retries without it).
+			perms.VulnerabilityAlerts = gh.Ptr("read")
 		}
 	case "reviewer":
 		// The reviewer tier is the advisor tier under a distinct name: the
@@ -440,7 +446,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 	defer cancel()
 	jwtClient := newJWTClient(jwtToken, a.apiURL)
 	installToken, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, installationID, opts)
-	if isPermissionNotGrantedMintError(err) && perms.VulnerabilityAlerts != nil && perms.Workflows == nil {
+	if isPermissionNotGrantedMintError(err) && perms.VulnerabilityAlerts != nil {
 		a.logger.Warn("scoped token mint with vulnerability_alerts:read failed; retrying without it — "+
 			"the sec-check Dependabot alerts call will 403 until the App grants Dependabot alerts read-only and the installation re-accepts it; see docs/github-app-setup.md",
 			"tier", tier, "error", err)

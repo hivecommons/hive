@@ -169,6 +169,15 @@ func TestScopedToken_OnlySecCheckTierRequestsVulnerabilityAlerts(t *testing.T) {
 	if _, err := auth.ScopedToken(context.Background(), agentmode.SecCheckTier); err != nil {
 		t.Fatalf("ScopedToken(sec-check): %v", err)
 	}
+	if _, err := auth.ScopedToken(context.Background(), agentmode.SecCheckTrustedTier); err != nil {
+		t.Fatalf("ScopedToken(sec-check-trusted): %v", err)
+	}
+	if gotPerms["vulnerability_alerts"] != "read" {
+		t.Errorf("sec-check-trusted tier vulnerability_alerts = %q, want read", gotPerms["vulnerability_alerts"])
+	}
+	if _, err := auth.ScopedToken(context.Background(), agentmode.SecCheckTier); err != nil {
+		t.Fatalf("ScopedToken(sec-check): %v", err)
+	}
 	if gotPerms["vulnerability_alerts"] != "read" {
 		t.Errorf("sec-check tier vulnerability_alerts = %q, want read", gotPerms["vulnerability_alerts"])
 	}
@@ -176,6 +185,52 @@ func TestScopedToken_OnlySecCheckTierRequestsVulnerabilityAlerts(t *testing.T) {
 		if gotPerms[perm] != "write" {
 			t.Errorf("sec-check tier %s = %q, want write (it is the contributor set plus alerts read)", perm, gotPerms[perm])
 		}
+	}
+}
+
+// The sec-check-trusted tier (#17496) is the trusted set plus Dependabot
+// alerts read, and degrades to a token without only the alerts grant (keeping
+// Workflows) when the installation has not accepted it.
+func TestScopedToken_SecCheckTrustedTierAlertsWithFallback(t *testing.T) {
+	var requests []map[string]string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		perms := decodePermissions(t, r)
+		requests = append(requests, perms)
+		if perms["vulnerability_alerts"] != "" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]any{"message": "The permissions requested are not granted to this installation."})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":      "scoped-token-trusted",
+			"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	auth := newWorkflowsTestAuth(t, server.URL)
+	if _, err := auth.ScopedToken(context.Background(), agentmode.SecCheckTrustedTier); err != nil {
+		t.Fatalf("ScopedToken: %v", err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("mint requests = %d, want 2", len(requests))
+	}
+	first := requests[0]
+	if first["vulnerability_alerts"] != "read" {
+		t.Errorf("first mint vulnerability_alerts = %q, want read", first["vulnerability_alerts"])
+	}
+	for perm, want := range map[string]string{"contents": "write", "issues": "write", "pull_requests": "write", "checks": "read", "workflows": "write"} {
+		if first[perm] != want {
+			t.Errorf("first mint %s = %q, want %q (trusted set plus alerts read)", perm, first[perm], want)
+		}
+	}
+	if _, present := requests[1]["vulnerability_alerts"]; present {
+		t.Errorf("retry still requests vulnerability_alerts: %v", requests[1])
+	}
+	if requests[1]["workflows"] != "write" {
+		t.Errorf("retry workflows = %q, want write (only the alerts grant is dropped)", requests[1]["workflows"])
 	}
 }
 
