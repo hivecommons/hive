@@ -125,6 +125,12 @@ type delegatedDecisionJob struct {
 	// decision, notes and result. Result then summarises them
 	// (rowActionDecidedEach) and Decision is unset.
 	Items []delegatedDecisionItem `json:"items,omitempty"`
+	// FromLedger marks a job read back from the operator-action ledger
+	// because this process no longer holds it (evicted after
+	// delegatedDecisionJobTTL, or started by a process that has since
+	// ended): status, requester, start, verdict and rule are what the
+	// ledger kept, and the outcome's words are in Notes or Error.
+	FromLedger bool `json:"from_ledger,omitempty"`
 }
 
 // delegatedDecisionItem is one nested PR's outcome inside an issue job.
@@ -230,10 +236,86 @@ func (s *Server) handleRepoItemDecideDelegatedStatus(w http.ResponseWriter, r *h
 	}
 	job, found := s.delegatedJobs.get(delegatedJobKey(owner+"/"+repoName, number))
 	if !found {
+		job, found = s.delegatedJobFromLedger(owner+"/"+repoName, number)
+	}
+	if !found {
 		jsonError(w, "no delegated decision for this item", http.StatusNotFound)
 		return
 	}
 	jsonResponse(w, job)
+}
+
+// delegatedRestartInterruptedDetail is the outcome a let-hive-decide gets
+// when the process running it ended first. Nothing resumes it: the job
+// acted with its requester's authority on the head it read, and after a
+// restart neither is known to still hold.
+const delegatedRestartInterruptedDetail = "interrupted by a hive restart before it finished, and not resumed; part of it may already be on GitHub, so check the item, then ask again"
+
+// settleDelegatedInterruptedByRestart marks every let-hive-decide still
+// pending in the ledger as failed (delegatedRestartInterruptedDetail),
+// with a log line and an audit entry per item. operatorActions calls it
+// once, before this process records anything, so only records a previous
+// process left behind are touched. It never re-runs a decision.
+func (s *Server) settleDelegatedInterruptedByRestart(st *operatorActionStore) {
+	interrupted, err := st.InterruptPendingAfterRestart(operatorActionLetHiveDecide, delegatedRestartInterruptedDetail)
+	if err != nil && s.logger != nil {
+		s.logger.Warn("operator action ledger write failed", "path", operatorActionsPath, "error", err)
+	}
+	for _, it := range interrupted {
+		if s.logger != nil {
+			s.logger.Warn("delegated decision interrupted by a restart: marked failed, not resumed",
+				"repo", it.Repo, "number", it.Number, "job", it.Record.JobID, "requester", it.Record.Actor, "started_at", it.Record.At)
+		}
+		if s.audit != nil {
+			s.audit.LogRecord(it.Record.Actor, auditRepoItemDecisionDelegated+"_failed", auditDetail("repo", it.Repo, "number", strconv.Itoa(it.Number),
+				"job", it.Record.JobID, "error", "interrupted by restart; not resumed"), "", it.Repo, it.Number)
+		}
+	}
+}
+
+// delegatedJobFromLedger answers the status of an item's latest
+// let-hive-decide from the operator-action ledger, for when the job is no
+// longer in memory. The newest record that names its job wins; a record
+// from before job ids were kept is used only when none does.
+func (s *Server) delegatedJobFromLedger(repoFull string, number int) (delegatedDecisionJob, bool) {
+	actions := s.operatorActions().List(repoFull, number)
+	pick := -1
+	for i := len(actions) - 1; i >= 0; i-- {
+		if actions[i].Action != operatorActionLetHiveDecide {
+			continue
+		}
+		if actions[i].JobID != "" {
+			pick = i
+			break
+		}
+		if pick < 0 {
+			pick = i
+		}
+	}
+	if pick < 0 {
+		return delegatedDecisionJob{}, false
+	}
+	a := actions[pick]
+	job := delegatedDecisionJob{
+		ID: a.JobID, Repo: repoFull, Number: number, Requester: a.Actor, StartedAt: a.At,
+		Marker: delegatedecision.Marker(s.delegateHiveID()), FromLedger: true,
+	}
+	switch a.Outcome {
+	case operatorActionOutcomePending:
+		job.Status = delegatedJobStatusRunning
+	case operatorActionOutcomeFailed:
+		job.Status = delegatedJobStatusFailed
+		job.Error = a.Detail
+	default:
+		job.Status = delegatedJobStatusDone
+		if a.Detail != "" {
+			job.Notes = []string{a.Detail}
+		}
+	}
+	if a.Verdict != "" {
+		job.Decision = &delegatedecision.Decision{Verdict: delegatedecision.Verdict(a.Verdict), Rule: a.Rule}
+	}
+	return job, true
 }
 
 func (s *Server) handleRepoItemDecideDelegated(w http.ResponseWriter, r *http.Request) {
@@ -316,6 +398,13 @@ func (s *Server) handleRepoItemDecideDelegated(w http.ResponseWriter, r *http.Re
 // issue with two or more open nested PRs is decided per PR (see
 // delegatedDecisionRequest.PRs); anything else is decided as one item.
 func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string, number int, itemType, user string, mergerRole bool, req delegatedDecisionRequest) {
+	if s.logger != nil {
+		jobID := ""
+		if job, ok := s.delegatedJobs.get(key); ok {
+			jobID = job.ID
+		}
+		s.logger.Info("delegated decision started", "repo", repoFull, "number", number, "type", itemType, "requester", user, "job", jobID)
+	}
 	if itemType == "issue" {
 		if prs := s.delegatedNestedOpenPRs(repoFull, number, req.PRs); len(prs) >= delegatedFanOutMinPRs {
 			s.runDelegatedDecisionPerPR(ctx, key, repoFull, number, prs, user, mergerRole, req)
@@ -341,6 +430,13 @@ func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string,
 // action ledger so the row's decision badge can show what hive did next.
 func (s *Server) settleDelegatedJob(key, repoFull string, number int) {
 	if done, ok := s.delegatedJobs.get(key); ok {
+		if s.logger != nil {
+			verdict := ""
+			if done.Decision != nil {
+				verdict = string(done.Decision.Verdict)
+			}
+			s.logger.Info("delegated decision ended", "repo", repoFull, "number", number, "job", done.ID, "status", done.Status, "verdict", verdict, "error", done.Error)
+		}
 		s.settleOperatorAction(repoFull, number, &done)
 	}
 }
