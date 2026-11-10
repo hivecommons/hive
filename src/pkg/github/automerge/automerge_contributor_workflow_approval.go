@@ -3,7 +3,10 @@ package automerge
 // Owner approval releases the workflow-path fence (hivecommons/hive#14664).
 //
 // The contributor lane's diff fence refuses any PR that edits
-// `.github/workflows/**` or `.github/actions/**` (contributorLaneDiffReason).
+// `.github/workflows/**` or `.github/actions/**` (contributorLaneDiffReason),
+// or with workflow_fence_scope: human_merge_paths only one whose edited
+// workflow / action file is also a human-merge path
+// (automerge_workflow_fence_scope.go).
 // Until #14664 that refusal was absolute: an owner's approval only moved the
 // PR to stage/090 with a "click Merge" caption and the hive never merged it
 // (hive#14568, hive#14498, rationguard#401). The owner's decision is that an
@@ -514,17 +517,18 @@ func (c *Engine) commentWorkflowApproval(ctx context.Context, owner, repo string
 }
 
 // workflowFenceMergeUnauthorized handles a merge failure on a PR whose
-// workflow-path fence owner approval released. When GitHub refused the merge
+// workflow-path fence owner approval released, or whose workflow edits
+// workflow_fence_scope left outside the fence. When GitHub refused the merge
 // for want of the App's `workflows` permission, it marks the PR unauthorized
 // for merge-workflow-path and returns the workflow-path reason — the
 // pre-#14664 outcome, which the stage engine routes to 090 "click Merge" for
 // an approved head. Any other failure, or a PR whose fence did not trip,
 // returns "" so the caller's usual handling runs.
 func (c *Engine) workflowFenceMergeUnauthorized(ctx context.Context, displayRepo, owner, repo string, eval contributorLaneEval, err error) string {
-	if eval.workflowApprover == "" || !isWorkflowsPermissionMergeError(err) {
+	if (eval.workflowApprover == "" && !eval.workflowUnfenced) || !isWorkflowsPermissionMergeError(err) {
 		return ""
 	}
-	c.warn("workflow-path merge refused: App lacks workflows permission", "repo", displayRepo, "pr", eval.pr.GetNumber(), "head", eval.headSHA, "approver", eval.workflowApprover, "error", err)
+	c.warn("workflow-path merge refused: App lacks workflows permission", "repo", displayRepo, "pr", eval.pr.GetNumber(), "head", eval.headSHA, "approver", eval.workflowApprover, "outside_fence_scope", eval.workflowUnfenced, "error", err)
 	c.markUnauthorized(ctx, displayRepo, owner, repo, eval.pr, eval.pr.GetNumber(), eval.headSHA, unauthorizedStepMergeWorkflowPath, unauthorizedPermissionWorkflowsWrite, mergeWorkflowPathHumanAction())
 	return contributorLaneReasonWorkflowPath
 }

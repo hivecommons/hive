@@ -462,6 +462,7 @@
       const repos = document.getElementById('am-contributor-lane-repos');
       const tiers = document.getElementById('am-contributor-lane-require-tiers');
       const scope = document.getElementById('am-contributor-lane-auto-promotion-scope');
+      const fenceScope = document.getElementById('am-contributor-lane-workflow-fence-scope');
       const soakMinutes = soak ? parseInt(soak.value, 10) : 30;
       markDirty('auto-merge', 'contributor_lane', {
         enabled: !!(enabled && enabled.classList.contains('on')),
@@ -471,6 +472,7 @@
         approve_held_runs_for_registry_trusted: !!(heldRuns && heldRuns.classList.contains('on')),
         owner_approval_releases_workflow_fence: !!(workflowApproval && workflowApproval.classList.contains('on')),
         auto_promotion_scope: scope && scope.value ? scope.value : 'hive',
+        workflow_fence_scope: fenceScope && fenceScope.value ? fenceScope.value : 'all',
         exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
         repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : [],
         require_tiers: tiers ? tiers.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : []
