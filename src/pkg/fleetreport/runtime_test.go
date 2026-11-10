@@ -256,6 +256,38 @@ func TestEvaluateRuntimeEvidenceReEmitsUntilPostedAndRecovers(t *testing.T) {
 	}
 }
 
+// An unclaimed hive (no project.org) has no GitHub App installation by
+// design; that is the onboarding banner's job, not a fleet issue (#17593).
+func TestEvaluateGitHubAppNotInstalledSkippedOnUnclaimedHive(t *testing.T) {
+	now := time.Date(2026, 11, 10, 18, 0, 0, 0, time.UTC)
+	appEv := Evidence{Class: ClassGitHubAppNotInstalled, Component: "github-client", Severity: "medium", Count: 1, Message: "github app installation id is unset: minting scoped token for guide: installation_id is 0", Attributable: true}
+	panicEv := Evidence{Class: ClassPanicRecovered, Component: "dashboard", Severity: "high", Count: 1, Message: "panic in handler: nil deref", Attributable: true}
+	cases := []struct {
+		name        string
+		org         string
+		evidence    []Evidence
+		wantClasses []string
+	}{
+		{name: "unclaimed hive skips app-not-installed", org: "", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "whitespace org counts as unclaimed", org: "  ", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "unclaimed hive still reports other classes", org: "", evidence: []Evidence{appEv, panicEv}, wantClasses: []string{ClassPanicRecovered}},
+		{name: "org configured still reports app-not-installed", org: "acme", evidence: []Evidence{appEv}, wantClasses: []string{ClassGitHubAppNotInstalled}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			obs := Observation{EpochStart: now, HiveID: "hive-a", Version: "v6.12.5", HiveSlug: "hosted-available-x", ProjectOrg: tc.org, Evidence: tc.evidence, Now: now}
+			res := Evaluate(obs, State{}, false)
+			var got []string
+			for _, r := range res.Reports {
+				got = append(got, r.Class)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.wantClasses) {
+				t.Fatalf("report classes = %v, want %v", got, tc.wantClasses)
+			}
+		})
+	}
+}
+
 func TestDefaultTrackerPackageHelpersAndEviction(t *testing.T) {
 	now, advance := fakeClock(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC))
 	tr := NewRuntimeTracker(now)

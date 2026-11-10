@@ -384,6 +384,9 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 		if ev.Class == "" || !IsKnownClass(ev.Class) {
 			continue
 		}
+		if onboardingOnlyCondition(obs, ev) {
+			continue
+		}
 		fp := RuntimeFingerprint(ev.Class, ev.Message)
 		report := BuildRuntimeReport(obs, ev, fp, instance, obs.HiveSlug, version, commit, now)
 		active[fp] = true
@@ -430,6 +433,16 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 	sort.Slice(res.Recoveries, func(i, j int) bool { return res.Recoveries[i].Fingerprint < res.Recoveries[j].Fingerprint })
 	res.State = state
 	return res
+}
+
+// onboardingOnlyCondition reports whether ev is the expected state of a hive
+// that has not been onboarded yet rather than a fleet defect (#17593). An
+// unclaimed hosted slot has no project.org, so it legitimately has no GitHub
+// App installation; the dashboard already surfaces that as the
+// github_app_not_installed onboarding banner. Once an org is configured, a
+// missing installation is a real misconfiguration and is still reported.
+func onboardingOnlyCondition(obs Observation, ev Evidence) bool {
+	return ev.Class == ClassGitHubAppNotInstalled && strings.TrimSpace(obs.ProjectOrg) == ""
 }
 
 // BuildObservationReports converts detector findings into reports consumed by
