@@ -1,0 +1,1 @@
+- An unclaimed hosted placeholder slot (no repos configured) no longer files a fleet `github_app_not_installed` self-report; the missing installation is expected before the slot is claimed and the dashboard onboarding banner already surfaces it (#17600).
