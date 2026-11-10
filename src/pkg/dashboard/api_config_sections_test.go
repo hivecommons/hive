@@ -643,6 +643,8 @@ func TestAutoMergeGet_ContributorLaneDefaults(t *testing.T) {
 			AutoPromotionScopes    []string `json:"auto_promotion_scopes"`
 			ApproveHeldRuns        bool     `json:"approve_held_runs_for_registry_trusted"`
 			OwnerApprovalWorkflow  bool     `json:"owner_approval_releases_workflow_fence"`
+			WorkflowFenceScope     string   `json:"workflow_fence_scope"`
+			WorkflowFenceScopes    []string `json:"workflow_fence_scopes"`
 			GrantableTiers         []string `json:"grantable_tiers"`
 		} `json:"contributor_lane"`
 	}
@@ -661,6 +663,9 @@ func TestAutoMergeGet_ContributorLaneDefaults(t *testing.T) {
 	}
 	if cl.AutoPromotionScope != config.ContributorLaneAutoPromotionScopeHive || strings.Join(cl.AutoPromotionScopes, ",") != "hive,repo" {
 		t.Fatalf("contributor_lane auto_promotion_scope defaults wrong: %+v", cl)
+	}
+	if cl.WorkflowFenceScope != config.ContributorLaneWorkflowFenceScopeAll || strings.Join(cl.WorkflowFenceScopes, ",") != "all,human_merge_paths" {
+		t.Fatalf("contributor_lane workflow_fence_scope defaults wrong: %+v", cl)
 	}
 	if strings.Join(cl.ExcludeLabels, ",") != strings.Join(config.DefaultContributorLaneExcludeLabels, ",") {
 		t.Fatalf("contributor_lane default labels wrong: %v", cl.ExcludeLabels)
@@ -681,6 +686,7 @@ func TestAutoMergePut_ContributorLaneValidation(t *testing.T) {
 			"auto_promotion_scope":                   " Repo ",
 			"approve_held_runs_for_registry_trusted": false,
 			"owner_approval_releases_workflow_fence": false,
+			"workflow_fence_scope":                   " Human_Merge_Paths ",
 		},
 	}
 	if rec := doPut(s, "/api/config/auto-merge", valid); rec.Code != http.StatusOK {
@@ -695,6 +701,15 @@ func TestAutoMergePut_ContributorLaneValidation(t *testing.T) {
 	}
 	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"contributor_lane": map[string]any{"auto_promotion_scope": "fleet"}}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid auto_promotion_scope: expected 400, got %d", rec.Code)
+	}
+	if cl.WorkflowFenceScope != config.ContributorLaneWorkflowFenceScopeHumanMergePaths {
+		t.Fatalf("contributor_lane workflow_fence_scope not normalized: %q", cl.WorkflowFenceScope)
+	}
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"contributor_lane": map[string]any{"workflow_fence_scope": "release_only"}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid workflow_fence_scope: expected 400, got %d", rec.Code)
+	}
+	if got := s.deps.Config.AutoMerge.ContributorLane.WorkflowFenceScope; got != config.ContributorLaneWorkflowFenceScopeHumanMergePaths {
+		t.Fatalf("rejected workflow_fence_scope write changed the stored value to %q", got)
 	}
 	if strings.Join(cl.Repos, ",") != "widget" || strings.Join(cl.ExcludeLabels, ",") != "hold" {
 		t.Fatalf("contributor_lane lists not normalized: repos=%v labels=%v", cl.Repos, cl.ExcludeLabels)

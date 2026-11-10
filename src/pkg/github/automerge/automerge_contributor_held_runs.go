@@ -74,7 +74,10 @@ func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayR
 	if c.sentinelLabelPresent(labels) || policy.excludedLabel(labels) != "" || c.labelBlockReason(labels, false) != "" {
 		return nil, reason
 	}
-	if contributorLaneDiffReason(files) == contributorLaneReasonWorkflowPath {
+	// Unscoped on purpose: approving held runs decides what code runs in CI,
+	// so every workflow / action edit stays a person's call whatever
+	// workflow_fence_scope narrows the merge fence to.
+	if contributorLaneTouchesWorkflowFiles(files) {
 		return nil, reason
 	}
 	fullRepo := owner + "/" + repo

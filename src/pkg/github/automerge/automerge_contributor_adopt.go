@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
@@ -266,22 +267,52 @@ func adoptionBlocked(labels []string) string {
 // return) is a standing files-evidence verdict with a nil error. A transport
 // failure reports files-evidence with the error set, so callers can tell a
 // transient read fault from a verdict; both are re-read on the next sweep.
+//
+// The verdict is deliberately the UNSCOPED one (workflow_fence_scope does not
+// apply): every caller in this file uses the workflow-path verdict to refuse
+// publishing workflow edits as an upstream branch, an execution guard, not a
+// merge decision. The merge-side readers use adoptionMergeFence.
 func (c *Engine) adoptionDiffRefusal(ctx context.Context, obs stageObservation) (string, error) {
+	files, reason, err := c.adoptionDiffFiles(ctx, obs)
+	if reason != "" || err != nil {
+		return reason, err
+	}
+	return contributorLaneDiffReason(files), nil
+}
+
+// adoptionMergeFence is adoptionDiffRefusal for merge decisions: the same
+// head check and file evidence, judged by the lane's scoped merge fence
+// (contributorLaneMergeFence), so the stage engine's explanations and merge
+// asks name the fence the lane itself applies.
+func (c *Engine) adoptionMergeFence(ctx context.Context, obs stageObservation) (string, error) {
+	files, reason, err := c.adoptionDiffFiles(ctx, obs)
+	if reason != "" || err != nil {
+		return reason, err
+	}
+	return c.contributorLaneMergeFence(c.currentContributorLanePolicy(), obs.Owner, obs.Repo, obs.Number, obs.HeadSHA, files), nil
+}
+
+// adoptionDiffFiles reads obs's head's complete changed-file list for the
+// diff fences. reason is non-empty when the fence cannot judge the head:
+// adoptionReasonHeadChanged when the PR's head moved past obs, or
+// contributorLaneReasonFilesEvidence (err set for a transport failure, nil
+// for an incomplete list).
+func (c *Engine) adoptionDiffFiles(ctx context.Context, obs stageObservation) ([]intent.ChangedFile, string, error) {
 	pr, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, obs.Number)
 	if err != nil {
-		return contributorLaneReasonFilesEvidence, err
+		return nil, contributorLaneReasonFilesEvidence, err
 	}
 	if head := pr.GetHead().GetSHA(); head == "" || head != obs.HeadSHA {
-		return adoptionReasonHeadChanged, nil
+		return nil, adoptionReasonHeadChanged, nil
 	}
 	files, err := ListChangedFiles(ctx, c.gh, obs.Owner, obs.Repo, pr)
 	if errors.Is(err, hgithub.ErrIncompletePRFileList) {
-		return contributorLaneReasonFilesEvidence, nil
+		return nil, contributorLaneReasonFilesEvidence, nil
 	}
 	if err != nil {
-		return contributorLaneReasonFilesEvidence, err
+		return nil, contributorLaneReasonFilesEvidence, err
 	}
-	return contributorLaneDiffReason(files), nil
+	return files, "", nil
 }
 
 // adoptionReasonHeadChanged is adoptionDiffRefusal's verdict for a PR whose
@@ -859,7 +890,17 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		return 0, nil
 	}
 	store.ClearAdoptionBlocked(key)
-	fence, err := c.adoptionDiffRefusal(ctx, obs)
+	files, fence, err := c.adoptionDiffFiles(ctx, obs)
+	if fence == "" && err == nil {
+		fence = contributorLaneDiffReason(files)
+	}
+	// fence (unscoped) decides whether the head may be published upstream;
+	// mergeFence is what the lane will apply to its merge under
+	// workflow_fence_scope, which is what the adoption comment tells people.
+	mergeFence := fence
+	if fence == contributorLaneReasonWorkflowPath {
+		mergeFence = c.contributorLaneMergeFence(c.currentContributorLanePolicy(), obs.Owner, obs.Repo, obs.Number, obs.HeadSHA, files)
+	}
 	if fence != "" && (err != nil || adoptionFenceDefers(fence)) {
 		// The fence could not judge this head (it moved, or its file list
 		// is incomplete / unreadable). Not recorded as an attempt: the PR
@@ -930,7 +971,7 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 			store.MarkAdoptedForReview(key, obs.HeadSHA)
 		}
 		c.recordContributorAbandon(ctx, obs, reason, 0, now)
-		body := AdoptionInPlaceComment(obs, policy.HiveID, reason, grace, rec.NudgeOnline) + adoptionFenceNote(fence)
+		body := AdoptionInPlaceComment(obs, policy.HiveID, reason, grace, rec.NudgeOnline) + adoptionFenceNote(mergeFence)
 		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 			c.warn("stage labels: adoption comment failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 			return 0, err
