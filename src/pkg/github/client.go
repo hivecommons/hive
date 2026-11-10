@@ -451,6 +451,10 @@ type Client struct {
 	// stageArchived memoises repos GitHub refused label writes on because
 	// they are archived (hivecommons/hive#14026); the sweep skips them.
 	stageArchived coveredByPRLabelState
+	// stageLabelForbidden memoises repos where the GitHub App was refused
+	// label writes with 403 "Resource not accessible by integration"
+	// (hivecommons/hive#17582); the sweep skips them until restart.
+	stageLabelForbidden coveredByPRLabelState
 	// legacyDecisionLabels memoises repos whose retired needs-decision /
 	// needs-direction definitions were deleted (hivecommons/hive#12683), or
 	// whose definition cleanup was denied integration permission (#14372).

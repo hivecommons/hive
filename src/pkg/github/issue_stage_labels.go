@@ -565,7 +565,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			}
 			continue
 		}
-		if client.stageArchived.has(strings.ToLower(owner + "/" + name)) {
+		if repoKey := strings.ToLower(owner + "/" + name); client.stageArchived.has(repoKey) || client.stageLabelForbidden.has(repoKey) {
 			continue
 		}
 		if err := client.ensureStageLabelFamily(ctx, in.Repo); err != nil {
@@ -575,6 +575,8 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			if logger != nil {
 				if client.stageArchived.has(strings.ToLower(owner + "/" + name)) {
 					logger.Warn("issue stage labels: repository is archived and read-only, skipping it until restart; remove it from the configured repos", "repo", in.Repo, "error", err)
+				} else if client.stageLabelForbidden.has(strings.ToLower(owner + "/" + name)) {
+					logger.Warn("issue stage labels: GitHub App cannot write labels in this repository, skipping it until restart; grant the App Issues write access or remove the repo from the configured repos", "repo", in.Repo, "error", err)
 				} else {
 					logger.Warn("issue stage labels: provisioning failed", "repo", in.Repo, "error", err)
 				}
@@ -890,7 +892,12 @@ func (c *Client) ensureStageLabelFamily(ctx context.Context, repo string) error 
 // create or edit because the repository is archived and read-only
 // (hivecommons/hive#14026), so later sweeps skip it instead of retrying.
 func (c *Client) noteArchivedLabelRefusal(key string, err error) {
-	c.noteArchivedWrite(key, err)
+	if c.noteArchivedWrite(key, err) {
+		return
+	}
+	if githubStatusError(err, http.StatusForbidden) && strings.Contains(strings.ToLower(err.Error()), "resource not accessible by integration") {
+		c.stageLabelForbidden.mark(key)
+	}
 }
 
 // noteArchivedWrite memoises the repo when err is GitHub's 403 refusal of a
