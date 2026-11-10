@@ -329,7 +329,9 @@ type AgentProcess struct {
 	// lastTokenRestart beside it.
 	tokenRestartAttempts int
 	// tokenRestartGaveUp latches once the cap is hit so the diagnosis is logged
-	// a single time rather than every poll (~3s). Cleared alongside the counter.
+	// a single time rather than every poll (~3s). Cleared by a fresh fire in
+	// decideTokenRestart, by clearTokenRestartCap, and by the per-boot re-arm
+	// (rearmTokenRestartCap) only once the rolling window has drained (#17483).
 	tokenRestartGaveUp bool
 	// tokenRestartFiredAt is the rolling ledger of token-triggered restart
 	// times inside tokenRestartWindow. Unlike tokenRestartAttempts it is NOT

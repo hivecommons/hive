@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -89,21 +90,27 @@ func stageTrackerItemColumn(it *StageTrackerItem) int {
 		}
 	}
 	if stageTrackerPersonActsOnPR(it) {
-		return trackerColumnPR
+		return trackerColumnReview
 	}
 	return stageTrackerColumn(st)
 }
 
 // stageTrackerPersonActsOnPR: a PR parked at 085 because a person has to
 // act ON THE PR — rerun CI, approve workflow runs, resolve a permission
-// (reason `unauthorized:<step>`), or answer review findings / red checks
-// still open on its head — is not queued, merging or merge-ready, so its
-// chevron lights PR in progress, never Merge queue. The Merge queue
-// column is only for rows actually queued / merging / merged, or a
-// merge-ready PR (review approved, CI green) parked on a merge decision.
-// A bare 085 with no track evidence keeps the gate: the person decides
-// there (hive#14821). Hive's own #16524 read "Awaiting human: rerun
-// shared ci" under Merge queue with CI unknown and review findings open.
+// (reason `unauthorized:<step>`), or answer review findings / red or
+// running checks still open on its head — is not queued, merging or
+// merge-ready, so its chevron lights its REAL stage, CI / Review (the CI
+// track while checks run or are red / unknown, the Review track while the
+// verdict is pending), never Merge queue and never PR in progress: the
+// human gate is a pill on the real stage, not a stage of its own (owner
+// rule 2026-11-08, hivecommons/hive#17327; #17453 for the 085 park). The
+// Merge queue column is only for rows actually queued / merging / merged,
+// or a merge-ready PR (review approved, CI green) parked on a merge
+// decision. A bare 085 with no track evidence keeps the gate: the person
+// decides there (hive#14821). Hive's own #16524 read "Awaiting human:
+// rerun shared ci" under Merge queue with CI unknown and review findings
+// open; #17442 read "Needs human · decision" under PR in progress while
+// CI ran.
 func stageTrackerPersonActsOnPR(it *StageTrackerItem) bool {
 	if it == nil || it.Kind != "pr" || stageByNumber(it.Stage) != stagelabels.NeedsDecision {
 		return false
@@ -120,6 +127,23 @@ func stageTrackerPersonActsOnPR(it *StageTrackerItem) bool {
 	return stageTrackerNotMergeReadyEvidence(it)
 }
 
+// stageTrackerApplyPersonActsOnPRPill: once the head's tracks are known,
+// a 085 PR whose chevron is its real stage (stageTrackerPersonActsOnPR →
+// CI / Review) gets the `needs-decision` modifier back, so the pill strip
+// carries the ask — the human icon, the decision popover, the question in
+// the tooltip — where the chevron no longer says "Needs human decision"
+// (hivecommons/hive#17453). The modifier keeps its place in the pill
+// order (stageTrackerModifierOrder).
+func stageTrackerApplyPersonActsOnPRPill(it *StageTrackerItem) {
+	if it == nil || !stageTrackerPersonActsOnPR(it) || slices.Contains(it.Modifiers, modNeedsDecision) {
+		return
+	}
+	it.Modifiers = append(it.Modifiers, modNeedsDecision)
+	slices.SortStableFunc(it.Modifiers, func(a, b string) int {
+		return slices.Index(stageTrackerModifierOrder, a) - slices.Index(stageTrackerModifierOrder, b)
+	})
+}
+
 func stageTrackerActivityOnHead(it *StageTrackerItem, a *StageTrackerActivity) bool {
 	return a != nil && (a.Head == "" || it.Head == "" || strings.EqualFold(a.Head, it.Head))
 }
@@ -134,12 +158,12 @@ func stageTrackerMergeReadyEvidence(it *StageTrackerItem) bool {
 
 // stageTrackerNotMergeReadyEvidence: a track on the current head says the
 // PR is short of merge-ready (review not approved, CI not green). CI that
-// is queued or running on the same head is a re-run, not a regression, so
-// it does not count.
+// is queued or running on the same head counts too: the head's real stage
+// is CI while checks run, so the row lights the CI track, not the gate
+// (hivecommons/hive#17453).
 func stageTrackerNotMergeReadyEvidence(it *StageTrackerItem) bool {
 	return (stageTrackerActivityOnHead(it, it.ReviewActivity) && it.ReviewActivity.State != "approved") ||
-		(stageTrackerActivityOnHead(it, it.CIActivity) && it.CIActivity.State != "passing" &&
-			it.CIActivity.State != "queued" && it.CIActivity.State != "running")
+		(stageTrackerActivityOnHead(it, it.CIActivity) && it.CIActivity.State != "passing")
 }
 
 // stageTrackerStagePhrase is the stage as a lowercase clause for the

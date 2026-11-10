@@ -146,6 +146,7 @@ func TestStageTrackerHoldProvenanceJS(t *testing.T) {
 		"function stageTrackerItemKey(it) { return it.repo + '/' + it.kind + '#' + it.number; }",
 		"function stageTrackerDecisionTriggerHtml(decision, inner, tip, cls) { return '<button class=\"' + cls + ' ham-decision-trigger\" data-ham-decision=\"' + esc(decision.key) + '\">' + inner + '</button>'; }",
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_PRIORITY"),
+		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_MODS"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
 		jsConstLine(t, html, "STAGE_TRACKER_HANDLED_TEXT"),
 		jsConstLine(t, html, "STAGE_TRACKER_DRAFT_TIP"),
@@ -155,7 +156,10 @@ func TestStageTrackerHoldProvenanceJS(t *testing.T) {
 		jsFunc(t, html, "stageTrackerDecisionOf"),
 		jsFunc(t, html, "stageTrackerHoldPill"),
 		jsFunc(t, html, "stageTrackerHoldTip"),
+		jsConstBlock(t, html, "STAGE_TRACKER_ICONS"),
+		jsFunc(t, html, "stageTrackerIcon"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
+		stageTrackerManualMergeJS(t, html),
 	}, "\n")+`
 const hold = { by: 'hive', source: 'reporter-trust', reason: 'reporter trust (issue #15017 by @Karibhou, contributor)', since: '2026-10-20T17:14:14Z', issue: 15017, reporter: 'Karibhou', association: 'contributor', pill: 'Held by hive · reporter trust (issue #15017 by @Karibhou, contributor)' };
 const decision = { question: 'The hive held this PR itself for reporter trust (issue #15017 by @Karibhou, contributor). Release the hold, or keep it?', asked_by: 'the hive', options: [ { action: 'release', label: 'Release hold', enabled: true } ] };
@@ -182,5 +186,28 @@ assert.strictEqual(stageTrackerHoldPill({ hold: null }), '');
 assert.strictEqual(stageTrackerHoldTip({ hold: {} }, 0), '');
 // Without the pill field the text is built from the parts.
 assert.strictEqual(stageTrackerHoldPill({ hold: { by: 'hive', reason: 'r' } }), 'Held by hive · r');
+// hivecommons/hive#17442 (#17453): a 085 PR with CI running and the review
+// verdict pending lights its real stage, so the ask rides as the
+// needs-decision pill — even on a payload that predates the server adding
+// the modifier — and that pill opens the decision popover.
+const ask = { question: 'Dependabot alerts need the security_events read permission. Grant it, or merge without the check?', asked_by: 'sec-check', options: [ { action: 'decide:approve', label: 'Approve', enabled: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true } ] };
+const running = { repo: 'hivecommons/hive', kind: 'pr', number: 17442, stage: 85, head: 'c0ffee1', modifiers: [], decision_needed: ask,
+  ci_activity: { head: 'c0ffee1', state: 'running', active: true, checks_passed: 3, checks_total: 9 },
+  review_activity: { head: 'c0ffee1', state: 'human_decision', perspectives_done: 5, perspectives_total: 5 } };
+const rpill = stageTrackerChipsHtml(running);
+assert.ok(rpill.includes('ham-mod-needs-decision') && rpill.includes('>needs human decision<'), rpill);
+assert.ok(rpill.includes('ham-mod-ask') && rpill.includes('ham-mod-ico') && rpill.includes('<span class="ham-mod-word">needs human decision</span>'), 'the ask pill wears the person icon with its words foldable: ' + rpill);
+assert.ok(rpill.includes('ham-decision-trigger') && rpill.includes('data-ham-decision="hivecommons/hive/pr#17442"'), rpill);
+assert.ok(!rpill.includes('+1'), 'one pill, not duplicated: ' + rpill);
+// The server already carrying the modifier adds nothing twice.
+const served = stageTrackerChipsHtml(Object.assign({}, running, { modifiers: ['needs-decision'] }));
+assert.strictEqual((served.match(/ham-mod-needs-decision/g) || []).length, 1, served);
+assert.ok(!served.includes('+1'), served);
+// A pill that already names the person owed (unauthorized, hold) stands in: no needs-decision stacked behind it.
+const gated = stageTrackerChipsHtml(Object.assign({}, running, { modifiers: ['unauthorized'] }));
+assert.ok(!gated.includes('ham-mod-needs-decision') && !gated.includes('+1'), gated);
+// A merge-ready 085 twin (approved + CI green) is the gate's: no invented pill.
+const ready = stageTrackerChipsHtml(Object.assign({}, running, { ci_activity: { head: 'c0ffee1', state: 'passing' }, review_activity: { head: 'c0ffee1', state: 'approved' } }));
+assert.ok(!ready.includes('ham-mod-needs-decision'), ready);
 `)
 }

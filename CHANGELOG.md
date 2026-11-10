@@ -11,6 +11,30 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.4)
+
+### Fixed
+
+- Activity Monitor: a PR parked at `stage/085-needs-decision` whose head is short of merge-ready (checks running, red or unreported; review verdict pending or asking for a person) now lights its real stage — the CI or Review track, with an amber human-gated marker — and carries the ask as the **needs human decision** pill (question in the hover, decision popover on click) instead of forcing a *Needs human · decision* chevron into the PR in progress column while CI and Review spun dim (#17442, #17416). PR in progress is passed, Merge queue stays empty; one lit stage per row.
+
+## 2026-11-10 (v5.211.3)
+
+### Fixed
+
+- The knowledge advisor_llm endpoint is now path-aware: an endpoint already ending in `/chat/completions` is used as-is and a `/v1` base gets `/chat/completions`, so the Copilot chat API (`https://api.githubcopilot.com/chat/completions`) works without a `?_=` query hack. Bare-host endpoints behave as before.
+
+## 2026-11-09 (v5.211.2)
+
+### Changed
+
+- A new [fork PR presubmit stall runbook](https://github.com/hivecommons/hive/blob/v5/src/docs/fork-pr-presubmit-stall-runbook.md) documents how to tell a missing Prow presubmit from a failing one and how to clear it with `/ok-to-test`, and what to do when dashboard-relayed `/lgtm` and `/approve` are rejected; the code fixes remain open in [#17451](https://github.com/hivecommons/hive/issues/17451).
+
+### Fixed
+
+- The merge train's one-PR-per-issue and same-issue claim-conflict holds now judge only heads at the merge gate ([#17439](https://github.com/hivecommons/hive/issues/17439)). A PR whose CI is still running or whose review is outstanding is evaluated as usual, so its tracker row reads CI / Review instead of "needs human decision · Let hive decide", and it is held at the merge point only if it gets there. The first same-issue PR at the merge point keeps the issue and that pick stands until it closes or is blocked for good, so a check going red mid-run no longer flips the winner and two PRs no longer wear each other's number as `duplicate-of`.
+- The sec-check agent's Dependabot alerts call no longer 403s once the GitHub App is granted the new read-only Dependabot alerts permission (documented in the GitHub App setup guide); existing installations must re-accept it once. Only the sec-check role's token requests the grant — other agents' tokens are unchanged.
+- hub: hives whose spoke reports `forge_unreachable` are labelled "forge unreachable (github_host)" instead of generic stale badges, and the condition no longer counts against their health or advisory status
+
 ## 2026-11-09 (v5.211.1)
 
 ### Changed
