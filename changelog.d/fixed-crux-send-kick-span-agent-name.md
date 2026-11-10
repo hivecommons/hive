@@ -1,1 +1,0 @@
-- crux: the agent.send_kick span records agent.name only after the kick target resolves, so caller-supplied unknown names no longer become an unbounded span attribute (hivecommons/crux#141)

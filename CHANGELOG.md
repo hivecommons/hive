@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.15)
+
+### Fixed
+
+- crux: the agent.send_kick span records agent.name only after the kick target resolves, so caller-supplied unknown names no longer become an unbounded span attribute (hivecommons/crux#141)
+
 ## 2026-11-10 (v5.211.14)
 
 ### Fixed
