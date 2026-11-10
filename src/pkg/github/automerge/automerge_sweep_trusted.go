@@ -235,7 +235,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 	// Review verdict hold (#12374): a requires_human or reject verdict stops
 	// this lane even with review.require_approval off, and survives a fix push.
-	if verdictReason, err := c.reviewVerdictGate(ctx, displayRepo, owner, repo, pr); err != nil || verdictReason != "" {
+	// On the trusted-bot lane the swarm verdict is advisory (#17577), so the
+	// hold is logged and skipped rather than parking the PR at "needs a person".
+	if verdictReason, err := c.reviewVerdictGateForLane(ctx, displayRepo, owner, repo, pr, lane); err != nil || verdictReason != "" {
 		return AutoMergeSweepEvent{}, verdictReason, err
 	}
 	if intentReason, err := c.selfMergeIntentGate(ctx, displayRepo, owner, repo, pr, author, selfLabels); err != nil {

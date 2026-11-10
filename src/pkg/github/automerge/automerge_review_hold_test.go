@@ -100,7 +100,9 @@ func requiresHumanHold(head string) ReviewVerdictHold {
 // A requires_human or reject verdict holds the App's own PR with
 // review.require_approval off (the sweep never reads that setting), on the
 // verdict's head and after a fix push moved the head, for the App and for a
-// trusted bot author alike.
+// trusted bot author alike once auto_merge.trusted_bot_skip_review is off
+// (on, the default, the trusted-bot lane treats the verdict as advisory;
+// see TestTrustedBotLaneReviewVerdictHoldAdvisory).
 func TestSelfAuthoredSweepReviewVerdictHolds(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -135,6 +137,7 @@ func TestSelfAuthoredSweepReviewVerdictHolds(t *testing.T) {
 
 			c := newAutoMergeSweepClient(srv.URL)
 			c.trustedBotAuthors = func() map[string]bool { return map[string]bool{"renovate[bot]": true} }
+			c.trustedBotSkipReview = func() bool { return false }
 			c.reviewVerdictHold = verdictHoldFor("acme/widget", tc.hold)
 			for tick := 0; tick < 2; tick++ {
 				event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)

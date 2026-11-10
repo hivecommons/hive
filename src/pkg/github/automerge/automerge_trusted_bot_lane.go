@@ -68,6 +68,25 @@ func (c *Engine) trustedBotLaneVerdict(displayRepo string, number int, head, lan
 	return v
 }
 
+// reviewVerdictGateForLane is reviewVerdictGate with the trusted-bot lane's
+// advisory contract applied: when the swarm's verdict holds a PR authored by
+// an auto_merge.trusted_bot_authors login and trusted_bot_skip_review is on
+// (the default), the hold is logged with the lane tier and the merge
+// proceeds; safety is the repo's CI. Every other lane, and the trusted-bot
+// lane with the knob off, is gated exactly as before.
+func (c *Engine) reviewVerdictGateForLane(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, lane string) (string, error) {
+	if c == nil || !c.trustedBotReviewAdvisory(lane) || c.reviewVerdictHold == nil {
+		return c.reviewVerdictGate(ctx, displayRepo, owner, repo, pr)
+	}
+	number := pr.GetNumber()
+	hold := c.reviewVerdictHold(owner+"/"+repo, number)
+	if !hold.Held {
+		return "", nil
+	}
+	c.info("trusted-bot lane: review verdict advisory", "tier", lane, "repo", displayRepo, "pr", number, "head", pr.GetHead().GetSHA(), "verdict", hold.Verdict, "verdict_head", hold.HeadSHA, "reason", "trusted_bot_skip_review")
+	return "", nil
+}
+
 // recheckRequiredCheckNeverReported re-evaluates a `required-check-missing:`
 // head on the trusted-bot lane when the required set came from
 // auto_merge.required_checks and the named check has never reported on this

@@ -427,6 +427,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.HumanMergePinOnly != nil {
 		cfg.AutoMerge.HumanMergePinOnly = humanMergePinOnly
+	}
 	if body.TrustedBotSkipReview != nil {
 		v := *body.TrustedBotSkipReview
 		cfg.AutoMerge.TrustedBotSkipReview = &v

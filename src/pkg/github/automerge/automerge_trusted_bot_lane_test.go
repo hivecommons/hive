@@ -208,6 +208,57 @@ func TestTrustedBotLaneReviewGateAdvisory(t *testing.T) {
 	}
 }
 
+// TestTrustedBotLaneReviewVerdictHoldAdvisory: the review-verdict hold
+// ledger (#12374) says requires_human (or reject) for a PR authored by a
+// configured trusted bot and no person has released it. With
+// trusted_bot_skip_review on (default) the trusted-bot lane logs the hold
+// as advisory and merges; with it off the hold stands, and the App's own
+// PR is held regardless.
+func TestTrustedBotLaneReviewVerdictHoldAdvisory(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		author     string
+		skip       bool
+		verdict    string
+		wantReason string
+	}{
+		{name: "trusted bot, requires_human, default", author: "dependabot[bot]", skip: true, verdict: "requires_human"},
+		{name: "trusted bot, reject, default", author: "github-actions[bot]", skip: true, verdict: "reject"},
+		{name: "trusted bot, knob off", author: "dependabot[bot]", skip: false, verdict: "requires_human", wantReason: autoMergeReasonReviewRequiresHuman},
+		{name: "app PR unaffected by the knob", author: "", skip: true, verdict: "requires_human", wantReason: autoMergeReasonReviewRequiresHuman},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			merges := 0
+			api := newSelfSweepGuardAPI(t, selfSweepFixture{author: tc.author, mergeApplied: true, mergeCalls: &merges})
+			defer api.Close()
+			srv := newReviewHoldFront(t, api.URL, &reviewHoldFront{})
+			defer srv.Close()
+
+			c := newAutoMergeSweepClient(srv.URL)
+			c.trustedBotAuthors = func() map[string]bool {
+				return map[string]bool{"dependabot[bot]": true, "github-actions[bot]": true}
+			}
+			skip := tc.skip
+			c.trustedBotSkipReview = func() bool { return skip }
+			c.reviewVerdictHold = verdictHoldFor("acme/widget", ReviewVerdictHold{Held: true, Verdict: tc.verdict, HeadSHA: "sha7", RecordedAt: reviewHoldVerdictAt})
+			_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
+			if err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+			if reason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
+			}
+			wantMerges := 0
+			if tc.wantReason == "" {
+				wantMerges = 1
+			}
+			if merges != wantMerges {
+				t.Fatalf("merges = %d, want %d", merges, wantMerges)
+			}
+		})
+	}
+}
+
 // TestRecheckRequiredCheckNeverReported: auto_merge.required_checks names
 // "build-gate" but this repo never produces it. With other checks reporting
 // green the head is gated on those; with one red it blocks on that check;
