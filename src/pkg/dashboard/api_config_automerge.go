@@ -790,9 +790,9 @@ func (s *Server) autoMergeHumanMergePinOnly(in, current map[string]config.PinOnl
 		seen[strings.ToLower(full)] = true
 		policy := config.PinOnlyException{
 			Enabled:        in[k].Enabled,
-			Paths:          dedupeTrimmedStrings(in[k].Paths),
-			Kinds:          dedupeTrimmedStrings(in[k].Kinds),
-			TrustedAuthors: dedupeTrimmedStrings(in[k].TrustedAuthors),
+			Paths:          autoMergeDedupeStrings(in[k].Paths),
+			Kinds:          autoMergeDedupeStrings(in[k].Kinds),
+			TrustedAuthors: autoMergeDedupeStrings(in[k].TrustedAuthors),
 		}
 		if !policy.Enabled && len(policy.Paths)+len(policy.Kinds)+len(policy.TrustedAuthors) == 0 {
 			continue
@@ -803,9 +803,9 @@ func (s *Server) autoMergeHumanMergePinOnly(in, current map[string]config.PinOnl
 		return nil, err.Error()
 	}
 	guarded := config.AutoMergeConfig{HumanMergePaths: pathsAfter}
-	for _, repo := range sortedPinOnlyRepos(out) {
+	for _, repo := range autoMergePinOnlyRepos(out) {
 		policy := out[repo]
-		if !policy.Enabled || pinOnlyUnchanged(current, repo, policy) {
+		if !policy.Enabled || autoMergePinOnlyUnchanged(current, repo, policy) {
 			continue
 		}
 		if len(guarded.HumanMergePathsFor(repo)) == 0 {
@@ -818,9 +818,9 @@ func (s *Server) autoMergeHumanMergePinOnly(in, current map[string]config.PinOnl
 	return out, ""
 }
 
-// pinOnlyUnchanged reports whether current already holds policy for repo, so
+// autoMergePinOnlyUnchanged reports whether current already holds policy for repo, so
 // an entry the write sends back untouched is not re-checked.
-func pinOnlyUnchanged(current map[string]config.PinOnlyException, repo string, policy config.PinOnlyException) bool {
+func autoMergePinOnlyUnchanged(current map[string]config.PinOnlyException, repo string, policy config.PinOnlyException) bool {
 	for k, was := range current {
 		if strings.EqualFold(strings.TrimSpace(k), repo) {
 			return was.Enabled == policy.Enabled && slices.Equal(was.Paths, policy.Paths) &&
@@ -830,7 +830,7 @@ func pinOnlyUnchanged(current map[string]config.PinOnlyException, repo string, p
 	return false
 }
 
-func sortedPinOnlyRepos(m map[string]config.PinOnlyException) []string {
+func autoMergePinOnlyRepos(m map[string]config.PinOnlyException) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -839,7 +839,7 @@ func sortedPinOnlyRepos(m map[string]config.PinOnlyException) []string {
 	return keys
 }
 
-func dedupeTrimmedStrings(list []string) []string {
+func autoMergeDedupeStrings(list []string) []string {
 	var out []string
 	for _, v := range normalizeAutoMergeRepoList(list) {
 		if !slices.Contains(out, v) {

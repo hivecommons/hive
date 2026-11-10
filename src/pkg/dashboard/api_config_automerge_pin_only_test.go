@@ -20,16 +20,16 @@ import (
 // /api/config/auto-merge: the pin-only exception to human_merge_paths
 // (#16377) set from the dashboard instead of hive.yaml.
 
-// pinOnlyServer is repoPolicyServer with human-merge paths on acme/api, the
+// autoMergePinOnlyServer is repoPolicyServer with human-merge paths on acme/api, the
 // repository the exception is set for.
-func pinOnlyServer(t *testing.T) *Server {
+func autoMergePinOnlyServer(t *testing.T) *Server {
 	t.Helper()
 	s := repoPolicyServer(t)
 	s.deps.Config.AutoMerge.HumanMergePaths = map[string][]string{"acme/api": {".github/workflows/**", "Containerfile"}}
 	return s
 }
 
-func pinOnlyEntry() map[string]any {
+func autoMergePinOnlyEntryBody() map[string]any {
 	return map[string]any{
 		"enabled":         true,
 		"paths":           []string{" .github/workflows/*.yml ", "Containerfile", "Containerfile", ""},
@@ -39,9 +39,9 @@ func pinOnlyEntry() map[string]any {
 }
 
 func TestAutoMergePinOnly_PutGetRoundTrip(t *testing.T) {
-	s := pinOnlyServer(t)
+	s := autoMergePinOnlyServer(t)
 	rec := doPut(s, "/api/config/auto-merge", map[string]any{
-		"human_merge_pin_only": map[string]any{"api": pinOnlyEntry()},
+		"human_merge_pin_only": map[string]any{"api": autoMergePinOnlyEntryBody()},
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -95,12 +95,12 @@ func TestAutoMergePinOnly_PutGetRoundTrip(t *testing.T) {
 }
 
 func TestAutoMergePinOnly_InvalidIsRefusedWithNoChange(t *testing.T) {
-	s := pinOnlyServer(t)
-	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"human_merge_pin_only": map[string]any{"api": pinOnlyEntry()}}); rec.Code != http.StatusOK {
+	s := autoMergePinOnlyServer(t)
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"human_merge_pin_only": map[string]any{"api": autoMergePinOnlyEntryBody()}}); rec.Code != http.StatusOK {
 		t.Fatalf("seed put: %d %s", rec.Code, rec.Body.String())
 	}
 	with := func(key string, value any) map[string]any {
-		e := pinOnlyEntry()
+		e := autoMergePinOnlyEntryBody()
 		e[key] = value
 		return e
 	}
@@ -109,15 +109,15 @@ func TestAutoMergePinOnly_InvalidIsRefusedWithNoChange(t *testing.T) {
 		body map[string]any
 		want string
 	}{
-		{"unknown repo", map[string]any{"human_merge_pin_only": map[string]any{"other/repo": pinOnlyEntry()}}, "human_merge_pin_only: other/repo is not in project.repos"},
-		{"twice", map[string]any{"human_merge_pin_only": map[string]any{"api": pinOnlyEntry(), "ACME/api": pinOnlyEntry()}}, "names acme/api twice"},
+		{"unknown repo", map[string]any{"human_merge_pin_only": map[string]any{"other/repo": autoMergePinOnlyEntryBody()}}, "human_merge_pin_only: other/repo is not in project.repos"},
+		{"twice", map[string]any{"human_merge_pin_only": map[string]any{"api": autoMergePinOnlyEntryBody(), "ACME/api": autoMergePinOnlyEntryBody()}}, "names acme/api twice"},
 		{"no trusted authors", map[string]any{"human_merge_pin_only": map[string]any{"api": with("trusted_authors", []string{" "})}}, "enabled policy requires nonempty trusted_authors"},
 		{"no paths", map[string]any{"human_merge_pin_only": map[string]any{"api": with("paths", []string{})}}, "enabled policy requires nonempty paths"},
 		{"unknown kind", map[string]any{"human_merge_pin_only": map[string]any{"api": with("kinds", []string{"any-line"})}}, "unknown kind"},
 		{"unknown kind while disabled", map[string]any{"human_merge_pin_only": map[string]any{"api": map[string]any{"enabled": false, "kinds": []string{"any-line"}}}}, "unknown kind"},
 		// The exception only lifts a human-merge-path hold, so on a repository
 		// with no such paths it would never apply.
-		{"no human-merge paths", map[string]any{"human_merge_pin_only": map[string]any{"api": pinOnlyEntry(), "web": pinOnlyEntry()}}, "acme/web has no human_merge_paths"},
+		{"no human-merge paths", map[string]any{"human_merge_pin_only": map[string]any{"api": autoMergePinOnlyEntryBody(), "web": autoMergePinOnlyEntryBody()}}, "acme/web has no human_merge_paths"},
 		{"paths cleared in the same write", map[string]any{"human_merge_paths": map[string][]string{}, "human_merge_pin_only": map[string]any{"api": with("kinds", []string{"version-pin"})}}, "acme/api has no human_merge_paths"},
 		// A valid key alongside an invalid one must not half-apply.
 		{"mixed", map[string]any{"max_merges": 7, "squash_only": []string{"api"}, "human_merge_pin_only": map[string]any{"api": with("kinds", []string{"nope"})}}, "unknown kind"},
@@ -141,13 +141,13 @@ func TestAutoMergePinOnly_InvalidIsRefusedWithNoChange(t *testing.T) {
 // back unchanged, so a full-map save from the dashboard still works on a hive
 // whose file carries an exception for a repository without human-merge paths.
 func TestAutoMergePinOnly_UnchangedEntryIsNotRechecked(t *testing.T) {
-	s := pinOnlyServer(t)
+	s := autoMergePinOnlyServer(t)
 	s.deps.Config.AutoMerge.HumanMergePinOnly = map[string]config.PinOnlyException{
 		"acme/web": {Enabled: true, Paths: []string{"Containerfile"}, Kinds: []string{"image-digest"}, TrustedAuthors: []string{"renovate[bot]"}},
 	}
 	rec := doPut(s, "/api/config/auto-merge", map[string]any{"human_merge_pin_only": map[string]any{
 		"acme/web": map[string]any{"enabled": true, "paths": []string{"Containerfile"}, "kinds": []string{"image-digest"}, "trusted_authors": []string{"renovate[bot]"}},
-		"api":      pinOnlyEntry(),
+		"api":      autoMergePinOnlyEntryBody(),
 	}})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -158,7 +158,7 @@ func TestAutoMergePinOnly_UnchangedEntryIsNotRechecked(t *testing.T) {
 }
 
 func TestAutoMergePinOnly_NonOwnerIsForbidden(t *testing.T) {
-	s := pinOnlyServer(t)
+	s := autoMergePinOnlyServer(t)
 	for _, tc := range []struct {
 		name     string
 		role     string
@@ -168,7 +168,7 @@ func TestAutoMergePinOnly_NonOwnerIsForbidden(t *testing.T) {
 		{"unverified owner", "owner", false},
 		{"no role", "", false},
 	} {
-		body, _ := json.Marshal(map[string]any{"human_merge_pin_only": map[string]any{"api": pinOnlyEntry()}})
+		body, _ := json.Marshal(map[string]any{"human_merge_pin_only": map[string]any{"api": autoMergePinOnlyEntryBody()}})
 		for _, method := range []string{http.MethodPut, http.MethodPatch} {
 			req := httptest.NewRequest(method, "/api/config/auto-merge", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
@@ -195,12 +195,12 @@ func TestAutoMergePinOnly_NonOwnerIsForbidden(t *testing.T) {
 // relay holds a copy the write must refresh. Both see a write at once, with
 // no restart, and both lose it when it is cleared.
 func TestAutoMergePinOnly_ReachesRunningHiveWithoutRestart(t *testing.T) {
-	s := pinOnlyServer(t)
+	s := autoMergePinOnlyServer(t)
 	client := ghpkg.NewClientForTest("http://127.0.0.1:1", "acme", []string{"api"}, covBLogger())
 	s.deps.GHClient = client
 	live := s.deps.Config // the pointer the sweeps were built with
 
-	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"human_merge_pin_only": map[string]any{"api": pinOnlyEntry()}}); rec.Code != http.StatusOK {
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"human_merge_pin_only": map[string]any{"api": autoMergePinOnlyEntryBody()}}); rec.Code != http.StatusOK {
 		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
 	}
 	if policy, ok := live.AutoMerge.HumanMergePinOnlyFor("acme/api"); !ok || strings.Join(policy.TrustedAuthors, ",") != "renovate[bot]" {
@@ -224,9 +224,9 @@ func TestAutoMergePinOnly_ReachesRunningHiveWithoutRestart(t *testing.T) {
 }
 
 func TestAutoMergePinOnly_PersistsToSavedConfig(t *testing.T) {
-	s := pinOnlyServer(t)
+	s := autoMergePinOnlyServer(t)
 	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
-	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"human_merge_pin_only": map[string]any{"api": pinOnlyEntry()}}); rec.Code != http.StatusOK {
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"human_merge_pin_only": map[string]any{"api": autoMergePinOnlyEntryBody()}}); rec.Code != http.StatusOK {
 		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
 	}
 	data, err := os.ReadFile(s.deps.Config.SourcePath)
