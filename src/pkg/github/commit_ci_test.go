@@ -150,25 +150,6 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 			want: "pending: head pushed 1m0s ago (< min_head_age)",
 		},
 		{
-			name: "cancelled advisory check carries no verdict when the required set is unknown",
-			checks: []map[string]string{
-				{"name": "build", "status": "completed", "conclusion": "success"},
-				{"name": "mutation", "status": "completed", "conclusion": "cancelled"},
-			},
-			opts:      CommitCIOptions{RequireEvidence: true},
-			wantGreen: true,
-		},
-		{
-			name: "failure still blocks next to a cancelled check when the required set is unknown",
-			checks: []map[string]string{
-				{"name": "build", "status": "completed", "conclusion": "success"},
-				{"name": "mutation", "status": "completed", "conclusion": "cancelled"},
-				{"name": "lint", "status": "completed", "conclusion": "failure"},
-			},
-			opts: CommitCIOptions{RequireEvidence: true},
-			want: "check-failure",
-		},
-		{
 			name: "failure with known-empty required set blocks locally",
 			checks: []map[string]string{
 				{"name": "build", "status": "completed", "conclusion": "failure"},
@@ -445,6 +426,76 @@ func TestEvaluateCommitCIFailOnAnyFailedCheck(t *testing.T) {
 	}
 	if st.Green || st.Reason != "check-failing:syntax-check" {
 		t.Fatalf("with option = (%v,%q), want red check-failing:syntax-check", st.Green, st.Reason)
+	}
+}
+
+// hivecommons/hive#17598: the merge-request gate calls EvaluateCommitCI
+// without UnknownRequiredChecksServerEnforced, so completed failures block
+// locally when the required set is unknown. A cancelled check run (an
+// advisory job that hit its timeout) carries no verdict there; a real failure
+// next to it still blocks.
+func TestEvaluateCommitCICancelledCheckUnknownRequiredSet(t *testing.T) {
+	tests := []struct {
+		name      string
+		checks    []map[string]string
+		wantGreen bool
+		want      string
+	}{
+		{
+			name: "cancelled advisory check carries no verdict",
+			checks: []map[string]string{
+				{"name": "build", "status": "completed", "conclusion": "success"},
+				{"name": "mutation", "status": "completed", "conclusion": "cancelled"},
+			},
+			wantGreen: true,
+		},
+		{
+			name: "failure still blocks next to a cancelled check",
+			checks: []map[string]string{
+				{"name": "build", "status": "completed", "conclusion": "success"},
+				{"name": "mutation", "status": "completed", "conclusion": "cancelled"},
+				{"name": "lint", "status": "completed", "conclusion": "failure"},
+			},
+			want: "check-failure",
+		},
+		{
+			name: "timed_out still blocks next to a cancelled check",
+			checks: []map[string]string{
+				{"name": "build", "status": "completed", "conclusion": "success"},
+				{"name": "mutation", "status": "completed", "conclusion": "cancelled"},
+				{"name": "lint", "status": "completed", "conclusion": "timed_out"},
+			},
+			want: "check-timed_out",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/repos/acme/widget/commits/sha/status":
+					json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
+				case "/repos/acme/widget/commits/sha/check-runs":
+					json.NewEncoder(w).Encode(map[string]any{"total_count": len(tt.checks), "check_runs": tt.checks})
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer api.Close()
+			client := gh.NewClient(nil)
+			base, err := url.Parse(api.URL + "/")
+			if err != nil {
+				t.Fatalf("ParseURL: %v", err)
+			}
+			client.BaseURL = base
+
+			st, err := EvaluateCommitCI(context.Background(), client, "acme", "widget", "sha", CommitCIOptions{RequireEvidence: true})
+			if err != nil {
+				t.Fatalf("EvaluateCommitCI returned error: %v", err)
+			}
+			if st.Green != tt.wantGreen || st.Reason != tt.want {
+				t.Fatalf("EvaluateCommitCI = (%v,%q), want (%v,%q)", st.Green, st.Reason, tt.wantGreen, tt.want)
+			}
+		})
 	}
 }
 
