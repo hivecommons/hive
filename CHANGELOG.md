@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.12.5)
+
+### Fixed
+
+- Claude credential bridge: the repair no longer acts on an agent whose whole `~/.claude` is still the legacy directory symlink to the shared `/data/home/.claude` (a paused or stopped agent that was never relaunched). Through that link the agent's credential path IS the shared login, so the watchdog renamed the shared file to `.stale-<UTC>` every cycle and, when the shared file held no token, linked `.credentials.json` to itself, logging every Claude agent out. The repair and the dashboard's "credential bridge broken" signal now resolve the link's directory first and skip that layout with one warning per agent; the agent's next launch already retires the directory link (#17253).
+
+## 2026-11-10 (v6.12.4)
+
+### Fixed
+
+- Trusted-bot automerge lane: PRs from every login the operator enabled under `auto_merge.trusted_bot_authors` (Settings bot toggles or a custom login) are now honored by the trusted-bot lane end to end. The review swarm's verdict is advisory for them by default (`auto_merge.trusted_bot_skip_review`, default `true`), so a Dependabot bump a reviewer routed to `requires_human` no longer parks at "needs a person" while its checks are green; the contributor lane hands bot PRs off as `trusted-bot-lane` instead of `contributor-lane:app-authored`; every self-authored-sweep skip/hold line carries `tier`; and when `auto_merge.required_checks` names a check a repo never runs, the lane gates on the checks that do report (warning once per repo per hour) or holds with `required-check-never-reported:<check>`, which the Activity Monitor shows as the human-gate reason (#17577).
+
 ## 2026-11-10 (v6.12.3)
 
 ### Changed
