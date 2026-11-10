@@ -56,6 +56,9 @@ type unparkServer struct {
 	added map[int][]string
 	// removed maps issue number to the labels removed from it.
 	removed map[int][]string
+	// replyAfterPost maps issue number to comments that appear in its
+	// listing once a comment is POSTed on it (e.g. Prow's reply).
+	replyAfterPost map[int][]unparkWireComment
 	// permissions maps login to the permission level the API reports.
 	permissions map[string]string
 	// roles maps login to the role_name the permission endpoint reports
@@ -206,6 +209,11 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			rec.posted[n] = append(rec.posted[n], body.Body)
+			if extra := rec.replyAfterPost[n]; len(extra) > 0 {
+				iss := byNum[n]
+				iss.Comments = append(append([]unparkWireComment(nil), iss.Comments...), extra...)
+				byNum[n] = iss
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 9000 + len(rec.posted[n])})
 
 		case strings.HasPrefix(path, "issues/comments/") && r.Method == http.MethodPatch:
