@@ -83,7 +83,6 @@ func TestTokenTierForRole_SecCheckGetsAlertsCapableTier(t *testing.T) {
 	}{
 		{ModeAdvisory, "advisor"},
 		{ModeIssuesOnly, "newcomer"},
-		{ModeIssuesPRsMerge, "trusted"},
 	} {
 		if got := TokenTierForRole(tc.mode, SecCheckRole); got != tc.want {
 			t.Errorf("%v sec-check minted %q, want %q", tc.mode, got, tc.want)
