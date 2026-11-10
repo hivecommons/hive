@@ -33,7 +33,9 @@ func freshenKickMessages(ctx context.Context, guard github.IrreversibleGuard, ac
 			continue
 		}
 		kept := make([]string, 0, len(msg.IssueRefs))
-		allDeferred := true
+		// Deferred and closed refusals are the guard working as designed; a
+		// kick withheld only by those is summarised below WARN too (#17518).
+		allExpected := true
 		var stale, closed, deferredReads, readErrors int
 		for _, raw := range msg.IssueRefs {
 			ref, ok := worksource.ParseKey(raw)
@@ -45,8 +47,8 @@ func freshenKickMessages(ctx context.Context, guard github.IrreversibleGuard, ac
 			_, isPR := prRefs[key]
 			if err := guard(ctx, ref.Repo, ref.Number, isPR); err != nil {
 				deferred := errors.Is(err, github.ErrAPIBudgetCritical) || errors.Is(err, github.ErrRateLimitCaution)
-				if !deferred {
-					allDeferred = false
+				if !deferred && !errors.Is(err, github.ErrItemNotOpen) {
+					allExpected = false
 				}
 				if logger != nil {
 					reason := "re-read"
@@ -84,7 +86,7 @@ func freshenKickMessages(ctx context.Context, guard github.IrreversibleGuard, ac
 		if len(kept) == 0 {
 			if logger != nil {
 				level := slog.LevelWarn
-				if allDeferred {
+				if allExpected {
 					level = slog.LevelInfo
 				}
 				logger.Log(ctx, level, "kick withheld: every ref failed the freshness check",
