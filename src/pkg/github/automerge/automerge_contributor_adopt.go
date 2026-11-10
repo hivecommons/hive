@@ -529,6 +529,13 @@ func adoptionBodyCause(reason string, wait adoptionWait) string {
 // person: it names the lane reason the hive was stuck on, so nobody reads
 // "waiting on a maintainer" into a PR the hive still owes a fix.
 func AdoptionStalledComment(obs stageObservation, rec stagelabels.Record, reason string, sat time.Duration) string {
+	return adoptionStalledComment(obs, rec, reason, sat, forkUpdateBlock{})
+}
+
+// adoptionStalledComment is AdoptionStalledComment with what the hive read
+// about why it cannot update a fork's branch (forkUpdateBlockFor), which
+// the fork-rehome-refused blocker names.
+func adoptionStalledComment(obs stageObservation, rec stagelabels.Record, reason string, sat time.Duration, block forkUpdateBlock) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s head=%s reason=%s -->\n", AdoptionStalledMarker, obs.HeadSHA, reason)
 	if reason == stagelabels.LaneReasonAdoptionStalledPrefix+stagelabels.LaneReasonRebaseFailedTwice {
@@ -539,7 +546,7 @@ func AdoptionStalledComment(obs stageObservation, rec stagelabels.Record, reason
 	}
 	fmt.Fprintf(&b, "The hive adopted this PR (`%s`) but its head `%s` has not moved for %s and the hive has nothing it can push: `%s`.\n\n", stagelabels.AdoptedByHive.Label(), shortSHA(obs.HeadSHA), formatSat(sat), reason)
 	b.WriteString("**Blocker:** ")
-	b.WriteString(adoptionBlockerText(obs, rec))
+	b.WriteString(adoptionBlockerTextFor(obs, rec, block))
 	b.WriteString("\n\nMoving to `")
 	b.WriteString(stagelabels.NeedsDecision.Label())
 	b.WriteString("` so a person sees it. This is not a merge-approval wait: the lane has not admitted this head.")
@@ -651,6 +658,12 @@ func (c *Engine) headManualMergeRule(ctx context.Context, key string, obs stageO
 
 // adoptionBlockerText spells out what the lane reason stands for.
 func adoptionBlockerText(obs stageObservation, rec stagelabels.Record) string {
+	return adoptionBlockerTextFor(obs, rec, forkUpdateBlock{})
+}
+
+// adoptionBlockerTextFor is adoptionBlockerText with the fork update
+// blocker the fork-rehome-refused ask names.
+func adoptionBlockerTextFor(obs stageObservation, rec stagelabels.Record, block forkUpdateBlock) string {
 	switch {
 	case adoptedHeadSignoffUnfixable(obs, rec):
 		author := nonEmpty(obs.Author, "the contributor")
@@ -684,7 +697,7 @@ func adoptionBlockerText(obs stageObservation, rec stagelabels.Record) string {
 		}
 		return msg + "."
 	case rec.ForkRehomeRefused(obs.HeadSHA):
-		return forkRehomeBlockerText(obs)
+		return forkRehomeBlockerTextFor(obs, block)
 	case rec.AdoptionAttemptedNothingOpened(obs.HeadSHA):
 		return fmt.Sprintf("the hive tried to re-home this PR onto `%s%d` (`%s`) and could not open the superseding PR.", adoptBranchPrefix, obs.Number, rec.AdoptReason)
 	}
@@ -697,9 +710,80 @@ func adoptionBlockerText(obs stageObservation, rec stagelabels.Record) string {
 	return fmt.Sprintf("lane reason `%s` on this head and nothing changed.", nonEmpty(obs.LaneReason, obs.Reason))
 }
 
+// forkUpdateBlock is what the hive read about why it cannot bring a fork
+// PR's branch up to date itself, so the fork-rehome-refused note can name
+// the one action that unblocks it instead of a general "bring it in or
+// close it" (projectbluefin/common#1611, utah-packages#812). The zero value
+// means nothing specific was read, and the note keeps the general ask.
+type forkUpdateBlock struct {
+	// NoMaintainerEdits: GET pulls/n reports maintainer_can_modify false.
+	NoMaintainerEdits bool
+	// WorkflowFile is a file under .github/workflows/ that the base changed
+	// since the PR's merge-base, or "". Updating the fork's branch would
+	// carry it into the fork, which GitHub refuses from the App whatever
+	// the App is granted on the base repository (projectbluefin/utah#1001).
+	WorkflowFile string
+}
+
+// forkUpdateBlockFor reads forkUpdateBlock for a fork PR. It runs only when
+// a fork-rehome-refused note is about to be posted (once per head), and a
+// failed read leaves its part unset.
+func (c *Engine) forkUpdateBlockFor(ctx context.Context, obs stageObservation) forkUpdateBlock {
+	var block forkUpdateBlock
+	if strings.TrimSpace(obs.HeadRepo) == "" || !adoptionFromFork(obs) {
+		return block
+	}
+	if pr, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, obs.Number); err == nil && pr.MaintainerCanModify != nil {
+		block.NoMaintainerEdits = !pr.GetMaintainerCanModify()
+	}
+	if file, err := c.baseSyncWorkflowFile(ctx, obs); err == nil {
+		block.WorkflowFile = file
+	}
+	return block
+}
+
 // forkRehomeBlockerText is the maintainer ask for a fork PR the hive cannot
 // finish on the fork's own branch and will not move into this repository.
 func forkRehomeBlockerText(obs stageObservation) string {
+	return forkRehomeBlockerTextFor(obs, forkUpdateBlock{})
+}
+
+// forkRehomeBlockerTextFor is forkRehomeBlockerText naming the block the
+// hive read: a base-side workflow change the App cannot carry into the fork
+// (the one action is a person's branch update), or a fork that allows no
+// maintainer edits (the author's). With neither, the general ask stands.
+func forkRehomeBlockerTextFor(obs stageObservation, block forkUpdateBlock) string {
+	fork := nonEmpty(obs.HeadRepo, "unknown")
+	base := nonEmpty(obs.BaseRef, "the base branch")
+	author := "the author"
+	if a := strings.TrimSpace(obs.Author); a != "" {
+		author = "@" + a
+	}
+	conflict := " If GitHub reports a conflict, merge `" + base + "` into the branch locally, resolve it and push."
+	if supersedeHeadConflicts(obs) {
+		conflict = " This PR also conflicts with `" + base + "`, so **Update branch** cannot do it alone: merge `" + base + "` into the branch locally, resolve the conflicts and push."
+	}
+	update := fmt.Sprintf("**Update branch** on this PR, or `gh pr update-branch %d -R %s/%s`", obs.Number, obs.Owner, obs.Repo)
+	switch {
+	case block.WorkflowFile != "":
+		var b strings.Builder
+		fmt.Fprintf(&b, "this PR comes from a fork (`%s`), and `%s` has changed `%s` since this branch was cut. "+
+			"Bringing the branch up to date (a merge or a rebase) carries that workflow change into the fork, and GitHub refuses such a push from the Hive App whatever the App is granted on this repository: the App is not installed on the fork. "+
+			"The change is inherited from `%s`, not part of this PR's own diff. "+
+			"Moving the commits to `%s%d` in this repository instead would run code no maintainer has reviewed with the repository's trusted CI, so the hive did not. ",
+			fork, base, block.WorkflowFile, base, adoptBranchPrefix, obs.Number)
+		if block.NoMaintainerEdits {
+			fmt.Fprintf(&b, "**Ask (maintainer):** the fork does not allow edits by maintainers, so ask %s to bring the branch up to date with `%s` (%s), or to turn on \"Allow edits by maintainers\" so you can.", author, base, update)
+		} else {
+			fmt.Fprintf(&b, "**Ask (maintainer):** bring the branch up to date with `%s` yourself (%s), or ask %s to.", base, update, author)
+		}
+		b.WriteString(conflict)
+		b.WriteString(" The update is a merge, so the contributor's commits and sign-off stay, and the new head goes through CI, `/test` and review as usual.")
+		return b.String()
+	case block.NoMaintainerEdits:
+		return fmt.Sprintf("this PR comes from a fork (`%s`) that does not allow edits by maintainers, so the hive cannot push to its branch. Moving its commits to `%s%d` in this repository would run code no maintainer has reviewed with the repository's trusted CI (secrets, write tokens, no fork guards), so the hive did not. "+
+			"**Ask (maintainer):** ask %s to turn on \"Allow edits by maintainers\" (the hive can then finish it on the fork) or to push the fix themselves; if it should not wait, review the change and bring it into the repository yourself, otherwise close it.", fork, adoptBranchPrefix, obs.Number, author)
+	}
 	return fmt.Sprintf("this PR comes from a fork (`%s`) and the hive cannot finish it on the fork's own branch. Moving its commits to `%s%d` in this repository would run code no maintainer has reviewed with the repository's trusted CI (secrets, write tokens, no fork guards), so the hive did not. "+
 		"**Ask (maintainer):** review the change; if it should land, bring it into the repository yourself or follow the repository's process for fork pull requests, otherwise close it.", nonEmpty(obs.HeadRepo, "unknown"), adoptBranchPrefix, obs.Number)
 }
@@ -708,11 +792,17 @@ func forkRehomeBlockerText(obs stageObservation) string {
 // to adopt (adoptContributorPR) when it is handed to a person after waiting
 // on its author for the 072 dwell.
 func ForkNotAdoptedComment(obs stageObservation, reason string, sat time.Duration) string {
+	return forkNotAdoptedComment(obs, reason, sat, forkUpdateBlock{})
+}
+
+// forkNotAdoptedComment is ForkNotAdoptedComment naming the fork update
+// block the hive read (forkUpdateBlockFor).
+func forkNotAdoptedComment(obs stageObservation, reason string, sat time.Duration, block forkUpdateBlock) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s head=%s reason=%s -->\n", AdoptionStalledMarker, obs.HeadSHA, reason)
 	fmt.Fprintf(&b, "Head `%s` has waited on its author at `%s` for %s since the nudge (lane reason `%s`). The hive did not adopt it: it cannot push to this fork's branch, and it does not move a fork's commits into this repository.\n\n", shortSHA(obs.HeadSHA), stagelabels.ReturnedToContributor.Label(), formatSat(sat), nonEmpty(obs.LaneReason, obs.Reason))
 	b.WriteString("**Blocker:** ")
-	b.WriteString(forkRehomeBlockerText(obs))
+	b.WriteString(forkRehomeBlockerTextFor(obs, block))
 	b.WriteString("\n\nMoving to `")
 	b.WriteString(stagelabels.NeedsDecision.Label())
 	b.WriteString("` so a person sees it. A new head from the author returns it to the normal path.")
@@ -1994,24 +2084,39 @@ func (c *Engine) pushAccessLost(ctx context.Context, obs stageObservation) bool 
 // dead end (#12865). A compare failure counts as touching: a superseding PR
 // is always deliverable.
 func (c *Engine) baseSyncTouchesWorkflows(ctx context.Context, obs stageObservation) bool {
+	file, err := c.baseSyncWorkflowFile(ctx, obs)
+	if err != nil {
+		c.warn("stage labels: adoption could not compare head to base for workflow changes; superseding", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return true
+	}
+	if file != "" {
+		c.info("stage labels: base-sync touches .github/workflows/ which the App cannot push; superseding", "repo", obs.Display, "pr", obs.Number, "file", file)
+		return true
+	}
+	return false
+}
+
+// baseSyncWorkflowFile returns the first file under .github/workflows/ that
+// the base changed since the PR's merge-base (compare head...base lists
+// only the base side), or "" when there is none or the PR's head or base is
+// unknown.
+func (c *Engine) baseSyncWorkflowFile(ctx context.Context, obs stageObservation) (string, error) {
 	if obs.HeadSHA == "" || obs.BaseRef == "" {
-		return false
+		return "", nil
 	}
 	opts := &gh.ListOptions{PerPage: 300}
 	for {
 		cmp, resp, err := c.gh.Repositories.CompareCommits(ctx, obs.Owner, obs.Repo, obs.HeadSHA, obs.BaseRef, opts)
 		if err != nil {
-			c.warn("stage labels: adoption could not compare head to base for workflow changes; superseding", "repo", obs.Display, "pr", obs.Number, "error", err)
-			return true
+			return "", err
 		}
 		for _, f := range cmp.Files {
 			if strings.HasPrefix(f.GetFilename(), ".github/workflows/") {
-				c.info("stage labels: base-sync touches .github/workflows/ which the App cannot push; superseding", "repo", obs.Display, "pr", obs.Number, "file", f.GetFilename())
-				return true
+				return f.GetFilename(), nil
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
-			return false
+			return "", nil
 		}
 		opts.Page = resp.NextPage
 	}
@@ -2557,7 +2662,11 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		// Only this blocker's text carries the merge-commit ask.
 		obs = c.withMergeAskFacts(ctx, key, obs)
 	}
-	body := AdoptionStalledComment(obs, rec, reason, now.Sub(rec.AdoptedHeadSince()))
+	block := forkUpdateBlock{}
+	if rec.ForkRehomeRefused(obs.HeadSHA) {
+		block = c.forkUpdateBlockFor(ctx, obs)
+	}
+	body := adoptionStalledComment(obs, rec, reason, now.Sub(rec.AdoptedHeadSince()), block)
 	n, err := c.postAdoptionEscalationNote(ctx, store, key, obs, reason, body, "stage labels: adoption escalation note failed")
 	comments += n
 	if err != nil && firstErr == nil {
@@ -2592,6 +2701,6 @@ func (c *Engine) escalateUnadoptableFork(ctx context.Context, store *stagelabels
 		return esc, 0, nil
 	}
 	c.info("stage labels: fork PR the hive cannot adopt waited past the 072 dwell; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "head_repo", obs.HeadRepo, "nudged_at", start, "lane_reason", nonEmpty(obs.LaneReason, obs.Reason))
-	n, err := c.postAdoptionEscalationNote(ctx, store, key, obs, reason, ForkNotAdoptedComment(obs, reason, now.Sub(start)), "stage labels: fork escalation note failed")
+	n, err := c.postAdoptionEscalationNote(ctx, store, key, obs, reason, forkNotAdoptedComment(obs, reason, now.Sub(start), c.forkUpdateBlockFor(ctx, obs)), "stage labels: fork escalation note failed")
 	return esc, n, err
 }
