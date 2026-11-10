@@ -16,7 +16,7 @@ func (h *depBotHarness) passAt(at time.Time, prs ...github.PullRequest) {
 	h.t.Helper()
 	a := &github.ActionableResult{}
 	a.PRs.Items = prs
-	sweepDependencyBotConflicts(context.Background(), h.store, "acme", h.writer, h.reader, a, func() time.Time { return at }, discardLogger())
+	sweepDependencyBotConflicts(context.Background(), h.store, "acme", 0, h.writer, h.reader, a, func() time.Time { return at }, discardLogger())
 }
 
 func depBotPR(author, sha string, mut func(*github.PullRequest)) github.PullRequest {
