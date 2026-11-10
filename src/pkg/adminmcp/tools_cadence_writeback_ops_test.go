@@ -164,20 +164,30 @@ func TestAgentCadencesOpKeepsUntouchedModes(t *testing.T) {
 func TestAgentCadencesOpFlagsWidening(t *testing.T) {
 	p := newCadenceWBProvider()
 	p.agents["paused"] = map[string]any{"cadences": map[string]any{"surge": 0, "busy": 7200}, "models": map[string]any{"surge": "", "busy": "", "quiet": "", "idle": ""}}
+	// An agent whose cadences are not plain intervals: continuous in surge, a
+	// cron string in busy and a schedule object in quiet. An interval cannot
+	// be compared with those, so the preview names them instead of guessing.
+	p.agents["shifted"] = map[string]any{
+		"cadences": map[string]any{"surge": "continuous", "busy": "0 9 * * 1-5", "quiet": map[string]any{"cron": "0 */6 * * *"}},
+		"models":   map[string]any{"surge": "", "busy": "", "quiet": "", "idle": ""},
+	}
 	h := cadenceWBHandler(p)
 	for name, tc := range map[string]struct {
 		agent, mode, value string
 		widening           bool
 		want               string
 	}{
-		"shorter":           {"scanner", "surge", "1h", true, "scanner runs more often in surge: more spend"},
-		"longer":            {"scanner", "idle", "8h", false, "runs less often in idle"},
-		"pause":             {"scanner", "quiet", "pause", false, "stops running on a cadence in quiet"},
-		"from paused":       {"paused", "surge", "6h", true, "paused runs more often in surge: more spend (every 6h, was paused)"},
-		"from unset":        {"paused", "idle", "12h", true, "paused runs more often in idle: more spend"},
-		"longer from 2h":    {"paused", "busy", "3h", false, "runs less often in busy"},
-		"shorter from 2h":   {"paused", "busy", "30m", true, "paused runs more often in busy"},
-		"seconds are exact": {"scanner", "busy", "90m", true, "every 90m, was every 4h"},
+		"shorter":              {"scanner", "surge", "1h", true, "scanner runs more often in surge: more spend"},
+		"longer":               {"scanner", "idle", "8h", false, "runs less often in idle"},
+		"pause":                {"scanner", "quiet", "pause", false, "stops running on a cadence in quiet"},
+		"from paused":          {"paused", "surge", "6h", true, "paused runs more often in surge: more spend (every 6h, was paused)"},
+		"from unset":           {"paused", "idle", "12h", true, "paused runs more often in idle: more spend"},
+		"longer from 2h":       {"paused", "busy", "3h", false, "runs less often in busy"},
+		"shorter from 2h":      {"paused", "busy", "30m", true, "paused runs more often in busy"},
+		"seconds are exact":    {"scanner", "busy", "90m", true, "every 90m, was every 4h"},
+		"from continuous":      {"shifted", "surge", "1h", false, "Narrowing: shifted runs every 1h in surge instead of continuously"},
+		"from cron string":     {"shifted", "busy", "1h", true, "every 1h replaces 0 9 * * 1-5, which may have run less often"},
+		"from schedule object": {"shifted", "quiet", "2h", true, `every 2h replaces schedule {"cron":"0 */6 * * *"}, which may have run less often`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			preview, _ := capPreview(t, h, WriteOpAgentCadences, map[string]any{"agent": tc.agent, "modes": map[string]any{tc.mode: tc.value}})
@@ -321,6 +331,26 @@ func TestWritebackKindPolicyOpKeepsUntouchedKinds(t *testing.T) {
 			kinds:   map[string]any{"stage_label": map[string]any{"require_label": false, "min_level": 6}},
 			args:    map[string]any{"stage_label": map[string]any{"min_level": nil}},
 			want:    `{"writebackKinds":{"stage_label":{"require_label":false}}}`,
+		},
+		// One row per droppable field: each has its own arm in
+		// applyWritebackKindChange, and dropping one must leave the others.
+		"null drops require_label": {
+			replace: true,
+			kinds:   map[string]any{"stage_label": map[string]any{"require_label": false, "min_level": 6}},
+			args:    map[string]any{"stage_label": map[string]any{"require_label": nil}},
+			want:    `{"writebackKinds":{"stage_label":{"min_level":6}}}`,
+		},
+		"null drops unlabeled_min_level": {
+			replace: true,
+			kinds:   map[string]any{"base_refresh": map[string]any{"unlabeled_min_level": 6, "min_level": 5}},
+			args:    map[string]any{"base_refresh": map[string]any{"unlabeled_min_level": nil}},
+			want:    `{"writebackKinds":{"base_refresh":{"min_level":5}}}`,
+		},
+		"null drops own_only": {
+			replace: true,
+			kinds:   map[string]any{"hold_gate_notice": map[string]any{"own_only": true, "require_label": false}},
+			args:    map[string]any{"hold_gate_notice": map[string]any{"own_only": nil}},
+			want:    `{"writebackKinds":{"hold_gate_notice":{"require_label":false}}}`,
 		},
 		"null removes only that kind": {
 			replace: true,
