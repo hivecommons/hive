@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.9.1)
+
+### Fixed
+
+- The hold guard now announces that it stopped keeping a held PR mergeable at INFO instead of WARN; several held fork PRs stopping in one pass no longer trips the `unclassified_error_repeated` self-report, and the person-facing note on the PR is unchanged (#17520).
+- A resident agent's kick no longer lists PRs on repos with auto-merge switched off as MERGE-ELIGIBLE; they move to NEEDS MAINTAINER MERGE with the reason, so the scanner stops spending a kick on hive-merge requests the relay always refuses.
+
 ## 2026-11-10 (v6.9.0)
 
 ### Added
