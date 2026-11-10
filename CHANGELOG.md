@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.16)
+
+### Fixed
+
+- The kick freshness guard now logs a ref it withheld because the re-read found the item closed or merged at INFO with `reason=closed` instead of WARN with the generic `re-read`, so a closed item lingering in a stale snapshot no longer files an `unclassified_error_repeated` self-report every cycle ([#17518](https://github.com/hivecommons/hive/issues/17518)).
+
 ## 2026-11-10 (v5.211.15)
 
 ### Fixed
