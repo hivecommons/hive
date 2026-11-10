@@ -61,6 +61,55 @@ func TestStageTrackerActivityRequiredCI(t *testing.T) {
 	}
 }
 
+// A required Prow presubmit that never ran has no check run to link to;
+// Tide's commit status carries the reason. The CI track borrows Tide's
+// description and link so it reads differently from a failing check, and
+// Tide itself never enters the tally (hivecommons/hive#17476).
+func TestStageTrackerCIActivityTideExplainsMissingPresubmit(t *testing.T) {
+	now := time.Date(2026, 11, 9, 21, 0, 0, 0, time.UTC)
+	const tideDesc = "Not mergeable. Jobs native-queue-policy, verify PR contents have not succeeded."
+	const tideURL = "https://prow.example/tide"
+	fixture := func(verify ...github.PRActivityCheck) github.PullRequest {
+		checks := append([]github.PRActivityCheck{
+			{Name: "build", State: "completed", Conclusion: "success", URL: "https://ci.example/build"},
+			{Name: "tide", State: "pending", Kind: "commit_status", URL: tideURL, Description: tideDesc},
+		}, verify...)
+		return github.PullRequest{HeadSHA: "head", CIActivity: &github.PRCIActivity{
+			Head: "head", Source: "github-check-runs", ObservedAt: &now, StatusesKnown: true, StatusesObservedAt: &now,
+			RequiredKnown: true, RequiredSource: "protection", Required: []string{"build", "verify PR contents"},
+			RequiredChecks: []github.PRRequiredCheck{{Name: "build", AppKnown: true}, {Name: "verify PR contents", AppKnown: true}},
+			Checks:         checks,
+		}}
+	}
+
+	got := stageTrackerCIActivity(fixture(), now)
+	if got.State != "missing" || got.ChecksTotal != 2 || got.ChecksPassed != 1 || got.ChecksFailed != 0 {
+		t.Fatalf("never-ran presubmit: %+v, want missing 1/2 with tide uncounted", got)
+	}
+	if got.URL != tideURL || !strings.Contains(got.Detail, tideDesc) || !strings.Contains(got.Detail, "verify PR contents is a Prow presubmit") {
+		t.Fatalf("never-ran presubmit carries no Tide link or words: url=%q detail=%q", got.URL, got.Detail)
+	}
+
+	// A pending Prow job keeps the link to its own run; Tide's words ride along.
+	got = stageTrackerCIActivity(fixture(github.PRActivityCheck{Name: "verify PR contents", State: "pending", Kind: "commit_status", URL: "https://prow.example/job/1"}), now)
+	if got.State != "queued" || got.URL != "https://prow.example/job/1" || !strings.Contains(got.Detail, tideDesc) {
+		t.Fatalf("pending presubmit: %+v", got)
+	}
+
+	// A failing check is a failing check: its own link, no Tide sentence.
+	got = stageTrackerCIActivity(fixture(github.PRActivityCheck{Name: "verify PR contents", State: "completed", Conclusion: "failure", URL: "https://ci.example/verify"}), now)
+	if got.State != "failing" || got.URL != "https://ci.example/verify" || strings.Contains(got.Detail, "Tide") {
+		t.Fatalf("failing check borrowed Tide: %+v", got)
+	}
+
+	// Tide in the pool says nothing worth showing.
+	pr := fixture()
+	pr.CIActivity.Checks[1].State, pr.CIActivity.Checks[1].Conclusion = "completed", "success"
+	if got = stageTrackerCIActivity(pr, now); got.URL != "" || strings.Contains(got.Detail, "Tide") {
+		t.Fatalf("mergeable Tide still annotated: %+v", got)
+	}
+}
+
 func trackerActivityFixture(now time.Time) (github.PullRequest, review.DispatchState, *StatusPayload) {
 	pr := github.PullRequest{Repo: "org/repo", Number: 7, Author: "author", HeadSHA: "head"}
 	dispatch := review.DispatchState{GeneratedAt: now, Pending: []review.PendingReview{

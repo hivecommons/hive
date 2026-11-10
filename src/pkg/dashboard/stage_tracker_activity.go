@@ -77,6 +77,8 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	if a == nil || pr.HeadSHA == "" || !strings.EqualFold(a.Head, pr.HeadSHA) {
 		return out
 	}
+	// The gates stay on `full`: Tide's words and link are read from it.
+	full := a
 	a = stageTrackerCITestActivity(a)
 	out.Source, out.ObservedAt = a.Source, a.ObservedAt
 	if a.RequiredSource != "" {
@@ -137,6 +139,9 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	for _, name := range a.Required {
 		settled[name] = true
 	}
+	// Required checks with no run at all, or only a pending commit status:
+	// on a Prow repository, a presubmit that never ran or has not finished.
+	presubmitWaiting := map[string]bool{}
 	for _, observation := range observations {
 		name := observation.name
 		check := github.PRActivityCheck{}
@@ -168,6 +173,9 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			case "failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale":
 				state = "failing"
 			}
+		}
+		if state == "missing" || (state == "queued" && len(observation.checks) == 1 && check.Kind == "commit_status") {
+			presubmitWaiting[name] = true
 		}
 		if state != "passing" && state != "failing" && state != "skipped" {
 			settled[name] = false
@@ -308,6 +316,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	// age rides ObservedAt for the tooltip, never a dimmer state
 	// (hivecommons/hive#16643).
 	out.Active = out.State == "running" || out.State == "queued"
+	stageTrackerAttachTide(out, full, presubmitWaiting)
 	return out
 }
 
@@ -329,6 +338,50 @@ func stageTrackerCITestActivity(a *github.PRCIActivity) *github.PRCIActivity {
 		return github.IsMergeGateContext(check.Name)
 	})
 	return &scoped
+}
+
+// stageTrackerTideContext is the commit status Prow's Tide reports. It is
+// merge-bot state, not CI: the CI track borrows its words and link only.
+const stageTrackerTideContext = "tide"
+
+// stageTrackerAttachTide lays Tide's own words and link over a CI track
+// that counts a required check with no run, or only a pending commit status
+// (hivecommons/hive#17476): a Prow presubmit that never ran has no check run
+// to link to, and Tide's description ("Not mergeable. Jobs … have not
+// succeeded.") is what tells it apart from a failing check. The chevron
+// links to Tide's target_url only when the leading evidence has no URL of
+// its own (a pending Prow job keeps the link to its run).
+func stageTrackerAttachTide(out *StageTrackerActivity, a *github.PRCIActivity, waiting map[string]bool) {
+	if len(waiting) == 0 || out.State == "passing" {
+		return
+	}
+	var tide *github.PRActivityCheck
+	for i := range a.Checks {
+		check := &a.Checks[i]
+		if !strings.EqualFold(check.Name, stageTrackerTideContext) || (check.Head != "" && !strings.EqualFold(check.Head, a.Head)) {
+			continue
+		}
+		if tide == nil || (check.Since != nil && (tide.Since == nil || check.Since.After(*tide.Since))) {
+			tide = check
+		}
+	}
+	if tide == nil || (tide.State == "completed" && tide.Conclusion == "success") {
+		return
+	}
+	if desc := strings.TrimSpace(tide.Description); desc != "" {
+		names := make([]string, 0, len(waiting))
+		for _, name := range a.Required {
+			if waiting[name] {
+				names = append(names, name)
+			}
+		}
+		out.Detail = strings.TrimSpace(out.Detail + fmt.Sprintf(" Tide, Prow's merge bot, reports %q: %s %s a Prow presubmit that has not run or finished on this commit, not a failed check.", desc, strings.Join(names, ", "), pluralVerb(len(names), "is", "are")))
+	}
+	if out.URL == "" {
+		if u := strings.TrimSpace(tide.URL); strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") {
+			out.URL = u
+		}
+	}
 }
 
 // stageTrackerWorkflowApprovalBlockerPrefix leads the CI blocker when the

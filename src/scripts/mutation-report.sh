@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Advisory mutation report for the Go packages a PR touches (#17349, Phase 1).
-# Runs gremlins on each changed package, then upserts ONE <!-- hive-mutation -->
-# PR comment listing surviving (LIVED) mutants in changed files. Never fails.
+# Runs gremlins on the lines each changed package's diff adds (#17463), then
+# upserts ONE <!-- hive-mutation --> PR comment listing surviving (LIVED)
+# mutants in changed files. Never fails.
 #
 # Two phases so the token never shares an environment with PR-controlled code:
 #   mutation-report.sh run    runs gremlins (no GH_TOKEN) and writes
@@ -52,6 +53,7 @@ fi
 base_ref="${BASE_REF:?BASE_REF is required}"
 coefficient="${MUTATION_TIMEOUT_COEFFICIENT:-3}"
 mkdir -p "$out_dir"
+out_abs=$(cd "$out_dir" && pwd)
 
 changed=$(git diff --name-only --diff-filter=d "origin/${base_ref}...HEAD" -- 'src/*.go' \
   | grep -vE '(_test\.go$|(^|/)testdata/|\.pb\.go$|_gen\.go$|_generated\.go$|(^|/)mock)' || true)
@@ -86,14 +88,21 @@ while IFS= read -r pkg; do
 done <<< "$pkgs"
 pkgs="${roots%$'\n'}"
 
+# gremlins --diff reads `git diff --merge-base <ref>` from its own working
+# directory and matches those paths against files relative to the package it
+# mutates. Run it from inside the package with diff.relative so both sides use
+# package-relative paths; otherwise every mutant would be skipped, or (with no
+# --diff) the whole package is mutated and the job times out (#17463). Coverage
+# chdirs to the module root, so the output path must be absolute.
 i=0
 while IFS= read -r pkg; do
   [ -n "$pkg" ] || continue
   i=$((i + 1))
   printf '%s\n' "$pkg" > "$out_dir/pkg-$i.dir"
-  echo "::group::gremlins unleash ./$pkg"
-  (cd src && gremlins unleash --timeout-coefficient "$coefficient" \
-    --output "../$out_dir/pkg-$i.json" "./$pkg") || echo "gremlins exited non-zero for $pkg (advisory)"
+  echo "::group::gremlins unleash ./$pkg --diff origin/${base_ref}"
+  (cd "src/$pkg" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.relative GIT_CONFIG_VALUE_0=true \
+    gremlins unleash --timeout-coefficient "$coefficient" --diff "origin/${base_ref}" \
+    --output "$out_abs/pkg-$i.json") || echo "gremlins exited non-zero for $pkg (advisory)"
   echo "::endgroup::"
 done <<< "$pkgs"
 
