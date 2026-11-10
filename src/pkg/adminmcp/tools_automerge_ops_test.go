@@ -99,7 +99,7 @@ func TestAutoMergeUpdateRejectsUnknownFields(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		"top-level typo":      {map[string]any{"squash_onyl": map[string]any{"add": []any{"org/c"}}}, `unsupported merge setting "squash_onyl"`},
+		"top-level typo":      {map[string]any{"squash_repos": map[string]any{"add": []any{"org/c"}}}, `unsupported merge setting "squash_repos"`},
 		"nested unknown":      {map[string]any{"contributor_lane": map[string]any{"enabled": true, "workflow_fence_scope": "all"}}, `unsupported merge setting "contributor_lane.workflow_fence_scope"`},
 		"dotted top-level":    {map[string]any{"merge_train.enabled": false}, `unsupported merge setting "merge_train.enabled"`},
 		"pin-only":            {map[string]any{"human_merge_pin_only": map[string]any{"org/a": map[string]any{"enabled": true}}}, "human_merge_pin_only is not on PATCH /api/config/auto-merge"},
