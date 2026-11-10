@@ -563,20 +563,33 @@ func TestDecisionCommentNamesActionsPerLane(t *testing.T) {
 		t.Fatalf("contributor-lane comment promises a hive push:\n%s", got)
 	}
 
+	// A hold-class label is a gate riding the head's real stage, not an 085
+	// park (hivecommons/hive#17327): the entry comment names each label a
+	// person must lift and never offers an approval as the way out.
 	held := readyEvidence()
 	held.SelfAuthored = true
 	held.Holds = Holds([]string{"hold", "do-not-merge/wip"})
 	r = RouteHuman(held)
-	if got := DecisionComment(r); !strings.Contains(got, "resolve the reason for `do-not-merge/wip` and have a maintainer remove that label") || !strings.Contains(got, "resolve the reason for `hold`") || !strings.Contains(got, "`/hive approve` does not remove it") {
-		t.Fatalf("hold park does not name the labels to clear:\n%s", got)
+	if r.Stage != ReadyForHumanMerge || len(r.Gates) != 2 {
+		t.Fatalf("hold route = %+v", r)
+	}
+	if got := ReadyComment(r, ""); !strings.Contains(got, "Held: the `do-not-merge/wip` label is set; the `hold` label is set.") || !strings.Contains(got, "lift the hold") {
+		t.Fatalf("held comment does not name the labels to clear:\n%s", got)
 	} else if strings.Contains(got, "approve this head") {
-		t.Fatalf("hold park offers an approval as the way out:\n%s", got)
+		t.Fatalf("held comment offers an approval as the way out:\n%s", got)
+	}
+	if got := DecisionComment(r); strings.Contains(got, "approve this head") {
+		t.Fatalf("hold gate offers an approval as the way out:\n%s", got)
 	}
 
 	sentinel := readyEvidence()
 	sentinel.Sentinel = true
-	if got := DecisionComment(RouteHuman(sentinel)); !strings.Contains(got, "**What to do:** resolve the sentinel alert") {
-		t.Fatalf("sentinel park does not name the action:\n%s", got)
+	r = RouteHuman(sentinel)
+	if r.Stage != ReadyForHumanMerge || len(r.Gates) != 1 {
+		t.Fatalf("sentinel route = %+v", r)
+	}
+	if got := ReadyComment(r, ""); !strings.Contains(got, "Held: a sentinel alert is open on this PR.") || !strings.Contains(got, "resolve the sentinel alert") {
+		t.Fatalf("sentinel gate does not name the action:\n%s", got)
 	}
 
 	manual := readyEvidence()

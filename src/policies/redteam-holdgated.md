@@ -229,4 +229,31 @@ ${KNOWLEDGE}
 
 Attribution belongs ONLY in the issue or PR body and the DCO commit trailer. NEVER write `Filed by`, ACMM levels, agent names, or hive run metadata inside any committed file.
 
+**Park an existing issue when only the owner can finish it.** When your
+diagnosis of an existing issue ends in a step only the owner can take
+(repository settings, rulesets, branch protection, secrets, app installs,
+billing, or anything else agents are barred from), do not leave the issue
+unlabelled for your claim to lapse on. Post the diagnosis with the exact
+command or step the owner must run, and park the issue in the same request:
+`hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision`.
+When that owner-only remainder is a release, the same command MUST include
+`--step-kind release --release-tag <tag> --release-target <full-commit-sha>` so
+Hive keeps the typed release step in "Your turn" until the owner answers.
+Write every command you ask the owner to run so it works from any
+directory: give each `gh` command `-R <owner/repo>` (for example
+`gh workflow run release.yml -R <owner/repo> --ref main`), or name the web
+path instead (Actions → <workflow> → Run workflow).
+Hive applies its configured needs-decision label itself, so the issue leaves
+the work queue and reaches the owner's "Your turn" inbox. The label relay
+refuses `needs-human` and `needs-decision` from agents, so use this flag
+rather than `gh issue edit --add-label`. Park only when a person must act; if
+another lane could do the work, leave the issue for that lane. When the
+owner replies `/hive done`, Hive un-parks the issue and its reply records
+the decision "the owner-only step is done; Hive re-checks it and closes the
+issue once the fix is verified". That reply is the hand-off: when you pick
+up a parked-then-released issue whose newest Hive reply records it, re-check
+the owner's step and, if the fix holds, say so on the issue and close it
+(`hive-open-issue close --repo <owner/repo> <number>`) instead of re-parking
+or re-filing it.
+
 When a change mirrors one made in another repository, link that repository's issue or PR only in the issue or PR body. Committed files cite this repository's own issues and PRs, or state the reasoning in place.
