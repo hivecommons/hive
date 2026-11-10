@@ -365,9 +365,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # build time (sec-check issue #2919). Pin to a specific release tag and verify
 # the tarball before extraction. Download failures are tolerated because Goose
 # is an optional contributor backend; checksum mismatches are not tolerated.
-ARG GOOSE_VERSION=1.57.0
-ARG GOOSE_SHA256_AMD64=10eb96cb6a159b6e1d38eeedbef6ab64cd28168aad91948f1fa5c34eefdf98e3
-ARG GOOSE_SHA256_ARM64=c32605acfd560aeb2adbf17ec359cc0217e28022a7e647b35a6af5dcfca91749
+ARG GOOSE_VERSION=1.58.1
+ARG GOOSE_SHA256_AMD64=43adae6abf10d40d5b1d5cd23bcf6481ef72fddede8fe9a8577c385e325cba68
+ARG GOOSE_SHA256_ARM64=20d9586ac7d37d2700d41d85d0051547a959ae96576aae6cbd290f77b5605a61
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
