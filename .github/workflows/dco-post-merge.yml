@@ -324,6 +324,26 @@ env:
   # 3fedd0f3cbf5703a306157411a7136ecff738f5c — same shape, person and
   # disposition as 003144299b above (#15542). Reversible: remove the entry.
 
+  # 76b20ebe56639360ff27e15ed3751afc96c04785 — the squash of #17464, on v6,
+  # with the mismatched-signoff shape created by the squash: the branch
+  # commits were authored AND signed off as Danathar
+  # <berths-purger-0g@icloud.com>, an Apple iCloud "Hide My Email" relay
+  # address, so the PR was internally consistent; GitHub's squash then wrote
+  # the PR author's profile-primary identity, Danathar
+  # <doug.baggett@gmail.com>, over it while keeping that sign-off. Same class
+  # as 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 and
+  # 4b9261183378a1a02a921cd0cc9df31e6f37993b: one maintainer, two addresses,
+  # nothing about the certification in doubt. The checker should not infer the
+  # link: a gmail or relay address carries no structural proof that it belongs
+  # to the authoring account (same reasoning as 7e01fee), so this is a
+  # per-commit waiver and not a DCO_ALLOWLIST_EMAILS entry. Protected v6
+  # history cannot be re-signed in place and no sign-off is rewritten on
+  # another person's behalf. Reported by the monitor in #17558. Accepted by
+  # maintainer disposition in #17558: the maintainer merging the PR that adds
+  # this entry IS that disposition. Reversible: remove the entry. To stop the
+  # squash producing this shape, the contributor can set the relay address as
+  # their GitHub profile-primary email, or sign off with the primary address.
+
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
   # Deep history carries further genuine mismatches — 8b536911 and, on v5
@@ -335,7 +355,7 @@ env:
   # regression. They are intentionally left unwaived: pre-approving them would
   # grow this list for commits that are not actually being reported, which is
   # the exact failure mode #6770 was filed about.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2 a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200 692d068ffa198895ab91bd7ad663971f2b8ad358 b893b01c90e6ffff951523d20b19e9dfbfa80184 a0de3f920ded7e0cfc287bb5009d542e5a14f014 c6c78c3a26c33c6d1530996df20ead0a6b699dda a9200f3d278fcdbf6291f37f921845113814686e fb153585e6dab7b6f6808cb328e706d691f9be79 00070300002c88fda6850278edaea2498e8ca941 511027d8174be02b1dd77c25e9f8d5265f7fb7d4 687c3cb006d7559135f5f2fb0db13476d1af2a43 003144299b952e53290088e7637ac12f6d5d20e9 8eb7267d3302bb3f68e718f4caf57826efb88ae3 3fedd0f3cbf5703a306157411a7136ecff738f5c'
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2 a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200 692d068ffa198895ab91bd7ad663971f2b8ad358 b893b01c90e6ffff951523d20b19e9dfbfa80184 a0de3f920ded7e0cfc287bb5009d542e5a14f014 c6c78c3a26c33c6d1530996df20ead0a6b699dda a9200f3d278fcdbf6291f37f921845113814686e fb153585e6dab7b6f6808cb328e706d691f9be79 00070300002c88fda6850278edaea2498e8ca941 511027d8174be02b1dd77c25e9f8d5265f7fb7d4 687c3cb006d7559135f5f2fb0db13476d1af2a43 003144299b952e53290088e7637ac12f6d5d20e9 8eb7267d3302bb3f68e718f4caf57826efb88ae3 3fedd0f3cbf5703a306157411a7136ecff738f5c 76b20ebe56639360ff27e15ed3751afc96c04785'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
