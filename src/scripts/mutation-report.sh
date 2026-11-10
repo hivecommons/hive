@@ -4,6 +4,11 @@
 # upserts ONE <!-- hive-mutation --> PR comment listing surviving (LIVED)
 # mutants in changed files. Never fails.
 #
+# The run phase keeps its own time budget (MUTATION_BUDGET_SECONDS, default
+# 17 min) under the job's timeout-minutes so comment.md is always written: a
+# job killed by the runner writes nothing, and the PR keeps the comment from
+# an earlier head (or none) with no sign the report is stale or partial.
+#
 # Two phases so the token never shares an environment with PR-controlled code:
 #   mutation-report.sh run    runs gremlins (no GH_TOKEN) and writes
 #                             $out_dir/comment.md
@@ -52,8 +57,13 @@ fi
 
 base_ref="${BASE_REF:?BASE_REF is required}"
 coefficient="${MUTATION_TIMEOUT_COEFFICIENT:-3}"
+budget="${MUTATION_BUDGET_SECONDS:-1020}"
+deadline=$(( $(date +%s) + budget ))
 mkdir -p "$out_dir"
 out_abs=$(cd "$out_dir" && pwd)
+# On a pull_request checkout HEAD is the synthetic merge commit; HEAD^2 is the
+# PR head the comment should name so a reader can tell a stale report apart.
+head_sha=$(git rev-parse --short HEAD^2 2>/dev/null || git rev-parse --short HEAD)
 
 changed=$(git diff --name-only --diff-filter=d "origin/${base_ref}...HEAD" -- 'src/*.go' \
   | grep -vE '(_test\.go$|(^|/)testdata/|\.pb\.go$|_gen\.go$|_generated\.go$|(^|/)mock)' || true)
@@ -94,15 +104,36 @@ pkgs="${roots%$'\n'}"
 # package-relative paths; otherwise every mutant would be skipped, or (with no
 # --diff) the whole package is mutated and the job times out (#17463). Coverage
 # chdirs to the module root, so the output path must be absolute.
+# Each package gets whatever is left of the budget; one that outlives it is
+# killed (exit 124) and recorded as unfinished, and the packages after it are
+# recorded as not started, so the comment says what was and was not mutated.
+unfinished="$out_dir/unfinished.txt"
+: > "$unfinished"
 i=0
+total=0
 while IFS= read -r pkg; do
   [ -n "$pkg" ] || continue
+  total=$((total + 1))
   i=$((i + 1))
   printf '%s\n' "$pkg" > "$out_dir/pkg-$i.dir"
-  echo "::group::gremlins unleash ./$pkg --diff origin/${base_ref}"
+  remaining=$(( deadline - $(date +%s) ))
+  if [ "$remaining" -le 0 ]; then
+    echo "time budget exhausted before $pkg; not started"
+    printf '%s\tnot started\n' "$pkg" >> "$unfinished"
+    continue
+  fi
+  echo "::group::gremlins unleash ./$pkg --diff origin/${base_ref} (budget ${remaining}s)"
   (cd "src/$pkg" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.relative GIT_CONFIG_VALUE_0=true \
+    timeout --kill-after=10 "$remaining" \
     gremlins unleash --timeout-coefficient "$coefficient" --diff "origin/${base_ref}" \
-    --output "$out_abs/pkg-$i.json") || echo "gremlins exited non-zero for $pkg (advisory)"
+    --output "$out_abs/pkg-$i.json")
+  rc=$?
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    echo "gremlins hit the time budget in $pkg after ${remaining}s; results for it are partial or missing"
+    printf '%s\tunfinished\n' "$pkg" >> "$unfinished"
+  elif [ "$rc" -ne 0 ]; then
+    echo "gremlins exited non-zero ($rc) for $pkg (advisory)"
+  fi
   echo "::endgroup::"
 done <<< "$pkgs"
 
@@ -132,14 +163,24 @@ done < "$survivors"
   echo "$marker"
   echo "### Mutation testing (advisory)"
   echo
+  echo "Head \`${head_sha}\`."
+  echo
   if [ -s "$filtered" ]; then
     echo "gremlins found **$(wc -l < "$filtered" | tr -d ' ') surviving mutant(s)** in changed files: the code ran under tests, but changing it did not fail any test."
     echo
     echo "| File | Line | Mutation |"
     echo "|---|---|---|"
     sort -t$'\t' -k1,1 -k2,2n "$filtered" | head -n 100 | awk -F'\t' '{printf "| `%s` | %s | %s |\n", $1, $2, $3}'
+  elif [ -s "$unfinished" ]; then
+    echo "No surviving mutants reported in the packages that finished."
   else
-    echo "No surviving mutants in changed files (or the run hit its time budget before reporting any)."
+    echo "No surviving mutants in changed files."
+  fi
+  if [ -s "$unfinished" ]; then
+    echo
+    echo "⏱ **Time budget (${budget}s) exhausted: $(wc -l < "$unfinished" | tr -d ' ') of ${total} changed package(s) were not fully mutated**, so this report is partial:"
+    echo
+    awk -F'\t' '{printf "- `src/%s` — %s\n", $1, $2}' "$unfinished"
   fi
   echo
   echo "_Advisory only; this job never blocks the PR (#17349)._"
