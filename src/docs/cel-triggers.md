@@ -3,7 +3,8 @@
 The `triggers:` config key lets an operator declare CEL ([Common Expression
 Language](https://github.com/cel-expr/cel-spec)) rules that decide when an
 agent should be kicked for an incoming event — issue opened, issue labeled,
-PR opened, a comment posted, and so on — without writing code.
+PR opened, a comment posted, CI failing on a default branch, and so on —
+without writing code.
 
 ```yaml
 triggers:
@@ -58,14 +59,14 @@ The reachable fields, taken from the `cel:"..."` struct tags on
 | `event.kind` | string | Event kind — see the `Kind*` constants below. |
 | `event.repo` | string | Repository spelling from `project.repos`, e.g. `"name"` or `"org/name"`; use the configured spelling, not necessarily the qualified display label. |
 | `event.labels` | list of string | Labels on the issue/PR. |
-| `event.title` | string | Issue/PR title. |
+| `event.title` | string | Issue/PR title; for `ci.failed`, the check name. |
 | `event.author` | string | Login/handle of the actor that produced the event. |
 | `event.body` | string | Issue/PR/comment body. |
 | `event.is_draft` | bool | Whether a PR is a draft. |
-| `event.number` | int | Issue/PR number. |
-| `event.state` | string | Current state, e.g. `"open"`/`"closed"`. |
+| `event.number` | int | Issue/PR number; `0` for `ci.failed`. |
+| `event.state` | string | Current state, e.g. `"open"`/`"closed"`; for `ci.failed`, the conclusion (`"failure"` or `"timed_out"`). |
 | `event.base_branch` | string | Target branch for a PR. |
-| `event.head_branch` | string | Source branch for a PR. |
+| `event.head_branch` | string | Source branch for a PR; for `ci.failed`, the repository's default branch. |
 | `event.assignees` | list of string | Currently-assigned logins. |
 | `event.comment` | string | Body of the triggering comment (for `comment.created`). |
 
@@ -87,12 +88,16 @@ pr.ready_for_review
 pr.closed
 pr.merged
 comment.created
+ci.failed
 ```
 
 `issue.opened` and `pr.opened` are edge-triggered: the eval cycle emits them
 once per issue/PR (keyed `repo#number`) per hive process, the first time the
 item is enumerated, not on every cycle while it stays actionable. The seen-set
 is in memory, so a hive restart re-emits currently actionable items once.
+
+`ci.failed` is described in
+[Kick an agent when default-branch CI fails](#kick-an-agent-when-default-branch-ci-fails).
 
 ### Run the scanner for newly seen GitHub issues
 
@@ -148,6 +153,54 @@ The receiver requires `GITHUB_WEBHOOK_SECRET` and a matching HMAC signature.
 Saving a channel or adding a CEL rule neither registers a webhook nor
 configures its secret. Delivery wakes an early governor evaluation subject
 to debounce/minimum-gap pacing; it does not bypass agent execution gates.
+
+### Kick an agent when default-branch CI fails
+
+`ci.failed` lets an operator say "kick `ci-maintainer` when main goes red"
+instead of waiting for that agent's next cadence slot:
+
+```yaml
+triggers:
+  - name: main-red
+    expr: event.kind == "ci.failed"
+    agent: ci-maintainer
+```
+
+Add `&& event.repo == "org/repo"` (the `project.repos` spelling) to watch one
+repository, or `&& event.title == "build"` to watch one check.
+The dashboard's **Default-branch CI failed** preset writes the per-repository
+form.
+
+What fires it:
+
+- The source is the red-main sweep (`SweepRedMain`, `src/pkg/github/red_main.go`),
+  which already reads every active repository's default branch tip every
+  10 minutes. There is no separate poller and no webhook involved, so it
+  works on hives with webhooks off. Detection lags a failure by up to one
+  sweep interval. The sweep has no opt-in setting; like the other unstick
+  sweeps it is skipped only while the GitHub API budget is critical.
+- It fires when the newest completed run of a check on the default branch
+  tip concluded `failure` or `timed_out`. `cancelled`, `skipped`, `neutral`,
+  `action_required` and `stale` do not fire, and a check still running on
+  the tip waits for the next sweep. Every check counts, not only required
+  ones, so a post-merge build or publish job is covered.
+- Only runs whose check suite was created for the default branch count; a
+  pull request's run that happens to share the tip commit does not.
+- It is edge-triggered: once per repository, check name and head SHA. A
+  later push that fails again fires again; the same red SHA does not. The
+  seen-set is in memory, so a hive restart may fire once more for a SHA
+  that is still red.
+- Fields set: `event.kind` = `"ci.failed"`, `event.repo` (configured
+  spelling), `event.title` (check name), `event.head_branch` (default
+  branch), `event.state` (`"failure"` or `"timed_out"`), `event.number` =
+  `0`. The kick message names the check, the commit and the run URL.
+- Only rules whose expression contains the text `ci.failed` are evaluated
+  for it. An existing rule that never tests the kind, such as
+  `event.repo == "org/repo"`, keeps routing only issues and PRs. With no
+  rule naming `ci.failed`, the sweep makes no extra GitHub reads.
+- The usual gates still apply: the agent must exist, be enabled and not be
+  paused, and the governor must allow a kick (cadence pause, budget,
+  on-demand, kick channel).
 
 ### Available functions
 
