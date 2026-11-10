@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.12.2)
+
+### Fixed
+
+- Merge lanes: pull requests on a repo an owner switched off with `auto_merge: false` at L6 now get a stage record every pass (090 "auto-merge off" once approved and green) from an observe-only pass that never merges, enqueues, updates a branch, rebases or otherwise writes to GitHub; hives below L6 are unchanged.
+
 ## 2026-11-10 (v6.12.1)
 
 ### Fixed
