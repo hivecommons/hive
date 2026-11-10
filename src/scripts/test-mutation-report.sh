@@ -9,7 +9,7 @@
 #
 # The budget section is the one that must never regress: a run that hits its
 # time budget must still write comment.md, and that comment must say which
-# packages were not mutated. Before #17601's sibling PRs were triaged, the job
+# packages were not mutated. Before #17602's sibling PRs were triaged, the job
 # timeout killed the step first, nothing was written, and the PR kept the
 # comment from an earlier head with no sign it was stale.
 set -u -o pipefail

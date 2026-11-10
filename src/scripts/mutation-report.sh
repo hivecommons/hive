@@ -110,10 +110,8 @@ pkgs="${roots%$'\n'}"
 unfinished="$out_dir/unfinished.txt"
 : > "$unfinished"
 i=0
-total=0
 while IFS= read -r pkg; do
   [ -n "$pkg" ] || continue
-  total=$((total + 1))
   i=$((i + 1))
   printf '%s\n' "$pkg" > "$out_dir/pkg-$i.dir"
   remaining=$(( deadline - $(date +%s) ))
@@ -178,7 +176,7 @@ done < "$survivors"
   fi
   if [ -s "$unfinished" ]; then
     echo
-    echo "⏱ **Time budget (${budget}s) exhausted: $(wc -l < "$unfinished" | tr -d ' ') of ${total} changed package(s) were not fully mutated**, so this report is partial:"
+    echo "⏱ **Time budget (${budget}s) exhausted: $(wc -l < "$unfinished" | tr -d ' ') of ${i} changed package(s) were not fully mutated**, so this report is partial:"
     echo
     awk -F'\t' '{printf "- `src/%s` — %s\n", $1, $2}' "$unfinished"
   fi
