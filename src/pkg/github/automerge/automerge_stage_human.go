@@ -104,26 +104,30 @@ func (c *Engine) headChecks(ctx context.Context, tracker *StageTracker, key stri
 }
 
 // humanFenceEntry is one head's contributor-lane diff fence ("" when the
-// diff is clean).
+// diff is clean), with the workflow fence scope it was judged under.
 type humanFenceEntry struct {
 	head  string
+	scope string
 	fence string
 }
 
-// headDiffFence returns the contributor lane's diff fence for obs's head
-// (contributorLaneDiffReason: workflow / action files, tests removed), cached
-// per head: a head's diff does not change, and a push is a new head. ok is
+// headDiffFence returns the contributor lane's merge diff fence for obs's
+// head (contributorLaneMergeFence: workflow / action files as
+// workflow_fence_scope scopes them, tests removed), cached per head and
+// scope: a head's diff does not change, a push is a new head, and a change
+// to the scope or the repository's human_merge_paths is re-read. ok is
 // false when it could not be read (transport error, incomplete file list, or
 // the PR's head moved past obs); nothing is cached then, so the next pass
 // tries again.
 func (c *Engine) headDiffFence(ctx context.Context, tracker *StageTracker, key string, obs stageObservation) (string, bool) {
+	scope := c.workflowFenceScopeKey(c.currentContributorLanePolicy(), obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
 	tracker.mu.Lock()
 	entry, ok := tracker.fences[key]
 	tracker.mu.Unlock()
-	if ok && entry.head == obs.HeadSHA {
+	if ok && entry.head == obs.HeadSHA && entry.scope == scope {
 		return entry.fence, true
 	}
-	fence, err := c.adoptionDiffRefusal(ctx, obs)
+	fence, err := c.adoptionMergeFence(ctx, obs)
 	if err != nil {
 		c.warn("stage labels: diff fence read failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return "", false
@@ -135,7 +139,7 @@ func (c *Engine) headDiffFence(ctx context.Context, tracker *StageTracker, key s
 	if tracker.fences == nil {
 		tracker.fences = map[string]humanFenceEntry{}
 	}
-	tracker.fences[key] = humanFenceEntry{head: obs.HeadSHA, fence: fence}
+	tracker.fences[key] = humanFenceEntry{head: obs.HeadSHA, scope: scope, fence: fence}
 	tracker.mu.Unlock()
 	return fence, true
 }

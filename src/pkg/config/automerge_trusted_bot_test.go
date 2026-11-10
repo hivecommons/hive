@@ -213,6 +213,39 @@ func TestContributorLaneAutoMergeConfigOwnerApprovalReleasesWorkflowFence(t *tes
 	}
 }
 
+// workflow_fence_scope defaults to all (today's full fence), accepts
+// human_merge_paths in any case, and rejects anything else; a rejected value
+// still reads as all, so it never narrows the fence.
+func TestContributorLaneAutoMergeConfigWorkflowFenceScope(t *testing.T) {
+	var cfg ContributorLaneAutoMergeConfig
+	if got := cfg.EffectiveWorkflowFenceScope(); got != ContributorLaneWorkflowFenceScopeAll {
+		t.Fatalf("default workflow_fence_scope = %q, want all", got)
+	}
+	cfg.WorkflowFenceScope = " Human_Merge_Paths "
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("human_merge_paths scope should validate: %v", err)
+	}
+	if got := cfg.EffectiveWorkflowFenceScope(); got != ContributorLaneWorkflowFenceScopeHumanMergePaths {
+		t.Fatalf("workflow_fence_scope = %q, want human_merge_paths (trimmed, lower-cased)", got)
+	}
+	cfg.WorkflowFenceScope = "release_only"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "workflow_fence_scope") {
+		t.Fatalf("invalid scope must fail validation, got %v", err)
+	}
+	if got := cfg.EffectiveWorkflowFenceScope(); got != ContributorLaneWorkflowFenceScopeAll {
+		t.Fatalf("unknown workflow_fence_scope = %q, want all (never narrows the fence)", got)
+	}
+	var parsed struct {
+		ContributorLane ContributorLaneAutoMergeConfig `yaml:"contributor_lane"`
+	}
+	if err := yaml.Unmarshal([]byte("contributor_lane:\n  workflow_fence_scope: human_merge_paths\n"), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.ContributorLane.EffectiveWorkflowFenceScope(); got != ContributorLaneWorkflowFenceScopeHumanMergePaths {
+		t.Fatalf("yaml workflow_fence_scope = %q, want human_merge_paths", got)
+	}
+}
+
 func TestContributorTierAutoMergeConfigAutoPromoteDefault(t *testing.T) {
 	var cfg ContributorTierAutoMergeConfig
 	if got := cfg.EffectiveAutoPromoteAfterMerged(); got != DefaultContributorTierAutoPromoteAfterMerged {

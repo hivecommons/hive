@@ -1075,6 +1075,44 @@ A PR merges through this tier only when all of the following hold:
   head, and the approved head parks at `090-ready-for-human-merge` for a
   person's **Merge** click as before. With the toggle off, or with no
   approval, a workflow-path PR is never merged by the hive.
+
+  Which edits trip this fence is `workflow_fence_scope` (default `all`).
+  With `all`, every file under `.github/workflows/**` or
+  `.github/actions/**` does. With `human_merge_paths`, only a workflow or
+  action file that also matches the repository's
+  `auto_merge.human_merge_paths` does, read with the same matcher as the
+  human-merge hold. Any other workflow edit, such as a pin bump or a
+  tightened `permissions:` block, needs no owner approval: it goes through
+  review, CI, soak and every other gate here like any other change. The
+  scoped fence fails closed:
+  - a repository with no `human_merge_paths` entry keeps the full fence;
+  - a renamed workflow or action file always trips it, because GitHub's
+    file list names only the new path;
+  - when GitHub refuses the merge for want of the App's **Workflows: Read
+    and write**, the head is marked `hive:unauthorized`
+    (`merge-workflow-path`) and stays fenced for a person's merge, as an
+    owner-released head does.
+
+  A listed file still gets the human-merge hold as well. List every
+  reusable workflow and local action your release workflows call, not only
+  the top-level files: an edit to an unlisted one merges after review.
+  Three things ignore the scope:
+  - the tests-removed fence below;
+  - held fork CI runs, which the lane never approves for any workflow edit
+    (`approve_held_runs_for_registry_trusted`);
+  - adoption, which never publishes any workflow edit as an upstream
+    branch.
+
+  Sentinel is separate. Its `sensitive_path` behaviour flags
+  `.github/workflows/**` and `.github/actions/**` by default and labels a
+  contributor's PR `sentinel-alert`, which blocks this lane until a person
+  clears it (`contributor-lane:sentinel-blocked`). For routine workflow
+  edits to merge without a person, `sentinel.sensitive_paths` must also
+  leave those globs out. That key replaces the whole default list, so copy
+  the defaults and drop only the workflow and action globs; Sentinel's
+  content rules (permission widening, secret exposure, CI-gate weakening,
+  remote code execution) still read every workflow patch (see
+  [Suspicious-activity alerts](operator-reference/sweeps-and-operations.md#suspicious-activity-alerts-sentinel)).
 - The diff does not delete a test file or remove 25+ test lines while
   deleting at least 3× what it adds (`contributor-lane:tests-removed`).
 - Required CI is green on the current head, using the same merge-CI gate as
@@ -1139,14 +1177,15 @@ auto_merge:
     auto_promotion_scope: hive        # count clean merged PRs across every hive repo (repo = this repository only)
     approve_held_runs_for_registry_trusted: true   # approve action_required runs once per head for registry-admitted authors
     owner_approval_releases_workflow_fence: true   # a trusted merger's approval on the current head lets the lane merge .github/workflows/** PRs
+    workflow_fence_scope: all         # human_merge_paths = fence only workflow / action files listed in auto_merge.human_merge_paths
   contributor_tier:
     auto_promote_after_merged: 5      # clean merged PRs before the lane trusts an author on its own; negative disables
 ```
 
 The block is editable from **Settings → Features → Auto Merge →
 Contributor-lane auto-merge** (enable switch, soak minutes, reviewer-verdict
-switch, required tiers, auto-promotion scope, excluded labels, repository
-allow-list) through the
+switch, required tiers, auto-promotion scope, workflow fence scope,
+excluded labels, repository allow-list) through the
 same owner-only `GET/PUT /api/config/auto-merge` overlay.
 
 **Operator workflow.** To let a known contributor's relay PRs merge

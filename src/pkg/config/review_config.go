@@ -892,6 +892,46 @@ type ContributorLaneAutoMergeConfig struct {
 	// the PR hive:unauthorized and parks it for a person's merge click.
 	// false keeps every workflow-path PR a person's merge.
 	OwnerApprovalReleasesWorkflowFence *bool `yaml:"owner_approval_releases_workflow_fence,omitempty" json:"owner_approval_releases_workflow_fence,omitempty"`
+	// WorkflowFenceScope picks which CI workflow / action edits trip the
+	// workflow-path fence. `all` (the default) fences every edit under
+	// `.github/workflows/**` or `.github/actions/**`. `human_merge_paths`
+	// fences only an edit to a file that also matches the repository's
+	// auto_merge.human_merge_paths, so routine workflow edits go through
+	// review, CI and soak like any other change; a repository with no
+	// human_merge_paths entry keeps the full fence. An unknown value is
+	// rejected by Validate and treated as `all`.
+	WorkflowFenceScope string `yaml:"workflow_fence_scope,omitempty" json:"workflow_fence_scope,omitempty"`
+}
+
+// Contributor-lane workflow fence scopes
+// (auto_merge.contributor_lane.workflow_fence_scope).
+const (
+	ContributorLaneWorkflowFenceScopeAll             = "all"
+	ContributorLaneWorkflowFenceScopeHumanMergePaths = "human_merge_paths"
+)
+
+// ContributorLaneWorkflowFenceScopes lists the accepted workflow_fence_scope
+// values.
+var ContributorLaneWorkflowFenceScopes = []string{ContributorLaneWorkflowFenceScopeAll, ContributorLaneWorkflowFenceScopeHumanMergePaths}
+
+// normalizedWorkflowFenceScope is workflow_fence_scope trimmed and
+// lower-cased, with unset meaning `all`.
+func (c ContributorLaneAutoMergeConfig) normalizedWorkflowFenceScope() string {
+	scope := strings.ToLower(strings.TrimSpace(c.WorkflowFenceScope))
+	if scope == "" {
+		return ContributorLaneWorkflowFenceScopeAll
+	}
+	return scope
+}
+
+// EffectiveWorkflowFenceScope returns the workflow fence scope the lane
+// applies: `human_merge_paths` only when set to exactly that (any case),
+// otherwise `all`, so an unknown value never narrows the fence.
+func (c ContributorLaneAutoMergeConfig) EffectiveWorkflowFenceScope() string {
+	if c.normalizedWorkflowFenceScope() == ContributorLaneWorkflowFenceScopeHumanMergePaths {
+		return ContributorLaneWorkflowFenceScopeHumanMergePaths
+	}
+	return ContributorLaneWorkflowFenceScopeAll
 }
 
 // Contributor-lane auto-promotion scopes
@@ -1066,6 +1106,9 @@ func (c ContributorLaneAutoMergeConfig) Validate() error {
 	}
 	if scope := c.EffectiveAutoPromotionScope(); scope != ContributorLaneAutoPromotionScopeHive && scope != ContributorLaneAutoPromotionScopeRepo {
 		return fmt.Errorf("auto_merge.contributor_lane.auto_promotion_scope: %q is not valid (allowed: %s)", c.AutoPromotionScope, strings.Join(ContributorLaneAutoPromotionScopes, ", "))
+	}
+	if scope := c.normalizedWorkflowFenceScope(); scope != ContributorLaneWorkflowFenceScopeAll && scope != ContributorLaneWorkflowFenceScopeHumanMergePaths {
+		return fmt.Errorf("auto_merge.contributor_lane.workflow_fence_scope: %q is not valid (allowed: %s)", c.WorkflowFenceScope, strings.Join(ContributorLaneWorkflowFenceScopes, ", "))
 	}
 	return nil
 }
