@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.11)
+
+### Fixed
+
+- dashboard: fold the human-gate verbs at render time;  keeps its 44px tap target (#17515)
+
 ## 2026-11-10 (v5.211.10)
 
 ### Changed
