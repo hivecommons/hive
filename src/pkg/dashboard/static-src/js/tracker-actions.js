@@ -2703,6 +2703,19 @@
         // decision park, so it has no decision target.
         items = items.filter(it => { const d = stageTrackerDeferralOf(it); return !!(d && d.close_ok); });
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
+      } else if (id === 'release' || id === 'gate:confirm-sentinel') {
+        // An issue row drawn through its one covering PR shows the PR's hold
+        // or sentinel on its gate pill (stageTrackerHumanGateReasons reads
+        // the PR's): Release hold / Confirm safe act on that PR, as Approve
+        // does, unless the issue carries the hold or sentinel itself
+        // (hivecommons/hive#17564 — the release ran on the issue and no-oped).
+        const carries = x => !!x && (id === 'release' ? (!!x.hold || (Array.isArray(x.modifiers) && x.modifiers.indexOf('hold') >= 0)) : !!x.sentinel_alert);
+        const seen = {};
+        items = items.map(it => {
+          if (!it || it.kind === 'pr' || carries(it)) return it;
+          const here = (Array.isArray(it.linked_prs) ? it.linked_prs : []).filter(lp => lp && (!Number(lp.drawn_under) || Number(lp.drawn_under) === Number(it.number)) && stageTrackerLinkedPROpen(lp, it));
+          return here.length === 1 && carries(here[0]) ? stageTrackerLinkedPRItem(it, here[0]) : it;
+        }).filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
       } else if (id.indexOf('decide:') === 0) {
         // A row decides its parked PR when it has one (the issue's stage is
         // only mirrored from it); dedupe when the PR row is selected too.
