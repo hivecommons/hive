@@ -69,6 +69,7 @@ const (
 	stageReasonSharedCIIncident            = prstage.StageReasonSharedCIIncident
 	trustedBotLaneSkipReason               = prstage.TrustedBotLaneSkipReason
 	workflowApprovalRequiredPrefix         = prstage.WorkflowApprovalRequiredPrefix
+	requiredCheckNeverReportedPrefix       = prstage.RequiredCheckNeverReportedPrefix
 	stageReasonUnauthorizedPrefix          = prstage.StageReasonUnauthorizedPrefix
 )
 
@@ -465,6 +466,12 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: rank, Human: true}, humanApprovalReason)
 	}
 	if strings.HasPrefix(reason, workflowApprovalRequiredPrefix) {
+		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+	}
+	if strings.HasPrefix(reason, requiredCheckNeverReportedPrefix) {
+		// The configured required check does not exist on this repo and no
+		// other check vouches for the head: the human gate names the check
+		// instead of a bare "needs a person".
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 	}
 	if strings.HasPrefix(reason, stageReasonUnauthorizedPrefix) {

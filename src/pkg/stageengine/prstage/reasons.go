@@ -93,6 +93,11 @@ const (
 	TrustedAuthorReasonAppAuthored    = "trusted-author:app-authored"
 	TrustedBotLaneSkipReason          = "trusted-bot-lane"
 	WorkflowApprovalRequiredPrefix    = "workflow-approval-required:"
+	// RequiredCheckNeverReportedPrefix: auto_merge.required_checks names a
+	// check that has never reported on this repo, so the trusted-bot lane
+	// cannot gate on it and no other check vouches for the head. A person
+	// (or a per-repo required_checks override) resolves it.
+	RequiredCheckNeverReportedPrefix = "required-check-never-reported:"
 )
 
 // Closing-link reasons (hivecommons/hive#15025): a closing keyword the

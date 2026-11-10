@@ -421,6 +421,9 @@ func humanizeStageReason(reason string) string {
 	if rest, ok := strings.CutPrefix(r, stageengineprstage.StageReasonUnauthorizedPrefix); ok {
 		return "the hive's GitHub App is not permitted to " + unauthorizedStepWords(rest) + "; a maintainer must"
 	}
+	if rest, ok := strings.CutPrefix(r, stageengineprstage.RequiredCheckNeverReportedPrefix); ok {
+		return "required check " + rest + " has never reported on this repository — fix auto_merge.required_checks (or the repo's required_checks override) or merge by hand"
+	}
 	if rest, ok := strings.CutPrefix(r, "fork-guard:"); ok {
 		return "check " + strings.ReplaceAll(rest, ",", ", ") + " refuses fork PRs — a maintainer must push this branch to the repository"
 	}

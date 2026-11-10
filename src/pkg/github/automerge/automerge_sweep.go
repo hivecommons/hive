@@ -176,6 +176,10 @@ type Options struct {
 	// PRs the self-authored sweep merges alongside the App's own (see
 	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
 	TrustedBotAuthors func() map[string]bool
+	// TrustedBotSkipReview returns the live auto_merge.trusted_bot_skip_review
+	// switch: the review swarm's verdict is advisory on the trusted-bot lane
+	// (config.AutoMergeConfig.TrustedBotSkipsReview). nil means true.
+	TrustedBotSkipReview func() bool
 	// BotTakeoverEnabled returns the live auto_merge.bot_takeover.enabled
 	// switch: re-author a trusted github-actions[bot] PR whose
 	// `pull_request` checks can never run (#12003). nil means off.
@@ -410,6 +414,7 @@ type Engine struct {
 	queueOnApproveAndUnhold           func(repo string) bool
 	repoOnGitHub                      func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
+	trustedBotSkipReview              func() bool
 	botTakeoverEnabledFn              func() bool
 	onTerminalHold                    func(repo string, number int, headSHA, reason string)
 	trustedAuthorPolicy               func() TrustedAuthorPolicy
@@ -428,6 +433,7 @@ type Engine struct {
 	evaluatedHeads                    map[string]string
 	requiredChecksFallbackWarnedMu    sync.Mutex
 	requiredChecksFallbackWarned      map[string]bool
+	requiredCheckNeverReportedWarned  map[string]time.Time
 	// heldRunApprovals is the shared per-PR-head one-shot map for rebase
 	// nudges and bot takeovers (historic name; workflow approvals no longer use it).
 	heldRunApprovalsMu sync.Mutex
@@ -549,6 +555,7 @@ func New(transport Transport, opts Options) *Engine {
 		queueOnApproveAndUnhold:           opts.QueueOnApproveAndUnhold,
 		repoOnGitHub:                      opts.RepoOnGitHub,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
+		trustedBotSkipReview:              opts.TrustedBotSkipReview,
 		rateLimitCautious:                 opts.RateLimitCautious,
 		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,
 		onTerminalHold:                    opts.OnTerminalHold,
@@ -586,6 +593,7 @@ func New(transport Transport, opts Options) *Engine {
 		observeOnly:                       opts.observeOnly,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
+		requiredCheckNeverReportedWarned:  make(map[string]time.Time),
 	}
 	if e.now == nil {
 		e.now = time.Now
