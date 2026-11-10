@@ -42,6 +42,10 @@ type configExportMetadata struct {
 	Version   string                    `json:"version"`
 	Commit    string                    `json:"commit"`
 	LayerPath map[string]configFileInfo `json:"layer_paths"`
+	// PersistedPath is the file that survives a restart and is the next
+	// boot's input — the one to edit (#17468). On a hosted spoke
+	// /etc/hive/hive.yaml is only a link to it.
+	PersistedPath string `json:"persisted_path"`
 }
 
 type configExportLayers struct {
@@ -185,12 +189,13 @@ func (s *Server) buildConfigExport() (configExportResponse, error) {
 		SchemaVersion: 1,
 		GeneratedAt:   configExportNow().UTC().Format(time.RFC3339),
 		Metadata: configExportMetadata{
-			HiveID:    cfg.HiveID,
-			Name:      cfg.Project.Name,
-			Org:       cfg.Project.Org,
-			Version:   version,
-			Commit:    commit,
-			LayerPath: layerPaths,
+			HiveID:        cfg.HiveID,
+			Name:          cfg.Project.Name,
+			Org:           cfg.Project.Org,
+			Version:       version,
+			Commit:        commit,
+			LayerPath:     layerPaths,
+			PersistedPath: config.PersistedConfigPath(cfg.SourcePath),
 		},
 		Effective: effective,
 		Layers: configExportLayers{
