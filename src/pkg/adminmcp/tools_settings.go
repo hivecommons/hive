@@ -44,6 +44,7 @@ var settingsSections = []SettingsSection{
 	{"advisor", "/api/config/advisor", "Advisor settings and model roles."},
 	{"advisory", "/api/config/governor/advisory", "Advisory-mode settings."},
 	{"replan", "/api/config/governor/replan", "Replan settings."},
+	{"decisions_delegate", "/api/config/decisions/delegate", "Let hive decide settings (decisions.delegate): the hive-wide switch, per-repository overrides, the LLM step and the effect timeout."},
 	{"question_autoclose", "/api/config/governor/question-autoclose", "Question auto-close settings."},
 	{"question_autoclose_schedule", "/api/config/governor/question-autoclose/schedule", "Question auto-close schedule."},
 	{"fleet_report", "/api/config/governor/fleet-report", "Fleet report settings."},

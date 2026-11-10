@@ -535,6 +535,7 @@ start-up script, its process launch, PIDs, signal handling and exit codes are un
 | plan approve / reject | `POST /api/plan/{epicID}/approve`, `.../reject` | `requireOwnerRole` |
 | feature settings | `PUT /api/config/governor/features` | `requireOwnerRole`; pointer fields, nil means unchanged |
 | merge settings | `PATCH /api/config/auto-merge` | `requireOwnerRole` on the read and the write; every list and map is a full replace |
+| Let hive decide settings | `PUT /api/config/decisions/delegate` | `requireOwnerRole` on the read and the write; `repos` is a full replace, the op sends the merged map |
 | repository pause / resume | `POST /api/repos/pause`, `/api/repos/resume` | `requireRepoPausePermission` → `canToggleRepoHold` |
 | item hold | `POST /api/repos/{owner}/{repo}/items/{number}/hold` | `canToggleRepoHold` |
 | re-evaluate now | `POST /api/repos/rescan` | none beyond write access |

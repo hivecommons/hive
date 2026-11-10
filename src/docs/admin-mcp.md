@@ -450,7 +450,8 @@ The sections:
   hub, LiteLLM, watchdog, trajectory, classifier, release sentinel), `project`,
   `github_apps`, `authorized_users`, `dashboard`, `channels`, `escalation`,
   `auto_merge`, `review`, `convergence`, `sla`, `triggers`, `advisor`,
-  `advisory`, `replan`, `question_autoclose`, `question_autoclose_schedule`,
+  `advisory`, `replan`, `decisions_delegate`, `question_autoclose`,
+  `question_autoclose_schedule`,
   `fleet_report`, `work_source`, `project_observability`, `general_advanced`,
   `cadence_scope`, `threshold_scaling`, `backup`, `bob`, `inference_auth`,
   `gateways`, `backends`, `variables`, `write_surface`, `stat_sources`.
@@ -712,6 +713,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | Plans                        | `plan.propose`, `plan.approve`, `plan.reject`                                                                                                                                                       |
 | Governor                     | `governor.feature_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                                    |
 | Merge settings               | `auto_merge.update`                                                                                                                                                                                 |
+| Let hive decide              | `decisions.delegate_settings`                                                                                                                                                                       |
 | Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                                                     |
 | Activity monitor row actions | see below                                                                                                                                                                                           |
 | Budget                       | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                                                                    |
@@ -760,6 +762,31 @@ only.
   repository allow-list (empty means every repository), and the like.
 - It never merges a pull request. `human_merge_pin_only` is not on this
   endpoint, so it is still set in the hive configuration file.
+
+`decisions.delegate_settings` changes the "Let hive decide" settings
+(`decisions.delegate`) through `PUT /api/config/decisions/delegate`, the same
+endpoint as Settings → Features → *Let hive decide*. It is owner only.
+
+- **Pass only what changes:** `enabled` (the hive-wide switch), `repos`
+  (`{"owner/repo": true | false | null}`, where `null` drops that repository's
+  override so it follows the hive-wide switch), `llm`
+  (`{"enabled": true, "model": "provider/model"}`) and `effect_timeout` (for
+  example `45m`, or empty for the default). An unknown field is refused.
+- **Repositories you do not name are kept.** The endpoint replaces the
+  override map it is sent, so the preview reads the current settings and sends
+  the merged map. It shows every change before and after.
+- **A stale preview is refused,** as for `auto_merge.update`.
+- **What it opens is disclosed.** Turning the LLM step on sends an item's text
+  (title, body, comments and linked items) to the configured model when the
+  rules leave the item at the reversible default; the preview names the model
+  and says when no reviewer endpoint is configured yet. Turning the delegate on
+  for a repository lets Let hive decide act there, from the dashboard and
+  `repository.item_delegate`, and lets the reviewer-question sweep use it on the
+  hive's own pull requests.
+- `llm.model` takes a model name only. A value that looks like an API key is
+  refused; the model's key stays on the governor reviewer endpoint.
+- It starts no decision and merges nothing. A delegated decision does what it
+  did before.
 
 The Activity monitor's row actions:
 
