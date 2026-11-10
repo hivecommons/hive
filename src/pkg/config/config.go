@@ -162,6 +162,10 @@ type Config struct {
 	// `<!-- hive-shared-ci-<n> -->` once incident #n closes
 	// (hivecommons/hive#12253). Default on.
 	SharedCIRerun SharedCIRerunConfig `yaml:"shared_ci_rerun,omitempty" json:"shared_ci_rerun,omitempty"`
+	// SharedCIIssues files one `[shared-ci]` tracking issue when a check
+	// fails on several open PRs in a repository (or trips the red-main
+	// breaker) and no incident is open for it yet. Default on.
+	SharedCIIssues SharedCIIssuesConfig `yaml:"shared_ci_issues,omitempty" json:"shared_ci_issues,omitzero"`
 	// Search controls the portfolio search indexer (hivecommons/hive#14635).
 	// Default off.
 	Search  SearchConfig  `yaml:"search,omitempty" json:"search,omitempty"`

@@ -799,6 +799,44 @@ func (c SharedCIRerunConfig) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
 }
 
+// DefaultSharedCIIssuesMinPRs is how many open PRs in one repository must
+// fail the same check before the shared-CI issue sweep files a tracking
+// issue for it. It matches hive-baseline-check.sh's default sibling
+// threshold, so the sweep and the agents' triage helper call the same
+// failure shared.
+const DefaultSharedCIIssuesMinPRs = 3
+
+// SharedCIIssuesConfig gates the shared-CI issue sweep
+// (github.SweepSharedCIIssues): when one check fails on min_prs or more open
+// PRs in a repository, or has tripped the red-main breaker, Hive files (or
+// keeps up to date) one `[shared-ci] <check> failing across <owner/repo>`
+// tracking issue instead of waiting for an agent to triage a red PR.
+type SharedCIIssuesConfig struct {
+	// Enabled is *bool so unset means on; set `shared_ci_issues.enabled:
+	// false` to disable.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// MinPRs is the number of open PRs that must fail one check; 0 means
+	// DefaultSharedCIIssuesMinPRs. Values below 2 are raised to 2: one red
+	// PR is that PR's own business.
+	MinPRs int `yaml:"min_prs,omitempty" json:"min_prs,omitempty"`
+}
+
+// IsEnabled reports whether the sweep runs; unset means on.
+func (c SharedCIIssuesConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// MinPRsOrDefault returns the effective PR threshold.
+func (c SharedCIIssuesConfig) MinPRsOrDefault() int {
+	switch {
+	case c.MinPRs <= 0:
+		return DefaultSharedCIIssuesMinPRs
+	case c.MinPRs < 2:
+		return 2
+	}
+	return c.MinPRs
+}
+
 // AutoMergeRepoConfig carries per-repository auto-merge overrides.
 type AutoMergeRepoConfig struct {
 	// RequiredChecks overrides auto_merge.required_checks for this repository.

@@ -126,6 +126,7 @@ func (b *boot) sweepJobs() []sweepJob {
 	// Initialize shared hook state before any worker starts.
 	gfi, first, coverage, notify := b.gfiState(), b.firstTimerState(), b.rfcCoverageState(), b.rfcNotifyState()
 	var unparkLast time.Time
+	sharedCIIssues := github.NewSharedCIIssueTracker()
 	return []sweepJob{
 		{"automerge", fixed(autoMergeSweepInterval), sweepEssential, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
 			// Workers start before the first eval finishes. A nil snapshot
@@ -148,6 +149,11 @@ func (b *boot) sweepJobs() []sweepJob {
 		}},
 		{"red_main", fixed(redMainSweepInterval), sweepUnstick, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
 			runRedMainSweepIfDue(ctx, gh, nil, b.logger)
+		}},
+		// Reads the last snapshot; files a [shared-ci] issue for a check
+		// failing across a repository when no agent has.
+		{"shared_ci_issues", fixed(sharedCIIssuesInterval), sweepUnstick, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
+			runSharedCIIssuesSweep(ctx, gh, cfg, b.lastActionable.Load(), sharedCIIssues, b.dashSrv, b.logger)
 		}},
 		{"blocked_issues", fixed(blockedIssuesSweepInterval), sweepUnstick, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
 			runBlockedIssuesSweepIfDue(ctx, gh, cfg, b.dashSrv, nil, b.logger)
