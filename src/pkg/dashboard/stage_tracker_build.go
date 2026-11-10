@@ -442,10 +442,19 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			it.Caption = stageTrackerReturnedToHiveCaption(it.Caption, it.Author, requesters)
 		}
-		applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
+		newState := stageTrackerNewState(it, ok, issueFilter, status.Governor, now)
+		if newState != nil && cfg != nil && !cfg.RepoAutoMergeEnabled(repoName) {
+			// No merge lane runs on this repo, so no stage pass will place
+			// the PR: say who lands it instead.
+			newState = stageTrackerAutoMergeOffNew(newState, verdict)
+		}
+		applyStageTrackerNew(&it, newState)
 		// After the New caption: an unclassified clanker PR whose clanker
-		// is offline says what that means for it.
-		it.Caption = stageTrackerOfflineAuthorCaption(it.Caption, it.Presence, it.Stage, adoptionClock, now)
+		// is offline says what that means for it — not where auto-merge is
+		// off, since its "merged without its author" is the lanes' promise.
+		if it.New == nil || !it.New.AutoMergeOff {
+			it.Caption = stageTrackerOfflineAuthorCaption(it.Caption, it.Presence, it.Stage, adoptionClock, now)
+		}
 		it.SentinelAlert, it.SentinelFindings, it.SentinelReason, it.SentinelDetails = s.stageTrackerSentinel(evidenceVerifier, repoName, pr.Number, pr.HeadSHA, pr.Labels)
 		it.SentinelNotice = it.SentinelAlert && !slices.ContainsFunc(pr.Labels, func(label string) bool {
 			return strings.EqualFold(strings.TrimSpace(label), sentinelLabel)

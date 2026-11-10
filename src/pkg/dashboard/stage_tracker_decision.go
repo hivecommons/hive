@@ -213,6 +213,8 @@ func stageTrackerDecisionNeededWith(it StageTrackerItem, verdict *review.Aggrega
 		return decisionForPR(it, verdict, sentinelLabel, held)
 	case it.Kind == "pr" && it.Stage == stagelabels.ReadyForHumanMerge.Number():
 		return decisionForHumanMerge(it, held)
+	case it.Kind == "pr" && it.Stage == 0 && it.New != nil && it.New.AutoMergeOff && it.New.NextMover == StageTrackerMoverMaintainer:
+		return decisionForAutoMergeOffNew(it, held)
 	case it.Kind == "issue" && it.Mirrored:
 		// The issue rides its covering PR; the PR's own row (nested under
 		// the issue) carries the decision.
