@@ -61,6 +61,9 @@ REF_DEF_RE = re.compile(r"^\s*\[[^\]]+\]:\s*<?([^\s>]+)>?", re.MULTILINE)
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$", re.MULTILINE)
 HTML_ANCHOR_RE = re.compile(r'<a\s+(?:name|id)=["\']([^"\']+)["\']', re.IGNORECASE)
 FENCE_RE = re.compile(r"^```.*$|^~~~.*$", re.MULTILINE)
+# A run of N backticks opens a code span closed by an identical run
+# (CommonMark), so a lone "`" inside a ``double`` span does not end it.
+INLINE_CODE_RE = re.compile(r"(`+)(?!`)(?:(?!\1)[^\n])+?\1(?!`)")
 
 
 def strip_code_fences(text: str) -> str:
@@ -75,6 +78,13 @@ def strip_code_fences(text: str) -> str:
         if not in_fence:
             out.append(line)
     return "".join(out)
+
+
+def strip_inline_code(text: str) -> str:
+    """Drop inline code spans so a literal `[text](url)` shown as an example
+    (changelog entries quoting a PR-body template, docs quoting Markdown
+    syntax) is not mistaken for a real link."""
+    return INLINE_CODE_RE.sub("", text)
 
 
 def slugify(heading: str) -> str:
@@ -126,7 +136,7 @@ def is_external(target: str) -> bool:
 
 
 def extract_links(text: str) -> list[str]:
-    body = strip_code_fences(text)
+    body = strip_inline_code(strip_code_fences(text))
     links = LINK_RE.findall(body) + REF_DEF_RE.findall(body)
     return links
 

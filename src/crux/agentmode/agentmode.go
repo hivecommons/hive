@@ -125,8 +125,33 @@ func TokenTierForRole(m AgentMode, role string) string {
 	if m == ModeAdvisory && role == ReviewerRole {
 		return "reviewer"
 	}
+	if role == SecCheckRole {
+		switch m {
+		case ModeIssuesAndPRs:
+			return SecCheckTier
+		case ModeIssuesPRsMerge:
+			return SecCheckTrustedTier
+		}
+	}
 	return m.TokenTier()
 }
+
+// SecCheckRole is the agent role whose token at ISSUES_AND_PRS and above
+// additionally carries Dependabot alerts read (#17426, #17496). Like the reviewer refinement it
+// is a role, not a rung on the mode ladder: a sec-check agent mints the
+// SecCheckTier (the contributor set plus vulnerability_alerts:read) so that
+// no other contributor-tier agent's token is widened by the grant. At
+// ISSUES_PRS_MERGE it mints SecCheckTrustedTier, the trusted set plus the
+// same grant.
+const SecCheckRole = "sec-check"
+
+// SecCheckTier is the scoped-token tier TokenTierForRole yields for an
+// ISSUES_AND_PRS agent with SecCheckRole.
+const SecCheckTier = "sec-check"
+
+// SecCheckTrustedTier is the scoped-token tier TokenTierForRole yields for an
+// ISSUES_PRS_MERGE agent with SecCheckRole (#17496).
+const SecCheckTrustedTier = "sec-check-trusted"
 
 // CanComment reports whether an agent at this mode may post a comment on an
 // issue. It sits at the ISSUES_ONLY rung: the newcomer token tier is the first
@@ -137,8 +162,10 @@ func TokenTierForRole(m AgentMode, role string) string {
 func (m AgentMode) CanComment() bool { return m >= ModeIssuesOnly }
 
 // ModeForTokenTier is the inverse of TokenTier / TokenTierForRole: the mode a
-// scoped-token tier corresponds to. The reviewer tier maps to ADVISORY (it is
-// a role refinement of that mode, see TokenTierForRole); "merger" is the
+// scoped-token tier corresponds to. The reviewer tier maps to ADVISORY and the
+// sec-check tier to ISSUES_AND_PRS and the sec-check-trusted tier to
+// ISSUES_PRS_MERGE (all are role refinements of their mode,
+// see TokenTierForRole); "merger" is the
 // contribute queue's name for the tier above trusted and shares its mode. An
 // unknown tier reports ADVISORY and false, so a caller that gates a write on
 // the result fails closed.
@@ -148,9 +175,9 @@ func ModeForTokenTier(tier string) (AgentMode, bool) {
 		return ModeAdvisory, true
 	case "newcomer":
 		return ModeIssuesOnly, true
-	case "contributor":
+	case "contributor", SecCheckTier:
 		return ModeIssuesAndPRs, true
-	case "trusted", "merger":
+	case "trusted", "merger", SecCheckTrustedTier:
 		return ModeIssuesPRsMerge, true
 	default:
 		return ModeAdvisory, false

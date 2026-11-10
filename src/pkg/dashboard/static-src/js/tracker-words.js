@@ -512,19 +512,6 @@
       const lines = stageTrackerSentinelPathLines(item);
       return lines.length ? tip + lines.map(l => '\n   · ' + l).join('') : tip;
     }
-    // Whether the item's lit chevron word carries the alert itself (a PR
-    // parked at 085, or an issue riding one): the chip then adds nothing.
-    function stageTrackerSentinelInLane(item) {
-      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (Number(item.stage) || 0) === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || !!item.via_pr);
-    }
-    // A returned PR (071/072) keeps its routing word — the human already
-    // acted, nothing is owed by the maintainer — and carries the alert as
-    // a " · sentinel" suffix instead (hivecommons/hive#15159); the chip
-    // then adds nothing.
-    function stageTrackerSentinelAsSuffix(item) {
-      const st = Number(item && item.stage) || 0;
-      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (st === 71 || st === 72) && (item.kind === 'pr' || !!item.via_pr);
-    }
     // Pure: whose PR a 071/072 row waits on — the row's own author, or, for
     // an issue row drawn through its one covering PR (via_pr), that PR's
     // author. The issue's author is whoever filed it (on hive's hive the
@@ -559,5 +546,5 @@
       if (sup) text = 'Superseded by #' + sup + ' · decide';
       else if (who.author && st === 71) text = 'Needs @' + who.author;
       else if (who.author && st === 72) text = 'Returned to @' + who.author + stageTrackerToolingSuffix(who.kind);
-      return text + (stageTrackerSentinelAsSuffix(item) ? ' · ' + STAGE_TRACKER_SENTINEL_CHIP : '');
+      return text;
     }

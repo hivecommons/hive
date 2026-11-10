@@ -196,3 +196,29 @@ func TestSampleDataDiskUsage_Coherent(t *testing.T) {
 		t.Fatalf("pct = %v, want within [0,100]", pct)
 	}
 }
+
+func TestDataDiskHealth_NodeRootIsInformational(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		pct  float64
+		want string
+	}{
+		{"data volume high warns", dataVolumePath, 90, "warn"},
+		{"node root filling is informational", rootFSPath, 80, "pass"},
+		{"node root high is informational", rootFSPath, 90, "pass"},
+		{"node root critical still fails", rootFSPath, 95, "fail"},
+		{"node root nearly full still fails", rootFSPath, 99, "fail"},
+	}
+	for _, tc := range cases {
+		total := uint64(1000 << 20)
+		u := dataDiskUsage{Path: tc.path, TotalBytes: total, UsedBytes: uint64(float64(total) * tc.pct / 100)}
+		st, detail := dataDiskHealth(u)
+		if st != tc.want {
+			t.Errorf("%s: status = %q, want %q (detail %q)", tc.name, st, tc.want, detail)
+		}
+		if tc.path == rootFSPath && !strings.Contains(detail, "shared node root") {
+			t.Errorf("%s: detail = %q, want shared node root label", tc.name, detail)
+		}
+	}
+}

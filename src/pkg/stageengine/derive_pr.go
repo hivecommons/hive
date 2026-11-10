@@ -416,7 +416,9 @@ func decisionFrom(v stageVerdict, role stagelabels.Role, obs stageObservation, f
 // the hive (Facts.Adoption live at the PR's head) when no lane observed
 // it: 074 adopted-by-hive, ahead of the 085 park the labels may still
 // carry — adoption is who owns the PR, and the owner answers the question
-// on the superseding PR. A hold label or sentinel alert keeps the park.
+// on the superseding PR. A `needs-human` label keeps the park; a hold
+// label or sentinel alert is a gate, not a stage (hivecommons/hive#17327),
+// so it rides the adoption as a pill and the lane still refuses the merge.
 func adoptedPRDecision(f Facts) (Decision, bool) {
 	a := f.Adoption
 	if !f.Open || !a.Adopted || !a.Live || a.Yielded {
@@ -425,9 +427,9 @@ func adoptedPRDecision(f Facts) (Decision, bool) {
 	if f.PR != nil && a.Head != "" && f.PR.HeadSHA != "" && a.Head != f.PR.HeadSHA {
 		return Decision{}, false
 	}
-	if len(f.Park.Holds) > 0 || f.Park.Sentinel || f.Park.NeedsHuman {
-		// A hold, sentinel or `needs-human` label is an explicit park
-		// (hivecommons/hive#14471); only the lane's own 085 yields.
+	if f.Park.NeedsHuman {
+		// A `needs-human` label is an explicit park (hivecommons/hive#14471);
+		// only the lane's own 085 yields.
 		return Decision{}, false
 	}
 	reason := "adopted by the hive"

@@ -25,6 +25,11 @@ const (
 	// zero-finding digest posted inside zeroFindingDigestMinInterval of the
 	// previous zero-finding digest on the same target.
 	suppressReasonZeroFindingCap = "zero_finding_cap"
+	// suppressReasonMinInterval marks a digest whose material content DID
+	// change but whose target was written less than the configured
+	// digest_min_interval ago (#17435). The change is not lost: the next
+	// cycle after the window re-renders and posts it.
+	suppressReasonMinInterval = "min_interval"
 )
 
 // AuditActionAdvisoryDigestSuppressed is the audit action recorded when a
@@ -53,6 +58,10 @@ var volatileDigestPatterns = []*regexp.Regexp{
 	// Commit-pin footer: the snapshot SHA advances with every upstream push,
 	// which is repo churn rather than a change in what the agents found.
 	regexp.MustCompile(`\b[0-9a-f]{7,40}\b`),
+	// The upsert marker and its "Updated N times" footer (#17435): both are
+	// bookkeeping about the comment, not about the findings.
+	regexp.MustCompile(`<!-- hive:advisory-digest[^>]*-->`),
+	regexp.MustCompile(`(?m)^_?Updated \d+ times?\b[^\n]*$`),
 }
 
 // materialDigestFingerprint reduces a rendered digest body to a stable hash of
@@ -130,7 +139,7 @@ type digestSuppression struct {
 // hasPosted is false when the target carries no digest comment yet — the first
 // digest on a target ALWAYS posts, so a fresh advisory issue is never left
 // empty by the guards.
-func evaluateDigestSuppression(pending, posted string, hasPosted bool, postedAt, now time.Time) digestSuppression {
+func evaluateDigestSuppression(pending, posted string, hasPosted bool, postedAt, now time.Time, minInterval time.Duration) digestSuppression {
 	if !hasPosted {
 		return digestSuppression{}
 	}
@@ -143,6 +152,12 @@ func evaluateDigestSuppression(pending, posted string, hasPosted bool, postedAt,
 	if isZeroFindingDigest(pending) && isZeroFindingDigest(posted) &&
 		!postedAt.IsZero() && now.Sub(postedAt) < zeroFindingDigestMinInterval {
 		return digestSuppression{suppress: true, reason: suppressReasonZeroFindingCap}
+	}
+	// Changed-content floor (#17435): a digest whose live counts drift every
+	// eval cycle must not rewrite the comment every cycle. postedAt is the
+	// target's own updated_at, so the floor survives a governor restart.
+	if minInterval > 0 && !postedAt.IsZero() && now.Sub(postedAt) < minInterval {
+		return digestSuppression{suppress: true, reason: suppressReasonMinInterval}
 	}
 	return digestSuppression{}
 }

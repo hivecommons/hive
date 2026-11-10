@@ -49,6 +49,17 @@ type AdvisoryConfig struct {
 	// so a user-lengthened interval never false-alarms as a wedge — pinned by
 	// TestAdvisoryStaleThresholdCoversMaxUpdateInterval in pkg/hub.
 	UpdateIntervalS int `yaml:"update_interval_s,omitempty" json:"update_interval_s,omitempty"`
+	// DigestMinInterval is the minimum time between two writes of a CHANGED
+	// digest to the same pinned comment (hivecommons/hive#17435). The
+	// update_interval_s throttle above paces post ATTEMPTS; this one bounds
+	// how often a materially different body may actually be written, so a
+	// digest whose live counts drift every eval cycle is rewritten at most
+	// once per window instead of every ~5 minutes. An unchanged digest never
+	// writes regardless. The baseline is the existing comment's updated_at
+	// on GitHub, so a restart does not repost inside the window. A Go
+	// duration; empty resolves to DefaultAdvisoryDigestMinInterval, "0" or a
+	// negative value disables the gate.
+	DigestMinInterval string `yaml:"digest_min_interval,omitempty" json:"digest_min_interval,omitempty"`
 	// PostRetryBackoffS is how long, in seconds, the digest write is paused
 	// after GitHub refuses it with 403 "Resource not accessible by
 	// integration" (#11791). 0/unset uses DefaultAdvisoryPostRetryBackoffS;
@@ -161,6 +172,29 @@ func (a AdvisoryConfig) UpdateInterval() time.Duration {
 		s = MaxAdvisoryUpdateIntervalS
 	}
 	return time.Duration(s) * time.Second
+}
+
+// DefaultAdvisoryDigestMinInterval is governor.advisory.digest_min_interval's
+// default: a changed digest is rewritten at most hourly.
+const DefaultAdvisoryDigestMinInterval = time.Hour
+
+// EffectiveDigestMinInterval resolves DigestMinInterval: empty or unparseable
+// → DefaultAdvisoryDigestMinInterval; an explicit zero or negative duration →
+// 0, which disables the gate so an operator can restore per-cycle rewrites
+// deliberately.
+func (a AdvisoryConfig) EffectiveDigestMinInterval() time.Duration {
+	raw := strings.TrimSpace(a.DigestMinInterval)
+	if raw == "" {
+		return DefaultAdvisoryDigestMinInterval
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return DefaultAdvisoryDigestMinInterval
+	}
+	if d <= 0 {
+		return 0
+	}
+	return d
 }
 
 const (

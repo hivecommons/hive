@@ -1,6 +1,6 @@
 level: 5
 name: Semi-Autonomous
-description: 'Semi-autonomous feedback. Fourteen agents can propose issues and pull requests, with level-applied hold labels requiring human review before merge. Architect and strategist coordinate RFC and cross-agent work; reviewer and adjudicator work the hold-gated queue; dedupe posts a daily consolidation checklist of duplicate and overlapping issues and PRs; telemetry and operations are present but opt-in/paused. The system proposes and repairs, but does not merge autonomously.
+description: 'Semi-autonomous feedback. Fifteen agents can propose issues and pull requests, with level-applied hold labels requiring human review before merge. Architect and strategist coordinate RFC and cross-agent work; reviewer and adjudicator work the hold-gated queue; dedupe posts a daily consolidation checklist of duplicate and overlapping issues and PRs; telemetry, operations and the redteam lane are present but opt-in/paused. The system proposes and repairs, but does not merge autonomously.
 
   '
 governor:
@@ -42,6 +42,7 @@ governor:
       dedupe: 24h
       telemetry: paused
       operations: paused
+      redteam: paused
     busy:
       supervisor: 5m
       scanner: 4h
@@ -56,6 +57,7 @@ governor:
       dedupe: 24h
       telemetry: paused
       operations: paused
+      redteam: paused
     quiet:
       supervisor: 5m
       scanner: 4h
@@ -70,6 +72,7 @@ governor:
       dedupe: 24h
       telemetry: paused
       operations: paused
+      redteam: paused
     idle:
       supervisor: 5m
       scanner: 4h
@@ -84,6 +87,7 @@ governor:
       dedupe: 24h
       telemetry: paused
       operations: paused
+      redteam: paused
 agents:
 - name: supervisor
   display_name: Supervisor
@@ -460,3 +464,35 @@ agents:
   lane_keywords: [healthz, readyz, readiness, slo-, sli-, service-level-objective, service-level-indicator, error-budget, runbook, incident-response, rollback, alerting]
   interactions: Opens issues and hold-gated PRs for operational-practice improvements.
   knowledge_use: Reads reliability goals and operational conventions from the knowledge base.
+- name: redteam
+  display_name: red team
+  role: redteam
+  description: 'Adversarial red-team lane (hivecommons/hive#17420). Plays a malicious
+    contributor (a human, an AI, or one posing as the other) and writes the issues,
+    PR bodies, review comments and RFC text such an actor would use to get agents to
+    write malicious code or lower the hive''s defenses. Measures them against the
+    deterministic defenses by extending the ioscan red-team corpus in hold-gated PRs,
+    recording each outcome as observed. Never posts a payload anywhere else. Opt-in:
+    paused in every mode, and refused every repository until its repos: scope names
+    the one holding the corpus.
+
+    '
+  emoji: "🎭"
+  color: '#c0392b'
+  sort_order: 67
+  backend: copilot
+  model: claude-sonnet-4-6
+  bead_role: worker
+  mode: ISSUES_AND_PRS
+  kick_template: redteam-holdgated.md
+  include_repos: true
+  stale_timeout: 100800  # 28h — must exceed the 24h cadence the opt-in guide suggests
+  interactions: 'Opens hold-labelled PRs that add attack cases and benign controls to the
+    ioscan red-team corpus, and at most one issue per run naming missed case IDs. Never
+    files payload text in an issue, PR body, comment or bead; never merges or removes hold.
+
+    '
+  knowledge_use: 'Reads the existing corpus, the ioscan rules and the published red-team
+    results so each run probes a gap instead of repeating a covered shape.
+
+    '

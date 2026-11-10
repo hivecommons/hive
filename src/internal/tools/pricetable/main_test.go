@@ -37,13 +37,13 @@ var modelPrices = map[string]ModelPrice{
 
 	// ---- OpenAI ----
 	"gpt-5-4":             {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
-	"gpt-oss-120b-medium": {InputPerMTok: 0.59, OutputPerMTok: 0.79, CacheReadPerMTok: 0.59, CacheWritePerMTok: 0.59},
+	"gpt-oss-120b-medium": {InputPerMTok: 0.30, OutputPerMTok: 0.79, CacheReadPerMTok: 0.30, CacheWritePerMTok: 0.30},
 	"gpt-5-6":             {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
 
 	// ---- Google / Meta ----
 	"gemini-3-7-flash":       {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
 	"gemini-3-7-flash-high":  {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
-	"llama-3-3-70b-instruct": {InputPerMTok: 0.59, OutputPerMTok: 0.79, CacheReadPerMTok: 0.59, CacheWritePerMTok: 0.40},
+	"llama-3-3-70b-instruct": {InputPerMTok: 0.30, OutputPerMTok: 0.50, CacheReadPerMTok: 0.30, CacheWritePerMTok: 0.40},
 	"dup-model":              {InputPerMTok: 1.00, OutputPerMTok: 2.00, CacheReadPerMTok: 1.00, CacheWritePerMTok: 1.00},
 }
 `
@@ -252,6 +252,213 @@ func TestReconcile(t *testing.T) {
 	}
 }
 
+// suspectTable holds the rows of #17354: kimi-k3 got a corrupt catalogue quote,
+// the others legitimate ones.
+const suspectTable = `package tokens
+
+const priceTableDate = "2026-11-02"
+
+type ModelPrice struct {
+	InputPerMTok      float64
+	OutputPerMTok     float64
+	CacheReadPerMTok  float64
+	CacheWritePerMTok float64
+}
+
+var modelPrices = map[string]ModelPrice{
+	"deepseek-chat":  {InputPerMTok: 0.2574, OutputPerMTok: 1.0287, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.2574},
+	"kimi-k3":        {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.00},
+	"kimi-k2-7-code": {InputPerMTok: 0.95, OutputPerMTok: 4.00, CacheReadPerMTok: 0.19, CacheWritePerMTok: 0.95},
+}
+`
+
+func suspectCatalogue(t *testing.T) *catalogue {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "openrouter-suspect.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := parseOpenRouter(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestReconcileHoldsImplausibleQuote(t *testing.T) {
+	tb, err := parseTable([]byte(suspectTable))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := reconcile(tb, suspectCatalogue(t), "2026-11-09", defaultStaleAfterDays)
+	byKey := map[string]change{}
+	for _, c := range r.Changes {
+		byKey[c.Key] = c
+	}
+	if _, ok := byKey["kimi-k3"]; ok {
+		t.Fatal("kimi-k3 quote is implausible and must not be emitted as a change")
+	}
+	for _, key := range []string{"deepseek-chat", "kimi-k2-7-code"} {
+		if _, ok := byKey[key]; !ok {
+			t.Errorf("%s is a legitimate change and must still reconcile", key)
+		}
+	}
+	if len(r.Suspect) != 1 || r.Suspect[0].Key != "kimi-k3" {
+		t.Fatalf("suspect = %+v, want only kimi-k3", r.Suspect)
+	}
+	rules := strings.Join(r.Suspect[0].Rules, "\n")
+	for _, s := range []string{"InputPerMTok moves more than 5×", "output/input ratio above 30", "cache read at or above 90% of input"} {
+		if !strings.Contains(rules, s) {
+			t.Errorf("rules missing %q:\n%s", s, rules)
+		}
+	}
+	if !strings.Contains(strings.Join(r.Notes, "\n"), "`kimi-k3`: quote from `moonshotai/kimi-k3` held") {
+		t.Errorf("notes missing held remark:\n%v", r.Notes)
+	}
+	out, err := applyChanges([]byte(suspectTable), tb, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"kimi-k3":        {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.00},`) {
+		t.Fatalf("kimi-k3 row must be kept verbatim:\n%s", out)
+	}
+}
+
+func TestReconcileHoldsZeroQuotes(t *testing.T) {
+	const kimiRow = `"kimi-k3":        {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.00},`
+	cases := []struct {
+		name      string
+		row       string
+		pricing   string
+		wantRules []string
+	}{
+		{
+			name:      "zero prompt against a priced input",
+			row:       kimiRow,
+			pricing:   `{"prompt": "0", "completion": "0.000016"}`,
+			wantRules: []string{"InputPerMTok moves more than 5× (3.00 → 0.00)"},
+		},
+		{
+			name:    "zero prompt with an extreme output",
+			row:     kimiRow,
+			pricing: `{"prompt": "0", "completion": "0.0001"}`,
+			wantRules: []string{
+				"InputPerMTok moves more than 5× (3.00 → 0.00)",
+				"OutputPerMTok moves more than 5× (15.00 → 100.00)",
+				"output/input ratio above 30 (100.00 / 3.00)",
+			},
+		},
+		{
+			name:    "zero prompt with a high cache read",
+			row:     strings.Replace(kimiRow, "CacheReadPerMTok: 0.30", "CacheReadPerMTok: 2.90", 1),
+			pricing: `{"prompt": "0", "completion": "0.000015", "input_cache_read": "0.0000029"}`,
+			wantRules: []string{
+				"InputPerMTok moves more than 5× (3.00 → 0.00)",
+				"cache read at or above 90% of input (2.90 vs 3.00)",
+			},
+		},
+		{
+			name:      "priced prompt against a zero input",
+			row:       strings.Replace(kimiRow, "InputPerMTok: 3.00", "InputPerMTok: 0.00", 1),
+			pricing:   `{"prompt": "0.000003", "completion": "0.000015", "input_cache_read": "0.0000003"}`,
+			wantRules: []string{"InputPerMTok moves more than 5× (0.00 → 3.00)"},
+		},
+		{
+			name:      "zero completion against a priced output",
+			row:       kimiRow,
+			pricing:   `{"prompt": "0.000003", "completion": "0", "input_cache_read": "0.0000003"}`,
+			wantRules: []string{"OutputPerMTok moves more than 5× (15.00 → 0.00)"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			table := strings.Replace(suspectTable, kimiRow, tc.row, 1)
+			tb, err := parseTable([]byte(table))
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := `{"data": [{"id": "moonshotai/kimi-k3", "pricing": ` + tc.pricing + `}]}`
+			c, err := parseOpenRouter([]byte(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := reconcile(tb, c, "2026-11-09", defaultStaleAfterDays)
+			for _, ch := range r.Changes {
+				if ch.Key == "kimi-k3" {
+					t.Fatalf("zero quote must be held, not applied: %+v", ch)
+				}
+			}
+			if len(r.Suspect) != 1 || r.Suspect[0].Key != "kimi-k3" {
+				t.Fatalf("suspect = %+v, want only kimi-k3", r.Suspect)
+			}
+			rules := strings.Join(r.Suspect[0].Rules, "\n")
+			for _, want := range tc.wantRules {
+				if !strings.Contains(rules, want) {
+					t.Errorf("rules missing %q:\n%s", want, rules)
+				}
+			}
+		})
+	}
+}
+
+func TestReconcileHeldOnlyStillChanges(t *testing.T) {
+	// A fresh table whose only moving row is the corrupt one: nothing may be
+	// applied, yet the run must still produce a diff so the workflow opens a
+	// PR carrying the held section.
+	heldOnly := strings.Replace(suspectTable,
+		`"deepseek-chat":  {InputPerMTok: 0.2574, OutputPerMTok: 1.0287, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.2574},`,
+		`"deepseek-chat":  {InputPerMTok: 0.32, OutputPerMTok: 0.89, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.32},`, 1)
+	heldOnly = strings.Replace(heldOnly,
+		`"kimi-k2-7-code": {InputPerMTok: 0.95, OutputPerMTok: 4.00, CacheReadPerMTok: 0.19, CacheWritePerMTok: 0.95},`,
+		`"kimi-k2-7-code": {InputPerMTok: 0.60, OutputPerMTok: 3.50, CacheReadPerMTok: 0.16, CacheWritePerMTok: 0.60},`, 1)
+	tb, err := parseTable([]byte(heldOnly))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := reconcile(tb, suspectCatalogue(t), "2026-11-03", defaultStaleAfterDays)
+	if len(r.Changes) != 0 {
+		t.Fatalf("no legitimate row moves, got changes %+v", r.Changes)
+	}
+	if len(r.Suspect) != 1 || r.Suspect[0].Key != "kimi-k3" {
+		t.Fatalf("suspect = %+v, want only kimi-k3", r.Suspect)
+	}
+	if !r.Changed() || r.NewDate != "2026-11-03" {
+		t.Fatalf("held-only run must bump the date so a PR is opened: changed=%v date=%s", r.Changed(), r.NewDate)
+	}
+	if !strings.Contains(r.DateReason, "1 quote(s) were held for review") {
+		t.Errorf("DateReason = %q, want held explanation", r.DateReason)
+	}
+	out, err := applyChanges([]byte(heldOnly), tb, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`const priceTableDate = "2026-11-03"`,
+		`"kimi-k3":        {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.00},`,
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("output missing %q\n%s", want, out)
+		}
+	}
+	md := renderReport(r, "testdata/openrouter-suspect.json")
+	for _, want := range []string{"held for review; the date is bumped", "### Held for review (1)"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("report missing %q\n%s", want, md)
+		}
+	}
+}
+
+func TestReconcileCacheReadSameAsInputExempt(t *testing.T) {
+	tb, err := parseTable([]byte(fixtureTable))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := reconcile(tb, fixtureCatalogue(t), fixtureDate, defaultStaleAfterDays)
+	if len(r.Suspect) != 0 {
+		t.Fatalf("fixture rows are all plausible, got suspect %+v", r.Suspect)
+	}
+}
+
 func TestReconcileNoChangeKeepsDate(t *testing.T) {
 	tb, err := parseTable([]byte(fixtureTable))
 	if err != nil {
@@ -352,6 +559,27 @@ func TestRenderReport(t *testing.T) {
 		if !strings.Contains(md, want) {
 			t.Errorf("report missing %q\n%s", want, md)
 		}
+	}
+}
+
+func TestRenderReportListsSuspectRows(t *testing.T) {
+	tb, _ := parseTable([]byte(suspectTable))
+	r := reconcile(tb, suspectCatalogue(t), "2026-11-09", defaultStaleAfterDays)
+	md := renderReport(r, "testdata/openrouter-suspect.json")
+	for _, want := range []string{
+		"### Held for review (1)",
+		"| `kimi-k3` | `moonshotai/kimi-k3` | 3.00 → proposed 0.192 | 15.00 → proposed 16.00 | 0.30 → proposed 0.182 | 3.00 → proposed 0.192 |",
+		"InputPerMTok moves more than 5× (3.00 → 0.192)",
+		"output/input ratio above 30 (16.00 / 0.192)",
+		"cache read at or above 90% of input (0.182 vs 0.192)",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("report missing %q\n%s", want, md)
+		}
+	}
+	clean, _ := parseTable([]byte(fixtureTable))
+	if strings.Contains(renderReport(reconcile(clean, fixtureCatalogue(t), fixtureDate, defaultStaleAfterDays), "x"), "Held for review") {
+		t.Error("report without suspect rows must not have a held section")
 	}
 }
 

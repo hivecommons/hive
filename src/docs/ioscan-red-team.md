@@ -160,3 +160,7 @@ file is the before/after evidence for the change.
 
 Adding a payload is a two-line change to `redTeamCorpus`. Record the outcome
 observed; a miss is a result and belongs in the table.
+
+The opt-in [red-team agent](redteam.md) adds cases here on a schedule. It
+plays a hostile contributor and records what the scanner did with each case.
+Its PRs carry `hold`, so a person accepts every change to these numbers.

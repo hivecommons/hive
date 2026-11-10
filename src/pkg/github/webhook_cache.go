@@ -603,6 +603,7 @@ type webhookEventPayload struct {
 	State       string                     `json:"state"`
 	Context     string                     `json:"context"`
 	TargetURL   string                     `json:"target_url"`
+	Description string                     `json:"description"`
 	CreatedAt   *time.Time                 `json:"created_at"`
 	UpdatedAt   *time.Time                 `json:"updated_at"`
 	Branches    []struct {

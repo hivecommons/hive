@@ -332,7 +332,9 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 	//
 	// A nil scope (every agent on every hive that does not use the feature)
 	// skips all of this, and the values below are byte-identical to before.
-	if s.cfg.AgentRepoScope(agentName) != nil {
+	// A lane that requires a scope and has none (the red-team lane) is
+	// filtered too, down to nothing: AgentServesRepo refuses it everywhere.
+	if s.cfg.AgentRepoRestricted(agentName) {
 		keep := func(repo string) bool { return s.cfg.AgentServesRepo(agentName, repo) }
 		actionable = github.FilterActionableForRepos(actionable, keep)
 		issues = filterIssuesForRepos(issues, keep)

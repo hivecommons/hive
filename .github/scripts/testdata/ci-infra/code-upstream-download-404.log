@@ -1,0 +1,62 @@
+2026-11-09T05:38:04.5394499Z ##[group]Run docker buildx build --load --network host --build-arg BASE_REGISTRY="$BASE_REGISTRY" -f "src/Dockerfile.contributor" -t "hive-ci-contributor:test" .
+2026-11-09T05:38:04.5395357Z ^[[36;1mdocker buildx build --load --network host --build-arg BASE_REGISTRY="$BASE_REGISTRY" -f "src/Dockerfile.contributor" -t "hive-ci-contributor:test" .^[[0m
+2026-11-09T05:38:04.5408586Z shell: /usr/bin/bash -e {0}
+2026-11-09T05:38:04.5408807Z env:
+2026-11-09T05:38:04.5408996Z   ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+2026-11-09T05:38:04.5409237Z   GO_CACHE_GUARD_BUILD_CACHE: job
+2026-11-09T05:38:04.5409447Z   BASE_REGISTRY: mirror.gcr.io/library
+2026-11-09T05:38:04.5409654Z ##[endgroup]
+2026-11-09T05:38:04.8809509Z #0 building with "builder-9e62066e-81b1-48b5-9654-3d2862d8a5ec" instance using docker-container driver
+2026-11-09T05:38:40.8576324Z 
+2026-11-09T05:38:51.7305872Z #17 11.03 /tmp/just.tar.gz: OK
+2026-11-09T05:38:51.8654320Z #17 11.17 curl: (22) The requested URL returned error: 404
+2026-11-09T05:39:01.8945014Z #17 21.19 curl: (22) The requested URL returned error: 404
+2026-11-09T05:39:11.9226188Z #17 31.22 curl: (22) The requested URL returned error: 404
+2026-11-09T05:39:21.9502710Z #17 41.25 curl: (22) The requested URL returned error: 404
+2026-11-09T05:43:52.8186930Z #17 ERROR: process "/bin/sh -c ARCH=\"${TARGETARCH:-$(dpkg --print-architecture)}\"   && case \"$ARCH\" in        amd64|x86_64) JUST_TARGET=x86_64-unknown-linux-musl; JUST_SHA256=\"$JUST_SHA256_AMD64\";                      YQ_ASSET=yq_linux_amd64; YQ_SHA256=\"$YQ_SHA256_AMD64\" ;;        arm64|aarch64) JUST_TARGET=aarch64-unknown-linux-musl; JUST_SHA256=\"$JUST_SHA256_ARM64\";                      YQ_ASSET=yq_linux_arm64; YQ_SHA256=\"$YQ_SHA256_ARM64\" ;;        *) echo \"unsupported arch for just/yq: $ARCH\" >&2; exit 1 ;;      esac   && curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors        -o /tmp/just.tar.gz        \"https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${JUST_TARGET}.tar.gz\"   && echo \"${JUST_SHA256}  /tmp/just.tar.gz\" | sha256sum -c -   && tar -xzf /tmp/just.tar.gz -C /tmp just   && install -m 0755 /tmp/just /usr/local/bin/just   && rm -f /tmp/just.tar.gz /tmp/just   && curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors        -o /tmp/yq        \"https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/${YQ_ASSET}\"   && echo \"${YQ_SHA256}  /tmp/yq\" | sha256sum -c -   && install -m 0755 /tmp/yq /usr/local/bin/yq   && rm -f /tmp/yq   && just --version   && yq --version" did not complete successfully: exit code: 22
+2026-11-09T05:43:52.8191038Z ------
+2026-11-09T05:43:52.8194559Z  > [stage-1  5/37] RUN ARCH="amd64"   && case "$ARCH" in        amd64|x86_64) JUST_TARGET=x86_64-unknown-linux-musl; JUST_SHA256="4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d";                      YQ_ASSET=yq_linux_amd64; YQ_SHA256="c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385" ;;        arm64|aarch64) JUST_TARGET=aarch64-unknown-linux-musl; JUST_SHA256="748237128c4c40cbdabc65e841d05ceba13cc23a91eaba395495894c1d9764df";                      YQ_ASSET=yq_linux_arm64; YQ_SHA256="88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09" ;;        *) echo "unsupported arch for just/yq: $ARCH" >&2; exit 1 ;;      esac   && curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors        -o /tmp/just.tar.gz        "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-${JUST_TARGET}.tar.gz"   && echo "${JUST_SHA256}  /tmp/just.tar.gz" | sha256sum -c -   && tar -xzf /tmp/just.tar.gz -C /tmp just   && install -m 0755 /tmp/just /usr/local/bin/just   && rm -f /tmp/just.tar.gz /tmp/just   && curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors        -o /tmp/yq        "https://github.com/mikefarah/yq/releases/download/v4.53.6/${YQ_ASSET}"   && echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -   && install -m 0755 /tmp/yq /usr/local/bin/yq   && rm -f /tmp/yq   && just --version   && yq --version:
+2026-11-09T05:43:52.8198817Z 221.8 curl: (22) The requested URL returned error: 404
+2026-11-09T05:43:52.8199109Z 231.8 curl: (22) The requested URL returned error: 404
+2026-11-09T05:43:52.8199369Z 241.9 curl: (22) The requested URL returned error: 404
+2026-11-09T05:43:52.8199629Z 251.9 curl: (22) The requested URL returned error: 404
+2026-11-09T05:43:52.8199892Z 261.9 curl: (22) The requested URL returned error: 404
+2026-11-09T05:43:52.8200145Z 272.0 curl: (22) The requested URL returned error: 404
+2026-11-09T05:43:52.8200396Z 282.0 curl: (22) The requested URL returned error: 404
+2026-11-09T05:43:52.8200649Z 292.0 curl: (22) The requested URL returned error: 404
+2026-11-09T05:43:52.8200901Z 302.1 curl: (22) The requested URL returned error: 404
+2026-11-09T05:43:52.8201392Z 312.1 curl: (22) The requested URL returned error: 404
+2026-11-09T05:43:52.8201610Z ------
+2026-11-09T05:43:52.8201702Z 
+2026-11-09T05:43:52.8202097Z  ^[[33m1 warning found (use docker --debug to expand):
+2026-11-09T05:43:52.8202628Z ^[[0m - SecretsUsedInArgOrEnv: Do not use ARG or ENV instructions for sensitive data (ARG "NODESOURCE_KEY_SHA256") (line 222)
+2026-11-09T05:43:52.8203073Z Dockerfile.contributor:189
+2026-11-09T05:43:52.8203261Z --------------------
+2026-11-09T05:43:52.8203576Z  188 |     ARG YQ_SHA256_ARM64=88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09
+2026-11-09T05:43:52.8204079Z  189 | >>> RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+2026-11-09T05:43:52.8204344Z  190 | >>>   && case "$ARCH" in \
+2026-11-09T05:43:52.8204674Z  191 | >>>        amd64|x86_64) JUST_TARGET=x86_64-unknown-linux-musl; JUST_SHA256="$JUST_SHA256_AMD64"; \
+2026-11-09T05:43:52.8205096Z  192 | >>>                      YQ_ASSET=yq_linux_amd64; YQ_SHA256="$YQ_SHA256_AMD64" ;; \
+2026-11-09T05:43:52.8205534Z  193 | >>>        arm64|aarch64) JUST_TARGET=aarch64-unknown-linux-musl; JUST_SHA256="$JUST_SHA256_ARM64"; \
+2026-11-09T05:43:52.8205954Z  194 | >>>                      YQ_ASSET=yq_linux_arm64; YQ_SHA256="$YQ_SHA256_ARM64" ;; \
+2026-11-09T05:43:52.8206373Z  195 | >>>        *) echo "unsupported arch for just/yq: $ARCH" >&2; exit 1 ;; \
+2026-11-09T05:43:52.8206780Z  196 | >>>      esac \
+2026-11-09T05:43:52.8207453Z  197 | >>>   && curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors \
+2026-11-09T05:43:52.8208088Z  198 | >>>        -o /tmp/just.tar.gz \
+2026-11-09T05:43:52.8208812Z  199 | >>>        "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${JUST_TARGET}.tar.gz" \
+2026-11-09T05:43:52.8209444Z  200 | >>>   && echo "${JUST_SHA256}  /tmp/just.tar.gz" | sha256sum -c - \
+2026-11-09T05:43:52.8209761Z  201 | >>>   && tar -xzf /tmp/just.tar.gz -C /tmp just \
+2026-11-09T05:43:52.8210045Z  202 | >>>   && install -m 0755 /tmp/just /usr/local/bin/just \
+2026-11-09T05:43:52.8210309Z  203 | >>>   && rm -f /tmp/just.tar.gz /tmp/just \
+2026-11-09T05:43:52.8210699Z  204 | >>>   && curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors \
+2026-11-09T05:43:52.8211083Z  205 | >>>        -o /tmp/yq \
+2026-11-09T05:43:52.8211397Z  206 | >>>        "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/${YQ_ASSET}" \
+2026-11-09T05:43:52.8211767Z  207 | >>>   && echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c - \
+2026-11-09T05:43:52.8212039Z  208 | >>>   && install -m 0755 /tmp/yq /usr/local/bin/yq \
+2026-11-09T05:43:52.8212275Z  209 | >>>   && rm -f /tmp/yq \
+2026-11-09T05:43:52.8212464Z  210 | >>>   && just --version \
+2026-11-09T05:43:52.8212655Z  211 | >>>   && yq --version
+2026-11-09T05:43:52.8212829Z  212 |     
+2026-11-09T05:43:52.8212978Z --------------------
+2026-11-09T05:43:52.8216281Z ERROR: failed to build: failed to solve: process "/bin/sh -c ARCH=\"${TARGETARCH:-$(dpkg --print-architecture)}\"   && case \"$ARCH\" in        amd64|x86_64) JUST_TARGET=x86_64-unknown-linux-musl; JUST_SHA256=\"$JUST_SHA256_AMD64\";                      YQ_ASSET=yq_linux_amd64; YQ_SHA256=\"$YQ_SHA256_AMD64\" ;;        arm64|aarch64) JUST_TARGET=aarch64-unknown-linux-musl; JUST_SHA256=\"$JUST_SHA256_ARM64\";                      YQ_ASSET=yq_linux_arm64; YQ_SHA256=\"$YQ_SHA256_ARM64\" ;;        *) echo \"unsupported arch for just/yq: $ARCH\" >&2; exit 1 ;;      esac   && curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors        -o /tmp/just.tar.gz        \"https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${JUST_TARGET}.tar.gz\"   && echo \"${JUST_SHA256}  /tmp/just.tar.gz\" | sha256sum -c -   && tar -xzf /tmp/just.tar.gz -C /tmp just   && install -m 0755 /tmp/just /usr/local/bin/just   && rm -f /tmp/just.tar.gz /tmp/just   && curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors        -o /tmp/yq        \"https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/${YQ_ASSET}\"   && echo \"${YQ_SHA256}  /tmp/yq\" | sha256sum -c -   && install -m 0755 /tmp/yq /usr/local/bin/yq   && rm -f /tmp/yq   && just --version   && yq --version" did not complete successfully: exit code: 22
+2026-11-09T05:43:52.8268368Z ##[error]Process completed with exit code 1.

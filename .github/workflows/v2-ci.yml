@@ -1051,12 +1051,14 @@ jobs:
       # had passed. The releases CDN stayed up throughout; a pinned URL with a
       # checksum has no API dependency at all. Bump the version and hash
       # together, deliberately.
+      # The CDN itself still 504s transiently (#17357), hence the curl
+      # --retry flags; sha256sum still gates whatever is fetched.
       - name: Install just
         run: |
           set -euo pipefail
           JUST_VERSION=1.58.0
           JUST_SHA256=4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
-          curl -fsSL -o /tmp/just.tgz "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o /tmp/just.tgz "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
           echo "${JUST_SHA256}  /tmp/just.tgz" | sha256sum -c -
           tar -xzf /tmp/just.tgz -C /tmp just
           sudo install -m 0755 /tmp/just /usr/local/bin/just
@@ -1641,7 +1643,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Log in to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

@@ -2,6 +2,8 @@ package automerge
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"strings"
@@ -44,7 +46,36 @@ const contributorNudgeCap = 2
 // and delivery mode. The upsert searches for ContributorNudgeMarkerPrefix
 // alone, so a changed reason slug still finds the comment.
 func ContributorNudgeMarker(reason, head string, nudge int, mode string) string {
-	return fmt.Sprintf("%s reason=%s head=%s n=%d mode=%s -->", ContributorNudgeMarkerPrefix, stagelabels.NudgeReasonSlug(reason), head, nudge, nonEmpty(mode, "comment"))
+	return contributorNudgeMarker(reason, head, nudge, mode, nil, 0)
+}
+
+// contributorNudgeMarker is ContributorNudgeMarker plus, for a CI-failure
+// nudge, `checks=<digest of the failing set> attempt=<red heads seen>`
+// (hivecommons/hive#17328).
+func contributorNudgeMarker(reason, head string, nudge int, mode string, checks []string, attempt int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s reason=%s head=%s n=%d mode=%s", ContributorNudgeMarkerPrefix, stagelabels.NudgeReasonSlug(reason), head, nudge, nonEmpty(mode, "comment"))
+	if len(checks) > 0 && attempt > 0 {
+		fmt.Fprintf(&b, " checks=%s attempt=%d", ciFailureSetDigest(checks), attempt)
+	}
+	b.WriteString(" -->")
+	return b.String()
+}
+
+// ciFailureSetDigest keys a failing-check set independent of order: the
+// first 12 hex chars of the SHA-256 of the sorted names.
+func ciFailureSetDigest(checks []string) string {
+	sorted := append([]string(nil), checks...)
+	slices.Sort(sorted)
+	sum := sha256.Sum256([]byte(strings.Join(sorted, "\n")))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// isCIFailureNudgeReason reports whether reason is a failing-check reason
+// (any check-failing prefix): the nudges that share the per-PR
+// failing-set ledger and the ci_failure_cooldown.
+func isCIFailureNudgeReason(reason string) bool {
+	return stagelabels.NudgeReasonSlug(reason) == stagelabels.NudgeReasonCIFailure
 }
 
 // ContributorNudge is the diagnosis handed to the sink for one PR in stage 072.
@@ -76,6 +107,9 @@ type ContributorNudge struct {
 	Nudge int
 	// Stalled is true when this nudge is the repeat re-nudge.
 	Stalled bool
+	// Attempt is, for a CI-failure nudge, how many red heads the same
+	// failing set has been seen on (1 for the first); 0 otherwise.
+	Attempt int
 }
 
 // ContributorNudgeOutcome is what the sink did with a nudge.
@@ -222,7 +256,7 @@ func nudgeDiagnosisRouted(reason string, d stageDetail, route *stagelabels.Route
 // the prose.
 func ContributorNudgeComment(n ContributorNudge, out ContributorNudgeOutcome) string {
 	var b strings.Builder
-	b.WriteString(ContributorNudgeMarker(n.Reason, n.HeadSHA, n.Nudge, out.Mode))
+	b.WriteString(contributorNudgeMarker(n.Reason, n.HeadSHA, n.Nudge, out.Mode, n.FailingChecks, n.Attempt))
 	b.WriteString("\n")
 	if n.Stalled {
 		fmt.Fprintf(&b, "@%s this PR has been waiting on you for a while (`%s`). ", n.Author, stagelabels.ReturnedToContributor.Label())
@@ -235,6 +269,9 @@ func ContributorNudgeComment(n ContributorNudge, out ContributorNudgeOutcome) st
 		b.WriteString("**Failing checks:**\n")
 		for _, c := range n.FailingChecks {
 			fmt.Fprintf(&b, "- `%s`\n", c)
+		}
+		if n.Attempt > 1 {
+			fmt.Fprintf(&b, "\nThe same checks have failed on %d heads so far (latest `%s`).\n", n.Attempt, shortSHA(n.HeadSHA))
 		}
 	}
 	if len(n.ReviewAsks) > 0 {
@@ -312,6 +349,12 @@ func nudgeDue(rec stagelabels.Record, head, reason string, repeatAfter time.Dura
 	if rec.NudgeHead != head {
 		return 0, true
 	}
+	return nudgeRepeatDue(rec, repeatAfter, now)
+}
+
+// nudgeRepeatDue is the same-head, same-class tail of nudgeDue: the one
+// repeat reminder once repeatAfter elapsed since the class was counted.
+func nudgeRepeatDue(rec stagelabels.Record, repeatAfter time.Duration, now time.Time) (ordinal int, ok bool) {
 	if rec.NudgeReasonCount >= contributorNudgeCap {
 		return 0, false
 	}
@@ -321,15 +364,50 @@ func nudgeDue(rec stagelabels.Record, head, reason string, repeatAfter time.Dura
 	return rec.NudgeReasonCount + 1, true
 }
 
+// ciNudgeDue is nudgeDue for a failing-check reason, keyed on the failing
+// set rather than the reason prefix (hivecommons/hive#17328). checks is the
+// set the comment would list now (already unioned with the recorded set
+// when the head is unchanged). Ordinal 1: the class is new to the PR, or
+// the set changed on a new head after cooldown elapsed since the set was
+// last counted. Ordinal 0 (a fold into the existing comment, uncounted):
+// the same set on a new head, a set that grew on the same head, or a
+// changed set on a new head inside the cooldown. Same head and same set
+// falls through to the repeat reminder.
+func ciNudgeDue(rec stagelabels.Record, head string, checks []string, repeatAfter, cooldown time.Duration, now time.Time) (ordinal int, ok bool) {
+	if head == "" {
+		return 0, false
+	}
+	if rec.NudgeReason != stagelabels.NudgeReasonCIFailure {
+		return 1, true
+	}
+	sorted := append([]string(nil), checks...)
+	slices.Sort(sorted)
+	sameSet := slices.Equal(sorted, rec.NudgeCIChecks)
+	if rec.NudgeHead == head {
+		if !sameSet {
+			return 0, true
+		}
+		return nudgeRepeatDue(rec, repeatAfter, now)
+	}
+	if sameSet {
+		return 0, true
+	}
+	// Records written before the ledger existed count from the class.
+	countedAt := rec.NudgeCIAt
+	if countedAt.IsZero() {
+		countedAt = rec.NudgeReasonAt
+	}
+	if cooldown > 0 && !countedAt.IsZero() && now.Sub(countedAt) < cooldown {
+		return 0, true
+	}
+	return 1, true
+}
+
 // nudgeContributor runs the stage-072 nudge for one observation. It returns
 // the number of GitHub comments posted.
 func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) (int, error) {
 	rec, ok := store.Get(key)
 	if !ok || obs.Author == "" {
-		return 0, nil
-	}
-	ordinal, due := nudgeDue(rec, obs.HeadSHA, obs.Reason, policy.RenudgeInterval, now)
-	if !due {
 		return 0, nil
 	}
 	checks, asks, human := nudgeDiagnosisRouted(obs.Reason, obs.Detail, obs.Route)
@@ -346,20 +424,48 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 			return 0, nil
 		}
 	}
+	ciFailure := isCIFailureNudgeReason(obs.Reason)
+	var ordinal int
+	var due bool
+	if ciFailure {
+		// On one head the failing set only accumulates: the lane's reason
+		// names whichever red check it saw first, and a set that shrank is
+		// a flap, not news.
+		if rec.NudgeReason == stagelabels.NudgeReasonCIFailure && rec.NudgeHead == obs.HeadSHA {
+			checks = unionChecks(rec.NudgeCIChecks, checks)
+		}
+		ordinal, due = ciNudgeDue(rec, obs.HeadSHA, checks, policy.RenudgeInterval, policy.CIFailureCooldown, now)
+	} else {
+		ordinal, due = nudgeDue(rec, obs.HeadSHA, obs.Reason, policy.RenudgeInterval, now)
+	}
+	if !due {
+		return 0, nil
+	}
 	// A head-only rewrite (ordinal 0) keeps the class's recorded count in
 	// the marker; the author pushed, so it is not the stall reminder.
 	shown := ordinal
 	if shown == 0 {
 		shown = max(rec.NudgeReasonCount, 1)
 	}
+	attempt := 0
+	if ciFailure {
+		attempt = ciNudgeAttempt(rec, obs.HeadSHA, checks, ordinal)
+	}
 	n := ContributorNudge{
 		Owner: obs.Owner, Repo: obs.Repo, Display: obs.Display, Number: obs.Number,
 		HeadSHA: obs.HeadSHA, Title: obs.Title, URL: obs.URL, Author: obs.Author, OpenedAt: obs.OpenedAt,
 		Reason: obs.Reason, FailingChecks: checks, ReviewAsks: asks, HumanChangesRequested: human,
-		Nudge: shown, Stalled: ordinal > 1,
+		Nudge: shown, Stalled: ordinal > 1, Attempt: attempt,
 	}
+	// Another check going red on the head the relay already has as a
+	// fix-pr task is folded into the comment, not dispatched again
+	// (hivecommons/hive#17328); the recorded delivery mode keeps the
+	// marker and prose honest.
+	sameHeadFold := ordinal == 0 && rec.NudgeHead == obs.HeadSHA
 	var out ContributorNudgeOutcome
-	if c.contributorNudge != nil {
+	if sameHeadFold {
+		out = ContributorNudgeOutcome{Mode: rec.NudgeMode, Online: rec.NudgeOnline}
+	} else if c.contributorNudge != nil {
 		out = c.contributorNudge.Nudge(ctx, n)
 	}
 	body := ContributorNudgeComment(n, out)
@@ -387,8 +493,42 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 	// as online gave an offline clanker the 2h online grace (#15566).
 	store.MarkNudged(key, obs.HeadSHA, max(ordinal, 1), out.Online || out.Mode == "spawn" || out.Mode == "preempt", now)
 	store.MarkNudgedReason(key, obs.Reason, ordinal, now)
+	if ciFailure {
+		store.MarkNudgedCIFailure(key, checks, obs.HeadSHA, nonEmpty(out.Mode, "comment"), attempt, ordinal == 1, now)
+	}
 	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "posted", posted == 1, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "relay_failed", out.RelayFailed, "reason", obs.Reason)
 	return posted, nil
+}
+
+// ciNudgeAttempt is the attempt count the CI-failure nudge comment shows:
+// 1 for a fresh nudge or a changed failing set, one more than recorded
+// for the same set on a new head, unchanged otherwise.
+func ciNudgeAttempt(rec stagelabels.Record, head string, checks []string, ordinal int) int {
+	switch {
+	case ordinal == 1, !slices.Equal(sortedChecks(checks), rec.NudgeCIChecks):
+		return 1
+	case rec.NudgeCIHead != head:
+		return max(rec.NudgeCIAttempts, 1) + 1
+	}
+	return max(rec.NudgeCIAttempts, 1)
+}
+
+func sortedChecks(checks []string) []string {
+	out := append([]string(nil), checks...)
+	slices.Sort(out)
+	return out
+}
+
+// unionChecks is prev plus the names in cur not already present, in
+// prev's order then cur's.
+func unionChecks(prev, cur []string) []string {
+	out := append([]string(nil), prev...)
+	for _, c := range cur {
+		if !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // withoutForkGuard drops the fork-guard checks from a nudge's failing

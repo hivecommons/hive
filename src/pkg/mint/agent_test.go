@@ -21,10 +21,11 @@ func testMinter(t *testing.T) *Minter {
 
 func TestScopesForTier(t *testing.T) {
 	cases := map[string][]string{
-		"advisor":     {ScopeIssuesRead},
-		"newcomer":    {ScopeIssuesRead, ScopeIssuesWrite},
-		"contributor": {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite},
-		"trusted":     {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite, ScopeMerge},
+		"advisor":           {ScopeIssuesRead},
+		"newcomer":          {ScopeIssuesRead, ScopeIssuesWrite},
+		"contributor":       {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite},
+		"trusted":           {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite, ScopeMerge},
+		"sec-check-trusted": {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite, ScopeMerge},
 	}
 	for tier, want := range cases {
 		got := ScopesForTier(tier)

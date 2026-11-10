@@ -17,6 +17,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -341,7 +342,21 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			PullRequests: gh.Ptr("read"),
 			Metadata:     gh.Ptr("read"),
 		}
-	case "trusted", "merger":
+	case agentmode.SecCheckTier:
+		// The sec-check role refinement of the contributor tier (#17426,
+		// agentmode.TokenTierForRole): the contributor set plus Dependabot
+		// alerts read so the agent can call dependabot/alerts. Scoped to
+		// this one role so no other ISSUES_AND_PRS agent's token carries
+		// it. Optional like Workflows: the mint below retries without it
+		// when the installation has not accepted the App permission.
+		perms = &gh.InstallationPermissions{
+			Issues:              gh.Ptr("write"),
+			Contents:            gh.Ptr("write"),
+			PullRequests:        gh.Ptr("write"),
+			Metadata:            gh.Ptr("read"),
+			VulnerabilityAlerts: gh.Ptr("read"),
+		}
+	case "trusted", "merger", agentmode.SecCheckTrustedTier:
 		perms = &gh.InstallationPermissions{
 			Issues:       gh.Ptr("write"),
 			Contents:     gh.Ptr("write"),
@@ -358,6 +373,12 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			// token without it and logs the missing grant instead of
 			// breaking every trusted-tier mint.
 			Workflows: gh.Ptr("write"),
+		}
+		if tier == agentmode.SecCheckTrustedTier {
+			// The sec-check role refinement of trusted (#17496): adds
+			// Dependabot alerts read, optional like Workflows (the mint
+			// below retries without it).
+			perms.VulnerabilityAlerts = gh.Ptr("read")
 		}
 	case "reviewer":
 		// The reviewer tier is the advisor tier under a distinct name: the
@@ -428,10 +449,41 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 	if len(repos) > 0 {
 		opts.Repositories = repos
 	}
-	mintCtx, cancel := mintContext(ctx)
-	defer cancel()
 	jwtClient := newJWTClient(jwtToken, a.apiURL)
-	installToken, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, installationID, opts)
+	mint := func() (*gh.InstallationToken, error) {
+		mintCtx, cancel := mintContext(ctx)
+		defer cancel()
+		tok, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, installationID, opts)
+		return tok, err
+	}
+	warnAlertsDropped := func(err error) {
+		a.logger.Warn("scoped token mint with vulnerability_alerts:read failed; retrying without it — "+
+			"the sec-check Dependabot alerts call will 403 until the App grants Dependabot alerts read-only and the installation re-accepts it; see docs/github-app-setup.md",
+			"tier", tier, "error", err)
+	}
+	installToken, err := mint()
+	if isPermissionNotGrantedMintError(err) && perms.VulnerabilityAlerts != nil {
+		// GitHub does not say which requested permission the installation
+		// has not accepted. Drop the alerts grant first (the newest one,
+		// #17426) and retry.
+		perms.VulnerabilityAlerts = nil
+		if perms.Workflows == nil {
+			warnAlertsDropped(err)
+		}
+		refusedErr := err
+		installToken, err = mint()
+		switch {
+		case err == nil && perms.Workflows != nil:
+			warnAlertsDropped(refusedErr)
+		case isPermissionNotGrantedMintError(err) && perms.Workflows != nil:
+			// Still refused without alerts, so Workflows is (at least) what
+			// the installation lacks. Restore the alerts grant so the
+			// Workflows retry below keeps Dependabot alerts read on an
+			// installation that accepted it but not Workflows (#17496);
+			// if that retry is refused too, both are dropped.
+			perms.VulnerabilityAlerts = gh.Ptr("read")
+		}
+	}
 	if err != nil && perms.Workflows != nil {
 		// The installation has likely not accepted the Workflows permission
 		// on the App yet — GitHub refuses to mint a token requesting a
@@ -443,9 +495,13 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			"(App settings → Permissions → Workflows → Read and write, then re-accept on the installation; see docs/github-app-setup.md)",
 			"tier", tier, "error", err)
 		perms.Workflows = nil
-		retryCtx, retryCancel := mintContext(ctx)
-		defer retryCancel()
-		installToken, _, err = jwtClient.Apps.CreateInstallationToken(retryCtx, installationID, opts)
+		installToken, err = mint()
+		if isPermissionNotGrantedMintError(err) && perms.VulnerabilityAlerts != nil {
+			// Neither optional grant is accepted: mint the bare trusted set.
+			warnAlertsDropped(err)
+			perms.VulnerabilityAlerts = nil
+			installToken, err = mint()
+		}
 	}
 	if err != nil {
 		return "", fmt.Errorf("creating scoped token for tier %s: %w", tier, err)
@@ -453,6 +509,22 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 
 	a.logger.Info("scoped token minted", "tier", tier, "repos", len(repos), "expires_at", installToken.GetExpiresAt().Format(time.RFC3339))
 	return installToken.GetToken(), nil
+}
+
+// isPermissionNotGrantedMintError reports whether an installation-token mint
+// was refused because the request named a permission the installation has
+// not accepted (GitHub answers 422 "The permissions requested are not granted
+// to this installation."). A timeout, a repo-scope 422 (IsRepoScopeMintError)
+// or any other failure is not that case and must not earn a second mint: the
+// retry would double the bounded mint window and break the one-mint-per-repo
+// accounting the hub relies on to exclude an unmintable repo.
+func isPermissionNotGrantedMintError(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil {
+		return false
+	}
+	return ghErr.Response.StatusCode == http.StatusUnprocessableEntity &&
+		strings.Contains(strings.ToLower(ghErr.Message), "permission")
 }
 
 // IsRepoScopeMintError reports whether an installation-token mint failed
@@ -803,6 +875,7 @@ func installationPermissionMap(p *gh.InstallationPermissions) map[string]string 
 	put("metadata", p.GetMetadata())
 	put("pull_requests", p.GetPullRequests())
 	put("secrets", p.GetSecrets())
+	put("vulnerability_alerts", p.GetVulnerabilityAlerts())
 	put("workflows", p.GetWorkflows())
 	return out
 }

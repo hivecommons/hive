@@ -109,10 +109,19 @@ type backendResumeLayout struct {
 // in a mktemp file that is discarded on every relaunch (agy_turn.go), so a
 // captured id would point at a conversation the next launch never reopens.
 var backendResumeLayouts = map[string]backendResumeLayout{
+	// claude keeps the session transcript at ~/.claude/projects/<project>/<uuid>.jsonl.
+	// Per-subagent transcripts under <uuid>/subagents/agent-*.jsonl are not
+	// sessions, so only a UUID-named file yields an id.
 	"claude": {
-		root:    func(home, _ string) string { return filepath.Join(home, ".claude", "projects") },
-		ext:     ".jsonl",
-		id:      func(name string) string { return trimResumeName(name, "", ".jsonl") },
+		root: func(home, _ string) string { return filepath.Join(home, ".claude", "projects") },
+		ext:  ".jsonl",
+		id: func(name string) string {
+			id := trimResumeName(name, "", ".jsonl")
+			if !looksLikeUUID(id) {
+				return ""
+			}
+			return id
+		},
 		command: func(id string) string { return "claude --resume " + id },
 	},
 	"copilot": {

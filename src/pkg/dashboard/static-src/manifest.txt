@@ -90,6 +90,7 @@ js/tracker-integration-execution.js
 js/tracker-filter-render.js
 js/tracker-filter-fetch.js
 js/tracker-actions.js
+js/tracker-human-gate.js
 js/tracker-merged.js
 js/tracker-queue.js
 js/tracker-sound.js
@@ -117,6 +118,7 @@ js/vault-audit.js
 js/review-queue.js
 js/contributors.js
 js/refresh.js
+js/scroll-stabilizer.js
 js/inception.js
 js/debug-logs.js
 js/tooltips-dialogs.js

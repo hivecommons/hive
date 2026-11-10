@@ -83,6 +83,14 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth, queuedWork int, now time.Time) HealthVerdict {
 	v := HealthVerdict{QueuedWork: queuedWork}
 
+	// Forge egress is broken, not the pod: the github_auth failure it causes
+	// must not read as a hive fault. StatsStale is deliberately NOT cleared
+	// here — cached stats are still cached, and the stale gate below never
+	// asserts health from them; the gate only names the forge as the cause.
+	if e.ForgeUnreachable {
+		app = GitHubAppHealth{Bucket: ghAppBucketUnknown}
+	}
+
 	// --- Unknown gates first: never claim health for a hive we can't see. ---
 	if !e.Online {
 		v.State = HealthStateUnknown
@@ -93,6 +101,9 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 	if e.StatsStale {
 		v.State = HealthStateUnknown
 		v.Reason = "heartbeat stats stale"
+		if e.ForgeUnreachable {
+			v.Reason = "heartbeat stats stale (forge unreachable)"
+		}
 		v.OutputKind = outputKindForLevel(e.ACMMLevel)
 		return v
 	}

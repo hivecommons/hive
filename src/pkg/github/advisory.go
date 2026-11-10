@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -334,6 +335,16 @@ const (
 	advisoryDigestPrefix    = "## 🐝 Advisory Digest"
 	githubCommentCharLimit  = 65536
 	truncationFooterPadding = 200
+	// advisoryDigestMarker opens the HTML comment that anchors the one
+	// upserted digest comment per issue (#17435): "<!-- hive:advisory-digest
+	// updates=N -->". N is read back from the existing comment on every
+	// cycle, so the counter continues across governor restarts without any
+	// local store.
+	advisoryDigestMarker = "<!-- hive:advisory-digest"
+	// advisoryDigestWrapReserve is the room kept under githubCommentCharLimit
+	// for the marker line and the "Updated N times" footer that wrap the
+	// rendered digest.
+	advisoryDigestWrapReserve = 256
 	// advisoryDigestAuditInterval is how often (in digest posts) an
 	// advisory_commented audit entry is emitted, in addition to the very first
 	// post. The digest is refreshed ~once a minute; a value of 50 yields roughly
@@ -414,7 +425,7 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 			return fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
 		}
 	}
-	digest = truncateDigest(logscrub.ScrubString(digest))
+	digest = truncateDigestTo(logscrub.ScrubString(digest), githubCommentCharLimit-advisoryDigestWrapReserve)
 
 	// Skip-if-unchanged guard (#4818): the digest is re-rendered ~once a
 	// minute, and at steady state the body is byte-identical cycle after
@@ -472,7 +483,19 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	// longer sees the bot's own digest and every cycle creates a fresh one.
 	// Suppressing on material content stops that at the source regardless of
 	// which branch the write would have taken.
-	sup := evaluateDigestSuppression(digest, existing.body, existing.found(), existing.updatedAt, time.Now())
+	// The changed-content floor (#17435) measures from the later of the
+	// target's updated_at and this process's own last write, so neither a
+	// lagging comment list nor a restart lets a drifting digest through
+	// inside governor.advisory.digest_min_interval.
+	now := time.Now()
+	c.advisoryMu.Lock()
+	minInterval := c.advisoryDigestMinInterval
+	postedAt := existing.updatedAt
+	if last := c.advisoryDigestLastWrite[key]; last.After(postedAt) {
+		postedAt = last
+	}
+	c.advisoryMu.Unlock()
+	sup := evaluateDigestSuppression(digest, existing.body, existing.found(), postedAt, now, minInterval)
 	if sup.suppress && writeThrough {
 		c.logger.Debug("advisory digest suppression overridden by periodic write-through",
 			slog.String("repo", repo), slog.Int("issue", issueNum),
@@ -508,6 +531,7 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 
 	commentID := existing.id
 	var author string
+	updates := parseDigestUpdates(existing.body) + 1
 	if commentID > 0 && !writeThrough {
 		// Per-anchor unchanged guard (#16439). The listed body the #5507
 		// suppression compares against can lag the last PATCH (the comment
@@ -532,9 +556,10 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 			return nil
 		}
 	}
+	action := "edit"
 	if commentID > 0 {
 		edited, _, err := c.client.Issues.EditComment(ctx, owner, repoName, int64(commentID), &gh.IssueComment{
-			Body: gh.Ptr(digest),
+			Body: gh.Ptr(wrapDigestComment(digest, updates, now)),
 		})
 		switch {
 		case err == nil:
@@ -556,8 +581,10 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 		}
 	}
 	if commentID == 0 {
+		action = "create"
+		updates = 1
 		comment, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, issueNum, &gh.IssueComment{
-			Body: gh.Ptr(digest),
+			Body: gh.Ptr(wrapDigestComment(digest, updates, now)),
 		})
 		if err != nil {
 			return fmt.Errorf("posting advisory digest to %s#%d: %w", repo, issueNum, c.classifyDigestWriteError(ctx, owner, repoName, err))
@@ -583,6 +610,10 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	// over from any real write.
 	c.advisoryDigestHashes[key] = digestHash
 	c.advisoryDigestSkips[key] = 0
+	if c.advisoryDigestLastWrite == nil {
+		c.advisoryDigestLastWrite = make(map[string]time.Time)
+	}
+	c.advisoryDigestLastWrite[key] = now
 	if commentID > 0 {
 		// Persist the anchor this write landed on and its material
 		// fingerprint (#16439): the next cycle re-pins to it past any
@@ -598,6 +629,13 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	c.advisoryDigestPosts[key]++
 	count := c.advisoryDigestPosts[key]
 	c.advisoryMu.Unlock()
+
+	// The caller logs "posted" for every healthy cycle, skipped or not; this
+	// line marks the cycles that actually reached the forge (#17435).
+	c.logger.Info("advisory digest comment written",
+		slog.String("repo", repo), slog.Int("issue", issueNum),
+		slog.Int("comment_id", commentID), slog.String("action", action),
+		slog.Int("updates", updates), slog.Bool("write_through", writeThrough))
 
 	if count == 1 || count%advisoryDigestAuditInterval == 0 {
 		c.recordWriteAudit(AuditActionAdvisoryCommented, InvocationMeta{Agent: AttributionAgentGovernor},
@@ -646,10 +684,17 @@ func (c *Client) ProbeIssueWrite(ctx context.Context, repo string, issueNum int)
 }
 
 func truncateDigest(digest string) string {
-	if len(digest) <= githubCommentCharLimit {
+	return truncateDigestTo(digest, githubCommentCharLimit)
+}
+
+// truncateDigestTo cuts digest to fit within limit bytes (footer included),
+// reporting GitHub's comment limit in the footer so the reader sees the real
+// constraint rather than the wrapper's reserve.
+func truncateDigestTo(digest string, limit int) string {
+	if len(digest) <= limit {
 		return digest
 	}
-	cutoff := githubCommentCharLimit - truncationFooterPadding
+	cutoff := limit - truncationFooterPadding
 	lastNewline := strings.LastIndex(digest[:cutoff], "\n")
 	if lastNewline > 0 {
 		cutoff = lastNewline
@@ -659,6 +704,59 @@ func truncateDigest(digest string) string {
 		cutoff--
 	}
 	return digest[:cutoff] + fmt.Sprintf("\n\n---\n⚠️ *Digest truncated: %d → %d characters (GitHub limit: %d)*\n", len(digest), cutoff, githubCommentCharLimit)
+}
+
+// SetAdvisoryDigestMinInterval sets the floor between two writes of a changed
+// digest to the same target (governor.advisory.digest_min_interval, #17435).
+// The governor calls it every eval cycle from live config; 0 disables the
+// gate. Nil-safe like PostAdvisoryDigest.
+func (c *Client) SetAdvisoryDigestMinInterval(d time.Duration) {
+	if c == nil {
+		return
+	}
+	if d < 0 {
+		d = 0
+	}
+	c.advisoryMu.Lock()
+	c.advisoryDigestMinInterval = d
+	c.advisoryMu.Unlock()
+}
+
+// isAdvisoryDigestBody reports whether a comment body is a hive advisory
+// digest: either the #17435 marker or the legacy bare heading, so digests
+// written before the marker existed are still adopted and edited in place.
+func isAdvisoryDigestBody(body string) bool {
+	return strings.HasPrefix(body, advisoryDigestMarker) || strings.HasPrefix(body, advisoryDigestPrefix)
+}
+
+// digestUpdatesPattern reads the update counter out of the marker.
+var digestUpdatesPattern = regexp.MustCompile(`<!-- hive:advisory-digest updates=(\d+) -->`)
+
+// parseDigestUpdates returns how many times the existing digest comment has
+// been written according to its marker; 0 for a legacy or absent comment.
+func parseDigestUpdates(body string) int {
+	m := digestUpdatesPattern.FindStringSubmatch(body)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// wrapDigestComment frames the rendered digest with the upsert marker and the
+// "Updated N times · last <ts>" footer (#17435). Both are excluded from the
+// material fingerprint (see volatileDigestPatterns), so the bookkeeping never
+// makes an unchanged digest look changed.
+func wrapDigestComment(digest string, updates int, now time.Time) string {
+	times := "times"
+	if updates == 1 {
+		times = "time"
+	}
+	return fmt.Sprintf("%s updates=%d -->\n%s\n\n_Updated %d %s · last %s_\n",
+		advisoryDigestMarker, updates, strings.TrimRight(digest, "\n"), updates, times, now.UTC().Format(time.RFC3339))
 }
 
 func (c *Client) ensureAdvisoryLabel(ctx context.Context, owner, repo string, issueNum int) {
@@ -759,7 +857,7 @@ type digestScan struct {
 // only noted in scan.foreign so the resolution can log it.
 func (c *Client) scanDigestPage(comments []*gh.IssueComment, scan *digestScan) (digestComment, bool) {
 	for _, comment := range comments {
-		if !strings.HasPrefix(comment.GetBody(), advisoryDigestPrefix) {
+		if !isAdvisoryDigestBody(comment.GetBody()) {
 			continue
 		}
 		if c.appAuth == nil {

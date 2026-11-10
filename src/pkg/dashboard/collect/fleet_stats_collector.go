@@ -44,6 +44,29 @@ const fleetStatsRetryAttempts = 4
 // rate-limit rejection rather than burning an attempt on a still-empty budget.
 var fleetStatsRetryBaseDelay = time.Minute
 
+// fleetStatsRetryMaxDelay caps the retry backoff. The consecutive-failure
+// count carries across collects, so while the forge host stays unreachable the
+// delay keeps doubling past the per-collect ladder (8m, then 15m, 15m, …)
+// instead of restarting at 1m every tick (#17427). A var so tests can shrink it.
+var fleetStatsRetryMaxDelay = 15 * time.Minute
+
+// fleetStatsRetryDelay returns the backoff after the given number of
+// consecutive failed attempts (>= 1): fleetStatsRetryBaseDelay doubled per
+// earlier failure, capped at fleetStatsRetryMaxDelay.
+func fleetStatsRetryDelay(consecutiveFailures int) time.Duration {
+	d := fleetStatsRetryBaseDelay
+	for i := 1; i < consecutiveFailures; i++ {
+		if d >= fleetStatsRetryMaxDelay {
+			break
+		}
+		d *= 2
+	}
+	if d > fleetStatsRetryMaxDelay {
+		d = fleetStatsRetryMaxDelay
+	}
+	return d
+}
+
 // FleetStatsCollector periodically computes this hive's AI-author contribution
 // counts (PRs merged, PRs rejected, CVE-referencing PRs) across its org and
 // caches them, so the heartbeat sender can attach a fresh-but-cheap snapshot to
@@ -77,6 +100,13 @@ type FleetStatsCollector struct {
 
 	// shedTickFn overrides the pacer's shed decision in tests.
 	shedTickFn func() bool
+
+	// consecutiveFailures counts failed collect attempts since the last
+	// success, across collects; it drives the backoff and the once-per-streak
+	// WARNs. exhaustedWarned records that this streak already logged the
+	// "failed after all retries" WARN. Only the collect loop touches these.
+	consecutiveFailures int
+	exhaustedWarned     bool
 }
 
 // persistedFleetStats is the on-disk shape written to persistPath. It carries
@@ -284,7 +314,10 @@ func (fc *FleetStatsCollector) startupDelay() time.Duration {
 
 // collect computes the counts, retrying with exponential backoff. A single
 // GitHub search rejection (rate limit, transient 5xx) must not cost this hive
-// its place in the fleet total until the next 30-minute tick.
+// its place in the fleet total until the next 30-minute tick. During a longer
+// outage (an unreachable forge host) the backoff keeps growing up to
+// fleetStatsRetryMaxDelay and the failure is logged once per streak at WARN,
+// with one INFO on recovery, instead of a WARN per attempt.
 func (fc *FleetStatsCollector) collect(ctx context.Context) {
 	gh := fc.client()
 	if gh == nil {
@@ -295,7 +328,6 @@ func (fc *FleetStatsCollector) collect(ctx context.Context) {
 		}
 		return
 	}
-	delay := fleetStatsRetryBaseDelay
 	var err error
 	for attempt := 1; attempt <= fleetStatsRetryAttempts; attempt++ {
 		var counts ghpkg.FleetContribCounts
@@ -309,6 +341,12 @@ func (fc *FleetStatsCollector) collect(ctx context.Context) {
 			// exact collect (with its real timestamp) instead of nil (#2329).
 			fc.persistLocked()
 			fc.mu.Unlock()
+			if fc.consecutiveFailures > 0 && fc.logger != nil {
+				fc.logger.Info("fleet stats collect recovered",
+					"failed_attempts", fc.consecutiveFailures)
+			}
+			fc.consecutiveFailures = 0
+			fc.exhaustedWarned = false
 			if fc.logger != nil {
 				fc.logger.Info("fleet stats collected",
 					"prs_merged", counts.PRsMerged,
@@ -319,27 +357,44 @@ func (fc *FleetStatsCollector) collect(ctx context.Context) {
 			}
 			return
 		}
+		fc.consecutiveFailures++
 		if attempt == fleetStatsRetryAttempts {
 			break
 		}
+		delay := fleetStatsRetryDelay(fc.consecutiveFailures)
 		if fc.logger != nil {
-			fc.logger.Warn("fleet stats collect failed; retrying",
-				"error", err, "attempt", attempt, "retry_in", delay.String())
+			// WARN only on the transition into failing; later attempts in the
+			// same streak are Debug so a dead forge host is one line, not one
+			// per attempt for the whole outage.
+			level := slog.LevelDebug
+			if fc.consecutiveFailures == 1 {
+				level = slog.LevelWarn
+			}
+			fc.logger.Log(ctx, level, "fleet stats collect failed; retrying",
+				"error", err, "attempt", attempt, "retry_in", delay.String(),
+				"consecutive_failures", fc.consecutiveFailures,
+				"max_backoff", fleetStatsRetryMaxDelay.String())
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(delay):
 		}
-		delay *= 2
 	}
 	if fc.logger != nil {
-		// Warn, not Debug: a failure here means this hive silently drops out
-		// of the public fleet-stats total, and the only symptom is a blank
-		// strip on the landing page. That is not something to hide at a log
-		// level nobody enables.
-		fc.logger.Warn("fleet stats collect failed after all retries; this hive will not contribute to the fleet total",
-			"error", err, "author", fc.author, "org", fc.org, "attempts", fleetStatsRetryAttempts)
+		// Warn, not Debug, the first time: a failure here means this hive
+		// silently drops out of the public fleet-stats total, and the only
+		// symptom is a blank strip on the landing page. That is not something
+		// to hide at a log level nobody enables. Repeats within the same
+		// failure streak are Debug.
+		level := slog.LevelDebug
+		if !fc.exhaustedWarned {
+			level = slog.LevelWarn
+			fc.exhaustedWarned = true
+		}
+		fc.logger.Log(ctx, level, "fleet stats collect failed after all retries; this hive will not contribute to the fleet total",
+			"error", err, "author", fc.author, "org", fc.org, "attempts", fleetStatsRetryAttempts,
+			"consecutive_failures", fc.consecutiveFailures)
 	}
 }
 

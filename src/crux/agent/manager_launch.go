@@ -338,8 +338,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	// clean; a relaunch on the same rejected id keeps the count and the kick
 	// backoff, because nothing about it changed (model_rejection.go).
 	m.clearStaleModelRejectionLocked(agent, agent.effectiveModel(), now)
-	agent.StartedAt = &now
-	agent.launchGen++
+	m.markCLILaunchedLocked(agent, now)
 	m.logger.Info("audit: agent started",
 		"name", agent.Name,
 		"backend", backend,

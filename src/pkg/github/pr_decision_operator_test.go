@@ -315,8 +315,8 @@ func TestProwManagedLabels(t *testing.T) {
 		{[]string{"lgtm", "role/trusted", PRNeedsDecisionStageLabel}, false},
 		{nil, false},
 	} {
-		if got := prowManagedLabels(tc.labels); got != tc.want {
-			t.Errorf("prowManagedLabels(%v) = %v, want %v", tc.labels, got, tc.want)
+		if got := ProwManagedLabels(tc.labels); got != tc.want {
+			t.Errorf("ProwManagedLabels(%v) = %v, want %v", tc.labels, got, tc.want)
 		}
 	}
 }
@@ -385,6 +385,41 @@ func TestRecordOperatorPullRequestApprovalSkipsCommandsProwRejected(t *testing.T
 			}
 			if review.HumanApprovalFor(store, "org/repo", liveDecisionPR, liveDecisionHead) == nil {
 				t.Fatal("the approval must be recorded against the head whether or not the commands were posted")
+			}
+		})
+	}
+}
+
+// On a Prow repo where rejection has not been observed yet, Prow answers the
+// relayed commands after they are posted. The approval event reports that
+// reply instead of leaving the board at "approved" (hivecommons/hive#17475).
+func TestRecordOperatorPullRequestApprovalReportsProwRejectionAfterPost(t *testing.T) {
+	oldWindow, oldInterval := prowReplyWindow, prowReplyInterval
+	prowReplyWindow, prowReplyInterval = time.Second, 10*time.Millisecond
+	t.Cleanup(func() { prowReplyWindow, prowReplyInterval = oldWindow, oldInterval })
+	at := time.Date(2026, 10, 29, 0, 32, 0, 0, time.UTC).Format(time.RFC3339)
+	own := unparkWireComment{ID: 9001, Body: renderPRApprovalCommandComment("/lgtm", "clubanderson", liveDecisionHead), User: wireUser{Login: "hive[bot]"}, CreatedAt: at, UpdatedAt: at}
+	reply := unparkWireComment{ID: 9100, Body: "@hive[bot]: changing LGTM is restricted to collaborators\n\nIn response to [this](https://github.com/org/repo/pull/1#issuecomment-9001):", User: wireUser{Login: "kubestellar-prow[bot]"}, CreatedAt: at, UpdatedAt: at}
+	for _, tc := range []struct {
+		name   string
+		labels []string
+		after  []unparkWireComment
+		want   bool
+	}{
+		{"prow rejects", []string{"size/XS"}, []unparkWireComment{own, reply}, true},
+		{"prow silent", []string{"size/XS"}, []unparkWireComment{own}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := hiveParkedPR()
+			pr.Labels = append(pr.Labels, wireLabel{Name: tc.labels[0]})
+			c, rec := newUnparkPRClient(t, []unparkWireIssue{pr}, map[string]string{"clubanderson": "admin"})
+			rec.replyAfterPost = map[int][]unparkWireComment{liveDecisionPR: tc.after}
+			event, err := c.RecordOperatorPullRequestApprovalWith(context.Background(), "org/repo", liveDecisionPR, "clubanderson", PullRequestApprovalOptions{HumanChangeRequests: review.NewHumanChangeRequests("")})
+			if err != nil {
+				t.Fatalf("approval: %v", err)
+			}
+			if event.ProwRejected != tc.want || event.CommandsSkipped != "" || len(rec.posted[liveDecisionPR]) != len(PRApprovalCommands) {
+				t.Fatalf("event = %+v, want ProwRejected %v with commands posted", event, tc.want)
 			}
 		})
 	}

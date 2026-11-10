@@ -114,6 +114,11 @@ type Claim struct {
 	// stage/020-claimed whatever its Kind (hivecommons/hive#13069). Once set
 	// it stays for the claim's life — a renewal never clears it.
 	PRStarted bool `json:"pr_started,omitempty"`
+	// PRRepo / PRNumber name the open pull request a claim is held for once
+	// its holder's lease ended with that PR covering the issue
+	// (hivecommons/hive#17300, HoldForPR). Zero for every other claim.
+	PRRepo   string `json:"pr_repo,omitempty"`
+	PRNumber int    `json:"pr_number,omitempty"`
 	// ClaimedAt is when the current holder took the claim.
 	ClaimedAt time.Time `json:"claimed_at"`
 	// ExpiresAt is when the claim lapses unless renewed.
@@ -720,6 +725,48 @@ func (l *Ledger) ReleaseByHolderID(holderID, reason string, onlyKey ...string) [
 	}
 	return out
 }
+
+// HoldForPR keeps holderID's live claim on key as a PR-held claim instead of
+// letting it go with the lease that carried it (hivecommons/hive#17300): it
+// records the covering pull request (PRStarted, PRRepo, PRNumber) and pushes
+// the expiry out to the policy's longest hold, so every ledger reader keeps
+// seeing the issue as taken by the same principal while the PR is open. The
+// caller re-confirms the PR and calls it again to renew, or releases the
+// claim once the PR merges or closes. OnClaimed fires only when the PR
+// evidence changed, so a periodic renewal does not touch GitHub. Reports
+// false when holderID holds no live claim on key.
+func (l *Ledger) HoldForPR(holderID, key, prRepo string, prNumber int) (Claim, bool) {
+	prRepo = strings.TrimSpace(prRepo)
+	if l == nil || holderID == "" || key == "" || prNumber <= 0 {
+		return Claim{}, false
+	}
+	l.mu.Lock()
+	now := l.now()
+	c, ok := l.claims[key]
+	if !ok || c.Expired(now) || c.HolderID != holderID {
+		l.mu.Unlock()
+		return Claim{}, false
+	}
+	changed := !c.PRStarted || c.PRRepo != prRepo || c.PRNumber != prNumber
+	c.PRStarted, c.PRRepo, c.PRNumber = true, prRepo, prNumber
+	hold := l.policy.MaxTTL
+	if hold <= 0 {
+		hold = DefaultMaxTTL
+	}
+	c.ExpiresAt = now.Add(hold)
+	l.claims[key] = c
+	_ = l.saveLocked()
+	hooks := l.hooks
+	l.mu.Unlock()
+	if changed && hooks.OnClaimed != nil {
+		hooks.OnClaimed(c, OutcomeRenewed)
+	}
+	return c, true
+}
+
+// ReasonCoveringPRDone is the release reason for a PR-held claim (HoldForPR)
+// whose covering pull request merged, closed, or stopped covering the issue.
+const ReasonCoveringPRDone = "covering PR merged or closed"
 
 // ReasonHolderRelaunched is the release reason recorded when a hive agent's
 // CLI was relaunched (hive boot, operator or self-heal restart): the context

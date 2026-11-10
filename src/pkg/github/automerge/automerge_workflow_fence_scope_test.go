@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // testReleaseWorkflow is the release-critical workflow the scope tests list
@@ -256,25 +257,17 @@ func scopedStageFence(release bool) func(*Engine) {
 // The stage engine's 085 note names the fence the lane applies. Behind a
 // sentinel alert (which the lane reaches before its diff fence) an unlisted
 // workflow edit is not called a manual merge or an approval-gated fence,
-// and a listed one still is. On v6 tip the unlisted case reads "merge this
-// PR manually", as for any workflow edit.
+// and a listed one still is. The sentinel is a gate riding the head's real
+// stage (hivecommons/hive#17327): with no fence the requires_human verdict's
+// concrete remediation is the author's to make (071) and no 085 note is
+// posted, so nothing can call it a manual merge.
 func TestWorkflowFenceScopeStageNoteAgreesWithLane(t *testing.T) {
 	t.Run("unlisted workflow", func(t *testing.T) {
-		_, closeAPI, sweep := manualMergeSweepWith(t, scopedStageFence(false), []string{".github/workflows/lint.yml"}, requiresHumanVerdict,
+		_, closeAPI, sweep := manualMergeSweepTo(t, stagelabels.NeedsAuthor, scopedStageFence(false), []string{".github/workflows/lint.yml"}, requiresHumanVerdict,
 			contributorLaneReasonSentinelBlocked, "role/trusted", "author/clanker", "stage/050-review-pending", "sentinel-alert")
 		defer closeAPI()
-		comments := sweep()
-		if len(comments) != 1 {
-			t.Fatalf("comments = %q", comments)
-		}
-		c := comments[0]
-		if !strings.Contains(c, "Needs a decision, not a merge") || !strings.Contains(c, "approves this head") {
-			t.Fatalf("085 comment = %q", c)
-		}
-		for _, unwanted := range []string{"merge this PR manually", "edits CI workflow / action files", "workflow-file fence"} {
-			if strings.Contains(c, unwanted) {
-				t.Fatalf("085 comment must not say %q for a workflow edit outside the fence scope:\n%s", unwanted, c)
-			}
+		if comments := sweep(); len(comments) != 0 {
+			t.Fatalf("a workflow edit outside the fence scope must not be parked at 085: %q", comments)
 		}
 	})
 	t.Run("listed workflow", func(t *testing.T) {
