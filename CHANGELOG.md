@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.13.2)
+
+### Fixed
+
+- Merge requests: a cancelled check (for example the 20-minute advisory mutation job timing out) no longer blocks the merge gate when the base branch's required checks cannot be read; GitHub still enforces the real required checks at merge time. When the required set is known to be empty (nothing enforced server-side), a cancelled non-advisory check still blocks locally, as do failed and timed-out checks (hivecommons/hive#17598).
+
 ## 2026-11-10 (v6.13.1)
 
 ### Fixed
