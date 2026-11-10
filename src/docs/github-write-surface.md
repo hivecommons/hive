@@ -158,6 +158,7 @@ writes no entry.
 | Supersession sweep (notice, `hive/superseded` close, own-PR update-branch + body `Closes`→`Refs` rewrite, `needs-human` + `Parked` fact on escalation) | `pr_supersession_sweep.go`, `pr_supersession_autoclose.go`, `pr_supersession_resolve.go` | yes (`supersession-sweep-*`) | yes |
 | Shared-CI rerun (`rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment) | `shared_ci_rerun.go` | yes (`shared-ci-rerun`) | yes |
 | Transient-CI rerun (`rerun-failed-jobs` on a hive PR whose failing runs carry `hive-ci-transient`, once per head, no comment) | `transient_ci_rerun.go` | yes (`transient-ci-rerun`) | yes |
+| Stale-red base refresh (`update-branch` on a red PR behind its base whose failing checks are green on the base tip, once per head and base tip, no comment) | `stale_red_base_refresh.go` | yes (`stale-red-base-refresh`) | yes |
 | Open-PR dispatch guard (`has-open-pr` label on a refused issue) and duplicate-fix sweep (one `hive:duplicate-fix` comment; `hive/superseded` close of the later hive PR, or `needs-human` + `Parked` fact on escalation) | `open_pr_links.go`, `pr_duplicate_fix_sweep.go` | yes (`duplicate-fix-*`) | yes |
 | Duplicate-PR sweep suggestions | `duplicate_sweep.go` | yes (`duplicate-sweep-suggested`) | yes (target = surviving PR) |
 | Hold-label migration (one-time) | `hive_hold_migration.go` | yes (`hold_migration_label_added`, one per item labeled; the migration report file is still written) | yes |
