@@ -303,6 +303,10 @@ type Options struct {
 	// instead of the transport's shared one: a read-only evaluation must
 	// not mark a head as tried (automerge_sweep_memory.go).
 	isolatedSweepMemory bool
+	// observeOnly builds the engine for a lane's observe-only pass on a
+	// repo whose auto-merge is off (automerge_observe_only.go): it records
+	// stage evidence and refuses every write.
+	observeOnly bool
 }
 
 // Engine owns the automerge sweep policy state.
@@ -497,6 +501,8 @@ type Engine struct {
 	fixDispatch              func(repo string, number int, head string) (review.FixDispatchStatus, bool)
 	hotspotRecorder          HotspotRecorder
 	integrationFilesObserved func(repo, head string, files []string)
+	// observeOnly: see Options.observeOnly. The write helpers check it.
+	observeOnly bool
 	mergeTrainState
 }
 
@@ -569,6 +575,7 @@ func New(transport Transport, opts Options) *Engine {
 		fixDispatch:                       opts.FixDispatchStatus,
 		hotspotRecorder:                   opts.HotspotRecorder,
 		integrationFilesObserved:          opts.IntegrationFilesObserved,
+		observeOnly:                       opts.observeOnly,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}

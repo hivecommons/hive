@@ -29,6 +29,9 @@ func (c *Engine) writebackGate() *writeback.Gate {
 // engine). A refusal is recorded by the gate for the dashboard drill-down;
 // the caller skips the write.
 func (c *Engine) writebackAllowed(repo string, item writeback.Item, kind writeback.Kind, preview string) writeback.Decision {
+	if c != nil && c.observeOnly {
+		return writeback.Decision{Reason: observeOnlyReasonRepoAutoMergeDisabled, Detail: "observe-only pass on a repo whose auto-merge is off"}
+	}
 	return c.writebackGate().AllowedPreview(repo, item, kind, preview)
 }
 

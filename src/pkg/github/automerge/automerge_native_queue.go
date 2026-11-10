@@ -239,6 +239,11 @@ func (c *Engine) routeIntegrationMerge(ctx context.Context, pr *gh.PullRequest, 
 		capture.pr = pr
 		return false, integrationEligibilityCaptured, nil
 	}
+	if c.observeOnly {
+		// An observe-only pass stops at the merge decision: no merge, no
+		// native-queue enqueue (automerge_observe_only.go).
+		return false, observeOnlyReasonRepoAutoMergeDisabled, nil
+	}
 	requiredNative := false
 	if c.integrationExecution != nil {
 		decision, err := c.integrationExecution(ctx, claim.Repo, pr, c.IntegrationEligibility)
@@ -361,6 +366,9 @@ func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequ
 // reconcileNativeQueueGate runs for the owning lane's rejected candidates,
 // including cheap prefilter holds. Never withdraw another actor's entry.
 func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo string, pr *gh.PullRequest, reason string) {
+	if c == nil || c.observeOnly {
+		return
+	}
 	t := c.nativeQueue(owner + "/" + repo)
 	if t == nil || pr == nil || pr.GetNodeID() == "" || !nativeQueueWithdrawReason(reason) {
 		return
