@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-mutation-report.sh — exercises mutation-report.sh against a throwaway
 # git repository and a stub `gremlins` that replays a canned JSON report, so
-# the verdict logic (misrouted / lived / uncovered / pass) is pinned without
+# the verdict logic (error / misrouted / lived / uncovered / pass) is pinned without
 # compiling or mutating any Go.
 set -u -o pipefail
 
@@ -17,7 +17,9 @@ pass() { echo "  ok: $*"; }
 bad()  { echo "  FAIL: $*"; fail=1; }
 out_grep() { grep "$@" <<<"$output"; }
 
-# Stub gremlins: copies $GREMLINS_FIXTURE to the --output path.
+# Stub gremlins: copies $GREMLINS_FIXTURE to the --output path. GREMLINS_EXIT=N
+# makes it exit N without writing a report (gremlins returns before report.Do
+# on error); GREMLINS_NO_OUTPUT=1 exits 0 without writing one.
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gremlins" <<'EOF'
 #!/usr/bin/env bash
@@ -26,8 +28,10 @@ while [ $# -gt 0 ]; do
   case "$1" in --output) out="$2"; shift ;; esac
   shift
 done
-[ -n "$out" ] && cp "$GREMLINS_FIXTURE" "$out"
 echo "stub gremlins ran in $(pwd)"
+[ -n "${GREMLINS_EXIT:-}" ] && exit "$GREMLINS_EXIT"
+[ -n "${GREMLINS_NO_OUTPUT:-}" ] && exit 0
+[ -n "$out" ] && cp "$GREMLINS_FIXTURE" "$out"
 EOF
 chmod +x "$TMP/bin/gremlins"
 export PATH="$TMP/bin:$PATH"
@@ -67,6 +71,9 @@ run_case pass-killed
 [ "$run_rc" -eq 0 ] && pass "run phase exits 0" || bad "run phase exit $run_rc"
 grep -qx $'src/pkg/x/x.go\t11\t16' "$MUTATION_OUT_DIR/added.tsv" \
   && pass "added.tsv records lines 11-16" || bad "added.tsv: $(cat "$MUTATION_OUT_DIR/added.tsv")"
+grep -qx $'src/pkg/x/x.go\t11\t16' "$MUTATION_OUT_DIR/gremlins.tsv" \
+  && pass "gremlins.tsv matches for a contiguous append" || bad "gremlins.tsv: $(cat "$MUTATION_OUT_DIR/gremlins.tsv")"
+[ -s "$MUTATION_OUT_DIR/errors.tsv" ] && bad "errors.tsv not empty: $(cat "$MUTATION_OUT_DIR/errors.tsv")" || pass "errors.tsv empty"
 [ "$(cat "$MUTATION_OUT_DIR/verdict")" = pass ] && pass "verdict pass" || bad "verdict $(cat "$MUTATION_OUT_DIR/verdict")"
 out_grep -q 'All 1 mutant(s) in changed files were killed' && pass "all-killed summary" || bad "all-killed summary missing"
 (cd "$repo" && PR_LABELS= MUTATION_OUT_DIR="$MUTATION_OUT_DIR" bash "$SCRIPT" verdict >/dev/null 2>&1) \
@@ -115,6 +122,57 @@ output=$(cd "$repo" && PR_LABELS='size/S' MUTATION_OUT_DIR="$MUTATION_OUT_DIR" b
 [ "$rc" -eq 0 ] && out_grep -q '::warning::mutation: mutant(s) in changed files are not reached' \
   && pass "uncovered warns but exits 0" || bad "uncovered rc=$rc: $output"
 
+echo "error: gremlins exits non-zero and writes no report"
+fixture unused '[]'
+export GREMLINS_EXIT=1
+run_case gremlins-fails
+unset GREMLINS_EXIT
+[ "$run_rc" -eq 0 ] && pass "run phase still exits 0" || bad "run phase exit $run_rc"
+[ "$(cat "$MUTATION_OUT_DIR/verdict")" = error ] && pass "verdict error" || bad "verdict $(cat "$MUTATION_OUT_DIR/verdict")"
+grep -qx $'pkg/x\texited 1' "$MUTATION_OUT_DIR/errors.tsv" && pass "errors.tsv names the package and exit code" || bad "errors.tsv: $(cat "$MUTATION_OUT_DIR/errors.tsv")"
+out_grep -q '::error::gremlins exited 1 for pkg/x' && pass "run log carries ::error" || bad "run log ::error missing"
+out_grep -q 'gremlins did not produce a report for 1 package(s)' && pass "comment reports the failure" || bad "comment failure summary missing"
+out_grep -q -- '- `pkg/x`: gremlins exited 1' && pass "comment names the package" || bad "comment package row missing"
+out_grep -q 'No mutants in changed files' && bad "false 'nothing to mutate' explanation on a failed run" || pass "no 'nothing to mutate' explanation"
+output=$(cd "$repo" && PR_LABELS='mutation/acknowledged' MUTATION_OUT_DIR="$MUTATION_OUT_DIR" bash "$SCRIPT" verdict 2>&1); rc=$?
+[ "$rc" -eq 1 ] && out_grep -q '::error::mutation: gremlins failed or wrote no report' \
+  && pass "verdict phase exits 1 on error (label does not waive)" || bad "verdict phase rc=$rc: $output"
+
+echo "error: gremlins exits 0 but writes no report"
+export GREMLINS_NO_OUTPUT=1
+run_case gremlins-silent
+unset GREMLINS_NO_OUTPUT
+[ "$(cat "$MUTATION_OUT_DIR/verdict")" = error ] && pass "verdict error" || bad "verdict $(cat "$MUTATION_OUT_DIR/verdict")"
+grep -qx $'pkg/x\twrote no report' "$MUTATION_OUT_DIR/errors.tsv" && pass "errors.tsv records the missing report" || bad "errors.tsv: $(cat "$MUTATION_OUT_DIR/errors.tsv")"
+
+echo "split hunk: non-contiguous added lines sharing one default-context hunk"
+# Base x.go is lines 1-10; insert two lines after 3 and two after 7. -U0 adds
+# 4-5 and 10-11, but -U3 merges both into @@ -1,10 +1,14 @@ with 3 leading
+# context lines, so gremlins v0.6.0 only honours 4-7.
+git checkout -q -b split refs/remotes/origin/main
+{ for i in 1 2 3; do echo "// line $i"; done; echo 'var a = 1 + 1'; echo 'var b = 2 + 2'
+  for i in 4 5 6 7; do echo "// line $i"; done; echo 'var c = 3 + 3'; echo 'var d = 4 + 4'
+  for i in 8 9 10; do echo "// line $i"; done; } > src/pkg/x/x.go
+git add . && git commit -q -m split
+fixture split '[{"line":4,"column":9,"type":"ARITHMETIC_BASE","status":"KILLED"},{"line":10,"column":9,"type":"ARITHMETIC_BASE","status":"SKIPPED"},{"line":11,"column":9,"type":"ARITHMETIC_BASE","status":"SKIPPED"}]'
+run_case split
+[ "$(tr '\n' ' ' < "$MUTATION_OUT_DIR/added.tsv")" = $'src/pkg/x/x.go\t4\t5 src/pkg/x/x.go\t10\t11 ' ] \
+  && pass "added.tsv records 4-5 and 10-11" || bad "added.tsv: $(cat "$MUTATION_OUT_DIR/added.tsv")"
+[ "$(cat "$MUTATION_OUT_DIR/gremlins.tsv")" = $'src/pkg/x/x.go\t4\t7' ] \
+  && pass "gremlins.tsv records the honoured approximation 4-7" || bad "gremlins.tsv: $(cat "$MUTATION_OUT_DIR/gremlins.tsv")"
+[ "$(cat "$MUTATION_OUT_DIR/verdict")" = pass ] && pass "SKIPPED on added lines gremlins does not honour is not misrouted" || bad "verdict $(cat "$MUTATION_OUT_DIR/verdict")"
+[ -s "$MUTATION_OUT_DIR/misrouted-changed.tsv" ] && bad "misrouted: $(cat "$MUTATION_OUT_DIR/misrouted-changed.tsv")" || pass "misrouted list empty"
+[ "$(wc -l < "$MUTATION_OUT_DIR/unhonoured-changed.tsv" | tr -d ' ')" = 2 ] && pass "two unhonoured mutants recorded" || bad "unhonoured: $(cat "$MUTATION_OUT_DIR/unhonoured-changed.tsv")"
+out_grep -q '2 mutant(s) on added lines were SKIPPED because gremlins v0.6.0 only honours' && pass "hunk-approximation note" || bad "hunk-approximation note missing"
+out_grep -q '| `src/pkg/x/x.go` | 10 | ARITHMETIC_BASE |' && pass "unhonoured row listed" || bad "unhonoured row missing"
+out_grep -q 'All 1 mutant(s) in changed files were killed' && pass "killed summary still shown" || bad "killed summary missing"
+(cd "$repo" && MUTATION_OUT_DIR="$MUTATION_OUT_DIR" bash "$SCRIPT" verdict >/dev/null 2>&1) \
+  && pass "verdict phase exits 0" || bad "verdict phase failed on split hunk"
+fixture split-misrouted '[{"line":4,"column":9,"type":"ARITHMETIC_BASE","status":"SKIPPED"},{"line":10,"column":9,"type":"ARITHMETIC_BASE","status":"SKIPPED"}]'
+run_case split-misrouted
+[ "$(cat "$MUTATION_OUT_DIR/verdict")" = misrouted ] && pass "SKIPPED inside the honoured range is still misrouted" || bad "verdict $(cat "$MUTATION_OUT_DIR/verdict")"
+out_grep -q '1 mutant(s) on lines this PR added were SKIPPED' && pass "misrouted count excludes the unhonoured line" || bad "misrouted summary wrong"
+
 echo "no changed Go files"
 git checkout -q -b docs-only refs/remotes/origin/main
 echo x > README.md && git add README.md && git commit -q -m docs
@@ -122,7 +180,8 @@ export MUTATION_OUT_DIR="$TMP/out-docs"
 output=$(BASE_REF=main bash "$SCRIPT" run 2>&1)
 [ "$(cat "$MUTATION_OUT_DIR/verdict")" = pass ] && pass "docs-only PR writes verdict pass" || bad "docs-only verdict: $(cat "$MUTATION_OUT_DIR/verdict" 2>&1)"
 output=$(MUTATION_OUT_DIR="$TMP/missing" bash "$SCRIPT" verdict 2>&1); rc=$?
-[ "$rc" -eq 0 ] && pass "missing verdict file defaults to pass" || bad "missing verdict rc=$rc"
+[ "$rc" -eq 1 ] && out_grep -q '::error::mutation: no verdict at' \
+  && pass "missing verdict file fails the verdict phase" || bad "missing verdict rc=$rc: $output"
 
 if [ "$fail" -ne 0 ]; then
   echo "test-mutation-report.sh: FAILED"
