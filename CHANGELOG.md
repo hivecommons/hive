@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.12.5)
+
+### Fixed
+
+- Claude credential bridge: the repair no longer acts on an agent whose whole `~/.claude` is still the legacy directory symlink to the shared `/data/home/.claude` (a paused or stopped agent that was never relaunched). Through that link the agent's credential path IS the shared login, so the watchdog renamed the shared file to `.stale-<UTC>` every cycle and, when the shared file held no token, linked `.credentials.json` to itself, logging every Claude agent out. The repair and the dashboard's "credential bridge broken" signal now resolve the link's directory first and skip that layout with one warning per agent; the agent's next launch already retires the directory link (#17253).
+
 ## 2026-11-10 (v6.12.4)
 
 ### Fixed
