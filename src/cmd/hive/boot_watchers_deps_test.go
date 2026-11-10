@@ -244,11 +244,13 @@ func TestBootWatchersWith_ReloadWithChangedIdentityRebuildsAuth(t *testing.T) {
 
 // A config reload runs on the watcher's timer goroutine and mutates *cfg
 // (including the cfg.Agents map) that the governor loop's ticks read. It must
-// wait for cfgReloadMu, or a reload racing the fast agent-status tick crashes
-// the process with "concurrent map read and map write".
-func TestBootWatchersWith_ReloadWaitsForConfigLock(t *testing.T) {
+// not touch cfg while the loop holds cfgReloadMu, or a reload racing the fast
+// agent-status tick crashes the process with "concurrent map read and map
+// write". It must not wait for the lock either: the loop holds it for whole
+// ticks, which starved hot-reload (hivecommons/hive#17467). The reload is
+// parked and applied when the holder releases the lock.
+func TestBootWatchersWith_ReloadDefersWhileConfigLockHeld(t *testing.T) {
 	const reloadWait = 5 * time.Second
-	const blockedCheck = 100 * time.Millisecond
 
 	f := newBootWatchersFake()
 	cfg := bootWatchersConfig()
@@ -265,7 +267,7 @@ func TestBootWatchersWith_ReloadWaitsForConfigLock(t *testing.T) {
 		"scanner": {Enabled: true, Backend: "copilot", Model: "gpt-5.4"},
 	}
 
-	b.cfgReloadMu.Lock()
+	b.lockCfg()
 	done := make(chan struct{})
 	go func() {
 		f.onReload(newCfg)
@@ -274,22 +276,16 @@ func TestBootWatchersWith_ReloadWaitsForConfigLock(t *testing.T) {
 
 	select {
 	case <-done:
-		b.cfgReloadMu.Unlock()
-		t.Fatal("reload applied while the governor loop held cfgReloadMu")
-	case <-time.After(blockedCheck):
+	case <-time.After(reloadWait):
+		b.unlockCfg()
+		t.Fatal("reload callback blocked on cfgReloadMu held by the governor loop")
 	}
 	if sameStringSlice(cfg.Project.Repos, []string{"widgets", "reloaded"}) {
-		b.cfgReloadMu.Unlock()
+		b.unlockCfg()
 		t.Fatal("reload mutated cfg while the governor loop held cfgReloadMu")
 	}
-
-	b.cfgReloadMu.Unlock()
-	select {
-	case <-done:
-	case <-time.After(reloadWait):
-		t.Fatal("reload never completed after cfgReloadMu was released")
-	}
+	b.unlockCfg()
 	if !sameStringSlice(cfg.Project.Repos, []string{"widgets", "reloaded"}) {
-		t.Fatalf("repos = %v after reload, want the reloaded list", cfg.Project.Repos)
+		t.Fatalf("repos = %v after the lock was released, want the reloaded list", cfg.Project.Repos)
 	}
 }
