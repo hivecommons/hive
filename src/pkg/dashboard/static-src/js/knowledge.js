@@ -1657,8 +1657,8 @@
               </select>
             </label>
           </div>
-          <label class="muted-note">Content
-            <textarea id="kb-import-content" rows="24" style="width:100%;margin-top:var(--sp-2);padding:var(--sp-4);border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg);font-size:0.78rem;font-family:var(--font-mono);resize:vertical;min-height:320px" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(',')..."></textarea>
+          <label class="muted-note">Content <span aria-hidden="true">*</span>
+            <textarea id="kb-import-content" required aria-required="true" rows="24" style="width:100%;margin-top:var(--sp-2);padding:var(--sp-4);border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg);font-size:0.78rem;font-family:var(--font-mono);resize:vertical;min-height:320px" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(',')..."></textarea>
           </label>
           <div style="display:flex;align-items:center;gap:10px;margin-top:var(--sp-2)">
             <label style="font-size:0.72rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:var(--sp-2)">
@@ -1692,9 +1692,9 @@
       const layer = document.getElementById('kb-import-layer')?.value;
       const format = document.getElementById('kb-import-format')?.value;
 
-      if (!content) { await hiveAlert('Content is required'); return; }
-      if (!layer) { await hiveAlert('Pick a channel to import into, or create one with "+ New channel".'); return; }
-      if (layer === RESERVED_KB_CHANNEL) { await hiveAlert(RESERVED_KB_CHANNEL + ' is reserved for automation. Choose or create another channel.'); return; }
+      if (!content) { kbFieldError(document.getElementById('kb-import-content'), 'Content is required'); return; }
+      if (!layer) { kbFieldError(document.getElementById('kb-import-layer'), 'Pick a channel to import into, or create one with "+ New channel".'); return; }
+      if (layer === RESERVED_KB_CHANNEL) { kbFieldError(document.getElementById('kb-import-layer'), RESERVED_KB_CHANNEL + ' is reserved for automation. Choose or create another channel.'); return; }
 
       try {
         const r = await fetch('/api/knowledge/import', {
@@ -1863,8 +1863,8 @@
 
         html += '<details open class="kb-sources-add"><summary class="summary-label">Add Git Source</summary>';
         html += '<div class="stack kb-sources-form">';
-        html += '<input id="kb-gs-url" type="text" class="kb-search-box" placeholder="https://github.com/org/repo">';
-        html += '<input id="kb-gs-name" type="text" class="kb-search-box" placeholder="Display name">';
+        html += '<input id="kb-gs-url" type="text" class="kb-search-box" required aria-required="true" placeholder="Repository URL * (https://github.com/org/repo)">';
+        html += '<input id="kb-gs-name" type="text" class="kb-search-box" required aria-required="true" placeholder="Display name *">';
         html += '<input id="kb-gs-subpath" type="text" class="kb-search-box" placeholder="Subpath (e.g. docs/skills)">';
         html += '<input id="kb-gs-branch" type="text" class="kb-search-box" placeholder="Branch (default: main)">';
         html += `<select id="kb-gs-layer" class="field-input">
@@ -1900,7 +1900,7 @@
 
         html += '<details open class="kb-sources-add"><summary class="summary-label">Add Subscription</summary>';
         html += '<div class="stack kb-sources-form">';
-        html += '<input id="kb-sub-url" type="text" class="kb-search-box" placeholder="https://wiki.example.com/mcp">';
+        html += '<input id="kb-sub-url" type="text" class="kb-search-box" required aria-required="true" placeholder="URL * (https://wiki.example.com/mcp)">';
         html += `<input id="kb-sub-name" type="text" class="kb-search-box" placeholder="Display name">`;
         html += `<select id="kb-sub-layer" class="field-input">
           <option value="project">Project</option>
@@ -1947,7 +1947,7 @@
 
         html += '<details open class="kb-sources-add"><summary class="summary-label">Import Document</summary>';
         html += '<div class="stack kb-sources-form">';
-        html += '<input id="kb-doc-url" type="text" class="kb-search-box" placeholder="https://arxiv.org/pdf/2309.06180">';
+        html += '<input id="kb-doc-url" type="text" class="kb-search-box" required aria-required="true" placeholder="URL * (https://arxiv.org/pdf/2309.06180)">';
         html += '<input id="kb-doc-name" type="text" class="kb-search-box" placeholder="Name (optional, derived from URL)">';
         html += `<select id="kb-doc-layer" class="field-input">
           <option value="project">Project</option>
@@ -2007,7 +2007,7 @@
           <option value="markdown" selected>Markdown</option>
           <option value="json">JSON</option>
         </select>`;
-        html += '<textarea id="kb-import-content" rows="8" class="kb-sources-textarea" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(\',\')..."></textarea>';
+        html += '<textarea id="kb-import-content" rows="8" class="kb-sources-textarea" required aria-required="true" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(\',\')..."></textarea>';
         html += '<div class="row-between kb-sources-actions">';
         html += '<label class="kb-sources-file"><span>or load from file:</span><input type="file" accept=".md,.json,.txt" data-change-action="kbLoadFile" data-arg-types="t"></label>';
         html += '<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbSubmitImport">Import</button>';
@@ -2023,6 +2023,30 @@
       }
     }
 
+    function kbClearFieldError(el) {
+      if (!el) return;
+      el.classList.remove('field-invalid');
+      el.removeAttribute('aria-invalid');
+      const next = el.nextElementSibling;
+      if (next && next.classList.contains('field-error')) next.remove();
+    }
+
+    // Marks a required input invalid, shows msg directly under it and focuses it; clears on the next edit.
+    function kbFieldError(el, msg) {
+      if (!el) { showToast(msg, 'error'); return; }
+      kbClearFieldError(el);
+      el.classList.add('field-invalid');
+      el.setAttribute('aria-invalid', 'true');
+      const err = document.createElement('div');
+      err.className = 'field-error';
+      err.setAttribute('role', 'alert');
+      err.textContent = msg;
+      el.insertAdjacentElement('afterend', err);
+      el.addEventListener('input', () => kbClearFieldError(el), { once: true });
+      el.addEventListener('change', () => kbClearFieldError(el), { once: true });
+      el.focus();
+    }
+
     async function kbAddGitSource() {
       const url = document.getElementById('kb-gs-url')?.value?.trim();
       const name = document.getElementById('kb-gs-name')?.value?.trim();
@@ -2030,8 +2054,8 @@
       const branch = document.getElementById('kb-gs-branch')?.value?.trim();
       const layer = document.getElementById('kb-gs-layer')?.value;
 
-      if (!url) { await hiveAlert('Repository URL is required'); return; }
-      if (!name) { await hiveAlert('Display name is required'); return; }
+      if (!url) { kbFieldError(document.getElementById('kb-gs-url'), 'Repository URL is required'); return; }
+      if (!name) { kbFieldError(document.getElementById('kb-gs-name'), 'Display name is required'); return; }
 
       const btn = document.querySelector('#kb-subs-content button[onclick="kbAddGitSource()"]');
       if (btn) { btn.disabled = true; btn.textContent = 'Cloning...'; }
@@ -2069,7 +2093,7 @@
       const name = document.getElementById('kb-sub-name')?.value?.trim();
       const layer = document.getElementById('kb-sub-layer')?.value;
 
-      if (!url) { await hiveAlert('URL is required'); return; }
+      if (!url) { kbFieldError(document.getElementById('kb-sub-url'), 'URL is required'); return; }
 
       try {
         const r = await fetch('/api/knowledge/subscriptions', {
@@ -2101,7 +2125,7 @@
       const name = document.getElementById('kb-doc-name')?.value?.trim();
       const layer = document.getElementById('kb-doc-layer')?.value;
 
-      if (!url) { await hiveAlert('Document URL is required'); return; }
+      if (!url) { kbFieldError(document.getElementById('kb-doc-url'), 'Document URL is required'); return; }
 
       const btn = document.querySelector('#kb-subs-content button[onclick="kbImportDocFromModal()"]');
       if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
