@@ -235,20 +235,25 @@ func TestTokenRestartCapReArmsAfterGenuineRecovery(t *testing.T) {
 	loginStreak := 0
 	a.simulatePollTick(t, readyPane, &started, now, &loginStreak)
 
-	if a.tokenRestartGaveUp {
-		t.Fatal("latch survived a genuine recovery: a real login would never re-enable the nudge")
-	}
 	if a.tokenRestartAttempts != 0 {
 		t.Fatalf("attempts = %d after recovery, want 0", a.tokenRestartAttempts)
 	}
 	// The per-boot cap is re-armed, but the rolling 24h budget was spent by
 	// the three restarts above (#12466): a nudge inside the window still
-	// gives up, and a nudge once the window has rolled on fires again.
+	// gives up, so the give-up latch must hold through the recovery or that
+	// give-up would re-log the WARN once per pane flap (#17483). A nudge once
+	// the window has rolled on fires again and drops the latch.
+	if !a.tokenRestartGaveUp {
+		t.Fatal("latch cleared by a recovery inside the window: the next give-up would re-log the diagnosis (#17483)")
+	}
 	if got := a.decideTokenRestart(now); got != tokenRestartGiveUp {
 		t.Fatalf("after recovery inside the window: got %v, want giveUp", got)
 	}
 	if got := a.decideTokenRestart(now.Add(tokenRestartWindow + time.Second)); got != tokenRestartFire {
 		t.Fatalf("after recovery and a full window: got %v, want fire", got)
+	}
+	if a.tokenRestartGaveUp {
+		t.Fatal("latch survived a fresh fire after the window drained: a real login would never re-enable the nudge")
 	}
 }
 
