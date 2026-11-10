@@ -621,6 +621,16 @@ Phase 5 registers the fleet-level write operations under that contract:
   of the change in operator terms — a lower effective threshold engages a busier mode at a
   shallower queue, which raises agent cadence and spend — because the number alone does not tell
   an owner what it buys.
+- `project.issue_filter` and `sentinel.settings` wrap `PUT /api/config/governor/labels` and
+  `PUT /api/config/governor/security` for the issue filter's and Sentinel's lists. Both
+  endpoints replace a list they are sent, so each op takes `{add, remove, clear}` per list,
+  reads the current values at preview, and sends the merged list. The preview records a
+  digest of what it read (`WritePreview.Basis`); `write_confirm` rebuilds the preview from a
+  fresh read and refuses with `ErrPreviewStale` when the digest moved, so a confirm never
+  overwrites an edit made in between. A change that admits more issues without triage, or
+  that makes Sentinel flag fewer pull requests, is disclosed as widening, and the Sentinel
+  disclosure names the pull requests that would no longer be held. `decisions.delegate` has
+  no dashboard write endpoint and so no operation.
 
 The Activity monitor's row actions are registered as the `repository.rescan` and
 `repository.item_*` operations, each sending the request the dashboard's button sends

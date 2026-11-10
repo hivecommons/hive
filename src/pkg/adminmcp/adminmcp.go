@@ -578,12 +578,22 @@ func (h *Handler) ConfirmWrite(ctx context.Context, args map[string]any) (any, e
 	if !ok {
 		return nil, fmt.Errorf("registered write operation %q is no longer available", pending.Operation)
 	}
-	preview, err := op.Preview(ctx, pending.Args)
+	// A preview built on settings it read (Basis set) is rebuilt from a fresh
+	// read, so a confirm never overwrites a change made since the preview.
+	var preview WritePreview
+	if po, ok := op.(providerPreviewOp); ok && pending.Preview.Basis != "" {
+		preview, err = po.PreviewWithProvider(ctx, pending.Args, h.Provider)
+	} else {
+		preview, err = op.Preview(ctx, pending.Args)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if preview.Request.Method != pending.Preview.Request.Method || preview.Request.Path != pending.Preview.Request.Path {
 		return nil, fmt.Errorf("write preview changed since confirmation was issued")
+	}
+	if preview.Basis != pending.Preview.Basis {
+		return nil, ErrPreviewStale
 	}
 	// Checked again here: a confirmation stored before this check existed
 	// must not be executed either.
@@ -623,7 +633,7 @@ func pendingValueNeedsFreshConfirm(v any) bool {
 // caller of write_preview and would otherwise duplicate the args (up to a
 // 10 000-char nudge prompt) in every stored entry (#9162).
 func persistedPendingPreview(preview WritePreview) WritePreview {
-	return WritePreview{Operation: preview.Operation, Target: scrubOutboundString(preview.Target), Request: scrubPendingPreview(preview).Request}
+	return WritePreview{Operation: preview.Operation, Target: scrubOutboundString(preview.Target), Request: scrubPendingPreview(preview).Request, Basis: preview.Basis}
 }
 
 func scrubPendingPreview(preview WritePreview) WritePreview {

@@ -34,6 +34,7 @@ var (
 	ErrConfirmationExpired = errors.New("admin MCP confirmation expired")
 	ErrConfirmationMissing = errors.New("admin MCP confirmation not found")
 	ErrConfirmationActor   = errors.New("admin MCP confirmation was previewed by another caller; preview it again yourself")
+	ErrPreviewStale        = errors.New("admin MCP preview is stale: the settings it read changed after write_preview, so nothing was written; preview it again")
 )
 
 type WriteClient interface {
@@ -55,6 +56,10 @@ type WritePreview struct {
 	WideningDisclosure  string         `json:"widening_disclosure"`
 	ConfirmationMessage string         `json:"confirmation_message"`
 	Details             map[string]any `json:"details,omitempty"`
+	// Basis is a digest of the settings a preview read to build its request
+	// (a merged list, say). When set, write_confirm rebuilds the preview from
+	// a fresh read and refuses with ErrPreviewStale if the digest changed.
+	Basis string `json:"basis,omitempty"`
 }
 
 type WriteOp interface {
