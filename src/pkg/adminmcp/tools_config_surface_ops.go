@@ -115,10 +115,10 @@ func listChangeArg(args map[string]any, key, where string) (listChange, bool, er
 		return listChange{}, false, err
 	}
 	var c listChange
-	if c.add, err = stringListValue(m["add"], name+".add"); err != nil {
+	if c.add, err = namedStringList(m["add"], name+".add"); err != nil {
 		return listChange{}, false, err
 	}
-	if c.remove, err = stringListValue(m["remove"], name+".remove"); err != nil {
+	if c.remove, err = namedStringList(m["remove"], name+".remove"); err != nil {
 		return listChange{}, false, err
 	}
 	if raw, present := m["clear"]; present && raw != nil {
@@ -137,7 +137,7 @@ func listChangeArg(args map[string]any, key, where string) (listChange, bool, er
 	return c, true, nil
 }
 
-func stringListValue(raw any, name string) ([]string, error) {
+func namedStringList(raw any, name string) ([]string, error) {
 	if raw == nil {
 		return nil, nil
 	}
