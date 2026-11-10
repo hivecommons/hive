@@ -750,6 +750,28 @@ func isDCOContext(name string) bool {
 // gate (`dco` from Prow's plugin, `DCO` from the DCO GitHub App).
 func IsDCOContext(name string) bool { return isDCOContext(name) }
 
+// isProwMergeGateContext reports the commit statuses Prow posts as merge
+// gates rather than tests: `tide` stays pending until the PR carries
+// lgtm/approved and every presubmit is green; `enforce-guardrails` mirrors
+// repository policy.
+func isProwMergeGateContext(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "tide", "enforce-guardrails":
+		return true
+	}
+	return false
+}
+
+// IsMergeGateContext reports whether a status context / check-run name is a
+// merge gate rather than a test: Prow's `tide` and `enforce-guardrails`
+// statuses plus the DCO sign-off gate (`dco` / `DCO`). The dashboard's CI
+// tally leaves these out of its count, its pending names and its lane state
+// (hivecommons/hive: "CI 18/19 · 'tide' running" on a PR whose tests were
+// all green); merge eligibility still enforces them separately.
+func IsMergeGateContext(name string) bool {
+	return isProwMergeGateContext(name) || isDCOContext(name)
+}
+
 // CommitCIReasonIsPending reports whether a commit-CI skip reason means the
 // checks are still running or not yet reported, as opposed to failing.
 func CommitCIReasonIsPending(reason string) bool { return commitCIReasonIsPending(reason) }

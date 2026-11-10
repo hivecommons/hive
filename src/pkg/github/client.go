@@ -2786,8 +2786,7 @@ func (c *Client) headTreeOID(ctx context.Context, owner, repoName string, pr *Pu
 // for hours (2026-08-04). The merge step itself re-enforces these gates —
 // counting them here only poisons the eligibility signal.
 func isMetaCheck(name string) bool {
-	switch name {
-	case "tide", "enforce-guardrails":
+	if isProwMergeGateContext(name) {
 		return true
 	}
 
