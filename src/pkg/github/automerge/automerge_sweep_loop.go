@@ -42,6 +42,9 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 			break
 		}
 		if !c.repoAutoMergeAllowed(repo) {
+			// No observe-only pass here: this sweep records no stage
+			// evidence on any repo. The self-authored, trusted-author and
+			// contributor lanes observe the same PRs (automerge_observe_only.go).
 			c.info("automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled")
 			continue
 		}
@@ -181,7 +184,14 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			continue
 		}
 		if !c.repoAutoMergeAllowed(repo) {
-			c.info("self-authored automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled")
+			c.info("self-authored automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled && c.repoObservedOnly(repo))
+			c.observeAutoMergeOffRepo(ctx, stageLaneSelf, repo, opts.Targets, func(ctx context.Context, oc *Engine, owner, repoName string, pr *gh.PullRequest) (string, error) {
+				if reason := oc.prefilterSelfAuthoredPR(pr); reason != "" {
+					return reason, nil
+				}
+				_, reason, err := oc.trySweepSelfAuthoredPR(mergeDecisionPriority(ctx), repo, owner, repoName, pr.GetNumber(), false)
+				return reason, err
+			})
 			continue
 		}
 		prs, skipReason, err := c.openPullRequests(ctx, owner, repoName, opts.Targets)
@@ -432,7 +442,21 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			continue
 		}
 		if !c.repoAutoMergeAllowed(displayRepo) {
-			c.info("trusted-author automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled")
+			c.info("trusted-author automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled && c.repoObservedOnly(displayRepo))
+			c.observeAutoMergeOffRepo(ctx, stageLaneTrusted, displayRepo, opts.Targets, func(ctx context.Context, oc *Engine, owner, repoName string, pr *gh.PullRequest) (string, error) {
+				login := hgithub.SafeGetLogin(pr.GetUser())
+				if opts.SelfAuthoredLaneActive && oc.isTrustedBotLaneAuthor(login) {
+					return trustedBotLaneSkipReason, nil
+				}
+				if lane, _ := oc.sweepLaneForAuthor(login); lane == stageLaneSelf {
+					return trustedAuthorReasonAppAuthored, nil
+				}
+				if reason := oc.prefilterTrustedAuthorPR(owner, repoName, pr, policy); reason != "" {
+					return reason, nil
+				}
+				_, reason, err := oc.trySweepTrustedAuthorPR(mergeDecisionPriority(ctx), displayRepo, owner, repoName, pr.GetNumber(), policy)
+				return reason, err
+			})
 			continue
 		}
 		prs, skipReason, err := c.openPullRequests(ctx, owner, repoName, opts.Targets)

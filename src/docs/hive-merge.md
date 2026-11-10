@@ -35,7 +35,9 @@ here. A repo with that switch off may still receive Hive-opened PRs, but the
 relay refuses to merge them and reports that auto-merge is disabled for the
 repository. The same repo policy is enforced by the App self-merge sweep and by
 the proxy's direct REST/GraphQL merge denial path, so agents cannot bypass it
-by calling GitHub directly.
+by calling GitHub directly. The merge lanes still evaluate such a repo's PRs
+in an observe-only mode that records a stage (090 *auto-merge off*) and writes
+nothing else.
 
 On top of `AuthorizeMerge`, the watcher's authorizer is wrapped with a second,
 target-specific check (the F4 target-binding, CWE-863) before any merge is

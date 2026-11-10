@@ -527,7 +527,7 @@ func mergeTrainCandidate(prefilterReason string) bool {
 // train, so a failed read never blocks a merge the lane would have made.
 func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, repo string, prs []*gh.PullRequest, prefilter func(*gh.PullRequest) string) *mergeTrainPlan {
 	plan := &mergeTrainPlan{lane: lane, displayRepo: displayRepo, owner: owner, repo: repo, byNumber: map[int]*mergeTrainGroup{}, candidates: map[int]*mergeTrainGroup{}}
-	if !c.mergeTrainPolicyNow().Enabled || c == nil || c.gh == nil {
+	if !c.mergeTrainPolicyNow().Enabled || c == nil || c.gh == nil || c.observeOnly {
 		return plan
 	}
 	defer c.mergeTrainSettleSeats(lane, owner, repo, displayRepo, prs, plan)
