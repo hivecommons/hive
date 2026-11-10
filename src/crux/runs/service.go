@@ -176,7 +176,8 @@ func (s *Service) Configured() bool { return s.Backend != nil }
 
 // Reconcile marks every run left accepted, running or waiting by a previous
 // process unfinished, and with it any step (S6) that run still records as
-// running. Call it once at serve start, before accepting requests.
+// running and any command (S4) its log still records as in flight. Call it
+// once at serve start, before accepting requests.
 func (s *Service) Reconcile() ([]runstate.Record, error) {
 	recs, err := s.Store.Reconcile(ReconcileReason)
 	// A run the previous process left in flight ended unobserved; its done
@@ -184,6 +185,13 @@ func (s *Service) Reconcile() ([]runstate.Record, error) {
 	for _, rec := range recs {
 		if _, serr := (agentstep.Store{RunDir: s.Store.Path(rec.ID)}).Reconcile(ReconcileReason, s.Store.Now()); serr != nil && err == nil {
 			err = serr
+		}
+		// Reopening its command log ends the command it left in flight
+		// (cmdlog.Open), so a follower's next_seq is not pinned behind it
+		// forever. Like every other cmdlog failure, an unopenable log is
+		// skipped rather than holding up the restart.
+		if s.CmdLog != nil {
+			_, _ = s.CmdLog(s.Store.Path(rec.ID))
 		}
 		s.signalDone(rec.ID, api.SignalDoneData{Status: rec.Status}, rec.Reason)
 	}
@@ -458,10 +466,22 @@ func (s *Service) validateWorkspace(caller Caller, req api.ContainedRunRequest, 
 	if !pathUnder(path, s.Config.WorkspaceRoots) {
 		return &ForbiddenError{fmt.Sprintf("workspace_path %q is not under this server's workspace_roots", path)}
 	}
-	if st, err := os.Stat(path); err != nil || !st.IsDir() {
+	// The lexical check above cannot see symlinks: <root>/x pointing at /
+	// passes it, and a previous run can plant such a link in its rw
+	// workspace. Resolve the path, check the resolved form against the
+	// resolved roots, and mount the resolved path so the backend never
+	// follows a link the check did not see.
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
 		return &RequestError{fmt.Sprintf("workspace_path %q is not a directory", path)}
 	}
-	p.workspace = path
+	if !pathUnder(resolved, resolvedRoots(s.Config.WorkspaceRoots)) {
+		return &ForbiddenError{fmt.Sprintf("workspace_path %q resolves outside this server's workspace_roots", path)}
+	}
+	if st, err := os.Stat(resolved); err != nil || !st.IsDir() {
+		return &RequestError{fmt.Sprintf("workspace_path %q is not a directory", path)}
+	}
+	p.workspace = resolved
 	return nil
 }
 
@@ -509,6 +529,26 @@ func pathUnder(path string, roots []string) bool {
 		}
 	}
 	return false
+}
+
+// resolvedRoots returns roots with symlinks resolved, so a root that is
+// itself reached through a link (a symlinked /tmp, a bind-mount alias)
+// still contains the resolved paths beneath it. A root that cannot be
+// resolved (it does not exist) is kept as written: nothing resolves
+// under a missing directory, so it admits nothing it should not.
+func resolvedRoots(roots []string) []string {
+	out := make([]string, 0, len(roots))
+	for _, root := range roots {
+		root = filepath.Clean(strings.TrimSpace(root))
+		if root == "" || root == "." {
+			continue
+		}
+		if r, err := filepath.EvalSymlinks(root); err == nil {
+			root = r
+		}
+		out = append(out, root)
+	}
+	return out
 }
 
 // execute runs one accepted run to a terminal status. Every exit path

@@ -153,11 +153,11 @@ func TestEvaluateDigestSuppression_FirstPostAlwaysAllowed(t *testing.T) {
 
 	// Sanity: with hasPosted=true these same inputs MUST suppress, otherwise
 	// the assertion below is not exercising the short-circuit.
-	if sup := evaluateDigestSuppression(pending, pending, true, at, at); !sup.suppress {
+	if sup := evaluateDigestSuppression(pending, pending, true, at, at, 0); !sup.suppress {
 		t.Fatal("control case did not suppress; this test cannot prove the first-post short-circuit")
 	}
 
-	if sup := evaluateDigestSuppression(pending, pending, false, at, at); sup.suppress {
+	if sup := evaluateDigestSuppression(pending, pending, false, at, at, 0); sup.suppress {
 		t.Fatalf("first digest on a target was suppressed (reason=%s); a fresh advisory issue would stay empty forever", sup.reason)
 	}
 }
@@ -168,7 +168,7 @@ func TestEvaluateDigestSuppression_IdenticalContentSuppressed(t *testing.T) {
 	posted := renderZeroFindingDigest(t, t1)
 	pending := renderZeroFindingDigest(t, t2)
 
-	sup := evaluateDigestSuppression(pending, posted, true, t1, t2)
+	sup := evaluateDigestSuppression(pending, posted, true, t1, t2, 0)
 	if !sup.suppress {
 		t.Fatal("a materially identical re-post was NOT suppressed — this is the exact 250-comment bug")
 	}
@@ -186,7 +186,7 @@ func TestEvaluateDigestSuppression_ChangedContentPostsInsideWindow(t *testing.T)
 	posted := renderZeroFindingDigest(t, t1)
 	pending := renderFindingDigest(t, t2, 3)
 
-	if sup := evaluateDigestSuppression(pending, posted, true, t1, t2); sup.suppress {
+	if sup := evaluateDigestSuppression(pending, posted, true, t1, t2, 0); sup.suppress {
 		t.Fatalf("0-findings → 3-findings was suppressed (reason=%s) — real news would be swallowed", sup.reason)
 	}
 
@@ -194,7 +194,7 @@ func TestEvaluateDigestSuppression_ChangedContentPostsInsideWindow(t *testing.T)
 	// news: it must post rather than be caught by the zero-finding cap.
 	postedThree := renderFindingDigest(t, t1, 3)
 	pendingZero := renderZeroFindingDigest(t, t2)
-	if sup := evaluateDigestSuppression(pendingZero, postedThree, true, t1, t2); sup.suppress {
+	if sup := evaluateDigestSuppression(pendingZero, postedThree, true, t1, t2, 0); sup.suppress {
 		t.Fatalf("3-findings → 0-findings was suppressed (reason=%s) — the all-clear would never be posted", sup.reason)
 	}
 }
@@ -223,7 +223,7 @@ func TestEvaluateDigestSuppression_ZeroFindingCap(t *testing.T) {
 
 	// Just under 48h: capped.
 	inside := t1.Add(47 * time.Hour)
-	sup := evaluateDigestSuppression(pending, posted, true, t1, inside)
+	sup := evaluateDigestSuppression(pending, posted, true, t1, inside, 0)
 	if !sup.suppress {
 		t.Fatal("drifting zero-finding digest inside the 48h window was not capped")
 	}
@@ -233,7 +233,7 @@ func TestEvaluateDigestSuppression_ZeroFindingCap(t *testing.T) {
 
 	// Just past 48h: posts again, so the freshness signal never dies.
 	outside := t1.Add(49 * time.Hour)
-	if sup := evaluateDigestSuppression(pending, posted, true, t1, outside); sup.suppress {
+	if sup := evaluateDigestSuppression(pending, posted, true, t1, outside, 0); sup.suppress {
 		t.Fatalf("zero-finding digest suppressed 49h after the last post (reason=%s); the digest would freeze permanently", sup.reason)
 	}
 }

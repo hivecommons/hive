@@ -105,10 +105,14 @@ func TestDerivePR_AdoptionFactsAloneYield074(t *testing.T) {
 	if d := DerivePR(yielded); d.Stage == stagelabels.AdoptedByHive {
 		t.Fatalf("yielded adoption must not claim 074: %+v", d)
 	}
+	// A hold label or sentinel alert is a gate, not a stage
+	// (hivecommons/hive#17327): adoption still says who owns the PR, and
+	// the lane refuses the merge on the label itself.
 	held := f
 	held.Park.Holds = []string{"hive/hold"}
-	if d := DerivePR(held); d.Stage == stagelabels.AdoptedByHive {
-		t.Fatalf("held PR must keep its park: %+v", d)
+	held.Park.Sentinel = true
+	if d := DerivePR(held); d.Stage != stagelabels.AdoptedByHive {
+		t.Fatalf("held PR adopts like any other: %+v", d)
 	}
 	labelled := f
 	labelled.Labels = append(labelled.Labels, NeedsHumanLabel)

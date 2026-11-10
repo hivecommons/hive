@@ -189,19 +189,30 @@
     // hive#15806) — on the PR drawn here, "also closes #A, #B" naming the
     // other listed open issues it resolves, every number a link; past
     // three it reads "#A, #B, #C +N" and the hover names every title.
-    function stageTrackerAlsoClosesChipHtml(lp) {
+    // With `group` ({ key, count, collapsed }: the primary row's key and how
+    // many secondary rows this list draws right under it), the pill is also
+    // the group's fold: a caret button ahead of the words (▾ expanded, ▸
+    // folded; hamSharedToggle(key), remembered in localStorage) — the
+    // secondaries' rows follow this one (stageTrackerSharedPRContiguous).
+    function stageTrackerAlsoClosesChipHtml(lp, group) {
       const list = Array.isArray(lp && lp.also_closes) ? lp.also_closes.filter(li => li && Number(li.number) > 0) : [];
       if (!list.length) return '';
       const shown = list.slice(0, 3);
       const links = shown.map(li => `<a href="${esc(li.url || '#')}" target="_blank" rel="noopener">#${Number(li.number)}</a>`).join(', ');
       const more = list.length > shown.length ? ' +' + (list.length - shown.length) : '';
-      const tip = 'this PR also resolves ' + list.map(li => '#' + Number(li.number) + (li.title ? ' (' + li.title + ')' : '')).join(', ');
-      return `<span class="ham-badge ham-also-closes" title="${esc(tip)}">also closes ${links}${more}</span>`;
+      let tip = 'this PR also resolves ' + list.map(li => '#' + Number(li.number) + (li.title ? ' (' + li.title + ')' : '')).join(', ');
+      if (!group || !(Number(group.count) > 0)) return `<span class="ham-badge ham-also-closes" title="${esc(tip)}">also closes ${links}${more}</span>`;
+      const n = Number(group.count);
+      const rows = n + (n === 1 ? ' issue row' : ' issue rows');
+      tip += group.collapsed ? ' · ' + rows + ' folded under this row; click the caret to show' : ' · ' + rows + ' drawn under this row; click the caret to fold';
+      const label = (group.collapsed ? 'Show ' : 'Fold ') + rows + ' this PR also closes';
+      return `<span class="ham-badge ham-also-closes ham-shared-head-pill${group.collapsed ? ' ham-shared-folded' : ''}" title="${esc(tip)}"><button type="button" class="ham-shared-toggle" data-action="hamSharedToggle" data-arg0="${esc(group.key)}" data-stop="1" aria-expanded="${group.collapsed ? 'false' : 'true'}" aria-label="${esc(label)}"><span class="ham-group-caret" aria-hidden="true">${group.collapsed ? '▸' : '▾'}</span></button>also closes ${links}${more}${group.collapsed ? ` <span class="ham-shared-count">+${n}</span>` : ''}</span>`;
     }
     // Pure: the lineage-style chips of a covering PR drawn under an issue —
     // its lineage / adopted-from chip, then the also-closes chip; null = none.
-    function stageTrackerLinkedChipsHtml(lp, lineage) {
-      const also = typeof stageTrackerAlsoClosesChipHtml === 'function' ? stageTrackerAlsoClosesChipHtml(lp) : '';
+    // `group`: see stageTrackerAlsoClosesChipHtml.
+    function stageTrackerLinkedChipsHtml(lp, lineage, group) {
+      const also = typeof stageTrackerAlsoClosesChipHtml === 'function' ? stageTrackerAlsoClosesChipHtml(lp, group) : '';
       const out = [lineage || '', also].filter(Boolean).join(' ');
       return out || null;
     }
@@ -297,6 +308,20 @@
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
       return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr', y, false) - stageTrackerAnchor(x.stage, stages, 'pr', x, false)) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
+    // Pure: the covering PR an issue row rides when every PR covering it is
+    // drawn under another row (its "↳ #N · under #M" chips): the furthest
+    // along of them (stageTrackerLinkedSorted's order), or null when one is
+    // drawn here or none covers it. The stage position is the PR's, not
+    // the issue's role — a secondary issue of a shared PR lights the same
+    // lane as the primary (soaking in the Merge queue, not "PR in progress"
+    // wearing the soak word; hivecommons/hive#17324) while its chip, not
+    // the PR title, names the PR.
+    function stageTrackerLinkedRiding(item, stages) {
+      if (!item || item.kind !== 'issue' || !Array.isArray(item.linked_prs) || stageTrackerLinkedSorted(item, stages).length) return null;
+      const elsewhere = item.linked_prs.filter(lp => lp && Number(lp.number) > 0 && !stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedSupersededGone(lp, item));
+      const first = stageTrackerLinkedSorted(Object.assign({}, item, { linked_prs: elsewhere.map(lp => Object.assign({}, lp, { drawn_under: 0 })) }), stages)[0];
+      return first ? elsewhere.find(lp => Number(lp.number) === Number(first.number)) || null : null;
+    }
 
     // Pure: a PR whose drawn_under issue is not a row of this page (filtered
     // out or on another page) would otherwise be drawn nowhere. The first
@@ -337,8 +362,9 @@
     // — its furthest covering PR, else the issue itself.
     function stageTrackerLead(item, stages) {
       const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
-      if (!linked.length) return { lead: item, kind: item.kind, stage: Number(item.stage) || 0, since: item.stage_since || '' };
-      const lp = linked[0];
+      // Guarded: test harnesses lift this function by name without stageTrackerLinkedRiding.
+      const lp = linked[0] || (typeof stageTrackerLinkedRiding === 'function' ? stageTrackerLinkedRiding(item, stages) : null);
+      if (!lp) return { lead: item, kind: item.kind, stage: Number(item.stage) || 0, since: item.stage_since || '' };
       return { lead: lp, kind: 'pr', stage: stageTrackerLeadStage(lp), since: lp.stage_since || item.stage_since || '' };
     }
     // List order: furthest along the strip first — a covered issue counts as

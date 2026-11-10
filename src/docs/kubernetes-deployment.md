@@ -184,6 +184,6 @@ through the authenticated `/terminal` proxy on 3002.
 
 | Mount Path | Purpose |
 |------------|---------|
-| `/etc/hive/hive.yaml` | Configuration (read-only, from ConfigMap) |
+| `/etc/hive/hive.yaml` | Configuration (writable `emptyDir`; symlink to `/data/hive.yaml.runtime` once one exists; ConfigMap is only the first-boot seed) |
 | `/data` | Persistent state: metrics, beads, logs |
 | `/secrets` | GitHub App key and other secrets (read-only) |

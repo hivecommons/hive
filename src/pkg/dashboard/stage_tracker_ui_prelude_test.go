@@ -114,6 +114,9 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerStalledTrack"),
 		jsFunc(t, html, "stageTrackerQueueAheadWord"),
 		jsFunc(t, html, "stageTrackerStageTrack"),
+		jsFunc(t, html, "stageTrackerTrackWouldLight"),
+		jsFunc(t, html, "stageTrackerLeadTrack"),
+		jsFunc(t, html, "stageTrackerQueuedTrackNote"),
 		jsFunc(t, html, "stageTrackerTrackWord"),
 		jsFunc(t, html, "stageTrackerAgoWord"),
 		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
@@ -163,6 +166,7 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerLinkedSupersededGone"),
 		jsFunc(t, html, "stageTrackerLinkedSupersededTip"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
+		jsFunc(t, html, "stageTrackerLinkedRiding"),
 		stageTrackerTierJS(t, html),
 		jsConstLine(t, html, "STAGE_TRACKER_COVERED_BY_PR"),
 		jsFunc(t, html, "stageTrackerLeadStage"),
@@ -227,27 +231,32 @@ var _stageTracker = { stages };
 // needs-rebase always lands a PR in 070/071/072 (automerge_stage_labels.go), so a
 // fixture pairing it with 050/060 would draw a contradictory row.
 const rebaseCoherent = (it) => { if ((it.modifiers || []).includes('needs-rebase')) assert.ok(![50, 60].includes(Number(it.stage)), 'fixture #' + it.number + ' pairs needs-rebase with stage ' + it.stage); (it.linked_prs || []).forEach(rebaseCoherent); };
-// hivecommons/hive#16540: no strip ever lights more than two chevrons. Lit =
-// the stage chevron's active fill (a settled-current one is not amber) or a
-// CI / Review track in the active class. Checked on every fixture rendered.
+// hivecommons/hive#16540 / #17335: no strip ever lights more than ONE chevron.
+// Lit = the stage chevron's active fill (a settled-current one is not amber)
+// or a CI / Review track in the active class. Checked on every fixture rendered.
 const litChevrons = (html) => (html.match(/class="ham-seg active(?! [^"]*ham-settled-current)|class="ham-seg ham-activity-track active\b/g) || []).length;
-// hivecommons/hive#16599 (canonical): 1 ≤ active ≤ 2 — the stage column is
-// always active (a settled-current one counts as filled), a track only while
-// it runs or is the stage's own / stalled track; and words ride ONLY active
-// chevrons — an inactive CI / Review track is its icon alone.
+// hivecommons/hive#16599 (canonical) as tightened by #17335: exactly one
+// active chevron — the stage column is always filled (a settled-current one
+// counts as filled), a track only while it is the row's lead track (running,
+// or the stage's own / stalled track); and words ride ONLY active chevrons —
+// an inactive CI / Review track is its icon alone, plus a muted queued note
+// (ham-track-note) when it would have lit behind the lead.
 const filledChevrons = (html) => litChevrons(html) + (html.match(/class="ham-seg active [^"]*ham-settled-current/g) || []).length;
-const trackCopyText = (li) => ((/<span class="ham-chevron-copy[^"]*">([\s\S]*?)<\/span>(?:<svg|<span id=)/.exec(li) || [])[1] || '').replace(/<svg[\s\S]*?<\/svg>/g, '').replace(/<[^>]+>/g, '').trim();
+const trackCopyText = (li) => ((/<span class="ham-chevron-copy[^"]*">([\s\S]*?)<\/span>(?:<svg|<span id=|<span class="ham-track-note")/.exec(li) || [])[1] || '').replace(/<svg[\s\S]*?<\/svg>/g, '').replace(/<[^>]+>/g, '').trim();
 const wordsOnlyWhenActive = (item, s) => Array.from(s.matchAll(/<li class="ham-seg ham-activity-track ([^"]*)"[\s\S]*?<\/li>/g)).forEach(m => {
   const words = trackCopyText(m[0]);
   if (/\bactive\b/.test(m[1])) assert.ok(words, 'fixture #' + item.number + ' active track without words: ' + m[0]);
   else assert.strictEqual(words, '', 'fixture #' + item.number + ' inactive track carries words: ' + m[0]);
+  // A demoted track is dim, still, and says it is queued; an active one never wears the note.
+  if (/ham-track-queued/.test(m[1])) assert.ok(!/\bactive\b/.test(m[1]) && !/data-motion=/.test(m[0]) && /<span class="ham-track-note">[^<]+<\/span>/.test(m[0]), 'fixture #' + item.number + ' queued track is not dim-with-note: ' + m[0]);
+  else assert.ok(!/ham-track-note/.test(m[0]), 'fixture #' + item.number + ' non-queued track wears a queued note: ' + m[0]);
   // hivecommons/hive#16643: a text-bearing track is active and nothing
   // else — no muted / pending / settled class may dim its one amber fill.
   if (words) assert.ok(/\bactive\b/.test(m[1]) && !/\b(?:pending|todo|done|failing|ham-settled-current)\b/.test(m[1]), 'fixture #' + item.number + ' text-bearing track is not plainly active: ' + m[1]);
 });
-// hivecommons/hive#16643: CI + Review is the only pair that may be active
-// together; a lit stage chevron (PR in progress, Merge queue …) is the row's
-// one active chevron, and it carries no CI / review verdict in its words.
+// hivecommons/hive#16643 / #17335: a lit stage chevron (PR in progress,
+// Merge queue …) is the row's one active chevron, never beside a running
+// track, and it carries no CI / review verdict in its words.
 const stageLitChevrons = (html) => (html.match(/class="ham-seg active(?! [^"]*ham-settled-current)/g) || []).length;
 const onlyTracksPair = (item, s, i) => {
   const lit = litChevrons(s);
@@ -264,7 +273,8 @@ const neverActivityUnknown = (item, s, i) => Array.from(s.matchAll(/<li class="h
   assert.ok(!/activity unknown|\b(?:CI|Review) unknown\b/.test(tip), 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' track tooltip says unknown: ' + tip);
 });
 const atMostTwoLit = (item, row) => row.split('aria-label="Pipeline progress"').slice(1).forEach((s, i) => {
-  assert.ok(litChevrons(s) <= 2, 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' lights ' + litChevrons(s) + ' chevrons: ' + s);
+  // Exactly one lit stage per row (hivecommons/hive#17335).
+  assert.ok(litChevrons(s) <= 1, 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' lights ' + litChevrons(s) + ' chevrons: ' + s);
   onlyTracksPair(item, s, i);
   if (s.includes('aria-current="step"')) assert.ok(filledChevrons(s) >= 1, 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' has no filled chevron: ' + s);
   wordsOnlyWhenActive(item, s);

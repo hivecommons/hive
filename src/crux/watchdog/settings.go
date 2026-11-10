@@ -39,6 +39,12 @@ const (
 	// Kept numerically equal to that constant rather than importing it,
 	// because pkg/agent imports pkg/watchdog and the reverse would cycle.
 	DefaultBootGrace = 60 * time.Second
+	// DefaultLoginStreak is how many consecutive watchdog polls must see
+	// login chrome before the pane is classified auth-required and an
+	// operator is paged. Mirrors the pane poller's loginStreakRestartMin: a
+	// relaunched CLI flashes login chrome for well under a second while it
+	// re-validates its token, and a single sighting is not a logout (#17320).
+	DefaultLoginStreak = 3
 )
 
 // defaultBackoff is the RFC restart ladder; the last entry is the cap.
@@ -130,6 +136,7 @@ type Settings struct {
 	StuckOverlayAfter time.Duration
 	ShellPromptAfter  time.Duration
 	BootGrace         time.Duration
+	LoginStreak       int
 	Backoff           []time.Duration
 	CrashLoopAfter    int
 	HealthyReset      time.Duration
@@ -154,6 +161,7 @@ func DefaultSettings() Settings {
 		StuckOverlayAfter: DefaultStuckOverlayAfter,
 		ShellPromptAfter:  DefaultShellPromptAfter,
 		BootGrace:         DefaultBootGrace,
+		LoginStreak:       DefaultLoginStreak,
 		Backoff:           defaultBackoff(),
 		CrashLoopAfter:    DefaultCrashLoopAfter,
 		HealthyReset:      DefaultHealthyReset,
@@ -207,6 +215,11 @@ func SettingsFrom(cfg config.WatchdogConfig) (Settings, []error) {
 
 	s.StuckOverlayAfter = resolveDuration("watchdog.liveness.stuck_overlay_after", cfg.Liveness.StuckOverlayAfter, DefaultStuckOverlayAfter, &errs)
 	s.ShellPromptAfter = resolveDuration("watchdog.liveness.shell_prompt_after", cfg.Liveness.ShellPromptAfter, DefaultShellPromptAfter, &errs)
+	if cfg.Liveness.LoginStreak < 0 {
+		errs = append(errs, fmt.Errorf("watchdog.liveness.login_streak: negative value %d, using default %d", cfg.Liveness.LoginStreak, DefaultLoginStreak))
+	} else if cfg.Liveness.LoginStreak > 0 {
+		s.LoginStreak = cfg.Liveness.LoginStreak
+	}
 	s.HealthyReset = resolveDuration("watchdog.restart.healthy_reset", cfg.Restart.HealthyReset, DefaultHealthyReset, &errs)
 	s.NoProductionFor = resolveDuration("watchdog.readiness.no_production_for", cfg.Readiness.NoProductionFor, DefaultNoProductionFor, &errs)
 

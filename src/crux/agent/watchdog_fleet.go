@@ -148,7 +148,9 @@ func (f WatchdogFleet) Observe(name string) (watchdog.Observation, error) {
 
 	// StartedAt dates the current launch so the reconciler can suppress dead
 	// verdicts during boot. Copied by value: the field is a pointer the
-	// manager mutates on relaunch.
+	// manager mutates on relaunch. LastLaunchAt is the most recent CLI spawn
+	// (markCLILaunchedLocked), which a restored or resumed session can leave
+	// StartedAt lagging behind.
 	var startedAt time.Time
 	providerClass := ""
 	providerLine := ""
@@ -156,6 +158,7 @@ func (f WatchdogFleet) Observe(name string) (watchdog.Observation, error) {
 	if agent.StartedAt != nil {
 		startedAt = *agent.StartedAt
 	}
+	lastLaunchAt := agent.lastCLILaunchAt
 	if f.M.providerErrorBackoffRemainingLocked(agent, time.Now()) > 0 {
 		providerClass = agent.ProviderErrorClass
 		providerLine = agent.ProviderErrorLine
@@ -170,6 +173,7 @@ func (f WatchdogFleet) Observe(name string) (watchdog.Observation, error) {
 		ShowsLoginPrompt:   needsLogin || paneShowsLoginPrompt(strings.Split(pane, "\n")),
 		LastChange:         lastChange,
 		StartedAt:          startedAt,
+		LastLaunchAt:       lastLaunchAt,
 		AuthAvailable:      authAvailable,
 		AuthKnown:          authKnown,
 		CredentialProven:   credentialProven,
@@ -457,4 +461,14 @@ func newestMtimeBounded(root string, maxDepth int) (time.Time, bool) {
 // the hooks for a sidecar (hivecommons/hive#14138, stage 3).
 func (m *Manager) WatchdogSource() watchdog.Source {
 	return WatchdogFleet{M: m}
+}
+
+// markCLILaunchedLocked records a completed CLI launch into the pane: the
+// agent's StartedAt, the launch generation stale startup-kick goroutines
+// check, and the relaunch timestamp the watchdog dates its boot grace from
+// (#17320). Caller holds m.mu.
+func (m *Manager) markCLILaunchedLocked(agent *AgentProcess, now time.Time) {
+	agent.StartedAt = &now
+	agent.launchGen++
+	agent.lastCLILaunchAt = now
 }

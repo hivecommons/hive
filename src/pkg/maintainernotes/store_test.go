@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -213,6 +214,43 @@ func TestStoreAppendFailureLeavesMemoryUnchanged(t *testing.T) {
 	}
 	if _, ok := m.Get(n.ID); !ok {
 		t.Fatal("a note whose tombstone failed to persist must stay live")
+	}
+}
+
+func TestStoreFileIsOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits")
+	}
+	path := filepath.Join(t.TempDir(), "notes", "maintainer-notes.jsonl")
+	s := New(path)
+	if _, err := s.Add("acme/widget", 1, "alice", "waiting on legal"); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("new notes file mode = %04o, want 0600: the notes are maintainer-private and every agent UID can read /data", got)
+	}
+
+	// A file an earlier release left world-readable is tightened on the next write.
+	wide := filepath.Join(t.TempDir(), "maintainer-notes.jsonl")
+	if err := os.WriteFile(wide, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(wide, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(wide).Add("acme/widget", 1, "alice", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	fi, err = os.Stat(wide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("pre-existing 0644 notes file left at %04o after a write, want 0600", got)
 	}
 }
 

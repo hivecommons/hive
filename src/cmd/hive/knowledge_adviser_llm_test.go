@@ -353,6 +353,19 @@ func TestKnowledgeAdviserLLM_EndpointErrorFallsBackPerOnError(t *testing.T) {
 	}
 }
 
+func TestKnowledgeAdviserLLMURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://api.githubcopilot.com":                  "https://api.githubcopilot.com/v1/chat/completions",
+		"https://x.example/v1":                           "https://x.example/v1/chat/completions",
+		"https://x.example/v1/":                          "https://x.example/v1/chat/completions",
+		"https://api.githubcopilot.com/chat/completions": "https://api.githubcopilot.com/chat/completions",
+	} {
+		if got := knowledgeAdviserLLMURL(in); got != want {
+			t.Errorf("knowledgeAdviserLLMURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestKnowledgeAdviserLLM_PerAgentHourBudget(t *testing.T) {
 	f := newLLMFixture(t, config.AdvisorLLMConfig{Mode: config.AdvisorLLMModeRank, OnError: config.AdvisorLLMOnErrorSilence})
 	for i := 0; i < config.AdvisorLLMMaxCallsPerAgentHourCap; i++ {

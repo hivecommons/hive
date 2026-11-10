@@ -513,9 +513,38 @@
       return lines.length ? tip + lines.map(l => '\n   · ' + l).join('') : tip;
     }
     // Whether the item's lit chevron word carries the alert itself (a PR
-    // parked at 085, or an issue riding one): the chip then adds nothing.
+    // parked at 085, an issue riding one, or a 090 row the gate holds —
+    // see stageTrackerHeldWord): the chip then adds nothing.
     function stageTrackerSentinelInLane(item) {
-      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (Number(item.stage) || 0) === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || !!item.via_pr);
+      const st = Number(item && item.stage) || 0;
+      return !!(item && item.sentinel_alert && !item.sentinel_notice) && (st === STAGE_TRACKER_NEEDS_DECISION || st === STAGE_TRACKER_READY_FOR_HUMAN_MERGE) && (item.kind === 'pr' || !!item.via_pr);
+    }
+    // A sentinel alert or a hold label is a gate on the PR's real stage,
+    // not a stage of its own (hivecommons/hive#17327): a green, reviewed
+    // PR stands in the Merge queue column at 090 and the column word says
+    // the gate — "Held · sentinel · confirm intent" / "Held · hold" —
+    // never "Queued for merge". '' when the row is not a held 090 PR.
+    const STAGE_TRACKER_HELD_SENTINEL_WORD = 'Held · sentinel · confirm intent';
+    const STAGE_TRACKER_HELD_HOLD_WORD = 'Held · hold';
+    const STAGE_TRACKER_HELD_NEVER_MERGES = 'Hive never merges this head while the gate stands.';
+    function stageTrackerHeldWord(item) {
+      if (!item || (Number(item.stage) || 0) !== STAGE_TRACKER_READY_FOR_HUMAN_MERGE || !(item.kind === 'pr' || item.via_pr)) return '';
+      if (item.sentinel_alert && !item.sentinel_notice) return STAGE_TRACKER_HELD_SENTINEL_WORD;
+      if ((Array.isArray(item.modifiers) && item.modifiers.indexOf('hold') >= 0) || (item.hold && item.hold.by)) return STAGE_TRACKER_HELD_HOLD_WORD;
+      return '';
+    }
+    // Pure: the held cell's hover — the gate's own reason (the sentinel
+    // tip, or who holds it and why), then the route reason and the rule.
+    function stageTrackerHeldTip(item, nowMs) {
+      const word = stageTrackerHeldWord(item);
+      if (!word) return '';
+      const lines = [word];
+      if (word === STAGE_TRACKER_HELD_SENTINEL_WORD) lines.push(stageTrackerSentinelTip(item));
+      else if (typeof stageTrackerHoldTip === 'function') { const ht = stageTrackerHoldTip(item, nowMs); if (ht) lines.push(ht); }
+      const reason = String(item.human_merge_reason_text || item.reason || '').trim();
+      if (reason && lines.indexOf(reason) < 0) lines.push(reason);
+      lines.push(STAGE_TRACKER_HELD_NEVER_MERGES);
+      return lines.filter(Boolean).join('\n');
     }
     // A returned PR (071/072) keeps its routing word — the human already
     // acted, nothing is owed by the maintainer — and carries the alert as

@@ -188,6 +188,10 @@ pinned:
   # image is operator tooling, not a hive release channel, so it follows the
   # default branch rather than every release line; v4 is feature-frozen.
   stream-image.yml: [-v4, -v6]
+  # Advisory gremlins mutation report on changed Go packages (#17349). It is
+  # pull_request-only and never blocks, so it covers every line that takes Go
+  # PRs; surviving-mutant data is equally useful on v4 backports.
+  mutation-advisory.yml: []
 
 # Workflows that deliberately do NOT pin to the release lines. Each must keep a
 # wildcard branch filter; if one is ever narrowed to a fixed list, the guard

@@ -56,6 +56,12 @@ type StageLabelPolicy struct {
 	// class that persists (auto_merge.nudge_repeat_after, default 72h);
 	// 0 never re-nudges.
 	RenudgeInterval time.Duration
+	// CIFailureCooldown is how long after a counted CI-failure nudge a
+	// changed failing set on a new head folds into the existing comment
+	// instead of counting as a fresh nudge
+	// (governor.labels.stage.contributor_nudge.ci_failure_cooldown,
+	// default 6h; hivecommons/hive#17328). 0 disables the fold.
+	CIFailureCooldown time.Duration
 	// Adoption turns the stage-074 adoption on
 	// (governor.labels.stage.adoption.enabled, default true): a contributor
 	// PR still red after the grace is superseded by an App PR that preserves

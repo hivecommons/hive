@@ -31,6 +31,13 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: "🌱 build(deps)"
+    ignore:
+      # Pinned by the gh-aw compiler (gh-aw-compile.yml --pin) and written
+      # into the generated weekly-competitor-report.lock.yml and
+      # .github/aw/actions-lock.json; the compile guard regenerates both and
+      # reverts a hand bump, so Dependabot's PR for it can never go green.
+      # Bump the compiler pin and recompile instead.
+      - dependency-name: "github/gh-aw-actions/setup"
 
   - package-ecosystem: "docker"
     directory: "/src"

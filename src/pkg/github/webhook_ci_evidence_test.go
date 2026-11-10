@@ -175,7 +175,7 @@ func TestWebhookCIChecksStatusAndWorkflowJob(t *testing.T) {
 	c.ciRefetch = &ciRefetcher{newTimer: func(_ time.Duration, f func()) ciRefetchTimer { return &ciTestTimer{} }}
 	c.storePRDetail("repo", 3, testPRDetail(3, "sha-3", clock.now, "clean"))
 
-	status := []byte(`{"id":91,"node_id":"SC_91","sha":"sha-3","state":"success","context":"dco","target_url":"https://dco/3","created_at":"2026-10-08T12:00:00Z","repository":{"full_name":"org/repo"}}`)
+	status := []byte(`{"id":91,"node_id":"SC_91","sha":"sha-3","state":"success","context":"dco","description":"DCO signed","target_url":"https://dco/3","created_at":"2026-10-08T12:00:00Z","repository":{"full_name":"org/repo"}}`)
 	res, err := c.HandleWebhookEvent("status", status)
 	if err != nil || res.CIEvidence == nil || res.CIEvidence.Applied != 1 {
 		t.Fatalf("status delivery: res=%+v err=%v", res.CIEvidence, err)
@@ -193,7 +193,7 @@ func TestWebhookCIChecksStatusAndWorkflowJob(t *testing.T) {
 	for _, check := range got.Checks {
 		byName[check.Name] = check
 	}
-	if dco := byName["dco"]; dco.Kind != "commit_status" || dco.State != "completed" || dco.Conclusion != "success" || dco.NodeID != "SC_91" {
+	if dco := byName["dco"]; dco.Kind != "commit_status" || dco.State != "completed" || dco.Conclusion != "success" || dco.NodeID != "SC_91" || dco.Description != "DCO signed" {
 		t.Fatalf("dco = %+v", dco)
 	}
 	if gate := byName["gate"]; gate.AppID == nil || *gate.AppID != githubActionsAppID || gate.Conclusion != "success" || gate.URL != "https://gh/job/501" {

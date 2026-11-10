@@ -1017,7 +1017,13 @@ if [ "$IS_KUBERNETES" = "true" ]; then
     # deliberately NOT merged — it is frozen at provision and every field it
     # could contribute is either already here or re-asserted by the hub on
     # the next heartbeat (~30s), including hub.is_public.
-    if cp "$HIVE_CONFIG_BOOT" "$HIVE_CONFIG_PATH" 2>/dev/null; then
+    #
+    # #17468: on hosted spokes the copy-config init container links the
+    # config path to the runtime config, so the two are one file. cp would
+    # refuse ("are the same file") and land in the read-only branch below.
+    if [ "$HIVE_CONFIG_PATH" -ef "$HIVE_CONFIG_BOOT" ]; then
+      echo "[entrypoint] K8s mode — booting from runtime config $HIVE_CONFIG_BOOT ($HIVE_CONFIG_PATH links to it; ConfigMap is a seed, not merged)"
+    elif cp "$HIVE_CONFIG_BOOT" "$HIVE_CONFIG_PATH" 2>/dev/null; then
       echo "[entrypoint] K8s mode — booting from runtime config $HIVE_CONFIG_BOOT (ConfigMap is a seed, not merged)"
     else
       export HIVE_CONFIG="$HIVE_CONFIG_BOOT"

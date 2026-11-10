@@ -638,6 +638,9 @@ type alertHive struct {
 	// key material.
 	InferenceAuthError string
 
+	// ForgeUnreachable exempts the github_auth check from the failing-check rule.
+	ForgeUnreachable bool
+
 	// GitHubAppRequired / GitHubAppState are the spoke's own report of whether
 	// its config demands App auth and, when App auth is failing, WHY (the
 	// github.AppAuthState wire token). Carried verbatim: the spoke owns the
@@ -694,6 +697,7 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 		InactiveAgentsReason: h.InactiveAgentsReason,
 
 		InferenceAuthError: h.InferenceAuthError,
+		ForgeUnreachable:   h.ForgeUnreachable,
 
 		GitHubAppRequired: h.GitHubAppRequired,
 		GitHubAppState:    h.GitHubAppState,
@@ -1145,6 +1149,9 @@ func evaluateAlertsInFleet(state *alertState, hives, fleet []alertHive, driftAle
 		// seeded with a placeholder org/repo, which the check flags by design
 		// until the slot is claimed (#12843).
 		failing := failingHealthChecks(h.Health)
+		if h.ForgeUnreachable {
+			failing = withoutForgeChecks(failing)
+		}
 		if h.IsPlaceholder {
 			failing = withoutAuthClassChecks(failing, h.ProvStatus == statusAvailable)
 		}

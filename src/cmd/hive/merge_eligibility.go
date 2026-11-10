@@ -143,6 +143,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			StalledRequireQuiet:       stage.Stalled.IsRequireQuiet(),
 			ContributorNudge:          stage.ContributorNudge.IsEnabled(),
 			RenudgeInterval:           nudgeRepeatAfter(cfg),
+			CIFailureCooldown:         stage.ContributorNudge.EffectiveCIFailureCooldown(),
 			Adoption:                  stage.Adoption.IsEnabled(),
 			GraceOnline:               stage.EffectiveContributorGraceOnline(),
 			GraceOffline:              stage.EffectiveContributorGraceOffline(),
@@ -381,7 +382,18 @@ const (
 // ordinary hive PR and flows through normal review and auto-merge (operator
 // decision, 2026-10-16). A nil ownsRepo fails closed to "cross-repo", so a
 // wiring mistake can only hold too much, never too little.
-func shouldHoldAgentPR(agentName, repo string, level int, ownsRepo func(agent, repo string) bool) bool {
+//
+// The red-team lane (hivecommons/hive#17420) adds a second level-independent
+// reason: its PRs change the ioscan red-team corpus and the published block
+// rate, and the lane's whole output is adversarial text. Its policy promises
+// "hold at every ACMM level, including L6"; alwaysHold is the server-side
+// enforcement of that promise, keyed on the authenticated agent's role/base
+// name from config, so a prompt that forgets the label cannot open an
+// auto-merge path. A nil alwaysHold simply adds no reason.
+func shouldHoldAgentPR(agentName, repo string, level int, ownsRepo func(agent, repo string) bool, alwaysHold func(agent string) bool) bool {
+	if alwaysHold != nil && alwaysHold(agentName) {
+		return true
+	}
 	if isOutreachAgent(agentName) {
 		if ownsRepo == nil || !ownsRepo(agentName, repo) {
 			return true

@@ -296,9 +296,14 @@ started_at, ended_at?, duration_ms?, exit_code?, stdout?, stderr?}`;
 count always, and up to 4 KiB from each end of the text the runner kept.
 `status` is one of `completed` (exit 0), `failed` (non-zero exit,
 refusal or timeout), `unfinished` (the sandbox never reported an exit)
-or `cancelled`. A `started` line with no `ended` line is returned as
-`unfinished` with no `ended_at`; a status is never guessed. Paging:
-pass the previous page's `next_seq` as `since_seq` while `more` is true.
+or `cancelled`. A `started` line with no `ended` line is an in-flight
+command, returned as `unfinished` with no `ended_at`; a status is never
+guessed. Paging: pass the previous page's `next_seq` as `since_seq` while
+`more` is true. `next_seq` stops before the first record with no
+`ended_at`, so a follower re-receives an in-flight command until it ends;
+a record with `ended_at` is terminal whatever its `status`, `unfinished`
+included. `more` is never true on a page whose `next_seq` equals the
+`since_seq` it answered, so that loop always makes progress.
 Visibility follows the run — a project reads only its own runs' logs
 (403 otherwise), unknown run 404, bad `since_seq`/`limit` 400, a run that
 kept no log (or an older server) is an empty page, a corrupt line 500
@@ -321,8 +326,12 @@ and tails pass through `logscrub.ScrubString` before they are written.
 two lines per command: `{"event":"started","seq",…}` and
 `{"event":"ended","seq",…}`. Readers fold the pair; a stray `ended`
 without its `started` is dropped. Re-opening a run's log resumes `seq`
-after the highest one on disk and cannot end a command an earlier
-process left open — it stays `unfinished`, which is the truth.
+after the highest one on disk and ends every command an earlier writer
+left open with an `ended` line of status `unfinished` (reason
+`cmdlog.OrphanReason`, no exit code): a run has one live writer at a
+time, so that command's exit is never coming. `crux serve` reopens the
+log of every run it reconciles at start, so a crash mid-command leaves a
+terminal record rather than one that pins `next_seq` forever.
 
 **Under-counting, stated plainly.** Every record carries `capture`; in
 S4 the only value written is `"runner"`, which means *the command the

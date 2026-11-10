@@ -559,3 +559,32 @@ func TestStageTrackerHumanMergeSaysItOnce(t *testing.T) {
 }
 
 var configKeyRE = regexp.MustCompile(`\b[a-z_]+\.[a-z_]+\.[a-z_]+\b`)
+
+// TestStageTrackerDecisionSentinelGateOnReadyStage: the sentinel is a gate
+// on the PR's real stage, not a stage of its own (hivecommons/hive#17327).
+// A green, reviewed PR wearing the alert sits at 090 and still asks the
+// sentinel question with Approve / Let hive decide, never "Ready to merge".
+func TestStageTrackerDecisionSentinelGateOnReadyStage(t *testing.T) {
+	since := time.Date(2026, 11, 8, 9, 0, 0, 0, time.UTC)
+	it := StageTrackerItem{Repo: "hivecommons/hive", Number: 17327, Kind: "pr", Head: "b0f5f80abcdef0123",
+		Stage: stagelabels.ReadyForHumanMerge.Number(), StageSince: &since, Reason: "a sentinel alert is open on this PR",
+		SentinelAlert: true, SentinelReason: "a new workflow file"}
+	d := stageTrackerDecisionNeeded(it, nil, "hive:sentinel-alert")
+	if d == nil || d.AskedBy != decisionAskedBySentinel {
+		t.Fatalf("decision = %+v, want the sentinel question", d)
+	}
+	if strings.Contains(d.Question, "Ready to merge") || !strings.Contains(d.Question, "a new workflow file") {
+		t.Fatalf("question = %q", d.Question)
+	}
+	if !strings.Contains(d.Blocker, "hive:sentinel-alert") {
+		t.Fatalf("blocker = %q, want the sentinel label named", d.Blocker)
+	}
+	if !decisionOptionByAction(t, d, decisionActionApprove).Enabled || !decisionOptionByAction(t, d, decisionActionDelegate).Enabled {
+		t.Fatal("Approve and Let hive decide must stay available from the merge-queue cell")
+	}
+	// The trusted-author notice is not a gate: the row reads ready.
+	it.SentinelNotice = true
+	if d := stageTrackerDecisionNeeded(it, nil, "hive:sentinel-alert"); d == nil || !strings.HasPrefix(d.Question, "Ready to merge") {
+		t.Fatalf("notice-only decision = %+v, want ready to merge", d)
+	}
+}

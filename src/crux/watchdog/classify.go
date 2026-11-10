@@ -1,6 +1,7 @@
 package watchdog
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -67,6 +68,13 @@ type Observation struct {
 	// agent spawns a second concurrent CLI, the race cliBootGraceSeconds was
 	// added for on the manager side.
 	StartedAt time.Time
+	// LastLaunchAt is when the CLI process was most recently (re)launched
+	// into the pane; zero when the manager has not recorded one. StartedAt
+	// dates the agent, not the process: a kick restart, memory-drain recycle
+	// or watchdog restart hours into an agent's life spawns a fresh CLI that
+	// repeats the whole startup handshake (login chrome included), so boot
+	// grace is measured from the later of the two.
+	LastLaunchAt time.Time
 	// AuthAvailable/AuthKnown carry the manager's owner-aware per-agent
 	// credential-file verdict (AgentAuthState, #4619/#4641): AuthKnown=false
 	// means the probe could not determine an answer and the reconciler must
@@ -208,9 +216,12 @@ func Classify(obs Observation, now time.Time, s Settings) Classification {
 	// Boot grace outranks every dead verdict. A launching agent legitimately
 	// has no tmux session, no pane, and no CLI marker for the first seconds of
 	// its life; without this, the watchdog would restart it underneath itself
-	// and spawn a second concurrent CLI. An agent with no StartedAt cannot be
-	// dated, so it gets no grace rather than an unbounded one.
-	booting := !obs.StartedAt.IsZero() && now.Sub(obs.StartedAt) < s.BootGrace
+	// and spawn a second concurrent CLI. An agent with no launch timestamp
+	// cannot be dated, so it gets no grace rather than an unbounded one. The
+	// grace is dated from the most recent CLI launch, not the agent's first:
+	// a relaunched CLI boots exactly like a new one (#17320).
+	launchedAt := obs.lastLaunch()
+	booting := !launchedAt.IsZero() && now.Sub(launchedAt) < s.BootGrace
 
 	if !obs.SessionExists {
 		if booting {
@@ -234,11 +245,16 @@ func Classify(obs Observation, now time.Time, s Settings) Classification {
 		// branch. Observed on a hosted spoke: rolling the pod paged quality,
 		// scanner and ci-maintainer 3 minutes in, one event each, never
 		// repeated -- all three were authenticated and working the whole time.
+		// Observed again 22h into the same agents' lives when their CLIs were
+		// relaunched mid-life (#17320): the grace was dated from the agent's
+		// first start, so the relaunch flash got none. Hence lastLaunch above,
+		// and the reconciler's ApplyLoginStreak on top for the relaunches the
+		// manager cannot date (the CLI re-executing itself, for one).
 		//
 		// Unknown rather than Ready: a login screen is not health, and this
 		// says only that it is too early to conclude anything. An agent that
 		// genuinely needs a human still shows the same chrome once grace
-		// elapses and pages on the very next tick.
+		// elapses and pages once the streak is met.
 		if booting {
 			return Classification{ClassUnknown, "pane shows login chrome inside boot grace"}
 		}
@@ -289,4 +305,27 @@ func Classify(obs Observation, now time.Time, s Settings) Classification {
 		return Classification{ClassUnknown, "shell prompt inside grace window"}
 	}
 	return Classification{ClassUnknown, "pane matched no known signature"}
+}
+
+// lastLaunch is the later of the agent's start and its most recent CLI
+// relaunch — the instant boot grace is measured from.
+func (o Observation) lastLaunch() time.Time {
+	if o.LastLaunchAt.After(o.StartedAt) {
+		return o.LastLaunchAt
+	}
+	return o.StartedAt
+}
+
+// ApplyLoginStreak is the watchdog's counterpart to the pane poller's
+// loginStreak guard: an auth-required verdict only stands once login chrome
+// has been seen on `required` consecutive polls, `streak` being the count
+// including this one. Below that it is downgraded to unknown — the honest
+// verdict for a CLI that may simply be mid-handshake after a relaunch the
+// manager could not date (#17320). Any other class passes through untouched;
+// a required streak below one disables the guard.
+func ApplyLoginStreak(cls Classification, streak, required int) Classification {
+	if cls.Class != ClassAuthRequired || required <= 1 || streak >= required {
+		return cls
+	}
+	return Classification{ClassUnknown, fmt.Sprintf("login chrome seen %d/%d polls", streak, required)}
 }

@@ -100,6 +100,40 @@ func TestRequestMetricsKeyedByRoutePattern(t *testing.T) {
 	}
 }
 
+func TestRequestMetricsBoundTheMethod(t *testing.T) {
+	for _, tc := range []struct{ method, want string }{
+		{http.MethodGet, http.MethodGet},
+		{http.MethodPatch, http.MethodPatch},
+		{"BREW", methodOther},
+		{"get", methodOther},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			reader := useTestMetrics(t)
+			h := instrument(http.NotFoundHandler())
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(tc.method, "/", nil))
+
+			var rm metricdata.ResourceMetrics
+			if err := reader.Collect(context.Background(), &rm); err != nil {
+				t.Fatalf("Collect: %v", err)
+			}
+			var methods []string
+			for _, sm := range rm.ScopeMetrics {
+				for _, m := range sm.Metrics {
+					if data, ok := m.Data.(metricdata.Sum[int64]); ok {
+						for _, dp := range data.DataPoints {
+							v, _ := dp.Attributes.Value(attrMethod)
+							methods = append(methods, v.AsString())
+						}
+					}
+				}
+			}
+			if len(methods) != 1 || methods[0] != tc.want {
+				t.Errorf("methods = %v, want [%s]", methods, tc.want)
+			}
+		})
+	}
+}
+
 func TestStatusClassBoundaries(t *testing.T) {
 	for status, want := range map[int]string{
 		http.StatusOK:                  statusClass2xx,

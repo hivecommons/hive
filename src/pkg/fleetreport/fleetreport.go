@@ -818,6 +818,15 @@ var benignSubstrings = []string{
 	// defect anyway (hivecommons/hive#15313). Kicks that keep failing after
 	// the restart are reported under kick_failed_repeatedly instead.
 	"busy-no-activity restart not yet attempted, not self-reporting",
+	// The review-dispatch promotion WARN (src/cmd/hive/main_sweeps.go) fires
+	// when the starvation guard walks a head that has been starved of a
+	// reviewer for ReviewWaitStarvationCycles ahead of the queue: the guard
+	// working as designed, an operational signal about the reviewer lane.
+	// The warn-once dampener re-arms whenever a PR leaves the promoted set
+	// and the WARN is per PR, so a backed-up lane filed it as a repeated
+	// runtime defect (hivecommons/hive#17366). Exhausted dispatch and forced
+	// fixes keep their own messages and stay reportable.
+	"review dispatch promoted: head starved of a reviewer",
 }
 
 // rateLimitSubstrings are lower-case fragments that mark a GitHub rate-limit
@@ -892,6 +901,13 @@ func IsGitHubUpstreamUnavailable(s string) bool {
 // exact-message exclusions matched in the function body below.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
+	// A repository's AGENTS.md outgrowing the injection cap is operator
+	// content enforcement working as designed (#12129), re-logged on every
+	// kick for that repo (#17318). The WARN stays in local logs; "agentsmd:
+	// parse failed, skipping injection" remains reportable.
+	if strings.TrimSpace(m) == "agentsmd: agents.md exceeded the injection cap; sections dropped whole" {
+		return true
+	}
 	// The bounded rebase loop hands an unresolved conflict to a person after
 	// its attempt cap. Repeated polls of that same handoff are expected, not
 	// a runtime defect (#16510). Keep other rebase failures reportable.

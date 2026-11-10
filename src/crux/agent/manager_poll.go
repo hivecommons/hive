@@ -96,9 +96,9 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				if agent.shouldResetTokenRestartCap(paneHasCLIMarker(strings.Join(tail, "\n")), startedAt, time.Now()) {
 					// A future "token appeared, nudge it" restart is now a
 					// fresh theory rather than a repeat of one that already
-					// failed. Reset both halves of the cap together.
-					agent.tokenRestartAttempts = 0
-					agent.tokenRestartGaveUp = false
+					// failed. The latch survives while the rolling window is
+					// still full (#17483).
+					agent.rearmTokenRestartCap(time.Now())
 				}
 			}
 

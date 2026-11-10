@@ -534,3 +534,47 @@ func TestDiagnoseStuckLoginUnreadableDoesNotBlameTheAgent(t *testing.T) {
 		t.Errorf("diagnosis should say the identity is undetermined from the hive's view:\n%s", got)
 	}
 }
+
+func TestRearmTokenRestartCapKeepsLatchWhileWindowFull(t *testing.T) {
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		age        time.Duration
+		wantGaveUp bool
+		wantGiveUp bool
+	}{
+		{"ledger full inside window keeps latch", time.Hour, true, true},
+		{"ledger expired clears latch", tokenRestartWindow + time.Minute, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &AgentProcess{Name: "quality", tokenRestartGaveUp: true, tokenRestartAttempts: tokenRestartMaxAttempts}
+			for i := 0; i < tokenRestartWindowMax; i++ {
+				a.tokenRestartFiredAt = append(a.tokenRestartFiredAt, now.Add(-tc.age))
+			}
+			a.rearmTokenRestartCap(now)
+			if a.tokenRestartAttempts != 0 {
+				t.Fatalf("attempts = %d, want 0", a.tokenRestartAttempts)
+			}
+			if a.tokenRestartGaveUp != tc.wantGaveUp {
+				t.Fatalf("gaveUp = %v, want %v", a.tokenRestartGaveUp, tc.wantGaveUp)
+			}
+			if tc.wantGiveUp {
+				if got := a.decideTokenRestart(now); got != tokenRestartGiveUp {
+					t.Fatalf("decide = %v, want give-up", got)
+				}
+			}
+		})
+	}
+}
+
+func TestDecideTokenRestartFireClearsLatch(t *testing.T) {
+	a := &AgentProcess{Name: "quality", tokenRestartGaveUp: true}
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	if got := a.decideTokenRestart(now); got != tokenRestartFire {
+		t.Fatalf("decide = %v, want fire", got)
+	}
+	if a.tokenRestartGaveUp {
+		t.Fatal("gaveUp still latched after a fresh fire")
+	}
+}
