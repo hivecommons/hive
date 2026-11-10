@@ -147,7 +147,7 @@ func (h *depBotHarness) pass(prs ...github.PullRequest) {
 	a := &github.ActionableResult{}
 	a.PRs.Items = prs
 	now := func() time.Time { return time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC) }
-	sweepDependencyBotConflicts(context.Background(), h.store, "acme", h.writer, h.reader, a, now, discardLogger())
+	sweepDependencyBotConflicts(context.Background(), h.store, "acme", 0, h.writer, h.reader, a, now, discardLogger())
 }
 
 const depBotKey = "acme/widgets#42"

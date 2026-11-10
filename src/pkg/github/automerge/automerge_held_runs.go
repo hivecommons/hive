@@ -624,19 +624,8 @@ func (c *Engine) nudgeDependabotRebase(ctx context.Context, displayRepo, owner, 
 	}
 	c.warn("automerge required check never ran on autofix-pushed Dependabot head; asking Dependabot to rebase",
 		"repo", displayRepo, "pr", number, "sha", headSHA, "context", missing)
-	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
-		Repo:   owner + "/" + repo,
-		Kind:   effects.KindIssueComment,
-		Target: strconv.Itoa(number),
-		Actor:  "automerge",
-		Inputs: map[string]string{"head_sha": headSHA, "body": effects.StableDigest(dependabotRebaseComment)},
-	}, func(ctx context.Context) (effects.Result, error) {
-		comment, _, apiErr := c.gh.Issues.CreateComment(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number, &gh.IssueComment{Body: gh.Ptr(dependabotRebaseComment)})
-		if apiErr != nil {
-			return effects.Result{}, effects.NotApplied(apiErr)
-		}
+	err := hgithub.PostBotCommand(ctx, c.mutation, c.gh, owner, repo, number, headSHA, dependabotRebaseComment, "automerge", "hive:automerge_sweep", func() {
 		c.noteOwnStageComment(owner, repo, number)
-		return effects.Result{Provenance: comment.GetHTMLURL()}, nil
 	})
 	if err != nil {
 		c.warn("automerge failed to post Dependabot rebase nudge", "repo", displayRepo, "pr", number, "sha", headSHA, "error", err)

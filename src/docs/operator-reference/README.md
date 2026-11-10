@@ -496,6 +496,34 @@ fallback when the approval sweep is off or refused:
   already labelled `needs-human`, `hold` or `do-not-merge`, comments once per
   head and reason, and removes only the `needs-human` label it added once CI
   is green, the conflict is gone or the PR closes (#11558, #12379).
+- A dependency bot stops rebasing a branch once someone else has committed to
+  it (a person's "Update branch", a stray merge-forward), and the hive never
+  base-syncs a bot's branch, so such a PR could sit behind its base forever.
+  The same sweep now watches for that. A dependency-bot PR (Renovate,
+  Dependabot, mergeraptor, or any `renovate/*` head) that has been behind or
+  conflicting for `governor.dependency_bot_rebase_after_s` (default `14400`,
+  4 hours; yaml-only) is **stranded** when its head commit is not the bot's,
+  or its Renovate config rebases never. A bot-authored head that is merely
+  behind is left to the bot. For a stranded PR the hive asks the bot to
+  rebase through the bot's own mechanism, once per head: it ticks Renovate's
+  rebase/retry checkbox (only that line of the description changes; a box
+  already ticked is left alone) or comments `@dependabot recreate`
+  (Dependabot refuses `@dependabot rebase` on a branch someone else edited).
+  If the head has not moved one window later, the PR is handed to a person
+  (one comment plus `needs-human`, reason "dependency bot will not rebase
+  this branch"); the request is never repeated on that head, and a new head
+  starts over. The hive never asks when the branch carries someone else's
+  non-merge commit, because the bot's regeneration would drop it; that PR is
+  handed to a person at the window instead. The request is gated as write-back
+  kind `bot_rebase_request` (default L6 with the opt-in label, like
+  `base_refresh`; `writeback.kinds.bot_rebase_request.unlabeled_min_level: 6`
+  lets it reach every bot PR at L6). When the kind refuses, the hive only
+  reports: a log line, and the person hand-off for a stranded PR that is
+  behind once the window passes; a conflicting one keeps the 24-hour conflict
+  hand-off above. While a request is due or pending on a conflicting PR, the
+  conflict hand-off waits, so the PR never gets the request and a person's
+  comment at once. First-seen and requested heads persist across restarts in
+  `dependency-bot-conflicts-rebase.json` beside the conflict ledger.
 - fork heads, sentinel-alert PRs, and human-authored lanes are never touched; a
   first-time contributor's held run is still a person's decision — with two
   exceptions that reach fork heads: the gated-run approval sweep

@@ -68,6 +68,12 @@ type depBotConflictStore struct {
 	// holds per PR head.
 	observed map[string]*depBotObservation
 	holds    map[string]depBotHold
+
+	// rebase holds the persisted stranded-branch records
+	// (dependency_bot_rebase_request.go); branchFacts, in memory only, what
+	// each PR's commit list said about its current head.
+	rebase      map[string]*depBotRebaseState
+	branchFacts map[string]depBotBranchFacts
 }
 
 func loadDepBotConflictStore(path string) *depBotConflictStore {
@@ -77,6 +83,9 @@ func loadDepBotConflictStore(path string) *depBotConflictStore {
 		noMarker: map[string]string{},
 		observed: loadDepBotObservations(depBotObservedPath(path)),
 		holds:    map[string]depBotHold{},
+
+		rebase:      loadDepBotRebaseStates(depBotRebasePath(path)),
+		branchFacts: map[string]depBotBranchFacts{},
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -236,23 +245,32 @@ func dependencyBotConflictComment(base string) string {
 //   - a failing required check that stayed red on the same head past
 //     depBotRedCIGrace (the PR stays out of the fix loop);
 //   - a terminal required-check hold the automerge sweep reported (held for
-//     approval, never started, never ran).
+//     approval, never started, never ran);
+//   - a stranded branch: behind or conflicting past
+//     governor.dependency_bot_rebase_after_s while the bot no longer rebases
+//     it, one window after a request to the bot through its own mechanism
+//     (dependency_bot_rebase_request.go) went unanswered, or as soon as the
+//     window passes when that request is not allowed or not safe.
 //
 // It takes that label back off once the reason is over (see
 // depBotHandoffResolved) or the PR closes — only if this sweep is the one
-// that added it. It never pushes, rebases, closes, approves or ticks.
+// that added it. It never pushes, rebases, closes or approves; the only
+// writes besides the hand-off are that one rebase request per head (a
+// ticked Renovate rebase/retry box or `@dependabot recreate`), gated as
+// write-back kind bot_rebase_request.
 func runDependencyBotConflictSweep(ctx context.Context, cfg *config.Config, writer forge.IssueWriter, reader depBotPRReader, actionable *github.ActionableResult, logger *slog.Logger) {
 	org := ""
 	if cfg != nil {
 		org = cfg.Project.Org
 	}
-	sweepDependencyBotConflicts(ctx, getDepBotConflictStore(), org, writer, reader, actionable, time.Now, logger)
+	sweepDependencyBotConflicts(ctx, getDepBotConflictStore(), org, cfg.DependencyBotRebaseAfter(), writer, reader, actionable, time.Now, logger)
 }
 
 func sweepDependencyBotConflicts(
 	ctx context.Context,
 	store *depBotConflictStore,
 	org string,
+	rebaseAfter time.Duration,
 	writer forge.IssueWriter,
 	reader depBotPRReader,
 	actionable *github.ActionableResult,
@@ -282,16 +300,44 @@ func sweepDependencyBotConflicts(
 
 	undoDependencyBotConflicts(ctx, store, writer, reader, seen, logger)
 
+	if rebaseAfter <= 0 {
+		rebaseAfter = config.DefaultDependencyBotRebaseAfterS * time.Second
+	}
+	stranded := depBotRebaseCheck{store: store, reader: reader, window: rebaseAfter, now: now(), logger: logger}
+	store.pruneRebase(seen)
+
 	waiting := map[string]bool{}
 	defer store.pruneObservations(waiting)
 	for _, pr := range actionable.PRs.Items {
-		if pr.HeadSHA == "" || !dependencyBotHandoffCandidate(pr) {
+		if pr.HeadSHA == "" {
+			continue
+		}
+		botAuthor := dependencyBotHandoffCandidate(pr)
+		if !botAuthor && !dependencyBotBranchCandidate(pr) {
 			continue
 		}
 		repo := qualify(pr.Repo)
 		key := escalation.Key(repo, pr.Number)
-		heldReason := store.heldReason(key, pr.HeadSHA)
-		reason, ok := dependencyBotHandoffReason(pr, heldReason)
+		heldReason, reason, ok := "", "", false
+		if botAuthor {
+			heldReason = store.heldReason(key, pr.HeadSHA)
+			reason, ok = dependencyBotHandoffReason(pr, heldReason)
+		}
+		// A stranded branch (the bot stopped rebasing it) is asked about
+		// before any conflict or red-CI hand-off: holdHandoff keeps that
+		// comment back (its grace clock still runs) while a rebase request is
+		// due or pending, so the PR never gets the request and a person's
+		// comment at once.
+		holdHandoff := false
+		if heldReason == "" {
+			switch stranded.step(ctx, repo, key, pr) {
+			case depBotStrandedHandoff:
+				reason, ok = depBotHandoffStranded, true
+			case depBotStrandedHold:
+				holdHandoff = true
+				waiting[key] = true
+			}
+		}
 		if !ok {
 			continue
 		}
@@ -309,6 +355,13 @@ func sweepDependencyBotConflicts(
 		case depBotHandoffHeld:
 			comment = dependencyBotHeldCheckComment(pr.Author, heldReason)
 		case depBotHandoffConflict:
+			if holdHandoff {
+				// A rebase request is due or pending: keep the grace clock
+				// running, post nothing yet.
+				waiting[key] = true
+				store.observe(key, pr.HeadSHA, reason, now())
+				continue
+			}
 			if pr.Author == renovateBotAuthor && !store.lacksMarker(key, pr.HeadSHA) {
 				body, err := reader.GetPRBody(ctx, repo, pr.Number)
 				if err != nil {
@@ -332,10 +385,14 @@ func sweepDependencyBotConflicts(
 			}
 		case depBotHandoffRedCI:
 			waiting[key] = true
-			if now().Sub(store.observe(key, pr.HeadSHA, reason, now())) < depBotRedCIGrace {
+			if now().Sub(store.observe(key, pr.HeadSHA, reason, now())) < depBotRedCIGrace || holdHandoff {
 				continue
 			}
 			comment = dependencyBotRedCIComment(pr)
+		case depBotHandoffStranded:
+			st, _ := store.rebaseState(key)
+			facts, known := store.branchFactsFor(key, pr.HeadSHA)
+			comment = dependencyBotStrandedComment(pr, st, facts, known, rebaseAfter)
 		}
 		if !depBotWritebackAllowed(ctx, reader, repo, pr.Number, writeback.KindNeedsDecisionComment, comment, logger) {
 			continue
