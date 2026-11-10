@@ -180,6 +180,13 @@ type CommitCIOptions struct {
 	// must block locally even when UnknownRequiredChecksServerEnforced is set
 	// for metadata handling.
 	RequiredKnownEmpty bool
+	// NoServerBackstop says the local gate is the only gate for this head: the
+	// required set is known to be empty, so the merge endpoint enforces nothing.
+	// A cancelled non-ignorable check-run then blocks as check-cancelled instead
+	// of carrying no verdict. RequiredKnownEmpty implies it; callers that collapse
+	// a known-empty set into requiredKnown=false without RequiredKnownEmpty (to
+	// keep metadata contexts in play) set this one instead.
+	NoServerBackstop bool
 }
 
 func RequiredStatusCheckContexts(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (map[string]bool, bool) {
@@ -476,7 +483,9 @@ func HeadCommitPushedAt(ctx context.Context, client *gh.Client, owner, repo, sha
 // RequiredKnownEmpty says the server enforces nothing, completed failures
 // still block locally (the older fail-closed positive-evidence policy),
 // except a cancelled check run, which carries no verdict when the required
-// set is unknown.
+// set is unknown and the server enforces it; with no server backstop
+// (RequiredKnownEmpty or NoServerBackstop) a cancelled non-ignorable check
+// still blocks as check-cancelled.
 // Later blockers are still walked after the first so that Evidence and
 // MissingRequired are complete for the caller. A non-nil error means the
 // evidence could not be gathered; Reason then names the failing API
@@ -495,6 +504,9 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	// list: either the server will enforce it, or it is known to be empty.
 	ignoreMetaContexts := serverEnforcedUnknown || opts.RequiredKnownEmpty
 	blockCompletedFailures := !serverEnforcedUnknown || opts.RequiredKnownEmpty
+	// A cancelled run only carries no verdict when the merge endpoint still
+	// enforces the real required checks; with a known-empty set nothing does.
+	blockCancelled := opts.RequiredKnownEmpty || opts.NoServerBackstop
 	seen := make(map[string]bool)
 	requiredSuccess := make(map[string]bool)
 	ignoredMeta := make(map[string]bool)
@@ -662,9 +674,12 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		case "cancelled":
 			// A cancelled run (e.g. an advisory job that hit its timeout)
 			// carries no verdict of its own, like opaqueWorkflowRuns. With the
-			// required set known it is still a required failure.
+			// required set known it is still a required failure, and with no
+			// server backstop it blocks locally like any other failure.
 			if requiredKnown {
 				block("required-check-failing:" + name)
+			} else if blockCancelled && !isIgnorableCICheck(name) {
+				block("check-cancelled")
 			}
 		default:
 			if requiredKnown {

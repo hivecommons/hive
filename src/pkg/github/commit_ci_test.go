@@ -165,6 +165,21 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 			want: "check-failure",
 		},
 		{
+			name: "cancelled with known-empty required set blocks locally",
+			checks: []map[string]string{
+				{"name": "build", "status": "completed", "conclusion": "cancelled"},
+				{"name": "lint", "status": "completed", "conclusion": "success"},
+			},
+			opts: CommitCIOptions{
+				RequiredKnownEmpty: true,
+				RequireEvidence:    true,
+				MinHeadAge:         3 * time.Minute,
+				HeadPushedAt:       now.Add(-10 * time.Minute),
+				Now:                func() time.Time { return now },
+			},
+			want: "check-cancelled",
+		},
+		{
 			name: "require evidence refuses empty actual-required repos with no statuses",
 			opts: CommitCIOptions{
 				RequireEvidence: true,
@@ -438,6 +453,7 @@ func TestEvaluateCommitCICancelledCheckUnknownRequiredSet(t *testing.T) {
 	tests := []struct {
 		name      string
 		checks    []map[string]string
+		opts      CommitCIOptions
 		wantGreen bool
 		want      string
 	}{
@@ -448,6 +464,15 @@ func TestEvaluateCommitCICancelledCheckUnknownRequiredSet(t *testing.T) {
 				{"name": "mutation", "status": "completed", "conclusion": "cancelled"},
 			},
 			wantGreen: true,
+		},
+		{
+			name: "cancelled check blocks when nothing enforces required checks server-side",
+			checks: []map[string]string{
+				{"name": "build", "status": "completed", "conclusion": "success"},
+				{"name": "mutation", "status": "completed", "conclusion": "cancelled"},
+			},
+			opts: CommitCIOptions{NoServerBackstop: true},
+			want: "check-cancelled",
 		},
 		{
 			name: "failure still blocks next to a cancelled check",
@@ -488,7 +513,9 @@ func TestEvaluateCommitCICancelledCheckUnknownRequiredSet(t *testing.T) {
 			}
 			client.BaseURL = base
 
-			st, err := EvaluateCommitCI(context.Background(), client, "acme", "widget", "sha", CommitCIOptions{RequireEvidence: true})
+			opts := tt.opts
+			opts.RequireEvidence = true
+			st, err := EvaluateCommitCI(context.Background(), client, "acme", "widget", "sha", opts)
 			if err != nil {
 				t.Fatalf("EvaluateCommitCI returned error: %v", err)
 			}
