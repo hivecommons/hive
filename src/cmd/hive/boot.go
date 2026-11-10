@@ -92,9 +92,15 @@ type boot struct {
 	// unlockCfg fires after releasing it; guarded by cfgReloadMu.
 	pendingACMM [][2]int
 	// pendingReloadMu guards pendingReload, the newest reload the watcher
-	// delivered that has not been applied yet.
+	// delivered that has not been applied yet, and parkedSaveSeq, the
+	// config.SaveSeq() seen when the oldest of those reloads was parked.
 	pendingReloadMu sync.Mutex
 	pendingReload   *config.Config
+	parkedSaveSeq   uint64
+	// configSaveSeq and saveConfig default to config.SaveSeq and cfg.Save;
+	// tests replace them.
+	configSaveSeq func() uint64
+	saveConfig    func() error
 	// sweepConfig is an immutable copy published outside long-running eval IO.
 	sweepConfig atomic.Pointer[config.Config]
 

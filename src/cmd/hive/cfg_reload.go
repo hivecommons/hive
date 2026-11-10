@@ -4,12 +4,23 @@ import "github.com/hivecommons/hive/pkg/config"
 
 // submitConfigReload is the config watcher's callback. The governor loop
 // holds cfgReloadMu for a whole tick (minutes on a busy spoke), so waiting
-// for it starved hot-reload and let the tick's persist rewrite hive.yaml from
-// the stale config (hivecommons/hive#17467). The reload is parked instead:
-// applied now when the lock is free, otherwise by the holder at its next safe
-// point. Only the newest parked reload is applied; each one is a full file.
+// for it starved hot-reload, and the tick's persist (persistState, whose
+// Config.ReconcilePausedAndSave rewrites hive.yaml from the in-memory config)
+// then saved the stale config over the operator's edit
+// (hivecommons/hive#17467). The reload is parked instead: applied now when
+// the lock is free, otherwise by the holder at its next safe point. Only the
+// newest parked reload is applied; each one is a full file.
+//
+// Savers that run without cfgReloadMu (heartbeat callbacks, dashboard
+// mutations, the pause callback) can still write the pre-reload config to
+// hive.yaml while the reload is parked. config.SaveSeq() is recorded at park
+// time so applyPendingReloadLocked can detect that and save the reloaded
+// config back to disk.
 func (b *boot) submitConfigReload(newCfg *config.Config) {
 	b.pendingReloadMu.Lock()
+	if b.pendingReload == nil {
+		b.parkedSaveSeq = b.currentSaveSeq()
+	}
 	b.pendingReload = newCfg
 	b.pendingReloadMu.Unlock()
 	if !b.cfgReloadMu.TryLock() {
@@ -53,14 +64,34 @@ func (b *boot) hasPendingReload() bool {
 	return b.pendingReload != nil && b.reloadApply != nil
 }
 
+func (b *boot) currentSaveSeq() uint64 {
+	if b.configSaveSeq != nil {
+		return b.configSaveSeq()
+	}
+	return config.SaveSeq()
+}
+
+func (b *boot) saveReloadedConfig() error {
+	if b.saveConfig != nil {
+		return b.saveConfig()
+	}
+	return b.cfg.Save()
+}
+
 // applyPendingReloadLocked swaps in the parked reload, if any. Caller holds
 // cfgReloadMu.
+//
+// If any config save started while the reload was parked, hive.yaml now
+// holds the pre-reload config, not the operator's edit. The reloaded config
+// is saved back so disk matches memory; the save arms the watcher's SkipNext
+// through the save observer, so it does not trigger another reload.
 func (b *boot) applyPendingReloadLocked() {
 	if b.reloadApply == nil {
 		return
 	}
 	b.pendingReloadMu.Lock()
 	newCfg := b.pendingReload
+	parkedSeq := b.parkedSaveSeq
 	b.pendingReload = nil
 	b.pendingReloadMu.Unlock()
 	if newCfg == nil {
@@ -71,13 +102,24 @@ func (b *boot) applyPendingReloadLocked() {
 	if prev != next {
 		b.pendingACMM = append(b.pendingACMM, [2]int{prev, next})
 	}
+	if seq := b.currentSaveSeq(); seq != parkedSeq {
+		if b.logger != nil {
+			b.logger.Info("config was saved while a reload was pending; saving the reloaded config back to disk",
+				"saves_while_pending", seq-parkedSeq)
+		}
+		if err := b.saveReloadedConfig(); err != nil && b.logger != nil {
+			b.logger.Error("failed to save reloaded config back to disk", "error", err)
+		}
+	}
 }
 
-// persistCycleLocked is a governor tick's persist. It first applies any
-// parked reload, then skips the save when a reload landed since the tick
-// started at cycleGen: the tick's state was built against the replaced
-// config, and the operator's edit must reach disk untouched. The next tick
-// persists from the reloaded config. Caller holds cfgReloadMu.
+// persistCycleLocked is a governor tick's persist. persistState ends in
+// Config.ReconcilePausedAndSave, which rewrites hive.yaml from the in-memory
+// config. It first applies any parked reload, then skips the save when a
+// reload landed since the tick started at cycleGen: the tick's state was
+// built against the replaced config, and the operator's edit must reach disk
+// untouched. The next tick persists from the reloaded config. Caller holds
+// cfgReloadMu.
 func (b *boot) persistCycleLocked(persist func(*boot), cycleGen uint64) {
 	b.applyPendingReloadLocked()
 	if b.cfgGeneration != cycleGen {
