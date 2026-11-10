@@ -847,7 +847,7 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 		// by design; that is the expected pre-onboarding state, the dashboard
 		// onboarding banner already surfaces it, and a fleet selfreport about
 		// a slot nobody owns is noise (#17600).
-		if m.hasGitHubTarget() {
+		if m.hasGitHubTarget(agent.Name) {
 			m.observeCondition(crux.ClassGitHubAppNotInstalled, agent.Name, "github app installation id is unset: "+err.Error(), "")
 		}
 	} else if err != nil {
@@ -875,9 +875,10 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 }
 
 // hasGitHubTarget reports whether the hive has any repo configured, i.e. it
-// is no longer an unclaimed placeholder slot.
-func (m *Manager) hasGitHubTarget() bool {
-	return len(m.project.Repos) > 0 || strings.TrimSpace(m.project.PrimaryRepoName) != ""
+// is no longer an unclaimed placeholder slot. It reads the live accessors, not
+// the boot-time snapshot fields, so a hive claimed via heartbeat is seen.
+func (m *Manager) hasGitHubTarget(agent string) bool {
+	return len(m.project.ReposFor(agent)) > 0 || strings.TrimSpace(m.project.PrimaryRepoFor(agent)) != ""
 }
 
 // agentTokenCacheEnabled keeps the shared-UID read path opt-in and App-only.

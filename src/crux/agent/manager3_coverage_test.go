@@ -588,5 +588,25 @@ func TestMintAgentTokenUnlocked_AppNotInstalledUnclaimedSlotNotReported(t *testi
 	if got := len(rec.observations(crux.ClassGitHubAppTokenMintFailed)); got != 0 {
 		t.Errorf("generic mint-failed observations = %d, want 0", got)
 	}
+}
 
+func TestMintAgentTokenUnlocked_AppNotInstalledReportsWhenClaimedAfterBoot(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	// Snapshot fields are empty (boot-time placeholder) but the live accessor
+	// already resolves a repo, as after a heartbeat claim.
+	m := NewManager(map[string]config.AgentConfig{"cxa": {Backend: "claude"}}, logger, ProjectContext{
+		AgentRepos: func(string) []string { return []string{"acme/widgets"} },
+	})
+	m.SetAppAuth(&fakeMinter{err: fmt.Errorf("minting scoped token for cxa: %w", crux.ErrGitHubAppNotInstalled)})
+	rec := recordConditions(t, m)
+	m.mu.Lock()
+	agent := m.agents["cxa"]
+	agent.UID = 2001
+	m.mu.Unlock()
+
+	m.mintAgentTokenUnlocked(context.Background(), agent)
+
+	if got := len(rec.observations(crux.ClassGitHubAppNotInstalled)); got != 1 {
+		t.Errorf("not-installed observations = %d, want 1", got)
+	}
 }
