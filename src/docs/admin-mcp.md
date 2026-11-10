@@ -680,7 +680,8 @@ Every write takes two steps:
    single-use and expires after 10 minutes. Only the caller who previewed a
    write can confirm it. The HTTP endpoint checks the writes switch again at
    this step, so a confirmation previewed before the owner turned writes off is
-   refused.
+   refused. An operation built from the current settings (`auto_merge.update`)
+   reads them again here and is refused if they changed after the preview.
 
 ### Who a write runs as
 
@@ -712,6 +713,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | Governor                     | `governor.feature_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                                    |
 | Issue filter                 | `project.issue_filter`                                                                                                                                                                              |
 | Sentinel                     | `sentinel.settings`                                                                                                                                                                                 |
+| Merge settings               | `auto_merge.update`                                                                                                                                                                                 |
 | Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                                                     |
 | Activity monitor row actions | see below                                                                                                                                                                                           |
 | Budget                       | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                                                                    |
@@ -787,6 +789,29 @@ anything. Turning reporter trust on does make later scans mark each held
 issue as waiting for triage, with a label and a one-time comment. The
 "Let hive decide" settings (`decisions.delegate`) have no dashboard write
 endpoint, so admin MCP cannot change them.
+
+`auto_merge.update` changes merge settings, the same settings as the
+dashboard's merge controls, through `PATCH /api/config/auto-merge`. It is owner
+only.
+
+- **Pass only what changes,** shaped like the endpoint's body, for example
+  `{"squash_only": {"add": ["org/c"]}}` or
+  `{"contributor_lane": {"repos": {"remove": ["org/a"]}}}`. A list takes `add`
+  and `remove`. `human_merge_paths` takes `owner/repo` and every pattern that
+  repository should hold; `null` or `[]` removes the repository. An unknown
+  field is refused.
+- **Entries you do not name are kept.** The endpoint replaces each list and
+  map it is sent, so the preview reads the current settings and sends the
+  merged whole value. It shows every change before and after.
+- **A stale preview is refused.** `write_confirm` reads the settings again and
+  refuses if any setting the change sends was changed after the preview.
+  Preview again to build on the new value.
+- **Widening is disclosed.** The preview says when a change lets the hive
+  merge more on its own: turning on the trusted-author lane, removing a
+  human-merge path, adding a repository to the native merge queue, emptying a
+  repository allow-list (empty means every repository), and the like.
+- It never merges a pull request. `human_merge_pin_only` is not on this
+  endpoint, so it is still set in the hive configuration file.
 
 The Activity monitor's row actions:
 

@@ -33,6 +33,7 @@ func DefaultWriteOps() []WriteOp {
 	ops = append(ops, stageTrackerWriteOps()...)
 	ops = append(ops, githubCapWriteOps()...)
 	ops = append(ops, configSurfaceWriteOps()...)
+	ops = append(ops, autoMergeWriteOps()...)
 	return append(ops, governorWriteOps()...)
 }
 
