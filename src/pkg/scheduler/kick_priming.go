@@ -114,8 +114,14 @@ func (s *Scheduler) primeAgentsMd(repoRoot string) string {
 		// The kick carries its own warning line; this is the operator-side
 		// half, so the repo owner learns the file outgrew the cap from the log
 		// rather than from an agent that missed a rule (#12129).
+		// capBytes 0 is the config "use default" sentinel; log the cap that
+		// applied so the operator can act on it (#17318).
+		effectiveCap := capBytes
+		if effectiveCap <= 0 {
+			effectiveCap = agentsmd.DefaultMaxInjectionBytes
+		}
 		s.logger.Warn("agentsmd: AGENTS.md exceeded the injection cap; sections dropped whole",
-			"root", repoRoot, "cap_bytes", capBytes, "whole_file", omitted.WholeFile,
+			"root", repoRoot, "cap_bytes", effectiveCap, "whole_file", omitted.WholeFile,
 			"omitted_sections", omitted.Sections, "omitted_bytes", omitted.Bytes)
 	}
 	return section

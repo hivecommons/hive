@@ -8,6 +8,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -16,9 +17,10 @@ import (
 // they sit on the global providers, which are OTel's delegating no-ops until a
 // host registers an SDK provider, so recording costs nothing by default.
 //
-// Attributes are bounded: the HTTP method, the mux route pattern (for example
-// "GET /v1/agents/{name}", never the concrete path or an agent name; routeUnmatched
-// when no route matched) and the status class. Never a path, token or body.
+// Attributes are bounded: the HTTP method (standard set, else _OTHER), the mux
+// route pattern (for example "GET /v1/agents/{name}", never the concrete path or
+// an agent name; routeUnmatched when no route matched) and the status class.
+// Never a path, token or body.
 const (
 	instrumentationName = "github.com/hivecommons/hive/crux/serve"
 
@@ -27,9 +29,13 @@ const (
 
 	routeUnmatched = "unmatched"
 
+	statusClass1xx = "1xx"
 	statusClass2xx = "2xx"
+	statusClass3xx = "3xx"
 	statusClass4xx = "4xx"
 	statusClass5xx = "5xx"
+
+	methodOther = "_OTHER"
 )
 
 var (
@@ -95,8 +101,25 @@ func statusClass(status int) string {
 		return statusClass5xx
 	case status >= 400:
 		return statusClass4xx
-	default:
+	case status >= 300:
+		return statusClass3xx
+	case status >= 200:
 		return statusClass2xx
+	default:
+		return statusClass1xx
+	}
+}
+
+// boundedMethod maps a client-supplied method onto the standard set, and
+// everything else onto _OTHER, as OTel HTTP semconv does for
+// http.request.method.
+func boundedMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodOptions, http.MethodConnect, http.MethodTrace:
+		return method
+	default:
+		return methodOther
 	}
 }
 
@@ -113,25 +136,35 @@ func instrument(next http.Handler) http.Handler {
 		}
 		// The mux records the matched pattern on the request it dispatches.
 		req := r.WithContext(ctx)
+		// A handler panic unwinds through here (net/http recovers it further
+		// up), so record in a defer and count it as a 5xx; the panic then
+		// continues untouched.
+		returned := false
+		defer func() {
+			status := rec.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if !returned {
+				status = http.StatusInternalServerError
+				span.SetStatus(codes.Error, "handler panic")
+			}
+			route := req.Pattern
+			if route == "" {
+				route = routeUnmatched
+			}
+			attrs := []attribute.KeyValue{
+				attrMethod.String(boundedMethod(r.Method)),
+				attrRoute.String(route),
+				attrStatusClass.String(statusClass(status)),
+			}
+			span.SetName(route)
+			span.SetAttributes(attrs...)
+			span.End()
+			globalRequestMetrics().record(ctx, time.Since(start), attrs)
+		}()
 		next.ServeHTTP(out, req)
-
-		status := rec.status
-		if status == 0 {
-			status = http.StatusOK
-		}
-		route := req.Pattern
-		if route == "" {
-			route = routeUnmatched
-		}
-		attrs := []attribute.KeyValue{
-			attrMethod.String(r.Method),
-			attrRoute.String(route),
-			attrStatusClass.String(statusClass(status)),
-		}
-		span.SetName(route)
-		span.SetAttributes(attrs...)
-		span.End()
-		globalRequestMetrics().record(ctx, time.Since(start), attrs)
+		returned = true
 	})
 }
 

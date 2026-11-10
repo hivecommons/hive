@@ -20,6 +20,14 @@ func manualMergeSweep(t *testing.T, files []string, verdict ContributorLaneVerdi
 // first (lane policy, unauthorized steps).
 func manualMergeSweepWith(t *testing.T, setup func(*Engine), files []string, verdict ContributorLaneVerdict, reason string, labels ...string) (*stageAPI, func(), func() []string) {
 	t.Helper()
+	return manualMergeSweepTo(t, stagelabels.NeedsDecision, setup, files, verdict, reason, labels...)
+}
+
+// manualMergeSweepTo is manualMergeSweepWith for a lane reason that is a
+// gate riding the head's real stage rather than an 085 park
+// (hivecommons/hive#17327): wantStage is the stage the sweep must resolve.
+func manualMergeSweepTo(t *testing.T, wantStage stagelabels.Stage, setup func(*Engine), files []string, verdict ContributorLaneVerdict, reason string, labels ...string) (*stageAPI, func(), func() []string) {
+	t.Helper()
 	api, closeAPI := seededStageAPI(t)
 	if files != nil {
 		api.prFiles = map[int][]string{9: files}
@@ -38,8 +46,8 @@ func manualMergeSweepWith(t *testing.T, setup func(*Engine), files []string, ver
 		if _, err := e.ApplyStageLabels(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if got := stageOf(t, store, 9); got != stagelabels.NeedsDecision {
-			t.Fatalf("stage=%v want 085", got)
+		if got := stageOf(t, store, 9); got != wantStage {
+			t.Fatalf("stage=%v want %v", got, wantStage)
 		}
 		return append([]string(nil), api.comments...)
 	}
@@ -96,39 +104,39 @@ func TestManualMergeNamedWhileSentinelBlocks(t *testing.T) {
 	}
 }
 
-// The same for a hold label: the hold is named, and so is the manual merge.
+// A hold label on an approved, green head is a gate, not a stage
+// (hivecommons/hive#17327): the head sits at its real 090 with the hold as
+// a pill, and the entry comment names the label and says the hive never
+// merges while it stands, without offering an approval as the way out.
 func TestManualMergeNamedWhileHoldLabelBlocks(t *testing.T) {
-	_, closeAPI, sweep := manualMergeSweep(t, []string{".github/workflows/ci.yml"}, ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"},
+	_, closeAPI, sweep := manualMergeSweepTo(t, stagelabels.ReadyForHumanMerge, nil, []string{".github/workflows/ci.yml"}, ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"},
 		"label:hold", "role/trusted", "author/clanker", "stage/050-review-pending", "hold")
 	defer closeAPI()
 
 	comments := sweep()
-	if len(comments) != 1 || !strings.Contains(comments[0], "the `hold` label is set") ||
-		!strings.Contains(comments[0], "a maintainer must review and merge this PR manually") {
-		t.Fatalf("085 comment = %q", comments)
+	if len(comments) != 1 || !strings.Contains(comments[0], "Held: the `hold` label is set") ||
+		!strings.Contains(comments[0], "The hive never merges this head while the gate stands") ||
+		strings.Contains(comments[0], "approves this head") {
+		t.Fatalf("090 comment = %q", comments)
 	}
 }
 
-// A clean diff, or one that cannot be read, leaves the comment as the
-// lane's reason alone states it: approve the head and the hive re-evaluates.
+// A clean diff, or one that cannot be read, claims no manual merge: the
+// sentinel gate rides the head's real stage (hivecommons/hive#17327), and a
+// requires_human verdict whose summary is a concrete remediation is the
+// author's fix to make (071), so no 085 comment is posted at all.
 func TestManualMergeNotClaimedWithoutWorkflowFence(t *testing.T) {
 	for name, files := range map[string][]string{
 		"clean diff":      {"README.md", "src/x.go"},
 		"diff unreadable": nil,
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, closeAPI, sweep := manualMergeSweep(t, files, requiresHumanVerdict,
+			_, closeAPI, sweep := manualMergeSweepTo(t, stagelabels.NeedsAuthor, nil, files, requiresHumanVerdict,
 				contributorLaneReasonSentinelBlocked, "role/trusted", "author/clanker", "stage/050-review-pending", "sentinel-alert")
 			defer closeAPI()
 
-			comments := sweep()
-			if len(comments) != 1 {
-				t.Fatalf("comments = %q", comments)
-			}
-			c := comments[0]
-			if !strings.Contains(c, "Needs a decision, not a merge") || !strings.Contains(c, "approves this head") ||
-				strings.Contains(c, "merge this PR manually") {
-				t.Fatalf("085 comment = %q", c)
+			if comments := sweep(); len(comments) != 0 {
+				t.Fatalf("a gated 071 must not post an 085 comment: %q", comments)
 			}
 		})
 	}

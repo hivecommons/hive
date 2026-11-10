@@ -23,6 +23,7 @@ func TestSettingsFromZeroValueIsRFCDefaults(t *testing.T) {
 		s.StuckOverlayAfter != want.StuckOverlayAfter ||
 		s.ShellPromptAfter != want.ShellPromptAfter ||
 		s.CrashLoopAfter != want.CrashLoopAfter ||
+		s.LoginStreak != want.LoginStreak ||
 		s.HealthyReset != want.HealthyReset ||
 		s.NoProductionFor != want.NoProductionFor ||
 		s.RestartTimeout != want.RestartTimeout {
@@ -41,6 +42,7 @@ func TestSettingsFromExplicitValues(t *testing.T) {
 		Liveness: config.WatchdogLivenessConfig{
 			StuckOverlayAfter: "3m",
 			ShellPromptAfter:  "90s",
+			LoginStreak:       5,
 		},
 		Restart: config.WatchdogRestartConfig{
 			Backoff:        []string{"30s", "1m"},
@@ -58,7 +60,7 @@ func TestSettingsFromExplicitValues(t *testing.T) {
 		t.Fatal("explicit enabled:false must map to mode off, and auth_probe:false must win")
 	}
 	if s.ProbeInterval != time.Minute || s.StuckOverlayAfter != 3*time.Minute ||
-		s.ShellPromptAfter != 90*time.Second || s.CrashLoopAfter != 2 ||
+		s.ShellPromptAfter != 90*time.Second || s.CrashLoopAfter != 2 || s.LoginStreak != 5 ||
 		s.HealthyReset != 10*time.Minute || s.NoProductionFor != 2*time.Hour {
 		t.Fatalf("explicit values not honored: %+v", s)
 	}
@@ -73,6 +75,7 @@ func TestSettingsFromInvalidValuesFallBackLoudly(t *testing.T) {
 		Liveness: config.WatchdogLivenessConfig{
 			StuckOverlayAfter: "not-a-duration",
 			ShellPromptAfter:  "-5m",
+			LoginStreak:       -1,
 		},
 		Restart: config.WatchdogRestartConfig{
 			Backoff:        []string{"1m", "banana"},
@@ -83,14 +86,16 @@ func TestSettingsFromInvalidValuesFallBackLoudly(t *testing.T) {
 	}
 	s, errs := SettingsFrom(cfg)
 	// One error per invalid field: probe interval, two liveness durations,
-	// backoff entry, crash-loop count, healthy reset, no-production-for.
-	const wantErrs = 7
+	// login streak, backoff entry, crash-loop count, healthy reset,
+	// no-production-for.
+	const wantErrs = 8
 	if len(errs) != wantErrs {
 		t.Fatalf("want %d config errors, got %d: %v", wantErrs, len(errs), errs)
 	}
 	want := DefaultSettings()
 	if s.ProbeInterval != want.ProbeInterval || s.StuckOverlayAfter != want.StuckOverlayAfter ||
 		s.ShellPromptAfter != want.ShellPromptAfter || s.CrashLoopAfter != want.CrashLoopAfter ||
+		s.LoginStreak != want.LoginStreak ||
 		s.HealthyReset != want.HealthyReset || s.NoProductionFor != want.NoProductionFor {
 		t.Fatalf("invalid fields must fall back to defaults: %+v", s)
 	}

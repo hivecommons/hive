@@ -342,6 +342,22 @@ func (c *Client) ProcessPRRequestsOnce(ctx context.Context) {
 	c.processPRRequests(ctx, time.Now)
 }
 
+// ProcessPRRequestDirOnce runs one watcher pass over dir with authz as the
+// request authorizer and nowFn as the clock — a StartPRRequestWatcher tick
+// without the ticker. Test entry point for packages that drive the watcher
+// end to end against their own clocks (pkg/dashboard's claimed-target
+// regression, hivecommons/hive#17302). A nil nowFn is time.Now.
+func (c *Client) ProcessPRRequestDirOnce(ctx context.Context, dir string, authz PRRequestAuthorizer, nowFn func() time.Time) {
+	if c == nil {
+		return
+	}
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	c.prAuthz = authz
+	c.processPRRequestsInDir(ctx, nowFn, dir)
+}
+
 func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func() time.Time) {
 	if !c.prRetries.allows(path, nowFn()) {
 		return
@@ -447,6 +463,25 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// footer). Fail the request loudly rather than opening a content-less PR.
 	if reason := c.validatePRRequestBody(req); reason != "" {
 		c.rejectPRRequest(path, req, "body", reason, nowFn)
+		return
+	}
+	// #17298: a closing reference to an issue another principal has claimed,
+	// or covered with an open PR, is refused before the request books a start
+	// on anything — epic-driven work never claims its target, so this is the
+	// first point it is checked. A failed lookup fails closed (retried).
+	refused, err := c.validatePRRequestTargets(ctx, req, nowFn())
+	if err != nil {
+		if reason, policy := prRequestPolicyReason(err); policy {
+			for _, r := range refused {
+				if !strings.EqualFold(r.Repo, req.Repo) && !c.AgentServesRepo(req.Agent, r.Repo) {
+					continue
+				}
+				c.noticePRRequestTargetRefusal(ctx, prRequestTargetActionOpenPR, r)
+			}
+			c.rejectPRRequest(path, req, "claim", reason, nowFn)
+			return
+		}
+		c.failPRRequest(path, req, err, nowFn)
 		return
 	}
 	// #10527: an authorized PR request naming an issue is the agent's start

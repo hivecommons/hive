@@ -894,6 +894,33 @@ func TestRepoAutoMergeEnabledFailsClosedBelowL6(t *testing.T) {
 	}
 }
 
+func TestRepoAutoMergeSwitchedOffIsL6ExplicitOffOnly(t *testing.T) {
+	f := false
+	tr := true
+	level := SelfMergeMinACMMLevel
+	cfg := &Config{ACMMLevel: &level, Project: ProjectConfig{
+		Org: "acme",
+		RepoPolicies: []RepoPolicy{
+			{Repo: "api", AutoMerge: &f},
+			{Repo: "web", AutoMerge: &tr},
+		},
+	}}
+	if !cfg.RepoAutoMergeSwitchedOff("api") || !cfg.RepoAutoMergeSwitchedOff("ACME/API") {
+		t.Fatal("auto_merge=false at L6 is switched off")
+	}
+	if cfg.RepoAutoMergeSwitchedOff("acme/web") || cfg.RepoAutoMergeSwitchedOff("other") {
+		t.Fatal("auto_merge=true or no override is not switched off")
+	}
+	below := SelfMergeMinACMMLevel - 1
+	cfg.ACMMLevel = &below
+	if cfg.RepoAutoMergeEnabled("api") || cfg.RepoAutoMergeSwitchedOff("api") {
+		t.Fatal("below L6 auto-merge is off everywhere but no repo counts as switched off")
+	}
+	if (*Config)(nil).RepoAutoMergeSwitchedOff("acme/api") {
+		t.Fatal("nil config is not switched off")
+	}
+}
+
 func TestSetSelfAuthorizationHoldForRepos(t *testing.T) {
 	cfg := &Config{
 		SourcePath: writeTempConfig(t, "project:\n  org: acme\n  repos: [api]\ngithub:\n  token: ghp_tok\nagents:\n  bot:\n    backend: claude\n"),
@@ -1105,5 +1132,38 @@ func TestGitHubGraphQLPRBatchYAMLRoundTrip(t *testing.T) {
 	}
 	if got := cfg.EffectiveGraphQLPRBatchPageSize(); got != 25 {
 		t.Fatalf("yaml page size = %d, want 25", got)
+	}
+}
+
+func TestSaveSeq_CountsStartedWrites(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{
+		SourcePath: filepath.Join(dir, "hive.yaml"),
+		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude", Paused: false}},
+		},
+	}
+
+	before := SaveSeq()
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+	if got := SaveSeq(); got != before+1 {
+		t.Fatalf("SaveSeq after Save = %d, want %d", got, before+1)
+	}
+	if _, err := cfg.SetAgentPausedAndSave("scanner", true); err != nil {
+		t.Fatalf("SetAgentPausedAndSave() error: %v", err)
+	}
+	if got := SaveSeq(); got != before+2 {
+		t.Fatalf("SaveSeq after SetAgentPausedAndSave = %d, want %d", got, before+2)
+	}
+
+	noPath := &Config{Project: ProjectConfig{Org: "org"}, AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"x": {}}}}
+	if err := noPath.Save(); err == nil {
+		t.Fatal("expected error with no source path")
+	}
+	if got := SaveSeq(); got != before+2 {
+		t.Fatalf("SaveSeq after rejected save = %d, want unchanged %d", got, before+2)
 	}
 }

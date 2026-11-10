@@ -225,19 +225,29 @@ func (c *Engine) nativeQueue(repo string) nativeQueueTransport {
 	return c.nativeQueueTransport()
 }
 
+const (
+	integrationMemberCaptureUnavailable = "integration exact member capture unavailable"
+	integrationMemberIdentityChanged    = "integration exact member identity changed"
+)
+
 // routeIntegrationMerge applies the exact-member capture and execution
 // authority before either serialized or direct merge execution.
 func (c *Engine) routeIntegrationMerge(ctx context.Context, pr *gh.PullRequest, claim effects.Claim) (bool, string, error) {
 	if capture, ok := ctx.Value(integrationEligibilityContextKey{}).(*integrationEligibilityCapture); ok {
 		if capture == nil {
-			return false, "integration exact member capture unavailable", nil
+			return false, integrationMemberCaptureUnavailable, nil
 		}
 		if pr.GetNumber() != capture.number || pr.GetHead().GetSHA() != capture.head || pr.GetBase().GetRef() != capture.base ||
 			pr.GetBase().GetRepo().GetFullName() != capture.repo {
-			return false, "integration exact member identity changed", nil
+			return false, integrationMemberIdentityChanged, nil
 		}
 		capture.pr = pr
 		return false, integrationEligibilityCaptured, nil
+	}
+	if c.observeOnly {
+		// An observe-only pass stops at the merge decision: no merge, no
+		// native-queue enqueue (automerge_observe_only.go).
+		return false, observeOnlyReasonRepoAutoMergeDisabled, nil
 	}
 	requiredNative := false
 	if c.integrationExecution != nil {
@@ -361,6 +371,9 @@ func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequ
 // reconcileNativeQueueGate runs for the owning lane's rejected candidates,
 // including cheap prefilter holds. Never withdraw another actor's entry.
 func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo string, pr *gh.PullRequest, reason string) {
+	if c == nil || c.observeOnly {
+		return
+	}
 	t := c.nativeQueue(owner + "/" + repo)
 	if t == nil || pr == nil || pr.GetNodeID() == "" || !nativeQueueWithdrawReason(reason) {
 		return

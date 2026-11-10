@@ -28,9 +28,16 @@ launched, running, unpaused agent:
    restarts until a human (or the resume API) intervenes. A continuous-ready
    window of `healthy_reset` (default 30m) clears the failure counter.
 4. **Auth probing** — a pane sitting at a login screen sets
-   `Authenticated=False` and raises an alert but deliberately does **not**
-   restart: restarting into a dead credential is the 1042-restart loop the
-   RFC documents. Provider-level credential probes reuse the rotation
+   `Authenticated=False` (reason `PaneShowsLogin`) and raises an alert but
+   deliberately does **not** restart: restarting into a dead credential is
+   the 1042-restart loop the RFC documents. Two guards keep a CLI's own
+   startup handshake from paging anyone: login chrome is ignored inside the
+   boot grace of the agent's most recent CLI (re)launch — a kick restart or
+   memory-drain recycle hours into an agent's life boots exactly like a fresh
+   start — and it must persist for `liveness.login_streak` consecutive polls
+   (default 3; one sighting reports `Ready=Unknown` with reason
+   `login chrome seen 1/3 polls`) before it counts, mirroring the pane
+   poller's own `loginStreak` guard. Provider-level credential probes reuse the rotation
    package's probers (Claude OAuth usage, Codex app-server handshake, Agy
    headless usage, DeepSeek balance) and the owner-aware per-agent credential
    check (per-agent `$HOME` layouts, 0600 session files).
@@ -138,6 +145,7 @@ governor:
     liveness:
       stuck_overlay_after: 10m
       shell_prompt_after: 5m
+      login_streak: 3        # consecutive polls of login chrome before auth-required
     restart:
       backoff: [1m, 2m, 4m, 8m, 16m]
       crash_loop_after: 5

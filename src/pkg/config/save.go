@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -112,6 +113,7 @@ func (c *Config) saveLocked() error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
+	saveSeq.Add(1)
 	notifySaveObserver()
 
 	// Write the dashboard overlay before touching the watched primary config.
@@ -128,6 +130,14 @@ func (c *Config) saveLocked() error {
 	// temp file and renaming. Rename breaks Docker bind mounts because it
 	// replaces the inode — the host file is never updated, so acmm_level
 	// and other runtime changes are lost on container restart.
+	//
+	// #17468: the same in-place write is what keeps hosted spokes durable.
+	// There the copy-config init container makes SourcePath
+	// (/etc/hive/hive.yaml, an emptyDir) a symlink to RuntimeConfigFile on
+	// the PVC; O_WRONLY|O_TRUNC follows the link and writes the PVC file,
+	// whereas a temp-file+rename would replace the link with a regular
+	// emptyDir file and silently revert the fix. Pinned by
+	// TestSaveThroughSymlinkKeepsLink — do not switch this to a rename.
 	//
 	// #3961: a source-path failure must NOT abort the save. On deployments
 	// that mount the config read-only (a ConfigMap mounted straight at
@@ -160,10 +170,15 @@ func (c *Config) saveLocked() error {
 		}
 	}
 
-	// Persist the runtime config to the PVC. In K8s this is a recovery copy
-	// (the ConfigMap seed plus the overlay is authoritative); in Docker/LXC
-	// it IS the boot-time source of truth, since there is no ConfigMap and
-	// no overlay there. The entrypoint decides which applies.
+	// Persist the runtime config to the PVC. In K8s this is the boot input
+	// after first boot (#2392): the entrypoint boots from it and the seed +
+	// overlay merge runs only when it is absent. On hosted spokes
+	// SourcePath already links to it (#17468), so this write is the same
+	// file a second time; it still matters on the restart right after
+	// first boot and on legacy-.bak-only spokes, where the config path is
+	// a plain copy. In Docker/LXC it IS the boot-time source of truth,
+	// since there is no ConfigMap and no overlay there. The entrypoint
+	// decides which applies.
 	//
 	// Always written under the new name. The legacy file is never written,
 	// renamed or removed here — see RuntimeConfigFileLegacy.
@@ -244,13 +259,41 @@ const defaultRuntimeConfigFile = "/data/hive.yaml.runtime"
 // Removable one release after every live hive has written the new name.
 const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
 
+// ResolvedConfigPath is path with symlinks resolved, or path itself when it
+// cannot be resolved. On hosted spokes /etc/hive/hive.yaml links to
+// RuntimeConfigFile (#17468), so this names the file a boot actually read.
+func ResolvedConfigPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
+// PersistedConfigPath names the file whose content survives a restart and is
+// the next boot's input — the one an operator must edit. That is
+// RuntimeConfigFile whenever the hive has one (every container deployment
+// after its first boot), else the legacy name the entrypoint falls back to;
+// otherwise the loaded config path, resolved, is the only copy (a bare binary
+// on a host).
+func PersistedConfigPath(sourcePath string) string {
+	for _, p := range []string{RuntimeConfigFile, RuntimeConfigFileLegacy} {
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 {
+			return p
+		}
+	}
+	return ResolvedConfigPath(sourcePath)
+}
+
 // DashboardOverlayFile is where Save() persists a secret-free copy of the
-// dashboard-edited config on the PVC in Kubernetes mode. The copy-config
-// init container re-seeds /etc/hive/hive.yaml FROM THE CONFIGMAP on every
-// pod boot, so without this overlay every dashboard save (LiteLLM
-// endpoint, notifications, agent tweaks, ...) silently vanished on the
-// next restart or upgrade. The entrypoint merges this file over the
-// ConfigMap seed at boot; the ConfigMap stays authoritative for the
+// dashboard-edited config on the PVC in Kubernetes mode. Before #2402 the
+// copy-config init container re-seeded /etc/hive/hive.yaml from the
+// ConfigMap on every pod boot, so without this overlay every dashboard save
+// (LiteLLM endpoint, notifications, agent tweaks, ...) silently vanished on
+// the next restart or upgrade. Since #2402 the runtime config is the boot
+// input once it exists (and since #17468 the config path links to it), so
+// the overlay is consumed only on a boot with no runtime config — first
+// boot or a reprovision onto a fresh PVC — where the entrypoint merges it
+// over the ConfigMap seed; the ConfigMap stays authoritative there for the
 // hub/admin-managed keys (acmm_level, hub.is_public).
 //
 // A package var (not const) only so tests can point it at a temp dir; it

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -79,5 +80,27 @@ func TestPrimeAgentsMd_UnderCapHasNoWarning(t *testing.T) {
 	}
 	if strings.Contains(logBuf.String(), "exceeded the injection cap") {
 		t.Errorf("no warning log expected under the cap:\n%s", logBuf.String())
+	}
+}
+
+// TestPrimeAgentsMd_LogsEffectiveCapForDefault: with agents_md_max_bytes unset
+// (0, the "use default" sentinel) the drop log names the cap that applied,
+// not 0 (#17318).
+func TestPrimeAgentsMd_LogsEffectiveCapForDefault(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	s := New(&config.Config{}, logger)
+	root := t.TempDir()
+	file := "## Giant style guide\n\n" + strings.Repeat("Indent with tabs. ", agentsmd.DefaultMaxInjectionBytes/10) + "\n"
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(file), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.primeAgentsMd(root)
+	log := logBuf.String()
+	if !strings.Contains(log, "exceeded the injection cap") {
+		t.Fatalf("expected the cap warning, got:\n%s", log)
+	}
+	if !strings.Contains(log, "cap_bytes="+strconv.Itoa(agentsmd.DefaultMaxInjectionBytes)) || strings.Contains(log, "cap_bytes=0") {
+		t.Errorf("log should carry the effective default cap, got:\n%s", log)
 	}
 }

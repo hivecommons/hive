@@ -141,9 +141,12 @@ func TestRouteHumanPendingStaysAtReview(t *testing.T) {
 	}
 }
 
-// TestRouteHumanDecision: sentinel, hold-class labels, no reviewer, or a
-// non-trust human-only lane rule → 085 naming the decision owed.
-func TestRouteHumanDecision(t *testing.T) {
+// TestRouteHumanGates: a sentinel alert or a hold-class label is a gate,
+// not a stage (hivecommons/hive#17327). A green, reviewed head keeps 090
+// with the gate in Reasons and Gates so the entry comment and the
+// decision popover still explain the stop; the lanes refuse the merge on
+// the label itself.
+func TestRouteHumanGates(t *testing.T) {
 	cases := []struct {
 		name   string
 		mutate func(*Evidence)
@@ -153,6 +156,62 @@ func TestRouteHumanDecision(t *testing.T) {
 		{"hold", func(e *Evidence) { e.Holds = Holds([]string{"Hold", "kind/bug"}) }, "the `hold` label is set"},
 		{"do-not-merge family", func(e *Evidence) { e.Holds = Holds([]string{"do-not-merge/work-in-progress"}) }, "the `do-not-merge/work-in-progress` label is set"},
 		{"needs-decision", func(e *Evidence) { e.Holds = Holds([]string{"needs-decision"}) }, "the `needs-decision` label is set"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := readyEvidence()
+			tc.mutate(&e)
+			r := RouteHuman(e)
+			if r.Stage != ReadyForHumanMerge || !containsString(r.Reasons, tc.want) || !containsString(r.Gates, tc.want) {
+				t.Fatalf("route = %+v", r)
+			}
+			got := ReadyComment(r, "`role/newcomer`")
+			if !strings.Contains(got, "Held: "+tc.want+". The hive never merges this head while the gate stands.") || strings.Contains(got, "Blocked only by") {
+				t.Fatalf("ReadyComment = %q", got)
+			}
+			// The gate rides every stage: CI pending keeps 060, no verdict
+			// keeps 050, a changes_requested verdict goes back to the author
+			// without the gate in the author's instruction.
+			pending := e
+			pending.Checks = CheckSummary{Total: 55, Green: 54, Pending: 1, Known: true}
+			if r := RouteHuman(pending); r.Stage != Reviewed || !containsString(r.Reasons, tc.want) {
+				t.Fatalf("pending route = %+v", r)
+			}
+			fresh := e
+			fresh.Verdict = VerdictPending
+			if r := RouteHuman(fresh); r.Stage != ReviewPending || !containsString(r.Reasons, tc.want) {
+				t.Fatalf("fresh route = %+v", r)
+			}
+			red := e
+			red.Verdict = VerdictChangesRequested
+			if r := RouteHuman(red); r.Stage != NeedsAuthor || containsString(r.Reasons, tc.want) || !containsString(r.Gates, tc.want) {
+				t.Fatalf("changes_requested route = %+v", r)
+			}
+		})
+	}
+	e := readyEvidence()
+	e.Sentinel = true
+	e.Holds = []string{"hold"}
+	r := RouteHuman(e)
+	if len(r.Gates) != 2 || !strings.Contains(ReadyComment(r, ""), "Held: a sentinel alert is open on this PR; the `hold` label is set.") {
+		t.Fatalf("multi-gate route = %+v / %q", r, ReadyComment(r, ""))
+	}
+	// A hive superseding PR's own hard stop already names the gate at 085.
+	hs := readyEvidence()
+	hs.Sentinel, hs.HiveSuperseder, hs.HiveSupersederHardStop = true, true, HiveSupersederHardStopSentinel
+	if r := RouteHuman(hs); r.Stage != NeedsDecision || len(r.Gates) != 0 {
+		t.Fatalf("hard-stop route = %+v", r)
+	}
+}
+
+// TestRouteHumanDecision: no reviewer, a requires_human verdict, or a
+// non-trust human-only lane rule → 085 naming the decision owed.
+func TestRouteHumanDecision(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Evidence)
+		want   string
+	}{
 		{"no reviewer", func(e *Evidence) { e.Verdict = VerdictUnavailable }, "no reviewer agent is configured, so this head will never get a swarm verdict"},
 		{"requires_human", func(e *Evidence) { e.Verdict = VerdictRequiresHuman }, "the reviewer swarm returned `requires_human` @abc1234"},
 		{"requires_human question", func(e *Evidence) {
@@ -186,7 +245,7 @@ func TestRouteHumanDecision(t *testing.T) {
 		})
 	}
 	e := readyEvidence()
-	e.Sentinel = true
+	e.Verdict = VerdictUnavailable
 	e.Holds = []string{"hold"}
 	r := RouteHuman(e)
 	if len(r.Reasons) != 2 || !strings.Contains(DecisionComment(r), "\n- the `hold` label is set\n") {
@@ -254,13 +313,16 @@ func TestRouteHumanApproved(t *testing.T) {
 			wantReason: "the reviewer swarm returned `requires_human` @abc1234",
 		},
 		{
+			// The gate rides the approved manual-merge route as a pill
+			// (hivecommons/hive#17327); the merge click still waits on it.
 			name: "approved but the sentinel label is still on",
 			mutate: func(e *Evidence) {
 				e.Verdict, e.HumanApprover, e.Sentinel = VerdictRequiresHuman, "octocat", true
 				manual(e)
 			},
-			wantStage:  NeedsDecision,
-			wantReason: "a sentinel alert is open on this PR",
+			wantStage: ReadyForHumanMerge, wantManual: true,
+			wantLaneReason: "contributor-lane:workflow-path" + HumanApprovedReasonSuffix + "octocat",
+			wantReason:     "a sentinel alert is open on this PR",
 		},
 		{
 			name: "approved but a hold label is set",
@@ -268,8 +330,9 @@ func TestRouteHumanApproved(t *testing.T) {
 				e.HumanApprover, e.Holds = "octocat", Holds([]string{"hold"})
 				manual(e)
 			},
-			wantStage:  NeedsDecision,
-			wantReason: "the `hold` label is set",
+			wantStage: ReadyForHumanMerge, wantManual: true,
+			wantLaneReason: "contributor-lane:workflow-path" + HumanApprovedReasonSuffix + "octocat",
+			wantReason:     "the `hold` label is set",
 		},
 		{
 			name:       "approved but no reviewer configured",
@@ -500,20 +563,33 @@ func TestDecisionCommentNamesActionsPerLane(t *testing.T) {
 		t.Fatalf("contributor-lane comment promises a hive push:\n%s", got)
 	}
 
+	// A hold-class label is a gate riding the head's real stage, not an 085
+	// park (hivecommons/hive#17327): the entry comment names each label a
+	// person must lift and never offers an approval as the way out.
 	held := readyEvidence()
 	held.SelfAuthored = true
 	held.Holds = Holds([]string{"hold", "do-not-merge/wip"})
 	r = RouteHuman(held)
-	if got := DecisionComment(r); !strings.Contains(got, "resolve the reason for `do-not-merge/wip` and have a maintainer remove that label") || !strings.Contains(got, "resolve the reason for `hold`") || !strings.Contains(got, "`/hive approve` does not remove it") {
-		t.Fatalf("hold park does not name the labels to clear:\n%s", got)
+	if r.Stage != ReadyForHumanMerge || len(r.Gates) != 2 {
+		t.Fatalf("hold route = %+v", r)
+	}
+	if got := ReadyComment(r, ""); !strings.Contains(got, "Held: the `do-not-merge/wip` label is set; the `hold` label is set.") || !strings.Contains(got, "lift the hold") {
+		t.Fatalf("held comment does not name the labels to clear:\n%s", got)
 	} else if strings.Contains(got, "approve this head") {
-		t.Fatalf("hold park offers an approval as the way out:\n%s", got)
+		t.Fatalf("held comment offers an approval as the way out:\n%s", got)
+	}
+	if got := DecisionComment(r); strings.Contains(got, "approve this head") {
+		t.Fatalf("hold gate offers an approval as the way out:\n%s", got)
 	}
 
 	sentinel := readyEvidence()
 	sentinel.Sentinel = true
-	if got := DecisionComment(RouteHuman(sentinel)); !strings.Contains(got, "**What to do:** resolve the sentinel alert") {
-		t.Fatalf("sentinel park does not name the action:\n%s", got)
+	r = RouteHuman(sentinel)
+	if r.Stage != ReadyForHumanMerge || len(r.Gates) != 1 {
+		t.Fatalf("sentinel route = %+v", r)
+	}
+	if got := ReadyComment(r, ""); !strings.Contains(got, "Held: a sentinel alert is open on this PR.") || !strings.Contains(got, "resolve the sentinel alert") {
+		t.Fatalf("sentinel gate does not name the action:\n%s", got)
 	}
 
 	manual := readyEvidence()
@@ -766,8 +842,8 @@ func TestRouteHumanAuthorOwesAnswer(t *testing.T) {
 		{"clanker author keeps 085", func(e *Evidence) { e.AuthorKind = authorkind.Clanker }, NeedsDecision, "", "the reviewer swarm returned `requires_human` @abc1234"},
 		{"hive author keeps 085", func(e *Evidence) { e.AuthorKind = authorkind.Hive }, NeedsDecision, "", "the reviewer swarm returned `requires_human` @abc1234"},
 		{"self-authored keeps 085", func(e *Evidence) { e.SelfAuthored = true }, NeedsDecision, "", "the reviewer swarm returned `requires_human` @abc1234"},
-		{"hold keeps 085", func(e *Evidence) { e.Holds = Holds([]string{"hold"}) }, NeedsDecision, "", "the `hold` label is set"},
-		{"sentinel keeps 085", func(e *Evidence) { e.Sentinel = true }, NeedsDecision, "", "a sentinel alert is open on this PR"},
+		{"hold rides the author route as a gate", func(e *Evidence) { e.Holds = Holds([]string{"hold"}) }, NeedsAuthor, LaneReasonReviewerQuestion, "reviewer question: @clubanderson should this land before the freeze?"},
+		{"sentinel rides the author route as a gate", func(e *Evidence) { e.Sentinel = true }, NeedsAuthor, LaneReasonReviewerQuestion, "reviewer question: @clubanderson should this land before the freeze?"},
 		{"lane rule keeps 085", func(e *Evidence) { e.CauseReason = "the lane excludes `workflow-paths` edits" }, NeedsDecision, "", "the lane excludes `workflow-paths` edits"},
 	}
 	for _, tc := range cases {

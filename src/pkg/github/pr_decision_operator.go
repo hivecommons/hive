@@ -88,6 +88,12 @@ type PullRequestApprovalEvent struct {
 	// so posting again would only draw the same "NOT APPROVED" reply. The
 	// hive's own approval record is unaffected.
 	CommandsSkipped string
+	// ProwRejected is true when the `/lgtm` + `/approve` comments were
+	// posted and Prow answered them with a rejection ("restricted to
+	// collaborators" / "NOT APPROVED") before the approval reported. Prow's
+	// reply stays on the PR, so the next Approve takes the CommandsSkipped
+	// path (hivecommons/hive#17475).
+	ProwRejected bool
 	// ReportingError preserves partial progress: the native approval stands,
 	// but comments, labels or stage reporting must be retried/reconciled.
 	ReportingError string
@@ -100,6 +106,38 @@ const PRApprovalCommandsSkippedProw = "prow-rejects-bot-commands"
 // prowCommandRejections are the phrases Prow replies with when the hive
 // bot's `/lgtm` or `/approve` carries no weight on the repo.
 var prowCommandRejections = []string{"restricted to collaborators", "NOT APPROVED"}
+
+// prowReplyWindow and prowReplyInterval bound how long an Approve on a
+// Prow-managed PR waits for Prow to answer the commands it just relayed.
+var (
+	prowReplyWindow   = 6 * time.Second
+	prowReplyInterval = 2 * time.Second
+)
+
+// awaitProwRejection reads the PR's comments for Prow's rejection of the
+// hive commands just posted: once when wait is false, otherwise polling
+// every prowReplyInterval with a final read at the end of prowReplyWindow,
+// since Prow answers a few seconds after the post.
+func (c *Client) awaitProwRejection(ctx context.Context, owner, name string, number int, wait bool) bool {
+	deadline := time.Now().Add(prowReplyWindow)
+	for {
+		if rejected, err := c.prowRejectedHiveCommands(ctx, owner, name, number); err == nil && rejected {
+			return true
+		}
+		if !wait {
+			return false
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(min(prowReplyInterval, remaining)):
+		}
+	}
+}
 
 // prowRejectedHiveCommands reports whether the Prow bot has replied to one of the hive's earlier dashboard approval commands on the
 // PR with a Prow rejection (dibs#510: `/lgtm` → "changing LGTM is
@@ -386,7 +424,7 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 		}
 	}
 	full := owner + "/" + name
-	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor, ProwManaged: prowManagedLabels(labels)}
+	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor, ProwManaged: ProwManagedLabels(labels)}
 	if opts.HumanChangeRequests != nil {
 		if head == "" {
 			return event, ErrPullRequestHeadUnknown
@@ -473,14 +511,15 @@ func (c *Client) reportOperatorPullRequestApproval(ctx context.Context, owner, n
 		if c.logger != nil {
 			c.logger.Info("pull request approval commands posted by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
 		}
+		event.ProwRejected = c.awaitProwRejection(ctx, owner, name, number, event.ProwManaged)
 	}
 	return ctx.Err()
 }
 
-// prowManagedLabels reports whether labels carry Prow's plugin markers:
+// ProwManagedLabels reports whether labels carry Prow's plugin markers:
 // the approve plugin's `approved`, size's `size/*`, the `do-not-merge/*`
 // family and trigger's `ok-to-test` / `needs-ok-to-test`.
-func prowManagedLabels(labels []string) bool {
+func ProwManagedLabels(labels []string) bool {
 	for _, l := range labels {
 		l = strings.ToLower(strings.TrimSpace(l))
 		switch {

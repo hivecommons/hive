@@ -72,6 +72,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 
 - [DiskPressure recovery runbook](diskpressure-recovery-runbook.md) — diagnose storage eviction, recover safely, and expand or migrate volumes.
 - [Agent backend-auth failure recovery runbook](backend-auth-recovery-runbook.md) — identify affected agents, re-authenticate the backend, and clear recovered fleet reports.
+- [Fork PR stalled on Prow presubmits recovery runbook](fork-pr-presubmit-stall-runbook.md) — start missing presubmits with `/ok-to-test` and apply `/lgtm` and `/approve` as a person when relayed ones are rejected.
 - [Troubleshooting](troubleshooting.md) — container logs, config validation, agent tmux sessions, dashboard auth, GitHub credential checks, and GitHub App workflow-permission push rejections.
 - [Admin MCP reference](https://github.com/hivecommons/hive/blob/v6/src/docs/admin-mcp.md) (v6) — diagnostic reads for logs, startup output, request logs, agent terminals and kick logs, and crash/restart/memory evidence via the admin MCP: `log_sources`, `log_read` and its diagnostic read companions, and what still needs a host shell.
 - [Community and support](community.md) — Discord, contributor portal, issue tracker, and where to ask Hive Commons questions.
@@ -167,6 +168,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Telemetry agent](telemetry.md) — the L5/L6-only opt-in observability agent, ACMM level gating, and the `project_observability` opt-in flow.
 - [NPS feedback prompt](nps.md) - the dashboard's opt-in NPS question: what is collected (no user identity), how it reaches the hub (directly, or through the opt-in relay for standalone hives), why only hub admins can read it, and the `hub.nps_enabled` / `HIVE_NPS_ENABLED` switch.
 - [Operations agent](operations.md) — the L5/L6-only opt-in operational-readiness agent (health checks, SLOs, runbooks), ACMM level gating, and the `project_observability` opt-in flow.
+- [Red-team agent](redteam.md) — the L5/L6-only opt-in lane that plays a malicious contributor (human, AI, or one posing as the other) and extends the `ioscan` red-team corpus in hold-labelled PRs; refused every repository until its `repos:` scope is set.
 - [Custom dashboard stylesheets](custom-stylesheets.md) — operator-supplied CSS for the dashboard and public snapshot.
 - [Branding a hive](branding.md) — persistent per-deployment name, mark, and colours via `<data>/branding/branding.json` and `custom.css` (`HIVE_BRANDING_JSON`/`HIVE_BRANDING_CSS`); distinct from the per-request `?style=` stylesheets above.
 - [Portable AgentDefinition format](../AGENT-DEFINITION.md) — standalone YAML schema for importing/exporting agent definitions.

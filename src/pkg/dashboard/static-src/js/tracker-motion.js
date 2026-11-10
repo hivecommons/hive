@@ -487,7 +487,8 @@
       for (const it of items) {
         if (!it || !it.kind || !(Number(it.number) > 0)) continue;
         const linked = it.kind === 'issue' ? stageTrackerLinkedSorted(it, stages).filter(lp => lp && Number(lp.number) > 0) : [];
-        const shown = linked.length === 1 ? Object.assign({}, it, { via_pr: true, stage: linked[0].stage || 40, display_column: linked[0].display_column || 0, head: linked[0].head, code_activity: linked[0].code_activity }) : it;
+        const ride = linked.length === 1 ? linked[0] : (!linked.length && typeof stageTrackerLinkedRiding === 'function' ? stageTrackerLinkedRiding(it, stages) : null);
+        const shown = ride ? Object.assign({}, it, { via_pr: true, stage: ride.stage || 40, display_column: ride.display_column || 0, head: ride.head, code_activity: ride.code_activity }) : it;
         out[stageTrackerItemKey(it)] = stageTrackerColIndex(shown, stages);
         for (const lp of linked) out[stageTrackerItemKey({ repo: it.repo, kind: 'pr', number: lp.number })] = stageTrackerColIndex({ kind: 'pr', stage: lp.stage || 0, display_column: lp.display_column || 0, head: lp.head, code_activity: lp.code_activity }, stages);
       }

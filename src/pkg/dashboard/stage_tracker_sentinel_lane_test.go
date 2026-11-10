@@ -15,12 +15,11 @@ import (
 )
 
 // stageTrackerSentinelJS is the sentinel-alert surface the row builders
-// depend on (constants + the two pure helpers), for every node harness
+// depend on (constants + the pure helpers), for every node harness
 // that runs stageTrackerSegments / stageTrackerChipsHtml.
 func stageTrackerSentinelJS(t *testing.T, html string) string {
 	t.Helper()
 	return strings.Join([]string{
-		jsConstLine(t, html, "STAGE_TRACKER_SENTINEL_WORD"),
 		jsConstLine(t, html, "STAGE_TRACKER_SENTINEL_CHIP"),
 		jsConstLine(t, html, "STAGE_TRACKER_SENTINEL_TIP"),
 		jsConstLine(t, html, "STAGE_TRACKER_SENTINEL_TIP_FALLBACK"),
@@ -28,8 +27,6 @@ func stageTrackerSentinelJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_DEFERRED_NOTE"),
 		jsFunc(t, html, "stageTrackerDeferredMods"),
 		jsFunc(t, html, "stageTrackerSentinelTip"),
-		jsFunc(t, html, "stageTrackerSentinelInLane"),
-		jsFunc(t, html, "stageTrackerSentinelAsSuffix"),
 		jsFunc(t, html, "stageTrackerReturnedAuthor"),
 		jsFunc(t, html, "stageTrackerToolingSuffix"),
 		jsFunc(t, html, "stageTrackerReturnedWord"),
@@ -288,21 +285,18 @@ func TestStageTrackerSentinelConfiguredLabel(t *testing.T) {
 }
 
 // TestStageTrackerSentinelLaneWiring pins the markup and CSS surface: the
-// constants, the chevron class, the chip class, the Decide… preface and
-// that the new CSS names tokens only (ADR-0018).
+// constants, the chip class, the Decide… preface, that the chevron no
+// longer wears a sentinel / held word (hivecommons/hive#17470 — the gate
+// is the one human-gate pill) and that the CSS names tokens only (ADR-0018).
 func TestStageTrackerSentinelLaneWiring(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`const STAGE_TRACKER_SENTINEL_WORD = 'Sentinel alert · needs human';`,
 		`const STAGE_TRACKER_SENTINEL_CHIP = 'sentinel';`,
 		`const STAGE_TRACKER_SENTINEL_TIP = 'Sentinel flagged security-relevant changes';`,
 		`function stageTrackerSentinelTip(item)`,
-		`function stageTrackerSentinelInLane(item)`,
 		`function stageTrackerSentinelChipHtml(item)`,
 		`function stageTrackerSentinelPreface(items)`,
-		`sentinel || sentinelSuffix ? 'ham-sentinel' : ''`,
 		`.ham-badge-sentinel { color: var(--status-error);`,
-		`.ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }`,
 		`const sentinel = id.indexOf('decide:') === 0 ? stageTrackerSentinelPreface(items) : '';`,
 		`message: preface + 'Post "/lgtm" and "/approve" on '`,
 		`confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel`,
@@ -314,6 +308,19 @@ func TestStageTrackerSentinelLaneWiring(t *testing.T) {
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing sentinel lane wiring %q", want)
+		}
+	}
+	for _, gone := range []string{
+		`STAGE_TRACKER_SENTINEL_WORD`,
+		`function stageTrackerSentinelInLane(`,
+		`function stageTrackerSentinelAsSuffix(`,
+		`function stageTrackerHeldWord(`,
+		`STAGE_TRACKER_HELD_SENTINEL_WORD`,
+		`.ham-seg.active.ham-held`,
+		`.ham-seg.active.ham-sentinel`,
+	} {
+		if strings.Contains(html, gone) {
+			t.Errorf("index.html still carries the chevron-word sentinel gate %q", gone)
 		}
 	}
 	start := strings.Index(html, "/* Sentinel-flagged PR, #13535 follow-up")
@@ -328,16 +335,16 @@ func TestStageTrackerSentinelLaneWiring(t *testing.T) {
 }
 
 // TestStageTrackerSentinelLaneText runs the row builders under node: a PR
-// parked at 085 with sentinel_alert reads "Sentinel alert · needs human"
-// in the lit chevron (class ham-sentinel, aria-label + title carrying the
-// reason at the head's short sha), the caption line says the same, no
-// chip is added there; on any other lane a `sentinel` chip sits in the
-// chip area beside the modifier pill with the same tooltip; the generic
-// tooltip stands in without a reason; an issue riding one covering PR
-// inherits the lane word, a nested sub-row carries its own; a clean row
-// has none of it; the Decide… preface names each flagged PR; and the
-// keyed reconcile swaps the row in place (same key, no enter animation)
-// when the flag flips.
+// parked at 085 with sentinel_alert keeps its column word on the lit
+// chevron (amber ham-human-gated) and carries the alert as a reason of
+// the one human-gate pill (hivecommons/hive#17470) with the reason at the
+// head's short sha as its hover, no chip beside it; on a lane with no
+// gate a `sentinel` chip sits in the chip area beside the modifier pill
+// with the same tooltip; the generic tooltip stands in without a reason;
+// an issue riding one covering PR carries the gate, a nested sub-row
+// carries its own; a clean row has none of it; the Decide… preface names
+// each flagged PR; and the keyed reconcile swaps the row in place (same
+// key, no enter animation) when the flag flips.
 func TestStageTrackerSentinelLaneText(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -374,43 +381,50 @@ assert.strictEqual(stageTrackerSentinelTip(P('o/r', 1, 85, flagged)), TIP);
 assert.strictEqual(stageTrackerSentinelTip(P('o/r', 1, 85, { sentinel_alert: true, head: HEAD })), 'Sentinel flagged security-relevant changes at feedfac: ' + STAGE_TRACKER_SENTINEL_TIP_FALLBACK, 'no reason → generic');
 assert.strictEqual(stageTrackerSentinelTip(P('o/r', 1, 85, { sentinel_alert: true })), 'Sentinel flagged security-relevant changes: ' + STAGE_TRACKER_SENTINEL_TIP_FALLBACK, 'no head → no sha');
 assert.strictEqual(stageTrackerSentinelTip(P('o/r', 1, 85)), '', 'clean → nothing');
-assert.ok(stageTrackerSentinelInLane(P('o/r', 1, 85, flagged)));
-assert.ok(!stageTrackerSentinelInLane(P('o/r', 1, 50, flagged)), 'CI / Review is not the human-decision lane');
-assert.ok(!stageTrackerSentinelInLane(I('o/r', 1, 85, flagged)), 'an issue parked at 085 on its own is not the merge gate');
-assert.ok(stageTrackerSentinelInLane(Object.assign(I('o/r', 1, 85, flagged), { via_pr: true })), 'an issue riding its PR is');
+const keys = item => stageTrackerHumanGateReasons(item).map(r => r.key).join(' ');
+assert.strictEqual(keys(P('o/r', 1, 85, flagged)), 'decision sentinel');
+assert.strictEqual(keys(P('o/r', 1, 50, flagged)), 'sentinel', 'CI / Review is not the human-decision lane; the alert alone gates');
+assert.strictEqual(keys(I('o/r', 1, 85, flagged)), 'decision sentinel', 'an issue parked at 085 is parked on a person too');
+assert.strictEqual(keys(P('o/r', 1, 85, { sentinel_alert: true, sentinel_notice: true })), 'decision', 'the trusted-author notice is not a gate');
 
-// 085 + sentinel: the lane word itself names the alert.
+// 085 + sentinel: the chevron keeps its column word; the gate pill
+// names the alert and carries the reason as its hover.
 const parked = stageTrackerRowHtml(P('o/r', 109, 85, flagged), stages, ctx);
-const lit = /<li class="ham-seg active detoured ham-sentinel"([^>]*)>([\s\S]*?)<\/li>/.exec(parked);
-assert.ok(lit, 'the lit merge-gate chevron carries ham-sentinel: ' + parked);
-assert.ok(lit[2].includes('<span class="ham-detour">Sentinel alert · needs human</span>'), 'lane text: ' + lit[2]);
+const lit = /<li class="ham-seg active detoured ham-human-gated"([^>]*)>([\s\S]*?)<\/li>/.exec(parked);
+assert.ok(lit, 'the lit merge-gate chevron wears the amber outline: ' + parked);
 const visibleChevron = lit[2].replace(/<span[^>]*class="config-tooltip ham-chevron-tip"[^>]*>[^<]*<\/span>/g, '').replace(/<[^>]+>/g, '');
-assert.ok(visibleChevron.includes('Sentinel alert · needs human'), 'visible chevron names the sentinel gate');
-assert.ok(!visibleChevron.includes('Needs human decision'), 'the plain word is replaced, not appended in visible copy; full context remains in the tooltip');
-assert.ok(lit[1].includes('title="' + TIP + ' — '), 'the chevron tooltip leads with the reason: ' + lit[1]);
+assert.ok(!/entinel|Needs human/.test(visibleChevron), 'the chevron never names the gate: ' + visibleChevron);
+assert.ok(!parked.includes('ham-sentinel"') && !parked.includes('ham-held'), 'no sentinel / held chevron class: ' + parked);
 assert.ok(lit[1].includes('aria-current="step"'));
-assert.ok(lit[1].includes('aria-label="Sentinel alert · needs human — ' + TIP + '"'), 'aria-label carries the wording: ' + lit[1]);
 assert.ok(lit[2].includes('aria-label="Next move: human"'), 'the 👤 actor icon stays');
-assert.ok(parked.includes('<p class="ham-current-stage">Needs human decision · Sentinel alert · needs human · Next move: human'), 'the compact caption preserves the human gate beside independent tracks: ' + parked);
-assert.ok(!parked.includes('ham-badge-sentinel'), 'no chip when the lane word already says it');
+const gate = /<span class="ham-human-gate" data-ham-gate="o\/r\/pr#109" data-ham-gate-reasons="decision sentinel"[^>]*>([\s\S]*?)<\/span><\/li>/.exec(parked);
+assert.ok(gate, 'one human-gate pill with both reasons: ' + parked);
+assert.ok(gate[1].includes('Needs human · decision, sentinel'), gate[1]);
+assert.ok(gate[1].includes(esc(TIP)), 'the status hover carries the sentinel reason: ' + gate[1]);
+assert.ok(gate[1].includes('>Confirm safe</button>'), 'the alert has its verb: ' + gate[1]);
+assert.ok(!parked.includes('ham-badge-sentinel'), 'no chip when the gate already says it');
 assert.ok(parked.includes(esc(TIP)), 'the PR link tooltip carries the sentinel line');
 
-// Other lanes: chip beside the modifier pill, same tooltip.
+// Other lanes: the alert alone is a gate — the pill carries it beside the
+// modifier chip, same tooltip; the sentinel chip stands in only where
+// the gate does not render (a draft).
 const review = stageTrackerRowHtml(P('o/r', 110, 50, Object.assign({ modifiers: ['needs-rebase'] }, flagged)), stages, ctx);
 assert.ok(!review.includes('<span class="ham-detour">') && review.includes('data-track="ci"') && review.includes('data-track="review"'), 'the informational notice preserves both independent tracks off the merge gate');
 const chips = /<span class="ham-badges">([\s\S]*?)<\/span><\/li>/.exec(review);
 assert.ok(chips, review);
-assert.ok(/^<span class="ham-badge ham-badge-sentinel" title="[^"]+" aria-label="Sentinel alert — [^"]+">sentinel<\/span><span class="ham-badge ham-badge-mod ham-mod-needs-rebase">needs rebase<\/span>$/.test(chips[1]), 'sentinel chip leads the chip area: ' + chips[1]);
-assert.ok(chips[1].includes('title="' + TIP + '"'), chips[1]);
+assert.ok(/^<span class="ham-badge ham-badge-mod ham-mod-needs-rebase">needs rebase<\/span><span class="ham-human-gate" data-ham-gate="o\/r\/pr#110" data-ham-gate-reasons="sentinel"/.test(chips[1]), 'the gate pill follows the modifier chip: ' + chips[1]);
+assert.ok(chips[1].includes('title="sentinel: ' + TIP + '"'), chips[1]);
+assert.ok(!review.includes('ham-badge-sentinel'), 'no chip beside the gate');
 assert.ok(!review.includes('ham-sentinel"'), 'the chevron is not tinted off the merge gate');
-const noMods = stageTrackerRowHtml(P('o/r', 110, 50, flagged), stages, ctx);
-assert.ok(noMods.includes('ham-badge-sentinel') && !noMods.includes('ham-badge-mod'), 'chip alone when there are no modifiers');
+const draft = stageTrackerRowHtml(P('o/r', 110, 50, Object.assign({ modifiers: ['draft'] }, flagged)), stages, ctx);
+assert.ok(/<span class="ham-badge ham-badge-sentinel" title="[^"]+" aria-label="Sentinel alert — [^"]+">sentinel<\/span>/.test(draft) && !draft.includes('ham-human-gate'), 'a draft is no gate: the chip says it: ' + draft);
+assert.ok(draft.includes('title="' + TIP + '"'), draft);
 const generic = stageTrackerRowHtml(P('o/r', 110, 71, { sentinel_alert: true }), stages, ctx);
 assert.ok(generic.includes('Sentinel flagged security-relevant changes: ' + esc(STAGE_TRACKER_SENTINEL_TIP_FALLBACK)), 'generic tooltip without a reason: ' + generic);
 
 // 071/072 + sentinel (hivecommons/hive#15159): the chevron keeps the
-// routing word — the human already acted — with the alert as a suffix,
-// never "needs human"; the chip is folded into the word.
+// routing word — the human already acted — never "needs human"; the
+// alert is the gate pill's reason, not a chevron suffix.
 assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }, 'Returned to contributor'), "Returned to @thatguywob's clanker");
 assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'bee', author_kind: 'hive' }, 'Returned to contributor'), "Returned to @bee's hive");
 // An issue row drawn through its one covering PR names the PR's author,
@@ -425,28 +439,23 @@ assert.strictEqual(stageTrackerReturnedWord(Object.assign({}, viaPR, { linked_pr
 // A row the sweep marked superseded says so instead of "Returned to":
 // nothing is owed by the author; a maintainer closes it (#15303 / #15304).
 assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker', superseded: { reason: 'superseded', closer_pr: 15304, closer_repo: 'hive' } }, 'Returned to contributor'), 'Superseded by #15304 · decide');
-assert.strictEqual(stageTrackerReturnedWord(Object.assign({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker', superseded: { closer_pr: 15304 } }, flagged), 'x'), 'Superseded by #15304 · decide · sentinel');
+assert.strictEqual(stageTrackerReturnedWord(Object.assign({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker', superseded: { closer_pr: 15304 } }, flagged), 'x'), 'Superseded by #15304 · decide', 'no sentinel suffix on the word');
 assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker', superseded: true }, 'Returned to contributor'), "Returned to @thatguywob's clanker", 'a bare nested flag names no closer');
 assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'sam', author_kind: 'human' }, 'Returned to contributor'), 'Returned to @sam');
 assert.strictEqual(stageTrackerReturnedWord({ stage: 71, kind: 'pr', author: 'sam' }, 'Needs author'), 'Needs @sam');
 assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr' }, 'Returned to contributor'), 'Returned to contributor', 'no author → stage word');
-assert.strictEqual(stageTrackerReturnedWord(Object.assign({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }, flagged), 'x'), "Returned to @thatguywob's clanker · sentinel");
-assert.ok(stageTrackerSentinelAsSuffix(P('o/r', 1, 72, flagged)) && stageTrackerSentinelAsSuffix(P('o/r', 1, 71, flagged)));
-assert.ok(!stageTrackerSentinelAsSuffix(P('o/r', 1, 85, flagged)) && !stageTrackerSentinelAsSuffix(I('o/r', 1, 72, flagged)));
+assert.strictEqual(stageTrackerReturnedWord(Object.assign({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }, flagged), 'x'), "Returned to @thatguywob's clanker");
 const returned = stageTrackerRowHtml(P('o/r', 15159, 72, Object.assign({ author: 'thatguywob', author_kind: 'clanker' }, flagged)), stages, ctx);
-const retLit = /<li class="ham-seg active detoured ham-sentinel"([^>]*)>([\s\S]*?)<\/li>/.exec(returned);
-assert.ok(retLit, 'the lit 072 chevron is tinted: ' + returned);
-assert.ok(retLit[2].includes("<span class=\"ham-detour\">Returned to @thatguywob&#39;s clanker · sentinel</span>"), 'routing word with sentinel suffix: ' + retLit[2]);
-assert.ok(!returned.includes('needs human') && !returned.includes('Needs human'), 'no needs-human wording at 072: ' + returned);
-assert.ok(retLit[1].includes("aria-label=\"Returned to @thatguywob&#39;s clanker · sentinel — " + TIP + '"'), 'aria names the routing: ' + retLit[1]);
-assert.ok(retLit[1].includes(' — ' + TIP), 'the tooltip carries the reason: ' + retLit[1]);
-assert.ok(!returned.includes('ham-badge-sentinel'), 'no chip when the word carries the suffix');
+const retLit = /<li class="ham-seg active detoured ham-human-gated"([^>]*)>([\s\S]*?)<\/li>/.exec(returned);
+assert.ok(retLit, 'the lit 072 chevron wears the amber outline: ' + returned);
+assert.ok(retLit[2].includes("<span class=\"ham-detour\">Returned to @thatguywob&#39;s clanker</span>"), 'routing word, no sentinel suffix: ' + retLit[2]);
+assert.ok(!/entinel/.test(retLit[2].replace(/<span[^>]*class="config-tooltip ham-chevron-tip"[^>]*>[^<]*<\/span>/g, '')), 'no sentinel word on the chevron: ' + retLit[2]);
+assert.ok(returned.includes('data-ham-gate-reasons="sentinel"') && returned.includes('>Confirm safe</button>'), 'the alert is the gate pill\'s reason: ' + returned);
+assert.ok(!returned.includes('ham-badge-sentinel'), 'no chip beside the gate');
 const needsAuthor = stageTrackerRowHtml(P('o/r', 15160, 71, Object.assign({ author: 'sam', author_kind: 'human' }, flagged)), stages, ctx);
-assert.ok(needsAuthor.includes('<span class="ham-detour">Needs @sam · sentinel</span>') && !needsAuthor.includes('needs human'), needsAuthor);
+assert.ok(needsAuthor.includes('<span class="ham-detour">Needs @sam</span>') && needsAuthor.includes('data-ham-gate-reasons="sentinel"'), needsAuthor);
 const returnedClean = stageTrackerRowHtml(P('o/r', 15161, 72, { author: 'thatguywob', author_kind: 'clanker' }), stages, ctx);
-assert.ok(returnedClean.includes("<span class=\"ham-detour\">Returned to @thatguywob&#39;s clanker</span>") && !returnedClean.includes('ham-sentinel') && !returnedClean.includes('entinel'), returnedClean);
-// 085 still says it in full.
-assert.ok(stageTrackerRowHtml(P('o/r', 15162, 85, flagged), stages, ctx).includes('<span class="ham-detour">Sentinel alert · needs human</span>'));
+assert.ok(returnedClean.includes("<span class=\"ham-detour\">Returned to @thatguywob&#39;s clanker</span>") && !returnedClean.includes('ham-human-gate') && !returnedClean.includes('entinel'), returnedClean);
 // Give direction on a clanker PR is carried to the contributor's clanker,
 // not to the hive's own fixer.
 assert.strictEqual(stageTrackerDirectionCarrier([{ kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }]), "@thatguywob's clanker");
@@ -456,17 +465,17 @@ assert.strictEqual(stageTrackerDirectionCarrier([]), 'the author agent');
 
 // Clean rows carry none of it.
 const clean = stageTrackerRowHtml(P('o/r', 104, 85), stages, ctx);
-assert.ok(clean.includes('<span class="ham-detour">Needs human decision</span>') && !clean.includes('entinel'), clean);
+assert.ok(clean.includes('data-ham-gate-reasons="decision"') && !clean.includes('entinel'), clean);
 assert.ok(!stageTrackerRowHtml(P('o/r', 1, 50, { modifiers: ['needs-rebase'] }), stages, ctx).includes('entinel'));
 
-// An issue with one covering PR rides that PR's lane word; several covering
+// An issue with one covering PR carries that PR's gate; several covering
 // PRs put the alert on the flagged sub-row only.
 const single = stageTrackerRowHtml(I('o/r', 13, 85, { linked_prs: [Object.assign({ number: 112, stage: 85, title: 'Covers 13' }, flagged)] }), stages, ctx);
-assert.ok(single.includes('<span class="ham-detour">Sentinel alert · needs human</span>') && !single.includes('ham-badge-sentinel'), single);
+assert.ok(single.includes('data-ham-gate-reasons="decision sentinel"') && !single.includes('ham-badge-sentinel') && !single.includes('Sentinel alert · needs human'), single);
 const multi = stageTrackerRowHtml(I('o/r', 14, 20, { linked_prs: [Object.assign({ number: 115, stage: 85, title: 'A' }, flagged), { number: 116, stage: 50, title: 'B' }] }), stages, ctx);
 const subs = multi.split('<div class="ham-sub"').slice(1);
 assert.strictEqual(subs.length, 2);
-assert.ok(subs[0].includes('Sentinel alert · needs human') && subs[0].includes('data-ham-sub-key="o/r/pr#115"'), subs[0]);
+assert.ok(subs[0].includes('data-ham-gate-reasons="decision sentinel"') && subs[0].includes('data-ham-sub-key="o/r/pr#115"'), subs[0]);
 assert.ok(!subs[1].includes('entinel'), subs[1]);
 assert.ok(!multi.slice(0, multi.indexOf('<div class="ham-sub"')).includes('entinel'), 'the issue line itself is clean');
 
@@ -502,6 +511,26 @@ assert.strictEqual(stageTrackerManualMergeWord({ manual_merge: true, human_merge
 const breaking = stageTrackerRowHtml(P('o/r', 403, 90, { manual_merge: true, human_merge_reason: 'breaking-change', human_merge_reason_text: 'Breaking change — owner merges' }), stages, ctx);
 assert.ok(breaking.includes('<span class="ham-detour">Ready for human merge · human merge</span>') && !breaking.includes('Awaiting human merge'), 'breaking-change 090 word: ' + breaking);
 
+// hivecommons/hive#17327 → #17470: a sentinel alert or hold label is a
+// gate on the PR's real stage. A green, reviewed, flagged PR stands at 090;
+// the Merge queue cell keeps its own word (amber ham-human-gated, never
+// "Held · sentinel", never red ham-sentinel), the gate pill names the
+// reason with the sentinel rule as its hover and Confirm safe as its verb,
+// and no sentinel chip repeats it.
+assert.strictEqual(keys(P('o/r', 1, 90, flagged)), 'sentinel');
+assert.strictEqual(keys(P('o/r', 1, 90, { modifiers: ['hold'], hold: { by: 'clubanderson', reason: 'wait for the release' } })), 'hold');
+assert.strictEqual(keys(P('o/r', 1, 90, { sentinel_alert: true, sentinel_notice: true })), '', 'the trusted-author notice is not a gate');
+assert.strictEqual(keys(P('o/r', 1, 90)), '');
+const heldSentinel = stageTrackerRowHtml(P('o/r', 17327, 90, Object.assign({ reason: 'a sentinel alert is open on this PR' }, flagged)), stages, ctx);
+assert.ok(!heldSentinel.includes('Held · ') && !heldSentinel.includes('ham-held') && !heldSentinel.includes('ham-sentinel"'), 'no held / sentinel chevron word: ' + heldSentinel);
+assert.ok(/<li class="ham-seg active[^"]*ham-human-gated"/.test(heldSentinel), 'the 090 chevron wears the amber outline: ' + heldSentinel);
+assert.ok(heldSentinel.includes('data-ham-gate-reasons="sentinel"') && heldSentinel.includes('Needs human · sentinel') && heldSentinel.includes('>Confirm safe</button>'), 'the gate pill carries the alert and its verb: ' + heldSentinel);
+assert.ok(heldSentinel.includes(esc(TIP)), 'the hover carries the reason: ' + heldSentinel);
+assert.ok(!heldSentinel.includes('ham-badge-sentinel'), 'no sentinel chip beside the gate: ' + heldSentinel);
+const heldHold = stageTrackerRowHtml(P('o/r', 17328, 90, { modifiers: ['hold'], hold: { by: 'clubanderson', reason: 'wait for the release', since: '2026-11-08T09:00:00Z' }, reason: 'held by label hold' }), stages, ctx);
+assert.ok(!heldHold.includes('Held · hold') && !heldHold.includes('ham-held') && heldHold.includes('data-ham-gate-reasons="hold"') && heldHold.includes('>Release hold</button>'), 'held-by-label 090 gate: ' + heldHold);
+assert.ok(heldHold.includes('Held by @clubanderson · wait for the release'), 'the gate hover names the holder: ' + heldHold);
+
 // Decide… preface: one line per flagged PR, nothing for clean ones.
 assert.strictEqual(stageTrackerSentinelPreface([P('o/r', 109, 85, flagged), P('o/r', 104, 85)]), '⚠ o/r#109 — ' + TIP);
 assert.strictEqual(stageTrackerSentinelPreface([P('o/r', 104, 85)]), '');
@@ -534,7 +563,7 @@ r = stageTrackerReconcile(el, [row(P('o/r', 109, 85, flagged))], opts);
 assert.deepStrictEqual(r, { kept: 0, replaced: 1, entered: 0, exited: 0, deferred: 0 }, 'flag on → same key, swapped in place');
 assert.strictEqual(el.children.length, 1);
 assert.notStrictEqual(el.children[0], first);
-assert.ok(el.children[0].html.includes('Sentinel alert · needs human'));
+assert.ok(el.children[0].html.includes('data-ham-gate-reasons="decision sentinel"'));
 assert.ok(!el.children[0].classList.contains('ham-entering'), 'a replaced row does not fade in');
 r = stageTrackerReconcile(el, [row(P('o/r', 109, 85))], opts);
 assert.deepStrictEqual(r, { kept: 0, replaced: 1, entered: 0, exited: 0, deferred: 0 }, 'flag off → swapped back');

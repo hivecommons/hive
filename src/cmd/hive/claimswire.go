@@ -217,8 +217,13 @@ func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, clie
 		// A fresh claim with no PR behind it is a dispatch: it also asks
 		// whether an open PR already fixes the issue (#14799). A renewal,
 		// a PR-backed start signal and the release tick's recheck of live
-		// claims do not — the holder's own PR is the open PR.
+		// claims do not — the holder's own PR is the open PR. A hive
+		// agent's own dispatch (Holder is the agent name) also refuses an
+		// issue that agent filed for outside help (hivecommons/hive#17299).
 		if _, held := ledger.Lookup(req.Repo, req.Issue); !held && !req.PRStarted {
+			if req.Kind == claims.KindAgent {
+				return gh.IssueStartBlockReason(ctx, req.Repo, req.Issue, req.Holder)
+			}
 			return gh.IssueDispatchBlockReason(ctx, req.Repo, req.Issue)
 		}
 		return gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)
@@ -514,12 +519,22 @@ func recordAgentKickListings(dashSrv *dashboard.Server, org, agentName string, i
 // comment or a label request; see pkg/github/agent_start_hook.go). The first such signal on an issue a kick
 // listed to the agent records the agent claim (comment and label included)
 // that the escalation gate counts; a later one renews it. A signal on an
-// issue no kick listed to the agent records nothing.
+// issue no kick listed to the agent records nothing — except the filed-claim
+// signal (hivecommons/hive#17299): the agent filed that issue itself as its
+// own next step and claimed it in the same request, so no kick could have
+// listed it; the filing is its listing, and the claim is recorded like a
+// kicked issue's first start (admission check included).
 func recordAgentStart(ledger *claims.Ledger, org, agentName, repo string, issue int, signal string, logger *slog.Logger) {
 	if ledger == nil || agentName == "" || issue <= 0 {
 		return
 	}
-	res, started, err := ledger.ClaimOnStart(qualifyClaimRepo(org, repo), issue, agentName, github.StartSignalIsPREvidence(signal))
+	qualified := qualifyClaimRepo(org, repo)
+	if signal == github.AgentStartSignalFiledClaim {
+		if _, listed := ledger.MarkListed(qualified, issue, agentName); !listed && logger != nil {
+			logger.Debug("issue-claims: self-filed issue someone else holds; not listed", "agent", agentName, "repo", repo, "issue", issue)
+		}
+	}
+	res, started, err := ledger.ClaimOnStart(qualified, issue, agentName, github.StartSignalIsPREvidence(signal))
 	if logger == nil || !started {
 		return
 	}

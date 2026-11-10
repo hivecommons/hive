@@ -44,7 +44,14 @@ var tierScopes = map[string][]string{
 	"advisor":     {ScopeIssuesRead},
 	"newcomer":    {ScopeIssuesRead, ScopeIssuesWrite},
 	"contributor": {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite},
-	"trusted":     {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite, ScopeMerge},
+	// The sec-check role refinement of contributor (agentmode.SecCheckTier):
+	// same hive-side scopes; the extra Dependabot alerts read lives only on
+	// the GitHub App token.
+	"sec-check": {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite},
+	"trusted":   {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite, ScopeMerge},
+	// The sec-check role refinement of trusted (agentmode.SecCheckTrustedTier):
+	// same hive-side scopes as trusted.
+	"sec-check-trusted": {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite, ScopeMerge},
 }
 
 // ScopesForTier returns the scope set for a trust tier. An unrecognized tier

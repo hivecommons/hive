@@ -51,6 +51,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	for key, info := range supersededGraceStates(entries, "", s.supersessionGracePeriod()) {
 		superseded[key] = info
 	}
+	deferrals := stageTrackerDeferrals(s.prDeferralAuditEntries(now), qualifyRepo)
 	var cfg *config.Config
 	if s.deps != nil {
 		cfg = s.deps.Config
@@ -175,7 +176,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.Modifiers, it.DeferredModifiers = stageTrackerModifiers(labels, status.HiveID, rec, hasRec, overrides, now, draft, it.Reason, it.Kind, stage, it.Mirrored)
 		// 045/085 have their own chevron word ("Needs human decision"); the
 		// chip only adds information when needs-decision modifies another
-		// stage.
+		// stage — or when the 085 row's chevron is its real stage (CI /
+		// Review) and the pill is what carries the ask; that case is
+		// re-added once the head's tracks are known
+		// (stageTrackerApplyPersonActsOnPRPill).
 		if stage == stagelabels.NeedsDecision || stage == stagelabels.IssueNeedsDecision {
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsDecision })
 		}
@@ -510,6 +514,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// a head the cycle never listed counts from the deliveries alone
 		// (hivecommons/hive#16521).
 		activityPR.CIActivity = github.HeadCIActivity(activityPR.Repo, pr.HeadSHA, pr.CIActivity)
+		s.stageTrackerRelistStaleCI(activityPR, now)
 		it.CIActivity = stageTrackerCIActivity(activityPR, now)
 		var bundle *evidence.Bundle
 		if evidenceVerifier != nil && pr.HeadSHA != "" {
@@ -605,11 +610,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			stageTrackerReviewFallbackState(it.ReviewActivity, stageTrackerReviewFallbackInputsFor(it, currentPR, reviewerLane))
 		}
 		activityItem.CIActivity, activityItem.ReviewActivity = it.CIActivity, it.ReviewActivity
+		activityItem.Deferral = stageTrackerDeferralFor(&activityItem, deferrals, status.GitHubBaseURL)
 		stageTrackerApplyCodeActivity(&activityItem, dispatchState, status, now)
 		stageTrackerApplyRemediation(&activityItem, dispatchState, status, stageTrackerFixerAgent(cfg), now)
-		it.CodeActivity, it.Remediation, it.ReviewActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.Remediation, activityItem.ReviewActivity, activityItem.DisplayColumn, activityItem.Caption
+		it.CodeActivity, it.Remediation, it.Deferral, it.ReviewActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.Remediation, activityItem.Deferral, activityItem.ReviewActivity, activityItem.DisplayColumn, activityItem.Caption
 		stageTrackerApplyReworkOwedBy(it)
 		stageTrackerApplyTrainQueuedCaption(it)
+		stageTrackerApplyPersonActsOnPRPill(it)
 	}
 	stageTrackerApplyReauthor(resp.Items, store, status.GitHubBaseURL, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
@@ -1119,4 +1126,24 @@ func stageTrackerSinceUnblock(it *StageTrackerItem, rec stagelabels.Record, hasR
 	}
 	t := rec.UnblockedAt
 	it.StageSince = &t
+}
+
+// stageTrackerRelistStaleCI asks for one fresh check-run listing of a head
+// whose CI snapshot still claims a check running or queued after
+// dashboard.stage_tracker.ci_activity_stale_m (default 10). The cycle's
+// listing can outlive the checks it describes — the GraphQL batch skips a
+// clean repository, an ETag replays — and nothing else re-reads a head
+// whose PR has not changed; promptargs#467 rendered `CI 2/3 · running` for
+// eight hours after every check had passed (hivecommons/hive#17508). The
+// listing is coalesced and budget-aware; it lands in the webhook CI
+// evidence store for the next build.
+func (s *Server) stageTrackerRelistStaleCI(pr github.PullRequest, now time.Time) bool {
+	if s == nil || s.deps == nil || s.deps.GHClient == nil || pr.HeadSHA == "" {
+		return false
+	}
+	maxAge := s.deps.Config.StageTrackerCIActivityStale()
+	if !github.CIActivityStale(pr.CIActivity, now, maxAge) {
+		return false
+	}
+	return s.deps.GHClient.RequestHeadCIRelist(pr.Repo, pr.Number, pr.HeadSHA, pr.BaseRef, maxAge)
 }

@@ -256,12 +256,13 @@ func TestAgentStartHook_DeferralCommentRecordsNoStart(t *testing.T) {
 // branch / PR is PR evidence; a bare claim or start comment is not.
 func TestStartSignalIsPREvidence(t *testing.T) {
 	cases := map[string]bool{
-		AgentStartSignalPRRequest: true,
-		AgentStartSignalBranch:    true,
-		AgentStartSignalClaim:     false,
-		AgentStartSignalComment:   false,
-		AgentStartSignalLabel:     false,
-		"":                        false,
+		AgentStartSignalPRRequest:  true,
+		AgentStartSignalBranch:     true,
+		AgentStartSignalClaim:      false,
+		AgentStartSignalFiledClaim: false,
+		AgentStartSignalComment:    false,
+		AgentStartSignalLabel:      false,
+		"":                         false,
 	}
 	for signal, want := range cases {
 		if got := StartSignalIsPREvidence(signal); got != want {

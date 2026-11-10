@@ -135,6 +135,13 @@ func IsUnauthorized(err error) bool {
 	return errors.As(err, &se) && se.Status == http.StatusUnauthorized
 }
 
+// IsUnavailable reports whether err is a 503 carrying CodeUnavailable: a
+// server that is up but cannot serve.
+func IsUnavailable(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && se.Status == http.StatusServiceUnavailable && se.Body.Code == CodeUnavailable
+}
+
 // Health is GET /v1/health.
 func (c *Client) Health(ctx context.Context) (Health, error) {
 	var out Health
@@ -358,21 +365,33 @@ func (a Address) target() string {
 }
 
 // WaitReady polls GET /v1/health until it answers or ctx ends; it is for a
-// caller that just started `crux serve` and needs to know when to begin.
+// caller that just started `crux serve` and needs to know when to begin. A
+// 401 or a 503 unavailable verdict (the server is up but cannot serve, e.g.
+// "tmux not found on PATH") returns at once. On any other failure it keeps
+// polling, and when ctx ends the error wraps ctx.Err() and names the last
+// health answer.
 func (c *Client) WaitReady(ctx context.Context, interval time.Duration) error {
 	if interval <= 0 {
 		interval = 100 * time.Millisecond
 	}
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	var lastErr error
 	for {
 		if _, err := c.Health(ctx); err == nil {
 			return nil
-		} else if IsUnauthorized(err) {
+		} else if IsUnauthorized(err) || IsUnavailable(err) {
 			return err
+		} else if ctx.Err() == nil || lastErr == nil {
+			// A probe cut short by ctx ending is not a health answer; keep
+			// the last real one so the deadline error still names it.
+			lastErr = err
 		}
 		select {
 		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("%w (last health answer: %v)", ctx.Err(), lastErr)
+			}
 			return ctx.Err()
 		case <-t.C:
 		}

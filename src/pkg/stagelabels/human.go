@@ -13,13 +13,19 @@ package stagelabels
 //   - 050 review-pending: no verdict for this head yet (or the head was just
 //     pushed and nothing has reported). Nobody acts; wait.
 //   - 085 needs-decision: a person must decide something other than the
-//     merge — sentinel alert, hold / do-not-merge / needs-decision label, or
-//     a lane rule that is human-only for a non-trust reason.
+//     merge — a needs-decision / needs-human label, a reviewer's
+//     requires_human verdict, or a lane rule that is human-only for a
+//     non-trust reason.
 //   - 060 reviewed: approve verdict, but checks or the soak are still
 //     running. Wait.
 //   - 090 ready-for-human-merge: everything the hive would need is in place
 //     and only trust/tier/role stops it. The maintainer's /lgtm /approve is
 //     the whole remaining job.
+//
+// A sentinel alert and a hold-class label are gates, not stages
+// (hivecommons/hive#17327): the stage stays the head's real progress and
+// the gate rides it as a pill (Route.Gates). The lanes refuse the merge on
+// the label itself, so a gated head at 090 is "held", never "queued".
 //
 // RouteHuman is a pure function of Evidence so every rule is testable.
 
@@ -262,8 +268,10 @@ func HumanApprovedReason(reason string) (base, approver string) {
 	return reason[:i], strings.TrimSpace(reason[i+len(HumanApprovedReasonSuffix):])
 }
 
-// HoldLabels are the modifier labels that turn a human hand-off into a
-// decision (085). `do-not-merge/*` (prow's family) matches by prefix.
+// HoldLabels are the modifier labels that gate a human hand-off: the hive
+// never merges while one is set, and the route carries it as a pill on the
+// head's real stage (hivecommons/hive#17327). `do-not-merge/*` (prow's
+// family) matches by prefix.
 // `needs-decision` is retired (hivecommons/hive#12683; nothing writes it)
 // and stays here only so a PR still carrying it keeps its decision routing
 // until the label is gone.
@@ -328,6 +336,12 @@ type Route struct {
 	// BehindBase is Evidence.BehindBase on a trust-blocked 090: the 090
 	// comment then says the branch must be brought up to date as well.
 	BehindBase string
+	// Gates names the hard merge stops that ride the route as pills
+	// without choosing its stage: an open sentinel alert, a hold-class
+	// label (owner rule, hivecommons/hive#17327). The stage is the head's
+	// real progress; the hive never merges the head while a gate stands,
+	// and the dashboard's Merge queue cell reads "Held · …" for it.
+	Gates []string
 }
 
 // Lane-vocabulary reasons RouteHuman emits for the fixing stages.
@@ -433,6 +447,61 @@ const decisionConsequenceReason = "the automerge lane will not merge this unatte
 
 // RouteHuman decides which stage a lane's "a human must act" resolves to.
 func RouteHuman(e Evidence) Route {
+	return withGates(e, routeProgress(e))
+}
+
+// GateReasons names the hard merge stops on the head that are gates, not
+// stages (hivecommons/hive#17327): an open sentinel alert and each
+// hold-class label. A hive superseding PR whose sentinel finding a person
+// acknowledged (no hard stop) carries no sentinel gate.
+func GateReasons(e Evidence) []string {
+	var gates []string
+	if e.Sentinel && !(e.HiveSuperseder && strings.TrimSpace(e.HiveSupersederHardStop) == "") {
+		gates = append(gates, "a sentinel alert is open on this PR")
+	}
+	for _, h := range e.Holds {
+		if h == "hold" && e.Hold.Clause() != "" {
+			gates = append(gates, e.Hold.Clause())
+			continue
+		}
+		gates = append(gates, "the `"+h+"` label is set")
+	}
+	return gates
+}
+
+// withGates rides the sentinel / hold gates on the progress route: they
+// are appended to Reasons so the entry comment and the decision popover
+// still say why the hive will not merge, recorded in Gates so the
+// dashboard can draw the held pill, and never change the Stage. A hive
+// superseding PR's own hard stop already names them in its 085 route.
+func withGates(e Evidence, r Route) Route {
+	if e.HiveSuperseder && strings.TrimSpace(e.HiveSupersederHardStop) != "" {
+		return r
+	}
+	gates := GateReasons(e)
+	if len(gates) == 0 {
+		return r
+	}
+	r.Gates = gates
+	if r.Hold == nil {
+		r.Hold = e.Hold
+	}
+	if r.Stage == NeedsAuthor || r.Stage == ReturnedToContributor || r.Stage == Fixing {
+		// The author's instruction is the whole 07x reason; the gate is a
+		// person's to lift and rides the route as Gates alone.
+		return r
+	}
+	for _, g := range gates {
+		if !slices.Contains(r.Reasons, g) {
+			r.Reasons = append(r.Reasons, g)
+		}
+	}
+	return r
+}
+
+// routeProgress is RouteHuman without the gates: the stage the head's own
+// evidence supports (verdict, checks, DCO, conflict, lane rule, trust).
+func routeProgress(e Evidence) Route {
 	fixing := FixingStageFor(e.SelfAuthored, e.AuthorKind)
 	summary := summarize(e)
 	var fix []string
@@ -568,18 +637,9 @@ func RouteHuman(e Evidence) Route {
 			}
 		}
 	}
-	if e.Sentinel && !(e.HiveSuperseder && strings.TrimSpace(e.HiveSupersederHardStop) == "") {
-		// A hive superseding PR with no hard-stop has an acknowledged
-		// sentinel finding: the person already ruled on it.
-		decide = append(decide, "a sentinel alert is open on this PR")
-	}
-	for _, h := range e.Holds {
-		if h == "hold" && e.Hold.Clause() != "" {
-			decide = append(decide, e.Hold.Clause())
-			continue
-		}
-		decide = append(decide, "the `"+h+"` label is set")
-	}
+	// A sentinel alert or a hold-class label is a gate, not a stage
+	// (hivecommons/hive#17327): withGates rides it on whatever stage the
+	// head's progress earns, and the lanes refuse the merge on the label.
 	manualMergeApproved := e.Cause == CauseDecision && e.ManualMergeRule && approver != "" && strings.TrimSpace(e.CauseReason) != "" && len(decide) == 0
 	if e.Cause == CauseDecision && strings.TrimSpace(e.CauseReason) != "" && !manualMergeApproved {
 		decide = append(decide, e.CauseReason)
@@ -785,15 +845,30 @@ func ReadyComment(r Route, blockedBy string) string {
 	b.WriteString("\nReady for a human merge: ")
 	b.WriteString(r.Summary)
 	b.WriteString(".")
+	held := func() {
+		// A gated head (hivecommons/hive#17327): the stage is its real
+		// progress, but the hive never merges it while the gate stands.
+		b.WriteString(" Held: ")
+		b.WriteString(strings.Join(r.Gates, "; "))
+		b.WriteString(". The hive never merges this head while the gate stands.")
+	}
 	if r.ManualMerge {
 		for _, reason := range r.Reasons {
-			if reason = strings.TrimSpace(reason); reason != "" {
+			if reason = strings.TrimSpace(reason); reason != "" && !slices.Contains(r.Gates, reason) {
 				b.WriteString(" ")
 				b.WriteString(strings.ToUpper(reason[:1]) + reason[1:])
 				b.WriteString(".")
 			}
 		}
+		if len(r.Gates) > 0 {
+			held()
+		}
 		b.WriteString("\n\n<sub>The hive never merges this lane's changes itself: click **Merge** (or `/lgtm` + `/approve` for tide) to land it.</sub>")
+		return b.String()
+	}
+	if len(r.Gates) > 0 {
+		held()
+		b.WriteString("\n\n<sub>Confirm the intent (resolve the sentinel alert or lift the hold), then `/lgtm` `/approve` (or merge) if you accept it.</sub>")
 		return b.String()
 	}
 	if blockedBy = strings.TrimSpace(blockedBy); blockedBy != "" {
@@ -1008,13 +1083,14 @@ func selfImposedHoldStep(h *HoldProvenance) string {
 // HumanAuthorOwesAnswer reports whether a requires_human verdict on a PR a
 // person pushed themselves routes to the author (071) rather than to a
 // decision (085): the author is human and not this hive, no trusted merger
-// has approved the head, and nothing else — sentinel, hold label, fork
-// guard, a human-only lane rule — asks a maintainer for a decision.
+// has approved the head, and nothing else — a fork guard, a human-only
+// lane rule — asks a maintainer for a decision. A sentinel alert or a hold
+// label is a gate riding the route, not a decision (hivecommons/hive#17327).
 func HumanAuthorOwesAnswer(e Evidence) bool {
 	if e.SelfAuthored || e.AuthorKind != authorkind.Human || e.Verdict != VerdictRequiresHuman {
 		return false
 	}
-	if strings.TrimSpace(e.HumanApprover) != "" || e.Sentinel || len(e.Holds) > 0 || len(e.ForkGuard) > 0 {
+	if strings.TrimSpace(e.HumanApprover) != "" || len(e.ForkGuard) > 0 {
 		return false
 	}
 	return e.Cause != CauseDecision || strings.TrimSpace(e.CauseReason) == "" || IsDecisionRequestedReason(e.CauseReason)

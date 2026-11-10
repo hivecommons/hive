@@ -111,10 +111,45 @@
         return out;
       });
     }
+    // Operator-readable words for a ticket's place: the scheduler's
+    // "unverified"/"preparation" vocabulary stays in the data, not the row
+    // (hivecommons/hive#17335: "Recorded preparation owner · unverified ·
+    // Head changed; current preparation unverified" read as jargon).
     function stageTrackerPreparationPlace(entry) {
-      if (entry.state === 'unverified') return 'Recorded preparation ' + (entry.role === 'owner' ? 'owner' : 'ticket') + ' · unverified';
+      if (entry.state === 'unverified') return entry.role === 'owner' ? 'Recorded first for the base refresh' : 'Recorded base-refresh ticket';
       if (entry.role === 'owner') return 'Preparing';
-      return entry.position > 0 ? 'Waiting ' + stageTrackerOrdinal(entry.position) + ' for preparation' : 'Waiting for preparation · position unverified';
+      return entry.position > 0 ? 'Waiting ' + stageTrackerOrdinal(entry.position) + ' for preparation' : 'Waiting for preparation · position not yet confirmed';
+    }
+    // Why a recorded ticket is not (yet) confirmed, in plain language. The
+    // server's Detail strings are the signal; this is their wording.
+    function stageTrackerPreparationPlainDetail(entry) {
+      const d = String(entry.ticket && entry.ticket.detail || '').trim();
+      const head7 = entry.head ? String(entry.head).slice(0, 7) : '';
+      if (/^Head changed/i.test(d)) return 'ticket issued for an earlier head' + (head7 ? ' · re-checked on ' + head7 : '');
+      if (/absent from current open snapshot/i.test(d)) return 'PR missing from the latest snapshot';
+      if (/^Current head unknown/i.test(d)) return 'current head not known yet';
+      if (/^Ticket age unknown/i.test(d)) return 'ticket time unknown';
+      if (!d) return 'not yet confirmed for the current head';
+      return d.replace(/\bunverified\b/gi, 'not yet confirmed').replace(/\bpreparation\b/gi, 'base refresh');
+    }
+    function stageTrackerPreparationIssued(ticket) {
+      const age = stageTrackerPreparationAge(ticket, _stageTrackerPreparationNow);
+      return age === 'age unknown' ? 'ticket time unknown' : 'ticket issued ' + age + ' ago';
+    }
+    // The pushed row's caption in operator words: who pushed what, and what
+    // runs next on it. Anything that is not the server's push caption passes through.
+    function stageTrackerPreparationCaption(item) {
+      const caption = item.caption || item.reason || '';
+      const push = item && item.push;
+      if (!push || push.state !== 'pushed' || !/^(push seen|new head observed)\b/i.test(caption)) return caption;
+      const sha7 = push.sha ? String(push.sha).slice(0, 7) : '';
+      const ago = /^push seen (.+?) ago → /.exec(caption);
+      const when = ago ? ago[1] + ' ago' : /just now/.test(caption) ? 'just now' : '';
+      const ci = item.ci_activity && item.ci_activity.state === 'running' && (!item.head || !item.ci_activity.head || item.ci_activity.head === item.head);
+      const rereview = push.next === 're-review' || /re-review/.test(caption);
+      return ['New push' + (sha7 ? ' ' + sha7 : '') + (push.login ? ' by @' + push.login : '') + (when ? ' ' + when : '')
+        + ' → ' + (ci ? 'CI running' : 'CI queued') + (rereview ? ', review will rerun' : '')]
+        .concat(rereview ? ['previous review no longer applies'] : []).join(' · ');
     }
     function stageTrackerPreparationVisualSync(data, listedRows, pageRows, stages, nowMs) {
       _stageTrackerPreparationShown = new Map();
@@ -158,8 +193,8 @@
       for (const e of group.members) {
         details.push('#' + e.ticket.number + ' · ' + stageTrackerPreparationPlace(e)
           + (e.location === 'page' ? '' : e.location === 'offpage' ? ' · another page or collapsed repo' : ' · hidden by filters or absent from snapshot')
-          + (e.state === 'unverified' ? ' · ' + (e.ticket.detail || 'current identity or eligibility unknown') : '')
-          + ' · ticket age ' + stageTrackerPreparationAge(e.ticket, _stageTrackerPreparationNow)
+          + (e.state === 'unverified' ? ' · ' + stageTrackerPreparationPlainDetail(e) : '')
+          + ' · ' + stageTrackerPreparationIssued(e.ticket)
           + ' · ticket head ' + (e.ticketHead || 'unknown')
           + ' · current head ' + (e.head || 'unknown'));
       }
@@ -241,16 +276,17 @@
       stageTrackerPreparationMark(item);
       const event = ctx && ctx.events && ctx.events[key];
       const eventHtml = typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(key, ctx) : '';
-      const caption = item.caption || item.reason || (e.state === 'current' ? e.ticket.pipeline : '') || '';
-      const captionVisible = caption && event && event.text && event.text.includes(caption)
+      const rawCaption = item.caption || item.reason || (e.state === 'current' ? e.ticket.pipeline : '') || '';
+      const caption = stageTrackerPreparationCaption(item) || rawCaption;
+      const captionVisible = rawCaption && event && event.text && event.text.includes(rawCaption)
         && eventHtml && !eventHtml.includes('cue-event-tucked');
       const parts = caption && !captionVisible ? [caption] : [];
       if (!caption) parts.push('Current pipeline blocker unknown');
       const preparation = e.state === 'unverified'
-        ? stageTrackerPreparationPlace(e) + ' · ' + (e.ticket.detail || 'current identity or eligibility unknown')
+        ? stageTrackerPreparationPlace(e) + ' · ' + stageTrackerPreparationPlainDetail(e)
         : e.role === 'owner' ? 'preparing base' : 'queued for base refresh' + (e.ticket.behind ? ' behind PR #' + e.ticket.behind : ' · owner unknown');
       if (!caption.split(/\s+[·—]\s+/).includes(preparation)) parts.push(preparation);
-      parts.push('ticket age ' + stageTrackerPreparationAge(e.ticket, _stageTrackerPreparationNow));
+      parts.push(stageTrackerPreparationIssued(e.ticket));
       if (e.row.nested) parts.push('shown under issue #' + e.row.host.number);
       return eventHtml + `<div class="cue-event ham-preparation-comment"><span class="cue-event-body">${esc(parts.join(' · '))}</span></div>`;
     }

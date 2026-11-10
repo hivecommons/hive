@@ -42,6 +42,9 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 			break
 		}
 		if !c.repoAutoMergeAllowed(repo) {
+			// No observe-only pass here: this sweep records no stage
+			// evidence on any repo. The self-authored, trusted-author and
+			// contributor lanes observe the same PRs (automerge_observe_only.go).
 			c.info("automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled")
 			continue
 		}
@@ -181,7 +184,14 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			continue
 		}
 		if !c.repoAutoMergeAllowed(repo) {
-			c.info("self-authored automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled")
+			c.info("self-authored automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled && c.repoObservedOnly(repo))
+			c.observeAutoMergeOffRepo(ctx, stageLaneSelf, repo, opts.Targets, func(ctx context.Context, oc *Engine, owner, repoName string, pr *gh.PullRequest) (string, error) {
+				if reason := oc.prefilterSelfAuthoredPR(pr); reason != "" {
+					return reason, nil
+				}
+				_, reason, err := oc.trySweepSelfAuthoredPR(mergeDecisionPriority(ctx), repo, owner, repoName, pr.GetNumber(), false)
+				return reason, err
+			})
 			continue
 		}
 		prs, skipReason, err := c.openPullRequests(ctx, owner, repoName, opts.Targets)
@@ -212,6 +222,9 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				c.reconcileNativeQueueGate(ctx, stageLaneSelf, owner, repoName, pr, reason)
 				c.recordStage(stageLaneSelf, repo, owner, repoName, pr, reason, merged, err)
 			}
+			// tier names the lane on every skip/hold line so an operator can
+			// grep a trusted bot's PR by `"tier":"trusted-bot"`.
+			tier := c.selfAuthoredSweepTier(pr)
 			if _, held := train.duplicateOf(number); held {
 				result.Skipped++
 				repoSkipped++
@@ -234,7 +247,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				continue
 			}
 			if reason, handled := c.mergeTrainFront(ctx, train, pr); handled {
-				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[autoMergeReasonMergeTrainRebasing]++
@@ -295,9 +308,9 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			}
 			if reason := c.detectTrustedRegistryClankerWorkflowApprovalRequired(ctx, repo, owner, repoName, pr); reason != "" {
 				if isTerminalRequiredCheckHold(reason) {
-					c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason)
+					c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason, "tier", tier)
 				} else {
-					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				}
 				result.Skipped++
 				repoSkipped++
@@ -307,7 +320,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			}
 			if reason := c.prefilterSelfAuthoredPR(pr); reason != "" {
 				c.rejectPrefilteredBeforeLane(ctx, repo, owner, repoName, number, pr, hgithub.PRAuditPathSweep, reason)
-				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++
@@ -317,7 +330,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			result.Candidates++
 			repoCandidates++
 			c.sweepClock.evaluating(repo, number)
-			event, reason, err := c.trySweepSelfAuthoredPR(withMergeTrainCandidateHold(mergeDecisionPriority(ctx), c.mergeTrainCandidateReason(train, number)), repo, owner, repoName, number, branchUpdateAttempts < selfAuthoredSweepMaxBranchUpdates)
+			event, reason, err := c.trySweepSelfAuthoredPR(c.mergeTrainEvalContext(mergeDecisionPriority(ctx), train, number), repo, owner, repoName, number, branchUpdateAttempts < selfAuthoredSweepMaxBranchUpdates)
 			c.sweepClock.evaluated()
 			if event.BranchUpdated || reason == "updated-branch" || reason == "update-branch" {
 				branchUpdateAttempts++
@@ -341,10 +354,10 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 					// Log once per head, but do not tell OnTerminalHold: its
 					// dependency-bot hand-off speaks only of required checks.
 					if c.markTerminalHoldLogged(owner, repoName, number, pr.GetHead().GetSHA(), reason) {
-						c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason)
+						c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason, "tier", tier)
 					}
 				} else {
-					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				}
 				result.Skipped++
 				repoSkipped++
@@ -432,7 +445,21 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			continue
 		}
 		if !c.repoAutoMergeAllowed(displayRepo) {
-			c.info("trusted-author automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled")
+			c.info("trusted-author automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled && c.repoObservedOnly(displayRepo))
+			c.observeAutoMergeOffRepo(ctx, stageLaneTrusted, displayRepo, opts.Targets, func(ctx context.Context, oc *Engine, owner, repoName string, pr *gh.PullRequest) (string, error) {
+				login := hgithub.SafeGetLogin(pr.GetUser())
+				if opts.SelfAuthoredLaneActive && oc.isTrustedBotLaneAuthor(login) {
+					return trustedBotLaneSkipReason, nil
+				}
+				if lane, _ := oc.sweepLaneForAuthor(login); lane == stageLaneSelf {
+					return trustedAuthorReasonAppAuthored, nil
+				}
+				if reason := oc.prefilterTrustedAuthorPR(owner, repoName, pr, policy); reason != "" {
+					return reason, nil
+				}
+				_, reason, err := oc.trySweepTrustedAuthorPR(mergeDecisionPriority(ctx), displayRepo, owner, repoName, pr.GetNumber(), policy)
+				return reason, err
+			})
 			continue
 		}
 		prs, skipReason, err := c.openPullRequests(ctx, owner, repoName, opts.Targets)
@@ -516,7 +543,7 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			}
 			result.Candidates++
 			c.sweepClock.evaluating(displayRepo, number)
-			event, reason, err := c.trySweepTrustedAuthorPR(withMergeTrainCandidateHold(mergeDecisionPriority(ctx), c.mergeTrainCandidateReason(train, number)), displayRepo, owner, repoName, number, policy)
+			event, reason, err := c.trySweepTrustedAuthorPR(c.mergeTrainEvalContext(mergeDecisionPriority(ctx), train, number), displayRepo, owner, repoName, number, policy)
 			c.sweepClock.evaluated()
 			if err == nil {
 				c.noteMergeTrainOutcome(stageLaneTrusted, owner, repoName, number, pr.GetHead().GetSHA(), reason)

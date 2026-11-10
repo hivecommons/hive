@@ -23,6 +23,14 @@ func claimPR(n int, login, body string, at time.Time) *gh.PullRequest {
 	}
 }
 
+// claimAtGate records the lane's "would merge" verdict for each PR's head
+// on o/r: the merge gate the same-issue rules judge (hivecommons/hive#17439).
+func claimAtGate(c *Engine, lane string, prs ...*gh.PullRequest) {
+	for _, pr := range prs {
+		c.noteMergeTrainOutcome(lane, "o", "r", pr.GetNumber(), pr.GetHead().GetSHA(), "")
+	}
+}
+
 // hivecommons/hive#15810: the hive's own #15783 (self lane) and a trusted
 // human's #15793 (trusted lane) both closed #15773 and both marched toward
 // merge because each lane's one-PR-per-issue rule saw only its own PRs.
@@ -47,6 +55,8 @@ func TestPlanClaimConflictsHoldsCrossLanePair(t *testing.T) {
 		}
 		return ""
 	}
+	claimAtGate(c, stageLaneSelf, hive)
+	claimAtGate(c, stageLaneTrusted, human)
 
 	self := &mergeTrainPlan{lane: stageLaneSelf, displayRepo: "o/r"}
 	kept := c.planDuplicateHolds(context.Background(), self, stageLaneSelf, "o", "r", "o/r", prs, selfOnly)
@@ -101,6 +111,7 @@ func TestPlanClaimConflictsDecidedOrAdoptionAdmits(t *testing.T) {
 	}
 	c := &Engine{humanChangeRequests: store}
 	prs := []*gh.PullRequest{claimPR(15783, "hive-app[bot]", "Closes #15773", t0), claimPR(15793, "clubanderson", "Fixes #15773", t0.Add(time.Hour))}
+	claimAtGate(c, stageLaneSelf, prs[0])
 	trusted := &mergeTrainPlan{lane: stageLaneTrusted}
 	kept := c.planDuplicateHolds(context.Background(), trusted, stageLaneTrusted, "o", "r", "o/r", prs, func(p *gh.PullRequest) string {
 		if p.GetUser().GetLogin() != "clubanderson" {
@@ -134,6 +145,7 @@ func TestPlanClaimConflictsDecidedOrAdoptionAdmits(t *testing.T) {
 
 	// Two candidates of one lane stay with the one-PR-per-issue winner
 	// rule, which already sees them both.
+	claimAtGate(c, stageLaneSelf, prs...)
 	plan = &mergeTrainPlan{lane: stageLaneSelf}
 	c.planDuplicateHolds(context.Background(), plan, stageLaneSelf, "o", "r", "o/r", prs, all)
 	if plan.claimConflicts != nil {
@@ -153,6 +165,7 @@ func TestPlanClaimConflictsSeesClaimantsOutsideNarrowedList(t *testing.T) {
 	hive, human := claimPR(15783, "hive-app[bot]", "Closes #15773", t0), claimPR(15793, "clubanderson", "Fixes #15773", t0.Add(time.Hour))
 	c := &Engine{}
 	c.rememberClaimants("o/r", []*gh.PullRequest{hive, human})
+	claimAtGate(c, stageLaneTrusted, human)
 	plan := &mergeTrainPlan{lane: stageLaneTrusted}
 	kept := c.planDuplicateHolds(context.Background(), plan, stageLaneTrusted, "o", "r", "o/r", []*gh.PullRequest{human}, func(*gh.PullRequest) string { return "" })
 	if h, held := plan.claimConflictOf(15793); !held || h.Other != 15783 || h.Issue != 15773 || len(kept) != 0 {
@@ -163,5 +176,42 @@ func TestPlanClaimConflictsSeesClaimantsOutsideNarrowedList(t *testing.T) {
 	c.planDuplicateHolds(context.Background(), plan, stageLaneTrusted, "o", "other", "o/other", []*gh.PullRequest{human}, func(*gh.PullRequest) string { return "" })
 	if plan.claimConflicts != nil {
 		t.Fatalf("other repo held: %+v", plan.claimConflicts)
+	}
+}
+
+// hivecommons/hive#17439: a claimant whose CI is still running is not
+// held for a decision — the lane evaluates it, so its row reads CI running
+// — but the merge point holds it all the same; once its head is at the
+// gate it is held for the decision.
+func TestPlanClaimConflictsDefersHeadShortOfTheGate(t *testing.T) {
+	t0 := time.Date(2026, 11, 3, 10, 25, 0, 0, time.UTC)
+	hive, human := claimPR(15783, "hive-app[bot]", "Closes #15773", t0), claimPR(15793, "clubanderson", "Fixes #15773", t0.Add(time.Hour))
+	trustedOnly := func(p *gh.PullRequest) string {
+		if p.GetUser().GetLogin() != "clubanderson" {
+			return "author:not-trusted"
+		}
+		return ""
+	}
+	c := &Engine{}
+	c.noteMergeTrainOutcome(stageLaneTrusted, "o", "r", 15793, human.GetHead().GetSHA(), "required-check-pending:build")
+	plan := &mergeTrainPlan{lane: stageLaneTrusted, displayRepo: "o/r", owner: "o", repo: "r"}
+	kept := c.planDuplicateHolds(context.Background(), plan, stageLaneTrusted, "o", "r", "o/r", []*gh.PullRequest{hive, human}, trustedOnly)
+	if _, held := plan.claimConflictOf(15793); held {
+		t.Fatal("held for a decision while its CI runs")
+	}
+	if len(kept) != 1 || kept[0].GetNumber() != 15783 {
+		t.Fatalf("kept %v, want the claimant out of the trains", kept)
+	}
+	reason := mergeTrainCandidateHold(c.mergeTrainEvalContext(context.Background(), plan, 15793))
+	mt, ok := prstage.ParseMergeTrain(reason)
+	if !ok || mt.State != prstage.MergeTrainStateClaimConflict || mt.Front != 15783 || mt.Position != 15773 {
+		t.Fatalf("merge point = %q", reason)
+	}
+
+	c.noteMergeTrainOutcome(stageLaneTrusted, "o", "r", 15793, human.GetHead().GetSHA(), reason)
+	plan = &mergeTrainPlan{lane: stageLaneTrusted, displayRepo: "o/r", owner: "o", repo: "r"}
+	c.planDuplicateHolds(context.Background(), plan, stageLaneTrusted, "o", "r", "o/r", []*gh.PullRequest{hive, human}, trustedOnly)
+	if h, held := plan.claimConflictOf(15793); !held || h.Other != 15783 || h.Issue != 15773 {
+		t.Fatalf("at the gate: hold=%+v held=%v", h, held)
 	}
 }

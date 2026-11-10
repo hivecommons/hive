@@ -18,7 +18,6 @@
     // words come from the hive's sentinel (possible security override,
     // privilege escalation or codebase damage), so a maintainer reads the
     // security reason before the row's "needs human".
-    const STAGE_TRACKER_SENTINEL_WORD = 'Sentinel alert · needs human';
     const STAGE_TRACKER_SENTINEL_CHIP = 'sentinel';
     const STAGE_TRACKER_SENTINEL_TIP = 'Sentinel flagged security-relevant changes';
     const STAGE_TRACKER_SENTINEL_TIP_FALLBACK = 'possible security override, privilege escalation or codebase damage — a maintainer must review before merge';
@@ -99,6 +98,10 @@
     const STAGE_TRACKER_GROUP_DIST_STEPS = 4;
     var _stageTrackerGroup = STAGE_TRACKER_GROUP_DEFAULT;
     var _stageTrackerCollapsed = {};
+    // Shared-PR groups (a PR closing several listed issues): the secondary
+    // issues' rows collapsed under their primary, by the primary's row key.
+    const STAGE_TRACKER_SHARED_COLLAPSED_KEY = 'hive.tracker.shared.collapsed';
+    var _stageTrackerSharedCollapsed = {};
     function stageTrackerDefaultFilter() {
       return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, waitingOnYou: false, attentionFirst: true, age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
     }

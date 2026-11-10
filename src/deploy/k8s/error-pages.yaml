@@ -60,6 +60,50 @@ data:
   # "ok": false is the field clients key off (issue #4241).
   error.json: |
     {"ok":false,"error":"hive unavailable","detail":"This hive is restarting or its API is temporarily unreachable. The request was NOT applied - retry shortly."}
+  # Served when the controller intercepts a 403 or 404. These are NOT "retry
+  # shortly" states: the upstream answered, and the resource is missing or
+  # forbidden. Before these documents existed, an intercepted 404 fell through
+  # to the 503 "Hive is restarting" page with an auto-refresh, which Google
+  # Search Console reported as "Soft 404" on hive.hivecommons.dev and which
+  # told a human a healthy hub was down (#17431). No spinner, no refresh.
+  notfound.json: |
+    {"ok":false,"error":"not found","detail":"No such page or API route on this hive. The request was NOT applied."}
+  notfound.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <meta name="robots" content="noindex">
+      <title>Hive — Page Not Found</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          background: #0d1117;
+          color: #e6edf3;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 100vh;
+        }
+        .container { text-align: center; max-width: 480px; padding: 40px 24px; }
+        .bee { font-size: 64px; margin-bottom: 24px; }
+        h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 12px; }
+        p { font-size: 0.95rem; color: #8b949e; line-height: 1.6; margin-bottom: 24px; }
+        a { color: #58a6ff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="bee">🔍</div>
+        <h1>Page not found</h1>
+        <p>The page you're looking for doesn't exist on this hive or has moved.</p>
+        <p><a href="/">Back to the front page</a></p>
+      </div>
+    </body>
+    </html>
   # Served for a 401 intercepted on the hive-api-xhr Ingress (the dashboard's
   # XHR routes under /api/, see src/pkg/hub/saas_provision.go). That Ingress
   # deliberately has no auth-signin: fetch() cannot follow the cross-origin
@@ -118,7 +162,13 @@ data:
     # ingress-nginx sends a request here when a hive Ingress intercepts one of
     # the upstream statuses named in its custom-http-errors annotation ("502,503"
     # on the hive Ingress, "401,502,503" on the hive-api-xhr Ingress -- see
-    # src/pkg/hub/saas_provision.go). It rewrites the
+    # src/pkg/hub/saas_provision.go), or in the controller's GLOBAL
+    # `custom-http-errors` ConfigMap key for an Ingress with no annotation of
+    # its own (the hub's). Keep that global list to "502,503,504": with 403 and
+    # 404 in it, every missing page on hive.hivecommons.dev was intercepted and
+    # -- because this backend had no 404 branch -- answered as a 503 "Hive is
+    # restarting" page (#17431). The 403/404 branches below are the safety net
+    # if the global list ever grows again. It rewrites the
     # URI to "/" and passes the original request's metadata in headers:
     #
     #   X-Code          the intercepted upstream status, e.g. "502"
@@ -165,10 +215,15 @@ data:
       # 401 gets its own document: it is intercepted from the hive-api-xhr
       # Ingress (issue #7405) and means "sign in again", not "retry shortly".
       error_page 401 /unauthorized.$hive_error_ext;
+      # 403 and 404 share the not-found document: the upstream answered and the
+      # resource is missing or off-limits, so no spinner and no auto-refresh.
+      error_page 403 404 /notfound.$hive_error_ext;
       location = /error.html { internal; }
       location = /error.json { internal; }
       location = /unauthorized.html { internal; }
       location = /unauthorized.json { internal; }
+      location = /notfound.html { internal; }
+      location = /notfound.json { internal; }
 
       # Probed by the kubelet directly, never through the Ingress, so it is not
       # affected by the status mapping below.
@@ -181,6 +236,8 @@ data:
         # Reflect the intercepted status back to the caller. `return` answers
         # every method, so a POST is no longer served a static file with 200.
         if ($http_x_code = "401") { return 401; }
+        if ($http_x_code = "403") { return 403; }
+        if ($http_x_code = "404") { return 404; }
         if ($http_x_code = "500") { return 500; }
         if ($http_x_code = "502") { return 502; }
         if ($http_x_code = "504") { return 504; }

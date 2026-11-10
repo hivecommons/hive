@@ -110,6 +110,10 @@ type Server struct {
 
 	feedbackRefreshBackoff feedbackBackoff
 
+	// forgeProbe caches the github_auth token probe so a dead forge host
+	// cannot hold HealthSummary past forgeProbeBudget (health_forge_probe.go).
+	forgeProbe forgeProbeState
+
 	// mergeTrains remembers the trains between tracker builds: the hourly
 	// "merge train stalled" activity-log line per train and each member's
 	// first estimate (stage_tracker_merge_train.go).
@@ -5102,17 +5106,27 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: detail, Onboarding: true, GuideStep: GuideStepGitHubApp})
 		fails++
 	} else if s.deps != nil && s.deps.GHAppAuth != nil {
-		if _, err := s.deps.GHAppAuth.Token(s.deps.Ctx); err != nil {
+		// Bounded by forgeProbeBudget: past it the last cached result is
+		// reported so an unreachable forge cannot eat the heartbeat budget.
+		probe := s.probeGitHubToken()
+		staleNote := ""
+		if probe.TimedOut {
+			staleNote = fmt.Sprintf(" (cached — forge probe exceeded %s)", forgeProbeBudget)
+		}
+		if !probe.Known {
+			checks = append(checks, check{Name: "github_auth", Status: "warn", Detail: fmt.Sprintf("forge probe exceeded %s — GitHub host may be unreachable", forgeProbeBudget)})
+			warns++
+		} else if err := probe.Err; err != nil {
 			// Surface the underlying error, not a bare "token error": this
 			// detail travels to the hub and into the dashboard tooltip, and a
 			// swallowed error string is exactly what left past github_auth flaps
 			// undiagnosable. Token() now serves a still-valid cached token
 			// through a transient mint blip, so reaching here means no usable
 			// token remains — a genuine, sustained auth failure worth showing.
-			checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "token error: " + err.Error()})
+			checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "token error: " + err.Error() + staleNote})
 			fails++
 		} else {
-			checks = append(checks, check{Name: "github_auth", Status: "pass"})
+			checks = append(checks, check{Name: "github_auth", Status: "pass", Detail: strings.TrimSpace(staleNote)})
 		}
 	} else if s.deps != nil && s.deps.GHClient != nil {
 		// See the /health counterpart above: pass with a scope-specific detail.

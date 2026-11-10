@@ -10,8 +10,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
 // prRequestPolicyError is a permanent mismatch between a PR's claim and its
@@ -541,4 +544,264 @@ func isMigrationFile(filename string) bool {
 		}
 	}
 	return false
+}
+
+// prRequestClaimTargetMarker tags the notice the claim-target gate posts on
+// an issue it refused a PR request for, so a retried or repeated request
+// edits the one notice instead of stacking another.
+const prRequestClaimTargetMarker = "<!-- hive:pr-request-claim-target -->"
+
+// prRequestTargetRefusal is one closing reference the claim-target gate
+// refused: the issue, and who holds it — a live claim (Holder) or an open
+// pull request by another author that covers it (CoveringPR).
+type prRequestTargetRefusal struct {
+	Repo       string
+	Issue      int
+	Holder     string
+	CoveringPR string
+}
+
+func (r prRequestTargetRefusal) why() string {
+	if r.Holder != "" {
+		return "already claimed by " + r.Holder
+	}
+	return "covered by " + r.CoveringPR
+}
+
+// validatePRRequestTargets is the claim-target gate (hivecommons/hive#17298):
+// a PR request may not close an issue another principal is working. For each
+// closing reference it refuses the issue when a live claim is held by anyone
+// other than the requesting agent (contributor, person or another agent), or
+// when an open pull request by an author outside this hive covers it. The
+// requesting agent's own claim and the hive's own covering PR pass. It runs
+// before the request books a start on any issue (notifyAgentStart), so
+// epic-driven work that never claimed the target is checked too — the case
+// that let #17250 supersede a contributor's #17248 on #17243.
+//
+// A refusal is returned as a prRequestPolicyError alongside the refused
+// targets, as is a closing reference whose issue does not exist (permanent,
+// so never retried); any other claim or coverage lookup failure returns a
+// plain error, so the request is not opened (fail closed) and is retried
+// later.
+func (c *Client) validatePRRequestTargets(ctx context.Context, req PRRequest, now time.Time) ([]prRequestTargetRefusal, error) {
+	if c == nil || c.client == nil {
+		return nil, ErrNoGitHubClient
+	}
+	owner, repo := c.prRequestRepo(req.Repo)
+	defaultRepo := owner + "/" + repo
+	var refused []prRequestTargetRefusal
+	seen := make(map[string]bool)
+	for _, ref := range ParseClaimedIssues(req.Title+"\n"+req.Body, defaultRepo) {
+		refOwner, refRepo := c.prRequestRepo(ref.Repo)
+		key := claimKey(strings.ToLower(refOwner+"/"+refRepo), ref.Issue)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		refusal, blocked, err := c.prRequestTargetBlock(ctx, req.Agent, refOwner, refRepo, ref.Issue, now)
+		if err != nil {
+			// A missing target is permanent (typically a cross-repo number
+			// written bare): reject it the way validatePRRequestClaims does
+			// rather than retrying until the horizon quarantines the request.
+			if errors.Is(err, errPRRequestTargetMissing) {
+				return nil, &prRequestPolicyError{reason: fmt.Sprintf(
+					"closing reference %s#%d does not exist; a cross-repo issue must be written as owner/repo#N",
+					refOwner+"/"+refRepo, ref.Issue)}
+			}
+			return nil, fmt.Errorf("checking claims on closing reference %s/%s#%d: %w", refOwner, refRepo, ref.Issue, err)
+		}
+		if blocked {
+			refused = append(refused, refusal)
+		}
+	}
+	if len(refused) == 0 {
+		return nil, nil
+	}
+	parts := make([]string, 0, len(refused))
+	for _, r := range refused {
+		parts = append(parts, fmt.Sprintf("%s#%d is %s", r.Repo, r.Issue, r.why()))
+	}
+	return refused, &prRequestPolicyError{reason: strings.Join(parts, "; ") +
+		" — another principal is working it, so this PR may not close it; the owner decides whether to proceed. " +
+		"Pick other work, or reference the issue without a closing keyword"}
+}
+
+// issueRequestStartTargetBlock is the claim-target gate on the kick/start
+// path (hivecommons/hive#17298): an issue request that starts work on
+// req.Number — a claim, or a comment announcing a start — is checked the
+// way a closing reference in hive-open-pr is, so epic-driven work that
+// never claims its target is refused before the start is booked.
+func (c *Client) issueRequestStartTargetBlock(ctx context.Context, req IssueRequest, now time.Time) (prRequestTargetRefusal, bool, error) {
+	if c == nil || c.client == nil {
+		return prRequestTargetRefusal{}, false, ErrNoGitHubClient
+	}
+	owner, repo := c.prRequestRepo(req.Repo)
+	refusal, blocked, err := c.prRequestTargetBlock(ctx, req.Agent, owner, repo, req.Number, now)
+	if err != nil {
+		return refusal, false, fmt.Errorf("checking claims on start target %s/%s#%d: %w", owner, repo, req.Number, err)
+	}
+	return refusal, blocked, nil
+}
+
+// issueRequestStartRefusedReason is the policy reason written to a start
+// request the claim-target gate refused.
+func issueRequestStartRefusedReason(kind string, r prRequestTargetRefusal) string {
+	verb := "start refused"
+	if kind == "claim" {
+		verb = "issue claim refused"
+	}
+	return fmt.Sprintf("%s: %s#%d is %s — another principal is working it; the owner decides whether to proceed. Pick other work",
+		verb, r.Repo, r.Issue, r.why())
+}
+
+// prRequestTargetBlock resolves one target issue: its live claim (the
+// forge marker or assignee when issue claims are on, else the hub's claim
+// ledger) and the duplicate-PR ledger's covering PR, re-read so a PR that
+// has since closed or merged no longer blocks. A target that is really a
+// pull request is never blocked: a start comment on a PR (a hive relay
+// note on a contributor's PR, say) does not start work on an issue.
+func (c *Client) prRequestTargetBlock(ctx context.Context, agent, owner, repo string, number int, now time.Time) (prRequestTargetRefusal, bool, error) {
+	refusal := prRequestTargetRefusal{Repo: owner + "/" + repo, Issue: number}
+	claim, found, err := c.prRequestTargetClaim(ctx, owner, repo, number, now)
+	if errors.Is(err, errPRRequestTargetIsPullRequest) {
+		return refusal, false, nil
+	}
+	if err != nil {
+		return refusal, false, err
+	}
+	if found && !c.isOwnTargetClaim(claim, agent) {
+		refusal.Holder = claim.Identity
+		return refusal, true, nil
+	}
+	issueRef := c.IssueStageRef(owner+"/"+repo, number)
+	cover, ok := c.ledgerClaim(issueRef)
+	if !ok || !cover.CoversOpenIssue() || !cover.ExternalAuthor {
+		return refusal, false, nil
+	}
+	pr, ok := c.claimPRRef(cover, issueRef)
+	if !ok {
+		return refusal, false, nil
+	}
+	live, _, err := c.client.PullRequests.Get(ctx, pr.Owner, pr.Repo, pr.Number)
+	if err != nil {
+		return refusal, false, fmt.Errorf("covering PR %s: %w", pr, err)
+	}
+	if strings.EqualFold(live.GetState(), "closed") || live.GetMerged() || !live.GetMergedAt().IsZero() {
+		return refusal, false, nil
+	}
+	refusal.CoveringPR = fmt.Sprintf("#%d", pr.Number)
+	if !strings.EqualFold(pr.Owner+"/"+pr.Repo, owner+"/"+repo) {
+		refusal.CoveringPR = fmt.Sprintf("%s/%s#%d", pr.Owner, pr.Repo, pr.Number)
+	}
+	if author := live.GetUser().GetLogin(); author != "" {
+		refusal.CoveringPR += " (@" + author + ")"
+	}
+	return refusal, true, nil
+}
+
+// isOwnTargetClaim reports whether claim is the requesting agent's own. A
+// bare agent name is only meaningful for kind=agent (or a legacy marker
+// without kind): a contributor's login can equal an agent name, and a
+// same-named agent in another hive is not this hive's agent.
+func (c *Client) isOwnTargetClaim(claim issueclaim.Claim, agent string) bool {
+	if claim.Kind != "" && !strings.EqualFold(claim.Kind, "agent") {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(claim.Identity), strings.TrimSpace(agent)) {
+		return false
+	}
+	if c.issueClaimLedgerHive != nil {
+		if hive := c.issueClaimLedgerHive(); hive != "" && claim.Hive != "" && claim.Hive != hive {
+			return false
+		}
+	}
+	return true
+}
+
+// errPRRequestTargetMissing wraps the 404 from reading a claim target: the
+// issue does not exist in that repository, which no retry can change.
+var errPRRequestTargetMissing = errors.New("target issue does not exist")
+
+// errPRRequestTargetIsPullRequest reports that the claim target resolved to
+// a pull request, which carries no issue claim.
+var errPRRequestTargetIsPullRequest = errors.New("target is a pull request")
+
+// prRequestTargetClaim is the live claim on one issue, read the way the
+// enumeration reads it (issueClaimFor) when issue claims are on, and from
+// the hub's ledger alone otherwise.
+func (c *Client) prRequestTargetClaim(ctx context.Context, owner, repo string, number int, now time.Time) (issueclaim.Claim, bool, error) {
+	enabled, ttl := c.issueClaimsSetting()
+	if !enabled {
+		claim, ok := c.ledgerClaimFor(owner, repo, number, now)
+		return claim, ok, nil
+	}
+	issue, _, err := c.client.Issues.Get(ctx, owner, repo, number)
+	if err != nil {
+		if githubStatusError(err, http.StatusNotFound) {
+			return issueclaim.Claim{}, false, fmt.Errorf("%w: %w", errPRRequestTargetMissing, err)
+		}
+		return issueclaim.Claim{}, false, err
+	}
+	if issue.IsPullRequest() {
+		return issueclaim.Claim{}, false, errPRRequestTargetIsPullRequest
+	}
+	snapshot := Issue{
+		Repo:      owner + "/" + repo,
+		Number:    number,
+		UpdatedAt: issue.GetUpdatedAt().Time,
+	}
+	for _, a := range issue.Assignees {
+		if login := a.GetLogin(); login != "" {
+			snapshot.Assignees = append(snapshot.Assignees, login)
+		}
+	}
+	return c.issueClaimFor(ctx, owner, repo, &snapshot, ttl, now)
+}
+
+// prRequestTargetAction names what the refused request was trying to do,
+// so the notice on the target issue describes the event that happened.
+type prRequestTargetAction string
+
+const (
+	// prRequestTargetActionOpenPR: hive-open-pr with a closing reference.
+	prRequestTargetActionOpenPR prRequestTargetAction = "open-pr"
+	// prRequestTargetActionClaim: hive-open-issue claim on the issue.
+	prRequestTargetActionClaim prRequestTargetAction = "claim"
+	// prRequestTargetActionStart: a relay comment announcing a start.
+	prRequestTargetActionStart prRequestTargetAction = "start"
+)
+
+// issueRequestStartTargetAction maps a start-path request kind to the
+// action named in the claim-target notice.
+func issueRequestStartTargetAction(kind string) prRequestTargetAction {
+	if kind == "claim" {
+		return prRequestTargetActionClaim
+	}
+	return prRequestTargetActionStart
+}
+
+// noticePRRequestTargetRefusalBody is the notice posted on a refused target
+// issue: what was asked, why it was refused, that nothing happened, and
+// that the owner decides.
+func noticePRRequestTargetRefusalBody(action prRequestTargetAction, r prRequestTargetRefusal) string {
+	asked, outcome := "asked to open a pull request that would close this issue", "No PR was opened"
+	switch action {
+	case prRequestTargetActionClaim:
+		asked, outcome = "asked to claim this issue", "The claim was not recorded"
+	case prRequestTargetActionStart:
+		asked, outcome = "asked to start work on this issue", "No work was started"
+	}
+	return fmt.Sprintf("%s\nA hive agent %s, but it is %s. %s; the owner decides whether to proceed.",
+		prRequestClaimTargetMarker, asked, r.why(), outcome)
+}
+
+// noticePRRequestTargetRefusal posts (or refreshes) the one notice on a
+// refused target issue. Best-effort: the rejected request is the
+// enforcement, the notice tells the issue's watchers why.
+func (c *Client) noticePRRequestTargetRefusal(ctx context.Context, action prRequestTargetAction, r prRequestTargetRefusal) {
+	body := noticePRRequestTargetRefusalBody(action, r)
+	if _, err := c.EditIssueMarkerComment(ctx, r.Repo, r.Issue, prRequestClaimTargetMarker, func(string) string { return body }); err != nil {
+		c.logger.Warn("pr-request watcher: could not post the claim-target notice",
+			slog.String("repo", r.Repo), slog.Int("issue", r.Issue), slog.String("error", err.Error()))
+	}
 }

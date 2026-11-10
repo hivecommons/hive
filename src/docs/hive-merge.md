@@ -35,7 +35,9 @@ here. A repo with that switch off may still receive Hive-opened PRs, but the
 relay refuses to merge them and reports that auto-merge is disabled for the
 repository. The same repo policy is enforced by the App self-merge sweep and by
 the proxy's direct REST/GraphQL merge denial path, so agents cannot bypass it
-by calling GitHub directly.
+by calling GitHub directly. The merge lanes still evaluate such a repo's PRs
+in an observe-only mode that records a stage (090 *auto-merge off*) and writes
+nothing else.
 
 On top of `AuthorizeMerge`, the watcher's authorizer is wrapped with a second,
 target-specific check (the F4 target-binding, CWE-863) before any merge is
@@ -523,6 +525,29 @@ miss every PR file: the review planner re-stamps the verdict onto the merge
 head instead of holding it at `review-gate:no-review-bundle`, and CI still
 re-runs on that head (see [Delta re-review](review-swarm.md#delta-re-review-reviewdelta_rereview-reviewdelta_trivial_lines-reviewdelta_max_age)).
 
+Every login on that list — a Settings toggle or a typed-in custom bot — is
+owned by the trusted-bot lane: the contributor lane hands it off as
+`trusted-bot-lane` (never `contributor-lane:app-authored`), and every
+`automerge skip` / `automerge hold` line the self-authored sweep logs carries
+`tier=trusted-bot` so a stuck bot PR can be grepped by lane. The lane's
+contract is "safety is established by CI", so the review swarm's verdict on
+a trusted bot's PR is **advisory** by default: a `requires_human`,
+decision-requested or `changes_requested` verdict is recorded on the
+evidence bundle and logged (`trusted-bot lane: review verdict advisory`)
+but neither holds the merge nor parks the PR at "needs a person". Set
+`auto_merge.trusted_bot_skip_review: false` to make bot PRs obey the swarm
+exactly like the App's own; a trusted human's `changes_requested` review
+always holds regardless. When `auto_merge.required_checks` names a check
+the repo never produces (for example `build-gate` declared hive-wide but
+absent on a docs repo), the lane does not wait forever: if at least one
+other check reports on the head and none is red or still running, it merges
+on "every reported check green" and warns once per repo per hour
+(`trusted-bot lane: required check "build-gate" never reported on
+<owner>/<repo>`); if nothing else reports, the PR is held with
+`required-check-never-reported:<check>`, which the Activity Monitor shows as
+the human-gate reason. Declare the repo's real set under
+`auto_merge.repos.<repo>.required_checks` to clear either condition.
+
 ### Event-driven sweeps on the ForgeState cache
 
 With `forgestate.enabled: true` the three sweep lanes (self-authored,
@@ -927,6 +952,24 @@ answer is always empty, so before this the sweep logged `automerge required
 checks source … source=branch known=false count=0`, a held head stayed at
 `ci-unverified`, and its runs were never approved (projectbluefin/testsuite,
 bluefin-bling).
+
+The lane also asks Prow to start presubmits for any admitted author
+(hivecommons/hive#17474). On a Prow-managed repository (Prow's labels such as
+`size/*` or `needs-ok-to-test`, or its `[APPROVALNOTIFIER]` comment) the
+trigger plugin runs presubmits for a non-member's fork PR only after a trusted
+user comments `/ok-to-test`, so #17359 sat green on GitHub Actions while Tide
+reported `Jobs … have not succeeded`. While such a fork head is not green, the
+author's `author_association` is not `OWNER`, `MEMBER` or `COLLABORATOR`, the
+PR has no `ok-to-test` label and Prow has reported no presubmit status on the
+head (a status other than `tide` from the account that reports `tide`), the
+lane posts `/ok-to-test` once per head with the same per-head marker and
+mutation-boundary dedupe as the trusted-lane command. If Prow replies
+`Cannot trigger testing until a trusted user`, the lane logs it once with
+`skipped=prow-rejects-bot-commands`, leaves one
+`<!-- hive-ok-to-test-rejected -->` needs-human note and never posts the
+command on that PR again; making the App a Prow trusted user is the
+repository's Prow configuration. The merge-request relay's read-only
+evaluation posts nothing.
 
 A PR merges through this tier only when all of the following hold:
 
@@ -1360,7 +1403,7 @@ human-authored PR → `stage/071-needs-author`, on a clanker PR →
 review or `/hive decision <text>` on a hive-authored PR's current head →
 `stage/070-fixing` with reason `human-changes-requested` and one fix kick
 carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041)),
-hold / sentinel alert → `stage/085-needs-decision`, hive-authored PR whose fix
+hold / sentinel alert → a **gate on the PR's real stage**, not a stage of its own (the column follows CI / review / merge-queue progress, the Merge queue cell reads *Held · sentinel · confirm intent* / *Held · hold*, and the lanes refuse the merge on the label itself — a parked PR never merges unattended, [#17327](https://github.com/hivecommons/hive/issues/17327)), hive-authored PR whose fix
 dispatch is refused with `fix-attempts-exhausted` → `stage/085-needs-decision`
 with reason `fixer-exhausted:<N>` and a once-per-head decision comment (re-author /
 hand to a person / close as not planned; a stale `decision-answered` cannot pull it
@@ -1544,6 +1587,23 @@ recorded trusted decision on a PR's head (the tracker's Approve, or any
 `/hive decision` on it — the downstream gates still judge the merge) is
 what lifts the gate for that PR; closing the other ends it
 ([#15810](https://github.com/hivecommons/hive/issues/15810)).
+
+Both rules judge **heads at the merge gate only**: a head the lane last saw
+green with every required verdict recorded, the readiness a train seat needs
+([#17439](https://github.com/hivecommons/hive/issues/17439)). A same-issue
+PR whose CI is still running, or whose review is outstanding, is not held:
+the lane evaluates it on its normal path, so its row reads CI running /
+review pending, never *needs a pick* or *needs decision*. Should that head
+reach the merge point it is held there instead of merging — on an undecided
+claim conflict, or behind the PR that already holds its issue — and from the
+next pass it is held at the gate like any other. Within one lane the first
+PR at the merge point takes the issue; when several are already at the gate
+the pick is the usual green-first, then earlier-opened. The pick then
+**stands** until the kept PR closes or is blocked for good (a person merges
+it, not mergeable, a terminal required-check hold, a permanent merge
+refusal): a check that goes red mid-run no longer hands the issue to the
+other PR, so two PRs never point at each other. The kept PR is remembered in
+memory per lane and issue; a restart re-plans.
 
 ### Hive-authored superseding PRs auto-merge
 

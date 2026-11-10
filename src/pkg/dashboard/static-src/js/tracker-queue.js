@@ -36,7 +36,7 @@
     function stageTrackerPreparationWord(p) {
       if (!p) return '';
       if (p.state === 'inactive') return 'Inactive preparation ticket · ' + (p.detail || 'not currently eligible');
-      if (p.state !== 'current') return (p.role === 'owner' ? 'Recorded preparation owner' : 'Recorded waiting ticket') + ' · ' + (p.detail || 'current state unknown');
+      if (p.state !== 'current') return (p.role === 'owner' ? 'Recorded first for the base refresh' : 'Recorded base-refresh ticket') + ' · ' + (p.detail || 'current state unknown').replace(/\bunverified\b/gi, 'not yet confirmed').replace(/\bpreparation\b/gi, 'base refresh');
       return p.role === 'owner' ? 'Preparing base' : (Number(p.behind) > 0 ? 'Waiting for preparation behind #' + Number(p.behind) : 'Waiting for preparation; owner not confirmed');
     }
     function stageTrackerPreparationAge(p, nowMs) {
@@ -50,7 +50,7 @@
       if (!p || p.state === 'inactive') return '';
       if (typeof stageTrackerPreparationRepresented === 'function' && stageTrackerPreparationRepresented(item)) return '';
       const word = stageTrackerPreparationWord(p);
-      const label = p.state === 'current' ? word : 'Preparation owner · unverified';
+      const label = p.state === 'current' ? word : 'Base refresh · not yet confirmed';
       return `<span class="ham-badge" title="${esc(word + ' · ticket head ' + p.head_sha + ' · ' + stageTrackerPreparationAge(p, Date.now()) + '. Preparation is not CI, review approval, or a ready merge-train seat.')}">${esc(label)}</span>`;
     }
     function stageTrackerPreparationPopHtml(queues, nowMs) {
