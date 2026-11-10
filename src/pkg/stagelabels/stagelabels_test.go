@@ -651,6 +651,7 @@ func TestNudgeReasonSlug(t *testing.T) {
 		"   ":                            "unknown",
 		"check-failing:unit (lint)":      "check-failing",
 		"required-check-failing:unit":    "check-failing",
+		"optional-check-failing:links":   "check-failing",
 		"Changes Requested by @Reviewer": "changes-requested-by--reviewer",
 		"--merge_conflict.v2--":          "merge_conflict.v2",
 		"(only parenthetical)":           "unknown",
@@ -1956,5 +1957,28 @@ func TestTransitionDampenerExpiresAfterWindow(t *testing.T) {
 	tr = s.ObserveHead(key, head, NeedsDecision, "verdict")
 	if tr.Suppressed || !tr.Changed || tr.Next != NeedsDecision {
 		t.Fatalf("move after window expiry must be allowed: %+v", tr)
+	}
+}
+
+func TestStoreMarkNudgedCIFailure(t *testing.T) {
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	s := NewStore("", func() time.Time { return now })
+	s.MarkNudgedCIFailure("missing", []string{"unit"}, "a", "spawn", 1, true, now) // unknown key: no-op
+	if _, ok := s.Get("missing"); ok {
+		t.Fatal("MarkNudgedCIFailure created a record")
+	}
+	key := Key("acme/widget", 7)
+	s.Observe(key, ReturnedToContributor, "check-failing:unit")
+	s.MarkNudgedCIFailure(key, []string{"unit", "lint"}, "a", "spawn", 1, true, now)
+	r, _ := s.Get(key)
+	if !reflect.DeepEqual(r.NudgeCIChecks, []string{"lint", "unit"}) || r.NudgeCIHead != "a" || r.NudgeCIAttempts != 1 || r.NudgeMode != "spawn" || !r.NudgeCIAt.Equal(now) {
+		t.Fatalf("after first: %+v", r)
+	}
+	// A fold (not counted) moves the set, head and attempt but keeps the
+	// cooldown clock and, with no mode given, the recorded mode.
+	s.MarkNudgedCIFailure(key, []string{"lint", "unit", "vet"}, "b", "", 2, false, now.Add(time.Hour))
+	r, _ = s.Get(key)
+	if !reflect.DeepEqual(r.NudgeCIChecks, []string{"lint", "unit", "vet"}) || r.NudgeCIHead != "b" || r.NudgeCIAttempts != 2 || r.NudgeMode != "spawn" || !r.NudgeCIAt.Equal(now) {
+		t.Fatalf("after fold: %+v", r)
 	}
 }

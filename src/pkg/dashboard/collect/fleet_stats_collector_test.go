@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -336,5 +337,135 @@ func TestFleetStatsCollector_StartupDelayWithinBound(t *testing.T) {
 		if d < 0 || d >= fleetStatsStartupJitterMax {
 			t.Fatalf("startupDelay() = %v, want within [0, %v)", d, fleetStatsStartupJitterMax)
 		}
+	}
+}
+
+func TestFleetStatsRetryDelay_ExponentialWithCeiling(t *testing.T) {
+	restoreBase, restoreMax := fleetStatsRetryBaseDelay, fleetStatsRetryMaxDelay
+	fleetStatsRetryBaseDelay = time.Minute
+	fleetStatsRetryMaxDelay = 15 * time.Minute
+	t.Cleanup(func() {
+		fleetStatsRetryBaseDelay = restoreBase
+		fleetStatsRetryMaxDelay = restoreMax
+	})
+
+	tests := []struct {
+		failures int
+		want     time.Duration
+	}{
+		{failures: 1, want: time.Minute},
+		{failures: 2, want: 2 * time.Minute},
+		{failures: 3, want: 4 * time.Minute},
+		{failures: 4, want: 8 * time.Minute},
+		{failures: 5, want: 15 * time.Minute},
+		{failures: 50, want: 15 * time.Minute},
+		{failures: 10000, want: 15 * time.Minute},
+	}
+	for _, tc := range tests {
+		if got := fleetStatsRetryDelay(tc.failures); got != tc.want {
+			t.Errorf("fleetStatsRetryDelay(%d) = %v, want %v", tc.failures, got, tc.want)
+		}
+	}
+}
+
+// countingHandler counts log records per (level, message).
+type countingHandler struct {
+	counts *sync.Map
+}
+
+func (h countingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h countingHandler) Handle(_ context.Context, r slog.Record) error {
+	key := r.Level.String() + " " + r.Message
+	v, _ := h.counts.LoadOrStore(key, new(atomic.Int32))
+	v.(*atomic.Int32).Add(1)
+	return nil
+}
+func (h countingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h countingHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h countingHandler) count(level slog.Level, msg string) int {
+	v, ok := h.counts.Load(level.String() + " " + msg)
+	if !ok {
+		return 0
+	}
+	return int(v.(*atomic.Int32).Load())
+}
+
+// TestFleetStatsCollector_OutageWarnsOncePerStreak is the #17427 guard: while
+// the forge host stays unreachable, repeated collects must not emit a WARN per
+// attempt — one WARN when the streak starts, one when the hive first drops out
+// of the fleet total, and one INFO on recovery. The failure count must carry
+// across collects so the backoff keeps growing instead of restarting.
+func TestFleetStatsCollector_OutageWarnsOncePerStreak(t *testing.T) {
+	var down atomic.Bool
+	down.Store(true)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
+		if down.Load() {
+			http.Error(w, "unreachable", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 2, "items": []any{}})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := ghpkg.NewClient("fake", "org", []string{"repo"}, slog.Default(), "")
+	base, _ := url.Parse(srv.URL + "/")
+	c.GoGitHub().BaseURL = base
+
+	restoreBase, restoreMax := fleetStatsRetryBaseDelay, fleetStatsRetryMaxDelay
+	fleetStatsRetryBaseDelay = time.Millisecond
+	fleetStatsRetryMaxDelay = 4 * time.Millisecond
+	t.Cleanup(func() {
+		fleetStatsRetryBaseDelay = restoreBase
+		fleetStatsRetryMaxDelay = restoreMax
+	})
+
+	h := countingHandler{counts: &sync.Map{}}
+	fc := NewFleetStatsCollector(c, "bot", "org", slog.New(h))
+
+	const collects = 3
+	for i := 0; i < collects; i++ {
+		fc.collect(context.Background())
+	}
+	if got, want := fc.consecutiveFailures, collects*fleetStatsRetryAttempts; got != want {
+		t.Errorf("consecutiveFailures = %d, want %d (must carry across collects)", got, want)
+	}
+
+	const retryMsg = "fleet stats collect failed; retrying"
+	const exhaustedMsg = "fleet stats collect failed after all retries; this hive will not contribute to the fleet total"
+	tests := []struct {
+		level slog.Level
+		msg   string
+		want  int
+	}{
+		{slog.LevelWarn, retryMsg, 1},
+		{slog.LevelDebug, retryMsg, collects*(fleetStatsRetryAttempts-1) - 1},
+		{slog.LevelWarn, exhaustedMsg, 1},
+		{slog.LevelDebug, exhaustedMsg, collects - 1},
+	}
+	for _, tc := range tests {
+		if got := h.count(tc.level, tc.msg); got != tc.want {
+			t.Errorf("%s %q logged %d times, want %d", tc.level, tc.msg, got, tc.want)
+		}
+	}
+
+	down.Store(false)
+	fc.collect(context.Background())
+	if _, ready := fc.Snapshot(); !ready {
+		t.Fatal("collector must be ready after recovery")
+	}
+	if got := h.count(slog.LevelInfo, "fleet stats collect recovered"); got != 1 {
+		t.Errorf("recovery INFO logged %d times, want 1", got)
+	}
+	if fc.consecutiveFailures != 0 || fc.exhaustedWarned {
+		t.Errorf("streak state not reset after recovery: failures=%d exhaustedWarned=%v", fc.consecutiveFailures, fc.exhaustedWarned)
+	}
+
+	// A new outage after recovery is a new streak and WARNs again.
+	down.Store(true)
+	fc.collect(context.Background())
+	if got := h.count(slog.LevelWarn, retryMsg); got != 2 {
+		t.Errorf("WARN %q after a second outage = %d, want 2", retryMsg, got)
 	}
 }

@@ -40,6 +40,9 @@ const segments = new Function('stageTrackerAnchor', globals + `
 const STAGE_TRACKER_ACTIVE_WORD = {70: 'Fixing'};
 const STAGE_TRACKER_HUMAN_GATED = 85, STAGE_TRACKER_READY_FOR_HUMAN_MERGE = 90, STAGE_TRACKER_ADOPTED_BY_HIVE = 74;
 function stageTrackerSentinelInLane() { return false; }
+function stageTrackerOpenSince(it) { return { ms: Date.parse(it.created_at || '') || 0 }; }
+function stageTrackerShortAgo() { return '1d'; }
+const STAGE_TRACKER_OPEN_STALE_DAYS = 7;
 function stageTrackerUnauthorizedWord() { return ''; }
 function stageTrackerManualMergeWord() { return 'Ready for human merge'; }
 function stageTrackerAdoptedWord() { return 'Adopted by hive'; }
@@ -47,6 +50,7 @@ function stageTrackerAdoptedWord() { return 'Adopted by hive'; }
 const renderStrip = new Function('esc', 'stageTrackerSegments', 'stageTrackerActivityTrackHtml', globals + `
 const STAGE_TRACKER_MOTION_STATIC = 'static', STAGE_TRACKER_MOTION_ACTIVE = 'active';
 const STAGE_TRACKER_READY_FOR_HUMAN_MERGE = 90;
+const STAGE_TRACKER_DRAFT_TIP = 'Draft — the author is still working on it.';
 function stageTrackerActorKind() { return ''; }
 function stageTrackerActorTip() { return ''; }
 function stageTrackerMotion() { return STAGE_TRACKER_MOTION_STATIC; }
@@ -101,6 +105,40 @@ test('fix pushed: PR in progress is done-style with its word while CI / Review i
   assert.doesNotMatch(pr, /aria-current/, 'the pushed fix is history: CI / Review is the current column');
   assert.match(pr, /evidence: push by @hive\[bot\]/);
   assert.match(c[4], /ham-current/, 'CI track is current');
+});
+
+// hivecommons/hive#17347: a head the hive deferred is a decision with an
+// owner and successors, not "Unassigned": plain amber, still, its first
+// successor in the word and the reason, all successors and the link in the
+// tooltip.
+test('deferred: PR in progress is plain amber and still, names the successor, and carries the reason and link', () => {
+  const item = redPR({ display_column: 30,
+    deferral: { head: 'abc1234def', actor: 'scanner', successors: ['#17345', '#17344'], close_ok: true },
+    code_activity: { head: 'abc1234def', state: 'deferred', caption: 'Deferred · waiting on #17345 +1', actor: 'scanner', source: 'hive-deferral', since: '2026-11-04T02:25:00Z', url: 'https://github.com/org/repo/issues/17345',
+      detail: 'scanner deferred head abc1234 at 2026-11-04T02:25:00Z: Deferring this PR (dependabot-authored). Waiting on #17345, #17344.' } });
+  const pr = cells(item)[3];
+  assert.match(pr, /class="ham-seg active[^"]*ham-remediation-deferred/);
+  assert.doesNotMatch(pr, /ham-remediation-unassigned/, 'never the unassigned red mix');
+  assert.match(pr, /data-remediation="deferred"/);
+  assert.match(pr, /Deferred · waiting on #17345 \+1/);
+  assert.doesNotMatch(pr, /data-motion="active"/, 'a decision, not work in motion: no pulse');
+  assert.match(pr, /Waiting on #17345, #17344/);
+  assert.match(pr, /https:\/\/github\.com\/org\/repo\/issues\/17345/);
+  assert.match(pr, /Close now is on the row/);
+});
+
+// hivecommons/hive#17500: a deferral to a shared-CI incident says so in the
+// word, links the incident, and the tooltip promises the lift.
+test('deferred to a shared-CI incident: the word is Waiting on shared CI with the incident linked', () => {
+  const item = redPR({ display_column: 30,
+    deferral: { head: 'abc1234def', actor: 'scanner', successors: ['#17463'], incident: 17463, incident_url: 'https://github.com/org/repo/issues/17463' },
+    code_activity: { head: 'abc1234def', state: 'deferred', caption: 'Waiting on shared CI · #17463', actor: 'scanner', source: 'hive-deferral', since: '2026-11-10T01:13:00Z', url: 'https://github.com/org/repo/issues/17463',
+      detail: '`mutation` is failing fleet-wide; tracked in #17463. Lifts automatically when that issue closes. scanner deferred head abc1234 at 2026-11-10T01:13:00Z.' } });
+  const pr = cells(item)[3];
+  assert.match(pr, /ham-remediation-deferred/);
+  assert.match(pr, /Waiting on shared CI · <a class="ham-incident-link" href="https:\/\/github\.com\/org\/repo\/issues\/17463"[^>]*>#17463<\/a>/);
+  assert.doesNotMatch(pr, /Deferred · by/);
+  assert.match(pr, /Lifts automatically when that issue closes/);
 });
 
 test('a red PR with a stale code head renders no remediation attributes', () => {
@@ -267,9 +305,17 @@ test('#16539 shape: a queued swarm reads 0/5 and, as the stage\'s own track, is 
 // hivecommons/hive#16631: a CI ring that is not full is a running ring.
 // 13/19 with checks still pending is active with its count beside the
 // running Review; only a complete 19/19 ring is the silent green glyph.
+// The backend says running/queued whenever a check is in motion; its own
+// `unknown` beside a part-filled ring (a required name with no run, statuses
+// unread) is settled, not inferred motion (hivecommons/hive#17508).
 test('#16628 shape: CI 13/19 with pending checks + review in progress → both tracks active with words', () => {
   const review = { head: 'abc1234def', state: 'reviewing', active: true, caption: 'Review 0/5 · in progress', perspectives_done: 0, perspectives_total: 5, source: 'dispatch', observed_at: seen };
-  for (const state of ['running', 'unknown', 'queued']) {
+  const unknown = cells(redPR({ display_column: 50, stage: 50,
+    ci_activity: { head: 'abc1234def', state: 'unknown', caption: 'CI waiting', checks_passed: 13, checks_total: 19, source: 'checks', observed_at: seen },
+    review_activity: review }));
+  assert.doesNotMatch(unknown[4], /class="ham-seg ham-activity-track active ham-current"/, 'unknown: a part-filled ring with no motion reported is not lit');
+  assert.equal(litCount(unknown.join('')), 1, 'unknown: only Review is in motion');
+  for (const state of ['running', 'queued']) {
     const c = cells(redPR({ display_column: 50, stage: 50,
       ci_activity: { head: 'abc1234def', state, caption: 'CI ' + state, checks_passed: 13, checks_total: 19, source: 'checks', observed_at: seen },
       review_activity: review }));
@@ -313,4 +359,32 @@ test('a stalled or stale-polled text-bearing track is plainly active: one amber 
     const words = m ? m[2].replace(/<[^>]+>/g, '').trim() : '';
     if (words) assert.ok(/\bactive\b/.test(m[1]) && !/\b(pending|todo|done|failing|ham-settled-current)\b/.test(m[1]), 'text without the one active fill: ' + m[1]);
   }
+});
+
+// hivecommons/hive#17461: a draft PR with no stage yet (Open column) whose CI
+// runs draws the Open chevron settled-current — icon only, neutral fill —
+// and the running track is the row's only coloured chevron. The Open word
+// tints (draft, blocked, New, stale) are declared after the settled rule at
+// equal specificity; the settled fill must still win.
+test('a draft Open PR with running CI: Open is settled-current and no Open tint repaints it', () => {
+  const c = cells(redPR({ stage: 0, modifiers: ['draft'], created_at: '2026-11-03T01:50:50Z',
+    ci_activity: { head: 'abc1234def', state: 'running', active: true, caption: 'CI 51/64 · 12 running', checks_passed: 51, checks_total: 64, source: 'checks', observed_at: '2026-11-04T02:40:00Z' },
+    review_activity: { head: 'abc1234def', state: 'not_started', caption: 'Review · draft, not requested', source: 'none', observed_at: '2026-11-04T02:40:00Z' } }));
+  assert.match(c[0], /^<li class="ham-seg active ham-settled-current ham-open-draft"/, 'Open keeps its draft class for the tooltip, settled while CI runs: ' + c[0]);
+  assert.doesNotMatch(c[0], /ham-chevron-copy/, 'settled-current Open is icon only');
+  assert.match(c[0], /title="Waiting on CI, running — /);
+  assert.equal(litCount(c.join('')), 1, 'the running CI track is the only lit chevron');
+  assert.match(c[4], /class="ham-seg ham-activity-track active[^"]*"[^]*CI 51\/64 · 13 running</);
+
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const css = fs.readFileSync(path.join(__dirname, 'static-src/css/tracker.css'), 'utf8');
+  const rules = Array.from(css.replace(/\/\*[^]*?\*\//g, '').matchAll(/([^{}]+)\{([^}]*)\}/g)).map(m => ({ sel: m[1].trim(), body: m[2] }));
+  const tints = rules.filter(r => /^\.ham-seg\.active\.(ham-open-\w+|ham-held)$/.test(r.sel) && /background/.test(r.body));
+  assert.ok(tints.length >= 4, 'the Open tints are still single-rule backgrounds: ' + tints.map(r => r.sel).join(' | '));
+  const settled = rules.findIndex(r => r.sel === '.ham-seg.ham-seg.active.ham-settled-current');
+  assert.ok(settled >= 0, 'a settled-current rule outranks the three-class tints');
+  assert.match(rules[settled].body, /background: var\(--surface-3\)/);
+  for (const t of tints) assert.ok(rules.indexOf(t) < settled, t.sel + ' is declared before the settled-current override');
+  for (const t of tints) assert.ok(t.sel.split('.').length - 1 < rules[settled].sel.split('.').length - 1, t.sel + ' has lower specificity than the settled-current override');
 });

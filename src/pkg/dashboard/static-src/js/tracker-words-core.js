@@ -60,14 +60,19 @@
     }
     // A PR parked at 085 because a person has to act ON THE PR (rerun CI,
     // approve workflow runs, resolve a permission, answer review findings
-    // or red checks still open on its head) is not queued, merging or
-    // merge-ready: it lights PR in progress, never Merge queue. Merge
-    // queue is only for rows actually queued / merging / merged, or a
-    // merge-ready PR (review approved, CI green on this head) parked on a
-    // merge decision. A bare 085 with no track evidence keeps the gate:
-    // the person decides there (hive#14821). Hive's own #16524 read
-    // "Awaiting human: rerun shared ci" under Merge queue with CI unknown
-    // and review findings open. Mirrors stageTrackerPersonActsOnPR in Go.
+    // or red / running checks still open on its head) is not queued,
+    // merging or merge-ready: it lights its REAL stage, CI / Review — the
+    // CI track while checks run or are red / unknown, the Review track
+    // while the verdict is pending — never Merge queue and never PR in
+    // progress; the gate is the needs-human pill (hivecommons/hive#17327,
+    // #17453). Merge queue is only for rows actually queued / merging /
+    // merged, or a merge-ready PR (review approved, CI green on this head)
+    // parked on a merge decision. A bare 085 with no track evidence keeps
+    // the gate: the person decides there (hive#14821). Hive's own #16524
+    // read "Awaiting human: rerun shared ci" under Merge queue with CI
+    // unknown and review findings open; #17442 read "Needs human ·
+    // decision" under PR in progress while CI ran. Mirrors
+    // stageTrackerPersonActsOnPR in Go.
     function stageTrackerPersonActsOnPR(item) {
       if (!item || (item.via_pr ? 'pr' : item.kind) !== 'pr' || Number(item.stage) !== STAGE_TRACKER_HUMAN_GATED) return false;
       if (item.merge_gate && item.merge_gate.state) return false;
@@ -238,13 +243,16 @@
     const STAGE_TRACKER_TRAIN_STATE_QUEUED = 'queued-behind';
     const STAGE_TRACKER_TRAIN_STATE_REBASING = 'rebasing';
     const STAGE_TRACKER_TRAIN_STATE_EXHAUSTED = 'rebase-exhausted';
-    // The merge-queue icon: a side-view railcar on two wheels (14px,
-    // currentColor) — the owner read the old ⛓ as a scribble. One path for
-    // the Merge queue column header, the train header chip and the queue
-    // popover, so the picture means the same thing everywhere.
-    const STAGE_TRACKER_TRAIN_ICON_PATH = '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>';
+    // The merge-queue icon: a "merge" traffic sign (US W4-1) — an up arrow
+    // with a second lane curving in from the lower right and joining the
+    // shaft mid-height (14px, currentColor). The owner read the old ⛓ as a
+    // scribble and the railcar that replaced it as a tram front
+    // (hivecommons/hive#17459). One path for the Merge queue column header,
+    // the 080 chevron, the train header chip and the queue popover, so the
+    // picture means the same thing everywhere.
+    const STAGE_TRACKER_TRAIN_ICON_PATH = '<path stroke-width="2" d="M6 14.5V3M3 6l3-3 3 3M13 14.5c0-3.8-3.4-4.6-7-6.5"/>';
     const STAGE_TRACKER_TRAIN_ICON_TITLE = 'Merge queue';
-    // Pure: the inline-SVG train with its "Merge queue" hover.
+    // Pure: the inline-SVG merge sign with its "Merge queue" hover.
     function stageTrackerTrainIconHtml(cls, title) {
       const label = title || STAGE_TRACKER_TRAIN_ICON_TITLE;
       return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
@@ -698,6 +706,89 @@
       });
       return out;
     }
+    /* ---- Shared-PR groups (pure; run under node by
+       stage_tracker_shared_pr_group_test.go) ------------------------------
+       A PR that closes several listed issues is drawn once, under its
+       primary (drawn_under); the other issues ride it from their own rows
+       (stageTrackerLinkedRiding, hivecommons/hive#17324). Those rows belong
+       together: #17292 (primary), #17302 (secondary) and PR #17308 are one
+       flow, yet the lead sort scattered them with an unrelated row between.
+       The group is one unit of the list — the secondaries sit right after
+       their primary, in the lead order among themselves, and the group sorts
+       by the primary — and shares ONE PR snapshot: a secondary's listing of
+       the PR is replaced by the primary's own entry, so both strips light
+       from the same object of the same payload tick. A secondary whose
+       primary is not a row of this list (filtered out, other page) stays a
+       standalone row exactly as before. */
+    // Pure: the primary row a secondary follows — { key, pr } — or null.
+    // Guarded: harnesses lift this file without stageTrackerLinkedRiding.
+    function stageTrackerSharedPRParent(it, stages, keys) {
+      if (!it || it.kind !== 'issue' || typeof stageTrackerLinkedRiding !== 'function') return null;
+      const lp = stageTrackerLinkedRiding(it, stages);
+      const under = Number(lp && lp.drawn_under) || 0;
+      if (!under) return null;
+      const key = stageTrackerItemKey({ repo: it.repo, kind: 'issue', number: under });
+      return keys[key] ? { key, pr: Number(lp.number) || 0 } : null;
+    }
+    // Pure: the groups of a row list — { parentOf: { childKey: parentKey },
+    // children: { parentKey: [childKey…] }, prs: { parentKey: { prNumber:
+    // true } } } — children in list order. Only rows of the list count.
+    function stageTrackerSharedPRGroups(rows, stages) {
+      rows = Array.isArray(rows) ? rows.filter(Boolean) : [];
+      const keys = {};
+      rows.forEach(it => { if (it.kind === 'issue' && Number(it.number) > 0) keys[stageTrackerItemKey(it)] = it; });
+      const out = { parentOf: {}, children: {}, prs: {} };
+      rows.forEach(it => {
+        const p = stageTrackerSharedPRParent(it, stages, keys);
+        if (!p) return;
+        const k = stageTrackerItemKey(it);
+        if (k === p.key) return;
+        out.parentOf[k] = p.key;
+        (out.children[p.key] = out.children[p.key] || []).push(k);
+        (out.prs[p.key] = out.prs[p.key] || {})[p.pr] = true;
+      });
+      return out;
+    }
+    // Pure: a secondary row rebound to its primary's listing of the shared
+    // PR — the same object, drawn_under kept — so the two strips cannot
+    // disagree. The row itself is copied; the payload stays the server's.
+    function stageTrackerSharedPRRebind(child, parent, prNumber) {
+      const own = Array.isArray(parent && parent.linked_prs) ? parent.linked_prs.find(lp => lp && Number(lp.number) === prNumber) : null;
+      if (!own || !Array.isArray(child.linked_prs)) return child;
+      const shared = Object.assign({}, own, { drawn_under: Number(parent.number) || 0, also_closes: null });
+      return Object.assign({}, child, { linked_prs: child.linked_prs.map(lp => lp && Number(lp.number) === prNumber ? shared : lp) });
+    }
+    // Pure: the list with every shared-PR group contiguous — primary, then
+    // its secondaries (rebound) — in the primary's place; a group whose
+    // primary is folded (collapsed[parentKey]) is its primary alone.
+    function stageTrackerSharedPRContiguous(rows, stages, collapsed) {
+      rows = Array.isArray(rows) ? rows : [];
+      const groups = stageTrackerSharedPRGroups(rows, stages);
+      if (!Object.keys(groups.parentOf).length) return rows;
+      const byKey = {};
+      rows.forEach(it => { if (it) byKey[stageTrackerItemKey(it)] = it; });
+      const emitted = {};
+      const out = [];
+      const emit = (it) => {
+        if (!it) { out.push(it); return; }
+        const k = stageTrackerItemKey(it);
+        if (emitted[k]) return;
+        emitted[k] = true;
+        out.push(it);
+        if (collapsed && collapsed[k]) { (groups.children[k] || []).forEach(ck => { emitted[ck] = true; }); return; }
+        (groups.children[k] || []).forEach(ck => {
+          const child = byKey[ck];
+          if (!child || emitted[ck]) return;
+          const pr = Number(Object.keys(groups.prs[k] || {}).find(n => Array.isArray(child.linked_prs) && child.linked_prs.some(lp => lp && Number(lp.number) === Number(n) && Number(lp.drawn_under) === Number(it.number)))) || 0;
+          emit(pr ? stageTrackerSharedPRRebind(child, it, pr) : child);
+        });
+      };
+      rows.forEach(it => { if (it && groups.parentOf[stageTrackerItemKey(it)]) return; emit(it); });
+      // A secondary whose primary never emitted (a cycle) keeps its own place.
+      rows.forEach(it => { if (it && !emitted[stageTrackerItemKey(it)]) emit(it); });
+      return out;
+    }
+
     // Pure: the member numbers of a train the page does not show, given the
     // train's record (ahead + size on the last member tells the whole
     // queue when the view carries it) and the numbers shown under the

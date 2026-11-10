@@ -341,7 +341,13 @@ type RegistryEntry struct {
 	// from cache. The hive is online, but health/agent-derived truth must be
 	// rendered as stale/unknown unless the beat explicitly carried a fresh
 	// in-memory agent overlay.
-	StatsStale       bool      `json:"statsStale,omitempty"`
+	StatsStale bool `json:"statsStale,omitempty"`
+	// ForgeUnreachable is the spoke-reported flag that the GitHub host in
+	// GitHubHost cannot be reached from the pod (forge probe timed out or
+	// failed at the transport layer). The pod is healthy; the break is egress,
+	// so the hub labels the row by host and exempts it from health/advisory
+	// penalties. Old spokes omit it (false = today's behaviour).
+	ForgeUnreachable bool      `json:"forgeUnreachable,omitempty"`
 	Upgrading        bool      `json:"upgrading,omitempty"`
 	UpgradeTarget    string    `json:"upgradeTarget,omitempty"`
 	UpgradeStartedAt time.Time `json:"upgradeStartedAt,omitempty"`
@@ -2135,6 +2141,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}(),
 		Online:            true,
 		StatsStale:        payload.StatsStale,
+		ForgeUnreachable:  payload.ForgeUnreachable,
 		GitHubAppRequired: payload.GitHubAppRequired,
 		// GitHubAppPermIssue is a full sentence the drift hover renders
 		// verbatim ("The GitHub App is configured but has no installation.

@@ -39,6 +39,17 @@ func newGitHubWebhookTestServer(t *testing.T) *Server {
 		Ctx:      context.Background(),
 		Logger:   logger,
 	}
+	// Every delivery naming a managed PR or issue arms the stage-tracker
+	// refresher's debounce. On the default time.AfterFunc that timer fires
+	// ~2s after the test returned, and its flush counts a targeted re-read
+	// (failed or not) into the process-wide webhook tracker of whichever
+	// test runs then: under -shuffle that can be
+	// TestGitHubWebhookReceiverSchedulesTargetedTrackerRefresh, which pins
+	// targeted_refreshes_1h to exactly 1 (hivecommons/hive#17446). The
+	// GitHub stub above rejects every call, so no test on this server
+	// wants the re-read: a hand-fired timer keeps the window in the test.
+	s.webhookRefresh = newWebhookTrackerRefresher()
+	s.webhookRefresh.newTimer = (&fakeTimers{}).newTimer
 	return s
 }
 

@@ -493,7 +493,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			}
 			result.Candidates++
 			c.sweepClock.evaluating(displayRepo, number)
-			event, reason, err := c.trySweepContributorLanePR(withMergeTrainCandidateHold(mergeDecisionPriority(ctx), c.mergeTrainCandidateReason(train, number)), displayRepo, owner, repoName, number, policy)
+			event, reason, err := c.trySweepContributorLanePR(c.mergeTrainEvalContext(mergeDecisionPriority(ctx), train, number), displayRepo, owner, repoName, number, policy)
 			c.sweepClock.evaluated()
 			if err == nil {
 				c.noteMergeTrainOutcome(stageLaneContributor, owner, repoName, number, pr.GetHead().GetSHA(), reason)
@@ -1649,6 +1649,11 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return eval, reason, err
 	}
 	if !green {
+		if !relay {
+			// A non-member fork head on a Prow repo gets no presubmits until
+			// someone posts /ok-to-test (#17474); the relay stays read-only.
+			c.requestProwPresubmitsForFork(ctx, displayRepo, owner, repo, pr, number, headSHA)
+		}
 		if contributorHeldRunsReason(reason) {
 			_, reason = c.approveHeldRunsForRegistryTrusted(ctx, displayRepo, owner, repo, pr, number, headSHA, claim, policy, files, reason)
 		}

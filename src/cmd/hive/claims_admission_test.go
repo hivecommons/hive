@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -200,5 +202,95 @@ func TestKickClaimsRefuseIssueWithOpenLinkedPR(t *testing.T) {
 	}
 	if pullsCalls.Load() != 1 {
 		t.Fatalf("open-PR listings = %d, want still 1 (renewal/tick never list)", pullsCalls.Load())
+	}
+}
+
+// hivecommons/hive#17299: an issue an agent filed without --claim is filed
+// for outside help, and the hub's own scanner dispatch of it back to that
+// agent (#17243→#17250) is refused — not only the agent's relay `claim`
+// request. Another agent still takes it.
+func TestKickClaimsRefuseFilerOfFiledForHelpIssue(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/o/r/issues/17243":
+			body, _ := json.Marshal(map[string]any{
+				"number": 17243, "state": "open", "labels": []map[string]string{{"name": "help wanted"}},
+				"body": "someone take this\n\n" + github.FiledForHelpMarker("scanner"),
+			})
+			_, _ = w.Write(body)
+		case r.URL.Path == "/repos/o/r/pulls", r.URL.Path == "/repos/o/r/issues/17243/labels", r.URL.Path == "/repos/o/r/labels":
+			fmt.Fprint(w, `[]`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer api.Close()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	client := github.NewClientForTest(api.URL, "o", []string{"r"}, logger)
+	ledger := testClaimsLedger(t)
+	installClaimAdmissionCheck(context.Background(), ledger, func() *github.Client { return client })
+
+	res, err := ledger.Claim(claims.Request{Repo: "o/r", Issue: 17243, Holder: "scanner", HolderID: "scanner", Kind: claims.KindAgent})
+	if err != nil || res.Outcome != claims.OutcomeRefused || !strings.HasPrefix(res.Reason, github.ClaimBlockReasonFiledForHelpPrefix+"scanner") {
+		t.Fatalf("filer's dispatch = %+v, %v; want refused with %q", res, err, github.ClaimBlockReasonFiledForHelpPrefix+"scanner")
+	}
+	ledger.MarkListed("o/r", 17243, "scanner")
+	recordAgentStart(ledger, "o", "scanner", "r", 17243, github.AgentStartSignalClaim, logger)
+	if c, ok := ledger.Lookup("o/r", 17243); ok {
+		t.Fatalf("filer's start signal claimed its own filed-for-help issue: %+v", c)
+	}
+
+	res, err = ledger.Claim(claims.Request{Repo: "o/r", Issue: 17243, Holder: "reviewer", HolderID: "reviewer", Kind: claims.KindAgent})
+	if err != nil || res.Outcome != claims.OutcomeClaimed {
+		t.Fatalf("another agent's claim = %+v, %v; want claimed", res, err)
+	}
+}
+
+// hivecommons/hive#17299: an issue an agent files with --claim was never in
+// a kick, so a plain `claim` start signal on it ledgers nothing and every
+// ledger-only reader (dispatch admission Lookup, the PR-request gate, the
+// claim listing) still sees it unclaimed. The filed-claim signal the create
+// path raises is the issue's own listing: the ledger claim is recorded, the
+// admission check still runs, and another agent's dispatch is refused.
+func TestRecordAgentStartFiledClaimLedgersSelfFiledIssue(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/o/r/issues/17243":
+			body, _ := json.Marshal(map[string]any{
+				"number": 17243, "state": "open", "body": "stage 2 of my epic",
+				"labels": []map[string]string{{"name": "hive/claimed-by-scanner"}},
+			})
+			_, _ = w.Write(body)
+		case r.URL.Path == "/repos/o/r/pulls", r.URL.Path == "/repos/o/r/issues/17243/labels", r.URL.Path == "/repos/o/r/labels":
+			fmt.Fprint(w, `[]`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer api.Close()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	client := github.NewClientForTest(api.URL, "o", []string{"r"}, logger)
+	ledger := testClaimsLedger(t)
+	installClaimAdmissionCheck(context.Background(), ledger, func() *github.Client { return client })
+
+	// The plain claim signal a `claim` request raises: no kick listed the
+	// issue, so the ledger stays empty — the gap the filed-claim signal closes.
+	recordAgentStart(ledger, "o", "scanner", "r", 17243, github.AgentStartSignalClaim, logger)
+	if c, ok := ledger.Lookup("o/r", 17243); ok {
+		t.Fatalf("plain claim signal on an unlisted issue recorded a claim: %+v", c)
+	}
+
+	recordAgentStart(ledger, "o", "scanner", "r", 17243, github.AgentStartSignalFiledClaim, logger)
+	c, ok := ledger.Lookup("o/r", 17243)
+	if !ok || c.Holder != "scanner" || c.Kind != claims.KindAgent || c.PRStarted {
+		t.Fatalf("filed-claim signal did not ledger the self-filed issue to its filer: %+v, %v", c, ok)
+	}
+	if li, listed := ledger.Listed("o/r", 17243); listed {
+		t.Fatalf("listing outlived the claim it became: %+v", li)
+	}
+
+	res, err := ledger.Claim(claims.Request{Repo: "o/r", Issue: 17243, Holder: "reviewer", HolderID: "reviewer", Kind: claims.KindAgent})
+	if err != nil || res.Outcome != claims.OutcomeHeld || res.Claim.Holder != "scanner" {
+		t.Fatalf("another agent's dispatch of the self-filed issue = %+v, %v; want held by scanner", res, err)
 	}
 }

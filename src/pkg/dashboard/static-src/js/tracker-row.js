@@ -11,26 +11,26 @@
       const curStage = byNum[cur] || {};
       const anchor = stageTrackerAnchor(cur, stages, item.via_pr ? 'pr' : item.kind, item);
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
-      const sentinelLane = stageTrackerSentinelInLane(item);
       // A 071 / 072 row whose author has pushed is back with the hive: the
       // chevron reads the column's own word ("CI / Review"), not "Needs
       // @author" (hivecommons/hive#15784). Guarded: the harnesses load by name.
       const pushedBack = (cur === 71 || cur === 72) && typeof stageTrackerPushedBack === 'function' && stageTrackerPushedBack(item);
       const detour = (!terminal && !pushedBack && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== STAGE_TRACKER_OPEN_FOR_DISCUSSION && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (typeof stageTrackerBlockerWord === 'function' && cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
-      if (detour && cur === 70 && !detour.sentinel && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
-      // A bare "Needs human decision" (045 / 085) says why in the chevron
-      // itself — "Needs human · edits CI workflows" — when a short reason
-      // is known (rationguard#480: "what does 'needs human' mean?"). A
-      // word already carrying its why (Blocked · …, Waiting for @x · …,
-      // the train, the sentinel) stands.
-      if (detour && (cur === STAGE_TRACKER_NEEDS_DECISION || cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION) && !detour.sentinel && detour.text === STAGE_TRACKER_ACTIVE_WORD[cur] && typeof stageTrackerNeedsHumanWord === 'function') {
-        const nh = stageTrackerNeedsHumanWord(item);
-        if (nh) detour.text = nh;
+        ? { text: (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (typeof stageTrackerBlockerWord === 'function' && cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) } : null;
+      if (detour && cur === 70 && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
+      // A human gate (sentinel alert, hold label, a reviewer's question, a
+      // needs-decision park) is never a chevron word: the bar lights the
+      // real stage with the amber ham-human-gated outline and the one
+      // human-gate pill beside it names the reasons and carries the verbs
+      // (hivecommons/hive#17470: "needs human, approve, let hive decide all
+      // in the same line"). A 085 PR that is merge-ready still anchors at
+      // the Merge queue column and reads that column's own word there.
+      if (detour && cur === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || item.via_pr) && detour.text === STAGE_TRACKER_ACTIVE_WORD[cur]) {
+        detour.text = String((byNum[anchor] || {}).short || (byNum[anchor] || {}).label || detour.text);
+        detour.gate = true;
       }
       if (detour && (cur === 71 || cur === 72) && typeof stageTrackerReturnedWord === 'function') {
         detour.text = stageTrackerReturnedWord(item, detour.text);
-        detour.sentinelSuffix = stageTrackerSentinelAsSuffix(item);
       }
       const code = item.code_activity;
       const codeMatches = code && String(code.head || '') === String(item.head || '');
@@ -39,7 +39,7 @@
       const clock = Number(nowMs) || Date.now();
       const codeWorking = codeMatches && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
       const codeCaption = codeMatches ? (!codeWorking && code.state === 'fixing' ? 'Fix task assigned · activity unknown' : (code.state === 'fixing' ? String(code.caption || '').replace(/^Fixing\b/, 'Remediating') : code.caption)) : 'Code activity unknown';
-      if (detour && !code && cur === 70 && !detour.sentinel) detour.text = 'Waiting for fixer · activity unknown';
+      if (detour && !code && cur === 70) detour.text = 'Waiting for fixer · activity unknown';
       if (detour && code && [70, 71, 72].includes(cur)) detour.text = codeCaption || detour.text;
       if (detour && code && cur === 74 && codeWorking) detour.text += ' · ' + codeCaption;
       if (detour && code && cur === 74 && !codeWorking) {
@@ -131,9 +131,9 @@
       // as one duplicated glyph (operator, 2026-11-03).
       50: '<path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>',
       ci: '<path d="M5.5 1.5h5M6.5 1.5v4.6L2.6 12.9a1 1 0 0 0 .9 1.6h9a1 1 0 0 0 .9-1.6L9.5 6.1V1.5"/><path d="M4.4 10.5h7.2"/>',
-      // Merge queue: the same railcar as the column header and train chip
+      // Merge queue: the same merge sign as the column header and train chip
       // (STAGE_TRACKER_TRAIN_ICON_PATH in tracker-words.js; a test keeps them equal).
-      80: '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>',
+      80: '<path stroke-width="2" d="M6 14.5V3M3 6l3-3 3 3M13 14.5c0-3.8-3.4-4.6-7-6.5"/>',
       100: '<path d="M3 5h10M3 8h10M3 11h10"/>',
       110: '<path d="M3 8l3 3 7-7"/>',
       history: '<path d="M2 8a6 6 0 1 0 6-6 6.5 6.5 0 0 0-4.5 1.83L2 5.33"/><path d="M2 2v3.33h3.33"/><path d="M8 4.67V8l2.67 1.33"/>',

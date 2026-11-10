@@ -43,6 +43,9 @@ const (
 	operatorActionRelease         = "release"
 	operatorActionAcceptTriage    = "accept-triage"
 	operatorActionMarkNeedsHuman  = "mark-needs-human"
+	// operatorActionConfirmSentinel is the human-gate pill's "Confirm safe"
+	// on a sentinel alert: the confirmation comment and the label removal.
+	operatorActionConfirmSentinel = "confirm-sentinel"
 	// Merge-gate answers on a 090 Ready-for-human-merge PR
 	// (hivecommons/hive#15078): merged by the operator through the hive's
 	// App, or queued for the hive's merge sweep.
@@ -438,6 +441,9 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 	case "send-to-human":
 		out.Action = operatorActionMarkNeedsHuman
 		out.Note = truncateOperatorNote(raw.Reason)
+	case "sentinel-confirm":
+		out.Action = operatorActionConfirmSentinel
+		out.Note = truncateOperatorNote(raw.Comment)
 	default:
 		return out, false
 	}

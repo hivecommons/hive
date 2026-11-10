@@ -487,6 +487,10 @@
             <label>Update interval (s) ${yamlHint('governor.advisory.update_interval_s')} ${settingHelpMark('advisory', '', 'Update interval (s)', `How often the digest comment on the pinned advisory issue is checked and refreshed. 0 = default (60s, every governor cycle). Longer values (30&ndash;3600s) reduce GitHub API writes and notification churn on watched repos; changes apply live from the next cycle. Unchanged digests are already skipped, and the periodic forced refresh that heals hand-edited comments stretches with this interval.`)}</label>
             <input type="number" min="0" max="3600" step="1" value="${updateIntervalS}" data-change-action="gh76">
           </div>
+          <div class="config-field">
+            <label>Rewrite floor for a changed digest ${yamlHint('governor.advisory.digest_min_interval')} ${settingHelpMark('advisory', '', 'Rewrite floor for a changed digest', `The one <code>hive:advisory-digest</code> comment on the pinned issue is edited in place at most this often when its content changed (live counts in the Advice block drift every cycle). Empty = 1h; 0 = rewrite on every changed cycle. Unchanged digests never write. The baseline is the comment's own last-edit time on GitHub, so a restart does not repost inside the window.`)}</label>
+            <input type="text" value="${esc(a.digest_min_interval || '')}" placeholder="1h" data-change-action="markDirty" data-arg0="advisory" data-arg1="digest_min_interval" data-arg-types="s,s,w">
+          </div>
         </div>
 
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">

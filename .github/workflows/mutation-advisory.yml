@@ -1,0 +1,51 @@
+name: Mutation (advisory)
+
+# Phase 1 of #17349: surface "covered but never asserted" branches as surviving
+# mutants on changed Go packages. Advisory only — never blocks a PR.
+on:
+  pull_request:
+    branches: [v4, v5, v6]
+    paths:
+      - 'src/**.go'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          cache: false
+          go-version-file: src/go.mod
+      - name: Install gremlins
+        run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+      # The mutation run executes PR-controlled test code, so it gets no token:
+      # it only writes mutation-out/comment.md. The token is scoped to the
+      # separate comment-upsert step below.
+      - name: Run mutation report
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          bash src/scripts/mutation-report.sh run
+      - name: Upsert mutation comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash src/scripts/mutation-report.sh post

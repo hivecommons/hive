@@ -150,19 +150,22 @@ func TestHumanHandoffRoutesByEvidence(t *testing.T) {
 		t.Fatalf("conflict: %+v", rec)
 	}
 
-	// Sentinel alone (head otherwise mergeable) → 085, decision comment.
+	// Sentinel alone (head otherwise mergeable) → 090 held: the gate is a
+	// pill on the PR's real stage, not a stage of its own
+	// (hivecommons/hive#17327), and the 090 comment says what holds it.
 	clock.at = clock.at.Add(time.Hour)
 	sweep("role/contributor", "author/human", "stage/071-needs-author", "sentinel-alert")
-	if got := stageOf(t, store, 9); got != stagelabels.NeedsDecision {
+	if got := stageOf(t, store, 9); got != stagelabels.ReadyForHumanMerge {
 		t.Fatalf("sentinel: stage=%v", got)
 	}
-	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.DecisionCommentMarker) || !strings.Contains(api.comments[0], "a sentinel alert is open on this PR") {
-		t.Fatalf("085 comment = %q", api.comments)
+	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.ReadyCommentMarker) || !strings.Contains(api.comments[0], "Held: a sentinel alert is open on this PR.") || strings.Contains(api.comments[0], "Blocked only by") {
+		t.Fatalf("held 090 comment = %q", api.comments)
 	}
-	// 085 → 090 when the alert clears is a flip, not a regression, and the
-	// 090 comment is posted for this new visit.
-	sweep("role/contributor", "author/human", "stage/085-needs-decision")
-	if got := stageOf(t, store, 9); got != stagelabels.ReadyForHumanMerge || len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.ReadyCommentMarker) {
+	// The alert clearing keeps 090; the plain ready cause was already
+	// explained on this head (the first 090 visit above), so no repost —
+	// TestReadyEntryRewritesWhenGateLifts covers the rewrite.
+	sweep("role/contributor", "author/human", "stage/090-ready-for-human-merge")
+	if got := stageOf(t, store, 9); got != stagelabels.ReadyForHumanMerge || len(api.comments) != 0 {
 		t.Fatalf("alert cleared: stage=%v comments=%q", got, api.comments)
 	}
 
@@ -596,10 +599,65 @@ func TestWorkflowApprovalSnippetRendersSelfContainedWorkflowForOwnAppLogin(t *te
 	}
 }
 
-// TestDecisionEntryRepostsWhenCauseChanges: a PR parked at 085 for a
-// sentinel alert whose maintainer clears the alert, only for the lane's
-// workflow-path fence to hold it, gets the new cause explained on the same
-// head — once — instead of sitting under a stale "sentinel alert" comment.
+// TestReadyEntryRewritesWhenGateLifts: a green, reviewed PR whose only
+// stop is a sentinel alert sits at 090 held (hivecommons/hive#17327); the
+// 090 comment names the gate, and when a person clears the alert on the
+// same head the comment is re-explained — once — without the "Held:" line,
+// so nobody reads a stale hold on a PR that is now theirs to merge.
+func TestReadyEntryRewritesWhenGateLifts(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)}
+	verdict := &ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}
+	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
+	ctx := context.Background()
+	sweep := func(reason string, labels ...string) {
+		t.Helper()
+		api.reset()
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(9, labels...), "untrusted-author-role", false, nil)
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(9, labels...), reason, false, nil)
+		e.noteStageRole("acme", "widget", 9, stagelabels.RoleContributor)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sweep(contributorLaneReasonSentinelBlocked, "role/contributor", "author/human", "stage/050-review-pending", "sentinel-alert")
+	if got := stageOf(t, store, 9); got != stagelabels.ReadyForHumanMerge {
+		t.Fatalf("sentinel: stage=%v", got)
+	}
+	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.ReadyCommentMarker) || !strings.Contains(api.comments[0], "Held: a sentinel alert is open on this PR.") {
+		t.Fatalf("held comment = %q", api.comments)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/090-ready-for-human-merge"}}) {
+		t.Fatalf("held 090 wears the 090 label: added=%v", api.added)
+	}
+	// Same gate again: quiet.
+	sweep(contributorLaneReasonSentinelBlocked, "role/contributor", "author/human", "stage/090-ready-for-human-merge", "sentinel-alert")
+	if len(api.comments) != 0 {
+		t.Fatalf("same gate reposted: %q", api.comments)
+	}
+	// Alert cleared on the same head: still 090, the comment re-explained
+	// with the trust cause and without the hold line.
+	sweep(contributorLaneReasonClaimTier, "role/contributor", "author/human", "stage/090-ready-for-human-merge")
+	if got := stageOf(t, store, 9); got != stagelabels.ReadyForHumanMerge {
+		t.Fatalf("alert cleared: stage=%v", got)
+	}
+	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.ReadyCommentMarker) || strings.Contains(api.comments[0], "Held:") || !strings.Contains(api.comments[0], "Blocked only by") {
+		t.Fatalf("cleared comment = %q", api.comments)
+	}
+	sweep(contributorLaneReasonClaimTier, "role/contributor", "author/human", "stage/090-ready-for-human-merge")
+	if len(api.comments) != 0 {
+		t.Fatalf("explained cause reposted: %q", api.comments)
+	}
+}
+
+// TestDecisionEntryRepostsWhenCauseChanges: a PR parked at 085 for the
+// lane's tests-removed rule whose cause changes — the tests come back, the
+// workflow-path fence now holds it — gets the new cause explained on the
+// same head — once — instead of sitting under a stale comment. (A sentinel
+// alert no longer parks 085 — hivecommons/hive#17327 — so the tests-removed
+// rule stands in for it here.)
 func TestDecisionEntryRepostsWhenCauseChanges(t *testing.T) {
 	api, closeAPI := seededStageAPI(t)
 	defer closeAPI()
@@ -618,25 +676,25 @@ func TestDecisionEntryRepostsWhenCauseChanges(t *testing.T) {
 		}
 	}
 
-	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/human", "stage/050-review-pending", "sentinel-alert")
+	sweep(contributorLaneReasonTestsRemoved, "role/trusted", "author/human", "stage/050-review-pending")
 	if got := stageOf(t, store, 9); got != stagelabels.NeedsDecision {
-		t.Fatalf("sentinel: stage=%v", got)
+		t.Fatalf("tests removed: stage=%v", got)
 	}
-	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "a sentinel alert is open on this PR") {
-		t.Fatalf("sentinel comment = %q", api.comments)
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "removes tests") {
+		t.Fatalf("tests-removed comment = %q", api.comments)
 	}
 	// Same cause again: no repost.
-	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/human", "stage/085-needs-decision", "sentinel-alert")
+	sweep(contributorLaneReasonTestsRemoved, "role/trusted", "author/human", "stage/085-needs-decision")
 	if len(api.comments) != 0 {
 		t.Fatalf("same cause reposted: %q", api.comments)
 	}
-	// Alert cleared, workflow-path fence now the blocker: still 085, new cause explained.
+	// Tests back, workflow-path fence now the blocker: still 085, new cause explained.
 	sweep(contributorLaneReasonWorkflowPath, "role/trusted", "author/human", "stage/085-needs-decision")
 	if got := stageOf(t, store, 9); got != stagelabels.NeedsDecision {
 		t.Fatalf("workflow path: stage=%v", got)
 	}
 	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.DecisionCommentMarker) ||
-		!strings.Contains(api.comments[0], "edits CI workflow / action files") || strings.Contains(api.comments[0], "sentinel alert") {
+		!strings.Contains(api.comments[0], "edits CI workflow / action files") || strings.Contains(api.comments[0], "removes tests") {
 		t.Fatalf("workflow-path comment = %q", api.comments)
 	}
 	rec, _ := store.Get(stageKey("acme", "widget", 9))
@@ -644,7 +702,7 @@ func TestDecisionEntryRepostsWhenCauseChanges(t *testing.T) {
 		t.Fatalf("causes not recorded: %+v", rec)
 	}
 	// Flapping back to an already-explained cause stays quiet.
-	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/human", "stage/085-needs-decision", "sentinel-alert")
+	sweep(contributorLaneReasonTestsRemoved, "role/trusted", "author/human", "stage/085-needs-decision")
 	sweep(contributorLaneReasonWorkflowPath, "role/trusted", "author/human", "stage/085-needs-decision")
 	if len(api.comments) != 0 {
 		t.Fatalf("explained cause reposted: %q", api.comments)

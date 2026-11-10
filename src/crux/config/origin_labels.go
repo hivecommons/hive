@@ -91,7 +91,8 @@ const agentLabelPrefix = "agent/"
 // origin/<lane>.
 var KnownOriginLanes = []string{
 	"architect", "ci-maintainer", "dedupe", "guide", "outreach", "quality",
-	"reviewer", "scanner", "sec-check", "strategist", "supervisor", "tester",
+	"redteam", "reviewer", "scanner", "sec-check", "strategist", "supervisor",
+	"tester",
 }
 
 // GitHubLabelDescriptionMax is GitHub's cap on a label description; a

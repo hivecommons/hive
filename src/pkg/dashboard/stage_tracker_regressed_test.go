@@ -101,9 +101,12 @@ const pill = stageTrackerChipsHtml(item);
 assert.ok(pill.includes('title="regressed: 040 Covered by PR → 020 Claimed at T'), pill);
 assert.ok(pill.includes('because live issue claim'), pill);
 assert.ok(!stageTrackerChipsHtml({ stage: 10, modifiers: ['stalled'] }).includes('title='));
-// Hive-handled: muted "stage ↓" pill, never the red regressed look, and it says so on hover.
+// Hive-handled: muted "stage reset" pill, never the red regressed look, and it says so on hover.
 const handledCases = [
   { name: 'actionable', item: item },
+  // hivecommons/hive#17335: a fall caused by a new push names its cause.
+  { name: 'pushed', item: { kind: 'pr', stage: 50, modifiers: ['regressed'], regressed_from: 80, push: { state: 'pushed', sha: 'c15a343', login: 'Karibhou' } }, text: STAGE_TRACKER_HANDLED_PUSH_TEXT },
+  { name: 'reason names the push', item: { kind: 'pr', stage: 50, modifiers: ['regressed'], regressed_from: 80, regressed_reason: 'new head pushed' }, text: STAGE_TRACKER_HANDLED_PUSH_TEXT },
   { name: 'claimed', item: { stage: 20, modifiers: ['regressed'], regressed_from: 30 } },
   { name: 'pr in progress', item: { stage: 30, modifiers: ['regressed'], regressed_from: 40 } },
   { name: 'draft folds in', item: { kind: 'pr', stage: 50, modifiers: ['regressed', 'draft'], regressed_from: 100 } },
@@ -113,7 +116,8 @@ for (const c of handledCases) {
   const h = stageTrackerChipsHtml(c.item);
   assert.ok(h.includes(STAGE_TRACKER_HANDLED_NOTE), c.name + ': ' + h);
   if (c.item.modifiers.length === 1) {
-    assert.ok(h.includes('ham-mod-regressed ham-mod-handled') && h.includes('>' + STAGE_TRACKER_HANDLED_TEXT + '<'), c.name + ': ' + h);
+    assert.ok(h.includes('ham-mod-regressed ham-mod-handled') && h.includes('>' + (c.text || STAGE_TRACKER_HANDLED_TEXT) + '<'), c.name + ': ' + h);
+    assert.ok(!h.includes('stage ↓'), c.name + ': the pill is words, not a glyph: ' + h);
   } else {
     assert.ok(!h.includes('ham-mod-regressed') && h.includes('ham-mod-draft') && h.includes(' +1<'), c.name + ' yields the lead pill: ' + h);
   }

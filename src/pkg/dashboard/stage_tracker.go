@@ -333,6 +333,10 @@ type StageTrackerItem struct {
 	// Remediation is the pickup evidence behind a red PR's code activity
 	// (stage_tracker_remediation.go); absent while nobody has picked it up.
 	Remediation *StageTrackerRemediation `json:"remediation,omitempty"`
+	// Deferral is the hive's standing deferral of the current head
+	// (stage_tracker_deferral.go); set only while the PR in progress
+	// chevron reads "Deferred".
+	Deferral *StageTrackerDeferral `json:"deferral,omitempty"`
 	// DisplayColumn is presentation only; native stages, filters and merge gates remain unchanged.
 	DisplayColumn int                           `json:"display_column,omitempty"`
 	Preparation   *StageTrackerPreparation      `json:"preparation,omitempty"`
@@ -1045,8 +1049,8 @@ const (
 )
 
 // stageTrackerRegistryAuthorKind overlays the contributor-hub registry on
-// an inferred author kind, mirroring pkg/authorkind rule 6 (RelayKnown →
-// Clanker) so the tracker row and its claimant agree with the stage
+// an inferred author kind, mirroring pkg/authorkind's registry rule
+// (RelayKnown → Clanker) so the tracker row and its claimant agree with the stage
 // engine's own classification (hivecommons/hive#16015). An author/<kind>
 // label and a hive (App-authored) verdict are stronger and stand; a
 // registered contributor's login otherwise reads clanker, source registry.

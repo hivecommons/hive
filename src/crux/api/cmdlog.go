@@ -67,8 +67,9 @@ type CommandOutput struct {
 	Truncated bool   `json:"truncated,omitempty"`
 }
 
-// CommandRecord is one dispatched command. ExitCode and EndedAt are
-// absent while the command is unfinished.
+// CommandRecord is one dispatched command. EndedAt is absent while the
+// command is in flight; ExitCode is absent whenever the exit is not known,
+// so an unfinished record can carry EndedAt without ExitCode.
 type CommandRecord struct {
 	Seq       int64      `json:"seq"`
 	Command   []string   `json:"command"`
@@ -88,6 +89,11 @@ type CommandRecord struct {
 // CommandPage is GET /v1/runs/{id}/cmdlog. NextSeq is the seq to pass as
 // since_seq for the following page; More says one exists now. A caller
 // following a live run keeps polling with NextSeq after More is false.
+// NextSeq never advances past a record with no EndedAt, so a follower
+// re-receives an in-flight command until it ends (idempotent by seq); a
+// record with EndedAt is terminal whatever its Status. More is never set
+// on a page whose NextSeq equals the since_seq it answered, so paging
+// while More is true always makes progress.
 type CommandPage struct {
 	Run      string          `json:"run"`
 	Commands []CommandRecord `json:"commands"`

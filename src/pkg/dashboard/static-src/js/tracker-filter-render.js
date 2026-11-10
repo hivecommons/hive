@@ -96,7 +96,15 @@
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
       const sorted = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f, { phone: stageTrackerPhone() }));
-      const ordered = typeof stageTrackerPreparationOrderRows === 'function' ? stageTrackerPreparationOrderRows(d, sorted, stages) : sorted;
+      const prepared = typeof stageTrackerPreparationOrderRows === 'function' ? stageTrackerPreparationOrderRows(d, sorted, stages) : sorted;
+      // Shared-PR groups last, so a secondary issue always sits right after
+      // its primary whatever the lead sort or train put between them; the
+      // groups a viewer folded leave their secondaries out of the list.
+      // Guarded: test harnesses lift renderStageTracker without tracker-words-core.
+      const sharing = typeof stageTrackerSharedPRContiguous === 'function';
+      ctx.shared = sharing ? Object.assign(stageTrackerSharedPRGroups(prepared, stages), { collapsed: _stageTrackerSharedCollapsed }) : null;
+      const ordered = sharing ? stageTrackerSharedPRContiguous(prepared, stages, _stageTrackerSharedCollapsed) : prepared;
+      const foldedShared = prepared.length - ordered.length;
       // A TV display (display=1&density=tv) shows the rows that fit the
       // screen, ungrouped, with "+N more" in place of the pager.
       const tv = typeof stageTrackerDisplayTv === 'function' && stageTrackerDisplayTv();
@@ -107,6 +115,8 @@
           ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
           : stageTrackerPage(ordered, f);
       if (!tv && page.page !== f.page) f.page = page.page;
+      // A folded secondary is not filtered out: it counts toward the total.
+      if (foldedShared > 0) page.total += foldedShared;
       // The rows this render draws (this page, group headers aside), for
       // stageTrackerPRListedOwnRow: a covered issue defers to its PR's row
       // only when that row is actually on screen. Kept beside the payload,

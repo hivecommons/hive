@@ -1134,3 +1134,36 @@ func TestGitHubGraphQLPRBatchYAMLRoundTrip(t *testing.T) {
 		t.Fatalf("yaml page size = %d, want 25", got)
 	}
 }
+
+func TestSaveSeq_CountsStartedWrites(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{
+		SourcePath: filepath.Join(dir, "hive.yaml"),
+		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude", Paused: false}},
+		},
+	}
+
+	before := SaveSeq()
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+	if got := SaveSeq(); got != before+1 {
+		t.Fatalf("SaveSeq after Save = %d, want %d", got, before+1)
+	}
+	if _, err := cfg.SetAgentPausedAndSave("scanner", true); err != nil {
+		t.Fatalf("SetAgentPausedAndSave() error: %v", err)
+	}
+	if got := SaveSeq(); got != before+2 {
+		t.Fatalf("SaveSeq after SetAgentPausedAndSave = %d, want %d", got, before+2)
+	}
+
+	noPath := &Config{Project: ProjectConfig{Org: "org"}, AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"x": {}}}}
+	if err := noPath.Save(); err == nil {
+		t.Fatal("expected error with no source path")
+	}
+	if got := SaveSeq(); got != before+2 {
+		t.Fatalf("SaveSeq after rejected save = %d, want unchanged %d", got, before+2)
+	}
+}

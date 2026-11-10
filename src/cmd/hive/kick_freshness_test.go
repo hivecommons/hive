@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -77,17 +78,22 @@ func TestFreshenKickMessages_WithholdsStaleAndClosed(t *testing.T) {
 // A refusal from the API budget or rate-limit caution window is the designed
 // back-off, not a fault: it is withheld but logged below WARN so the fleet
 // self-report feed does not file it as an unclassified repeated error
-// (#15465). Any other refusal still logs at WARN.
+// (#15465). A re-read that finds the item closed is likewise the guard
+// working as designed and repeats every cycle until the cache catches up,
+// so it logs below WARN with reason=closed (#17518). Any other refusal still
+// logs at WARN.
 func TestFreshenKickMessages_DeferredReadLogsBelowWarn(t *testing.T) {
 	cases := []struct {
-		name     string
-		err      error
-		wantWarn bool
+		name       string
+		err        error
+		wantWarn   bool
+		wantReason string
 	}{
-		{"budget critical", github.ErrAPIBudgetCritical, false},
-		{"caution window", github.ErrRateLimitCaution, false},
-		{"stale snapshot", github.ErrSnapshotStaleForDecision, true},
-		{"item closed", github.ErrItemNotOpen, true},
+		{"budget critical", github.ErrAPIBudgetCritical, false, "github read deferred"},
+		{"caution window", github.ErrRateLimitCaution, false, "github read deferred"},
+		{"stale snapshot", github.ErrSnapshotStaleForDecision, true, "stale snapshot"},
+		{"item closed", github.ErrItemNotOpen, false, "closed"},
+		{"read error", errors.New("private endpoint failed"), true, "re-read"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -106,6 +112,9 @@ func TestFreshenKickMessages_DeferredReadLogsBelowWarn(t *testing.T) {
 			}
 			if got := strings.Contains(log, "level=WARN"); got != tc.wantWarn {
 				t.Fatalf("WARN logged = %v, want %v: %q", got, tc.wantWarn, log)
+			}
+			if want := "reason=" + strconv.Quote(tc.wantReason); !strings.Contains(log, want) && !strings.Contains(log, "reason="+tc.wantReason) {
+				t.Fatalf("reason not logged, want %s: %q", want, log)
 			}
 		})
 	}

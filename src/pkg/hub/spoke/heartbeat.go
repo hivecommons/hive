@@ -861,7 +861,14 @@ type HeartbeatPayload struct {
 	// a hive's GitHub can differ from its cluster's default, so the cluster
 	// default is only ever a fallback for spokes too old to report this.
 	// Empty on such spokes — the hub falls back rather than guessing.
-	GitHubHost         string `json:"github_host,omitempty"`
+	GitHubHost string `json:"github_host,omitempty"`
+	// ForgeUnreachable is true when the spoke's last forge probe (the
+	// github_auth token check in Health) timed out or failed at the transport
+	// layer: GitHubHost cannot be reached from the pod. The probe runs under
+	// its own sub-budget so a dead forge no longer makes every beat stale;
+	// this field tells the hub why instead (#17427). Omitted when reachable
+	// and on older spokes.
+	ForgeUnreachable   bool   `json:"forge_unreachable,omitempty"`
 	Timestamp          string `json:"timestamp"`
 	GitHubAppRequired  bool   `json:"github_app_required,omitempty"`
 	GitHubAppPermIssue string `json:"github_app_perm_issue,omitempty"`

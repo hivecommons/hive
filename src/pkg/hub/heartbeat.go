@@ -312,6 +312,7 @@ type HeartbeatPayload struct {
 	GitBranch                    string                          `json:"git_branch,omitempty"`
 	ImageRef                     string                          `json:"image_ref,omitempty"`
 	GitHubHost                   string                          `json:"github_host,omitempty"`
+	ForgeUnreachable             bool                            `json:"forge_unreachable,omitempty"`
 	Timestamp                    string                          `json:"timestamp"`
 	GitHubAppRequired            bool                            `json:"github_app_required,omitempty"`
 	GitHubAppPermIssue           string                          `json:"github_app_perm_issue,omitempty"`

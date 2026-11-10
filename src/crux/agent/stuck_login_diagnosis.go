@@ -150,7 +150,24 @@ func (a *AgentProcess) decideTokenRestart(now time.Time) tokenRestartAction {
 	a.tokenRestartAttempts++
 	a.lastTokenRestart = now
 	a.tokenRestartFiredAt = append(a.tokenRestartFiredAt, now)
+	// A fresh attempt is a new theory: if this episode also fails, the
+	// give-up diagnosis must log again, once.
+	a.tokenRestartGaveUp = false
 	return tokenRestartFire
+}
+
+// rearmTokenRestartCap is the poller's per-boot re-arm: it zeroes the attempt
+// counter but keeps the give-up latch while the rolling window ledger would
+// make decideTokenRestart give up again straight away. Clearing it
+// unconditionally made every pane flap (login line gone, then back) re-run the
+// give-up WARN and diagnosis, once per flap rather than once per episode
+// (#17483). The ledger itself is deliberately not reset: that would re-enable
+// the restart storm the window ended (#6578).
+func (a *AgentProcess) rearmTokenRestartCap(now time.Time) {
+	a.tokenRestartAttempts = 0
+	if a.tokenRestartsInWindow(now) < tokenRestartWindowMax {
+		a.tokenRestartGaveUp = false
+	}
 }
 
 // tokenRestartsInWindow prunes the rolling ledger to tokenRestartWindow and
@@ -170,7 +187,8 @@ func (a *AgentProcess) tokenRestartsInWindow(now time.Time) int {
 // clearTokenRestartCap is the operator-facing reset: it re-arms the per-boot
 // cap, the give-up latch AND the rolling window ledger together, so a reset
 // or resume genuinely allows the heal to run again. The poller's own re-arm
-// (shouldResetTokenRestartCap) deliberately touches only the first two.
+// (rearmTokenRestartCap) deliberately leaves the ledger alone and keeps the
+// latch while the ledger is full.
 func (a *AgentProcess) clearTokenRestartCap() {
 	a.tokenRestartAttempts = 0
 	a.tokenRestartGaveUp = false

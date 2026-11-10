@@ -70,7 +70,13 @@ func newFixture(t *testing.T, launcher *fakeLauncher) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Join(t.TempDir(), "ws")
+	// Resolved so a symlinked TMPDIR does not make the mounted (resolved)
+	// workspace differ from f.workspace().
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(tmp, "ws")
 	if err := os.MkdirAll(filepath.Join(root, "proj"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -435,6 +441,12 @@ func (p provisionFunc) Provision(ctx context.Context, dir string, wt api.Contain
 func TestValidationErrors(t *testing.T) {
 	f := newFixture(t, blocking())
 	ws := f.workspace()
+	// A link under a root naming a directory outside it: the lexical
+	// prefix check admits it, the resolved check must not.
+	escape := filepath.Join(f.root, "escape")
+	if err := os.Symlink(filepath.Dir(f.root), escape); err != nil {
+		t.Fatal(err)
+	}
 	wt := &api.ContainedRunWorktree{Repo: "https://github.com/hivecommons/hive", Commit: testSHA}
 	cases := []struct {
 		name string
@@ -472,6 +484,7 @@ func TestValidationErrors(t *testing.T) {
 		{"workspace outside roots", api.ContainedRunRequest{Command: []string{"x"}, WorkspacePath: filepath.Dir(f.root)}, &ForbiddenError{}, "workspace_roots"},
 		{"workspace sibling prefix", api.ContainedRunRequest{Command: []string{"x"}, WorkspacePath: f.root + "2"}, &ForbiddenError{}, "workspace_roots"},
 		{"workspace missing", api.ContainedRunRequest{Command: []string{"x"}, WorkspacePath: filepath.Join(ws, "nope")}, &RequestError{}, "not a directory"},
+		{"workspace symlink escape", api.ContainedRunRequest{Command: []string{"x"}, WorkspacePath: escape}, &ForbiddenError{}, "resolves outside"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -498,6 +511,32 @@ func TestValidationErrors(t *testing.T) {
 	}
 	if len(f.launcher.specs) != 0 {
 		t.Fatal("a refused request reached the launcher")
+	}
+}
+
+// A root reached through a link, and a link that stays inside the root,
+// are still admitted; the run mounts the resolved directory, never the
+// link the check followed.
+func TestWorkspacePathSymlinksResolveInsideRoots(t *testing.T) {
+	f := newFixture(t, newFakeLauncher(func(context.Context, sandbox.LaunchSpec) (sandbox.Result, error) {
+		return sandbox.Result{}, nil
+	}))
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(f.root, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(f.workspace(), filepath.Join(f.root, "inner")); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Config.WorkspaceRoots = []string{alias}
+	for _, path := range []string{filepath.Join(alias, "proj"), filepath.Join(alias, "inner")} {
+		run := f.start(api.ContainedRunRequest{WorkspacePath: path, Command: []string{"x"}})
+		if spec := f.spec(); spec.Workspace != f.workspace() {
+			t.Fatalf("%s mounted %q, want resolved %q", path, spec.Workspace, f.workspace())
+		}
+		if done := f.wait(run.ID); done.Workdir != f.workspace() {
+			t.Fatalf("%s recorded workdir %q", path, done.Workdir)
+		}
 	}
 }
 

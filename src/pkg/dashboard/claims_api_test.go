@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -275,5 +276,130 @@ func TestClaims_RenewLeaseRenewsClaim(t *testing.T) {
 	after, ok := l.Lookup("myorg/repo1", 1)
 	if !ok || !after.ExpiresAt.After(first.ExpiresAt) || after.HolderID != identity {
 		t.Fatalf("claim not renewed with lease: before=%v after=%+v", first.ExpiresAt, after)
+	}
+}
+
+// A lease that ends while the holder's own open PR covers the issue keeps the
+// claim as a PR-held claim for the same principal; once that PR stops
+// covering the issue the sweep releases it (hivecommons/hive#17300).
+func TestClaims_LeaseRevokeKeepsClaimCoveredByHoldersPR(t *testing.T) {
+	hub, s, l := claimsHub(t)
+	const identity = "c-karibhou#a"
+	covering := ghpkg.IssueClaim{Repo: "myorg/repo1", Issue: 1, PRRepo: "myorg/repo1", PRNumber: 5,
+		PRURL: "https://github.com/myorg/repo1/pull/5", PRAuthor: "Karibhou", ExternalAuthor: true, Closing: true}
+	open := true
+	s.deps.IssueClaimed = func(repo string, number int) (ghpkg.IssueClaim, bool) {
+		if repo == "myorg/repo1" && number == 1 && open {
+			return covering, true
+		}
+		return ghpkg.IssueClaim{}, false
+	}
+	if err := hub.recordLease(identity, "t-1", "myorg/repo1", 1, "contributor", 3, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Claim(claims.Request{Repo: "myorg/repo1", Issue: 1, Holder: "karibhou", HolderID: identity, Kind: claims.KindContributor, Session: "a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	hub.revokeLease(identity, "t-1")
+	c, ok := l.Lookup("myorg/repo1", 1)
+	if !ok || c.HolderID != identity || c.Holder != "karibhou" || !c.PRStarted || c.PRRepo != "myorg/repo1" || c.PRNumber != 5 {
+		t.Fatalf("claim after revoke = %+v ok=%v, want PR-held claim by the same contributor", c, ok)
+	}
+	if hub.sweepPRHeldClaims() != 0 {
+		t.Fatal("sweep released a claim whose PR still covers the issue")
+	}
+	if _, ok := l.Lookup("myorg/repo1", 1); !ok {
+		t.Fatal("PR-held claim lost while the PR is open")
+	}
+
+	open = false
+	if n := hub.sweepPRHeldClaims(); n != 1 {
+		t.Fatalf("sweep released %d claims once the PR closed, want 1", n)
+	}
+	if _, ok := l.Lookup("myorg/repo1", 1); ok {
+		t.Fatal("PR-held claim survived its PR closing")
+	}
+}
+
+// Without a covering PR by the holder — none at all, or one by somebody
+// else — a revoked lease still releases the claim.
+func TestClaims_LeaseRevokeWithoutHoldersPRReleasesClaim(t *testing.T) {
+	hub, s, l := claimsHub(t)
+	const identity = "c-worker#a"
+	s.deps.IssueClaimed = func(repo string, number int) (ghpkg.IssueClaim, bool) {
+		if repo == "myorg/repo1" && number == 2 {
+			return ghpkg.IssueClaim{Repo: repo, Issue: number, PRNumber: 8, PRAuthor: "someone-else", ExternalAuthor: true}, true
+		}
+		return ghpkg.IssueClaim{}, false
+	}
+	for n, task := range map[int]string{1: "t-1", 2: "t-2"} {
+		if err := hub.recordLease(identity, task, "myorg/repo1", n, "contributor", 3, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := l.Claim(claims.Request{Repo: "myorg/repo1", Issue: n, Holder: "worker", HolderID: identity, Kind: claims.KindContributor, Session: "a"}); err != nil {
+			t.Fatal(err)
+		}
+		hub.revokeLease(identity, task)
+		if c, ok := l.Lookup("myorg/repo1", n); ok {
+			t.Fatalf("issue %d: claim survived an abandon with no covering PR by its holder: %+v", n, c)
+		}
+	}
+}
+
+// The primary #17300 path: the relay opened its PR with its own token and
+// reports task_complete before any scan saw it, so the duplicate-PR ledger is
+// empty at revoke time. The verified completion PR is recorded first and the
+// claim is held for it, not released with the lease.
+func TestClaims_CompletionPRHoldsClaimBeforeScanSeesIt(t *testing.T) {
+	hub, s, l := claimsHub(t)
+	const identity = "c-karibhou#a"
+	ledger := map[string]ghpkg.IssueClaim{}
+	s.deps.IssueClaimed = func(repo string, number int) (ghpkg.IssueClaim, bool) {
+		c, ok := ledger[repo+"#"+strconv.Itoa(number)]
+		return c, ok
+	}
+	s.deps.RecordIssueClaim = func(c ghpkg.IssueClaim) error {
+		ledger[c.Repo+"#"+strconv.Itoa(c.Issue)] = c
+		return nil
+	}
+	if err := hub.recordLease(identity, "t-1", "myorg/repo1", 1, "contributor", 3, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Claim(claims.Request{Repo: "myorg/repo1", Issue: 1, Holder: "karibhou", HolderID: identity, Kind: claims.KindContributor, Session: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.deps.IssueClaimed("myorg/repo1", 1); ok {
+		t.Fatal("precondition: scan ledger must not know the PR yet")
+	}
+
+	task := &WSTaskAssign{TaskID: "t-1", Kind: "issue", Repo: "myorg/repo1", Number: 1}
+	hub.recordCompletionPRClaim(task, "https://github.com/myorg/repo1/pull/9", "Karibhou", ghpkg.PRVerification{Verified: true})
+	hub.revokeLease(identity, "t-1")
+
+	c, ok := l.Lookup("myorg/repo1", 1)
+	if !ok || c.HolderID != identity || !c.PRStarted || c.PRRepo != "myorg/repo1" || c.PRNumber != 9 {
+		t.Fatalf("claim after completion = %+v ok=%v, want held for the verified PR #9", c, ok)
+	}
+	if hub.sweepPRHeldClaims() != 0 {
+		t.Fatal("sweep released a claim held for the verified completion PR")
+	}
+
+	// An unverified or merged completion PR records nothing, so the claim
+	// goes with the lease as before.
+	for i, pr := range []ghpkg.PRVerification{{}, {Verified: true, Merged: true}} {
+		n := 2 + i
+		task := &WSTaskAssign{TaskID: "t-x", Kind: "issue", Repo: "myorg/repo1", Number: n}
+		if err := hub.recordLease(identity, "t-x", "myorg/repo1", n, "contributor", 3, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := l.Claim(claims.Request{Repo: "myorg/repo1", Issue: n, Holder: "karibhou", HolderID: identity, Kind: claims.KindContributor, Session: "a"}); err != nil {
+			t.Fatal(err)
+		}
+		hub.recordCompletionPRClaim(task, "https://github.com/myorg/repo1/pull/10", "Karibhou", pr)
+		hub.revokeLease(identity, "t-x")
+		if c, ok := l.Lookup("myorg/repo1", n); ok {
+			t.Fatalf("issue %d: claim kept for an unverified/merged completion PR: %+v", n, c)
+		}
 	}
 }
