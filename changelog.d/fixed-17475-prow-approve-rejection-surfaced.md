@@ -1,0 +1,1 @@
+- Dashboard: an Approve on a Prow repo now reads Prow's reply to the relayed `/lgtm` + `/approve` and says Prow rejected them instead of showing "approved" (#17475, part of #17451).
