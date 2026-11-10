@@ -1,0 +1,1 @@
+- Issue stage labels: a repository where the GitHub App is refused label writes (403 "Resource not accessible by integration", e.g. the App lacks Issues write access) is now skipped until restart after one clear warning, instead of retrying label provisioning for every issue on every sweep and flooding the log with "provisioning failed" (#17582).
