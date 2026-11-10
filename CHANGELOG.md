@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.10.0)
+
+### Added
+
+- **Sentinel's sensitive-path list and the contributor lane's workflow fence scope can be set per repository.** Two opt-in hive.yaml keys under `project.repo_policies`, `sentinel_sensitive_paths` and `workflow_fence_scope`, replace `sentinel.sensitive_paths` and `auto_merge.contributor_lane.workflow_fence_scope` for one repository, so an operator can loosen (or tighten) them where the maintainers agreed without changing repositories that belong to someone else. A repository without the key behaves exactly as before, and a later change to the hive-wide value does not reach a repository that has its own. An explicit empty sensitive-path list matches nothing, as the hive-wide key does; `human_merge_paths` scope still keeps the full fence for a repository with no `human_merge_paths` entry. An invalid override stops the config from loading, and the running hive treats one that gets through as unset. Settings → Security → Suspicious Activity and Settings → Features → Auto Merge list the overrides (read-only), `settings_read` returns them, and the admin MCP `sentinel.settings` preview names every repository with its own list, what that list leaves out, and refuses a stale confirm if an override changed. See [hive-merge.md](src/docs/hive-merge.md#contributor-lane-auto-merge).
+- A red pull request that is behind its base, and whose every failing check has since gone green on the base tip, now gets the base merged in by the hive (the same merge "Update branch" makes), so its CI runs again against the fix instead of waiting for a person. It covers PRs the automerge adoption recovery does not, including repositories with auto-merge off; it skips drafts, held PRs, forks without maintainer edits, dependency-bot branches and PRs at stage 072 or 074, makes at most 2 updates per repository and 6 per pass every 5 minutes, tries each head and base tip once, and goes through the new `base_refresh` write-back kind (hive-authored PRs, else L6 with the opt-in label; `writeback.kinds.base_refresh.unlabeled_min_level: 6` reaches every PR). Seen on projectbluefin/actions#544, which sat red on `pytest` for six hours after main repaired the baseline.
+
 ## 2026-11-10 (v6.9.1)
 
 ### Fixed
