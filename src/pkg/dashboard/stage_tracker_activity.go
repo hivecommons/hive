@@ -77,6 +77,9 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	if a == nil || pr.HeadSHA == "" || !strings.EqualFold(a.Head, pr.HeadSHA) {
 		return out
 	}
+	// The gates stay on `full`: Tide's words and link are read from it.
+	full := a
+	a = stageTrackerCITestActivity(a)
 	out.Source, out.ObservedAt = a.Source, a.ObservedAt
 	if a.RequiredSource != "" {
 		out.Source += "+required-" + a.RequiredSource
@@ -313,8 +316,28 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	// age rides ObservedAt for the tooltip, never a dimmer state
 	// (hivecommons/hive#16643).
 	out.Active = out.State == "running" || out.State == "queued"
-	stageTrackerAttachTide(out, a, presubmitWaiting)
+	stageTrackerAttachTide(out, full, presubmitWaiting)
 	return out
+}
+
+// stageTrackerCITestActivity is the activity with merge-gate contexts
+// removed from the required set, its bindings and the observed checks.
+// Prow's `tide` status is pending on every PR until it carries lgtm/approved
+// and all presubmits are green, and the DCO gate is a sign-off check: neither
+// is a test, so neither counts toward the CI tally, names the check the head
+// waits on, or keeps the CI lane lit once the real checks have settled. The
+// caller's activity is left untouched; merge eligibility still reads the
+// gates from it.
+func stageTrackerCITestActivity(a *github.PRCIActivity) *github.PRCIActivity {
+	scoped := *a
+	scoped.Required = slices.DeleteFunc(slices.Clone(a.Required), github.IsMergeGateContext)
+	scoped.RequiredChecks = slices.DeleteFunc(slices.Clone(a.RequiredChecks), func(binding github.PRRequiredCheck) bool {
+		return github.IsMergeGateContext(binding.Name)
+	})
+	scoped.Checks = slices.DeleteFunc(slices.Clone(a.Checks), func(check github.PRActivityCheck) bool {
+		return github.IsMergeGateContext(check.Name)
+	})
+	return &scoped
 }
 
 // stageTrackerTideContext is the commit status Prow's Tide reports. It is

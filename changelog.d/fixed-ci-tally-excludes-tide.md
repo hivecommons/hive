@@ -1,0 +1,1 @@
+- Activity Monitor: the CI chevron no longer counts Prow's `tide` merge-gate status (or `enforce-guardrails` / DCO) as a check, so a PR whose tests are all green reads `CI 18/18` instead of `CI 18/19 · 'tide' running` and the lit stage moves on to Review / Merge queue; merge eligibility still enforces the gates.
