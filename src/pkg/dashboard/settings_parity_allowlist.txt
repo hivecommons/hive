@@ -552,6 +552,8 @@ security.sensitive_paths[] # TODO #15640
 self_experiments.scheduler.enabled # TODO #11854
 self_experiments.scheduler.interval_s # TODO #11854
 self_experiments.scheduler.mode # TODO #11854
+shared_ci_issues.enabled # shared-CI tracking issue sweep; yaml-only
+shared_ci_issues.min_prs # shared-CI tracking issue sweep; yaml-only
 shared_ci_rerun.enabled # TODO #11854
 swarm.themes.<key>.call_to_arms # TODO #11854
 swarm.themes.<key>.event_name # TODO #11854

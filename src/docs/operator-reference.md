@@ -43,6 +43,8 @@ The reference is organized into the sections below. Existing links to this page 
   - [Central stage engine rollout](operator-reference/sweeps-and-operations.md#central-stage-engine-rollout)
 <a id="shared-ci-rerun-sweep-shared_ci_rerun"></a>
 - [Shared-CI rerun sweep (`shared_ci_rerun`)](operator-reference/sweeps-and-operations.md#shared-ci-rerun-sweep-shared_ci_rerun)
+<a id="shared-ci-tracking-issues-shared_ci_issues"></a>
+- [Shared-CI tracking issues (`shared_ci_issues`)](operator-reference/sweeps-and-operations.md#shared-ci-tracking-issues-shared_ci_issues)
 <a id="stale-red-base-refresh-stale_red_base_refresh"></a>
 - [Stale-red base refresh (`stale_red_base_refresh`)](operator-reference/sweeps-and-operations.md#stale-red-base-refresh-stale_red_base_refresh)
 <a id="open-pr-dispatch-guard-and-duplicate-fix-sweep-scanner"></a>
