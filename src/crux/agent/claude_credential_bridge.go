@@ -53,6 +53,12 @@ import (
 // promoted, the shared file it replaces is preserved the same way beside the
 // shared credential. Both names fall outside sharedCredentialBases, so the
 // permissions watcher never opens them up to the group.
+//
+// The repair never acts on a link path that resolves to the shared credential
+// itself (an agent whose whole ~/.claude is still the legacy directory symlink
+// to /data/home/.claude): that "private file" is the fleet's login. Such an
+// agent is skipped with one warning; its next launch retires the directory
+// link (setupPerAgentCLIHome) before the repair runs.
 
 // Repair triggers, recorded in the audit detail and the log.
 const (
@@ -118,15 +124,73 @@ func sharedClaudeBridgeTarget() string {
 }
 
 // claudeCredentialBridgeBroken reports whether a regular file has replaced the
-// agent's credential symlink. Read-only (one Lstat), so it is cheap enough for
-// the status snapshot.
+// agent's credential symlink. Read-only (one Lstat, plus two directory
+// resolutions only when that Lstat finds a regular file), so it is cheap
+// enough for the status snapshot. It follows the same rule as the repair: the
+// legacy layout, where the link path resolves to the shared credential itself,
+// is not a broken bridge and is never reported as one.
 func claudeCredentialBridgeBroken(agentName string, uid int, backend string) bool {
-	link, _, ok := claudeCredentialBridgePaths(agentName, uid, backend)
+	link, target, ok := claudeCredentialBridgePaths(agentName, uid, backend)
 	if !ok {
 		return false
 	}
 	info, err := os.Lstat(link)
-	return err == nil && info.Mode().IsRegular()
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	same, err := claudeBridgeLinkIsTarget(link, target)
+	return err == nil && !same
+}
+
+// errClaudeBridgeLinkIsTarget: the agent's credential path IS the shared
+// credential, so there is no private copy to move aside and no link to
+// restore. On a live v6 hive this was an agent whose whole ~/.claude was still
+// the legacy directory symlink to the shared /data/home/.claude (the layout
+// setupPerAgentCLIHome retires at launch, never reached for an agent that is
+// paused or stopped). The repair then renamed the SHARED login aside and,
+// for a token-less file, linked .credentials.json to itself, logging every
+// agent out.
+var errClaudeBridgeLinkIsTarget = errors.New("credential link path resolves to the shared credential it would link to")
+
+// claudeBridgeLegacyWarned holds the credential links the legacy-layout skip
+// has already been logged for, so the watchdog, which walks every managed
+// agent each cycle, logs it once per agent instead of every cycle. Keyed by
+// the link path, which names the agent.
+var claudeBridgeLegacyWarned sync.Map
+
+// claudeBridgeLinkIsTarget reports whether link names the shared credential
+// itself: the same path, or a file of the same name in a directory that
+// resolves to the target's directory (a legacy whole-directory ~/.claude
+// symlink). An error means a directory could not be resolved (absent, or not
+// reachable by this process); callers treat that as nothing to repair.
+func claudeBridgeLinkIsTarget(link, target string) (bool, error) {
+	if filepath.Clean(link) == filepath.Clean(target) {
+		return true, nil
+	}
+	if filepath.Base(link) != filepath.Base(target) {
+		return false, nil
+	}
+	linkDir, err := filepath.EvalSymlinks(filepath.Dir(link))
+	if err != nil {
+		return false, err
+	}
+	targetDir, err := filepath.EvalSymlinks(filepath.Dir(target))
+	if err != nil {
+		return false, err
+	}
+	if linkDir == targetDir {
+		return true, nil
+	}
+	// Different resolved paths can still be one directory (a bind mount).
+	li, err := os.Stat(linkDir)
+	if err != nil {
+		return false, err
+	}
+	ti, err := os.Stat(targetDir)
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(li, ti), nil
 }
 
 // preferAgentClaudeCredential decides which credential the shared file keeps.
@@ -143,8 +207,10 @@ func preferAgentClaudeCredential(agent, shared *claude.OAuthTokens, now time.Tim
 
 // repairClaudeCredentialBridge re-bridges one agent's credential when a regular
 // file has replaced the symlink. It returns nil, nil when there is nothing to
-// repair (a symlink, an absent link, or a directory, which is not this
-// failure).
+// repair (a symlink, an absent link, a directory, which is not this failure,
+// or a link or target directory that cannot be resolved). It returns an error
+// wrapping errClaudeBridgeLinkIsTarget, and touches nothing, when the link
+// path resolves to the shared credential itself.
 func (m *Manager) repairClaudeCredentialBridge(agentName, link, target string) (*claudeBridgeRepair, error) {
 	claudeBridgeMu.Lock()
 	defer claudeBridgeMu.Unlock()
@@ -152,6 +218,22 @@ func (m *Manager) repairClaudeCredentialBridge(agentName, link, target string) (
 	info, err := os.Lstat(link)
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, nil
+	}
+
+	// Never operate on the shared credential itself. Checked BEFORE anything
+	// is moved: when the link path resolves to the target, the "private file"
+	// below IS the shared login, moving it aside strands the fleet, and the
+	// symlink restored afterwards would point at its own path.
+	same, err := claudeBridgeLinkIsTarget(link, target)
+	if err != nil {
+		// Nothing safe to judge without both directories; never move a file
+		// aside on a guess.
+		m.logger.Debug("claude credential bridge: cannot resolve the link or shared directory; not repairing",
+			"agent", agentName, "link", link, "target", target, "error", err)
+		return nil, nil
+	}
+	if same {
+		return nil, fmt.Errorf("%w: %s", errClaudeBridgeLinkIsTarget, link)
 	}
 	now := claudeBridgeNow()
 
@@ -292,6 +374,18 @@ func preserveClaudeCredential(path string, now time.Time) (string, error) {
 // sign-in hook share, so all three log and audit identically.
 func (m *Manager) rebridgeClaudeCredential(agentName, link, target, trigger string) *claudeBridgeRepair {
 	rep, err := m.repairClaudeCredentialBridge(agentName, link, target)
+	if errors.Is(err, errClaudeBridgeLinkIsTarget) {
+		// The legacy layout: skipped, and said once per agent rather than on
+		// every watchdog cycle. Not audited (nothing changed).
+		if _, seen := claudeBridgeLegacyWarned.LoadOrStore(link, true); !seen {
+			m.logger.Warn("claude credential bridge: this agent's .claude directory resolves to the shared login directory (a legacy whole-directory symlink), so its credential path IS the shared login; not re-bridging. The agent's next launch replaces the directory link with a per-agent directory",
+				"agent", agentName, "trigger", trigger, "dir", filepath.Dir(link), "shared", target)
+		}
+		return nil
+	}
+	// Any other outcome clears the mark, so a legacy layout that shows up
+	// again later is logged again.
+	claudeBridgeLegacyWarned.Delete(link)
 	if err != nil {
 		// Logged, not audited: a repair that keeps failing (an unprivileged
 		// hive that cannot enter the agent's 0700 home) would otherwise add an
