@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.12.3)
+
+### Changed
+
+- v6 carries every v5 change through v5.211.18: the hosted spoke's `/etc/hive/hive.yaml` is durable, a shared-CI deferral names the incident it waits on and lifts when it closes, the CI chevron ignores Prow's `tide` merge-gate status and re-lists a head whose snapshot claims a check still running after `dashboard.stage_tracker.ci_activity_stale_m`, Prow's rejection of a relayed `/lgtm` + `/approve` is surfaced, and a hold-class label or sentinel alert rides a PR's real stage as a gate pill instead of parking it at 085.
+
+### Fixed
+
+- Watchdog no longer raises a "CredentialMissing" credential-failure alert (and fleet self-report) for Claude login chrome seen inside the boot grace window (#17573).
+
 ## 2026-11-10 (v6.12.2)
 
 ### Fixed
