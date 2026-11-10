@@ -191,6 +191,10 @@ type repoItemDecisionResponse struct {
 	// the hive bot is not an approver, so they would only draw another
 	// "NOT APPROVED" (dibs#510). The approval itself is still recorded.
 	CommandsSkipped string `json:"commands_skipped,omitempty"`
+	// ProwRejected is set when the `/lgtm` + `/approve` were posted and Prow
+	// replied that it does not accept them from the hive bot
+	// (hivecommons/hive#17475).
+	ProwRejected bool `json:"prow_rejected,omitempty"`
 	// Rebase is set when an approval landed on a PR that is behind or
 	// conflicting with its base: the rebase episode the approval opened
 	// (hivecommons/hive#15103), so the row reads "Rebasing · attempt n/2".
@@ -235,6 +239,9 @@ type repoItemApproveFacts struct {
 	// because Prow already rejected the hive's commands on this PR
 	// (dibs#510); the hive's own approval record is what counts.
 	CommandsSkipped bool
+	// ProwRejected: the commands were posted and Prow's reply rejected them
+	// (hivecommons/hive#17475); later approvals on the PR skip them.
+	ProwRejected bool
 
 	// ToContributor is the contributor whose hive a direction was carried
 	// to (a clanker-authored PR, hivecommons/hive#15159); "" when the
@@ -737,7 +744,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	)
 	var released []string
 	stage, commandsSkipped, reportingError := "", "", ""
-	sentinelOpen, prow := false, false
+	sentinelOpen, prow, prowRejected := false, false, false
 	toContributor := ""
 	if decision == repoItemDecisionApprove {
 		var event ghpkg.PullRequestApprovalEvent
@@ -748,7 +755,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 		})
 		head = event.HeadSHA
 		released, stage, sentinelOpen, prow = repoItemApprovalReleased(event), event.Stage, event.SentinelLabelOpen, event.ProwManaged
-		commandsSkipped = event.CommandsSkipped
+		commandsSkipped, prowRejected = event.CommandsSkipped, event.ProwRejected
 		reportingError = event.ReportingError
 	} else {
 		var event ghpkg.PullRequestDecisionEvent
@@ -789,7 +796,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	}
 	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment, "released", strings.Join(released, ","), "stage", stage, "admitted_by", admitted, "commands_skipped", commandsSkipped, "to_contributor", toContributor), "", repoFull, number)
 	result := repoItemDecisionResultWith(repoFull, number, "pr", decision, comment, "", "", repoItemApproveFacts{
-		User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "", ToContributor: toContributor,
+		User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "", ProwRejected: prowRejected, ToContributor: toContributor,
 	})
 	if reportingError != "" {
 		s.audit.LogRecord(user, auditRepoItemDecisionApprove+"_reporting_failed", auditDetail("repo", repoFull, "number", numStr, "head", head, "error", reportingError), "", repoFull, number)
@@ -809,7 +816,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	// The row's park was just answered: serve the re-derived stage on the
 	// next tracker read instead of the cached 085.
 	s.invalidateStageTrackerForWebhook()
-	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage, Head: head, AdmittedBy: admitted, CommandsSkipped: commandsSkipped, Rebase: rebase,
+	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage, Head: head, AdmittedBy: admitted, CommandsSkipped: commandsSkipped, ProwRejected: prowRejected, Rebase: rebase,
 		Result: result})
 }
 
@@ -892,7 +899,7 @@ func repoItemApproveResult(out *RowActionResult, number int, facts repoItemAppro
 		released[r] = true
 	}
 	headline := "Approved #" + strconv.Itoa(number)
-	if facts.Prow {
+	if facts.Prow || facts.ProwRejected {
 		headline = "Approval of #" + strconv.Itoa(number) + " recorded in hive"
 	}
 	if u := strings.TrimSpace(facts.User); u != "" {
@@ -909,6 +916,8 @@ func repoItemApproveResult(out *RowActionResult, number int, facts repoItemAppro
 	out.Outcome = headline + "."
 	if facts.CommandsSkipped {
 		out.Posted = append(out.Posted, "`/lgtm` + `/approve` not posted (Prow does not accept the hive bot's commands on this repo)")
+	} else if facts.ProwRejected {
+		out.Posted = append(out.Posted, "`/lgtm` + `/approve` posted, but Prow rejected them (the hive bot is not a collaborator or OWNERS approver)")
 	} else {
 		out.Posted = append(out.Posted, "`/lgtm` posted", "`/approve` posted")
 	}
@@ -929,7 +938,7 @@ func repoItemApproveResult(out *RowActionResult, number int, facts repoItemAppro
 	default:
 		out.Next = "Hive merges it on its next merge pass once CI is green and the head has soaked" + repoItemSoakNote(facts.SoakMinutes) + "."
 	}
-	if facts.Prow || facts.CommandsSkipped {
+	if facts.Prow || facts.CommandsSkipped || facts.ProwRejected {
 		// Prow reads `/approve` only from OWNERS; the hive's account is not
 		// one, so the relayed command is "NOT APPROVED" there.
 		out.Next = "Prow approval still needs an OWNERS reviewer: the relayed `/approve` came from hive's account, which Prow does not count. " + out.Next
