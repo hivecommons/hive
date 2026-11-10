@@ -225,16 +225,21 @@ func (c *Engine) nativeQueue(repo string) nativeQueueTransport {
 	return c.nativeQueueTransport()
 }
 
+const (
+	integrationMemberCaptureUnavailable = "integration exact member capture unavailable"
+	integrationMemberIdentityChanged    = "integration exact member identity changed"
+)
+
 // routeIntegrationMerge applies the exact-member capture and execution
 // authority before either serialized or direct merge execution.
 func (c *Engine) routeIntegrationMerge(ctx context.Context, pr *gh.PullRequest, claim effects.Claim) (bool, string, error) {
 	if capture, ok := ctx.Value(integrationEligibilityContextKey{}).(*integrationEligibilityCapture); ok {
 		if capture == nil {
-			return false, "integration exact member capture unavailable", nil
+			return false, integrationMemberCaptureUnavailable, nil
 		}
 		if pr.GetNumber() != capture.number || pr.GetHead().GetSHA() != capture.head || pr.GetBase().GetRef() != capture.base ||
 			pr.GetBase().GetRepo().GetFullName() != capture.repo {
-			return false, "integration exact member identity changed", nil
+			return false, integrationMemberIdentityChanged, nil
 		}
 		capture.pr = pr
 		return false, integrationEligibilityCaptured, nil

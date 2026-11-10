@@ -3,7 +3,6 @@ package automerge
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
@@ -79,6 +78,7 @@ func (c *Engine) observeAutoMergeOffRepo(ctx context.Context, lane, displayRepo 
 			base = owner + "/" + repoName
 		}
 		capture := &integrationEligibilityCapture{repo: base, base: pr.GetBase().GetRef(), head: pr.GetHead().GetSHA(), number: pr.GetNumber()}
+		// The capture also disarms the base-preparation and queued-sweep probes (integrationEligibilityProbe), so it is not redundant with observeOnly.
 		reason, err := eval(context.WithValue(ctx, integrationEligibilityContextKey{}, capture), oc, owner, repoName, pr)
 		if observed := observeOnlyStageReason(lane, reason); observed != reason {
 			// The lane got as far as the merge (or a step only a merge
@@ -98,7 +98,7 @@ func (c *Engine) observeAutoMergeOffRepo(ctx context.Context, lane, displayRepo 
 // evidence (red or pending CI, a conflict, a hold, an admission or hand-off
 // reason) and is kept.
 func observeOnlyStageReason(lane, reason string) string {
-	if reason == "" || reason == integrationEligibilityCaptured || strings.HasPrefix(reason, "integration exact member") {
+	if reason == "" || reason == integrationEligibilityCaptured || reason == integrationMemberCaptureUnavailable || reason == integrationMemberIdentityChanged {
 		return observeOnlyReasonRepoAutoMergeDisabled
 	}
 	switch classifyStage(stageObservation{Lane: lane, Reason: reason}).Stage {
