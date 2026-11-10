@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v6.12.1)
+
+### Fixed
+
+- Stage engine: a PR observed on a repo whose auto-merge is off (`repo-auto-merge-disabled`) is now staged from its head evidence (050 / 07x / 085, or 090 "auto-merge off" when approved and green) instead of being dropped as a lane hand-off (#17565).
+
 ## 2026-11-10 (v6.12.0)
 
 ### Added
