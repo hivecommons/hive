@@ -92,8 +92,7 @@ func TestAutoMergeUpdateRegistered(t *testing.T) {
 }
 
 // An argument the endpoint does not take is refused before anything is read,
-// at the top level and inside a nested object; human_merge_pin_only, which
-// the endpoint has no field for, says so.
+// at the top level and inside a nested object.
 func TestAutoMergeUpdateRejectsUnknownFields(t *testing.T) {
 	for name, tc := range map[string]struct {
 		args map[string]any
@@ -102,7 +101,6 @@ func TestAutoMergeUpdateRejectsUnknownFields(t *testing.T) {
 		"top-level typo":      {map[string]any{"squash_repos": map[string]any{"add": []any{"org/c"}}}, `unsupported merge setting "squash_repos"`},
 		"nested unknown":      {map[string]any{"contributor_lane": map[string]any{"enabled": true, "workflow_fence_scope": "all"}}, `unsupported merge setting "contributor_lane.workflow_fence_scope"`},
 		"dotted top-level":    {map[string]any{"merge_train.enabled": false}, `unsupported merge setting "merge_train.enabled"`},
-		"pin-only":            {map[string]any{"human_merge_pin_only": map[string]any{"org/a": map[string]any{"enabled": true}}}, "human_merge_pin_only is not on PATCH /api/config/auto-merge"},
 		"list without add":    {map[string]any{"squash_only": map[string]any{"set": []any{"org/c"}}}, "takes only add and remove"},
 		"list given as array": {map[string]any{"squash_only": []any{"org/c"}}, `takes {"add"`},
 	} {

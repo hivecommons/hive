@@ -425,6 +425,19 @@
         const key = Object.keys(amHumanMergePaths).find(k => k.toLowerCase() === String(repo).toLowerCase());
         return key && Array.isArray(amHumanMergePaths[key]) ? amHumanMergePaths[key] : [];
       };
+      // auto_merge.human_merge_pin_only: one row per repository that has
+      // human-merge paths or already holds an exception (it only ever lifts a
+      // human-merge-path hold, so elsewhere it would never apply).
+      const amPinOnly = (am.human_merge_pin_only && typeof am.human_merge_pin_only === 'object') ? am.human_merge_pin_only : {};
+      const amPinOnlyKinds = Array.isArray(am.pin_only_kinds) && am.pin_only_kinds.length ? am.pin_only_kinds : ['action-sha', 'image-digest', 'version-pin'];
+      const amPinOnlyFor = (repo) => {
+        const key = Object.keys(amPinOnly).find(k => k.toLowerCase() === String(repo).toLowerCase());
+        const e = key && amPinOnly[key] && typeof amPinOnly[key] === 'object' ? amPinOnly[key] : {};
+        const list = (v) => Array.isArray(v) ? v : [];
+        return { enabled: e.enabled === true, paths: list(e.paths), kinds: list(e.kinds), trusted_authors: list(e.trusted_authors) };
+      };
+      const amPinOnlyRepos = amHumanMergePathRepos.filter(r => amHumanMergePathsFor(r).length || Object.keys(amPinOnly).some(k => k.toLowerCase() === String(r).toLowerCase()))
+        .concat(Object.keys(amPinOnly).filter(k => !amHumanMergePathRepos.some(r => String(r).toLowerCase() === k.toLowerCase())));
       const amBotSourceLabel = { known: 'known bot', discovered: 'seen in open PRs', custom: 'added manually' };
       const amBotRow = (b) => `<div class="config-toggle am-bot-row" data-bot-login="${esc(b.login)}">
               <div class="config-toggle-switch am-bot-switch ${b.trusted ? 'on' : ''}" data-action="gh97" data-arg0="${esc(b.login)}" data-arg-types="s" role="switch" aria-checked="${b.trusted ? 'true' : 'false'}"></div>
@@ -562,7 +575,17 @@
                 <input type="text" class="am-human-merge-path-input" value="${esc(amHumanMergePathsFor(r).join(', '))}" placeholder=".github/workflows/**, CODEOWNERS" data-change-action="markDirtyAutoMergeRepoPolicy">
               </div>`).join('') : '<p class="am-trusted-authors-note">No repositories in project.repos yet.</p>'}
             </div>
-            <p class="config-help">Select nothing (or leave paths empty) to turn a rule off for every repo. YAML keys: <code>auto_merge.require_current_base[]</code>, <code>auto_merge.squash_only[]</code>, <code>${esc('auto_merge.human_merge_paths.<key>')}</code>.</p>
+            <div class="config-field mt-4" id="am-human-merge-pin-only">
+              <label>Pin bumps that skip the hand merge ${yamlHint('auto_merge.human_merge_pin_only')} ${settingHelpMark('operator-reference/README', 'human-merge-pin-only-rollout', 'Pin bumps that skip the hand merge', `Off by default. Per repository, a pull request on a path a person must merge can merge without a hand merge when its only change is a pin bump: an action SHA, an image digest or a version pin, as chosen below. Its author and the author of every commit behind its head must be a trusted author, every commit must carry a GitHub-verified signature, and every other gate (CI, review, soak, holds) still applies. Any other change to those paths is still held for a person. Saving sends every repository&apos;s entry; turning an exception on needs paths a person must merge for that repository.`)}</label>
+              ${amPinOnlyRepos.length ? amPinOnlyRepos.map(r => { const p = amPinOnlyFor(r); return `<div class="config-field mt-3 am-pin-only-row" data-repo="${esc(r)}">
+                <label><code>${esc(r)}</code> ${settingHelpMark('operator-reference/README', 'human-merge-pin-only-rollout', r, `Pin-only exception for ${esc(r)}. On: a pull request whose whole diff is pin bumps of the ticked kinds to the listed paths, opened and authored by a trusted author, merges without a hand merge. Paths are comma-separated globs within this repository&apos;s paths a person must merge. Off keeps every pin bump a person&apos;s merge.`)}</label>
+                <label class="am-pin-only-opt"><input type="checkbox" class="am-pin-only-enabled"${p.enabled ? ' checked' : ''} data-change-action="markDirtyAutoMergePinOnly"> On</label>
+                <input type="text" class="am-pin-only-paths" aria-label="Pin bump paths for ${esc(r)}" value="${esc(p.paths.join(', '))}" placeholder="paths: .github/workflows/*.yml, Containerfile" data-change-action="markDirtyAutoMergePinOnly">
+                <span class="am-pin-only-kinds">${amPinOnlyKinds.map(k => `<label class="am-pin-only-opt"><input type="checkbox" class="am-pin-only-kind" value="${esc(k)}"${p.kinds.includes(k) ? ' checked' : ''} data-change-action="markDirtyAutoMergePinOnly"> ${esc(k)}</label>`).join(' ')}</span>
+                <input type="text" class="am-pin-only-authors" aria-label="Trusted authors for ${esc(r)}" value="${esc(p.trusted_authors.join(', '))}" placeholder="trusted authors: renovate[bot]" data-change-action="markDirtyAutoMergePinOnly">
+              </div>`; }).join('') : '<p class="am-trusted-authors-note">Set paths a person must merge for a repository first; its pin-only exception is edited here.</p>'}
+            </div>
+            <p class="config-help">Select nothing (or leave paths empty) to turn a rule off for every repo. YAML keys: <code>auto_merge.require_current_base[]</code>, <code>auto_merge.squash_only[]</code>, <code>${esc('auto_merge.human_merge_paths.<key>')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.enabled')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.paths[]')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.kinds[]')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.trusted_authors[]')}</code>.</p>
           </div>
           <div class="config-field" id="am-trusted-authors">
             <label>Trusted-author auto-merge ${settingHelpMark('hive-merge', 'trusted-author-auto-merge', 'Trusted-author auto-merge', `Operator opt-in for human-authored PRs: Hive may merge a green PR only when the author holds the configured hive role and, when required, GitHub says the author has push/maintain/admin permission on that repository. Fork PRs from non-members are blocked, excluded labels and CHANGES_REQUESTED reviews block, and the head SHA is re-checked at merge.`)}</label>

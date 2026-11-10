@@ -216,7 +216,7 @@ History point limits, timestamp cutoffs, incremental cost reads and ETag/304 beh
 | `GET` | `/api/config/governor/general-advanced` | Owner only | Governor General Advanced Get | `pkg/dashboard/api.go:263` |
 | `PUT` | `/api/config/governor/general-advanced` | Owner only | Governor General Advanced Set | `pkg/dashboard/api.go:264` |
 | `GET` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Get | `pkg/dashboard/api.go:268` |
-| `PUT` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Set | `pkg/dashboard/api.go:269` |
+| `PUT` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Set; `human_merge_pin_only` replaces the whole pin-only map (`{}` clears it), and an invalid entry is a 400 with nothing changed | `pkg/dashboard/api.go:269` |
 | `GET` | `/api/config/convergence` | Owner only | Convergence Config Get | `pkg/dashboard/api.go:275` |
 | `PUT` | `/api/config/convergence` | Owner only | Convergence Config Set | `pkg/dashboard/api.go:277` |
 | `GET` | `/api/config/governor/advisory` | Owner only | Governor Advisory Get | `pkg/dashboard/api.go:281` |
