@@ -87,13 +87,14 @@ func (a *observeOnlyLaneAPI) serve(w http.ResponseWriter, r *http.Request) bool 
 // (hivecommons/hive#17566). Each lane now observes it: the drain holds a
 // repo-auto-merge-disabled observation, the stage writer parks it at 090
 // "auto-merge off", and the lanes send GitHub no write at all — no merge,
-// no branch update, no native-queue enqueue. An ACMM L5 hive, whose
-// self-authored lane does not run (sweepPass with acmmAllowed false),
-// behaves the same.
+// no branch update, no native-queue enqueue. Only a repo an owner switched
+// off at L6 is observed (hivecommons/hive#17552 decision A): on an ACMM L5
+// hive, where auto-merge is off everywhere and RepoAutoMergeSwitchedOff
+// names no repo, the lanes skip the repo as before and stage nothing.
 func TestObserveOnlyPassStagesAutoMergeOffRepoWithoutWrites(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
-		acmmAllowed bool // ACMM L6 (self-authored lane runs) vs L5
+		acmmAllowed bool // ACMM L6 (self-authored lane runs, repo switched off) vs L5
 	}{
 		{name: "acmm L6", acmmAllowed: true},
 		{name: "acmm L5", acmmAllowed: false},
@@ -121,7 +122,10 @@ func TestObserveOnlyPassStagesAutoMergeOffRepoWithoutWrites(t *testing.T) {
 				CheckSummary:         greenChecks,
 				BasePreparation:      NewBasePreparationStore(""),
 				RepoAutoMergeEnabled: func(string) bool { return false },
-				TrustedAuthorPolicy:  func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true} },
+				RepoAutoMergeSwitchedOff: func(repo string) bool {
+					return tc.acmmAllowed && repo == "acme/widget"
+				},
+				TrustedAuthorPolicy: func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true} },
 				TrustedAuthorizer: func(login, requireRole string) TrustedAuthorDecision {
 					return TrustedAuthorDecision{Allowed: login == "alice", Role: requireRole}
 				},
@@ -149,6 +153,21 @@ func TestObserveOnlyPassStagesAutoMergeOffRepoWithoutWrites(t *testing.T) {
 			tracker.mu.Lock()
 			obs, ok := tracker.obs[stageKey("acme", "widget", 7)][stageLaneTrusted]
 			tracker.mu.Unlock()
+			if !tc.acmmAllowed {
+				if ok {
+					t.Fatalf("below L6 the lanes must not observe the repo, got %+v", obs)
+				}
+				if _, err := e.ApplyStageLabels(ctx); err != nil {
+					t.Fatalf("ApplyStageLabels: %v", err)
+				}
+				if rec, ok := store.Get(stageKey("acme", "widget", 7)); ok {
+					t.Fatalf("below L6 the PR must have no stage record, got %+v", rec)
+				}
+				if len(api.added) != 0 || lane.merges != 0 || lane.updates != 0 || lane.graphql != 0 {
+					t.Fatalf("below L6 the lanes wrote labels=%v merges=%d update-branch=%d graphql=%d, want none", api.added, lane.merges, lane.updates, lane.graphql)
+				}
+				return
+			}
 			if !ok {
 				t.Fatal("trusted-author lane recorded no observation for the auto-merge-off repo's PR")
 			}

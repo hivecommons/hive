@@ -428,7 +428,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			continue
 		}
 		if !c.repoAutoMergeAllowed(displayRepo) {
-			c.info("contributor-lane automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled)
+			c.info("contributor-lane automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled && c.repoObservedOnly(displayRepo))
 			c.observeAutoMergeOffRepo(ctx, stageLaneContributor, displayRepo, opts.Targets, func(ctx context.Context, oc *Engine, owner, repoName string, pr *gh.PullRequest) (string, error) {
 				if reason := oc.sentinelBlockedUnlessHumanChangesRequested(ctx, owner, repoName, pr, oc.prefilterContributorLanePR(pr, policy)); reason != "" {
 					return reason, nil

@@ -51,9 +51,11 @@ type observeLaneEval func(ctx context.Context, oc *Engine, owner, repoName strin
 // written to GitHub: the requests run under hgithub.WithIntegrationReadOnly,
 // the merge is captured instead of executed, and there is no merge train,
 // native-queue reconcile, hold release or workflow approval. A no-op when
-// stage labelling is off, since the record is all the pass produces.
+// stage labelling is off, since the record is all the pass produces, and
+// for a repo that is not one an owner switched off at L6 (repoObservedOnly):
+// hives below L6 are not staged.
 func (c *Engine) observeAutoMergeOffRepo(ctx context.Context, lane, displayRepo string, targets SweepTargets, eval observeLaneEval) {
-	if c == nil || !c.stagePolicy().Enabled || eval == nil {
+	if c == nil || !c.stagePolicy().Enabled || eval == nil || !c.repoObservedOnly(displayRepo) {
 		return
 	}
 	oc := c.observeOnlyEngine()

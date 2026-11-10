@@ -184,7 +184,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			continue
 		}
 		if !c.repoAutoMergeAllowed(repo) {
-			c.info("self-authored automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled)
+			c.info("self-authored automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled && c.repoObservedOnly(repo))
 			c.observeAutoMergeOffRepo(ctx, stageLaneSelf, repo, opts.Targets, func(ctx context.Context, oc *Engine, owner, repoName string, pr *gh.PullRequest) (string, error) {
 				if reason := oc.prefilterSelfAuthoredPR(pr); reason != "" {
 					return reason, nil
@@ -442,7 +442,7 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			continue
 		}
 		if !c.repoAutoMergeAllowed(displayRepo) {
-			c.info("trusted-author automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled)
+			c.info("trusted-author automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled && c.repoObservedOnly(displayRepo))
 			c.observeAutoMergeOffRepo(ctx, stageLaneTrusted, displayRepo, opts.Targets, func(ctx context.Context, oc *Engine, owner, repoName string, pr *gh.PullRequest) (string, error) {
 				login := hgithub.SafeGetLogin(pr.GetUser())
 				if opts.SelfAuthoredLaneActive && oc.isTrustedBotLaneAuthor(login) {
