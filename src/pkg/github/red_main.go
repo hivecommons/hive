@@ -2,7 +2,6 @@ package github
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -33,10 +32,6 @@ import (
 //
 // Every lookup failure leaves the repo's previous observation in place:
 // a read error never trips the breaker and never clears it either.
-
-// redMainMaxIssuePages bounds the open-issue listing used to find the
-// `[shared-ci]` tracking issue (newest first, 100 per page).
-const redMainMaxIssuePages = 3
 
 // redMainMaxLiveIssueLookups bounds the issues a refused PR request names
 // that the refusal path reads live to find a just-filed tracking issue.
@@ -286,34 +281,13 @@ func (c *Client) redMainAnnotatedPaths(ctx context.Context, owner, repo string, 
 // `[shared-ci] <check> failing across <owner/repo>` issue tracking it in
 // owner/repo (the lowest number when several are open).
 func (c *Client) openSharedCITrackingIssues(ctx context.Context, owner, repo string) (map[string]int, error) {
-	opts := &gh.IssueListByRepoOptions{
-		State:       "open",
-		Sort:        "created",
-		Direction:   "desc",
-		ListOptions: gh.ListOptions{PerPage: 100},
+	issues, err := c.openSharedCIIncidentIssues(ctx, owner, repo)
+	if err != nil {
+		return nil, err
 	}
-	out := map[string]int{}
-	for page := 0; page < redMainMaxIssuePages; page++ {
-		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
-		if err != nil {
-			return nil, fmt.Errorf("listing open shared-CI incidents in %s/%s: %w", owner, repo, err)
-		}
-		for _, issue := range issues {
-			if issue == nil || issue.IsPullRequest() {
-				continue
-			}
-			check, ok := SharedCITrackingCheck(issue.GetTitle(), owner+"/"+repo)
-			if !ok {
-				continue
-			}
-			if n, seen := out[check]; !seen || issue.GetNumber() < n {
-				out[check] = issue.GetNumber()
-			}
-		}
-		if resp == nil || resp.NextPage == 0 {
-			break
-		}
-		opts.ListOptions.Page = resp.NextPage
+	out := make(map[string]int, len(issues))
+	for check, issue := range issues {
+		out[check] = issue.GetNumber()
 	}
 	return out, nil
 }

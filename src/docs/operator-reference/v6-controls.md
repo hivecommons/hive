@@ -261,6 +261,9 @@ been red for **more than** the threshold:
 
 Everything lifts automatically on the first sweep that sees a completed green
 run of the check.
+When no agent has filed the tracking issue by the time the breaker trips, the
+[shared-CI issue sweep](sweeps-and-operations.md#shared-ci-tracking-issues-shared_ci_issues)
+files it.
 A repo whose required-check set or check runs cannot be read keeps its last
 observation (a read error neither trips nor clears the breaker). Trust levels,
 the trusted-merger definition and the self-merge floor are unchanged.

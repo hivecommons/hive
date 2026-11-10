@@ -308,6 +308,52 @@ someone re-runs it. The shared-CI rerun sweep
 |---|---|---|
 | `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes. |
 
+## Shared-CI tracking issues (`shared_ci_issues`)
+
+The `[shared-ci] <check> failing across <owner/repo>` incident issue is what
+the red-main breaker, the PR-request refusal, the kick builders and the rerun
+sweep above all key on. Agents file it when they triage a red PR with
+`hive-baseline-check.sh`, but when no agent picks one of the red PRs up (they
+are all contributor or bot PRs, or forks the hive may only comment on),
+nothing is filed and the same red check can sit on a dozen PRs for a day. The
+shared-CI issue sweep (`src/pkg/github/shared_ci_issues.go`) files it from the
+governor's own snapshot every ~15 minutes:
+
+- It groups the open PRs (held ones included) by repository and failing
+  check. A check failing on `min_prs` or more PRs (default 3, the same
+  threshold the baseline helper uses) is a shared failure. So is a required
+  check that has tripped the red-main breaker (`red_main_threshold`), even
+  with no red PR. A fork-publication guard check, red on every fork PR by
+  design, is not counted.
+- A PR cluster must last 30 minutes before an issue is filed, so a burst of
+  runner errors that clears on the next run files nothing. A red-main check
+  is filed at once: the breaker already waited.
+- When no open `[shared-ci]` issue names the check, it files one under that
+  exact title, labelled `agent/ci-maintainer` and `kind/bug` with origin
+  `governor`. The body names the check, the failing PRs, whether the check
+  is red on the base branch, and up to ten distinct lines from the failing
+  runs' annotations. A new red-main issue is recorded as the breaker's
+  tracking issue straight away.
+- An open incident it filed (body marker `<!-- hive-shared-ci-tracker -->`)
+  is edited in place when the PR list or the evidence changes; edits do not
+  notify, and an unchanged failure costs no write. An incident an agent or a
+  person filed is left alone: it has already reached the triage queue.
+- It never comments on the PRs, never stamps the `<!-- hive-shared-ci-<n> -->`
+  deferral marker and never closes the issue. Close it once the cause is
+  repaired; a PR that closes it counts as a fix for a red default branch.
+- After an incident for the same check closes it waits 24 hours before
+  filing again (7 days after a "not planned" close).
+- It reads nothing per PR. Only a repository with a shared failure costs
+  calls: one open-issue listing per pass, one closed-issue listing before a
+  filing, and the write itself. At most 5 writes per pass. Every write goes
+  through the write-back gate as `issue_file` and is audited as
+  `shared-ci-issue-filed` or `shared-ci-issue-updated`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `shared_ci_issues.enabled` | `true` (unset) | Set `false` to stop filing `[shared-ci]` tracking issues. |
+| `shared_ci_issues.min_prs` | `3` (unset) | Open PRs that must fail the same check before it counts as shared; values below 2 are raised to 2. |
+
 ## Open-PR dispatch guard and duplicate-fix sweep (`scanner`)
 
 An issue whose fix is already open must not be dispatched again
@@ -455,6 +501,7 @@ that level, the power the write-back exists to govern?
 | Welcome / outreach (`pkg/gfi`, `gfi_forge.go`, `pr_clanker_requested.go`) | good-first-issue selection | welcome comment, `good first issue` label | issues hive advertises | `welcome_comment` → L5 with label, L6 without |
 | Issue filing (`pkg/upstreamwatch/github_filer.go`, `advisory.go`, scanner/deps/regression agents, `dedupe_advisory_close.go`) | agents, advisory digest, upstream watch | **new** issues hive authors, pinned advisory issue + comments | `project.repos` | `issue_file` → L3, no label (this is what listing a repo opts in to; `per_repo.mode: issues-only` keeps only this) |
 | Code scanning sweep (`pkg/github/code_scanning.go`, `pkg/codescanning`) | hourly sweep (`code_scanning`, opt-in per repo) | **new** grouped issues from code scanning alerts, alert-table body edits, one closing comment + close when every alert is fixed or dismissed | the hive's own `hive/code-scanning` issues in repos with `code_scanning` on | `issue_file` → L3, no label (own items); see [code-scanning.md](../code-scanning.md) |
+| Shared-CI tracking issues (`shared_ci_issues.go`) | 15-min sweep (`shared_ci_issues`) | **new** `[shared-ci] <check> failing across <owner/repo>` issue, body edits of its own issue | repos where one check fails on `shared_ci_issues.min_prs`+ open PRs or trips the red-main breaker | `issue_file` → L3, no label (own items) |
 | Shared-CI rerun (`shared_ci_rerun.go`) | CI failure watcher | `rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment | PRs with failed shared workflows | `ci_rerun` → L6 + label |
 | Transient-CI rerun (`transient_ci_rerun.go`) | eval cycle, before the stuck-PR reaper | `rerun-failed-jobs`, once per head, no comment | hive-authored red PRs whose every failing run carries `hive-ci-transient` | `ci_rerun` (own items: allowed unless the repo is paused, off or issues-only) |
 | Level hold, self-authorization & reporter-trust releases (`pr_level_hold.go`, `automerge/self_authorization_release.go`, `reporter_trust_release.go`) | PR watcher | `hold` label add/remove | agent PRs | own items (hive-authored) — not gated |
