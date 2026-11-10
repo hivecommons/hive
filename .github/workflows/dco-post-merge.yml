@@ -55,7 +55,14 @@ env:
   # contributor make this a standing identity rather than a one-off, so it is
   # accepted here (same class as raul.mturrubiates in #6554) rather than
   # waived per-commit.
-  DCO_ALLOWLIST_EMAILS: 'raul.mturrubiates@gmail.com shelkeonka@gmail.com'
+  #
+  # berths-purger-0g@icloud.com: @Danathar signs off every branch commit with
+  # this address, but GitHub attributed the squash of #17464 (commit 76b20ebe)
+  # to the account's primary email, doug.baggett@gmail.com. Same person,
+  # alternate address; accepted by maintainer disposition in #17501 as a
+  # standing identity (same class as raul.mturrubiates in #6554) so future
+  # commits from it do not page again.
+  DCO_ALLOWLIST_EMAILS: 'raul.mturrubiates@gmail.com shelkeonka@gmail.com berths-purger-0g@icloud.com'
   # Per-commit maintainer DCO dispositions, by FULL SHA. This is the record
   # src/docs/v5-sync-policy.md asks for — "listing every affected SHA and the
   # reason the override is acceptable" — and the only instrument that can clear
