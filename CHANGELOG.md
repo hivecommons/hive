@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.18)
+
+### Fixed
+
+- crux resumehandle: the claude layout now only captures UUID-named session transcripts, so a newer per-subagent transcript (SESSION/subagents/agent-*.jsonl) no longer yields a bogus "claude --resume agent-…" handle (hivecommons/crux#145)
+
 ## 2026-11-10 (v5.211.17)
 
 ### Fixed
