@@ -44,7 +44,7 @@ by the runtime type `GitSourceConfig`, `pkg/knowledge/gitsource.go:33-39`):
 |---|---|---|---|
 | `name` | Yes | — | Display name; also the key used to look up/remove the source via the API. |
 | `url` | Yes | — | Git remote URL. **`https://` only** — see Auth below. |
-| `branch` | No | `main` (`gitsource.go:66-68`) | Branch to shallow-clone (`--depth 1 --branch <branch>`). |
+| `branch` | No | `main` (`gitsource.go:66-68`) | Branch to shallow-clone (`--depth 1 --branch <branch>`). Connecting through the dashboard/API with a blank branch resolves the remote default (`git ls-remote --symref <url> HEAD`) and records it in the saved config. |
 | `subpath` | No | — (whole repo) | When set, only this subdirectory is checked out (git sparse-checkout, `gitsource.go:199-219,232-248`) and indexed. |
 | `layer` | No | `project` when set via the API (`api_knowledge.go:1032-1034`); **required, no code default, when set via `hive.yaml`** | One of `personal`, `project`, `org`, `community` — see Layer semantics below. |
 

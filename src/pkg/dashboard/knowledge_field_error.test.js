@@ -117,3 +117,18 @@ test('a missing input falls back to an error toast', () => {
   h.kbFieldError(null, 'boom');
   assert.deepStrictEqual(toasts, [['boom', 'error']]);
 });
+
+test('Clone & Index busy state targets the data-action button and a blank branch is sent blank', () => {
+  const fn = fnSrc('kbAddGitSource');
+  assert.ok(fn.includes('[data-action="kbAddGitSource"]'), 'busy-state selector must match the data-action button');
+  assert.ok(!fn.includes('onclick='), 'stale onclick selector');
+  assert.ok(!fn.includes("branch || 'main'"), 'blank branch must not be guessed as main');
+  assert.ok(html.includes('Branch (blank = repo default)'));
+});
+
+test('a failed connect is kept and rendered as an error row with a Retry control', () => {
+  assert.ok(html.includes('_kbGitSourceFailed = { url,'));
+  assert.ok(html.includes('&middot; error: ${escapeHtml(failedGs.error)}'));
+  assert.ok(html.includes('data-action="kbRetryGitSource"'));
+  assert.ok(html.includes('function kbDismissGitSourceFailure('));
+});

@@ -45766,6 +45766,7 @@ function burnAreaChart() {
     // {url, subpath} of the git source loaded into the Add Git Source form by
     // Edit; null while the form adds a new source. Reset on every re-render.
     let _kbGitSourceEditing = null;
+    let _kbGitSourceFailed = null;
     const KB_POLL_MS = 30000;
     const KB_LAYER_ICONS = { personal: '🔒', project: '📁', org: '🏢', community: '🌍' };
     const KB_LAYER_LABELS = { personal: 'Personal', project: 'Project', org: 'Org', community: 'Community' };
@@ -47495,6 +47496,17 @@ function burnAreaChart() {
         html += '</div>';
         html += '<div class="kb-sources-note">Clone a GitHub repo locally. Hive indexes the markdown with Fisher-Rao scored search and syncs every 5 minutes.</div>';
 
+        const failedGs = _kbGitSourceFailed;
+        if (failedGs) {
+          html += '<div class="card-inset row-between mb-3" data-kb-gs-failed="1">';
+          html += '<div style="min-width:0;flex:1">';
+          html += `<div style="font-size:var(--fs-base);font-weight:600;color:var(--fg);display:flex;align-items:center;gap:var(--sp-3)"><span class="status-dot" data-status="error" style="width:7px;height:7px;min-width:7px"></span><span>${escapeHtml(failedGs.name)}</span></div>`;
+          html += `<div style="font-size:0.7rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(failedGs.url)}${failedGs.subpath ? ' / ' + escapeHtml(failedGs.subpath) : ''} &middot; error: ${escapeHtml(failedGs.error)}</div>`;
+          html += '</div><div class="row-end">';
+          html += `<button class="hv-btn btn-secondary nous-btn btn-sm" data-action="kbRetryGitSource" title="Load this attempt back into the form to retry">Retry</button>`;
+          html += '<button class="hv-btn btn-danger nous-btn btn-sm" data-action="kbDismissGitSourceFailure">Dismiss</button>';
+          html += '</div></div>';
+        }
         if (gitSources && gitSources.length > 0) {
           for (const gs of gitSources) {
             const gsStatus = statusMeta(gs.ready ? 'ready' : 'initializing');
@@ -47527,7 +47539,7 @@ function burnAreaChart() {
         html += '<input id="kb-gs-url" type="text" class="kb-search-box" required aria-required="true" placeholder="Repository URL * (https://github.com/org/repo)">';
         html += '<input id="kb-gs-name" type="text" class="kb-search-box" required aria-required="true" placeholder="Display name *">';
         html += '<input id="kb-gs-subpath" type="text" class="kb-search-box" placeholder="Subpath (e.g. docs/skills)">';
-        html += '<input id="kb-gs-branch" type="text" class="kb-search-box" placeholder="Branch (default: main)">';
+        html += '<input id="kb-gs-branch" type="text" class="kb-search-box" placeholder="Branch (blank = repo default)">';
         html += `<select id="kb-gs-layer" class="field-input">
           <option value="project">Project</option>
           <option value="org">Org</option>
@@ -47733,6 +47745,23 @@ function burnAreaChart() {
       document.getElementById('kb-gs-url')?.focus();
     }
 
+    function kbRetryGitSource() {
+      const f = _kbGitSourceFailed;
+      if (!f) return;
+      kbEditGitSource(f.url, f.subpath, f.name, f.branch, f.layer);
+      // A failed Save keeps targeting the original source; a failed connect is a fresh add.
+      _kbGitSourceEditing = f.editing || null;
+      const btn = document.getElementById('kb-gs-submit');
+      if (btn) btn.textContent = kbGitSourceSubmitLabel();
+      const cancel = document.getElementById('kb-gs-cancel');
+      if (cancel) cancel.hidden = !_kbGitSourceEditing;
+    }
+
+    function kbDismissGitSourceFailure() {
+      _kbGitSourceFailed = null;
+      kbLoadSubscriptions();
+    }
+
     function kbCancelGitSourceEdit() {
       _kbGitSourceEditing = null;
       for (const id of ['kb-gs-url', 'kb-gs-name', 'kb-gs-subpath', 'kb-gs-branch']) {
@@ -47760,18 +47789,26 @@ function burnAreaChart() {
       if (!name) { kbFieldError(document.getElementById('kb-gs-name'), 'Display name is required'); return; }
 
       const editing = _kbGitSourceEditing;
-      const btn = document.getElementById('kb-gs-submit');
-      if (btn) { btn.disabled = true; btn.textContent = editing ? 'Saving...' : 'Cloning...'; }
+      const btn = document.querySelector('#kb-subs-content [data-action="kbAddGitSource"]');
+      if (btn) { btn.disabled = true; btn.textContent = editing ? 'Saving…' : 'Cloning…'; }
 
       try {
         const payload = editing
-          ? { url: editing.url, subpath: editing.subpath, new_url: url, new_subpath: subpath || '', name, branch: branch || 'main', layer }
-          : { url, name, subpath: subpath || '', branch: branch || 'main', layer };
+          ? { url: editing.url, subpath: editing.subpath, new_url: url, new_subpath: subpath || '', name, branch: branch || '', layer }
+          : { url, name, subpath: subpath || '', branch: branch || '', layer };
         const r = await fetch('/api/knowledge/git-sources', {
           method: editing ? 'PUT' : 'POST', headers: _inceptionAuthHeaders(),
           body: JSON.stringify(payload),
         });
-        if (!r.ok) { const e = await r.json(); await hiveAlert(e.error || (editing ? 'Failed to save git source' : 'Failed to add git source')); return; }
+        if (!r.ok) {
+          const e = await r.json();
+          const reason = e.error || (editing ? 'Failed to save git source' : 'Failed to add git source');
+          _kbGitSourceFailed = { url, subpath: subpath || '', name, branch: branch || '', layer, error: reason, editing };
+          kbLoadSubscriptions();
+          await hiveAlert(reason);
+          return;
+        }
+        _kbGitSourceFailed = null;
         kbLoadSubscriptions();
         fetchKnowledgeStats();
       } catch (e) {

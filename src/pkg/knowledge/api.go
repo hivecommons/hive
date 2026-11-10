@@ -1085,6 +1085,14 @@ func (k *KnowledgeAPI) ConnectGitSource(ctx context.Context, config GitSourceCon
 	}
 	k.mu.RUnlock()
 
+	if strings.TrimSpace(config.Branch) == "" {
+		branch, err := resolveGitSourceDefaultBranch(ctx, config.URL)
+		if err != nil {
+			return fmt.Errorf("git source %s: resolving default branch: %w", config.Name, err)
+		}
+		config.Branch = branch
+	}
+
 	gs := newGitSourceForConnect(config, knowledgeBaseDir, k.logger)
 	if err := initGitSourceForConnect(gs, ctx); err != nil {
 		return err
@@ -1194,6 +1202,14 @@ func (k *KnowledgeAPI) ReplaceGitSource(ctx context.Context, oldURL, oldSubpath 
 	k.mu.RUnlock()
 	if old == nil {
 		return fmt.Errorf("%w: %s (subpath: %s)", ErrGitSourceNotFound, oldURL, oldSubpath)
+	}
+
+	if strings.TrimSpace(config.Branch) == "" {
+		branch, err := resolveGitSourceDefaultBranch(ctx, config.URL)
+		if err != nil {
+			return fmt.Errorf("git source %s: resolving default branch: %w", config.Name, err)
+		}
+		config.Branch = branch
 	}
 
 	gs := newGitSourceForConnect(config, knowledgeBaseDir, k.logger)
