@@ -232,6 +232,13 @@ func (c *Client) SetHumanMergePinOnly(policies map[string]PinOnlySpec) {
 	c.humanMergePinOnly = normalized
 }
 
+// HumanMergePinOnlyFor returns a copy of the relay's pin-only policy for repo
+// (owner/repo or a bare name in the client's org), the value the last
+// SetHumanMergePinOnly installed; disabled when none.
+func (c *Client) HumanMergePinOnlyFor(repo string) PinOnlySpec {
+	return c.humanMergePinOnlyFor(repo)
+}
+
 func (c *Client) humanMergePinOnlyFor(repo string) PinOnlySpec {
 	if c == nil {
 		return PinOnlySpec{}

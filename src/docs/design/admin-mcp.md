@@ -635,8 +635,9 @@ Phase 5 registers the fleet-level write operations under that contract:
   The preview names each change that lets the hive merge more on its own (a lane turned on, a
   human-merge path removed, a repository added to an allow-list or an allow-list emptied, which
   means every repository). Both the read and the write are owner only at the endpoint, and the
-  op merges nothing itself. `human_merge_pin_only` has no field on the endpoint, so the op
-  cannot reach it.
+  op merges nothing itself. `human_merge_pin_only` is set one repository at a time the same way
+  (the whole exception for that repository, or `null` to remove it); turning one on or giving
+  it more paths, kinds or trusted authors is named as widening.
 
 The Activity monitor's row actions are registered as the `repository.rescan` and
 `repository.item_*` operations, each sending the request the dashboard's button sends

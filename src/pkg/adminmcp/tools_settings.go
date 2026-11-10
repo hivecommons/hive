@@ -36,7 +36,7 @@ var settingsSections = []SettingsSection{
 	{"dashboard", "/api/config/dashboard", "Dashboard settings."},
 	{"channels", "/api/config/channels", "Channels: email, push, Slack, Matrix, Microsoft Teams and Telegram targets, GitHub mentions and Actions identity (secret values are never returned; secrets are named by environment variable)."},
 	{"escalation", "/api/config/escalation", "Escalation settings."},
-	{"auto_merge", "/api/config/auto-merge", "Merge settings, including the per-repository merge policy (squash_only, require_current_base, human_merge_paths)."},
+	{"auto_merge", "/api/config/auto-merge", "Merge settings, including the per-repository merge policy (squash_only, require_current_base, human_merge_paths, human_merge_pin_only)."},
 	{"review", "/api/config/review", "Review settings: reviewers, perspectives, review bots and gates."},
 	{"convergence", "/api/config/convergence", "Convergence settings."},
 	{"sla", "/api/config/sla", "SLA settings."},

@@ -102,7 +102,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/config/governor/general-advanced` | Owner only | Governor General Advanced Get | `pkg/dashboard/api.go:263` |
 | `PUT` | `/api/config/governor/general-advanced` | Owner only | Governor General Advanced Set | `pkg/dashboard/api.go:264` |
 | `GET` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Get | `pkg/dashboard/api.go:268` |
-| `PUT` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Set | `pkg/dashboard/api.go:269` |
+| `PUT` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Set; `human_merge_pin_only` replaces the whole pin-only map (`{}` clears it), and an invalid entry is a 400 with nothing changed | `pkg/dashboard/api.go:269` |
 | `PATCH` | `/api/config/auto-merge` | Owner only | Partially update auto-merge settings, including nested `merge_train`; omitted fields stay unchanged; returns effective settings and bot-author metadata | `pkg/dashboard/api_config_automerge.go` |
 | `GET` | `/api/config/convergence` | Owner only | Convergence Config Get | `pkg/dashboard/api.go:275` |
 | `PUT` | `/api/config/convergence` | Owner only | Convergence Config Set | `pkg/dashboard/api.go:277` |
