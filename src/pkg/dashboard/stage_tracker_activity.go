@@ -142,6 +142,9 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	// Required checks with no run at all, or only a pending commit status:
 	// on a Prow repository, a presubmit that never ran or has not finished.
 	presubmitWaiting := map[string]bool{}
+	// Required checks with no run on the head while commit statuses were
+	// not read: unknown rather than missing, with the no-run caption.
+	noRunUnread := map[string]bool{}
 	for _, observation := range observations {
 		name := observation.name
 		check := github.PRActivityCheck{}
@@ -154,8 +157,14 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		case len(observation.checks) > 1:
 			state = "unknown"
 		case !ok:
+			// No run of that name on the head. With commit statuses read it
+			// is missing; without them a status could still provide it, so
+			// the word stays unknown — but a settled unknown, never motion
+			// (hivecommons/hive#17508), with the no-run caption below.
 			if a.StatusesKnown {
 				state = "missing"
+			} else {
+				noRunUnread[name] = true
 			}
 		case check.State == "queued" || check.State == "waiting" || check.State == "pending" || check.State == "requested":
 			state = "queued"
@@ -304,6 +313,9 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		if statusesMissing {
 			out.Caption = "CI unknown · commit statuses not observed for this head"
 			out.Detail = "A required check is reported as a commit status rather than a check run, and hive has not yet fetched commit statuses for the PR's current commit."
+		} else if noRunUnread[out.Blocker] {
+			out.Caption = "CI waiting · required check " + check + " hasn't reported for this head yet"
+			out.Detail = "Branch protection requires a check named " + check + ", but no check run with that name exists for the PR's current commit, and hive has not yet read its commit statuses. Usually the workflow that produces it has not been triggered; a push, re-run, or label can start it."
 		} else {
 			out.Caption = "CI unknown · " + check + " reported but with no conclusion"
 			out.Detail = "Required check " + check + " exists for the PR's current commit but hive cannot read a clear result from it (several runs share the name, or the run ended with no conclusion)."
