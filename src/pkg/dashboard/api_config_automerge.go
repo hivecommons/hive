@@ -551,6 +551,13 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 	if contributorLaneLabels == nil {
 		contributorLaneLabels = append([]string{}, config.DefaultContributorLaneExcludeLabels...)
 	}
+	// Repositories whose repo_policies override replaces workflow_fence_scope;
+	// the hive-wide value (and a change to it) does not apply to them.
+	fenceOverrides := cfg.WorkflowFenceScopeRepoOverrides()
+	contributorLaneFenceScopeRepos := make([]map[string]interface{}, 0, len(fenceOverrides))
+	for _, o := range fenceOverrides {
+		contributorLaneFenceScopeRepos = append(contributorLaneFenceScopeRepos, map[string]interface{}{"repo": o.Repo, "workflow_fence_scope": o.Scope})
+	}
 	return map[string]interface{}{
 		"self_authored":                selfAuthored,
 		"self_authored_set":            am.SelfAuthored != nil,
@@ -604,6 +611,7 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 			"owner_approval_releases_workflow_fence": cl.EffectiveOwnerApprovalReleasesWorkflowFence(),
 			"workflow_fence_scope":                   cl.EffectiveWorkflowFenceScope(),
 			"workflow_fence_scopes":                  config.ContributorLaneWorkflowFenceScopes,
+			"workflow_fence_scope_repos":             contributorLaneFenceScopeRepos,
 		},
 	}
 }

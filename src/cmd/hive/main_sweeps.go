@@ -1396,6 +1396,19 @@ func sentinelSweepOptions(cfg *config.Config, ghClient *github.Client, dashSrv *
 			}
 			dashSrv.AuditLogRecord("system", action, detail, "", event.Repo, event.Number)
 		},
+		// Per-repo sensitive paths (project.repo_policies[].sentinel_sensitive_paths).
+		SensitivePathsForRepo: sentinelRepoSensitivePathsFunc(cfg),
+	}
+}
+
+// sentinelRepoSensitivePathsFunc resolves Sentinel's sensitive-path globs for
+// one "owner/repo": its project.repo_policies[].sentinel_sensitive_paths
+// override, else the hive-wide sentinel.sensitive_paths (or the shipped
+// defaults).
+func sentinelRepoSensitivePathsFunc(cfg *config.Config) func(repo string) []string {
+	return func(repo string) []string {
+		paths, _ := cfg.RepoSentinelSensitivePaths(repo)
+		return paths
 	}
 }
 

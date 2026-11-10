@@ -982,6 +982,8 @@
          get the blocking alert label; trusted authors default to notice-only. */
       const sn = sec.sentinel || {};
       const snPaths = Array.isArray(sn.sensitivePaths) ? sn.sensitivePaths : [];
+      const snRepoPaths = Array.isArray(sn.repoSensitivePaths) ? sn.repoSensitivePaths : [];
+      const snRepoPathsText = snRepoPaths.length ? snRepoPaths.map(o => `<code>${esc(o.repo)}</code>: ${(Array.isArray(o.sensitivePaths) && o.sensitivePaths.length) ? o.sensitivePaths.map(p => `<code>${esc(p)}</code>`).join(' ') : 'no globs (matches nothing)'}`).join('; ') : 'none';
       const snBehaviors = (sn.behaviors || []).map(b => `
         <div class="config-toggle">
           <div class="config-toggle-switch ${b.enabled ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelBehavior" data-rule="${esc(b.name)}"></div>
@@ -1003,6 +1005,7 @@
         <div class="config-field">
           <label>Sensitive files ${yamlHint('sentinel.sensitive_paths[]')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
           <textarea rows="8" class="mono" data-change-action="gh83" ${sn.enabled ? '' : 'disabled'}>${esc(snPaths.join('\n'))}</textarea>
+          <p class="muted-xs">Per-repository lists ${yamlHint('project.repo_policies[].sentinel_sensitive_paths[]')}: ${snRepoPathsText}. A listed repository uses its own list instead of this one. Per-repository lists are set in hive.yaml.</p>
         </div>
         <div class="config-field">
           <label>Behaviors ${yamlHint('sentinel.disabled_behaviors[]')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Behaviors', `Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.`)}</label>

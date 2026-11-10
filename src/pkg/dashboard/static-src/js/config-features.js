@@ -405,6 +405,8 @@
       const amContributorLaneFenceScopes = Array.isArray(amContributorLane.workflow_fence_scopes) && amContributorLane.workflow_fence_scopes.length ? amContributorLane.workflow_fence_scopes : ['all','human_merge_paths'];
       const amContributorLaneFenceScopeLabel = { all: "all — every workflow / action file edit", human_merge_paths: "human_merge_paths — only workflow / action files listed in Human-merge paths" };
       const amContributorLaneFenceScopeOptions = amContributorLaneFenceScopes.map(v => `<option value="${esc(v)}"${v === amContributorLaneFenceScope ? ' selected' : ''}>${esc(amContributorLaneFenceScopeLabel[v] || v)}</option>`).join('');
+      const amContributorLaneFenceScopeRepos = Array.isArray(amContributorLane.workflow_fence_scope_repos) ? amContributorLane.workflow_fence_scope_repos : [];
+      const amContributorLaneFenceScopeReposText = amContributorLaneFenceScopeRepos.length ? amContributorLaneFenceScopeRepos.map(o => `<code>${esc(o.repo)}</code>: <code>${esc(o.workflow_fence_scope)}</code>`).join(', ') : 'none';
       const amContributorLaneRepoSet = new Set((Array.isArray(amContributorLane.repos) ? amContributorLane.repos : []).map(r => String(r).toLowerCase()));
       const amContributorLaneRepoOptions = watchedRepos.map(r => `<option value="${esc(r)}"${amContributorLaneRepoSet.has(String(r).toLowerCase()) ? ' selected' : ''}>${esc(r)}</option>`).join('');
       // Per-repo merge policy lists offer project.repos as owner/repo (the form
@@ -674,6 +676,7 @@
               <label for="am-contributor-lane-workflow-fence-scope">Workflow fence scope ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Workflow fence scope', `Which CI workflow / action edits wait for an owner's approval of the head before the contributor lane merges them. all (the default) fences every edit under .github/workflows or .github/actions. human_merge_paths fences only an edit to a file that is also in that repository's Human-merge paths, so routine workflow edits (pin bumps, permission tightening) go through review, CI and soak like any other change. A repository with no Human-merge paths keeps the full fence, and a renamed workflow file always trips it. Held fork CI runs are still never approved for a workflow edit, and Sentinel and the tests-removed fence still apply.`)}</label>
               <select id="am-contributor-lane-workflow-fence-scope" data-change-action="gh104">${amContributorLaneFenceScopeOptions}</select>
               <p class="am-trusted-authors-note">With <code>human_merge_paths</code>, list every workflow, reusable workflow and local action your release workflows use in Human-merge paths: an edit to an unlisted one merges after review without an owner's approval.</p>
+              <p class="am-trusted-authors-note">Per-repository overrides ${yamlHint('project.repo_policies[].workflow_fence_scope')}: ${amContributorLaneFenceScopeReposText}. A listed repository uses its own scope; this setting does not apply to it. Overrides are set in hive.yaml.</p>
             </div>
             <div class="config-field mt-4">
               <label for="am-contributor-lane-exclude-labels">Excluded labels</label>

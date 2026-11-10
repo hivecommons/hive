@@ -1116,6 +1116,30 @@ A PR merges through this tier only when all of the following hold:
   content rules (permission widening, secret exposure, CI-gate weakening,
   remote code execution) still read every workflow patch (see
   [Suspicious-activity alerts](operator-reference/sweeps-and-operations.md#suspicious-activity-alerts-sentinel)).
+
+  Both keys can be set for one repository instead of the whole hive, for
+  example when some repositories belong to maintainers who have not agreed
+  to the looser setting. Under `project.repo_policies`,
+  `workflow_fence_scope` replaces the hive-wide scope and
+  `sentinel_sensitive_paths` replaces the hive-wide Sentinel list, for that
+  repository only. Either can be stricter or looser than the hive-wide
+  value, and a later change to the hive-wide value does not reach a
+  repository that has its own. A repository with `human_merge_paths` scope
+  but no `human_merge_paths` entry still keeps the full fence. An invalid
+  value stops the config from loading, and the running hive ignores one
+  that gets through and uses the hive-wide value. The overrides are set in
+  hive.yaml; Settings and `settings_read` list them.
+
+  ```yaml
+  project:
+    repo_policies:
+      - repo: website
+        workflow_fence_scope: human_merge_paths
+        sentinel_sensitive_paths:   # replaces sentinel.sensitive_paths for this repository
+          - OWNERS
+          - CODEOWNERS
+          - .github/workflows/release*.yml
+  ```
 - The diff does not delete a test file or remove 25+ test lines while
   deleting at least 3× what it adds (`contributor-lane:tests-removed`).
 - Required CI is green on the current head, using the same merge-CI gate as
