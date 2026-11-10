@@ -43,8 +43,11 @@ func TestStageTrackerSentinelNoticePreservesActualReviewerDecision(t *testing.T)
 		jsFunc(t, html, "stageTrackerSentinelTipWithPaths")+
 		jsFunc(t, html, "stageTrackerSentinelPreface")+
 		"\nconst notice = "+string(payload)+";\n"+`
-assert.deepStrictEqual(stageTrackerHumanGateReasons(notice).map(r => r.key), [], 'an informational notice is not a human gate');
-assert.ok(!stageTrackerRowHtml(notice, stages, ctx).includes('ham-human-gate'), 'no gate pill for a notice');
+const noticeKeys = stageTrackerHumanGateReasons(notice).map(r => r.key);
+assert.ok(!noticeKeys.includes('sentinel'), 'an informational notice is not a human gate: ' + noticeKeys);
+assert.deepStrictEqual(noticeKeys, ['decision'], 'the reviewer question stays the only gate on the row');
+assert.ok(stageTrackerRowHtml(notice, stages, ctx).includes('data-ham-gate-reasons="decision"'), 'the gate pill names the reviewer question, not the notice');
+assert.ok(!stageTrackerRowHtml(notice, stages, ctx).includes('gate:confirm-sentinel'), 'nothing to confirm on an informational notice');
 assert.ok(stageTrackerSentinelTip(notice).includes('Informational security notice (not a merge gate)'));
 assert.ok(!stageTrackerSentinelTip({...notice, sentinel_reason:''}).includes('must review before merge'));
 const own = stageTrackerRowHtml(notice, stages, ctx);

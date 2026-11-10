@@ -89,10 +89,11 @@ func TestRepoItemSentinelConfirmAuthorizationCommentAndLabel(t *testing.T) {
 
 	// The label already gone: the confirmation is still commented so the
 	// record names the person; nothing is removed; the owner role passes
-	// without a permission lookup.
+	// without a permission lookup (a user session is still required so the
+	// comment can name who confirmed).
 	mock.comments, mock.removed = nil, nil
 	mock.issueLabels = []string{"lgtm"}
-	w = postSentinelConfirm(t, srv, "", `{}`, true)
+	w = postSentinelConfirm(t, srv, "owner-ada", `{}`, true)
 	if w.Code != http.StatusOK {
 		t.Fatalf("owner, already clear: code=%d body=%s", w.Code, w.Body.String())
 	}

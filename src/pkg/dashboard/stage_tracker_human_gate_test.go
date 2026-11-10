@@ -106,7 +106,7 @@ const seen = new Date(now - 60000).toISOString();
 const visible = (html) => strip(html).split('<p class="ham-current-stage">')[0].replace(/<span [^>]*class="config-tooltip[^"]*"[^>]*>[\s\S]*?<\/span>/g, '').replace(/<[^>]*>/g, ' ');
 const gates = (html) => (html.match(/class="ham-human-gate"/g) || []).length;
 const reasons = (html) => (/data-ham-gate-reasons="([^"]*)"/.exec(html) || [])[1] || '';
-const verbs = (html) => Array.from(html.matchAll(/data-ham-act="([^"]*)"[^>]*>([^<]*)<\/button>/g)).map(m => m[2]);
+const verbs = (html) => Array.from(html.matchAll(/data-ham-act="([^"]*)"[^>]*>([^<]*)<\/button>/g)).map(m => m[2]).filter((v, i, a) => a.indexOf(v) === i);
 const gateWord = (html) => (/<span class="ham-gate-status[^"]*"[^>]*>[\s\S]*?<span class="ham-mod-word">([^<]*)<\/span>/.exec(html) || [])[1] || '';
 const gateTip = (html) => (/<span class="ham-gate-status[^"]*" title="([^"]*)"/.exec(html) || [])[1] || '';
 
@@ -130,7 +130,8 @@ assert.strictEqual(reasons(row), 'review sentinel', 'review verdict + sentinel a
 assert.strictEqual(gateWord(row), 'Needs human · review, sentinel');
 assert.ok(gateTip(row).includes(question.replace(/\?/g, '?')) && gateTip(row).includes('touches .github/workflows'), 'the status hover is the question and the rule: ' + gateTip(row));
 assert.deepStrictEqual(verbs(row), ['Approve', 'Request changes…', 'Let hive decide', 'Confirm safe'], 'union of the review and sentinel verb sets, de-duplicated');
-assert.ok(row.includes('data-ham-gate-more') && /<div class="ham-menu ham-gate-menu"[^>]*>[\s\S]*?Confirm safe/.test(row), 'the fourth verb folds into the … menu: ' + row);
+assert.ok(row.includes('data-ham-gate-overflow="1"') && /<div class="ham-menu ham-gate-menu"[^>]*>[\s\S]*?Confirm safe/.test(row), 'the fourth verb folds into the … menu: ' + row);
+assert.ok(!/data-ham-gate-inline[^>]*>Confirm safe/.test(row) && /data-ham-gate-inline[^>]*>Let hive decide/.test(row), 'menu copies of inline verbs are marked for the phone tier');
 assert.ok(!row.includes('ham-badge-sentinel') && !row.includes('ham-mod-needs-decision') && !row.includes('ham-lead-pill'), 'no sentinel chip, needs-decision pill or loose lead buttons beside the gate: ' + row);
 assert.ok(row.includes('<p class="ham-current-stage">') && row.includes('Needs human decision'), 'the expander line still names the decision');
 
@@ -169,7 +170,8 @@ assert.strictEqual(gates(row), 1, row);
 assert.strictEqual(reasons(row), 'decision');
 assert.deepStrictEqual(verbs(row), ['Decide…', 'Approve as-is', 'Let hive decide']);
 assert.ok(gateTip(row).includes('Two fixes are possible'), gateTip(row));
-assert.ok(!row.includes('data-ham-gate-more'), 'three verbs need no overflow');
+assert.ok(row.includes('data-ham-gate-overflow="0"'), 'three verbs need no overflow on the strip tier (the … is the phone tier\'s fold)');
+assert.strictEqual((row.match(/ham-gate-act-rest/g) || []).length, 2, 'the verbs after the first fold on the phone tier');
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured ham-human-gated', 'todo cap'], strip(row));
 assert.ok(row.includes('<span class="ham-detour">Merge queue</span>'), 'the chevron reads its column: ' + strip(row));
 

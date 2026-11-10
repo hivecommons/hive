@@ -126,13 +126,13 @@ func (s *Server) handleRepoItemSentinelConfirm(w http.ResponseWriter, r *http.Re
 	on := sentinelLabelsOn(labels, sentinel)
 	// The comment first: should the label removal fail, GitHub still
 	// carries who confirmed and why, and the retry is idempotent.
-	if err := s.deps.GHClient.CreateIssueComment(ctx, repoFull, number, sentinelConfirmComment(user, comment)); err != nil {
+	if err := s.deps.GHClient.CreateIssueComment(ctx, repoFull, number, sentinelConfirmComment(user, comment)); err != nil { // writeback:solicited operator pressed Confirm safe on this row
 		s.repoHoldGitHubError(w, "post confirmation comment", repoFull, number, sentinel, err)
 		return
 	}
 	removed := []string{}
 	for _, label := range on {
-		if err := s.deps.GHClient.RemoveLabel(ctx, repoFull, number, label); err != nil {
+		if err := s.deps.GHClient.RemoveLabel(ctx, repoFull, number, label); err != nil { // writeback:solicited operator pressed Confirm safe on this row
 			s.repoHoldGitHubError(w, "remove sentinel label", repoFull, number, label, err)
 			return
 		}
