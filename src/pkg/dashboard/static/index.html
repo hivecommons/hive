@@ -1480,6 +1480,12 @@
     .ham-head-cols .ham-seg.ham-head-tools { align-items: flex-start; }
     .ham-head-cols .ham-seg.ham-head-tools:has(> .ham-badges:empty) { display: none; }
     .ham-head-cols .ham-badges > :is(button, a) { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    /* The short needs-human popover pill stays one line: breaking "needs
+       human decision" mid-pill grows a nested-PR row by a text line and a
+       landscape phone loses its second row (hivecommons/hive#17453). */
+    .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-needs-decision { white-space: nowrap; }
+    .ham-badge-mod.ham-mod-ask { position: relative; }
+    .ham-badge-mod .ham-mod-ico { vertical-align: text-bottom; margin-right: var(--sp-1); }
     .ham-head-cols .ham-badge { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
     .ham-head-main { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: var(--sp-3); min-width: 0; }
     .ham-head-main > .ham-badge { flex: 0 1 auto; }
@@ -1813,6 +1819,10 @@
        the Merge queue cell wears the pill amber — held, not queued, not red. */
     .ham-seg.active.ham-held { background: var(--amber); color: var(--surface-0); }
     .ham-seg.active.ham-held .ham-detour::before { content: '⏸'; margin-right: var(--sp-1); }
+    /* A 085 PR a person acts on lights its real stage — the CI / Review
+       track — and that track wears an amber marker; the gate itself is the
+       needs-human pill beside the row (hivecommons/hive#17453). */
+    .ham-seg.ham-activity-track.active.ham-human-gated { outline: var(--focus-ring-width) solid var(--amber); outline-offset: calc(-1 * var(--focus-ring-width)); }
     .ham-seg.active.ham-open-hold .ham-seg-t::before { content: '⏸'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-blocked { background: var(--yellow); color: var(--surface-0); }
     .ham-seg.active.ham-open-blocked .ham-seg-t::before { content: '⛔'; margin-right: var(--sp-1); }
@@ -2336,6 +2346,9 @@
       .ham-head-cols .ham-strip > .ham-seg { grid-column: 1 / -1; grid-row: auto; padding: 0; }
       .ham-head-cols .ham-head-lead:empty { display: none; }
       .ham-head-cols > .ham-since { display: none; }
+      /* Stacked head: the ask pill is its person icon alone (#17453). */
+      .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-ask > .ham-mod-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      .ham-head-cols .ham-badges > .ham-badge-mod.ham-mod-ask > .ham-mod-ico { margin-right: 0; }
       .ham-row .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-row .ham-seg.cap { flex-basis: 2em; }
       .ham-since { width: 3em; }
@@ -2564,6 +2577,11 @@
         box-sizing: border-box; min-height: var(--tap-target); min-width: var(--tap-target);
       }
       #activity-monitor-section .ham-notes-btn { font-size: var(--tap-glyph); padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
+      /* A needs-human / hold pill that opens the decision popover keeps its
+         one-line box so a card row stays under the #17161 height budget; the
+         hit area is padded out to the tap target like .ham-pill (#17453). */
+      #activity-monitor-section .ham-badge-mod.ham-decision-trigger { position: relative; }
+      #activity-monitor-section .ham-badge-mod.ham-decision-trigger::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) calc((100% - var(--tap-target)) / 2); }
       /* A card keeps its two-line head and its density (#17161): the 🗒
          shows on a phone only once the item has notes; the row's ⋯ menu
          carries "Maintainer notes…" for the rest. */
@@ -15791,14 +15809,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // A PR parked at 085 because a person has to act ON THE PR (rerun CI,
     // approve workflow runs, resolve a permission, answer review findings
-    // or red checks still open on its head) is not queued, merging or
-    // merge-ready: it lights PR in progress, never Merge queue. Merge
-    // queue is only for rows actually queued / merging / merged, or a
-    // merge-ready PR (review approved, CI green on this head) parked on a
-    // merge decision. A bare 085 with no track evidence keeps the gate:
-    // the person decides there (hive#14821). Hive's own #16524 read
-    // "Awaiting human: rerun shared ci" under Merge queue with CI unknown
-    // and review findings open. Mirrors stageTrackerPersonActsOnPR in Go.
+    // or red / running checks still open on its head) is not queued,
+    // merging or merge-ready: it lights its REAL stage, CI / Review — the
+    // CI track while checks run or are red / unknown, the Review track
+    // while the verdict is pending — never Merge queue and never PR in
+    // progress; the gate is the needs-human pill (hivecommons/hive#17327,
+    // #17453). Merge queue is only for rows actually queued / merging /
+    // merged, or a merge-ready PR (review approved, CI green on this head)
+    // parked on a merge decision. A bare 085 with no track evidence keeps
+    // the gate: the person decides there (hive#14821). Hive's own #16524
+    // read "Awaiting human: rerun shared ci" under Merge queue with CI
+    // unknown and review findings open; #17442 read "Needs human ·
+    // decision" under PR in progress while CI ran. Mirrors
+    // stageTrackerPersonActsOnPR in Go.
     function stageTrackerPersonActsOnPR(item) {
       if (!item || (item.via_pr ? 'pr' : item.kind) !== 'pr' || Number(item.stage) !== STAGE_TRACKER_HUMAN_GATED) return false;
       if (item.merge_gate && item.merge_gate.state) return false;
@@ -18010,9 +18033,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // next to its 2nd-place sibling in Merge queue (hivecommons/hive#15395).
       if (item && item.merge_train && item.merge_train.state && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
       // A person owes a step on the PR itself (085 under hive:unauthorized,
-      // not merge-ready): PR in progress, with the merge-queue chevron
-      // empty (hivecommons/hive#16524).
-      if (kind === 'pr' && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) return STAGE_TRACKER_PR_COLUMN;
+      // a reviewer's question, CI running or red on the head — not
+      // merge-ready): the row lights its REAL stage, CI / Review, with the
+      // merge-queue chevron empty and PR in progress passed; the human gate
+      // rides as the needs-human pill, never as a chevron of its own
+      // (hivecommons/hive#16524, #17327, #17453).
+      if (kind === 'pr' && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) return 50;
       if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS || cur === STAGE_TRACKER_OPEN_FOR_DISCUSSION) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
@@ -18641,6 +18667,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerStalledTrack(item) {
       const on = kind => { const a = item && item[kind + '_activity']; return a && item.head && a.head === item.head ? a.state || 'unknown' : 'unknown'; };
       if (typeof stageTrackerStageTrack === 'function' && stageTrackerStageTrack(item)) return '';
+      // A 085 PR a person acts on whose review already asked for that
+      // person (human_decision) is at Review: the ask came from the
+      // review, whatever CI has or has not reported (hivecommons/hive#17453).
+      if (on('review') === 'human_decision' && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) return 'review';
       if (on('ci') !== 'passing') return 'ci';
       return 'review';
     }
@@ -18692,7 +18722,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerTrackRunning(item, kind) {
       const a = item && item[kind + '_activity'];
       if (!a || !item.head || a.head !== item.head) return false;
-      if (stageTrackerWaitingOnPerson(item)) return false;
+      // A 085 PR a person acts on (stageTrackerPersonActsOnPR) is parked,
+      // but checks genuinely running on its head are still motion: the CI
+      // track is its real stage and lights (hivecommons/hive#17453).
+      // Inferred motion (the ring count below) stays off for it.
+      const personActs = typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item);
+      if (stageTrackerWaitingOnPerson(item) && !personActs) return false;
       const moving = kind === 'ci' ? ['running', 'queued'] : ['reviewing', 'adjudicating', 'assigned'];
       if (a.active || moving.includes(a.state)) return true;
       // A CI ring that is not full is a running ring: checks counted on
@@ -18810,7 +18845,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const queuedNote = queued && typeof stageTrackerQueuedTrackNote === 'function' ? stageTrackerQueuedTrackNote(item, kind) : '';
       // A demoted track is still: no pulse beside the lead.
       if (queued) active = false;
-      const cls = lit ? 'active' + (stalled ? ' ham-stalled' : '') : (finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : 'todo') + (queued ? ' ham-track-queued' : '');
+      // The lit track of a 085 PR a person acts on wears an amber marker
+      // (ham-human-gated): the chevron is the real stage, the gate is the
+      // needs-human pill beside it (hivecommons/hive#17453).
+      const humanGated = lit && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item);
+      const cls = lit ? 'active' + (stalled ? ' ham-stalled' : '') + (humanGated ? ' ham-human-gated' : '') : (finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : 'todo') + (queued ? ' ham-track-queued' : '');
       const approvalPending = kind === 'ci' && matches ? stageTrackerWorkflowApprovalPending(a) : 0;
       const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' ? 'Needs a person\'s decision' : '';
       const personIco = stalled && humanAction ? stageTrackerIcon('human', 'ham-ico ham-actor-ico', humanAction) : '';
@@ -18868,6 +18907,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         (matches && a.actor ? ' · actor ' + a.actor : '') +
         (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
         (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '') +
+        (humanGated && item.decision_needed && item.decision_needed.question && !String(tip).includes(String(item.decision_needed.question)) ? ' · needs a person: ' + String(item.decision_needed.question) : '') +
         (waitLead ? ' · hive is waiting on ' + waitLead.waitingOn + (waitLead.newHead && sha7 ? ' for new head ' + sha7 : '') : '') +
         (queuedNote ? ' · ' + queuedNote + ' behind ' + (lead === 'ci' ? 'CI' : 'Review') : '');
       const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
@@ -19382,6 +19422,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
+      // A 085 PR a person acts on lights its real stage (CI / Review), so
+      // the chevron no longer says "Needs human decision": the ask rides
+      // here as the needs-decision pill (hivecommons/hive#17453). The server
+      // re-adds the modifier (stageTrackerApplyPersonActsOnPRPill); this
+      // covers a payload that predates it. Any pill that already names the
+      // person owed (unauthorized, hold …) stands in for it.
+      if (item.kind === 'pr' && !mods.some(m => STAGE_TRACKER_HUMAN_MODS.indexOf(m) >= 0) && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) {
+        mods.push('needs-decision');
+        mods.sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
+      }
       if (!mods.length) return sentinel;
       // A regression the hive is working through yields the lead pill to any
       // other modifier and, alone, draws muted as "stage reset" rather than red.
@@ -19434,7 +19484,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // of a native tooltip.
       // A hive-set hold is a decision too (release or keep): its pill opens the same popover.
       const decision = (mods[0] === 'needs-human' || mods[0] === 'needs-decision' || decisionPR || (holdPill && item.hold && item.hold.by === 'hive')) && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
-      if (decision) return sentinel + stageTrackerDecisionTriggerHtml(decision, inner, tip, 'ham-badge ham-badge-mod ' + cls);
+      // The ask pill wears the person icon; in the stacked head layout the
+      // words fold into the icon so a nested PR's title keeps its line and
+      // the popover / hover still carry the question (hivecommons/hive#17453).
+      const askIco = askable && typeof stageTrackerIcon === 'function' ? stageTrackerIcon('human', 'ham-ico ham-mod-ico') : '';
+      if (decision) return sentinel + stageTrackerDecisionTriggerHtml(decision, askIco ? askIco + `<span class="ham-mod-word">${inner}</span>` : inner, tip, 'ham-badge ham-badge-mod ' + cls + (askIco ? ' ham-mod-ask' : ''));
       // No popover to open (the ask is the issue's own while a covering
       // PR drives the strip): the pill is a button that reveals the row's
       // "Needs human: …" note line and carries the full reason as its hover.

@@ -155,7 +155,7 @@ func TestStageTrackerDecisionPopoverTriggersInRow(t *testing.T) {
 		`typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null`,
 		`stageTrackerDecisionTriggerHtml(decision, caption, fullTip)`,
 		`if (typeof hideConfigTooltip === 'function') hideConfigTooltip();`,
-		`stageTrackerDecisionTriggerHtml(decision, inner, tip, 'ham-badge ham-badge-mod ' + cls)`,
+		`stageTrackerDecisionTriggerHtml(decision, askIco ? askIco + ` + "`<span class=\"ham-mod-word\">${inner}</span>`" + ` : inner, tip, 'ham-badge ham-badge-mod ' + cls + (askIco ? ' ham-mod-ask' : ''))`,
 		`${decision ? '' : ` + "` title=\"${esc(tip)}\"`" + `}`,
 		`if (typeof stageTrackerWireDecisionPop === 'function') stageTrackerWireDecisionPop(el);`,
 		`decision_needed: lp.decision_needed || null`,

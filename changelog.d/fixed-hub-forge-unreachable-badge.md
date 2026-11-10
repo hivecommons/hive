@@ -1,1 +1,0 @@
-- hub: hives whose spoke reports `forge_unreachable` are labelled "forge unreachable (github_host)" instead of generic stale badges, and the condition no longer counts against their health or advisory status
