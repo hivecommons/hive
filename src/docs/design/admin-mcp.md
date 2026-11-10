@@ -537,7 +537,7 @@ start-up script, its process launch, PIDs, signal handling and exit codes are un
 | plan propose | `POST /api/plan/from-issue` | **deliberately not owner** — ioscan + ACMM L5 floor |
 | plan approve / reject | `POST /api/plan/{epicID}/approve`, `.../reject` | `requireOwnerRole` |
 | feature settings | `PUT /api/config/governor/features` | `requireOwnerRole`; pointer fields, nil means unchanged |
-| merge settings | `PATCH /api/config/auto-merge` | `requireOwnerRole` on the read and the write; every list and map is a full replace |
+| merge settings | `PATCH /api/config/auto-merge` | `requireOwnerRole` on the read and the write; every list and map is a full replace, except `contributor_lane.workflow_fence_scope_repos`, which is per repository (`null` clears) |
 | Let hive decide settings | `PUT /api/config/decisions/delegate` | `requireOwnerRole` on the read and the write; `repos` is a full replace, the op sends the merged map |
 | repository pause / resume | `POST /api/repos/pause`, `/api/repos/resume` | `requireRepoPausePermission` → `canToggleRepoHold` |
 | item hold | `POST /api/repos/{owner}/{repo}/items/{number}/hold` | `canToggleRepoHold` |
@@ -634,7 +634,10 @@ Phase 5 registers the fleet-level write operations under that contract:
   it read, so a change made between preview and confirm refuses the confirm
   (`ErrConfirmationStale`) instead of being overwritten. A change that admits more issues without triage, or
   that makes Sentinel flag fewer pull requests, is disclosed as widening, and the Sentinel
-  disclosure names the pull requests that would no longer be held.
+  disclosure names the pull requests that would no longer be held. `sentinel.settings` also
+  takes `repo_sensitive_paths`, one repository's own list, which the endpoint takes per
+  repository (`sentinel.repoSensitivePaths`, `null` clears), so the op sends only the
+  repositories that change.
 - `auto_merge.update` wraps `PATCH /api/config/auto-merge`, the endpoint behind the dashboard's
   merge settings. That endpoint replaces every list and map it is sent whole (`squash_only`,
   `require_current_base`, `human_merge_paths`, the native merge queue's repos and bases, the

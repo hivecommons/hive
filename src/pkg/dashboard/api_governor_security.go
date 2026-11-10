@@ -3,6 +3,7 @@ package dashboard
 import (
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -72,6 +73,13 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 			TrustedAuthorsBlock *bool     `json:"trustedAuthorsBlock"`
 			Repos               *[]string `json:"repos"`
 			MaxActions          *int      `json:"maxActions"`
+			// RepoSensitivePaths sets or clears single repositories'
+			// project.repo_policies[].sentinel_sensitive_paths: a list
+			// replaces that repository's own list ([] flags nothing by
+			// path there), null clears it so the repository reads
+			// sensitivePaths again. Repositories it does not name keep their
+			// list; the hive-wide list is never changed here.
+			RepoSensitivePaths map[string]*[]string `json:"repoSensitivePaths"`
 		} `json:"sentinel"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -79,6 +87,7 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var nextSentinel *config.SentinelConfig
+	var repoSensitivePaths map[string]*[]string
 	if body.Sentinel != nil {
 		sc := s.deps.Config.Sentinel
 		if body.Sentinel.Enabled != nil {
@@ -121,6 +130,14 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		nextSentinel = &sc
+		if body.Sentinel.RepoSensitivePaths != nil {
+			paths, msg := s.repoOverrideSensitivePaths(body.Sentinel.RepoSensitivePaths)
+			if msg != "" {
+				jsonError(w, msg, http.StatusBadRequest)
+				return
+			}
+			repoSensitivePaths = paths
+		}
 	}
 	if body.IoscanFailMode != nil && !validIoscanFailMode(*body.IoscanFailMode) {
 		jsonError(w, "ioscan fail_mode must be open or closed", http.StatusBadRequest)
@@ -163,6 +180,18 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	}
 
 	cfg := s.deps.Config
+	// Per-repository Sentinel lists go first: they are the only write here
+	// that can still be refused, and a refusal must leave every setting as
+	// it was.
+	var repoSensitivePathChanges []string
+	if repoSensitivePaths != nil {
+		changes, err := cfg.SetRepoSentinelSensitivePaths(repoSensitivePaths)
+		if err != nil {
+			jsonError(w, "sentinel.repoSensitivePaths: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		repoSensitivePathChanges = changes
+	}
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -308,9 +337,48 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	if ioscanChanged && s.deps.IoscanConfigApplied != nil {
 		s.deps.IoscanConfigApplied()
 	}
-	s.auditFromRequest(r, "config_governor_security", auditDetail("section", "security"), "")
+	auditKV := []string{"section", "security"}
+	if len(repoSensitivePathChanges) > 0 {
+		auditKV = append(auditKV, "sentinel_repo_sensitive_paths", strings.Join(repoSensitivePathChanges, "; "))
+	}
+	s.auditFromRequest(r, "config_governor_security", auditDetail(auditKV...), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
+}
+
+// repoOverrideSensitivePaths validates sentinel.repoSensitivePaths: every key
+// a repository in project.repos (stored as owner/repo, named once), every
+// value null (clear) or a list of non-blank, well-formed globs. A non-empty
+// msg is the 400 to return.
+func (s *Server) repoOverrideSensitivePaths(in map[string]*[]string) (map[string]*[]string, string) {
+	const key = "sentinel.repoSensitivePaths"
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make(map[string]*[]string, len(in))
+	seen := map[string]bool{}
+	for _, k := range keys {
+		full, msg := s.autoMergeWatchedRepo(key, strings.TrimSpace(k))
+		if msg != "" {
+			return nil, msg
+		}
+		if seen[strings.ToLower(full)] {
+			return nil, key + ": " + full + " is named twice"
+		}
+		seen[strings.ToLower(full)] = true
+		v := in[k]
+		if v != nil {
+			paths, err := config.NormalizeRepoSentinelSensitivePaths(key+": "+full, *v)
+			if err != nil {
+				return nil, err.Error()
+			}
+			v = &paths
+		}
+		out[full] = v
+	}
+	return out, ""
 }
 
 // validIoscanFailMode accepts open, closed, or empty (follow the default).
@@ -463,6 +531,10 @@ func sentinelSectionResponse(sc config.SentinelConfig, overrides []config.RepoSe
 		"trustedAuthorsBlock":   sc.TrustedAuthorsBlock,
 		"repos":                 nonNilStrings(sc.Repos),
 		"maxActions":            sc.MaxActionsOrDefault(),
+
+		// This build takes sentinel.repoSensitivePaths on PUT; the admin MCP
+		// refuses to send it to a hive that does not say so.
+		"repoSensitivePathsSettable": true,
 	}
 }
 

@@ -1127,8 +1127,19 @@ A PR merges through this tier only when all of the following hold:
   repository that has its own. A repository with `human_merge_paths` scope
   but no `human_merge_paths` entry still keeps the full fence. An invalid
   value stops the config from loading, and the running hive ignores one
-  that gets through and uses the hive-wide value. The overrides are set in
-  hive.yaml; Settings and `settings_read` list them.
+  that gets through and uses the hive-wide value.
+
+  An owner can set, change and clear either override without editing
+  hive.yaml. In Settings, use **Workflow fence scope per repository**
+  (Features → Auto Merge) and **Sensitive files per repository**
+  (Security → Suspicious Activity); choosing the hive-wide value clears the
+  override. The same writes go through `PUT /api/config/auto-merge`
+  (`contributor_lane.workflow_fence_scope_repos`) and
+  `PUT /api/config/governor/security` (`sentinel.repoSensitivePaths`), or
+  the admin MCP `auto_merge.update` and `sentinel.settings` operations,
+  whose previews name what each change loosens in each repository. Each
+  write changes only the repositories it names, never the hive-wide value,
+  and is recorded in the audit log. `settings_read` lists the overrides.
 
   ```yaml
   project:

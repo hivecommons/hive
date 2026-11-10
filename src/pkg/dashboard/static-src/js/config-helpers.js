@@ -159,6 +159,24 @@
       markSentinelDirty('sensitivePaths', []);
       renderConfigTab('Security');
     }
+    /* Security → Sentinel → Sensitive files per repository. Stages one
+       repository's project.repo_policies[].sentinel_sensitive_paths under
+       sentinel.repoSensitivePaths: hive-wide sends null (clears it), "flag
+       no paths" sends [], own list sends the box's globs. It does not touch
+       sentinelState(), whose repoSensitivePaths is the saved list. */
+    function markSentinelRepoPathsRow(el) {
+      const row = el && el.closest ? el.closest('.sn-repo-paths-row') : null;
+      if (!row || !row.dataset.repo) return;
+      const mode = row.querySelector('.sn-repo-paths-mode');
+      const list = row.querySelector('.sn-repo-paths-list');
+      const m = mode ? mode.value : 'hive';
+      if (list) list.disabled = m !== 'own';
+      const lines = list ? String(list.value || '').split('\n').map(l => l.trim()).filter(Boolean) : [];
+      if (!_configState.dirty.security) _configState.dirty.security = {};
+      const bag = _configState.dirty.security.sentinel || {};
+      bag.repoSensitivePaths = Object.assign({}, bag.repoSensitivePaths || {}, { [row.dataset.repo]: m === 'hive' ? null : (m === 'none' ? [] : lines) });
+      _configState.dirty.security.sentinel = bag;
+    }
     function markSentinelPathsFromText(text) {
       const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
       /* An emptied box restores defaults rather than disabling the rule. */
@@ -464,7 +482,8 @@
       const scope = document.getElementById('am-contributor-lane-auto-promotion-scope');
       const fenceScope = document.getElementById('am-contributor-lane-workflow-fence-scope');
       const soakMinutes = soak ? parseInt(soak.value, 10) : 30;
-      markDirty('auto-merge', 'contributor_lane', {
+      const staged = ((_configState.dirty || {})['auto-merge'] || {}).contributor_lane || {};
+      markDirty('auto-merge', 'contributor_lane', Object.assign({
         enabled: !!(enabled && enabled.classList.contains('on')),
         soak_minutes: Number.isFinite(soakMinutes) && soakMinutes >= 0 ? soakMinutes : 30,
         require_reviewer_verdict: !!(verdict && verdict.classList.contains('on')),
@@ -476,7 +495,17 @@
         exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
         repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : [],
         require_tiers: tiers ? tiers.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : []
-      });
+      }, staged.workflow_fence_scope_repos ? { workflow_fence_scope_repos: staged.workflow_fence_scope_repos } : {}));
+    }
+
+    // Settings → Features → Auto-merge → Workflow fence scope per repository.
+    // Stages one repository's project.repo_policies[].workflow_fence_scope
+    // inside contributor_lane: a scope sets it, '' (hive-wide) sends null,
+    // which clears it. Only repositories changed here are sent.
+    function markDirtyFenceScopeRepo(repo, value) {
+      const staged = ((_configState.dirty || {})['auto-merge'] || {}).contributor_lane || {};
+      const repos = Object.assign({}, staged.workflow_fence_scope_repos || {}, { [repo]: value ? value : null });
+      markDirty('auto-merge', 'contributor_lane', Object.assign({}, staged, { workflow_fence_scope_repos: repos }));
     }
 
     function markDirtyPerspectives() {

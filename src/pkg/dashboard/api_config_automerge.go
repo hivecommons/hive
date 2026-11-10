@@ -196,6 +196,12 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			ApproveHeldRunsForRegistryTrusted  *bool    `json:"approve_held_runs_for_registry_trusted"`
 			OwnerApprovalReleasesWorkflowFence *bool    `json:"owner_approval_releases_workflow_fence"`
 			WorkflowFenceScope                 *string  `json:"workflow_fence_scope"`
+			// WorkflowFenceScopeRepos sets or clears single repositories'
+			// project.repo_policies[].workflow_fence_scope: "all" or
+			// "human_merge_paths" sets it, null clears it so the repository
+			// reads workflow_fence_scope again. Repositories it does not name
+			// keep their override; the hive-wide value is never changed here.
+			WorkflowFenceScopeRepos map[string]*string `json:"workflow_fence_scope_repos"`
 		} `json:"contributor_lane"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -295,6 +301,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	var contributorLaneTiers []string
 	var contributorLaneScope string
 	var contributorLaneWorkflowFenceScope string
+	var fenceScopeRepos map[string]*string
 	if body.ContributorLane != nil {
 		if body.ContributorLane.SoakMinutes != nil && *body.ContributorLane.SoakMinutes < 0 {
 			jsonError(w, "contributor_lane.soak_minutes must be 0 (default 30) or greater", http.StatusBadRequest)
@@ -339,11 +346,32 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			}
 			contributorLaneWorkflowFenceScope = scope.EffectiveWorkflowFenceScope()
 		}
+		if body.ContributorLane.WorkflowFenceScopeRepos != nil {
+			repos, msg := s.repoOverrideFenceScopeRepos(body.ContributorLane.WorkflowFenceScopeRepos)
+			if msg != "" {
+				jsonError(w, msg, http.StatusBadRequest)
+				return
+			}
+			fenceScopeRepos = repos
+		}
 	}
 
 	// --- apply ---
 	cfg := s.deps.Config
 	previousAutoMerge := cfg.AutoMerge
+	// Per-repository fence scopes go first: they are the only write here that
+	// can still be refused, and a refusal must leave every setting untouched.
+	var fenceScopeChanges []string
+	var previousRepoPolicies []config.RepoPolicy
+	if fenceScopeRepos != nil {
+		previousRepoPolicies = append([]config.RepoPolicy(nil), cfg.Project.RepoPolicies...)
+		changes, err := cfg.SetRepoWorkflowFenceScopes(fenceScopeRepos)
+		if err != nil {
+			jsonError(w, "contributor_lane.workflow_fence_scope_repos: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		fenceScopeChanges = changes
+	}
 	if body.MergeTrain != nil {
 		if body.MergeTrain.Enabled != nil {
 			v := *body.MergeTrain.Enabled
@@ -469,15 +497,24 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("failed to persist config after auto-merge update", "error", err)
 		// A pin-only exception lets PRs past a human-merge hold, so one that
 		// cannot be saved is not left running until the next restart drops it.
-		if body.NativeMergeQueue != nil || body.MergeTrain != nil || body.HumanMergePinOnly != nil {
+		// A per-repository fence scope can let workflow edits past the fence,
+		// so it is rolled back the same way.
+		if body.NativeMergeQueue != nil || body.MergeTrain != nil || body.HumanMergePinOnly != nil || len(fenceScopeChanges) > 0 {
 			cfg.AutoMerge = previousAutoMerge
+			if len(fenceScopeChanges) > 0 {
+				cfg.Project.RepoPolicies = previousRepoPolicies
+			}
 			syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
 			jsonError(w, "failed to persist auto-merge settings", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	s.auditFromRequest(r, "config_auto_merge", auditDetail("section", "auto_merge"), "")
+	auditKV := []string{"section", "auto_merge"}
+	if len(fenceScopeChanges) > 0 {
+		auditKV = append(auditKV, "workflow_fence_scope_repos", strings.Join(fenceScopeChanges, "; "))
+	}
+	s.auditFromRequest(r, "config_auto_merge", auditDetail(auditKV...), "")
 	s.refreshAndPersist()
 	jsonResponse(w, s.autoMergeSectionResponseWithBots(cfg))
 }
@@ -612,6 +649,10 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 			"workflow_fence_scope":                   cl.EffectiveWorkflowFenceScope(),
 			"workflow_fence_scopes":                  config.ContributorLaneWorkflowFenceScopes,
 			"workflow_fence_scope_repos":             contributorLaneFenceScopeRepos,
+
+			// This build takes workflow_fence_scope_repos on PUT/PATCH; the
+			// admin MCP refuses to send it to a hive that does not say so.
+			"workflow_fence_scope_repos_settable": true,
 		},
 	}
 }
@@ -755,6 +796,42 @@ func (s *Server) autoMergeWatchedRepo(key, repo string) (full, msg string) {
 		return "", key + ": " + repo + " is not in project.repos"
 	}
 	return full, ""
+}
+
+// repoOverrideFenceScopeRepos validates
+// contributor_lane.workflow_fence_scope_repos: every key a repository in
+// project.repos (stored as owner/repo, named once), every value "all",
+// "human_merge_paths" (any case, the rule hive.yaml loads under) or null to
+// clear. A non-empty msg is the 400 to return.
+func (s *Server) repoOverrideFenceScopeRepos(in map[string]*string) (map[string]*string, string) {
+	const key = "contributor_lane.workflow_fence_scope_repos"
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make(map[string]*string, len(in))
+	seen := map[string]bool{}
+	for _, k := range keys {
+		full, msg := s.autoMergeWatchedRepo(key, strings.TrimSpace(k))
+		if msg != "" {
+			return nil, msg
+		}
+		if seen[strings.ToLower(full)] {
+			return nil, key + ": " + full + " is named twice"
+		}
+		seen[strings.ToLower(full)] = true
+		v := in[k]
+		if v != nil {
+			if strings.TrimSpace(*v) == "" || config.ValidateRepoWorkflowFenceScope(key+": "+full, *v) != nil {
+				return nil, key + ": " + full + " must be one of " + strings.Join(config.ContributorLaneWorkflowFenceScopes, ", ") + ", or null to use the hive-wide workflow_fence_scope"
+			}
+			scope := strings.ToLower(strings.TrimSpace(*v))
+			v = &scope
+		}
+		out[full] = v
+	}
+	return out, ""
 }
 
 // autoMergeHumanMergePaths validates auto_merge.human_merge_paths sent by the
