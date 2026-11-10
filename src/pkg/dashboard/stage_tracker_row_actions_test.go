@@ -2076,3 +2076,49 @@ _stageTracker = { items: [t1, plain, t2, pr] };
 })().catch(e => { console.error(e); process.exit(1); });
 `)
 }
+
+// TestStageTrackerReleaseHoldTargetsCoveringPR: an issue row drawn through
+// its one covering PR shows the PR's hold (and sentinel) on its gate pill,
+// so Release hold and Confirm safe post to the PR, not to the issue
+// (hivecommons/hive#17564 — the release ran on the issue, removed nothing
+// and the PR stayed held). An issue that carries the hold itself, or one
+// with several covering PRs, keeps acting on the issue.
+func TestStageTrackerReleaseHoldTargetsCoveringPR(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+`
+const pr = { number: 17561, url: 'https://github.com/o/r/pull/17561', stage: 90, modifiers: ['hold'], hold: { by: 'hive' }, sentinel_alert: true };
+const issue = { repo: 'o/r', kind: 'issue', number: 17558, url: 'u17558', stage: 50, modifiers: [], linked_prs: [pr] };
+const ownHold = Object.assign({}, issue, { number: 17600, modifiers: ['hold'] });
+const twoPRs = Object.assign({}, issue, { number: 17601, linked_prs: [pr, { number: 17562, stage: 40, modifiers: ['hold'] }] });
+const calls = [];
+global.fetch = async (url, init) => { calls.push({ url, body: JSON.parse(init.body) }); return { ok: true, status: 200, json: async () => ({ ok: true, result: { action: 'released', target: { repo: 'o/r', kind: 'pr', number: 17561 }, outcome: 'Hold released.' } }) }; };
+global.showToast = () => null; global.dismissToast = () => {};
+function stageTrackerProgressToast() { return { update() {}, done() {} }; }
+function stageTrackerAfterActions() {}
+function stageTrackerNoteOwnerEvent() {}
+async function stageTrackerActionPayload() { return {}; }
+_stageTracker = { items: [issue, ownHold, twoPRs] };
+(async () => {
+  await runRowAction('release', issue);
+  assert.deepStrictEqual(calls.map(c => c.url), ['/api/repos/o/r/items/17561/hold'], 'Release hold on the issue row posts to the covering PR');
+  assert.deepStrictEqual(calls[0].body, { held: false, type: 'pr' });
+
+  calls.length = 0;
+  await runRowAction('gate:confirm-sentinel', issue);
+  assert.deepStrictEqual(calls.map(c => c.url), ['/api/repos/o/r/items/17561/sentinel-confirm'], 'Confirm safe on the issue row posts to the covering PR');
+  assert.strictEqual(calls[0].body.type, 'pr');
+
+  calls.length = 0;
+  await runRowAction('release', [issue, Object.assign({ repo: 'o/r', kind: 'pr' }, pr)]);
+  assert.deepStrictEqual(calls.map(c => c.url), ['/api/repos/o/r/items/17561/hold'], 'the PR is released once when its row is selected too');
+
+  calls.length = 0;
+  await runRowAction('release', ownHold);
+  assert.deepStrictEqual(calls.map(c => c.url), ['/api/repos/o/r/items/17600/hold'], 'an issue that is held itself releases its own hold');
+
+  calls.length = 0;
+  await runRowAction('release', twoPRs);
+  assert.deepStrictEqual(calls.map(c => c.url), ['/api/repos/o/r/items/17601/hold'], 'several covering PRs: no single PR to retarget to');
+})().catch(e => { console.error(e); process.exit(1); });
+`)
+}
