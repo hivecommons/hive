@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.19)
+
+### Fixed
+
+- Activity monitor: **Release hold** and **Confirm safe** on an issue row drawn through its covering PR now act on that PR, which carries the hold or sentinel, instead of silently no-oping on the issue; a release that finds no hold on an issue whose covering PR is held now says so and names the PR.
+
 ## 2026-11-10 (v5.211.18)
 
 ### Fixed
