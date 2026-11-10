@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.8)
+
+### Fixed
+
+- Security: a `sec-check` agent configured at `ISSUES_PRS_MERGE` (or `autonomous`) now mints a new `sec-check-trusted` token tier — the trusted set plus Dependabot alerts read — so `dependabot/alerts` no longer returns 403; the grant stays optional and role-scoped. ([#17496](https://github.com/hivecommons/hive/issues/17496))
+- Edits to `/etc/hive/hive.yaml` on hub-provisioned spokes provisioned (or re-applied) after this change now survive a pod restart: the config path is a link to the persisted `/data/hive.yaml.runtime` instead of a throwaway `emptyDir` copy; existing spokes need their deployment re-applied (hub upgrades do not rewrite the init command). Startup logs which file is the boot source of truth, and `/api/config/export` reports it as `metadata.persisted_path`.
+
 ## 2026-11-10 (v5.211.7)
 
 ### Fixed
