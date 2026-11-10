@@ -1,1 +1,0 @@
-- crux resumehandle: the claude layout now only captures UUID-named session transcripts, so a newer per-subagent transcript (SESSION/subagents/agent-*.jsonl) no longer yields a bogus "claude --resume agent-…" handle (hivecommons/crux#145)
