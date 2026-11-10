@@ -1051,7 +1051,12 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      note says the hive adopted it to repair CI and why it still will not
      merge it (for `workflow-path` with the owner-approval release on, the
      085 note instead asks for a trusted merger's approval on the current
-     head, which releases the fence, [#14664](https://github.com/hivecommons/hive/issues/14664)).
+     head, which releases the fence, [#14664](https://github.com/hivecommons/hive/issues/14664);
+     with `auto_merge.contributor_lane.workflow_fence_scope:
+     human_merge_paths`, an edit to a workflow file the repository does not
+     list there is no merge fence, so the adoption comment does not say the
+     merge stays manual and the lane merges the green head after review).
+     Supersession still refuses every workflow edit, whatever the scope.
    - **supersede** (and the `dco-rehome`, `signoff-rehome` and
      `in-place-stalled` second takeovers): the App PR's body opens with
      `<!-- hive:carried-fence reason=<contributor-lane:…> from=#<n> -->`
