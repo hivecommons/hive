@@ -29,8 +29,14 @@ const mergeRequestMaxCIWait = time.Hour
 // makes the watcher refuse new requests for the same PR+SHA. Long enough that
 // a scanner re-dropping the request every kick cannot restart the poll cycle,
 // short enough that a check re-run that later turns the same SHA green is
-// eventually picked up again without an operator.
+// eventually picked up again without an operator. A head exhausted on a
+// CI-gate reason (mergeRequestCIGateReasonPrefix) is not refused outright: a
+// re-request re-evaluates the gate once and refuses only if it still blocks.
 const mergeRequestExhaustedRefusal = 24 * time.Hour
+
+// mergeRequestCIGateReasonPrefix starts every reason the watcher's pre-merge
+// CI gate (verifyMergeRequestCI) records.
+const mergeRequestCIGateReasonPrefix = "ci gate: "
 
 // mergeRequestStateRetention drops ledger entries untouched for this long so
 // the file cannot grow without bound.

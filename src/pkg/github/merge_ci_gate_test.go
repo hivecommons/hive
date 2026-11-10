@@ -1162,8 +1162,9 @@ func TestMergeCIGate_RequiredCheckNeverCreated(t *testing.T) {
 			mustExist(t, reqPath+".exhausted", "never-created request quarantined on the first verdict")
 			mustNotExist(t, reqPath, "live request after quarantine")
 
-			// A re-request for the same head is refused with the recorded
-			// reason instead of being evaluated again.
+			// A re-request for the same head re-evaluates the gate once
+			// (#17606); the check is still never created, so it is refused
+			// with the recorded reason.
 			again, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
 			c.handleOneMergeRequest(context.Background(), again, fixedNow)
 			if resp := readMergeResult(t, again); !strings.Contains(resp.Error, "exhausted on the same head") || !strings.Contains(resp.Error, "was never created") {
