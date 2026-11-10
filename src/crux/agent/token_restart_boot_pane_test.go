@@ -76,9 +76,11 @@ func TestPollerUsesTokenRestartCapResetGate(t *testing.T) {
 	if !strings.Contains(string(src), "shouldResetTokenRestartCap(") {
 		t.Fatal("pollTmuxOutputForAgent must call shouldResetTokenRestartCap; otherwise the boot pane re-arms the restart storm (#8711)")
 	}
-	if strings.Contains(string(src), "agent.tokenRestartAttempts = 0\n\t\t\t\tagent.tokenRestartGaveUp = false") &&
-		!strings.Contains(string(src), "if agent.shouldResetTokenRestartCap") {
-		t.Fatal("poller resets token restart attempts without the cap reset gate")
+	if !strings.Contains(string(src), "agent.rearmTokenRestartCap(") {
+		t.Fatal("pollTmuxOutputForAgent must re-arm via rearmTokenRestartCap; an inline reset wipes the give-up latch on every pane flap (#17483)")
+	}
+	if strings.Contains(string(src), "agent.tokenRestartGaveUp = false") {
+		t.Fatal("poller clears tokenRestartGaveUp inline instead of through rearmTokenRestartCap (#17483)")
 	}
 }
 
@@ -92,8 +94,7 @@ func (a *AgentProcess) simulatePollTick(t *testing.T, pane []string, startedAt *
 	} else {
 		*loginStreak = 0
 		if a.shouldResetTokenRestartCap(hasCLI, startedAt, now) {
-			a.tokenRestartAttempts = 0
-			a.tokenRestartGaveUp = false
+			a.rearmTokenRestartCap(now)
 		}
 	}
 	if !showsLogin || *loginStreak < loginStreakRestartMin {
