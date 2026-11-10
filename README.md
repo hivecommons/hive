@@ -11,6 +11,7 @@
 <p align="center">
   <a href="#install">Get started</a> ·
   <a href="src/docs/what-is-hive.md">Overview</a> ·
+  <a href="https://www.youtube.com/watch?v=uo1KGTyJJyU">Video: How Hive works</a> ·
   <a href="#community">Community</a>
 </p>
 
@@ -139,7 +140,7 @@ Use official images from `ghcr.io/hivecommons/hive`.
 
 ## Community
 
-[First contribution](docs/getting-started-contributing.md) · [Contributing](CONTRIBUTING.md) · [Contribute compute](src/docs/contributor-relay.md) · [Discord](https://hivecommons.dev/discord) · [Community meeting](https://docs.hivecommons.dev/docs/community/meetings) · [Live stream (Twitch)](https://www.twitch.tv/hivecommons) · [Discussions](https://github.com/hivecommons/hive/discussions).
+[Video: How Hive works](https://www.youtube.com/watch?v=uo1KGTyJJyU) · [First contribution](docs/getting-started-contributing.md) · [Contributing](CONTRIBUTING.md) · [Contribute compute](src/docs/contributor-relay.md) · [Discord](https://hivecommons.dev/discord) · [Community meeting](https://docs.hivecommons.dev/docs/community/meetings) · [Live stream (Twitch)](https://www.twitch.tv/hivecommons) · [Discussions](https://github.com/hivecommons/hive/discussions).
 
 [Code of Conduct](CODE_OF_CONDUCT.md) · [Project governance](GOVERNANCE.md) · [Report a vulnerability](SECURITY.md) · [Telemetry](src/docs/telemetry.md).
 
