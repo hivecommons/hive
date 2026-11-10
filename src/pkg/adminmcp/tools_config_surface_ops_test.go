@@ -151,7 +151,7 @@ func TestIssueFilterOpMergeKeepsUntouchedEntries(t *testing.T) {
 			t.Errorf("effects miss %q:\n%s", line, joined)
 		}
 	}
-	if p.Basis == "" {
+	if p.StateFingerprint == "" {
 		t.Fatal("preview records no basis, so a stale confirm could not be refused")
 	}
 	// Removing an entry that is not there is refused rather than ignored.
@@ -220,8 +220,8 @@ func TestIssueFilterOpRefusesStalePreview(t *testing.T) {
 
 	// Somebody else saves the Labels tab in between.
 	provider.governor["reporterTrust"].(map[string]any)["trustedLogins"] = []string{"ext-maint", "other-maint", "added-meanwhile"}
-	if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); !errors.Is(err, ErrPreviewStale) {
-		t.Fatalf("stale confirm err = %v, want ErrPreviewStale", err)
+	if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); !errors.Is(err, ErrConfirmationStale) {
+		t.Fatalf("stale confirm err = %v, want ErrConfirmationStale", err)
 	}
 	if len(provider.requests) != 0 {
 		t.Fatalf("a stale confirm wrote %+v", provider.requests)
@@ -240,8 +240,15 @@ func TestIssueFilterOpRefusesStalePreview(t *testing.T) {
 // Without a reading of the current filter there is nothing to merge onto,
 // so the preview is refused rather than guessed.
 func TestIssueFilterOpNeedsTheCurrentFilter(t *testing.T) {
-	if _, err := (issueFilterOp{}).Preview(context.Background(), map[string]any{"require_labels": map[string]any{"clear": true}}); err == nil {
+	args := map[string]any{"require_labels": map[string]any{"clear": true}}
+	if _, err := (issueFilterOp{}).PreviewWithProvider(context.Background(), args, nil); err == nil {
 		t.Fatal("previewed without reading the current filter")
+	}
+	// The provider-less Preview (used by write_confirm for the method and
+	// path) sends nothing and claims nothing.
+	p, err := (issueFilterOp{}).Preview(context.Background(), args)
+	if err != nil || p.Request.Body != nil || p.StateFingerprint != "" || !strings.HasPrefix(p.WideningDisclosure, "Potential widening:") {
+		t.Fatalf("provider-less preview = %+v, %v", p, err)
 	}
 	g := surfaceGovernor()
 	delete(g, "reporterTrust")
@@ -301,7 +308,7 @@ func TestSentinelSettingsOpMergeKeepsUntouchedEntries(t *testing.T) {
 	if isWidening(p) {
 		t.Fatalf("flagging more pull requests disclosed as widening: %q", p.WideningDisclosure)
 	}
-	if p.Basis == "" {
+	if p.StateFingerprint == "" {
 		t.Fatal("preview records no basis")
 	}
 }
@@ -354,8 +361,8 @@ func TestSentinelSettingsOpRefusesStalePreview(t *testing.T) {
 	_, id := capPreview(t, h, WriteOpSentinelSettings, args)
 
 	provider.governor["security"].(map[string]any)["sentinel"].(map[string]any)["trustedAuthorsBlock"] = false
-	if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); !errors.Is(err, ErrPreviewStale) {
-		t.Fatalf("stale confirm err = %v, want ErrPreviewStale", err)
+	if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); !errors.Is(err, ErrConfirmationStale) {
+		t.Fatalf("stale confirm err = %v, want ErrConfirmationStale", err)
 	}
 	if len(provider.requests) != 0 {
 		t.Fatalf("a stale confirm wrote %+v", provider.requests)

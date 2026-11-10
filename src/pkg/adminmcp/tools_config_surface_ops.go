@@ -22,8 +22,9 @@ import (
 // Lists are edited by change, not replaced: {add, remove, clear}. The preview
 // reads the current settings, shows each list before and after, and sends the
 // merged list, because both endpoints replace a list they are sent. It also
-// records a digest of what it read (WritePreview.Basis); write_confirm reads
-// again and refuses when that digest no longer matches, so a confirm never
+// records a fingerprint of what it read (WritePreview.StateFingerprint), and
+// ConfirmGuard reads again at write_confirm, which refuses with
+// ErrConfirmationStale when it no longer matches, so a confirm never
 // overwrites a change somebody made in between.
 //
 // decisions.delegate ("Let hive decide": enabled, per-repo, llm) has no
@@ -291,14 +292,37 @@ func changeDetails(changes []settingChange) []map[string]any {
 	return out
 }
 
-// basisDigest is the digest a preview records of the settings it read.
-func basisDigest(v any) (string, error) {
+// stateFingerprint is the digest a preview records of the settings it read.
+func stateFingerprint(v any) (string, error) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// unreadSettingsPreview is the preview of an op that could not read the
+// settings it merges onto: it names the endpoint and sends nothing.
+func unreadSettingsPreview(op, target, path, what string) WritePreview {
+	return WritePreview{
+		Operation:           op,
+		Summary:             "Change the " + what + " (current settings not read)",
+		Target:              target,
+		Request:             WriteRequest{Method: http.MethodPut, Path: path},
+		WideningDisclosure:  "Potential widening: the current " + what + " were not read, so this preview cannot say what would change.",
+		ConfirmationMessage: "Preview this change through write_preview to see what it would do.",
+	}
+}
+
+// confirmGuardFingerprint turns a fresh preview into the fingerprint
+// ConfirmWrite compares. A fresh preview that fails (the change no longer
+// applies, or the settings cannot be read) refuses the confirm.
+func confirmGuardFingerprint(preview WritePreview, err error) (string, error) {
+	if err != nil {
+		return "", fmt.Errorf("write_confirm checks the settings again before writing, and that check refused this change; preview it again: %w", err)
+	}
+	return preview.StateFingerprint, nil
 }
 
 // readGovernorSettings reads GET /api/config/governor (settings_read section
@@ -367,7 +391,7 @@ var hardSuppressBuckets = []struct{ key, readKey, def string }{
 }
 
 // issueFilterState is the issue filter as the preview read it. The exported
-// fields are the basis the confirm compares; hubManaged is display only.
+// fields are what the confirm fingerprints; hubManaged is display only.
 type issueFilterState struct {
 	RequireLabels  []string            `json:"require_labels"`
 	HardSuppress   map[string][]string `json:"hard_suppress_labels"`
@@ -549,8 +573,21 @@ func (issueFilterOp) InputSchema() map[string]any {
 		}, "additionalProperties": false},
 	}, "additionalProperties": false}
 }
-func (op issueFilterOp) Preview(ctx context.Context, args map[string]any) (WritePreview, error) {
-	return op.PreviewWithProvider(ctx, args, nil)
+
+// Preview without a provider checks the arguments and names the endpoint;
+// write_preview always goes through PreviewWithProvider, and write_confirm
+// uses this only to check the method and path.
+func (issueFilterOp) Preview(_ context.Context, args map[string]any) (WritePreview, error) {
+	if _, err := parseIssueFilterArgs(args); err != nil {
+		return WritePreview{}, err
+	}
+	return unreadSettingsPreview(WriteOpProjectIssueFilter, "project.issue_filter", "/api/config/governor/labels", "issue filter"), nil
+}
+
+// ConfirmGuard reads the filter again at write_confirm and returns its
+// fingerprint, which must still match the preview's.
+func (op issueFilterOp) ConfirmGuard(ctx context.Context, args map[string]any, provider Provider) (string, error) {
+	return confirmGuardFingerprint(op.PreviewWithProvider(ctx, args, provider))
 }
 
 // PreviewWithProvider reads the current filter, merges the requested list
@@ -659,7 +696,7 @@ func (issueFilterOp) PreviewWithProvider(ctx context.Context, args map[string]an
 	if len(changes) == 0 {
 		return WritePreview{}, fmt.Errorf("project.issue_filter changes nothing: the filter already reads that way")
 	}
-	basis, err := basisDigest(before)
+	fingerprint, err := stateFingerprint(before)
 	if err != nil {
 		return WritePreview{}, err
 	}
@@ -687,7 +724,7 @@ func (issueFilterOp) PreviewWithProvider(ctx context.Context, args map[string]an
 		WideningDisclosure:  issueFilterDisclosure(before, after),
 		ConfirmationMessage: "Confirm changing the issue filter: " + strings.Join(fields, ", ") + ".",
 		Details:             map[string]any{"changes": changeDetails(changes), "hub_managed": before.hubManaged, "after_rule": issueAdmissionRule(after)},
-		Basis:               basis,
+		StateFingerprint:    fingerprint,
 	}, nil
 }
 
@@ -798,7 +835,7 @@ func capitalize(s string) string {
 // ---- sentinel.settings -----------------------------------------------------
 
 // sentinelState is Sentinel as the preview read it. The exported fields are
-// the basis the confirm compares.
+// what the confirm fingerprints.
 type sentinelState struct {
 	SensitivePaths        []string `json:"sensitive_paths"`
 	SensitivePathsDefault bool     `json:"sensitive_paths_default"`
@@ -886,53 +923,83 @@ func (sentinelSettingsOp) InputSchema() map[string]any {
 		"trusted_authors_block": map[string]any{"type": "boolean", "description": "Whether a finding on a trusted author's pull request (the Hive App, configured trusted bots, authorized owners) gets the blocking label; off posts an informational notice only."},
 	}, "additionalProperties": false}
 }
-func (op sentinelSettingsOp) Preview(ctx context.Context, args map[string]any) (WritePreview, error) {
-	return op.PreviewWithProvider(ctx, args, nil)
+
+// Preview without a provider checks the arguments and names the endpoint;
+// see issueFilterOp.Preview.
+func (sentinelSettingsOp) Preview(_ context.Context, args map[string]any) (WritePreview, error) {
+	if _, err := parseSentinelArgs(args); err != nil {
+		return WritePreview{}, err
+	}
+	return unreadSettingsPreview(WriteOpSentinelSettings, "sentinel", "/api/config/governor/security", "Sentinel settings"), nil
+}
+
+// ConfirmGuard reads the Sentinel settings again at write_confirm and returns
+// their fingerprint, which must still match the preview's.
+func (op sentinelSettingsOp) ConfirmGuard(ctx context.Context, args map[string]any, provider Provider) (string, error) {
+	return confirmGuardFingerprint(op.PreviewWithProvider(ctx, args, provider))
+}
+
+// sentinelRequest is the parsed sentinel.settings arguments.
+type sentinelRequest struct {
+	paths, behaviors, exempt          listChange
+	hasPaths, hasBehaviors, hasExempt bool
+	block                             *bool
+}
+
+func parseSentinelArgs(args map[string]any) (sentinelRequest, error) {
+	const where = "sentinel.settings"
+	var req sentinelRequest
+	if err := rejectUnknownKeys(args, where, "sensitive_paths", "disabled_behaviors", "exempt_logins", "trusted_authors_block"); err != nil {
+		return req, err
+	}
+	var err error
+	if req.paths, req.hasPaths, err = listChangeArg(args, "sensitive_paths", where); err != nil {
+		return req, err
+	}
+	if req.behaviors, req.hasBehaviors, err = listChangeArg(args, "disabled_behaviors", where); err != nil {
+		return req, err
+	}
+	if req.exempt, req.hasExempt, err = listChangeArg(args, "exempt_logins", where); err != nil {
+		return req, err
+	}
+	if raw, present := args["trusted_authors_block"]; present && raw != nil {
+		b, ok := raw.(bool)
+		if !ok {
+			return req, fmt.Errorf("%s.trusted_authors_block must be true or false", where)
+		}
+		req.block = &b
+	}
+	if !req.hasPaths && !req.hasBehaviors && !req.hasExempt && req.block == nil {
+		return req, fmt.Errorf("give at least one of sensitive_paths, disabled_behaviors, exempt_logins or trusted_authors_block")
+	}
+	if req.hasBehaviors {
+		descriptions, names := sentinelBehaviorDescriptions()
+		for _, list := range []*[]string{&req.behaviors.add, &req.behaviors.remove} {
+			for i, name := range *list {
+				lower := strings.ToLower(name)
+				if _, ok := descriptions[lower]; !ok {
+					return req, fmt.Errorf("%s.disabled_behaviors: unknown behavior %q (known: %s)", where, name, strings.Join(names, ", "))
+				}
+				(*list)[i] = lower
+			}
+		}
+	}
+	return req, nil
 }
 
 // PreviewWithProvider reads the current Sentinel settings, merges the
 // requested list changes onto them and names which pull requests the result
 // would stop holding.
 func (sentinelSettingsOp) PreviewWithProvider(ctx context.Context, args map[string]any, provider Provider) (WritePreview, error) {
-	const where = "sentinel.settings"
-	if err := rejectUnknownKeys(args, where, "sensitive_paths", "disabled_behaviors", "exempt_logins", "trusted_authors_block"); err != nil {
-		return WritePreview{}, err
-	}
-	paths, hasPaths, err := listChangeArg(args, "sensitive_paths", where)
+	req, err := parseSentinelArgs(args)
 	if err != nil {
 		return WritePreview{}, err
 	}
-	behaviors, hasBehaviors, err := listChangeArg(args, "disabled_behaviors", where)
-	if err != nil {
-		return WritePreview{}, err
-	}
-	exempt, hasExempt, err := listChangeArg(args, "exempt_logins", where)
-	if err != nil {
-		return WritePreview{}, err
-	}
-	var block *bool
-	if raw, present := args["trusted_authors_block"]; present && raw != nil {
-		b, ok := raw.(bool)
-		if !ok {
-			return WritePreview{}, fmt.Errorf("%s.trusted_authors_block must be true or false", where)
-		}
-		block = &b
-	}
-	if !hasPaths && !hasBehaviors && !hasExempt && block == nil {
-		return WritePreview{}, fmt.Errorf("give at least one of sensitive_paths, disabled_behaviors, exempt_logins or trusted_authors_block")
-	}
-	descriptions, names := sentinelBehaviorDescriptions()
-	if hasBehaviors {
-		for _, list := range []*[]string{&behaviors.add, &behaviors.remove} {
-			for i, name := range *list {
-				lower := strings.ToLower(name)
-				if _, ok := descriptions[lower]; !ok {
-					return WritePreview{}, fmt.Errorf("%s.disabled_behaviors: unknown behavior %q (known: %s)", where, name, strings.Join(names, ", "))
-				}
-				(*list)[i] = lower
-			}
-		}
-	}
+	paths, hasPaths := req.paths, req.hasPaths
+	behaviors, hasBehaviors := req.behaviors, req.hasBehaviors
+	exempt, hasExempt := req.exempt, req.hasExempt
+	block := req.block
+	descriptions, _ := sentinelBehaviorDescriptions()
 
 	before, err := readSentinelState(ctx, provider)
 	if err != nil {
@@ -997,7 +1064,7 @@ func (sentinelSettingsOp) PreviewWithProvider(ctx context.Context, args map[stri
 	if len(changes) == 0 {
 		return WritePreview{}, fmt.Errorf("sentinel.settings changes nothing: Sentinel already reads that way")
 	}
-	basis, err := basisDigest(before)
+	fingerprint, err := stateFingerprint(before)
 	if err != nil {
 		return WritePreview{}, err
 	}
@@ -1021,7 +1088,7 @@ func (sentinelSettingsOp) PreviewWithProvider(ctx context.Context, args map[stri
 		WideningDisclosure:  sentinelDisclosure(before, after, descriptions),
 		ConfirmationMessage: "Confirm changing Sentinel settings: " + strings.Join(fields, ", ") + ".",
 		Details:             map[string]any{"changes": changeDetails(changes)},
-		Basis:               basis,
+		StateFingerprint:    fingerprint,
 	}, nil
 }
 
