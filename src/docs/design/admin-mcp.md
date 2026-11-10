@@ -635,6 +635,16 @@ Phase 5 registers the fleet-level write operations under that contract:
   (`ErrConfirmationStale`) instead of being overwritten. A change that admits more issues without triage, or
   that makes Sentinel flag fewer pull requests, is disclosed as widening, and the Sentinel
   disclosure names the pull requests that would no longer be held.
+- `agent.cadences` and `writeback.kind_policy` wrap `PUT /api/config/agent/{name}/cadences` and
+  `PUT /api/config/governor/features` (its `writebackKinds` field) for two settings that had no
+  operation: one agent's per-mode cadences and the write-back gate's per-kind overrides. They use
+  the same `ConfirmGuard` stale-preview check. The cadence endpoint claims operator ownership of
+  every mode it is sent (`governor.cadence_owners`), so the op sends only the modes that change
+  and its preview says each becomes operator-owned, which keeps a later pack apply from resetting
+  it; a shorter cadence is disclosed as more spend. The Features endpoint replaces the whole
+  `writebackKinds` map, so the op reads the current overrides and sends them all with the change
+  merged in, and discloses a kind whose resolved policy (`writeback.Config.Policy`) would write at
+  a lower level, without the opt-in label, or on items the hive did not author.
 - `auto_merge.update` wraps `PATCH /api/config/auto-merge`, the endpoint behind the dashboard's
   merge settings. That endpoint replaces every list and map it is sent whole (`squash_only`,
   `require_current_base`, `human_merge_paths`, the native merge queue's repos and bases, the
