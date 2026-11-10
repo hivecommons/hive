@@ -356,11 +356,11 @@ func TestEnforceHoldGuardSettledUpdateIsNotDriftAtLift(t *testing.T) {
 }
 
 // A stop whose ledger entry was dropped and re-snapshotted (hold lifted, then
-// returned) is announced at WARN once per head, base and reason, and its
+// returned) is announced at INFO once per head, base and reason, and its
 // person-facing note posted once per head and reason, not every pass.
 func TestStopHeldPRUpdateWarnsAndNotesOncePerHeadAndBase(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	store := newTestHoldGuardStore(t)
 	writer := &fakeIssueWriter{}
 	pr := github.PullRequest{Repo: "widgets", Number: 9016, HeadSHA: "once-h1", BaseSHA: "once-b1", MergeableState: "dirty", FromFork: true}
@@ -407,7 +407,7 @@ func TestStopHeldPRUpdateFreshStoreForgetsAnnouncedStops(t *testing.T) {
 	pr := github.PullRequest{Repo: "widgets", Number: 9017, HeadSHA: "fresh-h1", BaseSHA: "fresh-b1", MergeableState: "dirty", FromFork: true}
 	for i := 0; i < 2; i++ {
 		var buf bytes.Buffer
-		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 		store := newTestHoldGuardStore(t)
 		writer := &fakeIssueWriter{}
 		store.Snapshot("acme/widgets", pr.Number, pr.HeadSHA, nil)
@@ -426,7 +426,7 @@ func TestStopHeldPRUpdateFreshStoreForgetsAnnouncedStops(t *testing.T) {
 // (hivecommons/hive#16106).
 func TestStopHeldPRUpdateMemoryBoundedPerPR(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	store := newTestHoldGuardStore(t)
 	writer := &fakeIssueWriter{}
 	pr := github.PullRequest{Repo: "widgets", Number: 9018, HeadSHA: "bound-h1", MergeableState: "dirty", FromFork: true}
@@ -454,4 +454,25 @@ func TestStopHeldPRUpdateMemoryBoundedPerPR(t *testing.T) {
 	if entries != 1 {
 		t.Fatalf("process memory holds %d entries for one PR, want 1", entries)
 	}
+}
+
+// The stop is an expected steady state already noted on the PR, so its first
+// announcement is INFO: at WARN, several held PRs stopping in one pass collapse
+// into one line repeated and trip unclassified_error_repeated (#17520).
+func TestStopHeldPRUpdateAnnouncesAtInfoNotWarn(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	store := newTestHoldGuardStore(t)
+	pr := github.PullRequest{Repo: "docs", Number: 9020, HeadSHA: "lvl-h1", BaseSHA: "lvl-b1", MergeableState: "dirty", FromFork: true}
+	store.Snapshot("acme/docs", pr.Number, pr.HeadSHA, nil)
+	stopHeldPRUpdate(context.Background(), &fakeIssueWriter{}, store, "acme/docs", pr, holdguard.UpdateStopForkNotEditable, nil, logger)
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, "stopped keeping held PR mergeable") {
+			if !strings.Contains(line, "level=INFO") {
+				t.Fatalf("stop announcement must be INFO, got: %s", line)
+			}
+			return
+		}
+	}
+	t.Fatalf("no stop announcement logged:\n%s", buf.String())
 }
