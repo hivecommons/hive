@@ -4757,6 +4757,8 @@
     .am-bot-source { color: var(--muted); font-weight: 400; }
     #am-trusted-authors { margin-top: var(--sp-5); border-top: 1px solid var(--border); }
     .am-trusted-authors-note { font-size: var(--fs-xs); color: var(--muted); margin: var(--sp-2) var(--sp-0) var(--sp-0); }
+    .am-pin-only-row .am-pin-only-opt { display: inline-flex; align-items: center; gap: var(--sp-1); margin: var(--sp-1) var(--sp-3) var(--sp-1) var(--sp-0); font-size: var(--fs-xs); }
+    .am-pin-only-row input[type="text"] { margin-top: var(--sp-1); }
     .rv-reviewer-list { padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); }
     .rv-reviewer-row { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); padding: var(--sp-1) var(--sp-0); cursor: pointer; }
     .rv-reviewer-row.rv-reviewer-unavailable { opacity: 0.6; }
@@ -66875,6 +66877,19 @@ function burnAreaChart() {
         const key = Object.keys(amHumanMergePaths).find(k => k.toLowerCase() === String(repo).toLowerCase());
         return key && Array.isArray(amHumanMergePaths[key]) ? amHumanMergePaths[key] : [];
       };
+      // auto_merge.human_merge_pin_only: one row per repository that has
+      // human-merge paths or already holds an exception (it only ever lifts a
+      // human-merge-path hold, so elsewhere it would never apply).
+      const amPinOnly = (am.human_merge_pin_only && typeof am.human_merge_pin_only === 'object') ? am.human_merge_pin_only : {};
+      const amPinOnlyKinds = Array.isArray(am.pin_only_kinds) && am.pin_only_kinds.length ? am.pin_only_kinds : ['action-sha', 'image-digest', 'version-pin'];
+      const amPinOnlyFor = (repo) => {
+        const key = Object.keys(amPinOnly).find(k => k.toLowerCase() === String(repo).toLowerCase());
+        const e = key && amPinOnly[key] && typeof amPinOnly[key] === 'object' ? amPinOnly[key] : {};
+        const list = (v) => Array.isArray(v) ? v : [];
+        return { enabled: e.enabled === true, paths: list(e.paths), kinds: list(e.kinds), trusted_authors: list(e.trusted_authors) };
+      };
+      const amPinOnlyRepos = amHumanMergePathRepos.filter(r => amHumanMergePathsFor(r).length || Object.keys(amPinOnly).some(k => k.toLowerCase() === String(r).toLowerCase()))
+        .concat(Object.keys(amPinOnly).filter(k => !amHumanMergePathRepos.some(r => String(r).toLowerCase() === k.toLowerCase())));
       const amBotSourceLabel = { known: 'known bot', discovered: 'seen in open PRs', custom: 'added manually' };
       const amBotRow = (b) => `<div class="config-toggle am-bot-row" data-bot-login="${esc(b.login)}">
               <div class="config-toggle-switch am-bot-switch ${b.trusted ? 'on' : ''}" data-action="gh97" data-arg0="${esc(b.login)}" data-arg-types="s" role="switch" aria-checked="${b.trusted ? 'true' : 'false'}"></div>
@@ -67012,7 +67027,17 @@ function burnAreaChart() {
                 <input type="text" class="am-human-merge-path-input" value="${esc(amHumanMergePathsFor(r).join(', '))}" placeholder=".github/workflows/**, CODEOWNERS" data-change-action="markDirtyAutoMergeRepoPolicy">
               </div>`).join('') : '<p class="am-trusted-authors-note">No repositories in project.repos yet.</p>'}
             </div>
-            <p class="config-help">Select nothing (or leave paths empty) to turn a rule off for every repo. YAML keys: <code>auto_merge.require_current_base[]</code>, <code>auto_merge.squash_only[]</code>, <code>${esc('auto_merge.human_merge_paths.<key>')}</code>.</p>
+            <div class="config-field mt-4" id="am-human-merge-pin-only">
+              <label>Pin bumps that skip the hand merge ${yamlHint('auto_merge.human_merge_pin_only')} ${settingHelpMark('operator-reference/README', 'human-merge-pin-only-rollout', 'Pin bumps that skip the hand merge', `Off by default. Per repository, a pull request on a path a person must merge can merge without a hand merge when its only change is a pin bump: an action SHA, an image digest or a version pin, as chosen below. Its author and the author of every commit behind its head must be a trusted author, every commit must carry a GitHub-verified signature, and every other gate (CI, review, soak, holds) still applies. Any other change to those paths is still held for a person. Saving sends every repository&apos;s entry; turning an exception on needs paths a person must merge for that repository.`)}</label>
+              ${amPinOnlyRepos.length ? amPinOnlyRepos.map(r => { const p = amPinOnlyFor(r); return `<div class="config-field mt-3 am-pin-only-row" data-repo="${esc(r)}">
+                <label><code>${esc(r)}</code> ${settingHelpMark('operator-reference/README', 'human-merge-pin-only-rollout', r, `Pin-only exception for ${esc(r)}. On: a pull request whose whole diff is pin bumps of the ticked kinds to the listed paths, opened and authored by a trusted author, merges without a hand merge. Paths are comma-separated globs within this repository&apos;s paths a person must merge. Off keeps every pin bump a person&apos;s merge.`)}</label>
+                <label class="am-pin-only-opt"><input type="checkbox" class="am-pin-only-enabled"${p.enabled ? ' checked' : ''} data-change-action="markDirtyAutoMergePinOnly"> On</label>
+                <input type="text" class="am-pin-only-paths" aria-label="Pin bump paths for ${esc(r)}" value="${esc(p.paths.join(', '))}" placeholder="paths: .github/workflows/*.yml, Containerfile" data-change-action="markDirtyAutoMergePinOnly">
+                <span class="am-pin-only-kinds">${amPinOnlyKinds.map(k => `<label class="am-pin-only-opt"><input type="checkbox" class="am-pin-only-kind" value="${esc(k)}"${p.kinds.includes(k) ? ' checked' : ''} data-change-action="markDirtyAutoMergePinOnly"> ${esc(k)}</label>`).join(' ')}</span>
+                <input type="text" class="am-pin-only-authors" aria-label="Trusted authors for ${esc(r)}" value="${esc(p.trusted_authors.join(', '))}" placeholder="trusted authors: renovate[bot]" data-change-action="markDirtyAutoMergePinOnly">
+              </div>`; }).join('') : '<p class="am-trusted-authors-note">Set paths a person must merge for a repository first; its pin-only exception is edited here.</p>'}
+            </div>
+            <p class="config-help">Select nothing (or leave paths empty) to turn a rule off for every repo. YAML keys: <code>auto_merge.require_current_base[]</code>, <code>auto_merge.squash_only[]</code>, <code>${esc('auto_merge.human_merge_paths.<key>')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.enabled')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.paths[]')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.kinds[]')}</code>, <code>${esc('auto_merge.human_merge_pin_only.<key>.trusted_authors[]')}</code>.</p>
           </div>
           <div class="config-field" id="am-trusted-authors">
             <label>Trusted-author auto-merge ${settingHelpMark('hive-merge', 'trusted-author-auto-merge', 'Trusted-author auto-merge', `Operator opt-in for human-authored PRs: Hive may merge a green PR only when the author holds the configured hive role and, when required, GitHub says the author has push/maintain/admin permission on that repository. Fork PRs from non-members are blocked, excluded labels and CHANGES_REQUESTED reviews block, and the head SHA is re-checked at merge.`)}</label>
@@ -67492,6 +67517,7 @@ function burnAreaChart() {
         </div>
         ${renderGovReplanSection((_configState.data || {}).replan || {})}
         ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}
+        ${renderGovDecisionsDelegateSection((_configState.data || {}).decisions_delegate || {})}
 
         <div class="settings-subsection">
           <div class="settings-subsection-title">Superseded PR grace ${settingHelpMark('settings', 'features', 'Superseded PR grace', `Timing of the superseded-PR sweep.`)}</div>
@@ -68059,6 +68085,44 @@ function burnAreaChart() {
           </div>
         </div>
         `)}`;
+    }
+
+    // renderGovDecisionsDelegateSection renders the "Let hive decide"
+    // settings (decisions.delegate): the hive-wide switch and the LLM step.
+    // Values are marked dirty under 'decisions-delegate', which saveConfig
+    // PUTs to /api/config/decisions/delegate (owner only). The
+    // per-repository overrides (decisions.delegate.repos) are listed here
+    // read-only; they change in hive.yaml or through the admin MCP
+    // decisions.delegate_settings operation.
+    function renderGovDecisionsDelegateSection(dd) {
+      dd = dd || {};
+      const llm = dd.llm || {};
+      const on = dd.enabled !== false;
+      const llmOn = llm.enabled === true;
+      const repos = Object.entries(dd.repos || {}).sort((a, b) => a[0].localeCompare(b[0]));
+      const repoText = repos.length
+        ? repos.map(([r, v]) => `${esc(r)} ${v && v.enabled ? 'on' : 'off'}`).join(' · ')
+        : 'none, so every repository follows the switch above';
+      const readyNote = llmOn && dd.llm_reviewer_ready === false
+        ? '<div class="config-help">No reviewer endpoint or model is configured (governor.trajectory or governor.litellm), so every decision keeps the rules\' reversible default until one is.</div>' : '';
+      const maskedNote = llm.model_masked
+        ? '<div class="config-help">The stored model looks like an API key, so it is hidden. Enter a model name to replace it.</div>' : '';
+      return `
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Let hive decide ${settingHelpMark('settings', 'features', 'Let hive decide', `The activity monitor's Let hive decide action: the hive decides a needs-decision item as the owner's delegate and records it as a person's decision would be.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${on ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="decisions-delegate" data-key="enabled"></div>
+            <span class="config-toggle-label">Let hive decide enabled ${yamlHint('decisions.delegate.enabled')} ${settingHelpMark('settings', 'features', 'Let hive decide enabled', `On by default. Off greys out Let hive decide hive-wide, refuses it through the API and the admin MCP, and stops the reviewer-question sweep from deciding on its own. A per-repository override wins over this switch. Applies without a restart. It never merges anything: a delegated decision records a verdict, and merging stays with the merge settings.`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${llmOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="decisions-delegate" data-key="llm_enabled"></div>
+            <span class="config-toggle-label">Ask a model when the rules cannot decide ${yamlHint('decisions.delegate.llm.enabled')} ${settingHelpMark('settings', 'features', 'Ask a model when the rules cannot decide', `Off by default. When on, an item the rules leave at the reversible default is sent to the model: its title, body, comments and linked items go to the governor reviewer endpoint, and the model's verdict passes the same safety rails as a rule decision. Any failure keeps the reversible default. This spends tokens on each such decision.`)}</span>
+          </div>
+          ${readyNote}
+          <div class="config-field"><label>Decider model ${yamlHint('decisions.delegate.llm.model')} ${settingHelpMark('settings', 'features', 'Decider model', `Model for the decider turn. Empty uses the governor reviewer model. A model name only: the key belongs to the reviewer endpoint, and a value that looks like a key is refused.`)}</label><input type="text" value="${esc(llm.model || '')}" placeholder="${esc(dd.llm_model_effective || 'reviewer model')}" data-change-action="markDirty" data-arg0="decisions-delegate" data-arg1="llm_model" data-arg-types="s,s,w"></div>
+          ${maskedNote}
+          <div class="config-help">Per-repository overrides ${yamlHint('decisions.delegate.repos')}: ${repoText}. Change them in hive.yaml or with the admin MCP decisions.delegate_settings operation.</div>
+        </div>`;
     }
     async function prepareIntegrationExecutionIdentity() {
       const target = document.getElementById('integration-execution-identity');
@@ -70235,6 +70299,26 @@ function burnAreaChart() {
       }
     }
 
+    // Settings → Features → Auto-merge → Pin bumps that skip the hand merge.
+    // Stages auto_merge.human_merge_pin_only in full, one entry per row; a
+    // row that is off with nothing filled in drops out.
+    function markDirtyAutoMergePinOnly() {
+      const policies = {};
+      document.querySelectorAll('#am-human-merge-pin-only .am-pin-only-row').forEach(row => {
+        const enabled = row.querySelector('.am-pin-only-enabled');
+        const paths = row.querySelector('.am-pin-only-paths');
+        const authors = row.querySelector('.am-pin-only-authors');
+        const entry = {
+          enabled: !!(enabled && enabled.checked),
+          paths: splitConfigLines(paths ? paths.value : ''),
+          kinds: Array.from(row.querySelectorAll('.am-pin-only-kind')).filter(k => k.checked).map(k => k.value),
+          trusted_authors: splitConfigLines(authors ? authors.value : '')
+        };
+        if (row.dataset.repo && (entry.enabled || entry.paths.length || entry.kinds.length || entry.trusted_authors.length)) policies[row.dataset.repo] = entry;
+      });
+      markDirty('auto-merge', 'human_merge_pin_only', policies);
+    }
+
     function markDirtyContributorLane() {
       const enabled = document.getElementById('am-contributor-lane-enabled');
       const verdict = document.getElementById('am-contributor-lane-require-reviewer-verdict');
@@ -71603,6 +71687,23 @@ function burnAreaChart() {
             });
             if (!ioRes.ok) throw new Error(await saveErrorMessage(ioRes));
             _configState.data.integration_orchestration = await ioRes.json();
+          } else if (_configState.type === 'governor' && section === 'decisions-delegate') {
+            // decisions.delegate is a TOP-LEVEL config block; it saves through
+            // its own owner-only /api/config/decisions/delegate endpoint.
+            const ddBody = {};
+            if (values.enabled !== undefined) ddBody.enabled = values.enabled;
+            if (values.llm_enabled !== undefined || values.llm_model !== undefined) {
+              ddBody.llm = {};
+              if (values.llm_enabled !== undefined) ddBody.llm.enabled = values.llm_enabled;
+              if (values.llm_model !== undefined) ddBody.llm.model = values.llm_model;
+            }
+            const ddRes = await fetch('/api/config/decisions/delegate', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(ddBody)
+            });
+            if (!ddRes.ok) throw new Error(await saveErrorMessage(ddRes));
+            _configState.data.decisions_delegate = await ddRes.json().catch(() => _configState.data.decisions_delegate);
           } else if (_configState.type === 'governor' && section === 'convergence') {
             // convergence is a TOP-LEVEL config block, not under governor —
             // it saves through its own owner-only /api/config/convergence

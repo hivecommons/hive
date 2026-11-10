@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,8 +20,9 @@ import (
 // (handleAutoMergePut). That endpoint replaces every list and map it is sent
 // whole: squash_only ["a/b"] drops every other repository. So this op takes
 // changes instead (entries to add and remove, one repository's human-merge
-// paths to set or unset), reads the current settings while previewing, and
-// sends each changed list or map as its whole merged value. The preview shows
+// paths or pin-only exception to set or unset), reads the current settings
+// while previewing, and sends each changed list or map as its whole merged
+// value. The preview shows
 // every changed setting before and after. ConfirmGuard reads the settings
 // again at write_confirm and refuses when any of those before-values moved, so
 // a merge built from a stale read never overwrites someone else's change.
@@ -51,6 +53,7 @@ const (
 	amEnum
 	amList
 	amRepoPaths
+	amPinOnly
 )
 
 // amEntry is how a list's entries are compared.
@@ -81,6 +84,7 @@ const (
 	amWidenRole              // trusted_authors.require_role from owner to merger
 	amWidenScope             // contributor_lane.auto_promotion_scope from repo to hive
 	amWidenPaths             // human_merge_paths loses a pattern
+	amWidenPinOnly           // human_merge_pin_only admits more repositories, paths, kinds or authors
 )
 
 type amField struct {
@@ -107,6 +111,7 @@ var autoMergeFields = []amField{
 	{key: "squash_only", kind: amList, entry: amEntryRepo, widen: amWidenRemove, why: "a mixed-author pull request there merges with a merge commit instead of going back to a person"},
 	{key: "require_current_base", kind: amList, entry: amEntryRepo, widen: amWidenRemove, why: "pull requests there may merge without the current base tip"},
 	{key: "human_merge_paths", kind: amRepoPaths, widen: amWidenPaths, why: "pull requests touching these paths no longer wait for a person to merge them"},
+	{key: "human_merge_pin_only", kind: amPinOnly, widen: amWidenPinOnly},
 	{key: "bot_takeover_enabled", kind: amBool, widen: amWidenOn, why: "the App re-authors trusted github-actions[bot] pull requests and merges its copy"},
 	{key: "require_current_base_default", kind: amBool, widen: amWidenOff, why: "repositories without an override may merge without the current base tip"},
 	{key: "merge_train.enabled", kind: amBool},
@@ -135,7 +140,7 @@ var autoMergeFields = []amField{
 
 func (autoMergeUpdateOp) Name() string { return WriteOpAutoMergeUpdate }
 func (autoMergeUpdateOp) Description() string {
-	return "Change merge settings (auto_merge) through PATCH /api/config/auto-merge, the endpoint the dashboard's merge controls use. Owner only. Pass only what changes, shaped like the endpoint's body. A list takes {\"add\": [...], \"remove\": [...]}; human_merge_paths takes {\"owner/repo\": [every pattern for that repository]}, with null or [] removing that repository. The preview reads the current settings and sends each changed list or map whole, keeping every entry you did not name, shows each change before and after, and says which changes let the hive merge more on its own. write_confirm refuses if any of those settings changed after the preview. This operation never merges a pull request. human_merge_pin_only is not on this endpoint."
+	return "Change merge settings (auto_merge) through PATCH /api/config/auto-merge, the endpoint the dashboard's merge controls use. Owner only. Pass only what changes, shaped like the endpoint's body. A list takes {\"add\": [...], \"remove\": [...]}; human_merge_paths takes {\"owner/repo\": [every pattern for that repository]}, with null or [] removing that repository. human_merge_pin_only takes {\"owner/repo\": {\"enabled\": true, \"paths\": [...], \"kinds\": [...], \"trusted_authors\": [...]}}, the whole exception for that repository, with null removing it; the repository needs human_merge_paths. The preview reads the current settings and sends each changed list or map whole, keeping every entry you did not name, shows each change before and after, and says which changes let the hive merge more on its own. write_confirm refuses if any of those settings changed after the preview. This operation never merges a pull request."
 }
 
 func (autoMergeUpdateOp) InputSchema() map[string]any {
@@ -172,6 +177,19 @@ func (f *amField) schema() map[string]any {
 		return map[string]any{"type": "string", "enum": f.enum}
 	case amRepoPaths:
 		return map[string]any{"type": "object", "description": "owner/repo to every glob pattern that repository should hold; null or [] removes the repository. Repositories you do not name are kept.", "additionalProperties": map[string]any{"anyOf": []any{list, map[string]any{"type": "null"}}}}
+	case amPinOnly:
+		entry := map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"enabled":         map[string]any{"type": "boolean"},
+				"paths":           map[string]any{"type": "array", "items": stringSchema(), "description": "Glob patterns, within the repository's human_merge_paths, a pin bump may touch."},
+				"kinds":           map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": config.PinOnlyKinds}},
+				"trusted_authors": map[string]any{"type": "array", "items": stringSchema(), "description": "Logins that must author the pull request and every commit behind its head."},
+			},
+			"required":             []string{"enabled"},
+			"additionalProperties": false,
+		}
+		return map[string]any{"type": "object", "description": "owner/repo to that repository's whole pin-only exception; null removes it. Repositories you do not name are kept. An enabled exception lets a pull request whose only change is a pin bump on a human-merge path merge without a hand merge.", "additionalProperties": map[string]any{"anyOf": []any{entry, map[string]any{"type": "null"}}}}
 	default:
 		return map[string]any{"type": "object", "description": "Entries to add and to remove. Entries you do not name are kept.", "properties": map[string]any{"add": list, "remove": list}, "additionalProperties": false}
 	}
@@ -278,9 +296,31 @@ type amRow struct {
 	before, after any
 }
 
-// rows splits a human_merge_paths change into one row per repository that
-// changes, so a preview names repositories as values rather than as keys.
+// rows splits a human_merge_paths or human_merge_pin_only change into one row
+// per repository that changes, so a preview names repositories as values
+// rather than as keys.
 func (c amPlanned) rows() []amRow {
+	if c.field.kind == amPinOnly {
+		before := autoMergePinOnlyValue(c.before)
+		after, _ := c.after.(map[string]autoMergePinOnlyEntry)
+		var rows []amRow
+		for _, repo := range autoMergePinOnlyKeys(before, after) {
+			b, hadB := before[repo]
+			a, hasA := after[repo]
+			if hadB == hasA && compactJSON(b) == compactJSON(a) {
+				continue
+			}
+			row := amRow{field: c.field.key + "[" + repo + "]"}
+			if hadB {
+				row.before = b
+			}
+			if hasA {
+				row.after = a
+			}
+			rows = append(rows, row)
+		}
+		return rows
+	}
 	if c.field.kind != amRepoPaths {
 		return []amRow{{field: c.field.key, before: c.before, after: c.after}}
 	}
@@ -341,9 +381,6 @@ func parseAutoMergeArgs(args map[string]any) ([]amArg, error) {
 }
 
 func unknownAutoMergeField(key string) error {
-	if key == "human_merge_pin_only" {
-		return fmt.Errorf("human_merge_pin_only is not on PATCH %s, so this operation cannot change it; it is set in the hive configuration file", autoMergeSettingsPath)
-	}
 	return fmt.Errorf("unsupported merge setting %q", key)
 }
 
@@ -379,6 +416,9 @@ func planAutoMergeUpdate(ctx context.Context, args map[string]any, provider Prov
 	}
 	if len(plan.changes) == 0 {
 		return amPlan{}, fmt.Errorf("nothing would change: %s already as requested", strings.Join(plan.unchanged, ", "))
+	}
+	if err := autoMergeCheckPinOnlyGuarded(plan, current); err != nil {
+		return amPlan{}, err
 	}
 	plan.fingerprint = settingsFingerprint(beforeValues)
 	return plan, nil
@@ -477,6 +517,8 @@ func (f *amField) apply(before, raw any, projectRepos []string) (any, error) {
 		return nil, fmt.Errorf("%s must be one of %s", f.key, strings.Join(f.enum, ", "))
 	case amRepoPaths:
 		return applyRepoPaths(before, raw, projectRepos)
+	case amPinOnly:
+		return autoMergeApplyPinOnly(before, raw, projectRepos)
 	default:
 		return f.applyList(before, raw, projectRepos)
 	}
@@ -643,6 +685,223 @@ func applyRepoPaths(before, raw any, projectRepos []string) (map[string][]string
 	return out, nil
 }
 
+// autoMergePinOnlyEntry is one repository's auto_merge.human_merge_pin_only entry as the
+// endpoint reports and takes it. The fields are in the order encoding/json
+// sorts map keys, so a value read back from the hive and one built here
+// encode the same.
+type autoMergePinOnlyEntry struct {
+	Enabled        bool     `json:"enabled"`
+	Kinds          []string `json:"kinds"`
+	Paths          []string `json:"paths"`
+	TrustedAuthors []string `json:"trusted_authors"`
+}
+
+// autoMergePinOnlyValue reads human_merge_pin_only as the hive reported it.
+func autoMergePinOnlyValue(v any) map[string]autoMergePinOnlyEntry {
+	out := map[string]autoMergePinOnlyEntry{}
+	switch m := v.(type) {
+	case map[string]any:
+		for repo, raw := range m {
+			e, _ := raw.(map[string]any)
+			enabled, _ := e["enabled"].(bool)
+			out[repo] = autoMergePinOnlyEntry{
+				Enabled:        enabled,
+				Kinds:          nilAsEmpty(stringListValueLoose(e["kinds"])),
+				Paths:          nilAsEmpty(stringListValueLoose(e["paths"])),
+				TrustedAuthors: nilAsEmpty(stringListValueLoose(e["trusted_authors"])),
+			}
+		}
+	case map[string]autoMergePinOnlyEntry:
+		for repo, e := range m {
+			out[repo] = e
+		}
+	}
+	return out
+}
+
+func autoMergePinOnlyKeys(a, b map[string]autoMergePinOnlyEntry) []string {
+	keys := map[string]any{}
+	for k := range a {
+		keys[k] = nil
+	}
+	for k := range b {
+		keys[k] = nil
+	}
+	return SortKeys(keys)
+}
+
+// autoMergeApplyPinOnly sets or unsets the named repositories' whole pin-only
+// exception and keeps every other repository's entry. The merged map must
+// pass the same validation hive.yaml loads under.
+func autoMergeApplyPinOnly(before, raw any, projectRepos []string) (map[string]autoMergePinOnlyEntry, error) {
+	const shape = `human_merge_pin_only takes {"owner/repo": {"enabled": true, "paths": [...], "kinds": [...], "trusted_authors": [...]}}; null removes that repository`
+	change, ok := raw.(map[string]any)
+	if !ok || len(change) == 0 {
+		return nil, fmt.Errorf("%s", shape)
+	}
+	out := autoMergePinOnlyValue(before)
+	touched := map[string]bool{}
+	for _, key := range SortKeys(change) {
+		repo := qualifyProjectRepo(strings.TrimSpace(key), projectRepos)
+		owner, name, ok := strings.Cut(repo, "/")
+		if !ok || owner == "" || name == "" || strings.Contains(name, "/") || strings.ContainsAny(repo, " \t") {
+			return nil, fmt.Errorf("human_merge_pin_only: %q is not an owner/repo name", key)
+		}
+		if touched[strings.ToLower(repo)] {
+			return nil, fmt.Errorf("human_merge_pin_only names %s twice", repo)
+		}
+		touched[strings.ToLower(repo)] = true
+		existing := ""
+		for k := range out {
+			if strings.EqualFold(k, repo) {
+				existing = k
+			}
+		}
+		if change[key] == nil {
+			if existing == "" {
+				return nil, fmt.Errorf("human_merge_pin_only has no entry for %s to remove", repo)
+			}
+			delete(out, existing)
+			continue
+		}
+		entry, err := autoMergePinOnlyEntryArg(repo, change[key])
+		if err != nil {
+			return nil, err
+		}
+		if existing != "" {
+			repo = existing
+		}
+		out[repo] = entry
+	}
+	check := config.AutoMergeConfig{HumanMergePinOnly: map[string]config.PinOnlyException{}}
+	for repo, e := range out {
+		check.HumanMergePinOnly[repo] = config.PinOnlyException{Enabled: e.Enabled, Paths: e.Paths, Kinds: e.Kinds, TrustedAuthors: e.TrustedAuthors}
+	}
+	if err := check.ValidateHumanMergePinOnly(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// autoMergePinOnlyEntryArg reads one repository's exception from the arguments.
+func autoMergePinOnlyEntryArg(repo string, raw any) (autoMergePinOnlyEntry, error) {
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return autoMergePinOnlyEntry{}, fmt.Errorf("human_merge_pin_only[%s] must be an object with enabled, paths, kinds and trusted_authors, or null", repo)
+	}
+	for k := range obj {
+		switch k {
+		case "enabled", "paths", "kinds", "trusted_authors":
+		default:
+			return autoMergePinOnlyEntry{}, fmt.Errorf("human_merge_pin_only[%s] takes enabled, paths, kinds and trusted_authors, not %q", repo, k)
+		}
+	}
+	enabled, ok := obj["enabled"].(bool)
+	if !ok {
+		return autoMergePinOnlyEntry{}, fmt.Errorf("human_merge_pin_only[%s].enabled must be true or false", repo)
+	}
+	entry := autoMergePinOnlyEntry{Enabled: enabled}
+	for _, f := range []struct {
+		name string
+		dst  *[]string
+	}{{"kinds", &entry.Kinds}, {"paths", &entry.Paths}, {"trusted_authors", &entry.TrustedAuthors}} {
+		list, err := stringListValue(obj[f.name])
+		if err != nil {
+			return autoMergePinOnlyEntry{}, fmt.Errorf("human_merge_pin_only[%s].%s must be a list of strings", repo, f.name)
+		}
+		vals := []string{}
+		for _, v := range list {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				return autoMergePinOnlyEntry{}, fmt.Errorf("human_merge_pin_only[%s].%s entries must be non-empty", repo, f.name)
+			}
+			if !slices.Contains(vals, v) {
+				vals = append(vals, v)
+			}
+		}
+		*f.dst = vals
+	}
+	return entry, nil
+}
+
+// autoMergeCheckPinOnlyGuarded refuses an enabled pin-only exception the change adds
+// or alters for a repository that has no human_merge_paths after the change,
+// as the endpoint does: the exception only lifts a human-merge-path hold, so
+// there it would never apply.
+func autoMergeCheckPinOnlyGuarded(plan amPlan, current map[string]any) error {
+	var pin *amPlanned
+	for i := range plan.changes {
+		if plan.changes[i].field.kind == amPinOnly {
+			pin = &plan.changes[i]
+		}
+	}
+	if pin == nil {
+		return nil
+	}
+	paths := repoPathsValue(current["human_merge_paths"])
+	if sent, ok := plan.body["human_merge_paths"]; ok {
+		paths = repoPathsValue(sent)
+	}
+	before := autoMergePinOnlyValue(pin.before)
+	after, _ := pin.after.(map[string]autoMergePinOnlyEntry)
+	for _, repo := range autoMergePinOnlyKeys(after, nil) {
+		e := after[repo]
+		if b, had := before[repo]; !e.Enabled || (had && compactJSON(b) == compactJSON(e)) {
+			continue
+		}
+		guarded := false
+		for k, patterns := range paths {
+			if strings.EqualFold(k, repo) && len(patterns) > 0 {
+				guarded = true
+			}
+		}
+		if !guarded {
+			return fmt.Errorf("human_merge_pin_only[%s]: %s has no human_merge_paths, so a pin-only exception there would never apply; set its human-merge paths first (or in the same change)", repo, repo)
+		}
+	}
+	return nil
+}
+
+// autoMergePinOnlyWidening names what a human_merge_pin_only change lets merge without
+// a hand merge: a repository whose exception turns on, or an enabled one that
+// gains paths, kinds or trusted authors. Removing any of those narrows it.
+func autoMergePinOnlyWidening(before, after any) []string {
+	was := autoMergePinOnlyValue(before)
+	now := autoMergePinOnlyValue(after)
+	var notes []string
+	for _, repo := range autoMergePinOnlyKeys(now, nil) {
+		e := now[repo]
+		if !e.Enabled {
+			continue
+		}
+		b, had := was[repo]
+		bump := "pin bumps (" + strings.Join(e.Kinds, ", ") + ") to " + strings.Join(e.Paths, ", ") + " in " + repo + " by " + strings.Join(e.TrustedAuthors, ", ")
+		if !had || !b.Enabled {
+			notes = append(notes, "human_merge_pin_only["+repo+"] turned on: "+bump+" will merge without a hand merge")
+			continue
+		}
+		var gained []string
+		for _, f := range []struct {
+			name     string
+			was, now []string
+		}{{"paths", b.Paths, e.Paths}, {"kinds", b.Kinds, e.Kinds}, {"trusted_authors", b.TrustedAuthors, e.TrustedAuthors}} {
+			var added []string
+			for _, v := range f.now {
+				if !slices.Contains(f.was, v) {
+					added = append(added, v)
+				}
+			}
+			if len(added) > 0 {
+				gained = append(gained, f.name+" "+strings.Join(added, ", "))
+			}
+		}
+		if len(gained) > 0 {
+			notes = append(notes, "human_merge_pin_only["+repo+"] adds "+strings.Join(gained, "; ")+": "+bump+" will merge without a hand merge")
+		}
+	}
+	return notes
+}
+
 // widening names what a change lets the hive merge on its own, if anything.
 func (f *amField) widening(before, after any, projectRepos []string) []string {
 	note := func(what string) []string { return []string{f.key + " " + what + ": " + f.why} }
@@ -696,6 +955,8 @@ func (f *amField) widening(before, after any, projectRepos []string) []string {
 		if before == config.ContributorLaneAutoPromotionScopeRepo && after == config.ContributorLaneAutoPromotionScopeHive {
 			return note("repo → hive")
 		}
+	case amWidenPinOnly:
+		return autoMergePinOnlyWidening(before, after)
 	case amWidenPaths:
 		was := repoPathsValue(before)
 		now, _ := after.(map[string][]string)

@@ -88,7 +88,7 @@ Optional capabilities, each off or inert until you turn it on. Where a feature h
 - Audit publication: [Audit campaign](audit-campaign.md#publication).
 - Token mint: [Token mint](token-mint.md).
 - Spek stage runner: [Spektacular](spektacular.md).
-- Auto-merge: [App self-merge sweep](operator-reference.md#app-self-merge-sweep-auto_merge), [Trusted bot authors](hive-merge.md#trusted-bot-authors), [Trusted-author auto-merge](hive-merge.md#trusted-author-auto-merge), and the per-repository merge policy (`auto_merge.require_current_base`, `auto_merge.squash_only`, `auto_merge.human_merge_paths`).
+- Auto-merge: [App self-merge sweep](operator-reference.md#app-self-merge-sweep-auto_merge), [Trusted bot authors](hive-merge.md#trusted-bot-authors), [Trusted-author auto-merge](hive-merge.md#trusted-author-auto-merge), and the per-repository merge policy (`auto_merge.require_current_base`, `auto_merge.squash_only`, `auto_merge.human_merge_paths`, `auto_merge.human_merge_pin_only`).
 - Review gate: [Review swarm](review-swarm.md#configuration), [Blocking line and backlog](review-swarm.md#blocking-line-reviewseverity-reviewbacklog), and [external review bot threads](review-bot-threads.md).
 - Trajectory review: [Trajectory-Review Lane](trajectory-review.md#configuration).
 - Linear agent: [Linear agent integration](linear-agent.md).

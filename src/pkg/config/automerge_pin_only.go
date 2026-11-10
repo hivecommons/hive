@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/intent"
@@ -22,11 +23,13 @@ type PinOnlyException struct {
 	TrustedAuthors []string `yaml:"trusted_authors" json:"trusted_authors"`
 }
 
+// PinOnlyKinds is every kind a PinOnlyException may name. The settings
+// editors offer exactly these; validate refuses anything else.
+var PinOnlyKinds = []string{"action-sha", "image-digest", "version-pin"}
+
 func (p PinOnlyException) validate() error {
 	for _, kind := range p.Kinds {
-		switch kind {
-		case "action-sha", "image-digest", "version-pin":
-		default:
+		if !slices.Contains(PinOnlyKinds, kind) {
 			return fmt.Errorf("unknown kind %q", kind)
 		}
 	}

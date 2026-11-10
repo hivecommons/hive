@@ -102,7 +102,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/config/governor/general-advanced` | Owner only | Governor General Advanced Get | `pkg/dashboard/api.go:263` |
 | `PUT` | `/api/config/governor/general-advanced` | Owner only | Governor General Advanced Set | `pkg/dashboard/api.go:264` |
 | `GET` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Get | `pkg/dashboard/api.go:268` |
-| `PUT` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Set | `pkg/dashboard/api.go:269` |
+| `PUT` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Set; `human_merge_pin_only` replaces the whole pin-only map (`{}` clears it), and an invalid entry is a 400 with nothing changed | `pkg/dashboard/api.go:269` |
 | `PATCH` | `/api/config/auto-merge` | Owner only | Partially update auto-merge settings, including nested `merge_train`; omitted fields stay unchanged; returns effective settings and bot-author metadata | `pkg/dashboard/api_config_automerge.go` |
 | `GET` | `/api/config/convergence` | Owner only | Convergence Config Get | `pkg/dashboard/api.go:275` |
 | `PUT` | `/api/config/convergence` | Owner only | Convergence Config Set | `pkg/dashboard/api.go:277` |
@@ -110,6 +110,8 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `PUT` | `/api/config/governor/advisory` | Owner only | Governor Advisory Set | `pkg/dashboard/api.go:282` |
 | `GET` | `/api/config/governor/replan` | Owner only | Governor Replan Get | `pkg/dashboard/api.go:283` |
 | `PUT` | `/api/config/governor/replan` | Owner only | Governor Replan Set | `pkg/dashboard/api.go:284` |
+| `GET` | `/api/config/decisions/delegate` | Owner only | "Let hive decide" settings (`decisions.delegate`) with defaults resolved: `enabled` (unset = on), `enabled_set`, `repos` (`{owner/repo: {enabled}}`), `llm` (`{enabled, model, model_masked}`; unset = off), `llm_reviewer_ready` and `llm_model_effective` (the decider turn's model; the endpoint and its key are never returned), `effect_timeout`, `effect_timeout_effective`, `project_repos`. A stored `llm.model` that looks like a key is masked | `pkg/dashboard/api_config_decisions_delegate.go` |
+| `PUT` | `/api/config/decisions/delegate` | Owner only | Change `decisions.delegate`: `enabled`, `repos` (the full override map when sent; an entry with `enabled: null` is dropped; a new key must be in `project.repos`), `llm.enabled`, `llm.model` (a model name; a key-like value is refused) and `effect_timeout`. Unknown fields and invalid values are 400 with nothing changed. Saved, audited as `config_decisions_delegate` with the actor and each change before and after, and applied without a restart. Starts no decision and merges nothing | `pkg/dashboard/api_config_decisions_delegate.go` |
 | `GET` | `/api/config/governor/work-source` | Owner only | Governor Work Source Get (Jira secrets/TLS fields reported as set/unset only) | `pkg/dashboard/api.go:294` |
 | `PUT` | `/api/config/governor/work-source` | Owner only | Governor Work Source Set (including Jira Data Center TLS settings) | `pkg/dashboard/api.go:295` |
 | `PUT` | `/api/config/governor/security` | Owner only | Governor Security | `pkg/dashboard/api.go:296` |

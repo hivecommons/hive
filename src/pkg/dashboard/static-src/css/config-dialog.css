@@ -255,6 +255,8 @@
     .am-bot-source { color: var(--muted); font-weight: 400; }
     #am-trusted-authors { margin-top: var(--sp-5); border-top: 1px solid var(--border); }
     .am-trusted-authors-note { font-size: var(--fs-xs); color: var(--muted); margin: var(--sp-2) var(--sp-0) var(--sp-0); }
+    .am-pin-only-row .am-pin-only-opt { display: inline-flex; align-items: center; gap: var(--sp-1); margin: var(--sp-1) var(--sp-3) var(--sp-1) var(--sp-0); font-size: var(--fs-xs); }
+    .am-pin-only-row input[type="text"] { margin-top: var(--sp-1); }
     .rv-reviewer-list { padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); }
     .rv-reviewer-row { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); padding: var(--sp-1) var(--sp-0); cursor: pointer; }
     .rv-reviewer-row.rv-reviewer-unavailable { opacity: 0.6; }

@@ -535,6 +535,7 @@ start-up script, its process launch, PIDs, signal handling and exit codes are un
 | plan approve / reject | `POST /api/plan/{epicID}/approve`, `.../reject` | `requireOwnerRole` |
 | feature settings | `PUT /api/config/governor/features` | `requireOwnerRole`; pointer fields, nil means unchanged |
 | merge settings | `PATCH /api/config/auto-merge` | `requireOwnerRole` on the read and the write; every list and map is a full replace |
+| Let hive decide settings | `PUT /api/config/decisions/delegate` | `requireOwnerRole` on the read and the write; `repos` is a full replace, the op sends the merged map |
 | repository pause / resume | `POST /api/repos/pause`, `/api/repos/resume` | `requireRepoPausePermission` → `canToggleRepoHold` |
 | item hold | `POST /api/repos/{owner}/{repo}/items/{number}/hold` | `canToggleRepoHold` |
 | re-evaluate now | `POST /api/repos/rescan` | none beyond write access |
@@ -643,8 +644,9 @@ Phase 5 registers the fleet-level write operations under that contract:
   The preview names each change that lets the hive merge more on its own (a lane turned on, a
   human-merge path removed, a repository added to an allow-list or an allow-list emptied, which
   means every repository). Both the read and the write are owner only at the endpoint, and the
-  op merges nothing itself. `human_merge_pin_only` has no field on the endpoint, so the op
-  cannot reach it.
+  op merges nothing itself. `human_merge_pin_only` is set one repository at a time the same way
+  (the whole exception for that repository, or `null` to remove it); turning one on or giving
+  it more paths, kinds or trusted authors is named as widening.
 
 The Activity monitor's row actions are registered as the `repository.rescan` and
 `repository.item_*` operations, each sending the request the dashboard's button sends

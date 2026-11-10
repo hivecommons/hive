@@ -1025,6 +1025,23 @@
             });
             if (!ioRes.ok) throw new Error(await saveErrorMessage(ioRes));
             _configState.data.integration_orchestration = await ioRes.json();
+          } else if (_configState.type === 'governor' && section === 'decisions-delegate') {
+            // decisions.delegate is a TOP-LEVEL config block; it saves through
+            // its own owner-only /api/config/decisions/delegate endpoint.
+            const ddBody = {};
+            if (values.enabled !== undefined) ddBody.enabled = values.enabled;
+            if (values.llm_enabled !== undefined || values.llm_model !== undefined) {
+              ddBody.llm = {};
+              if (values.llm_enabled !== undefined) ddBody.llm.enabled = values.llm_enabled;
+              if (values.llm_model !== undefined) ddBody.llm.model = values.llm_model;
+            }
+            const ddRes = await fetch('/api/config/decisions/delegate', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(ddBody)
+            });
+            if (!ddRes.ok) throw new Error(await saveErrorMessage(ddRes));
+            _configState.data.decisions_delegate = await ddRes.json().catch(() => _configState.data.decisions_delegate);
           } else if (_configState.type === 'governor' && section === 'convergence') {
             // convergence is a TOP-LEVEL config block, not under governor —
             // it saves through its own owner-only /api/config/convergence
