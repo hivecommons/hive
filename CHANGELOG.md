@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-10 (v5.211.7)
+
+### Fixed
+
+- CI: the advisory `mutation` check now mutates only the lines a PR adds (`gremlins --diff`, run from inside each changed package so paths match) instead of every file under the changed package, so PRs touching large packages such as `pkg/dashboard` or `pkg/github` no longer hit the 20-minute job limit and show a red check that never judged the change. ([#17463](https://github.com/hivecommons/hive/issues/17463))
+- Dashboard: an Approve on a Prow repo now reads Prow's reply to the relayed `/lgtm` + `/approve` and says Prow rejected them instead of showing "approved" (#17475, part of #17451).
+- Dashboard: when a required check on a Prow repository has never reported (or is only a pending commit status), the stage tracker's CI chevron now quotes Tide's status description in its tooltip ("Not mergeable. Jobs … have not succeeded.") and links to Tide's page when the check has no link of its own, so a presubmit that never ran no longer looks like a failing check. Tide stays out of the pass/fail tally. ([#17476](https://github.com/hivecommons/hive/issues/17476))
+
 ## 2026-11-10 (v5.211.6)
 
 ### Fixed
