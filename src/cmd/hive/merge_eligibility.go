@@ -113,6 +113,7 @@ func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorL
 			AutoPromotionScope:                 p.EffectiveAutoPromotionScope(),
 			ApproveHeldRunsForRegistryTrusted:  p.EffectiveApproveHeldRunsForRegistryTrusted(),
 			OwnerApprovalReleasesWorkflowFence: p.EffectiveOwnerApprovalReleasesWorkflowFence(),
+			WorkflowFenceScope:                 p.EffectiveWorkflowFenceScope(),
 		}
 	}
 }
