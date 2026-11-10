@@ -218,7 +218,7 @@ func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, own
 		// hand the command to a person once.
 		c.markWorkflowApprovalUntrusted(owner, repo, number)
 		if !state.rejectionNoted {
-			c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, state.rejected)
+			c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, workflowApprovalUntrustedNote(strings.TrimSpace(c.transport.AppBotLogin()), state.rejected))
 		}
 		c.warn("automerge workflow approval cannot be requested by the App; merge bot trusts only its own users",
 			"repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "rejected", state.rejected, "prow", state.prowManaged)
@@ -459,12 +459,10 @@ func workflowApprovalUntrustedNote(appLogin string, rejected bool) string {
 	return b.String()
 }
 
-func (c *Engine) postWorkflowApprovalUntrustedNote(ctx context.Context, displayRepo, owner, repo string, number int, headSHA string, rejected bool) {
-	appLogin := ""
-	if c.transport != nil {
-		appLogin = strings.TrimSpace(c.transport.AppBotLogin())
-	}
-	body := workflowApprovalUntrustedNote(appLogin, rejected)
+// postWorkflowApprovalUntrustedNote posts body, a needs-human note opening
+// with workflowApprovalRejectedMarker, once per PR through the mutation
+// boundary.
+func (c *Engine) postWorkflowApprovalUntrustedNote(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, body string) {
 	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindIssueComment,
@@ -483,7 +481,7 @@ func (c *Engine) postWorkflowApprovalUntrustedNote(ctx context.Context, displayR
 		c.warn("automerge failed to post ok-to-test needs-human note", "repo", displayRepo, "pr", number, "sha", headSHA, "error", err)
 		return
 	}
-	c.info("automerge posted ok-to-test needs-human note", "repo", displayRepo, "pr", number, "sha", headSHA, "rejected", rejected)
+	c.info("automerge posted ok-to-test needs-human note", "repo", displayRepo, "pr", number, "sha", headSHA)
 }
 
 // detectTrustedRegistryClankerWorkflowApprovalRequired surfaces held runs for

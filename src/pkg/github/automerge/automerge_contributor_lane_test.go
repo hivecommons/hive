@@ -113,6 +113,9 @@ type contributorLaneFixture struct {
 	// headStatus, when set, is the combined-status state and check-run
 	// conclusion reported for sha7; empty means "success".
 	headStatus string
+	// headStatuses is what GET commits/sha7/statuses (every commit status,
+	// with its creator) serves; nil serves an empty list.
+	headStatuses []map[string]any
 	// baseRef, when set, gives the PR base a branch name and serves the
 	// branch, protection and compare routes the current-base gate
 	// (automerge_current_base.go) and release hold need; empty leaves the
@@ -347,6 +350,12 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				"total_count": 1,
 				"statuses":    []map[string]string{{"context": "ci/build", "state": headStatus}},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/statuses":
+			statuses := fx.headStatuses
+			if statuses == nil {
+				statuses = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(statuses)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
 			run := map[string]string{"name": "build", "status": "completed", "conclusion": headStatus}
 			if fx.checkCompletedAt != "" {
