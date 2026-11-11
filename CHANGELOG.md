@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v6.13.3)
+
+### Fixed
+
+- **Advisory mutation report survives its time budget** — `mutation-report.sh` now runs gremlins under its own `MUTATION_BUDGET_SECONDS` budget (17 min by default, under the job's 20‑minute limit), so a size/XXL PR no longer ends with the runner killing the step before anything is written. The `<!-- hive-mutation -->` comment is always posted, names the PR head it reports on, and when the budget ran out it says which changed packages were left unfinished or not started instead of a stale report from an earlier push, or none, standing in for a clean result. ([#17602](https://github.com/hivecommons/hive/issues/17602))
+
+## 2026-11-10 (v6.13.2)
+
+### Fixed
+
+- Merge requests: a cancelled check (for example the 20-minute advisory mutation job timing out) no longer blocks the merge gate when the base branch's required checks cannot be read; GitHub still enforces the real required checks at merge time. When the required set is known to be empty (nothing enforced server-side), a cancelled non-advisory check still blocks locally, as do failed and timed-out checks (hivecommons/hive#17598).
+
 ## 2026-11-10 (v6.13.1)
 
 ### Fixed
