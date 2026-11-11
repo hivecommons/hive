@@ -11,6 +11,33 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.222.1)
+
+### Fixed
+
+- The effect ledger no longer leaves an `issue_create` op stuck in Unknown forever after an ambiguous GitHub response: once a refused retry finds it unresolved past the kind's TTL (1h), the boundary expires it to NotApplied, clears the `effect_ledger_op_stuck` self-report and lets the caller's next attempt (which re-runs its own duplicate search first) create, without ever retrying the ambiguous write in the refused call (#17693).
+- Good-first-issue curation skips archived read-only repositories after GitHub refuses a write, instead of repeatedly reporting failures.
+- Fixed a startup panic in the stage engine when hive ran with no loaded config, which made the auto-merge sweep test flaky (#17736).
+- A read-only integration lane no longer retries removing the hive:unauthorized label every cycle and warning each time; the removal is skipped and left to a write-capable lane with a single debug line (#17720).
+
+## 2026-11-11 (v5.222.0)
+
+### Added
+
+- Add Agent Substrate (CNCF Sandbox) as a fourth, opt-in `sandbox.runtime: substrate` (ADR-0026 phase 2). Actors are created through Substrate's gRPC Control API with a hive-derived `atenet-egress` policy, a digest-pinned image, and workspace transfer through an in-actor bridge over the atenet-router mTLS tunnel; `sandbox.substrate.snapshot_on_idle` suspends instead of deleting the actor. Credential brokering is unchanged (agents still use the hive MITM proxy). No new Go modules: a trimmed wire-compatible proto subset is generated in-repo.
+
+### Changed
+
+- Document Agent Substrate as the opt-in fourth `sandbox.runtime` (ADR-0026 phase 2): ADR amendment with the contract mapping, deviations and when to choose it over OpenShell, a `sandbox-isolation.md` section, `deploy/substrate.md` install and verification notes with the hive cluster survey, and the integrations table entry.
+
+## 2026-11-11 (v5.221.1)
+
+### Fixed
+
+- Copilot agents no longer crash-loop on hosts whose kernel refuses the Copilot CLI binary with ENOEXEC (seen fleet-wide on OKE after the UEK8 / Linux 6.12 node upgrade: the Bun single-file ET_EXEC the `@github/copilot` platform package ships is rejected by the 6.12 ELF loader, the npm shim's `sh` fell back to "running" the ELF as a script, and every copilot agent sat in "copilot hung with no output" under the restart-storm breaker). The hive image now wraps the platform binary so it starts through glibc's `ld.so` (`bin/install-copilot-exec-shim.sh`, arch-aware, idempotent, `HIVE_COPILOT_DIRECT_EXEC=1` to bypass), the copilot hang diagnostic recognises `Exec format error` / the `ld-linux-…: not found` fallback signature and fails the agent loudly with the remedy instead of relaunching, and the in-process runtime execs every configured agent CLI once at boot and logs ERROR with the same remedy when the kernel refuses one (#17729, #17642).
+- The model-discovery self-report no longer carries raw binary when the Copilot CLI helper is refused with ENOEXEC; the error now names the cause (#17735).
+- The "agent git config declares a user identity outside the system gitconfig" warning is logged once per agent and config, not every cycle, so it no longer trips the repeated-error selfreport (#17703).
+
 ## 2026-11-11 (v5.221.0)
 
 ### Added

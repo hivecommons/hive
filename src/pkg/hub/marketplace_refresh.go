@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/evidence/complexity"
 	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/workflowmodel/bundle"
 	"github.com/hivecommons/hive/pkg/workflowmodel/ingest"
@@ -47,8 +46,23 @@ const (
 	// continuing.
 	marketplaceRateFloor   = 50
 	marketplaceRateMaxWait = 10 * time.Minute
-	marketplaceMaxTarball  = 256 << 20
 	marketplaceSeedDelay   = 30 * time.Second
+	// marketplaceStaleAfter is how old a repo's refresh record may be
+	// before the startup pass re-ingests it: the nightly interval, so a
+	// hub that restarts repeatedly only re-crawls what the nightly missed.
+	marketplaceStaleAfter = 24 * time.Hour
+	// marketplaceRetryErrorAfter is how soon the startup pass retries a
+	// repository whose last record is an error.
+	marketplaceRetryErrorAfter = time.Hour
+	// marketplaceProgressEvery is how many repos between progress log lines.
+	marketplaceProgressEvery = 25
+	// marketplaceFullRefreshInterval bounds on-demand full runs from
+	// non-admin callers (spokes): one per interval across all callers.
+	marketplaceFullRefreshInterval = time.Hour
+	// marketplaceRepoRefreshBurst / Window bound on-demand single-repo
+	// runs from non-admin callers.
+	marketplaceRepoRefreshBurst  = 10
+	marketplaceRepoRefreshWindow = time.Minute
 )
 
 // marketplaceRepoPause keeps the crawl polite: one repo at a time with a
@@ -84,6 +98,39 @@ type marketplaceRefresher struct {
 	// bgCtx bounds on-demand runs started from a request; set by
 	// StartMarketplaceRefresh so they stop with the other pollers.
 	bgCtx context.Context
+	// lastFullRequest and repoRequests back the on-demand rate limits.
+	lastFullRequest time.Time
+	repoRequests    []time.Time
+}
+
+// allowFullRefresh reports whether a non-admin full refresh may start now
+// and, when not, how long until one may. Callers hold no lock.
+func (rf *marketplaceRefresher) allowFullRefresh(now time.Time) (bool, time.Duration) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if wait := marketplaceFullRefreshInterval - now.Sub(rf.lastFullRequest); !rf.lastFullRequest.IsZero() && wait > 0 {
+		return false, wait
+	}
+	rf.lastFullRequest = now
+	return true, 0
+}
+
+// allowRepoRefresh is the sliding-window limit for non-admin ?repo= runs.
+func (rf *marketplaceRefresher) allowRepoRefresh(now time.Time) (bool, time.Duration) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	kept := rf.repoRequests[:0]
+	for _, t := range rf.repoRequests {
+		if now.Sub(t) < marketplaceRepoRefreshWindow {
+			kept = append(kept, t)
+		}
+	}
+	rf.repoRequests = kept
+	if len(kept) >= marketplaceRepoRefreshBurst {
+		return false, marketplaceRepoRefreshWindow - now.Sub(kept[0])
+	}
+	rf.repoRequests = append(kept, now)
+	return true, 0
 }
 
 // marketplaceBackgroundContext is the pollers' context when running, else
@@ -105,6 +152,9 @@ func (s *HubServer) marketplace() *marketplaceStore {
 		}
 		if s.marketplaceRefresher == nil {
 			s.marketplaceRefresher = &marketplaceRefresher{fetch: s.marketplaceGitHubFetcher, now: time.Now}
+		}
+		if s.marketplaceRefresher.last == nil {
+			s.marketplaceRefresher.last = s.marketplaceStore.loadLastRefresh()
 		}
 	})
 	return s.marketplaceStore
@@ -168,6 +218,7 @@ func (s *HubServer) runMarketplaceRefresh(ctx context.Context, repos []string, t
 		repos = marketplaceRepos()
 	}
 	res := &marketplaceRefreshResult{StartedAt: rf.now().UTC(), Trigger: trigger, Published: []string{}, Errors: []string{}}
+	s.logger.Info("marketplace refresh started", "trigger", trigger, "repos", len(repos))
 	for i, repo := range repos {
 		if ctx.Err() != nil {
 			res.Errors = append(res.Errors, "cancelled: "+ctx.Err().Error())
@@ -192,11 +243,17 @@ func (s *HubServer) runMarketplaceRefresh(ctx context.Context, repos []string, t
 		default:
 			res.Published = append(res.Published, outcome)
 		}
+		if res.Repos%marketplaceProgressEvery == 0 && res.Repos < len(repos) {
+			s.logger.Info("marketplace refresh progress", "trigger", trigger, "done", res.Repos, "total", len(repos), "published", len(res.Published), "errors", len(res.Errors))
+		}
 	}
 	res.FinishedAt = rf.now().UTC()
 	rf.mu.Lock()
 	rf.last = res
 	rf.mu.Unlock()
+	if err := st.saveLastRefresh(res); err != nil {
+		s.logger.Warn("marketplace refresh: could not persist summary", "error", err)
+	}
 	s.logger.Info("marketplace refresh finished", "trigger", trigger, "repos", res.Repos, "published", len(res.Published), "unchanged", res.Unchanged, "skipped", res.Skipped, "errors", len(res.Errors))
 	return res, nil
 }
@@ -213,7 +270,7 @@ func (s *HubServer) refreshOneRepo(ctx context.Context, st *marketplaceStore, rf
 	}
 	hash := marketplaceFilesHash(files)
 	rec := marketplaceRefreshRecord{Repo: repo, SourceSHA: sha, FilesHash: hash, Files: len(files), CheckedAt: rf.now().UTC()}
-	if prev, ok := st.refreshRecord(repo); ok && prev.FilesHash == hash && prev.Error == "" {
+	if prev, ok := st.refreshRecord(repo); ok && prev.Format == marketplaceRecordFormat && prev.FilesHash == hash && prev.Error == "" {
 		rec.Published = prev.Published
 		_ = st.saveRefreshRecord(rec)
 		return "", nil
@@ -313,20 +370,12 @@ func (s *HubServer) marketplaceGitHubFetcher(ctx context.Context, repo string) (
 		return nil, "", err
 	}
 	defer resp.Body.Close()
+	marketplaceHonourRateLimit(ctx, resp.StatusCode, resp.Header)
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return nil, "", fmt.Errorf("tarball: %s", resp.Status)
 	}
-	dir, err := os.MkdirTemp("", "hive-marketplace-")
-	if err != nil {
-		return nil, "", err
-	}
-	defer os.RemoveAll(dir)
-	top, err := complexity.ExtractTarGz(resp.Body, dir, marketplaceMaxTarball)
-	if err != nil {
-		return nil, "", err
-	}
-	files, err := ingest.ReadTree(top)
+	files, err := ingest.ReadTarball(resp.Body)
 	if err != nil {
 		return nil, "", err
 	}
@@ -334,8 +383,9 @@ func (s *HubServer) marketplaceGitHubFetcher(ctx context.Context, repo string) (
 }
 
 // marketplaceGitHubJSON GETs a GitHub API resource, honouring rate-limit
-// headers: when the remaining budget is under marketplaceRateFloor it
-// sleeps until the reset (bounded) before returning.
+// headers: when the remaining budget is under marketplaceRateFloor, or the
+// reply is a 403/429 carrying Retry-After (secondary limit), it sleeps
+// (bounded) before returning so the next repo does not hit the same wall.
 func marketplaceGitHubJSON(ctx context.Context, client *http.Client, url string, out interface{}) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -348,7 +398,7 @@ func marketplaceGitHubJSON(ctx context.Context, client *http.Client, url string,
 		return err
 	}
 	defer resp.Body.Close()
-	marketplaceHonourRateLimit(ctx, resp.Header)
+	marketplaceHonourRateLimit(ctx, resp.StatusCode, resp.Header)
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("%s: %s", url, resp.Status)
@@ -364,7 +414,20 @@ var marketplaceSleep = func(ctx context.Context, d time.Duration) {
 	}
 }
 
-func marketplaceHonourRateLimit(ctx context.Context, h http.Header) {
+func marketplaceHonourRateLimit(ctx context.Context, status int, h http.Header) {
+	if status == http.StatusForbidden || status == http.StatusTooManyRequests {
+		// Secondary rate limits answer 403/429 with Retry-After seconds and
+		// a non-zero X-RateLimit-Remaining, so the floor check below would
+		// not catch them.
+		if secs, err := strconv.Atoi(strings.TrimSpace(h.Get("Retry-After"))); err == nil && secs > 0 {
+			wait := time.Duration(secs) * time.Second
+			if wait > marketplaceRateMaxWait {
+				wait = marketplaceRateMaxWait
+			}
+			marketplaceSleep(ctx, wait)
+			return
+		}
+	}
 	rem, err := strconv.Atoi(strings.TrimSpace(h.Get("X-RateLimit-Remaining")))
 	if err != nil || rem >= marketplaceRateFloor {
 		return
@@ -412,9 +475,12 @@ func marketplaceSchedule() string {
 	return strings.TrimSpace(v)
 }
 
-// StartMarketplaceRefresh runs the nightly ingest until ctx is cancelled,
-// seeding the catalogue once at start when it is empty and the hub has a
-// GitHub token. Started from StartBackgroundPollers.
+// StartMarketplaceRefresh runs the nightly ingest until ctx is cancelled.
+// At start (after marketplaceSeedDelay) it ingests every corpus repository
+// that is due — no refresh record, a record older than marketplaceStaleAfter
+// or in an older format, or an error older than marketplaceRetryErrorAfter —
+// so a seed interrupted by a hub restart resumes where it stopped instead of
+// waiting for the nightly. Started from StartBackgroundPollers.
 func (s *HubServer) StartMarketplaceRefresh(ctx context.Context) {
 	if marketplaceDisabled() {
 		s.logger.Info("marketplace disabled", "env", hubMarketplaceDisableEnv)
@@ -426,11 +492,11 @@ func (s *HubServer) StartMarketplaceRefresh(ctx context.Context) {
 	rf.mu.Unlock()
 	schedule := marketplaceSchedule()
 	s.logger.Info("marketplace refresh started", "schedule_utc", schedule, "corpus_repos", len(marketplaceRepos()))
-	if s.marketplaceShouldSeed() {
-		s.logger.Warn("marketplace catalogue is empty: seeding from the CNCF corpus in the background", "delay", marketplaceSeedDelay.String())
+	if due := s.marketplaceDueRepos(); len(due) > 0 {
+		s.logger.Warn("marketplace catalogue has repositories due for ingest: resuming in the background", "due", len(due), "delay", marketplaceSeedDelay.String())
 		marketplaceSleep(ctx, marketplaceSeedDelay)
 		if ctx.Err() == nil {
-			if _, err := s.runMarketplaceRefresh(ctx, nil, "seed"); err != nil {
+			if _, err := s.runMarketplaceRefresh(ctx, due, "seed"); err != nil {
 				s.logger.Warn("marketplace seed did not run", "error", err)
 			}
 		}
@@ -452,12 +518,48 @@ func (s *HubServer) StartMarketplaceRefresh(ctx context.Context) {
 	}
 }
 
-// marketplaceShouldSeed is true when the catalogue has no entries and the
-// hub can reach GitHub with a token.
-func (s *HubServer) marketplaceShouldSeed() bool {
-	if hubGitHubAuthTokenForRequest(context.Background()) == "" {
-		return false
+// marketplaceRepoDue reports whether a repository needs ingesting at
+// startup given its last record (ok=false when there is none).
+func marketplaceRepoDue(rec marketplaceRefreshRecord, ok bool, now time.Time) bool {
+	switch {
+	case !ok:
+		return true
+	case rec.Format != marketplaceRecordFormat:
+		return true
+	case rec.Error != "":
+		return now.Sub(rec.CheckedAt) >= marketplaceRetryErrorAfter
+	default:
+		return now.Sub(rec.CheckedAt) >= marketplaceStaleAfter
 	}
-	idx, _, _, err := s.marketplace().Index()
-	return err == nil && len(idx.Entries) == 0
+}
+
+// marketplaceDueRepos is the sorted subset of marketplaceRepos the startup
+// pass should ingest, or nil when the hub has no GitHub token (nothing can
+// be fetched, so nothing is due).
+func (s *HubServer) marketplaceDueRepos() []string {
+	if hubGitHubAuthTokenForRequest(context.Background()) == "" {
+		return nil
+	}
+	st := s.marketplace()
+	now := s.refresher().now().UTC()
+	var due []string
+	for _, repo := range marketplaceRepos() {
+		rec, ok := st.refreshRecord(repo)
+		if marketplaceRepoDue(rec, ok, now) {
+			due = append(due, repo)
+		}
+	}
+	return due
+}
+
+// marketplacePendingRepos counts corpus repositories with no refresh record.
+func (s *HubServer) marketplacePendingRepos() []string {
+	st := s.marketplace()
+	var pending []string
+	for _, repo := range marketplaceRepos() {
+		if _, ok := st.refreshRecord(repo); !ok {
+			pending = append(pending, repo)
+		}
+	}
+	return pending
 }

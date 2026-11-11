@@ -802,7 +802,9 @@ when self-reporting is enabled, as a `[selfreport]` issue.
   mutation journal (`/data/convergence/mutation/journal.json` in the pod). Check whether the effect
   exists on GitHub; the owning call site reconciles it on its next pass, or
   the op resolves once the request behind it is removed. A watcher retrying
-  a doomed request keeps the op pinned, so fix the request first.
+  a doomed request keeps the op pinned, so fix the request first. An
+  `issue_create` op still refused after 1h is expired to NotApplied by the
+  boundary itself and the report clears.
 - **`unclassified_error_repeated`** — any WARN/ERROR line repeated five times
   in ten minutes. The report's message is the normalised line; grep the log
   for it (`kubectl -n hive logs deploy/hive | grep -F "<message>"`) to find

@@ -327,6 +327,54 @@ func quietOpts() SweepOptions {
 	return SweepOptions{Links: Links{Origin: "https://hive.example", HiveID: "acme-hive"}, Now: now, Logger: slog.New(slog.DiscardHandler)}
 }
 
+type archivedForge struct {
+	*fakeForge
+	archived bool
+	attempts int
+}
+
+var archivedErr = errors.New("archived repository")
+
+func (f *archivedForge) ArchivedWrite(repo string, err error) bool {
+	if repo != "acme/archived" {
+		return false
+	}
+	if errors.Is(err, archivedErr) {
+		f.archived = true
+	}
+	return f.archived
+}
+
+func (f *archivedForge) UpsertIssueMarkerComment(ctx context.Context, repo string, n int, marker, body string, create bool) (MarkerComment, error) {
+	if repo == "acme/archived" && create {
+		f.attempts++
+		return MarkerComment{}, archivedErr
+	}
+	return f.fakeForge.UpsertIssueMarkerComment(ctx, repo, n, marker, body, create)
+}
+
+func TestSweepSkipsArchivedRepoAfterRefusal(t *testing.T) {
+	forge := &archivedForge{fakeForge: newFakeForge()}
+	s := NewSweeper()
+	a := good()
+	a.Repo = "acme/archived"
+	b := a
+	b.Number++
+	active := good()
+	candidates := []Candidate{a, b, active}
+	first := s.Sweep(context.Background(), forge, candidates, quietOpts())
+	second := s.Sweep(context.Background(), forge, candidates, quietOpts())
+	if forge.attempts != 1 || first.Errors != 0 || second.Errors != 0 {
+		t.Fatalf("attempts=%d first=%+v second=%+v", forge.attempts, first, second)
+	}
+	if first.Skipped["archived-repo"] != 2 || second.Skipped["archived-repo"] != 2 {
+		t.Fatalf("archived skips: first=%+v second=%+v", first, second)
+	}
+	if len(first.Selected) != 1 || first.Selected[0] != active.Key() {
+		t.Fatalf("active repo not selected: %+v", first)
+	}
+}
+
 func TestSweepSelectsLabelsAndCommentsIdempotently(t *testing.T) {
 	forge := newFakeForge()
 	s := NewSweeper()
