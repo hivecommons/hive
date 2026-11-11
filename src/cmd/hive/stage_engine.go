@@ -39,6 +39,10 @@ func stageEngineOptions(cfg *config.Config, logger *slog.Logger) *stageengine.Op
 		if logger == nil {
 			logger = slog.Default()
 		}
+		var wf *wfstore.Store
+		if cfg != nil {
+			wf = wfstore.Open(wfstore.Root(cfg.Data.WorkflowsDir))
+		}
 		stageEngine.opts = &stageengine.Options{
 			Mode:        stageEngineConfiguredMode(cfg),
 			Store:       stagelabels.Shared(),
@@ -46,10 +50,10 @@ func stageEngineOptions(cfg *config.Config, logger *slog.Logger) *stageengine.Op
 			PR:          stageengine.PRDeriver(),
 			Logger:      logger,
 			Metrics:     stageengine.DefaultCounters(),
-			WorkflowFor: stageEngineWorkflowFor(cfg, wfstore.Open(wfstore.Root(cfg.Data.WorkflowsDir)), logger),
+			WorkflowFor: stageEngineWorkflowFor(cfg, wf, logger),
 		}
 		if cfg != nil {
-			stageEngine.opts.WorkflowProvisioned = wfstore.Open(wfstore.Root(cfg.Data.WorkflowsDir))
+			stageEngine.opts.WorkflowProvisioned = wf
 			stageEngine.opts.WorkflowLabelGC = func() bool { return cfg.Workflow.LabelGCEnabled() }
 		}
 	})
