@@ -1,1 +1,0 @@
-- A read-only integration lane no longer retries removing the hive:unauthorized label every cycle and warning each time; the removal is skipped and left to a write-capable lane with a single debug line (#17720).

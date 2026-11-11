@@ -1,1 +1,0 @@
-- Good-first-issue curation skips archived read-only repositories after GitHub refuses a write, instead of repeatedly reporting failures.
