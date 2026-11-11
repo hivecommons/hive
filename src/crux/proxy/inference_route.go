@@ -128,11 +128,15 @@ var DefaultInferenceTools = []openaiTool{
 type inferenceRouter struct {
 	mu     sync.RWMutex
 	routes map[string]*InferenceRoute // agent name → route
+	// cleared remembers agents whose route was removed, so a later "no route"
+	// can be told apart from an agent that never had one.
+	cleared map[string]struct{}
 }
 
 func newInferenceRouter() *inferenceRouter {
 	return &inferenceRouter{
-		routes: make(map[string]*InferenceRoute),
+		routes:  make(map[string]*InferenceRoute),
+		cleared: make(map[string]struct{}),
 	}
 }
 
@@ -140,12 +144,25 @@ func (ir *inferenceRouter) Set(agentName string, route *InferenceRoute) {
 	ir.mu.Lock()
 	defer ir.mu.Unlock()
 	ir.routes[agentName] = route
+	delete(ir.cleared, agentName)
 }
 
 func (ir *inferenceRouter) Clear(agentName string) {
 	ir.mu.Lock()
 	defer ir.mu.Unlock()
 	delete(ir.routes, agentName)
+	ir.cleared[agentName] = struct{}{}
+}
+
+// MissReason says why Get(agentName) found no route: "cleared" when one was
+// installed and later removed, "never_set" otherwise.
+func (ir *inferenceRouter) MissReason(agentName string) string {
+	ir.mu.RLock()
+	defer ir.mu.RUnlock()
+	if _, ok := ir.cleared[agentName]; ok {
+		return "cleared"
+	}
+	return "never_set"
 }
 
 func (ir *inferenceRouter) Get(agentName string) *InferenceRoute {

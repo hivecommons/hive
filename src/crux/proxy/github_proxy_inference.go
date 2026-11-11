@@ -411,7 +411,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 
 		route := p.inference.Get(agentName)
 		if route == nil {
-			p.logger.Warn("inference no route", "agent", agentName)
+			p.logger.Warn("inference no route", "agent", agentName, "reason", p.inference.MissReason(agentName))
 			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"no inference route for agent"}}`, http.StatusBadGateway)
 			return
 		}
