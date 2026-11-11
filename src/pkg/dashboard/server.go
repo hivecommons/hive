@@ -2797,24 +2797,30 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 
 	s.statusMu.Lock()
 	if buildEpoch < s.statusMutationEpoch {
-		// A mutation landed after this snapshot's build began: its data may
-		// predate the mutation. Drop it — the mutation's own refresh rebuild
-		// (which began after the epoch bump) publishes the fresh state.
 		curEpoch := s.statusMutationEpoch
-		s.statusStaleDrops++
-		drops := s.statusStaleDrops
-		s.statusConsecutiveStaleDrops++
-		consecutive := s.statusConsecutiveStaleDrops
-		s.statusMu.Unlock()
-		// A single drop is normal optimistic-concurrency self-healing; only a
-		// run of drops with no publish in between is an anomaly.
-		level := slog.LevelInfo
-		if consecutive >= staleDropStarvationThreshold {
-			level = slog.LevelWarn
+		if s.statusConsecutiveStaleDrops+1 >= staleDropStarvationThreshold {
+			// Bounded staleness: under sustained mutation churn every build
+			// loses the race, so publish this one rather than starve
+			// consumers. The counter resets below with the publish.
+			drops := s.statusStaleDrops
+			consecutive := s.statusConsecutiveStaleDrops
+			s.logger.Warn("publishing possibly-stale status snapshot after consecutive stale drops",
+				"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
+		} else {
+			// A mutation landed after this snapshot's build began: its data
+			// may predate the mutation. Drop it — the mutation's own refresh
+			// rebuild (which began after the epoch bump) publishes the fresh
+			// state.
+			s.statusStaleDrops++
+			drops := s.statusStaleDrops
+			s.statusConsecutiveStaleDrops++
+			consecutive := s.statusConsecutiveStaleDrops
+			s.statusMu.Unlock()
+			// A drop is a normal optimistic-concurrency race.
+			s.logger.Info("dropping stale status snapshot built before a mutation",
+				"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
+			return false
 		}
-		s.logger.Log(context.Background(), level, "dropping stale status snapshot built before a mutation",
-			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
-		return false
 	}
 
 	// Attach the advisory ACMM level-up recommendation (#5225) from the SAME
