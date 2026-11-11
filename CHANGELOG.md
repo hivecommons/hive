@@ -11,6 +11,15 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.222.1)
+
+### Fixed
+
+- The effect ledger no longer leaves an `issue_create` op stuck in Unknown forever after an ambiguous GitHub response: once a refused retry finds it unresolved past the kind's TTL (1h), the boundary expires it to NotApplied, clears the `effect_ledger_op_stuck` self-report and lets the caller's next attempt (which re-runs its own duplicate search first) create, without ever retrying the ambiguous write in the refused call (#17693).
+- Good-first-issue curation skips archived read-only repositories after GitHub refuses a write, instead of repeatedly reporting failures.
+- Fixed a startup panic in the stage engine when hive ran with no loaded config, which made the auto-merge sweep test flaky (#17736).
+- A read-only integration lane no longer retries removing the hive:unauthorized label every cycle and warning each time; the removal is skipped and left to a write-capable lane with a single debug line (#17720).
+
 ## 2026-11-11 (v5.222.0)
 
 ### Added

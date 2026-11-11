@@ -153,7 +153,7 @@ func openshellSandboxNameUnix(launchName, name string) (int64, bool) {
 	if i < 0 || !strings.HasPrefix(name, openshellNamePrefix) {
 		return 0, false
 	}
-	unix, err := strconv.ParseInt(name[i+1:], 10, 64)
+	unix, err := strconv.ParseInt(name[i+1:], openshellNameUnixBase, 64)
 	if err != nil {
 		return 0, false
 	}

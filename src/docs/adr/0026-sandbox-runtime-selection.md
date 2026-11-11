@@ -1,6 +1,6 @@
 # ADR-0026: Sandbox runtime selection
 
-Status: Accepted (phase 1 OpenShell implemented, runtime opt-in — #17642, hivecommons/hive#17646; phase 2 Agent Substrate implemented, runtime opt-in — #17695, hivecommons/hive#17741)
+Status: Accepted (phase 1 OpenShell implemented, runtime opt-in; measured on LKE in #17643: cold 1.67× / warm 2.4× the Job runtime, egress enforced — #17642, hivecommons/hive#17646; phase 2 Agent Substrate implemented, runtime opt-in — #17695, hivecommons/hive#17741)
 
 ## Context
 

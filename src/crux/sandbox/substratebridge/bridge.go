@@ -100,9 +100,28 @@ func (h *Handler) workspace() string {
 	return DefaultWorkspace
 }
 
+// clearDir empties dir without removing dir itself: inside the actor the
+// workspace is a durableDir mount point, and unlinking a mount point fails
+// with EBUSY.
+func clearDir(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (h *Handler) putWorkspace(w http.ResponseWriter, r *http.Request) {
 	dir := h.workspace()
-	if err := os.RemoveAll(dir); err != nil {
+	if err := clearDir(dir); err != nil {
 		http.Error(w, fmt.Sprintf("substrate bridge: clearing %s: %v", dir, err), http.StatusInternalServerError)
 		return
 	}
