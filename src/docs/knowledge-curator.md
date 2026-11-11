@@ -42,7 +42,7 @@ by the runtime type `GitSourceConfig`, `pkg/knowledge/gitsource.go:33-39`):
 
 | YAML key | Required | Default | Notes |
 |---|---|---|---|
-| `name` | Yes | — | Display name; also the key used to look up/remove the source via the API. |
+| `name` | Yes | — | Display name (editable via `PUT`); the API identifies a source by `url` + `subpath`, not by name. |
 | `url` | Yes | — | Git remote URL. **`https://` only** — see Auth below. |
 | `branch` | No | `main` (`gitsource.go:66-68`) | Branch to shallow-clone (`--depth 1 --branch <branch>`). Connecting through the dashboard/API with a blank branch resolves the remote default (`git ls-remote --symref <url> HEAD`) and records it in the saved config. |
 | `subpath` | No | — (whole repo) | When set, only this subdirectory is checked out (git sparse-checkout, `gitsource.go:199-219,232-248`) and indexed. |

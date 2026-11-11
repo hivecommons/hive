@@ -14464,7 +14464,8 @@
                     "type": "string"
                   },
                   "branch": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Omit or leave empty to resolve the remote's default branch (via git ls-remote); the resolved branch is recorded in the source config"
                   },
                   "subpath": {
                     "type": "string"
