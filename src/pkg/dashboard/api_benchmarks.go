@@ -147,6 +147,7 @@ func (s *Server) benchmarksOptions(ctx context.Context, since time.Time) benchma
 		RepoConsent:    cfg.Benchmarks.RepoConsentEnabled(),
 		RepoPublic:     func(repo string) bool { return s.benchmarksRepoPublic(ctx, repo) },
 		SandboxRuntime: cfg.BenchmarkSandboxRuntime,
+		CostLookup:     benchmarksCostLookup(s.deps.LaunchCost),
 	}
 }
 
