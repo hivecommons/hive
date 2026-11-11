@@ -43,6 +43,12 @@ var ErrNotApplied = errors.New("external effect definitely not applied")
 // must be reconciled (see Reconcile) before any retry.
 var ErrNeedsReconciliation = errors.New("external effect needs reconciliation before retry")
 
+// ErrUnresolvedExpired accompanies ErrNeedsReconciliation when the boundary
+// refused this attempt but, finding the operation unresolved past its TTL,
+// expired it to not-applied: the effect did not run, and the caller's next
+// attempt (after its own duplicate check) may.
+var ErrUnresolvedExpired = errors.New("unresolved external effect expired past TTL; retry authorized")
+
 // NotApplied wraps err as a definite refusal (ErrNotApplied) while keeping
 // err's own message and chain, so callers still see the original error.
 func NotApplied(err error) error {
@@ -146,6 +152,7 @@ func ExecuteReconciling(ctx context.Context, boundary Boundary, claim Claim, obs
 	if expErr != nil {
 		return Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v; expiry failed: %v)", journalErr, lookupErr, expErr)
 	}
+	expired = expired || errors.Is(journalErr, ErrUnresolvedExpired)
 	if !expired {
 		return Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v)", journalErr, lookupErr)
 	}
