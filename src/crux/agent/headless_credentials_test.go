@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -98,5 +99,17 @@ func TestHeadlessCredentialEnvInferenceAndOtherBackends(t *testing.T) {
 		if err != nil || env != nil {
 			t.Errorf("%s: env=%v err=%v, want nil", backend, env, err)
 		}
+	}
+}
+
+func TestHeadlessCredentialEnvClaudePrefersOperatorToken(t *testing.T) {
+	t.Setenv(claude.OperatorTokenEnvVar, " sk-ant-oat01-long-lived ")
+	t.Setenv(claude.OperatorTokenFileEnvVar, "")
+	env, err := HeadlessCredentialEnv("claude", HeadlessCredentialSources{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env) != 1 || env[0] != "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-long-lived" {
+		t.Fatalf("env = %v", env)
 	}
 }
