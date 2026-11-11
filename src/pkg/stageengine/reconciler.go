@@ -47,7 +47,13 @@ type Options struct {
 	// Workflow, when set, derives through the compiled workflow model
 	// (DeriveFromModel) and overrides Issue and PR. hivecommons/hive#17620.
 	Workflow *workflowmodel.Profile
-	Now      func() time.Time
+	// WorkflowFor, when set, resolves the compiled model bound to a
+	// repository (owner/repo) at derivation time; nil means the repository
+	// is unbound and the Issue/PR derivers run unchanged. It composes with
+	// Workflow: Workflow is the engine-wide model, WorkflowFor the
+	// per-repository override. hivecommons/hive#17620 (RFC phase 2).
+	WorkflowFor func(owner, repo string) *workflowmodel.Profile
+	Now         func() time.Time
 	Logger   *slog.Logger
 	Metrics  Metrics
 }
@@ -86,6 +92,10 @@ func New(o Options) Reconciler {
 	}
 	if o.PR == nil {
 		o.PR = PRDeriver()
+	}
+	if o.WorkflowFor != nil {
+		o.Issue = DeriveForRepo(o.WorkflowFor, o.Issue)
+		o.PR = DeriveForRepo(o.WorkflowFor, o.PR)
 	}
 	if o.Now == nil {
 		o.Now = time.Now

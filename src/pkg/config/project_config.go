@@ -79,6 +79,9 @@ type ProjectConfig struct {
 	// repo name. project.repos remains the watched-repo identity list; this
 	// sidecar list lets existing string-list configs keep round-tripping.
 	RepoPolicies []RepoPolicy `yaml:"repo_policies,omitempty" json:"repo_policies,omitempty"`
+	// WorkflowBindings assigns stored workflow models to repositories
+	// (hivecommons/hive#17620). Unbound repositories use hive-default.
+	WorkflowBindings []WorkflowBinding `yaml:"workflow_bindings,omitempty" json:"workflow_bindings,omitempty"`
 	// MergeFrontTimeout is the hive-wide front timeout of the serialized merge
 	// lane (hivecommons/hive#12952) as a Go duration ("90m", "2h"); empty
 	// keeps the lane default of 60 minutes. repo_policies[].merge_front_timeout

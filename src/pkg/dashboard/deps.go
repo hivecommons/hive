@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	wfstore "github.com/hivecommons/hive/pkg/workflowmodel/store"
 	"log/slog"
 	"net/http"
 	"os"
@@ -57,6 +58,9 @@ type ChatPoll struct {
 
 type Dependencies struct {
 	Config *config.Config
+	// WorkflowStore serves the workflow-model library (hivecommons/hive#17620).
+	// Nil disables the /api/workflows endpoints.
+	WorkflowStore *wfstore.Store
 	// AgentMgr is the agent runtime (hivecommons/hive#13536). The dashboard
 	// programs against the crux.Runtime surface, not *agent.Manager; tests that
 	// need manager-only seams unwrap it with agentManager.

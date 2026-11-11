@@ -104,3 +104,44 @@ func TestDeriveFromModelCoverage(t *testing.T) {
 		t.Fatalf("missing state %s: got %+v", drop, got)
 	}
 }
+
+// DeriveForRepo routes bound repositories through their model and leaves
+// unbound repositories on the built-in deriver, decision for decision.
+func TestDeriveForRepo(t *testing.T) {
+	p := hivedefault.Profile()
+	calls := 0
+	lookup := func(owner, repo string) *workflowmodel.Profile {
+		calls++
+		if repo == "bound" {
+			return p
+		}
+		return nil
+	}
+	if stageengine.DeriveForRepo(nil, stageengine.PRDeriver()) == nil || stageengine.DeriveForRepo(lookup, nil) != nil {
+		t.Fatal("nil handling")
+	}
+	derivers := map[stagelabels.Item][2]stageengine.Deriver{
+		stagelabels.IssueItem: {stageengine.IssueDeriver(), stageengine.DeriveForRepo(lookup, stageengine.IssueDeriver())},
+		stagelabels.PRItem:    {stageengine.PRDeriver(), stageengine.DeriveForRepo(lookup, stageengine.PRDeriver())},
+	}
+	if derivers[stagelabels.PRItem][1].Kind() != stagelabels.PRItem {
+		t.Fatal("kind")
+	}
+	for i, f := range stageengine.ParityFacts() {
+		for _, repo := range []string{"bound", "free"} {
+			f.Ref.Repo = repo
+			d := derivers[f.Ref.Kind]
+			if want, got := d[0].Derive(f), d[1].Derive(f); !reflect.DeepEqual(want, got) {
+				t.Errorf("facts[%d] %s/%s: built-in %+v, routed %+v", i, repo, f.Ref.Key(), want, got)
+			}
+		}
+	}
+	if calls == 0 {
+		t.Fatal("lookup never consulted")
+	}
+	// the engine composes it when Options.WorkflowFor is set
+	r := stageengine.New(stageengine.Options{WorkflowFor: lookup, Store: stagelabels.NewStore(t.TempDir()+"/stages.json", nil)})
+	if r == nil {
+		t.Fatal("engine")
+	}
+}

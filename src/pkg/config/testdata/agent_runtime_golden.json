@@ -494,6 +494,7 @@
     "BobSessionsDir": "/data/home/.bob",
     "AgentsDir": "/data/agent-configs",
     "NousDir": "/data/nous",
+    "WorkflowsDir": "",
     "SessionRetentionDays": null
   },
   "deployment": {},

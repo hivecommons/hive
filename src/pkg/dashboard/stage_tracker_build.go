@@ -57,6 +57,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		cfg = s.deps.Config
 	}
 	resp.NeedsHumanLabels = needsHumanPresetLabels(cfg, status.HiveID)
+	resp.Workflows = stageTrackerWorkflows(cfg, s.workflowProfileLookup(), qualifyRepo)
 	expectedPerspectives := stageTrackerExpectedPerspectives(cfg)
 	// A Review track only waits on "the hive reviewer" when this hive's
 	// planner dispatches one; with the swarm off it says a person reviews.
