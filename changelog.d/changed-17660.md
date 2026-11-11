@@ -1,1 +1,0 @@
-- chore: remove tracked build artifact from survey tool (#17660)

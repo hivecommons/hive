@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v6.16.1)
+
+### Changed
+
+- chore: remove tracked build artifact from survey tool (#17660)
+
 ## 2026-11-11 (v6.16.0)
 
 ### Added
