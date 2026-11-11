@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -412,4 +413,34 @@ func writeAtomic(path string, b []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// NextVersion returns the next free integer version of name: one more
+// than the largest integer version saved so far, or "1" for a name with no
+// integer versions. Non-integer versions (semver, tags) are ignored for
+// the count but can never be returned, so the result is always unused.
+func (s *Store) NextVersion(name string) (string, error) {
+	if !nameRe.MatchString(name) {
+		return "", fmt.Errorf("%w: %q", ErrBadName, name)
+	}
+	all, err := s.List()
+	if err != nil {
+		return "", err
+	}
+	max := 0
+	taken := map[string]bool{}
+	for _, e := range all {
+		if e.Name != name {
+			continue
+		}
+		taken[e.Version] = true
+		if n, err := strconv.Atoi(e.Version); err == nil && n > max {
+			max = n
+		}
+	}
+	for v := max + 1; ; v++ {
+		if s := strconv.Itoa(v); !taken[s] {
+			return s, nil
+		}
+	}
 }
