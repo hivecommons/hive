@@ -6,9 +6,15 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 func (m *Manager) markProviderErrorLocked(agent *AgentProcess, match providerErrorMatch, now time.Time) time.Duration {
+	// The matched line is pane text and leaves the spoke verbatim: LastError
+	// and BackendAuth.LastError go to the /v1 status, the dashboard and the
+	// hub heartbeat. Redact credentials once here, like compactPaneTail does
+	// for the stuck-login diagnostic, so no downstream copy can carry a token.
+	match.Line = strings.TrimSpace(logscrub.RedactPaneTokens(logscrub.ScrubString(match.Line)))
 	if status, ok := classifyBackendAuthStatus(match.Class, match.Line); ok {
 		agent.markBackendAuthLocked(status, match.Line, now)
 		// #6767: an unlicensed verdict against a copilot agent is direct

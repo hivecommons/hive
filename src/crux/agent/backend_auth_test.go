@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -131,6 +132,50 @@ func TestMarkProviderErrorLockedBare403IsUndetermined(t *testing.T) {
 	m.markProviderErrorLocked(agent, match, time.Now())
 	if agent.BackendAuth.Status != BackendAuthForbidden {
 		t.Fatalf("BackendAuth.Status = %q, want %q", agent.BackendAuth.Status, BackendAuthForbidden)
+	}
+}
+
+// TestMarkProviderErrorLockedRedactsCredentials drives a classified pane line
+// that carries a GitHub token and an sk- API key through the real
+// classifyProviderError → markProviderErrorLocked path and asserts no copy
+// of the line the spoke publishes (LastError, ProviderErrorLine,
+// BackendAuth.LastError) still contains either credential. These fields
+// reach the /v1 status, the dashboard and the hub heartbeat verbatim, so the
+// redaction has to happen at the source.
+func TestMarkProviderErrorLockedRedactsCredentials(t *testing.T) {
+	t.Setenv(ProviderErrorBackoffBaseEnv, "10s")
+	t.Setenv(ProviderErrorBackoffMaxEnv, "40s")
+	m := NewManager(map[string]config.AgentConfig{
+		"cop": {Backend: "copilot"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["cop"]
+	m.mu.RUnlock()
+
+	const ghToken = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	const apiKey = "sk-abcdefghijklmnop"
+	pane := "API Error: 401 Unauthorized for Authorization: Bearer " + ghToken + " (fallback key " + apiKey + ")\n"
+
+	match, ok := classifyProviderError(pane)
+	if !ok || match.Class != "auth" {
+		t.Fatalf("classifyProviderError = %+v, ok=%v; want auth class", match, ok)
+	}
+	m.markProviderErrorLocked(agent, match, time.Now())
+
+	if agent.BackendAuth.Status != BackendAuthTokenExpired {
+		t.Fatalf("BackendAuth.Status = %q, want %q (redaction must not change the verdict)", agent.BackendAuth.Status, BackendAuthTokenExpired)
+	}
+	for name, got := range map[string]string{
+		"LastError":             agent.LastError,
+		"ProviderErrorLine":     agent.ProviderErrorLine,
+		"BackendAuth.LastError": agent.BackendAuth.LastError,
+	} {
+		if got == "" {
+			t.Errorf("%s is empty; want the redacted line kept for the operator", name)
+		}
+		if strings.Contains(got, ghToken) || strings.Contains(got, apiKey) {
+			t.Errorf("%s = %q still carries a credential", name, got)
+		}
 	}
 }
 

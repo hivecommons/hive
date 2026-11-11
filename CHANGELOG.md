@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.211.25)
+
+### Fixed
+
+- Knowledge Sources: **Clone & Index** now disables the button and shows "Cloning…" while the request runs, resolves a blank branch to the remote's default branch (`git ls-remote --symref`) and records it instead of guessing `main`, and keeps a failed connect visible as an error row with the reason and Retry/Dismiss (#17610).
+
+## 2026-11-11 (v5.211.24)
+
+### Security
+
+- The pane line a provider error is classified from is now credential-redacted before it is stored as an agent's `LastError` / `BackendAuth.LastError`. Those fields leave the spoke verbatim — crux `/v1` status, dashboard status JSON and the hub heartbeat — and were the one pane-derived path that skipped the token scrubbing every other export applies, so a GitHub token or `sk-` key printed beside a `401`/`403` could be shipped to the hub (#17611).
+
 ## 2026-11-10 (v5.211.23)
 
 ### Fixed

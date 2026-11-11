@@ -1007,6 +1007,14 @@ func (k *KnowledgeAPI) ConnectGitSource(ctx context.Context, config GitSourceCon
 	}
 	k.mu.RUnlock()
 
+	if strings.TrimSpace(config.Branch) == "" {
+		branch, err := resolveGitSourceDefaultBranch(ctx, config.URL)
+		if err != nil {
+			return fmt.Errorf("git source %s: resolving default branch: %w", config.Name, err)
+		}
+		config.Branch = branch
+	}
+
 	gs := newGitSourceForConnect(config, knowledgeBaseDir, k.logger)
 	if err := initGitSourceForConnect(gs, ctx); err != nil {
 		return err
