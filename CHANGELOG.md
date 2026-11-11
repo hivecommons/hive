@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.223.0)
+
+### Added
+
+- Extend the `sandbox.runtime: substrate` preflight into a cluster prover (#17698): when hive runs in-cluster it now also reports, read-only and cached per control plane, missing Substrate CRDs or operator Deployments/atelet, WorkerPools with no ready replica, a cluster without gVisor (no `gvisor` SandboxConfig or `runsc` RuntimeClass) or without KVM for a microVM pool, node kernels below gVisor's floor, the `PodCertificateRequest`/`ClusterTrustBundle` APIs not being served, and an atenet-router that is unreachable or rejects hive's client certificate; each is one actionable warning. `deploy/k8s/sandbox-substrate-preflight-rbac.yaml` grants the read access it needs Two fixes found by the first real kick on a Substrate v1.0.0 cluster (#17697) ride along: the per-actor egress policy now carries the actor's atespace (the Control API rejects it otherwise) and the in-actor bridge empties `/workspace` in place instead of unlinking the durableDir mount point.
+
+### Fixed
+
+- Marketplace: the CNCF catalogue now actually fills — tarball extraction recognises git's `pax_global_header`, so pipeline files are read for every repository (previously only tektoncd/pipeline survived); seeding resumes across hub restarts by ingesting only repositories that are due (no record, stale, old format, or an hour-old error); the last refresh summary is persisted so `/api/marketplace/status` survives a restart and reports `pendingRepos`/`lastRefreshErrors`, with `?verbose=1` listing failing repos and their errors; `POST /api/marketplace/refresh` accepts a spoke's heartbeat credential (rate-limited, `429` + `Retry-After`) so a hive owner's "Refresh catalogue" works, and the crawl backs off on `403`/`429` `Retry-After` and logs progress every 25 repositories.
+- OpenShell runtime: sandbox names now fit the gateway's 19-character limit (`hk-<agent>-<base36 unix>`), the shared claim mounts as `hive-workspace` instead of the reserved `workspace`, and the deploy doc covers the Agent Sandbox prerequisite, `allowed_pod_labels`/annotations, sandbox uid, workspace storage class and the measured #17643 latency (#17643)
+- The "contributor-lane ok-to-test not posted again" warning is logged once per PR rejection, not again after a restart once the PR already records it, so it no longer trips the repeated-error selfreport (#17738).
+- The status builder publishes a (possibly stale) snapshot after a bounded number of consecutive stale drops instead of livelocking and warning on every drop during mutation bursts (#17727).
+
 ## 2026-11-11 (v5.222.1)
 
 ### Fixed
