@@ -447,8 +447,8 @@
     "BaseURL": "",
     "AppAuthoredPRs": null,
     "AppSignedCommits": null,
-    "attention": {},
     "notifications": {},
+    "attention": {},
     "OAuthBaseURLOverride": "",
     "OAuthAPIURLOverride": ""
   },
@@ -473,6 +473,7 @@
     "Port": 8080,
     "AuthToken": "",
     "AgentPollIntervalS": 10,
+    "matrix": {},
     "AuthorizedUsers": null,
     "AuthorizedUserNames": null,
     "HubProxied": false,
@@ -483,7 +484,6 @@
       }
     },
     "issue_bands": {},
-    "matrix": {},
     "stage_tracker": {}
   },
   "Data": {
@@ -686,6 +686,9 @@
   "fleet": {},
   "dedupe": {},
   "contribute": {},
+  "workflow": {
+    "enabled": false
+  },
   "HiveID": "",
   "acmm_level": null,
   "advisor": {},
@@ -723,6 +726,13 @@
   },
   "intent": {},
   "sentinel": {},
+  "security": {},
+  "evidence": {
+    "complexity": {}
+  },
+  "compliance": {
+    "posture_checks": {}
+  },
   "escalation": {
     "email": {
       "smtp": {},
@@ -733,10 +743,6 @@
       "pushover": {},
       "pagerduty": {}
     }
-  },
-  "security": {},
-  "evidence": {
-    "complexity": {}
   },
   "jev": {},
   "runs": {
@@ -775,9 +781,6 @@
     "contributor_prs": {},
     "recommendations": {},
     "plan_match": {}
-  },
-  "compliance": {
-    "posture_checks": {}
   },
   "auto_merge": {
     "bot_takeover": {},
