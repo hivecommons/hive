@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.215.1)
+
+### Security
+
+- Dashboard pane surfaces (`/api/agents/{name}/log`, `/api/status` summaries, Job log streams, archived kick/task logs) now mask JWTs, AWS access keys, Slack tokens and webhooks, `Authorization: Bearer`/`Basic` credentials and private-key blocks, not just GitHub and `sk-` tokens, because `logscrub.RedactPaneTokens` now also runs `ScrubString` ([#17665](https://github.com/hivecommons/hive/issues/17665)).
+
 ## 2026-11-11 (v5.215.0)
 
 ### Added
