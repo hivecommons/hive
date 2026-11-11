@@ -56,6 +56,29 @@ var inheritedCredentialEnvVars = []string{
 	"LINEAR_CLIENT_ID",
 	"LINEAR_CLIENT_SECRET",
 	"LINEAR_WEBHOOK_SECRET",
+	// The dashboard's shared token: X-Hive-Internal / bearer with this value
+	// is a server-verified OWNER on the Go API, including GET
+	// /api/config/download (the raw hive.yaml). Hosted hives receive it as
+	// DASHBOARD_AUTH_TOKEN from the provisioning template; Compose and Podman
+	// stacks as HIVE_DASHBOARD_TOKEN.
+	"DASHBOARD_AUTH_TOKEN",
+	"HIVE_DASHBOARD_TOKEN",
+	// Per-hive signing keys the hub injects into the hive container, and the
+	// legacy master they were derived from. The terminal key alone forges a
+	// /terminal grant to a ttyd shell as the hive user.
+	"HIVE_TERMINAL_KEY",
+	"HIVE_INVITE_KEY",
+	"HIVE_HEARTBEAT_KEY",
+	"HIVE_HUB_SECRET",
+	"HIVE_TTYD_CREDENTIAL",
+	// The corporate forward-proxy rules. The URL's userinfo is the proxy's
+	// Basic credential; agents reach the upstream only through the MITM
+	// proxy and are never handed the corporate proxy URL. The two list vars
+	// carry no secret but are hive-process settings, not agent ones — agents
+	// get their own NO_PROXY from agentEnvPairs.
+	"HIVE_UPSTREAM_PROXY_URL",
+	"HIVE_UPSTREAM_PROXY_HOSTS",
+	"HIVE_NO_PROXY",
 }
 
 // githubTokenEnvVars are the environment variables gh, git tooling and the
