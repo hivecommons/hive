@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/crux/agent/tmux"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/internal/textutil"
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 )
 
 // paneCaptureSleep is a pacing var, not a const, for the same reason as the
@@ -73,11 +74,16 @@ var inheritedCredentialEnvVars = []string{
 	"HIVE_TTYD_CREDENTIAL",
 	// The corporate forward-proxy rules. The URL's userinfo is the proxy's
 	// Basic credential; agents reach the upstream only through the MITM
-	// proxy and are never handed the corporate proxy URL. The two list vars
+	// proxy and are never handed the corporate proxy URL. The list vars
 	// carry no secret but are hive-process settings, not agent ones — agents
-	// get their own NO_PROXY from agentEnvPairs.
-	"HIVE_UPSTREAM_PROXY_URL",
-	"HIVE_UPSTREAM_PROXY_HOSTS",
+	// get their own NO_PROXY from agentEnvPairs. The names come from
+	// crux/upstreamproxy so the strip list cannot drift from what the
+	// loader reads; HIVE_NO_PROXY is the name the hub's provisioning
+	// template injects (saas_provision.go), stripped alongside until the
+	// hub and loader agree on one.
+	upstreamproxy.URLEnv,
+	upstreamproxy.HostsEnv,
+	upstreamproxy.NoProxyEnv,
 	"HIVE_NO_PROXY",
 }
 
