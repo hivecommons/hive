@@ -763,7 +763,7 @@ func TestMarketplaceRefreshAuthMatrixAndVerboseStatus(t *testing.T) {
 	s := marketplaceTestHub(t, fetch)
 	clock := s.refresher().now()
 	s.refresher().now = func() time.Time { return clock }
-	t.Setenv(hubMarketplaceExtraReposEnv, "broken/repo")
+	t.Setenv(hubMarketplaceExtraReposEnv, "broken/repo,ok/repo")
 
 	spoke := func(target string) *http.Request {
 		req := httptest.NewRequest(http.MethodPost, target, nil)
@@ -798,8 +798,21 @@ func TestMarketplaceRefreshAuthMatrixAndVerboseStatus(t *testing.T) {
 		t.Fatalf("bad bearer: %d", rec.Code)
 	}
 
+	// Spoke single repo outside the corpus: refused before any fetch or
+	// rate-limit accounting; the same request as admin is allowed.
+	rec := mktDo(s, spoke("/api/marketplace/refresh?repo=outside/corpus"))
+	if rec.Code != 403 || !strings.Contains(rec.Body.String(), "not in the marketplace corpus") {
+		t.Fatalf("spoke outside corpus: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = mktDo(s, admin(http.MethodPost, "/api/marketplace/refresh?repo=outside/corpus")); rec.Code != 200 {
+		t.Fatalf("admin outside corpus: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := s.marketplace().refreshRecord("outside/corpus"); !ok {
+		t.Fatal("admin refresh of an outside-corpus repo should have run")
+	}
+
 	// Spoke single repo: ok, then burst-limited.
-	rec := mktDo(s, spoke("/api/marketplace/refresh?repo=broken/repo"))
+	rec = mktDo(s, spoke("/api/marketplace/refresh?repo=broken/repo"))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "404 Not Found") {
 		t.Fatalf("spoke single: %d %s", rec.Code, rec.Body.String())
 	}

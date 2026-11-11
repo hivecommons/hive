@@ -188,6 +188,18 @@ func marketplaceRepos() []string {
 	return out
 }
 
+// marketplaceTracksRepo reports whether repo (already lower-cased and
+// trimmed) is one the hub ingests on its own: a corpus entry or an
+// HIVE_HUB_MARKETPLACE_EXTRA_REPOS entry.
+func marketplaceTracksRepo(repo string) bool {
+	for _, r := range marketplaceRepos() {
+		if r == repo {
+			return true
+		}
+	}
+	return false
+}
+
 // marketplaceDisabled reports HIVE_HUB_MARKETPLACE_DISABLED.
 func marketplaceDisabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv(hubMarketplaceDisableEnv)))
