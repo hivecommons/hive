@@ -19,7 +19,7 @@ func configureUpstreamProxy(logger *slog.Logger, cfg *config.Config) {
 	sel, err := upstreamproxy.Resolve(cfg.Network.UpstreamProxy.UpstreamProxy(), os.Getenv)
 	if err != nil {
 		logger.Error("boot: upstream proxy config ignored", "error", err)
-		return
+		sel = nil
 	}
 	upstreamproxy.SetDefault(sel)
 	github.SetUpstreamProxy(sel)

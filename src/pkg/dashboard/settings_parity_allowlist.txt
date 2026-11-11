@@ -411,6 +411,9 @@ knowledge.vaults[].auto_index # TODO #11854
 knowledge.vaults[].git_sync # TODO #11854
 knowledge.vaults[].name # TODO #11854
 knowledge.vaults[].path # TODO #11854
+network.upstream_proxy.hosts[] # deployment-level egress knob (corporate forward proxy), set via hive.yaml/env/hub clusters.json, not a Settings control (#17637)
+network.upstream_proxy.no_proxy[] # deployment-level egress knob (corporate forward proxy), set via hive.yaml/env/hub clusters.json, not a Settings control (#17637)
+network.upstream_proxy.url # deployment-level egress knob (corporate forward proxy), set via hive.yaml/env/hub clusters.json, not a Settings control (#17637)
 notifications.discord.rfc_announcer # opt-in rich RFC notify gates; yaml-only, documented in docs/notifications.md (#15926)
 notifications.discord.rfc_backlink_comment # opt-in rich RFC notify gates; yaml-only, documented in docs/notifications.md (#15926)
 notifications.discord.rfc_format # opt-in rich RFC notify gates; yaml-only, documented in docs/notifications.md (#15926)

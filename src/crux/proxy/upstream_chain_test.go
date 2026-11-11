@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -186,5 +187,75 @@ func TestDialUpstreamTLSChainsThroughUpstreamProxy(t *testing.T) {
 	}
 	if err != nil && !strings.Contains(err.Error(), "certificate") && !strings.Contains(err.Error(), "x509") {
 		t.Fatalf("unexpected non-TLS error through tunnel: %v", err)
+	}
+}
+
+// A chained raw tunnel to a matching host is spliced through the upstream
+// proxy, and a literal non-routable destination is refused before the proxy
+// is ever asked (the guard cannot classify names the proxy resolves, so IP
+// literals are the one thing it can still check).
+func TestDialUpstreamRawChainsAndGuardsPrivateLiterals(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_, _ = c.Write([]byte("chained"))
+		_ = c.Close()
+	}()
+	originHostPort := ln.Addr().String()
+	originHost, _, _ := net.SplitHostPort(originHostPort)
+
+	cp := startTestConnectProxy(t)
+	p := newChainedTestProxy(t, cp, []string{originHost, "10.0.0.0/8"})
+
+	conn, err := p.dialUpstreamRaw(originHostPort, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(conn)
+	conn.Close()
+	if string(b) != "chained" || cp.targets.Load() != 1 {
+		t.Fatalf("got %q via %d CONNECTs, want chained via 1", b, cp.targets.Load())
+	}
+
+	p.allowPrivateForward = false
+	_, err = p.dialUpstreamRaw("10.1.2.3:443", 2*time.Second)
+	var denied *plainForwardDenied
+	if !errors.As(err, &denied) {
+		t.Fatalf("private literal through proxy: err = %v, want plainForwardDenied", err)
+	}
+	if cp.targets.Load() != 1 {
+		t.Fatal("refused destination must not reach the upstream proxy")
+	}
+}
+
+// When the upstream proxy refuses the CONNECT, dialUpstreamTLS surfaces the
+// refusal instead of attempting a handshake on a dead tunnel.
+func TestDialUpstreamTLSSurfacesProxyRefusal(t *testing.T) {
+	cp := startTestConnectProxy(t)
+	p := newChainedTestProxy(t, cp, []string{"ghe.corp.invalid"})
+	// The test proxy dials the target itself; an unresolvable name yields 502.
+	_, err := p.dialUpstreamTLS("ghe.corp.invalid:443", "ghe.corp.invalid", 3*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("err = %v, want CONNECT refusal", err)
+	}
+}
+
+func TestRedactedProxyURLDropsUserinfo(t *testing.T) {
+	sel, err := upstreamproxy.New("http://user:secret@proxy.corp.example:3128", nil, nil, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := redactedProxyURL(sel); got != "http://proxy.corp.example:3128" {
+		t.Fatalf("redactedProxyURL = %q", got)
+	}
+	if got := redactedProxyURL(nil); got != "" {
+		t.Fatalf("redactedProxyURL(nil) = %q", got)
 	}
 }

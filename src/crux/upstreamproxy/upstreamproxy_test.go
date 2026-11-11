@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -271,5 +272,159 @@ func TestDialSurfacesProxyRefusal(t *testing.T) {
 	_, err := Dial(context.Background(), dialer.DialContext, proxyURL, "example.invalid:443")
 	if err == nil || !strings.Contains(err.Error(), "407") {
 		t.Fatalf("expected 407 refusal, got %v", err)
+	}
+}
+
+func TestParseProxyURLDefaults(t *testing.T) {
+	cases := map[string]string{
+		"proxy.corp.example:3128":         "http://proxy.corp.example:3128",
+		"http://proxy.corp.example":       "http://proxy.corp.example:80",
+		"https://proxy.corp.example":      "https://proxy.corp.example:443",
+		"http://u:p@proxy.corp.example:1": "http://u:p@proxy.corp.example:1",
+	}
+	for in, want := range cases {
+		sel, err := New(in, nil, nil, "config")
+		if err != nil {
+			t.Fatalf("New(%q): %v", in, err)
+		}
+		if got := sel.URL().String(); got != want {
+			t.Errorf("New(%q).URL() = %s, want %s", in, got, want)
+		}
+		if sel.Source() != "config" {
+			t.Errorf("Source() = %q", sel.Source())
+		}
+	}
+	for _, bad := range []string{"", "   ", "socks5://p:1080", "http://", "http://:3128"} {
+		if _, err := New(bad, nil, nil, "config"); err == nil {
+			t.Errorf("New(%q) accepted", bad)
+		}
+	}
+}
+
+func TestNilSelectorAccessors(t *testing.T) {
+	var s *Selector
+	if s.URL() != nil || s.Source() != "" || s.Restricted() || s.GitEnv() != nil || s.ProxyFor("ghe.corp.example:443") != nil {
+		t.Fatal("nil selector must report no proxy")
+	}
+	if u, err := s.ProxyFunc()(nil); u != nil || err != nil {
+		t.Fatalf("ProxyFunc(nil req) = %v, %v", u, err)
+	}
+	if u, err := s.ProxyFunc()(&http.Request{}); u != nil || err != nil {
+		t.Fatalf("ProxyFunc(req without URL) = %v, %v", u, err)
+	}
+}
+
+func TestProxyFuncUsesRequestHost(t *testing.T) {
+	sel, err := New("http://p:3128", []string{"ghe.corp.example"}, nil, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, "https://ghe.corp.example/api/v3", nil)
+	if u, _ := sel.ProxyFunc()(req); u == nil || u.Host != "p:3128" {
+		t.Fatalf("ProxyFunc(ghe) = %v", u)
+	}
+	req, _ = http.NewRequest(http.MethodGet, "https://api.github.com/", nil)
+	if u, _ := sel.ProxyFunc()(req); u != nil {
+		t.Fatalf("ProxyFunc(api.github.com) = %v, want direct", u)
+	}
+}
+
+func TestSetDefaultAndDefault(t *testing.T) {
+	t.Cleanup(func() { SetDefault(nil) })
+	if Default() != nil {
+		t.Fatal("Default() must start nil")
+	}
+	sel, _ := New("http://p:3128", nil, nil, "env")
+	SetDefault(sel)
+	if Default() != sel {
+		t.Fatal("Default() did not return the installed selector")
+	}
+	SetDefault(nil)
+	if Default() != nil {
+		t.Fatal("SetDefault(nil) must clear")
+	}
+}
+
+func TestDialErrorPaths(t *testing.T) {
+	ctx := context.Background()
+	dial := (&net.Dialer{Timeout: time.Second}).DialContext
+	if _, err := Dial(ctx, dial, nil, "ghe.corp.example:443"); err == nil {
+		t.Fatal("nil proxy URL accepted")
+	}
+	u, _ := url.Parse("http://127.0.0.1:1")
+	if _, err := Dial(ctx, dial, u, "ghe.corp.example"); err == nil || !strings.Contains(err.Error(), "host:port") {
+		t.Fatalf("target without port: %v", err)
+	}
+	refusing := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("boom") }
+	if _, err := Dial(ctx, refusing, u, "ghe.corp.example:443"); err == nil || !strings.Contains(err.Error(), "dial: boom") {
+		t.Fatalf("proxy dial failure: %v", err)
+	}
+
+	// A proxy that answers garbage instead of an HTTP status line.
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_, _ = io.WriteString(c, "not http\r\n\r\n")
+		_ = c.Close()
+	}()
+	gu, _ := url.Parse("http://" + ln.Addr().String())
+	if _, err := Dial(ctx, dial, gu, "ghe.corp.example:443"); err == nil || !strings.Contains(err.Error(), "read CONNECT response") {
+		t.Fatalf("garbage response: %v", err)
+	}
+}
+
+// Bytes the proxy sends right after its 200 must not be lost.
+func TestDialPreservesBytesAfterConnectResponse(t *testing.T) {
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		br := bufio.NewReader(c)
+		if _, err := http.ReadRequest(br); err != nil {
+			return
+		}
+		_, _ = io.WriteString(c, "HTTP/1.1 200 Connection established\r\n\r\nearly-bytes")
+		_ = c.Close()
+	}()
+	u, _ := url.Parse("http://" + ln.Addr().String())
+	conn, err := Dial(context.Background(), (&net.Dialer{Timeout: time.Second}).DialContext, u, "ghe.corp.example:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, ok := conn.(*bufferedConn); !ok {
+		t.Fatalf("expected bufferedConn, got %T", conn)
+	}
+	b, _ := io.ReadAll(conn)
+	if string(b) != "early-bytes" {
+		t.Fatalf("got %q", b)
+	}
+}
+
+// An https:// proxy URL wraps the proxy leg in TLS before CONNECT: against
+// a proxy presenting an untrusted certificate the failure is a TLS error on
+// the proxy leg, not a plaintext CONNECT reaching the handler.
+func TestDialHTTPSProxyLegIsTLS(t *testing.T) {
+	var handled atomic.Int32
+	tlsProxy := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handled.Add(1)
+	}))
+	defer tlsProxy.Close()
+
+	u, _ := url.Parse(tlsProxy.URL)
+	dial := (&net.Dialer{Timeout: time.Second}).DialContext
+	_, err := Dial(context.Background(), dial, u, "ghe.corp.example:443")
+	if err == nil || !strings.Contains(err.Error(), "tls") {
+		t.Fatalf("https proxy with untrusted CA: err = %v, want tls error", err)
+	}
+	if handled.Load() != 0 {
+		t.Fatal("CONNECT must not reach the proxy handler when the TLS leg fails")
 	}
 }
