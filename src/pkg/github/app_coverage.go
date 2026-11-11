@@ -50,6 +50,28 @@ func (a *AppAuth) InstallationCoverage(ctx context.Context) (InstallationCoverag
 		return cov, fmt.Errorf("minting installation token: %w", err)
 	}
 
+	return a.installationCoverageWithToken(ctx, token)
+}
+
+// InstallationCoverageForID lists repositories for a discovered installation
+// without changing the installation or cached token used by the hive.
+func (a *AppAuth) InstallationCoverageForID(ctx context.Context, installationID int64) (InstallationCoverage, error) {
+	if a == nil || !a.HasKey() {
+		return InstallationCoverage{}, fmt.Errorf("no GitHub App key loaded")
+	}
+	if installationID <= 0 {
+		return InstallationCoverage{}, fmt.Errorf("invalid installation ID")
+	}
+	token, _, err := a.mintInstallationTokenWithOptions(ctx, installationID, nil)
+	if err != nil {
+		return InstallationCoverage{}, fmt.Errorf("minting installation token: %w", err)
+	}
+	return a.installationCoverageWithToken(ctx, token)
+}
+
+func (a *AppAuth) installationCoverageWithToken(ctx context.Context, token string) (InstallationCoverage, error) {
+	cov := InstallationCoverage{Repos: map[string]struct{}{}}
+
 	client := newTokenClient(token, a.apiURL)
 	opts := &gh.ListOptions{PerPage: coveragePageSize}
 

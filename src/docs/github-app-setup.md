@@ -312,6 +312,14 @@ installation rather than creating a new one, so the `installation_id` in that
 redirect is one the hive already holds — the failed page does not mean App
 authentication is broken.
 
+An installation can authenticate successfully while excluding a private
+repository under **Only select repositories**. When adding a repo in the
+dashboard, use the reported installation settings link to add it to the
+selection, then re-check access. For repos already configured, the Forge App
+banner identifies missing repository coverage; update the installation and
+re-check it. A rejected advisory issue creation can then be retried without
+waiting for the next UTC day.
+
 ## `/gh-setup` flow
 
 When the app's Setup URL points at `https://<hive-host>/gh-setup`, GitHub redirects back with `setup_action` and, for install/update, `installation_id`.
