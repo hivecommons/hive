@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v6.18.0)
+
+### Added
+
+- **A PR now waits for the pull requests its `Depends-on:` lines name, in the same repository or another one.** Before, only the dashboard's critical path read `Depends-on: #N` / `owner/repo#N`, and nothing stopped a merge lane from landing the PR first, so a person had to hold it and remember to release it. The blocked sweep (every 5 minutes, configured repositories) now puts the existing `blocked` label on an open, non-draft PR whose `Depends-on:` names an open pull request, with one `<!-- hive:blocked-on pr=owner/repo#N -->` comment per open target (the marker a relay's blocked verdict already writes), and lifts it with one `<!-- hive:unblocked -->` note once every marked pull request has merged or closed (the note says when one closed without merging) or is no longer listed. Every merge lane now refuses a `blocked` PR (`label:blocked`): self-authored and trusted-bot, trusted-author, contributor (whatever `exclude_labels` says), the queued merge-request lane, the merge train, the native merge queue and the dashboard's merge verdict and human-merge shortcuts. Like `hold` it is a gate, not a stage: the route and the activity monitor row name the target (`blocked on owner/repo#N`, `Blocked on PR #N — lifts when it merges`). People win: a person's `blocked` is never placed over or lifted, and a person who removes the hive's `blocked` is not overridden for the same dependencies (a newly listed open one re-arms it). Writes go through the write-back gate (`gate_comment`). An issue named in `Depends-on:` stays display-only. `hive-open-issue comment --blocked-on-pr` now also takes `owner/repo#n`.
+
 ## 2026-11-11 (v6.17.0)
 
 ### Added
