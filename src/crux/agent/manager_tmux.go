@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/crux/agent/tmux"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/internal/textutil"
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 )
 
 // paneCaptureSleep is a pacing var, not a const, for the same reason as the
@@ -56,6 +57,34 @@ var inheritedCredentialEnvVars = []string{
 	"LINEAR_CLIENT_ID",
 	"LINEAR_CLIENT_SECRET",
 	"LINEAR_WEBHOOK_SECRET",
+	// The dashboard's shared token: X-Hive-Internal / bearer with this value
+	// is a server-verified OWNER on the Go API, including GET
+	// /api/config/download (the raw hive.yaml). Hosted hives receive it as
+	// DASHBOARD_AUTH_TOKEN from the provisioning template; Compose and Podman
+	// stacks as HIVE_DASHBOARD_TOKEN.
+	"DASHBOARD_AUTH_TOKEN",
+	"HIVE_DASHBOARD_TOKEN",
+	// Per-hive signing keys the hub injects into the hive container, and the
+	// legacy master they were derived from. The terminal key alone forges a
+	// /terminal grant to a ttyd shell as the hive user.
+	"HIVE_TERMINAL_KEY",
+	"HIVE_INVITE_KEY",
+	"HIVE_HEARTBEAT_KEY",
+	"HIVE_HUB_SECRET",
+	"HIVE_TTYD_CREDENTIAL",
+	// The corporate forward-proxy rules. The URL's userinfo is the proxy's
+	// Basic credential; agents reach the upstream only through the MITM
+	// proxy and are never handed the corporate proxy URL. The list vars
+	// carry no secret but are hive-process settings, not agent ones — agents
+	// get their own NO_PROXY from agentEnvPairs. The names come from
+	// crux/upstreamproxy so the strip list cannot drift from what the
+	// loader reads; HIVE_NO_PROXY is the name the hub's provisioning
+	// template injects (saas_provision.go), stripped alongside until the
+	// hub and loader agree on one.
+	upstreamproxy.URLEnv,
+	upstreamproxy.HostsEnv,
+	upstreamproxy.NoProxyEnv,
+	"HIVE_NO_PROXY",
 }
 
 // githubTokenEnvVars are the environment variables gh, git tooling and the
