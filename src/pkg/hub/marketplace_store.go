@@ -24,6 +24,7 @@ import (
 //	workflows/<name>/<version>.bundle.json   immutable published bundles
 //	index.json                               derived catalogue index
 //	refresh/<owner>__<repo>.json             last ingest run per corpus repo
+//	last-refresh.json                        summary of the last completed run
 //
 // Entries are keyed name@version and never overwritten: a republish with the
 // same key and hash is a no-op, a different hash is a 409. Curated versions
@@ -302,9 +303,18 @@ func marketplaceNormaliseIndex(idx *bundle.Index) {
 	}
 }
 
+// marketplaceRecordFormat versions the refresh record. Bumping it makes
+// every existing record due at the next startup pass, which is how a fix to
+// the ingest itself (not a change in the repository) gets re-crawled:
+//
+//	2 — tarball extraction recognises pax_global_header, so the pipeline
+//	    files are actually read (format 1 recorded 0 files for most repos).
+const marketplaceRecordFormat = 2
+
 // marketplaceRefreshRecord is what one ingest run remembers about a repo.
 type marketplaceRefreshRecord struct {
 	Repo      string    `json:"repo"`
+	Format    int       `json:"format,omitempty"`
 	SourceSHA string    `json:"sourceSHA"`
 	FilesHash string    `json:"filesHash"`
 	Files     int       `json:"files"`
@@ -334,6 +344,7 @@ func (st *marketplaceStore) refreshRecord(repo string) (marketplaceRefreshRecord
 }
 
 func (st *marketplaceStore) saveRefreshRecord(rec marketplaceRefreshRecord) error {
+	rec.Format = marketplaceRecordFormat
 	data, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
 		return err
@@ -341,6 +352,37 @@ func (st *marketplaceStore) saveRefreshRecord(rec marketplaceRefreshRecord) erro
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	return marketplaceWriteAtomic(filepath.Join(st.refreshDir(), marketplaceRepoSlug(rec.Repo)+".json"), data)
+}
+
+func (st *marketplaceStore) lastRefreshPath() string {
+	return filepath.Join(st.root, "last-refresh.json")
+}
+
+// saveLastRefresh persists a run summary so /api/marketplace/status can
+// report it across hub restarts.
+func (st *marketplaceStore) saveLastRefresh(res *marketplaceRefreshResult) error {
+	data, err := json.MarshalIndent(res, "", "  ")
+	if err != nil {
+		return err
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return marketplaceWriteAtomic(st.lastRefreshPath(), data)
+}
+
+// loadLastRefresh returns the persisted run summary, or nil when none.
+func (st *marketplaceStore) loadLastRefresh() *marketplaceRefreshResult {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	data, err := os.ReadFile(st.lastRefreshPath())
+	if err != nil {
+		return nil
+	}
+	var res marketplaceRefreshResult
+	if json.Unmarshal(data, &res) != nil || res.StartedAt.IsZero() {
+		return nil
+	}
+	return &res
 }
 
 // refreshRecords lists every recorded run.
