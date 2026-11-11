@@ -57,6 +57,17 @@ import (
 // sandbox.OpenShellLogReader, which keeps the OpenShell SDK out of this
 // package, and the launcher deletes the sandbox when the kick ends, so
 // between kicks the pane shows the persisted transcript exactly as above.
+//
+// The live source is weaker than the pod log, and the pane says so. The
+// gateway's sandbox log holds supervisor, policy (OCSF) and tracing
+// events; the kick runs as an exec session whose output reaches neither
+// that log nor the container log (OpenShell docs, "Accessing Logs"), and
+// Sandbox.Status.ExitCode is the sandbox main process's, not the kick's.
+// So while a kick runs the pane shows what the sandbox did around it
+// (network and filesystem decisions, supervisor state) and then points the
+// operator at the transcript, which is where the kick's own output and
+// exit code land once the launcher's Exec().Run returns. Only the job pod
+// log shows the kick's stdout live.
 
 const (
 	// Both live under terminalPathPrefix so the terminal handoff code,
@@ -354,8 +365,9 @@ func (s *Server) streamJobPod(ctx context.Context, out *jobTerminalWriter, reade
 }
 
 // streamOpenShellSandbox is the openshell-runtime counterpart of the pod
-// path above: follow the agent's live sandbox through the launcher's log
-// reader, scrubbed line by line, then report the exit code; with no live
+// path above: follow the agent's live sandbox's gateway log through the
+// launcher's log reader, scrubbed line by line, then say how the sandbox
+// ended and where the kick's own output and exit code are; with no live
 // sandbox, fall back to the persisted transcript.
 func (s *Server) streamOpenShellSandbox(ctx context.Context, out *jobTerminalWriter, name string, reader sandbox.OpenShellLogReader) {
 	info, found, err := reader.LatestSandbox(ctx, sandbox.LaunchName(name))
@@ -370,6 +382,7 @@ func (s *Server) streamOpenShellSandbox(ctx context.Context, out *jobTerminalWri
 		return
 	}
 	out.status("openshell sandbox %s · %s", info.Name, orUnknown(info.Phase))
+	out.status("%s", openshellLiveLogNote)
 	scrub := &kubejob.LineFilterWriter{Dst: out, Fn: scrubLogLine}
 	final, err := reader.StreamLogs(ctx, info.Name, s.jobTerminalPollInterval(), scrub)
 	_ = scrub.Close()
@@ -382,12 +395,27 @@ func (s *Server) streamOpenShellSandbox(ctx context.Context, out *jobTerminalWri
 	if final.Name == "" {
 		final.Name = info.Name
 	}
-	if final.Exited {
-		out.status("kick exited with code %d", final.ExitCode)
-	} else {
-		out.status("sandbox %s · %s (exit code not reported)", final.Name, orUnknown(final.Phase))
+	switch {
+	case final.Phase == sandbox.OpenShellPhaseDeleting:
+		// The launcher deletes the sandbox the moment Exec().Run returns,
+		// so this is the normal end of a kick.
+		out.status("sandbox %s was deleted by the launcher: the kick has finished. %s", final.Name, openshellKickResultNote)
+	case final.Exited:
+		out.status("sandbox %s main process exited with code %d (that is the sandbox workload, not the kick). %s", final.Name, final.ExitCode, openshellKickResultNote)
+	default:
+		out.status("sandbox %s · %s. %s", final.Name, orUnknown(final.Phase), openshellKickResultNote)
 	}
 }
+
+const (
+	// openshellLiveLogNote opens every live OpenShell stream so an operator
+	// never mistakes the sandbox's event log for the kick's output.
+	openshellLiveLogNote = "this is the sandbox's gateway log (supervisor, policy and tracing events), not the kick's output: " +
+		"the kick runs as an exec session whose stdout and exit code are written to the transcript when it ends"
+	// openshellKickResultNote closes it, pointing at where the kick's own
+	// result lives.
+	openshellKickResultNote = "the kick's output and exit code are in the persisted transcript; reopen this pane to see them"
+)
 
 // sandboxTerms are the runtime-specific words in the viewer's page and
 // status lines; everything else is shared between the runtimes.
@@ -408,7 +436,7 @@ var (
 	}
 	openshellTerms = sandboxTerms{
 		title: "openshell sandbox log",
-		about: "the kick runs in an OpenShell sandbox on the gateway, so this is the sandbox's log",
+		about: "the kick runs in an OpenShell sandbox on the gateway, so this is the sandbox's gateway event log while it runs and the kick's transcript afterwards",
 		live:  "OpenShell sandbox", where: "on the gateway",
 		gone: "the launcher deletes a sandbox when its kick finishes",
 	}

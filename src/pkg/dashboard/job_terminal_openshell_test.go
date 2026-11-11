@@ -113,14 +113,21 @@ func TestOpenShellTerminalStreamsLiveSandboxScrubbed(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"openshell sandbox hive-kick-shell-1 · Ready",
+		// The gateway log is not the kick's output; the pane must say so up front.
+		"this is the sandbox's gateway log (supervisor, policy and tracing events), not the kick's output",
 		"step 1\n",
 		"auth ghp_",
 		"partial",
-		"kick exited with code 4",
+		// Status.ExitCode belongs to the sandbox's main process, never the kick.
+		"sandbox hive-kick-shell-1 main process exited with code 4 (that is the sandbox workload, not the kick)",
+		"the kick's output and exit code are in the persisted transcript",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "kick exited with code") {
+		t.Fatalf("the sandbox exit code must not be presented as the kick's:\n%s", body)
 	}
 	if strings.Contains(body, token) {
 		t.Fatalf("live sandbox log reached the browser unscrubbed:\n%s", body)
@@ -143,9 +150,36 @@ func TestOpenShellTerminalStreamReportsErrorAndMissingExit(t *testing.T) {
 	}
 	s, _ := openshellTerminalServer(t, reader)
 	body := doGet(s, "/terminal/job/shell/stream").Body.String()
-	for _, want := range []string{"log stream ended with an error: PermissionDenied: logs", "sandbox sb · Error (exit code not reported)"} {
+	for _, want := range []string{"log stream ended with an error: PermissionDenied: logs", "sandbox sb · Error. the kick's output and exit code are in the persisted transcript"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+}
+
+// The launcher deletes the sandbox as soon as the kick's exec returns, so a
+// stream that ends on NotFound is the normal end of a kick: the pane must
+// say the kick finished and send the operator to the transcript rather than
+// print a missing or wrong exit code.
+func TestOpenShellTerminalStreamEndsWhenLauncherDeletesSandbox(t *testing.T) {
+	reader := &fakeOpenShellLogReader{
+		info: sandbox.OpenShellSandboxInfo{Name: "hive-kick-shell-1", Phase: "Ready"}, found: true,
+		lines: []string{"NET:OPEN ALLOWED api.github.com:443\n"},
+		final: sandbox.OpenShellSandboxInfo{Name: "hive-kick-shell-1", Phase: sandbox.OpenShellPhaseDeleting},
+	}
+	s, _ := openshellTerminalServer(t, reader)
+	body := doGet(s, "/terminal/job/shell/stream").Body.String()
+	for _, want := range []string{
+		"NET:OPEN ALLOWED api.github.com:443\n",
+		"sandbox hive-kick-shell-1 was deleted by the launcher: the kick has finished. the kick's output and exit code are in the persisted transcript; reopen this pane to see them",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+	for _, bad := range []string{"exited with code", "exit code not reported"} {
+		if strings.Contains(body, bad) {
+			t.Fatalf("unexpected %q in:\n%s", bad, body)
 		}
 	}
 }

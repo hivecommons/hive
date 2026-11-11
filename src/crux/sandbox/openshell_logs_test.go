@@ -9,6 +9,7 @@ import (
 	"time"
 
 	openshell "github.com/ai-openshell/sdk-go/openshell/v1"
+	openshelltypes "github.com/ai-openshell/sdk-go/openshell/v1/types"
 )
 
 // fakeOpenShellLogs scripts the read side of the gateway: a sandbox list,
@@ -24,6 +25,7 @@ type fakeOpenShellLogs struct {
 	// nilLogs makes every GetLogs call answer (nil, nil).
 	nilLogs  bool
 	since    []time.Time
+	lines    []uint32
 	gets     []*openshell.Sandbox
 	getErr   error
 	logCalls int
@@ -78,7 +80,9 @@ func (f *fakeOpenShellLogs) Get(context.Context, string, string) (*openshell.San
 func (f *fakeOpenShellLogs) GetLogs(_ context.Context, _, _ string, opts ...openshell.LogOption) (*openshell.LogResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.since = append(f.since, openshellLogSince(opts))
+	cfg := openshelltypes.ApplyLogOptions(opts)
+	f.since = append(f.since, cfg.Since())
+	f.lines = append(f.lines, cfg.Lines())
 	i := f.logCalls
 	f.logCalls++
 	if i < len(f.logErrs) && f.logErrs[i] != nil {
@@ -91,15 +95,6 @@ func (f *fakeOpenShellLogs) GetLogs(_ context.Context, _, _ string, opts ...open
 		return &openshell.LogResult{}, nil
 	}
 	return &openshell.LogResult{Lines: f.logs[i]}, nil
-}
-
-func openshellLogSince(opts []openshell.LogOption) time.Time {
-	// The SDK keeps the applied options private; WithLogSince is the only
-	// option the reader passes, so its presence is what the fake records.
-	if len(opts) == 0 {
-		return time.Time{}
-	}
-	return time.Unix(1, 0)
 }
 
 func openshellLogLauncher(f *fakeOpenShellLogs) *OpenShellLauncher {
@@ -184,8 +179,13 @@ func TestOpenShellStreamLogsFollowsUntilExitWithoutDuplicates(t *testing.T) {
 	if !info.Exited || info.ExitCode != 3 || !info.Finished() {
 		t.Fatalf("info = %+v", info)
 	}
-	if len(f.since) < 2 || !f.since[0].IsZero() || f.since[1].IsZero() {
+	if len(f.since) < 2 || !f.since[0].IsZero() || !f.since[1].Equal(t2) {
 		t.Fatalf("follow-up reads must ask only for new lines, got %v", f.since)
+	}
+	for i, n := range f.lines {
+		if n != openshellLogLinesPerRead {
+			t.Fatalf("read %d asked for %d lines, want the gateway's full %d-line buffer so none are lost between polls", i, n, openshellLogLinesPerRead)
+		}
 	}
 }
 
