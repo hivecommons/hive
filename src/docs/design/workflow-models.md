@@ -183,3 +183,78 @@ The tab never binds: binding stays on Settings → Repos so the per-repository d
 to the repository's other policy. The Activity Monitor's model badge deep-links here via
 `openWorkflowLibraryEntry(name, version)`. Every HTML builder is a pure function of its inputs so
 `workflows_library_ui_test.go` runs them under node without a DOM. Editing is phase 4.
+
+## Simulate (RFC phase 3c)
+
+"Paste or pick a real issue/PR and see which state the model puts it in and why, using the same
+`Facts` the engine would use" — the operator's confidence check before binding. Nothing is
+written; any logged-in role may simulate.
+
+`POST /api/workflows/{name}/{version}/simulate` takes
+
+```json
+{ "kind": "issue" | "pr", "facts": { ...SimulateFacts... }, "repo": "owner/repo", "number": 123 }
+```
+
+`facts` is a lowerCamel JSON mirror of `stageengine.Facts` (`SimulateFacts` in
+`pkg/dashboard/api_workflows_simulate.go`): `labels`, `open`, `merged`, `draft`, `origin`,
+`author{login,kind,selfAuthored,role}`, `park{holds,needsHuman,…}`, `issue{bucket,…}` and
+`pr{checks,review,dco,conflicting,changesRequested,humanApprover,lane,…}`. Enumerations use the
+engine's name helpers so a response can be pasted back as a request: `author.kind`
+hive|clanker|human|unknown, `pr.checks` green|red|pending|unknown, `pr.review`
+approved|changes_requested|pending|unavailable|requires_human, `pr.dco` yes|no|unknown
+(`stageengine.ParseAuthorKind/ParseChecks/ParseReview/ParseDCO` are the inverses of the name
+helpers). `park.holds` left null is derived from the labels with `stagelabels.Holds`.
+
+The handler loads and compiles the stored model exactly as `GET` does, converts the facts, and
+calls `stageengine.Explain(profile, kind, facts)`, which returns the same `Decision` as
+`DeriveFromModel(...).Derive` plus a trace:
+
+```json
+{
+  "decision": { "state": "accepted", "column": "Accepted", "stage": 20, "label": "stage/020-accepted",
+                "reason": "rule accepted", "abstain": false, "covered": true, "terminal": false },
+  "trace": [ { "id": "requested", "state": "requested", "evaluated": true, "matched": false,
+               "predicates": [ { "fact": "label", "op": "has", "value": "techdocs/request", "holds": true, "known": true },
+                               { "fact": "label", "op": "not", "value": "techdocs/accepted", "holds": false, "known": true, "actual": "techdocs/accepted" } ] },
+             { "id": "accepted", "state": "accepted", "evaluated": true, "matched": true, "predicates": [ … ] },
+             { "id": "pr-review", "state": "review", "kind": "pr", "evaluated": false, "matched": false, "skipped": "kind pr" },
+             { "id": "later", "state": "done", "evaluated": false, "matched": false } ],
+  "facts": { …normalized echo… }, "filled": [], "unknown": [], "notes": []
+}
+```
+
+Trace semantics: for `derivation: rules` every rule appears in order; rules for the other item
+kind are `skipped`; rules are `evaluated` until the first `matched` one, each with its predicates'
+`holds`/`known` verdicts and the actual value when it differs; rules after the match are listed
+with `evaluated: false`. The uncovered case has no matched rule and the decision carries
+`abstain: true, covered: false, reason "workflow: not covered…"`. For `derivation: builtin`
+(hive-default and ingested models) the trace is a single `{builtin: true, state, reason}` entry,
+because the built-in derivers are not rule lists. `column` is looked up from the profile and
+`stage` from the state's `lifecycle.number`; a built-in decision of Stage None (for example a
+draft PR) returns `covered: true` with an empty `state` and the deriver's reason.
+
+Built-in PR derivation reads lane facts the engine's lane observers normally supply. When the
+request carries no `pr.lane`, `stageengine.SimulatedLane` synthesizes one from the other facts
+(self-authored / trusted-author / contributor lane; reason from merged, closed, draft, conflict,
+changes requested, holds, needs-human, red or pending checks, missing review, untrusted role) and
+the response says so in `notes`. Give `pr.lane{lane,reason}` explicitly to override it.
+
+Best-effort fill: `repo` + `number` without `facts` fetches the item through the hive's GitHub
+client (`github.Client.WorkflowItemSnapshot`: the issue, the PR when it is one, its mergeable
+state and the head commit's check summary) and fills `labels`, `open`, `merged`, `draft`,
+`author.login`, `author.role` (from `role/*` labels), `park.holds`, `origin`, and for PRs
+`pr.checks`, `pr.dco`, `pr.conflicting`, `pr.headSHA`, `pr.baseRef`. `filled` lists what came
+from the forge and `unknown` what stayed at its default — `author.kind`, `pr.review`,
+`issue.bucket` and the claim/covering-PR facts need the engine's own observers and are not
+fetched; edit them in the form before running. `kind` may be omitted and is taken from the item;
+a mismatch is a 400. Without a wired GitHub client the endpoint answers 422 rather than guessing.
+
+The UI (`renderWorkflowSimulate`, `renderWorkflowSimulateResult` in
+`config-workflows-library.js`) lives in a collapsed **Simulate** section of the model detail page:
+a `owner/repo#123` picker with Fetch facts, an issue/PR radio, and a facts form generated from the
+declarative `WF_SIM_FIELDS` table (so the builder, the form reader and
+`workflows_simulate_ui_test.go` share one definition). Run posts the form, shows the decision chip
+(state · column · stage · reason or **Not covered**), the trace as an ordered list with the
+matched rule highlighted and each predicate as `fact op value → ✓/✗/?`, and
+`wfSimMarkDiagram` tags the resulting state's chip in the diagram (`.wf-dg-state.simulated`).
