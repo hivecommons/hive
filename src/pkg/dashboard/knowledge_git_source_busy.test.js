@@ -38,9 +38,13 @@ const setup = ({ fields, response }) => {
     await gate;
     return response;
   };
+  // v6 keeps one failed-connect row (_kbGitSourceFailed) and relabels the
+  // button through kbGitSourceSubmitLabel so an edit reads "Save".
   const h = new Function('document', 'fetch', '_inceptionAuthHeaders', 'hiveAlert', 'kbLoadSubscriptions', 'fetchKnowledgeStats', 'kbFieldError',
-    'var _kbFailedGitSources = [];\n' + fnSrc('_kbForgetFailedGitSource') + '\nasync ' + fnSrc('kbAddGitSource') +
-    '\nreturn { kbAddGitSource, failed: () => _kbFailedGitSources };')(
+    'var _kbGitSourceFailed = null, _kbGitSourceEditing = null;\n' +
+    'function kbGitSourceSubmitLabel() { return _kbGitSourceEditing ? "Save" : "Clone & Index"; }\n' +
+    'async ' + fnSrc('kbAddGitSource') +
+    '\nreturn { kbAddGitSource, failed: () => _kbGitSourceFailed };')(
     document, fetch, () => ({}), async m => { calls.alerts.push(m); }, () => { calls.reloads++; }, () => { calls.stats++; },
     (el, m) => { calls.fieldErrors.push(m); });
   return { h, btn, calls, selectors, release };
@@ -59,7 +63,7 @@ test('Clone & Index shows the busy state while cloning and restores it on succes
   assert.strictEqual(btn.disabled, false);
   assert.strictEqual(btn.textContent, 'Clone & Index');
   assert.strictEqual(calls.bodies[0].branch, '', 'blank branch must not be guessed as main');
-  assert.deepStrictEqual(h.failed(), []);
+  assert.strictEqual(h.failed(), null);
   assert.strictEqual(calls.stats, 1);
 });
 
@@ -73,9 +77,9 @@ test('a failed connect restores the button and leaves an error row with the reas
   await p;
   assert.strictEqual(btn.disabled, false);
   assert.strictEqual(btn.textContent, 'Clone & Index');
-  assert.deepStrictEqual(h.failed(), [{
-    url: 'https://github.com/org/repo', name: 'docs', subpath: '', branch: '', layer: 'project', error: 'git clone: exit status 128',
-  }]);
+  assert.deepStrictEqual(h.failed(), {
+    url: 'https://github.com/org/repo', name: 'docs', subpath: '', branch: '', layer: 'project', error: 'git clone: exit status 128', editing: null,
+  });
   assert.strictEqual(calls.reloads, 1);
   assert.match(calls.alerts[0], /exit status 128/);
 });
