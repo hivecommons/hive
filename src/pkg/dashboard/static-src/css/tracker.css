@@ -270,7 +270,7 @@
     /* Workflow-model columns (RFC 17620): the model badge on a
        bound repository's group header, its own column header, and the
        "Not covered" chevron for a stage the model has no state for. */
-    .ham-wf-badge { flex: 0 0 auto; font-family: var(--font-mono); font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; padding: 1px 7px; border-radius: var(--r-pill); white-space: nowrap; color: var(--indigo); background: color-mix(in srgb, var(--indigo) 12%, transparent); border: 1px solid color-mix(in srgb, var(--indigo) 40%, transparent); }
+    .ham-wf-badge { flex: 0 0 auto; font-family: var(--font-mono); font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; color: var(--indigo); background: color-mix(in srgb, var(--indigo) 12%, transparent); border: 1px solid color-mix(in srgb, var(--indigo) 40%, transparent); }
     .ham-wf-cols { position: static; }
     .ham-wf-cols .ham-wf-col { color: var(--indigo); }
     .ham-seg.ham-wf-uncovered { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); outline: 1px dashed var(--amber); }
