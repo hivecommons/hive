@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.211.27)
+
+### Fixed
+
+- The mutation advisory job now stops itself on a wall-clock budget and lists the packages it skipped, instead of being cancelled at the job timeout and losing its report.
+
 ## 2026-11-11 (v5.211.26)
 
 ### Fixed
