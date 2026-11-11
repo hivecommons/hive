@@ -49,6 +49,10 @@ type GitSource struct {
 	logger   *slog.Logger
 	mu       sync.RWMutex
 	ready    bool
+	// stopSync cancels the context the sync loop runs on; nil until bound.
+	stopSync context.CancelFunc
+	// syncDone is closed when the bound sync loop goroutine returns.
+	syncDone chan struct{}
 }
 
 // NewGitSource creates a git source. Call Init() to clone the repo and start
@@ -131,6 +135,83 @@ func (g *GitSource) Ready() bool {
 // Config returns the source configuration.
 func (g *GitSource) Config() GitSourceConfig {
 	return g.config
+}
+
+// withConfig returns a copy of g that shares its clone, index, store and sync
+// loop but reports cfg, so a metadata edit never mutates a source other
+// goroutines are reading. Only name/layer edits may use it: the clone is not
+// touched. The copy inherits stopSync so stopping it stops the shared loop.
+func (g *GitSource) withConfig(cfg GitSourceConfig) *GitSource {
+	g.mu.RLock()
+	store, ready, stopSync, syncDone := g.store, g.ready, g.stopSync, g.syncDone
+	g.mu.RUnlock()
+	if store != nil {
+		store.SetName(cfg.Name)
+	}
+	return &GitSource{
+		config:   cfg,
+		cloneDir: g.cloneDir,
+		indexDir: g.indexDir,
+		store:    store,
+		logger:   g.logger,
+		ready:    ready,
+		stopSync: stopSync,
+		syncDone: syncDone,
+	}
+}
+
+// bindSyncContext derives the context the sync loop should run on from ctx
+// and remembers its cancel func, so the loop can be stopped when the source is
+// disconnected or replaced instead of running for the server's lifetime. The
+// returned done channel must be closed by the caller when the loop goroutine
+// exits; StopSyncLoop waits on it.
+func (g *GitSource) bindSyncContext(ctx context.Context) (context.Context, chan<- struct{}) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopSync != nil {
+		g.stopSync()
+	}
+	loopCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	g.stopSync = cancel
+	g.syncDone = done
+	return loopCtx, done
+}
+
+// StopSyncLoop cancels the sync loop bound via bindSyncContext and waits for
+// it to return, so a disconnected or replaced source has stopped pulling its
+// remote by the time this returns: a same-identity branch edit can then rename
+// the old clone aside without a `git pull` still writing into it. Safe to
+// call when no loop was bound.
+func (g *GitSource) StopSyncLoop() {
+	g.mu.Lock()
+	stop, done := g.stopSync, g.syncDone
+	g.stopSync, g.syncDone = nil, nil
+	g.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+// relocate re-points g at cloneDir. It is used to clone into a staging
+// directory and, once indexed, to follow the rename into the final slug path.
+// Callers must not have published g or started its sync loop yet.
+func (g *GitSource) relocate(cloneDir string) {
+	indexDir := cloneDir
+	if g.config.Subpath != "" {
+		indexDir = filepath.Join(cloneDir, g.config.Subpath)
+	}
+	g.mu.Lock()
+	g.cloneDir = cloneDir
+	g.indexDir = indexDir
+	store := g.store
+	g.mu.Unlock()
+	if store != nil {
+		store.Relocate(indexDir)
+	}
 }
 
 // CloneDir returns the local filesystem path where the repo is cloned.
@@ -272,6 +353,43 @@ func (g *GitSource) ensureCloned(ctx context.Context) error {
 		"dir", g.cloneDir,
 	)
 	return nil
+}
+
+// gitSourceLsRemote runs `git ls-remote --symref <url> HEAD`; a var so tests
+// can fake the remote.
+var gitSourceLsRemote = func(ctx context.Context, url string) ([]byte, error) {
+	lsCtx, cancel := context.WithTimeout(ctx, gitSourceLookupTimeout*2)
+	defer cancel()
+	cmd := exec.CommandContext(lsCtx, "git", gitCmdArgs("ls-remote", "--symref", "--", url, "HEAD")...)
+	cmd.Env = gitSourceEnv()
+	return cmd.CombinedOutput()
+}
+
+// parseGitSymrefHead extracts <name> from the `ref: refs/heads/<name>\tHEAD`
+// line of `git ls-remote --symref` output.
+func parseGitSymrefHead(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		ref, rest, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok || strings.TrimSpace(rest) != "HEAD" || !strings.HasPrefix(ref, "ref: refs/heads/") {
+			continue
+		}
+		return strings.TrimPrefix(ref, "ref: refs/heads/")
+	}
+	return ""
+}
+
+// ResolveGitSourceDefaultBranch returns the remote's default branch. It falls
+// back to "main" only when the remote answers without a HEAD symref; a failing
+// ls-remote (unreachable, auth, not found) is returned to the caller.
+func ResolveGitSourceDefaultBranch(ctx context.Context, url string) (string, error) {
+	out, err := gitSourceLsRemote(ctx, url)
+	if err != nil {
+		return "", fmt.Errorf("git ls-remote: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	if branch := parseGitSymrefHead(string(out)); branch != "" {
+		return branch, nil
+	}
+	return "main", nil
 }
 
 // setupSparseCheckout configures sparse-checkout so only the subpath is

@@ -14464,7 +14464,8 @@
                     "type": "string"
                   },
                   "branch": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Omit or leave empty to resolve the remote's default branch (via git ls-remote); the resolved branch is recorded in the source config"
                   },
                   "subpath": {
                     "type": "string"
@@ -14572,6 +14573,106 @@
           },
           "404": {
             "description": "Git source not found"
+          },
+          "503": {
+            "description": "Knowledge not enabled"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Edit a git knowledge source",
+        "description": "Edits the connected git source identified by `url` (and optional `subpath`). Omitted fields keep their current value; `new_url`/`new_subpath` move the source. A name/layer-only change updates the source in place without re-cloning; a url, branch or subpath change clones the new source (into a staging directory when only the branch changed) and swaps it in once indexed, in this single request; the old source keeps serving until then and is untouched if the clone fails, and its sync loop is stopped on swap. Omitting `branch` keeps the current branch; an explicit empty string re-resolves the remote default. Persists to config and writes one `knowledge_git_source_update` audit row. Requires owner role. Same validation as connect.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "Current URL of the source to edit (identity)"
+                  },
+                  "subpath": {
+                    "type": "string",
+                    "description": "Current subpath of the source to edit (identity)"
+                  },
+                  "new_url": {
+                    "type": "string"
+                  },
+                  "new_subpath": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "branch": {
+                    "type": "string",
+                    "description": "Omit to keep the current branch; an empty string re-resolves the remote default branch"
+                  },
+                  "layer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Git source updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "subpath": {
+                      "type": "string"
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "layer": {
+                      "type": "string"
+                    },
+                    "recloned": {
+                      "type": "boolean",
+                      "description": "true when url/branch/subpath changed and the source was re-cloned"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, missing url, disallowed URL, or invalid name/branch/subpath"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "Git source not found"
+          },
+          "409": {
+            "description": "Another git source already uses the new url+subpath"
+          },
+          "500": {
+            "description": "Clone/connect of the edited source failed"
           },
           "503": {
             "description": "Knowledge not enabled"

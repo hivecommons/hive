@@ -1,0 +1,1 @@
+- Knowledge Sources: **Clone & Index** now disables the button and shows "Cloning…" while the request runs, resolves a blank branch to the remote's default branch (`git ls-remote --symref`) and records it instead of guessing `main`, and keeps a failed connect visible as an error row with the reason and Retry/Dismiss (#17610).

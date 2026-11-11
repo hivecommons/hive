@@ -94,14 +94,44 @@ func NewFileStore(rootDir string, name string, logger *slog.Logger) (*FileStore,
 }
 
 // Name returns the display name of this vault.
-func (s *FileStore) Name() string { return s.name }
+func (s *FileStore) Name() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.name
+}
 
 // SetName changes the display name of this vault (vanity rename).
-// The underlying directory path is unchanged.
-func (s *FileStore) SetName(name string) { s.name = name }
+// The underlying directory path is unchanged. It takes the store lock because
+// a git source's sync loop may be reindexing concurrently.
+func (s *FileStore) SetName(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.name = name
+}
 
 // RootDir returns the filesystem path.
-func (s *FileStore) RootDir() string { return s.rootDir }
+func (s *FileStore) RootDir() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.rootDir
+}
+
+// Relocate re-points the store at rootDir after the directory it indexed was
+// renamed there. The index stays valid; only the recorded file paths move.
+func (s *FileStore) Relocate(rootDir string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.rootDir
+	s.rootDir = rootDir
+	for slug, p := range s.pages {
+		rel, err := filepath.Rel(old, p.Path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		p.Path = filepath.Join(rootDir, rel)
+		s.pages[slug] = p
+	}
+}
 
 // WriteFacts persists facts into the vault as markdown files with YAML
 // frontmatter, one file per fact. This is the local-write counterpart to the
@@ -161,8 +191,11 @@ func (s *FileStore) factPath(title string) string {
 
 func (s *FileStore) reindex() {
 	pages := make(map[string]filePage)
+	s.mu.RLock()
+	rootDir := s.rootDir
+	s.mu.RUnlock()
 
-	err := filepath.WalkDir(s.rootDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -190,7 +223,7 @@ func (s *FileStore) reindex() {
 			return nil
 		}
 
-		rel, _ := filepath.Rel(s.rootDir, path)
+		rel, _ := filepath.Rel(rootDir, path)
 		slug := strings.TrimSuffix(rel, ext)
 		slug = strings.ReplaceAll(slug, string(filepath.Separator), "/")
 
@@ -229,12 +262,13 @@ func (s *FileStore) reindex() {
 	})
 
 	if err != nil {
-		s.logger.Warn("vault reindex error", "dir", s.rootDir, "error", err)
+		s.logger.Warn("vault reindex error", "dir", rootDir, "error", err)
 	}
 
 	s.embedCache.Clear()
 	s.mu.Lock()
 	prevCount := s.prevPageCount
+	name := s.name
 	for slug, page := range s.derivedPages {
 		pages[slug] = page
 	}
@@ -245,8 +279,8 @@ func (s *FileStore) reindex() {
 
 	if len(pages) != prevCount {
 		s.logger.Info("vault indexed",
-			"name", s.name,
-			"dir", s.rootDir,
+			"name", name,
+			"dir", rootDir,
 			"pages", len(pages),
 			"page_delta", len(pages)-prevCount,
 		)

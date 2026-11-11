@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -403,4 +404,212 @@ func TestStubPublicGitSourceDNSFailsClosed(t *testing.T) {
 			t.Fatal("unregistered host must fail closed")
 		}
 	})
+}
+
+func TestResolveGitSourceDefaultBranch(t *testing.T) {
+	tests := []struct {
+		name    string
+		out     string
+		runErr  error
+		want    string
+		wantErr bool
+	}{
+		{name: "trunk", out: "ref: refs/heads/trunk\tHEAD\n0123abcd\tHEAD\n", want: "trunk"},
+		{name: "slashed", out: "ref: refs/heads/release/v2\tHEAD\n0123abcd\tHEAD\n", want: "release/v2"},
+		{name: "no symref falls back to main", out: "0123abcd\tHEAD\n", want: "main"},
+		{name: "ls-remote failure surfaces", out: "fatal: repository not found", runErr: fmt.Errorf("exit status 128"), wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			orig := gitSourceLsRemote
+			gitSourceLsRemote = func(context.Context, string) ([]byte, error) { return []byte(tc.out), tc.runErr }
+			t.Cleanup(func() { gitSourceLsRemote = orig })
+
+			got, err := ResolveGitSourceDefaultBranch(context.Background(), "https://github.com/org/repo")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Errorf("branch = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestConnectGitSource_BlankBranchResolvesDefault(t *testing.T) {
+	stubPublicGitSourceDNS(t, "github.com")
+	origLs, origNew, origInit, origLoop := gitSourceLsRemote, newGitSourceForConnect, initGitSourceForConnect, startGitSourceSyncLoopForConnect
+	t.Cleanup(func() {
+		gitSourceLsRemote, newGitSourceForConnect, initGitSourceForConnect, startGitSourceSyncLoopForConnect = origLs, origNew, origInit, origLoop
+	})
+	gitSourceLsRemote = func(context.Context, string) ([]byte, error) {
+		return []byte("ref: refs/heads/trunk\tHEAD\n"), nil
+	}
+	var gotBranch string
+	newGitSourceForConnect = func(c GitSourceConfig, base string, l *slog.Logger) *GitSource {
+		gotBranch = c.Branch
+		return NewGitSource(c, base, l)
+	}
+	initGitSourceForConnect = func(*GitSource, context.Context) error { return nil }
+	startGitSourceSyncLoopForConnect = func(*GitSource, context.Context) {}
+
+	k := &KnowledgeAPI{logger: slog.Default()}
+	err := k.ConnectGitSource(context.Background(), GitSourceConfig{Name: "n", URL: "https://github.com/org/repo", Layer: LayerProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBranch != "trunk" {
+		t.Errorf("clone branch = %q, want trunk", gotBranch)
+	}
+	if infos := k.GitSources(); len(infos) != 1 || infos[0].Branch != "trunk" {
+		t.Errorf("recorded sources = %+v, want branch trunk", infos)
+	}
+}
+
+// TestGitSourceSyncLoopStopsWhenSourceGoesAway pins that the per-source sync
+// loop is cancelled when the source is disconnected or replaced (including a
+// same-directory branch edit), and that a metadata edit hands the loop to the
+// replacement so a later disconnect still stops it. Without this, every edit
+// or disconnect leaked a goroutine that kept pulling the old remote.
+func TestGitSourceSyncLoopStopsWhenSourceGoesAway(t *testing.T) {
+	stubPublicGitSourceDNS(t, "github.com")
+	SetBaseDirForTest(t, t.TempDir())
+	origInit, origLoop := initGitSourceForConnect, startGitSourceSyncLoopForConnect
+	t.Cleanup(func() {
+		initGitSourceForConnect, startGitSourceSyncLoopForConnect = origInit, origLoop
+	})
+	initGitSourceForConnect = func(*GitSource, context.Context) error { return nil }
+	loops := make(chan context.Context, 4)
+	startGitSourceSyncLoopForConnect = func(_ *GitSource, ctx context.Context) { loops <- ctx }
+
+	stopped := func(ctx context.Context) bool {
+		select {
+		case <-ctx.Done():
+			return true
+		default:
+			return false
+		}
+	}
+	const url = "https://github.com/org/repo"
+	k := &KnowledgeAPI{logger: slog.Default()}
+	if err := k.ConnectGitSource(context.Background(), GitSourceConfig{Name: "n", URL: url, Branch: "main", Layer: LayerProject}); err != nil {
+		t.Fatal(err)
+	}
+	first := <-loops
+	if stopped(first) {
+		t.Fatal("sync loop context cancelled right after connect")
+	}
+
+	if err := k.ReplaceGitSource(context.Background(), url, "", GitSourceConfig{Name: "n", URL: url, Branch: "release", Layer: LayerProject}); err != nil {
+		t.Fatal(err)
+	}
+	second := <-loops
+	if !stopped(first) {
+		t.Fatal("replaced source's sync loop was not stopped")
+	}
+	if stopped(second) {
+		t.Fatal("replacement's sync loop was cancelled")
+	}
+
+	if err := k.UpdateGitSourceMetadata(url, "", "renamed", LayerOrg); err != nil {
+		t.Fatal(err)
+	}
+	if stopped(second) {
+		t.Fatal("metadata edit must keep the sync loop running")
+	}
+	if err := k.DisconnectGitSource(url, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !stopped(second) {
+		t.Fatal("disconnect after a metadata edit did not stop the inherited sync loop")
+	}
+	if len(k.GitSources()) != 0 {
+		t.Fatalf("sources after disconnect = %+v, want none", k.GitSources())
+	}
+}
+
+// TestReplaceGitSourceStagesWhenCloneDirUnchanged pins that a replacement
+// landing on the old clone directory is staged and promoted even when the
+// URL string changed: the slug strips the scheme and a ".git" suffix, so
+// comparing URL+subpath would reuse the old checkout and `git pull` its old
+// branch while the config reports the new one.
+func TestReplaceGitSourceStagesWhenCloneDirUnchanged(t *testing.T) {
+	stubPublicGitSourceDNS(t, "github.com")
+	SetBaseDirForTest(t, t.TempDir())
+	origInit, origLoop := initGitSourceForConnect, startGitSourceSyncLoopForConnect
+	t.Cleanup(func() {
+		initGitSourceForConnect, startGitSourceSyncLoopForConnect = origInit, origLoop
+	})
+	var cloneDirs []string
+	initGitSourceForConnect = func(gs *GitSource, _ context.Context) error {
+		cloneDirs = append(cloneDirs, gs.CloneDir())
+		return os.MkdirAll(gs.CloneDir(), 0o755)
+	}
+	startGitSourceSyncLoopForConnect = func(*GitSource, context.Context) {}
+
+	const url = "https://github.com/org/repo"
+	k := &KnowledgeAPI{logger: slog.Default()}
+	if err := k.ConnectGitSource(context.Background(), GitSourceConfig{Name: "n", URL: url, Branch: "main", Layer: LayerProject}); err != nil {
+		t.Fatal(err)
+	}
+	if len(cloneDirs) != 1 {
+		t.Fatalf("clones after connect = %v, want one", cloneDirs)
+	}
+	finalDir := cloneDirs[0]
+
+	if err := k.ReplaceGitSource(context.Background(), url, "", GitSourceConfig{Name: "n", URL: url + ".git", Branch: "release", Layer: LayerProject}); err != nil {
+		t.Fatal(err)
+	}
+	if len(cloneDirs) != 2 {
+		t.Fatalf("clones after replace = %v, want two", cloneDirs)
+	}
+	if staged := cloneDirs[1]; staged == finalDir || filepath.Dir(staged) != filepath.Dir(finalDir) {
+		t.Fatalf("replacement cloned into %q, want a staging sibling of %q", staged, finalDir)
+	}
+	infos := k.GitSources()
+	if len(infos) != 1 || infos[0].URL != url+".git" || infos[0].Branch != "release" {
+		t.Fatalf("sources after replace = %+v, want the .git URL on release", infos)
+	}
+	k.mu.RLock()
+	gotDir := k.gitSources[0].CloneDir()
+	k.mu.RUnlock()
+	if gotDir != finalDir {
+		t.Fatalf("promoted clone dir = %q, want %q", gotDir, finalDir)
+	}
+	if _, err := os.Stat(cloneDirs[1]); !os.IsNotExist(err) {
+		t.Fatalf("staging dir %q still present after promotion (err=%v)", cloneDirs[1], err)
+	}
+}
+
+// TestReplaceGitSourceDoesNotResurrectRemovedSource pins that a Remove landing
+// while the replacement clone is running wins: the freshly cloned source is
+// not published and the caller sees ErrGitSourceNotFound, so the handler does
+// not persist a source the operator just disconnected.
+func TestReplaceGitSourceDoesNotResurrectRemovedSource(t *testing.T) {
+	stubPublicGitSourceDNS(t, "github.com")
+	SetBaseDirForTest(t, t.TempDir())
+	origInit, origLoop := initGitSourceForConnect, startGitSourceSyncLoopForConnect
+	t.Cleanup(func() {
+		initGitSourceForConnect, startGitSourceSyncLoopForConnect = origInit, origLoop
+	})
+	startGitSourceSyncLoopForConnect = func(*GitSource, context.Context) {}
+	initGitSourceForConnect = func(*GitSource, context.Context) error { return nil }
+
+	const url = "https://github.com/org/repo"
+	k := &KnowledgeAPI{logger: slog.Default()}
+	if err := k.ConnectGitSource(context.Background(), GitSourceConfig{Name: "n", URL: url, Branch: "main", Layer: LayerProject}); err != nil {
+		t.Fatal(err)
+	}
+	// The disconnect lands mid-clone, after ReplaceGitSource has found the old source.
+	initGitSourceForConnect = func(*GitSource, context.Context) error {
+		return k.DisconnectGitSource(url, "")
+	}
+
+	err := k.ReplaceGitSource(context.Background(), url, "", GitSourceConfig{Name: "n", URL: url, Branch: "release", Layer: LayerProject})
+	if !errors.Is(err, ErrGitSourceNotFound) {
+		t.Fatalf("ReplaceGitSource after a mid-clone disconnect = %v, want ErrGitSourceNotFound", err)
+	}
+	if infos := k.GitSources(); len(infos) != 0 {
+		t.Fatalf("sources after replace = %+v, want the removed source to stay removed", infos)
+	}
 }
