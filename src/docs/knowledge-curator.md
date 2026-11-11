@@ -30,7 +30,7 @@ wires configured entries at startup.
 knowledge:
   enabled: true
   git_sources:
-    - name: dakota-skills            # required — display name and dedup/lookup key
+    - name: dakota-skills            # required — display name (editable via PUT; identity is url + subpath)
       url: https://github.com/projectbluefin/dakota   # required — https:// only
       branch: main                   # optional — default "main"
       subpath: docs/skills           # optional — index only this subdirectory
