@@ -1274,10 +1274,11 @@ func (s *Server) handleGitSourcesDisconnect(w http.ResponseWriter, r *http.Reque
 
 // handleGitSourcesUpdate edits the connected git source identified by
 // {url, subpath}. Omitted fields keep their current value; new_url and
-// new_subpath move the source. A name/layer-only edit updates metadata in
-// place without touching the clone, while a url/branch/subpath change swaps in
-// a freshly cloned source in this one request, so correcting a typo no longer
-// needs Remove + re-add.
+// new_subpath move the source, and an explicit empty branch ("") re-resolves
+// the remote's default branch, matching POST. A name/layer-only edit updates
+// metadata in place without touching the clone, while a url/branch/subpath
+// change swaps in a freshly cloned source in this one request, so correcting a
+// typo no longer needs Remove + re-add.
 func (s *Server) handleGitSourcesUpdate(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -1294,7 +1295,7 @@ func (s *Server) handleGitSourcesUpdate(w http.ResponseWriter, r *http.Request) 
 		NewURL     *string `json:"new_url"`
 		NewSubpath *string `json:"new_subpath"`
 		Name       string  `json:"name"`
-		Branch     string  `json:"branch"`
+		Branch     *string `json:"branch"`
 		Layer      string  `json:"layer"`
 	}
 	if err := decodeBody(r, &req); err != nil {
@@ -1335,8 +1336,8 @@ func (s *Server) handleGitSourcesUpdate(w http.ResponseWriter, r *http.Request) 
 	if req.Name != "" {
 		next.Name = req.Name
 	}
-	if req.Branch != "" {
-		next.Branch = req.Branch
+	if req.Branch != nil {
+		next.Branch = strings.TrimSpace(*req.Branch)
 	}
 	if req.Layer != "" {
 		next.Layer = knowledge.LayerType(req.Layer)
@@ -1365,6 +1366,18 @@ func (s *Server) handleGitSourcesUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// A blank branch means "the remote default", which ReplaceGitSource
+	// resolves; it only counts as a change if that differs from the current
+	// branch, so a no-op Save with a blank field does not re-clone.
+	if next.Branch == "" {
+		branch, err := knowledge.ResolveGitSourceDefaultBranch(r.Context(), next.URL)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		next.Branch = branch
+	}
+
 	recloned := next.URL != current.URL || next.Subpath != current.Subpath || next.Branch != current.Branch
 	var err error
 	if recloned {
@@ -1382,15 +1395,6 @@ func (s *Server) handleGitSourcesUpdate(w http.ResponseWriter, r *http.Request) 
 	case err != nil:
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-
-	if next.Branch == "" {
-		for _, info := range s.deps.Knowledge.GitSources() {
-			if info.URL == next.URL && info.Subpath == next.Subpath {
-				next.Branch = info.Branch
-				break
-			}
-		}
 	}
 
 	updated := false

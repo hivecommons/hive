@@ -49,6 +49,8 @@ type GitSource struct {
 	logger   *slog.Logger
 	mu       sync.RWMutex
 	ready    bool
+	// stopSync cancels the context the sync loop runs on; nil until bound.
+	stopSync context.CancelFunc
 }
 
 // NewGitSource creates a git source. Call Init() to clone the repo and start
@@ -133,12 +135,13 @@ func (g *GitSource) Config() GitSourceConfig {
 	return g.config
 }
 
-// withConfig returns a copy of g that shares its clone, index and store but
-// reports cfg, so a metadata edit never mutates a source other goroutines are
-// reading. Only name/layer edits may use it: the clone is not touched.
+// withConfig returns a copy of g that shares its clone, index, store and sync
+// loop but reports cfg, so a metadata edit never mutates a source other
+// goroutines are reading. Only name/layer edits may use it: the clone is not
+// touched. The copy inherits stopSync so stopping it stops the shared loop.
 func (g *GitSource) withConfig(cfg GitSourceConfig) *GitSource {
 	g.mu.RLock()
-	store, ready := g.store, g.ready
+	store, ready, stopSync := g.store, g.ready, g.stopSync
 	g.mu.RUnlock()
 	if store != nil {
 		store.SetName(cfg.Name)
@@ -150,6 +153,52 @@ func (g *GitSource) withConfig(cfg GitSourceConfig) *GitSource {
 		store:    store,
 		logger:   g.logger,
 		ready:    ready,
+		stopSync: stopSync,
+	}
+}
+
+// bindSyncContext derives the context the sync loop should run on from ctx
+// and remembers its cancel func, so the loop can be stopped when the source is
+// disconnected or replaced instead of running for the server's lifetime.
+func (g *GitSource) bindSyncContext(ctx context.Context) context.Context {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopSync != nil {
+		g.stopSync()
+	}
+	loopCtx, cancel := context.WithCancel(ctx)
+	g.stopSync = cancel
+	return loopCtx
+}
+
+// StopSyncLoop cancels the sync loop bound via bindSyncContext, so a
+// disconnected or replaced source stops pulling its remote. Safe to call when
+// no loop was bound.
+func (g *GitSource) StopSyncLoop() {
+	g.mu.Lock()
+	stop := g.stopSync
+	g.stopSync = nil
+	g.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
+// relocate re-points g at cloneDir. It is used to clone into a staging
+// directory and, once indexed, to follow the rename into the final slug path.
+// Callers must not have published g or started its sync loop yet.
+func (g *GitSource) relocate(cloneDir string) {
+	indexDir := cloneDir
+	if g.config.Subpath != "" {
+		indexDir = filepath.Join(cloneDir, g.config.Subpath)
+	}
+	g.mu.Lock()
+	g.cloneDir = cloneDir
+	g.indexDir = indexDir
+	store := g.store
+	g.mu.Unlock()
+	if store != nil {
+		store.Relocate(indexDir)
 	}
 }
 
@@ -317,10 +366,10 @@ func parseGitSymrefHead(out string) string {
 	return ""
 }
 
-// resolveGitSourceDefaultBranch returns the remote's default branch. It falls
+// ResolveGitSourceDefaultBranch returns the remote's default branch. It falls
 // back to "main" only when the remote answers without a HEAD symref; a failing
 // ls-remote (unreachable, auth, not found) is returned to the caller.
-func resolveGitSourceDefaultBranch(ctx context.Context, url string) (string, error) {
+func ResolveGitSourceDefaultBranch(ctx context.Context, url string) (string, error) {
 	out, err := gitSourceLsRemote(ctx, url)
 	if err != nil {
 		return "", fmt.Errorf("git ls-remote: %s: %w", strings.TrimSpace(string(out)), err)

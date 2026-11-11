@@ -1,9 +1,7 @@
 package dashboard
 
 import (
-	"bytes"
 	"encoding/json"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -486,35 +484,33 @@ func TestGitSourcesUpdateMetadataVsReclone(t *testing.T) {
 
 // TestGitSourcesUpdateRecloneFailureKeepsOriginal pins that a failed re-clone
 // leaves the operator with the source they had before the edit: untouched
-// config, and for a same-directory edit a restored clone of the old branch.
+// config, and for a same-directory edit an untouched clone directory. The
+// replacement is cloned into a staging directory, so the old clone is never
+// removed and keeps serving while the clone runs; a failed attempt leaves no
+// staging directory behind and never triggers a second "restore" clone.
 func TestGitSourcesUpdateRecloneFailureKeepsOriginal(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		body        map[string]any
-		failOnce    bool
-		wantRestore bool
-		wantLog     bool
+		name string
+		body map[string]any
 	}{
 		{name: "new url", body: map[string]any{"new_url": "http://127.0.0.1/broken.git"}},
-		{name: "same directory branch change restores", body: map[string]any{"branch": "broken"}, failOnce: true, wantRestore: true},
-		{name: "same directory branch change restore also fails", body: map[string]any{"branch": "broken"}, wantLog: true},
+		{name: "same directory branch change", body: map[string]any{"branch": "broken"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logPath := installHermeticGit(t)
 			s, deps, url := gitSourceTestServer(t)
-			var logs bytes.Buffer
-			deps.Knowledge = knowledge.NewKnowledgeAPI(nil, knowledge.KnowledgeConfig{Enabled: true, Engine: "file"}, slog.New(slog.NewTextHandler(&logs, nil)))
 			if rec := doPost(s, "/api/knowledge/git-sources", map[string]any{"name": "docs", "url": url}); rec.Code != http.StatusOK {
 				t.Fatalf("seed connect: got %d (body %q)", rec.Code, rec.Body.String())
 			}
 			before := append([]config.GitSourceConfigYAML(nil), deps.Config.Knowledge.GitSources...)
-			cloneDir := deps.Knowledge.GitSources()[0].CloneDir
-
-			if tc.failOnce {
-				t.Setenv("HIVE_FAKE_GIT_CLONE_FAIL_ONCE", filepath.Join(t.TempDir(), "failed-once"))
-			} else {
-				t.Setenv("HIVE_FAKE_GIT_CLONE_EXIT", "1")
+			seeded := deps.Knowledge.GitSources()[0]
+			cloneDir := seeded.CloneDir
+			marker := filepath.Join(cloneDir, "marker.md")
+			if err := os.WriteFile(marker, []byte("# Marker\n"), 0o644); err != nil {
+				t.Fatal(err)
 			}
+
+			t.Setenv("HIVE_FAKE_GIT_CLONE_EXIT", "1")
 			if err := os.Truncate(logPath, 0); err != nil {
 				t.Fatal(err)
 			}
@@ -527,8 +523,14 @@ func TestGitSourcesUpdateRecloneFailureKeepsOriginal(t *testing.T) {
 				t.Fatalf("failed re-clone: expected 500, got %d (body %q)", rec.Code, rec.Body.String())
 			}
 			live := deps.Knowledge.GitSources()
-			if len(live) != 1 || live[0].URL != url || live[0].Name != "docs" || live[0].Branch != "main" {
+			if len(live) != 1 || live[0].URL != url || live[0].Name != "docs" || live[0].Branch != "main" || !live[0].Ready {
 				t.Fatalf("failed re-clone changed live sources: %+v", live)
+			}
+			if live[0].CloneDir != cloneDir {
+				t.Fatalf("failed re-clone moved the live clone dir to %s, want %s", live[0].CloneDir, cloneDir)
+			}
+			if live[0].Pages == 0 {
+				t.Fatalf("live source stopped serving after a failed re-clone: %+v", live[0])
 			}
 			if got := deps.Config.Knowledge.GitSources; len(got) != len(before) || got[0] != before[0] {
 				t.Fatalf("failed re-clone changed config: %+v, want %+v", got, before)
@@ -537,29 +539,162 @@ func TestGitSourcesUpdateRecloneFailureKeepsOriginal(t *testing.T) {
 				t.Fatalf("failed update wrote %d audit rows, want 0", n)
 			}
 
-			if tc.wantRestore {
-				gitLog, err := os.ReadFile(logPath)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var clones []string
-				for _, line := range strings.Split(string(gitLog), "\n") {
-					if strings.Contains(line, "clone") {
-						clones = append(clones, line)
-					}
-				}
-				if len(clones) != 2 || !strings.Contains(clones[0], "--branch broken") || !strings.Contains(clones[1], "--branch main") {
-					t.Fatalf("expected a failed clone of broken then a restore clone of main, got %q", clones)
-				}
-				if _, err := os.Stat(filepath.Join(cloneDir, "README.md")); err != nil {
-					t.Fatalf("restored clone dir is missing README.md: %v", err)
-				}
-				if strings.Contains(logs.String(), "git source restore after failed edit") {
-					t.Fatalf("restore succeeded but logged a failure:\n%s", logs.String())
+			// The old clone was never removed or replaced: the file written
+			// after the seed clone is still there, and the only thing under
+			// git-sources is the slug directory (no staging leftovers).
+			if _, err := os.Stat(marker); err != nil {
+				t.Fatalf("old clone dir was disturbed by the failed re-clone: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(cloneDir, "README.md")); err != nil {
+				t.Fatalf("old clone dir is missing README.md: %v", err)
+			}
+			entries, err := os.ReadDir(filepath.Dir(cloneDir))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range entries {
+				if strings.Contains(e.Name(), ".staging-") || strings.Contains(e.Name(), ".replaced-") {
+					t.Fatalf("failed re-clone left %s behind in %s", e.Name(), filepath.Dir(cloneDir))
 				}
 			}
-			if tc.wantLog && !strings.Contains(logs.String(), "git source restore after failed edit") {
-				t.Fatalf("expected restore failure to be logged, got:\n%s", logs.String())
+
+			gitLog, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clones := 0
+			for _, line := range strings.Split(string(gitLog), "\n") {
+				if strings.Contains(line, " clone ") {
+					clones++
+					if tc.name == "same directory branch change" && !strings.Contains(line, "--branch broken") {
+						t.Fatalf("unexpected clone during failed edit: %q", line)
+					}
+				}
+			}
+			if clones != 1 {
+				t.Fatalf("expected exactly one clone attempt (no restore clone), got %d:\n%s", clones, gitLog)
+			}
+		})
+	}
+}
+
+// TestGitSourcesUpdateSameDirectoryPromotesStagedClone pins the success side
+// of the staging swap: the new branch is cloned into a sibling staging
+// directory, then renamed over the old clone, so the live source ends up at
+// the same slug path (which startup re-opens) with the new checkout's files
+// and nothing left in staging.
+func TestGitSourcesUpdateSameDirectoryPromotesStagedClone(t *testing.T) {
+	logPath := installHermeticGit(t)
+	s, deps, url := gitSourceTestServer(t)
+	if rec := doPost(s, "/api/knowledge/git-sources", map[string]any{"name": "docs", "url": url, "branch": "main"}); rec.Code != http.StatusOK {
+		t.Fatalf("seed connect: got %d (body %q)", rec.Code, rec.Body.String())
+	}
+	cloneDir := deps.Knowledge.GitSources()[0].CloneDir
+	stale := filepath.Join(cloneDir, "only-on-main.md")
+	if err := os.WriteFile(stale, []byte("# Old branch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doPut(s, "/api/knowledge/git-sources", map[string]any{"url": url, "branch": "release"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d (body %q)", rec.Code, rec.Body.String())
+	}
+	live := deps.Knowledge.GitSources()
+	if len(live) != 1 || live[0].Branch != "release" || !live[0].Ready || live[0].Pages == 0 {
+		t.Fatalf("live source after branch edit = %+v, want ready release with pages", live)
+	}
+	if live[0].CloneDir != cloneDir {
+		t.Fatalf("branch edit left the clone at %s, want the slug path %s", live[0].CloneDir, cloneDir)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("old checkout's file survived the swap (stat err = %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(cloneDir, "README.md")); err != nil {
+		t.Fatalf("promoted clone is missing README.md: %v", err)
+	}
+	store := deps.Knowledge.GetGitSourceStore("docs")
+	if store == nil || store.RootDir() != cloneDir {
+		t.Fatalf("live store root = %v, want %s", store, cloneDir)
+	}
+	entries, err := os.ReadDir(filepath.Dir(cloneDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(cloneDir) {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("git-sources dir = %v, want only %s", names, filepath.Base(cloneDir))
+	}
+	gitLog, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(gitLog), "\n") {
+		if strings.Contains(line, "--branch release") && !strings.Contains(line, ".staging-") {
+			t.Fatalf("release clone did not target a staging dir: %q", line)
+		}
+	}
+}
+
+// TestGitSourcesUpdateBlankBranchResetsToDefault pins the PUT branch
+// semantics: omitting branch keeps the current one, while an explicit "" (what
+// the form sends when the operator clears the field, whose placeholder reads
+// "blank = repo default") re-resolves the remote default and re-clones only if
+// that differs from the current branch.
+func TestGitSourcesUpdateBlankBranchResetsToDefault(t *testing.T) {
+	tests := []struct {
+		name         string
+		seedBranch   string
+		body         map[string]any
+		wantBranch   string
+		wantRecloned bool
+	}{
+		{name: "omitted keeps current", seedBranch: "release", body: map[string]any{"name": "renamed"}, wantBranch: "release"},
+		{name: "blank resets to remote default", seedBranch: "release", body: map[string]any{"branch": ""}, wantBranch: "main", wantRecloned: true},
+		{name: "blank on default branch is a metadata edit", seedBranch: "main", body: map[string]any{"branch": "", "name": "renamed"}, wantBranch: "main"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := installHermeticGit(t)
+			s, deps, url := gitSourceTestServer(t)
+			if rec := doPost(s, "/api/knowledge/git-sources", map[string]any{"name": "docs", "url": url, "branch": tc.seedBranch}); rec.Code != http.StatusOK {
+				t.Fatalf("seed connect: got %d (body %q)", rec.Code, rec.Body.String())
+			}
+			if err := os.Truncate(logPath, 0); err != nil {
+				t.Fatal(err)
+			}
+			body := map[string]any{"url": url}
+			for k, v := range tc.body {
+				body[k] = v
+			}
+			rec := doPut(s, "/api/knowledge/git-sources", body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("update: expected 200, got %d (body %q)", rec.Code, rec.Body.String())
+			}
+			var resp struct {
+				Branch   string `json:"branch"`
+				Recloned bool   `json:"recloned"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.Branch != tc.wantBranch || resp.Recloned != tc.wantRecloned {
+				t.Fatalf("response = %+v, want branch %q recloned %v", resp, tc.wantBranch, tc.wantRecloned)
+			}
+			if live := deps.Knowledge.GitSources(); len(live) != 1 || live[0].Branch != tc.wantBranch {
+				t.Fatalf("live sources = %+v, want branch %q", live, tc.wantBranch)
+			}
+			if cfg := deps.Config.Knowledge.GitSources; len(cfg) != 1 || cfg[0].Branch != tc.wantBranch {
+				t.Fatalf("persisted sources = %+v, want branch %q", cfg, tc.wantBranch)
+			}
+			gitLog, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cloned := strings.Contains(string(gitLog), " clone "); cloned != tc.wantRecloned {
+				t.Fatalf("clone during update = %v, want %v; git calls:\n%s", cloned, tc.wantRecloned, gitLog)
 			}
 		})
 	}

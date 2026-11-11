@@ -14583,7 +14583,7 @@
           "Knowledge"
         ],
         "summary": "Edit a git knowledge source",
-        "description": "Edits the connected git source identified by `url` (and optional `subpath`). Omitted fields keep their current value; `new_url`/`new_subpath` move the source. A name/layer-only change updates the source in place without re-cloning; a url, branch or subpath change disconnects the old source and connects the new one in this single request (the old source keeps serving if the new clone fails). Persists to config and writes one `knowledge_git_source_update` audit row. Requires owner role. Same validation as connect.",
+        "description": "Edits the connected git source identified by `url` (and optional `subpath`). Omitted fields keep their current value; `new_url`/`new_subpath` move the source. A name/layer-only change updates the source in place without re-cloning; a url, branch or subpath change clones the new source (into a staging directory when only the branch changed) and swaps it in once indexed, in this single request; the old source keeps serving until then and is untouched if the clone fails, and its sync loop is stopped on swap. Omitting `branch` keeps the current branch; an explicit empty string re-resolves the remote default. Persists to config and writes one `knowledge_git_source_update` audit row. Requires owner role. Same validation as connect.",
         "requestBody": {
           "required": true,
           "content": {
@@ -14609,7 +14609,8 @@
                     "type": "string"
                   },
                   "branch": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Omit to keep the current branch; an empty string re-resolves the remote default branch"
                   },
                   "layer": {
                     "type": "string"

@@ -424,7 +424,7 @@ func TestResolveGitSourceDefaultBranch(t *testing.T) {
 			gitSourceLsRemote = func(context.Context, string) ([]byte, error) { return []byte(tc.out), tc.runErr }
 			t.Cleanup(func() { gitSourceLsRemote = orig })
 
-			got, err := resolveGitSourceDefaultBranch(context.Background(), "https://github.com/org/repo")
+			got, err := ResolveGitSourceDefaultBranch(context.Background(), "https://github.com/org/repo")
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -462,5 +462,67 @@ func TestConnectGitSource_BlankBranchResolvesDefault(t *testing.T) {
 	}
 	if infos := k.GitSources(); len(infos) != 1 || infos[0].Branch != "trunk" {
 		t.Errorf("recorded sources = %+v, want branch trunk", infos)
+	}
+}
+
+// TestGitSourceSyncLoopStopsWhenSourceGoesAway pins that the per-source sync
+// loop is cancelled when the source is disconnected or replaced (including a
+// same-directory branch edit), and that a metadata edit hands the loop to the
+// replacement so a later disconnect still stops it. Without this, every edit
+// or disconnect leaked a goroutine that kept pulling the old remote.
+func TestGitSourceSyncLoopStopsWhenSourceGoesAway(t *testing.T) {
+	stubPublicGitSourceDNS(t, "github.com")
+	SetBaseDirForTest(t, t.TempDir())
+	origInit, origLoop := initGitSourceForConnect, startGitSourceSyncLoopForConnect
+	t.Cleanup(func() {
+		initGitSourceForConnect, startGitSourceSyncLoopForConnect = origInit, origLoop
+	})
+	initGitSourceForConnect = func(*GitSource, context.Context) error { return nil }
+	loops := make(chan context.Context, 4)
+	startGitSourceSyncLoopForConnect = func(_ *GitSource, ctx context.Context) { loops <- ctx }
+
+	stopped := func(ctx context.Context) bool {
+		select {
+		case <-ctx.Done():
+			return true
+		default:
+			return false
+		}
+	}
+	const url = "https://github.com/org/repo"
+	k := &KnowledgeAPI{logger: slog.Default()}
+	if err := k.ConnectGitSource(context.Background(), GitSourceConfig{Name: "n", URL: url, Branch: "main", Layer: LayerProject}); err != nil {
+		t.Fatal(err)
+	}
+	first := <-loops
+	if stopped(first) {
+		t.Fatal("sync loop context cancelled right after connect")
+	}
+
+	if err := k.ReplaceGitSource(context.Background(), url, "", GitSourceConfig{Name: "n", URL: url, Branch: "release", Layer: LayerProject}); err != nil {
+		t.Fatal(err)
+	}
+	second := <-loops
+	if !stopped(first) {
+		t.Fatal("replaced source's sync loop was not stopped")
+	}
+	if stopped(second) {
+		t.Fatal("replacement's sync loop was cancelled")
+	}
+
+	if err := k.UpdateGitSourceMetadata(url, "", "renamed", LayerOrg); err != nil {
+		t.Fatal(err)
+	}
+	if stopped(second) {
+		t.Fatal("metadata edit must keep the sync loop running")
+	}
+	if err := k.DisconnectGitSource(url, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !stopped(second) {
+		t.Fatal("disconnect after a metadata edit did not stop the inherited sync loop")
+	}
+	if len(k.GitSources()) != 0 {
+		t.Fatalf("sources after disconnect = %+v, want none", k.GitSources())
 	}
 }

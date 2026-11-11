@@ -1086,7 +1086,7 @@ func (k *KnowledgeAPI) ConnectGitSource(ctx context.Context, config GitSourceCon
 	k.mu.RUnlock()
 
 	if strings.TrimSpace(config.Branch) == "" {
-		branch, err := resolveGitSourceDefaultBranch(ctx, config.URL)
+		branch, err := ResolveGitSourceDefaultBranch(ctx, config.URL)
 		if err != nil {
 			return fmt.Errorf("git source %s: resolving default branch: %w", config.Name, err)
 		}
@@ -1102,7 +1102,7 @@ func (k *KnowledgeAPI) ConnectGitSource(ctx context.Context, config GitSourceCon
 	k.gitSources = append(k.gitSources, gs)
 	k.mu.Unlock()
 
-	go startGitSourceSyncLoopForConnect(gs, ctx)
+	startGitSourceSync(gs, ctx)
 
 	return nil
 }
@@ -1112,6 +1112,15 @@ var (
 	initGitSourceForConnect          = (*GitSource).Init
 	startGitSourceSyncLoopForConnect = (*GitSource).StartSyncLoop
 )
+
+// startGitSourceSync runs gs's sync loop on a per-source context derived from
+// ctx, so DisconnectGitSource and ReplaceGitSource can stop it without
+// waiting for server shutdown. The cancel func is bound before the goroutine
+// starts, so a swap that races the loop start still stops it.
+func startGitSourceSync(gs *GitSource, ctx context.Context) {
+	loopCtx := gs.bindSyncContext(ctx)
+	go startGitSourceSyncLoopForConnect(gs, loopCtx)
+}
 
 // GetGitSourceStore returns the underlying FileStore for a git source by name.
 func (k *KnowledgeAPI) GetGitSourceStore(name string) *FileStore {
@@ -1130,19 +1139,20 @@ func (k *KnowledgeAPI) DisconnectGitSource(url, subpath string) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
-	found := false
+	var removed *GitSource
 	newSources := make([]*GitSource, 0, len(k.gitSources))
 	for _, gs := range k.gitSources {
 		if gs.Config().URL == url && gs.Config().Subpath == subpath {
-			found = true
+			removed = gs
 			continue
 		}
 		newSources = append(newSources, gs)
 	}
-	if !found {
+	if removed == nil {
 		return fmt.Errorf("git source not found: %s (subpath: %s)", url, subpath)
 	}
 	k.gitSources = newSources
+	removed.StopSyncLoop()
 	k.logger.Info("git source disconnected", "url", url, "subpath", subpath)
 	return nil
 }
@@ -1156,8 +1166,9 @@ var ErrGitSourceNotFound = errors.New("git source not found")
 var ErrGitSourceConflict = errors.New("git source already connected")
 
 // UpdateGitSourceMetadata changes the display name and layer of the git source
-// identified by url+subpath in place. The clone, index and sync loop are kept,
-// so correcting a name or layer never re-clones.
+// identified by url+subpath in place. The clone, index and sync loop are kept
+// (the replacement inherits the loop's cancel func), so correcting a name or
+// layer never re-clones.
 func (k *KnowledgeAPI) UpdateGitSourceMetadata(url, subpath, name string, layer LayerType) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -1177,10 +1188,12 @@ func (k *KnowledgeAPI) UpdateGitSourceMetadata(url, subpath, name string, layer 
 
 // ReplaceGitSource swaps the git source identified by oldURL+oldSubpath for a
 // freshly cloned and indexed source described by config. The old source keeps
-// serving until the new one is ready, so a failed clone leaves it in place.
-// When the identity is unchanged (only the branch moved) the two share a clone
-// directory, which is discarded first because reusing it would only pull the
-// old branch; if that fresh clone fails the old source is re-cloned.
+// serving, and its clone directory is left untouched, until the new one is
+// ready, so a failed clone leaves it exactly in place. When the identity is
+// unchanged (only the branch moved) the two want the same clone directory:
+// the new branch is cloned into a sibling staging directory and renamed over
+// the old clone only after it has been indexed. The old source's sync loop is
+// stopped once it is swapped out, so nothing keeps pulling the old remote.
 func (k *KnowledgeAPI) ReplaceGitSource(ctx context.Context, oldURL, oldSubpath string, config GitSourceConfig) error {
 	config.URL = strings.TrimSpace(config.URL)
 	if err := ValidateGitSourceURLContext(ctx, config.URL); err != nil {
@@ -1205,7 +1218,7 @@ func (k *KnowledgeAPI) ReplaceGitSource(ctx context.Context, oldURL, oldSubpath 
 	}
 
 	if strings.TrimSpace(config.Branch) == "" {
-		branch, err := resolveGitSourceDefaultBranch(ctx, config.URL)
+		branch, err := ResolveGitSourceDefaultBranch(ctx, config.URL)
 		if err != nil {
 			return fmt.Errorf("git source %s: resolving default branch: %w", config.Name, err)
 		}
@@ -1213,46 +1226,81 @@ func (k *KnowledgeAPI) ReplaceGitSource(ctx context.Context, oldURL, oldSubpath 
 	}
 
 	gs := newGitSourceForConnect(config, knowledgeBaseDir, k.logger)
+	finalDir := gs.CloneDir()
+	var staging string
 	if sameIdentity {
-		if err := os.RemoveAll(gs.CloneDir()); err != nil {
-			return fmt.Errorf("git source %s: clearing clone: %w", config.Name, err)
+		dir, err := gitSourceStagingDir(finalDir)
+		if err != nil {
+			return fmt.Errorf("git source %s: preparing staging clone: %w", config.Name, err)
 		}
+		staging = dir
+		gs.relocate(staging)
+		// Whether the clone fails or is promoted, nothing must be left behind.
+		defer os.RemoveAll(staging)
 	}
 	if err := initGitSourceForConnect(gs, ctx); err != nil {
-		if sameIdentity {
-			k.restoreGitSource(ctx, old)
-		}
 		return err
+	}
+	if sameIdentity {
+		if err := promoteStagedClone(staging, finalDir); err != nil {
+			return fmt.Errorf("git source %s: promoting staged clone: %w", config.Name, err)
+		}
+		gs.relocate(finalDir)
 	}
 
 	k.swapGitSource(oldURL, oldSubpath, gs)
-	go startGitSourceSyncLoopForConnect(gs, ctx)
+	startGitSourceSync(gs, ctx)
 	k.logger.Info("git source replaced",
 		"old_url", oldURL, "old_subpath", oldSubpath,
 		"url", config.URL, "subpath", config.Subpath, "branch", gs.Config().Branch)
 	return nil
 }
 
-// restoreGitSource re-clones old after a same-directory replacement failed,
-// so the caller is left with the source it had before the edit.
-func (k *KnowledgeAPI) restoreGitSource(ctx context.Context, old *GitSource) {
-	cfg := old.Config()
-	restored := newGitSourceForConnect(cfg, knowledgeBaseDir, k.logger)
-	_ = os.RemoveAll(restored.CloneDir())
-	if err := initGitSourceForConnect(restored, ctx); err != nil {
-		k.logger.Error("git source restore after failed edit", "url", cfg.URL, "subpath", cfg.Subpath, "error", err)
-		return
+// gitSourceStagingDir returns a fresh, empty sibling of finalDir for a
+// replacement clone to land in. git clone accepts an existing empty directory.
+func gitSourceStagingDir(finalDir string) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(finalDir), 0o755); err != nil {
+		return "", err
 	}
-	k.swapGitSource(cfg.URL, cfg.Subpath, restored)
-	go startGitSourceSyncLoopForConnect(restored, ctx)
+	return os.MkdirTemp(filepath.Dir(finalDir), filepath.Base(finalDir)+".staging-")
 }
 
+// promoteStagedClone moves the indexed staging clone into finalDir. The old
+// clone is renamed aside first (an atomic step that never leaves finalDir
+// half-removed) and deleted only after the new clone is in place. If the final
+// rename fails the old clone is put back so the still-serving source keeps
+// its files.
+func promoteStagedClone(staging, finalDir string) error {
+	trash := finalDir + ".replaced-" + filepath.Base(staging)
+	hadOld := true
+	if err := os.Rename(finalDir, trash); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("moving old clone aside: %w", err)
+		}
+		hadOld = false
+	}
+	if err := os.Rename(staging, finalDir); err != nil {
+		if hadOld {
+			_ = os.Rename(trash, finalDir)
+		}
+		return fmt.Errorf("moving staged clone into place: %w", err)
+	}
+	if hadOld {
+		_ = os.RemoveAll(trash)
+	}
+	return nil
+}
+
+// swapGitSource publishes gs under url+subpath in place of the source that
+// held that identity, stopping the replaced source's sync loop so it no longer
+// pulls its remote or re-indexes its detached store.
 func (k *KnowledgeAPI) swapGitSource(url, subpath string, gs *GitSource) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	for i, cur := range k.gitSources {
 		if cur.Config().URL == url && cur.Config().Subpath == subpath {
 			k.gitSources[i] = gs
+			cur.StopSyncLoop()
 			return
 		}
 	}

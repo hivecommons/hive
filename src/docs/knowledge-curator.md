@@ -135,8 +135,14 @@ and are the *same* underlying list as `knowledge.git_sources` in
 - `PUT` edits the live source identified by `url`+`subpath` (the dashboard's
   **Edit** button). A `name`/`layer` change updates it in place without
   re-cloning; a `new_url`, `new_subpath` or `branch` change swaps in a fresh
-  clone in the same request. The matching config entry is rewritten and
-  persisted, and one `knowledge_git_source_update` audit row is written.
+  clone in the same request. Omitting `branch` keeps the current one; an
+  explicit `"branch": ""` re-resolves the remote's default branch (what the
+  form sends when the field is cleared). A branch-only edit clones into a
+  staging directory beside the live clone and renames it into place only once
+  indexed, so the old source keeps serving throughout and a failed clone
+  leaves it untouched. The replaced source's sync loop is stopped. The
+  matching config entry is rewritten and persisted, and one
+  `knowledge_git_source_update` audit row is written.
 - Editing `git_sources:` directly in `hive.yaml` takes effect on the next
   process restart (main.go's startup loop at `cmd/hive/main.go:2421-2467`);
   it does not hot-reload while the process is running. Use the API for a
