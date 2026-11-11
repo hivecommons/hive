@@ -1,1 +1,0 @@
-- The "contributor-lane ok-to-test not posted again" warning is logged once per PR rejection, not again after a restart once the PR already records it, so it no longer trips the repeated-error selfreport (#17738).
