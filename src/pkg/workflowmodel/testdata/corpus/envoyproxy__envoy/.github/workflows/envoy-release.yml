@@ -1,0 +1,207 @@
+name: Envoy/release
+
+permissions:
+  contents: read
+
+on:
+  # Post-publish chaining lives in _publish_release.yml -> _release_chain.yml.
+  release:
+    types:
+    - published
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Select a task
+        required: true
+        default: create-release
+        type: choice
+        options:
+        - create-release
+        - reopen-branch
+        - sync-version-histories
+        - deprecate-guards
+      branch:
+        description: >-
+          Target branch, eg `release/v1.35`
+          (default: the branch the workflow is run from; not used by `deprecate-guards`)
+        type: string
+      dry-run:
+        type: boolean
+        default: false
+      pr:
+        type: boolean
+        default: true
+        description: Create a PR
+      pr-message:
+        description: Additional message for PR, eg to fix an issue or additional signoff (optional)
+      wip:
+        type: boolean
+        default: false
+        description: WIP
+      author:
+        description: >-
+          Author: User/email, eg 'Myname <me@mymail.com>'
+          (used by create-release, default: `changelogs/summary.md` last committer)
+      summary:
+        type: boolean
+        default: true
+        description: Use changelog summary (required to publish release)
+      recreate:
+        type: boolean
+        default: false
+        description: >-
+          Delete existing PR/branch
+          (closes any open bot PR and deletes the bot branch before recreating it)
+
+env:
+  COMMITTER_NAME: publish-envoy[bot]
+  COMMITTER_EMAIL: 140627008+publish-envoy[bot]@users.noreply.github.com
+
+
+jobs:
+  validate:
+    if: github.event_name == 'workflow_dispatch' && inputs.task != 'deprecate-guards'
+    runs-on: ubuntu-24.04
+    name: Validate dispatch
+    outputs:
+      branch: ${{ steps.validate.outputs.branch }}
+    steps:
+    - id: validate
+      env:
+        REF: ${{ github.ref_name }}
+        BRANCH: ${{ inputs.branch }}
+      run: |
+        if [[ "$REF" != "main" && ! "$REF" =~ ^release/v[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tasks must be dispatched from main or a release/vX.Y branch (got ${REF})"
+            exit 1
+        fi
+        if [[ -n "$BRANCH" && "$REF" != "main" && "$BRANCH" != "$REF" ]]; then
+            echo "::error::Dispatches from ${REF} cannot target a different branch (${BRANCH}); dispatch from main instead"
+            exit 1
+        fi
+        echo "branch=${BRANCH:-$REF}" >> "$GITHUB_OUTPUT"
+
+  ## Triggerable actions
+
+  # Create a release commit, when landed this will publish.
+  create_release:
+    needs: validate
+    if: inputs.task == 'create-release'
+    name: Create release
+    uses: ./.github/workflows/_release_task.yml
+    secrets:
+      ENVOY_CI_PUBLISH_APP_ID: ${{ secrets.ENVOY_CI_PUBLISH_APP_ID }}
+      ENVOY_CI_PUBLISH_APP_KEY: ${{ secrets.ENVOY_CI_PUBLISH_APP_KEY }}
+    with:
+      task: create-release
+      branch: ${{ needs.validate.outputs.branch }}
+      recreate: ${{ inputs.recreate }}
+      pr: ${{ inputs.pr }}
+      pr-message: ${{ inputs.pr-message }}
+      wip: ${{ inputs.wip }}
+      author: ${{ inputs.author }}
+      summary: ${{ inputs.summary }}
+
+  # Re-open a branch.
+  reopen-branch:
+    needs: validate
+    if: inputs.task == 'reopen-branch'
+    name: Re-open branch
+    uses: ./.github/workflows/_release_task.yml
+    secrets:
+      ENVOY_CI_PUBLISH_APP_ID: ${{ secrets.ENVOY_CI_PUBLISH_APP_ID }}
+      ENVOY_CI_PUBLISH_APP_KEY: ${{ secrets.ENVOY_CI_PUBLISH_APP_KEY }}
+    with:
+      task: reopen-branch
+      branch: ${{ needs.validate.outputs.branch }}
+      recreate: ${{ inputs.recreate }}
+      pr: ${{ inputs.pr }}
+      pr-message: ${{ inputs.pr-message }}
+      wip: ${{ inputs.wip }}
+      summary: ${{ inputs.summary }}
+
+  sync_version_histories:
+    needs: validate
+    if: inputs.task == 'sync-version-histories'
+    name: Sync version histories
+    uses: ./.github/workflows/_release_task.yml
+    secrets:
+      ENVOY_CI_PUBLISH_APP_ID: ${{ secrets.ENVOY_CI_PUBLISH_APP_ID }}
+      ENVOY_CI_PUBLISH_APP_KEY: ${{ secrets.ENVOY_CI_PUBLISH_APP_KEY }}
+    with:
+      task: sync-version-histories
+      branch: ${{ needs.validate.outputs.branch }}
+      recreate: ${{ inputs.recreate }}
+      pr: ${{ inputs.pr }}
+      pr-message: ${{ inputs.pr-message }}
+
+  deprecate_guards:
+    runs-on: ubuntu-24.04
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch'
+           && inputs.task == 'deprecate-guards')
+          || (github.event_name == 'release'
+              && endsWith(github.ref, '.0')) }}
+    name: Deprecate guards
+    steps:
+    - id: appauth
+      name: App auth
+      uses: envoyproxy/toolshed/actions/appauth@9bd3b300cf19f67cd2ef8b6e4aaa920f79894c24  # actions-v0.4.29
+      with:
+        app_id: ${{ secrets.ENVOY_CI_PUBLISH_APP_ID }}
+        key: ${{ secrets.ENVOY_CI_PUBLISH_APP_KEY }}
+    - id: checkout
+      name: Checkout Envoy repository
+      uses: envoyproxy/toolshed/actions/github/checkout@9bd3b300cf19f67cd2ef8b6e4aaa920f79894c24  # actions-v0.4.29
+      with:
+        config: |
+          fetch-depth: 0
+    - name: Run deprecation tool
+      run: |
+        bazel run --config=ci \
+            //tools/deprecate_guards \
+            -- \
+            ${{ ! inputs.dry-run && ' --create-issues' || '' }} \
+            ${{ github.repository != 'envoyproxy/envoy'
+                && format('--staging-repo {0}', github.repository)
+                || '' }}
+      env:
+        GITHUB_TOKEN: ${{ steps.appauth.outputs.token }}
+
+  ## Triggered actions
+
+  # On release to `main`:
+  # - fork the branch to a release branch
+  # - add an initial dev commit
+  # - remove anything unwanted
+  # - push branch
+  create_release_branch:
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'release' && endsWith(github.ref, '.0')
+    name: Create release branch
+    steps:
+    - id: appauth
+      name: App auth
+      uses: envoyproxy/toolshed/actions/appauth@9bd3b300cf19f67cd2ef8b6e4aaa920f79894c24  # actions-v0.4.29
+      with:
+        app_id: ${{ secrets.ENVOY_CI_PUBLISH_APP_ID }}
+        key: ${{ secrets.ENVOY_CI_PUBLISH_APP_KEY }}
+
+    - name: Checkout repository
+      uses: envoyproxy/toolshed/actions/github/checkout@9bd3b300cf19f67cd2ef8b6e4aaa920f79894c24  # actions-v0.4.29
+      with:
+        committer-name: ${{ env.COMMITTER_NAME }}
+        committer-email: ${{ env.COMMITTER_EMAIL }}
+        token: ${{ steps.appauth.outputs.token }}
+    - name: Create release branch
+      run: |
+        version="$(cut -d- -f1 < VERSION.txt | cut -d. -f-2)"
+        release_branch="release/v${version}"
+        commit_sha="$(git rev-parse HEAD)"
+        echo "Creating ${release_branch} from ${commit_sha}"
+        git checkout -b "$release_branch"
+        bazel run @envoy_repo//:dev -- --patch
+        git rm -rf .github/workflows/mobile*yml
+        git commit . -m "repo: Remove mobile ci for release branch"
+        git log
+        git push origin "$release_branch"
