@@ -1444,6 +1444,12 @@ type HubServer struct {
 	// field to point at a fake GitHub API before that first call.
 	dibsPublicOnce sync.Once
 	dibsPublic     *dibsPublicChecker
+
+	// Workflow marketplace catalogue (#17620 phase 7, marketplace*.go).
+	// Created lazily by marketplace(); tests pre-set the store/refresher.
+	marketplaceOnce      sync.Once
+	marketplaceStore     *marketplaceStore
+	marketplaceRefresher *marketplaceRefresher
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -1803,6 +1809,8 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// Fleet activity page (#16063): signed-in, read-only board over
 	// GET /api/hub/activity.
 	s.registerActivityPageRoutes()
+	// Workflow marketplace catalogue (#17620 phase 7).
+	s.registerMarketplaceRoutes()
 	go s.saveLoop()
 	go s.refreshActiveMyHivesSnapshotsLoop()
 

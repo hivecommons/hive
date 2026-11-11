@@ -51,6 +51,8 @@ func (s *HubServer) StartBackgroundPollers(ctx context.Context) <-chan struct{} 
 	// Hourly commit of spoke benchmark records to hivecommons/benchmarks
 	// (hivecommons/hive#17694).
 	start(s.StartBenchmarksPublisher)
+	// Workflow marketplace nightly ingest + first-boot seed (#17620 phase 7).
+	start(s.StartMarketplaceRefresh)
 	s.githubActivityMu.Lock()
 	s.githubActivityCtx = ctx
 	feed := s.githubActivityFeed
