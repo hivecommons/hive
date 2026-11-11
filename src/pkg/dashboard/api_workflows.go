@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -28,6 +29,7 @@ func (s *Server) registerWorkflowRoutes() {
 	s.mux.HandleFunc("DELETE /api/workflows/{name}/{version}", s.handleWorkflowDelete)
 	s.registerWorkflowVersionRoutes()
 	s.mux.HandleFunc("POST /api/workflows/{name}/{version}/simulate", s.handleWorkflowSimulate)
+	s.registerWorkflowEditorRoutes()
 }
 
 func (s *Server) workflowStore(w http.ResponseWriter) *wfstore.Store {
@@ -128,6 +130,15 @@ func (s *Server) handleWorkflowSave(w http.ResponseWriter, r *http.Request) {
 	if name := r.PathValue("name"); name != "" && (name != m.Metadata.Name || r.PathValue("version") != m.Spec.Meta.Version) {
 		jsonError(w, fmt.Sprintf("body is %s@%s, path is %s@%s", m.Metadata.Name, m.Spec.Meta.Version, name, r.PathValue("version")), http.StatusBadRequest)
 		return
+	}
+	// The editor posts meta.version "" to mean "next free integer version".
+	if r.PathValue("name") == "" && strings.TrimSpace(m.Spec.Meta.Version) == "" && m.Metadata.Name != "" {
+		v, err := st.NextVersion(m.Metadata.Name)
+		if err != nil {
+			workflowStoreError(w, err)
+			return
+		}
+		m.Spec.Meta.Version = v
 	}
 	e, err := st.Save(&m, requestUser(r), time.Now().UTC())
 	if err != nil {
