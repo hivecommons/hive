@@ -1,0 +1,634 @@
+# Curated marketplace model: the CNCF TechDocs AI-assisted assessment
+# lifecycle (hivecommons/hive#17620). Hand-curated from Nate W.'s written
+# spec and the cncf/techdocs .github snapshot; every element is confirmed
+# (no "inferred" confidence remains) and cites the spec section or file it
+# came from. A new version is a new file; this one is never edited in place.
+apiVersion: workflow.hivecommons.dev/v1alpha1
+kind: WorkflowModel
+metadata:
+  name: cncf-techdocs-assessment
+  labels:
+    workflow.hivecommons.dev/tier: curated
+  annotations:
+    workflow.hivecommons.dev/source: nate-double-u/cncf-techdocs@882be6fef28794433bc3a6a34ac1401391c1d3e4 specs/ai-assisted-techdocs-assessment-spec.md
+    workflow.hivecommons.dev/source-url: https://github.com/nate-double-u/cncf-techdocs/blob/ai-assisted-assessment-spec/specs/ai-assisted-techdocs-assessment-spec.md
+    workflow.hivecommons.dev/intake-template: nate-double-u/cncf-techdocs@ad915303f9774b9aa6b7646969897fada7975a00 .github/ISSUE_TEMPLATE/assessment-request.yml
+    workflow.hivecommons.dev/intake-template-url: https://github.com/nate-double-u/cncf-techdocs/blob/ad915303f9774b9aa6b7646969897fada7975a00/.github/ISSUE_TEMPLATE/assessment-request.yml
+    # Intake form field id -> the fact or record it feeds (spec §7, §12 Accept).
+    workflow.hivecommons.dev/intake-fields: "project-name=assessment.project; maturity=assessment.maturity; moving-levels=assessment.criteria-level; website,docs-url,repo,other-scope,out-of-scope=assessment.scope; domains=agent.egress-allowlist; contacts=stakeholder frozen set (validated at /accept); tooling,context=drafter input; disclosure=HC-6 acknowledgement (required)"
+    workflow.hivecommons.dev/curated-by: Andrew Anderson <andy@clubanderson.com>
+    workflow.hivecommons.dev/curated-from: ingest.Lifecycle(cncf/techdocs .github snapshot) + spec.Ingest(deterministic) skeleton, then hand-curated
+    workflow.hivecommons.dev/spec-sections: "4. Roles; 5. Lifecycle; 6. Phases and deliverables; 7. Inputs: the assessment request; 12. Lifecycle bindings; 13. Components and repository layout; 14. Agent definitions; 15. The provenance block"
+spec:
+  meta:
+    version: curated-2026.11.1
+    author: CNCF TechDocs (Nate W.); curated for Hive by Andrew Anderson
+    description: >-
+      AI-assisted, expert-supervised CNCF TechDocs assessment: an intake issue is
+      triaged and accepted by a technical writer, an agent drafts each phase's
+      deliverable as a draft PR, a verifier fact-checks it, the reviewer marks it
+      ready, the project's stakeholders confirm factual accuracy and an
+      independent approver merges. Phases A/B/C repeat the same six steps and are
+      carried by the phase/* labels.
+    license: CC-BY-4.0
+    source: spec
+    provenance: curated
+  scope:
+    forge: github.com
+    repository: cncf/techdocs
+    workTypes: [documentation-assessment]
+  sources:
+  - system: github-actions
+    path: .github/workflows/format-check.yml
+    sha256: bf8cbb5896ad92f1e88f1051998450b35d0c080b27dba24f03c5d58d54e4a67e
+  - system: github-actions
+    path: .github/workflows/link-check.yml
+    sha256: 1bcef2093eda4ef4ca90d5766985e7710fee8926e0e1d85e5e2055593e679e94
+  - system: github-actions
+    path: .github/workflows/spell-check.yml
+    sha256: d144101194175c7382e093d176019815fbe460c3633ef892350bc2a2635d7f87
+  initial: requested
+  columns:
+  - id: requested
+    label: Requested
+    hint: Intake or phase tracking issue filed; a technical writer triages it (spec §5 step 1, §12 Request)
+    states: [requested]
+  - id: accepted
+    label: Accepted
+    hint: A technical writer accepted (/accept) and owns the phase as reviewer; delegate the drafter (spec §5 step 2)
+    states: [accepted, escalated]
+  - id: drafting
+    label: Drafting
+    hint: AI-drafted deliverable as a draft PR; verifier pass runs here (spec §5 step 3, §12 Draft)
+    states: [draft-open, drafting]
+  - id: review
+    label: Reviewer check
+    hint: Verified; the reviewer refines in conversation and checks findings against source (spec §5 step 4, HC-7)
+    states: [in-review, checks-failing]
+  - id: stakeholders
+    label: Stakeholder review
+    hint: Ready for review; project stakeholders confirm factual accuracy with /confirm (spec §5 step 5, HC-2)
+    states: [stakeholder-review]
+  - id: approval
+    label: Approval
+    hint: Confirmed; an approver who was neither drafter nor reviewer signs off and merges (spec §5 step 6)
+    states: [awaiting-merge]
+  - id: done
+    label: Done
+    hint: Merged, discarded, declined or closed (spec §12 Merge, Failure and abort)
+    states: [merged, discarded, declined, closed]
+    terminal: true
+  states:
+  # ---- issues: the intake (umbrella) issue and per-phase tracking issues ----
+  - id: requested
+    label: Requested
+    owner: human
+    origin: human
+    lifecycle:
+      column: requested
+      number: 10
+      kinds: [issue]
+      waiting: [awaiting triage by a technical writer]
+      replies: ["/accept", "/decline"]
+      citations:
+      - path: "spec:5. Lifecycle#L219-L254"
+        text: "Request. Phase A is triggered by the intake issue; the next phase becomes eligible once the previous one is merged"
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "A request issue opens labeled needs-triage ... An issue may sit unassigned indefinitely; eligibility is not work."
+      - path: .github/ISSUE_TEMPLATE/assessment-request.yml
+        line: 4
+        text: "labels: Docs analysis, needs-triage"
+  - id: accepted
+    label: Accepted
+    owner: human
+    origin: human
+    lifecycle:
+      column: accepted
+      number: 20
+      kinds: [issue]
+      waiting: [reviewer to delegate the phase drafter, or restart/hand-write after a discard]
+      replies: ["/decline"]
+      citations:
+      - path: "spec:5. Lifecycle#L219-L254"
+        text: "Accept. A technical writer triages and explicitly accepts the request ... eligibility alone does not start work (P-1)"
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "/accept ... assigns the issue to them, recording who accepted and who acts as the phase's reviewer, and swaps needs-triage for triage/accepted"
+      - path: .github/settings.yml
+        line: 132
+        text: triage/accepted
+  - id: escalated
+    label: Escalated
+    owner: human
+    origin: human
+    lifecycle:
+      column: accepted
+      number: 45
+      kinds: [issue]
+      waiting: [administrator/platform owner to abort or release the hold]
+      replies: ["/abort"]
+      citations:
+      - path: "spec:5. Lifecycle#L219-L254"
+        text: "Repeated failure is escalated to the administrator/platform owner, who may abort the run."
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "An administrator/platform owner abort closes the tracking issue and the intake with it as not planned, the rationale recorded on both"
+  - id: draft-open
+    label: Draft under way
+    owner: registered-agent
+    origin: human
+    lifecycle:
+      column: drafting
+      number: 40
+      kinds: [issue]
+      citations:
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "Draft (step 3): a draft pull request. The agent works on its own branch in cncf/techdocs and opens a draft PR linked to the tracking issue"
+  - id: declined
+    label: Declined
+    owner: external-observation
+    origin: human
+    type: final
+    lifecycle:
+      column: done
+      kinds: [issue]
+      citations:
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "a writer declines an unaccepted request with /decline [reason] ... labels it triage/declined ... and closes the issue as not planned"
+      - path: .github/settings.yml
+        line: 135
+        text: triage/declined
+  - id: closed
+    label: Closed
+    owner: external-observation
+    origin: human
+    type: final
+    lifecycle:
+      column: done
+      kinds: [issue]
+      citations:
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "The final phase's merge closes the intake issue as completed ... the close reason and labels say how it ended, completed at the final merge, not planned on a decline or an abort."
+  # ---- pull requests: the phase deliverable ----
+  - id: drafting
+    label: Drafting
+    owner: registered-agent
+    origin: human
+    pipelines: [gha-github-workflows-format-check, gha-github-workflows-link-check, gha-github-workflows-spell-check]
+    lifecycle:
+      column: drafting
+      number: 70
+      kinds: [pr]
+      waiting: [drafter to finish, then the reviewer's /verify (or a recorded skip)]
+      replies: ["/verify", "/discard"]
+      citations:
+      - path: "spec:5. Lifecycle#L219-L254"
+        text: "Draft. The drafter produces the deliverable as a draft PR."
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "The reviewer triggers the verifier's pass by commenting /verify on the draft PR; its report lands as a PR comment ... the workflow applies the verified label"
+      - path: "spec:14. Agent definitions#L716-L792"
+        text: "Assessment drafter (Phase A) ... Plan drafter (Phase B) ... Backlog drafter (Phase C) ... Verifier (every phase)"
+  - id: in-review
+    label: Reviewer check
+    owner: human
+    origin: human
+    pipelines: [gha-github-workflows-format-check, gha-github-workflows-link-check, gha-github-workflows-spell-check]
+    lifecycle:
+      column: review
+      number: 50
+      kinds: [pr]
+      waiting: [reviewer to verify findings against source and comment /ready]
+      replies: ["/ready", "/skip-implementation", "/discard"]
+      citations:
+      - path: "spec:5. Lifecycle#L219-L254"
+        text: "Review. The verifier's fact-check pass runs first ... The reviewer then refines the draft in conversation with the drafter, verifies findings against source (HC-7), and marks it ready."
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "The label is the gate: /ready refuses without it"
+      - path: .github/settings.yml
+        line: 147
+        text: verified
+  - id: checks-failing
+    label: Checks failing
+    owner: human
+    origin: human
+    pipelines: [gha-github-workflows-format-check, gha-github-workflows-link-check, gha-github-workflows-spell-check]
+    lifecycle:
+      column: review
+      number: 71
+      kinds: [pr]
+      waiting: [format, link or spelling check to go green]
+      replies: ["/discard"]
+      citations:
+      - path: .github/workflows/format-check.yml
+        text: Format checks
+      - path: .github/workflows/link-check.yml
+        text: Link checks
+      - path: .github/workflows/spell-check.yml
+        text: Spelling checks
+  - id: stakeholder-review
+    label: Stakeholder review
+    owner: human
+    origin: human
+    pipelines: [gha-github-workflows-format-check, gha-github-workflows-link-check, gha-github-workflows-spell-check]
+    lifecycle:
+      column: stakeholders
+      number: 60
+      kinds: [pr]
+      waiting: [a stakeholder from the set frozen at acceptance to comment /confirm]
+      replies: ["/confirm", "/discard"]
+      citations:
+      - path: "spec:5. Lifecycle#L219-L254"
+        text: "Stakeholder review. Stakeholders confirm factual accuracy (required to advance) and record any disagreement with the conclusions (not required; HC-2)."
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "The reviewer comments /ready: the workflow marks the PR ready for review and mentions the stakeholders from the set frozen at acceptance"
+  - id: awaiting-merge
+    label: Awaiting approver
+    owner: human
+    origin: human
+    pipelines: [gha-github-workflows-format-check, gha-github-workflows-link-check, gha-github-workflows-spell-check]
+    lifecycle:
+      column: approval
+      number: 90
+      kinds: [pr]
+      waiting: [an approver who was neither drafter nor reviewer of this phase to sign off and merge]
+      replies: ["/approve", "/discard"]
+      citations:
+      - path: "spec:5. Lifecycle#L219-L254"
+        text: "Merge. The approver signs off and merges the PR into cncf/techdocs, which makes the next phase eligible."
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "The approver merges, first checking the confirmation behind the confirmed label"
+      - path: .github/settings.yml
+        line: 150
+        text: confirmed
+  - id: merged
+    label: Merged
+    owner: external-observation
+    origin: human
+    type: final
+    lifecycle:
+      column: done
+      kinds: [pr]
+      citations:
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "A merge-triggered GitHub Actions workflow then opens the next phase's tracking issue, labeled for its phase and needs-triage"
+  - id: discarded
+    label: Discarded
+    owner: external-observation
+    origin: human
+    type: final
+    lifecycle:
+      column: done
+      kinds: [pr]
+      citations:
+      - path: "spec:12. Lifecycle bindings#L482-L636"
+        text: "The reviewer discards a draft with /discard <reason>, which closes the PR with the reason recorded ... the tracking issue stays open for a restart or a hand-written phase."
+  roles:
+  - id: requester
+    label: Requester
+    kind: author-kind
+    params: {kind: human}
+    human: true
+  - id: reviewer
+    label: Reviewer (technical writer)
+    kind: permission
+    params: {permission: write}
+    human: true
+  - id: approver
+    label: Approver (independent technical writer)
+    kind: permission
+    params: {permission: write}
+    human: true
+  - id: stakeholder
+    label: Project stakeholder
+    kind: frozen-set
+    params: {frozenAt: accepted, source: "intake contacts validated at /accept"}
+    human: true
+  - id: administrator
+    label: Administrator / platform owner
+    kind: permission
+    params: {permission: admin}
+    human: true
+  - id: drafter
+    label: Phase drafter (agent)
+    kind: bot
+    params: {login: hive}
+  - id: verifier
+    label: Verifier (agent)
+    kind: bot
+    params: {login: hive}
+  gates:
+  - id: accept
+    releasedBy: reviewer
+    reply: "/accept"
+    citations:
+    - path: "spec:12. Lifecycle bindings#L482-L636"
+      text: "the workflow refuses /accept from a commenter without write access"
+  - id: decline
+    releasedBy: reviewer
+    reply: "/decline"
+    citations:
+    - path: "spec:12. Lifecycle bindings#L482-L636"
+      text: "/decline [reason], under the same authorization as /accept"
+  - id: verified
+    conditions:
+    - {fact: labels, op: has, value: verified}
+    releasedBy: reviewer
+    reply: "/verify"
+    citations:
+    - path: "spec:12. Lifecycle bindings#L482-L636"
+      text: "The label means the verification this PR needs is satisfied, not that the agent ran: a reviewer who deliberately skips the pass ... applies the label by hand with the reason in a comment"
+  - id: ready
+    conditions:
+    - {fact: labels, op: has, value: verified}
+    - {fact: pr.checks, op: is, value: green}
+    releasedBy: reviewer
+    reply: "/ready"
+    citations:
+    - path: "spec:12. Lifecycle bindings#L482-L636"
+      text: "/ready refuses without it [the verified label]"
+  - id: confirm
+    conditions:
+    - {fact: labels, op: has, value: confirmed}
+    releasedBy: stakeholder
+    reply: "/confirm"
+    citations:
+    - path: "spec:12. Lifecycle bindings#L482-L636"
+      text: "/confirm, which the workflow checks against the stakeholder set frozen at acceptance ... never the requester-editable intake body"
+  - id: approve
+    conditions:
+    - {fact: labels, op: has, value: confirmed}
+    - {fact: pr.checks, op: is, value: green}
+    releasedBy: approver
+    reply: "/approve"
+    citations:
+    - path: "spec:4. Roles#L166-L218"
+      text: "Approver. Gives each phase its independent quality sign-off and merges the PR. An experienced technical writer who was neither the drafter nor a reviewer of that phase"
+  - id: discard
+    releasedBy: reviewer
+    reply: "/discard"
+    citations:
+    - path: "spec:5. Lifecycle#L219-L254"
+      text: "the reviewer may discard it and restart or write by hand ... retries are chosen, never automatic"
+  - id: abort
+    releasedBy: administrator
+    reply: "/abort"
+    citations:
+    - path: "spec:12. Lifecycle bindings#L482-L636"
+      text: "An administrator/platform owner abort closes the tracking issue and the intake with it as not planned"
+  events:
+  - id: accepted
+    label: Request accepted
+    fact: {fact: labels, op: has, value: triage/accepted}
+    actor: reviewer
+  - id: declined
+    label: Request declined
+    fact: {fact: labels, op: has, value: triage/declined}
+    actor: reviewer
+  - id: draft-opened
+    label: Draft PR opened
+    fact: {fact: issue.covered, op: "true"}
+  - id: draft-withdrawn
+    label: Draft discarded; issue uncovered
+    fact: {fact: issue.covered, op: "false"}
+  - id: verified
+    label: Verification satisfied
+    fact: {fact: labels, op: has, value: verified}
+    actor: reviewer
+  - id: ready
+    label: Marked ready for review
+    fact: {fact: draft, op: "false"}
+    actor: reviewer
+  - id: confirmed
+    label: Stakeholder confirmed factual accuracy
+    fact: {fact: labels, op: has, value: confirmed}
+    actor: stakeholder
+  - id: checks-red
+    label: A check failed
+    fact: {fact: pr.checks, op: is, value: red}
+  - id: checks-green
+    label: Checks green
+    fact: {fact: pr.checks, op: is, value: green}
+  - id: merged
+    label: Deliverable merged
+    fact: {fact: merged, op: "true"}
+    actor: approver
+  - id: closed
+    label: Closed
+    fact: {fact: open, op: "false"}
+  - id: held
+    label: Hold applied (escalation)
+    fact: {fact: hold, op: "true"}
+  - id: released
+    label: Hold released
+    fact: {fact: hold, op: "false"}
+    actor: administrator
+  agents:
+  - profile: techdocs-drafter
+    states: [accepted, drafting]
+    tools: [read-repo, web-research, write-draft-pr]
+    produces: [pull-request, push]
+  - profile: techdocs-verifier
+    states: [drafting]
+    tools: [read-repo, web-research, comment]
+    produces: [comment]
+  checks:
+  - id: format-check
+    name: Format checks
+    kind: ci
+    required: true
+    source: .github/workflows/format-check.yml
+  - id: link-check
+    name: Link checks
+    kind: ci
+    required: true
+    source: .github/workflows/link-check.yml
+  - id: spell-check
+    name: Spelling checks
+    kind: ci
+    required: true
+    source: .github/workflows/spell-check.yml
+  - id: provenance-block
+    name: Provenance block present and strict check passes
+    kind: manual
+    required: true
+    source: "spec:15. The provenance block#L793-L877"
+  bookkeeping:
+  - on: accepted
+    action: notify-contacts
+    params: {note: "mention the validated project contacts on the intake issue before drafting (HC-6)", source: "spec:12. Lifecycle bindings#L482-L636"}
+  - on: ready
+    action: mention-stakeholders
+    params: {note: "mention the stakeholder set frozen at acceptance with the participant guide link", source: "spec:12. Lifecycle bindings#L482-L636"}
+  - on: merged
+    action: open-next-phase-tracking-issue
+    params: {note: "open the next phase's tracking issue labeled phase/* and needs-triage (phase C when skip-implementation is set); close the intake as completed after the final phase", source: "spec:12. Lifecycle bindings#L482-L636"}
+  labels:
+    entries:
+    - {name: Docs analysis, color: c2e0c6, description: CNCF technical documentation assistance}
+    - {name: needs-triage, color: EDEDED, description: Assessment request awaiting triage, state: requested}
+    - {name: triage/accepted, color: C2E0C6, description: Assessment request accepted, state: accepted}
+    - {name: triage/declined, color: F9D0C4, description: "Assessment request declined, reason posted", state: declined}
+    - {name: phase/assessment, color: C5DEF5, description: "Assessment phase A: analysis"}
+    - {name: phase/implementation, color: 84B6EB, description: "Assessment phase B: implementation plan"}
+    - {name: phase/backlog, color: 1D76DB, description: "Assessment phase C: issue backlog"}
+    - {name: verified, color: 0E8A16, description: Verification complete for this deliverable PR, state: in-review}
+    - {name: confirmed, color: 006B75, description: Stakeholder confirmation recorded for this deliverable PR, state: awaiting-merge}
+    - {name: skip-implementation, color: D4C5F9, description: Phase B skipped; phase A merge opens phase C}
+  transitions:
+  # issues
+  - {from: requested, to: accepted, on: accepted, gateRef: accept, note: "spec §12 Accept"}
+  - {from: requested, to: declined, on: declined, gateRef: decline, note: "spec §12 Accept: /decline"}
+  - {from: requested, to: closed, on: closed, note: "withdrawn by the project"}
+  - {from: accepted, to: draft-open, on: draft-opened, note: "spec §12 Draft"}
+  - {from: accepted, to: escalated, on: held, note: "spec §5 failure path: escalated to the administrator"}
+  - {from: accepted, to: closed, on: closed, note: "tracking issue declined or assessment ended"}
+  - {from: draft-open, to: accepted, on: draft-withdrawn, note: "draft discarded: restart, hand-write or stop"}
+  - {from: draft-open, to: escalated, on: held, note: "spec §5 failure path"}
+  - {from: draft-open, to: closed, on: closed, note: "phase merged (next phase opens) or aborted"}
+  - {from: escalated, to: accepted, on: released, note: "administrator released the hold"}
+  - {from: escalated, to: closed, on: closed, gateRef: abort, note: "spec §12 Failure and abort"}
+  # pull requests
+  - {from: drafting, to: in-review, on: verified, gateRef: verified, note: "spec §12 Review: verified label is the gate"}
+  - {from: drafting, to: discarded, on: closed, gateRef: discard}
+  - {from: in-review, to: stakeholder-review, on: ready, gateRef: ready, note: "spec §12 Stakeholder review: /ready"}
+  - {from: in-review, to: discarded, on: closed, gateRef: discard}
+  - {from: checks-failing, to: stakeholder-review, on: checks-green}
+  - {from: checks-failing, to: discarded, on: closed, gateRef: discard}
+  - {from: stakeholder-review, to: awaiting-merge, on: confirmed, gateRef: confirm, note: "spec §12: /confirm from the frozen stakeholder set"}
+  - {from: stakeholder-review, to: checks-failing, on: checks-red}
+  - {from: stakeholder-review, to: discarded, on: closed, gateRef: discard}
+  - {from: awaiting-merge, to: merged, on: merged, gateRef: approve, note: "spec §5 step 6 / §12 Merge"}
+  - {from: awaiting-merge, to: checks-failing, on: checks-red}
+  - {from: awaiting-merge, to: discarded, on: closed, gateRef: discard}
+  derivation:
+    mode: rules
+    rules:
+    # issues (intake umbrella and phase tracking issues)
+    - id: declined
+      kind: issue
+      state: declined
+      when:
+      - {fact: open, op: "false"}
+      - {fact: labels, op: has, value: triage/declined}
+      reason: declined by a technical writer (triage/declined)
+    - id: closed
+      kind: issue
+      state: closed
+      when:
+      - {fact: open, op: "false"}
+      reason: assessment ended (completed at the final merge, or aborted)
+    - id: escalated
+      kind: issue
+      state: escalated
+      when:
+      - {fact: hold, op: "true"}
+      reason: on hold; escalated to the administrator/platform owner
+    - id: draft-open
+      kind: issue
+      state: draft-open
+      when:
+      - {fact: labels, op: has, value: triage/accepted}
+      - {fact: issue.covered, op: "true"}
+      reason: a draft PR covers this phase
+    - id: accepted
+      kind: issue
+      state: accepted
+      when:
+      - {fact: labels, op: has, value: triage/accepted}
+      reason: accepted; awaiting a draft
+    - id: requested
+      kind: issue
+      state: requested
+      when:
+      - {fact: labels, op: has, value: needs-triage}
+      reason: filed; awaiting triage
+    # pull requests (the deliverable carries the Docs analysis label)
+    - id: merged
+      kind: pr
+      state: merged
+      when:
+      - {fact: merged, op: "true"}
+      - {fact: labels, op: has, value: Docs analysis}
+      reason: deliverable merged by the approver
+    - id: discarded
+      kind: pr
+      state: discarded
+      when:
+      - {fact: open, op: "false"}
+      - {fact: labels, op: has, value: Docs analysis}
+      reason: draft discarded (closed unmerged)
+    - id: in-review-draft
+      kind: pr
+      state: in-review
+      when:
+      - {fact: draft, op: "true"}
+      - {fact: labels, op: has, value: verified}
+      - {fact: labels, op: has, value: Docs analysis}
+      reason: verified; the reviewer refines and checks findings against source
+    - id: drafting
+      kind: pr
+      state: drafting
+      when:
+      - {fact: draft, op: "true"}
+      - {fact: labels, op: has, value: Docs analysis}
+      reason: AI-drafted deliverable in progress; verification not yet recorded
+    - id: checks-failing
+      kind: pr
+      state: checks-failing
+      when:
+      - {fact: pr.checks, op: is, value: red}
+      - {fact: labels, op: has, value: Docs analysis}
+      reason: a format, link or spelling check is red
+    - id: awaiting-merge
+      kind: pr
+      state: awaiting-merge
+      when:
+      - {fact: labels, op: has, value: confirmed}
+      - {fact: labels, op: has, value: Docs analysis}
+      reason: stakeholder confirmation recorded; awaiting the approver
+    - id: stakeholder-review
+      kind: pr
+      state: stakeholder-review
+      when:
+      - {fact: labels, op: has, value: verified}
+      - {fact: labels, op: has, value: Docs analysis}
+      reason: ready for review; awaiting /confirm from a stakeholder
+    - id: in-review-unverified
+      kind: pr
+      state: in-review
+      when:
+      - {fact: labels, op: has, value: Docs analysis}
+      reason: ready without the verified label; verification is still owed
+  pipelines:
+  - id: gha-github-workflows-format-check
+    name: Format checks
+    system: github-actions
+    path: .github/workflows/format-check.yml
+    role: pr-verify
+    triggers:
+    - event: pull_request
+    nodes:
+    - {id: format-check, name: FILE FORMAT, kind: job, runsOn: [ubuntu-latest], level: 0}
+    - {id: markdown-linter, name: MARKDOWN linter, kind: job, runsOn: [ubuntu-latest], level: 0}
+    levels: 1
+  - id: gha-github-workflows-link-check
+    name: Link checks
+    system: github-actions
+    path: .github/workflows/link-check.yml
+    role: pr-verify
+    triggers:
+    - event: pull_request
+    nodes:
+    - {id: link-check, name: LINK checking, kind: job, runsOn: [ubuntu-latest], level: 0}
+    levels: 1
+  - id: gha-github-workflows-spell-check
+    name: Spelling checks
+    system: github-actions
+    path: .github/workflows/spell-check.yml
+    role: pr-verify
+    triggers:
+    - event: pull_request
+    nodes:
+    - {id: spelling-check, name: SPELLING check, kind: job, runsOn: [ubuntu-latest], level: 0}
+    levels: 1
+  coverage:
+    files: 3
+    parsed: 3
