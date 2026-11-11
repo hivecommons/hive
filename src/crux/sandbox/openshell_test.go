@@ -27,6 +27,25 @@ type fakeOpenShell struct {
 	createErr   error
 	closed      bool
 	deleteCtxOK bool
+	healthErr   error
+	unhealthy   bool
+	gateway     *openshell.GatewayConfig
+	gatewayErr  error
+	healthCalls int
+	configCalls int
+}
+
+func (f *fakeOpenShell) Check(context.Context) (*openshell.HealthResult, error) {
+	f.healthCalls++
+	if f.healthErr != nil {
+		return nil, f.healthErr
+	}
+	return &openshell.HealthResult{Healthy: !f.unhealthy}, nil
+}
+
+func (f *fakeOpenShell) GetGateway(context.Context) (*openshell.GatewayConfig, error) {
+	f.configCalls++
+	return f.gateway, f.gatewayErr
 }
 
 type fakeCreate struct {
@@ -36,6 +55,8 @@ type fakeCreate struct {
 
 func (f *fakeOpenShell) Sandboxes() openshellSandboxes { return f }
 func (f *fakeOpenShell) Exec() openshellExec           { return f }
+func (f *fakeOpenShell) Health() openshellHealth       { return f }
+func (f *fakeOpenShell) Config() openshellConfig       { return f }
 func (f *fakeOpenShell) Close() error                  { f.closed = true; return nil }
 
 func (f *fakeOpenShell) Create(_ context.Context, ws, name string, spec *openshell.SandboxSpec, _ ...openshell.CreateOption) (*openshell.Sandbox, error) {
@@ -536,4 +557,138 @@ func TestNewOpenShellSDKClientBuildsLazyClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = c.Close()
+}
+
+func preflightFixture(fake *fakeOpenShell) (*OpenShellPreflighter, *time.Time) {
+	clock := time.Unix(1700000000, 0)
+	return &OpenShellPreflighter{
+		newClient: func(OpenShellOptions) (openshellClient, error) { return fake, nil },
+		now:       func() time.Time { return clock },
+	}, &clock
+}
+
+func goodGateway() *openshell.GatewayConfig {
+	return &openshell.GatewayConfig{Settings: map[string]openshell.SettingValue{
+		"allow_driver_config": {Type: openshell.SettingValueBool, BoolVal: true},
+		"telemetry_enabled":   {Type: openshell.SettingValueBool, BoolVal: false},
+	}}
+}
+
+func TestOpenShellPreflightHealthyGatewayIsQuiet(t *testing.T) {
+	p, _ := preflightFixture(&fakeOpenShell{gateway: goodGateway()})
+	if got := p.Check(context.Background(), OpenShellOptions{GatewayURL: "gw:8080"}); len(got) != 0 {
+		t.Errorf("warnings = %q, want none", got)
+	}
+}
+
+func TestOpenShellPreflightWarnings(t *testing.T) {
+	bad := goodGateway()
+	bad.Settings["allow_driver_config"] = openshell.SettingValue{Type: openshell.SettingValueBool}
+	bad.Settings["telemetry_enabled"] = openshell.SettingValue{Type: openshell.SettingValueBool, BoolVal: true}
+	cases := []struct {
+		name string
+		fake *fakeOpenShell
+		want []string
+	}{
+		{"unreachable", &fakeOpenShell{healthErr: errors.New("connection refused")}, []string{"unreachable"}},
+		{"unhealthy", &fakeOpenShell{unhealthy: true, gateway: goodGateway()}, []string{"unhealthy"}},
+		{"driver config off and telemetry on", &fakeOpenShell{gateway: bad}, []string{"allow_driver_config", "telemetry"}},
+		{"settings unreadable", &fakeOpenShell{gatewayErr: errors.New("denied")}, []string{"could not be read"}},
+	}
+	for _, c := range cases {
+		p, _ := preflightFixture(c.fake)
+		got := strings.Join(p.Check(context.Background(), OpenShellOptions{GatewayURL: "gw:8080"}), "\n")
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: warnings %q lack %q", c.name, got, w)
+			}
+		}
+	}
+}
+
+func TestOpenShellPreflightIsCachedPerGatewayUntilTTL(t *testing.T) {
+	fake := &fakeOpenShell{gateway: goodGateway()}
+	p, clock := preflightFixture(fake)
+	opts := OpenShellOptions{GatewayURL: "gw:8080"}
+	p.Check(context.Background(), opts)
+	p.Check(context.Background(), opts)
+	if fake.healthCalls != 1 || fake.configCalls != 1 {
+		t.Fatalf("gateway hit %d/%d times, want once", fake.healthCalls, fake.configCalls)
+	}
+	p.Check(context.Background(), OpenShellOptions{GatewayURL: "other:8080"})
+	if fake.healthCalls != 2 {
+		t.Errorf("a different gateway must be probed separately")
+	}
+	*clock = clock.Add(openshellPreflightTTL + time.Second)
+	p.Check(context.Background(), opts)
+	if fake.healthCalls != 3 {
+		t.Errorf("expired cache entry not refreshed")
+	}
+}
+
+func TestOpenShellPreflightClientErrorIsAWarning(t *testing.T) {
+	p := &OpenShellPreflighter{newClient: func(OpenShellOptions) (openshellClient, error) { return nil, errors.New("bad address") }}
+	got := p.Check(context.Background(), OpenShellOptions{GatewayURL: "gw:8080"})
+	if len(got) != 1 || !strings.Contains(got[0], "unreachable") {
+		t.Errorf("warnings = %q", got)
+	}
+}
+
+// Egress-policy prover: every shipped example allow_hosts set must render to
+// a policy that cannot reach more than hive intends. A config change that
+// widens egress fails here.
+var shippedOpenShellAllowHosts = [][]string{
+	nil,
+	{"litellm.example.com", "hub.hivecommons.dev"}, // docs/sandbox-isolation.md
+	{"litellm.example.com", "hub.example.org:8443"},
+}
+
+func TestOpenShellEgressPolicyProver(t *testing.T) {
+	for _, hosts := range shippedOpenShellAllowHosts {
+		p, err := OpenShellNetworkPolicy(hosts, nil)
+		if err != nil {
+			t.Fatalf("%v: %v", hosts, err)
+		}
+		sawAPI := false
+		for name, r := range p.NetworkPolicies {
+			if len(r.Binaries) == 0 {
+				t.Errorf("%v: rule %s has no binaries and would allow nothing", hosts, name)
+			}
+			for _, e := range r.Endpoints {
+				if strings.ContainsAny(e.Host, "*?") || e.Host == "" {
+					t.Errorf("%v: rule %s has wildcard/empty host %q", hosts, name, e.Host)
+				}
+				if e.Port == 0 {
+					t.Errorf("%v: rule %s endpoint %s has no port", hosts, name, e.Host)
+				}
+				if e.Enforcement != openshell.NetworkEnforcementModeEnforce {
+					t.Errorf("%v: rule %s endpoint %s is not enforced", hosts, name, e.Host)
+				}
+				if e.Host == "api.github.com" {
+					sawAPI = true
+					if e.Access != openshell.NetworkAccessPresetReadOnly {
+						t.Errorf("%v: api.github.com access = %v, must be read-only", hosts, e.Access)
+					}
+				}
+			}
+		}
+		if !sawAPI {
+			t.Errorf("%v: api.github.com rule missing", hosts)
+		}
+	}
+}
+
+func TestOpenShellEgressPolicyProverRejectsSmuggledHosts(t *testing.T) {
+	for _, h := range []string{
+		"https://evil.example.com", "evil.example.com/path", "user@evil.example.com",
+		"user:pw@evil.example.com:443", "evil.example.com?x=1", "evil.example.com#frag",
+		"*.example.com", "*", "evil.example.com:443:80", "evil .example.com", ":443", "-evil.com",
+	} {
+		if _, err := OpenShellNetworkPolicy([]string{h}, nil); err == nil {
+			t.Errorf("allow_hosts entry %q accepted", h)
+		}
+		if err := (OpenShellOptions{GatewayURL: "gw:8080", WorkspaceClaim: "c", AllowHosts: []string{h}}).Validate(); err == nil {
+			t.Errorf("Validate accepted allow_hosts entry %q", h)
+		}
+	}
 }
