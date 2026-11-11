@@ -214,10 +214,32 @@ func WriteCredentials(tokens *OAuthTokens, path string) error {
 // nil when the file is absent, malformed, or carries no token block. It never
 // applies an expiry rule — callers decide what a stale token means to them.
 func LoadTokens(path string) *OAuthTokens {
-	data, err := os.ReadFile(path)
+	tokens, err := ReadTokens(path)
 	if err != nil {
 		return nil
 	}
+	return tokens
+}
+
+// ReadTokens is LoadTokens keeping the read error, for callers that must tell
+// "this process may not open the file" (fs.ErrPermission — another uid's 0600
+// credential) apart from "the file holds no token". Malformed JSON is reported
+// as an error too; a parseable file with no token block returns nil, nil.
+func ReadTokens(path string) (*OAuthTokens, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var creds Credentials
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return nil, fmt.Errorf("parse credentials %s: %w", path, err)
+	}
+	return creds.ClaudeAIOAuth, nil
+}
+
+// ParseTokens decodes a credentials file already in memory. Nil for malformed
+// bytes or a file with no token block, like LoadTokens.
+func ParseTokens(data []byte) *OAuthTokens {
 	var creds Credentials
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return nil
@@ -281,11 +303,16 @@ func HasValidToken(path string) bool {
 // Positive evidence only: an unreadable or absent file returns false, leaving
 // callers exactly where they were before they asked.
 func HasUsableToken(path string) bool {
-	tokens := LoadTokens(path)
+	return TokensUsable(LoadTokens(path), time.Now())
+}
+
+// TokensUsable is the HasUsableToken rule applied to an already-loaded token
+// set at a given instant: a live access token, or a refresh grant that has not
+// expired. A nil token set is never usable.
+func TokensUsable(tokens *OAuthTokens, now time.Time) bool {
 	if tokens == nil {
 		return false
 	}
-	now := time.Now()
 	if tokens.AccessToken != "" && !expired(tokens.ExpiresAt, now) {
 		return true
 	}
