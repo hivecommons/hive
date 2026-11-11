@@ -1,1 +1,0 @@
-- Bumped the Go toolchain to 1.26.11 so the `govulncheck` gate stops flagging GO-2026-6859 (`net/http`), reachable from the dashboard, hub spoke heartbeat and GitHub client. The gate was red on the default branch toolchain itself, blocking every open PR.

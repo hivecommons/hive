@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.211.29)
+
+### Security
+
+- Bumped the Go toolchain to 1.26.11 so the `govulncheck` gate stops flagging GO-2026-6859 (`net/http`), reachable from the dashboard, hub spoke heartbeat and GitHub client. The gate was red on the default branch toolchain itself, blocking every open PR.
+
 ## 2026-11-11 (v5.211.28)
 
 ### Fixed
