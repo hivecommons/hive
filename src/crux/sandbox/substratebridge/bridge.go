@@ -267,7 +267,10 @@ func Pack(dir string, w io.Writer) error {
 	return gz.Close()
 }
 
-// Unpack reads a Pack stream into dir, refusing entries that would escape it.
+// Unpack reads a Pack stream into dir, refusing entries that escape it
+// lexically (absolute or ".." names) or through symlinks: every write goes
+// through an os.Root, so a symlink entry may be created but nothing is ever
+// written through one that leaves dir.
 func Unpack(r io.Reader, dir string) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
@@ -277,6 +280,11 @@ func Unpack(r io.Reader, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
@@ -286,34 +294,34 @@ func Unpack(r io.Reader, dir string) error {
 		if err != nil {
 			return fmt.Errorf("tar: %w", err)
 		}
-		target, err := safeJoin(dir, hdr.Name)
+		rel, err := safeRel(hdr.Name)
 		if err != nil {
 			return err
 		}
-		if err := unpackEntry(tr, hdr, target); err != nil {
-			return err
+		if err := unpackEntry(tr, hdr, root, rel); err != nil {
+			return fmt.Errorf("tar: entry %q: %w", hdr.Name, err)
 		}
 	}
 }
 
-func unpackEntry(tr *tar.Reader, hdr *tar.Header, target string) error {
+func unpackEntry(tr *tar.Reader, hdr *tar.Header, root *os.Root, rel string) error {
 	switch hdr.Typeflag {
 	case tar.TypeDir:
-		return os.MkdirAll(target, os.FileMode(hdr.Mode)&os.ModePerm|0o700)
+		return root.MkdirAll(rel, os.FileMode(hdr.Mode)&os.ModePerm|0o700)
 	case tar.TypeSymlink:
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 			return err
 		}
-		_ = os.Remove(target)
-		return os.Symlink(hdr.Linkname, target)
+		_ = root.Remove(rel)
+		return root.Symlink(hdr.Linkname, rel)
 	case tar.TypeReg:
 		if hdr.Size > maxTarEntry {
 			return fmt.Errorf("tar: entry %q is too large (%d bytes)", hdr.Name, hdr.Size)
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 			return err
 		}
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&os.ModePerm|0o600)
+		f, err := root.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&os.ModePerm|0o600)
 		if err != nil {
 			return err
 		}
@@ -328,12 +336,13 @@ func unpackEntry(tr *tar.Reader, hdr *tar.Header, target string) error {
 	}
 }
 
-func safeJoin(dir, name string) (string, error) {
+// safeRel is the lexical first filter; os.Root enforces the rest.
+func safeRel(name string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(name))
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("tar: entry %q escapes the workspace", name)
 	}
-	return filepath.Join(dir, clean), nil
+	return clean, nil
 }
 
 // Serve runs the bridge on ln until ctx ends. The actor's command is
