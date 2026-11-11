@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.215.2)
+
+### Fixed
+
+- Hardened the automerge workflow-approval path against the read-only integration eligibility probe: the probe could reach the `/ok-to-test` post, where the mutation boundary refused the comment and the caller logged a WARN on every tick. The probe now skips the post and leaves it to the live sweep; live behaviour is unchanged.
+
 ## 2026-11-11 (v5.215.1)
 
 ### Security
