@@ -11,6 +11,42 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v6.13.3)
+
+### Fixed
+
+- **Advisory mutation report survives its time budget** — `mutation-report.sh` now runs gremlins under its own `MUTATION_BUDGET_SECONDS` budget (17 min by default, under the job's 20‑minute limit), so a size/XXL PR no longer ends with the runner killing the step before anything is written. The `<!-- hive-mutation -->` comment is always posted, names the PR head it reports on, and when the budget ran out it says which changed packages were left unfinished or not started instead of a stale report from an earlier push, or none, standing in for a clean result. ([#17602](https://github.com/hivecommons/hive/issues/17602))
+
+## 2026-11-10 (v6.13.2)
+
+### Fixed
+
+- Merge requests: a cancelled check (for example the 20-minute advisory mutation job timing out) no longer blocks the merge gate when the base branch's required checks cannot be read; GitHub still enforces the real required checks at merge time. When the required set is known to be empty (nothing enforced server-side), a cancelled non-advisory check still blocks locally, as do failed and timed-out checks (hivecommons/hive#17598).
+
+## 2026-11-10 (v6.13.1)
+
+### Fixed
+
+- **Unclaimed hives no longer file `github_app_not_installed` self-reports** — a hosted "available slot" hive that has not been onboarded yet legitimately has no GitHub App installation, so the runtime `github_app_not_installed` condition is now kept out of fleet self-reports for it. "Unclaimed" covers both an empty `project.org` and the synthetic `available-<id>` / legacy `placeholder` org the pool seeds into a slot (the hive behind the report carried `project.org=available-…`, not an empty org); that prefix list now lives in one place (`config.PlaceholderOrgPrefixes`) shared with the dashboard's `project_org` health check. The local warning log and the dashboard onboarding banner are unchanged, and a hive that *does* have a real org configured but no App installation still self-reports it as a real misconfiguration. A tracker already opened by a pre-fix release is closed out through the normal self-recovery path on the first evaluation after upgrade. ([#17593](https://github.com/hivecommons/hive/issues/17593))
+
+## 2026-11-10 (v6.13.0)
+
+### Added
+
+- Dependency bots: a bot PR the bot has stopped rebasing no longer sits behind its base forever. Renovate and Dependabot stop maintaining a branch once someone else commits to it (a person's "Update branch", a stray merge-forward), and the hive never base-syncs a bot's branch, so on a base that requires up-to-date branches such a PR stayed behind with nobody told. The dependency-bot hand-off sweep now treats a bot PR that has been behind or conflicting for `governor.dependency_bot_rebase_after_s` (default 4 hours) as stranded when its head commit is not the bot's or its Renovate config rebases never, and asks the bot to rebase through the bot's own mechanism, once per head: it ticks Renovate's rebase/retry checkbox (only that line of the description changes) or comments `@dependabot recreate`. If the head has not moved one window later, the PR goes to a person through the existing hand-off (one comment plus `needs-human`, "dependency bot will not rebase this branch"). A branch carrying someone else's non-merge commit is never regenerated; it goes to a person instead. The request is the new write-back kind `bot_rebase_request` (default L6 with the opt-in label, editable in Settings → Features → Write-back containment and through the admin MCP `writeback.kind_policy` operation); when the kind refuses, a stranded PR that is only behind is still handed to a person once the window passes, and a conflicting one keeps the 24-hour conflict hand-off.
+
+## 2026-11-10 (v6.12.5)
+
+### Fixed
+
+- Claude credential bridge: the repair no longer acts on an agent whose whole `~/.claude` is still the legacy directory symlink to the shared `/data/home/.claude` (a paused or stopped agent that was never relaunched). Through that link the agent's credential path IS the shared login, so the watchdog renamed the shared file to `.stale-<UTC>` every cycle and, when the shared file held no token, linked `.credentials.json` to itself, logging every Claude agent out. The repair and the dashboard's "credential bridge broken" signal now resolve the link's directory first and skip that layout with one warning per agent; the agent's next launch already retires the directory link (#17253).
+
+## 2026-11-10 (v6.12.4)
+
+### Fixed
+
+- Trusted-bot automerge lane: PRs from every login the operator enabled under `auto_merge.trusted_bot_authors` (Settings bot toggles or a custom login) are now honored by the trusted-bot lane end to end. The review swarm's verdict is advisory for them by default (`auto_merge.trusted_bot_skip_review`, default `true`), so a Dependabot bump a reviewer routed to `requires_human` no longer parks at "needs a person" while its checks are green; the contributor lane hands bot PRs off as `trusted-bot-lane` instead of `contributor-lane:app-authored`; every self-authored-sweep skip/hold line carries `tier`; and when `auto_merge.required_checks` names a check a repo never runs, the lane gates on the checks that do report (warning once per repo per hour) or holds with `required-check-never-reported:<check>`, which the Activity Monitor shows as the human-gate reason (#17577).
+
 ## 2026-11-10 (v6.12.3)
 
 ### Changed

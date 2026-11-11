@@ -91,6 +91,13 @@ const (
 	// base has fixed what the PR's CI tripped on, and only a new head runs
 	// that check again. It pushes a merge commit and posts nothing.
 	KindBaseRefresh Kind = "base_refresh"
+	// KindBotRebaseRequest asks a dependency bot to rebase its own PR
+	// through the bot's own mechanism, once per PR head: it ticks Renovate's
+	// rebase/retry box in the PR description (editing only that line) or
+	// comments `@dependabot recreate`. The bot then regenerates the branch;
+	// the hive never pushes to it. Used only on a PR whose bot has stopped
+	// rebasing (see cmd/hive/dependency_bot_rebase_request.go).
+	KindBotRebaseRequest Kind = "bot_rebase_request"
 )
 
 // KindPolicy is the per-kind rule. A write of this kind on an item the hive
@@ -148,6 +155,7 @@ func DefaultKinds() map[Kind]KindPolicy {
 		KindIssueFile:            {MinLevel: 3},
 		KindCIRerun:              {MinLevel: 6, RequireLabel: true},
 		KindBaseRefresh:          {MinLevel: 6, RequireLabel: true},
+		KindBotRebaseRequest:     {MinLevel: 6, RequireLabel: true},
 	}
 }
 

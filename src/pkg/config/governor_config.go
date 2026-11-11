@@ -29,6 +29,13 @@ type GovernorConfig struct {
 	// for a sweep. Cooldown bounds kicks per PR head (default 600 seconds).
 	CIFailureWebhookKick   *bool `yaml:"ci_failure_webhook_kick,omitempty"`
 	CIFailureKickCooldownS int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
+	// DependencyBotRebaseAfterS is how long a dependency-bot PR may sit
+	// behind or conflicting with its base before the dependency-bot sweep
+	// treats a bot that stopped rebasing it as stranded: it asks the bot to
+	// rebase (write-back kind bot_rebase_request) and, one more window later
+	// with the head unchanged, hands the PR to a person. Seconds; 0 or unset
+	// means DefaultDependencyBotRebaseAfterS (4 hours).
+	DependencyBotRebaseAfterS int `yaml:"dependency_bot_rebase_after_s,omitempty" json:"dependency_bot_rebase_after_s,omitempty"`
 	// MergeTrainStallWarnS is the stalled-train warning threshold in seconds
 	// (default DefaultMergeTrainStallWarnS; explicit zero disables warnings;
 	// hivecommons/hive#15395).

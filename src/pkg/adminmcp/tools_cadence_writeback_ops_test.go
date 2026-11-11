@@ -368,6 +368,12 @@ func TestWritebackKindPolicyOpKeepsUntouchedKinds(t *testing.T) {
 			args:    map[string]any{"base_refresh": map[string]any{"unlabeled_min_level": 6}},
 			want:    `{"writebackKinds":{"base_refresh":{"unlabeled_min_level":6}}}`,
 		},
+		"the dependency-bot rebase request kind": {
+			replace: true,
+			kinds:   nil,
+			args:    map[string]any{"bot_rebase_request": map[string]any{"unlabeled_min_level": 6}},
+			want:    `{"writebackKinds":{"bot_rebase_request":{"unlabeled_min_level":6}}}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := newCadenceWBProvider()

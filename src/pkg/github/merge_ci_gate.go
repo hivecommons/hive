@@ -171,7 +171,8 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	cfgSet, cfgKnown := c.configRequiredChecksForRepo(owner + "/" + name)
 	required, requiredKnown, fromConfig, _, _ := RequiredStatusCheckContextsDetailedWithSource(ctx, c.client, owner, name, baseBranch, cfgSet, cfgKnown)
 	actualRequired, actualKnown := required, requiredKnown && !fromConfig
-	if actualKnown && len(required) == 0 {
+	noServerBackstop := actualKnown && len(required) == 0
+	if noServerBackstop {
 		// GitHub reports both "branch not protected" and "protected but no
 		// required checks" as a known empty set. For the merge-request watcher
 		// that must not mean "ignore failing CI": absent required-check config
@@ -209,6 +210,7 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		RequiredKnown:           requiredKnown,
 		RequiredKnownFromConfig: fromConfig,
 		FailOnAnyFailedCheck:    true,
+		NoServerBackstop:        noServerBackstop,
 		ExpectedChecks:          expected,
 		MinHeadAge:              minHeadAge,
 		HeadPushedAt:            minHeadAgeFrom,

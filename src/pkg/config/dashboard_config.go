@@ -592,6 +592,14 @@ func (c *Config) CIFailureKickCooldown() time.Duration {
 	return DefaultCIFailureKickCooldownS * time.Second
 }
 
+// DependencyBotRebaseAfter resolves governor.dependency_bot_rebase_after_s.
+func (c *Config) DependencyBotRebaseAfter() time.Duration {
+	if c != nil && c.Governor.DependencyBotRebaseAfterS > 0 {
+		return time.Duration(c.Governor.DependencyBotRebaseAfterS) * time.Second
+	}
+	return DefaultDependencyBotRebaseAfterS * time.Second
+}
+
 // SetMergeTrainStallWarnS records an explicit value, including zero to
 // disable warnings.
 func (c *Config) SetMergeTrainStallWarnS(seconds int) {
