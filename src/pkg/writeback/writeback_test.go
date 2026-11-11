@@ -437,3 +437,53 @@ func TestBotRebaseRequestKindDefaults(t *testing.T) {
 		t.Fatalf("L6 without the label after unlabeled_min_level: 6: %+v, want allowed", d)
 	}
 }
+
+// human_merge_path_release takes off a `hold` the hive set for
+// auto_merge.human_merge_paths once the PR's head touches none of them: it
+// defaults to the needs_decision_comment policy (L5 with the opt-in label),
+// the settings table and the admin MCP list it from the registry, and an
+// operator can widen it.
+func TestHumanMergePathReleaseKindDefaults(t *testing.T) {
+	if !IsKind("human_merge_path_release") {
+		t.Fatal("human_merge_path_release is not a known kind")
+	}
+	c := Config{}
+	if p := c.Policy(KindHumanMergePathRelease); p != c.Policy(KindNeedsDecisionComment) || p.MinLevel != 5 || !p.RequireLabel || p.UnlabeledMinLevel != 0 || p.OwnOnly {
+		t.Fatalf("default policy = %+v, want needs_decision_comment's L5 with the opt-in label", p)
+	}
+	if KindHumanMergePathRelease.IsLabelKind() || KindHumanMergePathRelease.ContentDeduped() {
+		t.Fatal("human_merge_path_release posts a per-head notice and keeps its own idempotence: neither a label kind nor content-deduped")
+	}
+	listed := false
+	for _, row := range c.EffectiveKinds() {
+		listed = listed || row.Kind == KindHumanMergePathRelease
+	}
+	if !listed {
+		t.Fatal("human_merge_path_release missing from EffectiveKinds (the Settings kind table)")
+	}
+
+	level := 5
+	g := New(Config{}, Deps{LevelFor: func(string) int { return level }}, "")
+	bot := Item{Number: 9, IsPR: true, Author: "renovate[bot]"}
+	if d := g.Decide("acme/widget", bot, KindHumanMergePathRelease); d.Allowed || d.Reason != ReasonNeedsLabel {
+		t.Fatalf("L5 without the label: %+v, want refused for the label", d)
+	}
+	labeled := bot
+	labeled.Labels = []string{DefaultOptInLabel}
+	if d := g.Decide("acme/widget", labeled, KindHumanMergePathRelease); !d.Allowed {
+		t.Fatalf("L5 with the label: %+v, want allowed", d)
+	}
+	if d := g.Decide("acme/widget", Item{Number: 10, IsPR: true, HiveAuthored: true}, KindHumanMergePathRelease); !d.Allowed {
+		t.Fatalf("hive-authored PR: %+v, want allowed", d)
+	}
+	level = 4
+	if d := g.Decide("acme/widget", labeled, KindHumanMergePathRelease); d.Allowed {
+		t.Fatalf("L4 with the label: %+v, want refused", d)
+	}
+	six := 6
+	g.SetConfig(Config{Kinds: map[string]KindPolicyOverride{"human_merge_path_release": {UnlabeledMinLevel: &six}}})
+	level = 6
+	if d := g.Decide("acme/widget", bot, KindHumanMergePathRelease); !d.Allowed {
+		t.Fatalf("L6 without the label after unlabeled_min_level: 6: %+v, want allowed", d)
+	}
+}

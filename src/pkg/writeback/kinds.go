@@ -98,6 +98,12 @@ const (
 	// the hive never pushes to it. Used only on a PR whose bot has stopped
 	// rebasing (see cmd/hive/dependency_bot_rebase_request.go).
 	KindBotRebaseRequest Kind = "bot_rebase_request"
+	// KindHumanMergePathRelease removes the `hold` the hive itself set for
+	// auto_merge.human_merge_paths, and leaves one notice per head, once the
+	// PR's current head touches none of those paths (a dependency bot moved
+	// the file to another PR, a contributor dropped the change). A hold a
+	// person set, or one with another hold source, is never removed.
+	KindHumanMergePathRelease Kind = "human_merge_path_release"
 )
 
 // KindPolicy is the per-kind rule. A write of this kind on an item the hive
@@ -156,6 +162,10 @@ func DefaultKinds() map[Kind]KindPolicy {
 		KindCIRerun:              {MinLevel: 6, RequireLabel: true},
 		KindBaseRefresh:          {MinLevel: 6, RequireLabel: true},
 		KindBotRebaseRequest:     {MinLevel: 6, RequireLabel: true},
+		// Same floor as the 085 park comment that told a maintainer the PR
+		// changes a human-merge path: wherever the hive could say so, it can
+		// take the hold back when that stops being true.
+		KindHumanMergePathRelease: {MinLevel: 5, RequireLabel: true},
 	}
 }
 
