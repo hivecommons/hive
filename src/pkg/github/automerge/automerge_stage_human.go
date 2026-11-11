@@ -125,9 +125,11 @@ func (c *Engine) headDiffFence(ctx context.Context, tracker *StageTracker, key s
 	entry, ok := tracker.fences[key]
 	tracker.mu.Unlock()
 	if ok && entry.head == obs.HeadSHA && entry.scope == scope {
-		return entry.fence, true
+		if _, judged := c.humanMergePathFenceHead(tracker, key, obs); judged {
+			return entry.fence, true
+		}
 	}
-	fence, err := c.adoptionMergeFence(ctx, obs)
+	fence, pr, files, err := c.adoptionMergeFence(ctx, obs)
 	if err != nil {
 		c.warn("stage labels: diff fence read failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return "", false
@@ -135,6 +137,9 @@ func (c *Engine) headDiffFence(ctx context.Context, tracker *StageTracker, key s
 	if fence == contributorLaneReasonFilesEvidence || fence == adoptionReasonHeadChanged {
 		return "", false
 	}
+	// The same complete file list says whether the head is a person's
+	// merge under human_merge_paths (humanMergePathFencePersonMerge).
+	c.noteHumanMergePathFenceHead(tracker, key, obs.Owner, obs.Repo, obs.HeadSHA, pr, files)
 	tracker.mu.Lock()
 	if tracker.fences == nil {
 		tracker.fences = map[string]humanFenceEntry{}
@@ -472,7 +477,11 @@ func alreadyLandedOriginalNote(copy, landed int, author, base string) string {
 // humanEvidence gathers the Evidence for one human-routed observation.
 func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, cause stagelabels.HumanCause, now time.Time) stagelabels.Evidence {
 	contributorVerdict := normalizeContributorLaneVerdict(c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA))
-	workflowManual := c.workflowFenceManual(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
+	// A head that touches auto_merge.human_merge_paths is a person's merge:
+	// an owner's approval releases the workflow fence only into the
+	// human-merge-path refusal, so it is never asked for.
+	humanMergePath := c.humanMergePathFencePersonMerge(ctx, tracker, key, obs)
+	workflowManual := c.workflowFenceManual(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA) || humanMergePath
 	e := stagelabels.Evidence{
 		Head:             obs.HeadSHA,
 		Verdict:          humanVerdict(contributorVerdict),
@@ -537,6 +546,9 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 				e.CauseReason = decisionCauseFor(fence, workflowManual)
 			}
 		}
+	}
+	if humanMergePath {
+		applyHumanMergePathFenceRoute(&e, obs)
 	}
 	if strings.HasPrefix(obs.Reason, stageReasonForkGuard) {
 		e.ForkGuard = append([]string(nil), obs.ForkGuardChecks...)

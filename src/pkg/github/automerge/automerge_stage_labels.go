@@ -280,6 +280,11 @@ type StageTracker struct {
 	// from their annotations (foldUnclassifiedForkGuard); created on first
 	// use.
 	forkGuards map[string]forkGuardRead
+	// humanMergePathFence remembers, per key, whether the head's changed
+	// files make it a person's merge under auto_merge.human_merge_paths
+	// (automerge_human_merge_path_fence.go); created on first use. Unlike
+	// obs it survives drain: it is per head, not per pass.
+	humanMergePathFence map[string]humanMergePathFenceEntry
 }
 
 // stageOwner is the lane that set a PR's current stage, for which head, and

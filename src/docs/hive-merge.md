@@ -1159,7 +1159,13 @@ A PR merges through this tier only when all of the following hold:
     (`merge-workflow-path`) and stays fenced for a person's merge, as an
     owner-released head does.
 
-  A listed file still gets the human-merge hold as well. List every
+  A listed file still gets the human-merge hold as well, and a head that
+  touches any `human_merge_paths` file is a person's merge whatever is
+  approved: the stage never asks for the owner approval on it, names the
+  human-merge path instead, and parks it at `090-ready-for-human-merge`
+  under that reason once it is reviewed, green and soaked (an unanswered
+  `requires_human` verdict still asks for its decision at 085). A PR the
+  pin-only exception might admit keeps the approval ask. List every
   reusable workflow and local action your release workflows call, not only
   the top-level files: an edit to an unlisted one merges after review.
   Three things ignore the scope:

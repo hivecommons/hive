@@ -1567,6 +1567,10 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	if err != nil {
 		return eval, contributorLaneReasonFilesEvidence, err
 	}
+	// The stage pass reads from this list whether the head is a person's
+	// merge under human_merge_paths, so its 085 note never asks for an
+	// approval the human-merge-path gate would refuse (no extra read).
+	c.noteHumanMergePathFenceHead(c.stageTrackerOrShared(), stageKey(owner, repo, number), owner, repo, headSHA, pr, files)
 	// The merge fence for this head, with the workflow-path verdict scoped by
 	// workflow_fence_scope (automerge_workflow_fence_scope.go). A workflow
 	// edit the scope waives still stays fenced once the App has been refused
