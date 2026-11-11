@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hubactivity"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -157,17 +158,9 @@ func TestHubActivityItemsServesStaleBodyWithoutBuilding(t *testing.T) {
 	}
 	<-started
 	close(release)
-	deadline := time.Now().Add(2 * time.Second)
-	for {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		s.stageTrackerCacheMu.Lock()
-		building := s.stageTrackerBuild != nil
-		s.stageTrackerCacheMu.Unlock()
-		if !building {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("background rebuild never finished")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+		defer s.stageTrackerCacheMu.Unlock()
+		return s.stageTrackerBuild == nil
+	}, "background rebuild never finished")
 }
