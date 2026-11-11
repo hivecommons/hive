@@ -670,7 +670,8 @@
   "dedupe": {},
   "contribute": {},
   "workflow": {
-    "enabled": false
+    "enabled": false,
+    "marketplace": {}
   },
   "HiveID": "",
   "acmm_level": null,
