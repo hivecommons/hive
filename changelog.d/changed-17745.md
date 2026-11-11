@@ -1,1 +1,0 @@
-- docs: ADR-0026 phase 2  Agent Substrate runtime operator and deploy notes (#17745)
