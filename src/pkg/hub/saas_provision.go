@@ -245,6 +245,13 @@ type ClusterConfig struct {
 	// reachable only via the proxy). Injected into new pool slots as
 	// HIVE_UPSTREAM_PROXY_URL / HIVE_UPSTREAM_PROXY_HOSTS / HIVE_NO_PROXY.
 	UpstreamProxy *ClusterUpstreamProxy `json:"upstream_proxy,omitempty" yaml:"upstream_proxy,omitempty"`
+	// HostAliases are Pod hostAliases entries rendered into every hive
+	// Deployment on THIS cluster, for GitHub Enterprise hosts reachable only
+	// through a TLS reverse proxy pinned to a fixed IP (no CONNECT proxy, so
+	// upstream_proxy cannot express it). Validated at load by
+	// normalizeClusterHostAliases; existing hives are converged by the
+	// host_aliases reconcile sweep (cluster_host_aliases.go, #17801).
+	HostAliases []ClusterHostAlias `json:"host_aliases,omitempty" yaml:"host_aliases,omitempty"`
 	// GitHubAppSlug is the GitHub App's URL slug on THIS cluster's GitHub
 	// host. A GitHub Enterprise instance hosts its own App registration,
 	// which is rarely named "kubestellar-hive" — without this the spoke's
@@ -2660,6 +2667,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"UpstreamProxyURL":     cluster.UpstreamProxy.url(),
 		"UpstreamProxyHosts":   cluster.UpstreamProxy.hosts(),
 		"UpstreamProxyNoProxy": cluster.UpstreamProxy.noProxy(),
+		"HostAliases":          cluster.HostAliases,
 		"IsPublic":             h.IsPublic,
 		"HiveType":             "hosted",
 		"HasGHE":               effectiveGitHubBaseURL(h, cluster) != "",
@@ -3404,6 +3412,18 @@ spec:
         app: hive
         hive-id: {{.ID}}
     spec:
+{{- if .HostAliases}}
+      # Per-cluster host_aliases (clusters.json): pins GHE hostnames to a TLS
+      # reverse-proxy IP where no CONNECT proxy exists. See #17801.
+      hostAliases:
+{{- range .HostAliases}}
+      - ip: "{{.IP}}"
+        hostnames:
+{{- range .Hostnames}}
+        - "{{.}}"
+{{- end}}
+{{- end}}
+{{- end}}
 {{- if .RequiresSCC}}
       serviceAccountName: hive-sa
 {{- else}}
