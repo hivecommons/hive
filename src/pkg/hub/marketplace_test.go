@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/workflowmodel/bundle"
 )
@@ -570,20 +571,11 @@ func TestMarketplaceRefreshRoutesAndStatus(t *testing.T) {
 	if rec = mktDo(s, admin("/api/marketplace/refresh")); rec.Code != 202 {
 		t.Fatalf("full: %d %s", rec.Code, rec.Body.String())
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	testutil.Eventually(t, 5*time.Second, func() bool {
 		rf.mu.Lock()
-		last := rf.last
-		running := rf.running
-		rf.mu.Unlock()
-		if !running && last != nil && strings.HasPrefix(last.Trigger, "on-demand:") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("background refresh did not finish")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		defer rf.mu.Unlock()
+		return !rf.running && rf.last != nil && strings.HasPrefix(rf.last.Trigger, "on-demand:")
+	}, "background refresh did not finish")
 
 	rec = mktDo(s, httptest.NewRequest(http.MethodGet, "/api/marketplace/status", nil))
 	if rec.Code != 200 {
@@ -697,7 +689,7 @@ func TestMarketplaceStartRefreshDisabledAndSeedGate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done = make(chan struct{})
 	go func() { s.StartMarketplaceRefresh(ctx); close(done) }()
-	time.Sleep(20 * time.Millisecond)
+	// Cancelling before the loop parks is fine: ctx.Done is observed either way.
 	cancel()
 	select {
 	case <-done:

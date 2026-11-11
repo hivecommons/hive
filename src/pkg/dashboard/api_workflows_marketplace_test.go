@@ -68,7 +68,6 @@ type fakeHub struct {
 	lastHive  string
 	refreshes atomic.Int32
 	publishRC int
-	down      bool
 }
 
 func newFakeHub(t *testing.T) (*fakeHub, *httptest.Server) {
