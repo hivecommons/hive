@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/logread"
 	"github.com/hivecommons/hive/pkg/adminmcp"
 	"github.com/hivecommons/hive/pkg/config"
@@ -228,5 +229,43 @@ func TestAdminMCPLogReadThroughProvider(t *testing.T) {
 	adminmcp.NewHandler(provider).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "line 0299") || !strings.Contains(rec.Body.String(), "UNTRUSTED CONTENT") {
 		t.Fatalf("tools/call log_read = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLogReadScrubsClaudeOperatorToken: the operator's long-lived Claude token
+// (HIVE_CLAUDE_OAUTH_TOKEN) is redacted from log reads over the API and the
+// admin MCP, including when it is supplied as a file outside the secret roots.
+func TestLogReadScrubsClaudeOperatorToken(t *testing.T) {
+	const sentinel = "operator-claude-sentinel-0123456789abcdef"
+	path := filepath.Join(t.TempDir(), "claude-oauth-token")
+	if err := os.WriteFile(path, []byte(sentinel+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(claude.OperatorTokenEnvVar, "")
+	t.Setenv(claude.OperatorTokenFileEnvVar, path)
+	s := logTestServer(t, writeHiveLog(t, 1, "agent env CLAUDE_CODE_OAUTH_TOKEN="+sentinel))
+
+	rec := serveLog(s, config.RoleReadWrite, "/api/logs/read")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), sentinel) {
+		t.Fatalf("API log read leaked the operator token: %d %s", rec.Code, rec.Body.String())
+	}
+
+	provider := dashboardAdminMCPProvider{server: s, role: config.RoleReadWrite}
+	data, err := provider.Read(context.Background(), adminmcp.ToolLogRead, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), sentinel) {
+		t.Fatalf("admin MCP log_read leaked the operator token: %s", out)
+	}
+
+	t.Setenv(claude.OperatorTokenFileEnvVar, "")
+	t.Setenv(claude.OperatorTokenEnvVar, sentinel)
+	if rec := serveLog(s, config.RoleReadWrite, "/api/logs/read"); strings.Contains(rec.Body.String(), sentinel) {
+		t.Fatalf("API log read leaked the env-supplied operator token: %s", rec.Body.String())
 	}
 }

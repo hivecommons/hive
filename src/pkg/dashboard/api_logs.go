@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/logread"
 	"github.com/hivecommons/hive/pkg/config"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
@@ -94,9 +95,11 @@ func (s *Server) logReadOptions(secrets *logread.SecretScrubber) logread.Options
 
 // logSecretSources lists this hive's own secret values for read-time
 // redaction: the dashboard token, the terminal login in its user:token form,
-// the terminal key, secret files, and secret-named environment values.
+// the terminal key, the operator's long-lived Claude token (which may live in a
+// file outside the secret roots), secret files, and secret-named environment
+// values.
 func (s *Server) logSecretSources() logread.SecretSources {
-	values := []string{s.authToken, os.Getenv("HIVE_TTYD_CREDENTIAL"), spoke.TerminalSigningKey()}
+	values := []string{s.authToken, os.Getenv("HIVE_TTYD_CREDENTIAL"), spoke.TerminalSigningKey(), claude.OperatorToken()}
 	if s.authToken != "" {
 		values = append(values, "hive:"+s.authToken)
 	}
