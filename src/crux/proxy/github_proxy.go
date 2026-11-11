@@ -21,6 +21,7 @@ import (
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/inferencehealth"
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 )
 
 const (
@@ -288,6 +289,11 @@ type GitHubProxy struct {
 	// verbatim). Tests substitute a pipe so the tunnel path is exercised
 	// without network access.
 	tunnelDial func(host string) (net.Conn, error)
+
+	// upstream, when set, names the hosts whose upstream leg is chained
+	// through a corporate HTTP forward proxy (SetUpstreamProxy). nil keeps
+	// every upstream dial direct.
+	upstream *upstreamproxy.Selector
 
 	canariesEnabled  bool
 	canaryFailClosed bool

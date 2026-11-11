@@ -685,6 +685,9 @@
   "otel": {},
   "Tracing": {},
   "debug": {},
+  "network": {
+    "upstream_proxy": {}
+  },
   "Mint": {
     "Enabled": false,
     "KeyPath": "",

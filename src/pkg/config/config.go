@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
@@ -118,6 +120,11 @@ type Config struct {
 	// Debug holds process-level diagnostics knobs (pprof listener). See
 	// docs/operator-reference.md "Runtime diagnostics".
 	Debug DebugConfig `yaml:"debug,omitempty" json:"debug,omitempty"`
+	// Network holds outbound-connectivity knobs: the optional upstream HTTP
+	// forward proxy that selected hosts (e.g. an enterprise GitHub reachable
+	// only via a corporate proxy) are chained through. Env overrides and
+	// HTTPS_PROXY fallback: see crux/upstreamproxy.Resolve.
+	Network NetworkConfig `yaml:"network,omitempty" json:"network,omitempty"`
 	// Triggers is an additive list of CEL-based declarative agent triggers.
 	// Default empty → existing label/governor triggering is unchanged.
 	Triggers []TriggerRule `yaml:"triggers,omitempty" json:"triggers,omitempty"`
@@ -1510,6 +1517,7 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 	}
 
 	var optedIn, noImage, noClaim, noGateway, badRuntime []string
+	var openshellBlocks []SandboxOpenShellConfig
 	for name, a := range cfg.Agents {
 		if !a.SandboxEnabled(cfg.AgentSandbox) {
 			continue
@@ -1530,6 +1538,9 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 			}
 			if strings.TrimSpace(os.WorkspaceClaim) == "" {
 				noClaim = append(noClaim, name)
+			}
+			if strings.TrimSpace(os.GatewayURL) != "" {
+				openshellBlocks = append(openshellBlocks, os)
 			}
 		}
 	}
@@ -1576,6 +1587,9 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 			"agent_sandbox.enabled is true but only %d of %d agent(s) are opted in (%s); the rest still run unconfined on the tmux path (#4918)",
 			len(optedIn), len(cfg.Agents), strings.Join(optedIn, ", ")))
 	}
+	// Last, because it may reach the network (bounded and cached): the static
+	// warnings above must not wait on a gateway.
+	out = append(out, cruxconfig.OpenShellPreflightWarnings(openshellBlocks)...)
 	return out
 }
 
@@ -4623,6 +4637,35 @@ func (c ContributeConfig) EffectiveMinFocusWindow() time.Duration {
 type ContributeHelpLink struct {
 	Label string `yaml:"label" json:"label"`
 	URL   string `yaml:"url" json:"url"`
+}
+
+// NetworkConfig groups outbound-connectivity settings.
+type NetworkConfig struct {
+	UpstreamProxy UpstreamProxyConfig `yaml:"upstream_proxy,omitempty" json:"upstream_proxy,omitempty"`
+}
+
+// UpstreamProxyConfig names a corporate HTTP forward proxy and the hosts
+// whose TLS egress (control-plane GitHub clients, in-process git, and every
+// agent :443 flow intercepted by the MITM proxy) must be chained through it
+// with CONNECT. Env mapping: HIVE_UPSTREAM_PROXY_URL, HIVE_UPSTREAM_PROXY_HOSTS
+// (comma-separated), HIVE_NO_PROXY; when none of these nor the file block is
+// set, standard HTTPS_PROXY/HTTP_PROXY/NO_PROXY apply to all hosts.
+type UpstreamProxyConfig struct {
+	// URL is the proxy, e.g. http://proxy.corp.example:3128 (userinfo is
+	// sent as Proxy-Authorization: Basic).
+	URL string `yaml:"url,omitempty" json:"url,omitempty"`
+	// Hosts restricts chaining to matching hosts: exact ("ghe.corp.example"),
+	// wildcard ("*.ghe.corp.example", subdomains only), dotted suffix
+	// (".corp.example"), IP, CIDR, or "*". Empty means every host not in
+	// NoProxy.
+	Hosts []string `yaml:"hosts,omitempty" json:"hosts,omitempty"`
+	// NoProxy lists hosts (same grammar) that are always dialled directly.
+	NoProxy []string `yaml:"no_proxy,omitempty" json:"no_proxy,omitempty"`
+}
+
+// UpstreamProxy converts the file block into the selector package's input.
+func (c UpstreamProxyConfig) UpstreamProxy() upstreamproxy.Config {
+	return upstreamproxy.Config{URL: c.URL, Hosts: c.Hosts, NoProxy: c.NoProxy}
 }
 
 type HubConfig struct {

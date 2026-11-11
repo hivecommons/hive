@@ -147,9 +147,19 @@ type openshellExec interface {
 	Run(ctx context.Context, workspace, sandboxName string, command []string, opts ...openshell.ExecOptions) (*openshell.ExecResult, error)
 }
 
+type openshellHealth interface {
+	Check(ctx context.Context) (*openshell.HealthResult, error)
+}
+
+type openshellConfig interface {
+	GetGateway(ctx context.Context) (*openshell.GatewayConfig, error)
+}
+
 type openshellClient interface {
 	Sandboxes() openshellSandboxes
 	Exec() openshellExec
+	Health() openshellHealth
+	Config() openshellConfig
 	Close() error
 }
 
@@ -158,6 +168,8 @@ type sdkClient struct{ c *openshell.Client }
 
 func (s sdkClient) Sandboxes() openshellSandboxes { return s.c.Sandboxes() }
 func (s sdkClient) Exec() openshellExec           { return s.c.Exec() }
+func (s sdkClient) Health() openshellHealth       { return s.c.Health() }
+func (s sdkClient) Config() openshellConfig       { return s.c.Config() }
 func (s sdkClient) Close() error                  { return s.c.Close() }
 
 // OpenShellLauncher runs sandboxed kicks through an OpenShell gateway.
@@ -494,6 +506,10 @@ func openshellAddress(raw string) (addr string, tls bool, err error) {
 	return host, tls, nil
 }
 
+// openshellHostName is a literal DNS name or IPv4 address: no wildcard,
+// userinfo, query, fragment or second colon can ride along in a host entry.
+var openshellHostName = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$`)
+
 // openshellHostPort parses an allow_hosts entry: `host` means 443.
 func openshellHostPort(raw string) (string, uint32, error) {
 	raw = strings.TrimSpace(raw)
@@ -504,6 +520,9 @@ func openshellHostPort(raw string) (string, uint32, error) {
 		return "", 0, fmt.Errorf("openshell: allow_hosts entry %q must be host or host:port, not a URL", raw)
 	}
 	host, portStr, found := strings.Cut(raw, ":")
+	if !openshellHostName.MatchString(host) {
+		return "", 0, fmt.Errorf("openshell: allow_hosts entry %q must be a literal host name — no wildcards, userinfo, query or fragment", raw)
+	}
 	if !found {
 		return host, openshellHTTPSPort, nil
 	}

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -73,5 +74,41 @@ func TestSandboxOpenShellGateWarnings(t *testing.T) {
 	cfg.AgentSandbox.OpenShell = &SandboxOpenShellConfig{GatewayURL: "gw:8080", WorkspaceClaim: "hive-data"}
 	if got := AgentSandboxGateWarnings(cfg); len(got) != 0 {
 		t.Errorf("fully configured openshell runtime still warns: %q", got)
+	}
+}
+
+func TestAgentSandboxGateWarningsIncludeOpenShellPreflight(t *testing.T) {
+	yes := true
+	cfg := &Config{
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			AgentSandbox: AgentSandboxConfig{
+				Enabled:   true,
+				Image:     "img",
+				OpenShell: &SandboxOpenShellConfig{GatewayURL: "gw:8080", WorkspaceClaim: "hive-data"},
+			},
+			Agents: map[string]AgentConfig{
+				"a": {Sandbox: &AgentSandboxOverride{Enabled: &yes, Runtime: SandboxRuntimeOpenShell}},
+				"b": {Sandbox: &AgentSandboxOverride{Enabled: &yes, Runtime: SandboxRuntimeOpenShell}},
+			},
+		},
+	}
+	var calls int
+	var gotBlocks int
+	cruxconfig.SetOpenShellPreflight(func(b []SandboxOpenShellConfig) []string {
+		calls++
+		gotBlocks = len(b)
+		return []string{"gateway gw:8080 is unreachable"}
+	})
+	defer cruxconfig.SetOpenShellPreflight(nil)
+	got := AgentSandboxGateWarnings(cfg)
+	if len(got) != 1 || !strings.Contains(got[0], "unreachable") || calls != 1 || gotBlocks != 2 {
+		t.Errorf("warnings = %q calls=%d blocks=%d, want the preflight warning from one call over both agents", got, calls, gotBlocks)
+	}
+
+	cfg.Agents = map[string]AgentConfig{"p": {Sandbox: &AgentSandboxOverride{Enabled: &yes, Runtime: SandboxRuntimePodman}}}
+	calls = 0
+	AgentSandboxGateWarnings(cfg)
+	if calls != 0 {
+		t.Errorf("preflight ran with no openshell agent")
 	}
 }

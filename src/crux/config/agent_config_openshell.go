@@ -1,6 +1,37 @@
 package config
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
+
+var (
+	openshellPreflightMu sync.RWMutex
+	openshellPreflight   func([]SandboxOpenShellConfig) []string
+)
+
+// SetOpenShellPreflight registers the cluster-prerequisite check
+// AgentSandboxGateWarnings runs for openshell-runtime agents. This package
+// (and pkg/config above it) cannot import the OpenShell SDK or crux/sandbox,
+// so the code that owns the gateway client plugs itself in here. Passing nil
+// unregisters it.
+func SetOpenShellPreflight(f func([]SandboxOpenShellConfig) []string) {
+	openshellPreflightMu.Lock()
+	defer openshellPreflightMu.Unlock()
+	openshellPreflight = f
+}
+
+// OpenShellPreflightWarnings runs the registered preflight against the given
+// openshell blocks; with none registered it reports nothing.
+func OpenShellPreflightWarnings(cfgs []SandboxOpenShellConfig) []string {
+	openshellPreflightMu.RLock()
+	f := openshellPreflight
+	openshellPreflightMu.RUnlock()
+	if f == nil || len(cfgs) == 0 {
+		return nil
+	}
+	return f(cfgs)
+}
 
 // SandboxOpenShellConfig is everything the OpenShell runtime needs beyond the
 // image (ADR-0026 phase 1). Hive talks to an OpenShell gateway over its gRPC

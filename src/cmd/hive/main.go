@@ -26,6 +26,7 @@ import (
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/crux/trajectory"
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/crux/watsonx"
 	"github.com/hivecommons/hive/pkg/advisory"
@@ -654,6 +655,13 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 		"boot_source", config.ResolvedConfigPath(b.configPath),
 		"persisted_path", config.PersistedConfigPath(b.configPath),
 	)
+
+	// Upstream forward-proxy chaining (enterprise GitHub reachable only via
+	// a corporate proxy): resolve the rule set once from network.upstream_proxy
+	// / HIVE_UPSTREAM_PROXY_* / HTTPS_PROXY and hand it to every outbound
+	// path — control-plane GitHub clients, in-process git, and the MITM proxy
+	// that carries agent :443 traffic (bootProxyWith).
+	configureUpstreamProxy(b.logger, b.cfg)
 
 	// Load or generate a unique Hive ID for this instance
 	b.cfg.HiveID = deps.hiveID(b.logger)
@@ -4061,6 +4069,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 	if err != nil {
 		b.logger.Error("failed to create github proxy", "error", err)
 	} else {
+		b.githubProxy.SetUpstreamProxy(upstreamproxy.Default())
 		b.githubProxy.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, canaryLeakHandler)
 		// REST accounting and the shared core-bucket snapshot the agent
 		// GitHub budget reads live in pkg/github; the proxy takes them through
