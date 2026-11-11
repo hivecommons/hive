@@ -51,6 +51,8 @@ type GitSource struct {
 	ready    bool
 	// stopSync cancels the context the sync loop runs on; nil until bound.
 	stopSync context.CancelFunc
+	// syncDone is closed when the bound sync loop goroutine returns.
+	syncDone chan struct{}
 }
 
 // NewGitSource creates a git source. Call Init() to clone the repo and start
@@ -141,7 +143,7 @@ func (g *GitSource) Config() GitSourceConfig {
 // touched. The copy inherits stopSync so stopping it stops the shared loop.
 func (g *GitSource) withConfig(cfg GitSourceConfig) *GitSource {
 	g.mu.RLock()
-	store, ready, stopSync := g.store, g.ready, g.stopSync
+	store, ready, stopSync, syncDone := g.store, g.ready, g.stopSync, g.syncDone
 	g.mu.RUnlock()
 	if store != nil {
 		store.SetName(cfg.Name)
@@ -154,33 +156,43 @@ func (g *GitSource) withConfig(cfg GitSourceConfig) *GitSource {
 		logger:   g.logger,
 		ready:    ready,
 		stopSync: stopSync,
+		syncDone: syncDone,
 	}
 }
 
 // bindSyncContext derives the context the sync loop should run on from ctx
 // and remembers its cancel func, so the loop can be stopped when the source is
-// disconnected or replaced instead of running for the server's lifetime.
-func (g *GitSource) bindSyncContext(ctx context.Context) context.Context {
+// disconnected or replaced instead of running for the server's lifetime. The
+// returned done channel must be closed by the caller when the loop goroutine
+// exits; StopSyncLoop waits on it.
+func (g *GitSource) bindSyncContext(ctx context.Context) (context.Context, chan<- struct{}) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.stopSync != nil {
 		g.stopSync()
 	}
 	loopCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	g.stopSync = cancel
-	return loopCtx
+	g.syncDone = done
+	return loopCtx, done
 }
 
-// StopSyncLoop cancels the sync loop bound via bindSyncContext, so a
-// disconnected or replaced source stops pulling its remote. Safe to call when
-// no loop was bound.
+// StopSyncLoop cancels the sync loop bound via bindSyncContext and waits for
+// it to return, so a disconnected or replaced source has stopped pulling its
+// remote by the time this returns: a same-identity branch edit can then rename
+// the old clone aside without a `git pull` still writing into it. Safe to
+// call when no loop was bound.
 func (g *GitSource) StopSyncLoop() {
 	g.mu.Lock()
-	stop := g.stopSync
-	g.stopSync = nil
+	stop, done := g.stopSync, g.syncDone
+	g.stopSync, g.syncDone = nil, nil
 	g.mu.Unlock()
 	if stop != nil {
 		stop()
+	}
+	if done != nil {
+		<-done
 	}
 }
 

@@ -2240,7 +2240,7 @@
 
       if (!url) { kbFieldError(document.getElementById('kb-doc-url'), 'Document URL is required'); return; }
 
-      const btn = document.querySelector('#kb-subs-content button[onclick="kbImportDocFromModal()"]');
+      const btn = document.querySelector('#kb-subs-content [data-action="kbImportDocFromModal"]');
       if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
 
       try {

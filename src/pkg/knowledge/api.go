@@ -1118,8 +1118,11 @@ var (
 // waiting for server shutdown. The cancel func is bound before the goroutine
 // starts, so a swap that races the loop start still stops it.
 func startGitSourceSync(gs *GitSource, ctx context.Context) {
-	loopCtx := gs.bindSyncContext(ctx)
-	go startGitSourceSyncLoopForConnect(gs, loopCtx)
+	loopCtx, done := gs.bindSyncContext(ctx)
+	go func() {
+		defer close(done)
+		startGitSourceSyncLoopForConnect(gs, loopCtx)
+	}()
 }
 
 // GetGitSourceStore returns the underlying FileStore for a git source by name.
@@ -1254,7 +1257,7 @@ func (k *KnowledgeAPI) ReplaceGitSource(ctx context.Context, oldURL, oldSubpath 
 		}
 	}
 
-	if err := k.swapGitSource(oldURL, oldSubpath, gs, promote); err != nil {
+	if err := k.swapGitSource(ctx, oldURL, oldSubpath, gs, promote); err != nil {
 		return err
 	}
 	startGitSourceSync(gs, ctx)
@@ -1305,22 +1308,25 @@ func promoteStagedClone(staging, finalDir string) error {
 // under the lock, so a source disconnected while the replacement clone ran is
 // not resurrected: swapGitSource returns ErrGitSourceNotFound and gs is never
 // published. promote, when non-nil, runs under the same lock just before gs is
-// published; it moves a staged clone into place, and its failure aborts the
-// swap with the old source untouched.
-func (k *KnowledgeAPI) swapGitSource(url, subpath string, gs *GitSource, promote func() error) error {
+// published; it moves a staged clone into place. The old loop is stopped (and
+// has returned) before promote runs, so no `git pull` is writing into the
+// clone while it is renamed aside; if promote fails the swap is aborted, the
+// old source stays published and its sync loop is restarted on ctx.
+func (k *KnowledgeAPI) swapGitSource(ctx context.Context, url, subpath string, gs *GitSource, promote func() error) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	for i, cur := range k.gitSources {
 		if cur.Config().URL != url || cur.Config().Subpath != subpath {
 			continue
 		}
+		cur.StopSyncLoop()
 		if promote != nil {
 			if err := promote(); err != nil {
+				startGitSourceSync(cur, ctx)
 				return err
 			}
 		}
 		k.gitSources[i] = gs
-		cur.StopSyncLoop()
 		return nil
 	}
 	return fmt.Errorf("%w: %s (subpath: %s)", ErrGitSourceNotFound, url, subpath)
@@ -1328,6 +1334,8 @@ func (k *KnowledgeAPI) swapGitSource(url, subpath string, gs *GitSource, promote
 
 // GitSources returns info about all connected git sources.
 func (k *KnowledgeAPI) GitSources() []GitSourceInfo {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
 	infos := make([]GitSourceInfo, len(k.gitSources))
 	for i, gs := range k.gitSources {
 		infos[i] = gs.Info()

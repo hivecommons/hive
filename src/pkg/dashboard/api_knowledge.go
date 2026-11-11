@@ -1367,9 +1367,11 @@ func (s *Server) handleGitSourcesUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// A blank branch means "the remote default", which ReplaceGitSource
-	// resolves; it only counts as a change if that differs from the current
-	// branch, so a no-op Save with a blank field does not re-clone.
+	// A blank branch means "the remote default". The handler resolves it here,
+	// before deciding whether a re-clone is needed, so a no-op Save with a
+	// blank field compares the resolved name against the current branch and
+	// does not re-clone. (ReplaceGitSource also resolves a blank branch for
+	// direct library callers; it never sees one from this handler.)
 	if next.Branch == "" {
 		branch, err := knowledge.ResolveGitSourceDefaultBranch(r.Context(), next.URL)
 		if err != nil {
