@@ -458,13 +458,25 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 
 	// Durable per-PR+SHA state (/data, survives restarts and re-requests).
 	// A request for a head that already exhausted its budget is refused with
-	// the recorded reason instead of starting another poll cycle, and a head
+	// the recorded reason instead of starting another poll cycle, except that
+	// a CI-gate exhaustion is re-evaluated once first (below), and a head
 	// parked on pending CI is not re-evaluated before its backoff elapses.
 	now := nowFn()
 	prState, tracked := c.mergeRequestState(req.Repo, req.Number, req.ExpectSHA)
 	if tracked && prState.Exhausted && now.Sub(prState.At) < mergeRequestExhaustedRefusal {
-		c.refuseExhaustedMergeRequest(path, req, prState, nowFn)
-		return
+		// A CI-gate verdict can be a gate false positive fixed since, or an
+		// advisory check re-run green on the same head; a fork PR cannot get
+		// a new SHA from the hive (#17606). Re-evaluate the gate once and
+		// refuse only if it still blocks; other reasons refuse outright.
+		fresh, reevaluated := c.reevaluateExhaustedCIGate(ctx, req, prState, now)
+		if !reevaluated || fresh != "" {
+			if fresh != "" {
+				prState.Reason += "; re-evaluated: " + fresh
+			}
+			c.refuseExhaustedMergeRequest(path, req, prState, nowFn)
+			return
+		}
+		c.clearMergeRequestState(req.Repo, req.Number)
 	}
 	if tracked && !prState.Exhausted && now.Before(prState.NextPollAt) {
 		return
@@ -775,13 +787,42 @@ func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, att
 // request was already exhausted with the recorded reason, instead of starting
 // another wait/retry cycle on a head that has not changed.
 func (c *Client) refuseExhaustedMergeRequest(path string, req MergeRequest, prev mergeRequestPRState, nowFn func() time.Time) {
-	reason := fmt.Sprintf("refused: an earlier merge request for this PR was exhausted on the same head %s at %s (%s); push a new commit or merge it manually",
-		shortSHA(prev.SHA), prev.At.UTC().Format(time.RFC3339), prev.Reason)
+	hint := "push a new commit or merge it manually"
+	if strings.HasPrefix(prev.Reason, mergeRequestCIGateReasonPrefix) {
+		hint = "re-run the failing check and re-request, push a new commit, or merge it manually"
+	}
+	reason := fmt.Sprintf("refused: an earlier merge request for this PR was exhausted on the same head %s at %s (%s); %s",
+		shortSHA(prev.SHA), prev.At.UTC().Format(time.RFC3339), prev.Reason, hint)
 	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: prev.Attempts, OK: false, Error: reason, At: nowFn().UTC().Format(time.RFC3339)})
 	_ = os.Rename(path, path+".exhausted")
 	c.logger.Info("merge-request watcher: refused re-request for a head already exhausted",
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", prev.SHA), slog.String("agent", req.Agent))
+}
+
+// reevaluateExhaustedCIGate re-runs the CI gate once for a PR+SHA exhausted
+// on a CI-gate reason. reevaluated is false when the recorded reason is not a
+// CI-gate verdict (conflict, permission, merge-queue-required) or the repo is
+// on a non-GitHub forge. blocking is the fresh gate reason when the gate
+// still does not pass, empty when it is now green.
+func (c *Client) reevaluateExhaustedCIGate(ctx context.Context, req MergeRequest, prev mergeRequestPRState, now time.Time) (blocking string, reevaluated bool) {
+	if !strings.HasPrefix(prev.Reason, mergeRequestCIGateReasonPrefix) || c.forgeMergeFor(req.Repo) != nil {
+		return "", false
+	}
+	verdict, why, err := c.verifyMergeRequestCI(ctx, req.Repo, req.Number, req.ExpectSHA, now, time.Time{})
+	if err != nil {
+		c.logCIVerdict(req, verdict, err.Error())
+		return err.Error(), true
+	}
+	verdict, why = c.maybeDowngradeNoCIVerdict(req, verdict, why)
+	c.logCIVerdict(req, verdict, why)
+	if verdict != mergeCIGreen {
+		return why, true
+	}
+	c.logger.Info("merge-request watcher: exhausted head re-evaluated green, clearing the CI-gate exhaustion",
+		slog.String("repo", req.Repo), slog.Int("number", req.Number),
+		slog.String("sha", prev.SHA), slog.String("recorded_reason", prev.Reason))
+	return "", true
 }
 
 func (c *Client) denyMergeRequest(path string, req MergeRequest, reason string, nowFn func() time.Time) {
