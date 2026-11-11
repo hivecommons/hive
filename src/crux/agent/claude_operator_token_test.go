@@ -151,3 +151,17 @@ func TestClaudeOperatorToken_NeverLogged(t *testing.T) {
 		t.Fatal("operator token reached the shell command-line env prefix")
 	}
 }
+
+// The hive process holds HIVE_CLAUDE_OAUTH_TOKEN in its own environment, and
+// every tmux server it starts inherits that globally. applySessionEnv must
+// strip it (with -r, so the global value is hidden too) or every pane of every
+// backend — copilot, codex, bob — could read the year-long token under its
+// original name. The claude backend receives it only as CLAUDE_CODE_OAUTH_TOKEN.
+func TestClaudeOperatorToken_StrippedFromInheritedPaneEnv(t *testing.T) {
+	for _, k := range inheritedCredentialEnvVars {
+		if k == claude.OperatorTokenEnvVar {
+			return
+		}
+	}
+	t.Fatalf("%s is not in inheritedCredentialEnvVars; it would reach every agent pane via the tmux global environment", claude.OperatorTokenEnvVar)
+}
