@@ -17,6 +17,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/internal/testutil"
 	"github.com/hivecommons/hive/crux/sharedfile"
 )
 
@@ -770,16 +771,10 @@ func TestCredentialWatchdog_RebridgesWithinOneCycle(t *testing.T) {
 	done := make(chan struct{})
 	go func() { m.StartCredentialWatchdog(ctx); close(done) }()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if got, err := os.Readlink(link); err == nil && got == target {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("watchdog did not re-bridge the credential within 5s")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		got, err := os.Readlink(link)
+		return err == nil && got == target
+	}, "watchdog did not re-bridge the credential within 5s")
 	cancel()
 	<-done
 	if !bytes.Equal(mustRead(t, target), fresh) {
