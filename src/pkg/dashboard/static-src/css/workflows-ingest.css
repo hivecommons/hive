@@ -1,0 +1,21 @@
+    /* Settings → Workflows → Ingest, other sources (#17620 phase 6): cluster and written-spec panels */
+    .wf-src-panel { border: var(--line-width) solid var(--border); border-radius: var(--r); padding: var(--sp-0) var(--sp-4); margin-top: var(--sp-4); }
+    .wf-src-panel > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-3); padding: var(--sp-3) var(--sp-0); list-style: none; }
+    .wf-src-panel > summary::-webkit-details-marker { display: none; }
+    .wf-src-panel > summary::before { content: '▸'; color: var(--muted); font-size: var(--fs-sm); }
+    .wf-src-panel[open] > summary::before { content: '▾'; }
+    .wf-src-panel > summary h3 { margin: var(--sp-0); font-size: var(--fs-base); }
+    .wf-src-panel > p, .wf-src-panel > .wf-ingest-form, .wf-src-panel > .wf-ingest-result, .wf-src-panel > .wf-ingest-error { margin-bottom: var(--sp-4); }
+    .wf-src-wide { grid-column: 1 / -1; }
+    .wf-src-check { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
+    .wf-src-check input[type="checkbox"] { width: auto; margin: var(--sp-0); }
+    .wf-src-unavailable { color: var(--status-warn); }
+    .wf-src-note { margin: var(--sp-3) var(--sp-0) var(--sp-0); }
+    .wf-src-llm { display: inline-block; border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); font-weight: 700; border: var(--line-width) solid var(--border); color: var(--muted); }
+    .wf-src-llm-on { color: var(--brand); }
+    .wf-src-llm-fallback { color: var(--status-warn); }
+    .wf-src-runs, .wf-src-sections { margin: var(--sp-0); padding-left: var(--sp-6); font-size: var(--fs-sm); }
+    .wf-src-run-status { font-weight: 700; color: var(--muted); }
+    .wf-src-run-succeeded { color: var(--status-ok); }
+    .wf-src-run-failed { color: var(--status-error); }
+    .wf-src-run-running { color: var(--status-warn); }
