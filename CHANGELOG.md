@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.218.0)
+
+### Added
+
+- Workflow models, RFC phase 3c ([#17620](https://github.com/hivecommons/hive/issues/17620)): simulate an issue or PR against a model before binding it. New read-only `POST /api/workflows/{name}/{version}/simulate` takes `{kind, facts}` (a JSON mirror of the engine's `Facts`) or `{repo, number}` to best-effort fill the facts from the forge (the response lists what was fetched and what stayed unknown), runs the stored model's deriver through the new `stageengine.Explain`, and returns the decision (state, column, stage label, reason, covered/abstain) with a per-rule trace — every rule in order, the first match highlighted, each predicate's holds/known verdict — or a single built-in entry for `derivation: builtin` models. Settings → Workflows → model detail grows a **Simulate** panel: pick `owner/repo#123` and Fetch facts, or describe the item in a form, Run, and the matched state lights up in the diagram.
+
+### Fixed
+
+- Weekly competitor report: the publication gate no longer rejects the Discord post for the Discord formatting the prompt itself requires (bold headings, fenced project table, no sources details), which silently blocked the 2026-11-09 report.
+
 ## 2026-11-11 (v5.217.1)
 
 ### Changed
