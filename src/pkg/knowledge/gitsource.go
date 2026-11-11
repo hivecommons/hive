@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 )
 
 const (
@@ -542,10 +544,14 @@ func gitSourceEnv() []string {
 	if allowPrivateGitSource() {
 		allowedProtocols += ":http"
 	}
-	return append(os.Environ(),
+	env := append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_ALLOW_PROTOCOL="+allowedProtocols,
 	)
+	// Chain knowledge-source clones through the configured upstream forward
+	// proxy for the hosts it names (enterprise GitHub behind a corporate
+	// proxy); nil selector appends nothing.
+	return append(env, upstreamproxy.Default().GitEnv()...)
 }
 
 // gitSourceSlug creates a filesystem-safe directory name from a git URL + subpath.
