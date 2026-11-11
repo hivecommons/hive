@@ -7,6 +7,7 @@
 # hivecommons/hive#13536) from pkg/dashboard must route through an existing
 # seam or be added here with PR justification; removed imports must be
 # deleted so the ratchet tightens. Entries are sorted.
+# workflowmodel: /api/workflows handlers compile lifecycle models (Compile, Profile diagnostics) and the tracker emits per-repo workflow columns; the store and bindings already route through Dependencies (hivecommons/hive#17620 P2).
 github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agentparse
 github.com/hivecommons/hive/crux/claude
@@ -73,5 +74,6 @@ github.com/hivecommons/hive/pkg/tokens
 github.com/hivecommons/hive/pkg/turn
 github.com/hivecommons/hive/pkg/upstreamwatch
 github.com/hivecommons/hive/pkg/webassets
+github.com/hivecommons/hive/pkg/workflowmodel
 github.com/hivecommons/hive/pkg/worksource
 github.com/hivecommons/hive/pkg/writeback

@@ -93,13 +93,23 @@ type Metadata struct {
 // Spec is the model body: the process graph (states, transitions, guards,
 // lanes) and the execution graphs (pipelines) bound into it.
 type Spec struct {
+	Meta        Meta         `json:"meta,omitzero"`
 	Scope       Scope        `json:"scope"`
 	Sources     []Source     `json:"sources,omitempty"`
 	Initial     string       `json:"initial"`
+	Columns     []Column     `json:"columns,omitempty"`
 	States      []State      `json:"states"`
 	Transitions []Transition `json:"transitions,omitempty"`
 	Guards      []Guard      `json:"guards,omitempty"`
 	Lanes       []Lane       `json:"lanes,omitempty"`
+	Derivation  Derivation   `json:"derivation,omitzero"`
+	Events      []Event      `json:"events,omitempty"`
+	Gates       []Gate       `json:"gates,omitempty"`
+	Roles       []RoleDef    `json:"roles,omitempty"`
+	Agents      []AgentGrant `json:"agents,omitempty"`
+	Checks      []Check      `json:"checks,omitempty"`
+	Bookkeeping []Effect     `json:"bookkeeping,omitempty"`
+	Labels      LabelSet     `json:"labels,omitzero"`
 	Pipelines   []Pipeline   `json:"pipelines,omitempty"`
 	Coverage    Coverage     `json:"coverage"`
 }
@@ -131,6 +141,8 @@ type State struct {
 	// Pipelines bound into this state (by Pipeline.ID).
 	Pipelines []string `json:"pipelines,omitempty"`
 	Origin    Origin   `json:"origin,omitempty"`
+	// Lifecycle is the board/label half of the state (lifecycle.go).
+	Lifecycle StateLifecycle `json:"lifecycle,omitzero"`
 }
 
 // Transition moves work between states on an event, if its guard holds.
@@ -139,6 +151,10 @@ type Transition struct {
 	To       string `json:"to"`
 	On       string `json:"on"`
 	GuardRef string `json:"guardRef,omitempty"`
+	// GateRef is the lifecycle Gate (lifecycle.go) the move needs.
+	GateRef string `json:"gateRef,omitempty"`
+	// Note is the human-readable reason for the edge.
+	Note string `json:"note,omitempty"`
 }
 
 // GuardKind is the family a guard belongs to.

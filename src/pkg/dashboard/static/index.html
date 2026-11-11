@@ -1609,6 +1609,13 @@
     .ham-group-n, .ham-group-attn { flex: 0 0 auto; font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; }
     .ham-group-attn { color: var(--amber); }
     .ham-group-collapsed .ham-group-name { color: var(--muted); }
+    /* Workflow-model columns (RFC 17620): the model badge on a
+       bound repository's group header, its own column header, and the
+       "Not covered" chevron for a stage the model has no state for. */
+    .ham-wf-badge { flex: 0 0 auto; font-family: var(--font-mono); font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; color: var(--indigo); background: color-mix(in srgb, var(--indigo) 12%, transparent); border: 1px solid color-mix(in srgb, var(--indigo) 40%, transparent); }
+    .ham-wf-cols { position: static; }
+    .ham-wf-cols .ham-wf-col { color: var(--indigo); }
+    .ham-seg.ham-wf-uncovered { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); outline: 1px dashed var(--amber); }
     .ham-group-dist { flex: 0 0 auto; margin-left: auto; margin-right: calc(4em + var(--sp-3)); display: inline-flex; align-items: flex-end; gap: var(--sp-1); height: 0.9em; }
     .ham-gd { display: inline-block; width: 0.45em; height: 15%; border-radius: var(--sp-1); background: color-mix(in srgb, var(--text-faint) 35%, transparent); }
     .ham-gd-1 { height: 35%; background: color-mix(in srgb, var(--amber) 55%, transparent); }
@@ -19540,6 +19547,83 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const rm = item && item.rebase_merge;
       return !!(rm && (rm.state === 'approved' || rm.state === 'rebasing' || rm.state === 'ci-pending'));
     }
+    /* ---- Workflow-model columns (hivecommons/hive#17620, RFC phase 2) -----
+       GET /api/stage-tracker carries `workflows` only when at least one
+       repository is bound to a model other than hive-default. For such a
+       repository the group header names the model and draws the model's own
+       column header, and each row's strip is one chevron per model column,
+       placed by the stage/NNN number the row wears. Everything else on the
+       row (lead cell, chips, human gate, notes) is unchanged. Hives with no
+       binding never reach this code: stageTrackerWorkflowOf returns null and
+       the built-in strip renders exactly as before. Pure helpers so the node
+       harness (stage_tracker_workflows_ui_test.go) can run them. */
+    const STAGE_TRACKER_WORKFLOW_UNCOVERED_WORD = 'Not covered';
+
+    // The model block for repo, or null when the repo follows hive-default
+    // (unbound, bound to hive-default itself, or bound to a model the
+    // server reported as unusable — the row then falls back to the
+    // built-in strip, which is what the engine does too).
+    function stageTrackerWorkflowOf(ctx, repo) {
+      const w = ctx && ctx.workflows;
+      if (!w || !w.repos) return null;
+      const wf = w.repos[String(repo || '')];
+      if (!wf || wf.error || !Array.isArray(wf.columns) || !wf.columns.length) return null;
+      if (w.default && wf.name === w.default.name && wf.version === w.default.version) return null;
+      return wf;
+    }
+
+    // Index of the column holding stage number `stage`; 0 for an unstaged
+    // item (the first column is the model's entry), the terminal column for
+    // a terminal stage, -1 when no column anchors the number (the model
+    // does not cover it: the engine abstained with "workflow: not covered").
+    function stageTrackerWorkflowColumnIndex(wf, stage) {
+      const n = Number(stage) || 0;
+      const cols = wf.columns;
+      if (n === 0) return 0;
+      if (n >= (typeof STAGE_TRACKER_TERMINAL === 'number' ? STAGE_TRACKER_TERMINAL : 110)) {
+        const t = cols.findIndex(c => c.terminal);
+        return t >= 0 ? t : cols.length - 1;
+      }
+      return cols.findIndex(c => Array.isArray(c.numbers) && c.numbers.indexOf(n) >= 0);
+    }
+
+    function stageTrackerWorkflowBadgeHtml(wf) {
+      if (!wf) return '';
+      const key = `${wf.name}@${wf.version}`;
+      return `<span class="ham-wf-badge" title="${esc('This repository follows the ' + key + ' workflow model; its columns are the model\'s, not hive-default\'s.')}">${esc(key)}</span>`;
+    }
+
+    // The model's column header, drawn under a bound repository's group
+    // header in place of the shared hive-default header.
+    function stageTrackerWorkflowHeaderHtml(wf) {
+      const cols = wf.columns.map(c => `<li class="ham-seg ham-wf-col${c.terminal ? ' cap' : ''}" title="${esc(c.hint || c.label)}"><span class="ham-seg-t">${esc(c.label)}</span></li>`).join('');
+      return `<div class="ham-cols ham-wf-cols" aria-hidden="true" data-ham-workflow="${esc(wf.name + '@' + wf.version)}"><div class="ham-strip-row"><ol class="ham-strip">${cols}</ol><span class="ham-since">since</span></div></div>`;
+    }
+
+    // One row's strip under its model: done before the anchored column,
+    // active at it (the stage's own word from `stages`, or the column
+    // label), todo after. An uncovered stage lights the first column amber
+    // with the "Not covered" word so the gap is visible, not silent.
+    function stageTrackerWorkflowStripItems(item, wf, stages) {
+      const cur = Number(item.stage) || 0;
+      const terminal = cur >= (typeof STAGE_TRACKER_TERMINAL === 'number' ? STAGE_TRACKER_TERMINAL : 110);
+      let at = stageTrackerWorkflowColumnIndex(wf, cur);
+      const uncovered = at < 0;
+      if (uncovered) at = 0;
+      const st = (stages || []).find(s => Number(s.number) === cur) || {};
+      return wf.columns.map((c, i) => {
+        let state = 'todo';
+        if (terminal || i < at) state = 'done';
+        else if (i === at) state = 'active';
+        if (terminal && c.terminal) state = 'active';
+        const word = state !== 'active' ? c.label : (uncovered ? STAGE_TRACKER_WORKFLOW_UNCOVERED_WORD : (st.short || st.label || c.label));
+        const tip = state === 'active' && uncovered
+          ? `stage/${String(cur).padStart(3, '0')} is not a state of ${wf.name}@${wf.version}; the engine leaves this item where it is.`
+          : (c.hint || c.label) + (state === 'active' && cur ? ` — stage/${String(cur).padStart(3, '0')}` : '');
+        const cls = ['ham-seg', 'ham-wf-seg', state, c.terminal ? 'cap' : '', uncovered && state === 'active' ? 'ham-wf-uncovered' : ''].filter(Boolean).join(' ');
+        return `<li class="${cls}" title="${esc(tip)}"><span class="ham-seg-t">${esc(word)}</span></li>`;
+      }).join('');
+    }
     const STAGE_TRACKER_ACTED_STATES = ['waiting', 'addressed', 'stuck', 'pending', 'failed', 'executing', 'blocked'];
     const STAGE_TRACKER_ACTED_FILTERS = ['any', 'awaiting', 'acted', 'stuck'];
     const STAGE_TRACKER_ACTED_STUCK_DEFAULT_S = 30 * 60;
@@ -20485,6 +20569,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // needs-attention count and a mini per-column distribution. Keyed
     // `group:owner/repo` by the render so the reconcile keeps it stable.
     function stageTrackerGroupHeaderHtml(g, stages, ctx) {
+      const groupWorkflow = typeof stageTrackerWorkflowOf === 'function' ? stageTrackerWorkflowOf(ctx, g.repo) : null;
       const max = Math.max(1, ...g.cols);
       const dist = g.cols.map((c, i) => `<i class="ham-gd ham-gd-${c ? Math.max(1, Math.ceil(c / max * STAGE_TRACKER_GROUP_DIST_STEPS)) : 0}" title="${esc(stageTrackerColName(i, stages) + ': ' + c)}"></i>`).join('');
       const attn = g.attention ? `<span class="ham-group-attn">${g.attention} need${g.attention === 1 ? 's' : ''} attention</span>` : '';
@@ -20492,10 +20577,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const chipCtx = { repoChips: Object.assign({}, (ctx && ctx.repoChips) || {}) };
       return `<div class="ham-group${g.collapsed ? ' ham-group-collapsed' : ''}" data-ham-repo="${esc(g.repo)}" role="row">
         <button type="button" class="ham-group-toggle" data-action="hamGroupToggle" data-arg0="${esc(g.repo)}" data-stop="1" aria-expanded="${g.collapsed ? 'false' : 'true'}" aria-label="${esc((g.collapsed ? 'Expand ' : 'Collapse ') + g.repo)}"><span class="ham-group-caret" aria-hidden="true">${g.collapsed ? '▸' : '▾'}</span></button>
-        ${stageTrackerRepoChipHtml(g.repo, chipCtx)}<span class="ham-group-name">${esc(g.repo)}</span>
+        ${stageTrackerRepoChipHtml(g.repo, chipCtx)}<span class="ham-group-name">${esc(g.repo)}</span>${groupWorkflow ? stageTrackerWorkflowBadgeHtml(groupWorkflow) : ''}
         <span class="ham-group-n">${g.count} ${g.count === 1 ? 'row' : 'rows'}</span>${attn}
-        <span class="ham-group-dist" role="img" aria-label="${esc(g.cols.map((c, i) => stageTrackerColName(i, stages) + ' ' + c).join(', '))}">${dist}</span>
-      </div>`;
+        ${groupWorkflow ? '' : `<span class="ham-group-dist" role="img" aria-label="${esc(g.cols.map((c, i) => stageTrackerColName(i, stages) + ' ' + c).join(', '))}">${dist}</span>`}
+      </div>${groupWorkflow && !g.collapsed ? stageTrackerWorkflowHeaderHtml(groupWorkflow) : ''}`;
     }
 
     // Row = title line (number, title, chips, since) + thin strip. Non-active
@@ -20616,6 +20701,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // One note line per row: the human line takes the stage note (folded
       // or dropped), so the event slot below the caption renders nothing.
       const rowKey = stageTrackerItemKey(item);
+      // A repository bound to a workflow model draws the model's columns
+      // (tracker-workflows.js); null keeps the built-in strip byte for byte.
+      const rowWorkflow = typeof stageTrackerWorkflowOf === 'function' ? stageTrackerWorkflowOf(ctx, item.repo) : null;
       const humanNote = typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(item, stages, nowMs, subRows, ctx, rowKey) : '';
       const noteCtx = humanNote && typeof stageTrackerNoteTakenCtx === 'function' ? stageTrackerNoteTakenCtx(ctx, rowKey) : ctx;
       // One human-gate pill per gated row (hivecommons/hive#17470): it
@@ -20630,7 +20718,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         </div>
         <div class="ham-strip-row">
           ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
-          <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, sharedUnder ? Object.assign({}, ctx, { gateElsewhere: true }) : ctx)}</ol>
+          <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${rowWorkflow ? stageTrackerWorkflowStripItems(shown, rowWorkflow, stages) : stageTrackerStripItems(shown, stages, range, nowMs, sharedUnder ? Object.assign({}, ctx, { gateElsewhere: true }) : ctx)}</ol>
           ${stageTrackerSinceHtml(shown, nowMs)}${typeof stageTrackerPillHtml === 'function' ? stageTrackerPillHtml(shown, stages, range, nowMs, ctx) : ''}
         </div>${humanNote}${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, noteCtx, rowKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(rowKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${typeof stageTrackerNotesPanelHtml === 'function' ? stageTrackerNotesPanelHtml(item, hamNotesCtx(item)) : ''}${subs}
       </div>`;
@@ -23095,6 +23183,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       stageTrackerSyncToolbar(f);
       const ctx = { nowMs, stages, moves: _stageTrackerMoves };
+      // Workflow-model columns for bound repositories (hivecommons/hive#17620).
+      ctx.workflows = d.workflows || null;
       ctx.workers = stageTrackerWorkers(window._lastStatus);
       ctx.events = _stageTrackerEvents;
       ctx.noteTuck = stageTrackerNoteTuckSetting();
@@ -61614,7 +61704,7 @@ function burnAreaChart() {
           </div>`;
         // Fully forge-qualified so the row is unambiguous: github.ibm.com/org/repo.
         const displayName = ghHost + '/' + r;
-        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}${cbRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub;
+        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}${cbRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub + renderRepoWorkflowRow(r);
       }).join('');
       const hostNote = isGHE
         ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`
@@ -62327,6 +62417,102 @@ function burnAreaChart() {
           Restart backoff ladder: <code style="font-family:var(--font-mono)">${ladder}</code>
           <span style="opacity:0.8">— fixed progression; the last step is the cap.</span>
         </div>`;
+    }
+    // Workflow-model bindings (hivecommons/hive#17620, RFC phase 2).
+    //
+    // Each repo row on Settings → Repos carries a "Workflow" select: hive-default
+    // (the built-in lifecycle every unbound repo follows) or any compiled model
+    // from the library. Binding persists immediately through
+    // PUT /api/workflows/bindings (owner-only, audited) — it is not part of the
+    // tab's Save button, because a binding is validated server-side against the
+    // store (the model must exist and compile) and the tracker picks the new
+    // columns up on its next poll.
+    const WORKFLOW_DEFAULT_KEY = 'hive-default@1';
+    const _workflowState = { loaded: false, loading: false, enabled: false, workflows: [], bindings: [] };
+
+    function workflowKey(name, version) { return (name || '') + '@' + (version || ''); }
+
+    async function loadWorkflowLibrary(onDone) {
+      if (_workflowState.loading) return;
+      _workflowState.loading = true;
+      try {
+        const res = await fetch('/api/workflows', { headers: _inceptionAuthHeaders() });
+        if (res.status === 503) { _workflowState.loaded = true; _workflowState.workflows = []; return; }
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        const data = await res.json();
+        _workflowState.workflows = Array.isArray(data.workflows) ? data.workflows : [];
+        _workflowState.bindings = Array.isArray(data.bindings) ? data.bindings : [];
+        _workflowState.enabled = !!data.enabled;
+        _workflowState.loaded = true;
+      } catch (err) {
+        _workflowState.loaded = true;
+        showToast('Could not load the workflow library: ' + err.message, 'error');
+      } finally {
+        _workflowState.loading = false;
+        if (typeof onDone === 'function') onDone();
+      }
+    }
+
+    function workflowBindingFor(repo) {
+      const want = String(repo || '').toLowerCase();
+      const org = String((_configState.data && _configState.data.org) || '').toLowerCase();
+      return _workflowState.bindings.find(b => {
+        const r = String(b.repo || '').toLowerCase();
+        return r === want || (org && (r === org + '/' + want || want === org + '/' + r));
+      }) || null;
+    }
+
+    // renderRepoWorkflowRow returns the per-repo select, or '' when the hive
+    // has no workflow store (the row simply does not appear; nothing else on
+    // the tab changes).
+    function renderRepoWorkflowRow(repo) {
+      if (!_workflowState.loaded) {
+        loadWorkflowLibrary(() => { if (_configState.tab === 'Repos') renderConfigTab('Repos'); });
+        return '';
+      }
+      if (!_workflowState.workflows.length) return '';
+      const bound = workflowBindingFor(repo);
+      const current = bound ? workflowKey(bound.name, bound.version) : WORKFLOW_DEFAULT_KEY;
+      const locked = !dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const options = _workflowState.workflows.map(w => {
+        const key = workflowKey(w.name, w.version);
+        const compiled = w.compiled !== false;
+        const label = key + (w.description ? ' — ' + w.description : '') + (compiled ? '' : ' (draft, does not compile)');
+        return `<option value="${esc(key)}" ${key === current ? 'selected' : ''} ${compiled ? '' : 'disabled'}>${esc(label)}</option>`;
+      }).join('');
+      const flag = _workflowState.enabled
+        ? ''
+        : '<span class="rt-inherit" title="workflow.enabled is off in hive.yaml: bindings are recorded and the monitor shows the model\'s columns, but stage derivation still runs the built-in engine.">derivation off</span>';
+      return `<div class="config-list-item ld-sub" data-wf-repo="${esc(repo)}"><label class="rt-check" title="Which workflow model this repository follows (hivecommons/hive#17620). hive-default is the built-in lifecycle; a custom model changes the monitor's columns and, when workflow.enabled is on, how stages are derived.">Workflow <select ${locked ? 'disabled' : ''} data-change-action="setRepoWorkflow" data-arg0="${esc(repo)}" data-arg-types="s,v">${options}</select></label>${flag}${bound ? `<span class="rt-inherit" title="Bound to ${esc(current)}">bound</span>` : '<span class="rt-inherit">default</span>'}</div>`;
+    }
+
+    async function setRepoWorkflow(repo, value) {
+      if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) {
+        showToast('Owner role is required to bind a workflow.', 'error');
+        renderConfigTab('Repos');
+        return;
+      }
+      const key = String(value || '');
+      const body = { repo: repo };
+      if (key && key !== WORKFLOW_DEFAULT_KEY) {
+        const at = key.lastIndexOf('@');
+        body.name = key.slice(0, at);
+        body.version = key.slice(at + 1);
+      }
+      try {
+        const res = await fetch('/api/workflows/bindings', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        const data = await res.json();
+        _workflowState.bindings = Array.isArray(data.bindings) ? data.bindings : [];
+        showToast(body.name ? `${repo} now follows ${key}` : `${repo} back on hive-default`);
+      } catch (err) {
+        showToast('Failed to bind workflow: ' + err.message, 'error');
+      }
+      renderConfigTab('Repos');
     }
     // ── Watchdog activity strip (#7254) ──────────────────────────────────────
     // "Review the watchdog-*-observed entries in the Audit Log, then switch to
