@@ -78,7 +78,7 @@ func WriteSurfaceGraphQLRefusal(enforced func(agent string) bool, agent string, 
 		return "", false
 	}
 	var req graphQLRequest
-	if err := json.Unmarshal(body, &req); err == nil && !graphQLMutationRe.MatchString(strings.TrimSpace(req.Query)) {
+	if err := json.Unmarshal(body, &req); err == nil && !isGitHubGraphQLMutation(req.Query) {
 		return "", false
 	}
 	if !enforced(agent) {
