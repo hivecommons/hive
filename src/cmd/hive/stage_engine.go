@@ -48,6 +48,10 @@ func stageEngineOptions(cfg *config.Config, logger *slog.Logger) *stageengine.Op
 			Metrics:     stageengine.DefaultCounters(),
 			WorkflowFor: stageEngineWorkflowFor(cfg, wfstore.Open(wfstore.Root(cfg.Data.WorkflowsDir)), logger),
 		}
+		if cfg != nil {
+			stageEngine.opts.WorkflowProvisioned = wfstore.Open(wfstore.Root(cfg.Data.WorkflowsDir))
+			stageEngine.opts.WorkflowLabelGC = func() bool { return cfg.Workflow.LabelGCEnabled() }
+		}
 	})
 	return stageEngine.opts
 }

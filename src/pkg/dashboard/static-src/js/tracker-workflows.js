@@ -38,6 +38,26 @@
       return cols.findIndex(c => Array.isArray(c.numbers) && c.numbers.indexOf(n) >= 0);
     }
 
+    // Pure: the reply verbs the bound model declares for the item's
+    // current state (RFC phase 4, `workflows.repos[repo].replies` keyed by
+    // stage number), in the model's order; [] for an unbound repository, a
+    // PR row (the dashboard records model replies on issues only), or a
+    // state without replies.
+    function stageTrackerWorkflowReplies(item, workflows) {
+      if (!item || item.kind === 'pr' || item.via_pr) return [];
+      const wf = stageTrackerWorkflowOf({ workflows }, item.repo);
+      if (!wf || !wf.replies) return [];
+      const list = wf.replies[String(Number(item.stage) || 0)];
+      return Array.isArray(list) ? list.map(v => String(v || '').trim()).filter(Boolean) : [];
+    }
+
+    // Pure: a model verb as the pill prints it — "approve analysis" →
+    // "Approve analysis".
+    function stageTrackerWorkflowReplyLabel(verb) {
+      const v = String(verb || '').trim();
+      return v ? v.charAt(0).toUpperCase() + v.slice(1) : '';
+    }
+
     function stageTrackerWorkflowBadgeHtml(wf) {
       if (!wf) return '';
       const key = `${wf.name}@${wf.version}`;
