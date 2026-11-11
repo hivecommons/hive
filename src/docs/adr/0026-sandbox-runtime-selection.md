@@ -1,6 +1,6 @@
 # ADR-0026: Sandbox runtime selection
 
-Status: Proposed
+Status: Accepted (phase 1 implemented, runtime opt-in) — #17642, hivecommons/hive#17646
 
 ## Context
 
@@ -25,7 +25,10 @@ own documentation on 2026-10-25:
 **Not done in this record:** the prototype run on a hive spoke (#14092 step 2).
 Startup latency, image and boot size, and proxy and attribution behaviour are
 **not measured** here. [Prototype protocol](#prototype-protocol) lists what to
-measure. This record stays `Proposed` until those numbers exist.
+measure; #17643 tracks running it. The runtime shipped as opt-in before those
+numbers existed (see [Implementation notes](#implementation-notes-phase-1)):
+nothing changes for an operator who does not select it, and the measurement
+needs the code to exist.
 
 ### The contract a runtime must satisfy
 
@@ -130,7 +133,7 @@ the agent.
 
 ## Decision
 
-**Proposed:** adopt **OpenShell** as a third `sandbox.runtime` value
+**Accepted:** adopt **OpenShell** as a third `sandbox.runtime` value
 (`openshell`), behind the existing `sandbox.Launcher` interface. Use the
 Kubernetes driver on hosted spokes and the Podman driver on standalone hosts.
 The existing `podman` and `job` runtimes stay as they are, and the default
@@ -189,6 +192,31 @@ moves to `Accepted`:
 | Direct egress refused | A raw TCP connect to an arbitrary IP fails |
 | Attribution | The refused write appears in runtime logs with the sandbox and kick name |
 | Broker path intact | The kick's commits arrive as a PR through `pushbroker`, unchanged |
+
+## Implementation notes (phase 1)
+
+Phase 1 landed in hivecommons/hive#17646 (epic #17642) as
+`sandbox.runtime: openshell`, `src/crux/sandbox/openshell.go`, configured
+under `agent_sandbox.openshell` — see
+[sandbox-isolation.md](../sandbox-isolation.md#running-sandboxed-kicks-in-an-openshell-sandbox)
+for the operator view and [deploy/openshell.md](../../deploy/openshell.md) for
+the cluster side. Writing it against the real SDK moved four assumptions in
+this record:
+
+| This record assumed | What the SDK (v0.1.8) offers | What phase 1 does |
+|---|---|---|
+| Go SDK at `github.com/NVIDIA/OpenShell/sdk/go` | that path is deprecated upstream in favour of `github.com/ai-openshell/sdk-go` | pins `github.com/ai-openshell/sdk-go v0.1.8` (tagged). +3 modules per go.mod (`sdk-go`, `x/oauth2`, `x/sync`), grpc 1.83.2 → 1.85.0, no CGO, ~3.6 MB on the `hive` binary |
+| Workspace copied in and out through the SDK | `Files().Upload` is single-file and the default transport is optional on the gateway | the hive data PVC is mounted at a `sub_path` through the gateway's Kubernetes `driver_config`, exactly as the `job` runtime shares it. Needs `allow_driver_config = true` on the gateway and the claim labelled `openshell.ai/sandbox-attachable` |
+| `policy_profile` selects a gateway-side policy | no create-time policy-profile API; OpenShell "profiles" are credential-provider profiles | the policy is derived by hive (`OpenShellNetworkPolicy`); `policy_profile` is recorded on the sandbox as the annotation `hive.dev/policy-profile` for gateway admission to act on |
+| A static egress allowlist to translate | none exists: ADR-0002 redirects all `:443` to the proxy and decides per request | rules for `github.com` (read-write, git fetch-pack) and `api.github.com` (read-only), plus `agent_sandbox.openshell.allow_hosts`; attached to an overridable default binary set because OpenShell allows nothing for an unlisted binary |
+
+The preconditions above are still the operator's to verify; phase 1 refuses a
+kick when `gateway_url` or `workspace_claim` is missing and warns at boot, but
+cannot see the kernel, the CNI or the gateway settings from inside the hive
+pod (#17644 adds a gateway preflight). The kernel survey for the clusters hive
+runs on, read on 2026-11-10: LKE (`lke648397`, `hive-ci`) run 6.12 on Debian 13
+with Calico and qualify; OKE UEK7 (5.15), and the RHCOS 9.x OpenShift clusters
+(5.14) do not.
 
 ## Consequences
 

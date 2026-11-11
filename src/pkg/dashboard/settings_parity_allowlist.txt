@@ -13,6 +13,22 @@ agent_sandbox.job.volumes[].claim # TODO #11854
 agent_sandbox.job.volumes[].mount_path # TODO #11854
 agent_sandbox.job.volumes[].name # TODO #11854
 agent_sandbox.job.volumes[].read_only # TODO #11854
+agent_sandbox.openshell.allow_hosts[] # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.binaries[] # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.gateway_url # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.insecure_tls # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.namespace # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.node_selector.<key> # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.policy_profile # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.runtime_class_name # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.timeout_s # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.token_env # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.tolerations[].effect # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.tolerations[].key # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.tolerations[].operator # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.tolerations[].value # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.workspace_claim # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.workspace_claim_mount # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
 agent_sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
 agents.<key>.acmm_levels[] # TODO #11854
@@ -115,6 +131,22 @@ agents.<key>.sandbox.job.volumes[].read_only # TODO #11854
 agents.<key>.sandbox.job.workspace_claim # TODO #11854
 agents.<key>.sandbox.job.workspace_claim_mount # TODO #11854
 agents.<key>.sandbox.network_mode # TODO #11854
+agents.<key>.sandbox.openshell.allow_hosts[] # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.binaries[] # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.gateway_url # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.insecure_tls # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.namespace # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.node_selector.<key> # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.policy_profile # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.runtime_class_name # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.timeout_s # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.token_env # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.tolerations[].effect # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.tolerations[].key # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.tolerations[].operator # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.tolerations[].value # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.workspace_claim # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.workspace_claim_mount # TODO #17645 (OpenShell runtime; Settings control pending)
 agents.<key>.sandbox.runtime # TODO #11854
 agents.<key>.sandbox.timeout_s # TODO #11854
 agents.<key>.sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)

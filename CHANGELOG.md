@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.211.30)
+
+### Changed
+
+- ADR-0026 (sandbox runtime selection) moves from Proposed to **Accepted (phase 1 implemented, runtime opt-in)** now that `sandbox.runtime: openshell` exists ([#17642](https://github.com/hivecommons/hive/issues/17642)), with an implementation-notes section recording where the real SDK differed from the record (module path moved to `github.com/ai-openshell/sdk-go`, workspace shared through the data PVC instead of copied, `policy_profile` advisory, egress derived from hive's proxy host set) and the kernel survey of hive's clusters. `sandbox-isolation.md` gains the operator section for the runtime (config, egress policy, credential boundary, lifecycle, verification, limitations), `integrations.md` lists OpenShell as in progress (opt-in) instead of planned, and `src/deploy/openshell.md` covers the cluster side — prerequisites, the upstream Helm install, `allow_driver_config`, the `openshell.ai/sandbox-attachable` PVC labels, `OPENSHELL_TELEMETRY_ENABLED=false`, digest pinning — without vendoring manifests.
+
+## 2026-11-11 (v5.211.29)
+
+### Security
+
+- Bumped the Go toolchain to 1.26.11 so the `govulncheck` gate stops flagging GO-2026-6859 (`net/http`), reachable from the dashboard, hub spoke heartbeat and GitHub client. The gate was red on the default branch toolchain itself, blocking every open PR.
+
 ## 2026-11-11 (v5.211.28)
 
 ### Fixed

@@ -1515,7 +1515,7 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 		return nil
 	}
 
-	var optedIn, noImage, noClaim, badRuntime []string
+	var optedIn, noImage, noClaim, noGateway, badRuntime []string
 	for name, a := range cfg.Agents {
 		if !a.SandboxEnabled(cfg.AgentSandbox) {
 			continue
@@ -1529,11 +1529,20 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 			badRuntime = append(badRuntime, name+"="+rt)
 		case rt == SandboxRuntimeJob && strings.TrimSpace(a.SandboxJob(cfg.AgentSandbox).WorkspaceClaim) == "":
 			noClaim = append(noClaim, name)
+		case rt == SandboxRuntimeOpenShell:
+			os := a.SandboxOpenShell(cfg.AgentSandbox)
+			if strings.TrimSpace(os.GatewayURL) == "" {
+				noGateway = append(noGateway, name)
+			}
+			if strings.TrimSpace(os.WorkspaceClaim) == "" {
+				noClaim = append(noClaim, name)
+			}
 		}
 	}
 	sort.Strings(optedIn)
 	sort.Strings(noImage)
 	sort.Strings(noClaim)
+	sort.Strings(noGateway)
 	sort.Strings(badRuntime)
 
 	var out []string
@@ -1558,9 +1567,15 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 	}
 	if len(noClaim) > 0 {
 		out = append(out, fmt.Sprintf(
-			"agent(s) %s use the job sandbox runtime but resolve no job.workspace_claim; the Job has no way to see the workspace and every kick will fail — "+
-				"set agent_sandbox.job.workspace_claim (or the per-agent sandbox.job.workspace_claim) to the PVC hive's data lives on (#6311)",
+			"agent(s) %s use the job or openshell sandbox runtime but resolve no workspace_claim; the sandbox has no way to see the workspace and every kick will fail — "+
+				"set agent_sandbox.job.workspace_claim / agent_sandbox.openshell.workspace_claim (or the per-agent one) to the PVC hive's data lives on (#6311)",
 			strings.Join(noClaim, ", ")))
+	}
+	if len(noGateway) > 0 {
+		out = append(out, fmt.Sprintf(
+			"agent(s) %s use the openshell sandbox runtime but resolve no openshell.gateway_url; every kick will fail — "+
+				"set agent_sandbox.openshell.gateway_url (or the per-agent sandbox.openshell.gateway_url) to the OpenShell gateway's gRPC address (ADR-0026)",
+			strings.Join(noGateway, ", ")))
 	}
 	if len(optedIn) < len(cfg.Agents) {
 		out = append(out, fmt.Sprintf(
