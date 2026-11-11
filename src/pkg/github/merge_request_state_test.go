@@ -147,14 +147,17 @@ func TestMergeRequestWatcher_StateSurvivesRestart(t *testing.T) {
 				before := prGets.Load()
 				reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
 				c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
-				if prGets.Load() != before {
-					t.Fatalf("refusing an exhausted head must not call GitHub")
+				if got := prGets.Load() - before; got != 1 {
+					t.Fatalf("an exhausted CI-gate head must be re-evaluated exactly once, got %d PR GETs", got)
 				}
 				resp := readMergeResult(t, reqPath)
 				if resp.OK || !strings.Contains(resp.Error, "exhausted on the same head") || !strings.Contains(resp.Error, "absent CI is not passing") {
 					t.Fatalf("expected a refusal carrying the recorded reason, got %+v", resp)
 				}
 				mustExist(t, reqPath+".exhausted", "refused re-request")
+				if st, ok := c.mergeRequestState("o/r", 42, "abc"); !ok || !st.Exhausted {
+					t.Fatalf("a gate that still blocks must keep the exhausted record, got %+v", st)
+				}
 
 				// After the refusal window the same head is evaluated again.
 				later := func() time.Time { return fixedNow().Add(mergeRequestExhaustedRefusal + time.Minute) }
@@ -198,6 +201,69 @@ func TestMergeRequestWatcher_StateSurvivesRestart(t *testing.T) {
 	}
 }
 
+// A head exhausted on a CI-gate verdict is re-evaluated on re-request: a gate
+// that now passes merges (the stale check-cancelled false positive of #17606
+// must not outlive its fix), one that still blocks refuses and keeps the
+// record, and a non-CI reason still refuses without calling GitHub.
+func TestMergeRequestWatcher_ExhaustedCIGateReevaluated(t *testing.T) {
+	cases := []struct {
+		name      string
+		reason    string
+		red       bool
+		wantMerge bool
+	}{
+		{name: "ci gate now green merges", reason: "ci gate: required status check has not succeeded (check-cancelled)", wantMerge: true},
+		{name: "ci gate still red refuses", reason: "ci gate: required status check has not succeeded (check-cancelled)", red: true},
+		{name: "non-CI reason refuses", reason: "409 Merge conflict"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := greenFixture()
+			f.defaultHead = "abc"
+			if tc.red {
+				f.checks = []ciCheck{{name: "build", status: "completed", conclusion: "failure"}}
+			}
+			var merges, prGets atomic.Int32
+			srv := ciGateServer(t, f, &merges)
+			defer srv.Close()
+			counted := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/42") {
+					prGets.Add(1)
+				}
+				srv.Config.Handler.ServeHTTP(w, r)
+			}))
+			defer counted.Close()
+			c := testMergeClient(t, counted.URL)
+			c.SetMergeRequestStatePath(filepath.Join(t.TempDir(), "merge-request-state.json"))
+			c.putMergeRequestState("o/r", 42, mergeRequestPRState{SHA: "abc", Attempts: mergeRequestMaxAttempts, Exhausted: true, Reason: tc.reason, At: fixedNow()})
+
+			reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+			c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+			resp := readMergeResult(t, reqPath)
+			st, tracked := c.mergeRequestState("o/r", 42, "abc")
+			if tc.wantMerge {
+				if merges.Load() != 1 || !resp.OK {
+					t.Fatalf("a CI-gate exhaustion whose gate now passes must merge, got %d merges (%+v)", merges.Load(), resp)
+				}
+				if tracked {
+					t.Fatalf("merged PR must not keep the exhausted record, got %+v", st)
+				}
+				return
+			}
+			if merges.Load() != 0 || resp.OK || !strings.Contains(resp.Error, "exhausted on the same head") || !strings.Contains(resp.Error, tc.reason) {
+				t.Fatalf("expected a refusal carrying the recorded reason, got %d merges (%+v)", merges.Load(), resp)
+			}
+			mustExist(t, reqPath+".exhausted", "refused re-request")
+			if !tracked || !st.Exhausted || st.Reason != tc.reason {
+				t.Fatalf("a refusal must keep the exhausted record, got %+v", st)
+			}
+			if !tc.red && prGets.Load() != 0 {
+				t.Fatalf("a non-CI exhaustion must be refused without calling GitHub, got %d PR GETs", prGets.Load())
+			}
+		})
+	}
+}
+
 // A merged PR drops its ledger entry so the file does not accumulate.
 func TestMergeRequestWatcher_MergeClearsState(t *testing.T) {
 	f := greenFixture()
@@ -216,5 +282,24 @@ func TestMergeRequestWatcher_MergeClearsState(t *testing.T) {
 	}
 	if _, ok := c.mergeRequestState("o/r", 42, "abc"); ok {
 		t.Fatalf("merged PR must not keep wait state")
+	}
+}
+
+func TestRefuseExhaustedMergeRequest_HintMatchesReason(t *testing.T) {
+	cases := []struct {
+		reason, want, notWant string
+	}{
+		{"ci gate: required status check has not succeeded", "re-run the failing check", ""},
+		{"409 Merge conflict", "push a new commit or merge it manually", "re-run"},
+	}
+	for _, tc := range cases {
+		c := testMergeClient(t, "http://unused")
+		reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+		c.refuseExhaustedMergeRequest(reqPath, MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"},
+			mergeRequestPRState{SHA: "abc", Exhausted: true, Reason: tc.reason, At: fixedNow()}, fixedNow)
+		resp := readMergeResult(t, reqPath)
+		if !strings.Contains(resp.Error, tc.want) || (tc.notWant != "" && strings.Contains(resp.Error, tc.notWant)) {
+			t.Errorf("reason %q: unexpected hint in %q", tc.reason, resp.Error)
+		}
 	}
 }
