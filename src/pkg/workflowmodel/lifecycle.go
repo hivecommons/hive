@@ -39,6 +39,9 @@ const (
 	ProvenanceBuiltIn            Provenance = "built-in"
 	ProvenanceCurated            Provenance = "curated"
 	ProvenanceIngestedUnreviewed Provenance = "ingested-unreviewed"
+	// ProvenanceLocal is a model authored or edited on this hive and not
+	// (yet) published anywhere.
+	ProvenanceLocal Provenance = "local"
 )
 
 // Confidence marks an element a human has not confirmed yet.
