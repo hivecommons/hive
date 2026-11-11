@@ -97,7 +97,7 @@ func (c *Client) applyIssueModelReply(ctx context.Context, owner, repo string, n
 	}
 	applied := ""
 	if eff.Label != "" && !labelPresent(labels, eff.Label) {
-		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{eff.Label}); err != nil {
+		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{eff.Label}); err != nil { // writeback:solicited a maintainer answered the gate with this model verb (comment or dashboard)
 			return IssueUnparkEvent{}, fmt.Errorf("adding %s to %s/%s#%d: %w", eff.Label, owner, repo, number, err)
 		}
 		c.recordWriteAudit(AuditActionHiveLabelApplied, hiveWriteMeta(),
