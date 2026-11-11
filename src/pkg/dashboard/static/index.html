@@ -29837,24 +29837,31 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        in another pod, so there is no hive-<agent> tmux session for ttyd to
        attach to. Their terminal is the read-only Job pod log viewer, served
        by the Go server under the same /terminal prefix so openTerminal()'s
-       handoff code and assertion cookie apply unchanged. */
+       handoff code and assertion cookie apply unchanged. openshell agents
+       (#17645) run each kick in a gateway-owned sandbox and use the same
+       viewer, which streams the sandbox's log instead. */
     const JOB_SANDBOX_RUNTIME = 'job';
+    const OPENSHELL_SANDBOX_RUNTIME = 'openshell';
+    function sandboxRuntimeWithoutTmux(sandboxRuntime) {
+      return sandboxRuntime === JOB_SANDBOX_RUNTIME || sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME;
+    }
     function agentUsesJobTerminal(a) {
-      return !!a && a.sandboxRuntime === JOB_SANDBOX_RUNTIME;
+      return !!a && sandboxRuntimeWithoutTmux(a.sandboxRuntime);
     }
     function terminalUrl(agentName, sandboxRuntime) {
       const proto = window.location.protocol;
       const host = window.location.host;
-      if (sandboxRuntime === JOB_SANDBOX_RUNTIME) {
+      if (sandboxRuntimeWithoutTmux(sandboxRuntime)) {
         return `${proto}//${host}/terminal/job/${encodeURIComponent(agentName)}`;
       }
       const session = TMUX_SESSION_PREFIX + agentName;
       return `${proto}//${host}/terminal/?arg=${encodeURIComponent(session)}`;
     }
     function terminalLinkTitle(a, tmuxTitle) {
-      return agentUsesJobTerminal(a)
-        ? 'Stream the log of this agent\'s sandbox Job pod (read-only: it runs as a Kubernetes Job, not a tmux session)'
-        : tmuxTitle;
+      if (!agentUsesJobTerminal(a)) return tmuxTitle;
+      return a.sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME
+        ? 'Stream the log of this agent\'s OpenShell sandbox (read-only: it runs in a gateway-owned sandbox, not a tmux session)'
+        : 'Stream the log of this agent\'s sandbox Job pod (read-only: it runs as a Kubernetes Job, not a tmux session)';
     }
     /* The hosted fleet has moved apex once already (hive.kubestellar.io ->
        hive.hivecommons.dev) and spokes are also served at vanity hostnames, so

@@ -1,0 +1,1 @@
+- The dashboard's ▶ terminal pane now works for `sandbox.runtime: openshell` agents: it opens the read-only `/terminal/job/<agent>` viewer, follows the live OpenShell sandbox's gateway log (scrubbed like the Job pod log) and falls back to the last persisted transcript between kicks.
