@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -350,4 +351,189 @@ func TestOpenShellSandboxName(t *testing.T) {
 	if got := openshellSandboxName("---", now); got != "hive-kick-agent-1700000000" {
 		t.Errorf("empty base = %q", got)
 	}
+}
+
+func TestOpenShellRunRefusesClineProvider(t *testing.T) {
+	spec, _ := clineLaunchFixture(t)
+	fake := &fakeOpenShell{}
+	l := newTestOpenShell(fake)
+	spec.Image = "registry.example/dev:sha256-abc"
+	spec.Workspace = "/data/agents/sandbox/deps"
+	if _, err := l.Run(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "Podman-only") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(fake.created) != 0 {
+		t.Error("sandbox created despite the Cline provider refusal")
+	}
+}
+
+func TestOpenShellRunRejectsBadOptionsAndSpec(t *testing.T) {
+	fake := &fakeOpenShell{}
+	l := newTestOpenShell(fake)
+	l.Options.WorkspaceClaim = ""
+	if _, err := l.Run(context.Background(), testSpec()); err == nil || !strings.Contains(err.Error(), "workspace_claim is required") {
+		t.Fatalf("missing claim: err = %v", err)
+	}
+
+	l = newTestOpenShell(fake)
+	spec := testSpec()
+	spec.Workspace = ""
+	if _, err := l.Run(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "workspace is required") {
+		t.Fatalf("missing workspace: err = %v", err)
+	}
+
+	spec = testSpec()
+	spec.Command = nil
+	if _, err := l.Run(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "command is required") {
+		t.Fatalf("missing command: err = %v", err)
+	}
+
+	l.Options.AllowHosts = []string{"https://not-a-host"}
+	if _, err := l.Run(context.Background(), testSpec()); err == nil || !strings.Contains(err.Error(), "must be host or host:port") {
+		t.Fatalf("bad allow_hosts: err = %v", err)
+	}
+	if len(fake.created) != 0 {
+		t.Error("a sandbox was created for an invalid launch")
+	}
+}
+
+func TestOpenShellRunClientAndCreateErrors(t *testing.T) {
+	l := newTestOpenShell(&fakeOpenShell{})
+	l.newClient = func(OpenShellOptions) (openshellClient, error) { return nil, errors.New("dial refused") }
+	if _, err := l.Run(context.Background(), testSpec()); err == nil || !strings.Contains(err.Error(), "dial refused") {
+		t.Fatalf("client error: err = %v", err)
+	}
+
+	fake := &fakeOpenShell{createErr: errors.New("quota exceeded")}
+	l = newTestOpenShell(fake)
+	res, err := l.Run(context.Background(), testSpec())
+	if err == nil || !strings.Contains(err.Error(), "creating sandbox") || !strings.Contains(err.Error(), "quota exceeded") {
+		t.Fatalf("create error: err = %v", err)
+	}
+	if res.ExitCode != OpenShellExitCodeUnknown {
+		t.Errorf("exit = %d, want unknown", res.ExitCode)
+	}
+	if len(fake.deleted) != 0 {
+		t.Errorf("deleted = %v, nothing to clean up when create failed", fake.deleted)
+	}
+	if !fake.closed {
+		t.Error("client not closed after a failed create")
+	}
+}
+
+func TestOpenShellRunExecErrorCleansUpAndWraps(t *testing.T) {
+	fake := &fakeOpenShell{runErr: errors.New("stream reset")}
+	l := newTestOpenShell(fake)
+	_, err := l.Run(context.Background(), testSpec())
+	if err == nil || !strings.Contains(err.Error(), "running kick in sandbox") || !strings.Contains(err.Error(), "stream reset") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(fake.deleted) != 1 {
+		t.Errorf("deleted = %v, want the sandbox removed after an exec failure", fake.deleted)
+	}
+}
+
+func TestOpenShellRunWaitReadyCanceledReturnsContextError(t *testing.T) {
+	fake := &fakeOpenShell{waitBlocks: true}
+	l := newTestOpenShell(fake)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := l.Run(ctx, testSpec())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want canceled", err)
+	}
+	if len(fake.deleted) != 1 || !fake.deleteCtxOK {
+		t.Errorf("deleted = %v ctxOK = %v, want cleanup on a live context", fake.deleted, fake.deleteCtxOK)
+	}
+}
+
+func TestOpenShellRunPolicyProfileRuntimeClassAndOutputCap(t *testing.T) {
+	big := bytes.Repeat([]byte("x"), openshellMaxOutput+10)
+	fake := &fakeOpenShell{runResult: &openshell.ExecResult{ExitCode: 0, Stdout: big, Stderr: big}}
+	l := newTestOpenShell(fake)
+	l.Options.PolicyProfile = "strict"
+	l.Options.RuntimeClassName = "gvisor"
+	l.Options.Workspace = "team-a"
+	res, err := l.Run(context.Background(), testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Stdout) != openshellMaxOutput || len(res.Stderr) != openshellMaxOutput {
+		t.Errorf("stdout %d stderr %d, want capped at %d", len(res.Stdout), len(res.Stderr), openshellMaxOutput)
+	}
+	if len(fake.created) != 1 {
+		t.Fatalf("created = %d", len(fake.created))
+	}
+	c := fake.created[0]
+	if c.workspace != "team-a" {
+		t.Errorf("workspace = %q, want the configured OpenShell workspace", c.workspace)
+	}
+	if c.spec.Template.RuntimeClassName != "gvisor" {
+		t.Errorf("runtime class = %q", c.spec.Template.RuntimeClassName)
+	}
+	k8s, _ := c.spec.Template.DriverConfig["kubernetes"].(map[string]any)
+	pod, _ := k8s["pod"].(map[string]any)
+	if pod == nil || pod["runtime_class_name"] != "gvisor" {
+		t.Errorf("driver_config pod = %v, want runtime_class_name gvisor", pod)
+	}
+}
+
+func TestOpenShellNetworkPolicySortsAllowHostsByPort(t *testing.T) {
+	policy, err := OpenShellNetworkPolicy([]string{"svc.example:9443", "svc.example:8443"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eps := policy.NetworkPolicies["hive-allow-hosts"].Endpoints
+	if len(eps) != 2 || eps[0].Port != 8443 || eps[1].Port != 9443 {
+		t.Errorf("endpoints = %+v, want sorted by port within a host", eps)
+	}
+}
+
+func TestOpenShellAddressAndHostPortErrors(t *testing.T) {
+	for _, in := range []string{"", "gw", "gw:notaport", "ftp://gw:21", "http://", "http://%zz"} {
+		if _, _, err := openshellAddress(in); err == nil {
+			t.Errorf("openshellAddress(%q) accepted", in)
+		}
+	}
+	if addr, tls, err := openshellAddress("http://gw"); err != nil || addr != "gw:80" || tls {
+		t.Errorf("http default port: %q %v %v", addr, tls, err)
+	}
+	if addr, tls, err := openshellAddress("grpcs://gw:7443"); err != nil || addr != "gw:7443" || !tls {
+		t.Errorf("grpcs: %q %v %v", addr, tls, err)
+	}
+	for _, in := range []string{"", "  ", "host:0", "host:70000", ":443", "host:abc", "host/path", "has space"} {
+		if _, _, err := openshellHostPort(in); err == nil {
+			t.Errorf("openshellHostPort(%q) accepted", in)
+		}
+	}
+}
+
+func TestNewOpenShellSDKClientBuildsLazyClient(t *testing.T) {
+	// grpc.NewClient does not dial until the first RPC, so constructing the
+	// real SDK client against an unreachable address is hermetic.
+	for _, o := range []OpenShellOptions{
+		{GatewayURL: "127.0.0.1:1"},
+		{GatewayURL: "https://127.0.0.1:1", Token: "tok"},
+		{GatewayURL: "127.0.0.1:1", InsecureTLS: true},
+	} {
+		c, err := newOpenShellSDKClient(o)
+		if err != nil {
+			t.Fatalf("%+v: %v", o, err)
+		}
+		if c.Sandboxes() == nil || c.Exec() == nil {
+			t.Errorf("%+v: nil SDK service", o)
+		}
+		if err := c.Close(); err != nil {
+			t.Errorf("%+v: close: %v", o, err)
+		}
+	}
+	if _, err := newOpenShellSDKClient(OpenShellOptions{GatewayURL: "nope"}); err == nil {
+		t.Error("bad gateway_url accepted")
+	}
+	l := &OpenShellLauncher{Options: OpenShellOptions{GatewayURL: "127.0.0.1:1"}}
+	c, err := l.client()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close()
 }
