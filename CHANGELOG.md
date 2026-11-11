@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.217.0)
+
+### Added
+
+- Workflow models (RFC phase 4, backend): `GET /api/workflows/{name}/versions`, a deterministic structural diff between two versions (`GET …/{name}/diff?from&to`, optionally cross-model against hive-default), `POST …/{name}/{version}/confirm` to confirm an ingested model's inferred elements as a new local version (owner, audited `workflow_confirm`), `GET …/{name}/{version}/labels` to preview the labels and commands a model regenerates, and the stage-label provisioner now creates or recolours a bound model's own label vocabulary and re-provisions when the binding changes ([#17620](https://github.com/hivecommons/hive/issues/17620))
+- Settings gains a **Workflows** tab (RFC phase 3b): a library of every workflow model the hive knows — built-in `hive-default`, locally saved models and drafts ingested from repository pipelines — with provenance and compile badges, bound-repository counts, View / Duplicate / Export / Delete, a read-only detail view that draws the compiled columns and states as an SVG diagram with transitions, diagnostics and citations, and an Ingest form that turns a repository's pipeline files into a draft model through `POST /api/workflows/ingest`. The Activity Monitor model badge deep-links into the library entry. Binding a repository stays on Settings → Repos; this tab never binds ([#17620](https://github.com/hivecommons/hive/issues/17620)).
+
 ## 2026-11-11 (v5.216.0)
 
 ### Added
