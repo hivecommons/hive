@@ -193,13 +193,31 @@ func (s *Server) importBundle(st *wfstore.Store, b *bundle.Bundle, by string) (w
 		version = next
 	}
 	m.Spec.Meta.Version = version
-	if m.Spec.Meta.Provenance == "" {
-		m.Spec.Meta.Provenance = workflowmodel.Provenance(b.Tier)
-	}
-	if m.Spec.Meta.Provenance == workflowmodel.ProvenanceBuiltIn || string(m.Spec.Meta.Provenance) == bundle.TierLocalPublished {
-		m.Spec.Meta.Provenance = workflowmodel.ProvenanceLocal
-	}
+	m.Spec.Meta.Provenance = importedProvenance(m.Spec.Meta.Provenance, b.Tier)
 	return st.Save(m, by, time.Now().UTC())
+}
+
+// importedProvenance decides what provenance an imported model is stored
+// with. The envelope tier is the field the hub polices (curated/built-in
+// need a hub admin); the model's own provenance is hash-covered and set by
+// whoever authored the model, so a vouched tier claimed there is honoured
+// only when the envelope asserts the same tier. built-in and
+// local-published always land as local: this hive did not ship the model
+// and has not published it.
+func importedProvenance(model workflowmodel.Provenance, tier string) workflowmodel.Provenance {
+	p := model
+	switch {
+	case p == "":
+		p = workflowmodel.Provenance(tier)
+	case p == workflowmodel.ProvenanceCurated || p == workflowmodel.ProvenanceBuiltIn:
+		if string(p) != tier {
+			p = workflowmodel.Provenance(tier)
+		}
+	}
+	if p == workflowmodel.ProvenanceBuiltIn || string(p) == bundle.TierLocalPublished || p == "" {
+		p = workflowmodel.ProvenanceLocal
+	}
+	return p
 }
 
 // hubRequest builds an authenticated spoke→hub request.

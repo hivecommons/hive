@@ -308,6 +308,18 @@ func TestMarketplacePublishAuth(t *testing.T) {
 	if rec := mktDo(s, mktSpokeReq(mktBody(t, mktBundle(t, bundle.TierCurated)))); rec.Code != 403 {
 		t.Fatalf("spoke curated: %d %s", rec.Code, rec.Body.String())
 	}
+	// Spoke asserting curated inside the hash-covered model (envelope tier
+	// legitimate) → 403: the hub cannot normalise it, so it must refuse.
+	launder := mktModel(t)
+	launder.Spec.Meta.Provenance = workflowmodel.ProvenanceCurated
+	lb, err := bundle.Export(launder, "spoke", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lb.Tier = bundle.TierLocalPublished
+	if rec := mktDo(s, mktSpokeReq(mktBody(t, lb))); rec.Code != 403 || !strings.Contains(rec.Body.String(), "model provenance") {
+		t.Fatalf("spoke model-curated: %d %s", rec.Code, rec.Body.String())
+	}
 	// Spoke OK: `local` is normalised to local-published.
 	rec := mktDo(s, mktSpokeReq(body))
 	if rec.Code != 201 {

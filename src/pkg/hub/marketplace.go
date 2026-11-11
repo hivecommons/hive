@@ -178,6 +178,13 @@ func (s *HubServer) handleMarketplacePublish(w http.ResponseWriter, r *http.Requ
 		marketplaceJSONError(w, http.StatusBadRequest, "unknown tier "+b.Tier)
 		return
 	}
+	// The model's own provenance is hash-covered, so it cannot be normalised
+	// like the envelope tier; a vouched tier claimed there needs the same
+	// admin the envelope does, otherwise importers would store it as vouched.
+	if p := string(b.Model.Spec.Meta.Provenance); (p == bundle.TierCurated || p == bundle.TierBuiltIn) && !who.admin {
+		marketplaceJSONError(w, http.StatusForbidden, fmt.Sprintf("model provenance %q requires a hub admin", p))
+		return
+	}
 	if err := bundle.Verify(b); err != nil {
 		marketplaceJSONError(w, http.StatusUnprocessableEntity, "bundle verification failed: "+err.Error())
 		return
