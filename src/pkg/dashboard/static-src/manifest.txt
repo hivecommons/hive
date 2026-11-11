@@ -75,6 +75,7 @@ js/tracker-words.js
 js/tracker-row-anchor.js
 js/tracker-row.js
 js/tracker-row-strip.js
+js/tracker-workflows.js
 js/tracker-row-acted.js
 js/tracker-human-attention.js
 js/tracker-row-layout.js
@@ -133,6 +134,7 @@ js/config-tabs.js
 js/config-hub.js
 js/config-agent.js
 js/config-governor.js
+js/config-workflows.js
 js/config-watchdog-security.js
 js/config-features.js
 js/integration-execution-settings.js

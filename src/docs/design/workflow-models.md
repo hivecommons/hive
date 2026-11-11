@@ -101,3 +101,27 @@ kind is not covered. Models are whole (no inheritance) through phase 4.
 - Pipelines-as-Code `on-cel-expression` triggers are recorded as `cel` events and not classified
   into roles, so a tag-push expressed in CEL does not add *Release*.
 - Bare Tekton `Pipeline` library files (catalogs) have no trigger and bind nowhere (`no-trigger`).
+
+## Store, bindings and engine wiring (RFC phase 2)
+
+- **Store** (`pkg/workflowmodel/store`): `<DataDir>/workflows/<name>/<version>.json` plus an
+  `index.json` rebuilt on write; names/versions are regex-guarded, writes are atomic.
+  `hive-default` is virtual and read-only. Drafts (models that do not compile) save but
+  `Profile()` returns `ErrNotCompiled`. Entries reserve `adoption`, `ratings`, `benchmarks`
+  (raw JSON, carried verbatim) so the phase-7 marketplace can add them without a migration.
+- **Binding** (`pkg/config/workflow_binding.go`): `project.workflow_bindings: [{repo, name,
+  version}]`, mirroring `repo_policies`. `WorkflowBindingFor` is keyed like repo pauses
+  (lowercased, org-qualified) and reads the live config, so a PUT takes effect without a
+  restart. Binding requires the model to compile; deleting a bound model is a 409.
+- **API** (`pkg/dashboard/api_workflows.go`): `GET/POST /api/workflows`, `POST
+  /api/workflows/compile`, `GET/PUT /api/workflows/bindings`, `GET/PUT/DELETE
+  /api/workflows/{name}/{version}`. Writes need the owner role and are audited; 503 when no
+  store is configured.
+- **Engine**: `stageengine.Options.WorkflowFor(owner, repo) *Profile` and `DeriveForRepo` (a
+  per-profile, hash-cached deriver) route bound repositories through `DeriveFromModel`; unbound
+  repositories and `workflow.enabled: false` take the builtin path unchanged. An unusable
+  binding (missing or non-compiling model) warns once and falls back.
+- **Tracker**: the response gains `workflows: {default: {...}, repos: {<repo>: {name, version,
+  columns, numbers, error}}}` (nil when nothing is bound). The JS labels the model column,
+  renders a per-row column strip by stage number, and shows an amber "Not covered" chevron for
+  abstentions. Settings → Repos has a per-repo Workflow select that PUTs the binding.

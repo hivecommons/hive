@@ -49,8 +49,11 @@ func TestStageEngineWorkflowFor(t *testing.T) {
 	if lookup("cncf", "other") != nil {
 		t.Fatal("unbound repo resolved a model")
 	}
-	if lookup("cncf", "ghost") != nil || lookup("cncf", "ghost") != nil {
-		t.Fatal("missing model must fall back")
+	// Twice: the second call exercises the warn-once path.
+	for i := 0; i < 2; i++ {
+		if lookup("cncf", "ghost") != nil {
+			t.Fatal("missing model must fall back")
+		}
 	}
 	if _, err := cfg.SetWorkflowBinding("techdocs", "", ""); err != nil {
 		t.Fatal(err)

@@ -87,6 +87,8 @@
       }
       stageTrackerSyncToolbar(f);
       const ctx = { nowMs, stages, moves: _stageTrackerMoves };
+      // Workflow-model columns for bound repositories (hivecommons/hive#17620).
+      ctx.workflows = d.workflows || null;
       ctx.workers = stageTrackerWorkers(window._lastStatus);
       ctx.events = _stageTrackerEvents;
       ctx.noteTuck = stageTrackerNoteTuckSetting();
