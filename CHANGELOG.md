@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.214.1)
+
+### Security
+
+- Agent tmux panes no longer inherit the hive container's dashboard shared token (`DASHBOARD_AUTH_TOKEN` / `HIVE_DASHBOARD_TOKEN`), the hub-injected per-hive signing keys (`HIVE_TERMINAL_KEY`, `HIVE_INVITE_KEY`, `HIVE_HEARTBEAT_KEY`, `HIVE_HUB_SECRET`), the ttyd credential or the corporate upstream-proxy settings; `applySessionEnv` removes them from the tmux global environment alongside the GitHub and Linear credentials it already stripped.
+
 ## 2026-11-11 (v5.214.0)
 
 ### Added
