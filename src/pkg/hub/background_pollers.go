@@ -48,6 +48,9 @@ func (s *HubServer) StartBackgroundPollers(ctx context.Context) <-chan struct{} 
 	start(s.startAlertStatePersistence)
 	// Live-vs-approved org reconciliation for assigned hives (#11847).
 	start(s.startPlaceholderOrgSweep)
+	// Hourly commit of spoke benchmark records to hivecommons/benchmarks
+	// (hivecommons/hive#17694).
+	start(s.StartBenchmarksPublisher)
 	s.githubActivityMu.Lock()
 	s.githubActivityCtx = ctx
 	feed := s.githubActivityFeed

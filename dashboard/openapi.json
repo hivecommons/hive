@@ -25993,6 +25993,67 @@
         }
       }
     },
+    "/api/benchmarks/export": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Export this hive's anonymized benchmark records",
+        "description": "Owner session. Folds the review evidence bundles under /data/evidence into hivecommons/benchmarks schema records (one per PR and agent role): model, harness, sandbox runtime, outcome, time-to-merge, ACMM level, keyed by this hive's salted hash. Repository and org names appear only for public repositories unless `benchmarks.repo_consent: false`. Returns `records: []` when `benchmarks.publish: false`. The same records are pushed hourly to the hub (hivecommons/hive#17694).",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "RFC3339 or YYYY-MM-DD; PRs whose newest bundle is older are skipped. Default: 90 days ago."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Benchmark records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hive_hash": {
+                      "type": "string"
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "publish": {
+                      "type": "boolean"
+                    },
+                    "since": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "count": {
+                      "type": "integer"
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "hivecommons/benchmarks schema/result.schema.json record"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad since"
+          }
+        }
+      }
+    },
     "/api/evidence/summary": {
       "get": {
         "tags": [
