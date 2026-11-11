@@ -97,8 +97,10 @@ func isOwnerRole(role string) bool {
 // A WRONG proof header is ALWAYS rejected regardless of this setting.
 var proxyProofRequired = true
 
-// staleDropStarvationThreshold is the number of consecutive stale-snapshot
-// drops (no publish between) at which the drop is logged at Warn.
+// staleDropStarvationThreshold bounds consecutive stale-snapshot drops (no
+// publish between): the build that would be the Nth consecutive drop is
+// published anyway, logged at Warn, so sustained mutation churn cannot
+// starve consumers. The counter resets on every publish.
 const staleDropStarvationThreshold = 5
 
 type Server struct {
