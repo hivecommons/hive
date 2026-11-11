@@ -93,15 +93,46 @@ Repository permissions used by the dashboard setup UI are:
 | Actions | Read and write (Read-only with `governor.ci.auto_approve_workflows: false`) | Inspect workflow runs; the default-on approval sweep approves gated `pull_request` runs for trusted bots, the App and dashboard-admitted heads with the App token ([#16603](https://github.com/hivecommons/hive/issues/16603)). If the sweep is off or refused and GitHub holds trusted Dependabot/App/clanker runs in `action_required`, Hive posts `/ok-to-test`; the repository-local `hive-ok-to-test` workflow uses its own `GITHUB_TOKEN` with Actions write to approve those runs. With Read and write, the contributor lane also approves held runs directly for a PR author the contributor registry admitted at a `require_tiers` tier (`auto_merge.contributor_lane.approve_held_runs_for_registry_trusted`). Optional: without it the hive marks such a PR `hive:unauthorized` and waits for a maintainer to click **Approve and run** ([#14589](https://github.com/hivecommons/hive/issues/14589)). |
 | Administration | Read-only | Read branch-protection rules before the merge-request watcher lands a PR; Hive refuses closed if it cannot verify the base branch is protected. |
 | Commit statuses | Read/write | Needed when `governor.labels.automerge` is the default `lgtm` on a repository running Prow's commit-bound `lgtm` (prow-github-actions v3): the queue action sets a `prow/lgtm` success status on the approved head so Prow does not strip the label. Without the write grant the label and approval still land, but every queue action takes the failure branch and posts a PR comment saying the status could not be set. Choose a distinct label such as `hive/auto-merge` if you would rather keep this at Read. |
-| Dependabot alerts | Read-only | Required for the sec-check agent's Dependabot scanning (`gh api repos/<org>/<repo>/dependabot/alerts`, [#17426](https://github.com/hivecommons/hive/issues/17426)). Least privilege: only the token minted for an agent with role `sec-check` at ISSUES_AND_PRS or ISSUES_PRS_MERGE ([#17496](https://github.com/hivecommons/hive/issues/17496)) requests `vulnerability_alerts: read`; every other agent's token is unchanged, even though the App itself must declare the permission. Existing installations must re-accept the updated permission once under Settings → Integrations → the app → Review request. Optional: without it the sec-check mint retries without the grant, the Dependabot call returns 403, and the hive still mints tokens. |
+| Dependabot alerts | Read-only | Required for the sec-check agent's Dependabot scanning (`gh api repos/<org>/<repo>/dependabot/alerts`, [#17426](https://github.com/hivecommons/hive/issues/17426)). Least privilege: only the token minted for an agent with role `sec-check` at ISSUES_AND_PRS or ISSUES_PRS_MERGE ([#17496](https://github.com/hivecommons/hive/issues/17496)) requests `vulnerability_alerts: read`; every other agent's token is unchanged. The App itself must still declare the permission, and that is a GitHub UI change only the App owner can make — see [Adding a permission to an existing App](#adding-a-permission-to-an-existing-app). Optional: until it is declared and re-accepted, the sec-check mint logs `scoped token mint with vulnerability_alerts:read failed; retrying without it`, mints without the grant, and the Dependabot call returns 403; the hive still mints tokens and every other agent is unaffected. |
 | Code scanning alerts | Read-only (optional) | Only for the opt-in code scanning sweep (`code_scanning`, off by default): it reads a repository's open alerts to file grouped issues ([code-scanning.md](code-scanning.md)). This is GitHub's `security_events` permission. Without it the sweep shows a "Code Scanning Alerts Not Readable" notice for that repository and retries every six hours; nothing else uses it. |
-
 | Workflows | Read/write | Let trusted-tier agents push branches that modify `.github/workflows/`, and let the contributor lane merge an owner-approved PR that edits `.github/workflows/**` (`auto_merge.contributor_lane.owner_approval_releases_workflow_fence`, [#14664](https://github.com/hivecommons/hive/issues/14664)); without the grant such a merge is refused and the hive marks the PR `hive:unauthorized` (`merge-workflow-path`) and parks it at 090 for a maintainer's **Merge** click. Without it GitHub also rejects any GitHub App-token push touching those files server-side ("refusing to allow a GitHub App to create or update workflow … without workflows permission") no matter what the token requests. Maintainer user credentials are separate and can still push workflow-file changes when their account has the normal repository rights; the Hive App cannot until this grant is added **and re-accepted on each installation** (an existing install must approve the new permission under Settings → Integrations → the app → Review request). See [`hive-open-pr`](hive-open-pr.md#workflow-file-pushes-rejected-by-app-tokens) for the agent delivery procedure and [#6985](https://github.com/hivecommons/hive/issues/6985) for the outstanding permission change. |
+
 Organization permission:
 
 | Permission | Level | Why |
 | --- | --- | --- |
 | Members | Read-only | Identify contributors and owners where configured. |
+
+### Adding a permission to an existing App
+
+Hive does not ship an App manifest and never edits the App's permissions for
+you: GitHub exposes no API for changing a GitHub App's declared permissions, so
+when a Hive release starts requesting a grant the App does not yet declare
+(Workflows in [#6985](https://github.com/hivecommons/hive/issues/6985),
+Dependabot alerts in [#17426](https://github.com/hivecommons/hive/issues/17426)),
+the token mint is refused with `422 The permissions requested are not granted
+to this installation`, Hive logs a warning, retries without the grant, and the
+feature that needed it degrades (a 403 on that API call) until two people have
+clicked through the GitHub UI:
+
+1. **The App owner** (whoever owns the App under **Developer settings**, e.g.
+   the organization that created it) opens **Settings → Developer settings →
+   GitHub Apps → _your app_ → Permissions & events → Repository
+   permissions**, sets the new permission (for example **Dependabot alerts:
+   Read-only**), and clicks **Save changes** at the bottom of the page.
+   Nothing changes for any installation until this is saved.
+2. **Each installation owner** then sees **Permission updates requested** on
+   the installation page — **Settings → Integrations → Applications →
+   _your app_ → Configure** for a user account, or **Organization settings →
+   Third-party access → GitHub Apps → _your app_ → Configure** for an
+   organization — and must click **Review request → Accept new permissions**.
+   GitHub also emails the installation owner. Until an installation accepts,
+   that installation keeps minting without the grant; installations that have
+   accepted get it on their next mint without a hive restart.
+
+The hive confirms the grant landed when the `scoped token mint with
+vulnerability_alerts:read failed` (or `workflows:write failed`) warning stops
+appearing in the spoke log on the next mint for that tier.
 
 ### Optional shared-CI recovery
 

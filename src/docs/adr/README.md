@@ -83,7 +83,7 @@ sequencing; ADR-0019/0025 give their current action/mode contract first.
 - [ADR-0023: Hive may merge PRs whose author could merge them](0023-trusted-author-automerge.md)
 - [ADR-0024: Provider credential lifecycle](0024-provider-credential-lifecycle.md) — **Proposed**, not a credential-pool or refresh-service setup guide.
 - [ADR-0025: One stage engine derives and writes every `stage/*` label](0025-central-stage-engine.md)
-- [ADR-0026: Sandbox runtime selection](0026-sandbox-runtime-selection.md) (Proposed)
+- [ADR-0026: Sandbox runtime selection](0026-sandbox-runtime-selection.md) (Accepted — phase 1 implemented, runtime opt-in)
 
 ### v6-only ADRs (`0100`+)
 

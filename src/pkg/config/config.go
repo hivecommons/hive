@@ -107,6 +107,11 @@ type Config struct {
 	// Debug holds process-level diagnostics knobs (pprof listener). See
 	// docs/operator-reference.md "Runtime diagnostics".
 	Debug DebugConfig `yaml:"debug,omitempty" json:"debug,omitempty"`
+	// Network holds outbound-connectivity knobs: the optional upstream HTTP
+	// forward proxy that selected hosts (e.g. an enterprise GitHub reachable
+	// only via a corporate proxy) are chained through. Env overrides and
+	// HTTPS_PROXY fallback: see crux/upstreamproxy.Resolve.
+	Network NetworkConfig `yaml:"network,omitempty" json:"network,omitempty"`
 	// Triggers is an additive list of CEL-based declarative agent triggers.
 	// Default empty → existing label/governor triggering is unchanged.
 	Triggers []TriggerRule `yaml:"triggers,omitempty" json:"triggers,omitempty"`
@@ -137,6 +142,9 @@ type Config struct {
 	// Evidence controls the review evidence bundles the review relay writes
 	// (hivecommons/hive#11060). Default on, unsigned; see EvidenceConfig.
 	Evidence EvidenceConfig `yaml:"evidence,omitempty" json:"evidence,omitempty"`
+	// Benchmarks governs the anonymized per-PR records this hive contributes
+	// to hivecommons/benchmarks (hivecommons/hive#17694); see BenchmarksConfig.
+	Benchmarks BenchmarksConfig `yaml:"benchmarks,omitempty" json:"benchmarks,omitempty"`
 	// Compliance selects framework profiles; see ComplianceConfig.
 	Compliance ComplianceConfig `yaml:"compliance,omitempty" json:"compliance,omitempty"`
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
@@ -282,6 +290,22 @@ type Config struct {
 // WorkflowConfig is the `workflow:` block (hivecommons/hive#17620).
 type WorkflowConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
+	// LabelGC lets the stage engine delete a bound model's labels from a
+	// repository once the repository is unbound or rebound to a model that
+	// no longer declares them (RFC phase 4 follow-up). Only labels the hive
+	// itself provisioned, outside the built-in stage family and worn by no
+	// open issue or PR, are ever deleted; each deletion is audited as
+	// workflow_label_removed. nil means true; false leaves every label in
+	// place and logs what would have gone.
+	LabelGC *bool `yaml:"label_gc,omitempty" json:"label_gc,omitempty"`
+	// Marketplace configures the spoke's view of the hub workflow catalogue
+	// (hivecommons/hive#17620 phase 7).
+	Marketplace MarketplaceConfig `yaml:"marketplace,omitempty" json:"marketplace,omitempty"`
+}
+
+// LabelGCEnabled is the effective workflow.label_gc (default true).
+func (c WorkflowConfig) LabelGCEnabled() bool {
+	return c.LabelGC == nil || *c.LabelGC
 }
 
 type DataConfig struct {

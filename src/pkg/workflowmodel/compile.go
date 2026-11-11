@@ -75,6 +75,9 @@ type Profile struct {
 	Labels LabelSet `json:"labels,omitzero"`
 	// Diagnostics are the warnings left after a successful compile.
 	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
+	// replyEffects maps state id → NormalizeReply(verb) → the transition
+	// the verb releases (replies.go). Derived; never serialised.
+	replyEffects map[string]map[string]ReplyEffect
 }
 
 // Compile validates m, then checks the lifecycle half and builds the
@@ -149,6 +152,7 @@ func (c *compiler) run() {
 
 	c.columns()
 	c.numbers()
+	c.replies()
 	c.exits()
 	c.roles()
 	c.events()

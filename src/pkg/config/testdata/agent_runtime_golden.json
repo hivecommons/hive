@@ -688,7 +688,8 @@
   "dedupe": {},
   "contribute": {},
   "workflow": {
-    "enabled": false
+    "enabled": false,
+    "marketplace": {}
   },
   "HiveID": "",
   "acmm_level": null,
@@ -708,6 +709,9 @@
   "otel": {},
   "Tracing": {},
   "debug": {},
+  "network": {
+    "upstream_proxy": {}
+  },
   "Mint": {
     "Enabled": false,
     "KeyPath": "",
@@ -731,6 +735,7 @@
   "evidence": {
     "complexity": {}
   },
+  "benchmarks": {},
   "compliance": {
     "posture_checks": {}
   },

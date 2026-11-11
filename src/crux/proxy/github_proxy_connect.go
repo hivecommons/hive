@@ -213,7 +213,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	}
 	defer func() { _ = tlsClientConn.Close() }()
 
-	upstreamConn, err := tls.DialWithDialer(markDialer(upstreamDialTimeout), "tcp", host+":443", &tls.Config{ServerName: host})
+	upstreamConn, err := p.dialUpstreamTLS(host+":443", host, upstreamDialTimeout)
 	if err != nil {
 		p.logger.Error("transparent proxy upstream dial failed", "host", host, "error", err)
 		return
@@ -282,7 +282,7 @@ func (p *GitHubProxy) dialTunnelUpstream(host string) (net.Conn, error) {
 	if p.tunnelDial != nil {
 		return p.tunnelDial(host)
 	}
-	return p.tunnelDialer(transparentProxyTimeout).Dial("tcp", host+":443")
+	return p.dialUpstreamRaw(host+":443", transparentProxyTimeout)
 }
 
 const tlsClientHelloMaxSize = 4096
@@ -534,9 +534,7 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	// curl sits in poll() waiting for "200 Connection established" that never
 	// comes). The deadline is lifted once established so the relay is not
 	// time-boxed.
-	upstreamConn, err := tls.DialWithDialer(markDialer(upstreamDialTimeout), "tcp", r.Host, &tls.Config{
-		ServerName: host,
-	})
+	upstreamConn, err := p.dialUpstreamTLS(r.Host, host, upstreamDialTimeout)
 	if err != nil {
 		p.logger.Error("proxy upstream dial failed", "host", r.Host, "error", err)
 		return
@@ -611,7 +609,7 @@ func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 	// is destination-guarded like the plain forward path: a CONNECT names an
 	// arbitrary host:port, and without the guard it was a raw TCP tunnel from
 	// the proxy's uid to the cloud metadata service or the cluster estate.
-	upstream, err := p.tunnelDialer(tunnelDialTimeout).Dial("tcp", r.Host)
+	upstream, err := p.dialUpstreamRaw(r.Host, tunnelDialTimeout)
 	if err != nil {
 		var denied *plainForwardDenied
 		if errors.As(err, &denied) {

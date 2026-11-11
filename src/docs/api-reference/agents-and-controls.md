@@ -37,6 +37,13 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `POST` | `/api/agents/import` | Owner only | Agent Import | `pkg/dashboard/api.go:340` |
 | `DELETE` | `/api/agents/{name}` | Owner only | Agent Delete | `pkg/dashboard/api.go:341` |
 
+| `GET` | `/api/benchmarks/export` | Owner only | Anonymized per-PR [benchmark records](../benchmarks.md) (schema `hivecommons/benchmarks` `result.schema.json`) built from the evidence bundles updated since `since` (RFC3339 or `YYYY-MM-DD`; default 90 days; `400` when malformed) plus `hive_hash`, `publish`, `generated_at` and `count`. `records` is empty when `benchmarks.publish: false`; repo/org names appear only for GitHub-public repos when `benchmarks.repo_consent` is on | `pkg/dashboard/api.go:566` |
+| `GET` | `/api/agents/{name}/log` | Dashboard auth/session | Agent Full Log | `pkg/dashboard/api.go:139` |
+| `GET` | `/api/agents/{name}/terminal-urls` | Dashboard auth/session | Agent Terminal URLs | `pkg/dashboard/api.go:143` |
+| `GET` | `/api/agents/{name}/kicks` | Dashboard auth/session | Agent Kick Log List | `pkg/dashboard/api.go:146` |
+| `GET` | `/api/agents/{name}/kicks/{id}` | Dashboard auth/session | Agent Kick Log Get | `pkg/dashboard/api.go:147` |
+| `GET` | `/agents/{name}/kicks` | Dashboard auth/session | Agent Kick History Page (HTML) | `pkg/dashboard/api.go:148` |
+| `POST` | `/api/agents/{name}/login-code` | Owner only | Agent Login Code | `pkg/dashboard/api.go:170` |
 
 ### Kick is asynchronous
 

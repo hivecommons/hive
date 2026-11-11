@@ -491,6 +491,10 @@ type Client struct {
 	// stageArchived memoises repos GitHub refused label writes on because
 	// they are archived (hivecommons/hive#14026); the sweep skips them.
 	stageArchived coveredByPRLabelState
+	// stageLabelForbidden memoises repos where the GitHub App was refused
+	// label writes with 403 "Resource not accessible by integration"
+	// (hivecommons/hive#17582); the sweep skips them until restart.
+	stageLabelForbidden coveredByPRLabelState
 	// legacyDecisionLabels memoises repos whose retired needs-decision /
 	// needs-direction definitions were deleted (hivecommons/hive#12683), or
 	// whose definition cleanup was denied integration permission (#14372).
@@ -5141,6 +5145,18 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path 
 	// A merge resolves this PR's blockers and proven repository-level causes,
 	// not another PR's required checks or review/head-specific conditions.
 	c.clearMergeFailureAlertsAfterMerge(repo, number, method)
+}
+
+// RecordWorkflowLabelRemoved records the deletion of a workflow model's
+// stale label from repo (automerge's label garbage collection,
+// hivecommons/hive#17620). model is the binding that made it stale
+// (name@version) or "unbound".
+func (c *Client) RecordWorkflowLabelRemoved(repo, label, model string) {
+	if c == nil {
+		return
+	}
+	c.recordWriteAudit(AuditActionWorkflowLabelRemoved, InvocationMeta{Agent: AttributionAgentGovernor},
+		WriteTarget{Repo: repo}, "label", label, "workflow", model)
 }
 
 // RepoWorkBreakdown explains the raw open issue and PR totals for one

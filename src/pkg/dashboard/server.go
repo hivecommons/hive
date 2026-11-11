@@ -141,6 +141,12 @@ type Server struct {
 	logger       *slog.Logger
 	mux          *http.ServeMux
 	deps         *Dependencies
+
+	// benchmarksPub is the hourly hivecommons/benchmarks publisher state
+	// (api_benchmarks.go), built lazily by benchmarks().
+	benchmarksOnce sync.Once
+	benchmarksPub  *benchmarksPublisher
+
 	// stageStore is the stage-label memory /api/stage-tracker reads; nil
 	// means the process-wide stagelabels.Shared(). Tests inject one.
 	stageStore *stagelabels.Store
@@ -1960,6 +1966,8 @@ func (s *Server) Start() error {
 	followCtx, cancelFollow := context.WithCancel(context.Background())
 	defer cancelFollow()
 	s.StartRebaseMergeFollowThrough(followCtx)
+	// Hourly anonymized benchmark push to the hub (hivecommons/hive#17694).
+	s.StartBenchmarksPublisher(followCtx)
 	return srv.Serve(ln)
 }
 
@@ -4096,6 +4104,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	payload.UpgradeProgress = s.upgradeProgress(status, now)
 	payload.Writeback = s.WritebackStatus()
 	payload.Hotspots = s.HotspotStatusBlock()
+	payload.Benchmarks = s.BenchmarksStatusBlock()
 	payload.Config = s.configHealthStatus()
 	if s.deps != nil {
 		payload.WorkflowApprovals = s.deps.GHClient.WorkflowApprovalsStatus()
@@ -4141,6 +4150,9 @@ type statusWithWebhooks struct {
 	// link, and a notice for a repo whose alerts the App cannot read.
 	// Absent while the sweep is off everywhere.
 	CodeScanning *github.CodeScanningStatusBlock `json:"code_scanning,omitempty"`
+	// Benchmarks is this hive's leaderboard hash and last publish to
+	// hivecommons/benchmarks (hivecommons/hive#17694).
+	Benchmarks *BenchmarksStatus `json:"benchmarks,omitempty"`
 	*EvalLoopStatus
 	// MatrixEnabled reports whether the Matrix block is active (enabled with
 	// at least one repo, see config.DashboardMatrixConfig.Active) so the header shows

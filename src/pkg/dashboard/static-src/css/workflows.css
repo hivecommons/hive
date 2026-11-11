@@ -1,0 +1,101 @@
+    /* Settings → Workflows (#17620 phase 3): library, detail, diagram, ingest */
+    .wf-nav { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-5); border-bottom: var(--line-width) solid var(--border); }
+    .wf-nav-item { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; font-size: var(--fs-sm); font-weight: 700; padding: var(--sp-2) var(--sp-4); cursor: pointer; }
+    .wf-nav-item.active { color: var(--text); border-bottom-color: var(--brand); }
+    .wf-table td.wf-num { font-family: var(--font-mono); white-space: nowrap; }
+    .wf-key { color: var(--text); text-decoration: none; font-weight: 700; }
+    .wf-key:hover { text-decoration: underline; }
+    .wf-desc { font-size: var(--fs-xs); margin-top: var(--sp-1); max-width: 36em; }
+    .wf-prov, .wf-compiled { display: inline-block; border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; border: var(--line-width) solid var(--border); color: var(--muted); }
+    .wf-prov-built-in { color: var(--status-info); border-color: color-mix(in srgb, var(--status-info) 40%, transparent); background: color-mix(in srgb, var(--status-info) 10%, transparent); }
+    .wf-prov-curated { color: var(--status-ok); border-color: color-mix(in srgb, var(--status-ok) 40%, transparent); background: color-mix(in srgb, var(--status-ok) 10%, transparent); }
+    .wf-prov-ingested-unreviewed { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 40%, transparent); background: color-mix(in srgb, var(--status-warn) 10%, transparent); }
+    .wf-compiled-ok { color: var(--status-ok); }
+    .wf-compiled-warn { color: var(--status-warn); }
+    .wf-compiled-no { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 40%, transparent); }
+    .wf-detail-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
+    .wf-detail-head h3 { margin: var(--sp-0); }
+    .wf-detail h4 { margin: var(--sp-6) var(--sp-0) var(--sp-2); font-size: var(--fs-base); }
+    .wf-facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--sp-2) var(--sp-5); margin: var(--sp-4) var(--sp-0); font-size: var(--fs-sm); }
+    .wf-facts dt { color: var(--muted); font-weight: 700; }
+    .wf-facts dd { margin: var(--sp-0); min-width: 0; overflow-wrap: anywhere; }
+    .wf-diagram-wrap { overflow-x: auto; padding: var(--sp-2) var(--sp-0); }
+    .wf-diagram { display: block; max-width: none; font-family: var(--font-ui); }
+    .wf-dg-lane { fill: color-mix(in srgb, var(--panel) 70%, var(--bg)); stroke: var(--border); stroke-width: 1; }
+    .wf-dg-col.terminal .wf-dg-lane { stroke-dasharray: 4 3; }
+    .wf-dg-colname { fill: var(--muted); font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+    .wf-dg-chip { fill: var(--panel-strong); stroke: var(--line-strong); stroke-width: 1; }
+    .wf-dg-state.initial .wf-dg-chip { stroke: var(--status-info); stroke-width: 1.5; }
+    .wf-dg-state.terminal .wf-dg-chip { stroke-width: 2; }
+    .wf-dg-state.inferred .wf-dg-chip { stroke-dasharray: 4 3; stroke: var(--status-warn); }
+    .wf-dg-label { fill: var(--text); font-size: var(--fs-sm); }
+    .wf-dg-num { fill: var(--muted); font-size: var(--fs-2xs); }
+    /* Edge layer: quiet by default, detail on focus. Hovering a state or an
+       edge (wfEdgeFocusHover) dims everything not incident and lifts the
+       focused edges into .wf-edge-front with the accent colour. */
+    .wf-diagram, .wf-ed-svg { --wf-edge-dim: .18; --wf-edge-quiet: .7; --wf-edge-back: .55; }
+    .wf-dg-edge { cursor: default; }
+    .wf-dg-edge-hit { fill: none; stroke: transparent; stroke-width: 10; }
+    .wf-dg-edge-line { fill: none; stroke: var(--muted); stroke-width: 1.25; opacity: var(--wf-edge-quiet); }
+    .wf-dg-edge.back .wf-dg-edge-line { stroke-dasharray: 3 3; opacity: var(--wf-edge-back); }
+    .wf-focus .wf-dg-edge:not(.focus) .wf-dg-edge-line, .wf-focus .wf-fan-trunk { opacity: var(--wf-edge-dim); }
+    .wf-focus .wf-dg-state:not(.focus) .wf-dg-chip, .wf-focus .wf-dg-state:not(.focus) text { opacity: var(--wf-edge-quiet); }
+    .wf-dg-edge.focus .wf-dg-edge-line, .wf-dg-edge:hover .wf-dg-edge-line { stroke: var(--brand); stroke-width: 2; opacity: 1; }
+    .wf-dg-state.focus .wf-dg-chip { stroke: var(--brand); }
+    .wf-dg-arrowhead { fill: var(--muted); }
+    .wf-dg-edge-label { display: none; }
+    .wf-dg-edge:hover .wf-dg-edge-label { display: inline; }
+    .wf-dg-edge-label text { fill: var(--brand); font-size: var(--fs-2xs); font-weight: 600; pointer-events: none; }
+    .wf-dg-edge-label-bg { fill: var(--panel); stroke: var(--brand); stroke-width: 1; }
+    /* Fan-out bundles: >N edges from one state into one lane collapse to a trunk with a +N badge; hover expands. */
+    .wf-fan .wf-fan-edge { display: none; }
+    .wf-fan:hover .wf-fan-edge, .wf-fan.open .wf-fan-edge, .wf-fan:focus-within .wf-fan-edge { display: inline; }
+    .wf-fan:hover .wf-fan-trunk, .wf-fan.open .wf-fan-trunk { display: none; }
+    .wf-fan-trunk { stroke-width: 2.5; }
+    .wf-fan-badge { cursor: pointer; }
+    .wf-fan-badge rect { fill: var(--panel-strong); stroke: var(--muted); stroke-width: 1; }
+    .wf-fan-badge text { fill: var(--text); font-size: var(--fs-2xs); font-weight: 700; pointer-events: none; }
+    .wf-fan-badge:hover rect { stroke: var(--brand); }
+    .wf-fan-badge:hover text { fill: var(--brand); }
+    .wf-diags, .wf-citations, .wf-pipelines { margin: var(--sp-0); padding-left: var(--sp-6); font-size: var(--fs-sm); }
+    .wf-diag-code { color: var(--muted); margin-right: var(--sp-2); }
+    .wf-diag-error .wf-diag-code { color: var(--status-error); }
+    .wf-diag-warning .wf-diag-code { color: var(--status-warn); }
+    .wf-json pre { max-height: 24rem; overflow: auto; font-size: var(--fs-xs); background: var(--bg-soft); padding: var(--sp-4); border-radius: var(--r-sm); }
+    .wf-ingest-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: var(--sp-4); align-items: end; }
+    .wf-ingest-form .config-field { margin-bottom: var(--sp-0); }
+    .wf-ingest-form .kc-actions { grid-column: 1 / -1; }
+    .wf-ingest-error { color: var(--status-error); font-size: var(--fs-sm); margin-top: var(--sp-4); }
+    .wf-ingest-result { margin-top: var(--sp-5); border-top: var(--line-width) solid var(--border); padding-top: var(--sp-4); }
+    .wf-ingest-result h4 { margin: var(--sp-5) var(--sp-0) var(--sp-2); font-size: var(--fs-base); }
+    .wf-ingest-summary { font-size: var(--fs-sm); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+
+    /* Simulate panel (RFC phase 3c) */
+    .wf-sim > summary { cursor: pointer; list-style: none; }
+    .wf-sim > summary h4 { display: inline; margin: var(--sp-0); }
+    .wf-sim > summary::before { content: '▸'; display: inline-block; width: var(--sp-4); color: var(--muted); }
+    .wf-sim[open] > summary::before { content: '▾'; }
+    .wf-sim-pick { display: flex; align-items: flex-end; gap: var(--sp-3); flex-wrap: wrap; }
+    .wf-sim-pick .config-field { flex: 1 1 16rem; margin: var(--sp-0); }
+    .wf-sim-kinds { display: flex; gap: var(--sp-5); margin: var(--sp-3) var(--sp-0); font-size: var(--fs-sm); }
+    .wf-sim-kind { display: inline-flex; align-items: center; gap: var(--sp-2); cursor: pointer; }
+    .wf-sim-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: var(--sp-3) var(--sp-4); font-size: var(--fs-sm); }
+    .wf-sim-form .config-field { margin: var(--sp-0); }
+    .wf-sim-check { display: flex; align-items: center; gap: var(--sp-2); align-self: end; }
+    .wf-sim-result { margin-top: var(--sp-4); border-top: 1px solid var(--line-strong); padding-top: var(--sp-4); }
+    .wf-sim-decision { font-size: var(--fs-base); display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+    .wf-sim-chip { display: inline-block; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); font-weight: 700; font-size: var(--fs-sm); }
+    .wf-sim-chip-state { background: var(--status-ok); color: var(--panel); }
+    .wf-sim-chip-abstain { background: var(--status-warn); color: var(--panel); }
+    .wf-sim-chip-none { background: var(--muted); color: var(--panel); }
+    .wf-sim-sep { color: var(--muted); }
+    .wf-sim-trace { margin: var(--sp-3) var(--sp-0) var(--sp-0); padding-left: var(--sp-6); font-size: var(--fs-sm); }
+    .wf-sim-rule { padding: var(--sp-1) var(--sp-2); border-radius: var(--r-sm); }
+    .wf-sim-rule.matched { background: var(--bg-soft); border-left: 3px solid var(--status-ok); }
+    .wf-sim-rule.unevaluated, .wf-sim-rule.skipped { color: var(--muted); }
+    .wf-sim-preds { list-style: none; margin: var(--sp-1) var(--sp-0) var(--sp-0); padding-left: var(--sp-4); font-size: var(--fs-xs); }
+    .wf-sim-ok { color: var(--status-ok); font-weight: 700; }
+    .wf-sim-fail { color: var(--status-error); font-weight: 700; }
+    .wf-sim-unknown { color: var(--status-warn); font-weight: 700; }
+    .wf-sim-fill { margin-top: var(--sp-3); color: var(--text); }
+    .wf-dg-state.simulated .wf-dg-chip { stroke: var(--status-ok); stroke-width: 3; }

@@ -53,9 +53,18 @@ type Options struct {
 	// Workflow: Workflow is the engine-wide model, WorkflowFor the
 	// per-repository override. hivecommons/hive#17620 (RFC phase 2).
 	WorkflowFor func(owner, repo string) *workflowmodel.Profile
-	Now         func() time.Time
-	Logger   *slog.Logger
-	Metrics  Metrics
+	// WorkflowProvisioned remembers, per repository, the model labels the
+	// label reconciler created, so a later pass can tell its own labels
+	// from the repository's. nil: nothing is remembered and no model label
+	// is ever deleted. hivecommons/hive#17620 (RFC phase 4 follow-up).
+	WorkflowProvisioned workflowmodel.ProvisionedStore
+	// WorkflowLabelGC, read on every pass, says whether a remembered model
+	// label the current binding no longer declares may be deleted from the
+	// repository (workflow.label_gc). nil means true.
+	WorkflowLabelGC func() bool
+	Now             func() time.Time
+	Logger          *slog.Logger
+	Metrics         Metrics
 }
 
 // ErrNoWriter is returned by an enforce-mode Reconcile with no Writer.

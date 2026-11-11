@@ -89,6 +89,10 @@ func TestWriteSurfaceGraphQLRefusal(t *testing.T) {
 		{"mutation", "scanner", `{"query":"mutation { addComment(input:{}) { clientMutationId } }"}`, true},
 		{"query", "scanner", `{"query":"query { viewer { login } }"}`, false},
 		{"shorthand query", "scanner", `{"query":"{ viewer { login } }"}`, false},
+		{"fragment-first mutation", "scanner", `{"query":"fragment F on Repository { id } mutation { addComment(input:{}) { clientMutationId } }"}`, true},
+		{"leading comma mutation", "scanner", `{"query":",mutation { addComment(input:{}) { clientMutationId } }"}`, true},
+		{"leading BOM mutation", "scanner", "{\"query\":\"\uFEFFmutation { addComment(input:{}) { clientMutationId } }\"}", true},
+		{"fragment-first query", "scanner", `{"query":"fragment F on Repository { id } query { viewer { login } }"}`, false},
 		{"not json fails closed", "scanner", `not json`, true},
 		{"unlisted lane mutation", "reviewer", `{"query":"mutation { x }"}`, false},
 	}

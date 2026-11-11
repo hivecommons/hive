@@ -9,6 +9,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/upstreamproxy"
 )
 
 // mintClientTimeout bounds a single App-JWT / installation-token HTTP call.
@@ -45,6 +46,21 @@ type proxyTrustPool struct {
 	// load-bearing and not merely an optimization (#3875).
 	transport     *http.Transport
 	transportPool *x509.CertPool
+	// upstream, when set, decides per-host whether the transport chains
+	// through a corporate forward proxy (SetUpstreamProxy). transportUpstream
+	// records which selector the cached transport was built with so a change
+	// invalidates it.
+	upstream          *upstreamproxy.Selector
+	transportUpstream *upstreamproxy.Selector
+}
+
+// SetUpstreamProxy installs the upstream-proxy selector every GitHub client
+// built on the shared transport honours via http.Transport.Proxy. nil
+// restores http.ProxyFromEnvironment (the http.DefaultTransport default).
+func SetUpstreamProxy(sel *upstreamproxy.Selector) {
+	sharedProxyTrust.mu.Lock()
+	defer sharedProxyTrust.mu.Unlock()
+	sharedProxyTrust.upstream = sel
 }
 
 // certPool returns a RootCAs pool trusting the system roots plus the proxy CA
@@ -160,7 +176,7 @@ func (t *proxyTrustPool) sharedTransport() *http.Transport {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.transport != nil && t.transportPool == pool {
+	if t.transport != nil && t.transportPool == pool && t.transportUpstream == t.upstream {
 		return t.transport
 	}
 
@@ -179,12 +195,19 @@ func (t *proxyTrustPool) sharedTransport() *http.Transport {
 	// does not yet exist. nil also means "system roots" to crypto/tls, so the
 	// direct-HTTPS (advisory mode) path is never broken.
 	transport.TLSClientConfig.RootCAs = pool
+	// The DefaultTransport clone already carries ProxyFromEnvironment; an
+	// explicit selector (config block or HIVE_UPSTREAM_PROXY_* env) replaces
+	// it so the host rules match what the MITM proxy applies to agent flows.
+	if t.upstream != nil {
+		transport.Proxy = t.upstream.ProxyFunc()
+	}
 
 	if old := t.transport; old != nil {
 		old.CloseIdleConnections()
 	}
 	t.transport = transport
 	t.transportPool = pool
+	t.transportUpstream = t.upstream
 	return transport
 }
 

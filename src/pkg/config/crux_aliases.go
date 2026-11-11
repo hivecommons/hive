@@ -38,6 +38,7 @@ type (
 	SandboxJobResources        = cruxconfig.SandboxJobResources
 	SandboxJobToleration       = cruxconfig.SandboxJobToleration
 	SandboxJobVolume           = cruxconfig.SandboxJobVolume
+	SandboxOpenShellConfig     = cruxconfig.SandboxOpenShellConfig
 	StatsDisplayEntry          = cruxconfig.StatsDisplayEntry
 	ToolApprovalConfig         = cruxconfig.ToolApprovalConfig
 	ToolApprovalRule           = cruxconfig.ToolApprovalRule
@@ -145,6 +146,7 @@ const (
 	RotationHeadroomSourceBuiltin       = cruxconfig.RotationHeadroomSourceBuiltin
 	RotationHeadroomSourceCCLeft        = cruxconfig.RotationHeadroomSourceCCLeft
 	SandboxRuntimeJob                   = cruxconfig.SandboxRuntimeJob
+	SandboxRuntimeOpenShell             = cruxconfig.SandboxRuntimeOpenShell
 	SandboxRuntimePodman                = cruxconfig.SandboxRuntimePodman
 	SelfMergeMinACMMLevel               = cruxconfig.SelfMergeMinACMMLevel
 	WritableBobAPIKeyFile               = cruxconfig.WritableBobAPIKeyFile

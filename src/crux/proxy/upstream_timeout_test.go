@@ -37,6 +37,11 @@ func readGitHubProxySource(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("glob github_proxy*.go: %v", err)
 	}
+	chain, err := filepath.Glob(filepath.Join(filepath.Dir(file), "upstream_chain.go"))
+	if err != nil {
+		t.Fatalf("glob upstream_chain.go: %v", err)
+	}
+	paths = append(paths, chain...)
 	var sb strings.Builder
 	for _, path := range paths {
 		if strings.HasSuffix(path, "_test.go") {
@@ -63,9 +68,18 @@ func TestAllTLSUpstreamDialsAreBound(t *testing.T) {
 	if strings.Contains(text, "tls.DialWithDialer(markDialer(0)") {
 		t.Fatal("TLS upstream dials must not use an unbounded zero-timeout dialer")
 	}
+	// Every TLS upstream dial funnels through dialUpstreamTLS, whose direct
+	// leg is the single bounded tls.DialWithDialer(markDialer(timeout)) and
+	// whose chained leg is bounded by a context carrying the same timeout.
+	if got := strings.Count(text, "tls.DialWithDialer("); got != 1 {
+		t.Fatalf("tls.DialWithDialer sites = %d, want 1 (dialUpstreamTLS)", got)
+	}
+	if !strings.Contains(text, "tls.DialWithDialer(markDialer(timeout)") {
+		t.Fatal("dialUpstreamTLS direct leg must use the bounded markDialer(timeout)")
+	}
 	const wantBoundTLSUpstreamDials = 3
-	if got := strings.Count(text, "tls.DialWithDialer(markDialer(upstreamDialTimeout)"); got != wantBoundTLSUpstreamDials {
-		t.Fatalf("bounded TLS upstream dials = %d, want %d", got, wantBoundTLSUpstreamDials)
+	if got := strings.Count(text, "upstreamDialTimeout)"); got < wantBoundTLSUpstreamDials {
+		t.Fatalf("dialUpstreamTLS callers passing upstreamDialTimeout = %d, want >= %d", got, wantBoundTLSUpstreamDials)
 	}
 	for _, want := range []string{
 		`p.logger.Error("transparent proxy upstream dial failed"`,

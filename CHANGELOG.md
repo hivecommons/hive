@@ -396,6 +396,183 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 - release: cap GitHub Release notes at `RELEASE_NOTES_MAX_CHARS` (120000) before the SBOM/NOTICE trailer, cutting the changelog section at a bullet boundary and linking the tag's full `CHANGELOG.md` section, so a first-on-the-line release such as v6.0.0 no longer fails `gh release create` with HTTP 422 "body is too long" after the tag and image retags have landed.
 
+## 2026-11-11 (v5.220.0)
+
+### Added
+
+- Benchmarks: every hive now contributes **anonymized** per-PR benchmark records to the public leaderboard at <https://hivecommons.dev/benchmarks/> (data repo `hivecommons/benchmarks`), built from the review evidence bundles it already seals. A record carries a salted hash of the hive id, the agent, harness, model, sandbox runtime, task kind, ACMM level, review verdicts and merge/CI/revert outcome — never the hive id, PR numbers, SHAs, prompts, diffs, logins or costs. Publication is **on by default**; `benchmarks.publish: false` opts a hive out, and `benchmarks.repo_consent` (default on) names repositories only when GitHub reports them public, so no new information is disclosed. Cadence is hub-driven and hourly: the spoke pushes new records to the hub's `POST /api/benchmarks/ingest` with its heartbeat bearer, and the hub commits month files to the data repo through its App identity; `GET /api/benchmarks/export?since=` and the `benchmarks` block in `/api/status` expose the same data and last-push state on the spoke, `GET /api/hub/benchmarks` on the hub, and Settings → Features → Benchmarks shows the toggles and the hive's hash. New bundles are stamped with the agent's sandbox runtime and task kind. See `docs/benchmarks.md` (#17694).
+- Workflow models, RFC phase 4 UI: Settings → Workflows grows an **Editor** — a visual design surface for lifecycle models rather than a form. Columns are vertical lanes (add, rename by double-click, reorder and resize by dragging the header, toggle terminal); states are chips you drag within and between lanes or drop from a templates palette (common states and columns, hive-default stages); transitions are drawn by dragging a chip's port onto another chip, with backward edges dashed and self-loops drawn as loops. The canvas pans, zooms, fits, shows a minimap, supports marquee and shift-click multi-select, keyboard nudging and Delete, undo/redo, and an Auto-layout that orders lanes by topological depth. An inspector edits the selected state, transition, column or the model itself; a bottom drawer hosts Problems (live compile diagnostics, badged on the canvas and clickable), YAML (two-way via the new `POST /api/workflows/yaml`), Diff (client-side structural diff against the last save, or the stored versions diff) and Simulate (facts → `POST /api/workflows/simulate` against the unsaved model, highlighting the decided state). Save assigns the next version through `POST /api/workflows` with an empty `meta.version`; Save as… and Revert are one click; inferred states carry a ✓ Confirm affordance with a toolbar "Confirm all inferred". Export offers self-contained SVG, PNG, model JSON and YAML. Library rows and detail gain Edit (owner) / Edit a copy (hive-default), and ingest results gain "Open in editor" ([#17620](https://github.com/hivecommons/hive/issues/17620))
+- **workflow models:** two more ways into a draft lifecycle model on Settings → Workflows → Ingest. *From a cluster* lists a kube context's Tekton Pipelines, Tasks, newest PipelineRuns and Triggers through `kubectl`, feeds them to the same Tekton ingester as a repository (citations at `cluster/<ns>/<kind>/<name>.yaml`) and records each pipeline's last run status as an *observed* annotation, never an inferred state; clear 4xx for missing CRDs, RBAC denials and unknown contexts, with namespace, run, object and byte caps. *From a written spec* turns pasted markdown, a repository file or a public URL into a draft: a deterministic pass reads step lists, if/when/after sentences and role nouns into states, guards and gates, and — only when a model gateway is configured and the operator opts in — the gateway refines that skeleton, its answer accepted solely if it parses strictly, passes `Mark` (every element forced to `confidence: inferred` with a `spec:<heading>#L<a>-L<b>` citation, provenance `ingested-unreviewed`) and compiles, with one diagnostic-quoting retry before falling back. The LLM is consulted nowhere else in the workflow-model stack. `POST /api/workflows/ingest/{cluster,spec}` and `GET /api/workflows/ingest/capabilities`, owner-only, audited as `workflow_ingest` ([#17620](https://github.com/hivecommons/hive/issues/17620))
+- Workflow models (RFC phase 4, backend): `GET /api/workflows/{name}/versions`, a deterministic structural diff between two versions (`GET …/{name}/diff?from&to`, optionally cross-model against hive-default), `POST …/{name}/{version}/confirm` to confirm an ingested model's inferred elements as a new local version (owner, audited `workflow_confirm`), `GET …/{name}/{version}/labels` to preview the labels and commands a model regenerates, and the stage-label provisioner now creates or recolours a bound model's own label vocabulary and re-provisions when the binding changes ([#17620](https://github.com/hivecommons/hive/issues/17620))
+
+## 2026-11-11 (v5.219.1)
+
+### Fixed
+
+- Weekly competitor report: the publication gate keys Discord table rows by project first word, holds table notes to their provenance links, and accepts "does not mean no licence"-style disclaimers (catch-up run 43070009570 failed on these).
+
+## 2026-11-11 (v5.219.0)
+
+### Added
+
+- **workflow models:** the stage engine now remembers which model labels it provisioned per repository and, on unbind or rebind to a model with a different label set, deletes the stale ones — only labels it created, outside the built-in stage family and worn by no open issue or PR; each deletion is audited `workflow_label_removed` and `workflow.label_gc: false` keeps everything. A bound model's `replies` are now offered by the Activity Monitor's human-gate pill and accepted as `/hive <verb>` on parked issues, applying the label the model maps to the reply's target state ([#17620](https://github.com/hivecommons/hive/issues/17620))
+
+### Fixed
+
+- Weekly competitor report: the publication gate accepts the "Who does what" project table as a fenced block on GitHub as well as a Markdown table (catch-up run 43065486702 failed on this).
+
+## 2026-11-11 (v5.218.0)
+
+### Added
+
+- **workflow models:** ingesting a repository now proposes its *intake half* alongside its pipelines: issue templates become `requested-<slug>` intake states and events, a triage label (from templates, `settings.yml`, `labels.yml`, `labeler.yml` or `CONTRIBUTING.md`) becomes a `triage` state and gate, PR-template checklist items become manual checks, `CODEOWNERS`/Prow `OWNERS` become `approver`/`reviewer` roles owning the review gate, a `MAINTAINERS` file's `@handles` become the `maintainer` role's members, `kind/*`/`priority/*`/`area/*` labels are carried as classification rows, and the default branch's protection or rulesets (fetched when ingesting by `repo`, or a probot `settings.yml`) become required CI checks, `review.minApprovals`, a `codeowner-review` gate and bookkeeping notes. Everything is `inferred` and cites `path:line` or the API endpoint; ingesting `cncf/techdocs` now proposes its triage state. Trees without these inputs produce the byte-identical model as before; `workflow-survey` counts the proposals per repository ([#17620](https://github.com/hivecommons/hive/issues/17620))
+- Workflow models, RFC phase 3c ([#17620](https://github.com/hivecommons/hive/issues/17620)): simulate an issue or PR against a model before binding it. New read-only `POST /api/workflows/{name}/{version}/simulate` takes `{kind, facts}` (a JSON mirror of the engine's `Facts`) or `{repo, number}` to best-effort fill the facts from the forge (the response lists what was fetched and what stayed unknown), runs the stored model's deriver through the new `stageengine.Explain`, and returns the decision (state, column, stage label, reason, covered/abstain) with a per-rule trace — every rule in order, the first match highlighted, each predicate's holds/known verdict — or a single built-in entry for `derivation: builtin` models. Settings → Workflows → model detail grows a **Simulate** panel: pick `owner/repo#123` and Fetch facts, or describe the item in a form, Run, and the matched state lights up in the diagram.
+
+### Fixed
+
+- Weekly competitor report: the publication gate no longer rejects the Discord post for the Discord formatting the prompt itself requires (bold headings, fenced project table, no sources details), which silently blocked the 2026-11-09 report.
+- The `hive-inference` vLLM Deployment's `model-download` init container now pulls `docker.io/curlimages/curl` by its fully-qualified name instead of the Docker Hub short name `curlimages/curl`. Oracle Linux 9 cri-o (OKE 1.34 node images) enforces short-name resolution (`short-name-mode = "enforcing"`), so on the upgraded hive-oke nodes the pod stuck in `Init:ImageInspectError` with "image name curlimages/curl:8.13.0 returns ambiguous list" and the model never downloaded; OL8 nodes silently resolved it to Docker Hub. Found during the hive-oke OL8→OL9 / Landlock node cycling (#17642).
+
+## 2026-11-11 (v5.217.1)
+
+### Changed
+
+- CI: the `pull_request` workflows `mutation-advisory`, `pr-overlap`, `stream-image`, `ci-runner-image` and `docs-index-reminder` now check out with `persist-credentials: false`. None of those jobs pushes or fetches with the job token; steps that call the API keep getting it through their step `env`, scoped by the job's `permissions:` block (#17636).
+
+### Security
+
+- **proxy:** the GitHub GraphQL mutation gate no longer fails open when `mutation` follows a same-line prefix (a leading fragment definition, comma or BOM). It now uses the same string- and comment-aware depth-zero token scan as the Linear path, so read-only lanes cannot slip a mutation past the capability tier, write-surface and auto-merge checks (#17676).
+
+## 2026-11-11 (v5.217.0)
+
+### Added
+
+- Workflow models (RFC phase 4, backend): `GET /api/workflows/{name}/versions`, a deterministic structural diff between two versions (`GET …/{name}/diff?from&to`, optionally cross-model against hive-default), `POST …/{name}/{version}/confirm` to confirm an ingested model's inferred elements as a new local version (owner, audited `workflow_confirm`), `GET …/{name}/{version}/labels` to preview the labels and commands a model regenerates, and the stage-label provisioner now creates or recolours a bound model's own label vocabulary and re-provisions when the binding changes ([#17620](https://github.com/hivecommons/hive/issues/17620))
+- Settings gains a **Workflows** tab (RFC phase 3b): a library of every workflow model the hive knows — built-in `hive-default`, locally saved models and drafts ingested from repository pipelines — with provenance and compile badges, bound-repository counts, View / Duplicate / Export / Delete, a read-only detail view that draws the compiled columns and states as an SVG diagram with transitions, diagnostics and citations, and an Ingest form that turns a repository's pipeline files into a draft model through `POST /api/workflows/ingest`. The Activity Monitor model badge deep-links into the library entry. Binding a repository stays on Settings → Repos; this tab never binds ([#17620](https://github.com/hivecommons/hive/issues/17620)).
+
+## 2026-11-11 (v5.216.0)
+
+### Added
+
+- Workflow models, RFC phase 1 ([#17620](https://github.com/hivecommons/hive/issues/17620)): the `workflow.hivecommons.dev/v1alpha1` schema gains the lifecycle half of the RFC — `columns`, `derivation`, `events`, `gates`, `roles`, `agents`, `checks`, `bookkeeping`, `labels`, `meta` and per-state `lifecycle` (column, stage number, item kinds, replies) — and `workflowmodel.Compile` turns a model into a `Profile` or refuses it with coded diagnostics (a non-terminal state with no exit, a gate with no releasing role, an agent-granted state with no human-released gate before a terminal outcome, two events bound to one fact, a state in no or two columns, duplicate stage numbers, an unknown fact or operator). `pkg/workflowmodel/hivedefault` generates the `hive-default` model from the live stage table and the engine's expected-edge table, so the monitor's seven columns and the stage numbers are now a compiled model rather than constants. `stageengine.DeriveFromModel` derives under a compiled profile: `hive-default` declares `derivation: builtin` and delegates to the existing derivers (the whole PR stage-golden corpus and the issue sweep derive identically), custom models declare `derivation: rules` (ordered first-match predicates over the fact vocabulary, uncovered items abstain `workflow: not covered`). New `workflow.enabled` config flag, default false; nothing changes for any hive until a repository is bound (phase 2).
+- Workflow models, RFC phase 3a ([#17620](https://github.com/hivecommons/hive/issues/17620)): an ingested repository now yields a model that compiles. `ingest.Lifecycle` composes the hive-default lifecycle (states, columns, builtin derivation, roles, gates, events) with the repository's pipelines — PR-verify pipelines bound to the CI / Review states with file citations, the post-merge chain (main CI, release, per-environment deploys, done) as new columns after Merged — every ingested element marked inferred and the model's provenance `ingested-unreviewed`. New fact `pipeline.status` names the post-merge run the chain waits on (the engine reports `unknown` until it observes post-merge runs, so nothing moves on it yet). New owner-gated `POST /api/workflows/ingest` takes `{repo}` (default branch fetched read-only through the hive's GitHub client, CI files selected by `ingest.ReadTree`) or pasted `{files}`, returns the model, compile result and diagnostics, and with `save: true` stores it at the next integer version. `cmd/workflow-survey` compiles every repository's lifecycle model and reports pass/refusal counts by code; over the 317-repository CNCF corpus 317/317 compile with 1,117 inferred-element warnings and no refusals.
+- Workflow models, phase 1 ([#17620](https://github.com/hivecommons/hive/issues/17620)): a new `pkg/workflowmodel` package ingests a repository's GitHub Actions workflows and Tekton / OpenShift Pipelines resources (`pkg/workflowmodel/githubactions`, `pkg/workflowmodel/tekton`, composed by `pkg/workflowmodel/ingest`) into one deterministic, content-hashed model of the repo's delivery process — pipelines with their trigger roles (PR verify, push verify, release, deploy, scheduled, manual), execution DAGs with topological levels, matrices, reusable workflows, environments and concurrency — bound onto the hive default lifecycle. `pkg/workflowmodel/render` turns a model into a Mermaid diagram and the Activity Monitor column set it implies (CI sub-stages under *CI / Review*, post-merge *Main CI*, *Release* and *Deploy: <env>* columns), and a model with no pipelines renders today's seven columns unchanged. Nothing is wired into the v5/v6 stage engine yet; `cmd/workflow-survey` is the proving harness that produced the CNCF-landscape survey posted on the issue (317 repositories, 4,389 pipelines, 317 valid models). Golden fixtures under `pkg/workflowmodel/testdata/corpus` pin real repositories' results.
+- Workflow models, RFC phase 2 ([#17620](https://github.com/hivecommons/hive/issues/17620)): models now have a home and a way to reach the engine. `pkg/workflowmodel/store` keeps versioned models under `<data>/workflows/<name>/<version>.json` (plus `index.json`); `hive-default` is virtual and read-only, drafts save but do not compile, every entry reserves `adoption`/`ratings`/`benchmarks` fields for the marketplace and carries them verbatim across saves. New owner-gated, audited `/api/workflows` routes list, save, read, delete and compile models; `project.workflow_bindings: [{repo, name, version}]` binds a repository to a compiling model (the binding is refused for a draft, and a bound model cannot be deleted). When `workflow.enabled` is on, the stage reconciler derives bound repositories through the bound model and everything else through the built-in derivers exactly as before. Settings → Repos gains a per-repo Workflow select, and the Activity Monitor response gains a `workflows` block (default columns plus per-repo columns and stage numbers) that the tracker uses to label the model column and to render a per-row column strip, with an amber "Not covered" chevron when a bound model abstains. Nothing changes for unbound repositories.
+
+## 2026-11-11 (v5.215.2)
+
+### Fixed
+
+- Hardened the automerge workflow-approval path against the read-only integration eligibility probe: the probe could reach the `/ok-to-test` post, where the mutation boundary refused the comment and the caller logged a WARN on every tick. The probe now skips the post and leaves it to the live sweep; live behaviour is unchanged.
+
+## 2026-11-11 (v5.215.1)
+
+### Security
+
+- Dashboard pane surfaces (`/api/agents/{name}/log`, `/api/status` summaries, Job log streams, archived kick/task logs) now mask JWTs, AWS access keys, Slack tokens and webhooks, `Authorization: Bearer`/`Basic` credentials and private-key blocks, not just GitHub and `sk-` tokens, because `logscrub.RedactPaneTokens` now also runs `ScrubString` ([#17665](https://github.com/hivecommons/hive/issues/17665)).
+
+## 2026-11-11 (v5.215.0)
+
+### Added
+
+- The dashboard's ▶ terminal pane now works for `sandbox.runtime: openshell` agents: it opens the read-only `/terminal/job/<agent>` viewer, follows the live OpenShell sandbox's gateway event log while a kick runs (scrubbed like the Job pod log; the pane says this is the sandbox's supervisor/policy log, not the kick's stdout, which an exec session does not expose) and shows the last persisted transcript — with the kick's own output and exit code — between kicks.
+
+## 2026-11-11 (v5.214.1)
+
+### Security
+
+- Agent tmux panes no longer inherit the hive container's dashboard shared token (`DASHBOARD_AUTH_TOKEN` / `HIVE_DASHBOARD_TOKEN`), the hub-injected per-hive signing keys (`HIVE_TERMINAL_KEY`, `HIVE_INVITE_KEY`, `HIVE_HEARTBEAT_KEY`, `HIVE_HUB_SECRET`), the ttyd credential or the corporate upstream-proxy settings; `applySessionEnv` removes them from the tmux global environment alongside the GitHub and Linear credentials it already stripped.
+
+## 2026-11-11 (v5.214.0)
+
+### Added
+
+- Added an OpenShell cluster preflight and an egress-policy prover: at boot and on reload, `AgentSandboxGateWarnings` now warns when an `openshell`-runtime gateway is unreachable, reports telemetry on, or has `allow_driver_config` off (read-only, cached, bounded to 30 s), and `allow_hosts` entries must be literal host names (userinfo, query, fragment and wildcards are rejected) with a test that fails if the rendered egress policy widens ([#17644](https://github.com/hivecommons/hive/issues/17644)).
+
+## 2026-11-11 (v5.213.0)
+
+### Added
+
+- **Upstream forward-proxy chaining for hosts behind a corporate proxy.** A hive whose enterprise GitHub is reachable only through a corporate HTTP forward proxy could not use it: the control-plane client honoured `HTTPS_PROXY`, but every agent `:443` flow is iptables-redirected into the in-process MITM proxy, which always dialled upstream directly — so agent `git`/`gh` traffic to the GHE host simply timed out. New `network.upstream_proxy` config (`url`, `hosts`, `no_proxy`; env `HIVE_UPSTREAM_PROXY_URL`/`HIVE_UPSTREAM_PROXY_HOSTS`/`HIVE_NO_PROXY`, falling back to standard `HTTPS_PROXY`/`NO_PROXY`) drives one selector used by the control-plane GitHub transport, in-process `git` runs (scoped `GIT_CONFIG_*` entries), and the MITM proxy, which now issues `CONNECT host:443` through the upstream proxy (Basic auth from URL userinfo) and runs TLS or splices bytes over the tunnel for matching hosts; non-matching hosts keep the exact direct path. Hosted hubs can set `upstream_proxy: {url, hosts, no_proxy}` per cluster in `clusters.json`, and the provisioner injects the env vars into new pool slots. See `docs/network-requirements.md` → "Egress through a corporate forward proxy".
+
+## 2026-11-11 (v5.212.0)
+
+### Added
+
+- Added `sandbox.runtime: openshell`, a third sandbox runtime behind the same `sandbox.Launcher` seam as `podman` and `job` (ADR-0026 phase 1, [#14092](https://github.com/hivecommons/hive/issues/14092)). A kick on it is created through an NVIDIA OpenShell gateway (`github.com/ai-openshell/sdk-go` v0.1.8) as a kernel-confined sandbox from the agent's image, runs the kick command with the same credential-filtered environment the other launchers pass, shares the workspace through the hive data PVC exactly as the Job runtime does, and is deleted on success, failure or kick timeout. Hive hands the gateway an egress policy derived from the hosts its own proxy brokers — `github.com` read-write for git, `api.github.com` read-only — plus `agent_sandbox.openshell.allow_hosts` for a model gateway or the hub; nothing else is reachable from the sandbox. Config lives under `agent_sandbox.openshell` (`gateway_url`, `namespace`, `token_env`, `workspace_claim`, `allow_hosts`, `timeout_s`, scheduling passthrough) with per-agent overrides; the runtime is inert unless selected, and a selected one with no `gateway_url` or `workspace_claim` is warned about at boot and refused at kick time before the agent is marked running.
+
+## 2026-11-11 (v5.211.30)
+
+### Changed
+
+- ADR-0026 (sandbox runtime selection) moves from Proposed to **Accepted (phase 1 implemented, runtime opt-in)** now that `sandbox.runtime: openshell` exists ([#17642](https://github.com/hivecommons/hive/issues/17642)), with an implementation-notes section recording where the real SDK differed from the record (module path moved to `github.com/ai-openshell/sdk-go`, workspace shared through the data PVC instead of copied, `policy_profile` advisory, egress derived from hive's proxy host set) and the kernel survey of hive's clusters. `sandbox-isolation.md` gains the operator section for the runtime (config, egress policy, credential boundary, lifecycle, verification, limitations), `integrations.md` lists OpenShell as in progress (opt-in) instead of planned, and `src/deploy/openshell.md` covers the cluster side — prerequisites, the upstream Helm install, `allow_driver_config`, the `openshell.ai/sandbox-attachable` PVC labels, `OPENSHELL_TELEMETRY_ENABLED=false`, digest pinning — without vendoring manifests.
+
+## 2026-11-11 (v5.211.29)
+
+### Security
+
+- Bumped the Go toolchain to 1.26.11 so the `govulncheck` gate stops flagging GO-2026-6859 (`net/http`), reachable from the dashboard, hub spoke heartbeat and GitHub client. The gate was red on the default branch toolchain itself, blocking every open PR.
+
+## 2026-11-11 (v5.211.28)
+
+### Fixed
+
+- **Unclaimed hives no longer file `github_app_not_installed` self-reports** — a hosted "available slot" hive that has not been onboarded yet legitimately has no GitHub App installation, so the runtime `github_app_not_installed` condition is now kept out of fleet self-reports for it. "Unclaimed" covers both an empty `project.org` and the synthetic `available-<id>` / legacy `placeholder` org the pool seeds into a slot (the hive behind the report carried `project.org=available-…`, not an empty org); that prefix list now lives in one place (`config.PlaceholderOrgPrefixes`) shared with the dashboard's `project_org` health check. The local warning log and the dashboard onboarding banner are unchanged, and a hive that *does* have a real org configured but no App installation still self-reports it as a real misconfiguration. A tracker already opened by a pre-fix release is closed out through the normal self-recovery path on the first evaluation after upgrade. ([#17593](https://github.com/hivecommons/hive/issues/17593), [#17600](https://github.com/hivecommons/hive/issues/17600))
+
+## 2026-11-11 (v5.211.27)
+
+### Fixed
+
+- The mutation advisory job now stops itself on a wall-clock budget and lists the packages it skipped, instead of being cancelled at the job timeout and losing its report.
+
+## 2026-11-11 (v5.211.26)
+
+### Fixed
+
+- Give the `inference no route` WARN its own `inference_no_route` fleet-report class and tag it with a `reason` (`cleared` or `never_set`), so it no longer lands in `unclassified_error_repeated`.
+
+## 2026-11-11 (v5.211.25)
+
+### Fixed
+
+- Knowledge Sources: **Clone & Index** now disables the button and shows "Cloning…" while the request runs, resolves a blank branch to the remote's default branch (`git ls-remote --symref`) and records it instead of guessing `main`, and keeps a failed connect visible as an error row with the reason and Retry/Dismiss (#17610).
+
+## 2026-11-11 (v5.211.24)
+
+### Security
+
+- The pane line a provider error is classified from is now credential-redacted before it is stored as an agent's `LastError` / `BackendAuth.LastError`. Those fields leave the spoke verbatim — crux `/v1` status, dashboard status JSON and the hub heartbeat — and were the one pane-derived path that skipped the token scrubbing every other export applies, so a GitHub token or `sk-` key printed beside a `401`/`403` could be shipped to the hub (#17611).
+
+## 2026-11-10 (v5.211.23)
+
+### Fixed
+
+- Knowledge panel: Add Git Source, Add Subscription, Import Document and Import now show required-field errors inline under the offending input (red border, focus, `role="alert"` message) instead of a transient info toast, and required inputs are marked; fixes Clone & Index appearing to do nothing with an empty name or URL (#17587, part of #17583).
+
+## 2026-11-10 (v5.211.22)
+
+### Fixed
+
+- Issue stage labels: a repository where the GitHub App is refused label writes (403 "Resource not accessible by integration", e.g. the App lacks Issues write access) is now skipped until restart after one clear warning, instead of retrying label provisioning for every issue on every sweep and flooding the log with "provisioning failed" (#17582).
+
+## 2026-11-10 (v5.211.21)
+
+### Fixed
+
+- Trusted-bot automerge lane: PRs from every login the operator enabled under `auto_merge.trusted_bot_authors` (Settings bot toggles or a custom login) are now honored by the trusted-bot lane end to end. The review swarm's verdict is advisory for them by default (`auto_merge.trusted_bot_skip_review`, default `true`), so a Dependabot bump a reviewer routed to `requires_human` no longer parks at "needs a person" while its checks are green; the contributor lane hands bot PRs off as `trusted-bot-lane` instead of `contributor-lane:app-authored`; every self-authored-sweep skip/hold line carries `tier`; and when `auto_merge.required_checks` names a check a repo never runs, the lane gates on the checks that do report (warning once per repo per hour) or holds with `required-check-never-reported:<check>`, which the Activity Monitor shows as the human-gate reason (#17577).
+
+## 2026-11-10 (v5.211.20)
+
+### Changed
+
+- CI mutation report (`src/scripts/mutation-report.sh`): the `<!-- hive-mutation -->` PR comment now also lists NOT COVERED mutants in changed files and tells a zero-mutant run apart from a broken one — a SKIPPED mutant on an added line gremlins honours (it only matches the first `lines added` lines of each default-context hunk; the rest are noted, not flagged) is flagged as a diff-matching fault, a gremlins failure or missing report is an `error` verdict rather than a silent pass, while added lines with nothing gremlins can mutate (a unary `!`, a bare `return`) are reported as such instead of "no surviving mutants". A new `verdict` phase exits non-zero on `error`/`lived`/`misrouted` or a missing verdict file and warns on `uncovered` unless the PR carries `mutation/acknowledged`, so a workflow can block on it (#17349, Phase 2).
+
+## 2026-11-10 (v5.211.19)
+
+### Fixed
+
+- Activity monitor: **Release hold** and **Confirm safe** on an issue row drawn through its covering PR now act on that PR, which carries the hold or sentinel, instead of silently no-oping on the issue; a release that finds no hold on an issue whose covering PR is held now says so and names the PR.
+
 ## 2026-11-10 (v5.211.18)
 
 ### Fixed

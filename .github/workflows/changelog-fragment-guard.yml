@@ -121,17 +121,10 @@ jobs:
           # Full history so the merge base with the target branch exists
           # locally and the three-dot diff below is computable.
           fetch-depth: 0
-          # The autofix push uses TOPUP_PUSH_TOKEN when set: a push made with
-          # that PAT fires `pull_request` AND `pull_request_target` runs, so
-          # every check re-reports on the new head. With github.token the
-          # push lands and fires the `pull_request` runs, but NO
-          # `pull_request_target` run (observed on #16567's b9cd4bac: eleven
-          # pull_request runs with actor=github-actions[bot], no PR Verifier).
-          # Dependabot-triggered runs see no Actions secrets, so Dependabot PRs
-          # (#16567) always take the github.token path; the dispatch step
-          # after the push re-runs pr-verifier for them. Same optional-PAT
-          # convention as cli-pin-bump.yml / v5-topup.yml / notice-autofix.yml.
-          token: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
+          # Nothing survives the checkout: the guard steps below run scripts
+          # from the PR's own tree. Only the autofix step pushes, and it gets
+          # the token through its step env (PUSH_TOKEN), never via .git/config.
+          persist-credentials: false
 
       - name: Code changes must carry a changelog.d fragment (or no-changelog)
         id: guard
@@ -186,6 +179,17 @@ jobs:
           PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # The autofix push uses TOPUP_PUSH_TOKEN when set: a push made with
+          # that PAT fires `pull_request` AND `pull_request_target` runs, so
+          # every check re-reports on the new head. With github.token the
+          # push lands and fires the `pull_request` runs, but NO
+          # `pull_request_target` run (observed on #16567's b9cd4bac: eleven
+          # pull_request runs with actor=github-actions[bot], no PR Verifier).
+          # Dependabot-triggered runs see no Actions secrets, so Dependabot PRs
+          # (#16567) always take the github.token path; the dispatch step
+          # after the push re-runs pr-verifier for them. Same optional-PAT
+          # convention as cli-pin-bump.yml / v5-topup.yml / notice-autofix.yml.
+          PUSH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
           MISPLACED_FILE: ${{ runner.temp }}/changelog-misplaced.txt
         run: |
           set -euo pipefail
@@ -252,7 +256,9 @@ jobs:
           # When this push was made with github.token it fires no
           # `pull_request_target` run, so pr-verifier (a required context)
           # would stay "expected"; the step below re-triggers it (#17036).
-          if git push --force-with-lease="refs/heads/${HEAD_REF}:${HEAD_SHA}" origin "HEAD:refs/heads/${HEAD_REF}"; then
+          auth="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)"
+          echo "::add-mask::${auth}"
+          if git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" push --force-with-lease="refs/heads/${HEAD_REF}:${HEAD_SHA}" origin "HEAD:refs/heads/${HEAD_REF}"; then
             echo "pushed=true" >> "$GITHUB_OUTPUT"
             echo "fragment=$f" >> "$GITHUB_OUTPUT"
           else

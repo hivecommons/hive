@@ -1326,8 +1326,15 @@
       if (bar.innerHTML !== html) bar.innerHTML = html;
     }
     function stageTrackerActionLabel(id) {
+      const modelVerb = typeof stageTrackerModelReplyVerb === 'function' ? stageTrackerModelReplyVerb(id) : '';
+      if (modelVerb) return typeof stageTrackerWorkflowReplyLabel === 'function' ? stageTrackerWorkflowReplyLabel(modelVerb) : modelVerb;
       const base = typeof stageTrackerActionBase === 'function' ? stageTrackerActionBase(id) : id;
       return STAGE_TRACKER_ACTION_LABELS[base] || id;
+    }
+    // Pure: the model verb a `wf:<verb>` human-gate action carries
+    // (hivecommons/hive#17620, RFC phase 4), '' for any other id.
+    function stageTrackerModelReplyVerb(id) {
+      return String(id || '').indexOf('wf:') === 0 ? String(id).slice(3).trim() : '';
     }
     // Pure: which endpoint an action hits for one item. `once` marks a
     // hive-wide call made one time per batch.
@@ -1384,6 +1391,13 @@
       }
       if (id === 'gate:confirm-sentinel') {
         return { url: '/api/repos/' + seg + '/items/' + n + '/sentinel-confirm', body: { comment: payload.comment || '', type } };
+      }
+      // A workflow model's reply verb: recorded as "/hive <verb>" on the
+      // parked issue; the server checks the verb against the bound model.
+      const modelVerb = typeof stageTrackerModelReplyVerb === 'function' ? stageTrackerModelReplyVerb(id) : '';
+      if (modelVerb) {
+        if (type !== 'issue') return null;
+        return { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'model-reply', reply: modelVerb, comment: payload.comment || '', type } };
       }
       if (id.indexOf('decide:') === 0) {
         const body = { decision: id.slice('decide:'.length), comment: payload.comment || '', type };
@@ -2258,6 +2272,11 @@
         const target = stageTrackerRerouteTargetOf(id) || STAGE_TRACKER_REROUTE_ANY;
         return (await stageTrackerAsk('decide:reroute', 'confirm', stageTrackerRerouteConfirm(refs, who, target, stageTrackerTakeoverOf(items[0])))) ? { to: target } : null;
       }
+      const verb = typeof stageTrackerModelReplyVerb === 'function' ? stageTrackerModelReplyVerb(id) : '';
+      if (verb) {
+        const v = await stageTrackerAsk(id, 'prompt', { title: stageTrackerActionLabel(id) + ' — ' + refs, label: 'Record "/hive ' + verb + '" on ' + refs + ' as ' + who + '? The hive un-parks the issue and applies the label the workflow model maps to this reply, if any. Note (optional)', placeholder: 'e.g. keep the shorter outline', confirmLabel: 'Send' });
+        return v == null ? null : { comment: v };
+      }
       return {};
     }
     // Pure: the Adopt now confirm — the consequence line is the message.
@@ -2759,6 +2778,19 @@
         // decision park, so it has no decision target.
         items = items.filter(it => { const d = stageTrackerDeferralOf(it); return !!(d && d.close_ok); });
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
+      } else if (id === 'release' || id === 'gate:confirm-sentinel') {
+        // An issue row drawn through its one covering PR shows the PR's hold
+        // or sentinel on its gate pill (stageTrackerHumanGateReasons reads
+        // the PR's): Release hold / Confirm safe act on that PR, as Approve
+        // does, unless the issue carries the hold or sentinel itself
+        // (hivecommons/hive#17564 — the release ran on the issue and no-oped).
+        const carries = x => !!x && (id === 'release' ? (!!x.hold || (Array.isArray(x.modifiers) && x.modifiers.indexOf('hold') >= 0)) : !!x.sentinel_alert);
+        const seen = {};
+        items = items.map(it => {
+          if (!it || it.kind === 'pr' || carries(it)) return it;
+          const here = (Array.isArray(it.linked_prs) ? it.linked_prs : []).filter(lp => lp && (!Number(lp.drawn_under) || Number(lp.drawn_under) === Number(it.number)) && stageTrackerLinkedPROpen(lp, it));
+          return here.length === 1 && carries(here[0]) ? stageTrackerLinkedPRItem(it, here[0]) : it;
+        }).filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
       } else if (id.indexOf('decide:') === 0) {
         // A row decides its parked PR when it has one (the issue's stage is
         // only mirrored from it); dedupe when the PR row is selected too.

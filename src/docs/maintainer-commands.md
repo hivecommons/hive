@@ -364,6 +364,19 @@ assent, Hive posts a hint asking for `/hive approve` or `/hive decision <text>`
 and leaves all labels unchanged. This avoids turning casual agreement into a
 state-changing instruction.
 
+## Model-defined replies
+
+A repository bound to a [workflow model](design/workflow-models.md) may
+declare its own human-gate verbs per state (`replies`). On a parked issue in
+such a repository, `/hive <verb>` with one of those verbs — multi-word verbs
+are fine, case does not matter — is accepted like `/hive decision`: the
+parking labels are cleared, `approved-direction` is added, the label the model
+maps to the verb's target state is applied when it declares one, and the reply
+comment says what the model did with the verb. Any text after the verb is kept
+as the decision. The Activity Monitor's human-gate pill offers the same verbs
+after the built-in ones. Repositories without a binding, and pull requests,
+behave exactly as described above; the model's verbs are not recognised there.
+
 ## Idempotency markers
 
 Hive marks its standing parked-issue notice with

@@ -86,6 +86,12 @@
     .kb-sources-section > .row { flex-wrap: wrap; }
     .kb-sources-note { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; margin-bottom: var(--sp-6); }
     .kb-sources-section .empty-dashed { padding: var(--sp-8) var(--sp-6); }
+    .kb-gs-error-main { min-width: 0; flex: 1; }
+    .kb-gs-error-title { font-size: var(--fs-base); font-weight: 600; color: var(--fg); display: flex; align-items: center; gap: var(--sp-3); white-space: nowrap; overflow: hidden; }
+    .kb-gs-error-title > .status-dot { width: 7px; height: 7px; min-width: 7px; }
+    .kb-gs-error-name { overflow: hidden; text-overflow: ellipsis; }
+    .kb-gs-error-meta { font-size: var(--fs-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kb-gs-error-reason { font-size: var(--fs-xs); color: var(--red); white-space: normal; overflow-wrap: anywhere; }
     .kb-sources-add { margin-top: var(--sp-7); }
     .kb-sources-add > summary { padding: var(--sp-2) var(--sp-0); }
     .kb-sources-form { gap: var(--sp-5); margin-top: var(--sp-5); }

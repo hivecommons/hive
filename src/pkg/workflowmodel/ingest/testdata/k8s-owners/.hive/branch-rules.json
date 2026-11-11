@@ -1,0 +1,12 @@
+{
+  "branch": "master",
+  "source": "protection",
+  "endpoint": "repos/example/widgets/branches/master/protection",
+  "requiredChecks": ["pull-widgets-unit", "pull-widgets-verify", "dco"],
+  "requiredApprovals": 2,
+  "requireCodeOwnerReview": true,
+  "dismissStaleReviews": true,
+  "enforceAdmins": true,
+  "linearHistory": true,
+  "signedCommits": true
+}

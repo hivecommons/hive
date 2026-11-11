@@ -1217,7 +1217,7 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.auditFromRequest(r, "git_source_connect", auditDetail("name", req.Name, "url", req.URL), "")
-	jsonResponse(w, map[string]interface{}{"ok": true, "name": req.Name, "url": req.URL})
+	jsonResponse(w, map[string]interface{}{"ok": true, "name": req.Name, "url": req.URL, "branch": req.Branch})
 }
 
 func (s *Server) handleGitSourcesDisconnect(w http.ResponseWriter, r *http.Request) {
