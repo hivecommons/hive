@@ -1116,12 +1116,15 @@ var (
 // startGitSourceSync runs gs's sync loop on a per-source context derived from
 // ctx, so DisconnectGitSource and ReplaceGitSource can stop it without
 // waiting for server shutdown. The cancel func is bound before the goroutine
-// starts, so a swap that races the loop start still stops it.
+// starts, so a swap that races the loop start still stops it. The loop hook
+// is read on the caller's goroutine, not inside the new one, so a test that
+// restores it right after ConnectGitSource returns does not race the read.
 func startGitSourceSync(gs *GitSource, ctx context.Context) {
 	loopCtx, done := gs.bindSyncContext(ctx)
+	loop := startGitSourceSyncLoopForConnect
 	go func() {
 		defer close(done)
-		startGitSourceSyncLoopForConnect(gs, loopCtx)
+		loop(gs, loopCtx)
 	}()
 }
 
