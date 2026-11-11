@@ -184,6 +184,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"jevMode":          agentCfg.JevMode,
 			"jevReady":         s.deps.Config.JevReady(),
 			"explainMode":      agentCfg.ExplainMode,
+			"sandboxSubstrate": agentSandboxSubstrateOrEmpty(agentCfg),
 			"sandboxEnabled":   agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
 			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
 			"replicas":         agentCfg.Replicas,
@@ -659,6 +660,27 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			}
 			bb := b
 			agentCfg.Sandbox.Enabled = &bb
+		}
+	}
+	if v, ok := body["sandboxSubstrate"]; ok {
+		raw, err := json.Marshal(v)
+		var in config.SandboxSubstrateConfig
+		if err == nil {
+			err = json.Unmarshal(raw, &in)
+		}
+		var sub *config.SandboxSubstrateConfig
+		if err == nil {
+			sub, err = sanitizeSubstrateConfig(in)
+		}
+		if err != nil {
+			jsonError(w, "invalid sandboxSubstrate: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if sub != nil && agentCfg.Sandbox == nil {
+			agentCfg.Sandbox = &config.AgentSandboxOverride{}
+		}
+		if agentCfg.Sandbox != nil {
+			agentCfg.Sandbox.Substrate = sub
 		}
 	}
 	if v, ok := body["cavemanMode"]; ok {
@@ -1914,4 +1936,11 @@ func (s *Server) getAgentHooks(name string) map[string][]any {
 		return h
 	}
 	return map[string][]any{"preKick": {}, "postIdle": {}}
+}
+
+func agentSandboxSubstrateOrEmpty(a config.AgentConfig) config.SandboxSubstrateConfig {
+	if a.Sandbox == nil {
+		return config.SandboxSubstrateConfig{}
+	}
+	return substrateOrEmpty(a.Sandbox.Substrate)
 }
