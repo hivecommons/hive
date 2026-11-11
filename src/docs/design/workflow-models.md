@@ -34,7 +34,9 @@ state it fills. One workflow serving several triggers binds to each role its tri
 
 | Package | Role |
 |---|---|
-| `pkg/workflowmodel` | types, `Validate`, `Hash`, `HiveDefault`, `Bind`, topological `Levels` |
+| `pkg/workflowmodel` | types, `Validate`, `Hash`, `HiveDefault`, `Bind`, topological `Levels`, `Compile` → `Profile` |
+| `pkg/workflowmodel/hivedefault` | `Generate()` the `hive-default` model from `stagelabels.Table` + `stageengine.DiagramEdges()`; `Profile()` compiled |
+| `pkg/stageengine` (`workflow.go`) | `DeriveFromModel(profile, kind)`: builtin delegation or the rules evaluator; `Options.Workflow` |
 | `pkg/workflowmodel/githubactions` | `.github/workflows/*.y*ml` → pipelines |
 | `pkg/workflowmodel/tekton` | Pipeline / PipelineRun / Task (+ Pipelines-as-Code annotations) → pipelines |
 | `pkg/workflowmodel/ingest` | `Repository(scope, files)`: route files to ingesters, compose, bind |
@@ -61,6 +63,35 @@ repositories (argo-cd, cilium, envoy, konflux-ci, tektoncd/pipeline, serverless-
 golden summary per repository; `go test ./pkg/workflowmodel/ingest -update` rewrites the goldens
 after an intended change. The full 317-repository CNCF-landscape survey and its collector live
 outside the repository; the results are on #17620.
+
+## Lifecycle half and the compiler (RFC phase 1)
+
+The RFC (#17620) asks for one engine that derives under any model. The decision that keeps v5/v6
+byte-identical is that **`hive-default` derivation stays in Go**: `hivedefault.Generate()` builds
+the model from the stage table, the engine's expected edges and the monitor's column anchors, and
+declares `derivation: builtin`. `stageengine.DeriveFromModel` then delegates to `IssueDeriver` /
+`PRDeriver` and only checks coverage — a stage the model has no state for abstains with
+`workflow: not covered` instead of writing a label the model does not know. The parity test
+(`TestDeriveFromModelHiveDefaultParity`) runs every PR stage golden and an issue sweep through both
+and requires identical `Decision`s.
+
+Custom models declare `derivation: rules`: ordered rules, each a conjunction of predicates over the
+fact vocabulary in `workflowmodel.Facts` (`open`, `merged`, `draft`, `labels has stage/*`,
+`author.kind is human`, `pr.checks is green`, `pr.review is approved`, `issue.covered`, …); the
+first rule whose predicates all hold names the state, and an item no rule matches is not covered.
+Rules reach only the facts the engine already computes; no LLM is ever in the derivation path.
+`testdata/models/techdocs.json` is the hand-written reference model (cncf/techdocs engagement).
+
+`Compile` refuses (error diagnostics, no profile): `state-no-exit`, `gate-no-owner`,
+`agent-no-human-gate` (every path from an agent-granted state to a terminal outcome must cross a
+transition gated by a role with `human: true`; closure edges — the item closed unmerged — are
+observations and exempt), `duplicate-event-fact`, `state-no-column` / `unknown-column`,
+`duplicate-stage-number`, `unknown-fact` / `bad-op`, `no-rules`, `no-version`. Elements marked
+`confidence: inferred` compile with an `inferred-element` warning the editor shows.
+
+Stage numbers in a model are Hive's label numbers (`stagelabels.Table`) for now, so a bound repo's
+labels, tracker anchors and replies keep working; a state whose number does not apply to the item
+kind is not covered. Models are whole (no inheritance) through phase 4.
 
 ## Known gaps (phase 1)
 

@@ -82,8 +82,13 @@ type Config struct {
 	// Dedupe tunes the dedupe lane's follow-through on its checklists.
 	Dedupe     DedupeLaneConfig `yaml:"dedupe,omitempty" json:"dedupe,omitempty"`
 	Contribute ContributeConfig `yaml:"contribute,omitempty" json:"contribute,omitempty"`
-	HiveID     string           `yaml:"hive_id"`
-	ACMMLevel  *int             `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	// Workflow gates the workflow-model engine (hivecommons/hive#17620).
+	// Off by default: every repository derives stages with the built-in
+	// derivers exactly as before. On, repositories bound to a workflow
+	// model derive through it; unbound repositories are unchanged.
+	Workflow  WorkflowConfig `yaml:"workflow,omitempty" json:"workflow,omitempty"`
+	HiveID    string         `yaml:"hive_id"`
+	ACMMLevel *int           `yaml:"acmm_level,omitempty" json:"acmm_level"`
 	// ModelRoles is the named model-roles map (#9722): a small set of names,
 	// each naming a backend, a model and a reasoning effort, referenced as
 	// "@<role>" wherever hive asks for a model (today: agents' model and the
@@ -272,6 +277,11 @@ type Config struct {
 	// by the caller, and zero means "use the declared replicas". Written
 	// via SetReviewerAutoscaleActive.
 	ReviewerAutoscaleActive int `yaml:"-" json:"-"`
+}
+
+// WorkflowConfig is the `workflow:` block (hivecommons/hive#17620).
+type WorkflowConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
 type DataConfig struct {
