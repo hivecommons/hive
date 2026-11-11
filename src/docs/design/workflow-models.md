@@ -679,3 +679,130 @@ from the capabilities route's list or a text field, namespace, selector, all-nam
 observed-run list) and *From a written spec* (paste, URL or repository file; a *Use AI
 assistance* checkbox rendered only when the spoke reports a gateway; the LLM note and section
 list in the result). Both reuse the repository ingest's result block, diagnostics and diagram.
+
+## Bundles and marketplace (RFC phase 7)
+
+Phase 7 lets a model leave the hive it was authored on. Three pieces: a signed
+**bundle** format (`pkg/workflowmodel/bundle`), an immutable **catalogue** on the
+hub (`pkg/hub/marketplace*.go`), and the spoke's **import / publish / browse**
+surface (`pkg/dashboard/api_workflows_marketplace.go`, Settings → Workflows →
+Marketplace).
+
+### Bundle — `pkg/workflowmodel/bundle`
+
+```
+{ apiVersion: "workflow.hivecommons.dev/v1alpha1-bundle", kind: "WorkflowBundle",
+  model: <Model>, profile: <compiled Profile>, hash: <sha256>, createdAt, createdBy, tier }
+```
+
+- `Export(m, by, now)` compiles the model and refuses on compile errors; the hash is
+  `CanonicalHash(m)` — sha256 of the model's canonical JSON (sorted keys, no
+  insignificant whitespace, `apiVersion/kind/metadata/spec` only).
+- `Encode`/`Decode` are canonical and strict (`DisallowUnknownFields`); the bundle
+  bytes themselves are deterministic so a store can compare them byte-for-byte.
+- `Verify(b)` recomputes the hash **and recompiles the model locally**, comparing the
+  result structurally with the published profile. A mismatch is
+  `ErrProfileMismatch` ("published profile does not match local compile"). Nothing
+  downstream ever trusts a published profile: the receiving side always recompiles.
+- Tiers are provenance for the catalogue: `built-in`, `curated`,
+  `ingested-unreviewed`, `local`, `local-published`. `Export` derives the default tier
+  from `spec.meta.provenance`.
+- `IndexEntry`/`Index` are the shared wire types for the catalogue index (below) so the
+  hub and spoke agree without the hub importing dashboard code.
+
+### Hub catalogue — `pkg/hub/marketplace*.go`
+
+Storage is a directory under the hub data dir:
+
+```
+/data/marketplace/
+  workflows/<name>/<version>.bundle.json   immutable; refuse overwrite of name@version
+  index.json                               derived; rebuilt from the bundles if missing
+  refresh/<owner>__<repo>.json             last ingest run per repository
+```
+
+Entries are keyed `name@version` plus hash. Publishing the identical bundle again is a
+no-op (`200`); different content under an existing key is `409`. The index carries
+`{name, version, hash, tier, description, source, states, columns, publishedAt,
+publishedBy, sourceSHA?, newerIngestAvailable, adoption:{}, ratings:{}, benchmarks:{}}`;
+the last three are reserved and empty today. `ETag` is the sha256 of the index bytes.
+
+Routes (see [hub-server.md](../api-reference/hub-server.md)):
+
+| Route | Who | Notes |
+|---|---|---|
+| `GET /api/marketplace/workflows` | public | index; `If-None-Match` → `304` |
+| `GET /api/marketplace/workflows/{name}/{version}/bundle` | public | one bundle, `Cache-Control: immutable` |
+| `POST /api/marketplace/workflows` | spoke bearer or hub admin | publish; hub re-verifies |
+| `POST /api/marketplace/refresh[?repo=]` | hub admin | on-demand ingest |
+| `GET /api/marketplace/status` | public | last refresh, counts by tier |
+
+**Who may publish what.** A spoke authenticates with its heartbeat bearer bound to the
+`X-Hive-ID` header (the same per-hive key the heartbeat and NPS lanes verify) and may
+assert `local`/`local-published` (normalised to `local-published`) or
+`ingested-unreviewed`. `curated` and `built-in` require a hub-admin session with
+same-origin CSRF evidence. The hub never stores a bundle it did not itself `Verify`.
+
+**Refresh.** The corpus is the CNCF survey list, now embedded as
+`pkg/workflowmodel/ingest/corpus` (262 projects / 299 repositories; `cmd/workflow-survey`
+falls back to it when no `projects.json` is given) plus
+`HIVE_HUB_MARKETPLACE_EXTRA_REPOS`. For each repository the hub fetches the default-branch
+tarball through its GitHub identity, keeps only pipeline files (`ingest.ReadTree`), and
+records `{sourceSHA, filesHash, files, checkedAt}`. Unchanged hash → no-op. Changed →
+`ingest.Lifecycle` → `bundle.Export` → publish as `ingested-YYYYMMDD.N`, tier
+`ingested-unreviewed`, with the source SHA in an annotation. Curated versions are never
+touched; `marketplaceNormaliseIndex` flags a curated entry `newerIngestAvailable` when a
+later ingest of the same name exists. The crawl is sequential with a short pause between
+repositories and honours `X-RateLimit-Remaining`/`Reset`. It runs nightly at
+`HIVE_HUB_MARKETPLACE_REFRESH_SCHEDULE` (HH:MM UTC, default `03:00`, empty disables), on
+demand, and once at hub start when the catalogue is empty and a GitHub token is present
+(in a goroutine; startup is not blocked). `HIVE_HUB_MARKETPLACE_DISABLED` turns the
+routes off (`404`).
+
+### Spoke — import, publish, browse
+
+Config (`hive.yaml`):
+
+```yaml
+workflow:
+  marketplace:
+    enabled: true          # default true; false hides the tab and 404s the routes
+    url: ""                # default: hub.url
+    refresh_interval: 15m  # how long the spoke trusts its cached index before revalidating
+```
+
+Routes (`pkg/dashboard/api_workflows_marketplace.go`):
+
+- `GET /api/workflows/{name}/{version}/bundle` — export a stored model as a bundle (any role).
+- `POST /api/workflows/import` (owner) — body is a bundle; `Verify` → recompile → `store.Save`
+  pinned to the bundle's version when free, else the next free version; `201 {entry,
+  verified:true}`; `422` when verification fails. Audit `workflow_import`.
+- `GET /api/marketplace/workflows` — proxy to the hub with `If-None-Match`; response
+  `{index, stale, etag, fetchedAt, error?}`. Hub unreachable → `502` with the cached index
+  and `stale:true` so the UI can still render.
+- `POST /api/marketplace/workflows/{name}/{version}/import` (owner) — fetch the bundle from
+  the hub and import as above. Audit `workflow_import`.
+- `POST /api/marketplace/workflows/publish {name, version}` (owner) — export and POST to
+  the hub with the spoke's heartbeat credential; `201 {published, hash, tier}`. Audit
+  `workflow_publish`.
+- `POST /api/marketplace/refresh[?repo=]` (owner) — forwards to the hub; a non-admin hive
+  surfaces the hub's `403`. Audit `workflow_marketplace_refresh`.
+
+Imported models are pinned `name@version`; a newer catalogue version is a new library entry
+and **bindings never move automatically** — rebinding stays an explicit act on Settings →
+Repos. Built-in names cannot be imported over.
+
+UI: Settings → Workflows → **Marketplace** (`config-workflows-marketplace.js`) lists the
+catalogue with tier badges, search, a tier filter, the `newer ingest available` flag,
+reserved Adoption/Rating columns (rendered `—`), **Import** (→ verified, compiled, library
+entry opened), **Reload**, and for owners **Refresh catalogue**; library rows and the detail
+view gain **Publish** (confirmed via `hiveConfirm`). A stale banner shows when the proxy
+served cached data.
+
+### Known gaps (phase 7)
+
+- `adoption`, `ratings`, `benchmarks` are reserved and empty; nothing collects them yet.
+- Hub-side marketplace settings are environment variables, not hub YAML.
+- The hub logs publishes/refreshes through its structured logger; it has no audit store.
+- Ingest versions are per-day sequence numbers, not semantic; curation (promoting an ingest
+  to `curated`) is a manual admin publish of a reviewed model.
