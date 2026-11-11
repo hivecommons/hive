@@ -577,8 +577,6 @@ type graphQLRequest struct {
 	Variables     any    `json:"variables"`
 }
 
-var graphQLMutationRe = regexp.MustCompile(`(?m)^\s*mutation\b`)
-
 // graphQLMergeMutationRe matches mutations that merge a pull request. Merging is
 // the highest-privilege write and must require the same mode as the REST
 // `PUT /pulls/{n}/merge` rule (ModeIssuesPRsMerge) — otherwise an ISSUES_ONLY
@@ -804,7 +802,7 @@ func GraphQLAllowedCaps(mode agent.AgentMode, caps agent.AgentCapabilities, body
 	}
 
 	query := strings.TrimSpace(req.Query)
-	if !graphQLMutationRe.MatchString(query) {
+	if !isGitHubGraphQLMutation(query) {
 		return true, false // read-only query
 	}
 
@@ -843,7 +841,7 @@ func GraphQLAutoMergeRefusal(enabled func(repo string) bool, body []byte) (strin
 	if err := json.Unmarshal(body, &req); err != nil {
 		return "", false
 	}
-	if !graphQLMutationRe.MatchString(strings.TrimSpace(req.Query)) || !graphQLMergeMutationRe.MatchString(req.Query) {
+	if !isGitHubGraphQLMutation(req.Query) || !graphQLMergeMutationRe.MatchString(req.Query) {
 		return "", false
 	}
 	if repo := repoFromGraphQLValue(req.Variables); repo != "" && !enabled(repo) {
