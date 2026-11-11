@@ -763,7 +763,10 @@ type Manager struct {
 	// agent on sandbox.runtime: job (#6311). Nil means the real in-cluster
 	// launcher; tests inject a fake through setSandboxJobLauncherFactoryForTest.
 	sandboxJobLauncherFactory func(config.SandboxJobConfig) sandbox.Launcher
-	sandboxRunner             sandboxCommandRunner
+	// sandboxOpenShellLauncherFactory is the same seam for
+	// sandbox.runtime: openshell (ADR-0026).
+	sandboxOpenShellLauncherFactory func(config.SandboxOpenShellConfig) sandbox.Launcher
+	sandboxRunner                   sandboxCommandRunner
 	// sandboxRunPersister overrides persistSandboxRun in tests.
 	sandboxRunPersister  func(workDir string, entry SandboxRunHistoryEntry) error
 	sandboxPushMinter    pushbroker.TokenMinter

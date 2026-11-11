@@ -7,12 +7,13 @@ import (
 
 // Sandbox runtimes. SandboxRuntimePodman is the default when nothing is set.
 const (
-	SandboxRuntimePodman = "podman"
-	SandboxRuntimeJob    = "job"
+	SandboxRuntimePodman    = "podman"
+	SandboxRuntimeJob       = "job"
+	SandboxRuntimeOpenShell = "openshell"
 )
 
 // ValidSandboxRuntimes is the closed set a config may name.
-var ValidSandboxRuntimes = map[string]bool{SandboxRuntimePodman: true, SandboxRuntimeJob: true}
+var ValidSandboxRuntimes = map[string]bool{SandboxRuntimePodman: true, SandboxRuntimeJob: true, SandboxRuntimeOpenShell: true}
 
 // SandboxJobConfig is everything the Job runtime needs beyond the image
 // (#6311). The pod-template fields pass through to Kubernetes verbatim.
@@ -496,6 +497,8 @@ type AgentSandboxConfig struct {
 	WorkspaceDir string            `yaml:"workspace_dir,omitempty" json:"workspace_dir,omitempty"`
 	Runtime      string            `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 	Job          *SandboxJobConfig `yaml:"job,omitempty" json:"job,omitempty"`
+	// OpenShell holds the settings for sandbox.runtime: openshell (ADR-0026).
+	OpenShell *SandboxOpenShellConfig `yaml:"openshell,omitempty" json:"openshell,omitempty"`
 	// Publish gates what a sandboxed run may publish; see SandboxPublishConfig.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`
 }
@@ -534,6 +537,9 @@ type AgentSandboxOverride struct {
 	TimeoutS     int               `yaml:"timeout_s,omitempty" json:"timeout_s,omitempty"`
 	Runtime      string            `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 	Job          *SandboxJobConfig `yaml:"job,omitempty" json:"job,omitempty"`
+	// OpenShell, when set, overrides the global openshell block field by
+	// field for this agent; see AgentConfig.SandboxOpenShell.
+	OpenShell *SandboxOpenShellConfig `yaml:"openshell,omitempty" json:"openshell,omitempty"`
 	// Publish, when set, replaces the global publish preflight for this
 	// agent; an empty verify list here turns the preflight off for it.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`

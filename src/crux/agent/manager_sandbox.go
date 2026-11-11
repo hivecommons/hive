@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -90,12 +91,22 @@ func (m *Manager) validateSandboxKickLocked(agent *AgentProcess) (string, error)
 	// does, instead of failing it after the state machine has moved.
 	runtime := agent.Config.SandboxRuntime(m.sandboxConfig)
 	if !config.ValidSandboxRuntimes[runtime] {
-		return "", fmt.Errorf("agent %s sandbox runtime %q is not one hive has (%s or %s)", agent.Name, runtime, config.SandboxRuntimePodman, config.SandboxRuntimeJob)
+		return "", fmt.Errorf("agent %s sandbox runtime %q is not one hive has (%s, %s or %s)", agent.Name, runtime, config.SandboxRuntimePodman, config.SandboxRuntimeJob, config.SandboxRuntimeOpenShell)
 	}
-	if runtime == config.SandboxRuntimeJob {
+	switch runtime {
+	case config.SandboxRuntimeJob:
 		job := agent.Config.SandboxJob(m.sandboxConfig)
 		if strings.TrimSpace(job.WorkspaceClaim) == "" {
 			return "", fmt.Errorf("agent %s sandbox job runtime requires job.workspace_claim — the PVC hive's sandbox workspace root lives on, mounted RWX so the Job can see it from another node", agent.Name)
+		}
+	case config.SandboxRuntimeOpenShell:
+		// ADR-0026: the OpenShell runtime is inert unless selected, and a
+		// selected one refuses the kick before the state machine moves.
+		if err := OpenShellOptionsFromConfig(agent.Config.SandboxOpenShell(m.sandboxConfig)).Validate(); err != nil {
+			return "", fmt.Errorf("agent %s sandbox openshell runtime: %w", agent.Name, err)
+		}
+		if effectiveBackend(agent) == "cline" {
+			return "", fmt.Errorf("agent %s: the Cline backend is not supported on the openshell sandbox runtime (no credential path into the sandbox); use podman or job", agent.Name)
 		}
 	}
 	if effectiveBackend(agent) == "cline" {
@@ -112,9 +123,11 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 		return err
 	}
 	launcher := m.sandboxLauncher
-	if runtime == config.SandboxRuntimeJob {
-		job := agent.Config.SandboxJob(m.sandboxConfig)
-		launcher = m.jobLauncherLocked(job)
+	switch runtime {
+	case config.SandboxRuntimeJob:
+		launcher = m.jobLauncherLocked(agent.Config.SandboxJob(m.sandboxConfig))
+	case config.SandboxRuntimeOpenShell:
+		launcher = m.openshellLauncherLocked(agent.Config.SandboxOpenShell(m.sandboxConfig))
 	}
 	repo := m.project.PrimaryRepo()
 	now := time.Now()
@@ -342,6 +355,48 @@ func (m *Manager) jobLauncherLocked(job config.SandboxJobConfig) sandbox.Launche
 		return m.sandboxJobLauncherFactory(job)
 	}
 	return &kubejob.Launcher{Options: JobOptionsFromConfig(job)}
+}
+
+func (m *Manager) setSandboxOpenShellLauncherFactoryForTest(f func(config.SandboxOpenShellConfig) sandbox.Launcher) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sandboxOpenShellLauncherFactory = f
+}
+
+// openshellLauncherLocked returns the launcher for a sandbox.runtime:
+// openshell kick: the injected factory's, or a real gateway-backed
+// sandbox.OpenShellLauncher (ADR-0026).
+func (m *Manager) openshellLauncherLocked(cfg config.SandboxOpenShellConfig) sandbox.Launcher {
+	if m.sandboxOpenShellLauncherFactory != nil {
+		return m.sandboxOpenShellLauncherFactory(cfg)
+	}
+	return &sandbox.OpenShellLauncher{Options: OpenShellOptionsFromConfig(cfg)}
+}
+
+// OpenShellOptionsFromConfig converts the operator's openshell block into
+// the launcher's options. The gateway token is read from the environment
+// variable the block names, so the token itself never sits in hive.yaml.
+func OpenShellOptionsFromConfig(cfg config.SandboxOpenShellConfig) sandbox.OpenShellOptions {
+	opts := sandbox.OpenShellOptions{
+		GatewayURL:          cfg.GatewayURL,
+		Workspace:           cfg.Namespace,
+		PolicyProfile:       cfg.PolicyProfile,
+		InsecureTLS:         cfg.InsecureTLS,
+		Timeout:             time.Duration(cfg.TimeoutS) * time.Second,
+		WorkspaceClaim:      cfg.WorkspaceClaim,
+		WorkspaceClaimMount: cfg.WorkspaceClaimMount,
+		AllowHosts:          append([]string(nil), cfg.AllowHosts...),
+		Binaries:            append([]string(nil), cfg.Binaries...),
+		RuntimeClassName:    cfg.RuntimeClassName,
+		NodeSelector:        cfg.NodeSelector,
+	}
+	if env := strings.TrimSpace(cfg.TokenEnv); env != "" {
+		opts.Token = os.Getenv(env)
+	}
+	for _, t := range cfg.Tolerations {
+		opts.Tolerations = append(opts.Tolerations, sandbox.OpenShellToleration{Key: t.Key, Operator: t.Operator, Value: t.Value, Effect: t.Effect})
+	}
+	return opts
 }
 
 // JobOptionsFromConfig converts the operator's job block into the launcher's
