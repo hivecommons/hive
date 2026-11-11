@@ -5093,6 +5093,36 @@
     .wf-ingest-result { margin-top: var(--sp-5); border-top: var(--line-width) solid var(--border); padding-top: var(--sp-4); }
     .wf-ingest-result h4 { margin: var(--sp-5) var(--sp-0) var(--sp-2); font-size: var(--fs-base); }
     .wf-ingest-summary { font-size: var(--fs-sm); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+
+    /* Simulate panel (RFC phase 3c) */
+    .wf-sim > summary { cursor: pointer; list-style: none; }
+    .wf-sim > summary h4 { display: inline; margin: var(--sp-0); }
+    .wf-sim > summary::before { content: '▸'; display: inline-block; width: var(--sp-4); color: var(--muted); }
+    .wf-sim[open] > summary::before { content: '▾'; }
+    .wf-sim-pick { display: flex; align-items: flex-end; gap: var(--sp-3); flex-wrap: wrap; }
+    .wf-sim-pick .config-field { flex: 1 1 16rem; margin: var(--sp-0); }
+    .wf-sim-kinds { display: flex; gap: var(--sp-5); margin: var(--sp-3) var(--sp-0); font-size: var(--fs-sm); }
+    .wf-sim-kind { display: inline-flex; align-items: center; gap: var(--sp-2); cursor: pointer; }
+    .wf-sim-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: var(--sp-3) var(--sp-4); font-size: var(--fs-sm); }
+    .wf-sim-form .config-field { margin: var(--sp-0); }
+    .wf-sim-check { display: flex; align-items: center; gap: var(--sp-2); align-self: end; }
+    .wf-sim-result { margin-top: var(--sp-4); border-top: 1px solid var(--line-strong); padding-top: var(--sp-4); }
+    .wf-sim-decision { font-size: var(--fs-base); display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+    .wf-sim-chip { display: inline-block; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); font-weight: 700; font-size: var(--fs-sm); }
+    .wf-sim-chip-state { background: var(--status-ok); color: var(--panel); }
+    .wf-sim-chip-abstain { background: var(--status-warn); color: var(--panel); }
+    .wf-sim-chip-none { background: var(--muted); color: var(--panel); }
+    .wf-sim-sep { color: var(--muted); }
+    .wf-sim-trace { margin: var(--sp-3) var(--sp-0) var(--sp-0); padding-left: var(--sp-6); font-size: var(--fs-sm); }
+    .wf-sim-rule { padding: var(--sp-1) var(--sp-2); border-radius: var(--r-sm); }
+    .wf-sim-rule.matched { background: var(--bg-soft); border-left: 3px solid var(--status-ok); }
+    .wf-sim-rule.unevaluated, .wf-sim-rule.skipped { color: var(--muted); }
+    .wf-sim-preds { list-style: none; margin: var(--sp-1) var(--sp-0) var(--sp-0); padding-left: var(--sp-4); font-size: var(--fs-xs); }
+    .wf-sim-ok { color: var(--status-ok); font-weight: 700; }
+    .wf-sim-fail { color: var(--status-error); font-weight: 700; }
+    .wf-sim-unknown { color: var(--status-warn); font-weight: 700; }
+    .wf-sim-fill { margin-top: var(--sp-3); color: var(--text); }
+    .wf-dg-state.simulated .wf-dg-chip { stroke: var(--status-ok); stroke-width: 3; }
     /* Hive Chat Panel */
     .hive-chat-fab {
       position: fixed; bottom: 24px; right: 24px; z-index: 9000;
@@ -62583,8 +62613,40 @@ function burnAreaChart() {
       'ingested-unreviewed': 'ingested · unreviewed',
     };
     const WF_DIAGRAM = { colW: 172, colGap: 28, chipH: 30, chipGap: 10, headH: 30, pad: 14, textPad: 10, maxLabel: 22 };
+    // Simulate (RFC phase 3c): the facts form is generated from this table
+    // so the HTML builder, the form reader and the node tests share one
+    // source of truth. `path` is the dotted key inside the simulate facts
+    // DTO; `kind` restricts a field to issues or PRs; enumerations mirror
+    // the stageengine name helpers the API parses.
+    const WF_SIM_KINDS = ['issue', 'pr'];
+    const WF_SIM_FIELDS = [
+      { path: 'labels', label: 'Labels', type: 'list', hint: 'space or comma separated' },
+      { path: 'open', label: 'Open', type: 'bool' },
+      { path: 'merged', label: 'Merged', type: 'bool', kind: 'pr' },
+      { path: 'draft', label: 'Draft', type: 'bool', kind: 'pr' },
+      { path: 'author.login', label: 'Author', type: 'text' },
+      { path: 'author.kind', label: 'Author kind', type: 'select', options: ['human', 'hive', 'clanker', 'unknown'] },
+      { path: 'author.role', label: 'Author role', type: 'select', options: ['', 'trusted', 'contributor', 'newcomer', 'untrusted'] },
+      { path: 'author.selfAuthored', label: 'Self-authored (hive\u2019s own PR)', type: 'bool', kind: 'pr' },
+      { path: 'issue.bucket', label: 'Issue bucket', type: 'select', kind: 'issue', options: ['', 'actionable', 'claimed', 'in_progress', 'claimed_by_pr', 'filtered', 'reporter_triage'] },
+      { path: 'pr.checks', label: 'Checks', type: 'select', kind: 'pr', options: ['unknown', 'green', 'red', 'pending'] },
+      { path: 'pr.review', label: 'Review', type: 'select', kind: 'pr', options: ['pending', 'approved', 'changes_requested', 'requires_human', 'unavailable'] },
+      { path: 'pr.dco', label: 'DCO', type: 'select', kind: 'pr', options: ['unknown', 'yes', 'no'] },
+      { path: 'pr.conflicting', label: 'Merge conflict', type: 'bool', kind: 'pr' },
+      { path: 'park.holds', label: 'Hold labels', type: 'list', hint: 'blank = derived from labels' },
+      { path: 'park.needsHuman', label: 'Needs human', type: 'bool' },
+    ];
+    function wfSimDefaultFacts() {
+      return { labels: [], open: true, merged: false, draft: false, origin: '',
+        author: { login: '', kind: 'human', selfAuthored: false, role: '' },
+        park: { holds: null, needsHuman: false },
+        issue: { bucket: '' },
+        pr: { checks: 'unknown', review: 'pending', dco: 'unknown', conflicting: false } };
+    }
+    function wfSimDefaultState() { return { kind: 'pr', repo: '', facts: wfSimDefaultFacts(), result: null, error: '', busy: false, open: false }; }
     const _wfLib = { view: 'library', selected: null, detail: null, detailError: '', loadingKey: '', pending: null,
-      ingest: { repo: '', name: '', busy: false, result: null, error: '' } };
+      ingest: { repo: '', name: '', busy: false, result: null, error: '' },
+      sim: wfSimDefaultState() };
 
     function wfProvenanceOf(entry) {
       if (!entry) return 'local';
@@ -62745,8 +62807,9 @@ function burnAreaChart() {
       ).join('') + '</ul>';
     }
 
-    function renderWorkflowDetail(detail, bindings, owner) {
+    function renderWorkflowDetail(detail, bindings, owner, sim) {
       const e = detail.entry || {}, m = detail.model || {}, p = detail.profile || null;
+      if (sim === undefined) sim = _wfLib.sim;
       const key = e.name + '@' + e.version;
       const bound = wfBoundRepos(bindings, e.name, e.version);
       const meta = (m.spec && m.spec.meta) || {};
@@ -62777,11 +62840,231 @@ function burnAreaChart() {
         '<dl class="wf-facts">' + facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('') + '</dl>' +
         '<h4>Columns and states</h4>' +
         '<p class="text-muted fs-sm">Left to right as the Activity Monitor draws them. Arrows are the model\'s transitions; hover one for its event. Dashed states were inferred by ingest and have not been confirmed by a human.</p>' +
-        '<div class="wf-diagram-wrap">' + workflowDiagramSvg(m, p) + '</div>' +
+        '<div class="wf-diagram-wrap">' + wfSimMarkDiagram(workflowDiagramSvg(m, p), sim && sim.result) + '</div>' +
+        renderWorkflowSimulate(sim, owner) +
         '<h4>Diagnostics</h4>' + renderWorkflowDiagnostics(e.diagnostics || (p && p.diagnostics)) +
         (citations.length ? '<h4>Citations</h4><ul class="wf-citations">' + citations.slice(0, 40).map(c => `<li class="mono">${esc(c.path || '')}${c.line ? ':' + esc(String(c.line)) : ''}${c.note ? ` <span class="text-muted">${esc(c.note)}</span>` : ''}</li>`).join('') + (citations.length > 40 ? `<li class="text-muted">… ${citations.length - 40} more</li>` : '') + '</ul>' : '') +
         '<details class="wf-json"><summary>Model JSON</summary><pre class="mono">' + esc(JSON.stringify(m, null, 2)) + '</pre></details>' +
         '</div>';
+    }
+
+    // --- Simulate -----------------------------------------------------------
+
+    function wfSimGet(obj, path) {
+      return path.split('.').reduce((o, k) => (o && o[k] !== undefined && o[k] !== null) ? o[k] : undefined, obj);
+    }
+
+    function wfSimSetPath(obj, path, value) {
+      const keys = path.split('.');
+      let cur = obj;
+      keys.slice(0, -1).forEach(k => { if (!cur[k] || typeof cur[k] !== 'object') cur[k] = {}; cur = cur[k]; });
+      cur[keys[keys.length - 1]] = value;
+      return obj;
+    }
+
+    function wfSimSplitList(raw) {
+      return String(raw || '').split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+    }
+
+    // wfSimFieldsFor returns the form fields that apply to a kind.
+    function wfSimFieldsFor(kind) {
+      return WF_SIM_FIELDS.filter(f => !f.kind || f.kind === kind);
+    }
+
+    // wfSimFormFromFacts maps facts to the raw form value of one field:
+    // strings for text/select, booleans for bool, a joined string for lists.
+    function wfSimFormFromFacts(facts, field) {
+      const v = wfSimGet(facts || {}, field.path);
+      if (field.type === 'bool') return !!v;
+      if (field.type === 'list') return Array.isArray(v) ? v.join(' ') : String(v || '');
+      return v === undefined ? (field.options ? field.options[0] : '') : String(v);
+    }
+
+    // wfSimFactsFromForm folds raw form values back into a facts object.
+    // `read(field)` returns the raw value for a field (DOM value / checked
+    // in the page, a plain lookup in tests); fields it returns undefined
+    // for keep their current value.
+    function wfSimFactsFromForm(facts, kind, read) {
+      const out = JSON.parse(JSON.stringify(facts || wfSimDefaultFacts()));
+      wfSimFieldsFor(kind).forEach(f => {
+        const raw = read(f);
+        if (raw === undefined) return;
+        let v;
+        if (f.type === 'bool') v = !!raw;
+        else if (f.type === 'list') v = wfSimSplitList(raw);
+        else v = String(raw == null ? '' : raw).trim();
+        if (f.path === 'park.holds' && v.length === 0) v = null;
+        wfSimSetPath(out, f.path, v);
+      });
+      return out;
+    }
+
+    function wfSimParseItem(raw) {
+      const m = /^\s*(?:https?:\/\/[^/]+\/)?([^/\s#]+)\/([^/\s#]+?)(?:\/(?:issues|pull)\/|#)(\d+)\s*$/.exec(String(raw || ''));
+      return m ? { repo: m[1] + '/' + m[2], number: parseInt(m[3], 10) } : null;
+    }
+
+    function wfSimFieldHtml(field, facts, disabled) {
+      const id = 'wf-sim-' + field.path.replace(/\./g, '-');
+      const val = wfSimFormFromFacts(facts, field);
+      const common = `id="${id}" data-sim-field="${esc(field.path)}" ${disabled}`;
+      let input;
+      if (field.type === 'bool') {
+        input = `<input type="checkbox" ${common} ${val ? 'checked' : ''} data-change-action="wfSimSet" data-arg0="${esc(field.path)}" data-arg-types="s,c">`;
+        return `<label class="config-field wf-sim-check">${input} ${esc(field.label)}</label>`;
+      }
+      if (field.type === 'select') {
+        input = `<select ${common} data-change-action="wfSimSet" data-arg0="${esc(field.path)}" data-arg-types="s,v">` +
+          field.options.map(o => `<option value="${esc(o)}" ${o === val ? 'selected' : ''}>${esc(o || '—')}</option>`).join('') + '</select>';
+      } else {
+        input = `<input type="text" ${common} value="${esc(val)}" placeholder="${esc(field.hint || '')}" data-change-action="wfSimSet" data-arg0="${esc(field.path)}" data-arg-types="s,v">`;
+      }
+      return `<label class="config-field">${esc(field.label)}${input}</label>`;
+    }
+
+    function renderWorkflowSimulate(state, owner) {
+      const st = state || _wfLib.sim;
+      const kind = WF_SIM_KINDS.indexOf(st.kind) >= 0 ? st.kind : 'pr';
+      const disabled = st.busy ? 'disabled' : '';
+      const kinds = WF_SIM_KINDS.map(k =>
+        `<label class="wf-sim-kind"><input type="radio" name="wf-sim-kind" value="${k}" ${k === kind ? 'checked' : ''} ${disabled} data-change-action="wfSimSet" data-arg0="kind" data-arg-types="s,v"> ${k === 'pr' ? 'Pull request' : 'Issue'}</label>`).join('');
+      const fields = wfSimFieldsFor(kind).map(f => wfSimFieldHtml(f, st.facts, disabled)).join('');
+      return '<details class="config-section wf-sim" data-section="workflows-simulate" ' + (st.open || st.result || st.error ? 'open' : '') + '>' +
+        '<summary><h4>Simulate</h4></summary>' +
+        '<p class="text-muted fs-sm">Paste a real issue or PR, or describe one, and see which state this model puts it in and why — the same facts the engine would use. This is the confidence check before binding; nothing is written.</p>' +
+        '<div class="wf-sim-pick">' +
+        `<label class="config-field">Pick a real item<input type="text" id="wf-sim-repo" value="${esc(st.repo)}" placeholder="owner/repo#123" ${disabled} data-input-action="wfSimSet" data-arg0="repo" data-arg-types="s,v"></label>` +
+        `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfSimFetch" ${disabled}>${st.busy ? 'Working…' : 'Fetch facts'}</button>` +
+        '</div>' +
+        '<div class="wf-sim-kinds">' + kinds + '</div>' +
+        '<div class="wf-sim-form">' + fields + '</div>' +
+        `<div class="kc-actions"><button type="button" class="hv-btn btn-primary btn-sm" data-action="wfSimRun" ${disabled}>${st.busy ? 'Working…' : 'Run'}</button></div>` +
+        (st.error ? `<p class="wf-ingest-error">${esc(st.error)}</p>` : '') +
+        (st.result ? renderWorkflowSimulateResult(st.result) : '') +
+        '</details>';
+    }
+
+    function wfSimVerdict(p) {
+      if (!p.known) return '<span class="wf-sim-unknown" title="fact unknown">?</span>';
+      return p.holds ? '<span class="wf-sim-ok">✓</span>' : '<span class="wf-sim-fail">✗</span>';
+    }
+
+    function renderWorkflowSimulateResult(result) {
+      const r = result || {}, d = r.decision || {};
+      const stage = d.stage ? 'stage/' + String(d.stage).padStart(3, '0') : '';
+      let chip;
+      if (d.abstain && !d.covered) chip = `<span class="wf-sim-chip wf-sim-chip-abstain">Not covered</span> <span class="text-muted">${esc(d.reason || '')}</span>`;
+      else if (d.abstain) chip = `<span class="wf-sim-chip wf-sim-chip-abstain">Abstain</span> <span class="text-muted">${esc(d.reason || '')}</span>`;
+      else if (!d.state) chip = `<span class="wf-sim-chip wf-sim-chip-none">No stage</span> <span class="text-muted">${esc(d.reason || '')}</span>`;
+      else chip = `<span class="wf-sim-chip wf-sim-chip-state mono">${esc(d.state)}</span>` +
+        (d.column ? ` <span class="wf-sim-sep">·</span> ${esc(d.column)}` : '') +
+        (stage ? ` <span class="wf-sim-sep">·</span> <span class="mono">${esc(stage)}</span>` : '') +
+        (d.reason ? ` <span class="wf-sim-sep">·</span> <span class="text-muted">${esc(d.reason)}</span>` : '');
+      const trace = Array.isArray(r.trace) ? r.trace : [];
+      const items = trace.map(t => {
+        const cls = t.matched ? 'matched' : (t.skipped ? 'skipped' : (t.evaluated ? 'missed' : 'unevaluated'));
+        const head = t.builtin
+          ? `<span class="mono">${esc(t.state || '—')}</span> <span class="text-muted">built-in deriver${t.reason ? ' · ' + esc(t.reason) : ''}</span>`
+          : `<span class="mono">${esc(t.id || '')}</span> → <span class="mono">${esc(t.state || '')}</span>` +
+            (t.skipped ? ` <span class="text-muted">skipped: ${esc(t.skipped)}</span>` : '') +
+            (!t.evaluated && !t.skipped ? ' <span class="text-muted">not evaluated</span>' : '');
+        const preds = (t.predicates || []).map(p =>
+          `<li class="mono"><span class="wf-sim-pred">${esc(p.fact)} ${esc(p.op)} ${esc(p.value || '')}</span> → ${wfSimVerdict(p)}` +
+          (p.actual ? ` <span class="text-muted">(${esc(p.actual)})</span>` : '') + '</li>').join('');
+        return `<li class="wf-sim-rule ${cls}" data-rule="${esc(t.id || '')}">${head}${preds ? '<ul class="wf-sim-preds">' + preds + '</ul>' : ''}</li>`;
+      }).join('');
+      const fill = [];
+      if (Array.isArray(r.filled) && r.filled.length) fill.push('<span class="text-muted">fetched:</span> ' + r.filled.map(esc).join(', '));
+      if (Array.isArray(r.unknown) && r.unknown.length) fill.push('<span class="text-muted">unknown, defaulted:</span> ' + r.unknown.map(esc).join(', '));
+      (r.notes || []).forEach(n => fill.push(esc(n)));
+      return '<div class="wf-sim-result" data-sim-state="' + esc(d.state || '') + '">' +
+        '<div class="wf-sim-decision">' + chip + '</div>' +
+        (items ? '<ol class="wf-sim-trace">' + items + '</ol>' : '') +
+        (fill.length ? '<p class="fs-sm wf-sim-fill">' + fill.join('<br>') + '</p>' : '') +
+        '</div>';
+    }
+
+    // wfSimMarkDiagram tags the simulated state's chip in the diagram SVG.
+    function wfSimMarkDiagram(svg, result) {
+      const id = result && result.decision && result.decision.state;
+      if (!id) return svg;
+      const marker = 'data-state="' + esc(id) + '"';
+      return svg.split(marker).map((part, i, all) => {
+        if (i === all.length - 1) return part;
+        return part.replace(/class="([^"]*)"\s*$/, 'class="$1 simulated" ');
+      }).join(marker);
+    }
+
+    function wfSimSet(field, value) {
+      const st = _wfLib.sim;
+      st.open = true;
+      if (field === 'kind') { st.kind = WF_SIM_KINDS.indexOf(value) >= 0 ? value : 'pr'; st.result = null; st.error = ''; wfLibRerender(); return; }
+      if (field === 'repo') { st.repo = String(value || ''); return; }
+      const def = WF_SIM_FIELDS.find(f => f.path === field);
+      if (!def) return;
+      st.facts = wfSimFactsFromForm(st.facts, st.kind, f => f.path === field ? value : undefined);
+    }
+
+    function wfSimReadForm() {
+      const st = _wfLib.sim;
+      st.open = true;
+      const repoEl = document.getElementById('wf-sim-repo');
+      if (repoEl) st.repo = repoEl.value.trim();
+      st.facts = wfSimFactsFromForm(st.facts, st.kind, f => {
+        const el = document.querySelector('[data-sim-field="' + f.path + '"]');
+        if (!el) return undefined;
+        return f.type === 'bool' ? el.checked : el.value;
+      });
+    }
+
+    async function wfSimCall(body) {
+      const st = _wfLib.sim, e = (_wfLib.detail && _wfLib.detail.entry) || {};
+      if (!e.name) { st.error = 'Open a model first.'; wfLibRerender(); return null; }
+      st.busy = true; st.error = ''; wfLibRerender();
+      try {
+        const res = await fetch('/api/workflows/' + encodeURIComponent(e.name) + '/' + encodeURIComponent(e.version) + '/simulate',
+          { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify(body) });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        return await res.json();
+      } catch (err) {
+        st.error = 'Simulate failed: ' + err.message;
+        st.result = null;
+        return null;
+      } finally {
+        st.busy = false;
+      }
+    }
+
+    // wfSimFetch fills the facts form from a real item so the operator can
+    // tweak them before running; the fetched facts are also run as-is.
+    async function wfSimFetch() {
+      const st = _wfLib.sim;
+      wfSimReadForm();
+      const item = wfSimParseItem(st.repo);
+      if (!item) { st.error = 'Enter an item as owner/repo#123.'; st.result = null; wfLibRerender(); return; }
+      const out = await wfSimCall({ repo: item.repo, number: item.number });
+      if (out) {
+        if (out.facts) {
+          st.facts = Object.assign(wfSimDefaultFacts(), out.facts);
+          if (!st.facts.pr) st.facts.pr = wfSimDefaultFacts().pr;
+          if (!st.facts.issue) st.facts.issue = wfSimDefaultFacts().issue;
+        }
+        if (out.facts && out.facts.pr && !out.facts.issue) st.kind = 'pr';
+        else if (out.facts && out.facts.issue) st.kind = 'issue';
+        st.result = out;
+      }
+      wfLibRerender();
+    }
+
+    async function wfSimRun() {
+      const st = _wfLib.sim;
+      wfSimReadForm();
+      const body = { kind: st.kind, facts: st.facts };
+      const item = wfSimParseItem(st.repo);
+      if (item) { body.repo = item.repo; body.number = item.number; }
+      const out = await wfSimCall(body);
+      if (out) st.result = out;
+      wfLibRerender();
     }
 
     function wfRepoChoices() {
@@ -62871,6 +63154,7 @@ function burnAreaChart() {
     async function wfLibOpen(name, version) {
       const key = name + '@' + version;
       _wfLib.view = 'detail'; _wfLib.detail = null; _wfLib.detailError = ''; _wfLib.loadingKey = key; _wfLib.selected = key;
+      _wfLib.sim.result = null; _wfLib.sim.error = '';
       wfLibRerender();
       try {
         const res = await fetch('/api/workflows/' + encodeURIComponent(name) + '/' + encodeURIComponent(version), { headers: _inceptionAuthHeaders() });
