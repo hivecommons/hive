@@ -63,8 +63,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// surfaces render one markup (hivecommons/hive#16236), plus
 	// pkg/maintainernotes, the append-only store behind the Activity
 	// Monitor's private per-item maintainer notes and the /api/notes routes,
-	// shared with the scheduler's kick injection (hivecommons/hive#17244).
-	const maxDashboardInternalImports = 59
+	// shared with the scheduler's kick injection (hivecommons/hive#17244),
+	// plus pkg/workflowmodel/store, the spoke-local library of workflow
+	// models behind the /api/workflows routes and the tracker's per-repo
+	// column block (RFC hivecommons/hive#17620, phase 2).
+	const maxDashboardInternalImports = 60
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

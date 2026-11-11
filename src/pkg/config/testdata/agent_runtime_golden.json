@@ -440,8 +440,8 @@
     "BaseURL": "",
     "AppAuthoredPRs": null,
     "AppSignedCommits": null,
-    "attention": {},
     "notifications": {},
+    "attention": {},
     "OAuthBaseURLOverride": "",
     "OAuthAPIURLOverride": ""
   },
@@ -463,6 +463,7 @@
     "Port": 8080,
     "AuthToken": "",
     "AgentPollIntervalS": 10,
+    "matrix": {},
     "AuthorizedUsers": null,
     "AuthorizedUserNames": null,
     "HubProxied": false,
@@ -473,7 +474,6 @@
       }
     },
     "issue_bands": {},
-    "matrix": {},
     "stage_tracker": {}
   },
   "Data": {
@@ -483,6 +483,7 @@
     "CopilotSessionsDir": "/data/home/.copilot/session-state",
     "BobSessionsDir": "/data/home/.bob",
     "AgentsDir": "/data/agent-configs",
+    "WorkflowsDir": "",
     "SessionRetentionDays": null
   },
   "deployment": {},
@@ -668,6 +669,9 @@
   },
   "dedupe": {},
   "contribute": {},
+  "workflow": {
+    "enabled": false
+  },
   "HiveID": "",
   "acmm_level": null,
   "Variables": {

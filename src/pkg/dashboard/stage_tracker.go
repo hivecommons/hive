@@ -77,6 +77,10 @@ type StageTrackerResponse struct {
 	// Engine is the ADR-0025 central stage engine's mode and counters for
 	// the tracker's status strip; absent when the hive has no engine.
 	Engine *stageengine.Status `json:"engine,omitempty"`
+	// Workflows names the workflow model each bound repository follows and
+	// its column layout (hivecommons/hive#17620); absent when no repository
+	// is bound.
+	Workflows *StageTrackerWorkflows `json:"workflows,omitempty"`
 	// RecentlyMerged lists the pull requests GitHub reports merged within
 	// stageTrackerMergedWindow, whoever merged them: the audit log's
 	// pr_merged entries (the hive's own sweep, queue, relay and forge

@@ -1,0 +1,22 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goreleaser/goreleaser-action@v6
+  publish-image:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: make image-push

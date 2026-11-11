@@ -35262,7 +35262,472 @@
           }
         }
       }
-    }
+    },
+      "/api/workflows": {
+        "get": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "List workflow models",
+          "description": "Every stored model version plus the virtual read-only hive-default, the current repository bindings, and whether model-driven derivation (workflow.enabled) is on.",
+          "responses": {
+            "200": {
+              "description": "Library",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "workflows": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/components/schemas/WorkflowEntry"
+                        }
+                      },
+                      "bindings": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/components/schemas/WorkflowBinding"
+                        }
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        },
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Save a workflow model",
+          "description": "Owner only. Compiles the model; a draft that fails compilation is still stored (compiled=false) so it can be edited, but cannot be bound. Audited as workflow_save.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowModel"
+                }
+              }
+            }
+          },
+          "responses": {
+            "201": {
+              "description": "Stored",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "entry": {
+                        "$ref": "#/components/schemas/WorkflowEntry"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Bad name/version or invalid model"
+            },
+            "403": {
+              "description": "Not an owner, or the version is read-only (hive-default)"
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        }
+      },
+      "/api/workflows/compile": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Compile a workflow model without storing it",
+          "description": "Returns the compiler diagnostics and, when it compiles, the profile. Used by the editor and by ingest previews.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowModel"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Compilation result",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "compiled": {
+                        "type": "boolean"
+                      },
+                      "diagnostics": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/components/schemas/WorkflowDiagnostic"
+                        }
+                      },
+                      "profile": {
+                        "$ref": "#/components/schemas/WorkflowProfile"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Malformed body"
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        }
+      },
+      "/api/workflows/bindings": {
+        "get": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "List repository → workflow bindings",
+          "description": "project.workflow_bindings from hive.yaml plus the live workflow.enabled flag. Unbound repositories derive with hive-default.",
+          "responses": {
+            "200": {
+              "description": "Bindings",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "bindings": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/components/schemas/WorkflowBinding"
+                        }
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "503": {
+              "description": "No workflow store or config"
+            }
+          }
+        },
+        "put": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Bind or unbind a repository",
+          "description": "Owner only. Body {repo, name, version}; an empty name unbinds. The model must exist and compile. Persists hive.yaml and takes effect on the next derivation pass. Audited as workflow_bind / workflow_unbind.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowBinding"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Bindings after the change",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "changed": {
+                        "type": "boolean"
+                      },
+                      "bindings": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/components/schemas/WorkflowBinding"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Missing repo, or the model does not compile"
+            },
+            "403": {
+              "description": "Not an owner"
+            },
+            "404": {
+              "description": "Model not found"
+            },
+            "503": {
+              "description": "No workflow store or config"
+            }
+          }
+        }
+      },
+      "/api/workflows/{name}/{version}": {
+        "get": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Fetch one workflow model version",
+          "parameters": [
+            {
+              "name": "name",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "version",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Model",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "entry": {
+                        "$ref": "#/components/schemas/WorkflowEntry"
+                      },
+                      "model": {
+                        "$ref": "#/components/schemas/WorkflowModel"
+                      },
+                      "profile": {
+                        "$ref": "#/components/schemas/WorkflowProfile"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "Not found"
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        },
+        "put": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Save a workflow model at an explicit name@version",
+          "description": "Owner only. Same as POST /api/workflows but the path must agree with the body name/version. Audited as workflow_save.",
+          "parameters": [
+            {
+              "name": "name",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "version",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowModel"
+                }
+              }
+            }
+          },
+          "responses": {
+            "201": {
+              "description": "Stored",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "entry": {
+                        "$ref": "#/components/schemas/WorkflowEntry"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Path and body disagree, or invalid model"
+            },
+            "403": {
+              "description": "Not an owner, or read-only"
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        },
+        "delete": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Delete a workflow model version",
+          "description": "Owner only. Refused with 409 while any repository is bound to it; hive-default cannot be deleted. Audited as workflow_delete.",
+          "parameters": [
+            {
+              "name": "name",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "version",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Deleted",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "ok": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "403": {
+              "description": "Not an owner, or read-only"
+            },
+            "404": {
+              "description": "Not found"
+            },
+            "409": {
+              "description": "Still bound"
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        }
+      },
+      "/api/workflows/ingest": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Ingest a repository's CI definitions into a lifecycle workflow model",
+          "description": "Reads the repository's default-branch GitHub Actions workflows and Tekton resources (or pasted files) and returns the hive-default lifecycle with the repository's pipelines bound: PR-verify pipelines on the CI / Review states, the post-merge chain as new columns. Provenance ingested-unreviewed. With save=true the model is stored as the next integer version under name. Owner role required.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repo": {
+                      "type": "string",
+                      "description": "owner/name to fetch through the forge client; exactly one of repo or files"
+                    },
+                    "files": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "repo-relative path to file contents, for pasted or uploaded definitions"
+                    },
+                    "save": {
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "store name (default: slug of the repository)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Ingested (not saved)",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowIngestResult"
+                  }
+                }
+              }
+            },
+            "201": {
+              "description": "Ingested and saved",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowIngestResult"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Bad request"
+            },
+            "403": {
+              "description": "Owner role required"
+            },
+            "502": {
+              "description": "Repository fetch failed"
+            },
+            "503": {
+              "description": "No forge client or no workflow store"
+            }
+          }
+        }
+      }
   },
   "components": {
     "schemas": {
@@ -35566,7 +36031,138 @@
             }
           }
         }
-      }
+      },
+        "WorkflowEntry": {
+          "type": "object",
+          "description": "Index row for one stored model version.",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "hash": {
+              "type": "string",
+              "description": "sha256 of the stored model document"
+            },
+            "title": {
+              "type": "string"
+            },
+            "provenance": {
+              "type": "string",
+              "enum": [
+                "builtin",
+                "local",
+                "ingested",
+                "imported"
+              ]
+            },
+            "compiled": {
+              "type": "boolean",
+              "description": "false for a draft that does not compile; drafts can be stored but not bound"
+            },
+            "builtin": {
+              "type": "boolean",
+              "description": "true for the read-only hive-default model"
+            },
+            "created_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "ratings": {
+              "description": "Reserved for the marketplace (benchmarks, votes); preserved verbatim across saves.",
+              "nullable": true
+            }
+          }
+        },
+        "WorkflowBinding": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/repo or bare repo name"
+            },
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repo",
+            "name",
+            "version"
+          ]
+        },
+        "WorkflowDiagnostic": {
+          "type": "object",
+          "properties": {
+            "severity": {
+              "type": "string",
+              "enum": [
+                "error",
+                "warning"
+              ]
+            },
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        "WorkflowModel": {
+          "type": "object",
+          "description": "A workflow.hivecommons.dev/v1alpha1 model document (states, transitions, columns, derivation, events, gates, roles, agents, checks, bookkeeping, labels, meta).",
+          "additionalProperties": true
+        },
+        "WorkflowProfile": {
+          "type": "object",
+          "description": "Compiled, derivation-ready form of a model (hash, states, columns, ordered rules). Never trusted from the wire: the spoke recompiles on save and on bind.",
+          "additionalProperties": true
+        },
+        "WorkflowIngestResult": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "$ref": "#/components/schemas/WorkflowModel"
+            },
+            "compiled": {
+              "type": "boolean"
+            },
+            "diagnostics": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/WorkflowDiagnostic"
+              }
+            },
+            "profile": {
+              "type": "object"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "files": {
+              "type": "integer"
+            },
+            "pipelines": {
+              "type": "integer"
+            },
+            "entry": {
+              "$ref": "#/components/schemas/WorkflowEntry"
+            }
+          }
+        }
     }
   }
 }

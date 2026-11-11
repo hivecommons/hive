@@ -63,6 +63,7 @@
     // needs-attention count and a mini per-column distribution. Keyed
     // `group:owner/repo` by the render so the reconcile keeps it stable.
     function stageTrackerGroupHeaderHtml(g, stages, ctx) {
+      const groupWorkflow = typeof stageTrackerWorkflowOf === 'function' ? stageTrackerWorkflowOf(ctx, g.repo) : null;
       const max = Math.max(1, ...g.cols);
       const dist = g.cols.map((c, i) => `<i class="ham-gd ham-gd-${c ? Math.max(1, Math.ceil(c / max * STAGE_TRACKER_GROUP_DIST_STEPS)) : 0}" title="${esc(stageTrackerColName(i, stages) + ': ' + c)}"></i>`).join('');
       const attn = g.attention ? `<span class="ham-group-attn">${g.attention} need${g.attention === 1 ? 's' : ''} attention</span>` : '';
@@ -70,10 +71,10 @@
       const chipCtx = { repoChips: Object.assign({}, (ctx && ctx.repoChips) || {}) };
       return `<div class="ham-group${g.collapsed ? ' ham-group-collapsed' : ''}" data-ham-repo="${esc(g.repo)}" role="row">
         <button type="button" class="ham-group-toggle" data-action="hamGroupToggle" data-arg0="${esc(g.repo)}" data-stop="1" aria-expanded="${g.collapsed ? 'false' : 'true'}" aria-label="${esc((g.collapsed ? 'Expand ' : 'Collapse ') + g.repo)}"><span class="ham-group-caret" aria-hidden="true">${g.collapsed ? '▸' : '▾'}</span></button>
-        ${stageTrackerRepoChipHtml(g.repo, chipCtx)}<span class="ham-group-name">${esc(g.repo)}</span>
+        ${stageTrackerRepoChipHtml(g.repo, chipCtx)}<span class="ham-group-name">${esc(g.repo)}</span>${groupWorkflow ? stageTrackerWorkflowBadgeHtml(groupWorkflow) : ''}
         <span class="ham-group-n">${g.count} ${g.count === 1 ? 'row' : 'rows'}</span>${attn}
-        <span class="ham-group-dist" role="img" aria-label="${esc(g.cols.map((c, i) => stageTrackerColName(i, stages) + ' ' + c).join(', '))}">${dist}</span>
-      </div>`;
+        ${groupWorkflow ? '' : `<span class="ham-group-dist" role="img" aria-label="${esc(g.cols.map((c, i) => stageTrackerColName(i, stages) + ' ' + c).join(', '))}">${dist}</span>`}
+      </div>${groupWorkflow && !g.collapsed ? stageTrackerWorkflowHeaderHtml(groupWorkflow) : ''}`;
     }
 
     // Row = title line (number, title, chips, since) + thin strip. Non-active
@@ -194,6 +195,9 @@
       // One note line per row: the human line takes the stage note (folded
       // or dropped), so the event slot below the caption renders nothing.
       const rowKey = stageTrackerItemKey(item);
+      // A repository bound to a workflow model draws the model's columns
+      // (tracker-workflows.js); null keeps the built-in strip byte for byte.
+      const rowWorkflow = typeof stageTrackerWorkflowOf === 'function' ? stageTrackerWorkflowOf(ctx, item.repo) : null;
       const humanNote = typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(item, stages, nowMs, subRows, ctx, rowKey) : '';
       const noteCtx = humanNote && typeof stageTrackerNoteTakenCtx === 'function' ? stageTrackerNoteTakenCtx(ctx, rowKey) : ctx;
       // One human-gate pill per gated row (hivecommons/hive#17470): it
@@ -208,7 +212,7 @@
         </div>
         <div class="ham-strip-row">
           ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
-          <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, sharedUnder ? Object.assign({}, ctx, { gateElsewhere: true }) : ctx)}</ol>
+          <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${rowWorkflow ? stageTrackerWorkflowStripItems(shown, rowWorkflow, stages) : stageTrackerStripItems(shown, stages, range, nowMs, sharedUnder ? Object.assign({}, ctx, { gateElsewhere: true }) : ctx)}</ol>
           ${stageTrackerSinceHtml(shown, nowMs)}${typeof stageTrackerPillHtml === 'function' ? stageTrackerPillHtml(shown, stages, range, nowMs, ctx) : ''}
         </div>${humanNote}${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(shown, noteCtx, rowKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(rowKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(shown) : ''}${typeof stageTrackerReviewNotesHtml === 'function' ? stageTrackerReviewNotesHtml(item, ctx) : ''}${typeof stageTrackerNotesPanelHtml === 'function' ? stageTrackerNotesPanelHtml(item, hamNotesCtx(item)) : ''}${subs}
       </div>`;
