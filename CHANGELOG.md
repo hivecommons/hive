@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.215.0)
+
+### Added
+
+- The dashboard's ▶ terminal pane now works for `sandbox.runtime: openshell` agents: it opens the read-only `/terminal/job/<agent>` viewer, follows the live OpenShell sandbox's gateway event log while a kick runs (scrubbed like the Job pod log; the pane says this is the sandbox's supervisor/policy log, not the kick's stdout, which an exec session does not expose) and shows the last persisted transcript — with the kick's own output and exit code — between kicks.
+
 ## 2026-11-11 (v5.214.1)
 
 ### Security
