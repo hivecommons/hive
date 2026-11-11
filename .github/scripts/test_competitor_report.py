@@ -44,33 +44,81 @@ class GroundingTests(unittest.TestCase):
         return (f"https://github.com/hivecommons/hive/blob/{self.bundle['sha']}/"
                 f"{ref['path']}#L{ref['start']}-L{ref['end']}")
 
-    def payload(self):
+    GITHUB_TABLE = (
+        "| Project | Who runs it | Category | Relationship to Hive | Licence |\n"
+        "|---|---|---|---|---|\n"
+        "| OpenHands | All Hands AI | terminal agent | runs as worker engine today | MIT |\n"
+        "| Roo Code (archived) | Roo | editor agent | could run as engine | Apache-2.0 |\n"
+        "Licence from the GitHub API.\n"
+    )
+    DISCORD_TABLE = (
+        "```\n"
+        "Project              Category  Relationship   Licence\n"
+        "OpenHands            terminal  engine today   MIT\n"
+        "Roo Code (arch.)     editor    could be       Apache-2.0\n"
+        "```\n"
+        "Owners: OpenHands All Hands AI; Roo Code Roo.\n"
+        "Licence from the GitHub API.\n"
+    )
+
+    def report_text(self, heading, table):
         text = (
             f"Source: hivecommons/hive; SHA: {self.bundle['sha']}; "
             f"default: {self.bundle['default_branch']}\n"
             "**Hive weekly competitor report - 2026-11-02**\n"
-            "**What changed this week**\nno news found\n"
-            "**Who does what**\n"
-            "**SWOT for Hive**\n"
+            f"{heading('What changed this week')}\nno news found\n"
+            f"{heading('Who does what')}\n{table}"
+            f"{heading('SWOT for Hive')}\n"
         )
         for claim in self.ledger["claims"]:
             text += claim["text"] + " " + " ".join(
                 f"<{self.url(ref)}>" for ref in claim["sources"]) + "\n"
         text += (
-            "**One thing to watch**\n"
+            f"{heading('One thing to watch')}\n"
             "Follow reachable operations rather than mistaking a source interface "
             "for deployed feature parity. No new unsupported work is proposed.\n"
-            "**Top 5 this week - stay ahead and stay integrated**\n"
+            f"{heading('Top 5 this week - stay ahead and stay integrated')}\n"
             "Evidence limits: quotations establish provenance, not semantic proof. "
             "All-state work searches are bounded, and inaccessible vendor news is "
             "not a basis for opening work.\n" + self.extra
         )
+        return text.strip()
+
+    def github_text(self):
+        return self.report_text(lambda h: f"### {h}", self.GITHUB_TABLE) + (
+            "\n<details><summary>Sources and queries</summary>\n- HN Algolia: coding agent\n</details>")
+
+    def discord_text(self):
+        return self.report_text(lambda h: f"**{h}**", self.DISCORD_TABLE)
+
+    def payload(self):
         return {"items": [
             {"type": "add_comment", "item_number": 14613,
-             "body": text.strip() + "\n" + report.LEDGER_START +
+             "body": self.github_text() + "\n" + report.LEDGER_START +
                      json.dumps(self.ledger) + report.LEDGER_END},
-            {"type": "post_to_discord", "message": text.strip()},
+            {"type": "post_to_discord", "message": self.discord_text()},
         ]}
+
+    def test_discord_formatting_differences_are_allowed(self):
+        """Regression for run 42622204563: the prompt asks for bold headings, a
+        fenced table and no sources details on Discord, so byte-equality must
+        not be required."""
+        self.validate()
+
+    def test_discord_prose_must_match_github(self):
+        payload = self.payload()
+        payload["items"][1]["message"] = self.discord_text().replace(
+            "no news found", "OpenHands raised a round")
+        with self.assertRaisesRegex(ValueError, "differ outside the project table"):
+            self.validate(payload)
+
+    def test_discord_table_must_keep_every_project_and_note(self):
+        for missing, message in (("Roo Code (arch.)     editor    could be       Apache-2.0\n", "missing 'Roo Code"),
+                                 ("Licence from the GitHub API.\n", "dropped a note")):
+            payload = self.payload()
+            payload["items"][1]["message"] = self.discord_text().replace(missing, "", 1)
+            with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, message):
+                self.validate(payload)
 
     def validate(self, payload=None, fetch=no_work, **kwargs):
         return report.validate(payload or self.payload(), self.bundle, fetch=fetch,

@@ -1,1 +1,0 @@
-- CI: the `pull_request` workflows `mutation-advisory`, `pr-overlap`, `stream-image`, `ci-runner-image` and `docs-index-reminder` now check out with `persist-credentials: false`. None of those jobs pushes or fetches with the job token; steps that call the API keep getting it through their step `env`, scoped by the job's `permissions:` block (#17636).
