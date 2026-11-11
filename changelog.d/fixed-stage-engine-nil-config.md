@@ -1,1 +1,0 @@
-- Fixed a startup panic in the stage engine when hive ran with no loaded config, which made the auto-merge sweep test flaky (#17736).
