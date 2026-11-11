@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.219.0)
+
+### Added
+
+- **workflow models:** the stage engine now remembers which model labels it provisioned per repository and, on unbind or rebind to a model with a different label set, deletes the stale ones — only labels it created, outside the built-in stage family and worn by no open issue or PR; each deletion is audited `workflow_label_removed` and `workflow.label_gc: false` keeps everything. A bound model's `replies` are now offered by the Activity Monitor's human-gate pill and accepted as `/hive <verb>` on parked issues, applying the label the model maps to the reply's target state ([#17620](https://github.com/hivecommons/hive/issues/17620))
+
+### Fixed
+
+- Weekly competitor report: the publication gate accepts the "Who does what" project table as a fenced block on GitHub as well as a Markdown table (catch-up run 43065486702 failed on this).
+
 ## 2026-11-11 (v5.218.0)
 
 ### Added
