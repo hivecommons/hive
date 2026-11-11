@@ -211,6 +211,13 @@ const bobBackend = "bob"
 // CLI backend expects. Claude CLI uses hyphens (claude-opus-4-7), while
 // gemini/goose/agy-style backends use dots (claude-opus-4.7).
 //
+// claude takes ClaudeLaunchModel: the Copilot CLI's dotted spelling of a
+// Claude model (claude-sonnet-5.5), which an agent can be left holding after
+// a copilot→claude switch, becomes the Claude CLI's dashed id
+// (claude-sonnet-5-5). The Claude CLI refuses the dotted spelling on every
+// turn. Ids without a dot, the opus/sonnet/haiku aliases and unknown ids pass
+// through verbatim, so this only ever corrects a known Copilot spelling.
+//
 // copilot does NOT take the blind trailing-digits dot-rewrite below: the
 // Copilot CLI's --model nomenclature mixes separators per model family
 // (claude-fable-5 is DASHED, claude-opus-4.6 is DOTTED), so the rewrite
@@ -241,8 +248,11 @@ const bobBackend = "bob"
 // about what was configured and stops the corrupted id from being handed to a
 // future bob consumer.
 func normalizeModelNameForBackend(model, backend string, inferenceRoutable bool) string {
-	if backend == "claude" || backend == bobBackend || inferenceRoutable {
+	if backend == bobBackend || inferenceRoutable {
 		return model
+	}
+	if backend == "claude" {
+		return ClaudeLaunchModel(model)
 	}
 	if backend == "copilot" {
 		return CopilotLaunchModel(model)
@@ -345,9 +355,14 @@ func (m *Manager) SetModelOverride(name, model string) error {
 	// the dropdown preselect, and auto-heal all agree on one canonical id
 	// (separator drift like claude-fable.5 vs claude-fable-5, #4262). Launch
 	// re-applies the same canonicalization, so even ids stored before this
-	// existed self-correct there.
-	if agent.effectiveBackend() == "copilot" {
+	// existed self-correct there. claude gets the same treatment: the
+	// override is persisted to hive-state and replayed at boot, so it must
+	// never keep the Copilot spelling of a Claude model.
+	switch agent.effectiveBackend() {
+	case "copilot":
 		model = CanonicalizeCopilotModel(model)
+	case "claude":
+		model = ClaudeLaunchModel(model)
 	}
 
 	// A pin blocks the governor's auto-selection, never a user's explicit
@@ -409,6 +424,7 @@ func (m *Manager) SetBackendOverride(name, backend string) error {
 	prevBackend := agent.effectiveBackend()
 	agent.BackendOverride = backend
 	m.logger.Info("agent backend override set", "name", name, "backend", backend)
+	m.respellModelOverrideLocked(agent, backend)
 	// Record only a real transition: /switch/{backend} is also re-applied on
 	// config reload with the value already in effect, and auditing those
 	// no-ops would bury the actual operator changes.
@@ -431,6 +447,42 @@ func (m *Manager) SetBackendOverride(name, backend string) error {
 		m.clearInferenceRouteCallback(name)
 	}
 	return nil
+}
+
+// respellModelOverrideLocked keeps a stored model override valid for the
+// agent's new backend. The override outlives a backend switch (and is
+// persisted to hive-state and replayed at boot), so without this a
+// copilot→claude switch kept the Copilot spelling claude-sonnet-5.5, which
+// the Claude CLI refuses on every turn. A known equivalent is re-spelled
+// (ModelForBackend); a model with no equivalent on the new backend is
+// dropped so the agent falls back to its configured model. A pin that
+// pointed at the old value follows it. Caller holds m.mu.
+func (m *Manager) respellModelOverrideLocked(agent *AgentProcess, backend string) {
+	if agent.ModelOverride == "" {
+		return
+	}
+	model, ok := ModelForBackend(agent.ModelOverride, backend)
+	if !ok {
+		model = ""
+	}
+	if model == agent.ModelOverride {
+		return
+	}
+	prev := agent.ModelOverride
+	if agent.PinnedModel == prev {
+		agent.PinnedModel = model
+	}
+	agent.ModelOverride = model
+	m.clearStaleModelRejectionLocked(agent, agent.effectiveModel(), time.Now())
+	m.logger.Info("agent model override re-spelled for new backend",
+		"name", agent.Name, "backend", backend, "model", model, "previous_model", prev)
+	m.audit(AuditAgentModelSet, agent.Name, auditFields(
+		"outcome", "success",
+		"backend", backend,
+		"model", agent.effectiveModel(),
+		"previous_model", prev,
+		"trigger", "backend-change",
+	))
 }
 
 // RefreshInferenceRoutes re-fires the inference route callback for every
