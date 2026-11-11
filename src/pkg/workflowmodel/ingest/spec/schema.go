@@ -57,7 +57,7 @@ func walk(t reflect.Type, prefix string, seen map[reflect.Type]bool, lines *[]st
 		}
 		ft := f.Type
 		suffix := ""
-		for ft.Kind() == reflect.Slice || ft.Kind() == reflect.Ptr {
+		for ft.Kind() == reflect.Slice || ft.Kind() == reflect.Pointer {
 			if ft.Kind() == reflect.Slice {
 				suffix += "[]"
 			}
