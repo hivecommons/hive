@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/upstreamproxy"
 	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
@@ -1516,6 +1517,7 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 	}
 
 	var optedIn, noImage, noClaim, noGateway, badRuntime []string
+	var openshellBlocks []SandboxOpenShellConfig
 	for name, a := range cfg.Agents {
 		if !a.SandboxEnabled(cfg.AgentSandbox) {
 			continue
@@ -1536,6 +1538,9 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 			}
 			if strings.TrimSpace(os.WorkspaceClaim) == "" {
 				noClaim = append(noClaim, name)
+			}
+			if strings.TrimSpace(os.GatewayURL) != "" {
+				openshellBlocks = append(openshellBlocks, os)
 			}
 		}
 	}
@@ -1582,6 +1587,9 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 			"agent_sandbox.enabled is true but only %d of %d agent(s) are opted in (%s); the rest still run unconfined on the tmux path (#4918)",
 			len(optedIn), len(cfg.Agents), strings.Join(optedIn, ", ")))
 	}
+	// Last, because it may reach the network (bounded and cached): the static
+	// warnings above must not wait on a gateway.
+	out = append(out, cruxconfig.OpenShellPreflightWarnings(openshellBlocks)...)
 	return out
 }
 
