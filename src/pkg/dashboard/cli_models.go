@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/claude"
@@ -1623,13 +1624,14 @@ func copilotSDKHelperExecErr(ctx context.Context, err error, stderr string) erro
 }
 
 // isBinaryStderr reports stderr that is not text: invalid UTF-8 or control
-// bytes other than whitespace, as when sh dumps an ELF it could not exec.
+// bytes other than whitespace and ESC (ANSI colour), as when sh dumps an ELF
+// it could not exec.
 func isBinaryStderr(s string) bool {
 	if !utf8.ValidString(s) {
 		return true
 	}
 	for _, r := range s {
-		if r < 0x20 && r != '\n' && r != '\r' && r != '\t' {
+		if r < 0x20 && r != '\n' && r != '\r' && r != '\t' && r != 0x1b {
 			return true
 		}
 	}

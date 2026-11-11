@@ -74,6 +74,16 @@ func TestCopilotSDKHelperExecErr_BinaryStderrNamed(t *testing.T) {
 	}
 }
 
+// TestCopilotSDKHelperExecErr_ANSIStderrKept: coloured stderr is text, not an
+// ELF dump — it must be passed through rather than mislabelled as ENOEXEC.
+func TestCopilotSDKHelperExecErr_ANSIStderrKept(t *testing.T) {
+	err := copilotSDKHelperExecErr(context.Background(), errors.New("exit status 1"), "\x1b[31merror:\x1b[0m auth required\n")
+	got := err.Error()
+	if strings.Contains(got, "ENOEXEC") || !strings.Contains(got, "auth required") {
+		t.Fatalf("ANSI stderr mislabelled: %q", got)
+	}
+}
+
 // TestQueryCLIModels_SDKFailureServesLastGoodCatalog is the #11865 flap: a
 // clean SDK probe, then one that dies. The served list must stay the CLI's
 // catalog — authoritative, labelled stale with the helper failure as the
