@@ -140,6 +140,14 @@ func (c *Engine) workflowFenceReleased(ctx context.Context, displayRepo, owner, 
 		c.markUnauthorized(ctx, displayRepo, owner, repo, pr, number, headSHA, unauthorizedStepMergeWorkflowPath, unauthorizedPermissionWorkflowsWrite, mergeWorkflowPathHumanAction())
 		return workflowApproval{}, false
 	}
+	if c.observeOnly {
+		// An observe-only pass on an auto-merge-off repo refuses every write
+		// by design, so the audit comment waits for a pass that may merge;
+		// attempting it logged the refusal at WARN on every re-evaluation
+		// (hivecommons/hive#17668).
+		c.debug("workflow-path fence: observe-only pass skipped audit comment", "repo", displayRepo, "pr", number, "head", headSHA, "login", approver)
+		return approval, true
+	}
 	if !hasCommentWithPrefix(comments, workflowApprovalMarker(headSHA)) {
 		if approval.CarriedFrom != "" {
 			c.info("workflow-path fence approval carried over hive base refresh", "repo", displayRepo, "pr", number, "login", approver, "approved_head", approval.CarriedFrom, "head", headSHA)

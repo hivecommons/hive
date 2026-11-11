@@ -1,7 +1,9 @@
 package automerge
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -726,5 +728,38 @@ func TestParsePRApprovalCommandCommentRoundTrip(t *testing.T) {
 	}
 	if _, _, _, ok := hgithub.ParsePRApprovalCommandComment("/approve\n\nlooks good"); ok {
 		t.Fatal("a bare /approve is not a dashboard approval")
+	}
+}
+
+// An observe-only pass on a repo whose auto-merge is off still releases the
+// workflow-path fence for the stage it records, but does not try to post the
+// audit comment its mutation boundary refuses by design: the refusal used to
+// be logged at WARN on every re-evaluation of the head (hivecommons/hive#17668).
+func TestWorkflowFenceObserveOnlySkipsAuditComment(t *testing.T) {
+	fx := validContributorFixture()
+	fx.files = workflowPathFiles()
+	fx.reviews = []map[string]any{ownerApprovedReview("clubanderson", "sha7")}
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	policy := defaultContributorLanePolicy()
+	policy.OwnerApprovalReleasesWorkflowFence = true
+	clock := &contributorLaneClock{at: mustParseTime(t, "2026-10-27T13:00:00Z")}
+	engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+	oc := engine.observeOnlyEngine()
+	oc.SetMergerAuthorizer(func(login string) bool { return strings.EqualFold(login, "clubanderson") })
+	var logs bytes.Buffer
+	oc.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	pr := &gh.PullRequest{Number: gh.Ptr(7), Head: &gh.PullRequestBranch{SHA: gh.Ptr("sha7")}, Base: &gh.PullRequestBranch{Ref: gh.Ptr("main")}}
+	approval, released := oc.workflowFenceReleased(hgithub.WithIntegrationReadOnly(context.Background()), "widget", "acme", "widget", pr, 7, "sha7", contributorLaneReasonWorkflowPath, policy, ContributorLaneVerdict{}, false)
+	if !released || approval.Login != "clubanderson" {
+		t.Fatalf("released=%v approval=%+v, want the fence released by clubanderson", released, approval)
+	}
+	if strings.Contains(logs.String(), "could not post audit comment") {
+		t.Fatalf("observe-only pass logged the refused audit comment at WARN: %s", logs.String())
+	}
+	for _, body := range fx.allComments {
+		if strings.HasPrefix(body, workflowApprovalMarkerPrefix) {
+			t.Fatalf("observe-only pass posted the audit comment: %v", fx.allComments)
+		}
 	}
 }
