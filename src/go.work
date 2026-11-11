@@ -7,7 +7,7 @@
 // builds work with GOWORK=off too (Docker, `go install`); the nested module
 // never replaces or requires the root, which is what keeps it consumable on
 // its own.
-go 1.26.10
+go 1.26.11
 
 use (
 	.
