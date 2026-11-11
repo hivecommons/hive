@@ -528,6 +528,59 @@ func TestGitSourceSyncLoopStopsWhenSourceGoesAway(t *testing.T) {
 	}
 }
 
+// TestReplaceGitSourceStagesWhenCloneDirUnchanged pins that a replacement
+// landing on the old clone directory is staged and promoted even when the
+// URL string changed: the slug strips the scheme and a ".git" suffix, so
+// comparing URL+subpath would reuse the old checkout and `git pull` its old
+// branch while the config reports the new one.
+func TestReplaceGitSourceStagesWhenCloneDirUnchanged(t *testing.T) {
+	stubPublicGitSourceDNS(t, "github.com")
+	SetBaseDirForTest(t, t.TempDir())
+	origInit, origLoop := initGitSourceForConnect, startGitSourceSyncLoopForConnect
+	t.Cleanup(func() {
+		initGitSourceForConnect, startGitSourceSyncLoopForConnect = origInit, origLoop
+	})
+	var cloneDirs []string
+	initGitSourceForConnect = func(gs *GitSource, _ context.Context) error {
+		cloneDirs = append(cloneDirs, gs.CloneDir())
+		return os.MkdirAll(gs.CloneDir(), 0o755)
+	}
+	startGitSourceSyncLoopForConnect = func(*GitSource, context.Context) {}
+
+	const url = "https://github.com/org/repo"
+	k := &KnowledgeAPI{logger: slog.Default()}
+	if err := k.ConnectGitSource(context.Background(), GitSourceConfig{Name: "n", URL: url, Branch: "main", Layer: LayerProject}); err != nil {
+		t.Fatal(err)
+	}
+	if len(cloneDirs) != 1 {
+		t.Fatalf("clones after connect = %v, want one", cloneDirs)
+	}
+	finalDir := cloneDirs[0]
+
+	if err := k.ReplaceGitSource(context.Background(), url, "", GitSourceConfig{Name: "n", URL: url + ".git", Branch: "release", Layer: LayerProject}); err != nil {
+		t.Fatal(err)
+	}
+	if len(cloneDirs) != 2 {
+		t.Fatalf("clones after replace = %v, want two", cloneDirs)
+	}
+	if staged := cloneDirs[1]; staged == finalDir || filepath.Dir(staged) != filepath.Dir(finalDir) {
+		t.Fatalf("replacement cloned into %q, want a staging sibling of %q", staged, finalDir)
+	}
+	infos := k.GitSources()
+	if len(infos) != 1 || infos[0].URL != url+".git" || infos[0].Branch != "release" {
+		t.Fatalf("sources after replace = %+v, want the .git URL on release", infos)
+	}
+	k.mu.RLock()
+	gotDir := k.gitSources[0].CloneDir()
+	k.mu.RUnlock()
+	if gotDir != finalDir {
+		t.Fatalf("promoted clone dir = %q, want %q", gotDir, finalDir)
+	}
+	if _, err := os.Stat(cloneDirs[1]); !os.IsNotExist(err) {
+		t.Fatalf("staging dir %q still present after promotion (err=%v)", cloneDirs[1], err)
+	}
+}
+
 // TestReplaceGitSourceDoesNotResurrectRemovedSource pins that a Remove landing
 // while the replacement clone is running wins: the freshly cloned source is
 // not published and the caller sees ErrGitSourceNotFound, so the handler does

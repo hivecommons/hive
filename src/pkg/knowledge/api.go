@@ -1195,10 +1195,12 @@ func (k *KnowledgeAPI) UpdateGitSourceMetadata(url, subpath, name string, layer 
 // ReplaceGitSource swaps the git source identified by oldURL+oldSubpath for a
 // freshly cloned and indexed source described by config. The old source keeps
 // serving, and its clone directory is left untouched, until the new one is
-// ready, so a failed clone leaves it exactly in place. When the identity is
-// unchanged (only the branch moved) the two want the same clone directory:
-// the new branch is cloned into a sibling staging directory and renamed over
-// the old clone only after it has been indexed. The old source's sync loop is
+// ready, so a failed clone leaves it exactly in place. When the two resolve
+// to the same clone directory (only the branch moved, or the URL changed by
+// scheme or a `.git` suffix that the slug strips) the new branch is cloned
+// into a sibling staging directory and renamed over the old clone only after
+// it has been indexed; reusing the old checkout would silently keep its
+// branch. The old source's sync loop is
 // stopped once it is swapped out, so nothing keeps pulling the old remote. If
 // the old source was disconnected while the clone ran, the new source is not
 // published: the operator's Remove wins and ErrGitSourceNotFound is returned.
@@ -1207,7 +1209,6 @@ func (k *KnowledgeAPI) ReplaceGitSource(ctx context.Context, oldURL, oldSubpath 
 	if err := ValidateGitSourceURLContext(ctx, config.URL); err != nil {
 		return fmt.Errorf("invalid git source url: %w", err)
 	}
-	sameIdentity := config.URL == oldURL && config.Subpath == oldSubpath
 
 	var old *GitSource
 	k.mu.RLock()
@@ -1235,8 +1236,11 @@ func (k *KnowledgeAPI) ReplaceGitSource(ctx context.Context, oldURL, oldSubpath 
 
 	gs := newGitSourceForConnect(config, knowledgeBaseDir, k.logger)
 	finalDir := gs.CloneDir()
+	// Compare clone directories, not URL+subpath: the slug strips the scheme
+	// and a ".git" suffix, so a URL edit can still land on the old checkout.
+	sameCloneDir := finalDir == old.CloneDir()
 	var staging string
-	if sameIdentity {
+	if sameCloneDir {
 		dir, err := gitSourceStagingDir(finalDir)
 		if err != nil {
 			return fmt.Errorf("git source %s: preparing staging clone: %w", config.Name, err)
@@ -1250,7 +1254,7 @@ func (k *KnowledgeAPI) ReplaceGitSource(ctx context.Context, oldURL, oldSubpath 
 		return err
 	}
 	var promote func() error
-	if sameIdentity {
+	if sameCloneDir {
 		promote = func() error {
 			if err := promoteStagedClone(staging, finalDir); err != nil {
 				return fmt.Errorf("git source %s: promoting staged clone: %w", config.Name, err)

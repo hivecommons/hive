@@ -32,7 +32,7 @@ knowledge:
   git_sources:
     - name: dakota-skills            # required — display name (editable via PUT; identity is url + subpath)
       url: https://github.com/projectbluefin/dakota   # required — https:// only
-      branch: main                   # optional — default "main"
+      branch: main                   # optional — blank resolves the remote's default branch
       subpath: docs/skills           # optional — index only this subdirectory
       layer: project                 # optional — default "project"
 ```
@@ -44,9 +44,9 @@ by the runtime type `GitSourceConfig`, `pkg/knowledge/gitsource.go:33-39`):
 |---|---|---|---|
 | `name` | Yes | — | Display name (editable via `PUT`); the API identifies a source by `url` + `subpath`, not by name. |
 | `url` | Yes | — | Git remote URL. **`https://` only** — see Auth below. |
-| `branch` | No | `main` (`gitsource.go:66-68`) | Branch to shallow-clone (`--depth 1 --branch <branch>`). Connecting through the dashboard/API with a blank branch resolves the remote default (`git ls-remote --symref <url> HEAD`) and records it in the saved config. |
+| `branch` | No | remote default branch (`gitsource.go:384-393`) | Branch to shallow-clone (`--depth 1 --branch <branch>`). A blank branch — whether from `hive.yaml` at boot or from the dashboard/API — is resolved on connect with `git ls-remote --symref <url> HEAD` and the result is recorded in the saved config; `main` is used only when the remote reports no `HEAD` symref, and the source fails to connect if `ls-remote` itself errors. |
 | `subpath` | No | — (whole repo) | When set, only this subdirectory is checked out (git sparse-checkout, `gitsource.go:199-219,232-248`) and indexed. |
-| `layer` | No | `project` when set via the API (`api_knowledge.go:1032-1034`); **required, no code default, when set via `hive.yaml`** | One of `personal`, `project`, `org`, `community` — see Layer semantics below. |
+| `layer` | No | `project` when set via the API (`api_knowledge.go:1175-1177`); **required, no code default, when set via `hive.yaml`** | One of `personal`, `project`, `org`, `community` — see Layer semantics below. |
 
 ### What "indexed" means
 
@@ -118,27 +118,28 @@ source is `Ready` and its current page count.
 ### Static config vs. the runtime API
 
 `GET/POST/PUT/DELETE /api/knowledge/git-sources` (mutations owner-role only,
-`pkg/dashboard/api_knowledge.go:980-986,988-1070,1072-1114`) manage sources at runtime
+`pkg/dashboard/api_knowledge.go:1131-1137,1139-1221,1223-1265,1290-1450`) manage sources at runtime
 and are the *same* underlying list as `knowledge.git_sources` in
 `hive.yaml` — not a separate system:
 
 - `POST` connects a source immediately and, if it isn't already present
   (matched by `url`+`subpath`), appends it to `Config.Knowledge.GitSources`
-  and persists the config (`api_knowledge.go:1048-1066`). A `POST` for a source that
+  and persists the config (`api_knowledge.go:1199-1217`). A `POST` for a source that
   is only in `hive.yaml` but not yet connected in the running process (e.g.
   right after editing the file without restarting) will add a duplicate
   config entry once reconnected, since the dedup check is by URL+subpath
   against what's already in `Config`, not against what main.go loaded at
   boot.
 - `DELETE` disconnects the live source and removes matching entries from
-  `Config.Knowledge.GitSources`, then persists (`api_knowledge.go:1100-1110`).
+  `Config.Knowledge.GitSources`, then persists (`api_knowledge.go:1251-1261`).
 - `PUT` edits the live source identified by `url`+`subpath` (the dashboard's
   **Edit** button). A `name`/`layer` change updates it in place without
   re-cloning; a `new_url`, `new_subpath` or `branch` change swaps in a fresh
   clone in the same request. Omitting `branch` keeps the current one; an
   explicit `"branch": ""` re-resolves the remote's default branch (what the
-  form sends when the field is cleared). A branch-only edit clones into a
-  staging directory beside the live clone and renames it into place only once
+  form sends when the field is cleared). An edit that lands on the same clone
+  directory (branch-only, or a URL that differs only by scheme or `.git`
+  suffix) clones into a staging directory beside the live clone and renames it into place only once
   indexed, so the old source keeps serving throughout and a failed clone
   leaves it untouched. The replaced source's sync loop is stopped. The
   matching config entry is rewritten and persisted, and one
