@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/benchmarks"
+	"github.com/hivecommons/hive/pkg/evidence/benchmarks"
 )
 
 // Fleet benchmark publication (hivecommons/hive#17694). Spokes POST their

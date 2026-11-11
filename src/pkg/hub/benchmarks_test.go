@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/benchmarks"
+	"github.com/hivecommons/hive/pkg/evidence/benchmarks"
 )
 
 func useTempBenchmarksStore(t *testing.T) string {

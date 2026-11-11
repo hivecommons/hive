@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/benchmarks"
+	"github.com/hivecommons/hive/pkg/evidence/benchmarks"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hub/spoke"

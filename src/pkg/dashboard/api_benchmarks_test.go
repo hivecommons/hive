@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/benchmarks"
+	"github.com/hivecommons/hive/pkg/evidence/benchmarks"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/evidence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"

@@ -15,7 +15,7 @@ than on vendor evals. Design discussion: hivecommons/hive#17694.
 
 One record per PR per role, conforming to
 [`schema/result.schema.json`](https://github.com/hivecommons/benchmarks/blob/main/schema/result.schema.json)
-(vendored in `pkg/benchmarks/testdata/`):
+(vendored in `pkg/evidence/benchmarks/testdata/`):
 
 | Field | Source |
 |---|---|
@@ -95,7 +95,7 @@ pods and a nightly workflow rebuilds the index.
 
 ## Code map
 
-- `pkg/benchmarks` — record types, `HiveHash`, `Convert` (bundles → records), schema golden test.
+- `pkg/evidence/benchmarks` — record types, `HiveHash`, `Convert` (bundles → records), schema golden test.
 - `pkg/dashboard/api_benchmarks.go` — export endpoint, status block, hourly pusher, Settings panel data.
 - `pkg/hub/benchmarks.go` — ingest, month-file store, hourly GitHub publisher, status endpoint.
 - `pkg/evidence` `Author.runtime` / `Author.task_kind` — stamped at bundle write via `github.EvidenceAgentContext`.

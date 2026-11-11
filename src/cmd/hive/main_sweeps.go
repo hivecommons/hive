@@ -15,7 +15,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/beads"
-	"github.com/hivecommons/hive/pkg/benchmarks"
+	"github.com/hivecommons/hive/pkg/evidence/benchmarks"
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
