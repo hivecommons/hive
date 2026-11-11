@@ -245,6 +245,45 @@ check "comment --blocked-by refusal writes no request" "" "$(find_req badblocked
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
+# --blocked-on-pr takes a same-repo number or owner/repo#n (a PR in another
+# repository): the request carries the number and, for the second, its repo.
+run_script "blockedonprbot" comment --repo "acme/widget" 7 --body "Lands after the upstream change." \
+  --blocked-on-pr "acme/gadget#42" >/dev/null
+REQ_FILE="$(find_req blockedonprbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_BLOCKED="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('blocked_on_pr'), d.get('blocked_on_pr_repo'))" "$REQ_FILE")"
+  check "comment --blocked-on-pr owner/repo#n carries the number and the repo" "42 acme/gadget" "$GOT_BLOCKED"
+else
+  echo "  FAIL: request file not created for --blocked-on-pr owner/repo#n test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+run_script "blockedonprsamebot" comment --repo "acme/widget" 7 --body "Lands after #41." --blocked-on-pr 41 >/dev/null
+REQ_FILE="$(find_req blockedonprsamebot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_BLOCKED="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('blocked_on_pr'), d.get('blocked_on_pr_repo'))" "$REQ_FILE")"
+  check "comment --blocked-on-pr <n> stays same-repo (no blocked_on_pr_repo)" "41 None" "$GOT_BLOCKED"
+else
+  echo "  FAIL: request file not created for --blocked-on-pr <n> test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+set +e
+run_script "badblockedonprbot" comment --repo "acme/widget" 7 --body "x" --blocked-on-pr "acme/gadget#" >/dev/null 2>&1
+BAD_RC=$?
+set -e
+check "comment --blocked-on-pr refuses a malformed owner/repo#n (exit 2)" "2" "$BAD_RC"
+check "comment --blocked-on-pr refusal writes no request" "" "$(find_req badblockedonprbot)"
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
 # --- Section 3d: --close-on-merge flag (filing-time opt-in, #10304) ---
 run_script "closeonmergebot" --repo "hiveorg/widgets" --title "Sweep finding" --body "found by reading the code" --close-on-merge
 

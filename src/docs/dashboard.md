@@ -1017,6 +1017,11 @@ are untouched.
     (`owner/repo#N` names another repository). Agents write it when they know
     the order. A prerequisite in a tracked repository that is no longer open is
     done and drops out; one in an untracked repository stays as `external`.
+    The line also holds the merge: while a pull request it names is open, the
+    blocked sweep puts `blocked` on the PR and no merge lane merges it, and
+    the row reads `Blocked on PR #N — lifts when it merges`. See
+    [`blocked`](labels-and-control-signals/reference.md#blocked). A
+    prerequisite that is an issue stays display-only here.
   - An issue waits on the open PR whose closing link (`Fixes`, `Closes`,
     `Resolves #N`, or GitHub's own closing reference) names it, and on its open
     GitHub "blocked by" issues.

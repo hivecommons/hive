@@ -165,6 +165,9 @@ type IssueRequest struct {
 	// label and removes `help wanted`. The blocked sweep lifts the label when
 	// the PR merges or closes.
 	BlockedOnPR int `json:"blocked_on_pr,omitempty"` // comment only
+	// BlockedOnPRRepo names the repository of BlockedOnPR when it is not
+	// Repo (`--blocked-on-pr owner/repo#n`); empty means Repo.
+	BlockedOnPRRepo string `json:"blocked_on_pr_repo,omitempty"` // comment only
 	// Claim makes an "issue" request file AND claim the new issue for Agent
 	// in one request (hivecommons/hive#17299): right after the create the
 	// watcher performs the same claim a "claim" request does and takes
@@ -736,17 +739,21 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 		var parkBlocked bool
 		if req.BlockedOnPR > 0 {
-			settled, merged, pErr := c.pullRequestSettledDetails(ctx, req.Repo, req.BlockedOnPR)
+			prRepo := req.Repo
+			if r := strings.TrimSpace(req.BlockedOnPRRepo); r != "" {
+				prRepo = r
+			}
+			settled, merged, pErr := c.pullRequestSettledDetails(ctx, prRepo, req.BlockedOnPR)
 			if pErr != nil {
 				if !githubStatusError(pErr, http.StatusNotFound) {
 					err = pErr
 					break
 				}
-				body = blockedTargetNotFoundNote(req.Repo, req.BlockedOnPR, body)
+				body = blockedTargetNotFoundNote(prRepo, req.BlockedOnPR, body)
 			} else if settled {
-				body = blockedTargetSettledNote(req.Repo, req.BlockedOnPR, merged, body)
+				body = blockedTargetSettledNote(prRepo, req.BlockedOnPR, merged, body)
 			} else {
-				body = blockedNoteBody(req.Repo, req.BlockedOnPR, body)
+				body = blockedNoteBody(prRepo, req.BlockedOnPR, body)
 				parkBlocked = true
 			}
 		}

@@ -471,6 +471,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if it.SentinelAlert && stageTrackerPillsDeferred(it.Kind, it.Stage, it.Mirrored) {
 			it.DeferredModifiers = append([]string{modSentinel}, it.DeferredModifiers...)
 		}
+		// A PR the blocked sweep holds on its Depends-on targets names the
+		// first open one, read from the PR's blocked-on marker comments.
+		if reason := github.BlockedOnSeenReason(qualifyRepo(repoName), pr.Number); reason != "" {
+			stageTrackerBlockedOnPR(&it, "", reason, status.GitHubBaseURL, prState)
+		}
 		it.LinkedIssues = stageTrackerPRLinkedIssues(pr, repoName, status.GitHubBaseURL)
 		if sup, ok := supersedes[stagelabels.Key(repoName, pr.Number)]; ok {
 			it.Supersedes = &sup

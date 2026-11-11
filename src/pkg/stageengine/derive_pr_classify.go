@@ -317,8 +317,12 @@ var stageNeedsHumanReasons = map[string]bool{
 // Merge queue column reads "held", never "queued", because the lane
 // refuses the merge on the label itself (automerge_sweep_trusted,
 // automerge_contributor_lane), not on the stage number.
+//
+// `blocked` (label:blocked) is the same kind of gate: the PR waits on the
+// pull requests its Depends-on lines name, or on a person's own reason,
+// and its stage is still the head's progress.
 var stageHeldGateReasons = map[string]bool{
-	"held": true, "label:hold": true, "sentinel": true, contributorLaneReasonSentinelBlocked: true,
+	"held": true, "label:hold": true, "label:blocked": true, "sentinel": true, contributorLaneReasonSentinelBlocked: true,
 }
 
 // stageMergeQueueReasons are reasons reached only after every gate passed,

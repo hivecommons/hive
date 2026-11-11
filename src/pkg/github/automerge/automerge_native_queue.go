@@ -150,7 +150,7 @@ func ownNativeQueueEntry(e *hgithub.NativeMergeQueueEntry, slug string) bool {
 // API error, a routing observation — keeps the App's queue entry.
 func nativeQueueWithdrawReason(reason string) bool {
 	switch reason {
-	case "held", "label:hold", "label:needs-human", "sentinel", contributorLaneReasonSentinelBlocked, "exempt-label",
+	case "held", "label:hold", autoMergeReasonLabelBlocked, "label:needs-human", "sentinel", contributorLaneReasonSentinelBlocked, "exempt-label",
 		"label-removed", autoMergeReasonNoHiveQueueApproval, autoMergeReasonUntrustedQueueApproval,
 		"queue-approval-missing-head", "queue-approval-head-changed", "self-merge-ban", autoMergeReasonUntrustedMerger,
 		"changes-requested", autoMergeReasonHumanChangesRequested, contributorLaneReasonChangesRequested,

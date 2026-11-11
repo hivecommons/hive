@@ -287,15 +287,33 @@ func (c *Client) latestLabelEventByApp(ctx context.Context, owner, repo string, 
 	if c == nil || strings.TrimSpace(c.appBotLogin) == "" {
 		return false, gh.Timestamp{}, nil
 	}
-	opts := &gh.ListOptions{PerPage: 100}
-	latestEvent := ""
-	latestActor := ""
+	h, err := c.labelEventHistory(ctx, owner, repo, number, label)
+	if err != nil {
+		return false, gh.Timestamp{}, err
+	}
+	return h.latestKind == "labeled" && strings.EqualFold(h.latestActor, c.appBotLogin), h.latestAt, nil
+}
+
+// labelEventSummary is what one walk of an item's label events says about
+// one label: the newest labeled/unlabeled event (kind, actor, time), and
+// whether the App bot ever applied it.
+type labelEventSummary struct {
+	latestKind  string
+	latestActor string
+	latestAt    gh.Timestamp
+	appLabeled  bool
+}
+
+// labelEventHistory walks the item's issue events for label. The caller
+// checks that the App bot login is set; with none, appLabeled stays false.
+func (c *Client) labelEventHistory(ctx context.Context, owner, repo string, number int, label string) (labelEventSummary, error) {
+	var h labelEventSummary
 	latestAtSet := false
-	var latestAt gh.Timestamp
+	opts := &gh.ListOptions{PerPage: 100}
 	for {
 		events, resp, err := c.client.Issues.ListIssueEvents(ctx, owner, repo, number, opts)
 		if err != nil {
-			return false, gh.Timestamp{}, fmt.Errorf("listing issue events for %s/%s#%d: %w", owner, repo, number, err)
+			return labelEventSummary{}, fmt.Errorf("listing issue events for %s/%s#%d: %w", owner, repo, number, err)
 		}
 		for _, event := range events {
 			if event == nil || !strings.EqualFold(event.GetLabel().GetName(), label) {
@@ -305,19 +323,23 @@ func (c *Client) latestLabelEventByApp(ctx context.Context, owner, repo string, 
 			if kind != "labeled" && kind != "unlabeled" {
 				continue
 			}
-			if !latestAtSet || event.GetCreatedAt().After(latestAt.Time) {
+			actor := safeGetLogin(event.GetActor())
+			if kind == "labeled" && c.appBotLogin != "" && strings.EqualFold(actor, c.appBotLogin) {
+				h.appLabeled = true
+			}
+			if !latestAtSet || event.GetCreatedAt().After(h.latestAt.Time) {
 				latestAtSet = true
-				latestAt = event.GetCreatedAt()
-				latestEvent = kind
-				latestActor = safeGetLogin(event.GetActor())
+				h.latestAt = event.GetCreatedAt()
+				h.latestKind = kind
+				h.latestActor = actor
 			}
 		}
-		if resp.NextPage == 0 {
+		if resp == nil || resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
 	}
-	return latestEvent == "labeled" && strings.EqualFold(latestActor, c.appBotLogin), latestAt, nil
+	return h, nil
 }
 
 func (c *Client) listIssueComments(ctx context.Context, owner, repo string, number int) ([]*gh.IssueComment, error) {

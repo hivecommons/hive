@@ -17,7 +17,7 @@
 #
 # Usage (drop-in for the common gh shapes):
 #   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision] [--no-consolidate <reason>]
-#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision|--withdraw-decision] [--blocked-by <n[,n]>] [--blocked-on-pr <n>]
+#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision|--withdraw-decision] [--blocked-by <n[,n]>] [--blocked-on-pr <n|owner/repo#n>]
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
 #   hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
@@ -73,9 +73,10 @@
 # request is unrelated work that merely shares a file or component with one.
 # The reason is required, and the watcher records it in the result.
 #
-# --blocked-on-pr <n> (comment only) parks the issue on open PR <n> in the
-# same repo (hivecommons/hive#13093): use it when the code a finding names
-# exists only in an unmerged PR, so there is nothing to ship until it lands.
+# --blocked-on-pr <n|owner/repo#n> (comment only) parks the issue on open PR
+# <n> in the same repo, or on owner/repo#n in another one
+# (hivecommons/hive#13093): use it when the code a finding names exists only
+# in an unmerged PR, so there is nothing to ship until it lands.
 # The watcher prefixes the note with the blocked-on marker, strips any
 # @-mentions (the PR's author is not asked to do the hive's work), adds the
 # `blocked` label and removes `help wanted`; the hive lifts the label itself
@@ -152,6 +153,7 @@ NEEDS_DECISION=0
 WITHDRAW_DECISION=0
 STEP_KIND=""; RELEASE_TAG=""; RELEASE_TARGET=""; STEP_REQUESTED=0
 BLOCKED_ON_PR=""
+BLOCKED_ON_PR_REPO=""
 NO_CONSOLIDATE=""
 NO_CONSOLIDATE_SET=0
 DRY_RUN=0
@@ -280,8 +282,14 @@ if [ -n "${BLOCKED_ON_PR:-}" ] && [ "$KIND" != "comment" ]; then
   echo "hive-open-issue: --blocked-on-pr only applies to a comment; nothing was written." >&2
   exit 2
 fi
+# owner/repo#n names a PR in another repository: split it into the number
+# and the repo the watcher reads it from.
+if [ -n "${BLOCKED_ON_PR:-}" ] && [[ "$BLOCKED_ON_PR" =~ ^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([0-9]+)$ ]]; then
+  BLOCKED_ON_PR_REPO="${BASH_REMATCH[1]}"
+  BLOCKED_ON_PR="${BASH_REMATCH[2]}"
+fi
 if [ -n "${BLOCKED_ON_PR:-}" ] && ! [[ "$BLOCKED_ON_PR" =~ ^[0-9]+$ && "$BLOCKED_ON_PR" -gt 0 ]]; then
-  echo "hive-open-issue: --blocked-on-pr needs a positive PR number; nothing was written." >&2
+  echo "hive-open-issue: --blocked-on-pr needs a positive PR number or owner/repo#n; nothing was written." >&2
   exit 2
 fi
 
@@ -399,11 +407,12 @@ REMOVE_LABELS_JSON="$(printf '%s\n' "${REMOVE_LABELS[@]:-}" | python3 -c 'import
 REVIEWERS_JSON="$(printf '%s\n' "${REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 TEAM_REVIEWERS_JSON="$(printf '%s\n' "${TEAM_REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 BLOCKED_BY_JSON="$(printf '%s\n' "${BLOCKED_BY[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "${BLOCKED_ON_PR:-0}" "$STEP_KIND" "$RELEASE_TAG" "$RELEASE_TARGET" "$STEP_REQUESTED" "$NO_CONSOLIDATE" "$WITHDRAW_DECISION" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "${BLOCKED_ON_PR:-0}" "$STEP_KIND" "$RELEASE_TAG" "$RELEASE_TARGET" "$STEP_REQUESTED" "$NO_CONSOLIDATE" "$WITHDRAW_DECISION" "$BLOCKED_ON_PR_REPO" <<'PY'
 import json, os, re, sys
 temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by, needs_decision, blocked_on_pr = sys.argv[1:18]
 no_consolidate = sys.argv[22]
 withdraw_decision = sys.argv[23]
+blocked_on_pr_repo = sys.argv[24].strip()
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
 remove_labels = [part.strip() for value in json.loads(remove_labels)
@@ -518,6 +527,9 @@ if kind == "comment" and int(blocked_on_pr) > 0:
     # --blocked-on-pr: the watcher adds the marker and the `blocked` label
     # itself (hivecommons/hive#13093).
     req["blocked_on_pr"] = int(blocked_on_pr)
+    if blocked_on_pr_repo:
+        # owner/repo#n: the PR lives in another repository.
+        req["blocked_on_pr_repo"] = blocked_on_pr_repo
 if dry_run == "1":
     # Honour --dry-run: show exactly what would be queued, write nothing.
     print("hive-open-issue: DRY RUN — no request written, nothing will be created. Would write %s:" % path)
@@ -541,7 +553,7 @@ if [ "$KIND" = "comment" ]; then
     echo "hive-open-issue: will withdraw your decision park on $REPO#$NUMBER (refused if the park is not yours)"
   fi
   if [ -n "${BLOCKED_ON_PR:-}" ]; then
-    echo "hive-open-issue: will park the issue on $REPO#$BLOCKED_ON_PR (blocked label; help wanted removed; no one is @-mentioned)"
+    echo "hive-open-issue: will park the issue on ${BLOCKED_ON_PR_REPO:-$REPO}#$BLOCKED_ON_PR (blocked label; help wanted removed; no one is @-mentioned)"
   fi
 elif [ "$KIND" = "claim" ]; then
   echo "hive-open-issue: requested claim of $REPO#$NUMBER (hive/claimed-by-$AGENT label)"

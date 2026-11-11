@@ -54,6 +54,11 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	if c.isHeld(labels) {
 		return reject("held")
 	}
+	// A `blocked` applied after the listing (its Depends-on targets are
+	// still open) stops the queued lane like a hold does.
+	if hasLabelFold(labels, hgithub.BlockedLabel) {
+		return reject(autoMergeReasonLabelBlocked)
+	}
 	if c.transport.IsExemptLabels(labels) {
 		return reject("exempt-label")
 	}

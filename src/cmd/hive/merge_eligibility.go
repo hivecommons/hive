@@ -940,6 +940,13 @@ func automergeBlockLabelReason(labels []string, trusted bool) string {
 			return "label:hold"
 		}
 	}
+	// Last, as in the lanes' labelBlockReason: a PR held on its Depends-on
+	// targets (or a person's `blocked`) is never merge-eligible.
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), github.BlockedLabel) {
+			return "label:" + github.BlockedLabel
+		}
+	}
 	return ""
 }
 

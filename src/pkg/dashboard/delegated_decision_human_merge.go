@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/delegatedecision"
+	"github.com/hivecommons/hive/pkg/github"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -62,8 +63,13 @@ const decisionWhyMergerRole = "merger role required"
 // stage is the head's real progress, not a merge licence: neither
 // human-merge shortcut below may approve, admit or adopt it; the policy
 // (sentinel question, rail-hold) answers as it did when the gate pinned 085.
+//
+// A `blocked` PR (held on its Depends-on targets, or by a person) is gated
+// the same way: the shortcuts never merge past it.
 func delegatedHumanMergeGated(in delegatedecision.Input) bool {
-	return in.SentinelAlert || len(stagelabels.Holds(in.Labels)) > 0
+	return in.SentinelAlert || len(stagelabels.Holds(in.Labels)) > 0 || slices.ContainsFunc(in.Labels, func(l string) bool {
+		return strings.EqualFold(strings.TrimSpace(l), github.BlockedLabel)
+	})
 }
 
 // delegatedHumanMergeOutcome answers "Let hive decide" on a PR wearing the

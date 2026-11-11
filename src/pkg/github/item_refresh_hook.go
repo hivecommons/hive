@@ -47,12 +47,18 @@ func notifyItemRefresh(repo string, number int, isPR bool) {
 // the Activity Monitor re-derive the row immediately rather than after the
 // next enumeration.
 func (c *Client) unblockIssue(ctx context.Context, repo string, number int) error {
+	return c.unblockItem(ctx, repo, number, false)
+}
+
+// unblockItem is unblockIssue for an issue or, with isPR, a pull request the
+// blocked PR sweep parked on its Depends-on targets.
+func (c *Client) unblockItem(ctx context.Context, repo string, number int, isPR bool) error {
 	if err := c.RemoveLabel(ctx, repo, number, BlockedLabel); err != nil {
 		return err
 	}
 	forgetBlockedOnSeen(repo, number)
 	// The row's since-time restarts at the lift (hivecommons/hive#15779).
 	stagelabels.Shared().NoteUnblocked(stagelabels.Key(repo, number), time.Now())
-	notifyItemRefresh(repo, number, false)
+	notifyItemRefresh(repo, number, isPR)
 	return nil
 }
