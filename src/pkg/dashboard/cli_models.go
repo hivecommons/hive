@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/claude"
@@ -1613,10 +1614,28 @@ func copilotSDKHelperExecErr(ctx context.Context, err error, stderr string) erro
 			errCopilotSDKHelperTimeout, copilotSDKProbeTimeout, filepath.Base(copilotSDKHelperPath))
 	}
 	msg := strings.TrimSpace(stderr)
+	if isBinaryStderr(msg) {
+		return fmt.Errorf("sdk helper: %w (stderr was binary: the kernel refused to exec the Copilot CLI ELF and sh tried to run it as a script — ENOEXEC, see the copilot exec shim; not a model-catalog fault)", err)
+	}
 	if len(msg) > copilotSDKStderrLogLimit {
 		msg = msg[:copilotSDKStderrLogLimit]
 	}
 	return fmt.Errorf("sdk helper: %w (stderr: %s)", err, msg)
+}
+
+// isBinaryStderr reports stderr that is not text: invalid UTF-8 or control
+// bytes other than whitespace and ESC (ANSI colour), as when sh dumps an ELF
+// it could not exec.
+func isBinaryStderr(s string) bool {
+	if !utf8.ValidString(s) {
+		return true
+	}
+	for _, r := range s {
+		if r < 0x20 && r != '\n' && r != '\r' && r != '\t' && r != 0x1b {
+			return true
+		}
+	}
+	return false
 }
 
 // copilotSDKModel mirrors one entry of the helper's stdout JSON. The helper
