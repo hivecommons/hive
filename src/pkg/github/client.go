@@ -4940,6 +4940,18 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path 
 	c.clearMergeFailureAlertsAfterMerge(repo, number, method)
 }
 
+// RecordWorkflowLabelRemoved records the deletion of a workflow model's
+// stale label from repo (automerge's label garbage collection,
+// hivecommons/hive#17620). model is the binding that made it stale
+// (name@version) or "unbound".
+func (c *Client) RecordWorkflowLabelRemoved(repo, label, model string) {
+	if c == nil {
+		return
+	}
+	c.recordWriteAudit(AuditActionWorkflowLabelRemoved, InvocationMeta{Agent: AttributionAgentGovernor},
+		WriteTarget{Repo: repo}, "label", label, "workflow", model)
+}
+
 // RepoWorkBreakdown explains the raw open issue and PR totals for one
 // repository. Enumeration assigns every raw item to exactly one primary
 // bucket at the same choice point that determines whether it is actionable.

@@ -288,6 +288,19 @@ type Config struct {
 // WorkflowConfig is the `workflow:` block (hivecommons/hive#17620).
 type WorkflowConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
+	// LabelGC lets the stage engine delete a bound model's labels from a
+	// repository once the repository is unbound or rebound to a model that
+	// no longer declares them (RFC phase 4 follow-up). Only labels the hive
+	// itself provisioned, outside the built-in stage family and worn by no
+	// open issue or PR, are ever deleted; each deletion is audited as
+	// workflow_label_removed. nil means true; false leaves every label in
+	// place and logs what would have gone.
+	LabelGC *bool `yaml:"label_gc,omitempty" json:"label_gc,omitempty"`
+}
+
+// LabelGCEnabled is the effective workflow.label_gc (default true).
+func (c WorkflowConfig) LabelGCEnabled() bool {
+	return c.LabelGC == nil || *c.LabelGC
 }
 
 // UnmarshalYAML accepts the operator-facing agents.github_api_hourly_cap

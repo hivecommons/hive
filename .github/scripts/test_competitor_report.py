@@ -49,16 +49,18 @@ class GroundingTests(unittest.TestCase):
         "|---|---|---|---|---|\n"
         "| OpenHands | All Hands AI | terminal agent | runs as worker engine today | MIT |\n"
         "| Roo Code (archived) | Roo | editor agent | could run as engine | Apache-2.0 |\n"
-        "Licence from the GitHub API.\n"
+        "| Devin, Jules, Codex cloud | vendors | cloud agent | complementary | not detected (unverified) |\n"
+        "Licence from the GitHub API https://api.github.com/repos/OpenHands/OpenHands.\n"
     )
     DISCORD_TABLE = (
         "```\n"
         "Project              Category  Relationship   Licence\n"
         "OpenHands            terminal  engine today   MIT\n"
         "Roo Code (arch.)     editor    could be       Apache-2.0\n"
+        "Devin/Jules/etc      cloud     complementary  not detected\n"
         "```\n"
         "Owners: OpenHands All Hands AI; Roo Code Roo.\n"
-        "Licence from the GitHub API.\n"
+        "Licences via GitHub API <https://api.github.com/repos/OpenHands/OpenHands>.\n"
     )
 
     def report_text(self, heading, table):
@@ -105,6 +107,18 @@ class GroundingTests(unittest.TestCase):
         not be required."""
         self.validate()
 
+    def test_github_table_may_be_a_fenced_block(self):
+        """Regression for run 43065486702: the agent used a fenced block on
+        GitHub too, which must count as the project table."""
+        payload = self.payload()
+        payload["items"][0]["body"] = payload["items"][0]["body"].replace(
+            self.GITHUB_TABLE, self.DISCORD_TABLE.replace("Owners: OpenHands All Hands AI; Roo Code Roo.\n", ""))
+        self.validate(payload)
+        payload["items"][1]["message"] = self.discord_text().replace(
+            "Roo Code (arch.)     editor    could be       Apache-2.0\n", "", 1)
+        with self.assertRaisesRegex(ValueError, "missing 'Roo Code"):
+            self.validate(payload)
+
     def test_discord_prose_must_match_github(self):
         payload = self.payload()
         payload["items"][1]["message"] = self.discord_text().replace(
@@ -114,7 +128,7 @@ class GroundingTests(unittest.TestCase):
 
     def test_discord_table_must_keep_every_project_and_note(self):
         for missing, message in (("Roo Code (arch.)     editor    could be       Apache-2.0\n", "missing 'Roo Code"),
-                                 ("Licence from the GitHub API.\n", "dropped a note")):
+                                 ("Licences via GitHub API <https://api.github.com/repos/OpenHands/OpenHands>.\n", "dropped")):
             payload = self.payload()
             payload["items"][1]["message"] = self.discord_text().replace(missing, "", 1)
             with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, message):
@@ -204,6 +218,12 @@ class GroundingTests(unittest.TestCase):
                 self.validate()
         self.extra = "| Project | not detected (unverified) |"
         self.validate()
+        # Regressions from runs 43065486702 / 43070009570: disclaimers are fine.
+        for text in ('"not detected (unverified)" means the API gave null; it does not mean no licence.',
+                     "The API returned no licence, so it is unverified."):
+            self.extra = text
+            with self.subTest(text=text):
+                self.validate()
 
     def metric(self):
         claim = {

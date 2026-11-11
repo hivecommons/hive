@@ -32,6 +32,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/worksource"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -1492,9 +1493,16 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 		approveOpts.TrustedBotSkipReview = func() bool { return cfg.AutoMerge.TrustedBotSkipsReview() }
 	}
 	approveEngine := automerge.New(ghClient, approveOpts)
+	// A bound workflow model's replies are accepted as `/hive <verb>`
+	// (hivecommons/hive#17620); unbound repositories see no change.
+	var workflowFor func(owner, repo string) *workflowmodel.Profile
+	if cfg != nil {
+		workflowFor = stageEngineOptions(cfg, logger).WorkflowFor
+	}
 	result, err := ghClient.SweepIssueUnparkCommands(ctx, github.IssueUnparkSweepOptions{
 		PRApproveReply: approveEngine.PRApproveReply,
 		MaxActions:     github.DefaultIssueUnparkSweepMaxActions,
+		WorkflowFor:    workflowFor,
 		// cfg is nil only in tests; nil leaves every repo on the default path.
 		LabelDriven:   func(repo string) bool { return cfg.RepoLabelDriven(repo) },
 		LabelApproval: labelApprovalPolicyResolver(cfg),

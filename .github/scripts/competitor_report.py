@@ -210,10 +210,23 @@ def split_who_section(text):
 
 
 def table_projects(section):
-    rows = [line for line in section.splitlines() if line.strip().startswith("|")]
-    cells = [[c.strip() for c in row.strip().strip("|").split("|")] for row in rows]
-    return [row[0] for row in cells[2:] if row and row[0]], [
-        line for line in section.splitlines() if not line.strip().startswith("|")]
+    """Project names (first column) and the notes outside the table. The
+    table may be a Markdown pipe table or a fenced block of aligned columns."""
+    lines = section.splitlines()
+    rows = [line for line in lines if line.strip().startswith("|")]
+    if rows:
+        cells = [[c.strip() for c in row.strip().strip("|").split("|")] for row in rows]
+        projects = [row[0] for row in cells[2:] if row and row[0]]
+        notes = [line for line in lines if not line.strip().startswith("|")]
+        return projects, notes
+    fenced = re.findall(r"```[^\n]*\n(.*?)```", section, re.S)
+    projects = []
+    for block in fenced:
+        body = [line for line in block.splitlines()[1:] if line.strip()
+                and not re.fullmatch(r"[-+| ]+", line.strip())]
+        projects += [re.split(r"\s*\|\s*|\s{2,}", line.strip())[0] for line in body]
+    notes = re.sub(r"```.*?```", "", section, flags=re.S).splitlines()
+    return [p for p in projects if p], notes
 
 
 def check_discord_matches(report, message):
@@ -228,18 +241,25 @@ def check_discord_matches(report, message):
             "Discord and GitHub reports differ outside the project table "
             "(ledger and sources details belong only on GitHub)")
     projects, notes = table_projects(github_who)
-    require(projects, f'GitHub "{WHO_HEADING}" section needs a Markdown table')
+    require(projects, f'GitHub "{WHO_HEADING}" section needs a project table')
     fenced = re.findall(r"```[^\n]*\n(.*?)```", discord_who, re.S)
     require(fenced, f'Discord "{WHO_HEADING}" table must be a fenced code block')
-    block = squash(" ".join(fenced))
+    block = squash(" ".join(fenced)).lower()
     for project in projects:
-        require(project.split()[0] in block,
+        # Discord rows are width-limited and abbreviated; the first word of the
+        # project name is the stable key ("Roo Code (archived)" -> "roo").
+        key = re.search(r"[a-z0-9][\w.+-]*", project, re.I)
+        require(key is None or key.group(0).lower() in block,
                 f"Discord project table is missing {project!r}")
+    # Notes under the table get re-wrapped for Discord; hold them to the same
+    # provenance links rather than the same wording.
+    note_text = " ".join(notes)
     discord_squashed = squash(discord_who)
-    for note in notes:
-        if note.strip():
-            require(squash(note) in discord_squashed,
-                    f'Discord "{WHO_HEADING}" section dropped a note under the table')
+    require(not note_text.strip() or re.sub(r"```.*?```", "", discord_who, flags=re.S).strip(),
+            f'Discord "{WHO_HEADING}" section dropped the notes under the table')
+    for url in re.findall(r"https?://\S+", note_text):
+        require(url.rstrip(".,;)") in discord_squashed,
+                f'Discord "{WHO_HEADING}" notes dropped {url}')
 
 
 def check_source_url(url, bundle):
@@ -289,8 +309,14 @@ def validate(payload, bundle, fetch=api, open_issues=False, today=None):
     require("Evidence limits:" in report, "Missing visible evidence/verification limitations")
     require(not re.search(r"\bHive (?:is|remains) GitHub[- ]only\b|Forge: GitHub today", report, re.I),
             "Known blanket GitHub-only regression; distinguish adapters from reachable execution")
-    require(not re.search(r"\b(?:no licen[cs]e|unlicensed)\b", report, re.I),
-            "Do not infer no product license from absent API detection")
+    for match in re.finditer(r"\b(?:no licen[cs]e|unlicensed)\b", report, re.I):
+        # "does not mean no licence" / "returned no licence, so unverified" are
+        # the disclaimers we want, not the inference.
+        lead = re.split(r"[.;\n]", report[max(0, match.start() - 40):match.start()])[-1]
+        tail = re.split(r"[.;\n]", report[match.end():match.end() + 60])[0]
+        require(re.search(r"\b(?:not|never|rather than)\b", lead, re.I)
+                or re.search(r"\b(?:unverified|not detected)\b", tail, re.I),
+                "Do not infer no product license from absent API detection")
     require(not re.search(r"\|\s*(?:none|null|NOASSERTION)\s*\|", report, re.I),
             "Use 'not detected (unverified)' for ambiguous API license metadata")
 

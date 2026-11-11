@@ -19665,6 +19665,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return cols.findIndex(c => Array.isArray(c.numbers) && c.numbers.indexOf(n) >= 0);
     }
 
+    // Pure: the reply verbs the bound model declares for the item's
+    // current state (RFC phase 4, `workflows.repos[repo].replies` keyed by
+    // stage number), in the model's order; [] for an unbound repository, a
+    // PR row (the dashboard records model replies on issues only), or a
+    // state without replies.
+    function stageTrackerWorkflowReplies(item, workflows) {
+      if (!item || item.kind === 'pr' || item.via_pr) return [];
+      const wf = stageTrackerWorkflowOf({ workflows }, item.repo);
+      if (!wf || !wf.replies) return [];
+      const list = wf.replies[String(Number(item.stage) || 0)];
+      return Array.isArray(list) ? list.map(v => String(v || '').trim()).filter(Boolean) : [];
+    }
+
+    // Pure: a model verb as the pill prints it — "approve analysis" →
+    // "Approve analysis".
+    function stageTrackerWorkflowReplyLabel(verb) {
+      const v = String(verb || '').trim();
+      return v ? v.charAt(0).toUpperCase() + v.slice(1) : '';
+    }
+
     function stageTrackerWorkflowBadgeHtml(wf) {
       if (!wf) return '';
       const key = `${wf.name}@${wf.version}`;
@@ -24910,8 +24930,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (bar.innerHTML !== html) bar.innerHTML = html;
     }
     function stageTrackerActionLabel(id) {
+      const modelVerb = typeof stageTrackerModelReplyVerb === 'function' ? stageTrackerModelReplyVerb(id) : '';
+      if (modelVerb) return typeof stageTrackerWorkflowReplyLabel === 'function' ? stageTrackerWorkflowReplyLabel(modelVerb) : modelVerb;
       const base = typeof stageTrackerActionBase === 'function' ? stageTrackerActionBase(id) : id;
       return STAGE_TRACKER_ACTION_LABELS[base] || id;
+    }
+    // Pure: the model verb a `wf:<verb>` human-gate action carries
+    // (hivecommons/hive#17620, RFC phase 4), '' for any other id.
+    function stageTrackerModelReplyVerb(id) {
+      return String(id || '').indexOf('wf:') === 0 ? String(id).slice(3).trim() : '';
     }
     // Pure: which endpoint an action hits for one item. `once` marks a
     // hive-wide call made one time per batch.
@@ -24967,6 +24994,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (id === 'gate:confirm-sentinel') {
         return { url: '/api/repos/' + seg + '/items/' + n + '/sentinel-confirm', body: { comment: payload.comment || '', type } };
+      }
+      // A workflow model's reply verb: recorded as "/hive <verb>" on the
+      // parked issue; the server checks the verb against the bound model.
+      const modelVerb = typeof stageTrackerModelReplyVerb === 'function' ? stageTrackerModelReplyVerb(id) : '';
+      if (modelVerb) {
+        if (type !== 'issue') return null;
+        return { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'model-reply', reply: modelVerb, comment: payload.comment || '', type } };
       }
       if (id.indexOf('decide:') === 0) {
         const body = { decision: id.slice('decide:'.length), comment: payload.comment || '', type };
@@ -25794,6 +25828,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const target = stageTrackerRerouteTargetOf(id) || STAGE_TRACKER_REROUTE_ANY;
         return (await stageTrackerAsk('decide:reroute', 'confirm', stageTrackerRerouteConfirm(refs, who, target, stageTrackerTakeoverOf(items[0])))) ? { to: target } : null;
       }
+      const verb = typeof stageTrackerModelReplyVerb === 'function' ? stageTrackerModelReplyVerb(id) : '';
+      if (verb) {
+        const v = await stageTrackerAsk(id, 'prompt', { title: stageTrackerActionLabel(id) + ' — ' + refs, label: 'Record "/hive ' + verb + '" on ' + refs + ' as ' + who + '? The hive un-parks the issue and applies the label the workflow model maps to this reply, if any. Note (optional)', placeholder: 'e.g. keep the shorter outline', confirmLabel: 'Send' });
+        return v == null ? null : { comment: v };
+      }
       return {};
     }
     // Pure: the Adopt now confirm — the consequence line is the message.
@@ -26571,17 +26610,32 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       out.sort((x, y) => STAGE_TRACKER_GATE_ORDER.indexOf(x.key) - STAGE_TRACKER_GATE_ORDER.indexOf(y.key));
       return out;
     }
+    // A model reply's action id: `wf:` + the verb as the model declares it.
+    const STAGE_TRACKER_GATE_MODEL_PREFIX = 'wf:';
     // Pure: the verbs for a set of reasons — the union in reason order,
     // de-duplicated, first label wins (so "Approve" on review + decision
     // reads "Approve", and "Approve as-is" when the decision stands alone).
-    function stageTrackerHumanGateVerbs(reasons, item) {
+    // modelVerbs are the bound workflow model's replies for the row's
+    // state (hivecommons/hive#17620, RFC phase 4): they follow the built-in
+    // verbs as `wf:<verb>`, each posting "/hive <verb>", skipping any whose
+    // label a built-in verb already reads.
+    function stageTrackerHumanGateVerbs(reasons, item, modelVerbs) {
       const ids = [];
       // A row with no PR has no head to approve or send back; those verbs
       // belong to PR rows (or an issue drawn through its covering PR).
       const onPR = item == null || stageTrackerGateIsPR(item);
       (reasons || []).forEach(r => (STAGE_TRACKER_GATE_VERBS[r.key] || []).forEach(id => { if (ids.indexOf(id) < 0 && (onPR || STAGE_TRACKER_GATE_PR_ONLY.indexOf(id) < 0)) ids.push(id); }));
       const onlyDecision = (reasons || []).length && reasons.every(r => r.key === 'decision');
-      return ids.map(id => ({ id, label: id === 'decide:approve' && onlyDecision ? STAGE_TRACKER_GATE_APPROVE_AS_IS : STAGE_TRACKER_GATE_LABELS[id] || id, posts: STAGE_TRACKER_GATE_POSTS[id] || '' }));
+      const out = ids.map(id => ({ id, label: id === 'decide:approve' && onlyDecision ? STAGE_TRACKER_GATE_APPROVE_AS_IS : STAGE_TRACKER_GATE_LABELS[id] || id, posts: STAGE_TRACKER_GATE_POSTS[id] || '' }));
+      const taken = out.map(v => String(v.label).replace(/…$/, '').toLowerCase());
+      (Array.isArray(modelVerbs) ? modelVerbs : []).forEach(verb => {
+        const v = String(verb || '').trim();
+        const id = STAGE_TRACKER_GATE_MODEL_PREFIX + v;
+        if (!v || out.some(x => x.id === id) || taken.indexOf(v.toLowerCase()) >= 0) return;
+        taken.push(v.toLowerCase());
+        out.push({ id, label: typeof stageTrackerWorkflowReplyLabel === 'function' ? stageTrackerWorkflowReplyLabel(v) : v, posts: 'Posts "/hive ' + v + '" — a reply the repository\'s workflow model declares for this state; the hive applies the state\'s label when the model maps one.', model: true });
+      });
+      return out;
     }
     // Pure: the status segment's words — "Needs human · review, sentinel".
     function stageTrackerHumanGateStatusText(reasons) {
@@ -26646,7 +26700,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (passive) return typeof stageTrackerLeadPillHtml === 'function' ? stageTrackerLeadPillHtml(item, passive) : '';
       // A gate owed on a PR drawn under this issue row renders on that sub-row.
       if (Array.isArray(subRows) && subRows.length && item.kind === 'issue' && !item.via_pr && !leads.length && subRows.some(s => stageTrackerHumanGateReasons(s).length)) return '';
-      const verbs = stageTrackerHumanGateVerbs(reasons, shown);
+      const workflows = opts && opts.workflows !== undefined ? opts.workflows : (typeof _stageTracker !== 'undefined' && _stageTracker ? _stageTracker.workflows : null);
+      const modelVerbs = typeof stageTrackerWorkflowReplies === 'function' ? stageTrackerWorkflowReplies(shown, workflows) : [];
+      const verbs = stageTrackerHumanGateVerbs(reasons, shown, modelVerbs);
       const text = stageTrackerHumanGateStatusText(reasons);
       const tip = stageTrackerHumanGateTip(reasons);
       const ico = typeof stageTrackerIcon === 'function' ? stageTrackerIcon('human', 'ham-ico ham-mod-ico') : '';
