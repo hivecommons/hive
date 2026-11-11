@@ -1,0 +1,1 @@
+- Log the issue-claims GitHub side-effect retry at INFO instead of WARN; only exhausted retries warn, so expected transient timeouts no longer trip the fleet-report repeated-error classifier (#17782).

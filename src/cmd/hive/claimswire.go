@@ -93,7 +93,7 @@ func retryClaimEffect(ctx context.Context, logger *slog.Logger, what, key string
 			return n
 		}
 		if logger != nil {
-			logger.Warn("issue-claims: retrying GitHub side effect", "what", what, "issue", key, "attempt", n, "retry_in", backoff.String(), "error", err)
+			logger.Info("issue-claims: retrying GitHub side effect", "what", what, "issue", key, "attempt", n, "retry_in", backoff.String(), "error", err)
 		}
 		if !wait(ctx, backoff) {
 			if logger != nil {
