@@ -271,6 +271,10 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
   && npm cache clean --force \
   && node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs" \
   && claude --version
+# ld.so wrapper for the copilot platform binary (#17729) — see src/Dockerfile.
+COPY bin/install-copilot-exec-shim.sh /usr/local/bin/install-copilot-exec-shim.sh
+RUN chmod +x /usr/local/bin/install-copilot-exec-shim.sh && \
+    /usr/local/bin/install-copilot-exec-shim.sh "$(npm root -g)"
 
 # Install Muse Code (backend: muse). Mirrors Layer 8.3 of src/Dockerfile so a
 # containerized contributor relay can actually run the muse backend, instead of
