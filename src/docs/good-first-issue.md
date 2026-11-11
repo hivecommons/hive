@@ -121,6 +121,11 @@ wins, oldest first on ties. Issues with the `good first issue` label the hive
 did not apply are still given the welcome comment (once) so that their
 visitors get the relay pitch too.
 
+If GitHub refuses a curation write because a repository is archived and
+read-only, the sweep skips that repository until hive restarts. Remove archived
+repositories from the configured repo list, or restart hive after unarchiving.
+Other write failures are still reported and retried on later sweeps.
+
 ## The welcome comment
 
 One comment per issue, found by its first-line marker `<!-- hive:gfi -->`. A
