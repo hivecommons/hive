@@ -1087,6 +1087,7 @@ func (b *boot) wireBootClosures() {
 		return &dashboard.Dependencies{
 			Config:            b.cfg,
 			WorkflowStore:     wfstore.Open(wfstore.Root(b.cfg.Data.WorkflowsDir)),
+			WorkflowRepoFiles: workflowRepoFiles(func() *github.Client { return b.ghClient }),
 			AgentMgr:          b.agentMgr,
 			CruxRuntimeHealth: cruxRuntimeHealthFunc(b.cruxSupervision),
 			// Provider gateways (#5565 slice 3): concrete openrouter/watsonx/

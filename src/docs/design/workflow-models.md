@@ -125,3 +125,33 @@ kind is not covered. Models are whole (no inheritance) through phase 4.
   columns, numbers, error}}}` (nil when nothing is bound). The JS labels the model column,
   renders a per-row column strip by stage number, and shows an amber "Not covered" chevron for
   abstentions. Settings → Repos has a per-repo Workflow select that PUTs the binding.
+
+## Ingest → lifecycle (RFC phase 3a)
+
+`ingest.Repository` (phase 0) is unchanged and still produces the process half. `ingest.Lifecycle`
+composes on top of it:
+
+1. Start from `hivedefault.Generate()` — the compiled hive-default lifecycle, `derivation: builtin`.
+2. Copy the ingested pipelines, sources and coverage; `meta.source` is the system(s) read,
+   `meta.provenance` is `ingested-unreviewed`, `meta.version` is `1` (the store assigns later
+   versions).
+3. PR-verify pipelines are bound to every state in the CI / Review column, each with a citation to
+   the file the pipeline came from.
+4. Every post-merge state the process half produced (main CI, release, `deploy-<env>`, done)
+   becomes a state in its own column after Merged, `confidence: inferred`, with the environment
+   guards carried over. The chain's transitions fire on `pipeline-succeeded` =
+   `pipeline.status is green`. The engine does not observe post-merge runs yet and reports
+   `unknown` for that fact, so a bound ingested model derives exactly like hive-default today;
+   the extra columns render, nothing lands in them until post-merge observation exists.
+
+The compiler warns once per inferred element; a human confirming them in the editor (phase 4)
+is what moves provenance to `local`/`curated`.
+
+`POST /api/workflows/ingest` is the spoke entry point (owner role): `{repo}` fetches the default
+branch through `FetchDefaultBranchTree`, `ingest.ReadTree` keeps GitHub Actions workflows, YAML
+under Tekton directories and pipeline-named YAML that looks like Tekton (the survey collector's
+rules), and the checkout is removed. `{files}` accepts pasted definitions. `save: true` stores the
+result at the next integer version under `name` (default: the repository slug).
+
+`cmd/workflow-survey` now compiles every corpus repository's lifecycle model (`lifecycle.json`
+alongside `model.json`) and reports pass/refusal counts by diagnostic code.

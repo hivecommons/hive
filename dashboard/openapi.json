@@ -39356,6 +39356,79 @@
           }
         }
       }
+    },
+    "/api/workflows/ingest": {
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Ingest a repository's CI definitions into a lifecycle workflow model",
+        "description": "Reads the repository's default-branch GitHub Actions workflows and Tekton resources (or pasted files) and returns the hive-default lifecycle with the repository's pipelines bound: PR-verify pipelines on the CI / Review states, the post-merge chain as new columns. Provenance ingested-unreviewed. With save=true the model is stored as the next integer version under name. Owner role required.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "description": "owner/name to fetch through the forge client; exactly one of repo or files"
+                  },
+                  "files": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "repo-relative path to file contents, for pasted or uploaded definitions"
+                  },
+                  "save": {
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "store name (default: slug of the repository)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ingested (not saved)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowIngestResult"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Ingested and saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowIngestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "502": {
+            "description": "Repository fetch failed"
+          },
+          "503": {
+            "description": "No forge client or no workflow store"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -39759,6 +39832,38 @@
         "type": "object",
         "description": "Compiled, derivation-ready form of a model (hash, states, columns, ordered rules). Never trusted from the wire: the spoke recompiles on save and on bind.",
         "additionalProperties": true
+      },
+      "WorkflowIngestResult": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "$ref": "#/components/schemas/WorkflowModel"
+          },
+          "compiled": {
+            "type": "boolean"
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowDiagnostic"
+            }
+          },
+          "profile": {
+            "type": "object"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "files": {
+            "type": "integer"
+          },
+          "pipelines": {
+            "type": "integer"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/WorkflowEntry"
+          }
+        }
       }
     }
   }
