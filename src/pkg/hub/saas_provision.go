@@ -240,6 +240,11 @@ type ClusterConfig struct {
 	InferenceEndpoint string `json:"inference_endpoint,omitempty" yaml:"inference_endpoint,omitempty"`
 	GitHubBaseURL     string `json:"github_base_url,omitempty" yaml:"github_base_url,omitempty"`
 	GitHubAPIURL      string `json:"github_api_url,omitempty" yaml:"github_api_url,omitempty"`
+	// UpstreamProxy names a corporate HTTP forward proxy the hives on THIS
+	// cluster must chain selected hosts through (e.g. an enterprise GitHub
+	// reachable only via the proxy). Injected into new pool slots as
+	// HIVE_UPSTREAM_PROXY_URL / HIVE_UPSTREAM_PROXY_HOSTS / HIVE_NO_PROXY.
+	UpstreamProxy *ClusterUpstreamProxy `json:"upstream_proxy,omitempty" yaml:"upstream_proxy,omitempty"`
 	// GitHubAppSlug is the GitHub App's URL slug on THIS cluster's GitHub
 	// host. A GitHub Enterprise instance hosts its own App registration,
 	// which is rarely named "kubestellar-hive" — without this the spoke's
@@ -2647,15 +2652,19 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 			}
 			return "anyuid"
 		}(),
-		"InitContainerUID":  initContainerUID,
-		"InitContainerGID":  initContainerGID,
-		"InferenceEndpoint": cluster.InferenceEndpoint,
-		"HasInference":      cluster.InferenceEndpoint != "",
-		"IsPublic":          h.IsPublic,
-		"HiveType":          "hosted",
-		"HasGHE":            effectiveGitHubBaseURL(h, cluster) != "",
-		"GitHubBaseURL":     effectiveGitHubBaseURL(h, cluster),
-		"GitHubAPIURL":      effectiveGitHubAPIURL(h, cluster),
+		"InitContainerUID":     initContainerUID,
+		"InitContainerGID":     initContainerGID,
+		"InferenceEndpoint":    cluster.InferenceEndpoint,
+		"HasInference":         cluster.InferenceEndpoint != "",
+		"HasUpstreamProxy":     cluster.UpstreamProxy.enabled(),
+		"UpstreamProxyURL":     cluster.UpstreamProxy.url(),
+		"UpstreamProxyHosts":   cluster.UpstreamProxy.hosts(),
+		"UpstreamProxyNoProxy": cluster.UpstreamProxy.noProxy(),
+		"IsPublic":             h.IsPublic,
+		"HiveType":             "hosted",
+		"HasGHE":               effectiveGitHubBaseURL(h, cluster) != "",
+		"GitHubBaseURL":        effectiveGitHubBaseURL(h, cluster),
+		"GitHubAPIURL":         effectiveGitHubAPIURL(h, cluster),
 		// app_slug follows the hive's GitHub host: a GHE hive gets the cluster's
 		// GHE App slug (e.g. "kubestellar-hive-ghe"); a public-GitHub hive emits
 		// none, letting config.ResolvedAppSlug() supply the public default. Only
@@ -3630,6 +3639,18 @@ spec:
 {{- if .HasInference}}
         - name: HIVE_VLLM_ENDPOINT
           value: "{{.InferenceEndpoint}}"
+{{- end}}
+{{- if .HasUpstreamProxy}}
+        - name: HIVE_UPSTREAM_PROXY_URL
+          value: "{{.UpstreamProxyURL}}"
+{{- if .UpstreamProxyHosts}}
+        - name: HIVE_UPSTREAM_PROXY_HOSTS
+          value: "{{.UpstreamProxyHosts}}"
+{{- end}}
+{{- if .UpstreamProxyNoProxy}}
+        - name: HIVE_NO_PROXY
+          value: "{{.UpstreamProxyNoProxy}}"
+{{- end}}
 {{- end}}
         ports:
         - name: terminal

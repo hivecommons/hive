@@ -44,6 +44,59 @@ Reverse proxies, Routes, and Ingresses must preserve HTTP upgrade headers and lo
 | Login provider issuers | Hub with multi-provider login | GitHub OAuth endpoints, plus the OIDC issuer/JWKS hosts for each configured provider (e.g. `accounts.google.com`, `login.microsoftonline.com`, `sso.redhat.com`, or your IBMid/custom issuer). |
 | OCI Object Storage (`objectstorage.<region>.oraclecloud.com`) | Hub running DR backups | Only when the opt-in backup CronJob is deployed; see [backup-restore.md](backup-restore.md). |
 
+## Egress through a corporate forward proxy
+
+Some environments cannot reach a destination directly — the common case is an
+enterprise GitHub instance that is only reachable through a corporate HTTP
+forward proxy. Hive can chain selected hosts through such a proxy with
+`CONNECT`, on every path that carries TLS egress:
+
+- the control-plane GitHub clients (App JWT / installation-token minting, REST
+  and GraphQL calls);
+- in-process `git` runs (knowledge sources, ad-hoc worktree provisioning),
+  expressed as scoped `GIT_CONFIG_*` entries;
+- the in-process MITM proxy that all agent `:443` traffic is redirected into.
+  Agents keep `HTTPS_PROXY=http://127.0.0.1:<mitm-port>`; the MITM proxy dials
+  the upstream proxy for matching hosts and speaks TLS (inspected flows) or
+  splices bytes (passthrough flows) over the tunnel. Agents are never handed
+  the corporate proxy URL.
+
+Configure it in `hive.yaml`:
+
+```yaml
+network:
+  upstream_proxy:
+    url: http://proxy.corp.example:3128      # userinfo → Proxy-Authorization: Basic
+    hosts: ["ghe.corp.example", "*.ghe.corp.example"]
+    no_proxy: ["10.0.0.0/8"]
+```
+
+or via environment (`HIVE_UPSTREAM_PROXY_URL`, comma-separated
+`HIVE_UPSTREAM_PROXY_HOSTS`, `HIVE_NO_PROXY`), which overrides the file block.
+When neither is set, standard `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` apply to
+every host. `hosts` patterns: exact host, `*.domain` (subdomains only),
+`.domain` (domain and subdomains), IP literal, CIDR, or `*`; empty means every
+host not listed in `no_proxy`. Hosts outside the rules keep the direct path.
+Limitation: for `git`, only exact-host patterns can be expressed as per-URL
+`http.<url>.proxy` config; wildcard/suffix/CIDR rules apply to API and MITM
+traffic but not to in-process `git` unless `hosts` is empty.
+
+Hosted hubs set this per cluster in `/data/saas/clusters.json` so new pool
+slots on that cluster are provisioned with the env vars above:
+
+```json
+{
+  "id": "corp-cluster",
+  "upstream_proxy": {
+    "url": "http://proxy.corp.example:3128",
+    "hosts": ["ghe.corp.example", "*.ghe.corp.example"]
+  }
+}
+```
+
+Existing hive Deployments are not reconciled; patch them once with
+`kubectl -n <hive-ns> set env deploy/hive -c hive HIVE_UPSTREAM_PROXY_URL=... HIVE_UPSTREAM_PROXY_HOSTS=...`.
+
 ## Firewall recommendations
 
 - Public edge: expose only the dashboard/hub front door (3001 for Docker/hub, or your HTTPS Ingress/Route for Kubernetes). Keep 3002 and 7681 cluster/private unless you have an explicit operator access path.
