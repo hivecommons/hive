@@ -6,3 +6,4 @@ hive.yaml
 secrets/
 src/coverage.out
 /bin/
+/cmd/workflow-survey/workflow-survey
