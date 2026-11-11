@@ -516,7 +516,8 @@
           `<label class="config-field">Save as<input type="text" id="wf-ingest-name" value="${esc(st.name)}" placeholder="${esc(wfIngestDefaultName(st.repo) || 'derived from the repository')}" ${disabled} data-input-action="wfIngestSetName" data-arg-types="v"></label>` +
           `<div class="kc-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfIngestRun" data-arg0="false" data-arg-types="j" ${disabled}>${st.busy ? 'Working…' : 'Preview'}</button>` +
           `<button type="button" class="hv-btn btn-primary btn-sm" data-action="wfIngestRun" data-arg0="true" data-arg-types="j" ${disabled}>Ingest and save</button></div>` +
-        '</div>' + result + '</div>';
+        '</div>' + result + '</div>' +
+        (typeof renderWorkflowIngestSources === 'function' ? renderWorkflowIngestSources(state, owner) : '');
     }
 
     function wfIngestDefaultName(repo) {
