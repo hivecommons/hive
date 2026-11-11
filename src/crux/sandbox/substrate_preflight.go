@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"sync"
@@ -12,10 +13,11 @@ import (
 )
 
 // Substrate cluster-prerequisite preflight (ADR-0026 phase 2; the sibling
-// of the OpenShell preflight in openshell_preflight.go). Hive cannot see the
-// node kernel or the WorkerPool CRDs from its pod without cluster RBAC, but
-// the Control API answers whether it is up and which workers — and so which
-// sandbox classes — exist; that is what decides whether a kick can land.
+// of the OpenShell preflight in openshell_preflight.go). The Control API
+// answers whether it is up and which workers — and so which sandbox classes
+// — exist; that is what decides whether a kick can land. The cluster and
+// router halves in substrate_preflight_cluster.go (#17698) add the
+// Kubernetes facts behind that answer when hive runs in the cluster.
 
 const substratePreflightTTL = 5 * time.Minute
 
@@ -32,6 +34,10 @@ type SubstratePreflighter struct {
 
 	newClient func(SubstrateOptions) (substrateClient, error)
 	now       func() time.Time
+	// kube and routerDial let tests point the cluster and router halves at
+	// fakes; nil means the in-cluster API and a plain TCP dial.
+	kube       *substrateKube
+	routerDial func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // DefaultSubstratePreflighter backs the warnings AgentSandboxGateWarnings emits.
@@ -58,7 +64,16 @@ func (p *SubstratePreflighter) Check(ctx context.Context, opts SubstrateOptions)
 	return append([]string(nil), warnings...)
 }
 
+// probe runs the three halves — Control API, cluster facts, router — and
+// concatenates their warnings; a down control plane does not hide the
+// cluster facts that explain it.
 func (p *SubstratePreflighter) probe(ctx context.Context, opts SubstrateOptions) []string {
+	out := p.probeControl(ctx, opts)
+	out = append(out, p.probeCluster(ctx, opts)...)
+	return append(out, p.probeRouter(ctx, opts)...)
+}
+
+func (p *SubstratePreflighter) probeControl(ctx context.Context, opts SubstrateOptions) []string {
 	ep := opts.endpoint()
 	ctx, cancel := context.WithTimeout(ctx, substrateRequestWait)
 	defer cancel()
