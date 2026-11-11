@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
 )
 
 // Transition is what Reconcile reports to its caller and the audit log.
@@ -38,14 +39,23 @@ type Reconciler interface {
 
 // Options configures New.
 type Options struct {
-	Mode    Mode
-	Store   *stagelabels.Store // stagelabels.Shared() by default; API unchanged
-	Writer  StageWriter
-	Issue   Deriver // defaults to DeriveIssue
-	PR      Deriver // defaults to DerivePR
-	Now     func() time.Time
-	Logger  *slog.Logger
-	Metrics Metrics
+	Mode   Mode
+	Store  *stagelabels.Store // stagelabels.Shared() by default; API unchanged
+	Writer StageWriter
+	Issue  Deriver // defaults to DeriveIssue
+	PR     Deriver // defaults to DerivePR
+	// Workflow, when set, derives through the compiled workflow model
+	// (DeriveFromModel) and overrides Issue and PR. hivecommons/hive#17620.
+	Workflow *workflowmodel.Profile
+	// WorkflowFor, when set, resolves the compiled model bound to a
+	// repository (owner/repo) at derivation time; nil means the repository
+	// is unbound and the Issue/PR derivers run unchanged. It composes with
+	// Workflow: Workflow is the engine-wide model, WorkflowFor the
+	// per-repository override. hivecommons/hive#17620 (RFC phase 2).
+	WorkflowFor func(owner, repo string) *workflowmodel.Profile
+	Now         func() time.Time
+	Logger      *slog.Logger
+	Metrics     Metrics
 }
 
 // ErrNoWriter is returned by an enforce-mode Reconcile with no Writer.
@@ -73,11 +83,19 @@ func New(o Options) Reconciler {
 	if o.Store == nil {
 		o.Store = stagelabels.Shared()
 	}
+	if o.Workflow != nil {
+		o.Issue = DeriveFromModel(o.Workflow, stagelabels.IssueItem)
+		o.PR = DeriveFromModel(o.Workflow, stagelabels.PRItem)
+	}
 	if o.Issue == nil {
 		o.Issue = IssueDeriver()
 	}
 	if o.PR == nil {
 		o.PR = PRDeriver()
+	}
+	if o.WorkflowFor != nil {
+		o.Issue = DeriveForRepo(o.WorkflowFor, o.Issue)
+		o.PR = DeriveForRepo(o.WorkflowFor, o.PR)
 	}
 	if o.Now == nil {
 		o.Now = time.Now

@@ -613,3 +613,7 @@ governor.hotspot_min_lines # merge-hotspot advisor; yaml-only
 governor.hotspot_refile_days # merge-hotspot advisor; yaml-only
 governor.hotspot_max_open # merge-hotspot advisor; yaml-only
 governor.hotspot_max_per_pass # merge-hotspot advisor; yaml-only
+data.workflows_dir # workflow-model store root; deployment knob, no Settings control planned (RFC #17620)
+project.workflow_bindings[].name # set through the per-repo workflow select on Settings → Repos via PUT /api/workflows/bindings, not a leaf-path control (RFC #17620)
+project.workflow_bindings[].repo # see project.workflow_bindings[].name
+project.workflow_bindings[].version # see project.workflow_bindings[].name

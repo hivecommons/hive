@@ -110,9 +110,14 @@ type Config struct {
 	// Dedupe tunes the dedupe lane's follow-through on its checklists.
 	Dedupe     DedupeLaneConfig `yaml:"dedupe,omitempty" json:"dedupe,omitempty"`
 	Contribute ContributeConfig `yaml:"contribute,omitempty" json:"contribute,omitempty"`
-	HiveID     string           `yaml:"hive_id"`
-	ACMMLevel  *int             `yaml:"acmm_level,omitempty" json:"acmm_level"`
-	Variables  VariablesConfig  `yaml:"variables,omitempty"`
+	// Workflow gates the workflow-model engine (hivecommons/hive#17620).
+	// Off by default: every repository derives stages with the built-in
+	// derivers exactly as before. On, repositories bound to a workflow
+	// model derive through it; unbound repositories are unchanged.
+	Workflow  WorkflowConfig  `yaml:"workflow,omitempty" json:"workflow,omitempty"`
+	HiveID    string          `yaml:"hive_id"`
+	ACMMLevel *int            `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	Variables VariablesConfig `yaml:"variables,omitempty"`
 	// OTel configures standards-based OTLP trace export. It is the preferred
 	// operator-facing block; Tracing is retained as a legacy alias.
 	OTel    OTelConfig `yaml:"otel,omitempty" json:"otel,omitempty"`
@@ -275,6 +280,11 @@ type Config struct {
 	// by the caller, and zero means "use the declared replicas". Written
 	// via SetReviewerAutoscaleActive.
 	ReviewerAutoscaleActive int `yaml:"-" json:"-"`
+}
+
+// WorkflowConfig is the `workflow:` block (hivecommons/hive#17620).
+type WorkflowConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
 // UnmarshalYAML accepts the operator-facing agents.github_api_hourly_cap
@@ -1096,6 +1106,9 @@ type ProjectConfig struct {
 	// repo name. project.repos remains the watched-repo identity list; this
 	// sidecar list lets existing string-list configs keep round-tripping.
 	RepoPolicies []RepoPolicy `yaml:"repo_policies,omitempty" json:"repo_policies,omitempty"`
+	// WorkflowBindings assigns stored workflow models to repositories
+	// (hivecommons/hive#17620). Unbound repositories use hive-default.
+	WorkflowBindings []WorkflowBinding `yaml:"workflow_bindings,omitempty" json:"workflow_bindings,omitempty"`
 	// WritingGuide is the hive owner's instruction for how the issues, PRs and
 	// reviews its agents write should READ — length, structure, register — as
 	// free text (hivecommons/hive#7667). It is rendered into every default
@@ -5837,6 +5850,10 @@ type DataConfig struct {
 	CopilotSessionsDir string `yaml:"copilot_sessions_dir"`
 	BobSessionsDir     string `yaml:"bob_sessions_dir"`
 	AgentsDir          string `yaml:"agents_dir"`
+	// WorkflowsDir is the durable root for stored workflow models
+	// (hivecommons/hive#17620); models live under <dir>/workflows. Empty
+	// means the hive data dir (/data); HIVE_WORKFLOWS_DATA_DIR overrides.
+	WorkflowsDir string `yaml:"workflows_dir,omitempty"`
 
 	// SessionRetentionDays is how many days of CLI session-state directories to
 	// keep. Session directories are created per CLI invocation and were never
