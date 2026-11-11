@@ -56,7 +56,7 @@ func TestWorkflowSimulateHiveDefaultPR(t *testing.T) {
 
 	// Red CI on the hive's own PR is the fixing stage.
 	code, out, raw = simulateCall(t, s, "/api/workflows/hive-default/1/simulate", map[string]any{
-		"kind": "pr",
+		"kind":  "pr",
 		"facts": map[string]any{"open": true, "author": map[string]any{"kind": "hive", "selfAuthored": true, "role": "trusted"}, "pr": map[string]any{"checks": "red"}},
 	})
 	if code != http.StatusOK || out.Decision.Stage != 70 {
