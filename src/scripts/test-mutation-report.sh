@@ -173,6 +173,23 @@ run_case split-misrouted
 [ "$(cat "$MUTATION_OUT_DIR/verdict")" = misrouted ] && pass "SKIPPED inside the honoured range is still misrouted" || bad "verdict $(cat "$MUTATION_OUT_DIR/verdict")"
 out_grep -q '1 mutant(s) on lines this PR added were SKIPPED' && pass "misrouted count excludes the unhonoured line" || bad "misrouted summary wrong"
 
+echo "wall-clock budget"
+export MUTATION_BUDGET_SECONDS=0
+run_case pass-killed
+[ "$run_rc" -eq 0 ] && pass "exhausted budget still exits 0" || bad "exhausted budget exit $run_rc"
+grep -qx $'pkg/x\tskipped (not started)' "$MUTATION_OUT_DIR/budget.tsv" \
+  && pass "package recorded as skipped" || bad "budget.tsv: $(cat "$MUTATION_OUT_DIR/budget.tsv")"
+out_grep -q 'mutation budget ran out' && out_grep -q 'pkg/x`: skipped (not started)' \
+  && pass "report lists the skipped package" || bad "skipped package not in report"
+[ -s "$MUTATION_OUT_DIR/errors.tsv" ] && bad "budget skip recorded as error" || pass "skip is not an error"
+export MUTATION_BUDGET_SECONDS=60 GREMLINS_EXIT=124
+run_case pass-killed
+[ "$run_rc" -eq 0 ] && pass "timeout exit 124 still exits 0" || bad "exit 124 run rc $run_rc"
+grep -qx $'pkg/x\tcut short (partial, no report)' "$MUTATION_OUT_DIR/budget.tsv" \
+  && pass "package recorded as cut short" || bad "budget.tsv: $(cat "$MUTATION_OUT_DIR/budget.tsv")"
+[ -s "$MUTATION_OUT_DIR/errors.tsv" ] && bad "cut-short recorded as error" || pass "cut-short is not an error"
+unset MUTATION_BUDGET_SECONDS GREMLINS_EXIT
+
 echo "no changed Go files"
 git checkout -q -b docs-only refs/remotes/origin/main
 echo x > README.md && git add README.md && git commit -q -m docs

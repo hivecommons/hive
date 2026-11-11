@@ -7,7 +7,12 @@
 # Three phases so the token never shares an environment with PR-controlled code:
 #   mutation-report.sh run      runs gremlins (no GH_TOKEN) and writes
 #                               $out_dir/comment.md and $out_dir/verdict.
-#                               Always exits 0.
+#                               Always exits 0. A wall-clock budget
+#                               (MUTATION_BUDGET_SECONDS, default 900, under the
+#                               job's timeout-minutes) stops the run cleanly:
+#                               packages it did not reach, or cut short, are
+#                               listed in the comment instead of the job being
+#                               cancelled and losing the report (#17605).
 #   mutation-report.sh post     reads comment.md and upserts the PR comment
 #                               (needs GH_TOKEN, PR_NUMBER, GITHUB_REPOSITORY)
 #   mutation-report.sh verdict  exits 1 when $out_dir/verdict is `error`,
@@ -122,6 +127,9 @@ fi
 
 base_ref="${BASE_REF:?BASE_REF is required}"
 coefficient="${MUTATION_TIMEOUT_COEFFICIENT:-3}"
+budget="${MUTATION_BUDGET_SECONDS:-900}"
+case "$budget" in ''|*[!0-9]*) budget=900 ;; esac
+run_start=$SECONDS
 mkdir -p "$out_dir"
 out_abs=$(cd "$out_dir" && pwd)
 
@@ -192,21 +200,33 @@ pkgs="${roots%$'\n'}"
 # --diff) the whole package is mutated and the job times out (#17463). Coverage
 # chdirs to the module root, so the output path must be absolute.
 errors="$out_dir/errors.tsv"
+budgeted="$out_dir/budget.tsv"
 : > "$errors"
+: > "$budgeted"
 i=0
 while IFS= read -r pkg; do
   [ -n "$pkg" ] || continue
   i=$((i + 1))
   printf '%s\n' "$pkg" > "$out_dir/pkg-$i.dir"
+  remaining=$((budget - (SECONDS - run_start)))
+  if [ "$remaining" -le 0 ]; then
+    echo "::warning::mutation budget of ${budget}s exhausted; skipping $pkg"
+    printf '%s\tskipped (not started)\n' "$pkg" >> "$budgeted"
+    continue
+  fi
   echo "::group::gremlins unleash ./$pkg --diff origin/${base_ref}"
   rc=0
   (cd "src/$pkg" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.relative GIT_CONFIG_VALUE_0=true \
+    timeout --kill-after=10s "${remaining}s" \
     gremlins unleash --timeout-coefficient "$coefficient" --diff "origin/${base_ref}" \
     --output "$out_abs/pkg-$i.json") || rc=$?
   echo "::endgroup::"
   # gremlins writes no report when it errors or is cancelled, so either sign
   # means this package was not judged: record it rather than pass by default.
-  if [ "$rc" -ne 0 ]; then
+  if [ "$rc" -eq 124 ]; then
+    echo "::warning::mutation budget of ${budget}s exhausted while running $pkg"
+    printf '%s\tcut short (partial, no report)\n' "$pkg" >> "$budgeted"
+  elif [ "$rc" -ne 0 ]; then
     echo "::error::gremlins exited $rc for $pkg"
     printf '%s\texited %d\n' "$pkg" "$rc" >> "$errors"
   elif [ ! -s "$out_abs/pkg-$i.json" ]; then
@@ -265,6 +285,12 @@ table() { sort -t$'\t' -k1,1 -k2,2n "$1" | head -n 100 | awk -F'\t' '{printf "| 
   echo "$marker"
   echo "### Mutation testing"
   echo
+  if [ -s "$budgeted" ]; then
+    echo "⏱️ **The ${budget}s mutation budget ran out**, so $(wc -l < "$budgeted" | tr -d ' ') package(s) were not fully mutated and the results below do not cover them:"
+    echo
+    awk -F'\t' '{printf "- `%s`: %s\n", $1, $2}' "$budgeted"
+    echo
+  fi
   if [ -s "$errors" ]; then
     echo "❌ **gremlins did not produce a report for $(wc -l < "$errors" | tr -d ' ') package(s)**, so no verdict can be derived from this run (see the job log):"
     echo
