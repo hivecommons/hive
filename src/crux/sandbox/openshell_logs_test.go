@@ -33,6 +33,8 @@ type fakeOpenShellLogs struct {
 
 func (f *fakeOpenShellLogs) Sandboxes() openshellSandboxes { return f }
 func (f *fakeOpenShellLogs) Exec() openshellExec           { return nil }
+func (f *fakeOpenShellLogs) Health() openshellHealth       { return nil }
+func (f *fakeOpenShellLogs) Config() openshellConfig       { return nil }
 func (f *fakeOpenShellLogs) Close() error                  { f.closed++; return nil }
 
 func (f *fakeOpenShellLogs) Create(context.Context, string, string, *openshell.SandboxSpec, ...openshell.CreateOption) (*openshell.Sandbox, error) {
