@@ -2,6 +2,8 @@ package claude
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -130,5 +132,68 @@ func TestRefreshTokenExpiresAtRoundTrips(t *testing.T) {
 	got := LoadTokens(path)
 	if got == nil || got.RefreshTokenExpiresAt != want {
 		t.Fatalf("refreshTokenExpiresAt lost on round trip: got %+v", got)
+	}
+}
+
+// TestReadTokens_KeepsTheReadError: the credential bridge must tell "this
+// process may not open another uid's 0600 file" apart from "no token here";
+// LoadTokens flattens both to nil, ReadTokens does not.
+func TestReadTokens_KeepsTheReadError(t *testing.T) {
+	if _, err := ReadTokens(filepath.Join(t.TempDir(), "missing")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("missing file: err = %v, want ErrNotExist", err)
+	}
+	bad := filepath.Join(t.TempDir(), ".credentials.json")
+	if err := os.WriteFile(bad, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := ReadTokens(bad); err != nil || tok != nil {
+		t.Errorf("malformed: (%v, %v), want nil, nil (readable, nothing usable)", tok, err)
+	}
+	if tok := LoadTokens(bad); tok != nil {
+		t.Errorf("LoadTokens malformed = %v, want nil", tok)
+	}
+	empty := filepath.Join(t.TempDir(), ".credentials.json")
+	if err := os.WriteFile(empty, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := ReadTokens(empty); err != nil || tok != nil {
+		t.Errorf("no token block: (%v, %v), want nil, nil", tok, err)
+	}
+	if os.Getuid() != 0 {
+		locked := writeCredFile(t, &OAuthTokens{AccessToken: "a", ExpiresAt: ms(time.Hour)})
+		if err := os.Chmod(locked, 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadTokens(locked); !errors.Is(err, fs.ErrPermission) {
+			t.Errorf("unreadable: err = %v, want ErrPermission", err)
+		}
+	}
+}
+
+func TestParseTokens(t *testing.T) {
+	if tok := ParseTokens([]byte("nope")); tok != nil {
+		t.Errorf("malformed = %v", tok)
+	}
+	if tok := ParseTokens([]byte(`{}`)); tok != nil {
+		t.Errorf("no block = %v", tok)
+	}
+	tok := ParseTokens([]byte(`{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":42}}`))
+	if tok == nil || tok.AccessToken != "a" || tok.RefreshToken != "r" || tok.ExpiresAt != 42 {
+		t.Errorf("parsed = %+v", tok)
+	}
+}
+
+func TestTokensUsable_AtAnInstant(t *testing.T) {
+	now := time.Now()
+	later := now.Add(2 * time.Hour)
+	tok := &OAuthTokens{AccessToken: "a", ExpiresAt: now.Add(time.Hour).UnixMilli()}
+	if !TokensUsable(tok, now) {
+		t.Error("live access token at now should be usable")
+	}
+	if TokensUsable(tok, later) {
+		t.Error("the same token judged after its expiry should be unusable")
+	}
+	if TokensUsable(nil, now) {
+		t.Error("nil is never usable")
 	}
 }
