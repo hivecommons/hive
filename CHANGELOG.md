@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.217.0)
+
+### Added
+
+- Settings gains a **Workflows** tab (RFC phase 3b): a library of every workflow model the hive knows — built-in `hive-default`, locally saved models and drafts ingested from repository pipelines — with provenance and compile badges, bound-repository counts, View / Duplicate / Export / Delete, a read-only detail view that draws the compiled columns and states as an SVG diagram with transitions, diagnostics and citations, and an Ingest form that turns a repository's pipeline files into a draft model through `POST /api/workflows/ingest`. The Activity Monitor model badge deep-links into the library entry. Binding a repository stays on Settings → Repos; this tab never binds ([#17620](https://github.com/hivecommons/hive/issues/17620)).
+
 ## 2026-11-11 (v5.216.0)
 
 ### Added
