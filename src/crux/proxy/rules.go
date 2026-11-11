@@ -577,7 +577,13 @@ type graphQLRequest struct {
 	Variables     any    `json:"variables"`
 }
 
-var graphQLMutationRe = regexp.MustCompile(`(?m)^\s*mutation\b`)
+// isGraphQLMutation reports whether the document contains a depth-zero
+// `mutation` keyword. A token scan (not a line-anchored regex) is required:
+// fragments, commas and a BOM may precede the operation on the same line, while
+// strings and comments must never count.
+func isGraphQLMutation(query string) bool {
+	return countGraphQLKeyword(query, "mutation") > 0
+}
 
 // graphQLMergeMutationRe matches mutations that merge a pull request. Merging is
 // the highest-privilege write and must require the same mode as the REST
@@ -804,7 +810,7 @@ func GraphQLAllowedCaps(mode agent.AgentMode, caps agent.AgentCapabilities, body
 	}
 
 	query := strings.TrimSpace(req.Query)
-	if !graphQLMutationRe.MatchString(query) {
+	if !isGraphQLMutation(query) {
 		return true, false // read-only query
 	}
 
@@ -843,7 +849,7 @@ func GraphQLAutoMergeRefusal(enabled func(repo string) bool, body []byte) (strin
 	if err := json.Unmarshal(body, &req); err != nil {
 		return "", false
 	}
-	if !graphQLMutationRe.MatchString(strings.TrimSpace(req.Query)) || !graphQLMergeMutationRe.MatchString(req.Query) {
+	if !isGraphQLMutation(req.Query) || !graphQLMergeMutationRe.MatchString(req.Query) {
 		return "", false
 	}
 	if repo := repoFromGraphQLValue(req.Variables); repo != "" && !enabled(repo) {

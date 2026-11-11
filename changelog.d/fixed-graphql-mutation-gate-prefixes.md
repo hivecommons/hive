@@ -1,0 +1,1 @@
+- The GitHub proxy now classifies a GraphQL document as a mutation wherever the `mutation` keyword appears at depth zero (after a fragment, comma, BOM or comment), closing a read-tier bypass (#17676).

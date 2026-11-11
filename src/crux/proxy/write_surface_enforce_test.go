@@ -87,6 +87,7 @@ func TestWriteSurfaceGraphQLRefusal(t *testing.T) {
 		want              bool
 	}{
 		{"mutation", "scanner", `{"query":"mutation { addComment(input:{}) { clientMutationId } }"}`, true},
+		{"fragment-prefixed mutation", "scanner", `{"query":"fragment F on Repository { id } mutation { addComment(input:{}) { clientMutationId } }"}`, true},
 		{"query", "scanner", `{"query":"query { viewer { login } }"}`, false},
 		{"shorthand query", "scanner", `{"query":"{ viewer { login } }"}`, false},
 		{"not json fails closed", "scanner", `not json`, true},
