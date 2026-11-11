@@ -21,24 +21,18 @@ type (
 	AgentMintIssuer = crux.AgentMintIssuer
 )
 
-// ReloadClaudeToken re-reads the Claude credentials file and updates the
-// cached token. Called by the dashboard after a successful OAuth login.
+// ReloadClaudeToken re-reads the Claude credentials file, updates the cached
+// token and (after m.mu is released) re-bridges agents a refresh unlinked.
 func (m *Manager) ReloadClaudeToken() {
+	defer m.rebridgeClaudeCredentialsAfterSignIn() // LIFO: runs after Unlock
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.claudeAuthToken = claude.ReadAccessToken(claude.CredentialsPath)
-	m.mu.Unlock()
-	// A sign-in wrote the shared file; agents whose link a refresh replaced
-	// would never see it. Relink them now rather than on the next poll. A
-	// logout leaves nothing usable, so nothing is moved.
-	if claude.HasUsableToken(sharedClaudeBridgeTarget()) {
-		m.RepairClaudeCredentialBridges(claudeBridgeTriggerSignIn)
-	}
 }
 
 // Copilot token sources, as reported by CopilotTokenSource. Operator-facing
-// phrases: they are spliced verbatim into the model-picker notice and the
-// "rejected by upstream" log line, so each one has to read as an answer to
-// "which credential did GitHub just reject?".
+// phrases, spliced verbatim into the model-picker notice and the "rejected by
+// upstream" log line: each must answer "which credential did GitHub reject?".
 const (
 	// Defined in the crux root package; see crux.CopilotTokenSourceEnv.
 	CopilotTokenSourceEnv            = crux.CopilotTokenSourceEnv

@@ -551,3 +551,13 @@ func (m *Manager) RepairClaudeCredentialBridges(trigger string) []string {
 	}
 	return repaired
 }
+
+// rebridgeClaudeCredentialsAfterSignIn runs from ReloadClaudeToken: a sign-in
+// wrote the shared file, and agents whose link a refresh replaced would never
+// see it. Relink them now rather than on the next poll. A logout leaves
+// nothing usable, so nothing is moved.
+func (m *Manager) rebridgeClaudeCredentialsAfterSignIn() {
+	if claude.HasUsableToken(sharedClaudeBridgeTarget()) {
+		m.RepairClaudeCredentialBridges(claudeBridgeTriggerSignIn)
+	}
+}
