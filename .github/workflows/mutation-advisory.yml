@@ -39,6 +39,9 @@ jobs:
       - name: Run mutation report
         env:
           BASE_REF: ${{ github.base_ref }}
+          # Must stay under timeout-minutes (20m = 1200s): a job killed by that
+          # timeout is `cancelled` and loses the report; the script stops itself first.
+          MUTATION_BUDGET_SECONDS: '900'
         run: |
           export PATH="$(go env GOPATH)/bin:$PATH"
           bash src/scripts/mutation-report.sh run
