@@ -212,9 +212,12 @@ type Gate struct {
 	// ReleasedBy is the Role that may release the gate. Required.
 	ReleasedBy string `json:"releasedBy"`
 	// Reply is the text posted when the gate is released.
-	Reply      string     `json:"reply,omitempty"`
-	Confidence Confidence `json:"confidence,omitempty"`
-	Citations  []Citation `json:"citations,omitempty"`
+	Reply string `json:"reply,omitempty"`
+	// MinApprovals is how many distinct approving reviews release the
+	// gate; zero means one release suffices.
+	MinApprovals int        `json:"minApprovals,omitempty"`
+	Confidence   Confidence `json:"confidence,omitempty"`
+	Citations    []Citation `json:"citations,omitempty"`
 }
 
 // RoleKind is how a role's members are determined.
@@ -223,12 +226,14 @@ type RoleKind string
 // Role kinds. Permission is a repository permission (admin, maintain,
 // write); FrozenSet is a set named at an earlier event (the reviewers at
 // request time); AuthorKind is authorkind (human, clanker, hive); Bot is a
-// named bot login.
+// named bot login; Members is a fixed list of logins and teams (params
+// "members", comma-separated) such as a CODEOWNERS or OWNERS file names.
 const (
 	RolePermission RoleKind = "permission"
 	RoleFrozenSet  RoleKind = "frozen-set"
 	RoleAuthorKind RoleKind = "author-kind"
 	RoleBot        RoleKind = "bot"
+	RoleMembers    RoleKind = "members"
 )
 
 // RoleDef is who may fire which events and release which gates.
@@ -251,12 +256,24 @@ type AgentGrant struct {
 	Produces []string `json:"produces,omitempty"`
 }
 
-// Check is a CI check a gate may require.
+// CheckKind is how a check is satisfied.
+type CheckKind string
+
+// Check kinds. CI is a status context a service reports; Manual is a box
+// a person ticks (a pull-request template checklist item).
+const (
+	CheckCI     CheckKind = "ci"
+	CheckManual CheckKind = "manual"
+)
+
+// Check is a CI check or manual checklist item a gate may require.
 type Check struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Required bool   `json:"required,omitempty"`
-	Source   string `json:"source,omitempty"`
+	ID       string    `json:"id"`
+	Name     string    `json:"name"`
+	Kind     CheckKind `json:"kind,omitempty"`
+	Required bool      `json:"required,omitempty"`
+	// Source is where the check was read from: a file:line or an API path.
+	Source string `json:"source,omitempty"`
 }
 
 // Effect is a deterministic bookkeeping action on an event.

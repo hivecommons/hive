@@ -331,3 +331,66 @@ exactly the pre-P4 path: one list, the built-in family, no model labels.
   phase 4 and follows the diagram editor.
 - A model without a `labels` block regenerates nothing (TechDocs as shipped); the preview still
   shows its commands and the built-in stages its numbered states land on.
+
+## Ingest: intake, triage, roles and branch rules (RFC phase 5)
+
+`ingest.Lifecycle` now reads the repository's process conventions next to its pipelines and adds
+an *intake half* to the draft: how work enters, who triages it, who approves a change and what the
+forge requires before merge. `ReadTree` keeps the files below in addition to the CI definitions
+(`ingest.IsIntakePath`); the dashboard seam (`WorkflowRepoFiles`) is unchanged. Everything this
+half adds is `confidence: inferred` and cites where it came from; the compiler warns once per
+element and a human confirms them in the editor exactly as for the pipeline half. Trees with none
+of these inputs produce the byte-identical model as before (`TestLifecyclePipelineOnlyUnchanged`).
+
+### Heuristics
+
+| Input | Read as | Proposes |
+|---|---|---|
+| `.github/ISSUE_TEMPLATE/*.{yml,yaml}` (issue forms), `*.md` and `.github/ISSUE_TEMPLATE.md` (front matter) | `name`, `labels` (list or comma string) | One `requested-<slug>` state per distinct label set in an **Intake** column after Open; event `issue-opened-with-template:<slug>` = `labels has <bind label>` (the template's first label that is not a triage label and not already bound); transitions open→requested, requested→triage (or →actionable when no triage label exists) and requested→closed; a `labels.entries` row per template label pointing at the state. |
+| `.github/ISSUE_TEMPLATE/config.yml` | `blank_issues_enabled` | Annotation `workflow.hivecommons.dev/blank-issues: disabled` when false (every issue arrives through a template). |
+| Labels seen in templates, `.github/settings.yml` (probot `labels:`), `.github/labels.yml` (sequence, `labels:` wrapper or mapping), `.github/labeler.yml` (top-level keys), `CONTRIBUTING.md` (backticked labels, or hyphen/slash labels at word boundaries) | Triage vocabulary: `needs-triage`/`triage/needed`/`status/needs-triage`/…; `triage/accepted`/`triage-accepted`/`accepted`; `triage/declined`/`wontfix`/`invalid`/`not-a-bug`; conventions `good first issue`, `help wanted` | A `triage` state in a **Triage** column after Intake; events `triage-requested` (`labels has <needs>`), `triage-accepted` (`labels has <accepted>`, or `labels lacks <needs>` when there is no accepted label), `triage-declined`; gate `triage-decision` released by `approver` when one exists, else `maintainer`, with reply `/label <accepted>`; transitions open→triage, triage→actionable (gated), triage→closed; label rows `needs → triage`, `accepted → actionable`, `declined → closed`; convention labels as plain rows. |
+| PR template (`.github/PULL_REQUEST_TEMPLATE.md`, `PULL_REQUEST_TEMPLATE.md`, `docs/…`, `.github/PULL_REQUEST_TEMPLATE/*.md`) | `- [ ]` / `* [ ]` / `[x]` items | `checks` entries `pr-template-<slug>` of kind `manual`, `source: path:line`. Duplicates by id are dropped. |
+| `CODEOWNERS` (root, `.github/`, `docs/`) | Every owner on every rule (users and `org/team`) | Role `approver` of kind `members` (params `members`, `source: path:line,…`). |
+| root `OWNERS`, `OWNERS_ALIASES` (Prow) | `approvers`, `reviewers`, `filters[".*"]`, aliases | Roles `approver` and `reviewer`; the review gate's reply is `/approve`. |
+| `MAINTAINERS`, `MAINTAINERS.md` (root, `.github/`, `docs/`) | `@handle` and `github.com/handle` spellings (plain list, markdown table or prose; names and e-mail addresses are not identities) | The hive-default permission-based `maintainer` role becomes kind `members` listing those handles (`source: path:line`); when no `approver` role exists, the review gate is released by `maintainer`. |
+| `kind/*`, `priority/*`, `type/*`, `area/*`, `severity/*`, `size/*` labels declared in `labels.yml`, `settings.yml`, `labeler.yml`, templates or backticked in `CONTRIBUTING.md` | Classification vocabulary triage applies | Plain `labels.entries` rows (no state), sorted by name, so the triage gate's vocabulary is visible in the editor. |
+| Any `approver` role | | Gate `review` released by `approver` (condition `pr.review is approved`) attached to the hive-default edges from CI / Review into the admitted Merge-queue states (`awaiting-merge-admission`, `ready-for-human-merge`, `pre-merge-soak`, `merge-queue`), so the compiler's "gate with no owner role" refusal is satisfied by a real role. |
+| Branch rules: `GET /repos/{o}/{r}/branches/{b}/protection`, falling back to `GET /repos/{o}/{r}/rules/branches/{b}` (repository and organisation rulesets); or probot `.github/settings.yml` `branches[].protection` when the API gave nothing | required status checks, required approving reviews, code-owner review, dismiss stale reviews, enforce admins, linear history, signed commits | `checks` entries `check-<slug>` of kind `ci`, `required: true`; guard `required-checks` (params `contexts`) on the same merge edges; `review.minApprovals: N`; gate `codeowner-review`; bookkeeping effects on `merged` (`enforce-admins`, `require-linear-history`, `require-signed-commits`, `dismiss-stale-reviews`) with the source in their params. |
+
+The forge half arrives as a synthetic file at `ingest.BranchRulesPath` (`.hive/branch-rules.json`,
+`ingest.BranchRules`): `cmd/hive`'s `workflowRepoFiles` fills it through `Client.FetchBranchRules`
+when ingesting by `repo`, so pasted `files` and the survey corpus can carry the same reading.
+`ingest.LifecycleOptions` accepts the rules explicitly, overriding the file.
+
+### Citations
+
+Every element cites `path:line` for file-derived facts (`Citation.Path`/`Line`; `checks[].source`,
+`guards[].source`, `roles[].params.source` and `bookkeeping[].params.source` carry the same
+`path:line` string) and `api:<endpoint>` — for example `api:repos/cncf/techdocs/rules/branches/main`
+— for facts read from the forge. `meta.source` becomes `issue-templates` (or
+`github-actions+issue-templates`) once a template was read.
+
+### What `cncf/techdocs` proposes
+
+With its current `main` (no issue templates yet; `.github/settings.yml` declares `needs-triage`,
+`triage/accepted`, `triage/declined`, `good first issue`, `help wanted`; the org ruleset requires no
+checks or approvals): columns `open · triage · actionable · claimed · pr-in-progress · ci-review ·
+merge-queue · merged`, the `triage` state citing `.github/settings.yml:129/132/135`, the three
+triage events, the `triage-decision` gate released by `maintainer`, and the five label rows. The
+intake form on the pending `build/03-intake` branch (`assessment-request.yml`, labels `Docs analysis`
++ `needs-triage`) adds `intake[requested-documentation-assessment-request]` before Triage — the
+fixture under `pkg/workflowmodel/ingest/testdata/techdocs` carries both.
+
+### Limitations
+
+- Heuristics prefer precision: a template without labels, or whose labels are all triage labels or
+  already bound to another intake state, yields a `issue-template-no-labels` / `issue-template-merged`
+  finding rather than a state. Label names are matched from a fixed table; a repository's own
+  triage word (`status: new`) is not recognised.
+- Only the root `OWNERS` is read (nested owners files scope by path, which the model does not
+  express); CODEOWNERS owners are all `approver`, since the file has no reviewer notion.
+- `codeowner-review` is informational: the engine does not observe which files a PR touches.
+- The engine still derives through the built-in stage table; nothing lands in Intake or Triage
+  until the label-driven engine half of phase 4 writes model labels onto items.
+- Branch protection needs `administration:read`; without it the rulesets endpoint is used, which
+  omits legacy protection settings such as `enforce_admins`.

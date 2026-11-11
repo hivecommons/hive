@@ -25,8 +25,20 @@ const EventPipelineSucceeded = "pipeline-succeeded"
 // origin ingested, confidence inferred (the compiler warns per element)
 // and the model's provenance is ingested-unreviewed until a human edits it.
 //
+// The intake half (RFC phase 5) then reads the tree's issue and
+// pull-request templates, CONTRIBUTING, CODEOWNERS/OWNERS and label
+// files, plus branch rules carried at BranchRulesPath, and adds intake
+// and triage states, roles, gates and checks; see intake.go. A tree with
+// none of those inputs yields exactly the pipeline-only model.
+//
 // The process half (Repository) is unchanged; this composes on top of it.
 func Lifecycle(scope workflowmodel.Scope, files map[string][]byte) *workflowmodel.Model {
+	return LifecycleOptions(scope, files, Options{BranchRules: BranchRulesFromFiles(files)})
+}
+
+// LifecycleOptions is Lifecycle with the branch rules passed explicitly
+// (the forge API reading, when the caller had a client).
+func LifecycleOptions(scope workflowmodel.Scope, files map[string][]byte, opts Options) *workflowmodel.Model {
 	base := Repository(scope, files)
 	m := hivedefault.Generate()
 	m.Metadata.Name = base.Metadata.Name
@@ -40,8 +52,17 @@ func Lifecycle(scope workflowmodel.Scope, files map[string][]byte) *workflowmode
 	m.Spec.Pipelines = base.Spec.Pipelines
 	m.Spec.Sources = base.Spec.Sources
 	m.Spec.Coverage = base.Spec.Coverage
+	bindPipelines(m, base)
+	applyIntake(m, readIntake(files), opts.BranchRules)
+	return m
+}
+
+// bindPipelines binds the process half's pipelines onto the lifecycle:
+// PR-verify pipelines on the CI / Review states, the post-merge chain as
+// new columns after Merged.
+func bindPipelines(m, base *workflowmodel.Model) {
 	if len(base.Spec.Pipelines) == 0 {
-		return m
+		return
 	}
 
 	cite := citations(base.Spec.Pipelines)
@@ -65,7 +86,7 @@ func Lifecycle(scope workflowmodel.Scope, files map[string][]byte) *workflowmode
 		}
 	}
 	if len(post) == 0 {
-		return m
+		return
 	}
 	for _, g := range base.Spec.Guards {
 		if g.Kind == workflowmodel.GuardEnvironmentApproval {
@@ -92,7 +113,6 @@ func Lifecycle(scope workflowmodel.Scope, files map[string][]byte) *workflowmode
 		m.Spec.Transitions = append(m.Spec.Transitions, workflowmodel.Transition{From: prev, To: st.ID, On: EventPipelineSucceeded, GuardRef: st.GuardRef, Note: "ingested post-merge chain"})
 		prev = st.ID
 	}
-	return m
 }
 
 // ingestSource is the meta source for the systems the pipelines came from.
