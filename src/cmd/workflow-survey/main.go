@@ -74,6 +74,21 @@ type repoResult struct {
 	CompileError  string         `json:"compileError,omitempty"`
 	CompileCodes  map[string]int `json:"compileCodes,omitempty"`
 	LifecycleCols int            `json:"lifecycleColumns"`
+	// Intake is what the P5 intake half proposed from the repository's
+	// process conventions (issue/PR templates, OWNERS, branch rules).
+	Intake intakeStats `json:"intake"`
+}
+
+// intakeStats counts the intake-half proposals in one lifecycle model.
+type intakeStats struct {
+	IntakeStates   int  `json:"intakeStates"`
+	Triage         bool `json:"triage"`
+	MemberRoles    int  `json:"memberRoles"`
+	InferredGates  int  `json:"inferredGates"`
+	ManualChecks   int  `json:"manualChecks"`
+	CIChecks       int  `json:"ciChecks"`
+	BranchRules    bool `json:"branchRules"`
+	IntakeFindings int  `json:"intakeFindings"`
 }
 
 type summary struct {
@@ -92,10 +107,22 @@ type summary struct {
 	Severities       map[workflowmodel.Severity]int `json:"severities"`
 	ColumnSets       map[string]int                 `json:"columnSets"`
 	ReposChangedCols int                            `json:"reposWithChangedColumns"`
-	ByProject        map[string]*projectStats       `json:"byProject"`
-	Worst            []repoResult                   `json:"worst"`
-	Top              []repoResult                   `json:"top"`
-	Repos_           []repoResult                   `json:"results"`
+	// Intake counts repos where the intake half proposed each element.
+	Intake    intakeSummary            `json:"intake"`
+	ByProject map[string]*projectStats `json:"byProject"`
+	Worst     []repoResult             `json:"worst"`
+	Top       []repoResult             `json:"top"`
+	Repos_    []repoResult             `json:"results"`
+}
+
+// intakeSummary counts repositories, not elements.
+type intakeSummary struct {
+	ReposWithIntakeStates int `json:"reposWithIntakeStates"`
+	ReposWithTriage       int `json:"reposWithTriage"`
+	ReposWithRoles        int `json:"reposWithRoles"`
+	ReposWithGates        int `json:"reposWithGates"`
+	ReposWithChecks       int `json:"reposWithChecks"`
+	ReposWithBranchRules  int `json:"reposWithBranchRules"`
 }
 
 type projectStats struct {
@@ -272,6 +299,7 @@ func surveyRepo(dir, repo, outDir string) (repoResult, error) {
 	} else {
 		res.Compiled = true
 	}
+	res.Intake = countIntake(lm)
 
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return res, err
@@ -294,6 +322,50 @@ func surveyRepo(dir, repo, outDir string) (repoResult, error) {
 		return res, err
 	}
 	return res, writeJSON(filepath.Join(outDir, "result.json"), res)
+}
+
+// countIntake tallies the intake-half proposals in a lifecycle model.
+func countIntake(m *workflowmodel.Model) intakeStats {
+	var st intakeStats
+	for _, s := range m.Spec.States {
+		switch {
+		case s.ID == ingest.StateTriage:
+			st.Triage = true
+		case strings.HasPrefix(s.ID, ingest.StateRequestedPrefix):
+			st.IntakeStates++
+		}
+	}
+	for _, r := range m.Spec.Roles {
+		if r.Kind == workflowmodel.RoleMembers {
+			st.MemberRoles++
+		}
+	}
+	for _, g := range m.Spec.Gates {
+		if g.Confidence == workflowmodel.ConfidenceInferred {
+			st.InferredGates++
+		}
+	}
+	for _, c := range m.Spec.Checks {
+		switch c.Kind {
+		case workflowmodel.CheckManual:
+			st.ManualChecks++
+		case workflowmodel.CheckCI:
+			st.CIChecks++
+			st.BranchRules = true
+		}
+	}
+	for _, g := range m.Spec.Gates {
+		if g.ID == ingest.GateCodeownerReview || (g.ID == ingest.GateReview && g.MinApprovals > 0) {
+			st.BranchRules = true
+		}
+	}
+	st.BranchRules = st.BranchRules || len(m.Spec.Bookkeeping) > 0
+	for _, f := range m.Spec.Coverage.Findings {
+		if strings.HasPrefix(f.Code, "issue-template-") {
+			st.IntakeFindings++
+		}
+	}
+	return st
 }
 
 func countConstructs(c map[string]int, p workflowmodel.Pipeline) {
@@ -357,6 +429,24 @@ func accumulate(s *summary, r repoResult) {
 	if len(r.ColumnDiff) > 0 {
 		s.ReposChangedCols++
 	}
+	if r.Intake.IntakeStates > 0 {
+		s.Intake.ReposWithIntakeStates++
+	}
+	if r.Intake.Triage {
+		s.Intake.ReposWithTriage++
+	}
+	if r.Intake.MemberRoles > 0 {
+		s.Intake.ReposWithRoles++
+	}
+	if r.Intake.InferredGates > 0 {
+		s.Intake.ReposWithGates++
+	}
+	if r.Intake.ManualChecks+r.Intake.CIChecks > 0 {
+		s.Intake.ReposWithChecks++
+	}
+	if r.Intake.BranchRules {
+		s.Intake.ReposWithBranchRules++
+	}
 	for k, v := range r.Roles {
 		s.Roles[k] += v
 	}
@@ -411,6 +501,8 @@ func markdown(s *summary) string {
 		fmt.Fprintf(&b, "| %s | %d |\n", k, s.CompileCodes[k])
 	}
 	b.WriteString("\n")
+	fmt.Fprintf(&b, "## Intake proposals (RFC phase 5)\n\n| Proposed | Repos |\n|---|---|\n| Intake states (issue templates) | %d |\n| Triage state | %d |\n| Member roles (CODEOWNERS/OWNERS) | %d |\n| Inferred gates | %d |\n| Checks (PR template / required status) | %d |\n| Branch rules | %d |\n\n",
+		s.Intake.ReposWithIntakeStates, s.Intake.ReposWithTriage, s.Intake.ReposWithRoles, s.Intake.ReposWithGates, s.Intake.ReposWithChecks, s.Intake.ReposWithBranchRules)
 	b.WriteString("## Pipeline roles\n\n| Role | Pipelines |\n|---|---|\n")
 	for _, k := range sortedKeys(s.Roles) {
 		fmt.Fprintf(&b, "| %s | %d |\n", k, s.Roles[workflowmodel.Role(k)])
