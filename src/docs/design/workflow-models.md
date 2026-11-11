@@ -353,8 +353,7 @@ within or between lanes (rewrites `columns[].states` and `lifecycle.column`), do
 rename the label, Delete/Backspace removes the selection and its transitions (confirmed when more
 than one), marquee on empty canvas, shift-click to extend, arrow keys nudge order. Each chip has
 a right-edge port; dragging it onto another chip creates a transition with `on: ''`, selects it
-and focuses the inspector's `on` field. Edges are beziers (self-loops as a small loop, backward
-edges dashed); clicking one selects it. Pan with space+drag, middle button or wheel; zoom with
+and focuses the inspector's `on` field; clicking an edge selects it. Pan with space+drag, middle button or wheel; zoom with
 ctrl/⌘+wheel or the toolbar ± / Fit; a minimap appears when the model outgrows the viewport.
 **Auto-layout** orders lanes by BFS depth from the initial state (terminal lanes last), drops
 unassigned states into the nearest lane by depth, and sorts each lane by stage number then
@@ -362,6 +361,36 @@ label. Compile diagnostics appear as badges on chips (error red, warning amber, 
 inferred states are dashed with a one-click ✓ **Confirm** that sets `confidence: local` locally,
 and a toolbar **Confirm all inferred** that, for a stored ingested version, also calls
 `POST /api/workflows/{name}/{version}/confirm` after saving. The initial state carries a marker.
+
+**Edge layer: quiet by default, detail on focus.** A real model (hive-default has 22 states and
+~90 transitions) turns a naive one-bezier-per-transition drawing into a knot, so the canvas and
+the read-only library diagram share one pure router (`wfRouteEdges` in
+`config-workflows-library.js`) and a set of rules:
+
+- *No labels by default.* Every edge renders its event as a floating pill, but CSS shows it only
+  while that edge is hovered or selected. A toolbar **Labels** toggle shows labels for the
+  exceptional events only — the model's most common `on` (e.g. `stage-change`, detected by
+  `wfEdgeCommonEvent`) is never worth labelling and stays quiet.
+- *Orthogonal routing through gutters, bundled per lane pair.* Edges leave the source chip's
+  right port, run into the gutter between the lanes, drop vertically in a channel reserved for
+  that (from-lane → to-lane) pair and enter the target's left port with rounded corners
+  (`wfOrthoPath`). Edges that share a lane pair share one vertical trunk, so the Actionable →
+  Claimed bundle is one line that fans out at both ends. Same-lane edges hug the lane's right
+  margin, stacked by distance. Edges that skip lanes run below the lanes in a corridor row;
+  backward edges between adjacent lanes run down the shared gutter (both ports face it), and
+  backward edges that skip lanes route around the *outside* above the lane headers, dashed and
+  muted. `wfEdgeChannels` counts the corridor rows so the layout reserves that space.
+- *Focus mode.* Hovering or selecting a state dims every edge not incident to it
+  (`--wf-edge-dim`), lifts the incident edges into a front layer in the accent colour with
+  arrowheads (`fill="context-stroke"`), and outlines the neighbouring chips; hovering an edge
+  highlights it and both end chips and reveals its label. The hover handler
+  (`wfEdgeFocusHover`) is DOM-only and shared by the editor canvas and the library diagram.
+- *Fan-out collapse.* More than four transitions from one state into the same lane collapse to
+  one trunk with a **+N** badge at the source port; hovering expands the fan, and in the editor
+  clicking the badge pins it open (`view.fansOpen`).
+
+Ports, drag-to-connect, arrowheads and the initial/terminal styling are unchanged; every colour,
+opacity and size is a token so the style ratchet stays green.
 
 **Pure core.** Everything that mutates or lays out the model is a pure function over plain JSON
 (never mutates its input, deterministic), so the undo stack is a snapshot list and the core is
@@ -371,7 +400,7 @@ moveStatesTo)`, `wfEdAddState` / `wfEdMoveState` / `wfEdRenameState` (rewrites t
 initial, label entries, derivation rules, lanes and agent grants) / `wfEdRemoveState`,
 `wfEdAddTransition` / `wfEdRemoveTransition`, `wfEdUpdate(model, path, value)` with paths like
 `spec.states[id=open].lifecycle.number` (empty value deletes), `wfEdUniqueId` (slug + `-N`),
-`wfEdAutoLayout`, `wfEdLayout(model, profile, view)` → lanes/chips/edges geometry,
+`wfEdAutoLayout`, `wfEdLayout(model, profile, view)` → lanes/chips/edges/fans geometry (edges via the shared `wfRouteEdges` / `wfOrthoPath` / `wfEdgeChannels` router),
 `wfEdLaneAt` / `wfEdSlotAt` for drops, `wfEdLocalProblems` (mirrors the compiler's refusals —
 `state-no-exit`, `state-no-column`, `unknown-column`, `unknown-state`, `column-empty`,
 `no-terminal-column`, `duplicate-stage-number`, `unknown-event`, `inferred-element` — for

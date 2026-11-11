@@ -59,8 +59,10 @@ const WF_ED = { colW: 200, colGap: 32, chipH: 34, chipGap: 12, headH: 36, pad: 1
 const WF_ED_UNASSIGNED = '__unassigned';
 const WF_ED_API_VERSION = 'workflow.hivecommons.dev/v1alpha1';
 const WF_ED_KINDS = ['issue', 'pr'];
-const WF_ED_EDGE_LABEL_MAX = 16;
-` + jsFunc(t, html, "wfEdClone") + jsFunc(t, html, "wfEdSlug") + jsFunc(t, html, "wfEdSpec") +
+const WF_EDGE = { chan: 8, radius: 6, fanMax: 4, selfR: 12 };
+` + jsFunc(t, html, "wfEdgeCommonEvent") + jsFunc(t, html, "wfEdgeChannels") + jsFunc(t, html, "wfEdgeCorridor") +
+		jsFunc(t, html, "wfOrthoPath") + jsFunc(t, html, "wfRouteEdges") + jsFunc(t, html, "wfEdgeLabelSvg") +
+		jsFunc(t, html, "wfEdClone") + jsFunc(t, html, "wfEdSlug") + jsFunc(t, html, "wfEdSpec") +
 		jsFunc(t, html, "wfEdStates") + jsFunc(t, html, "wfEdFindState") + jsFunc(t, html, "wfEdFindColumn") +
 		jsFunc(t, html, "wfEdUniqueId") + jsFunc(t, html, "wfEdNewModel") + jsFunc(t, html, "wfEdNormalize") +
 		jsFunc(t, html, "wfEdAddColumn") + jsFunc(t, html, "wfEdMoveColumn") + jsFunc(t, html, "wfEdRenameColumn") +
@@ -280,20 +282,85 @@ const svgBad = wfEdSvg(bad, wfEdLayout(bad, null, {}), { diags: wfEdLocalProblem
 assert.ok(svgBad.includes('wf-ed-badge'), 'diagnostics render as badges');
 assert.ok(svgBad.includes('wf-ed-confirm'), 'inferred states get a confirm affordance');
 assert.ok(svgBad.includes('inferred'), 'inferred states are dashed');
-const sparseSvg = wfEdSvg(wfEdAddTransition(ok, 'done', 'open', 'reopened'), wfEdLayout(wfEdAddTransition(ok, 'done', 'open', 'reopened'), null, {}), { selection: { type: '', ids: [] }, diags: [] });
-assert.ok(sparseSvg.includes('>reopened<'), 'sparse models draw every edge label');
-// Dense models only label selected edges so the canvas stays legible.
-let dense = ok;
-for (let i = 0; i < WF_ED_EDGE_LABEL_MAX + 2; i++) {
-  dense = wfEdAddState(dense, { id: 'd' + i, label: 'D' + i }, 'intake');
-  dense = wfEdAddTransition(dense, 'open', 'd' + i, 'ev' + i);
-}
-const denseLayout = wfEdLayout(dense, null, {});
-assert.ok(denseLayout.edges.length > WF_ED_EDGE_LABEL_MAX, 'dense fixture has many edges');
-const denseSvg = wfEdSvg(dense, denseLayout, { selection: { type: '', ids: [] }, diags: [] });
-assert.ok(!denseSvg.includes('wf-ed-edge-label'), 'dense models hide unselected edge labels');
-const denseSel = wfEdSvg(dense, denseLayout, { selection: { type: 'transition', ids: ['1'] }, diags: [] });
-assert.strictEqual((denseSel.match(/wf-ed-edge-label/g) || []).length, 1, 'selected edge keeps its label');
+// Quiet-by-default edge layer: every edge renders a label pill but nothing
+// marks it visible unless selected; the most common event is tagged
+// 'common' so the Labels toggle can skip it; a selected state puts the
+// canvas in focus mode.
+let quiet = wfEdAddTransition(wfEdAddTransition(ok, 'done', 'open', 'reopened'), 'open', 'done', 'stage-change');
+quiet = wfEdAddTransition(wfEdAddState(quiet, { id: 'mid', label: 'Mid' }, 'intake'), 'mid', 'done', 'stage-change');
+const quietLay = wfEdLayout(quiet, null, {});
+const quietSvg = wfEdSvg(quiet, quietLay, { selection: { type: '', ids: [] }, diags: [] });
+assert.ok(quietSvg.includes('class="wf-ed-edge-label"'), 'edge labels are rendered as pills');
+assert.ok(quietSvg.startsWith('<svg class="wf-ed-svg"') && !quietSvg.includes('show-labels'), 'no focus or label mode by default');
+assert.ok(quietSvg.includes('data-wf-from="done" data-wf-to="open"'), 'edges expose endpoints for hover focus');
+assert.ok(quietSvg.includes('data-wf-focus-root="1"'), 'canvas is a focus root');
+const labelsSvg = wfEdSvg(quiet, quietLay, { selection: { type: '', ids: [] }, diags: [], showLabels: true });
+assert.ok(labelsSvg.includes('class="wf-edge-layer show-labels"'), 'labels toggle flags the layer');
+assert.strictEqual(quietLay.commonEvent, 'stage-change', 'most common event detected');
+assert.ok(/class="wf-ed-edge[^"]* common"[^>]*data-wf-from="open" data-wf-to="done"/.test(labelsSvg), 'common-event edges are tagged so their labels stay hidden');
+const focusSvg = wfEdSvg(quiet, quietLay, { selection: { type: 'state', ids: ['done'] }, diags: [] });
+assert.ok(focusSvg.startsWith('<svg class="wf-ed-svg wf-focus"'), 'selecting a state enters focus mode');
+assert.ok(/class="wf-ed-edge[^"]* focus"[^>]*data-wf-from="done"/.test(focusSvg), 'incident edges are focused');
+assert.ok(/class="wf-ed-state[^"]* focus[^"]*"[^>]*data-wf-state="open"/.test(focusSvg), 'neighbour chips are focused');
+const selEdgeSvg = wfEdSvg(quiet, quietLay, { selection: { type: 'transition', ids: [String(quietLay.edges.find(e => e.from === 'done').index)] }, diags: [] });
+assert.ok(/class="wf-ed-edge back selected"/.test(selEdgeSvg), 'selected edge is marked');
+
+// Orthogonal router: bundling by lane pair, back edges outside, fan collapse.
+const geom = { gap: 32, pad: 16, cols: [{ x: 16, y: 40, w: 200, h: 300 }, { x: 248, y: 40, w: 200, h: 300 }, { x: 480, y: 40, w: 200, h: 300 }], chips: {} };
+const mkChip = (id, ci, ri) => { geom.chips[id] = { id: id, x: geom.cols[ci].x + 8, y: 40 + 36 + 12 + ri * 46, w: 184, h: 34, colIndex: ci, index: ri }; };
+mkChip('a1', 0, 0); mkChip('a2', 0, 1); mkChip('a3', 0, 2); mkChip('b1', 1, 0); mkChip('b2', 1, 1); mkChip('b3', 1, 2); mkChip('c1', 2, 0);
+const rt = wfRouteEdges([
+  { from: 'a1', to: 'b2', on: 'stage-change' }, { from: 'a2', to: 'b3', on: 'stage-change' }, { from: 'a3', to: 'b1', on: 'rare' },
+  { from: 'b2', to: 'a1', on: 'reopened' }, { from: 'c1', to: 'a2', on: 'restart' }, { from: 'a1', to: 'c1', on: 'skip' }, { from: 'a1', to: 'a2', on: 'stage-change' }, { from: 'c1', to: 'c1', on: 'loop' },
+], geom, {});
+assert.strictEqual(rt.common, 'stage-change');
+const fwd = rt.edges.filter(e => e.kind === 'fwd');
+assert.strictEqual(fwd.length, 3);
+const xs = new Set(fwd.map(e => e.d.match(/ Q([\d.]+) /)[1]));
+assert.strictEqual(xs.size, 1, 'forward edges between the same lane pair share one vertical trunk x');
+const tx = Number([...xs][0]);
+assert.ok(tx > 216 && tx < 248, 'trunk runs through the gutter between the lanes');
+assert.ok(fwd.every(e => e.d.includes(' Q' + tx + ' ')), 'every bundled edge turns on the shared trunk');
+assert.ok(fwd.every(e => !e.common === (e.on === 'rare')), 'only the common event is tagged');
+const ys = d => d.split(/[ML Q,]+/).filter(Boolean).map(Number).filter((v, i) => i % 2 === 1);
+const back = rt.edges.find(e => e.from === 'b2');
+assert.strictEqual(back.back, true);
+assert.ok(back.d.startsWith('M256 '), 'back edge leaves from the left port of its source chip');
+assert.ok(Math.min.apply(null, ys(back.d)) >= 40, 'adjacent-lane back edge stays in the shared gutter');
+assert.ok(back.d.endsWith(' 105'), 'and enters the target’s right port');
+const far = rt.edges.find(e => e.from === 'c1' && e.to === 'a2');
+assert.ok(Math.min.apply(null, ys(far.d)) < 40, 'lane-skipping back edge routes above the lane headers instead of across the lanes');
+const long = rt.edges.find(e => e.kind === 'fwdlong');
+const maxY = Math.max.apply(null, long.d.split(/[ML Q,]+/).filter(Boolean).map(Number).filter((v, i) => i % 2 === 1));
+assert.ok(maxY > 340, 'lane-skipping edge routes below the lanes');
+const same = rt.edges.find(e => e.kind === 'same');
+assert.strictEqual(same.back, false);
+assert.ok(same.d.startsWith('M208 ') && same.d.endsWith(' 151'), 'same-lane edge leaves and re-enters on the lane\u2019s right margin');
+assert.ok(rt.edges.find(e => e.self).d.startsWith('M'), 'self loop drawn');
+assert.strictEqual(rt.fans.length, 0, 'no fan below the threshold');
+const chans = wfEdgeChannels([{ from: 'b2', to: 'a1' }, { from: 'a1', to: 'c1' }, { from: 'a1', to: 'b1' }], id => geom.chips[id].colIndex);
+assert.deepStrictEqual(chans, { top: 0, bottom: 1 }, 'adjacent back edges need no corridor');
+assert.deepStrictEqual(wfEdgeChannels([{ from: 'c1', to: 'a1' }, { from: 'c1', to: 'a2' }], id => geom.chips[id].colIndex), { top: 1, bottom: 0 }, 'one corridor row per lane pair');
+assert.strictEqual(wfEdgeCorridor(0), 0);
+assert.strictEqual(wfEdgeCorridor(2), 24);
+// Fan-out: five edges from one state into one lane collapse to a trunk unless expanded.
+for (let i = 0; i < 5; i++) mkChip('f' + i, 1, 3 + i);
+const fanT = [0, 1, 2, 3, 4].map(i => ({ from: 'a1', to: 'f' + i, on: 'ev' }));
+const fanned = wfRouteEdges(fanT, geom, {});
+assert.strictEqual(fanned.fans.length, 1);
+assert.strictEqual(fanned.fans[0].count, 5);
+assert.strictEqual(fanned.fans[0].key, 'a1>1');
+assert.ok(fanned.edges.every(e => e.collapsed && e.fan === 'a1>1'), 'fan edges are collapsed');
+const opened = wfRouteEdges(fanT, geom, { expanded: { 'a1>1': true } });
+assert.ok(opened.fans[0].open && opened.edges.every(e => !e.collapsed), 'expanded fan shows its edges');
+assert.strictEqual(wfRouteEdges(fanT.slice(0, 4), geom, {}).fans.length, 0, 'threshold is > fanMax');
+assert.strictEqual(JSON.stringify(wfRouteEdges(fanT, geom, {})), JSON.stringify(fanned), 'router is deterministic');
+const fanSvg = wfEdSvg(ok, Object.assign({}, quietLay, { edges: fanned.edges, fans: fanned.fans }), { selection: { type: '', ids: [] }, diags: [] });
+assert.ok(fanSvg.includes('class="wf-fan" data-wf-fan="a1&gt;1"') || fanSvg.includes('data-wf-fan="a1>1"'), 'fan group rendered');
+assert.ok(fanSvg.includes('>+5<'), 'fan badge shows the collapsed count');
+assert.strictEqual((fanSvg.match(/wf-fan-edge/g) || []).length, 5, 'collapsed edges live inside the fan group');
+assert.strictEqual(wfOrthoPath([[0, 0], [10, 0], [10, 10]], 2), 'M0 0 L8 0 Q10 0 10 2 L10 10');
+assert.strictEqual(wfOrthoPath([[0, 0], [5, 0], [10, 0]], 2), 'M0 0 L10 0', 'collinear points pruned');
 const mm = wfEdMinimapSvg(wfEdLayout(ok, null, {}), { panX: 0, panY: 0, zoom: 1 }, 800, 600);
 assert.ok(mm.includes('wf-ed-mm-view'));
 

@@ -30,10 +30,33 @@
     .wf-dg-state.inferred .wf-dg-chip { stroke-dasharray: 4 3; stroke: var(--status-warn); }
     .wf-dg-label { fill: var(--text); font-size: var(--fs-sm); }
     .wf-dg-num { fill: var(--muted); font-size: var(--fs-2xs); }
-    .wf-dg-edge { fill: none; stroke: var(--muted); stroke-width: 1.25; opacity: .8; }
-    .wf-dg-edge.back { stroke-dasharray: 3 3; }
-    .wf-dg-edge:hover { stroke: var(--text); stroke-width: 2; opacity: 1; }
+    /* Edge layer: quiet by default, detail on focus. Hovering a state or an
+       edge (wfEdgeFocusHover) dims everything not incident and lifts the
+       focused edges into .wf-edge-front with the accent colour. */
+    .wf-diagram, .wf-ed-svg { --wf-edge-dim: .18; --wf-edge-quiet: .7; --wf-edge-back: .55; }
+    .wf-dg-edge { cursor: default; }
+    .wf-dg-edge-hit { fill: none; stroke: transparent; stroke-width: 10; }
+    .wf-dg-edge-line { fill: none; stroke: var(--muted); stroke-width: 1.25; opacity: var(--wf-edge-quiet); }
+    .wf-dg-edge.back .wf-dg-edge-line { stroke-dasharray: 3 3; opacity: var(--wf-edge-back); }
+    .wf-focus .wf-dg-edge:not(.focus) .wf-dg-edge-line, .wf-focus .wf-fan-trunk { opacity: var(--wf-edge-dim); }
+    .wf-focus .wf-dg-state:not(.focus) .wf-dg-chip, .wf-focus .wf-dg-state:not(.focus) text { opacity: var(--wf-edge-quiet); }
+    .wf-dg-edge.focus .wf-dg-edge-line, .wf-dg-edge:hover .wf-dg-edge-line { stroke: var(--brand); stroke-width: 2; opacity: 1; }
+    .wf-dg-state.focus .wf-dg-chip { stroke: var(--brand); }
     .wf-dg-arrowhead { fill: var(--muted); }
+    .wf-dg-edge-label { display: none; }
+    .wf-dg-edge:hover .wf-dg-edge-label { display: inline; }
+    .wf-dg-edge-label text { fill: var(--brand); font-size: var(--fs-2xs); font-weight: 600; pointer-events: none; }
+    .wf-dg-edge-label-bg { fill: var(--panel); stroke: var(--brand); stroke-width: 1; }
+    /* Fan-out bundles: >N edges from one state into one lane collapse to a trunk with a +N badge; hover expands. */
+    .wf-fan .wf-fan-edge { display: none; }
+    .wf-fan:hover .wf-fan-edge, .wf-fan.open .wf-fan-edge, .wf-fan:focus-within .wf-fan-edge { display: inline; }
+    .wf-fan:hover .wf-fan-trunk, .wf-fan.open .wf-fan-trunk { display: none; }
+    .wf-fan-trunk { stroke-width: 2.5; }
+    .wf-fan-badge { cursor: pointer; }
+    .wf-fan-badge rect { fill: var(--panel-strong); stroke: var(--muted); stroke-width: 1; }
+    .wf-fan-badge text { fill: var(--text); font-size: var(--fs-2xs); font-weight: 700; pointer-events: none; }
+    .wf-fan-badge:hover rect { stroke: var(--brand); }
+    .wf-fan-badge:hover text { fill: var(--brand); }
     .wf-diags, .wf-citations, .wf-pipelines { margin: var(--sp-0); padding-left: var(--sp-6); font-size: var(--fs-sm); }
     .wf-diag-code { color: var(--muted); margin-right: var(--sp-2); }
     .wf-diag-error .wf-diag-code { color: var(--status-error); }

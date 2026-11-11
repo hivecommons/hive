@@ -10,9 +10,6 @@
     // live compile, the YAML/Diff/Simulate drawers and persistence.
     const WF_ED = { colW: 200, colGap: 32, chipH: 34, chipGap: 12, headH: 36, pad: 16, grid: 8, minRows: 4, portR: 5, minColW: 120, maxColW: 480 };
     const WF_ED_HISTORY_CAP = 200;
-    // Dense models: edge labels are only drawn for selected/problem edges once
-    // a model has more transitions than this, to keep the canvas legible.
-    const WF_ED_EDGE_LABEL_MAX = 16;
     const WF_ED_COMPILE_DEBOUNCE_MS = 300;
     const WF_ED_YAML_DEBOUNCE_MS = 500;
     const WF_ED_UNASSIGNED = '__unassigned';
@@ -385,42 +382,24 @@
       let maxRows = D.minRows;
       lanes.forEach(l => { maxRows = Math.max(maxRows, l.states.length + 1); });
       const laneH = D.headH + maxRows * (D.chipH + D.chipGap) + D.chipGap;
+      const laneIndex = {}; lanes.forEach((l, ci) => l.states.forEach(id => { laneIndex[id] = ci; }));
+      const channels = wfEdgeChannels(spec.transitions || [], id => (laneIndex[id] == null ? null : laneIndex[id]));
+      const topCorr = wfEdgeCorridor(channels.top), bottomCorr = wfEdgeCorridor(channels.bottom);
+      const laneY = D.pad + topCorr;
       let x = D.pad;
       const cols = [], chips = {};
       lanes.forEach((l, ci) => {
         const w = Math.max(D.minColW, Math.min(D.maxColW, wfEdSnap(widths[l.id] || D.colW)));
-        cols.push({ id: l.id, label: l.label, hint: l.hint, terminal: l.terminal, virtual: l.virtual, index: ci, x: x, y: D.pad, w: w, h: laneH });
+        cols.push({ id: l.id, label: l.label, hint: l.hint, terminal: l.terminal, virtual: l.virtual, index: ci, x: x, y: laneY, w: w, h: laneH });
         l.states.forEach((id, ri) => {
-          chips[id] = { id: id, col: l.id, colIndex: ci, index: ri, x: x + D.grid, y: D.pad + D.headH + D.chipGap + ri * (D.chipH + D.chipGap), w: w - D.grid * 2, h: D.chipH };
+          chips[id] = { id: id, col: l.id, colIndex: ci, index: ri, x: x + D.grid, y: laneY + D.headH + D.chipGap + ri * (D.chipH + D.chipGap), w: w - D.grid * 2, h: D.chipH };
         });
         x += w + D.colGap;
       });
-      const width = x - D.colGap + D.pad, height = D.pad * 2 + laneH;
-      const edges = [];
-      (spec.transitions || []).forEach((t, i) => {
-        const a = chips[t.from], b = chips[t.to];
-        if (!a || !b) return;
-        const e = { index: i, from: t.from, to: t.to, on: t.on || '', note: t.note || '', self: t.from === t.to, back: false, d: '', lx: 0, ly: 0 };
-        if (e.self) {
-          const px = a.x + a.w, py = a.y + a.h / 2, r = 12;
-          e.d = `M${px} ${py - 6} C${px + r * 2} ${py - r * 2}, ${px + r * 2} ${py + r * 2}, ${px} ${py + 6}`;
-          e.lx = px + r * 1.6; e.ly = py;
-        } else if (a.colIndex === b.colIndex) {
-          const px = a.x + a.w, y1 = a.y + a.h / 2, y2 = b.y + b.h / 2, bow = D.colGap * 0.7;
-          e.back = b.index < a.index;
-          e.d = `M${px} ${y1} C${px + bow} ${y1}, ${px + bow} ${y2}, ${px} ${y2}`;
-          e.lx = px + bow * 0.75; e.ly = (y1 + y2) / 2;
-        } else {
-          const fwd = b.colIndex > a.colIndex;
-          e.back = !fwd;
-          const x1 = fwd ? a.x + a.w : a.x, x2 = fwd ? b.x : b.x + b.w;
-          const y1 = a.y + a.h / 2, y2 = b.y + b.h / 2, dx = (x2 - x1) / 2;
-          e.d = `M${x1} ${y1} C${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
-          e.lx = (x1 + x2) / 2; e.ly = (y1 + y2) / 2;
-        }
-        edges.push(e);
-      });
-      return { width: width, height: height, cols: cols, chips: chips, edges: edges, laneH: laneH };
+      const width = x - D.colGap + D.pad, height = D.pad * 2 + topCorr + laneH + bottomCorr;
+      const routed = wfRouteEdges(spec.transitions || [], { cols: cols, chips: chips, gap: D.colGap, pad: D.pad }, { expanded: (view && view.fansOpen) || {} });
+      const edges = routed.edges, fans = routed.fans;
+      return { width: width, height: height, cols: cols, chips: chips, edges: edges, fans: fans, commonEvent: routed.common, laneH: laneH };
     }
 
     // wfEdLaneAt / wfEdSlotAt map a model-space point onto a lane and a chip
@@ -562,9 +541,8 @@
       const profile = st.profile || null;
       const out = [];
       const vw = st.viewportW || layout.width, vh = st.viewportH || layout.height;
-      out.push(`<svg class="wf-ed-svg" width="${vw}" height="${vh}" viewBox="0 0 ${vw} ${vh}" role="application" aria-label="Workflow model canvas: ${esc(String(spec.columns ? spec.columns.length : 0))} columns, ${esc(String(Object.keys(states).length))} states" tabindex="0" data-wf-ed-canvas="1">`);
-      out.push('<defs><marker id="wf-ed-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="wf-ed-arrowhead"/></marker>' +
-        '<marker id="wf-ed-arrow-sel" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="wf-ed-arrowhead sel"/></marker>' +
+      out.push(`<svg class="wf-ed-svg${sel.type === 'state' && sel.ids.length === 1 ? ' wf-focus' : ''}" width="${vw}" height="${vh}" viewBox="0 0 ${vw} ${vh}" role="application" aria-label="Workflow model canvas: ${esc(String(spec.columns ? spec.columns.length : 0))} columns, ${esc(String(Object.keys(states).length))} states" tabindex="0" data-wf-ed-canvas="1" data-wf-focus-root="1">`);
+      out.push('<defs><marker id="wf-ed-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="wf-ed-arrowhead" fill="context-stroke"/></marker>' +
         `<pattern id="wf-ed-grid" width="${D.grid * 4}" height="${D.grid * 4}" patternUnits="userSpaceOnUse"><path d="M ${D.grid * 4} 0 L 0 0 0 ${D.grid * 4}" class="wf-ed-gridline"/></pattern></defs>`);
       out.push(`<rect class="wf-ed-bg" x="0" y="0" width="${vw}" height="${vh}" fill="url(#wf-ed-grid)" data-wf-ed-bg="1"/>`);
       out.push(`<g class="wf-ed-world" transform="translate(${view.panX} ${view.panY}) scale(${view.zoom})">`);
@@ -579,18 +557,33 @@
           (c.virtual ? '' : `<rect x="${c.x + c.w - 6}" y="${c.y}" width="12" height="${c.h}" class="wf-ed-resize" data-wf-resize="${esc(c.id)}"/>`) +
           '</g>');
       });
-      const denseEdges = layout.edges.length > WF_ED_EDGE_LABEL_MAX;
-      layout.edges.forEach(e => {
+      // Edges: quiet by default. Labels render for every edge but CSS only
+      // shows them on hover/selection, or (Labels toggle) for events other
+      // than the model's most common one. A selected state puts the canvas
+      // in focus mode so only its incident edges stay at full strength.
+      const focusState = sel.type === 'state' && sel.ids.length === 1 ? sel.ids[0] : '';
+      const fanned = {};
+      (layout.fans || []).forEach(f => { f.edges.forEach(i => { fanned[i] = f.key; }); });
+      const edgeSvg = e => {
         const subj = e.from + '->' + e.to, d = diags[subj];
         const selected = isSel('transition', String(e.index));
-        const showLabel = (e.on || d) && (!denseEdges || selected || d);
-        const cls = 'wf-ed-edge' + (e.back ? ' back' : '') + (e.self ? ' self' : '') + (selected ? ' selected' : '') + (st.simHit && (st.simHit === e.to) ? ' sim-path' : '') + (d ? ' ' + d.severity : '');
-        out.push(`<g class="${cls}" data-wf-edge="${e.index}">` +
+        const focus = focusState && (e.from === focusState || e.to === focusState);
+        const cls = 'wf-ed-edge' + (e.back ? ' back' : '') + (e.self ? ' self' : '') + (selected ? ' selected' : '') + (focus ? ' focus' : '') + (e.collapsed ? ' wf-fan-edge' : '') +
+          (e.common && !d ? ' common' : '') + (st.simHit && (st.simHit === e.to) ? ' sim-path' : '') + (d ? ' ' + d.severity : '');
+        return `<g class="${cls}" data-wf-edge="${e.index}" data-wf-from="${esc(e.from)}" data-wf-to="${esc(e.to)}">` +
           `<path d="${e.d}" class="wf-ed-edge-hit"/>` +
-          `<path d="${e.d}" class="wf-ed-edge-line" marker-end="url(#${selected ? 'wf-ed-arrow-sel' : 'wf-ed-arrow'})"/>` +
-          (showLabel ? `<text x="${e.lx}" y="${e.ly - 4}" text-anchor="middle" class="wf-ed-edge-label">${esc(wfTrim(e.on || '', 18))}${d ? ' !' : ''}</text>` : '') +
-          `<title>${esc(e.from)} \u2192 ${esc(e.to)}${e.on ? ' on ' + esc(e.on) : ' (no event)'}${e.note ? '\n' + esc(e.note) : ''}${d ? '\n' + esc(d.text) : ''}</title></g>`);
+          `<path d="${e.d}" class="wf-ed-edge-line" marker-end="url(#wf-ed-arrow)"/>` +
+          (e.on || d ? wfEdgeLabelSvg((e.on || '(no event)') + (d ? ' !' : ''), e.lx, e.ly, 'wf-ed-edge-label') : '') +
+          `<title>${esc(e.from)} \u2192 ${esc(e.to)}${e.on ? ' on ' + esc(e.on) : ' (no event)'}${e.note ? '\n' + esc(e.note) : ''}${d ? '\n' + esc(d.text) : ''}</title></g>`;
+      };
+      out.push(`<g class="wf-edge-layer${st.showLabels ? ' show-labels' : ''}">`);
+      layout.edges.forEach(e => { if (!fanned[e.index]) out.push(edgeSvg(e)); });
+      (layout.fans || []).forEach(f => {
+        out.push(`<g class="wf-fan${f.open ? ' open' : ''}" data-wf-fan="${esc(f.key)}" data-wf-from="${esc(f.from)}"><path d="${f.d}" class="wf-ed-edge-line wf-fan-trunk"/>` +
+          layout.edges.filter(e => fanned[e.index] === f.key).map(edgeSvg).join('') +
+          `<g class="wf-fan-badge" role="button" tabindex="0" aria-label="${f.count} transitions from ${esc(f.from)} into one lane; ${f.open ? 'collapse' : 'expand'}"><rect x="${f.x + 6}" y="${f.y - 8}" width="28" height="16" rx="8"/><text x="${f.x + 20}" y="${f.y + 4}" text-anchor="middle">${f.open ? '\u2212' : '+'}${f.count}</text><title>${f.count} transitions into one lane \u00b7 click to ${f.open ? 'collapse' : 'expand'}</title></g></g>`);
       });
+      out.push('</g>');
       Object.keys(layout.chips).forEach(id => {
         const p = layout.chips[id], s = states[id] || { id: id, label: id };
         const lc = s.lifecycle || {};
@@ -598,7 +591,8 @@
         const num = lc.number ? String(lc.number).padStart(3, '0') : '';
         const d = diags[id];
         const terminal = (profile && profile.terminal && profile.terminal[id]) || (layout.cols.find(c => c.id === p.col) || {}).terminal;
-        const cls = 'wf-ed-state' + (inferred ? ' inferred' : '') + (spec.initial === id ? ' initial' : '') + (terminal ? ' terminal' : '') + (isSel('state', id) ? ' selected' : '') +
+        const focus = focusState && (id === focusState || layout.edges.some(e => (e.from === focusState && e.to === id) || (e.to === focusState && e.from === id)));
+        const cls = 'wf-ed-state' + (inferred ? ' inferred' : '') + (spec.initial === id ? ' initial' : '') + (terminal ? ' terminal' : '') + (isSel('state', id) ? ' selected' : '') + (focus ? ' focus' : '') +
           (st.simHit ? (st.simHit === id ? ' wf-ed-sim-hit' : ' wf-ed-sim-dim') : '') + (d ? ' ' + d.severity : '') + (st.dragging && st.dragging.indexOf(id) >= 0 ? ' dragging' : '');
         const kinds = Array.isArray(lc.kinds) && lc.kinds.length ? lc.kinds.join('+') : '';
         const tip = (s.label || id) + (num ? ' \u00b7 stage/' + num : '') + (kinds ? ' \u00b7 ' + kinds : '') + (inferred ? ' \u00b7 inferred' : '') + (d ? '\n' + d.text : '');
@@ -666,7 +660,7 @@
       return {
         model: null, saved: null, source: null, readOnly: false, rev: 0,
         history: [], future: [], selection: { type: '', ids: [] },
-        view: { panX: 0, panY: 0, zoom: 1, laneWidths: {} },
+        view: { panX: 0, panY: 0, zoom: 1, laneWidths: {}, showLabels: false, fansOpen: {} },
         compile: { busy: false, rev: -1, profile: null, diags: [], compiled: null, error: '' },
         drawer: { tab: 'problems', open: true },
         yaml: { text: '', rev: -1, error: '', busy: false, focused: false },
@@ -833,6 +827,7 @@
         `<span class="wf-ed-zoom mono">${Math.round(st.view.zoom * 100)}%</span>` +
         btn('wfEdZoom', '+', 'Zoom in', 'data-arg0="1" data-arg-types="j"') +
         btn('wfEdFit', 'Fit', 'Fit the whole model in view') +
+        btn('wfEdToggleLabels', st.view.showLabels ? 'Labels \u2713' : 'Labels', 'Show event labels on edges (the most common event stays unlabelled; hover an edge to see its label)', st.view.showLabels ? 'aria-pressed="true"' : 'aria-pressed="false"') +
         '<span class="wf-ed-sep"></span>' +
         `<span class="wf-ed-menu">${btn('wfEdToggleExport', 'Export \u25BE', 'Export the canvas or the model')}${st.exportMenu ? '<div class="wf-ed-menu-items" role="menu">' +
           ['svg', 'SVG', 'png', 'PNG', 'json', 'Model JSON', 'yaml', 'Model YAML'].reduce((acc, v, i, arr) => i % 2 ? acc : acc + `<button type="button" role="menuitem" data-action="wfEdExport" data-arg0="${v}">${arr[i + 1]}</button>`, '') + '</div>' : ''}</span>` +
@@ -865,7 +860,7 @@
       const layout = wfEdLayoutNow();
       const svg = wfEdSvg(st.model, layout, {
         selection: st.selection, diags: wfEdDiags(), profile: st.compile.rev === st.rev ? st.compile.profile : null, view: st.view,
-        viewportW: st.viewport.w, viewportH: st.viewport.h, simHit: st.sim.hit, marquee: st.marquee, pendingEdge: st.pendingEdge, dropLane: st.dropLane,
+        viewportW: st.viewport.w, viewportH: st.viewport.h, simHit: st.sim.hit, marquee: st.marquee, pendingEdge: st.pendingEdge, dropLane: st.dropLane, showLabels: !!st.view.showLabels,
         dragging: st.drag && st.drag.type === 'chip' && st.drag.moved ? st.drag.ids : null,
       });
       const big = layout.width * st.view.zoom > st.viewport.w || layout.height * st.view.zoom > st.viewport.h;
@@ -1169,6 +1164,8 @@
         if (id !== WF_ED_UNASSIGNED) { wfEdSelect('column', id, false); if (can) _wfEd.drag = { type: 'col', id: id, sx: p.x, moved: false }; }
         ev.preventDefault(); return;
       }
+      const fanBadge = closest('.wf-fan-badge');
+      if (fanBadge) { const fan = fanBadge.closest('[data-wf-fan]'); if (fan) wfEdToggleFan(fan.getAttribute('data-wf-fan')); ev.preventDefault(); return; }
       const edge = closest('[data-wf-edge]');
       if (edge) { wfEdSelect('transition', edge.getAttribute('data-wf-edge'), ev.shiftKey); ev.preventDefault(); return; }
       if (closest('[data-wf-col]')) {
@@ -1470,6 +1467,8 @@
     function wfEdDrawerToggle() { _wfEd.drawer.open = !_wfEd.drawer.open; wfEdRefresh(['drawer', 'canvas']); }
     function wfEdToggleExport() { _wfEd.exportMenu = !_wfEd.exportMenu; wfEdRefresh(['toolbar']); }
     function wfEdZoom(dir) { const v = _wfEd.view, z = Math.max(0.2, Math.min(3, v.zoom * (dir > 0 ? 1.2 : 1 / 1.2))); const cx = _wfEd.viewport.w / 2, cy = _wfEd.viewport.h / 2; v.panX = cx - (cx - v.panX) * (z / v.zoom); v.panY = cy - (cy - v.panY) * (z / v.zoom); v.zoom = z; wfEdRefresh(['canvas', 'toolbar']); }
+    function wfEdToggleLabels() { _wfEd.view.showLabels = !_wfEd.view.showLabels; wfEdRefresh(['canvas', 'toolbar']); }
+    function wfEdToggleFan(key) { const o = _wfEd.view.fansOpen || (_wfEd.view.fansOpen = {}); if (o[key]) delete o[key]; else o[key] = true; wfEdRefresh(['canvas']); }
     function wfEdFit() { const fit = wfEdFitView(wfEdLayoutNow(), _wfEd.viewport.w, _wfEd.viewport.h); Object.assign(_wfEd.view, fit); wfEdRefresh(['canvas', 'toolbar']); }
     function wfEdLaneWidth(id, value) { _wfEd.view.laneWidths[id] = wfEdSnap(parseInt(value, 10) || WF_ED.colW); wfEdRefresh(['canvas']); }
 
@@ -1780,7 +1779,13 @@
         ['.wf-ed-edge-line', 'fill:none;stroke:' + tok('--muted', 'gray') + ';stroke-width:1.25'],
         ['.wf-ed-edge.back .wf-ed-edge-line', 'stroke-dasharray:3 3'],
         ['.wf-ed-edge-hit', 'fill:none;stroke:none'],
-        ['.wf-ed-edge-label', 'fill:' + tok('--muted', 'gray') + ';font-size:' + tok('--fs-2xs', '10px')],
+        ['.wf-ed-edge-label, .wf-fan-edge', 'display:none'],
+        ['.wf-edge-layer.show-labels .wf-ed-edge:not(.common) .wf-ed-edge-label, .wf-ed-edge.selected .wf-ed-edge-label', 'display:inline'],
+        ['.wf-ed-edge-label text', 'fill:' + tok('--brand', 'blue') + ';font-size:' + tok('--fs-2xs', '10px') + ';font-weight:600'],
+        ['.wf-ed-edge-label-bg', 'fill:' + tok('--panel', 'white') + ';stroke:' + tok('--brand', 'blue')],
+        ['.wf-fan-trunk', 'stroke-width:2.5'],
+        ['.wf-fan-badge rect', 'fill:' + tok('--panel-strong', 'white') + ';stroke:' + tok('--muted', 'gray')],
+        ['.wf-fan-badge text', 'fill:' + tok('--text', 'black') + ';font-size:' + tok('--fs-2xs', '10px') + ';font-weight:700'],
         ['.wf-ed-arrowhead', 'fill:' + tok('--muted', 'gray')],
         ['.wf-ed-port, .wf-ed-resize, .wf-ed-badge, .wf-ed-confirm, .wf-ed-marquee', 'display:none'],
       ];
@@ -1789,7 +1794,7 @@
 
     function wfEdExportSvgText() {
       const layout = wfEdLayoutNow();
-      let svg = wfEdSvg(_wfEd.model, layout, { view: { panX: 0, panY: 0, zoom: 1 }, viewportW: layout.width, viewportH: layout.height, profile: _wfEd.compile.profile, diags: [] });
+      let svg = wfEdSvg(_wfEd.model, layout, { view: { panX: 0, panY: 0, zoom: 1 }, viewportW: layout.width, viewportH: layout.height, profile: _wfEd.compile.profile, diags: [], showLabels: !!_wfEd.view.showLabels });
       svg = svg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ').replace(/ tabindex="0"/g, '').replace('<defs>', wfEdExportStyle() + '<defs>');
       return svg;
     }

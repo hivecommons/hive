@@ -63,17 +63,27 @@
     .wf-ed-port:hover { fill: var(--brand); stroke: var(--brand); }
     .wf-ed-edge { cursor: pointer; }
     .wf-ed-edge-hit { fill: none; stroke: transparent; stroke-width: 12; }
-    .wf-ed-edge-line { fill: none; stroke: var(--muted); stroke-width: 1.25; opacity: .85; }
-    .wf-ed-edge.back .wf-ed-edge-line { stroke-dasharray: 3 3; }
-    .wf-ed-edge:hover .wf-ed-edge-line { stroke: var(--text); stroke-width: 2; opacity: 1; }
+    .wf-ed-edge-line { fill: none; stroke: var(--muted); stroke-width: 1.25; opacity: var(--wf-edge-quiet); }
+    .wf-ed-edge.back .wf-ed-edge-line { stroke-dasharray: 3 3; opacity: var(--wf-edge-back); }
+    .wf-focus .wf-ed-edge:not(.focus):not(.selected) .wf-ed-edge-line, .wf-focus .wf-fan-trunk { opacity: var(--wf-edge-dim); }
+    .wf-focus .wf-ed-state:not(.focus):not(.selected) .wf-ed-chip, .wf-focus .wf-ed-state:not(.focus):not(.selected) text { opacity: var(--wf-edge-quiet); }
+    .wf-ed-edge.focus .wf-ed-edge-line, .wf-ed-edge:hover .wf-ed-edge-line { stroke: var(--brand); stroke-width: 2; opacity: 1; }
     .wf-ed-edge.selected .wf-ed-edge-line { stroke: var(--brand); stroke-width: 2.5; opacity: 1; }
-    .wf-ed-edge.error .wf-ed-edge-line { stroke: var(--status-error); }
-    .wf-ed-edge.warning .wf-ed-edge-line { stroke: var(--status-warn); }
-    .wf-ed-edge-label { fill: var(--muted); font-size: var(--fs-2xs); pointer-events: none; }
-    .wf-ed-edge.selected .wf-ed-edge-label { fill: var(--brand); font-weight: 700; }
+    .wf-ed-state.focus .wf-ed-chip { stroke: var(--brand); }
+    .wf-ed-edge.error .wf-ed-edge-line { stroke: var(--status-error); opacity: 1; }
+    .wf-ed-edge.warning .wf-ed-edge-line { stroke: var(--status-warn); opacity: 1; }
+    .wf-ed-edge-label { display: none; }
+    .wf-ed-edge.selected .wf-ed-edge-label, .wf-ed-edge:hover .wf-ed-edge-label,
+    .wf-ed-edge.error .wf-ed-edge-label, .wf-ed-edge.warning .wf-ed-edge-label,
+    .wf-edge-layer.show-labels .wf-ed-edge:not(.common) .wf-ed-edge-label { display: inline; }
+    .wf-ed-edge-label text { fill: var(--brand); font-size: var(--fs-2xs); font-weight: 600; pointer-events: none; }
+    .wf-ed-edge-label-bg { fill: var(--panel); stroke: var(--brand); stroke-width: 1; }
+    .wf-ed-edge.error .wf-ed-edge-label text { fill: var(--status-error); }
+    .wf-ed-edge.error .wf-ed-edge-label-bg { stroke: var(--status-error); }
+    .wf-ed-edge.warning .wf-ed-edge-label text { fill: var(--status-warn); }
+    .wf-ed-edge.warning .wf-ed-edge-label-bg { stroke: var(--status-warn); }
     .wf-ed-edge-pending { fill: none; stroke: var(--brand); stroke-width: 1.5; stroke-dasharray: 4 3; pointer-events: none; }
     .wf-ed-arrowhead { fill: var(--muted); }
-    .wf-ed-arrowhead.sel { fill: var(--brand); }
     .wf-ed-badge circle { fill: var(--status-warn); }
     .wf-ed-badge.error circle { fill: var(--status-error); }
     .wf-ed-badge text { fill: var(--panel); font-size: var(--fs-2xs); font-weight: 700; pointer-events: none; }
