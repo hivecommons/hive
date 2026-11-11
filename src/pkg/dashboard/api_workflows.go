@@ -35,6 +35,14 @@ func (s *Server) workflowStore(w http.ResponseWriter) *wfstore.Store {
 	return s.deps.WorkflowStore
 }
 
+// workflowProfileLookup is the store's Profile method, or nil without a store.
+func (s *Server) workflowProfileLookup() workflowProfileLookup {
+	if s.deps == nil || s.deps.WorkflowStore == nil {
+		return nil
+	}
+	return s.deps.WorkflowStore.Profile
+}
+
 func workflowStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, wfstore.ErrNotFound):

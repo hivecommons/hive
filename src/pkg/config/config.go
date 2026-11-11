@@ -296,6 +296,10 @@ type DataConfig struct {
 	// panel configuration (#11694). Default /data/nous; HIVE_NOUS_DATA_DIR
 	// overrides it at runtime.
 	NousDir string `yaml:"nous_dir,omitempty"`
+	// WorkflowsDir is the durable root for stored workflow models
+	// (hivecommons/hive#17620); models live under <dir>/workflows. Empty
+	// means the hive data dir (/data); HIVE_WORKFLOWS_DATA_DIR overrides.
+	WorkflowsDir string `yaml:"workflows_dir,omitempty"`
 
 	// SessionRetentionDays is how many days of CLI session-state directories to
 	// keep. Session directories are created per CLI invocation and were never

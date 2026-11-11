@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/workflowmodel/hivedefault"
@@ -226,5 +227,52 @@ func TestWorkflowBindingsWithoutConfig(t *testing.T) {
 	rec := wfReq(s, http.MethodGet, "/api/workflows", nil, false)
 	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"bindings":[]`)) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestStageTrackerWorkflowsBlock(t *testing.T) {
+	qualify := func(r string) string { return "myorg/" + r }
+	if stageTrackerWorkflows(nil, nil, qualify) != nil {
+		t.Fatal("nil config produced a block")
+	}
+	s := workflowTestServer(t, true)
+	if stageTrackerWorkflows(s.deps.Config, s.workflowProfileLookup(), qualify) != nil {
+		t.Fatal("unbound hive produced a block")
+	}
+	if rec := wfReq(s, http.MethodPost, "/api/workflows", techdocsModel(t), true); rec.Code != http.StatusCreated {
+		t.Fatal(rec.Body.String())
+	}
+	if _, err := s.deps.Config.SetWorkflowBinding("repo1", "cncf-techdocs", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.deps.Config.SetWorkflowBinding("repo2", "ghost", "1"); err != nil {
+		t.Fatal(err)
+	}
+	blk := stageTrackerWorkflows(s.deps.Config, s.workflowProfileLookup(), qualify)
+	if blk == nil || blk.Default.Name != hivedefault.Name || len(blk.Default.Columns) != 7 {
+		t.Fatalf("%+v", blk)
+	}
+	td := blk.Repos["myorg/repo1"]
+	if td.Name != "cncf-techdocs" || td.Error != "" || len(td.Columns) != 5 {
+		t.Fatalf("%+v", td)
+	}
+	var nums int
+	for _, c := range td.Columns {
+		nums += len(c.Numbers)
+	}
+	if nums == 0 {
+		t.Fatalf("no stage numbers anchored: %+v", td.Columns)
+	}
+	if g := blk.Repos["myorg/repo2"]; g.Error == "" || g.Name != "ghost" {
+		t.Fatalf("%+v", g)
+	}
+	noStore := stageTrackerWorkflows(s.deps.Config, nil, qualify)
+	if noStore.Repos["myorg/repo1"].Error == "" {
+		t.Fatalf("%+v", noStore.Repos)
+	}
+	// the tracker response carries it
+	resp := s.buildStageTracker(&StatusPayload{HiveID: "h"}, nil, time.Now())
+	if resp.Workflows == nil || len(resp.Workflows.Repos) != 2 {
+		t.Fatalf("%+v", resp.Workflows)
 	}
 }

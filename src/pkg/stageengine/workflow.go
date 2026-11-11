@@ -3,11 +3,39 @@ package stageengine
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/workflowmodel"
 )
+
+// DeriveForRepo returns a Deriver of fallback's kind that derives through
+// the model lookup returns for the item's repository, or through fallback
+// when lookup returns nil. Profiles are compiled per lookup result and
+// cached by hash, so a rebinding takes effect on the next derivation.
+func DeriveForRepo(lookup func(owner, repo string) *workflowmodel.Profile, fallback Deriver) Deriver {
+	if lookup == nil || fallback == nil {
+		return fallback
+	}
+	kind := fallback.Kind()
+	var mu sync.Mutex
+	cache := map[string]Deriver{}
+	return DeriverFunc(kind, func(f Facts) Decision {
+		p := lookup(f.Ref.Owner, f.Ref.Repo)
+		if p == nil {
+			return fallback.Derive(f)
+		}
+		mu.Lock()
+		d, ok := cache[p.Hash]
+		if !ok {
+			d = DeriveFromModel(p, kind)
+			cache[p.Hash] = d
+		}
+		mu.Unlock()
+		return d.Derive(f)
+	})
+}
 
 // DeriveFromModel is the third Deriver (hivecommons/hive#17620 "One
 // engine, one writer"): it derives an item's stage under a compiled
