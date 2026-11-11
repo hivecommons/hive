@@ -710,6 +710,7 @@
   "evidence": {
     "complexity": {}
   },
+  "benchmarks": {},
   "compliance": {
     "posture_checks": {}
   },

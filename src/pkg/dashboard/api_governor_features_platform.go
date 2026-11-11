@@ -36,6 +36,9 @@ type featuresPlatformBody struct {
 
 	EvidenceEnabled *bool `json:"evidenceEnabled"`
 
+	BenchmarksPublish     *bool `json:"benchmarksPublish"`
+	BenchmarksRepoConsent *bool `json:"benchmarksRepoConsent"`
+
 	GiteaURL       *string `json:"giteaUrl"`
 	GiteaTokenEnv  *string `json:"giteaTokenEnv"`
 	GitLabURL      *string `json:"gitlabUrl"`
@@ -173,6 +176,14 @@ func (b featuresPlatformBody) prepare() (func(*config.Config), error) {
 	if b.EvidenceEnabled != nil {
 		v := *b.EvidenceEnabled
 		steps = append(steps, func(c *config.Config) { c.Evidence.Enabled = &v })
+	}
+	if b.BenchmarksPublish != nil {
+		v := *b.BenchmarksPublish
+		steps = append(steps, func(c *config.Config) { c.Benchmarks.Publish = &v })
+	}
+	if b.BenchmarksRepoConsent != nil {
+		v := *b.BenchmarksRepoConsent
+		steps = append(steps, func(c *config.Config) { c.Benchmarks.RepoConsent = &v })
 	}
 
 	for _, f := range []struct {

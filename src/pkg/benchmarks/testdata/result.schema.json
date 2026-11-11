@@ -1,0 +1,449 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hivecommons.dev/benchmarks/schema/result.schema.json",
+  "title": "Hive Commons benchmark result",
+  "description": "One benchmark record: a single unit of agent work (usually one pull request) with its outcome, cost and quality signals. Field names follow the hive evidence bundle (pkg/evidence.Bundle) and GET /api/cost so a spoke can emit records directly.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "published_at",
+    "source",
+    "agent",
+    "model",
+    "sandbox_runtime",
+    "task",
+    "outcome"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "id": {
+      "type": "string",
+      "description": "Stable unique id. Convention: sha256 of (hive_id, repo, pr number, head sha) hex-encoded, or any URN.",
+      "minLength": 8
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "synthetic": {
+      "type": "boolean",
+      "default": false,
+      "description": "True for hand-written sample records. The site excludes these from every leaderboard."
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hive_id",
+        "hive_version"
+      ],
+      "properties": {
+        "hive_id": {
+          "type": "string",
+          "description": "Stable anonymous id: sha256('hivecommons-benchmarks/v1/' + hive id)[:16]. Shown to the owner in their dashboard (Settings \u2192 Benchmarks)."
+        },
+        "hive_name": {
+          "type": "string",
+          "description": "Only present when the owner opted in (benchmarks.publish_name)."
+        },
+        "org": {
+          "type": "string",
+          "description": "GitHub org of the repository. Present only when task.repo_consent is true (public repo)."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "Free-form cluster / environment label (e.g. kind, openshift, bare-metal)."
+        },
+        "hive_version": {
+          "type": "string"
+        },
+        "exporter": {
+          "type": "string",
+          "description": "What produced the record, e.g. hive/api/benchmarks/export, hub/aggregate, manual.",
+          "examples": [
+            "hive/api/benchmarks/export",
+            "hub/publisher",
+            "backfill-from-cluster",
+            "manual"
+          ]
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "harness"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Agent name as configured in hive.yaml (evidence author.agent)."
+        },
+        "role": {
+          "type": "string",
+          "description": "author = the agent opened the PR; reviewer = the agent reviewed someone else's PR. Other values are free-form lane names.",
+          "examples": [
+            "author",
+            "reviewer",
+            "fix",
+            "review",
+            "triage",
+            "ci-repair"
+          ]
+        },
+        "harness": {
+          "type": "string",
+          "description": "CLI harness / backend (evidence author.backend, crux IsCLIBackend list).",
+          "enum": [
+            "agy",
+            "aider",
+            "bob",
+            "claude",
+            "cline",
+            "codex",
+            "copilot",
+            "gemini",
+            "goose",
+            "kilo",
+            "muse",
+            "omnigent",
+            "omp",
+            "opencode",
+            "openhands",
+            "pi",
+            "clanker",
+            "other"
+          ]
+        },
+        "harness_version": {
+          "type": "string"
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "name"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "Vendor family (pkg/modelfamily), e.g. anthropic, openai, google, ibm, local."
+        },
+        "name": {
+          "type": "string",
+          "description": "Exact model id as reported by the harness (evidence author.model)."
+        },
+        "version": {
+          "type": "string"
+        },
+        "effort": {
+          "type": "string",
+          "description": "Reasoning effort / thinking budget label if the harness exposes one."
+        }
+      }
+    },
+    "sandbox_runtime": {
+      "type": "string",
+      "description": "Where the agent process ran (crux/config SandboxRuntime*). Open enum.",
+      "anyOf": [
+        {
+          "enum": [
+            "podman",
+            "kubernetes-job",
+            "openshell",
+            "substrate",
+            "none"
+          ]
+        },
+        {
+          "type": "string",
+          "pattern": "^x-[a-z0-9-]+$"
+        }
+      ]
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "issue-fix",
+            "pr-review",
+            "ci-repair",
+            "triage",
+            "release",
+            "docs",
+            "security-fix",
+            "dependency-update",
+            "refactor",
+            "experiment",
+            "other",
+            "unknown"
+          ]
+        },
+        "repo": {
+          "type": "string",
+          "description": "owner/name. MUST be omitted unless repo_consent is true.",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "repo_consent": {
+          "type": "boolean",
+          "description": "Repository owner consented to being named in published results."
+        },
+        "repo_visibility": {
+          "type": "string",
+          "enum": [
+            "public",
+            "private"
+          ]
+        },
+        "language": {
+          "type": "string",
+          "description": "Primary language of the touched files."
+        },
+        "size": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "files_changed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "additions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "deletions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "bucket": {
+              "type": "string",
+              "enum": [
+                "xs",
+                "s",
+                "m",
+                "l",
+                "xl"
+              ]
+            }
+          }
+        },
+        "acmm_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6,
+          "description": "Policy ACMM level the hive ran at (evidence policy.acmm_level)."
+        }
+      },
+      "if": {
+        "properties": {
+          "repo_consent": {
+            "const": false
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "repo"
+          ]
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pr_opened"
+      ],
+      "properties": {
+        "pr_opened": {
+          "type": "boolean"
+        },
+        "pr_merged": {
+          "type": "boolean"
+        },
+        "pr_closed_unmerged": {
+          "type": "boolean"
+        },
+        "merge_method": {
+          "type": "string",
+          "enum": [
+            "merge",
+            "squash",
+            "rebase",
+            "unrecorded"
+          ]
+        },
+        "ci_green_first_try": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "CI status was success on the first head (evidence ci.status on the bundle with no previous_bundle_id). null = no CI captured."
+        },
+        "ci_status_at_merge": {
+          "type": "string",
+          "enum": [
+            "success",
+            "failure",
+            "pending",
+            "unknown"
+          ]
+        },
+        "review_verdict": {
+          "type": "string",
+          "description": "Worst swarm verdict on the final head (evidence verdicts[].verdict); reject > changes_requested > requires_human > comment > approve.",
+          "enum": [
+            "approve",
+            "comment",
+            "requires_human",
+            "changes_requested",
+            "reject",
+            "none"
+          ]
+        },
+        "review_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reviewer_models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Exact model ids of the reviewing perspectives."
+        },
+        "human_interventions": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "len(evidence human_actions)."
+        },
+        "wall_clock_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "merge.at - merge.opened_at, or close time for unmerged."
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of additional heads pushed (bundles chained by previous_bundle_id)."
+        },
+        "opened_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "merged_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_read_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_write_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "basis": {
+          "type": "string",
+          "description": "How usd was computed (GET /api/cost: estimated from public price table, or apportioned from per-agent totals).",
+          "enum": [
+            "estimated",
+            "apportioned",
+            "billed",
+            "unpriced"
+          ]
+        },
+        "price_table_date": {
+          "type": "string",
+          "format": "date"
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reverted_within_14d": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "followed_up_within_14d": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "issue_reopened": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "acmm_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6,
+          "description": "Repo overall ACMM level at the time (GET /api/acmm/evaluation overall_level); context, not an agent score."
+        },
+        "acmm_scores": {
+          "type": "object",
+          "description": "Per-level detected_score 0..1 keyed by level number, from GET /api/acmm/evaluation levels[].",
+          "patternProperties": {
+            "^[0-6]$": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "sentinel_findings": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Free text. MUST NOT contain prompts, logins, or code excerpts."
+    }
+  }
+}

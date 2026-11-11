@@ -633,6 +633,20 @@
             <div class="config-toggle-switch ${f.evidenceEnabled !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="evidenceEnabled"></div>
             <span class="config-toggle-label">Write evidence bundles ${yamlHint('evidence.enabled')} ${settingHelpMark('settings', 'features', 'Write evidence bundles', `On by default. Off stops writing review evidence bundles. Applies to the next review.`)}</span>
           </div>
+          <div class="settings-subsection-title">Benchmarks ${settingHelpMark('settings', 'features', 'Benchmarks', `This hive contributes anonymized per-PR records (model, harness, sandbox runtime, outcome, time-to-merge, ACMM level) to the fleet leaderboard at hivecommons.dev/benchmarks. No logins, prompts, findings or code ever leave the hive; the hive is identified only by the hash below. Repository names are included only for public repositories.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.benchmarksPublish !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="benchmarksPublish"></div>
+            <span class="config-toggle-label">Publish anonymized benchmark records ${yamlHint('benchmarks.publish')} ${settingHelpMark('settings', 'features', 'Publish benchmark records', `On by default. Off stops the hourly push to the hub and empties GET /api/benchmarks/export.`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.benchmarksRepoConsent !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="benchmarksRepoConsent"></div>
+            <span class="config-toggle-label">Name public repositories ${yamlHint('benchmarks.repo_consent')} ${settingHelpMark('settings', 'features', 'Name public repositories', `On by default: records for PUBLIC repositories carry the repository and org name, since that activity is already public. Off anonymizes every record. Private repositories are never named.`)}</span>
+          </div>
+          <div class="config-field settings-subsection-row"><label>Your hive on the leaderboard</label><input type="text" value="${esc(f.benchmarksHiveHash || '')}" readonly aria-readonly="true"><div class="config-help">Look this hash up in the &quot;Contributing hives&quot; table at <a href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener">hivecommons.dev/benchmarks</a> to verify your records arrived${f.benchmarksLastPushAt ? ` &middot; last pushed ${esc(f.benchmarksLastPushAt)} (${esc(String(f.benchmarksLastPushCount || 0))} records)` : ' &middot; nothing pushed yet'}.</div></div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Review evidence signing</div>
           <div class="config-field settings-subsection-row"><label>Signing key file ${yamlHint('evidence.signing_key_file')} ${settingHelpMark('settings', 'features', 'Evidence signing key file', `Path to an Ed25519 private key used to sign bundles. Empty means bundles are written unsigned. Only the path is shown; the key is never read by this dialog.`)}</label><input type="text" value="${esc(f.evidenceSigningKeyFile || '')}" placeholder="not set (bundles unsigned)" readonly aria-readonly="true"><div class="config-help">Read-only here: signing keys are provisioned on disk and set in hive.yaml.</div></div>
         </div>
         `)}

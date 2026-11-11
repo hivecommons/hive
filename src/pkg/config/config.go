@@ -159,6 +159,9 @@ type Config struct {
 	// Evidence controls the review evidence bundles the review relay writes
 	// (hivecommons/hive#11060). Default on, unsigned; see EvidenceConfig.
 	Evidence EvidenceConfig `yaml:"evidence,omitempty" json:"evidence,omitempty"`
+	// Benchmarks governs the anonymized per-PR records this hive contributes
+	// to hivecommons/benchmarks (hivecommons/hive#17694); see BenchmarksConfig.
+	Benchmarks BenchmarksConfig `yaml:"benchmarks,omitempty" json:"benchmarks,omitempty"`
 	// Compliance selects framework profiles; see ComplianceConfig.
 	Compliance ComplianceConfig `yaml:"compliance,omitempty" json:"compliance,omitempty"`
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`

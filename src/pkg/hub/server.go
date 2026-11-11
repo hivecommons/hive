@@ -1721,6 +1721,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// same credential as /api/task-status. The only read path is the admin-gated
 	// GET registered in registerSaaSRoutes.
 	s.mux.HandleFunc("POST "+npsIngestPath, s.handleNPSIngest)
+	// Fleet benchmark records from spokes (hivecommons/hive#17694).
+	s.mux.HandleFunc("POST "+benchmarksIngestPath, s.handleBenchmarksIngest)
+	s.mux.HandleFunc("GET "+benchmarksStatusPath, s.handleBenchmarksStatus)
 	s.mux.HandleFunc("POST "+feedbackIngestPath, s.handleFeedbackIngest)
 	s.mux.HandleFunc("POST "+selfReportIngestPath, s.handleSelfReportIngest)
 	s.mux.HandleFunc("GET "+feedbackIssuesPath, s.handleFeedbackIssues)
