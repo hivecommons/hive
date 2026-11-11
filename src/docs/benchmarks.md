@@ -28,11 +28,28 @@ One record per PR per role, conforming to
 | `task.acmm_level` | `policy.acmm_level` at review time. |
 | `outcome.*` | `pr_opened`, `pr_merged`, `merged_at`, `time_to_merge_s`, `ci_status_at_merge`, `ci_green_first_try`, `review_verdict`, `reverted`, `closed_unmerged`, `human_interventions` (human approvals / label changes). |
 | `quality.*` | Swarm verdict counts and confidence. |
+| `cost.*` | Estimated spend — see [Cost](#cost-estimated-never-billed). |
 
 **What never leaves the spoke:** the hive id, repository and organization
 names (unless the repository is public — see below), PR numbers, commit SHAs,
-agent prompts, diff content, reviewer comments, human logins, and cost/token
-figures (not present in bundles today).
+agent prompts, diff content, reviewer comments, human logins, per-session
+token usage and any billed figure. Only the per-PR *estimated* USD and its
+token share leave, rounded by the price table.
+
+## Cost: estimated, never billed
+
+Each record carries `cost.basis` and, when attributable, `cost.usd_est`:
+
+| `cost.basis` | Meaning |
+|---|---|
+| `tokens_x_pricing` | The spoke's launch-cost collector (`/api/launch-cost`, `/data/launch-cost.json`) saw a kick that named this PR — the swarm's `owner/repo#N` PR ref for reviewer records, or the governor's `repo#N` issue ref of an issue the PR closed (`issue_closures`) for author records. The kick's token usage is priced with `pkg/tokens/pricing.go` (public list prices, `price_table_date`) and split evenly across the refs the kick named — the same `share_usd` the Cost panel shows. `launches` counts the kicks folded in; `*_tokens` are the in-window token share, informational. |
+| `unknown` | No kick with usage named the PR: kicked without a ref, older than the launch-cost store, or usage landed outside the 6 h ownership horizon. |
+
+The spoke never emits `fleet_model_median`; the benchmarks site imputes that
+at index-build time from attributed records of the same model and role and
+labels it as such. `reported` (a gateway-billed figure) is reserved. List
+prices are not what subscription plans or self-hosted inference cost, so the
+site shows every dollar as an estimate with its basis mix.
 
 ## Privacy model: default on, anonymized
 
@@ -97,5 +114,6 @@ pods and a nightly workflow rebuilds the index.
 
 - `pkg/evidence/benchmarks` — record types, `HiveHash`, `Convert` (bundles → records), schema golden test.
 - `pkg/dashboard/api_benchmarks.go` — export endpoint, status block, hourly pusher, Settings panel data.
+- `pkg/dashboard/benchmarks_cost.go` — `CostLookup` over the launch-cost collector (daily rollup USD + snapshot tokens).
 - `pkg/hub/benchmarks.go` — ingest, month-file store, hourly GitHub publisher, status endpoint.
 - `pkg/evidence` `Author.runtime` / `Author.task_kind` — stamped at bundle write via `github.EvidenceAgentContext`.

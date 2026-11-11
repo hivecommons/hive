@@ -49,6 +49,7 @@ type Record struct {
 	Task           Task     `json:"task"`
 	Outcome        Outcome  `json:"outcome"`
 	Quality        *Quality `json:"quality,omitempty"`
+	Cost           Cost     `json:"cost"`
 }
 
 // Source says which hive emitted the record.
@@ -108,6 +109,40 @@ type Quality struct {
 	ACMMLevel           *int  `json:"acmm_level,omitempty"`
 	SentinelFindings    *int  `json:"sentinel_findings,omitempty"`
 }
+
+// Cost basis values (schema cost.basis). A spoke never emits
+// fleet_model_median — the index builder imputes that from published records.
+const (
+	CostBasisReported       = "reported"
+	CostBasisTokensXPricing = "tokens_x_pricing"
+	CostBasisUnknown        = "unknown"
+)
+
+// Cost is the record's estimated spend. USDEst is hive's launch attribution
+// priced with its public list-price table; it is an estimate, never a bill.
+type Cost struct {
+	Basis            string   `json:"basis"`
+	USDEst           *float64 `json:"usd_est,omitempty"`
+	InputTokens      *int64   `json:"input_tokens,omitempty"`
+	OutputTokens     *int64   `json:"output_tokens,omitempty"`
+	CacheReadTokens  *int64   `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens *int64   `json:"cache_write_tokens,omitempty"`
+	// Launches counts the kicks whose spend was attributed to the record.
+	Launches       int    `json:"launches,omitempty"`
+	PriceTableDate string `json:"price_table_date,omitempty"`
+}
+
+// CostRef is one work reference a kick may have named. Ref carries the
+// spelling the kick path uses: issue refs are "repo#N" (governor), PR refs
+// are "owner/repo#N" (review swarm); Convert asks for both.
+type CostRef struct {
+	Ref  string
+	Kind string // "issue" or "pr"
+}
+
+// CostLookup sums the attributed spend of every ref and reports whether any
+// usage landed. Spend of zero counts as no attribution.
+type CostLookup func(refs []CostRef) (Cost, bool)
 
 // recordID derives the stable id of one (hive, PR, role) triple so re-exports
 // overwrite rather than duplicate.
