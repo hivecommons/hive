@@ -257,3 +257,26 @@ func TestRoot(t *testing.T) {
 		t.Fatal("env must win")
 	}
 }
+
+func TestNextVersion(t *testing.T) {
+	s := Open(t.TempDir())
+	m := techdocs(t)
+	if v, err := s.NextVersion(m.Metadata.Name); err != nil || v != "1" {
+		t.Fatalf("empty: %q %v", v, err)
+	}
+	if _, err := s.NextVersion("Bad Name"); !errors.Is(err, ErrBadName) {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"1", "3", "2.0-rc1"} {
+		m.Spec.Meta.Version = v
+		if _, err := s.Save(m, "andy", t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v, err := s.NextVersion(m.Metadata.Name); err != nil || v != "4" {
+		t.Fatalf("after 1,3,2.0-rc1: %q %v", v, err)
+	}
+	if v, err := s.NextVersion(hivedefault.Name); err != nil || v != "2" {
+		t.Fatalf("builtin: %q %v", v, err)
+	}
+}
