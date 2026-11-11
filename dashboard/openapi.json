@@ -36416,6 +36416,314 @@
             }
           }
         }
+      },
+      "/api/workflows/{name}/{version}/bundle": {
+        "get": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Export a stored workflow model as a signed bundle",
+          "description": "Compiles name@version and wraps model, compiled profile and the sha256 of the canonical model JSON in a WorkflowBundle (RFC #17620 phase 7). Any role. 422 when the model does not compile.",
+          "parameters": [
+            {
+              "name": "name",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "version",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Bundle",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowBundle"
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "Not found"
+            },
+            "422": {
+              "description": "Model does not compile"
+            },
+            "503": {
+              "description": "Workflow store not enabled"
+            }
+          }
+        }
+      },
+      "/api/workflows/import": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Import a workflow bundle",
+          "description": "Verifies the bundle (hash over the canonical model, local recompile compared structurally with the published profile) and stores the model. The version is pinned to the bundle's when that slot is free, else the next integer version. The store recompiles; the published profile is never persisted. Owner role; audited as workflow_import.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowBundle"
+                }
+              }
+            }
+          },
+          "responses": {
+            "201": {
+              "description": "Imported and recompiled locally",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowImportResult"
+                  }
+                }
+              }
+            },
+            "422": {
+              "description": "Bundle verification failed (hash or published profile does not match local compile)"
+            },
+            "400": {
+              "description": "Bad request"
+            },
+            "403": {
+              "description": "Owner role required"
+            },
+            "503": {
+              "description": "Workflow store or marketplace not enabled"
+            },
+            "413": {
+              "description": "Bundle too large"
+            }
+          }
+        }
+      },
+      "/api/marketplace/workflows": {
+        "get": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Marketplace catalogue index (proxied from the hub)",
+          "description": "Returns the hub's catalogue index. The spoke caches it for workflow.marketplace.refresh_interval and revalidates with If-None-Match; ?refresh=1 forces revalidation. When the hub is unreachable the response is 502 with the last cached index and stale=true.",
+          "parameters": [
+            {
+              "name": "refresh",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string"
+              },
+              "description": "any value forces revalidation with the hub"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Index",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MarketplaceIndexResponse"
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "Marketplace disabled (workflow.marketplace.enabled=false)"
+            },
+            "502": {
+              "description": "Hub unreachable; body carries the cached index (possibly empty) with stale=true",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MarketplaceIndexResponse"
+                  }
+                }
+              }
+            },
+            "503": {
+              "description": "No hub URL configured"
+            }
+          }
+        }
+      },
+      "/api/marketplace/workflows/{name}/{version}/import": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Import a catalogue entry from the hub",
+          "description": "Fetches name@version's bundle from the hub, verifies it locally and stores it exactly as POST /api/workflows/import does. Owner role; audited as workflow_import.",
+          "parameters": [
+            {
+              "name": "name",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "version",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "201": {
+              "description": "Imported and recompiled locally",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowImportResult"
+                  }
+                }
+              }
+            },
+            "422": {
+              "description": "Bundle verification failed (hash or published profile does not match local compile)"
+            },
+            "403": {
+              "description": "Owner role required"
+            },
+            "404": {
+              "description": "Not in the marketplace or marketplace disabled"
+            },
+            "502": {
+              "description": "Hub unreachable or returned an invalid bundle"
+            },
+            "503": {
+              "description": "Workflow store not enabled or no hub URL"
+            }
+          }
+        }
+      },
+      "/api/marketplace/workflows/publish": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Publish a library entry to the hub marketplace",
+          "description": "Exports name@version as a bundle (tier local-published unless the model is ingested-unreviewed) and posts it to the hub with the spoke's heartbeat credential. Owner role; audited as workflow_publish.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "version"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "201": {
+              "description": "Published",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "published": {
+                        "type": "string",
+                        "description": "name@version"
+                      },
+                      "hash": {
+                        "type": "string"
+                      },
+                      "tier": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Bad request"
+            },
+            "403": {
+              "description": "Owner role required, or the hub refused the spoke credential"
+            },
+            "404": {
+              "description": "Entry not found"
+            },
+            "409": {
+              "description": "name@version already published with a different hash"
+            },
+            "422": {
+              "description": "Model does not compile or hub rejected the bundle"
+            },
+            "502": {
+              "description": "Hub unreachable"
+            },
+            "503": {
+              "description": "Workflow store not enabled or no hub URL"
+            }
+          }
+        }
+      },
+      "/api/marketplace/refresh": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Ask the hub to refresh its ingested catalogue",
+          "description": "Proxies POST /api/marketplace/refresh on the hub (optionally ?repo=owner/name). Owner role on the spoke; the hub applies its own admin policy. Audited as workflow_marketplace_refresh.",
+          "parameters": [
+            {
+              "name": "repo",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "202": {
+              "description": "Refresh accepted by the hub"
+            },
+            "403": {
+              "description": "Owner role required or hub refused"
+            },
+            "404": {
+              "description": "Marketplace disabled"
+            },
+            "502": {
+              "description": "Hub unreachable or failed"
+            },
+            "503": {
+              "description": "No hub URL"
+            }
+          }
+        }
       }
   },
   "components": {
@@ -37405,6 +37713,175 @@
             },
             "entry": {
               "$ref": "#/components/schemas/WorkflowEntry"
+            }
+          }
+        },
+        "WorkflowBundle": {
+          "type": "object",
+          "description": "Portable workflow model envelope: model + the publisher's compiled profile + sha256 of the canonical model JSON. Importers verify the hash and recompile locally; the published profile is only ever compared, never trusted.",
+          "required": [
+            "apiVersion",
+            "model",
+            "profile",
+            "hash"
+          ],
+          "properties": {
+            "apiVersion": {
+              "type": "string",
+              "enum": [
+                "workflow.hivecommons.dev/v1alpha1"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "WorkflowBundle"
+              ]
+            },
+            "model": {
+              "$ref": "#/components/schemas/WorkflowModel"
+            },
+            "profile": {
+              "type": "object",
+              "description": "compiled profile (see WorkflowProfile)"
+            },
+            "hash": {
+              "type": "string",
+              "description": "sha256 hex of the canonical (sorted-key) model JSON"
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "createdBy": {
+              "type": "string"
+            },
+            "tier": {
+              "type": "string",
+              "enum": [
+                "built-in",
+                "curated",
+                "ingested-unreviewed",
+                "local",
+                "local-published"
+              ]
+            }
+          }
+        },
+        "WorkflowImportResult": {
+          "type": "object",
+          "properties": {
+            "entry": {
+              "$ref": "#/components/schemas/WorkflowEntry"
+            },
+            "verified": {
+              "type": "boolean"
+            },
+            "source": {
+              "type": "string",
+              "description": "name@version in the marketplace, for marketplace imports"
+            }
+          }
+        },
+        "MarketplaceIndexEntry": {
+          "type": "object",
+          "description": "One immutable catalogue row, keyed name@version plus hash.",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "hash": {
+              "type": "string"
+            },
+            "tier": {
+              "type": "string",
+              "enum": [
+                "built-in",
+                "curated",
+                "ingested-unreviewed",
+                "local",
+                "local-published"
+              ]
+            },
+            "description": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string",
+              "description": "repository or author the model came from"
+            },
+            "states": {
+              "type": "integer"
+            },
+            "columns": {
+              "type": "integer"
+            },
+            "publishedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "publishedBy": {
+              "type": "string"
+            },
+            "sourceSHA": {
+              "type": "string",
+              "description": "commit the model was ingested from"
+            },
+            "newerIngestAvailable": {
+              "type": "boolean",
+              "description": "set on curated entries when a later ingested-unreviewed version exists"
+            },
+            "adoption": {
+              "type": "object",
+              "description": "reserved; empty today"
+            },
+            "ratings": {
+              "type": "object",
+              "description": "reserved; empty today"
+            },
+            "benchmarks": {
+              "type": "object",
+              "description": "reserved; empty today"
+            }
+          }
+        },
+        "MarketplaceIndex": {
+          "type": "object",
+          "properties": {
+            "generatedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/MarketplaceIndexEntry"
+              }
+            }
+          }
+        },
+        "MarketplaceIndexResponse": {
+          "type": "object",
+          "properties": {
+            "index": {
+              "$ref": "#/components/schemas/MarketplaceIndex"
+            },
+            "stale": {
+              "type": "boolean",
+              "description": "true when served from cache because the hub was unreachable"
+            },
+            "etag": {
+              "type": "string"
+            },
+            "fetchedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "error": {
+              "type": "string"
             }
           }
         }

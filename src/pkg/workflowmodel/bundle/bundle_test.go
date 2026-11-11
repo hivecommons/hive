@@ -232,3 +232,25 @@ func mustJSON(t *testing.T, v interface{}) string {
 	}
 	return string(b)
 }
+
+func TestEntryFor(t *testing.T) {
+	e := EntryFor(nil, fixedNow, "andy", "")
+	if e.Name != "" || string(e.Adoption) != "{}" || string(e.Ratings) != "{}" || string(e.Benchmarks) != "{}" {
+		t.Fatalf("nil entry = %+v", e)
+	}
+	b, err := Export(techdocs(t), "andy", fixedNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e = EntryFor(b, fixedNow, "andy", "abc123")
+	if e.Key() != "cncf-techdocs@1" || e.Hash != b.Hash || e.Tier != TierLocal || e.Source != "cncf/techdocs" || e.SourceSHA != "abc123" {
+		t.Fatalf("entry = %+v", e)
+	}
+	if e.States == 0 || e.Columns == 0 || e.Description == "" {
+		t.Fatalf("summary fields empty: %+v", e)
+	}
+	b.Model.Spec.Scope.Repository = "org/repo"
+	if EntryFor(b, fixedNow, "", "").Source != "org/repo" {
+		t.Fatal("repository scope should win as source")
+	}
+}
