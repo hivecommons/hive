@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v6.19.1)
+
+### Fixed
+
+- Marketplace: the CNCF catalogue now actually fills — tarball extraction recognises git's `pax_global_header`, so pipeline files are read for every repository (previously only tektoncd/pipeline survived); seeding resumes across hub restarts by ingesting only repositories that are due (no record, stale, old format, or an hour-old error); the last refresh summary is persisted so `/api/marketplace/status` survives a restart and reports `pendingRepos`/`lastRefreshErrors`, with `?verbose=1` listing failing repos and their errors; `POST /api/marketplace/refresh` accepts a spoke's heartbeat credential (rate-limited, `429` + `Retry-After`) so a hive owner's "Refresh catalogue" works, and the crawl backs off on `403`/`429` `Retry-After` and logs progress every 25 repositories.
+
 ## 2026-11-11 (v6.19.0)
 
 ### Added
