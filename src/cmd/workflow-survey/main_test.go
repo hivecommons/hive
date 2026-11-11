@@ -253,8 +253,8 @@ func TestHelpers(t *testing.T) {
 	if got := sortedKeys(map[string]int{"b": 1, "a": 2}); strings.Join(got, ",") != "a,b" {
 		t.Errorf("sortedKeys = %v", got)
 	}
-	if loadProjects(t.TempDir()) == nil {
-		t.Error("loadProjects without projects.json should return an empty map")
+	if m := loadProjects(t.TempDir()); m["project-akri/akri"] != "sandbox" {
+		t.Errorf("loadProjects without projects.json should fall back to the embedded corpus, got %d entries", len(m))
 	}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "projects.json"), []byte("{not json"), 0o644); err != nil {

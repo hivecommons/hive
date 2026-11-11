@@ -19,6 +19,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/workflowmodel/ingest"
+	corpuslist "github.com/hivecommons/hive/pkg/workflowmodel/ingest/corpus"
 	"github.com/hivecommons/hive/pkg/workflowmodel/render"
 )
 
@@ -168,11 +169,13 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 
 // loadProjects maps owner/repo to project maturity from the collector's
 // projects.json, when present.
+// loadProjects reads <corpus>/projects.json; when the corpus directory
+// carries none it falls back to the embedded CNCF list (#17620 phase 7).
 func loadProjects(corpus string) map[string]string {
 	out := map[string]string{}
 	b, err := os.ReadFile(filepath.Join(corpus, "projects.json"))
 	if err != nil {
-		return out
+		return corpuslist.Maturity()
 	}
 	var projects []struct {
 		Project string   `json:"project"`
