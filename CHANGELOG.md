@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.214.0)
+
+### Added
+
+- Added an OpenShell cluster preflight and an egress-policy prover: at boot and on reload, `AgentSandboxGateWarnings` now warns when an `openshell`-runtime gateway is unreachable, reports telemetry on, or has `allow_driver_config` off (read-only, cached, bounded to 30 s), and `allow_hosts` entries must be literal host names (userinfo, query, fragment and wildcards are rejected) with a test that fails if the rendered egress policy widens ([#17644](https://github.com/hivecommons/hive/issues/17644)).
+
 ## 2026-11-11 (v5.213.0)
 
 ### Added
