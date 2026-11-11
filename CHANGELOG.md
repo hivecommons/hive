@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.218.0)
+
+### Added
+
+- **workflow models:** ingesting a repository now proposes its *intake half* alongside its pipelines: issue templates become `requested-<slug>` intake states and events, a triage label (from templates, `settings.yml`, `labels.yml`, `labeler.yml` or `CONTRIBUTING.md`) becomes a `triage` state and gate, PR-template checklist items become manual checks, `CODEOWNERS`/Prow `OWNERS` become `approver`/`reviewer` roles owning the review gate, a `MAINTAINERS` file's `@handles` become the `maintainer` role's members, `kind/*`/`priority/*`/`area/*` labels are carried as classification rows, and the default branch's protection or rulesets (fetched when ingesting by `repo`, or a probot `settings.yml`) become required CI checks, `review.minApprovals`, a `codeowner-review` gate and bookkeeping notes. Everything is `inferred` and cites `path:line` or the API endpoint; ingesting `cncf/techdocs` now proposes its triage state. Trees without these inputs produce the byte-identical model as before; `workflow-survey` counts the proposals per repository ([#17620](https://github.com/hivecommons/hive/issues/17620))
+- Workflow models, RFC phase 3c ([#17620](https://github.com/hivecommons/hive/issues/17620)): simulate an issue or PR against a model before binding it. New read-only `POST /api/workflows/{name}/{version}/simulate` takes `{kind, facts}` (a JSON mirror of the engine's `Facts`) or `{repo, number}` to best-effort fill the facts from the forge (the response lists what was fetched and what stayed unknown), runs the stored model's deriver through the new `stageengine.Explain`, and returns the decision (state, column, stage label, reason, covered/abstain) with a per-rule trace — every rule in order, the first match highlighted, each predicate's holds/known verdict — or a single built-in entry for `derivation: builtin` models. Settings → Workflows → model detail grows a **Simulate** panel: pick `owner/repo#123` and Fetch facts, or describe the item in a form, Run, and the matched state lights up in the diagram.
+
+### Fixed
+
+- Weekly competitor report: the publication gate no longer rejects the Discord post for the Discord formatting the prompt itself requires (bold headings, fenced project table, no sources details), which silently blocked the 2026-11-09 report.
+- The `hive-inference` vLLM Deployment's `model-download` init container now pulls `docker.io/curlimages/curl` by its fully-qualified name instead of the Docker Hub short name `curlimages/curl`. Oracle Linux 9 cri-o (OKE 1.34 node images) enforces short-name resolution (`short-name-mode = "enforcing"`), so on the upgraded hive-oke nodes the pod stuck in `Init:ImageInspectError` with "image name curlimages/curl:8.13.0 returns ambiguous list" and the model never downloaded; OL8 nodes silently resolved it to Docker Hub. Found during the hive-oke OL8→OL9 / Landlock node cycling (#17642).
+
 ## 2026-11-11 (v5.217.1)
 
 ### Changed
