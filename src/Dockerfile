@@ -292,6 +292,14 @@ ARG COPILOT_VERSION=1.0.88
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     "@github/copilot@${COPILOT_VERSION}" && npm cache clean --force || \
     echo "WARN: GitHub Copilot CLI install failed — skipping"
+# Wrap the platform binary so it starts through glibc's ld.so (#17729): the
+# Bun single-file ET_EXEC the package ships is rejected with ENOEXEC by Linux
+# 6.12 binfmt_elf (OKE UEK8 upgrade took every copilot agent down), while the
+# dynamic loader maps the same file fine. The installer is idempotent and a
+# no-op when the copilot layer above was skipped.
+COPY bin/install-copilot-exec-shim.sh /usr/local/bin/install-copilot-exec-shim.sh
+RUN chmod +x /usr/local/bin/install-copilot-exec-shim.sh && \
+    /usr/local/bin/install-copilot-exec-shim.sh /usr/local/lib/node_modules
 
 # --- Layer 3b: GitHub Copilot SDK (pinned; powers SDK-based model discovery) ---
 # The dashboard's copilot model discovery prefers a probe through the official
