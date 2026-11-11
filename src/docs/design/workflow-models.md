@@ -394,3 +394,82 @@ fixture under `pkg/workflowmodel/ingest/testdata/techdocs` carries both.
   until the label-driven engine half of phase 4 writes model labels onto items.
 - Branch protection needs `administration:read`; without it the rulesets endpoint is used, which
   omits legacy protection settings such as `enforce_admins`.
+
+## Label GC and model commands (RFC phase 4, follow-up)
+
+Two of the phase-4 backend gaps close here: stale model labels are now reclaimed, and a bound
+model's `replies` reach the human gate as commands.
+
+### Label garbage collection on unbind / rebind
+
+`ensureStageLabels` already provisions a bound model's `LabelDefs` after the built-in family. It
+now also remembers what it provisioned and reconciles on change
+(`automerge_stage_labels_gc.go`):
+
+- **Record.** After each provisioning pass the engine writes one JSON record per repository,
+  `workflows/provisioned/<owner>__<repo>.json` under `data.workflows_dir`
+  (`workflowmodel.ProvisionedLabels{repo, model name@version, hash, labels[]}`, through the
+  `workflowmodel.ProvisionedStore` interface the workflow store implements). The record is the
+  hive's memory of which labels *it* created or adopted by recolouring for a model; a label the
+  repository already had for its own reasons is never in it.
+- **Diff.** When the profile hash differs from the record's — a rebind, a new version of the bound
+  model, or an unbind (lookup returns nil or hive-default) — the engine computes
+  `previous − current` model labels.
+- **Delete, only when safe.** A stale label is deleted only if it is in the record, is not in the
+  built-in family (`stagelabels.LabelDefsFor` plus the retired spellings in `stagelabels.Renames`),
+  and no open issue or PR wears it (one `label:"x" is:open` search per label; a failed search keeps
+  the label and logs it). Anything kept stays in the record so the next pass retries it. Every
+  deletion is audited as `workflow_label_removed` with the repository, label and the model key it
+  belonged to.
+- **Knob.** `workflow.label_gc` (`WorkflowConfig.LabelGC`, default `true`). `false` keeps every
+  label and logs what would have gone; the record is still maintained, so turning it back on
+  reclaims what accumulated. The knob is yaml-only (no Settings control; allowlisted in
+  `settings_parity_allowlist.txt`).
+- **Zero change for unbound repositories.** With no `ProvisionedStore` wired, or for a repository
+  that was never bound, nothing is remembered and nothing is deleted; the pre-P4 path is unchanged
+  and its tests are byte-identical.
+
+### Model replies as human-gate commands
+
+A model's `replies[state]` lists the verbs a human may answer the gate with. They now flow through
+three places, all for a repository bound to a non-default model only:
+
+- **Lookup.** `Profile.RepliesForNumber(stage)` returns the verbs for the state at a stage number;
+  `Profile.ReplyForNumber(stage, verb)` resolves one to a `ReplyEffect{Verb, From, To, Label}` —
+  the transition the model declares with that verb as its `on` event (if any), the target state,
+  and the label `labels.entries` maps to that state (if any). `NormalizeReply` folds case, inner
+  whitespace and a leading slash so "Approve Analysis", "approve  analysis" and "/approve analysis"
+  are one verb.
+- **Comments.** The `/hive` parser (`parseUnparkCommandFor`) tries the model's verbs first —
+  multi-word, longest match wins, trailing punctuation trimmed, the rest of the line is the
+  decision text — then the built-ins. With no verbs it *is* the old parser, so `/hive approve` on
+  an unbound repository is exactly what it was. On a parked issue the sweep answers a model verb
+  with `applyIssueModelReply`: the parking labels are cleared as for `/hive approve`
+  (`approved-direction` added, `needs-human` lifted), the mapped label is applied when there is one
+  (audited `hive_label_applied` with `reply=<verb>`), and one reply comment is posted that begins
+  with the same `Decision:` sentence the decision history reads, then says what the model did
+  ("moves the item from `a` to `b`; `label` applied" / "…the model maps no label to that state" /
+  "is recorded; the model declares no transition for it"). Answered replies are idempotency
+  watermarks like the built-ins. cmd/hive passes the stage engine's `WorkflowFor` to the un-park
+  sweep so comments see the same binding the labeller does.
+- **Dashboard.** The tracker payload's `workflows.repos[<repo>].replies` maps stage number →
+  verbs (hive-default's block carries none). `stageTrackerHumanGateVerbs` appends them after the
+  built-in verbs, deduped by label, as `wf:<verb>` actions; choosing one prompts for an optional
+  note and POSTs `{"decision":"model-reply","reply":"<verb>","comment":…}` to
+  `/api/repos/{repo}/items/{n}/decision`. The handler resolves the bound profile
+  (`workflowProfileForRepo`), refuses unbound repositories and verbs the model does not offer at
+  the item's state with 409, PRs with 400, and otherwise runs the same `applyIssueModelReply`
+  path, audited `repo_item_decision_model_reply`.
+
+### Known gaps (phase 4 follow-up)
+
+- Model replies act on **parked issues** only. A verb declared for a PR state (TechDocs'
+  `draft-review: approve / request changes`) is not offered by the pill or honoured in comments; PRs
+  keep GitHub's native review signal. Un-parked issue states with replies are likewise not
+  answered — the reply needs a gate to answer.
+- The pill offers model verbs only where it already shows a human gate; a model state with replies
+  but no `needs-human` / needs-decision label on the item shows nothing extra.
+- Label GC trusts the provisioned record: labels created by an earlier hive build (before the
+  record existed) are adopted into the record on the next provisioning pass only while the model
+  still declares them; labels a model dropped *before* this change shipped are never reclaimed
+  automatically.
