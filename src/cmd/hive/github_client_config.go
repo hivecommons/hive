@@ -176,6 +176,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	client.SetReporterConfirmationEnabledFunc(func() bool {
 		return b.cfg.Issues.ReporterConfirmationEnabled()
 	})
+	// ci.failed CEL trigger source: the red-main sweep reports default-branch
+	// CI failures only while a trigger rule names ci.failed. Both hooks read
+	// b.cfg / b.agentMgr / b.gov when called, so boot order does not matter.
+	client.SetCIFailedHook(b.ciFailedTriggerWanted, b.emitCIFailedTrigger)
 	// Hive-authored superseded PR auto-close (hivecommons/hive#14965):
 	// governor.auto_close_superseded gates it, the repo's ACMM level must
 	// allow own-PR closes.
