@@ -58,6 +58,7 @@ fi
 ok "guard functions extracted from entrypoint.sh ($(grep -c '^  hive_.*() {' "$GUARDS") functions)"
 
 for fn in hive_fix_shared_credential hive_fix_copilot_config hive_fix_tree \
+          hive_claude_cred_judge hive_rebridge_claude_credentials \
           hive_fix_claude_instant hive_fix_credentials_fast hive_guard_forever \
           hive_watch_once; do
   if grep -q "^  ${fn}() {" "$GUARDS" || grep -q "^  ${fn}() " "$GUARDS"; then
@@ -593,6 +594,210 @@ for repair in hive_fix_tree_recent hive_fix_tree; do
   fi
 done
 rm -f "$SETTINGS" "$SIBLING"
+
+# ── 14. Root re-bridge of a per-agent Claude credential ─────────────────────
+# A Claude Code refresh replaces an agent's ~/.claude/.credentials.json symlink
+# with a private 0600 file and rotates the grant, so that file holds the only
+# live login. The hive server's uid cannot read it; the root guard must judge
+# it, promote it when it is complete, usable and newer, keep the shared file's
+# owner and mode, never let an empty-token file win, and never print a token.
+# Driven against its own tree, so the cases above are unaffected.
+if ! command -v jq >/dev/null 2>&1; then
+  ok "SKIP: jq not installed; hive_rebridge_claude_credentials is a no-op without it"
+else
+  RBHOME="$WORK/rbhome"
+  RBTMP="$WORK/rbtmp"
+  mkdir -p "$RBHOME/.claude" "$RBHOME/agents" "$RBTMP"
+  sed "s#/data/home#${RBHOME}#g" "$GUARDS" > "$WORK/guards.rebridge.sh"
+  RB_SHARED="$RBHOME/.claude/.credentials.json"
+  RB_OUT="$WORK/rebridge.log"
+  : > "$RB_OUT"
+  NOW_MS=$(( $(date +%s) * 1000 ))
+  HOUR_MS=3600000
+  # Every token below carries this marker; the guard's output must never.
+  SENTINEL="TOKSENTINEL"
+  rb_cred() {
+    printf '{"claudeAiOauth":{"accessToken":"%s","refreshToken":"%s","expiresAt":%s,"scopes":["user:inference"]}}' "$1" "$2" "$3"
+  }
+  rb_shared() { rb_cred "$@" > "$RB_SHARED"; chmod "${RB_SHARED_MODE:-640}" "$RB_SHARED"; }
+  rb_agent() {
+    mkdir -p "$RBHOME/agents/$1/.claude"
+    rm -f "$RBHOME/agents/$1/.claude/.credentials.json"
+    printf '%s' "$2" > "$RBHOME/agents/$1/.claude/.credentials.json"
+    chmod 600 "$RBHOME/agents/$1/.claude/.credentials.json"
+  }
+  rb_pass() {
+    TMPDIR="$RBTMP" sh -c 'set -e; . "$1"; hive_rebridge_claude_credentials; echo REBRIDGE_PASS_OK' \
+      sh "$WORK/guards.rebridge.sh" >>"$RB_OUT" 2>&1
+  }
+  rb_linked() {
+    [ -L "$RBHOME/agents/$1/.claude/.credentials.json" ] \
+      && [ "$(readlink "$RBHOME/agents/$1/.claude/.credentials.json")" = "$RB_SHARED" ]
+  }
+  rb_stale_count() { find "$1" -maxdepth 1 -name '.credentials.json.stale-*' | wc -l | tr -d ' '; }
+
+  # 14a. Newer, complete, usable private copy over an expired shared one:
+  # promoted atomically, with the shared file's owner and mode.
+  rb_shared "${SENTINEL}-old-access" "${SENTINEL}-old-refresh" $(( NOW_MS - HOUR_MS ))
+  OWNER_BEFORE="$(stat -c '%u:%g' "$RB_SHARED")"
+  INODE_BEFORE="$(stat -c '%i' "$RB_SHARED")"
+  OLD_SHARED="$(cat "$RB_SHARED")"
+  FRESH="$(rb_cred "${SENTINEL}-new-access" "${SENTINEL}-new-refresh" $(( NOW_MS + 8 * HOUR_MS )))"
+  rb_agent fresh "$FRESH"
+  rb_pass
+  if [ "$(cat "$RB_SHARED")" = "$FRESH" ]; then
+    ok "rebridge: a newer usable private credential is promoted into the shared file"
+  else
+    bad "rebridge: a newer usable private credential is promoted" "shared file was not replaced"
+  fi
+  if [ "$(stat -c '%i' "$RB_SHARED")" != "$INODE_BEFORE" ] \
+     && [ -z "$(find "$RBHOME/.claude" -maxdepth 1 -name '.credentials.json.rebridge.*')" ]; then
+    ok "rebridge: the promotion is a rename of a finished temp file (new inode, no temp left)"
+  else
+    bad "rebridge: the promotion is atomic" "inode unchanged or a temp file was left behind"
+  fi
+  if [ "$(stat -c '%a' "$RB_SHARED")" = "640" ] && [ "$(stat -c '%u:%g' "$RB_SHARED")" = "$OWNER_BEFORE" ]; then
+    ok "rebridge: the promoted file keeps the shared file's owner, group and mode (0640)"
+  else
+    bad "rebridge: the promoted file keeps the shared owner and mode" \
+        "now $(stat -c '%a %u:%g' "$RB_SHARED"), was 640 $OWNER_BEFORE"
+  fi
+  OLD_COPY="$(find "$RBHOME/.claude" -maxdepth 1 -name '.credentials.json.stale-*' | head -1)"
+  if [ -n "$OLD_COPY" ] && [ "$(cat "$OLD_COPY")" = "$OLD_SHARED" ] && [ "$(stat -c '%a' "$OLD_COPY")" = "600" ]; then
+    ok "rebridge: the replaced shared credential is preserved beside it (0600)"
+  else
+    bad "rebridge: the replaced shared credential is preserved" "found: ${OLD_COPY:-none}"
+  fi
+  PRIV_COPY="$(find "$RBHOME/agents/fresh/.claude" -maxdepth 1 -name '.credentials.json.stale-*' | head -1)"
+  if rb_linked fresh && [ -n "$PRIV_COPY" ] && [ "$(stat -c '%a' "$PRIV_COPY")" = "600" ]; then
+    ok "rebridge: the agent is linked back to the shared login and its private file kept aside (0600)"
+  else
+    bad "rebridge: the agent is re-linked and its private file kept" "link or stale copy missing"
+  fi
+  grep -q "re-bridged agent 'fresh' (kept=agent" "$RB_OUT" \
+    && ok "rebridge: the promotion is logged with kept=agent" \
+    || bad "rebridge: the promotion is logged" "$(cat "$RB_OUT")"
+
+  # 14b. A failed refresh's empty-token, expiresAt-0 file never wins, even
+  # over a shared login that is itself expired and grant-less.
+  for shared_case in usable unusable; do
+    if [ "$shared_case" = usable ]; then
+      rb_shared "${SENTINEL}-live-access" "${SENTINEL}-live-refresh" $(( NOW_MS + 4 * HOUR_MS ))
+    else
+      rb_shared "${SENTINEL}-dead-access" "" $(( NOW_MS - HOUR_MS ))
+    fi
+    BEFORE="$(cat "$RB_SHARED")"; INODE_BEFORE="$(stat -c '%i' "$RB_SHARED")"
+    rb_agent "empty-$shared_case" '{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,"scopes":[]}}'
+    rb_pass
+    if [ "$(cat "$RB_SHARED")" = "$BEFORE" ] && [ "$(stat -c '%i' "$RB_SHARED")" = "$INODE_BEFORE" ] \
+       && rb_linked "empty-$shared_case"; then
+      ok "rebridge: an empty-token private file never replaces a $shared_case shared file; the agent is re-linked"
+    else
+      bad "rebridge: an empty-token private file never replaces a $shared_case shared file" \
+          "shared changed or agent not re-linked"
+    fi
+  done
+  # A complete-looking token with no recorded expiry cannot be judged newer.
+  rb_shared "${SENTINEL}-dead2-access" "" $(( NOW_MS - HOUR_MS ))
+  BEFORE="$(cat "$RB_SHARED")"
+  rb_agent noexp "$(rb_cred "${SENTINEL}-noexp-access" "${SENTINEL}-noexp-refresh" 0)"
+  rb_pass
+  [ "$(cat "$RB_SHARED")" = "$BEFORE" ] \
+    && ok "rebridge: a private file with expiresAt 0 is never promoted" \
+    || bad "rebridge: a private file with expiresAt 0 is never promoted" "shared file was replaced"
+
+  # 14c. Not newer: the shared login stays, the private file goes aside.
+  rb_shared "${SENTINEL}-signin-access" "${SENTINEL}-signin-refresh" $(( NOW_MS + 8 * HOUR_MS ))
+  BEFORE="$(cat "$RB_SHARED")"
+  rb_agent older "$(rb_cred "${SENTINEL}-older-access" "${SENTINEL}-older-refresh" $(( NOW_MS + HOUR_MS )))"
+  rb_pass
+  if [ "$(cat "$RB_SHARED")" = "$BEFORE" ] && rb_linked older \
+     && [ "$(rb_stale_count "$RBHOME/agents/older/.claude")" = 1 ]; then
+    ok "rebridge: an older private file leaves the shared login alone (kept=shared) and is moved aside"
+  else
+    bad "rebridge: an older private file leaves the shared login alone" "shared changed or agent not re-linked"
+  fi
+
+  # 14d. Promotion never widens access: a world-readable shared file yields a
+  # promoted file with the world bits removed.
+  RB_SHARED_MODE=644 rb_shared "${SENTINEL}-exp-access" "${SENTINEL}-exp-refresh" $(( NOW_MS - HOUR_MS ))
+  rb_agent narrow "$(rb_cred "${SENTINEL}-narrow-access" "${SENTINEL}-narrow-refresh" $(( NOW_MS + 8 * HOUR_MS )))"
+  rb_pass
+  if [ "$(stat -c '%a' "$RB_SHARED")" = "640" ] && grep -q "${SENTINEL}-narrow-access" "$RB_SHARED"; then
+    ok "rebridge: a promoted credential never gets world access (0644 shared -> 0640)"
+  else
+    bad "rebridge: a promoted credential never gets world access" "mode $(stat -c '%a' "$RB_SHARED")"
+  fi
+
+  # 14e. Things that are not a private copy are never touched: the legacy
+  # whole-directory link, a private symlink, and any agent when no shared
+  # login exists at all.
+  rb_shared "${SENTINEL}-keep-access" "${SENTINEL}-keep-refresh" $(( NOW_MS - HOUR_MS ))
+  BEFORE="$(cat "$RB_SHARED")"; INODE_BEFORE="$(stat -c '%i' "$RB_SHARED")"
+  STALE_BEFORE="$(rb_stale_count "$RBHOME/.claude")"
+  mkdir -p "$RBHOME/agents/legacy"
+  ln -s "$RBHOME/.claude" "$RBHOME/agents/legacy/.claude"
+  mkdir -p "$RBHOME/agents/planted/.claude"
+  printf '%s' "$(rb_cred "${SENTINEL}-elsewhere-access" "${SENTINEL}-elsewhere-refresh" $(( NOW_MS + 9 * HOUR_MS )))" > "$WORK/elsewhere.json"
+  ln -s "$WORK/elsewhere.json" "$RBHOME/agents/planted/.claude/.credentials.json"
+  rb_pass
+  if [ "$(cat "$RB_SHARED")" = "$BEFORE" ] && [ "$(stat -c '%i' "$RB_SHARED")" = "$INODE_BEFORE" ] \
+     && [ "$(rb_stale_count "$RBHOME/.claude")" = "$STALE_BEFORE" ] \
+     && [ "$(readlink "$RBHOME/agents/planted/.claude/.credentials.json")" = "$WORK/elsewhere.json" ]; then
+    ok "rebridge: a legacy directory link and a planted symlink are left alone"
+  else
+    bad "rebridge: a legacy directory link and a planted symlink are left alone" "something was moved or promoted"
+  fi
+  rm -rf "$RBHOME/agents/legacy" "$RBHOME/agents/planted"
+  mv "$RB_SHARED" "$WORK/shared.parked"
+  rb_agent nologin "$(rb_cred "${SENTINEL}-nologin-access" "${SENTINEL}-nologin-refresh" $(( NOW_MS + 8 * HOUR_MS )))"
+  rb_pass
+  if [ -f "$RBHOME/agents/nologin/.claude/.credentials.json" ] && [ ! -L "$RBHOME/agents/nologin/.claude/.credentials.json" ] \
+     && [ ! -e "$RB_SHARED" ]; then
+    ok "rebridge: with no shared login nothing is moved (a logout is not undone)"
+  else
+    bad "rebridge: with no shared login nothing is moved" "private file moved or shared file created"
+  fi
+  rm -rf "$RBHOME/agents/nologin"
+  mv "$WORK/shared.parked" "$RB_SHARED"
+
+  # 14f. A private file the guard cannot read is put back, not discarded,
+  # and the link is not restored over it. (Mode 000 stands in for another
+  # uid's 0600 file; a root CI runner reads it anyway, so skip there.)
+  if [ "$(id -u)" != 0 ]; then
+    BEFORE="$(cat "$RB_SHARED")"
+    rb_agent unreadable "$(rb_cred "${SENTINEL}-locked-access" "${SENTINEL}-locked-refresh" $(( NOW_MS + 8 * HOUR_MS )))"
+    chmod 000 "$RBHOME/agents/unreadable/.claude/.credentials.json"
+    rb_pass
+    if [ -f "$RBHOME/agents/unreadable/.claude/.credentials.json" ] \
+       && [ ! -L "$RBHOME/agents/unreadable/.claude/.credentials.json" ] \
+       && [ "$(rb_stale_count "$RBHOME/agents/unreadable/.claude")" = 0 ] \
+       && [ "$(cat "$RB_SHARED")" = "$BEFORE" ]; then
+      ok "rebridge: an unreadable private credential stays in place and the shared login is untouched"
+    else
+      bad "rebridge: an unreadable private credential stays in place" "it was moved aside or re-linked"
+    fi
+    chmod 600 "$RBHOME/agents/unreadable/.claude/.credentials.json"
+    rm -rf "$RBHOME/agents/unreadable"
+  else
+    ok "SKIP: unreadable-file case needs a non-root runner"
+  fi
+
+  # 14g. Every pass survived set -e, left no root temp dirs, and printed no
+  # token text anywhere.
+  PASSES="$(grep -c REBRIDGE_PASS_OK "$RB_OUT")"
+  [ "$PASSES" -ge 8 ] \
+    && ok "rebridge: every pass returned 0 under set -e ($PASSES passes)" \
+    || bad "rebridge: every pass returned 0 under set -e" "only $PASSES passes completed: $(cat "$RB_OUT")"
+  [ -z "$(ls -A "$RBTMP")" ] \
+    && ok "rebridge: no work directory is left behind" \
+    || bad "rebridge: no work directory is left behind" "$(ls -A "$RBTMP")"
+  if grep -q "$SENTINEL" "$RB_OUT"; then
+    bad "rebridge: no token text in the guard's output" "$(grep -c "$SENTINEL" "$RB_OUT") line(s) carry token text"
+  else
+    ok "rebridge: no token text in the guard's output ($(wc -l < "$RB_OUT" | tr -d ' ') lines checked)"
+  fi
+fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -342,8 +343,20 @@ func ApplyProfile(tokens *OAuthTokens, prof Profile, fetchErr error, previous *O
 	return tokens.SubscriptionType != "" || tokens.RateLimitTier != ""
 }
 
-// WriteCredentials atomically writes tokens to the credentials file.
+// ErrNoAccessToken is returned by WriteCredentials for a token set with no
+// access token. Writing one would replace whatever login is on file with a
+// signed-out credential.
+var ErrNoAccessToken = errors.New("refusing to write a Claude credential with no access token")
+
+// WriteCredentials atomically writes tokens to the credentials file. It
+// refuses a nil token set or one with an empty access token
+// (ErrNoAccessToken), so no hive caller can blank the shared login with a
+// signed-out credential; the dashboard sign-in, its only caller in the hive,
+// never produces one (ExchangeCode rejects an empty access token).
 func WriteCredentials(tokens *OAuthTokens, path string) error {
+	if tokens == nil || tokens.AccessToken == "" {
+		return ErrNoAccessToken
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o2775); err != nil {
 		return fmt.Errorf("create credentials dir: %w", err)
@@ -366,13 +379,33 @@ func WriteCredentials(tokens *OAuthTokens, path string) error {
 }
 
 // LoadTokens parses the credentials file and returns the stored token set, or
-// nil when the file is absent, malformed, or carries no token block. It never
-// applies an expiry rule — callers decide what a stale token means to them.
+// nil when the file is absent, unreadable, malformed, or carries no token
+// block. It never applies an expiry rule — callers decide what a stale token
+// means to them. Callers that must tell "this process cannot read the file"
+// apart from "the file holds no usable token" use ReadTokens.
 func LoadTokens(path string) *OAuthTokens {
+	tokens, _ := ReadTokens(path)
+	return tokens
+}
+
+// ReadTokens is LoadTokens with the read error kept. The error is non-nil
+// only when the file could not be read at all (absent, or not readable by
+// this process, e.g. EACCES on another uid's 0600 file); test it with
+// errors.Is(err, fs.ErrNotExist) or fs.ErrPermission. A file that was read
+// but is malformed, or carries no token block, returns (nil, nil): it was
+// readable, and it holds nothing usable. The error never carries file
+// content.
+func ReadTokens(path string) (*OAuthTokens, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return nil, err
 	}
+	return ParseTokens(data), nil
+}
+
+// ParseTokens decodes a credentials file body already in memory, with the
+// LoadTokens rules: nil when it is malformed or carries no token block.
+func ParseTokens(data []byte) *OAuthTokens {
 	var creds Credentials
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return nil

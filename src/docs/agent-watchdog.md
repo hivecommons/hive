@@ -129,7 +129,12 @@ $ podman exec hive ls -l /data/home/agents/<name>/.claude/.credentials.json
 
 A regular file here, instead of a symlink to `/data/home/.claude/.credentials.json`, is the cause. A Claude Code token refresh replaced the link with a private copy, so no sign-in can reach that agent. The agent card says **credential bridge broken (private stale file)**.
 
-Hive repairs this on its own: at the agent's next launch, on the next credential-watchdog tick, and right after the next dashboard sign-in. It moves the private file aside as `.credentials.json.stale-<UTC time>`, keeps whichever token is newer and usable in the shared file, restores the symlink, and writes a `claude_credential_rebridged` Audit Log entry. See [When a Claude token refresh breaks the credential link](agent-configuration.md#when-a-claude-token-refresh-breaks-the-credential-link) for the rule. You do not need to move files by hand. If the card still shows the broken bridge after a watchdog cycle, the hive log has a `claude credential bridge: repair failed` warning that names the file and the error.
+Hive repairs this on its own. The container entrypoint's root permission guard does it within 5 seconds (container log: `[entrypoint] claude credential bridge: re-bridged agent '<name>'`). The hive server also tries at the agent's next launch, on the next credential-watchdog tick, and right after the next dashboard sign-in (`claude_credential_rebridged` in the Audit Log). Either one moves the private file aside as `.credentials.json.stale-<UTC time>`, keeps whichever token is newer, complete and usable in the shared file, and restores the symlink. See [When a Claude token refresh breaks the credential link](agent-configuration.md#when-a-claude-token-refresh-breaks-the-credential-link) for the rule. You do not need to move files by hand.
+
+If the card still shows the broken bridge after a minute, check the hive log:
+
+- `claude credential bridge: the hive process cannot read this agent's private credential` means the hive server left the file alone because it cannot judge it. Only the root guard can repair it. If this line repeats for the same agent, that guard is not running.
+- `claude credential bridge: repair failed` names the file and the error of a repair that was attempted.
 
 ## Configuration
 

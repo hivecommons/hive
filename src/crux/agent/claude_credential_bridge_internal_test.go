@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -334,4 +335,216 @@ func TestSetupInteractiveHome_LegacyDirLinkLaunchRetiresBeforeRebridge(t *testin
 		t.Fatalf("legacy .claude directory link not retired: info=%v err=%v", info, err)
 	}
 	assertBridgeRestored(t, link, target)
+}
+
+// withUnreadableClaudeCredential makes the repair's credential reader fail
+// with EACCES for every path unreadable(path) accepts, as the hive server's
+// uid does on an agent's 0600 file in a per-UID deployment. A test cannot
+// produce that for real without root and a second uid.
+func withUnreadableClaudeCredential(t *testing.T, unreadable func(path string) bool) {
+	t.Helper()
+	orig := claudeBridgeReadTokens
+	claudeBridgeReadTokens = func(path string) (*claude.OAuthTokens, error) {
+		if unreadable(path) {
+			return nil, &fs.PathError{Op: "open", Path: path, Err: syscall.EACCES}
+		}
+		return orig(path)
+	}
+	t.Cleanup(func() { claudeBridgeReadTokens = orig })
+}
+
+// TestRepairClaudeCredentialBridge_UnreadablePrivateCredentialLeftInPlace is
+// the live per-UID incident: an agent's refresh left a fresh 0600 private
+// file (the only live token, its refresh rotated the shared grant) that the
+// hive server cannot read. On the v6 tip the read error looked like "no
+// token": the file was moved aside, kept=shared, and the agent was relinked
+// to the dead grant. Now nothing moves, nothing is linked, the dashboard
+// still reports the bridge as broken, and the ERROR is logged once per file
+// version rather than every watchdog cycle.
+func TestRepairClaudeCredentialBridge_UnreadablePrivateCredentialLeftInPlace(t *testing.T) {
+	shared := withSharedAgentHome(t)
+	m, sink := testManagerWithSink(t)
+	var logs bytes.Buffer
+	m.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	now := time.Now()
+	sharedJSON := fakeClaudeCredential("fake-rotated-access", now.Add(3*time.Minute), "fake-rotated-refresh")
+	agentJSON := fakeClaudeCredential("fake-fresh-access", now.Add(8*time.Hour), "fake-fresh-refresh")
+	link, target := brokenBridgeFixture(t, shared, "quality", sharedJSON, agentJSON)
+	agentDir := filepath.Dir(link)
+	withUnreadableClaudeCredential(t, func(path string) bool { return filepath.Dir(path) == agentDir })
+
+	rep, err := m.repairClaudeCredentialBridge("quality", link, target)
+	if rep != nil || !errors.Is(err, errClaudeBridgeAgentUnreadable) || !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("repair = (%+v, %v), want (nil, errClaudeBridgeAgentUnreadable wrapping EACCES)", rep, err)
+	}
+	for cycle := 0; cycle < 3; cycle++ {
+		if got := m.rebridgeClaudeCredential("quality", link, target, claudeBridgeTriggerWatchdog); got != nil {
+			t.Fatalf("cycle %d: rebridge = %+v, want nil (left in place)", cycle, got)
+		}
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("private credential must stay a regular file at the link path: info=%v err=%v", info, err)
+	}
+	if got := readFileString(t, link); got != agentJSON {
+		t.Errorf("private credential content changed: %s", got)
+	}
+	if got := staleFiles(t, agentDir); len(got) != 0 {
+		t.Errorf("an unreadable private credential was moved aside: %v", got)
+	}
+	if got := readFileString(t, target); got != sharedJSON {
+		t.Errorf("shared credential changed: %s", got)
+	}
+	if got := staleFiles(t, filepath.Dir(target)); len(got) != 0 {
+		t.Errorf("shared credential was moved aside: %v", got)
+	}
+	if !claudeCredentialBridgeBroken("quality", 2007, "claude") {
+		t.Error("the dashboard must keep reporting the bridge as broken while the private copy is in place")
+	}
+	if ev := sink.find("claude_credential_rebridged"); ev != nil {
+		t.Errorf("nothing changed, so nothing may be audited as a re-bridge: %+v", ev)
+	}
+	const msg = "cannot read this agent's private credential"
+	if n := strings.Count(logs.String(), msg); n != 1 {
+		t.Fatalf("unreadable-credential error logged %d times over 3 cycles, want 1:\n%s", n, logs.String())
+	}
+	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "permission denied") ||
+		!strings.Contains(logs.String(), link) {
+		t.Errorf("log must be an ERROR naming the path and the errno:\n%s", logs.String())
+	}
+	if strings.Contains(logs.String(), "fake-") {
+		t.Errorf("log carries token material:\n%s", logs.String())
+	}
+
+	// The CLI refreshes again: a new file version is worth one more line.
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(link, later, later); err != nil {
+		t.Fatal(err)
+	}
+	m.rebridgeClaudeCredential("quality", link, target, claudeBridgeTriggerWatchdog)
+	if n := strings.Count(logs.String(), msg); n != 2 {
+		t.Errorf("a new private file version must be logged again: got %d lines, want 2", n)
+	}
+}
+
+// TestRepairClaudeCredentialBridge_UnreadableAfterMoveIsPutBack: the file at
+// the link was readable when checked, but the one actually renamed (the CLI
+// replaced it in between) is not. It is put back at the link path, not left
+// at a stale name with the agent relinked to the shared file.
+func TestRepairClaudeCredentialBridge_UnreadableAfterMoveIsPutBack(t *testing.T) {
+	shared := withSharedAgentHome(t)
+	m, _ := testManagerWithSink(t)
+	now := time.Now()
+	sharedJSON := fakeClaudeCredential("fake-shared-access", now.Add(time.Hour), "fake-shared-refresh")
+	agentJSON := fakeClaudeCredential("fake-fresh-access", now.Add(8*time.Hour), "fake-fresh-refresh")
+	link, target := brokenBridgeFixture(t, shared, "scanner", sharedJSON, agentJSON)
+	withUnreadableClaudeCredential(t, func(path string) bool {
+		return strings.Contains(filepath.Base(path), claudeCredentialStaleInfix)
+	})
+
+	rep, err := m.repairClaudeCredentialBridge("scanner", link, target)
+	if rep != nil || !errors.Is(err, errClaudeBridgeAgentUnreadable) {
+		t.Fatalf("repair = (%+v, %v), want (nil, errClaudeBridgeAgentUnreadable)", rep, err)
+	}
+	info, err := os.Lstat(link)
+	if err != nil || !info.Mode().IsRegular() || readFileString(t, link) != agentJSON {
+		t.Fatalf("private credential must be back at the link path: info=%v err=%v", info, err)
+	}
+	if got := staleFiles(t, filepath.Dir(link)); len(got) != 0 {
+		t.Errorf("nothing may stay at a stale name: %v", got)
+	}
+	if got := readFileString(t, target); got != sharedJSON {
+		t.Errorf("shared credential changed: %s", got)
+	}
+}
+
+// TestRepairClaudeCredentialBridge_EmptyTokenPrivateNeverWins: a failed refresh
+// writes a private file with empty tokens and expiresAt 0. It must never
+// replace the shared login, usable or not; the agent is relinked to it.
+func TestRepairClaudeCredentialBridge_EmptyTokenPrivateNeverWins(t *testing.T) {
+	const emptyJSON = `{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,"scopes":[]}}`
+	now := time.Now()
+	cases := map[string]string{
+		"usable shared":   fakeClaudeCredential("fake-live-access", now.Add(4*time.Hour), "fake-live-refresh"),
+		"unusable shared": fakeClaudeCredential("fake-dead-access", now.Add(-time.Hour), ""),
+	}
+	for name, sharedJSON := range cases {
+		t.Run(name, func(t *testing.T) {
+			shared := withSharedAgentHome(t)
+			m, sink := testManagerWithSink(t)
+			link, target := brokenBridgeFixture(t, shared, "sec-check", sharedJSON, emptyJSON)
+
+			rep := m.rebridgeClaudeCredential("sec-check", link, target, claudeBridgeTriggerWatchdog)
+			if rep == nil || rep.kept != "shared" {
+				t.Fatalf("repair = %+v, want kept=shared", rep)
+			}
+			if got := readFileString(t, target); got != sharedJSON {
+				t.Errorf("an empty-token private file replaced the shared credential: %s", got)
+			}
+			if got := staleFiles(t, filepath.Dir(target)); len(got) != 0 {
+				t.Errorf("shared credential must not be replaced or moved: %v", got)
+			}
+			assertBridgeRestored(t, link, target)
+			if ev := sink.find("claude_credential_rebridged"); ev == nil || ev.Fields["kept"] != "shared" {
+				t.Errorf("audit entry = %+v, want kept=shared", ev)
+			}
+		})
+	}
+}
+
+// TestClaudeBridgePromotable_RejectsIncompleteCredentials pins the shared
+// promotion rule (also applied by the root perm guard in entrypoint.sh): only a
+// complete, usable credential may replace the shared login. On the v6 tip a
+// token with no recorded expiresAt counted as usable and newer than an
+// expired shared login, and so did one with no refresh token.
+func TestClaudeBridgePromotable_RejectsIncompleteCredentials(t *testing.T) {
+	now := time.Now()
+	deadShared := &claude.OAuthTokens{AccessToken: "fake", ExpiresAt: now.Add(-time.Hour).UnixMilli()}
+	cases := []struct {
+		name  string
+		agent *claude.OAuthTokens
+		want  bool
+	}{
+		{"complete and live", &claude.OAuthTokens{AccessToken: "a", RefreshToken: "r", ExpiresAt: now.Add(time.Hour).UnixMilli()}, true},
+		{"empty tokens, expiresAt 0", &claude.OAuthTokens{}, false},
+		{"tokens but no expiresAt", &claude.OAuthTokens{AccessToken: "a", RefreshToken: "r"}, false},
+		{"no refresh token", &claude.OAuthTokens{AccessToken: "a", ExpiresAt: now.Add(time.Hour).UnixMilli()}, false},
+		{"no access token", &claude.OAuthTokens{RefreshToken: "r", ExpiresAt: now.Add(time.Hour).UnixMilli()}, false},
+		{"nil", nil, false},
+	}
+	for _, c := range cases {
+		if got := claudeBridgePromotable(c.agent, now); got != c.want {
+			t.Errorf("%s: claudeBridgePromotable = %v, want %v", c.name, got, c.want)
+		}
+		if got := preferAgentClaudeCredential(c.agent, deadShared, now); got != c.want {
+			t.Errorf("%s: preferAgentClaudeCredential over a dead shared login = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestPromoteClaudeCredential_RefusesUnusableBytes: the promotion re-checks the
+// bytes it is about to write, so a source that changed after it was judged
+// can never blank the shared login. Nothing is preserved or written.
+func TestPromoteClaudeCredential_RefusesUnusableBytes(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "private.json")
+	target := filepath.Join(dir, ".credentials.json")
+	now := time.Now()
+	sharedJSON := fakeClaudeCredential("fake-live-access", now.Add(time.Hour), "fake-live-refresh")
+	if err := os.WriteFile(target, []byte(sharedJSON), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte(`{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := promoteClaudeCredential(src, target, now); !errors.Is(err, errClaudeBridgeNotPromotable) {
+		t.Fatalf("promote error = %v, want errClaudeBridgeNotPromotable", err)
+	}
+	if got := readFileString(t, target); got != sharedJSON {
+		t.Errorf("shared credential changed: %s", got)
+	}
+	if got := staleFiles(t, dir); len(got) != 0 {
+		t.Errorf("a refused promotion must not preserve or move anything: %v", got)
+	}
 }

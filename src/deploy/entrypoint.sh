@@ -1769,12 +1769,224 @@ if [ "$(id -u)" = "0" ]; then
     return 0
   }
 
+  # ── Claude credential bridge repair, as root (hive_rebridge_claude_credentials)
+  #
+  # Each per-agent ~/.claude/.credentials.json is a symlink to the shared
+  # /data/home/.claude/.credentials.json. A Claude Code token refresh writes a
+  # temp file and renames it over that path, which replaces the link with a
+  # private file owned by the agent's uid, mode 0600. The refresh also rotates
+  # the grant, so the shared file's refresh token is now dead and the private
+  # file holds the only live login in the fleet.
+  #
+  # The Go repair (crux/agent/claude_credential_bridge.go) runs as the hive
+  # server's own uid and cannot read that 0600 file. On a live per-UID hive it
+  # took the read error for "no token", kept the dead shared file, moved the
+  # fresh one aside, and the fleet logged out one access-token lifetime later.
+  # Root can read it, so this guard runs the same repair with the same rule
+  # every 5 seconds: move the private file aside, promote it into the shared
+  # file only when it is complete and usable and either the shared login is
+  # not usable or the private token expires later, then restore the link.
+  # Five seconds also beats the other agents' CLIs, which refresh within a
+  # minute or two of each other and would otherwise redeem the rotated grant.
+  #
+  # Rules this code keeps:
+  #   - No token text is ever printed. jq prints only 0/1 flags and the
+  #     expiresAt number (hive_claude_cred_judge), and file contents only move
+  #     between files.
+  #   - Access is never widened. The promoted file is written by a process
+  #     running as the shared file's owner and group, in the shared directory,
+  #     with the shared file's mode minus any world bits, then renamed over it
+  #     (atomic). Only what could read the shared login can read the result.
+  #   - Root never follows a path an agent controls. The agent's .claude is
+  #     entered with cd -P and checked with pwd -P, every name after that is
+  #     relative, and the private file is read with dd iflag=nofollow into a
+  #     fresh root-only temp dir. In a directory another uid can write, root
+  #     only renames and creates the link (both act on the name, never
+  #     through it) and writes no file content.
+  #   - Nothing is deleted. The private file becomes
+  #     .credentials.json.stale-<UTC> beside it (owner and mode kept); a
+  #     replaced shared file is preserved as .credentials.json.stale-<UTC>
+  #     beside the shared one, mode 0600. When anything is inconclusive the
+  #     private file is put back and the link is left alone.
+  #   - No shared login (signed out, or never signed in) means nothing to
+  #     bridge to: the guard does nothing, as the Go sign-in hook does.
+
+  # hive_claude_cred_judge FILE — print "USABLE PROMOTABLE EXPIRES_AT" as three
+  # integers: USABLE and PROMOTABLE are 1 or 0, EXPIRES_AT is claudeAiOauth
+  # .expiresAt in epoch milliseconds (0 when absent). An unreadable, malformed
+  # or non-credential file prints "0 0 0". The rules are Go's:
+  #   usable     = an access token whose expiresAt is absent or in the future,
+  #                or a refresh token whose refreshTokenExpiresAt is absent or
+  #                in the future (claude.TokensUsable);
+  #   promotable = usable, with an access token, a refresh token and an
+  #                expiresAt > 0 (claudeBridgePromotable), so a failed
+  #                refresh's empty-token, expiresAt-0 file never is.
+  hive_claude_cred_judge() {
+    _cj="$(jq -r '
+      def present: if type == "string" then length > 0 else false end;
+      def stamp: if type == "number" and . > 0 then floor else 0 end;
+      (.claudeAiOauth // {}) as $o
+      | (now * 1000 | floor) as $now
+      | ($o.accessToken // "" | present) as $acc
+      | ($o.refreshToken // "" | present) as $ref
+      | ($o.expiresAt // 0 | stamp) as $exp
+      | ($o.refreshTokenExpiresAt // 0 | stamp) as $rexp
+      | (($acc and ($exp == 0 or $exp >= $now))
+         or ($ref and ($rexp == 0 or $rexp >= $now))) as $usable
+      | [ (if $usable then 1 else 0 end),
+          (if $usable and $acc and $ref and $exp > 0 then 1 else 0 end),
+          $exp ]
+      | map(tostring) | join(" ")
+    ' "$1" 2>/dev/null)" || _cj=""
+    case "$_cj" in
+      [01]\ [01]\ [0-9]*) case "${_cj##* }" in *[!0-9]*) _cj="0 0 0" ;; esac ;;
+      *) _cj="0 0 0" ;;
+    esac
+    printf '%s\n' "$_cj"
+    return 0
+  }
+
+  # hive_claude_promote_sh — script that installs the bytes on its stdin as the
+  # shared credential. It runs as the shared file's owner and group (see
+  # hive_rebridge_claude_credentials), never as root. Arguments: SHARED STAMP
+  # MODE. It preserves the current shared file as SHARED.stale-STAMP[-N]
+  # (0600, never overwriting one), writes a temp file beside SHARED, sets MODE
+  # and the shared group, and renames it over SHARED. Prints "promoted" only
+  # when the rename succeeded.
+  hive_claude_promote_sh() {
+    # shellcheck disable=SC2016
+    printf '%s' 'shared=$1; stamp=$2; mode=$3; umask 077
+tmp=$(mktemp "$shared.rebridge.XXXXXX" 2>/dev/null) || exit 0
+cat > "$tmp" 2>/dev/null && [ -s "$tmp" ] || { rm -f "$tmp"; exit 0; }
+old="$shared.stale-$stamp"; n=0
+while [ -e "$old" ] || [ -L "$old" ]; do
+  n=$((n + 1)); [ "$n" -lt 100 ] || { rm -f "$tmp"; exit 0; }
+  old="$shared.stale-$stamp-$n"
+done
+(set -C; cat "$shared" > "$old") 2>/dev/null || { rm -f "$tmp"; exit 0; }
+chmod "$mode" "$tmp" 2>/dev/null || { rm -f "$tmp"; exit 0; }
+chgrp "$(id -g)" "$tmp" 2>/dev/null || true
+mv -fT "$tmp" "$shared" 2>/dev/null || { rm -f "$tmp"; exit 0; }
+echo promoted'
+  }
+
+  # hive_rebridge_claude_credential DIR SHARED STAMP — repair one agent's
+  # .claude directory DIR (/data/home/agents/<name>/.claude). A subshell, so
+  # its cd stays local. Prints one log line when it re-bridged the agent.
+  hive_rebridge_claude_credential() (
+    _rb_dir="$1"; _rb_shared="$2"; _rb_stamp="$3"
+    _rb_agent="${_rb_dir%/.claude}"; _rb_agent="${_rb_agent##*/}"
+    _rb_want="$(cd -P "${_rb_dir%/*}" 2>/dev/null && pwd -P)/.claude" || exit 0
+    # A symlinked .claude is the legacy whole-directory layout: its
+    # .credentials.json IS the shared login, never a private copy.
+    [ -d "$_rb_dir" ] && [ ! -L "$_rb_dir" ] || exit 0
+    cd -P "$_rb_dir" 2>/dev/null || exit 0
+    [ "$(pwd -P)" = "$_rb_want" ] || exit 0
+    [ -f .credentials.json ] && [ ! -L .credentials.json ] || exit 0
+    [ .credentials.json -ef "$_rb_shared" ] && exit 0
+
+    _rb_stale=".credentials.json.stale-$_rb_stamp"; _rb_n=0
+    while [ -e "$_rb_stale" ] || [ -L "$_rb_stale" ]; do
+      _rb_n=$((_rb_n + 1)); [ "$_rb_n" -lt 100 ] || exit 0
+      _rb_stale=".credentials.json.stale-$_rb_stamp-$_rb_n"
+    done
+    _rb_work="$(mktemp -d "${TMPDIR:-/tmp}/hive-rebridge.XXXXXX" 2>/dev/null)" || exit 0
+    [ -n "$_rb_work" ] || exit 0
+    # Move aside FIRST: the CLI's next write lands at the link path, so what
+    # is judged below cannot change under the judgment.
+    if ! mv -fT .credentials.json "$_rb_stale" 2>/dev/null; then
+      rm -rf "$_rb_work"; exit 0
+    fi
+    _rb_kept=""
+    if dd if="$_rb_stale" of="$_rb_work/agent" iflag=nofollow status=none 2>/dev/null; then
+      # shellcheck disable=SC2046
+      set -- $(hive_claude_cred_judge "$_rb_work/agent") $(hive_claude_cred_judge "$_rb_shared")
+      # $1 $2 $3: private usable/promotable/expiresAt; $4 $5 $6: shared.
+      if [ "$2" = 1 ] && { [ "$4" = 0 ] || [ "$3" -gt "$6" ]; }; then
+        # The shared file's owner, group and mode, read without following a
+        # link. The mode loses any world bits: match the shared login's
+        # access, or narrow it, never widen it.
+        _rb_uid=""; _rb_gid=""; _rb_mode=""
+        if [ -f "$_rb_shared" ] && [ ! -L "$_rb_shared" ]; then
+          _rb_uid="$(stat -c '%u' "$_rb_shared" 2>/dev/null)" || _rb_uid=""
+          _rb_gid="$(stat -c '%g' "$_rb_shared" 2>/dev/null)" || _rb_gid=""
+          _rb_mode="$(stat -c '%a' "$_rb_shared" 2>/dev/null)" || _rb_mode=""
+        fi
+        case "$_rb_mode" in
+          *[!0-7]*|'') _rb_mode="" ;;
+          *) _rb_mode="$(printf '%o' $((0$_rb_mode & 0770)))" ;;
+        esac
+        _rb_out=""
+        if [ -z "$_rb_uid" ] || [ -z "$_rb_gid" ] || [ -z "$_rb_mode" ]; then
+          :
+        elif [ "$(id -u)" = 0 ]; then
+          # Never write in the shared directory as root, and never as root's
+          # identity: a root-owned shared file would lock every agent out.
+          if [ "$_rb_uid" != 0 ] && command -v setpriv >/dev/null 2>&1; then
+            _rb_out="$(setpriv --reuid="$_rb_uid" --regid="$_rb_gid" --clear-groups \
+              sh -c "$(hive_claude_promote_sh)" sh "$_rb_shared" "$_rb_stamp" "$_rb_mode" \
+              < "$_rb_work/agent" 2>/dev/null)" || _rb_out=""
+          fi
+        else
+          _rb_out="$(sh -c "$(hive_claude_promote_sh)" sh "$_rb_shared" "$_rb_stamp" "$_rb_mode" \
+            < "$_rb_work/agent" 2>/dev/null)" || _rb_out=""
+        fi
+        [ "$_rb_out" = promoted ] && _rb_kept=agent
+      else
+        _rb_kept=shared
+      fi
+    fi
+    rm -rf "$_rb_work"
+    if [ -z "$_rb_kept" ]; then
+      # Inconclusive (unreadable, unparsable copy, or a promotion that did
+      # not land): put the private file back, unless the CLI has written a
+      # newer one meanwhile, and leave the link as it is.
+      [ -e .credentials.json ] || [ -L .credentials.json ] \
+        || mv -fT "$_rb_stale" .credentials.json 2>/dev/null || true
+      echo "[entrypoint] WARN: claude credential bridge: could not judge or promote the private credential of agent '$_rb_agent'; left it in place"
+      exit 0
+    fi
+    # EEXIST: the CLI wrote a fresh file since the move; the next pass takes it.
+    ln -s "$_rb_shared" .credentials.json 2>/dev/null || true
+    echo "[entrypoint] claude credential bridge: re-bridged agent '$_rb_agent' (kept=$_rb_kept, private copy moved to $_rb_dir/$_rb_stale)"
+    exit 0
+  )
+
+  # hive_rebridge_claude_credentials — one pass over every per-agent home.
+  # Cheap when nothing is wrong: one test per agent, no fork.
+  hive_rebridge_claude_credentials() {
+    [ "${HIVE_SHARED_AGENT_HOME:-}" = "1" ] && return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    _rbs_shared=/data/home/.claude/.credentials.json
+    [ -f "$_rbs_shared" ] && [ ! -L "$_rbs_shared" ] || return 0
+    _rbs_stamp=""
+    for _rbs_dir in /data/home/agents/*/.claude; do
+      [ -f "$_rbs_dir/.credentials.json" ] && [ ! -L "$_rbs_dir/.credentials.json" ] || continue
+      if [ -z "$_rbs_stamp" ]; then
+        # Root promotes only by dropping to the shared file's owner, which
+        # needs setpriv and a non-root owner. Without them, leave every
+        # private file alone rather than re-bridge on half a decision; the Go
+        # repair then logs that it cannot judge the file.
+        if [ "$(id -u)" = 0 ]; then
+          command -v setpriv >/dev/null 2>&1 || return 0
+          [ "$(stat -c '%u' "$_rbs_shared" 2>/dev/null || echo 0)" != 0 ] || return 0
+        fi
+        _rbs_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+      fi
+      hive_rebridge_claude_credential "$_rbs_dir" "$_rbs_shared" "$_rbs_stamp" || true
+    done
+    return 0
+  }
+
   # hive_fix_credentials_fast — the 5s polling path. Bounded and cheap: the
   # files a CLI rewrites owner-only on token/session refresh, and no tree walk
   # at all. This is the backstop that would have repaired #5730 and #8713
-  # within five seconds.
+  # within five seconds. It also re-bridges any per-agent Claude
+  # credential a token refresh replaced (hive_rebridge_claude_credentials),
+  # before the shared file's own group repair.
   hive_fix_credentials_fast() {
     hive_fix_copilot_config
+    hive_rebridge_claude_credentials
     hive_fix_shared_credential /data/home/.claude/.credentials.json
     hive_fix_shared_credential /data/home/.gemini/antigravity-cli/antigravity-oauth-token
     hive_fix_shared_credential /data/home/.gemini/antigravity-cli/cache/onboarding.json
