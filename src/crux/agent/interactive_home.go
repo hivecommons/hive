@@ -521,6 +521,9 @@ func (m *Manager) warnOnStrayGitIdentity(agentName, home string) {
 		if !gitConfigDeclaresUserIdentity(path) {
 			continue
 		}
+		if !m.strayGitIdentity.shouldWarn(agentName, path) {
+			continue
+		}
 		m.logger.Warn("agent git config declares a user identity outside the system /etc/gitconfig; commits still use the pinned per-lane GIT_AUTHOR_*/GIT_COMMITTER_* identity, but `git config user.email` reads this shared value instead (hivecommons/hive#9478)",
 			"agent", agentName, "config", path)
 	}
