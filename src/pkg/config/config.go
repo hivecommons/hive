@@ -82,8 +82,13 @@ type Config struct {
 	// Dedupe tunes the dedupe lane's follow-through on its checklists.
 	Dedupe     DedupeLaneConfig `yaml:"dedupe,omitempty" json:"dedupe,omitempty"`
 	Contribute ContributeConfig `yaml:"contribute,omitempty" json:"contribute,omitempty"`
-	HiveID     string           `yaml:"hive_id"`
-	ACMMLevel  *int             `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	// Workflow gates the workflow-model engine (hivecommons/hive#17620).
+	// Off by default: every repository derives stages with the built-in
+	// derivers exactly as before. On, repositories bound to a workflow
+	// model derive through it; unbound repositories are unchanged.
+	Workflow  WorkflowConfig `yaml:"workflow,omitempty" json:"workflow,omitempty"`
+	HiveID    string         `yaml:"hive_id"`
+	ACMMLevel *int           `yaml:"acmm_level,omitempty" json:"acmm_level"`
 	// ModelRoles is the named model-roles map (#9722): a small set of names,
 	// each naming a backend, a model and a reasoning effort, referenced as
 	// "@<role>" wherever hive asks for a model (today: agents' model and the
@@ -274,6 +279,11 @@ type Config struct {
 	ReviewerAutoscaleActive int `yaml:"-" json:"-"`
 }
 
+// WorkflowConfig is the `workflow:` block (hivecommons/hive#17620).
+type WorkflowConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+}
+
 type DataConfig struct {
 	MetricsDir         string `yaml:"metrics_dir"`
 	LogsDir            string `yaml:"logs_dir"`
@@ -286,6 +296,10 @@ type DataConfig struct {
 	// panel configuration (#11694). Default /data/nous; HIVE_NOUS_DATA_DIR
 	// overrides it at runtime.
 	NousDir string `yaml:"nous_dir,omitempty"`
+	// WorkflowsDir is the durable root for stored workflow models
+	// (hivecommons/hive#17620); models live under <dir>/workflows. Empty
+	// means the hive data dir (/data); HIVE_WORKFLOWS_DATA_DIR overrides.
+	WorkflowsDir string `yaml:"workflows_dir,omitempty"`
 
 	// SessionRetentionDays is how many days of CLI session-state directories to
 	// keep. Session directories are created per CLI invocation and were never

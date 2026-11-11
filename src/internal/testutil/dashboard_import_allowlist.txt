@@ -21,6 +21,7 @@
 # crux/logscrub: pkg/logscrub moved into the Crux module with the cut (hivecommons/hive#13950).
 # search: GET /api/repos/{owner}/{repo}/health serves the report-only repo health score the search indexer computes (search.Health), wired through a setter so the dashboard never builds or walks the index (hivecommons/hive#14638).
 # search: GET /api/search reads the portfolio search Backend the indexer publishes; pkg/search is a leaf (no dashboard deps) (hivecommons/hive#14637).
+# workflowmodel: /api/workflows handlers compile lifecycle models (Compile, Profile diagnostics) and the tracker emits per-repo workflow columns; the store and bindings already route through Dependencies (hivecommons/hive#17620 P2).
 github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agent
 github.com/hivecommons/hive/crux/agentparse
@@ -98,5 +99,6 @@ github.com/hivecommons/hive/pkg/tokens
 github.com/hivecommons/hive/pkg/turn
 github.com/hivecommons/hive/pkg/upstreamwatch
 github.com/hivecommons/hive/pkg/webassets
+github.com/hivecommons/hive/pkg/workflowmodel
 github.com/hivecommons/hive/pkg/worksource
 github.com/hivecommons/hive/pkg/writeback
