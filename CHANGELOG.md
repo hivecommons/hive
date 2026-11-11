@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.219.1)
+
+### Fixed
+
+- Weekly competitor report: the publication gate keys Discord table rows by project first word, holds table notes to their provenance links, and accepts "does not mean no licence"-style disclaimers (catch-up run 43070009570 failed on these).
+
 ## 2026-11-11 (v5.219.0)
 
 ### Added
