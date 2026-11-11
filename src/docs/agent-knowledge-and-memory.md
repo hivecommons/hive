@@ -268,6 +268,10 @@ conversation. `/clear` empties the chat; it does not touch anything on disk.
   deleted — a pre-isolation `projects/*/memory` store is logged once for review.
   The full table is in [agent-configuration.md](agent-configuration.md#per-agent-homes-what-is-shared-and-what-is-private).
 - `HIVE_SHARED_AGENT_HOME=1` forces the legacy single shared home for all.
+- `HIVE_SHARED_CLAUDE_HOME=1` keeps only `~/.claude` shared, as one
+  whole-directory link: Claude agents share `CLAUDE.md`, history, todos and
+  memory again, in exchange for a token refresh that reaches every agent. See
+  [agent-configuration.md](agent-configuration.md#keeping-one-shared-claude-directory).
 - Inference (API-routed) agents use throwaway homes under
   `/tmp/.claude-inference-home-<name>` that vanish with the pod.
 - Contributor containers stage only `.credentials.json` and `settings.json`

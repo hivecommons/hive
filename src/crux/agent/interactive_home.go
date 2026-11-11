@@ -405,6 +405,9 @@ func (m *Manager) setupPerAgentCLIHomes(agentName, home string, uid int) {
 }
 
 func (m *Manager) setupPerAgentCLIHome(agentName, home string, uid int, spec perAgentCLIHome) {
+	if spec.dir == claudeHomeDirName && sharedClaudeHomeForced() && m.bridgeSharedClaudeHome(agentName, home) {
+		return
+	}
 	dir := filepath.Join(home, spec.dir)
 	shared := filepath.Join(sharedAgentHome, spec.dir)
 	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {

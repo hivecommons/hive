@@ -171,7 +171,8 @@ func (m *Manager) seedCopilotMemorySetting(agent *AgentProcess, home string) {
 // agent might have run, under its own HOME and CODEX_HOME only. Shared-home
 // paths are never returned: under HIVE_SHARED_AGENT_HOME=1 (or a UID-0
 // agent) the stores are fleet-shared and wiping them for one agent's kick
-// would erase every other agent's memory too.
+// would erase every other agent's memory too. The same holds for one CLI home
+// that is a whole-directory link to the shared home (HIVE_SHARED_CLAUDE_HOME=1).
 func cliMemoryStorePaths(agent *AgentProcess, backend string) []string {
 	if agent.UID <= 0 || sharedAgentHomeForced() {
 		return nil
@@ -179,6 +180,13 @@ func cliMemoryStorePaths(agent *AgentProcess, backend string) []string {
 	home := AgentHome(agent.Name, agent.UID, backend)
 	var paths []string
 	for _, spec := range perAgentCLIHomes {
+		// A CLI home that is a whole-directory link into the shared home
+		// (HIVE_SHARED_CLAUDE_HOME=1, or a legacy bridge not yet retired)
+		// holds the fleet's stores, not this agent's: a path through it
+		// would wipe every other agent's memory too.
+		if info, err := os.Lstat(filepath.Join(home, spec.dir)); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
 		for _, rel := range spec.memoryRel {
 			matches, err := filepath.Glob(filepath.Join(home, spec.dir, filepath.FromSlash(rel)))
 			if err != nil {

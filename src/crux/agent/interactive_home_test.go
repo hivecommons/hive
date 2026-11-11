@@ -677,3 +677,115 @@ func TestSweepOrphanedClaudeTmp(t *testing.T) {
 		t.Errorf("real .claude.json must survive the sweep: %v", err)
 	}
 }
+
+// HIVE_SHARED_CLAUDE_HOME=1: ~/.claude becomes a whole-directory link to the
+// shared Claude directory, so a credential the CLI renames into place lands in
+// the shared login. The per-agent directory is moved aside, never deleted, and
+// the other CLI homes stay per agent.
+func TestSetupInteractiveHome_SharedClaudeHomeLinksWholeDirectory(t *testing.T) {
+	shared := withSharedAgentHome(t)
+	t.Setenv("HIVE_SHARED_CLAUDE_HOME", "1")
+	m := interactiveHomeTestManager(t)
+	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
+	home := interactiveHomePath("scanner")
+	sharedClaude := filepath.Join(shared, ".claude")
+	if err := os.MkdirAll(sharedClaude, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The per-agent layout: a real ~/.claude holding this agent's memory.
+	memRel := filepath.Join("projects", "-data-agents-scanner", "memory", "MEMORY.md")
+	mem := filepath.Join(home, ".claude", memRel)
+	if err := os.MkdirAll(filepath.Dir(mem), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mem, []byte("# mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m.setupInteractiveHome(ap, "claude")
+
+	link := filepath.Join(home, ".claude")
+	if target, err := os.Readlink(link); err != nil || target != sharedClaude {
+		t.Fatalf(".claude is not a link to the shared directory: target=%q err=%v", target, err)
+	}
+	// The per-agent directory was moved aside with its contents.
+	moved, err := filepath.Glob(filepath.Join(home, ".claude.per-agent-*", memRel))
+	if err != nil || len(moved) != 1 {
+		t.Fatalf("per-agent directory not preserved exactly once: %v err=%v", moved, err)
+	}
+	if data, err := os.ReadFile(moved[0]); err != nil || string(data) != "# mine" {
+		t.Errorf("moved-aside memory changed: %q err=%v", data, err)
+	}
+	// What the CLI does on a token refresh: a temp file in ~/.claude renamed
+	// over .credentials.json. Through the link it lands in the shared login.
+	tmp := filepath.Join(link, ".credentials.json.tmp")
+	if err := os.WriteFile(tmp, []byte(`{"claudeAiOauth":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, filepath.Join(link, ".credentials.json")); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(filepath.Join(sharedClaude, ".credentials.json")); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("refreshed credential did not land in the shared directory: info=%v err=%v", info, err)
+	}
+	if target, err := os.Readlink(link); err != nil || target != sharedClaude {
+		t.Errorf("the rename replaced the directory link: target=%q err=%v", target, err)
+	}
+	// The other CLI homes are still real per-agent directories.
+	if info, err := os.Lstat(filepath.Join(home, ".gemini")); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Errorf(".gemini should stay a per-agent directory: info=%v err=%v", info, err)
+	}
+
+	// Idempotent: a second launch keeps the link and moves nothing else.
+	m.setupInteractiveHome(ap, "claude")
+	if target, err := os.Readlink(link); err != nil || target != sharedClaude {
+		t.Errorf(".claude link lost on re-provision: target=%q err=%v", target, err)
+	}
+	if asides, _ := filepath.Glob(filepath.Join(home, ".claude.per-agent-*")); len(asides) != 1 {
+		t.Errorf("re-provision moved something aside again: %v", asides)
+	}
+}
+
+// With no shared Claude directory to link to, the switch keeps the per-agent
+// directory: a dangling directory link would break the CLI's own mkdir -p.
+func TestSetupInteractiveHome_SharedClaudeHomeNeedsSharedDirectory(t *testing.T) {
+	withSharedAgentHome(t)
+	t.Setenv("HIVE_SHARED_CLAUDE_HOME", "1")
+	m := interactiveHomeTestManager(t)
+	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
+	home := interactiveHomePath("scanner")
+
+	m.setupInteractiveHome(ap, "claude")
+
+	if info, err := os.Lstat(filepath.Join(home, ".claude")); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Errorf(".claude should be a per-agent directory when the shared one is missing: info=%v err=%v", info, err)
+	}
+}
+
+// Turning the switch off again goes back to the per-agent layout on the next
+// launch: the directory link is retired like any legacy bridge.
+func TestSetupInteractiveHome_SharedClaudeHomeOffRetiresLink(t *testing.T) {
+	shared := withSharedAgentHome(t)
+	m := interactiveHomeTestManager(t)
+	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
+	home := interactiveHomePath("scanner")
+	if err := os.MkdirAll(filepath.Join(shared, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("HIVE_SHARED_CLAUDE_HOME", "1")
+	m.setupInteractiveHome(ap, "claude")
+	if info, err := os.Lstat(filepath.Join(home, ".claude")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf(".claude should be a link while the switch is on: info=%v err=%v", info, err)
+	}
+
+	t.Setenv("HIVE_SHARED_CLAUDE_HOME", "")
+	m.setupInteractiveHome(ap, "claude")
+	if info, err := os.Lstat(filepath.Join(home, ".claude")); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Errorf(".claude should be a per-agent directory again: info=%v err=%v", info, err)
+	}
+	if target, err := os.Readlink(filepath.Join(home, ".claude", ".credentials.json")); err != nil || target != filepath.Join(shared, ".claude", ".credentials.json") {
+		t.Errorf(".credentials.json bridge not restored: target=%q err=%v", target, err)
+	}
+}

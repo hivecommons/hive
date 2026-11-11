@@ -213,3 +213,32 @@ func TestClearCLIMemoryForKick_OffByDefaultAndNeverSharedHome(t *testing.T) {
 		t.Errorf("uid 0 returned stores to wipe: %v", got)
 	}
 }
+
+// A ~/.claude that is a whole-directory link to the shared home
+// (HIVE_SHARED_CLAUDE_HOME=1, or a legacy bridge) holds every agent's memory:
+// the per-kick wipe must never be handed a path through it.
+func TestCLIMemoryStorePaths_SkipsWholeDirectoryLink(t *testing.T) {
+	shared := withSharedAgentHome(t)
+	home := interactiveHomePath("scanner")
+	sharedMem := filepath.Join(shared, ".claude", "projects", "-data-agents-coder", "memory")
+	if err := os.MkdirAll(sharedMem, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(shared, ".claude"), filepath.Join(home, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+
+	on := &config.CLIMemoryConfig{ClearOnKick: true}
+	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{CLIMemory: on}}
+	if got := cliMemoryStorePaths(ap, "claude"); len(got) != 0 {
+		t.Errorf("a whole-directory link returned shared stores to wipe: %v", got)
+	}
+	m := interactiveHomeTestManager(t)
+	m.clearCLIMemoryForKick(ap, "claude")
+	if _, err := os.Stat(sharedMem); err != nil {
+		t.Errorf("the shared memory store was wiped through the link: %v", err)
+	}
+}

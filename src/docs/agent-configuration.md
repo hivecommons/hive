@@ -705,6 +705,21 @@ Each repair writes a `claude_credential_rebridged` Audit Log entry naming the ag
 
 The repair skips an agent whose whole `~/.claude` is still the old directory symlink to `/data/home/.claude`. That happens to an agent that has been paused or stopped since before the per-agent split, because only a launch replaces the directory link. Through that link the agent's `.credentials.json` is the shared login itself, so there is nothing private to move aside. The hive log says so once per agent (`claude credential bridge: this agent's .claude directory resolves to the shared login directory`), the card does not show a broken bridge, and the agent's next launch replaces the directory link with its own `~/.claude`.
 
+#### Keeping one shared Claude directory
+
+Set `HIVE_SHARED_CLAUDE_HOME=1` in the hive's environment to keep every agent's `~/.claude` as one whole-directory link to the shared `/data/home/.claude`, the layout from before [#17031](https://github.com/hivecommons/hive/issues/17031).
+
+Use it when a hive with per-agent users signs in to Claude from the dashboard and its agents log out again about every 8 hours. With the whole directory linked, the CLI's refresh (a temp file renamed over `.credentials.json`) lands in the shared directory, so every agent reads the new token and the credential link is never replaced.
+
+What changes while it is on:
+
+- On an agent's next launch its `~/.claude` becomes the link. A per-agent `.claude` directory found there is moved aside to `~/.claude.per-agent-<UTC timestamp>`, never deleted.
+- Claude agents share one `CLAUDE.md`, `history.jsonl` and `todos/` again, and can read each other's transcripts and auto-memory. This gives up the isolation #17031 added, for Claude only. `.gemini`, `.bob` and `.copilot` stay per agent.
+- `agents.cli_memory.clear_on_kick` skips Claude, because the memory store is no longer the agent's own.
+- Claude sessions recorded in the moved-aside directories are no longer scanned for the dashboard's token totals.
+
+Unset the variable to go back: the next launch retires the link and creates a fresh per-agent directory. The moved-aside directory is left for you to restore by hand.
+
 ### CLI auto-memory (`agents.cli_memory`)
 
 Subscription CLIs keep their own long-lived "memory" next to the transcripts: Claude Code's auto-memory (`~/.claude/projects/-data-agents-<name>/memory/MEMORY.md`), Codex memories (`$CODEX_HOME/memories/`), Copilot CLI's `memory` setting, and Gemini's `~/.gemini/GEMINI.md`. Hive agents already get their durable context from beads, the knowledge store, and the kick prompt, so a hidden per-CLI notebook mostly accumulates stale one-off inferences ([#17032](https://github.com/hivecommons/hive/issues/17032)). The `agents.cli_memory` block controls it fleet-wide, and each agent may override it with its own `cli_memory:` block:

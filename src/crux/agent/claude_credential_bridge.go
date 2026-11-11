@@ -375,6 +375,12 @@ func preserveClaudeCredential(path string, now time.Time) (string, error) {
 func (m *Manager) rebridgeClaudeCredential(agentName, link, target, trigger string) *claudeBridgeRepair {
 	rep, err := m.repairClaudeCredentialBridge(agentName, link, target)
 	if errors.Is(err, errClaudeBridgeLinkIsTarget) {
+		if sharedClaudeHomeForced() {
+			// The operator chose the whole-directory link
+			// (HIVE_SHARED_CLAUDE_HOME=1): the agent's credential path IS the
+			// shared login by design, so there is nothing to bridge or report.
+			return nil
+		}
 		// The legacy layout: skipped, and said once per agent rather than on
 		// every watchdog cycle. Not audited (nothing changed).
 		if _, seen := claudeBridgeLegacyWarned.LoadOrStore(link, true); !seen {
