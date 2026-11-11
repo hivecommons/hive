@@ -19,6 +19,10 @@ func TestGraphQLMutationGate_SameLinePrefixes(t *testing.T) {
 		{"plain query", `query { viewer { login } }`, false},
 		{"fragment-first query", `fragment F on Repository { id } query { viewer { login } }`, false},
 		{"mutation word in a string", `query { search(query: "mutation { x }") { issueCount } }`, false},
+		{"escaped triple quote in block string", `fragment F on Repository { ref(qualifiedName: """\"""""") { id } }
+mutation { addComment(input:{subjectId:"x", body:"y"}) { subject { ... on Issue { repository { ...F } } } } }`, true},
+		{"unterminated string fails closed", `query { search(query: "abc) { issueCount } }`, true},
+		{"unterminated block string fails closed", `query { search(query: """abc) { issueCount } }`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
