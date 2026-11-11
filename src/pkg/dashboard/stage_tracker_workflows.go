@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"sort"
+	"strconv"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/workflowmodel"
@@ -28,7 +29,13 @@ type StageTrackerWorkflow struct {
 	Version string                       `json:"version"`
 	Hash    string                       `json:"hash,omitempty"`
 	Columns []StageTrackerWorkflowColumn `json:"columns,omitempty"`
-	Error   string                       `json:"error,omitempty"`
+	// Replies maps a stage number (as a string key, the JSON object key
+	// the SPA indexes by `item.stage`) to the human-gate reply verbs the
+	// model declares for the state at that number (hivecommons/hive#17620,
+	// RFC phase 4). The gate pill offers them after the built-in verbs;
+	// each posts `/hive <verb>`. Absent when the model declares none.
+	Replies map[string][]string `json:"replies,omitempty"`
+	Error   string              `json:"error,omitempty"`
 }
 
 // StageTrackerWorkflowColumn is a column with the stage numbers it anchors,
@@ -59,7 +66,43 @@ func stageTrackerWorkflowBlock(p *workflowmodel.Profile) StageTrackerWorkflow {
 		sort.Ints(col.Numbers)
 		out.Columns = append(out.Columns, col)
 	}
+	// hive-default's replies are dashboard action ids, not comment verbs;
+	// its block stays exactly as before.
+	for n, id := range p.StateOfNumber {
+		if p.Name == hivedefault.Name {
+			break
+		}
+		if verbs := p.RepliesForNumber(n); len(verbs) > 0 && id != "" {
+			if out.Replies == nil {
+				out.Replies = map[string][]string{}
+			}
+			out.Replies[strconv.Itoa(n)] = append([]string{}, verbs...)
+		}
+	}
 	return out
+}
+
+// workflowProfileForRepo is the compiled model the repository is bound to
+// — nil when unbound, bound to hive-default, or when the binding does not
+// resolve — so the dashboard applies exactly the vocabulary the stage
+// engine does (hivecommons/hive#17620).
+func (s *Server) workflowProfileForRepo(repoFull string) *workflowmodel.Profile {
+	if s == nil || s.deps == nil || s.deps.Config == nil || !s.deps.Config.Workflow.Enabled {
+		return nil
+	}
+	lookup := s.workflowProfileLookup()
+	if lookup == nil {
+		return nil
+	}
+	b, ok := s.deps.Config.WorkflowBindingFor(repoFull)
+	if !ok {
+		return nil
+	}
+	p, err := lookup(b.Name, b.Version)
+	if err != nil || p == nil || p.Name == hivedefault.Name {
+		return nil
+	}
+	return p
 }
 
 // stageTrackerWorkflows builds the block from the config's bindings; nil when
