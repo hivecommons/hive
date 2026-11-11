@@ -237,6 +237,18 @@ func TestIntakeFixtures(t *testing.T) {
 			},
 		},
 		{
+			dir: "maintainers-labels",
+			want: intakeShape{
+				columns:     []string{"open[open]", "triage[triage]"},
+				states:      []string{"triage"},
+				events:      []string{"triage-accepted=labels lacks needs-triage", "triage-requested=labels has needs-triage"},
+				gates:       []string{"review<-maintainer[0]", "triage-decision<-maintainer[0]"},
+				roles:       []string{"maintainer=ada,grace,linus-t"},
+				labels:      []string{"area/runtime->", "kind/bug->", "kind/feature->", "needs-triage->triage", "priority/P0->", "priority/P1->", "priority/P2->"},
+				reviewEdges: 5, triageEdges: 1,
+			},
+		},
+		{
 			dir:  "empty",
 			want: intakeShape{columns: []string{"open[open]"}},
 		},

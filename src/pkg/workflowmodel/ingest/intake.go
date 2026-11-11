@@ -81,6 +81,10 @@ var intakeFiles = map[string]bool{
 	"docs/codeowners":                    true,
 	"owners":                             true,
 	"owners_aliases":                     true,
+	"maintainers":                        true,
+	"maintainers.md":                     true,
+	".github/maintainers.md":             true,
+	"docs/maintainers.md":                true,
 	".github/settings.yml":               true,
 	".github/labels.yml":                 true,
 	".github/labels.yaml":                true,
@@ -173,6 +177,8 @@ func readIntake(files map[string][]byte) *intake {
 			in.owners.addOwners(p, data)
 		case pathIs(p, "owners_aliases"):
 			in.owners.addAliases(p, data)
+		case pathIs(p, "maintainers", "maintainers.md", ".github/maintainers.md", "docs/maintainers.md"):
+			in.owners.addMaintainers(p, data)
 		case pathIs(p, ".github/settings.yml"):
 			parseSettingsLabels(p, data, in.labels)
 			in.settingsRules = branchRulesFromSettings(p, data)
@@ -224,6 +230,7 @@ func applyIntake(m *workflowmodel.Model, in *intake, rules *BranchRules) {
 	applyTriage(m, triage, roles)
 	applyTemplates(m, in.templates, triage)
 	applyConventionLabels(m, in.labels)
+	applyClassificationLabels(m, in.labels)
 	m.Spec.Checks = append(m.Spec.Checks, in.checks...)
 	applyBranchRules(m, rules, roles)
 }

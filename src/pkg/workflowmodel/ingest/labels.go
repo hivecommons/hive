@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -85,7 +86,23 @@ var (
 	// conventionNames are community labels worth carrying in the label
 	// set but that mark no state.
 	conventionNames = []string{"good-first-issue", "help-wanted"}
+	// classificationPrefixes are the label families triage applies to
+	// classify an issue (kind/bug, priority/P1, area/docs ...). They mark
+	// no state either; the model carries them so the triage gate's
+	// vocabulary is visible in the editor.
+	classificationPrefixes = []string{"kind/", "priority/", "type/", "area/", "severity/", "size/"}
 )
+
+// isClassificationLabel reports whether the normalized label n belongs
+// to one of the classification families.
+func isClassificationLabel(n string) bool {
+	for _, p := range classificationPrefixes {
+		if rest, ok := strings.CutPrefix(n, p); ok && rest != "" {
+			return true
+		}
+	}
+	return false
+}
 
 // triageLabels are the repository's triage labels, if any (empty names
 // when absent), with their citations.
@@ -210,6 +227,9 @@ func parseContributing(p string, data []byte, x *labelIndex) {
 	for i, line := range strings.Split(string(data), "\n") {
 		for _, m := range backticked.FindAllStringSubmatch(line, -1) {
 			n := normalizeLabel(m[1])
+			if isClassificationLabel(n) && !strings.ContainsAny(m[1], " *<>") {
+				x.add(m[1], "", "", cite(p, i+1, m[0]))
+			}
 			for _, t := range table {
 				if n == t {
 					x.add(m[1], "", "", cite(p, i+1, m[0]))
@@ -303,6 +323,23 @@ func applyConventionLabels(m *workflowmodel.Model, x *labelIndex) {
 		if l, ok := x.get(n); ok {
 			addLabel(m, workflowmodel.LabelEntry{Name: l.Name, Description: l.Description, Color: l.Color})
 		}
+	}
+}
+
+// applyClassificationLabels carries the kind/*, priority/* ... labels the
+// repository declares into the label set (no state), sorted by name.
+// Labels an intake state already bound keep that state (addLabel).
+func applyClassificationLabels(m *workflowmodel.Model, x *labelIndex) {
+	var names []string
+	for n := range x.byName {
+		if isClassificationLabel(n) {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		l := x.byName[n]
+		addLabel(m, workflowmodel.LabelEntry{Name: l.Name, Description: l.Description, Color: l.Color})
 	}
 }
 

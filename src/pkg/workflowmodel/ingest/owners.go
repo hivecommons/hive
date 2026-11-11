@@ -2,12 +2,14 @@ package ingest
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/hivecommons/hive/pkg/workflowmodel"
+	"github.com/hivecommons/hive/pkg/workflowmodel/hivedefault"
 )
 
 // owners collects who approves and reviews from CODEOWNERS (GitHub) and
@@ -16,10 +18,12 @@ import (
 // not express.
 type owners struct {
 	approvers, reviewers map[string]bool
+	maintainers          map[string]bool
 	aliases              map[string][]string
 	rawApprovers         []string
 	rawReviewers         []string
 	cites                []workflowmodel.Citation
+	maintainerCites      []workflowmodel.Citation
 	prow                 bool
 }
 
@@ -27,11 +31,42 @@ func (o *owners) init() {
 	if o.approvers == nil {
 		o.approvers = map[string]bool{}
 		o.reviewers = map[string]bool{}
+		o.maintainers = map[string]bool{}
 		o.aliases = map[string][]string{}
 	}
 }
 
-func (o *owners) empty() bool { return len(o.approvers) == 0 && len(o.reviewers) == 0 }
+func (o *owners) empty() bool {
+	return len(o.approvers) == 0 && len(o.reviewers) == 0 && len(o.maintainers) == 0
+}
+
+// maintainerHandle matches a GitHub handle written as @handle (not the
+// local part of an e-mail address) or as a github.com/handle link in a
+// MAINTAINERS file.
+var maintainerHandle = regexp.MustCompile(`(?:^|[^\w.])(?:@|https?://github\.com/)([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))`)
+
+// addMaintainers reads the handles named in a MAINTAINERS file (plain
+// list, markdown table or prose). Only @handle and github.com/handle
+// spellings count: names and e-mail addresses are not GitHub identities.
+func (o *owners) addMaintainers(p string, data []byte) {
+	o.init()
+	first := 0
+	for i, line := range strings.Split(string(data), "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" || (strings.HasPrefix(s, "#") && !strings.Contains(s, "@")) {
+			continue
+		}
+		for _, m := range maintainerHandle.FindAllStringSubmatch(line, -1) {
+			o.maintainers[m[1]] = true
+			if first == 0 {
+				first = i + 1
+			}
+		}
+	}
+	if first > 0 {
+		o.maintainerCites = append(o.maintainerCites, cite(p, first, "MAINTAINERS"))
+	}
+}
 
 // addCodeowners reads every owner on every rule line as an approver:
 // GitHub requests their review and, under require-code-owner-review,
@@ -167,11 +202,7 @@ func applyOwners(m *workflowmodel.Model, o owners) map[string]bool {
 	if o.empty() {
 		return roles
 	}
-	sources := make([]string, 0, len(o.cites))
-	for _, c := range o.cites {
-		sources = append(sources, fmt.Sprintf("%s:%d", c.Path, c.Line))
-	}
-	source := strings.Join(sources, ",")
+	source := citeSources(o.cites)
 	if a := members(o.approvers); len(a) > 0 {
 		m.Spec.Roles = append(m.Spec.Roles, workflowmodel.RoleDef{ID: RoleApprover, Label: "Approver", Kind: workflowmodel.RoleMembers, Params: map[string]string{"members": strings.Join(a, ","), "source": source}, Human: true})
 		roles[RoleApprover] = true
@@ -187,7 +218,41 @@ func applyOwners(m *workflowmodel.Model, o owners) map[string]bool {
 			g.Reply = "/approve"
 		}
 	}
+	if mt := members(o.maintainers); len(mt) > 0 {
+		applyMaintainers(m, mt, o.maintainerCites)
+		roles[hivedefault.RoleMaintainer] = true
+		if !roles[RoleApprover] {
+			g := ensureReviewGate(m, hivedefault.RoleMaintainer)
+			g.Citations = append(g.Citations, o.maintainerCites...)
+		}
+	}
 	return roles
+}
+
+// applyMaintainers turns the hive-default permission-based maintainer
+// role into the members the MAINTAINERS file names (adding the role when
+// the model has none), keeping the gates that already reference it.
+func applyMaintainers(m *workflowmodel.Model, mt []string, cites []workflowmodel.Citation) {
+	params := map[string]string{"members": strings.Join(mt, ","), "source": citeSources(cites)}
+	for i := range m.Spec.Roles {
+		if m.Spec.Roles[i].ID == hivedefault.RoleMaintainer {
+			m.Spec.Roles[i].Kind = workflowmodel.RoleMembers
+			m.Spec.Roles[i].Params = params
+			m.Spec.Roles[i].Human = true
+			return
+		}
+	}
+	m.Spec.Roles = append(m.Spec.Roles, workflowmodel.RoleDef{ID: hivedefault.RoleMaintainer, Label: "Maintainer", Kind: workflowmodel.RoleMembers, Params: params, Human: true})
+}
+
+// citeSources joins citations as the "path:line,..." source string roles
+// and checks carry.
+func citeSources(cites []workflowmodel.Citation) string {
+	sources := make([]string, 0, len(cites))
+	for _, c := range cites {
+		sources = append(sources, fmt.Sprintf("%s:%d", c.Path, c.Line))
+	}
+	return strings.Join(sources, ",")
 }
 
 // ensureReviewGate returns the review gate, adding it (released by role,
