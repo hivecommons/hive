@@ -1,1 +1,0 @@
-- **proxy:** the GitHub GraphQL mutation gate no longer fails open when `mutation` follows a same-line prefix (a leading fragment definition, comma or BOM). It now uses the same string- and comment-aware depth-zero token scan as the Linear path, so read-only lanes cannot slip a mutation past the capability tier, write-surface and auto-merge checks (#17676).
