@@ -577,16 +577,6 @@ type graphQLRequest struct {
 	Variables     any    `json:"variables"`
 }
 
-var graphQLMutationRe = regexp.MustCompile(`(?m)^\s*mutation\b`)
-
-// isGitHubGraphQLMutation reports whether the document holds a depth-zero
-// mutation operation. The anchored regex above misses same-line prefixes (a
-// leading fragment, comma or BOM), so every gate uses the string- and
-// comment-aware token scan the Linear path already relies on.
-func isGitHubGraphQLMutation(query string) bool {
-	return countGraphQLKeyword(query, "mutation") > 0
-}
-
 // graphQLMergeMutationRe matches mutations that merge a pull request. Merging is
 // the highest-privilege write and must require the same mode as the REST
 // `PUT /pulls/{n}/merge` rule (ModeIssuesPRsMerge) — otherwise an ISSUES_ONLY
