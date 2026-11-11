@@ -106,6 +106,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Resolve the base image and the tag once, up front, so every later step
       # (the exists-check, the build, the summary) agrees on them.
