@@ -68,6 +68,12 @@ type repoResult struct {
 	ValidateError  string                         `json:"validateError,omitempty"`
 	Hash           string                         `json:"hash"`
 	Severities     map[workflowmodel.Severity]int `json:"severities,omitempty"`
+	// Compiled says whether the lifecycle model (ingest.Lifecycle) compiles;
+	// CompileCodes counts its diagnostics by code, errors and warnings.
+	Compiled      bool           `json:"compiled"`
+	CompileError  string         `json:"compileError,omitempty"`
+	CompileCodes  map[string]int `json:"compileCodes,omitempty"`
+	LifecycleCols int            `json:"lifecycleColumns"`
 }
 
 type summary struct {
@@ -78,6 +84,8 @@ type summary struct {
 	Parsed           int                            `json:"parsed"`
 	Pipelines        int                            `json:"pipelines"`
 	Valid            int                            `json:"valid"`
+	Compiled         int                            `json:"compiled"`
+	CompileCodes     map[string]int                 `json:"compileCodes"`
 	Roles            map[workflowmodel.Role]int     `json:"roles"`
 	Constructs       map[string]int                 `json:"constructs"`
 	FindingCodes     map[string]int                 `json:"findingCodes"`
@@ -160,7 +168,7 @@ func run(corpus, out string, filter map[string]bool, stdout, stderr io.Writer) e
 		return err
 	}
 	maturity := loadProjects(corpus)
-	sum := &summary{Roles: map[workflowmodel.Role]int{}, Constructs: map[string]int{}, FindingCodes: map[string]int{}, Severities: map[workflowmodel.Severity]int{}, ColumnSets: map[string]int{}, ByProject: map[string]*projectStats{}}
+	sum := &summary{Roles: map[workflowmodel.Role]int{}, Constructs: map[string]int{}, FindingCodes: map[string]int{}, Severities: map[workflowmodel.Severity]int{}, CompileCodes: map[string]int{}, ColumnSets: map[string]int{}, ByProject: map[string]*projectStats{}}
 	for _, d := range dirs {
 		if !d.IsDir() {
 			continue
@@ -252,7 +260,23 @@ func surveyRepo(dir, repo, outDir string) (repoResult, error) {
 	}
 	res.ColumnDiff = render.Diff(m)
 
+	lm := ingest.Lifecycle(workflowmodel.Scope{Forge: defaultForge, Repository: repo}, files)
+	res.LifecycleCols = len(lm.Spec.Columns)
+	res.CompileCodes = map[string]int{}
+	_, diags, cerr := workflowmodel.Compile(lm)
+	for _, d := range diags {
+		res.CompileCodes[d.Code]++
+	}
+	if cerr != nil {
+		res.CompileError = cerr.Error()
+	} else {
+		res.Compiled = true
+	}
+
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return res, err
+	}
+	if err := writeJSON(filepath.Join(outDir, "lifecycle.json"), lm); err != nil {
 		return res, err
 	}
 	if err := writeJSON(filepath.Join(outDir, "model.json"), m); err != nil {
@@ -324,6 +348,12 @@ func accumulate(s *summary, r repoResult) {
 	if r.Valid {
 		s.Valid++
 	}
+	if r.Compiled {
+		s.Compiled++
+	}
+	for k, v := range r.CompileCodes {
+		s.CompileCodes[k] += v
+	}
 	if len(r.ColumnDiff) > 0 {
 		s.ReposChangedCols++
 	}
@@ -375,7 +405,12 @@ func markdown(s *summary) string {
 	fmt.Fprintf(&b, "# Workflow model survey\n\n")
 	fmt.Fprintf(&b, "| | |\n|---|---|\n")
 	fmt.Fprintf(&b, "| Repositories | %d |\n| with GitHub Actions pipelines | %d |\n| with Tekton pipelines | %d |\n", s.Repos, s.ReposWithGHA, s.ReposWithTekton)
-	fmt.Fprintf(&b, "| Files read | %d |\n| Files parsed | %d (%.1f%%) |\n| Pipelines | %d |\n| Models valid | %d / %d |\n| Repos whose columns change | %d |\n\n", s.Files, s.Parsed, pct(s.Parsed, s.Files), s.Pipelines, s.Valid, s.Repos, s.ReposChangedCols)
+	fmt.Fprintf(&b, "| Files read | %d |\n| Files parsed | %d (%.1f%%) |\n| Pipelines | %d |\n| Models valid | %d / %d |\n| Lifecycle models compiled | %d / %d |\n| Repos whose columns change | %d |\n\n", s.Files, s.Parsed, pct(s.Parsed, s.Files), s.Pipelines, s.Valid, s.Repos, s.Compiled, s.Repos, s.ReposChangedCols)
+	b.WriteString("## Lifecycle compile diagnostics\n\n| Code | Count |\n|---|---|\n")
+	for _, k := range sortedKeys(s.CompileCodes) {
+		fmt.Fprintf(&b, "| %s | %d |\n", k, s.CompileCodes[k])
+	}
+	b.WriteString("\n")
 	b.WriteString("## Pipeline roles\n\n| Role | Pipelines |\n|---|---|\n")
 	for _, k := range sortedKeys(s.Roles) {
 		fmt.Fprintf(&b, "| %s | %d |\n", k, s.Roles[workflowmodel.Role(k)])

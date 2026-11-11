@@ -20,6 +20,7 @@ func (s *Server) registerWorkflowRoutes() {
 	s.mux.HandleFunc("GET /api/workflows", s.handleWorkflowList)
 	s.mux.HandleFunc("POST /api/workflows", s.handleWorkflowSave)
 	s.mux.HandleFunc("POST /api/workflows/compile", s.handleWorkflowCompile)
+	s.mux.HandleFunc("POST /api/workflows/ingest", s.handleWorkflowIngest)
 	s.mux.HandleFunc("GET /api/workflows/bindings", s.handleWorkflowBindingsGet)
 	s.mux.HandleFunc("PUT /api/workflows/bindings", s.handleWorkflowBindingPut)
 	s.mux.HandleFunc("GET /api/workflows/{name}/{version}", s.handleWorkflowGet)

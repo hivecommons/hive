@@ -201,6 +201,9 @@ func scalarValue(fact string) string {
 		return "changes_requested"
 	case "pr.dco":
 		return "yes"
+	case "pipeline.status":
+		// Post-merge runs are not observed yet; the engine reports unknown.
+		return "unknown"
 	case "pr.base":
 		return "main"
 	}

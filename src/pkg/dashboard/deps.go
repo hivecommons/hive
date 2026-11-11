@@ -61,6 +61,10 @@ type Dependencies struct {
 	// WorkflowStore serves the workflow-model library (hivecommons/hive#17620).
 	// Nil disables the /api/workflows endpoints.
 	WorkflowStore *wfstore.Store
+	// WorkflowRepoFiles fetches a repository's default-branch CI definition
+	// files (repo-relative slash path -> contents) and the ref read, for
+	// POST /api/workflows/ingest. Nil disables ingest from a repository.
+	WorkflowRepoFiles func(ctx context.Context, repo string) (files map[string][]byte, ref string, err error)
 	// AgentMgr is the agent runtime (hivecommons/hive#13536). The dashboard
 	// programs against the crux.Runtime surface, not *agent.Manager; tests that
 	// need manager-only seams unwrap it with agentManager.
