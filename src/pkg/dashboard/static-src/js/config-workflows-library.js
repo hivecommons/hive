@@ -10,7 +10,7 @@
     //
     // All HTML builders are pure functions of their inputs so the node
     // harness (workflows_library_ui_test.go) can run them without a DOM.
-    const WF_LIB_VIEWS = ['library', 'detail', 'ingest'];
+    const WF_LIB_VIEWS = ['library', 'detail', 'ingest', 'editor'];
     const WF_PROVENANCE_LABELS = {
       'built-in': 'built-in',
       'curated': 'curated',
@@ -88,7 +88,7 @@
     }
 
     function wfLibNav(view) {
-      const items = [['library', 'Library'], ['ingest', 'Ingest']];
+      const items = [['library', 'Library'], ['ingest', 'Ingest'], ['editor', 'Editor']];
       return '<div class="wf-nav" role="tablist">' + items.map(([id, label]) =>
         `<button type="button" role="tab" class="wf-nav-item${view === id || (id === 'library' && view === 'detail') ? ' active' : ''}" aria-selected="${view === id ? 'true' : 'false'}" data-action="wfLibShow" data-arg0="${id}">${label}</button>`
       ).join('') + '</div>';
@@ -109,6 +109,8 @@
         const canDelete = owner && !builtin && !e.readOnly && !bound.length;
         const actions = [
           `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibOpen" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">View</button>`,
+          owner ? (builtin ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdCopyOf" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" title="Open a copy in the editor under a new name.">Edit a copy</button>`
+            : `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdOpen" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" title="Open in the visual editor.">Edit</button>`) : '',
           owner ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibDuplicate" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" title="Save a copy under a new name as version 1 (provenance: local).">Duplicate</button>` : '',
           `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibExport" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" title="Show the model as JSON to copy.">Export</button>`,
           canDelete ? `<button type="button" class="hv-btn btn-danger btn-sm" data-action="wfLibDelete" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Delete</button>`
@@ -235,6 +237,8 @@
       if (sources.length) facts.push(['Ingested from', sources.map(s => `<span class="mono">${esc(s.repo || s.ref || s.path || JSON.stringify(s))}</span>`).join(', ')]);
       const actions = [
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibShow" data-arg0="library">← Library</button>',
+        owner ? (builtin ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdCopyOf" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Edit a copy</button>`
+          : `<button type="button" class="hv-btn btn-primary btn-sm" data-action="wfEdOpen" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Edit</button>`) : '',
         owner ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibDuplicate" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Duplicate</button>` : '',
         `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibExport" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Export JSON</button>`,
         owner && !builtin && !bound.length ? `<button type="button" class="hv-btn btn-danger btn-sm" data-action="wfLibDelete" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Delete</button>` : '',
@@ -499,6 +503,7 @@
           ` · ${esc(String(r.files || 0))} pipeline file${r.files === 1 ? '' : 's'} · ${pipelines.length} pipeline${pipelines.length === 1 ? '' : 's'} · ${cols.length} column${cols.length === 1 ? '' : 's'}` +
           (r.ref ? ` · <span class="mono">${esc(String(r.ref).slice(0, 12))}</span>` : '') +
           (e ? ` · saved as <a href="#" class="mono" data-action="wfLibOpen" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" data-prevent="1">${esc(e.name + '@' + e.version)}</a>` : '') +
+          (owner && r.model ? ` <button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdOpenIngestResult" title="Open this draft on the editor canvas.">Open in editor</button>` : '') +
           '</div>' +
           (pipelines.length ? '<ul class="wf-pipelines">' + pipelines.map(p => `<li><span class="mono">${esc(p.system || p.kind || '')}</span> ${esc(p.name || p.id || '')}${p.path ? ` <span class="text-muted mono">${esc(p.path)}</span>` : ''}</li>`).join('') + '</ul>' : '') +
           '<h4>Diagnostics</h4>' + renderWorkflowDiagnostics(r.diagnostics) +
@@ -542,6 +547,8 @@
         else body = renderWorkflowDetail(_wfLib.detail, _workflowState.bindings, owner);
       } else if (_wfLib.view === 'ingest') {
         body = renderWorkflowIngest(_wfLib.ingest, owner);
+      } else if (_wfLib.view === 'editor') {
+        body = renderWorkflowEditor(owner);
       } else {
         body = renderWorkflowLibraryTable(_workflowState.workflows, _workflowState.bindings, owner);
       }
@@ -551,6 +558,10 @@
     function wfLibRerender() { if (_configState && _configState.tab === 'Workflows') renderConfigTab('Workflows'); }
 
     function wfLibShow(view) {
+      if (_wfLib.view === 'editor' && view !== 'editor' && typeof wfEdGuardLeave === 'function' && _wfEd.model && wfEdDirty()) {
+        wfEdGuardLeave().then(ok => { if (ok) { _wfEd.model = null; _wfEd.saved = null; wfLibShow(view); } });
+        return;
+      }
       _wfLib.view = WF_LIB_VIEWS.indexOf(view) >= 0 ? view : 'library';
       if (_wfLib.view !== 'detail') { _wfLib.detail = null; _wfLib.detailError = ''; }
       wfLibRerender();
