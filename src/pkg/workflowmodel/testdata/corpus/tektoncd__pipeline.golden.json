@@ -1,0 +1,37 @@
+{
+  "columns": [
+    "Open",
+    "Actionable",
+    "Claimed",
+    "PR in progress",
+    "CI / Review",
+    "Merge queue",
+    "Merged"
+  ],
+  "roles": {
+    "pr-verify": 1
+  },
+  "pipelines": [
+    {
+      "id": "gha-github-workflows-ci",
+      "role": "pr-verify",
+      "nodes": 9,
+      "levels": 4,
+      "events": [
+        "pull_request"
+      ]
+    }
+  ],
+  "ciSubstages": [
+    "categorize changes",
+    "build · buildFips · lint",
+    "Check generated code · Multi-arch build · e2e-tests +1",
+    "CI summary"
+  ],
+  "findings": {
+    "pipelineref-external": 1
+  },
+  "columnDiff": [
+    "column \"CI / Review\" gains 4 CI substage(s) from 1 pipeline(s)"
+  ]
+}

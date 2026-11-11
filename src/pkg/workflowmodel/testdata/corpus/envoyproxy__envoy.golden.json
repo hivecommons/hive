@@ -1,0 +1,94 @@
+{
+  "columns": [
+    "Open",
+    "Actionable",
+    "Claimed",
+    "PR in progress",
+    "CI / Review",
+    "Merge queue",
+    "Merged",
+    "Main CI",
+    "Release",
+    "Done"
+  ],
+  "roles": {
+    "other": 3,
+    "pr-verify": 2,
+    "release": 1
+  },
+  "pipelines": [
+    {
+      "id": "gha-github-workflows-codeql",
+      "role": "other",
+      "nodes": 1,
+      "levels": 1,
+      "events": [
+        "workflow_call"
+      ]
+    },
+    {
+      "id": "gha-github-workflows-request",
+      "role": "other",
+      "nodes": 2,
+      "levels": 2,
+      "events": [
+        "workflow_call"
+      ]
+    },
+    {
+      "id": "gha-github-workflows-request-checks",
+      "role": "other",
+      "nodes": 1,
+      "levels": 1,
+      "events": [
+        "workflow_call"
+      ]
+    },
+    {
+      "id": "gha-github-workflows-codeql-push",
+      "role": "pr-verify",
+      "nodes": 3,
+      "levels": 2,
+      "events": [
+        "push",
+        "pull_request"
+      ]
+    },
+    {
+      "id": "gha-github-workflows-envoy-release",
+      "role": "release",
+      "nodes": 6,
+      "levels": 2,
+      "events": [
+        "release",
+        "workflow_dispatch"
+      ]
+    },
+    {
+      "id": "gha-github-workflows-request-2",
+      "role": "pr-verify",
+      "nodes": 2,
+      "levels": 2,
+      "events": [
+        "pull_request_target",
+        "push",
+        "schedule"
+      ]
+    }
+  ],
+  "ciSubstages": [
+    "authorize · targets",
+    "CodeQL-Build · CodeQL-Noop · request"
+  ],
+  "findings": {
+    "environment-on-pr": 1,
+    "reusable-only": 3
+  },
+  "columnDiff": [
+    "column \"CI / Review\" gains 2 CI substage(s) from 2 pipeline(s)",
+    "column \"Merged\" is no longer the cap",
+    "column \"Main CI\" added after merge",
+    "column \"Release\" added after merge",
+    "column \"Done\" added after merge"
+  ]
+}

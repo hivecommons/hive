@@ -1,0 +1,82 @@
+{
+  "columns": [
+    "Open",
+    "Actionable",
+    "Claimed",
+    "PR in progress",
+    "CI / Review",
+    "Merge queue",
+    "Merged",
+    "Main CI",
+    "Release",
+    "Deploy: release-helm",
+    "Deploy: release-tool",
+    "Done"
+  ],
+  "roles": {
+    "deploy": 1,
+    "pr-verify": 1,
+    "push-verify": 1,
+    "release": 1
+  },
+  "pipelines": [
+    {
+      "id": "gha-github-workflows-build-images-ci",
+      "role": "pr-verify",
+      "nodes": 5,
+      "levels": 3,
+      "events": [
+        "pull_request_target",
+        "push",
+        "merge_group"
+      ]
+    },
+    {
+      "id": "gha-github-workflows-build-images-releases",
+      "role": "release",
+      "nodes": 4,
+      "levels": 3,
+      "events": [
+        "push"
+      ]
+    },
+    {
+      "id": "gha-github-workflows-conformance-kind-proxy-embedded",
+      "role": "push-verify",
+      "nodes": 4,
+      "levels": 2,
+      "events": [
+        "workflow_dispatch",
+        "push"
+      ]
+    },
+    {
+      "id": "gha-github-workflows-release",
+      "role": "deploy",
+      "nodes": 2,
+      "levels": 1,
+      "events": [
+        "workflow_dispatch",
+        "workflow_call"
+      ]
+    }
+  ],
+  "ciSubstages": [
+    "Build and Push Images",
+    "Display Digests · Pre-Comment · Push dev chart",
+    "Post test comment for Renovate PRs after images built"
+  ],
+  "findings": {
+    "environment-on-pr": 2,
+    "secrets-inherit": 1
+  },
+  "columnDiff": [
+    "column \"CI / Review\" gains 3 CI substage(s) from 1 pipeline(s)",
+    "column \"Merged\" is no longer the cap",
+    "column \"Main CI\" added after merge",
+    "column \"Release\" added after merge",
+    "column \"Deploy: release-helm\" added after merge",
+    "column \"Deploy: release-tool\" added after merge",
+    "column \"Done\" added after merge"
+  ]
+}
