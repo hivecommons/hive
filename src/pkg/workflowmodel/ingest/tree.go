@@ -1,6 +1,11 @@
 package ingest
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -50,34 +55,121 @@ func ReadTree(root string) (map[string][]byte, error) {
 		if !d.Type().IsRegular() || len(files) >= MaxTreeFiles {
 			return nil
 		}
-		switch {
-		case IsIntakePath(rel):
-		case !isYAMLPath(rel):
-			return nil
-		case githubactions.IsWorkflowPath(rel), underTektonDir(rel):
-		case hintsPipeline(rel):
-			data, err := os.ReadFile(p)
-			if err != nil {
-				return err
-			}
-			if tekton.LooksTekton(data) {
-				files[rel] = data
-			}
-			return nil
-		default:
-			return nil
-		}
-		data, err := os.ReadFile(p)
+		data, keep, err := selectTreeFile(rel, func() ([]byte, error) { return os.ReadFile(p) })
 		if err != nil {
 			return err
 		}
-		files[rel] = data
+		if keep {
+			files[rel] = data
+		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return files, nil
+}
+
+// Tarball streaming limits: ReadTarball keeps at most MaxTarballFileBytes
+// per matched file and MaxTarballKeptBytes across all kept files, so a
+// monorepo's source tree never has to fit anywhere — only its CI files do.
+const (
+	MaxTarballFileBytes = 1 << 20
+	MaxTarballKeptBytes = 32 << 20
+)
+
+// ErrTarballKeptTooLarge is returned when the CI files alone exceed
+// MaxTarballKeptBytes.
+var ErrTarballKeptTooLarge = errors.New("ingest: pipeline files exceed size cap")
+
+// ReadTarball streams a gzipped tar archive (GitHub's /tarball shape: one
+// wrapping top-level directory, a leading pax_global_header) and returns the
+// same selection ReadTree makes from a checkout, without extracting
+// anything to disk. Entries outside the selection are discarded as they
+// stream, so the archive's total size is unbounded; a matched file over
+// MaxTarballFileBytes is skipped (and Repository never sees it), and the
+// kept set is capped at MaxTarballKeptBytes.
+func ReadTarball(r io.Reader) (map[string][]byte, error) {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, fmt.Errorf("ingest: tarball gzip: %w", err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	files := map[string][]byte{}
+	var kept int64
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return files, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("ingest: tarball: %w", err)
+		}
+		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+			continue
+		}
+		rel, ok := tarballRelPath(hdr.Name)
+		if !ok || len(files) >= MaxTreeFiles || hdr.Size > MaxTarballFileBytes {
+			continue
+		}
+		data, keep, err := selectTreeFile(rel, func() ([]byte, error) {
+			return io.ReadAll(io.LimitReader(tr, MaxTarballFileBytes+1))
+		})
+		if err != nil {
+			return nil, fmt.Errorf("ingest: tarball %s: %w", rel, err)
+		}
+		if !keep || int64(len(data)) > MaxTarballFileBytes {
+			continue
+		}
+		kept += int64(len(data))
+		if kept > MaxTarballKeptBytes {
+			return nil, ErrTarballKeptTooLarge
+		}
+		files[rel] = data
+	}
+}
+
+// tarballRelPath strips the wrapping top-level directory from a GitHub
+// tarball entry and rejects anything under a skipDirs component or that
+// escapes the tree.
+func tarballRelPath(name string) (string, bool) {
+	name = strings.TrimPrefix(filepath.ToSlash(name), "./")
+	_, rel, ok := strings.Cut(name, "/")
+	if !ok || rel == "" || strings.HasSuffix(rel, "/") {
+		return "", false
+	}
+	for _, seg := range strings.Split(rel, "/") {
+		if seg == ".." || skipDirs[seg] {
+			return "", false
+		}
+	}
+	return rel, true
+}
+
+// selectTreeFile applies the ReadTree selection to one repo-relative path,
+// calling read only when the path is a candidate; keep reports whether
+// the returned data belongs in the result.
+func selectTreeFile(rel string, read func() ([]byte, error)) (data []byte, keep bool, err error) {
+	switch {
+	case IsIntakePath(rel):
+	case !isYAMLPath(rel):
+		return nil, false, nil
+	case githubactions.IsWorkflowPath(rel), underTektonDir(rel):
+	case hintsPipeline(rel):
+		data, err := read()
+		if err != nil {
+			return nil, false, err
+		}
+		return data, tekton.LooksTekton(data), nil
+	default:
+		return nil, false, nil
+	}
+	data, err = read()
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
 }
 
 func underTektonDir(rel string) bool {
