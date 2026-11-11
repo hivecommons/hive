@@ -45,7 +45,10 @@ func TestWorkflowsLibraryNode(t *testing.T) {
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
 const WF_PROVENANCE_LABELS = { 'built-in': 'built-in', 'curated': 'curated', 'local': 'local', 'ingested-unreviewed': 'ingested · unreviewed' };
 const WF_DIAGRAM = { colW: 172, colGap: 28, chipH: 30, chipGap: 10, headH: 30, pad: 14, textPad: 10, maxLabel: 22 };
-` + jsFunc(t, html, "wfProvenanceOf") + jsFunc(t, html, "wfProvenanceBadge") + jsFunc(t, html, "wfCompiledBadge") +
+const WF_EDGE = { chan: 8, radius: 6, fanMax: 4, selfR: 12 };
+` + jsFunc(t, html, "wfEdgeCommonEvent") + jsFunc(t, html, "wfEdgeChannels") + jsFunc(t, html, "wfEdgeCorridor") +
+		jsFunc(t, html, "wfOrthoPath") + jsFunc(t, html, "wfRouteEdges") + jsFunc(t, html, "wfEdgeLabelSvg") +
+		jsFunc(t, html, "wfProvenanceOf") + jsFunc(t, html, "wfProvenanceBadge") + jsFunc(t, html, "wfCompiledBadge") +
 		jsFunc(t, html, "wfBoundRepos") + jsFunc(t, html, "renderWorkflowLibraryRows") + jsFunc(t, html, "wfTrim") +
 		jsFunc(t, html, "workflowDiagramSvg") + jsFunc(t, html, "wfIngestDefaultName") + `
 assert.strictEqual(wfProvenanceOf(null), 'local');
@@ -99,8 +102,13 @@ const profile = { columns: [{ id: 'c1', label: 'Open', states: ['open'] }, { id:
 const svg = workflowDiagramSvg(model, profile);
 assert.strictEqual((svg.match(/class="wf-dg-lane"/g) || []).length, 3, 'one lane per column');
 assert.strictEqual((svg.match(/class="wf-dg-chip"/g) || []).length, 4, 'one chip per state');
-assert.strictEqual((svg.match(/<path d="M[^"]*" class="wf-dg-edge/g) || []).length, 4, 'duplicate and dangling edges dropped');
+assert.strictEqual((svg.match(/<g class="wf-dg-edge[ "]/g) || []).length, 4, 'duplicate and dangling edges dropped');
 assert.strictEqual((svg.match(/wf-dg-edge back/g) || []).length, 1, 'backward edge marked');
+assert.ok(svg.includes('data-wf-focus-root="1"') && svg.includes('class="wf-edge-layer"'), 'diagram opts into hover focus');
+assert.ok(svg.includes('data-wf-from="review" data-wf-to="open"'), 'edges carry endpoints for focus mode');
+assert.strictEqual((svg.match(/class="wf-dg-edge-label"/g) || []).length, 4, 'labels are rendered (CSS hides them until hover)');
+assert.ok(!svg.includes('<path d="M') || !/wf-dg-edge-line" marker-end="url\(#wf-arrow\)"\/><text/.test(svg), 'no bare text labels on edges');
+assert.ok(svg.includes('fill="context-stroke"'), 'arrowheads follow the edge colour');
 assert.ok(svg.includes('wf-dg-state inferred'), 'inferred state marked');
 assert.ok(svg.includes('wf-dg-state initial'), 'initial state marked');
 assert.ok(svg.includes('>010<') && svg.includes('>100<'), 'stage numbers padded');

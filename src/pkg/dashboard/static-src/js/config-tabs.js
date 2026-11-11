@@ -63,6 +63,9 @@
         if (tabId === 'Appearance') loadThemeConfig();
         if (tabId === 'Knowledge') { renderPublicKnowledgeControls(); loadKnowledgeConnectors(); loadKnowledgePipeline(); }
         if (tabId === 'Compliance') loadComplianceStatus();
+        // The workflow editor's canvas needs real pointer listeners and a
+        // measured viewport once its SVG is in the DOM.
+        if (tabId === 'Workflows' && typeof wfEdAfterRender === 'function') wfEdAfterRender();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
       // invariant on every render (requirement #4). Cheap and idempotent — a

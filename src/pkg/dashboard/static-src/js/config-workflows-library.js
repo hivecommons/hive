@@ -10,7 +10,7 @@
     //
     // All HTML builders are pure functions of their inputs so the node
     // harness (workflows_library_ui_test.go) can run them without a DOM.
-    const WF_LIB_VIEWS = ['library', 'detail', 'ingest'];
+    const WF_LIB_VIEWS = ['library', 'detail', 'ingest', 'editor'];
     const WF_PROVENANCE_LABELS = {
       'built-in': 'built-in',
       'curated': 'curated',
@@ -18,6 +18,192 @@
       'ingested-unreviewed': 'ingested · unreviewed',
     };
     const WF_DIAGRAM = { colW: 172, colGap: 28, chipH: 30, chipGap: 10, headH: 30, pad: 14, textPad: 10, maxLabel: 22 };
+
+    // ---- Edge routing, shared by the library diagram and the editor canvas ----
+    // Quiet by default, detail on focus: transitions are orthogonal polylines
+    // that leave a chip's port, run into the gutter between lanes, travel a
+    // per-lane-pair channel and enter the target chip. Edges that share a
+    // lane pair share one trunk (bundling). Backward edges go around the
+    // outside above the lane headers; forward edges spanning two or more
+    // lanes go around below. Labels are only drawn on hover/selection. All
+    // functions here are pure and never mutate their inputs.
+    const WF_EDGE = { chan: 8, radius: 6, fanMax: 4, selfR: 12 };
+
+    // wfEdgeCommonEvent returns the event carried by the most transitions when
+    // at least two share it; labels for that event are noise and never drawn.
+    function wfEdgeCommonEvent(transitions) {
+      const n = {};
+      let best = '', bc = 0;
+      (transitions || []).forEach(t => {
+        const k = (t && t.on) || '';
+        if (!k) return;
+        n[k] = (n[k] || 0) + 1;
+        if (n[k] > bc || (n[k] === bc && k < best)) { best = k; bc = n[k]; }
+      });
+      return bc >= 2 ? best : '';
+    }
+
+    // wfEdgeChannels counts the corridor channels a transition set needs above
+    // (backward lane pairs) and below (forward pairs spanning 2+ lanes) the
+    // lanes, so a layout can reserve the space before placing chips. colOf
+    // maps a state id to its lane index or null when unplaced.
+    function wfEdgeChannels(transitions, colOf) {
+      const top = {}, bottom = {};
+      (transitions || []).forEach(t => {
+        const a = colOf(t.from), b = colOf(t.to);
+        if (a == null || b == null || a === b) return;
+        if (b < a - 1) top[a + '>' + b] = true;
+        else if (b > a + 1) bottom[a + '>' + b] = true;
+      });
+      return { top: Object.keys(top).length, bottom: Object.keys(bottom).length };
+    }
+    function wfEdgeCorridor(n) { return n ? (n + 1) * WF_EDGE.chan : 0; }
+
+    // wfOrthoPath turns an orthogonal polyline into a path with rounded corners.
+    function wfOrthoPath(points, radius) {
+      const R = v => Math.round(v * 10) / 10;
+      const p = [];
+      points.forEach(q => { const l = p[p.length - 1]; if (!l || l[0] !== q[0] || l[1] !== q[1]) p.push(q); });
+      for (let i = 1; i < p.length - 1;) {
+        const a = p[i - 1], b = p[i], c = p[i + 1];
+        if ((a[0] === b[0] && b[0] === c[0]) || (a[1] === b[1] && b[1] === c[1])) p.splice(i, 1); else i++;
+      }
+      if (p.length < 2) return '';
+      let d = `M${R(p[0][0])} ${R(p[0][1])}`;
+      for (let i = 1; i < p.length - 1; i++) {
+        const a = p[i - 1], b = p[i], c = p[i + 1];
+        const r = Math.min(radius, Math.hypot(b[0] - a[0], b[1] - a[1]) / 2, Math.hypot(c[0] - b[0], c[1] - b[1]) / 2);
+        const ux = Math.sign(b[0] - a[0]), uy = Math.sign(b[1] - a[1]), vx = Math.sign(c[0] - b[0]), vy = Math.sign(c[1] - b[1]);
+        d += ` L${R(b[0] - ux * r)} ${R(b[1] - uy * r)} Q${R(b[0])} ${R(b[1])} ${R(b[0] + vx * r)} ${R(b[1] + vy * r)}`;
+      }
+      const e = p[p.length - 1];
+      return d + ` L${R(e[0])} ${R(e[1])}`;
+    }
+
+    // wfRouteEdges routes transitions through the gutters of a lane layout.
+    // geom = { cols: [{x,y,w,h}] in lane order, chips: {id: {x,y,w,h,colIndex,index}},
+    // gap, pad }. opts = { dedupe, fanMax, expanded: {fanKey: true} }.
+    // Returns { edges, fans, common } where each edge carries its path `d`,
+    // a label anchor (lx, ly), kind (self|same|fwd|fwdlong|back), back,
+    // common (its `on` is the model's most common event), and collapsed/fan
+    // when it is folded into a fan-out trunk. Fans group >fanMax forward
+    // edges from one state into one lane.
+    function wfRouteEdges(transitions, geom, opts) {
+      const o = opts || {}, K = WF_EDGE, fanMax = o.fanMax || K.fanMax, expanded = o.expanded || {};
+      const cols = geom.cols || [], chips = geom.chips || {}, gap = geom.gap || 28, pad = geom.pad || 14;
+      const common = wfEdgeCommonEvent(transitions);
+      if (!cols.length) return { edges: [], fans: [], common: common };
+      const laneTop = cols[0].y, laneBottom = cols[0].y + cols[0].h;
+      const recs = [], seen = {};
+      (transitions || []).forEach((t, i) => {
+        if (!t) return;
+        const a = chips[t.from], b = chips[t.to];
+        if (!a || !b) return;
+        const key = t.from + '>' + t.to;
+        if (o.dedupe) { if (seen[key]) return; seen[key] = true; }
+        const r = { index: i, from: t.from, to: t.to, on: t.on || '', note: t.note || '', key: key, self: t.from === t.to, back: false, kind: 'self', span: 0, d: '', lx: 0, ly: 0, common: !!t.on && t.on === common, collapsed: false, fan: '' };
+        if (!r.self) {
+          r.span = b.colIndex - a.colIndex;
+          r.back = r.span < 0 || (r.span === 0 && b.index < a.index);
+          r.kind = r.span === 0 ? 'same' : r.span === 1 ? 'fwd' : r.span > 1 ? 'fwdlong' : 'back';
+        }
+        recs.push(r);
+      });
+      // Channel reservations: gutter g sits between cols[g] and cols[g+1];
+      // g = -1 is the margin left of the first lane, g = cols.length-1 the
+      // margin right of the last.
+      const gutters = {}, top = {}, bottom = {};
+      const reserve = (g, key) => { (gutters[g] = gutters[g] || {})[key] = true; };
+      recs.forEach(r => {
+        const a = chips[r.from], b = chips[r.to], pair = a.colIndex + '>' + b.colIndex;
+        if (r.kind === 'same') reserve(a.colIndex, 'S' + String(Math.abs(b.index - a.index)).padStart(3, '0'));
+        else if (r.kind === 'fwd') reserve(a.colIndex, 'F' + pair);
+        else if (r.kind === 'fwdlong') { reserve(a.colIndex, 'F' + pair + 'x'); reserve(b.colIndex - 1, 'F' + pair + 'e'); bottom[pair] = Math.abs(r.span); }
+        else if (r.kind === 'back' && r.span === -1) reserve(b.colIndex, 'B' + pair);
+        else if (r.kind === 'back') { reserve(a.colIndex - 1, 'B' + pair + 'x'); reserve(b.colIndex, 'B' + pair + 'e'); top[pair] = Math.abs(r.span); }
+      });
+      const chanX = {};
+      Object.keys(gutters).forEach(gs => {
+        const g = Number(gs);
+        let left, width;
+        if (g < 0) { left = cols[0].x - pad; width = pad; }
+        else if (g >= cols.length - 1) { left = cols[cols.length - 1].x + cols[cols.length - 1].w; width = pad; }
+        else { left = cols[g].x + cols[g].w; width = cols[g + 1].x - left; }
+        // Same-lane bows nearest their lane, then forward trunks, then backward.
+        const order = k => (k[0] === 'S' ? '0' : k[0] === 'F' ? '1' : '2') + k;
+        const keys = Object.keys(gutters[gs]).sort((p, q) => order(p) < order(q) ? -1 : 1);
+        keys.forEach((k, i) => { chanX[g + ':' + k] = left + width * (i + 1) / (keys.length + 1); });
+      });
+      // Corridor rows: shorter spans sit nearest the lanes so longer ones
+      // pass outside them without crossing.
+      const rows = (set, sign, base) => {
+        const out = {};
+        Object.keys(set).sort((p, q) => set[p] - set[q] || (p < q ? -1 : 1)).forEach((k, i) => { out[k] = base + sign * K.chan * (i + 1); });
+        return out;
+      };
+      const topY = rows(top, -1, laneTop), bottomY = rows(bottom, 1, laneBottom);
+      const mid = pts => {
+        let best = 0, bl = -1;
+        for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); if (l > bl) { bl = l; best = i; } }
+        return [(pts[best][0] + pts[best - 1][0]) / 2, (pts[best][1] + pts[best - 1][1]) / 2];
+      };
+      recs.forEach(r => {
+        const a = chips[r.from], b = chips[r.to], pair = a.colIndex + '>' + b.colIndex;
+        const y1 = a.y + a.h / 2, y2 = b.y + b.h / 2;
+        let pts;
+        if (r.self) {
+          const px = a.x + a.w, R = K.selfR;
+          r.d = `M${px} ${y1 - 6} C${px + R * 2} ${y1 - R * 2}, ${px + R * 2} ${y1 + R * 2}, ${px} ${y1 + 6}`;
+          r.lx = px + R * 1.6; r.ly = y1;
+          return;
+        }
+        if (r.kind === 'same') {
+          const x = chanX[a.colIndex + ':S' + String(Math.abs(b.index - a.index)).padStart(3, '0')];
+          pts = [[a.x + a.w, y1], [x, y1], [x, y2], [b.x + b.w, y2]];
+        } else if (r.kind === 'fwd') {
+          const x = chanX[a.colIndex + ':F' + pair];
+          pts = [[a.x + a.w, y1], [x, y1], [x, y2], [b.x, y2]];
+        } else if (r.kind === 'fwdlong') {
+          const x1 = chanX[a.colIndex + ':F' + pair + 'x'], x2 = chanX[(b.colIndex - 1) + ':F' + pair + 'e'], cy = bottomY[pair];
+          pts = [[a.x + a.w, y1], [x1, y1], [x1, cy], [x2, cy], [x2, y2], [b.x, y2]];
+        } else if (r.span === -1) {
+          // Adjacent lanes share one gutter: run straight down it.
+          const x = chanX[b.colIndex + ':B' + pair];
+          pts = [[a.x, y1], [x, y1], [x, y2], [b.x + b.w, y2]];
+        } else {
+          const x1 = chanX[(a.colIndex - 1) + ':B' + pair + 'x'], x2 = chanX[b.colIndex + ':B' + pair + 'e'], cy = topY[pair];
+          pts = [[a.x, y1], [x1, y1], [x1, cy], [x2, cy], [x2, y2], [b.x + b.w, y2]];
+        }
+        r.d = wfOrthoPath(pts, K.radius);
+        const m = mid(pts); r.lx = m[0]; r.ly = m[1];
+      });
+      // Fan-out: more than fanMax forward edges from one state into one lane
+      // collapse to a trunk with a +N badge unless expanded.
+      const groups = {};
+      recs.forEach(r => { if (r.kind === 'fwd' || r.kind === 'fwdlong') (groups[r.from + '>' + chips[r.to].colIndex] = groups[r.from + '>' + chips[r.to].colIndex] || []).push(r); });
+      const fans = [];
+      Object.keys(groups).sort().forEach(key => {
+        const list = groups[key];
+        if (list.length <= fanMax) return;
+        const a = chips[list[0].from], y1 = a.y + a.h / 2;
+        const px = a.x + a.w, firstKind = list[0].kind, pair = a.colIndex + '>' + chips[list[0].to].colIndex;
+        const x = chanX[a.colIndex + ':F' + pair + (firstKind === 'fwdlong' ? 'x' : '')];
+        const ys = list.map(r => chips[r.to].y + chips[r.to].h / 2);
+        const yEnd = firstKind === 'fwdlong' ? bottomY[pair] : Math.max.apply(null, ys);
+        const yStart = firstKind === 'fwdlong' ? y1 : Math.min.apply(null, ys);
+        const open = !!expanded[key];
+        list.forEach(r => { r.collapsed = !open; r.fan = key; });
+        fans.push({ key: key, from: list[0].from, col: chips[list[0].to].colIndex, count: list.length, open: open, x: px, y: y1, edges: list.map(r => r.index),
+          d: wfOrthoPath([[px, y1], [x, y1], [x, Math.min(yStart, y1)]], K.radius) + ' ' + wfOrthoPath([[x, y1], [x, Math.max(yEnd, y1)]], K.radius) });
+      });
+      return { edges: recs, fans: fans, common: common };
+    }
+
+    // wfEdgeLabelSvg draws a floating label pill at an edge's anchor.
+    function wfEdgeLabelSvg(text, lx, ly, cls) {
+      const t = wfTrim(text, 18), w = Math.max(16, t.length * 6 + 10);
+      return `<g class="${cls}" pointer-events="none"><rect x="${Math.round(lx - w / 2)}" y="${Math.round(ly - 9)}" width="${w}" height="16" rx="8" class="${cls}-bg"/><text x="${Math.round(lx)}" y="${Math.round(ly + 3)}" text-anchor="middle">${esc(t)}</text></g>`;
+    }
     // Simulate (RFC phase 3c): the facts form is generated from this table
     // so the HTML builder, the form reader and the node tests share one
     // source of truth. `path` is the dotted key inside the simulate facts
@@ -88,7 +274,7 @@
     }
 
     function wfLibNav(view) {
-      const items = [['library', 'Library'], ['ingest', 'Ingest']];
+      const items = [['library', 'Library'], ['ingest', 'Ingest'], ['editor', 'Editor']];
       return '<div class="wf-nav" role="tablist">' + items.map(([id, label]) =>
         `<button type="button" role="tab" class="wf-nav-item${view === id || (id === 'library' && view === 'detail') ? ' active' : ''}" aria-selected="${view === id ? 'true' : 'false'}" data-action="wfLibShow" data-arg0="${id}">${label}</button>`
       ).join('') + '</div>';
@@ -109,6 +295,8 @@
         const canDelete = owner && !builtin && !e.readOnly && !bound.length;
         const actions = [
           `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibOpen" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">View</button>`,
+          owner ? (builtin ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdCopyOf" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" title="Open a copy in the editor under a new name.">Edit a copy</button>`
+            : `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdOpen" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" title="Open in the visual editor.">Edit</button>`) : '',
           owner ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibDuplicate" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" title="Save a copy under a new name as version 1 (provenance: local).">Duplicate</button>` : '',
           `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibExport" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" title="Show the model as JSON to copy.">Export</button>`,
           canDelete ? `<button type="button" class="hv-btn btn-danger btn-sm" data-action="wfLibDelete" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Delete</button>`
@@ -148,60 +336,102 @@
       const D = WF_DIAGRAM;
       const states = {};
       (function walk(list) { (list || []).forEach(s => { states[s.id] = s; walk(s.regions); }); })(spec.states);
-      const pos = {};
+      const colOf = {};
+      cols.forEach((c, ci) => (Array.isArray(c.states) ? c.states : []).forEach(id => { if (colOf[id] == null) colOf[id] = ci; }));
+      const transitions = Array.isArray(spec.transitions) ? spec.transitions : [];
+      const channels = wfEdgeChannels(transitions, id => (colOf[id] == null ? null : colOf[id]));
+      const topCorr = wfEdgeCorridor(channels.top), bottomCorr = wfEdgeCorridor(channels.bottom);
+      const laneY = D.pad + topCorr;
       let maxRows = 1;
+      cols.forEach(c => { maxRows = Math.max(maxRows, (Array.isArray(c.states) ? c.states : []).length); });
+      const laneH = D.headH + maxRows * (D.chipH + D.chipGap);
+      const geomCols = [], chips = {};
       cols.forEach((c, ci) => {
-        const ids = Array.isArray(c.states) ? c.states : [];
-        maxRows = Math.max(maxRows, ids.length);
-        ids.forEach((id, ri) => {
-          pos[id] = { x: D.pad + ci * (D.colW + D.colGap), y: D.pad + D.headH + ri * (D.chipH + D.chipGap), col: ci };
+        const x = D.pad + ci * (D.colW + D.colGap);
+        geomCols.push({ x: x, y: laneY, w: D.colW, h: laneH });
+        (Array.isArray(c.states) ? c.states : []).forEach((id, ri) => {
+          if (chips[id]) return;
+          chips[id] = { id: id, x: x + 8, y: laneY + D.headH + ri * (D.chipH + D.chipGap), w: D.colW - 16, h: D.chipH, colIndex: ci, index: ri };
         });
       });
       const width = D.pad * 2 + cols.length * D.colW + (cols.length - 1) * D.colGap;
-      const height = D.pad * 2 + D.headH + maxRows * (D.chipH + D.chipGap);
-      const out = [`<svg class="wf-diagram" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Workflow columns and states">`];
-      out.push('<defs><marker id="wf-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="wf-dg-arrowhead"/></marker></defs>');
+      const height = D.pad * 2 + topCorr + laneH + bottomCorr;
+      const out = [`<svg class="wf-diagram" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Workflow columns and states" data-wf-focus-root="1">`];
+      out.push('<defs><marker id="wf-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" class="wf-dg-arrowhead" fill="context-stroke"/></marker></defs>');
       cols.forEach((c, ci) => {
-        const x = D.pad + ci * (D.colW + D.colGap);
-        out.push(`<g class="wf-dg-col${c.terminal ? ' terminal' : ''}"><rect x="${x}" y="${D.pad}" width="${D.colW}" height="${height - D.pad * 2}" rx="6" class="wf-dg-lane"/>` +
-          `<text x="${x + D.colW / 2}" y="${D.pad + D.headH / 2 + 4}" text-anchor="middle" class="wf-dg-colname">${esc(wfTrim(c.label || c.id, D.maxLabel))}</text></g>`);
+        const g = geomCols[ci];
+        out.push(`<g class="wf-dg-col${c.terminal ? ' terminal' : ''}"><rect x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}" rx="6" class="wf-dg-lane"/>` +
+          `<text x="${g.x + D.colW / 2}" y="${g.y + D.headH / 2 + 4}" text-anchor="middle" class="wf-dg-colname">${esc(wfTrim(c.label || c.id, D.maxLabel))}</text></g>`);
       });
-      const edges = Array.isArray(spec.transitions) ? spec.transitions : [];
-      const seen = {};
-      edges.forEach(t => {
-        const a = pos[t.from], b = pos[t.to];
-        if (!a || !b || t.from === t.to) return;
-        const k = t.from + '>' + t.to;
-        if (seen[k]) return;
-        seen[k] = true;
-        const title = esc((t.on || '') + (t.note ? ' — ' + t.note : ''));
-        let d;
-        if (a.col === b.col) {
-          // Same lane: bow out to the right of the chips.
-          const x = a.x + D.colW, y1 = a.y + D.chipH / 2, y2 = b.y + D.chipH / 2, bow = D.colGap * 0.6;
-          d = `M${x} ${y1} C${x + bow} ${y1}, ${x + bow} ${y2}, ${x} ${y2}`;
-        } else {
-          const fwd = b.col > a.col;
-          const x1 = fwd ? a.x + D.colW : a.x, x2 = fwd ? b.x : b.x + D.colW;
-          const y1 = a.y + D.chipH / 2, y2 = b.y + D.chipH / 2, dx = (x2 - x1) / 2;
-          d = `M${x1} ${y1} C${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
-        }
-        out.push(`<path d="${d}" class="wf-dg-edge${a.col > b.col ? ' back' : ''}" marker-end="url(#wf-arrow)"><title>${title}</title></path>`);
+      const routed = wfRouteEdges(transitions, { cols: geomCols, chips: chips, gap: D.colGap, pad: D.pad }, { dedupe: true });
+      const edgeSvg = e => {
+        const title = esc(e.from + ' \u2192 ' + e.to + (e.on ? ' on ' + e.on : '') + (e.note ? ' \u2014 ' + e.note : ''));
+        return `<g class="wf-dg-edge${e.back ? ' back' : ''}${e.collapsed ? ' wf-fan-edge' : ''}" data-wf-from="${esc(e.from)}" data-wf-to="${esc(e.to)}"><path d="${e.d}" class="wf-dg-edge-hit"/><path d="${e.d}" class="wf-dg-edge-line" marker-end="url(#wf-arrow)"/>` +
+          (e.on ? wfEdgeLabelSvg(e.on, e.lx, e.ly, 'wf-dg-edge-label') : '') + `<title>${title}</title></g>`;
+      };
+      const fanned = {};
+      routed.fans.forEach(f => { f.edges.forEach(i => { fanned[i] = f.key; }); });
+      out.push('<g class="wf-edge-layer">');
+      routed.edges.forEach(e => { if (e.self || fanned[e.index]) return; out.push(edgeSvg(e)); });
+      routed.fans.forEach(f => {
+        out.push(`<g class="wf-fan" data-wf-fan="${esc(f.key)}" data-wf-from="${esc(f.from)}"><path d="${f.d}" class="wf-dg-edge-line wf-fan-trunk"/>` +
+          routed.edges.filter(e => fanned[e.index] === f.key).map(edgeSvg).join('') +
+          `<g class="wf-fan-badge"><rect x="${f.x + 4}" y="${f.y - 8}" width="26" height="16" rx="8"/><text x="${f.x + 17}" y="${f.y + 4}" text-anchor="middle">+${f.count}</text><title>${f.count} transitions into one lane; hover to expand</title></g></g>`);
       });
+      out.push('</g>');
       cols.forEach(c => (c.states || []).forEach(id => {
-        const p = pos[id], s = states[id] || { id: id, label: id };
+        const p = chips[id], s = states[id] || { id: id, label: id };
+        if (!p || p.id !== id) return;
         const lc = s.lifecycle || {};
         const inferred = lc.confidence === 'inferred';
         const num = lc.number ? String(lc.number).padStart(3, '0') : '';
         const cls = 'wf-dg-state' + (inferred ? ' inferred' : '') + (spec.initial === id ? ' initial' : '') + (profile && profile.terminal && profile.terminal[id] ? ' terminal' : '');
         const tip = esc(s.label || id) + (num ? ' · stage/' + num : '') + (inferred ? ' · inferred' : '') + (lc.column ? '\ncolumn ' + esc(lc.column) : '');
-        out.push(`<g class="${cls}" data-state="${esc(id)}"><title>${tip}</title>` +
-          `<rect x="${p.x + 8}" y="${p.y}" width="${D.colW - 16}" height="${D.chipH}" rx="5" class="wf-dg-chip"/>` +
-          (num ? `<text x="${p.x + D.textPad + 4}" y="${p.y + D.chipH / 2 + 4}" class="wf-dg-num mono">${num}</text>` : '') +
-          `<text x="${p.x + D.textPad + (num ? 34 : 4)}" y="${p.y + D.chipH / 2 + 4}" class="wf-dg-label">${esc(wfTrim(s.label || id, num ? D.maxLabel - 5 : D.maxLabel))}</text></g>`);
+        out.push(`<g class="${cls}" data-state="${esc(id)}" data-wf-state="${esc(id)}"><title>${tip}</title>` +
+          `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="5" class="wf-dg-chip"/>` +
+          (num ? `<text x="${p.x + D.textPad - 4}" y="${p.y + D.chipH / 2 + 4}" class="wf-dg-num mono">${num}</text>` : '') +
+          `<text x="${p.x + D.textPad + (num ? 26 : -4)}" y="${p.y + D.chipH / 2 + 4}" class="wf-dg-label">${esc(wfTrim(s.label || id, num ? D.maxLabel - 5 : D.maxLabel))}</text></g>`);
       }));
       out.push('</svg>');
       return out.join('');
+    }
+
+    // wfEdgeFocusHover implements detail-on-focus for both the library diagram
+    // and the editor canvas: hovering a state dims every edge not incident to
+    // it, hovering an edge highlights it and both end chips. Focused edges are
+    // moved to a front layer so they draw over the chips. Pure DOM, no state.
+    function wfEdgeFocusHover(ev) {
+      const t = ev.target && ev.target.closest ? ev.target.closest('[data-wf-state],[data-wf-from]') : null;
+      const root = t ? t.closest('[data-wf-focus-root]') : (ev.relatedTarget && ev.relatedTarget.closest ? ev.relatedTarget.closest('[data-wf-focus-root]') : null);
+      if (!root) return;
+      wfEdgeFocusClear(root);
+      if (!t || ev.type === 'pointerout') return;
+      const edges = root.querySelectorAll('[data-wf-from]');
+      let states = [];
+      if (t.hasAttribute('data-wf-state')) {
+        const id = t.getAttribute('data-wf-state');
+        edges.forEach(e => { if (e.getAttribute('data-wf-from') === id || e.getAttribute('data-wf-to') === id) { e.classList.add('focus'); states.push(e.getAttribute('data-wf-from'), e.getAttribute('data-wf-to')); } });
+      } else {
+        t.classList.add('focus');
+        states = [t.getAttribute('data-wf-from'), t.getAttribute('data-wf-to')];
+      }
+      states.forEach(id => { if (id == null) return; const c = root.querySelector('[data-wf-state="' + id.replace(/"/g, '') + '"]'); if (c) c.classList.add('focus'); });
+      root.classList.add('wf-focus');
+      const layer = root.querySelector('.wf-edge-layer');
+      if (!layer) return;
+      let front = layer.parentNode.querySelector(':scope > .wf-edge-front');
+      if (!front) { front = document.createElementNS('http://www.w3.org/2000/svg', 'g'); front.setAttribute('class', 'wf-edge-front'); layer.parentNode.appendChild(front); }
+      layer.querySelectorAll(':scope > [data-wf-from].focus').forEach(e => front.appendChild(e));
+    }
+    function wfEdgeFocusClear(root) {
+      root.classList.remove('wf-focus');
+      const layer = root.querySelector('.wf-edge-layer');
+      root.querySelectorAll('.focus').forEach(e => e.classList.remove('focus'));
+      if (layer) root.querySelectorAll('.wf-edge-front > [data-wf-from]').forEach(e => layer.appendChild(e));
+    }
+    if (typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('pointerover', wfEdgeFocusHover);
+      document.addEventListener('pointerout', wfEdgeFocusHover);
     }
 
     function renderWorkflowDiagnostics(diags) {
@@ -235,6 +465,8 @@
       if (sources.length) facts.push(['Ingested from', sources.map(s => `<span class="mono">${esc(s.repo || s.ref || s.path || JSON.stringify(s))}</span>`).join(', ')]);
       const actions = [
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibShow" data-arg0="library">← Library</button>',
+        owner ? (builtin ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdCopyOf" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Edit a copy</button>`
+          : `<button type="button" class="hv-btn btn-primary btn-sm" data-action="wfEdOpen" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Edit</button>`) : '',
         owner ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibDuplicate" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Duplicate</button>` : '',
         `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibExport" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Export JSON</button>`,
         owner && !builtin && !bound.length ? `<button type="button" class="hv-btn btn-danger btn-sm" data-action="wfLibDelete" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Delete</button>` : '',
@@ -499,6 +731,7 @@
           ` · ${esc(String(r.files || 0))} pipeline file${r.files === 1 ? '' : 's'} · ${pipelines.length} pipeline${pipelines.length === 1 ? '' : 's'} · ${cols.length} column${cols.length === 1 ? '' : 's'}` +
           (r.ref ? ` · <span class="mono">${esc(String(r.ref).slice(0, 12))}</span>` : '') +
           (e ? ` · saved as <a href="#" class="mono" data-action="wfLibOpen" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" data-prevent="1">${esc(e.name + '@' + e.version)}</a>` : '') +
+          (owner && r.model ? ` <button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdOpenIngestResult" title="Open this draft on the editor canvas.">Open in editor</button>` : '') +
           '</div>' +
           (pipelines.length ? '<ul class="wf-pipelines">' + pipelines.map(p => `<li><span class="mono">${esc(p.system || p.kind || '')}</span> ${esc(p.name || p.id || '')}${p.path ? ` <span class="text-muted mono">${esc(p.path)}</span>` : ''}</li>`).join('') + '</ul>' : '') +
           '<h4>Diagnostics</h4>' + renderWorkflowDiagnostics(r.diagnostics) +
@@ -543,6 +776,8 @@
         else body = renderWorkflowDetail(_wfLib.detail, _workflowState.bindings, owner);
       } else if (_wfLib.view === 'ingest') {
         body = renderWorkflowIngest(_wfLib.ingest, owner);
+      } else if (_wfLib.view === 'editor') {
+        body = renderWorkflowEditor(owner);
       } else {
         body = renderWorkflowLibraryTable(_workflowState.workflows, _workflowState.bindings, owner);
       }
@@ -552,6 +787,10 @@
     function wfLibRerender() { if (_configState && _configState.tab === 'Workflows') renderConfigTab('Workflows'); }
 
     function wfLibShow(view) {
+      if (_wfLib.view === 'editor' && view !== 'editor' && typeof wfEdGuardLeave === 'function' && _wfEd.model && wfEdDirty()) {
+        wfEdGuardLeave().then(ok => { if (ok) { _wfEd.model = null; _wfEd.saved = null; wfLibShow(view); } });
+        return;
+      }
       _wfLib.view = WF_LIB_VIEWS.indexOf(view) >= 0 ? view : 'library';
       if (_wfLib.view !== 'detail') { _wfLib.detail = null; _wfLib.detailError = ''; }
       wfLibRerender();

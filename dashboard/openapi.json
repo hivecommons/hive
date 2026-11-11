@@ -35459,6 +35459,116 @@
           }
         }
       },
+      "/api/workflows/yaml": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Convert a workflow model between JSON and YAML",
+          "description": "Editor helper. Send `model` to get its YAML (field names are the JSON tags), or `yaml` to get the parsed model back. A YAML parse or schema error answers 200 with `error` set so the editor can show it inline. Read-only; no store or owner role needed.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "model": {
+                      "$ref": "#/components/schemas/WorkflowModel"
+                    },
+                    "yaml": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "yaml, or model (or error) depending on the input",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "yaml": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "$ref": "#/components/schemas/WorkflowModel"
+                      },
+                      "error": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Neither model nor yaml supplied, or malformed body"
+            }
+          }
+        }
+      },
+      "/api/workflows/simulate": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Simulate an issue or PR against an unsaved workflow model",
+          "description": "Editor variant of /api/workflows/{name}/{version}/simulate: the model travels in the body and `facts` are required (no forge fetch). Same decision and trace shape. Read-only; no store or owner role needed.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "model",
+                    "kind",
+                    "facts"
+                  ],
+                  "properties": {
+                    "model": {
+                      "$ref": "#/components/schemas/WorkflowModel"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "issue",
+                        "pr"
+                      ]
+                    },
+                    "facts": {
+                      "$ref": "#/components/schemas/WorkflowSimulateFacts"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Decision, trace and normalized facts",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowSimulateResult"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Missing model, kind or facts"
+            },
+            "422": {
+              "description": "Model does not compile; body carries diagnostics"
+            }
+          }
+        }
+      },
       "/api/workflows/bindings": {
         "get": {
           "tags": [
