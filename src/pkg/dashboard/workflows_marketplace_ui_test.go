@@ -15,7 +15,7 @@ func TestWorkflowsMarketplaceTabWiring(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		`['marketplace', 'Marketplace']`,
-		`const WF_LIB_VIEWS = ['library', 'detail', 'ingest', 'marketplace'];`,
+		`'editor', 'marketplace'];`,
 		`} else if (_wfLib.view === 'marketplace') {`,
 		`body = renderWorkflowMarketplaceView(owner);`,
 		`function renderWorkflowMarketplace(state, workflows, owner)`,
