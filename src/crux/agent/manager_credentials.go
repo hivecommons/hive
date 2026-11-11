@@ -204,6 +204,26 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 			if output == "" {
 				continue
 			}
+			if paneShowsExecFormatError(strings.Split(output, "\n")) {
+				// The kernel refused the binary (#17729). No relaunch can fix
+				// that, and the restart-storm breaker would only turn it into
+				// 30-minute silences; park the agent with the remedy instead.
+				agent.LastError = execFormatLastError(binary)
+				m.logger.Error("diagnostic: copilot binary cannot be executed on this kernel (ENOEXEC); not relaunching",
+					"agent", agent.Name, "binary", binary, "output_tail", truncateStr(compactPaneTail(output, 8), 500), "remedy", execFormatRemedy)
+				if agent.UID > 0 {
+					killAgentProcesses(agent.UID, m.logger)
+				}
+				_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
+				agent.State = StateFailed
+				m.audit(AuditAgentStartFailed, agent.Name, auditFields(
+					"outcome", "failure",
+					"backend", agent.effectiveBackend(),
+					"model", agent.effectiveModel(),
+					"error", agent.LastError,
+				))
+				return
+			}
 			if matchesAuthError(output) {
 				agent.LastError = "auth token expired or invalid"
 				// Prefer to RESTORE the stored token over merely clearing it: an
