@@ -155,3 +155,104 @@ result at the next integer version under `name` (default: the repository slug).
 
 `cmd/workflow-survey` now compiles every corpus repository's lifecycle model (`lifecycle.json`
 alongside `model.json`) and reports pass/refusal counts by diagnostic code.
+
+## Workflows tab (RFC phase 3b)
+
+Settings → **Workflows** is the spoke's home for models (`static-src/js/config-workflows-library.js`,
+`css/workflows.css`). It has two sub-views and a detail page, all built from `GET /api/workflows`
+and `GET /api/workflows/{name}/{version}`:
+
+- **Library** — one row per `name@version`: provenance badge (`built-in` for the virtual
+  hive-default and any read-only entry, else `meta.provenance`), compile badge (`compiles`,
+  `compiles · N warnings`, `does not compile`, with the diagnostics as the tooltip), source,
+  states / columns, and the repositories bound to it. Built-in rows sort first. Owners get
+  Duplicate (saves a copy under a new name at version 1, provenance `local`) and Delete; Delete is
+  withheld while anything is bound (the API returns 409 anyway) and the row says `bound` instead.
+  Export shows the model JSON in-app (copy to clipboard) for everyone.
+- **Detail** — facts, the diagram, diagnostics, citations and the raw model/profile JSON.
+  `workflowDiagramSvg(model, profile)` is a pure function: the compiled profile's columns are lanes
+  in display order, each state is a chip carrying its padded stage number, transitions are bezier
+  edges (same-lane edges bow to the right, backward edges are styled `back`), inferred states are
+  dashed, the initial state and terminal column are marked. Duplicate and dangling transitions are
+  dropped rather than drawn.
+- **Ingest** — pick a configured repository (or type `owner/repo`), optionally a name (default: the
+  slug), then Preview or Ingest-and-save; both call `POST /api/workflows/ingest`. The result shows
+  the compile outcome, files read, pipelines found, and opens the saved entry.
+
+The tab never binds: binding stays on Settings → Repos so the per-repository decision sits next
+to the repository's other policy. The Activity Monitor's model badge deep-links here via
+`openWorkflowLibraryEntry(name, version)`. Every HTML builder is a pure function of its inputs so
+`workflows_library_ui_test.go` runs them under node without a DOM. Editing is phase 4.
+
+## Versions, diff, confirm and label regeneration (RFC phase 4, backend)
+
+Phase 4's definition of done is "the TechDocs model can be changed from the diagram and the change
+regenerates labels and commands". The backend half gives the editor the primitives for that; the
+diagram UI lands separately on top of it.
+
+### Structural diff — `workflowmodel.Diff`
+
+`Diff(a, b *Model) ModelDiff` is pure and deterministic: spec only (metadata never counts),
+every list sorted by key, the same pair always yields the same JSON. It compares five keyed
+collections plus `spec.meta`:
+
+| Set | Key | Fields compared |
+|---|---|---|
+| `columns` | column id | label, hint, states, terminal |
+| `states` | state id (regions flattened, with `parent`) | label, owner, type, parent, guardRef, pipelines, origin, column, number, kinds, waiting, replies, confidence |
+| `transitions` | `from>to` (`from>to@on` when the pair occurs more than once) | on, guardRef, gateRef, note |
+| `labels` | label name | color, description, state |
+| `rules` | rule id, else `rules[i]` | kind, state, when (rendered predicates), reason |
+| `meta` | — | version, author, description, license, source, provenance, derivation mode |
+
+Each set is `{added, removed, changed:[{key, fields:[{field, from, to}]}]}`; `summary` is one
+line (`+2 states, −1 transition, 3 changed`; `no changes` when `empty`). Lists are rendered as
+comma-joined strings so a field change is always a flat string pair.
+
+### Confirm inferred → local — `workflowmodel.Confirm`
+
+`Confirm(m, by)` returns a deep copy with every `confidence: inferred` element (states at any
+depth, events, gates) marked confirmed, `meta.provenance = local`, `meta.version` cleared so the
+store assigns the next integer version, and `metadata.annotations["workflow.hivecommons.dev/confirmed-by"]`
+set to the caller. `meta.source` is kept: the model still says where it was ingested from. The
+input is never modified; `Inferred(m)` counts what is left to confirm. The store gained
+`NextVersion(name)` (largest integer version + 1, never a taken one) for this.
+
+### API
+
+| Route | Role | Answer |
+|---|---|---|
+| `GET /api/workflows/{name}/versions` | any | `{versions: []Entry}` newest save first; hive-default returns its one virtual entry; 404 unknown |
+| `GET /api/workflows/{name}/diff?from=V1&to=V2[&fromName=&toName=]` | any | `{from: Entry, to: Entry, diff: ModelDiff}`; 400 when `from`/`to` missing, 404 when either side is unknown. `fromName`/`toName` let a local model be diffed against `hive-default` |
+| `POST /api/workflows/{name}/{version}/confirm` | owner | 201 `{entry, confirmed, from}` — the confirmed copy saved as the next version; 409 for hive-default (read-only); audited `workflow_confirm` |
+| `GET /api/workflows/{name}/{version}/labels` | any | `{name, version, hash, prefix, labels: []LabelDef{name,color,description,state}, commands: [{state, verbs}], stages: [{state, number, label}]}` — the regeneration preview; 400 with diagnostics for a draft that does not compile |
+
+`labels` is `Profile.LabelDefs(stagelabels.StageColor)`: the model's `spec.labels.entries` with
+the stage colour filled in where an entry names none, the state's label as description where an
+entry has none, and descriptions clamped to GitHub's limit. `commands` is `Profile.Replies` (the
+human-gate verbs per state) in column order. `stages` is the built-in stage label each numbered
+state maps onto today, since the engine still writes the built-in family by stage number.
+
+### Label regeneration on bind
+
+`automerge.Engine.ensureStageLabels` provisions the built-in family once per repository per
+process. It now also asks `stageengine.Options.WorkflowFor` (the P2 lookup cmd/hive wires from
+the bindings and the store) for the profile bound to the repository; for a bound, non-hive-default
+profile it creates or recolours that profile's `LabelDefs` in the same pass, after the built-in
+family, reusing the one label list call. The memo is per repository *and* profile hash
+(`StageTracker.ensuredWorkflow`), so a rebinding, an unbind, or a new version of the bound model
+changes the hash and the next pass re-lists and provisions only what is missing. No reload hook is
+needed: the dashboard's binding edit mutates the live config, `WorkflowFor` reads it on every call,
+and the hash comparison does the rest. An unbound repository (or one bound to hive-default) takes
+exactly the pre-P4 path: one list, the built-in family, no model labels.
+
+### Known gaps (phase 4 backend)
+
+- Labels are only ever created or recoloured, never deleted: unbinding or removing an entry leaves
+  the label in the repository (same policy as the built-in family). Removal needs an explicit
+  operator action, not a sweep side effect.
+- The engine derives through the built-in stage table by number; a model's own `labels.entries`
+  are provisioned but not yet written onto items. Writing model labels is the engine half of
+  phase 4 and follows the diagram editor.
+- A model without a `labels` block regenerates nothing (TechDocs as shipped); the preview still
+  shows its commands and the built-in stages its numbered states land on.

@@ -252,6 +252,7 @@
         case 'Thresholds': return renderGovThresholds(d) + renderGovSLATargets(d);
         case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || [], d.requireLabels || []);
         case 'Repos': return renderGovRepos(d.repos || []);
+        case 'Workflows': return renderGovWorkflows();
         case 'Budget': return renderGovBudget(d.budget || {}, d.health || {});
         case 'Notifications': return renderGovNotifications(d.notifications || {});
         case 'Health': return renderGovHealth(d.health || {});

@@ -23,7 +23,7 @@
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Workflows', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
