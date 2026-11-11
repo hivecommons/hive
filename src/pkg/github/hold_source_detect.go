@@ -58,8 +58,9 @@ const (
 
 // holdSourceCheckVersion is the derivation version of a cached check. Bump it
 // when what a check records changes, so older cached checks are re-read once.
-// Version 2 added the "other" latest-hold actor.
-const holdSourceCheckVersion = 2
+// Version 2 added the "other" latest-hold actor; version 3 drops the
+// human-merge-path source when the PR's head no longer touches such a path.
+const holdSourceCheckVersion = 3
 
 // holdSourceCheck is the cached result of reading one held PR's comments and
 // hold-label events. Only facts GitHub alone can tell are cached; the label-
@@ -379,8 +380,9 @@ func (d *holdSourceDetector) flush() {
 	}
 }
 
-// checkHeldPRHoldSources reads a held PR's comments and hold-label events.
-// Read-only: it lists and never writes.
+// checkHeldPRHoldSources reads a held PR's comments and hold-label events, and
+// its changed files when a human-merge-path notice is among them. Read-only:
+// it lists and never writes.
 func (c *Client) checkHeldPRHoldSources(ctx context.Context, owner, repo string, number int) (holdSourceCheck, error) {
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
@@ -391,6 +393,12 @@ func (c *Client) checkHeldPRHoldSources(ctx context.Context, owner, repo string,
 		return holdSourceCheck{}, err
 	}
 	set := c.holdNoticeSources(comments)
+	// The human-merge-path notice stays on the thread for good, but the
+	// source applies only while the current head still touches such a path:
+	// a dependency bot that regroups its update can drop the file.
+	if set[HoldSourceHumanMergePath] && c.humanMergePathNoLongerApplies(ctx, owner, repo, number) {
+		delete(set, HoldSourceHumanMergePath)
+	}
 	return holdSourceCheck{Notices: orderedHoldSources(set), LatestHoldBy: by}, nil
 }
 

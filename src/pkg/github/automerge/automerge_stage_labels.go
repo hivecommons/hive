@@ -1135,6 +1135,27 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					continue
 				}
 			}
+			// A human-merge-path hold whose PR no longer touches such a
+			// path at its current head is lifted, or, while something
+			// else keeps it, no longer described as one.
+			if prov.SelfImposed() && prov.HumanMergePath() {
+				lifted, stale, err := c.liftStaleHumanMergePathHold(ctx, obs, prov)
+				if err != nil {
+					c.warn("stage labels: could not lift stale human-merge-path hold", "repo", obs.Display, "pr", obs.Number, "error", err)
+					if firstErr == nil {
+						firstErr = err
+					}
+				}
+				if lifted {
+					result.Comments++
+					result.Skipped++
+					store.ClearHold(key)
+					continue
+				}
+				if stale {
+					prov = staleHumanMergePathHold(prov)
+				}
+			}
 			obs.Hold = prov
 		}
 		// Issue-closed beats the reviewer's verdict: a hive-authored PR
