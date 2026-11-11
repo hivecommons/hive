@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.221.0)
+
+### Added
+
+- **workflow models:** RFC phase 7 — signed bundles (`pkg/workflowmodel/bundle`: model + compiled profile + sha256; import always re-verifies and recompiles locally), a hub marketplace catalogue (`/api/marketplace/*`: immutable `name@version` entries, ETag index, tiers built-in · curated · ingested-unreviewed · local-published, nightly/on-demand refresh of the embedded CNCF corpus publishing `ingested-YYYYMMDD.N`, curated versions only flagged `newerIngestAvailable`), spoke import/publish/proxy routes with `workflow.marketplace.{enabled,url,refresh_interval}`, and a Settings → Workflows → Marketplace view with Import, Publish and Refresh catalogue ([#17620](https://github.com/hivecommons/hive/issues/17620))
+
 ## 2026-11-11 (v5.220.0)
 
 ### Added
