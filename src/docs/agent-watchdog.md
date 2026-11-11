@@ -131,6 +131,8 @@ A regular file here, instead of a symlink to `/data/home/.claude/.credentials.js
 
 Hive repairs this on its own: at the agent's next launch, on the next credential-watchdog tick, and right after the next dashboard sign-in. It moves the private file aside as `.credentials.json.stale-<UTC time>`, keeps whichever token is newer and usable in the shared file, restores the symlink, and writes a `claude_credential_rebridged` Audit Log entry. See [When a Claude token refresh breaks the credential link](agent-configuration.md#when-a-claude-token-refresh-breaks-the-credential-link) for the rule. You do not need to move files by hand. If the card still shows the broken bridge after a watchdog cycle, the hive log has a `claude credential bridge: repair failed` warning that names the file and the error.
 
+The hive log may instead say `claude credential bridge: the hive process cannot read this agent's private credential`. That means the hive server left the file alone because it cannot read it, so it cannot tell whether the file holds the newest token. The agent keeps working on its own copy. The next dashboard sign-in moves the file aside and relinks the agent to the shared login.
+
 ## Configuration
 
 Everything lives under `governor.watchdog` and is optional; an absent block
