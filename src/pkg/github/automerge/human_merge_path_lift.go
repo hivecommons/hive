@@ -31,8 +31,9 @@ type otherHoldSourcesTransport interface {
 	OtherHoldSourcesForPR(repo string, number int, labels []string, comments []*gh.IssueComment) []string
 }
 
-func humanMergePathLiftComment(head string) string {
-	return humanMergePathLiftMarker + head + " -->\nHold lifted: this PR no longer touches a path in `" + hgithub.HumanMergePathsConfigKey +
+// humanMergePathLiftNotice is the lift comment's text after its marker line.
+func humanMergePathLiftNotice(head string) string {
+	return "Hold lifted: this PR no longer touches a path in `" + hgithub.HumanMergePathsConfigKey +
 		"` at " + head + ". The hive set `hold` when an earlier head changed one; the merge lanes take the PR from here. A hold a person sets is never lifted this way."
 }
 
@@ -101,7 +102,7 @@ func (c *Engine) liftStaleHumanMergePathHold(ctx context.Context, obs stageObser
 		// again owns it now, so the pass does not undo it a second time.
 		return false, true, nil
 	}
-	body := humanMergePathLiftComment(head)
+	body := humanMergePathLiftMarker + head + " -->\n" + humanMergePathLiftNotice(head)
 	item := writebackItemForObservation(obs)
 	item.HiveAuthored = strings.EqualFold(normalizeBotLogin(obs.Author), normalizeBotLogin(appBot))
 	if d := c.writebackAllowed(repo, item, writeback.KindHumanMergePathRelease, ""); !d.Allowed {
