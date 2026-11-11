@@ -38,7 +38,6 @@ const (
 	SubstrateDefaultOperatorNamespace = "ate-system"
 
 	substrateKubeAPIServer = "https://kubernetes.default.svc"
-	substrateKubeTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 	substrateKubeCAPath    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 	substrateKubeMaxBody   = 8 << 20
 	substrateKubeNodeLimit = 500
@@ -69,6 +68,24 @@ var substrateOperatorDeployments = []string{"ate-api-server", "ate-controller", 
 // substrateCertsVersions are the certificates.k8s.io versions that may serve
 // PodCertificateRequest and ClusterTrustBundle (beta in 1.34, GA later).
 var substrateCertsVersions = []string{"v1", "v1beta1"}
+
+// substrateKubeTokenPath is the projected Kubernetes ServiceAccount token
+// the kube client authenticates with. A variable so tests pin the
+// environment instead of inheriting the runner's (CI itself runs in Pods).
+var substrateKubeTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+// substrateInCluster reports whether hive runs in a Pod wired for Substrate:
+// both the Kubernetes ServiceAccount token and hive's projected Substrate
+// token exist. The kube and router halves of the preflight only run then;
+// a laptop, or a CI Pod without the Substrate projection, gets the
+// Control-API probe alone.
+func substrateInCluster(opts SubstrateOptions) bool {
+	if _, err := os.Stat(substrateKubeTokenPath); err != nil {
+		return false
+	}
+	_, err := os.Stat(opts.tokenFile())
+	return err == nil
+}
 
 // substrateKube is the minimal read-only in-cluster API client the prover
 // needs; kubejob has its own because importing it here would be a cycle.
@@ -240,7 +257,7 @@ func (c *substrateClusterProbe) warnf(format string, args ...any) {
 func (p *SubstratePreflighter) probeCluster(ctx context.Context, opts SubstrateOptions) []string {
 	kube := p.kube
 	if kube == nil {
-		if _, err := os.Stat(substrateKubeTokenPath); err != nil {
+		if !substrateInCluster(opts) {
 			return nil
 		}
 		kube = &substrateKube{server: substrateKubeAPIServer, tokenPath: substrateKubeTokenPath, caPath: substrateKubeCAPath}
@@ -483,10 +500,8 @@ const substrateRouterProbeActor = "hive-preflight"
 // not proof). Skipped outside a cluster, where neither the bundle nor the
 // router exist.
 func (p *SubstratePreflighter) probeRouter(ctx context.Context, opts SubstrateOptions) []string {
-	if p.kube == nil {
-		if _, err := os.Stat(substrateKubeTokenPath); err != nil {
-			return nil
-		}
+	if p.kube == nil && !substrateInCluster(opts) {
+		return nil
 	}
 	bridge, err := newRouterBridge(opts)
 	if err != nil {

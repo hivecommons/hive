@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -310,14 +311,53 @@ func TestSubstratePreflightClusterFeatureGatesAndKernels(t *testing.T) {
 	}
 }
 
+// init pins the Kubernetes token path to a file that does not exist so the
+// Control-API-only tests behave the same on a laptop and in a CI Pod (where
+// the runner has a real ServiceAccount token). Tests that want the
+// in-cluster halves inject kube/routerDial or call inClusterToken.
+func init() {
+	substrateKubeTokenPath = filepath.Join(os.TempDir(), "hive-substrate-preflight-no-token-"+strconv.Itoa(os.Getpid()))
+}
+
+// inClusterToken makes the prover believe it runs in a Pod wired for
+// Substrate: a Kubernetes token and a projected Substrate token both exist.
+// It returns the Substrate token path to set as opts.TokenFile.
+func inClusterToken(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	prev := substrateKubeTokenPath
+	substrateKubeTokenPath = filepath.Join(dir, "k8s-token")
+	ate := filepath.Join(dir, "ate-token")
+	for _, f := range []string{substrateKubeTokenPath, ate} {
+		if err := os.WriteFile(f, []byte("t"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { substrateKubeTokenPath = prev })
+	return ate
+}
+
 func TestSubstratePreflightClusterSkippedOutsideCluster(t *testing.T) {
 	fake := &fakeSubstrate{workers: []*substrateapi.Worker{worker("w", "active", nil, "gvisor")}}
 	p := &SubstratePreflighter{newClient: fakeSubstrateFactory{fake: fake}.new}
-	if _, err := os.Stat(substrateKubeTokenPath); err == nil {
-		t.Skip("running inside a cluster")
-	}
 	if got := p.Check(context.Background(), SubstrateOptions{Endpoint: "api:443"}); len(got) != 0 {
 		t.Errorf("outside a cluster the kube/router halves must be silent: %q", got)
+	}
+
+	// In a Pod with no reachable API server the kube half reports once and
+	// the router half reports unusable credentials, instead of staying silent.
+	ate := inClusterToken(t)
+	// Only one of the two markers present is still "outside".
+	if substrateInCluster(SubstrateOptions{}) {
+		t.Error("a Kubernetes token alone must not count as in-cluster")
+	}
+	opts := SubstrateOptions{Endpoint: "api:443", TokenFile: ate, RouterClientBundle: filepath.Join(t.TempDir(), "missing.pem")}
+	got := p.probeCluster(context.Background(), opts)
+	if len(got) != 1 || !strings.Contains(got[0], "cluster facts could not be read") {
+		t.Errorf("in-cluster without an API server: %q", got)
+	}
+	if got := p.probeRouter(context.Background(), opts); len(got) != 1 || !strings.Contains(got[0], "not usable") {
+		t.Errorf("in-cluster without a bundle: %q", got)
 	}
 }
 
@@ -467,9 +507,7 @@ func TestSubstratePreflightRouter(t *testing.T) {
 	}
 
 	// Outside a cluster the router half is silent.
-	if _, err := os.Stat(substrateKubeTokenPath); err != nil {
-		if got := (&SubstratePreflighter{}).probeRouter(ctx, opts); len(got) != 0 {
-			t.Errorf("outside cluster: %q", got)
-		}
+	if got := (&SubstratePreflighter{}).probeRouter(ctx, opts); len(got) != 0 {
+		t.Errorf("outside cluster: %q", got)
 	}
 }
