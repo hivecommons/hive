@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/evidence/benchmarks"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
@@ -2015,6 +2016,11 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
 		return reviewEvidenceSettings(cfg, repo)
 	})
+	// hivecommons/hive#17694: stamp the sandbox runtime and benchmark task
+	// kind on agent-authored bundles so the exporter need not guess.
+	github.EvidenceAgentContext = func(agent string) (string, string) {
+		return cfg.BenchmarkSandboxRuntime(agent), benchmarks.TaskKindFor(agent)
+	}
 	// hivecommons/hive#14581: issue-author credit on every merge path, read
 	// live so a reload of auto_merge.credit_issue_authors applies.
 	client.SetCreditIssueAuthors(func(string) bool { return cfg.AutoMerge.CreditIssueAuthorsEnabled() })
