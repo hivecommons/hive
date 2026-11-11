@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.213.0)
+
+### Added
+
+- **Upstream forward-proxy chaining for hosts behind a corporate proxy.** A hive whose enterprise GitHub is reachable only through a corporate HTTP forward proxy could not use it: the control-plane client honoured `HTTPS_PROXY`, but every agent `:443` flow is iptables-redirected into the in-process MITM proxy, which always dialled upstream directly — so agent `git`/`gh` traffic to the GHE host simply timed out. New `network.upstream_proxy` config (`url`, `hosts`, `no_proxy`; env `HIVE_UPSTREAM_PROXY_URL`/`HIVE_UPSTREAM_PROXY_HOSTS`/`HIVE_NO_PROXY`, falling back to standard `HTTPS_PROXY`/`NO_PROXY`) drives one selector used by the control-plane GitHub transport, in-process `git` runs (scoped `GIT_CONFIG_*` entries), and the MITM proxy, which now issues `CONNECT host:443` through the upstream proxy (Basic auth from URL userinfo) and runs TLS or splices bytes over the tunnel for matching hosts; non-matching hosts keep the exact direct path. Hosted hubs can set `upstream_proxy: {url, hosts, no_proxy}` per cluster in `clusters.json`, and the provisioner injects the env vars into new pool slots. See `docs/network-requirements.md` → "Egress through a corporate forward proxy".
+
+## 2026-11-11 (v5.212.0)
+
+### Added
+
+- Added `sandbox.runtime: openshell`, a third sandbox runtime behind the same `sandbox.Launcher` seam as `podman` and `job` (ADR-0026 phase 1, [#14092](https://github.com/hivecommons/hive/issues/14092)). A kick on it is created through an NVIDIA OpenShell gateway (`github.com/ai-openshell/sdk-go` v0.1.8) as a kernel-confined sandbox from the agent's image, runs the kick command with the same credential-filtered environment the other launchers pass, shares the workspace through the hive data PVC exactly as the Job runtime does, and is deleted on success, failure or kick timeout. Hive hands the gateway an egress policy derived from the hosts its own proxy brokers — `github.com` read-write for git, `api.github.com` read-only — plus `agent_sandbox.openshell.allow_hosts` for a model gateway or the hub; nothing else is reachable from the sandbox. Config lives under `agent_sandbox.openshell` (`gateway_url`, `namespace`, `token_env`, `workspace_claim`, `allow_hosts`, `timeout_s`, scheduling passthrough) with per-agent overrides; the runtime is inert unless selected, and a selected one with no `gateway_url` or `workspace_claim` is warned about at boot and refused at kick time before the agent is marked running.
+
 ## 2026-11-11 (v5.211.30)
 
 ### Changed

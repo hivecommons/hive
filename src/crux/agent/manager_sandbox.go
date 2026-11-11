@@ -16,6 +16,27 @@ import (
 	"github.com/hivecommons/hive/crux/sandbox"
 )
 
+func init() {
+	config.SetOpenShellPreflight(openShellPreflightWarnings)
+}
+
+// openShellPreflightWarnings checks each distinct gateway the openshell
+// agents resolve to, once.
+func openShellPreflightWarnings(blocks []config.SandboxOpenShellConfig) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, b := range blocks {
+		opts := OpenShellOptionsFromConfig(b)
+		key := opts.GatewayURL + "\x00" + opts.Token
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, sandbox.DefaultOpenShellPreflighter.Check(context.Background(), opts)...)
+	}
+	return out
+}
+
 // SetSandboxConfig wires the disabled-by-default sandbox kick executor gate.
 func (m *Manager) SetSandboxConfig(cfg config.AgentSandboxConfig) {
 	m.mu.Lock()
