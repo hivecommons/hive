@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -120,6 +122,10 @@ case "$*" in
     mkdir -p "$dest/docs"
     printf '# Docs\n' > "$dest/README.md"
     printf '# Nested docs\n' > "$dest/docs/guide.md"
+    if [ -n "${HIVE_FAKE_GIT_CLONE_FAIL_ONCE:-}" ] && [ ! -e "$HIVE_FAKE_GIT_CLONE_FAIL_ONCE" ]; then
+      : > "$HIVE_FAKE_GIT_CLONE_FAIL_ONCE"
+      exit 1
+    fi
     exit "${HIVE_FAKE_GIT_CLONE_EXIT:-0}"
     ;;
   *sparse-checkout\ init*)
@@ -479,25 +485,39 @@ func TestGitSourcesUpdateMetadataVsReclone(t *testing.T) {
 }
 
 // TestGitSourcesUpdateRecloneFailureKeepsOriginal pins that a failed re-clone
-// leaves the original source live and its config entry untouched, so a bad
-// edit never costs the operator the source they already had.
+// leaves the operator with the source they had before the edit: untouched
+// config, and for a same-directory edit a restored clone of the old branch.
 func TestGitSourcesUpdateRecloneFailureKeepsOriginal(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		body map[string]any
+		name        string
+		body        map[string]any
+		failOnce    bool
+		wantRestore bool
+		wantLog     bool
 	}{
-		{"new url", map[string]any{"new_url": "http://127.0.0.1/broken.git"}},
-		{"same directory branch change", map[string]any{"branch": "broken"}},
+		{name: "new url", body: map[string]any{"new_url": "http://127.0.0.1/broken.git"}},
+		{name: "same directory branch change restores", body: map[string]any{"branch": "broken"}, failOnce: true, wantRestore: true},
+		{name: "same directory branch change restore also fails", body: map[string]any{"branch": "broken"}, wantLog: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			installHermeticGit(t)
+			logPath := installHermeticGit(t)
 			s, deps, url := gitSourceTestServer(t)
+			var logs bytes.Buffer
+			deps.Knowledge = knowledge.NewKnowledgeAPI(nil, knowledge.KnowledgeConfig{Enabled: true, Engine: "file"}, slog.New(slog.NewTextHandler(&logs, nil)))
 			if rec := doPost(s, "/api/knowledge/git-sources", map[string]any{"name": "docs", "url": url}); rec.Code != http.StatusOK {
 				t.Fatalf("seed connect: got %d (body %q)", rec.Code, rec.Body.String())
 			}
 			before := append([]config.GitSourceConfigYAML(nil), deps.Config.Knowledge.GitSources...)
+			cloneDir := deps.Knowledge.GitSources()[0].CloneDir
 
-			t.Setenv("HIVE_FAKE_GIT_CLONE_EXIT", "1")
+			if tc.failOnce {
+				t.Setenv("HIVE_FAKE_GIT_CLONE_FAIL_ONCE", filepath.Join(t.TempDir(), "failed-once"))
+			} else {
+				t.Setenv("HIVE_FAKE_GIT_CLONE_EXIT", "1")
+			}
+			if err := os.Truncate(logPath, 0); err != nil {
+				t.Fatal(err)
+			}
 			body := map[string]any{"url": url}
 			for k, v := range tc.body {
 				body[k] = v
@@ -515,6 +535,31 @@ func TestGitSourcesUpdateRecloneFailureKeepsOriginal(t *testing.T) {
 			}
 			if n := len(s.audit.RecentWithPrefixSince(time.Now().Add(-time.Minute), "knowledge_git_source_update")); n != 0 {
 				t.Fatalf("failed update wrote %d audit rows, want 0", n)
+			}
+
+			if tc.wantRestore {
+				gitLog, err := os.ReadFile(logPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var clones []string
+				for _, line := range strings.Split(string(gitLog), "\n") {
+					if strings.Contains(line, "clone") {
+						clones = append(clones, line)
+					}
+				}
+				if len(clones) != 2 || !strings.Contains(clones[0], "--branch broken") || !strings.Contains(clones[1], "--branch main") {
+					t.Fatalf("expected a failed clone of broken then a restore clone of main, got %q", clones)
+				}
+				if _, err := os.Stat(filepath.Join(cloneDir, "README.md")); err != nil {
+					t.Fatalf("restored clone dir is missing README.md: %v", err)
+				}
+				if strings.Contains(logs.String(), "git source restore after failed edit") {
+					t.Fatalf("restore succeeded but logged a failure:\n%s", logs.String())
+				}
+			}
+			if tc.wantLog && !strings.Contains(logs.String(), "git source restore after failed edit") {
+				t.Fatalf("expected restore failure to be logged, got:\n%s", logs.String())
 			}
 		})
 	}
