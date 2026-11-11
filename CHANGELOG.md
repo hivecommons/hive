@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v6.13.5)
+
+### Fixed
+
+- Human-merge paths: a PR the hive held because it touched a path in `auto_merge.human_merge_paths` stayed held for good once a later head dropped that file (a dependency bot moving its workflow update to a separate PR, a contributor reverting the change). The hold's reason was read from the notice still on the thread, never from the current head, so the PR sat at needs-decision with a comment saying it changes a human-merge path when it changed none. The stage-label pass now re-matches the current head's complete file list with the matcher the merge lanes use. When nothing matches, it removes the hive's own `hold` and posts one notice for that head, and the merge lanes take the PR from there. A hold a person set, or one with a second hold source, stays, and the row, the 085 comment and the dashboard's hold sources stop naming a human-merge path for a head that touches none. The lift is the new write-back kind `human_merge_path_release` (default L5 with the opt-in label, overridable under `writeback.kinds`, the Settings kind table and the admin MCP `writeback.kind_policy` operation).
+
 ## 2026-11-11 (v6.13.4)
 
 ### Fixed
