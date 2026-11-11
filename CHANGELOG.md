@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v6.16.0)
+
+### Added
+
+- Knowledge Sources: each git source row now has an **Edit** button that loads it into the Add Git Source form (button becomes **Save**, with Cancel), backed by a new owner-only `PUT /api/knowledge/git-sources`; a name/layer correction updates in place without re-cloning, while a URL, branch or subpath correction re-clones and re-indexes in one request (audited as `knowledge_git_source_update`) (#17588, part of #17583).
+
+### Fixed
+
+- Knowledge Sources: **Clone & Index** now disables the button and shows "Cloning…" while the request runs, resolves a blank branch to the remote's default branch (`git ls-remote --symref`) and records it instead of guessing `main`, and keeps a failed connect visible as an error row with the reason and Retry/Dismiss (#17610).
+- Knowledge panel: Add Git Source, Add Subscription, Import Document and Import now show required-field errors inline under the offending input (red border, focus, `role="alert"` message) instead of a transient info toast, and required inputs are marked; fixes Clone & Index appearing to do nothing with an empty name or URL (#17587, part of #17583).
+
 ## 2026-11-11 (v6.15.0)
 
 ### Added
