@@ -393,6 +393,18 @@ func TestExtractTarGz(t *testing.T) {
 		t.Error("symlink must be skipped")
 	}
 
+	// git archive leads with a pax_global_header entry; it must not be
+	// mistaken for a second top-level name.
+	pax := tarGz(t, map[string]string{"o-r-abc1234/p.go": "package p\n"},
+		tar.Header{Name: "pax_global_header", Typeflag: tar.TypeXGlobalHeader, PAXRecords: map[string]string{"comment": "abc1234"}})
+	d2 := t.TempDir()
+	if top, err := ExtractTarGz(bytes.NewReader(pax), d2, 0); err != nil || top != filepath.Join(d2, "o-r-abc1234") {
+		t.Errorf("pax header: top=%s err=%v", top, err)
+	}
+	if _, err := os.Stat(filepath.Join(d2, "pax_global_header")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("pax_global_header must not be written")
+	}
+
 	// Path traversal is refused.
 	bad := tarGz(t, map[string]string{"../escape.go": "x"})
 	if _, err := ExtractTarGz(bytes.NewReader(bad), t.TempDir(), 0); err == nil {

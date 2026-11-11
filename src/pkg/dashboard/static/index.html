@@ -65926,7 +65926,7 @@ function burnAreaChart() {
         `<select class="wf-mkt-tier" aria-label="Filter by tier" data-change-action="wfMktSetTier" data-arg-types="v">${tierOpts}</select>` +
         `<span class="text-muted wf-mkt-count">${shown.length} of ${entries.length}</span>` +
         `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfMktReload" data-arg0="1"${st.loading ? ' disabled' : ''} title="Ask the hub for the current catalogue (revalidates the spoke's cached copy).">${st.loading ? 'Loading…' : 'Reload'}</button>` +
-        (owner ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfMktRefreshCatalogue"${st.busy === 'refresh' ? ' disabled' : ''} title="Ask the hub to re-ingest the CNCF corpus now (hub admins only; otherwise the hub answers 403).">${st.busy === 'refresh' ? 'Requesting…' : 'Refresh catalogue'}</button>` : '') +
+        (owner ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfMktRefreshCatalogue"${st.busy === 'refresh' ? ' disabled' : ''} title="Ask the hub to re-ingest the CNCF corpus now. The hub accepts this hive's credential; one full refresh per hour across hives.">${st.busy === 'refresh' ? 'Requesting…' : 'Refresh catalogue'}</button>` : '') +
         '</div>';
       let body;
       if (!st.loaded && st.loading) body = '<p class="text-muted">Loading the catalogue…</p>';
