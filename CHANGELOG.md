@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v6.19.0)
+
+### Added
+
+- **workflow models:** RFC phase 7 — signed bundles (`pkg/workflowmodel/bundle`: model + compiled profile + sha256; import always re-verifies and recompiles locally), a hub marketplace catalogue (`/api/marketplace/*`: immutable `name@version` entries, ETag index, tiers built-in · curated · ingested-unreviewed · local-published, nightly/on-demand refresh of the embedded CNCF corpus publishing `ingested-YYYYMMDD.N`, curated versions only flagged `newerIngestAvailable`), spoke import/publish/proxy routes with `workflow.marketplace.{enabled,url,refresh_interval}`, and a Settings → Workflows → Marketplace view with Import, Publish and Refresh catalogue ([#17620](https://github.com/hivecommons/hive/issues/17620))
+
+### Changed
+
+- v6 carries every v5 change through v5.220.0: the workflow-models RFC ([#17620](https://github.com/hivecommons/hive/issues/17620)) phases 1–7 — schema, compiler, store and repo bindings, the Settings → Workflows tab with visual editor, versions/diff/confirm, simulate, intake/cluster/spec ingest, safe label GC with model-defined human-gate replies, and signed bundles with a hub marketplace catalogue — plus OpenShell as a third `sandbox.runtime` (ADR-0026 phase 1, with cluster preflight and the dashboard terminal pane), an upstream corporate forward proxy for selected TLS egress, per-PR benchmark evidence export and opt-in publishing, the trusted-bot automerge lane honouring every configured bot, the GitHub GraphQL mutation gate no longer failing open on same-line prefixes, and the mutation report's verdict phase and wall-clock budget.
+
 ## 2026-11-11 (v6.18.0)
 
 ### Added
