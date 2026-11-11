@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v6.13.4)
+
+### Fixed
+
+- Merge requests: a re-request for a PR head whose earlier merge request was exhausted on a CI-gate verdict now re-evaluates the CI gate once instead of being refused for 24 hours; it merges if the gate now passes (for example after a gate false positive was fixed or a check was re-run green) and is still refused if the gate blocks. Exhaustions for conflicts, permissions or merge-queue-required are refused as before, so fork PRs no longer need a new commit or a manual merge to recover from a stale CI verdict (hivecommons/hive#17606).
+
 ## 2026-11-11 (v6.13.3)
 
 ### Fixed
