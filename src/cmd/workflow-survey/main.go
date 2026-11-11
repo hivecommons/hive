@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,8 +31,9 @@ const (
 	repoDirSeparator = "__"
 	// defaultForge is recorded in every model's scope.
 	defaultForge = "github.com"
-	// maxFileBytes skips pathological files (generated manifests).
-	maxFileBytes = 2 << 20
+	// exitUsage and exitFailure are the process exit codes.
+	exitUsage   = 2
+	exitFailure = 1
 )
 
 // repoIndex is the per-repository index the collector writes.
@@ -95,13 +97,23 @@ type projectStats struct {
 }
 
 func main() {
-	corpus := flag.String("corpus", "", "corpus root (contains repos/)")
-	out := flag.String("out", "", "output root (default <corpus>/out)")
-	only := flag.String("only", "", "comma-separated owner/repo filter")
-	flag.Parse()
+	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// realMain parses args and runs the survey, returning the exit code. It
+// is separated from main so tests can drive the binary in-process.
+func realMain(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("workflow-survey", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	corpus := fs.String("corpus", "", "corpus root (contains repos/)")
+	out := fs.String("out", "", "output root (default <corpus>/out)")
+	only := fs.String("only", "", "comma-separated owner/repo filter")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
 	if *corpus == "" {
-		fmt.Fprintln(os.Stderr, "usage: workflow-survey -corpus DIR [-out DIR] [-only owner/repo,...]")
-		os.Exit(2)
+		fmt.Fprintln(stderr, "usage: workflow-survey -corpus DIR [-out DIR] [-only owner/repo,...]")
+		return exitUsage
 	}
 	if *out == "" {
 		*out = filepath.Join(*corpus, "out")
@@ -112,10 +124,11 @@ func main() {
 			filter[r] = true
 		}
 	}
-	if err := run(*corpus, *out, filter); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	if err := run(*corpus, *out, filter, stdout, stderr); err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitFailure
 	}
+	return 0
 }
 
 // loadProjects maps owner/repo to project maturity from the collector's
@@ -141,7 +154,7 @@ func loadProjects(corpus string) map[string]string {
 	return out
 }
 
-func run(corpus, out string, filter map[string]bool) error {
+func run(corpus, out string, filter map[string]bool, stdout, stderr io.Writer) error {
 	dirs, err := os.ReadDir(filepath.Join(corpus, "repos"))
 	if err != nil {
 		return err
@@ -161,13 +174,16 @@ func run(corpus, out string, filter map[string]bool) error {
 			res.Project = maturity[strings.ToLower(repo)]
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", repo, err)
+			fmt.Fprintf(stderr, "%s: %v\n", repo, err)
 			continue
 		}
-		fmt.Printf("%-50s files=%-3d parsed=%-3d pipelines=%-3d findings=%-3d cols=%d%s\n", repo, res.Files, res.Parsed, res.Pipelines, res.Findings, len(res.Columns), ternary(res.Valid, "", " INVALID"))
+		fmt.Fprintf(stdout, "%-50s files=%-3d parsed=%-3d pipelines=%-3d findings=%-3d cols=%d%s\n", repo, res.Files, res.Parsed, res.Pipelines, res.Findings, len(res.Columns), ternary(res.Valid, "", " INVALID"))
 		accumulate(sum, res)
 	}
 	finish(sum)
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		return err
+	}
 	if err := writeJSON(filepath.Join(out, "summary.json"), sum); err != nil {
 		return err
 	}
