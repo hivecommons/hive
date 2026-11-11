@@ -1,0 +1,1 @@
+- The model-discovery self-report no longer carries raw binary when the Copilot CLI helper is refused with ENOEXEC; the error now names the cause (#17735).
