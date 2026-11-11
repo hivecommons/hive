@@ -313,6 +313,11 @@ type PRPassFacts struct {
 	// PR reads 085 with stagelabels.LaneReasonRebaseFailedTwice so a
 	// person decides (hivecommons/hive#15307).
 	RebaseFailedTwice bool
+	// BotAuthorFinding is the PR author's login when another bot opened
+	// the PR and the reviewer asked for changes on its head: the PR reads
+	// 085 with stagelabels.LaneReasonBotAuthorFinding instead of returning
+	// to an author that cannot act on a review.
+	BotAuthorFinding string
 	// FixerExhausted is the attempt count when the review fix dispatcher
 	// refuses another fix for this hive-authored PR because the
 	// re-engagement cap is spent: the PR reads 085 with

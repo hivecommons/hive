@@ -186,16 +186,17 @@ func (p *DispatchPlan) dispatchHeads(pr PullRequest, reviewers []AgentCapability
 			continue
 		}
 		msg := BuildPerspectivePromptWith(m.Perspective, pr, PromptOptions{
-			HeadRecordOnly:       m.Head,
-			Revise:               revisiting,
-			Perspectives:         opts.Perspectives,
-			ProposeFixesOnly:     !fixPushAllowed(pr, opts),
-			WritingGuideSection:  opts.WritingGuideSection,
-			ReviewBotLogins:      opts.ReviewBotLogins,
-			ReviewBotMinPriority: opts.ReviewBotMinPriority,
-			ReviewBackend:        reviewer.Backend,
-			ReviewModel:          reviewer.Model,
-			Delta:                delta,
+			HeadRecordOnly:        m.Head,
+			Revise:                revisiting,
+			Perspectives:          opts.Perspectives,
+			ProposeFixesOnly:      !fixPushAllowed(pr, opts),
+			ProposeFixesBotAuthor: proposeFixesBotAuthor(pr, opts),
+			WritingGuideSection:   opts.WritingGuideSection,
+			ReviewBotLogins:       opts.ReviewBotLogins,
+			ReviewBotMinPriority:  opts.ReviewBotMinPriority,
+			ReviewBackend:         reviewer.Backend,
+			ReviewModel:           reviewer.Model,
+			Delta:                 delta,
 		})
 		p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: reviewer.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: m.Perspective, Head: m.Head, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: reviewer.Backend, ReviewModel: reviewer.Model, DeltaPreviousHead: deltaPreviousHead(delta), Priority: pr.Priority})
 		p.State.Pending = append(p.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: m.Perspective, Agent: reviewer.Name, Head: m.Head, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewModel: strings.TrimSpace(reviewer.Model), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
@@ -225,16 +226,17 @@ func (p *DispatchPlan) dispatchCombinedHeads(pr PullRequest, keys []string, grou
 			continue
 		}
 		msg := BuildCombinedPrompt(pr, perspectives, PromptOptions{
-			HeadRecordOnly:       head,
-			Revise:               revisiting,
-			Perspectives:         opts.Perspectives,
-			ProposeFixesOnly:     !fixPushAllowed(pr, opts),
-			WritingGuideSection:  opts.WritingGuideSection,
-			ReviewBotLogins:      opts.ReviewBotLogins,
-			ReviewBotMinPriority: opts.ReviewBotMinPriority,
-			ReviewBackend:        reviewer.Backend,
-			ReviewModel:          reviewer.Model,
-			Delta:                delta,
+			HeadRecordOnly:        head,
+			Revise:                revisiting,
+			Perspectives:          opts.Perspectives,
+			ProposeFixesOnly:      !fixPushAllowed(pr, opts),
+			ProposeFixesBotAuthor: proposeFixesBotAuthor(pr, opts),
+			WritingGuideSection:   opts.WritingGuideSection,
+			ReviewBotLogins:       opts.ReviewBotLogins,
+			ReviewBotMinPriority:  opts.ReviewBotMinPriority,
+			ReviewBackend:         reviewer.Backend,
+			ReviewModel:           reviewer.Model,
+			Delta:                 delta,
 		})
 		p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: reviewer.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspectives[0], Perspectives: perspectives, Head: head, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: reviewer.Backend, ReviewModel: reviewer.Model, DeltaPreviousHead: deltaPreviousHead(delta), Priority: pr.Priority})
 		for _, persp := range perspectives {

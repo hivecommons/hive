@@ -217,6 +217,7 @@ func (p *DispatchPlan) dispatchDecision(pr PullRequest, agg Aggregate, bases []A
 		Revise:                revisiting,
 		Perspectives:          opts.Perspectives,
 		ProposeFixesOnly:      !fixPushAllowed(pr, opts),
+		ProposeFixesBotAuthor: proposeFixesBotAuthor(pr, opts),
 		WritingGuideSection:   opts.WritingGuideSection,
 	})
 	p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: base.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspectives[0], Perspectives: perspectives, Decision: true, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: base.Backend, ReviewModel: base.Model, Priority: pr.Priority})

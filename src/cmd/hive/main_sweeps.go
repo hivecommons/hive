@@ -922,6 +922,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 			return automerge.MergeTrainPolicy{Enabled: cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
 		}
 		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
+		opts.ReviewBotAuthors = func() []string { return cfg.Review.EffectiveBotAuthors() }
 		opts.TrustedBotSkipReview = func() bool { return cfg.AutoMerge.TrustedBotSkipsReview() }
 		opts.NativeMergeQueue = func() automerge.NativeMergeQueuePolicy {
 			q := cfg.AutoMerge.NativeMergeQueue
@@ -2687,6 +2688,7 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		HeadMaxRetries:        cfg.Review.HeadMaxRetries,
 		ProjectOrg:            cfg.Project.Org,
 		AIAuthor:              cfg.EffectiveAIAuthor(),
+		AppLogin:              cfg.GitHub.BotLogin(),
 		Agents:                agents,
 		ReviewBotLogins:       reviewBotLogins,
 		ReviewBotMinPriority:  reviewBots.MinPriority,
@@ -3051,7 +3053,7 @@ func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor
 		key := reviewFixExcludedWarnKey(x)
 		active[key] = struct{}{}
 		level := reviewFixExcludedWarn.level(key)
-		if x.Reason == review.FixDispatchExcludedNotHiveAuthored || x.Reason == review.FixDispatchExcludedNotHiveAuthoredDCO {
+		if x.Reason == review.FixDispatchExcludedNotHiveAuthored || x.Reason == review.FixDispatchExcludedNotHiveAuthoredDCO || x.Reason == review.FixDispatchExcludedOtherBotAuthor {
 			// Policy skip (the hive never pushes to PRs it did not author), not a fault.
 			if level == slog.LevelWarn {
 				level = slog.LevelInfo

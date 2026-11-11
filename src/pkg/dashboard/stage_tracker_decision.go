@@ -122,6 +122,9 @@ const (
 	decisionWhyNoPermission   = "Only a person with the permission can do this"
 	decisionWhyApproveNoGrant = "Approving does not grant the missing permission"
 	decisionHeldBlockerPlain  = "On hold — the hive does nothing until the hold is released."
+	// decisionWhyBotAuthorBranch disables Give direction on another bot's
+	// PR (stagelabels.LaneReasonBotAuthorFinding): no fixer pushes there.
+	decisionWhyBotAuthorBranch = "No agent pushes to a branch another bot regenerates; fix it on the base branch"
 )
 
 // stageTrackerVerdictLookup returns a lookup over review-verdicts.json for

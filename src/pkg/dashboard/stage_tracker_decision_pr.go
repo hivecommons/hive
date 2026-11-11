@@ -41,6 +41,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	// hivecommons/hive#15744: the hive's own PR after its fixer spent the
 	// re-engagement cap; nobody is fixing it any more.
 	fixerAttempts, fixerExhausted := stagelabels.ParseFixerExhausted(base)
+	// Another bot's PR the reviewer asked to change: nobody pushes to the
+	// branch that bot regenerates, so the fix lands on the base branch.
+	botAuthorFinding := lower == stagelabels.LaneReasonBotAuthorFinding
 	hiveSupersederStop := stagelabels.HiveSupersederHardStopReason(base)
 
 	// WHAT it is waiting on: the question, most specific source first. A
@@ -97,6 +100,15 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 			d.Question += ": " + finding
 		}
 		d.Question += ". Give direction, hand it to a person, or close it as not planned?"
+	case botAuthorFinding:
+		d.AskedBy = decisionAskedByReviewer
+		d.Question = "A reviewer asked for changes on a PR another bot opened and regenerates, so neither the hive nor the bot will change this branch"
+		if verdict != nil {
+			if s := decisionFirstNonEmpty(verdict.HumanSummaries); s != "" {
+				d.Question += ": " + s
+			}
+		}
+		d.Question += ". Fix it on the base branch, merge it as is, or close it?"
 	case verdict != nil && decisionFirstNonEmpty(verdict.HumanSummaries) != "":
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = "A reviewer handed this to a person: " + decisionFirstNonEmpty(verdict.HumanSummaries)
@@ -158,6 +170,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Blocker = "The hive never merges this by itself. After approval, a maintainer merges."
 	case forkGuarded:
 		d.Blocker = "Neither the author nor the hive can make CI run for this fork PR."
+	case botAuthorFinding:
+		d.Blocker = "A reviewer requested changes" + at + ". The bot that opened this PR rewrites its branch, so no fix is pushed here; the fix lands on the base branch, and the bot's next run brings it in."
+		approveOK, approveWhy = false, "Approving does not clear the reviewer's change request. Merge it yourself on GitHub to take it as is."
 	case fixerExhausted:
 		d.Blocker = "The fix dispatcher refuses another fix for this head (" + strconv.Itoa(fixerAttempts) + " attempts spent). No agent is on it until a person decides."
 		approveOK, approveWhy = false, "The head still carries the reviewer's unresolved findings; approving does not fix them."
@@ -198,6 +213,14 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	}
 	if fixerExhausted {
 		d.Options = decisionLeadFixerExhausted(d.Options, it)
+	}
+	if botAuthorFinding {
+		// Direction goes to a fixer, and no fixer pushes to this branch.
+		for i := range d.Options {
+			if d.Options[i].Action == decisionActionDirection {
+				d.Options[i] = decisionOption(decisionActionDirection, d.Options[i].Label, false, decisionWhyBotAuthorBranch)
+			}
+		}
 	}
 	if selfHold != nil {
 		// Release leads: it is the one action that answers the question.

@@ -272,6 +272,11 @@ type PromptOptions struct {
 	// name a problem and then leave the author to guess at the fix the
 	// reviewer already had in mind.
 	ProposeFixesOnly bool
+	// ProposeFixesBotAuthor is the login of the other bot that opened the
+	// PR and regenerates its branch ("" otherwise). With ProposeFixesOnly it
+	// tells the reviewer the author cannot apply a fix either: a defect the
+	// PR carries over from its base belongs on the base branch.
+	ProposeFixesBotAuthor string
 	// WritingGuideSection is config.ProjectConfig.WritingGuideSection().
 	WritingGuideSection string
 	// ReviewBotLogins is config.EffectiveReviewBots().Logins: the external

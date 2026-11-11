@@ -189,6 +189,7 @@ stateDiagram-v2
     s050 --> s071: human PR red / changes requested
     s050 --> s072: contributor PR red / changes requested
     s050 --> s085: swarm requires_human (reason reviewer-verdict:requires_human)
+    s050 --> s085: swarm changes_requested on a PR another bot opened and regenerates (reason bot-author:finding)
     s060 --> s070: new head red
     s095 --> s070: new head red during the soak (backward hop, commented)
     s095 --> s072: contributor head red during the soak (backward hop, commented)
@@ -464,6 +465,7 @@ conflict reason and the contributor lane's soak — and
 | Evidence | Stage |
 |---|---|
 | verdict changes_requested at the head, any red gating check, DCO sign-off missing, merge conflict (`conflicting` / `needs-rebase`) | `071-needs-author` (`author/human`) / `072-returned-to-contributor` (`author/clanker`); `070-fixing` when self-authored or `author/hive`. The 072 nudge lists every reason. Moving 085/090 → 071/072 is not a regression |
+| after the rows above, in the stage pass: the swarm's verdict changes_requested/reject at the head of a PR another bot opened (a `review.bot_authors` login that is not this hive's App, with no agent attribution and no adoption), and no person's change request on that head | `085-needs-decision`, reason `bot-author:finding`. The bot rewrites its branch and cannot act on a review, and the fixer never pushes to it, so the PR does not wait at 071 on an author that never answers. The once-per-head decision comment (write-back gated as `needs_decision_comment`) names the finding and the options: fix it on the base branch so the bot's next run brings it in, merge it as is by hand, or close it. The tracker disables *Give direction* on it |
 | no verdict for this head yet, or nothing has reported on the head (just pushed) and the verdict is not already `requires_human` | `050-review-pending` — never 090 without a current-head approve |
 | verdict `requires_human` at the head (even on a fresh head nothing has reported on yet, [#13115](https://github.com/hivecommons/hive/issues/13115)), no reviewer configured, or a non-trust human-only lane rule | `085-needs-decision` + one entry comment naming the decision ("Needs a decision, not a merge: the reviewer asked for a human decision.") |
 | everything above clean but a sentinel alert or hold-class label on the PR | `090-ready-for-human-merge`, held ([#17327](https://github.com/hivecommons/hive/issues/17327)): the entry comment carries the evidence and adds "Held: a sentinel alert is open on this PR. The hive never merges this head while the gate stands." The gate never changes the stage; it only stops the merge |

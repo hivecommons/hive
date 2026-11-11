@@ -37,6 +37,9 @@ func buildProposeOnlyInstruction(pr PullRequest, opts PromptOptions) string {
 	if !opts.ProposeFixesOnly {
 		return ""
 	}
+	if bot := strings.TrimSpace(opts.ProposeFixesBotAuthor); bot != "" {
+		return buildBotAuthorProposeOnlyInstruction(pr, bot)
+	}
 	var b strings.Builder
 	b.WriteString("\nPROPOSE FIXES, DO NOT PUSH THEM.\n")
 	fmt.Fprintf(&b, "PR %s#%d was opened by someone this hive does not speak for, so NO agent will push to its branch after your review, whatever review.fix_human_prs says: a commit signed off by the hive instead of the PR author fails the squash sign-off gate, and only the author could clear it. Do not check out, commit to, or push to this PR's branch yourself, and do not open a replacement PR.\n", pr.Repo, pr.Number)
@@ -48,6 +51,20 @@ func buildProposeOnlyInstruction(pr PullRequest, opts PromptOptions) string {
 		b.WriteString("For every finding you would have asked an agent to fix, put the fix in the review comment so the author can apply it: a ```suggestion block for a change that fits in a few lines at one location, or a ```diff patch block for anything larger. A finding without a concrete fix is a request for the author's time; a finding with one is an offer of yours.\n")
 	}
 	b.WriteString("changes_requested still means what it says — the verdict is recorded and the PR waits on the author, not on the hive.\n")
+	return b.String()
+}
+
+// buildBotAuthorProposeOnlyInstruction is buildProposeOnlyInstruction for a
+// PR another bot opened (a workflow's promotion or release PR, a dependency
+// bump). That bot regenerates the branch, so nobody applies a fix there:
+// not the hive, and not the bot. A finding the PR inherits from its base is
+// a finding about the base branch, and the reviewer says so.
+func buildBotAuthorProposeOnlyInstruction(pr PullRequest, bot string) string {
+	var b strings.Builder
+	b.WriteString("\nFINDINGS GO TO THE BASE BRANCH, NOT THIS PR.\n")
+	fmt.Fprintf(&b, "PR %s#%d was opened by %s, a bot that regenerates this branch on its own schedule: a commit pushed here is overwritten on its next run, and the bot cannot apply a suggestion. NO agent will push to this PR's branch after your review. Do not check out, commit to, or push to it yourself, and do not open a replacement PR.\n", pr.Repo, pr.Number, bot)
+	b.WriteString("Judge the change this PR makes. When a finding is about code the PR carries over unchanged from the branch it copies (a promotion or sync PR usually changes nothing of its own), say that in the finding: the defect is on the base branch and has to be fixed there, after which the bot's next run brings the fix into this PR. Put the concrete fix in the finding (the exact replacement lines, or a unified diff) so a maintainer can apply it on the base branch.\n")
+	b.WriteString("Do not ask the PR's author for a change: it is a bot. changes_requested still means this head should not merge as it is; a maintainer decides where the fix lands.\n")
 	return b.String()
 }
 
