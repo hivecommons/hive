@@ -150,7 +150,9 @@ hive_run_uid_isolation_migration() {
     else
       echo "[entrypoint] UID isolation: repairing ${_agent_name} (uid ${_agent_uid}) in background"
       hive_reown_agent_paths_if_needed "$_agent_name" "$_agent_uid"
-      chmod g+rwX "$_agent_dir" 2>/dev/null || true
+      if [ -d "$_agent_dir" ] && ! [ -L "$_agent_dir" ]; then
+        chmod g+rwX "$_agent_dir" 2>/dev/null || true
+      fi
       hive_publish_uid_isolation_marker "$_agent_marker" "$_agent_expected" || true
       echo "[entrypoint] UID isolation: ${_agent_name} pass complete"
     fi
@@ -685,6 +687,9 @@ hive_sweep_root_phase_paths() {
   _sweep_failed=""
   for _p in $HIVE_DATA_ROOT_PHASE_PATHS; do
     [ -e "$_p" ] || continue
+    # Never through a link: chown without -h acts on what the link names, and
+    # /data/home is writable by every agent uid.
+    [ -L "$_p" ] && continue
     # Already owned by the runtime user — the steady state on almost every
     # boot. Skip the syscall entirely so the common path costs one stat.
     [ "$(stat -c '%u' "$_p" 2>/dev/null || echo)" = "1001" ] && continue
@@ -1421,6 +1426,9 @@ if [ "$(id -u)" = "0" ]; then
     fi
     for _seeded_dir in /data/agents/*/; do
       [ -d "$_seeded_dir" ] || continue
+      # The trailing-slash glob also matches a link to a directory; a
+      # recursive chown/chmod must never start from one.
+      [ -L "${_seeded_dir%/}" ] && continue
       if [ "$(stat -c '%u' "$_seeded_dir" 2>/dev/null || echo 0)" = "0" ]; then
         chown -R dev:node "$_seeded_dir" 2>/dev/null || true
         chmod -R g+rwX "$_seeded_dir" 2>/dev/null || true
@@ -1489,6 +1497,27 @@ if [ "$(id -u)" = "0" ]; then
   chown dev:node /data/home/.copilot 2>/dev/null || true
   chmod 2775 /data/home/.claude /data/home/.claude/session-env 2>/dev/null || true
   chown dev:node /data/home/.claude /data/home/.claude/session-env 2>/dev/null || true
+  # hive_shared_dir_sticky DIR... — add the sticky bit to the shared CLI
+  # directories whose files the root-run perm guard and the in-process Go
+  # writers rename over: in a group-writable directory only the sticky bit
+  # keeps a dev-owned entry from being removed or replaced by another uid.
+  # Under the per-agent home layout every CLI rewrites its own copy inside
+  # /data/home/agents/<name>, so nothing legitimate renames over a dev-owned
+  # file here. The legacy whole-directory layout (HIVE_SHARED_AGENT_HOME=1)
+  # does — each agent uid refreshes the shared file in place — so the bit is
+  # left off there. Group bits are untouched; the existing 2770/2775 stays.
+  # Only directories that are real directories get it: a chmod through a
+  # symlink would land on whatever the link names.
+  hive_shared_dir_sticky() {
+    [ "${HIVE_SHARED_AGENT_HOME:-0}" = "1" ] && return 0
+    for _d; do
+      if [ -d "$_d" ] && ! [ -L "$_d" ]; then
+        chmod +t "$_d" 2>/dev/null || true
+      fi
+    done
+    return 0
+  }
+  hive_shared_dir_sticky /data/home /data/home/.claude /data/home/.copilot
   # Codex (newer method) writes a local sqlite state db under $HOME/.codex —
   # pre-create it group-writable + setgid so every agent UID (node group) can
   # init it, matching .claude/.copilot. Without this, switching an agent to the
@@ -1536,6 +1565,9 @@ if [ "$(id -u)" = "0" ]; then
   # process touches .bob first. 2770: no world access, these hold auth settings.
   chmod 2770 /data/home/.bob /data/home/.bob/settings 2>/dev/null || true
   chown dev:node /data/home/.bob /data/home/.bob/settings 2>/dev/null || true
+  # Not antigravity-cli/ or its cache/: those are bridged into each agent home
+  # as directories, so agy renames its token there under the agent's own uid.
+  hive_shared_dir_sticky /data/home/.gemini /data/home/.bob
   ln -sfn /data/config/github-copilot /home/dev/.config/github-copilot
   ln -sfn /data/config/github-copilot /data/home/.config/github-copilot
   ln -sfn /data/home/.copilot /home/dev/.copilot
@@ -1625,18 +1657,52 @@ if [ "$(id -u)" = "0" ]; then
   # this is an OAuth token. The chown restores dev ownership as well, because
   # that is the invariant the in-process Go permissions watcher depends on — it
   # runs as dev after the privilege drop and can only chmod what dev owns.
+  #
+  # Both single-file repairs go through hive_fix_shared_file, which acts only
+  # on a regular file inside a regular directory: chmod and chown (without -h)
+  # act on whatever a path resolves to, and these directories are writable by
+  # every agent uid. The invariant is that a root-run repair never changes the
+  # mode or owner of anything an agent uid could have pointed the path at.
   hive_fix_shared_credential() {
-    [ -f "$1" ] || return 0
-    chmod g+r "$1" 2>/dev/null || true
-    chown dev:node "$1" 2>/dev/null || true
+    hive_fix_shared_file "$1" g+r
     return 0
   }
 
   # hive_fix_copilot_config — copilot rewrites config.json 0600 on refresh.
   hive_fix_copilot_config() {
-    [ -f /data/home/.copilot/config.json ] || return 0
-    chmod 660 /data/home/.copilot/config.json 2>/dev/null || true
-    chown dev:node /data/home/.copilot/config.json 2>/dev/null || true
+    hive_fix_shared_file /data/home/.copilot/config.json 660
+    return 0
+  }
+
+  # hive_fix_shared_file PATH MODE — chmod MODE and chown dev:node the regular
+  # file at PATH. Nothing is done when PATH is absent. When PATH or its
+  # directory is anything other than a regular file in a regular directory,
+  # nothing is done either, and a WARN is logged once per path per guard
+  # process (HIVE_PERM_GUARD_REFUSED is that process's memory of it).
+  #
+  # The `[ -L ]` tests are the decision; the find runs the chmod and chown
+  # from the same enumeration (`-type f` never matches a link) and `chown -h`
+  # never follows, so the time between the check and each action is as short
+  # as the shell can make it. The sticky bit set on the shared dot-dirs at
+  # boot is what keeps a dev-owned entry from being swapped out from under it.
+  hive_fix_shared_file() {
+    _p="$1"; _m="$2"
+    _dir="${_p%/*}"; _base="${_p##*/}"
+    if [ -d "$_dir" ] && ! [ -L "$_dir" ] && [ -f "$_p" ] && ! [ -L "$_p" ]; then
+      find "$_dir" -maxdepth 1 -name "$_base" -type f ! -type l -exec chmod "$_m" {} + -exec chown -h dev:node {} + 2>/dev/null || true
+      return 0
+    fi
+    # Absent (and not a dangling link): nothing to repair, nothing to say.
+    if ! [ -e "$_p" ] && ! [ -L "$_p" ]; then
+      return 0
+    fi
+    case " ${HIVE_PERM_GUARD_REFUSED:-} " in
+      *" $_p "*) ;;
+      *)
+        HIVE_PERM_GUARD_REFUSED="${HIVE_PERM_GUARD_REFUSED:-} $_p"
+        echo "[entrypoint] WARN: perm guard: $_p is not a regular file in a regular directory; left untouched" >&2
+        ;;
+    esac
     return 0
   }
 
@@ -1747,7 +1813,9 @@ if [ "$(id -u)" = "0" ]; then
   # sweep still happens, on the 5-minute cycle.
   hive_fix_claude_instant() {
     hive_fix_shared_credential /data/home/.claude/.credentials.json
-    chmod g+rwx /data/home/.claude 2>/dev/null || true
+    if [ -d /data/home/.claude ] && ! [ -L /data/home/.claude ]; then
+      chmod g+rwx /data/home/.claude 2>/dev/null || true
+    fi
     return 0
   }
 
@@ -1765,7 +1833,11 @@ if [ "$(id -u)" = "0" ]; then
   hive_fix_gemini_instant() {
     hive_fix_shared_credential /data/home/.gemini/antigravity-cli/antigravity-oauth-token
     hive_fix_shared_credential /data/home/.gemini/antigravity-cli/cache/onboarding.json
-    chmod g+rwx /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache 2>/dev/null || true
+    for _d in /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache; do
+      if [ -d "$_d" ] && ! [ -L "$_d" ]; then
+        chmod g+rwx "$_d" 2>/dev/null || true
+      fi
+    done
     return 0
   }
 
@@ -1898,6 +1970,11 @@ if [ "$(id -u)" = "0" ]; then
   # launch. Falling back to the proxy CA alone if the combined bundle isn't there
   # yet keeps proxied HTTPS working; the combined bundle is strictly safer because
   # it also trusts real public roots for any non-proxied endpoint (advisory mode).
+  # Root writes this file into a directory every agent uid can write to, so
+  # it is only ever written when the path is absent or already a regular file.
+  if [ -L /data/home/.bashrc ]; then
+    echo "[entrypoint] WARN: /data/home/.bashrc is not a regular file; left untouched"
+  else
   cat > /data/home/.bashrc <<'BASHRC' 2>/dev/null || true
 # Hive agent shell environment
 if [ -f /data/proxy-ca-bundle.pem ]; then
@@ -1914,15 +1991,16 @@ BASHRC
   # Written by root via `cat >` above, so it is created root:root. Hand it to
   # dev at the point of creation (#5369): the recursive /data chown is guarded
   # off on every normal boot and cannot be relied on to fix it later.
-  chown dev:node /data/home/.bashrc 2>/dev/null || true
+  chown -h dev:node /data/home/.bashrc 2>/dev/null || true
+  fi
   # Login shells (tmux default-command) read ~/.profile, not ~/.bashrc — chain
   # them so both shell flavors get the same environment.
-  if [ ! -f /data/home/.profile ]; then
+  if [ ! -f /data/home/.profile ] && ! [ -L /data/home/.profile ]; then
     # shellcheck disable=SC2016
     printf '[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"\n' > /data/home/.profile 2>/dev/null || true
     chmod 644 /data/home/.profile 2>/dev/null || true
     # Same as .bashrc above — created by root, so hand it over here (#5369).
-    chown dev:node /data/home/.profile 2>/dev/null || true
+    chown -h dev:node /data/home/.profile 2>/dev/null || true
   fi
 
   # ── #5369: targeted post-phase ownership sweep ────────────────────────
@@ -2020,8 +2098,10 @@ BASHRC
       fi
       # Ensure agent dirs are group-writable so the dev user (same node group)
       # can clean up stale workspaces at runtime without root privileges.
-      chmod g+rwX "/data/agents/${agent_name}" 2>/dev/null || true
-      if [ -d "/data/beads/${agent_name}" ]; then
+      if [ -d "/data/agents/${agent_name}" ] && ! [ -L "/data/agents/${agent_name}" ]; then
+        chmod g+rwX "/data/agents/${agent_name}" 2>/dev/null || true
+      fi
+      if [ -d "/data/beads/${agent_name}" ] && ! [ -L "/data/beads/${agent_name}" ]; then
         BEAD_DIR_OWNER=$(stat -c '%u' "/data/beads/${agent_name}" 2>/dev/null || echo "0")
         if [ "$BEAD_DIR_OWNER" != "$AGENT_UID" ]; then
           chown -R "hive-${agent_name}:node" "/data/beads/${agent_name}" 2>/dev/null || true

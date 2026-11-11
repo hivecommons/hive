@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/sharedfile"
 )
 
 const (
@@ -187,8 +190,27 @@ func ExchangeCode(code, codeVerifier, redirectURI string) (*OAuthTokens, error) 
 	}, nil
 }
 
-// WriteCredentials atomically writes tokens to the credentials file.
+// ErrNoAccessToken is returned by WriteCredentials for a token set with no
+// access token. Writing one would replace whatever login is on file with a
+// signed-out credential.
+var ErrNoAccessToken = errors.New("refusing to write a Claude credential with no access token")
+
+// CredentialsFileMode is the mode of the shared credentials file: owner and
+// group read/write, so every agent uid reaches it through the shared group.
+const CredentialsFileMode = 0o660
+
+// WriteCredentials atomically writes tokens to the credentials file. It
+// refuses a nil token set or one with an empty access token
+// (ErrNoAccessToken), so no hive caller can replace the shared login with a
+// signed-out credential. The write is sharedfile.Replace: the credentials
+// directory is shared with every agent uid, so the temporary name is random,
+// metadata is set by descriptor, and a non-regular file at the destination or
+// a directory that is not this process's own is refused rather than written
+// through.
 func WriteCredentials(tokens *OAuthTokens, path string) error {
+	if tokens == nil || tokens.AccessToken == "" {
+		return ErrNoAccessToken
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o2775); err != nil {
 		return fmt.Errorf("create credentials dir: %w", err)
@@ -199,13 +221,8 @@ func WriteCredentials(tokens *OAuthTokens, path string) error {
 	if err != nil {
 		return fmt.Errorf("marshal credentials: %w", err)
 	}
-
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o660); err != nil {
-		return fmt.Errorf("write temp credentials: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename credentials: %w", err)
+	if err := sharedfile.Replace(path, data, CredentialsFileMode, sharedfile.Options{PreserveOwner: true}); err != nil {
+		return fmt.Errorf("write credentials: %w", err)
 	}
 	return nil
 }
@@ -214,10 +231,29 @@ func WriteCredentials(tokens *OAuthTokens, path string) error {
 // nil when the file is absent, malformed, or carries no token block. It never
 // applies an expiry rule — callers decide what a stale token means to them.
 func LoadTokens(path string) *OAuthTokens {
-	data, err := os.ReadFile(path)
+	tokens, err := ReadTokens(path)
 	if err != nil {
 		return nil
 	}
+	return tokens
+}
+
+// ReadTokens is LoadTokens with the read error kept, for callers that must
+// tell "this process cannot read the file" (fs.ErrNotExist, or
+// fs.ErrPermission on another uid's 0600 credential) apart from "the file
+// holds no usable token". A file that was read but is malformed, or carries
+// no token block, returns (nil, nil). The error never carries file content.
+func ReadTokens(path string) (*OAuthTokens, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTokens(data), nil
+}
+
+// ParseTokens decodes a credentials file already in memory. Nil for malformed
+// bytes or a file with no token block, like LoadTokens.
+func ParseTokens(data []byte) *OAuthTokens {
 	var creds Credentials
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return nil
@@ -281,11 +317,16 @@ func HasValidToken(path string) bool {
 // Positive evidence only: an unreadable or absent file returns false, leaving
 // callers exactly where they were before they asked.
 func HasUsableToken(path string) bool {
-	tokens := LoadTokens(path)
+	return TokensUsable(LoadTokens(path), time.Now())
+}
+
+// TokensUsable is the HasUsableToken rule applied to an already-loaded token
+// set at a given instant: a live access token, or a refresh grant that has not
+// expired. A nil token set is never usable.
+func TokensUsable(tokens *OAuthTokens, now time.Time) bool {
 	if tokens == nil {
 		return false
 	}
-	now := time.Now()
 	if tokens.AccessToken != "" && !expired(tokens.ExpiresAt, now) {
 		return true
 	}
