@@ -35898,6 +35898,70 @@
           }
         }
       },
+      "/api/workflows/{name}/{version}/simulate": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Simulate an issue or PR against a workflow model",
+          "description": "Derives the state a stored model would put an item in, using the same stageengine Facts the engine uses, and returns a per-rule trace explaining why. Send `facts` directly, or `repo`+`number` to best-effort fill them from the forge (the response lists which facts were filled and which stay unknown). Read-only; RFC phase 3c of the workflow-models RFC.",
+          "parameters": [
+            {
+              "name": "name",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "version",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowSimulateRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Decision, trace and normalized facts",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowSimulateResult"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Malformed body, unknown kind, or kind does not match the fetched item"
+            },
+            "404": {
+              "description": "Not found"
+            },
+            "422": {
+              "description": "Model does not compile, or no forge client is wired for repo+number fill"
+            },
+            "502": {
+              "description": "Forge fetch failed"
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        }
+      },
       "/api/workflows/ingest": {
         "post": {
           "tags": [
@@ -36320,6 +36384,262 @@
             "ratings": {
               "description": "Reserved for the marketplace (benchmarks, votes); preserved verbatim across saves.",
               "nullable": true
+            }
+          }
+        },
+        "WorkflowSimulateRequest": {
+          "type": "object",
+          "description": "Either `facts` (with `kind`) or `repo`+`number` must be given. When both are present `facts` wins and `repo`/`number` only seed the item reference.",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "issue",
+                "pr"
+              ]
+            },
+            "repo": {
+              "type": "string",
+              "description": "owner/repo"
+            },
+            "number": {
+              "type": "integer"
+            },
+            "facts": {
+              "$ref": "#/components/schemas/WorkflowSimulateFacts"
+            }
+          }
+        },
+        "WorkflowSimulateFacts": {
+          "type": "object",
+          "description": "JSON mirror of stageengine.Facts. Enumerations are the engine's name helpers: author.kind hive|clanker|human|unknown; pr.checks green|red|pending|none|unknown; pr.review approved|changes_requested|pending|unavailable|requires_human; pr.dco yes|no|unknown.",
+          "properties": {
+            "labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "open": {
+              "type": "boolean"
+            },
+            "merged": {
+              "type": "boolean"
+            },
+            "draft": {
+              "type": "boolean"
+            },
+            "origin": {
+              "type": "string"
+            },
+            "author": {
+              "type": "object",
+              "properties": {
+                "login": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "selfAuthored": {
+                  "type": "boolean"
+                },
+                "role": {
+                  "type": "string"
+                }
+              }
+            },
+            "park": {
+              "type": "object",
+              "properties": {
+                "holds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "needsHuman": {
+                  "type": "boolean"
+                },
+                "decisionLabel": {
+                  "type": "string"
+                },
+                "possiblyExists": {
+                  "type": "boolean"
+                },
+                "sentinel": {
+                  "type": "boolean"
+                },
+                "humanOnlyReason": {
+                  "type": "string"
+                },
+                "approvedDirection": {
+                  "type": "boolean"
+                },
+                "decisionQuestion": {
+                  "type": "string"
+                },
+                "decisionSuperseded": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "issue": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "bucket": {
+                  "type": "string"
+                }
+              }
+            },
+            "pr": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "checks": {
+                  "type": "string"
+                },
+                "review": {
+                  "type": "string"
+                },
+                "dco": {
+                  "type": "string"
+                },
+                "conflicting": {
+                  "type": "boolean"
+                },
+                "changesRequested": {
+                  "type": "boolean"
+                },
+                "humanApprover": {
+                  "type": "boolean"
+                },
+                "lane": {
+                  "type": "object",
+                  "properties": {
+                    "lane": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "WorkflowSimulateResult": {
+          "type": "object",
+          "properties": {
+            "decision": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string"
+                },
+                "column": {
+                  "type": "string"
+                },
+                "stage": {
+                  "type": "integer"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "abstain": {
+                  "type": "boolean"
+                },
+                "covered": {
+                  "type": "boolean"
+                },
+                "terminal": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "trace": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "evaluated": {
+                    "type": "boolean"
+                  },
+                  "matched": {
+                    "type": "boolean"
+                  },
+                  "skipped": {
+                    "type": "string"
+                  },
+                  "builtin": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "predicates": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "fact": {
+                          "type": "string"
+                        },
+                        "op": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        },
+                        "holds": {
+                          "type": "boolean"
+                        },
+                        "known": {
+                          "type": "boolean"
+                        },
+                        "actual": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "facts": {
+              "$ref": "#/components/schemas/WorkflowSimulateFacts"
+            },
+            "filled": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "unknown": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           }
         },

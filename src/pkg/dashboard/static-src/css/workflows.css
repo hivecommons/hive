@@ -46,3 +46,33 @@
     .wf-ingest-result { margin-top: var(--sp-5); border-top: var(--line-width) solid var(--border); padding-top: var(--sp-4); }
     .wf-ingest-result h4 { margin: var(--sp-5) var(--sp-0) var(--sp-2); font-size: var(--fs-base); }
     .wf-ingest-summary { font-size: var(--fs-sm); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+
+    /* Simulate panel (RFC phase 3c) */
+    .wf-sim > summary { cursor: pointer; list-style: none; }
+    .wf-sim > summary h4 { display: inline; margin: var(--sp-0); }
+    .wf-sim > summary::before { content: '▸'; display: inline-block; width: var(--sp-4); color: var(--muted); }
+    .wf-sim[open] > summary::before { content: '▾'; }
+    .wf-sim-pick { display: flex; align-items: flex-end; gap: var(--sp-3); flex-wrap: wrap; }
+    .wf-sim-pick .config-field { flex: 1 1 16rem; margin: var(--sp-0); }
+    .wf-sim-kinds { display: flex; gap: var(--sp-5); margin: var(--sp-3) var(--sp-0); font-size: var(--fs-sm); }
+    .wf-sim-kind { display: inline-flex; align-items: center; gap: var(--sp-2); cursor: pointer; }
+    .wf-sim-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: var(--sp-3) var(--sp-4); font-size: var(--fs-sm); }
+    .wf-sim-form .config-field { margin: var(--sp-0); }
+    .wf-sim-check { display: flex; align-items: center; gap: var(--sp-2); align-self: end; }
+    .wf-sim-result { margin-top: var(--sp-4); border-top: 1px solid var(--line-strong); padding-top: var(--sp-4); }
+    .wf-sim-decision { font-size: var(--fs-base); display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+    .wf-sim-chip { display: inline-block; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); font-weight: 700; font-size: var(--fs-sm); }
+    .wf-sim-chip-state { background: var(--status-ok); color: var(--panel); }
+    .wf-sim-chip-abstain { background: var(--status-warn); color: var(--panel); }
+    .wf-sim-chip-none { background: var(--muted); color: var(--panel); }
+    .wf-sim-sep { color: var(--muted); }
+    .wf-sim-trace { margin: var(--sp-3) var(--sp-0) var(--sp-0); padding-left: var(--sp-6); font-size: var(--fs-sm); }
+    .wf-sim-rule { padding: var(--sp-1) var(--sp-2); border-radius: var(--r-sm); }
+    .wf-sim-rule.matched { background: var(--bg-soft); border-left: 3px solid var(--status-ok); }
+    .wf-sim-rule.unevaluated, .wf-sim-rule.skipped { color: var(--muted); }
+    .wf-sim-preds { list-style: none; margin: var(--sp-1) var(--sp-0) var(--sp-0); padding-left: var(--sp-4); font-size: var(--fs-xs); }
+    .wf-sim-ok { color: var(--status-ok); font-weight: 700; }
+    .wf-sim-fail { color: var(--status-error); font-weight: 700; }
+    .wf-sim-unknown { color: var(--status-warn); font-weight: 700; }
+    .wf-sim-fill { margin-top: var(--sp-3); color: var(--text); }
+    .wf-dg-state.simulated .wf-dg-chip { stroke: var(--status-ok); stroke-width: 3; }

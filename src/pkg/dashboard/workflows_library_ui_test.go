@@ -18,7 +18,7 @@ func TestWorkflowsLibraryTabWiring(t *testing.T) {
 		`case 'Workflows': return renderGovWorkflows();`,
 		`function renderGovWorkflows()`,
 		`function renderWorkflowLibraryRows(workflows, bindings, owner)`,
-		`function renderWorkflowDetail(detail, bindings, owner)`,
+		`function renderWorkflowDetail(detail, bindings, owner, sim)`,
 		`function workflowDiagramSvg(model, profile)`,
 		`function renderWorkflowIngest(state, owner)`,
 		`function openWorkflowLibraryEntry(name, version)`,
