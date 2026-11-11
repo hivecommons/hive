@@ -43,7 +43,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 
 ```sh
 hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>] [--step-kind release --release-tag <tag> --release-target <sha>] [--claim]
-hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision|--withdraw-decision] [--blocked-by <n[,n]>] [--blocked-on-pr <n>]
+hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision|--withdraw-decision] [--blocked-by <n[,n]>] [--blocked-on-pr <n|owner/repo#n>]
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
 hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
@@ -68,7 +68,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--withdraw-decision` | — | comment | take back a decision park you placed yourself; see [Withdrawing your own park](#withdrawing-your-own-park). Cannot be combined with `--needs-decision` |
 | `--claim` | — | issue | file the new issue **and** claim it for this agent in the same request (see [Filing your own next step](#filing-your-own-next-step)). The request carries `"claim": true`; the result reports `claimed`, or `claim_error` when the claim did not land |
 | `--no-consolidate` | — | issue | requires a non-empty reason; the watcher skips open-issue consolidation (same-subject, file-set and component folds) and files a new issue, echoing the reason as `consolidation_skipped_reason` in the result and logging it. Use it for unrelated work that only shares a file or component with an open issue ([#14360](https://github.com/hivecommons/hive/issues/14360)). The request carries `"no_consolidate_reason"`. A request that declares `--parent` or `--blocked-by` needs no reason: it is a distinct DAG node and never takes the file-set, component or canonical-subject folds, and a genuine create reports `consolidation_skipped_reason` as `parent` or `blocked_by` ([#16065](https://github.com/hivecommons/hive/issues/16065)) |
-| `--blocked-on-pr` | — | comment | park the issue on open PR `<n>` in the same repo: the watcher prefixes the note with `<!-- hive:blocked-on pr=owner/repo#n -->`, strips `@`-mentions from it, adds the `blocked` label and removes `help wanted` (see [Blocked on an unmerged PR](#blocked-on-an-unmerged-pr)) |
+| `--blocked-on-pr` | — | comment | park the issue on open PR `<n>` in the same repo, or on `owner/repo#n` in another repository (the request then also carries `"blocked_on_pr_repo"`): the watcher prefixes the note with `<!-- hive:blocked-on pr=owner/repo#n -->`, strips `@`-mentions from it, adds the `blocked` label and removes `help wanted` (see [Blocked on an unmerged PR](#blocked-on-an-unmerged-pr)) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed. **This is how you test the tool.** A live call creates a real GitHub issue/comment/label change under the hive's App identity |
 
@@ -354,6 +354,11 @@ one neutral note with `--blocked-on-pr <n>`:
 hive-open-issue comment --repo o/r 13093 --blocked-on-pr 13092 \
   --body "Blocked on #13092: the flagged file exists only on that PR; nothing to ship until it lands."
 ```
+
+A PR in another repository is named `owner/repo#n`
+(`--blocked-on-pr acme/gadget#42`); the marker then reads
+`<!-- hive:blocked-on pr=acme/gadget#42 -->` and the sweep lifts the block
+when that PR merges or closes.
 
 The watcher prefixes the body with the marker `<!-- hive:blocked-on
 pr=o/r#13092 -->`, strips any `@login` mention from it (the PR's author is not

@@ -474,6 +474,16 @@ func alreadyLandedOriginalNote(copy, landed int, author, base string) string {
 	return b.String()
 }
 
+// blockedGateClause is the route's gate clause for a `blocked` PR: the pull
+// request it waits on, as the blocked sweep last read it from the PR's
+// blocked-on markers ("blocked on owner/repo#N"), else the bare label.
+func blockedGateClause(repo string, number int) string {
+	if reason := hgithub.BlockedOnSeenReason(repo, number); reason != "" {
+		return reason
+	}
+	return "the `" + hgithub.BlockedLabel + "` label is set"
+}
+
 // humanEvidence gathers the Evidence for one human-routed observation.
 func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, cause stagelabels.HumanCause, now time.Time) stagelabels.Evidence {
 	contributorVerdict := normalizeContributorLaneVerdict(c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA))
@@ -501,6 +511,9 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		// The 085 actions ask for the approval that releases the fence
 		// instead of saying none helps (hivecommons/hive#14664).
 		ApprovalReleasesFence: obs.Reason == contributorLaneReasonWorkflowPath && !workflowManual,
+	}
+	if hasLabelFold(obs.Labels, hgithub.BlockedLabel) {
+		e.Blocked = blockedGateClause(obs.Owner+"/"+obs.Repo, obs.Number)
 	}
 	// A trusted merger's APPROVED review on exactly this head is the human
 	// decision the lane noted (latestTrustedHumanApproval): it settles a
@@ -664,7 +677,7 @@ func workflowPathCause(workflowManual bool) string {
 // supplied (see workflowFenceManual).
 func decisionCauseFor(reason string, workflowManual bool) string {
 	switch {
-	case reason == "held", reason == "label:hold", reason == "label:needs-human", reason == "exempt-label",
+	case reason == "held", reason == "label:hold", reason == autoMergeReasonLabelBlocked, reason == "label:needs-human", reason == "exempt-label",
 		strings.HasPrefix(reason, "excluded-label:"), reason == "sentinel", reason == contributorLaneReasonSentinelBlocked:
 		return ""
 	case reason == contributorLaneReasonWorkflowPath:

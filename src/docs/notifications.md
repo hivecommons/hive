@@ -654,7 +654,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).PostClaimNote` | `protocol_command` |  |
 | `github.(*Client).reportOperatorPullRequestApproval` | `protocol_command` |  |
 | `main.githubClaimHooksOn` | `protocol_command` |  |
-| `github.(*Client).RecordVerdictBlocker` | `protocol_command` | carries the machine-consumed blocked-on marker |
+| `github.(*Client).postBlockedOnPRMarker` | `protocol_command` | carries the machine-consumed blocked-on marker; shared by a relay's blocked verdict and a PR's `Depends-on:` placement |
 | `github.(*Client).handleOnePRRequest` | `security_event` |  |
 | `github.(*Client).markReporterTrustAwaiting` | `security_event` |  |
 | `github.(*Client).reconcileReporterTrustSignal` | `security_event` |  |

@@ -1281,10 +1281,17 @@ func runBlockedIssuesSweepIfDue(ctx context.Context, ghClient *github.Client, cf
 	res, err := ghClient.SweepBlockedIssues(ctx, github.BlockedSweepOptions{Repos: repos})
 	if err != nil {
 		logger.Warn("blocked issues reconciliation sweep failed", "error", err)
-		return
-	}
-	if res.Unblocked+res.Retargeted+res.Stripped+res.Errors > 0 {
+	} else if res.Unblocked+res.Retargeted+res.Stripped+res.Errors > 0 {
 		logger.Info("blocked issues reconciliation sweep complete", "items", res.Items, "unblocked", res.Unblocked, "retargeted", res.Retargeted, "help_wanted_stripped", res.Stripped, "errors", res.Errors)
+	}
+	// The same sweep holds PRs on the open pull requests their Depends-on
+	// lines name, and lifts that hold once they land.
+	prRes, err := ghClient.SweepBlockedPRDependencies(ctx, github.BlockedSweepOptions{Repos: repos})
+	if err != nil {
+		logger.Warn("blocked PR dependency sweep: a repository could not be listed", "error", err)
+	}
+	if prRes.Placed+prRes.Marked+prRes.Unblocked+prRes.Suppressed+prRes.Errors > 0 {
+		logger.Info("blocked PR dependency sweep complete", "prs", prRes.PRs, "placed", prRes.Placed, "marked", prRes.Marked, "released_by_person", prRes.Released, "unblocked", prRes.Unblocked, "suppressed", prRes.Suppressed, "errors", prRes.Errors)
 	}
 }
 

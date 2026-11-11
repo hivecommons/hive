@@ -126,6 +126,11 @@ type Evidence struct {
 	// it (hivecommons/hive#15020); the 085 reason then names them instead
 	// of the bare "the `hold` label is set".
 	Hold *HoldProvenance
+	// Blocked is the gate clause for a `blocked` label on the PR — "blocked
+	// on owner/repo#N" when the blocked sweep read the pull request it waits
+	// on, else "the `blocked` label is set" — and "" without the label. It
+	// rides the route like a hold: every merge lane refuses the PR on it.
+	Blocked string
 	// Cause is why the lane handed off; CauseTrust is the only one that can
 	// end at 090.
 	Cause HumanCause
@@ -459,8 +464,9 @@ func RouteHuman(e Evidence) Route {
 
 // GateReasons names the hard merge stops on the head that are gates, not
 // stages (hivecommons/hive#17327): an open sentinel alert and each
-// hold-class label. A hive superseding PR whose sentinel finding a person
-// acknowledged (no hard stop) carries no sentinel gate.
+// hold-class label, then the `blocked` label (Evidence.Blocked). A hive
+// superseding PR whose sentinel finding a person acknowledged (no hard stop)
+// carries no sentinel gate.
 func GateReasons(e Evidence) []string {
 	var gates []string
 	if e.Sentinel && !(e.HiveSuperseder && strings.TrimSpace(e.HiveSupersederHardStop) == "") {
@@ -472,6 +478,9 @@ func GateReasons(e Evidence) []string {
 			continue
 		}
 		gates = append(gates, "the `"+h+"` label is set")
+	}
+	if b := strings.TrimSpace(e.Blocked); b != "" {
+		gates = append(gates, b)
 	}
 	return gates
 }

@@ -88,10 +88,10 @@ func TestContributorLaneApprovesHeldRunsForRegistryTrusted(t *testing.T) {
 			wantReason: contributorLaneReasonSentinelBlocked,
 		},
 		{
-			name:       "exclude label refuses",
+			name:       "blocked label refuses",
 			registry:   registryTrusted,
 			mutate:     func(fx *contributorLaneFixture) { noMarker(fx); fx.labels = []string{"blocked"} },
-			wantReason: "excluded-label:blocked",
+			wantReason: autoMergeReasonLabelBlocked,
 		},
 		{
 			name:     "workflow path refuses",

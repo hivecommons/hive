@@ -688,7 +688,7 @@ func TestTrySweepContributorLanePRSkipReasons(t *testing.T) {
 		{name: "hold label", mutate: func(fx *contributorLaneFixture) { fx.labels = []string{"hold"} }, wantReason: "label:hold"},
 		{name: "do-not-merge slash label", mutate: func(fx *contributorLaneFixture) { fx.labels = []string{"do-not-merge/wip"} }, wantReason: "label:do-not-merge/wip"},
 		{name: "needs-rebase label returns author fix", mutate: func(fx *contributorLaneFixture) { fx.labels = []string{"needs-rebase"} }, wantReason: "label:needs-rebase"},
-		{name: "policy exclude label", mutate: func(fx *contributorLaneFixture) { fx.labels = []string{"blocked"} }, wantReason: "excluded-label:blocked"},
+		{name: "blocked label (shared merge gate)", mutate: func(fx *contributorLaneFixture) { fx.labels = []string{"blocked"} }, wantReason: autoMergeReasonLabelBlocked},
 		{name: "conflict outranks untrusted claim tier", mutate: func(fx *contributorLaneFixture) {
 			fx.mergeableState = "dirty"
 			tierClaim(" tier=newcomer verified=true")(fx)

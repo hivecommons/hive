@@ -483,6 +483,11 @@ func (c *Engine) sentinelLabelName() string {
 	return strings.ToLower(strings.TrimSpace(c.sentinelLabel()))
 }
 
+// autoMergeReasonLabelBlocked is labelBlockReason's answer for the `blocked`
+// label: the PR waits on another pull request (its Depends-on targets, or a
+// person's own reason), and no lane merges it while the label stands.
+const autoMergeReasonLabelBlocked = "label:blocked"
+
 func (c *Engine) labelBlockReason(labels []string, trusted bool) string {
 	sentinelLabel := c.sentinelLabelName()
 	holdLabels := labels
@@ -512,6 +517,12 @@ func (c *Engine) labelBlockReason(labels []string, trusted bool) string {
 	}
 	if c.isHeld(holdLabels) {
 		return "label:hold"
+	}
+	// `blocked` is checked after the hold family so a PR wearing both keeps
+	// reading as held. Every lane's prefilter and the queued lane's listing
+	// call this, so one check refuses the PR on every merge path.
+	if hasLabelFold(labels, hgithub.BlockedLabel) {
+		return autoMergeReasonLabelBlocked
 	}
 	return ""
 }
