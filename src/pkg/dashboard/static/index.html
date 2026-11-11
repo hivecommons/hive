@@ -5287,6 +5287,12 @@
     .kb-sources-section > .row { flex-wrap: wrap; }
     .kb-sources-note { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; margin-bottom: var(--sp-6); }
     .kb-sources-section .empty-dashed { padding: var(--sp-8) var(--sp-6); }
+    .kb-gs-error-main { min-width: 0; flex: 1; }
+    .kb-gs-error-title { font-size: var(--fs-base); font-weight: 600; color: var(--fg); display: flex; align-items: center; gap: var(--sp-3); white-space: nowrap; overflow: hidden; }
+    .kb-gs-error-title > .status-dot { width: 7px; height: 7px; min-width: 7px; }
+    .kb-gs-error-name { overflow: hidden; text-overflow: ellipsis; }
+    .kb-gs-error-meta { font-size: var(--fs-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kb-gs-error-reason { font-size: var(--fs-xs); color: var(--red); white-space: normal; overflow-wrap: anywhere; }
     .kb-sources-add { margin-top: var(--sp-7); }
     .kb-sources-add > summary { padding: var(--sp-2) var(--sp-0); }
     .kb-sources-form { gap: var(--sp-5); margin-top: var(--sp-5); }
@@ -44897,14 +44903,14 @@ function burnAreaChart() {
 
         _kbFailedGitSources.forEach((fs, i) => {
           html += '<div class="card-inset row-between mb-3" data-kb-gs-error="1">';
-          html += '<div style="min-width:0;flex:1">';
-          html += `<div style="font-size:var(--fs-base);font-weight:600;color:var(--fg);display:flex;align-items:center;gap:var(--sp-3);white-space:nowrap;overflow:hidden">`;
-          html += `<span class="status-dot" data-status="error" style="width:7px;height:7px;min-width:7px"></span>`;
-          html += `<span style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(fs.name)}</span></div>`;
-          html += `<div style="font-size:0.7rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(fs.url)}`;
+          html += '<div class="kb-gs-error-main">';
+          html += '<div class="kb-gs-error-title">';
+          html += '<span class="status-dot" data-status="error"></span>';
+          html += `<span class="kb-gs-error-name">${escapeHtml(fs.name)}</span></div>`;
+          html += `<div class="kb-gs-error-meta">${escapeHtml(fs.url)}`;
           if (fs.subpath) html += ` / ${escapeHtml(fs.subpath)}`;
           html += ` &middot; ${escapeHtml(fs.branch || 'repo default')}</div>`;
-          html += `<div role="alert" style="font-size:0.7rem;color:var(--red);white-space:normal;overflow-wrap:anywhere">status: error &mdash; ${escapeHtml(fs.error)}</div>`;
+          html += `<div role="alert" class="kb-gs-error-reason">status: error &mdash; ${escapeHtml(fs.error)}</div>`;
           html += '</div>';
           html += `<button class="hv-btn nous-btn btn-sm" data-action="kbRetryGitSource" data-arg0="${i}">Retry</button>`;
           html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="kbDismissGitSourceError" data-arg0="${i}">Dismiss</button>`;
