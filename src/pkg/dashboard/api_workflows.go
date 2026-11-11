@@ -31,6 +31,7 @@ func (s *Server) registerWorkflowRoutes() {
 	s.mux.HandleFunc("POST /api/workflows/{name}/{version}/simulate", s.handleWorkflowSimulate)
 	s.registerWorkflowEditorRoutes()
 	s.registerWorkflowIngestSourceRoutes()
+	s.registerWorkflowMarketplaceRoutes()
 }
 
 func (s *Server) workflowStore(w http.ResponseWriter) *wfstore.Store {
