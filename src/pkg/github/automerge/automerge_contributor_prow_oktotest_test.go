@@ -7,7 +7,9 @@ package automerge
 // that shape, never otherwise, and stops for good once Prow rejects the App.
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -179,5 +181,30 @@ func TestContributorLaneRelayEvaluationDoesNotPostProwOkToTest(t *testing.T) {
 	}
 	if fx.comments != 0 {
 		t.Fatalf("comments = %d %q, want none from a relay evaluation", fx.comments, fx.allComments)
+	}
+}
+
+// A rejection the PR thread already records is a handled state: a restarted
+// hive must not log it at WARN again.
+func TestContributorLaneProwRejectionAlreadyNotedLogsBelowWarn(t *testing.T) {
+	fx := prowOkToTestFixture()
+	fx.prComments = []map[string]any{
+		appComment(2, workflowApprovalCommandBody("oldhead")),
+		prowComment(3, "@"+testHiveAppBotLogin+": Cannot trigger testing until a trusted user reviews the PR and leaves an `/ok-to-test` message."),
+	}
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	policy := defaultContributorLanePolicy()
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)}
+	var logs bytes.Buffer
+	for run := 0; run < 2; run++ {
+		engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+		engine.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		if _, _, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy); err != nil {
+			t.Fatalf("run %d err = %v", run, err)
+		}
+	}
+	if got := strings.Count(logs.String(), "ok-to-test not posted again"); got != 1 {
+		t.Fatalf("WARN lines = %d in %q, want 1 (only the run that left the note)", got, logs.String())
 	}
 }

@@ -68,11 +68,14 @@ func (c *Engine) requestProwPresubmitsForFork(ctx context.Context, displayRepo, 
 	}
 	if state.rejected {
 		c.markWorkflowApprovalUntrusted(owner, repo, number)
-		if !state.rejectionNoted {
-			c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, prowPresubmitsRejectedNote(strings.TrimSpace(c.transport.AppBotLogin())))
+		args := []any{"repo", displayRepo, "pr", number, "sha", headSHA, "skipped", hgithub.PRApprovalCommandsSkippedProw}
+		const msg = "contributor-lane ok-to-test not posted again: Prow rejected the App's command on this fork PR; a trusted user must post it"
+		if state.rejectionNoted {
+			c.debug(msg, args...)
+			return
 		}
-		c.warn("contributor-lane ok-to-test not posted again: Prow rejected the App's command on this fork PR; a trusted user must post it",
-			"repo", displayRepo, "pr", number, "sha", headSHA, "skipped", hgithub.PRApprovalCommandsSkippedProw)
+		c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, prowPresubmitsRejectedNote(strings.TrimSpace(c.transport.AppBotLogin())))
+		c.warn(msg, args...)
 		return
 	}
 	if state.postedForHead || !(hgithub.ProwManagedLabels(labels) || state.prowManaged) {
