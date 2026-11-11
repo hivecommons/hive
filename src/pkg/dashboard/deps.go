@@ -44,6 +44,11 @@ type Dependencies struct {
 	// files (repo-relative slash path -> contents) and the ref read, for
 	// POST /api/workflows/ingest. Nil disables ingest from a repository.
 	WorkflowRepoFiles func(ctx context.Context, repo string) (files map[string][]byte, ref string, err error)
+	// WorkflowItemSnapshot reads one issue or PR head-level for
+	// POST /api/workflows/{name}/{version}/simulate (RFC #17620 phase 3c)
+	// so the operator can simulate a real item. Nil disables the fetch; the
+	// handler then answers 422 and the form still accepts hand-set facts.
+	WorkflowItemSnapshot func(ctx context.Context, repo string, number int) (ghpkg.WorkflowItemSnapshot, error)
 	// AgentMgr is the agent runtime (hivecommons/hive#13536). The dashboard
 	// programs against the crux.Runtime surface, not *agent.Manager; tests that
 	// need manager-only seams unwrap it with agentManager.

@@ -27,6 +27,7 @@ func (s *Server) registerWorkflowRoutes() {
 	s.mux.HandleFunc("PUT /api/workflows/{name}/{version}", s.handleWorkflowSave)
 	s.mux.HandleFunc("DELETE /api/workflows/{name}/{version}", s.handleWorkflowDelete)
 	s.registerWorkflowVersionRoutes()
+	s.mux.HandleFunc("POST /api/workflows/{name}/{version}/simulate", s.handleWorkflowSimulate)
 }
 
 func (s *Server) workflowStore(w http.ResponseWriter) *wfstore.Store {

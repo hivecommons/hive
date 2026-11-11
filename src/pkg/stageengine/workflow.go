@@ -2,6 +2,7 @@ package stageengine
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -334,4 +335,169 @@ func dcoName(d stagelabels.DCOState) string {
 		return "no"
 	}
 	return "unknown"
+}
+
+// RuleTrace is one rule's evaluation in an Explain run, in rule order.
+// Rules after the first match are listed with Evaluated false so the
+// operator sees the whole model, not just the part that fired. A builtin
+// derivation yields a single trace with Builtin set.
+type RuleTrace struct {
+	ID         string           `json:"id"`
+	State      string           `json:"state"`
+	Kind       string           `json:"kind,omitempty"`
+	Evaluated  bool             `json:"evaluated"`
+	Matched    bool             `json:"matched"`
+	Skipped    string           `json:"skipped,omitempty"`
+	Builtin    bool             `json:"builtin,omitempty"`
+	Reason     string           `json:"reason,omitempty"`
+	Predicates []PredicateTrace `json:"predicates,omitempty"`
+}
+
+// PredicateTrace is one predicate's verdict: Holds is the evaluator's
+// answer, Known is false when the fact is outside the vocabulary (the
+// compiler refuses such a model, so this is defence in depth), and Actual
+// is the fact's value as the evaluator saw it (scalar and bool facts).
+type PredicateTrace struct {
+	Fact   string `json:"fact"`
+	Op     string `json:"op"`
+	Value  string `json:"value,omitempty"`
+	Holds  bool   `json:"holds"`
+	Known  bool   `json:"known"`
+	Actual string `json:"actual,omitempty"`
+}
+
+// Explain derives f under p exactly as DeriveFromModel does and also
+// returns the rule-by-rule trace of how it got there (RFC #17620 phase 3c
+// "simulate"). The Decision is identical to DeriveFromModel(p, kind).Derive(f).
+func Explain(p *workflowmodel.Profile, kind stagelabels.Item, f Facts) (Decision, []RuleTrace) {
+	d := DeriveFromModel(p, kind)
+	dec := d.Derive(f)
+	md, ok := d.(modelDeriver)
+	if !ok || f.Ref.Kind != kind {
+		return dec, nil
+	}
+	if md.p.Mode != workflowmodel.DerivationRules {
+		tr := RuleTrace{Builtin: true, Evaluated: true, Matched: !dec.Abstain, Reason: dec.Reason}
+		if !dec.Abstain && dec.Stage != stagelabels.None {
+			tr.State, _ = md.p.StateForNumber(dec.Stage.Number())
+		}
+		return dec, []RuleTrace{tr}
+	}
+	want := workflowmodel.KindIssue
+	if kind == stagelabels.PRItem {
+		want = workflowmodel.KindPR
+	}
+	traces := make([]RuleTrace, 0, len(md.p.Rules))
+	matched := false
+	for i, r := range md.p.Rules {
+		id := r.ID
+		if id == "" {
+			id = fmt.Sprintf("rules[%d]", i)
+		}
+		tr := RuleTrace{ID: id, State: r.State, Kind: string(r.Kind), Reason: r.Reason}
+		switch {
+		case matched:
+		case r.Kind != workflowmodel.KindAny && r.Kind != want:
+			tr.Skipped = fmt.Sprintf("rule is for %s items", r.Kind)
+		default:
+			tr.Evaluated = true
+			tr.Matched = true
+			for _, pr := range r.When {
+				pt := explainPredicate(f, pr)
+				if !pt.Holds {
+					tr.Matched = false
+				}
+				tr.Predicates = append(tr.Predicates, pt)
+			}
+			if tr.Matched {
+				matched = true
+			}
+		}
+		traces = append(traces, tr)
+	}
+	return dec, traces
+}
+
+func explainPredicate(f Facts, p workflowmodel.Predicate) PredicateTrace {
+	pt := PredicateTrace{Fact: p.Fact, Op: string(p.Op), Value: p.Value, Holds: holds(f, p)}
+	switch workflowmodel.Facts[p.Fact] {
+	case workflowmodel.FactBool:
+		if v, ok := boolFact(f, p.Fact); ok {
+			pt.Known, pt.Actual = true, strconv.FormatBool(v)
+		}
+	case workflowmodel.FactScalar:
+		if v, ok := scalarFact(f, p.Fact); ok {
+			pt.Known, pt.Actual = true, v
+		}
+	case workflowmodel.FactSet:
+		if v, ok := setFact(f, p.Fact); ok {
+			pt.Known, pt.Actual = true, strings.Join(v, " ")
+		}
+	}
+	return pt
+}
+
+// AuthorKindName, ChecksName, ReviewName and DCOName are the scalar fact
+// spellings the rules vocabulary uses (author.kind, pr.checks, pr.review,
+// pr.dco); the Parse* helpers invert them for callers that build Facts from
+// text, such as the simulate API.
+func AuthorKindName(k authorkind.Kind) string      { return authorKindName(k) }
+func ChecksName(c stagelabels.CheckSummary) string { return checksName(c) }
+func ReviewName(s stagelabels.VerdictState) string { return reviewName(s) }
+func DCOName(d stagelabels.DCOState) string        { return dcoName(d) }
+
+// ParseAuthorKind inverts AuthorKindName; anything else is Unknown.
+func ParseAuthorKind(s string) authorkind.Kind {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "human":
+		return authorkind.Human
+	case "hive":
+		return authorkind.Hive
+	case "clanker":
+		return authorkind.Clanker
+	}
+	return authorkind.Unknown
+}
+
+// ParseChecks inverts ChecksName into a minimal CheckSummary: green is one
+// passing check, red one failing check named "ci", pending one queued
+// check, unknown (or "") an unread head.
+func ParseChecks(s string) stagelabels.CheckSummary {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "green":
+		return stagelabels.CheckSummary{Known: true, Total: 1, Green: 1}
+	case "red":
+		return stagelabels.CheckSummary{Known: true, Total: 1, Red: []string{"ci"}}
+	case "pending":
+		return stagelabels.CheckSummary{Known: true, Total: 1, Pending: 1}
+	case "missing", "none":
+		return stagelabels.CheckSummary{Known: true}
+	}
+	return stagelabels.CheckSummary{}
+}
+
+// ParseReview inverts ReviewName; anything else is pending.
+func ParseReview(s string) stagelabels.VerdictState {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "approved":
+		return stagelabels.VerdictApproved
+	case "changes_requested":
+		return stagelabels.VerdictChangesRequested
+	case "unavailable":
+		return stagelabels.VerdictUnavailable
+	case "requires_human":
+		return stagelabels.VerdictRequiresHuman
+	}
+	return stagelabels.VerdictPending
+}
+
+// ParseDCO inverts DCOName; anything else is unknown.
+func ParseDCO(s string) stagelabels.DCOState {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "yes":
+		return stagelabels.DCOYes
+	case "no":
+		return stagelabels.DCONo
+	}
+	return stagelabels.DCOUnknown
 }
