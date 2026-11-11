@@ -1592,8 +1592,9 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 		return nil
 	}
 
-	var optedIn, noImage, noClaim, noGateway, badRuntime []string
+	var optedIn, noImage, noClaim, noGateway, noDigest, badRuntime []string
 	var openshellBlocks []SandboxOpenShellConfig
+	var substrateBlocks []SandboxSubstrateConfig
 	for name, a := range cfg.Agents {
 		if !a.SandboxEnabled(cfg.AgentSandbox) {
 			continue
@@ -1618,12 +1619,21 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 			if strings.TrimSpace(os.GatewayURL) != "" {
 				openshellBlocks = append(openshellBlocks, os)
 			}
+		case rt == SandboxRuntimeSubstrate:
+			sb := a.SandboxSubstrate(cfg.AgentSandbox)
+			// Substrate refuses tag-only images; the agent image is usually a
+			// tag, so the substrate block must carry the digest-pinned one.
+			if !strings.Contains(sb.Image, "@sha256:") {
+				noDigest = append(noDigest, name)
+			}
+			substrateBlocks = append(substrateBlocks, sb)
 		}
 	}
 	sort.Strings(optedIn)
 	sort.Strings(noImage)
 	sort.Strings(noClaim)
 	sort.Strings(noGateway)
+	sort.Strings(noDigest)
 	sort.Strings(badRuntime)
 
 	var out []string
@@ -1658,6 +1668,12 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 				"set agent_sandbox.openshell.gateway_url (or the per-agent sandbox.openshell.gateway_url) to the OpenShell gateway's gRPC address (ADR-0026)",
 			strings.Join(noGateway, ", ")))
 	}
+	if len(noDigest) > 0 {
+		out = append(out, fmt.Sprintf(
+			"agent(s) %s use the substrate sandbox runtime but resolve no digest-pinned substrate.image; Substrate refuses tag-only images and every kick will fail — "+
+				"set agent_sandbox.substrate.image (or the per-agent sandbox.substrate.image) to the sandbox image's …@sha256:… reference (ADR-0026 phase 2)",
+			strings.Join(noDigest, ", ")))
+	}
 	if len(optedIn) < len(cfg.Agents) {
 		out = append(out, fmt.Sprintf(
 			"agent_sandbox.enabled is true but only %d of %d agent(s) are opted in (%s); the rest still run unconfined on the tmux path (#4918)",
@@ -1666,6 +1682,7 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 	// Last, because it may reach the network (bounded and cached): the static
 	// warnings above must not wait on a gateway.
 	out = append(out, cruxconfig.OpenShellPreflightWarnings(openshellBlocks)...)
+	out = append(out, cruxconfig.SubstratePreflightWarnings(substrateBlocks)...)
 	return out
 }
 
