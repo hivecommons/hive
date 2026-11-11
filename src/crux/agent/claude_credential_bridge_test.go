@@ -17,6 +17,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/sharedfile"
 )
 
 // Fake tokens. Every token string carries this sentinel so a test can prove
@@ -540,34 +541,214 @@ func TestPromoteClaudeCredential_RefusesUnusableBytes(t *testing.T) {
 	}
 }
 
-func TestPromoteClaudeCredential_KeepsSharedOwner(t *testing.T) {
+func TestPromoteClaudeCredential_WritesOnlyTheTokenBlock(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, ".credentials.json")
 	if err := os.WriteFile(target, bridgeTestCreds(t, "shared", time.Now().Add(time.Hour).UnixMilli()), 0o660); err != nil {
 		t.Fatal(err)
 	}
-	var chowned string
-	var gotUID, gotGID int
-	old := chownClaudeCredential
-	chownClaudeCredential = func(path string, uid, gid int) error {
-		chowned, gotUID, gotGID = path, uid, gid
-		return nil
-	}
-	t.Cleanup(func() { chownClaudeCredential = old })
-
-	fresh := bridgeTestCreds(t, "fresh", time.Now().Add(8*time.Hour).UnixMilli())
-	stale, err := promoteClaudeCredential(fresh, target, time.Now())
+	exp := time.Now().Add(8 * time.Hour).UnixMilli()
+	// A credential with extra material around and inside the token block.
+	raw := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"acc-%s","refreshToken":"ref-%s","expiresAt":%d,"scopes":["user:inference"],"extraField":{"deep":"EXTRA-MATERIAL"}},"otherTopLevel":"EXTRA-MATERIAL"}`,
+		bridgeTestTokenSentinel, bridgeTestTokenSentinel, exp)
+	stale, err := promoteClaudeCredential([]byte(raw), target, time.Now())
 	if err != nil || stale == "" {
 		t.Fatalf("promote = (%q, %v)", stale, err)
 	}
-	if chowned != target+".tmp-rebridge" || gotUID != os.Getuid() || gotGID != os.Getgid() {
-		t.Errorf("chown(%q, %d, %d), want the temp file with the shared file's owner %d:%d", chowned, gotUID, gotGID, os.Getuid(), os.Getgid())
+	got := mustRead(t, target)
+	if bytes.Contains(got, []byte("EXTRA-MATERIAL")) {
+		t.Errorf("shared file carries bytes outside the typed token block: %s", got)
+	}
+	want, _ := json.Marshal(claude.Credentials{ClaudeAIOAuth: &claude.OAuthTokens{
+		AccessToken: "acc-" + bridgeTestTokenSentinel, RefreshToken: "ref-" + bridgeTestTokenSentinel,
+		ExpiresAt: exp, Scopes: []string{"user:inference"},
+	}})
+	if !bytes.Equal(got, want) {
+		t.Errorf("shared file = %s, want canonical %s", got, want)
+	}
+	if info, err := os.Lstat(target); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != claudeSharedCredentialMode {
+		t.Errorf("shared file mode = %v err=%v", info.Mode(), err)
 	}
 	if info, err := os.Stat(stale); err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("preserved shared copy mode = %v err=%v, want 0600", info.Mode(), err)
 	}
-	if _, err := os.Stat(target + ".tmp-rebridge"); !errors.Is(err, fs.ErrNotExist) {
-		t.Error("temp file left behind")
+	if _, err := os.Lstat(target + ".tmp-rebridge"); !errors.Is(err, fs.ErrNotExist) {
+		t.Error("a predictable temporary name was used")
+	}
+	if left, _ := filepath.Glob(target + ".*.tmp"); len(left) != 0 {
+		t.Errorf("temporary files left: %v", left)
+	}
+	if _, _, err := canonicalClaudeCredential(bytes.Repeat([]byte("x"), claudeBridgeMaxCredentialBytes+1), time.Now()); !errors.Is(err, errClaudeBridgeNotPromotable) {
+		t.Errorf("oversized input: err = %v", err)
+	}
+}
+
+// TestRepairClaudeCredentialBridge_SharedTargetSymlinkIsRefused: the shared
+// credential path holds a symlink. Nothing is written through it, the agent
+// keeps its private copy in place, and the refusal is logged once.
+func TestRepairClaudeCredentialBridge_SharedTargetSymlinkIsRefused(t *testing.T) {
+	m, sink, _, link, target := bridgeTestFixture(t)
+	var logBuf bytes.Buffer
+	m.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, target); err != nil {
+		t.Fatal(err)
+	}
+	simulateClaudeRefresh(t, link, bridgeTestCreds(t, "fresh", time.Now().Add(8*time.Hour).UnixMilli()))
+
+	for i := 0; i < 2; i++ {
+		if rep := m.rebridgeClaudeCredential("scanner", link, target, claudeBridgeTriggerWatchdog); rep != nil {
+			t.Fatalf("repair = %+v, want refusal", rep)
+		}
+	}
+	if got, _ := os.ReadFile(victim); string(got) != "keep" {
+		t.Errorf("victim rewritten: %q", got)
+	}
+	if info, _ := os.Lstat(victim); info.Mode().Perm() != 0o600 {
+		t.Errorf("victim mode changed: %v", info.Mode())
+	}
+	if info, err := os.Lstat(target); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+		t.Errorf("symlink at the shared path was replaced: %v %v", info, err)
+	}
+	if info, err := os.Lstat(link); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("agent's private file not left in place: %v %v", info, err)
+	}
+	if got := staleFilesBeside(t, link); len(got) != 0 {
+		t.Errorf("private copy left aside: %v", got)
+	}
+	if sink.count() != 0 {
+		t.Error("a refusal must not audit")
+	}
+	if n := strings.Count(logBuf.String(), "location was refused"); n != 1 {
+		t.Errorf("refusal logged %d times over two cycles, want once:\n%s", n, logBuf.String())
+	}
+	if strings.Contains(logBuf.String(), bridgeTestTokenSentinel) {
+		t.Error("log carries token material")
+	}
+}
+
+// TestRepairClaudeCredentialBridge_SharedDirSymlinkIsRefused: the shared
+// .claude directory itself is a symlink. Nothing is written into what it
+// points at.
+func TestRepairClaudeCredentialBridge_SharedDirSymlinkIsRefused(t *testing.T) {
+	m, _, _, link, target := bridgeTestFixture(t)
+	sharedBytes := bridgeTestCreds(t, "shared", time.Now().Add(time.Hour).UnixMilli())
+	if err := os.WriteFile(target, sharedBytes, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(target)
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.Rename(dir, elsewhere); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, dir); err != nil {
+		t.Fatal(err)
+	}
+	simulateClaudeRefresh(t, link, bridgeTestCreds(t, "fresh", time.Now().Add(8*time.Hour).UnixMilli()))
+
+	if rep := m.rebridgeClaudeCredential("scanner", link, target, claudeBridgeTriggerWatchdog); rep != nil {
+		t.Fatalf("repair = %+v, want refusal", rep)
+	}
+	if !bytes.Equal(mustRead(t, filepath.Join(elsewhere, ".credentials.json")), sharedBytes) {
+		t.Error("wrote through the directory symlink")
+	}
+	entries, _ := os.ReadDir(elsewhere)
+	for _, e := range entries {
+		if e.Name() != ".credentials.json" {
+			t.Errorf("unexpected entry behind the directory symlink: %s", e.Name())
+		}
+	}
+	if info, err := os.Lstat(link); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("agent's private file not left in place: %v %v", info, err)
+	}
+}
+
+// TestMoveAsideClaudeCredential_NonRegularSourceIsRefused: a symlink where the
+// private file should be is neither moved nor read.
+func TestMoveAsideClaudeCredential_NonRegularSourceIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, bridgeTestCreds(t, "v", time.Now().Add(time.Hour).UnixMilli()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, ".credentials.json")
+	if err := os.Symlink(victim, src); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := moveAsideClaudeCredential(src, time.Now()); !errors.Is(err, errClaudeBridgeSourceChanged) {
+		t.Errorf("err = %v, want errClaudeBridgeSourceChanged", err)
+	}
+	if info, err := os.Lstat(src); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+		t.Errorf("symlink moved: %v %v", info, err)
+	}
+	if got := staleFilesBeside(t, src); len(got) != 0 {
+		t.Errorf("stale files created: %v", got)
+	}
+	// A directory is refused the same way.
+	d := filepath.Join(dir, "d")
+	if err := os.Mkdir(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := moveAsideClaudeCredential(d, time.Now()); !errors.Is(err, errClaudeBridgeSourceChanged) {
+		t.Errorf("directory: err = %v", err)
+	}
+	// The owner-read path refuses a symlink too, even one to a readable file.
+	if _, err := readClaudeCredentialAsOwner(src); !errors.Is(err, sharedfile.ErrNotRegular) {
+		t.Errorf("read through symlink: err = %v, want ErrNotRegular", err)
+	}
+}
+
+// TestRepairClaudeCredentialBridge_UnreadableIsRelinkedOnlyAfterSignIn: an
+// unreadable private file stays put on the watchdog, but a dashboard sign-in
+// (a shared login newer than any private copy) moves it aside unread and
+// relinks the agent.
+func TestRepairClaudeCredentialBridge_UnreadableIsRelinkedOnlyAfterSignIn(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read a mode-000 file; the permission fallback cannot be exercised")
+	}
+	m, sink, _, link, target := bridgeTestFixture(t)
+	simulateClaudeRefresh(t, link, bridgeTestCreds(t, "private", time.Now().Add(8*time.Hour).UnixMilli()))
+	if err := os.Chmod(link, 0); err != nil {
+		t.Fatal(err)
+	}
+	old := runAsAgentUser
+	runAsAgentUser = func(string, []byte, ...string) ([]byte, error) { return nil, errors.New("no su-exec") }
+	t.Cleanup(func() { runAsAgentUser = old })
+
+	// No shared login yet: even the sign-in trigger moves nothing.
+	if rep := m.rebridgeClaudeCredential("scanner", link, target, claudeBridgeTriggerSignIn); rep != nil {
+		t.Fatalf("sign-in without a shared login: repair = %+v", rep)
+	}
+	sharedBytes := bridgeTestCreds(t, "signin", time.Now().Add(8*time.Hour).UnixMilli())
+	if err := os.WriteFile(target, sharedBytes, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if rep := m.rebridgeClaudeCredential("scanner", link, target, claudeBridgeTriggerWatchdog); rep != nil {
+		t.Fatalf("watchdog: repair = %+v, want none", rep)
+	}
+	if info, err := os.Lstat(link); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("watchdog moved the unreadable file: %v %v", info, err)
+	}
+
+	m.ReloadClaudeToken()
+	assertLinkRestored(t, link, target)
+	stale := staleFilesBeside(t, link)
+	if len(stale) != 1 {
+		t.Fatalf("stale files = %v, want the unreadable copy moved aside", stale)
+	}
+	if info, err := os.Lstat(stale[0]); err != nil || info.Mode().Perm() != 0 {
+		t.Errorf("moved-aside copy mode = %v err=%v, want unchanged (000)", info.Mode(), err)
+	}
+	_ = os.Chmod(stale[0], 0o600)
+	if !bytes.Equal(mustRead(t, target), sharedBytes) {
+		t.Error("shared login changed")
+	}
+	rec := sink.find(AuditClaudeCredentialRebridged)
+	if rec == nil || rec.Fields["kept"] != "shared" || rec.Fields["trigger"] != claudeBridgeTriggerSignIn {
+		t.Errorf("audit = %+v", rec)
 	}
 }
 
@@ -670,7 +851,7 @@ func TestRepairClaudeCredentialBridge_MidRenameIsNextCycle(t *testing.T) {
 		runAsAgentUser = old
 		t.Skip("root cannot exercise the owner-read path")
 	}
-	rep, err := m.repairClaudeCredentialBridge("scanner", link, target)
+	rep, err := m.repairClaudeCredentialBridge("scanner", link, target, claudeBridgeTriggerWatchdog)
 	if rep != nil || err != nil {
 		t.Errorf("mid-rename: (%+v, %v), want nothing", rep, err)
 	}

@@ -146,8 +146,8 @@ func TestReadTokens_KeepsTheReadError(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if tok, err := ReadTokens(bad); err == nil || tok != nil {
-		t.Errorf("malformed: (%v, %v), want parse error", tok, err)
+	if tok, err := ReadTokens(bad); err != nil || tok != nil {
+		t.Errorf("malformed: (%v, %v), want nil, nil (readable, nothing usable)", tok, err)
 	}
 	if tok := LoadTokens(bad); tok != nil {
 		t.Errorf("LoadTokens malformed = %v, want nil", tok)

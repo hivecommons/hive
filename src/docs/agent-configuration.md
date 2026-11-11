@@ -643,7 +643,9 @@ Hive now treats the login as the one piece of `.claude` state that *is* shared, 
 - moves the private file aside to `.credentials.json.stale-<UTC time>` in the agent's `.claude` (owner and mode unchanged) and, when the agent's copy was promoted, preserves the old shared file beside the shared credential the same way. Nothing is deleted; remove the `.stale-*` files by hand once you no longer want them;
 - restores the symlink and records a `claude_credential_rebridged` audit entry (`kept=agent|shared`, never token material).
 
-When the file cannot be read either way (a deployment without `su-exec`), nothing is moved or relinked, the agent keeps the token it already had, and one `ERROR` per agent and file version names the path. Memory, transcripts and todos stay per agent throughout; only the credential file is published.
+When the file cannot be read either way (a deployment without `su-exec`), nothing is moved or relinked, the agent keeps the token it already had, and one `ERROR` per agent and file version names the path. The one exception is a dashboard sign-in: a fresh shared login is newer than anything an unreadable private copy could hold, so that trigger moves the unreadable file aside unread and relinks the agent. Memory, transcripts and todos stay per agent throughout; only the credential file is published.
+
+Every hive-side write to a shared login or CLI config (`.claude/.credentials.json`, `.copilot/config.json`, the durable Copilot token) goes through `crux/sharedfile`: a randomly named temporary beside the target, mode and owner set on the open descriptor, verified, then renamed into place, and only when the target is absent or a regular file inside a regular directory the server owns. Anything else at those paths is refused and logged once. The entrypoint's root permission guard applies the same rule to the files it repairs, and the shared dot-dirs carry the sticky bit so a dev-owned entry cannot be replaced by another uid.
 
 ### CLI auto-memory (`agents.cli_memory`)
 
