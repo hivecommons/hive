@@ -766,6 +766,9 @@ type Manager struct {
 	// sandboxOpenShellLauncherFactory is the same seam for
 	// sandbox.runtime: openshell (ADR-0026).
 	sandboxOpenShellLauncherFactory func(config.SandboxOpenShellConfig) sandbox.Launcher
+	// sandboxSubstrateLauncherFactory is the same seam for
+	// sandbox.runtime: substrate (ADR-0026 phase 2).
+	sandboxSubstrateLauncherFactory func(config.SandboxSubstrateConfig) sandbox.Launcher
 	sandboxRunner                   sandboxCommandRunner
 	// sandboxRunPersister overrides persistSandboxRun in tests.
 	sandboxRunPersister  func(workDir string, entry SandboxRunHistoryEntry) error
