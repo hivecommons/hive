@@ -736,7 +736,7 @@ Routes (see [hub-server.md](../api-reference/hub-server.md)):
 | `GET /api/marketplace/workflows/{name}/{version}/bundle` | public | one bundle, `Cache-Control: immutable` |
 | `POST /api/marketplace/workflows` | spoke bearer or hub admin | publish; hub re-verifies |
 | `POST /api/marketplace/refresh[?repo=]` | spoke bearer or hub admin | on-demand ingest; spokes rate-limited (`429`) |
-| `GET /api/marketplace/status[?verbose=1]` | public (`verbose`: spoke bearer or hub admin) | last refresh, counts by tier; `verbose` adds failing and pending repos |
+| `GET /api/marketplace/status[?verbose=1]` | public (`verbose`: spoke bearer or hub admin) | last refresh, counts by tier, failing repos with their errors; `verbose` adds pending repos |
 
 **Who may publish what.** A spoke authenticates with its heartbeat bearer bound to the
 `X-Hive-ID` header (the same per-hive key the heartbeat and NPS lanes verify) and may
@@ -748,7 +748,9 @@ same-origin CSRF evidence. The hub never stores a bundle it did not itself `Veri
 `pkg/workflowmodel/ingest/corpus` (262 projects / 299 repositories; `cmd/workflow-survey`
 falls back to it when no `projects.json` is given) plus
 `HIVE_HUB_MARKETPLACE_EXTRA_REPOS`. For each repository the hub fetches the default-branch
-tarball through its GitHub identity, keeps only pipeline files (`ingest.ReadTree`), and
+tarball through its GitHub identity and streams it (`ingest.ReadTarball`): only the paths
+`ingest.ReadTree` would select are kept (per file ≤ 1 MiB, ≤ 32 MiB in total), everything
+else is discarded as it streams, so a monorepo's source size never matters. It then
 records `{format, sourceSHA, filesHash, files, checkedAt}`. Unchanged hash → no-op. Changed →
 `ingest.Lifecycle` → `bundle.Export` → publish as `ingested-YYYYMMDD.N`, tier
 `ingested-unreviewed`, with the source SHA in an annotation. Curated versions are never

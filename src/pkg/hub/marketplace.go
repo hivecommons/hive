@@ -19,8 +19,8 @@ import (
 //	GET  /api/marketplace/workflows/{name}/{version}/bundle one bundle
 //	POST /api/marketplace/workflows                         publish (spoke bearer or admin)
 //	POST /api/marketplace/refresh[?repo=]                   on-demand ingest (spoke bearer or admin)
-//	GET  /api/marketplace/status[?verbose=1]                last refresh + counts by tier
-//	                                                        (verbose: failing/pending repos; spoke bearer or admin)
+//	GET  /api/marketplace/status[?verbose=1]                last refresh + counts by tier + failing repos
+//	                                                        (verbose: pending repos; spoke bearer or admin)
 //
 // Tier policy: a publisher may assert `local`, `local-published` or
 // `ingested-unreviewed`; `curated` and `built-in` require a hub admin
@@ -296,9 +296,10 @@ type marketplaceFailingRepo struct {
 	CheckedAt time.Time `json:"checkedAt"`
 }
 
-// handleMarketplaceStatus reports the last refresh and tier counts.
-// ?verbose=1 (spoke bearer or admin) adds the failing repositories with
-// their error strings and the repositories still awaiting a first ingest.
+// handleMarketplaceStatus reports the last refresh and tier counts, plus
+// the failing repositories with their error strings (repo names and fetch
+// errors carry no secrets, so any caller sees them). ?verbose=1 (spoke
+// bearer or admin) adds the repositories still awaiting a first ingest.
 func (s *HubServer) handleMarketplaceStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.marketplaceGate(w) {
 		return
@@ -358,11 +359,11 @@ func (s *HubServer) handleMarketplaceStatus(w http.ResponseWriter, r *http.Reque
 	if !lastChecked.IsZero() {
 		out["lastCheckedAt"] = lastChecked
 	}
+	out["failing"] = failing
 	if verbose {
 		if pending == nil {
 			pending = []string{}
 		}
-		out["failing"] = failing
 		out["pending"] = pending
 	}
 	w.Header().Set("Content-Type", "application/json")
