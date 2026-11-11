@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/evidence/complexity"
 	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/workflowmodel/bundle"
 	"github.com/hivecommons/hive/pkg/workflowmodel/ingest"
@@ -47,7 +46,6 @@ const (
 	// continuing.
 	marketplaceRateFloor   = 50
 	marketplaceRateMaxWait = 10 * time.Minute
-	marketplaceMaxTarball  = 256 << 20
 	marketplaceSeedDelay   = 30 * time.Second
 	// marketplaceStaleAfter is how old a repo's refresh record may be
 	// before the startup pass re-ingests it: the nightly interval, so a
@@ -377,16 +375,7 @@ func (s *HubServer) marketplaceGitHubFetcher(ctx context.Context, repo string) (
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return nil, "", fmt.Errorf("tarball: %s", resp.Status)
 	}
-	dir, err := os.MkdirTemp("", "hive-marketplace-")
-	if err != nil {
-		return nil, "", err
-	}
-	defer os.RemoveAll(dir)
-	top, err := complexity.ExtractTarGz(resp.Body, dir, marketplaceMaxTarball)
-	if err != nil {
-		return nil, "", err
-	}
-	files, err := ingest.ReadTree(top)
+	files, err := ingest.ReadTarball(resp.Body)
 	if err != nil {
 		return nil, "", err
 	}

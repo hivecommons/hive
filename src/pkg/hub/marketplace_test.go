@@ -594,8 +594,11 @@ func TestMarketplaceRefreshRoutesAndStatus(t *testing.T) {
 	if status["pendingRepos"].(float64) != 0 || status["lastRefreshErrors"].(float64) != 0 {
 		t.Fatalf("pending/lastErrors: %s", rec.Body.String())
 	}
-	if _, ok := status["failing"]; ok {
-		t.Fatal("non-verbose status must not list failing repos")
+	if f, ok := status["failing"].([]interface{}); !ok || len(f) != 0 {
+		t.Fatalf("non-verbose status must list failing repos (empty here): %s", rec.Body.String())
+	}
+	if _, ok := status["pending"]; ok {
+		t.Fatal("non-verbose status must not list pending repos")
 	}
 	byTier := status["byTier"].(map[string]interface{})
 	if byTier[bundle.TierIngestedUnreviewed].(float64) != 1 {
