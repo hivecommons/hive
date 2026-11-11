@@ -10,7 +10,7 @@
     //
     // All HTML builders are pure functions of their inputs so the node
     // harness (workflows_library_ui_test.go) can run them without a DOM.
-    const WF_LIB_VIEWS = ['library', 'detail', 'ingest', 'editor'];
+    const WF_LIB_VIEWS = ['library', 'detail', 'ingest', 'editor', 'marketplace'];
     const WF_PROVENANCE_LABELS = {
       'built-in': 'built-in',
       'curated': 'curated',
@@ -274,7 +274,7 @@
     }
 
     function wfLibNav(view) {
-      const items = [['library', 'Library'], ['ingest', 'Ingest'], ['editor', 'Editor']];
+      const items = [['library', 'Library'], ['ingest', 'Ingest'], ['editor', 'Editor'], ['marketplace', 'Marketplace']];
       return '<div class="wf-nav" role="tablist">' + items.map(([id, label]) =>
         `<button type="button" role="tab" class="wf-nav-item${view === id || (id === 'library' && view === 'detail') ? ' active' : ''}" aria-selected="${view === id ? 'true' : 'false'}" data-action="wfLibShow" data-arg0="${id}">${label}</button>`
       ).join('') + '</div>';
@@ -299,6 +299,7 @@
             : `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdOpen" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" title="Open in the visual editor.">Edit</button>`) : '',
           owner ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibDuplicate" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" title="Save a copy under a new name as version 1 (provenance: local).">Duplicate</button>` : '',
           `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibExport" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}" title="Show the model as JSON to copy.">Export</button>`,
+          typeof wfMktPublishButton === 'function' ? wfMktPublishButton(e, owner) : '',
           canDelete ? `<button type="button" class="hv-btn btn-danger btn-sm" data-action="wfLibDelete" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Delete</button>`
             : (owner && !builtin && bound.length ? `<span class="rt-inherit" title="Unbind it on Settings → Repos first.">bound</span>` : ''),
         ].join('');
@@ -469,6 +470,7 @@
           : `<button type="button" class="hv-btn btn-primary btn-sm" data-action="wfEdOpen" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Edit</button>`) : '',
         owner ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibDuplicate" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Duplicate</button>` : '',
         `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfLibExport" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Export JSON</button>`,
+        typeof wfMktPublishButton === 'function' ? wfMktPublishButton(e, owner) : '',
         owner && !builtin && !bound.length ? `<button type="button" class="hv-btn btn-danger btn-sm" data-action="wfLibDelete" data-arg0="${esc(e.name)}" data-arg1="${esc(e.version)}">Delete</button>` : '',
       ].join('');
       return '<div class="config-section wf-detail" data-section="workflows-detail" data-wf-key="' + esc(key) + '">' +
@@ -778,6 +780,8 @@
         body = renderWorkflowIngest(_wfLib.ingest, owner);
       } else if (_wfLib.view === 'editor') {
         body = renderWorkflowEditor(owner);
+      } else if (_wfLib.view === 'marketplace') {
+        body = renderWorkflowMarketplaceView(owner);
       } else {
         body = renderWorkflowLibraryTable(_workflowState.workflows, _workflowState.bindings, owner);
       }
