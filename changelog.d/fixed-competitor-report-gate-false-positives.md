@@ -1,1 +1,0 @@
-- Weekly competitor report: the publication gate keys Discord table rows by project first word, holds table notes to their provenance links, and accepts "does not mean no licence"-style disclaimers (catch-up run 43070009570 failed on these).
