@@ -1,0 +1,1 @@
+- OpenShell runtime: sandbox names now fit the gateway's 19-character limit (`hk-<agent>-<base36 unix>`), the shared claim mounts as `hive-workspace` instead of the reserved `workspace`, and the deploy doc covers the Agent Sandbox prerequisite, `allowed_pod_labels`/annotations, sandbox uid, workspace storage class and the measured #17643 latency (#17643)
