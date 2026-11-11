@@ -1,0 +1,1 @@
+- Repeated agent-lifecycle log lines (failed kick send, bare-shell crash, missing tmux session, kill-session failure, watchdog observe-mode restart) now file under the `agent_lifecycle_repeated` class instead of `unclassified_error_repeated`.

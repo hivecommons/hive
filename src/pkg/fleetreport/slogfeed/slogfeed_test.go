@@ -488,7 +488,7 @@ func TestPostRestartKickHoldLogsWithoutFleetReport(t *testing.T) {
 	}
 	// Other kick send failures must remain reportable.
 	logger.Warn("failed to send kick", "agent", "reviewer-2", "error", "tmux send-keys exit 1")
-	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassAgentLifecycleRepeated {
 		t.Fatalf("other kick failures must remain reportable: %+v", *seen)
 	}
 }
