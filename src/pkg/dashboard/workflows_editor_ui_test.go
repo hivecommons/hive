@@ -59,6 +59,7 @@ const WF_ED = { colW: 200, colGap: 32, chipH: 34, chipGap: 12, headH: 36, pad: 1
 const WF_ED_UNASSIGNED = '__unassigned';
 const WF_ED_API_VERSION = 'workflow.hivecommons.dev/v1alpha1';
 const WF_ED_KINDS = ['issue', 'pr'];
+const WF_ED_EDGE_LABEL_MAX = 16;
 ` + jsFunc(t, html, "wfEdClone") + jsFunc(t, html, "wfEdSlug") + jsFunc(t, html, "wfEdSpec") +
 		jsFunc(t, html, "wfEdStates") + jsFunc(t, html, "wfEdFindState") + jsFunc(t, html, "wfEdFindColumn") +
 		jsFunc(t, html, "wfEdUniqueId") + jsFunc(t, html, "wfEdNewModel") + jsFunc(t, html, "wfEdNormalize") +
@@ -279,6 +280,20 @@ const svgBad = wfEdSvg(bad, wfEdLayout(bad, null, {}), { diags: wfEdLocalProblem
 assert.ok(svgBad.includes('wf-ed-badge'), 'diagnostics render as badges');
 assert.ok(svgBad.includes('wf-ed-confirm'), 'inferred states get a confirm affordance');
 assert.ok(svgBad.includes('inferred'), 'inferred states are dashed');
+const sparseSvg = wfEdSvg(wfEdAddTransition(ok, 'done', 'open', 'reopened'), wfEdLayout(wfEdAddTransition(ok, 'done', 'open', 'reopened'), null, {}), { selection: { type: '', ids: [] }, diags: [] });
+assert.ok(sparseSvg.includes('>reopened<'), 'sparse models draw every edge label');
+// Dense models only label selected edges so the canvas stays legible.
+let dense = ok;
+for (let i = 0; i < WF_ED_EDGE_LABEL_MAX + 2; i++) {
+  dense = wfEdAddState(dense, { id: 'd' + i, label: 'D' + i }, 'intake');
+  dense = wfEdAddTransition(dense, 'open', 'd' + i, 'ev' + i);
+}
+const denseLayout = wfEdLayout(dense, null, {});
+assert.ok(denseLayout.edges.length > WF_ED_EDGE_LABEL_MAX, 'dense fixture has many edges');
+const denseSvg = wfEdSvg(dense, denseLayout, { selection: { type: '', ids: [] }, diags: [] });
+assert.ok(!denseSvg.includes('wf-ed-edge-label'), 'dense models hide unselected edge labels');
+const denseSel = wfEdSvg(dense, denseLayout, { selection: { type: 'transition', ids: ['1'] }, diags: [] });
+assert.strictEqual((denseSel.match(/wf-ed-edge-label/g) || []).length, 1, 'selected edge keeps its label');
 const mm = wfEdMinimapSvg(wfEdLayout(ok, null, {}), { panX: 0, panY: 0, zoom: 1 }, 800, 600);
 assert.ok(mm.includes('wf-ed-mm-view'));
 

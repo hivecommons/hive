@@ -331,3 +331,85 @@ exactly the pre-P4 path: one list, the built-in family, no model labels.
   phase 4 and follows the diagram editor.
 - A model without a `labels` block regenerates nothing (TechDocs as shipped); the preview still
   shows its commands and the built-in stages its numbered states land on.
+
+## Editor (RFC phase 4, UI)
+
+The owner's brief was "the editor needs to be a good design tool too": a design surface in the
+spirit of a lightweight draw.io for state machines, not a form over the JSON. Settings → Workflows
+grows an **Editor** nav item (`config-workflows-editor.js`, `workflows-editor.css`, registered
+right after the library module), and the library rows and detail page grow **Edit** (owner) or
+**Edit a copy** (hive-default and other built-ins, which are read-only); an ingest result gains
+**Open in editor** so an ingested draft can be reviewed on the canvas before it is saved.
+
+**Layout.** Toolbar · left templates palette · centre SVG canvas · right inspector · bottom
+tabbed drawer (Problems · YAML · Diff · Simulate). With no model loaded the Editor shows a start
+screen: New blank model, Duplicate hive-default, Open from Library, From Ingest, Marketplace
+(disabled placeholder for phase 7).
+
+**Canvas.** Columns are vertical lanes: `+ Column` adds one, double-click the header renames it,
+drag the header horizontally to reorder, drag its right edge to resize (snapped to an 8px grid,
+`view.laneWidths`), terminal lanes are shaded and dashed. States are chips inside lanes: drag
+within or between lanes (rewrites `columns[].states` and `lifecycle.column`), double-click to
+rename the label, Delete/Backspace removes the selection and its transitions (confirmed when more
+than one), marquee on empty canvas, shift-click to extend, arrow keys nudge order. Each chip has
+a right-edge port; dragging it onto another chip creates a transition with `on: ''`, selects it
+and focuses the inspector's `on` field. Edges are beziers (self-loops as a small loop, backward
+edges dashed); clicking one selects it. Pan with space+drag, middle button or wheel; zoom with
+ctrl/⌘+wheel or the toolbar ± / Fit; a minimap appears when the model outgrows the viewport.
+**Auto-layout** orders lanes by BFS depth from the initial state (terminal lanes last), drops
+unassigned states into the nearest lane by depth, and sorts each lane by stage number then
+label. Compile diagnostics appear as badges on chips (error red, warning amber, tooltip text);
+inferred states are dashed with a one-click ✓ **Confirm** that sets `confidence: local` locally,
+and a toolbar **Confirm all inferred** that, for a stored ingested version, also calls
+`POST /api/workflows/{name}/{version}/confirm` after saving. The initial state carries a marker.
+
+**Pure core.** Everything that mutates or lays out the model is a pure function over plain JSON
+(never mutates its input, deterministic), so the undo stack is a snapshot list and the core is
+unit-tested under node (`workflows_editor_ui_test.go`): `wfEdNewModel`, `wfEdNormalize`,
+`wfEdAddColumn` / `wfEdMoveColumn` / `wfEdRenameColumn` / `wfEdRemoveColumn(model, id,
+moveStatesTo)`, `wfEdAddState` / `wfEdMoveState` / `wfEdRenameState` (rewrites transitions,
+initial, label entries, derivation rules, lanes and agent grants) / `wfEdRemoveState`,
+`wfEdAddTransition` / `wfEdRemoveTransition`, `wfEdUpdate(model, path, value)` with paths like
+`spec.states[id=open].lifecycle.number` (empty value deletes), `wfEdUniqueId` (slug + `-N`),
+`wfEdAutoLayout`, `wfEdLayout(model, profile, view)` → lanes/chips/edges geometry,
+`wfEdLaneAt` / `wfEdSlotAt` for drops, `wfEdLocalProblems` (mirrors the compiler's refusals —
+`state-no-exit`, `state-no-column`, `unknown-column`, `unknown-state`, `column-empty`,
+`no-terminal-column`, `duplicate-stage-number`, `unknown-event`, `inferred-element` — for
+instant feedback before the server answers), `wfEdDiff(a, b)` (the client twin of
+`workflowmodel.Diff`: keyed change sets for columns, states, transitions, labels and rules plus
+meta field changes and a summary), `wfEdSvg(model, layout, state)` and `wfEdMinimapSvg`.
+
+**Runtime.** `_wfEd = {model, saved, history[], future[], selection, view{panX,panY,zoom,
+laneWidths}, compile{busy,profile,diags}, drawer, sim, yaml, …}`. `wfEdCommit(next)` pushes a
+deep-copy snapshot (cap 200), bumps a revision, re-renders only the affected regions and
+schedules a live compile: 300 ms after the last change the model is posted to
+`POST /api/workflows/compile` and the toolbar pill reads `compiles` / `N warnings` / `does not
+compile`. Pointer interactions attach once per render (`wfEdAttach(root)`, idempotent) to the
+canvas root; every other control is a delegated `data-action`. Cmd/Ctrl-Z, Shift-Cmd-Z and Cmd-S
+work when the editor has focus. Leaving the editor with unsaved changes asks via `hiveConfirm`.
+
+**Drawers.** *Problems* lists diagnostics (click selects the element). *YAML* is a textarea
+bound two-way through the new `POST /api/workflows/yaml` (`{model}` → `{yaml}` and `{yaml}` →
+`{model, error?}`; model→YAML refreshes while the tab is visible and the textarea is not focused;
+Apply parses back and commits; parse errors show inline). *Diff* shows the client-side
+`wfEdDiff` of the working copy against the last save as grouped lists, and, for a stored
+version, the stored-versions diff (`GET …/diff?from&to`) against any earlier version. *Simulate*
+uses the library's declarative `WF_SIM_FIELDS` form and posts `{model, kind, facts}` to the new
+`POST /api/workflows/simulate`, which compiles the unsaved body and runs `stageengine.Explain`
+(422 with diagnostics when the model does not compile); the decided state is highlighted on the
+canvas (`.wf-ed-sim-hit`, others dimmed) and the reason and trace render below the form.
+
+**Persistence.** *Save* posts the model with `meta.version: ''`, which `handleWorkflowSave` now
+resolves through `store.NextVersion(name)`, then reloads the library and reopens the saved entry
+in the editor. *Save as…* prompts a new name (version 1, provenance local). *Revert* restores the
+last saved snapshot. hive-default opens read-only with an *Edit a copy* button.
+
+**Export.** SVG (the canvas serialized with the CSS custom-property values resolved via
+`getComputedStyle`, so it is self-contained), PNG (drawn to a canvas and shown in a dialog with
+open-in-new-tab — no forced download), model JSON and model YAML, all through
+`hiveExportViewer`.
+
+**Deferred.** Editing events, gates, roles and derivation rules (they round-trip untouched and
+are editable through the YAML drawer); nested regions beyond flattening; marketplace (phase 7);
+keyboard-only lane reorder; collaborative/locking semantics; server-side layout persistence
+(lane widths live in the session).

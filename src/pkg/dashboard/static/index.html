@@ -5124,7 +5124,7 @@
     .wf-sim-fill { margin-top: var(--sp-3); color: var(--text); }
     .wf-dg-state.simulated .wf-dg-chip { stroke: var(--status-ok); stroke-width: 3; }
 /* Settings → Workflows → Editor (#17620 phase 4): toolbar, palette, canvas, inspector, drawer */
-    .wf-ed { display: flex; flex-direction: column; gap: var(--sp-2); min-height: 36rem; height: calc(100vh - 14rem); }
+    .wf-ed { display: flex; flex-direction: column; gap: var(--sp-2); min-height: 32rem; height: calc(100vh - 22rem); }
     .wf-ed-toolbar { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; padding: var(--sp-2) var(--sp-3); background: var(--panel); border: var(--line-width) solid var(--border); border-radius: var(--r-sm); }
     .wf-ed-title { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); font-weight: 700; margin-right: var(--sp-2); }
     .wf-ed-dirty { color: var(--status-warn); }
@@ -5217,7 +5217,8 @@
     .wf-ed-mm-view { fill: color-mix(in srgb, var(--brand) 10%, transparent); stroke: var(--brand); stroke-width: 1; }
     .wf-ed-hint { position: absolute; left: var(--sp-3); bottom: var(--sp-2); font-size: var(--fs-2xs); pointer-events: none; }
 
-    .wf-ed-field { margin-bottom: var(--sp-3); }
+    .wf-ed-field { display: block; margin-bottom: var(--sp-3); }
+    .wf-ed-field > span { display: block; margin-top: var(--sp-1); }
     .wf-ed-field input[type="text"], .wf-ed-field input[type="number"], .wf-ed-field select, .wf-ed-field textarea { width: 100%; }
     .wf-ed-field input[readonly] { color: var(--muted); }
     .wf-ed-inline { display: flex; gap: var(--sp-2); align-items: center; }
@@ -63427,6 +63428,9 @@ function burnAreaChart() {
     // live compile, the YAML/Diff/Simulate drawers and persistence.
     const WF_ED = { colW: 200, colGap: 32, chipH: 34, chipGap: 12, headH: 36, pad: 16, grid: 8, minRows: 4, portR: 5, minColW: 120, maxColW: 480 };
     const WF_ED_HISTORY_CAP = 200;
+    // Dense models: edge labels are only drawn for selected/problem edges once
+    // a model has more transitions than this, to keep the canvas legible.
+    const WF_ED_EDGE_LABEL_MAX = 16;
     const WF_ED_COMPILE_DEBOUNCE_MS = 300;
     const WF_ED_YAML_DEBOUNCE_MS = 500;
     const WF_ED_UNASSIGNED = '__unassigned';
@@ -63443,7 +63447,7 @@ function burnAreaChart() {
       { id: 'triage', label: 'Triage', number: 20 },
       { id: 'needs-decision', label: 'Needs decision', number: 25, kinds: ['issue'] },
       { id: 'claimed', label: 'Claimed', number: 30, kinds: ['issue'] },
-      { id: 'in-progress', label: 'In progress', number: 40 },
+      { id: 'in-progress', label: 'Work in progress', number: 40 },
       { id: 'in-review', label: 'In review', number: 60, kinds: ['pr'] },
       { id: 'ci-failing', label: 'CI failing', number: 65, kinds: ['pr'] },
       { id: 'merge-queue', label: 'Merge queue', number: 80, kinds: ['pr'] },
@@ -63993,14 +63997,16 @@ function burnAreaChart() {
           (c.virtual ? '' : `<rect x="${c.x + c.w - 6}" y="${c.y}" width="12" height="${c.h}" class="wf-ed-resize" data-wf-resize="${esc(c.id)}"/>`) +
           '</g>');
       });
+      const denseEdges = layout.edges.length > WF_ED_EDGE_LABEL_MAX;
       layout.edges.forEach(e => {
         const subj = e.from + '->' + e.to, d = diags[subj];
         const selected = isSel('transition', String(e.index));
+        const showLabel = (e.on || d) && (!denseEdges || selected || d);
         const cls = 'wf-ed-edge' + (e.back ? ' back' : '') + (e.self ? ' self' : '') + (selected ? ' selected' : '') + (st.simHit && (st.simHit === e.to) ? ' sim-path' : '') + (d ? ' ' + d.severity : '');
         out.push(`<g class="${cls}" data-wf-edge="${e.index}">` +
           `<path d="${e.d}" class="wf-ed-edge-hit"/>` +
           `<path d="${e.d}" class="wf-ed-edge-line" marker-end="url(#${selected ? 'wf-ed-arrow-sel' : 'wf-ed-arrow'})"/>` +
-          (e.on || d ? `<text x="${e.lx}" y="${e.ly - 4}" text-anchor="middle" class="wf-ed-edge-label">${esc(wfTrim(e.on || '', 18))}${d ? ' !' : ''}</text>` : '') +
+          (showLabel ? `<text x="${e.lx}" y="${e.ly - 4}" text-anchor="middle" class="wf-ed-edge-label">${esc(wfTrim(e.on || '', 18))}${d ? ' !' : ''}</text>` : '') +
           `<title>${esc(e.from)} \u2192 ${esc(e.to)}${e.on ? ' on ' + esc(e.on) : ' (no event)'}${e.note ? '\n' + esc(e.note) : ''}${d ? '\n' + esc(d.text) : ''}</title></g>`);
       });
       Object.keys(layout.chips).forEach(id => {
@@ -64116,7 +64122,7 @@ function burnAreaChart() {
       if (!wfEdCanEdit()) { showToast(_wfEd.readOnly ? 'This model is read-only. Use "Edit a copy".' : 'Owner role is required to edit.', 'error'); return; }
       const o = opts || {};
       _wfEd.history.push(wfEdClone(_wfEd.model));
-      if (_wfEd.history.length > WF_ED_HISTORY_CAP) _wfEd.history.shift();
+      _wfEd.history = _wfEd.history.slice(-WF_ED_HISTORY_CAP);
       _wfEd.future = [];
       _wfEd.model = wfEdNormalize(next);
       _wfEd.rev++;
@@ -64128,12 +64134,14 @@ function burnAreaChart() {
     function wfEdUndo() {
       if (!_wfEd.history.length) return;
       _wfEd.future.push(wfEdClone(_wfEd.model));
+      _wfEd.future = _wfEd.future.slice(-WF_ED_HISTORY_CAP);
       _wfEd.model = _wfEd.history.pop();
       _wfEd.rev++; wfEdPruneSelection(); wfEdScheduleCompile(); wfEdRefresh();
     }
     function wfEdRedo() {
       if (!_wfEd.future.length) return;
       _wfEd.history.push(wfEdClone(_wfEd.model));
+      _wfEd.history = _wfEd.history.slice(-WF_ED_HISTORY_CAP);
       _wfEd.model = _wfEd.future.pop();
       _wfEd.rev++; wfEdPruneSelection(); wfEdScheduleCompile(); wfEdRefresh();
     }
@@ -64283,6 +64291,8 @@ function burnAreaChart() {
         '<div class="wf-ed-hint text-muted">drag chips between lanes \u00b7 drag a port to connect \u00b7 wheel pans, Ctrl+wheel zooms \u00b7 dbl-click renames \u00b7 Del removes</div>';
     }
 
+    // esc() folds newlines; textarea bodies need them kept.
+    function wfEdEscText(s) { return esc(String(s == null ? '' : s).replace(/\n/g, '\u0001')).replace(/\u0001/g, '\n'); }
     function wfEdField(label, input, hint) { return `<label class="config-field wf-ed-field">${esc(label)}${input}${hint ? `<span class="text-muted fs-xs">${hint}</span>` : ''}</label>`; }
     function wfEdText(path, value, extra) { return `<input type="text" value="${esc(value == null ? '' : String(value))}" data-change-action="wfEdFieldSet" data-arg0="${esc(path)}" data-arg-types="s,v" ${extra || ''}>`; }
     function wfEdSelectHtml(action, arg0, value, options, extra) {
@@ -64353,7 +64363,7 @@ function burnAreaChart() {
         const states = wfEdStates(m);
         body = '<h4>Model</h4>' +
           wfEdField('Name', wfEdText('metadata.name', (m.metadata || {}).name, dis + ' pattern="[a-z0-9][a-z0-9._-]*"'), 'lower-case, digits, dots, dashes') +
-          wfEdField('Description', `<textarea rows="3" data-change-action="wfEdFieldSet" data-arg0="spec.meta.description" data-arg-types="s,v" ${dis}>${esc(meta.description || '')}</textarea>`) +
+          wfEdField('Description', `<textarea rows="3" data-change-action="wfEdFieldSet" data-arg0="spec.meta.description" data-arg-types="s,v" ${dis}>${wfEdEscText(meta.description || '')}</textarea>`) +
           wfEdField('Source', wfEdSelectHtml('wfEdFieldSet', 'spec.meta.source', meta.source || 'hand', ['hand', 'spec', 'github-actions', 'tekton', 'issue-templates', 'built-in'], dis)) +
           wfEdField('Provenance', `<input type="text" value="${esc(meta.provenance || 'local')}" readonly>`, 'set by the store on save') +
           wfEdField('Version', `<input type="text" value="${esc(st.source ? st.source.version : (meta.version || ''))}" readonly>`, 'Save assigns the next free integer') +
@@ -64409,7 +64419,7 @@ function burnAreaChart() {
           `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdYamlRefresh">Refresh from canvas</button>` +
           `<button type="button" class="hv-btn btn-primary btn-sm" data-action="wfEdYamlApply" ${wfEdCanEdit() ? '' : 'disabled'}>Apply</button></div>` +
           (st.yaml.error ? `<p class="wf-ingest-error">${esc(st.yaml.error)}</p>` : '') +
-          `<textarea id="wf-ed-yaml" class="wf-ed-yaml mono" spellcheck="false" ${wfEdCanEdit() ? '' : 'readonly'} data-change-action="wfEdYamlApply" aria-label="Model YAML">${esc(st.yaml.text)}</textarea>`;
+          `<textarea id="wf-ed-yaml" class="wf-ed-yaml mono" spellcheck="false" ${wfEdCanEdit() ? '' : 'readonly'} data-change-action="wfEdYamlApply" aria-label="Model YAML"></textarea>`;
       } else if (tab === 'diff') {
         const local = wfEdDiff(st.saved || {}, st.model);
         const versions = st.diff.versions || [];
@@ -64441,15 +64451,26 @@ function burnAreaChart() {
       if (!root) { if (_wfLib.view === 'editor') wfLibRerender(); return; }
       const want = parts || ['toolbar', 'palette', 'canvas', 'inspector', 'drawer'];
       const map = { toolbar: renderWfEdToolbar, palette: renderWfEdPalette, canvas: renderWfEdCanvas, inspector: renderWfEdInspector, drawer: renderWfEdDrawer };
+      // Re-rendering the canvas replaces the focused SVG node; remember where
+      // keyboard focus was so shortcuts keep working after every edit.
+      const active = document.activeElement;
+      const canvasEl = document.getElementById('wf-ed-canvas');
+      const focusInCanvas = active && canvasEl && canvasEl.contains(active) && want.indexOf('canvas') >= 0;
+      let focusChip = '';
+      if (focusInCanvas && active.closest) { const c = active.closest('[data-wf-state]'); if (c) focusChip = c.getAttribute('data-wf-state') || ''; }
       want.forEach(p => {
         const el = document.getElementById('wf-ed-' + p);
         if (!el) return;
         if (p === 'drawer' && _wfEd.drawer.tab === 'yaml' && _wfEd.yaml.focused) return;
         if (p === 'canvas') wfEdMeasure(el);
         el.innerHTML = map[p](_wfEd);
-        if (p === 'drawer') el.classList.toggle('open', _wfEd.drawer.open);
+        if (p === 'drawer') { el.classList.toggle('open', _wfEd.drawer.open); wfEdFillYaml(el); }
       });
       wfEdAttach(root);
+      if (focusInCanvas) {
+        const again = (focusChip && root.querySelector('[data-wf-state="' + focusChip.replace(/"/g, '') + '"]')) || root.querySelector('.wf-ed-svg');
+        if (again && again.focus) again.focus({ preventScroll: true });
+      }
       if (want.indexOf('drawer') >= 0 && _wfEd.drawer.open && _wfEd.drawer.tab === 'yaml') wfEdYamlSync();
     }
 
@@ -64470,6 +64491,7 @@ function burnAreaChart() {
         if (before !== _wfEd.viewport.w + 'x' + _wfEd.viewport.h) canvas.innerHTML = renderWfEdCanvas(_wfEd);
       }
       wfEdAttach(root);
+      wfEdFillYaml(root);
       if (_wfEd.drawer.open && _wfEd.drawer.tab === 'yaml') wfEdYamlSync();
       if (!_wfEd.palette.hiveDefault && !_wfEd.palette.loading) wfEdLoadHiveDefault();
       if (_wfEd.source && _wfEd.diff.loadedFor !== _wfEd.source.name) wfEdLoadVersions();
@@ -65086,6 +65108,13 @@ function burnAreaChart() {
 
     // --- YAML drawer ----------------------------------------------------------
 
+    // The shared esc() folds newlines, so the YAML text is assigned as a
+    // property after the drawer is in the DOM rather than embedded in HTML.
+    function wfEdFillYaml(scope) {
+      const ta = (scope || document).querySelector('#wf-ed-yaml');
+      if (ta) ta.value = _wfEd.yaml.text || '';
+    }
+
     function wfEdYamlSync() {
       const y = _wfEd.yaml;
       if (!_wfEd.model || y.focused || y.busy || y.rev === _wfEd.rev) return;
@@ -65151,7 +65180,7 @@ function burnAreaChart() {
     // SVG is self-contained. The tag is built in pieces so the style ratchet,
     // which scans inline <style> blocks, does not see one here.
     function wfEdExportStyle() {
-      const cs = getComputedStyle(document.documentElement);
+      const cs = getComputedStyle(document.querySelector('.wf-ed-canvas') || document.body);
       const tok = (name, fallback) => (cs.getPropertyValue(name) || '').trim() || fallback;
       const rules = [
         ['.wf-ed-svg', 'font-family:' + tok('--font-ui', 'sans-serif') + ';background:' + tok('--bg', 'white')],

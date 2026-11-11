@@ -1,5 +1,5 @@
 /* Settings → Workflows → Editor (#17620 phase 4): toolbar, palette, canvas, inspector, drawer */
-    .wf-ed { display: flex; flex-direction: column; gap: var(--sp-2); min-height: 36rem; height: calc(100vh - 14rem); }
+    .wf-ed { display: flex; flex-direction: column; gap: var(--sp-2); min-height: 32rem; height: calc(100vh - 22rem); }
     .wf-ed-toolbar { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; padding: var(--sp-2) var(--sp-3); background: var(--panel); border: var(--line-width) solid var(--border); border-radius: var(--r-sm); }
     .wf-ed-title { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); font-weight: 700; margin-right: var(--sp-2); }
     .wf-ed-dirty { color: var(--status-warn); }
@@ -92,7 +92,8 @@
     .wf-ed-mm-view { fill: color-mix(in srgb, var(--brand) 10%, transparent); stroke: var(--brand); stroke-width: 1; }
     .wf-ed-hint { position: absolute; left: var(--sp-3); bottom: var(--sp-2); font-size: var(--fs-2xs); pointer-events: none; }
 
-    .wf-ed-field { margin-bottom: var(--sp-3); }
+    .wf-ed-field { display: block; margin-bottom: var(--sp-3); }
+    .wf-ed-field > span { display: block; margin-top: var(--sp-1); }
     .wf-ed-field input[type="text"], .wf-ed-field input[type="number"], .wf-ed-field select, .wf-ed-field textarea { width: 100%; }
     .wf-ed-field input[readonly] { color: var(--muted); }
     .wf-ed-inline { display: flex; gap: var(--sp-2); align-items: center; }
