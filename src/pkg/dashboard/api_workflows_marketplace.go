@@ -206,13 +206,9 @@ func (s *Server) importBundle(st *wfstore.Store, b *bundle.Bundle, by string) (w
 // and has not published it.
 func importedProvenance(model workflowmodel.Provenance, tier string) workflowmodel.Provenance {
 	p := model
-	switch {
-	case p == "":
+	vouched := p == workflowmodel.ProvenanceCurated || p == workflowmodel.ProvenanceBuiltIn
+	if p == "" || (vouched && string(p) != tier) {
 		p = workflowmodel.Provenance(tier)
-	case p == workflowmodel.ProvenanceCurated || p == workflowmodel.ProvenanceBuiltIn:
-		if string(p) != tier {
-			p = workflowmodel.Provenance(tier)
-		}
 	}
 	if p == workflowmodel.ProvenanceBuiltIn || string(p) == bundle.TierLocalPublished || p == "" {
 		p = workflowmodel.ProvenanceLocal
