@@ -284,3 +284,22 @@ func TestMergeRequestWatcher_MergeClearsState(t *testing.T) {
 		t.Fatalf("merged PR must not keep wait state")
 	}
 }
+
+func TestRefuseExhaustedMergeRequest_HintMatchesReason(t *testing.T) {
+	cases := []struct {
+		reason, want, notWant string
+	}{
+		{"ci gate: required status check has not succeeded", "re-run the failing check", ""},
+		{"409 Merge conflict", "push a new commit or merge it manually", "re-run"},
+	}
+	for _, tc := range cases {
+		c := testMergeClient(t, "http://unused")
+		reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+		c.refuseExhaustedMergeRequest(reqPath, MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"},
+			mergeRequestPRState{SHA: "abc", Exhausted: true, Reason: tc.reason, At: fixedNow()}, fixedNow)
+		resp := readMergeResult(t, reqPath)
+		if !strings.Contains(resp.Error, tc.want) || (tc.notWant != "" && strings.Contains(resp.Error, tc.notWant)) {
+			t.Errorf("reason %q: unexpected hint in %q", tc.reason, resp.Error)
+		}
+	}
+}

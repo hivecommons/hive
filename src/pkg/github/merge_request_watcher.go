@@ -458,9 +458,9 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 
 	// Durable per-PR+SHA state (/data, survives restarts and re-requests).
 	// A request for a head that already exhausted its budget is refused with
-	// the recorded reason (after one CI-gate re-evaluation, below) instead of
-	// starting another poll cycle, and a head parked on pending CI is not
-	// re-evaluated before its backoff elapses.
+	// the recorded reason instead of starting another poll cycle, except that
+	// a CI-gate exhaustion is re-evaluated once first (below), and a head
+	// parked on pending CI is not re-evaluated before its backoff elapses.
 	now := nowFn()
 	prState, tracked := c.mergeRequestState(req.Repo, req.Number, req.ExpectSHA)
 	if tracked && prState.Exhausted && now.Sub(prState.At) < mergeRequestExhaustedRefusal {
@@ -787,8 +787,12 @@ func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, att
 // request was already exhausted with the recorded reason, instead of starting
 // another wait/retry cycle on a head that has not changed.
 func (c *Client) refuseExhaustedMergeRequest(path string, req MergeRequest, prev mergeRequestPRState, nowFn func() time.Time) {
-	reason := fmt.Sprintf("refused: an earlier merge request for this PR was exhausted on the same head %s at %s (%s); re-run the failing check and re-request, push a new commit, or merge it manually",
-		shortSHA(prev.SHA), prev.At.UTC().Format(time.RFC3339), prev.Reason)
+	hint := "push a new commit or merge it manually"
+	if strings.HasPrefix(prev.Reason, mergeRequestCIGateReasonPrefix) {
+		hint = "re-run the failing check and re-request, push a new commit, or merge it manually"
+	}
+	reason := fmt.Sprintf("refused: an earlier merge request for this PR was exhausted on the same head %s at %s (%s); %s",
+		shortSHA(prev.SHA), prev.At.UTC().Format(time.RFC3339), prev.Reason, hint)
 	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: prev.Attempts, OK: false, Error: reason, At: nowFn().UTC().Format(time.RFC3339)})
 	_ = os.Rename(path, path+".exhausted")
 	c.logger.Info("merge-request watcher: refused re-request for a head already exhausted",

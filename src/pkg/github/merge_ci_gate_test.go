@@ -1215,3 +1215,47 @@ func TestMergeCIGate_SkewedHeadWithoutExpectSHAHoldsFromFirstObservation(t *test
 		t.Fatalf("verifyMergeRequestCI must never merge, got %d", got)
 	}
 }
+
+func TestCIGateReason(t *testing.T) {
+	cases := []struct {
+		name, got, want string
+	}{
+		{"plain", ciGateReason("fetching PR"), "ci gate: fetching PR"},
+		{"formatted", ciGateReason("CI still running (%s)", "build"), "ci gate: CI still running (build)"},
+	}
+	for _, tc := range cases {
+		if tc.got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
+// Every reason verifyMergeRequestCI returns must carry the prefix the
+// exhausted-head re-evaluation keys off.
+func TestMergeCIGate_ReasonsCarryPrefix(t *testing.T) {
+	cases := []struct {
+		name string
+		f    *ciFixture
+		sha  string
+	}{
+		{"green", greenFixture(), "abc"},
+		{"no CI evidence", &ciFixture{defaultHead: "abc"}, "abc"},
+		{"head moved", greenFixture(), "def"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.f.defaultHead = "abc"
+			var merges atomic.Int32
+			srv := ciGateServer(t, tc.f, &merges)
+			defer srv.Close()
+			c := testMergeClient(t, srv.URL)
+			_, why, err := c.verifyMergeRequestCI(context.Background(), "o/r", 42, tc.sha, fixedNow(), time.Time{})
+			if err != nil {
+				why = err.Error()
+			}
+			if !strings.HasPrefix(why, mergeRequestCIGateReasonPrefix) {
+				t.Fatalf("reason %q must start with %q", why, mergeRequestCIGateReasonPrefix)
+			}
+		})
+	}
+}

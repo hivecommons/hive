@@ -34,10 +34,6 @@ const mergeRequestMaxCIWait = time.Hour
 // re-request re-evaluates the gate once and refuses only if it still blocks.
 const mergeRequestExhaustedRefusal = 24 * time.Hour
 
-// mergeRequestCIGateReasonPrefix starts every reason the watcher's pre-merge
-// CI gate (verifyMergeRequestCI) records.
-const mergeRequestCIGateReasonPrefix = "ci gate: "
-
 // mergeRequestStateRetention drops ledger entries untouched for this long so
 // the file cannot grow without bound.
 const mergeRequestStateRetention = 7 * 24 * time.Hour
