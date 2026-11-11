@@ -105,6 +105,18 @@ class GroundingTests(unittest.TestCase):
         not be required."""
         self.validate()
 
+    def test_github_table_may_be_a_fenced_block(self):
+        """Regression for run 43065486702: the agent used a fenced block on
+        GitHub too, which must count as the project table."""
+        payload = self.payload()
+        payload["items"][0]["body"] = payload["items"][0]["body"].replace(
+            self.GITHUB_TABLE, self.DISCORD_TABLE.replace("Owners: OpenHands All Hands AI; Roo Code Roo.\n", ""))
+        self.validate(payload)
+        payload["items"][1]["message"] = self.discord_text().replace(
+            "Roo Code (arch.)     editor    could be       Apache-2.0\n", "", 1)
+        with self.assertRaisesRegex(ValueError, "missing 'Roo Code"):
+            self.validate(payload)
+
     def test_discord_prose_must_match_github(self):
         payload = self.payload()
         payload["items"][1]["message"] = self.discord_text().replace(

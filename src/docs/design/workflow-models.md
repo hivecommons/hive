@@ -442,3 +442,145 @@ open-in-new-tab — no forced download), model JSON and model YAML, all through
 are editable through the YAML drawer); nested regions beyond flattening; marketplace (phase 7);
 keyboard-only lane reorder; collaborative/locking semantics; server-side layout persistence
 (lane widths live in the session).
+
+## Ingest: intake, triage, roles and branch rules (RFC phase 5)
+
+`ingest.Lifecycle` now reads the repository's process conventions next to its pipelines and adds
+an *intake half* to the draft: how work enters, who triages it, who approves a change and what the
+forge requires before merge. `ReadTree` keeps the files below in addition to the CI definitions
+(`ingest.IsIntakePath`); the dashboard seam (`WorkflowRepoFiles`) is unchanged. Everything this
+half adds is `confidence: inferred` and cites where it came from; the compiler warns once per
+element and a human confirms them in the editor exactly as for the pipeline half. Trees with none
+of these inputs produce the byte-identical model as before (`TestLifecyclePipelineOnlyUnchanged`).
+
+### Heuristics
+
+| Input | Read as | Proposes |
+|---|---|---|
+| `.github/ISSUE_TEMPLATE/*.{yml,yaml}` (issue forms), `*.md` and `.github/ISSUE_TEMPLATE.md` (front matter) | `name`, `labels` (list or comma string) | One `requested-<slug>` state per distinct label set in an **Intake** column after Open; event `issue-opened-with-template:<slug>` = `labels has <bind label>` (the template's first label that is not a triage label and not already bound); transitions open→requested, requested→triage (or →actionable when no triage label exists) and requested→closed; a `labels.entries` row per template label pointing at the state. |
+| `.github/ISSUE_TEMPLATE/config.yml` | `blank_issues_enabled` | Annotation `workflow.hivecommons.dev/blank-issues: disabled` when false (every issue arrives through a template). |
+| Labels seen in templates, `.github/settings.yml` (probot `labels:`), `.github/labels.yml` (sequence, `labels:` wrapper or mapping), `.github/labeler.yml` (top-level keys), `CONTRIBUTING.md` (backticked labels, or hyphen/slash labels at word boundaries) | Triage vocabulary: `needs-triage`/`triage/needed`/`status/needs-triage`/…; `triage/accepted`/`triage-accepted`/`accepted`; `triage/declined`/`wontfix`/`invalid`/`not-a-bug`; conventions `good first issue`, `help wanted` | A `triage` state in a **Triage** column after Intake; events `triage-requested` (`labels has <needs>`), `triage-accepted` (`labels has <accepted>`, or `labels lacks <needs>` when there is no accepted label), `triage-declined`; gate `triage-decision` released by `approver` when one exists, else `maintainer`, with reply `/label <accepted>`; transitions open→triage, triage→actionable (gated), triage→closed; label rows `needs → triage`, `accepted → actionable`, `declined → closed`; convention labels as plain rows. |
+| PR template (`.github/PULL_REQUEST_TEMPLATE.md`, `PULL_REQUEST_TEMPLATE.md`, `docs/…`, `.github/PULL_REQUEST_TEMPLATE/*.md`) | `- [ ]` / `* [ ]` / `[x]` items | `checks` entries `pr-template-<slug>` of kind `manual`, `source: path:line`. Duplicates by id are dropped. |
+| `CODEOWNERS` (root, `.github/`, `docs/`) | Every owner on every rule (users and `org/team`) | Role `approver` of kind `members` (params `members`, `source: path:line,…`). |
+| root `OWNERS`, `OWNERS_ALIASES` (Prow) | `approvers`, `reviewers`, `filters[".*"]`, aliases | Roles `approver` and `reviewer`; the review gate's reply is `/approve`. |
+| `MAINTAINERS`, `MAINTAINERS.md` (root, `.github/`, `docs/`) | `@handle` and `github.com/handle` spellings (plain list, markdown table or prose; names and e-mail addresses are not identities) | The hive-default permission-based `maintainer` role becomes kind `members` listing those handles (`source: path:line`); when no `approver` role exists, the review gate is released by `maintainer`. |
+| `kind/*`, `priority/*`, `type/*`, `area/*`, `severity/*`, `size/*` labels declared in `labels.yml`, `settings.yml`, `labeler.yml`, templates or backticked in `CONTRIBUTING.md` | Classification vocabulary triage applies | Plain `labels.entries` rows (no state), sorted by name, so the triage gate's vocabulary is visible in the editor. |
+| Any `approver` role | | Gate `review` released by `approver` (condition `pr.review is approved`) attached to the hive-default edges from CI / Review into the admitted Merge-queue states (`awaiting-merge-admission`, `ready-for-human-merge`, `pre-merge-soak`, `merge-queue`), so the compiler's "gate with no owner role" refusal is satisfied by a real role. |
+| Branch rules: `GET /repos/{o}/{r}/branches/{b}/protection`, falling back to `GET /repos/{o}/{r}/rules/branches/{b}` (repository and organisation rulesets); or probot `.github/settings.yml` `branches[].protection` when the API gave nothing | required status checks, required approving reviews, code-owner review, dismiss stale reviews, enforce admins, linear history, signed commits | `checks` entries `check-<slug>` of kind `ci`, `required: true`; guard `required-checks` (params `contexts`) on the same merge edges; `review.minApprovals: N`; gate `codeowner-review`; bookkeeping effects on `merged` (`enforce-admins`, `require-linear-history`, `require-signed-commits`, `dismiss-stale-reviews`) with the source in their params. |
+
+The forge half arrives as a synthetic file at `ingest.BranchRulesPath` (`.hive/branch-rules.json`,
+`ingest.BranchRules`): `cmd/hive`'s `workflowRepoFiles` fills it through `Client.FetchBranchRules`
+when ingesting by `repo`, so pasted `files` and the survey corpus can carry the same reading.
+`ingest.LifecycleOptions` accepts the rules explicitly, overriding the file.
+
+### Citations
+
+Every element cites `path:line` for file-derived facts (`Citation.Path`/`Line`; `checks[].source`,
+`guards[].source`, `roles[].params.source` and `bookkeeping[].params.source` carry the same
+`path:line` string) and `api:<endpoint>` — for example `api:repos/cncf/techdocs/rules/branches/main`
+— for facts read from the forge. `meta.source` becomes `issue-templates` (or
+`github-actions+issue-templates`) once a template was read.
+
+### What `cncf/techdocs` proposes
+
+With its current `main` (no issue templates yet; `.github/settings.yml` declares `needs-triage`,
+`triage/accepted`, `triage/declined`, `good first issue`, `help wanted`; the org ruleset requires no
+checks or approvals): columns `open · triage · actionable · claimed · pr-in-progress · ci-review ·
+merge-queue · merged`, the `triage` state citing `.github/settings.yml:129/132/135`, the three
+triage events, the `triage-decision` gate released by `maintainer`, and the five label rows. The
+intake form on the pending `build/03-intake` branch (`assessment-request.yml`, labels `Docs analysis`
++ `needs-triage`) adds `intake[requested-documentation-assessment-request]` before Triage — the
+fixture under `pkg/workflowmodel/ingest/testdata/techdocs` carries both.
+
+### Limitations
+
+- Heuristics prefer precision: a template without labels, or whose labels are all triage labels or
+  already bound to another intake state, yields a `issue-template-no-labels` / `issue-template-merged`
+  finding rather than a state. Label names are matched from a fixed table; a repository's own
+  triage word (`status: new`) is not recognised.
+- Only the root `OWNERS` is read (nested owners files scope by path, which the model does not
+  express); CODEOWNERS owners are all `approver`, since the file has no reviewer notion.
+- `codeowner-review` is informational: the engine does not observe which files a PR touches.
+- The engine still derives through the built-in stage table; nothing lands in Intake or Triage
+  until the label-driven engine half of phase 4 writes model labels onto items.
+- Branch protection needs `administration:read`; without it the rulesets endpoint is used, which
+  omits legacy protection settings such as `enforce_admins`.
+
+## Label GC and model commands (RFC phase 4, follow-up)
+
+Two of the phase-4 backend gaps close here: stale model labels are now reclaimed, and a bound
+model's `replies` reach the human gate as commands.
+
+### Label garbage collection on unbind / rebind
+
+`ensureStageLabels` already provisions a bound model's `LabelDefs` after the built-in family. It
+now also remembers what it provisioned and reconciles on change
+(`automerge_stage_labels_gc.go`):
+
+- **Record.** After each provisioning pass the engine writes one JSON record per repository,
+  `workflows/provisioned/<owner>__<repo>.json` under `data.workflows_dir`
+  (`workflowmodel.ProvisionedLabels{repo, model name@version, hash, labels[]}`, through the
+  `workflowmodel.ProvisionedStore` interface the workflow store implements). The record is the
+  hive's memory of which labels *it* created or adopted by recolouring for a model; a label the
+  repository already had for its own reasons is never in it.
+- **Diff.** When the profile hash differs from the record's — a rebind, a new version of the bound
+  model, or an unbind (lookup returns nil or hive-default) — the engine computes
+  `previous − current` model labels.
+- **Delete, only when safe.** A stale label is deleted only if it is in the record, is not in the
+  built-in family (`stagelabels.LabelDefsFor` plus the retired spellings in `stagelabels.Renames`),
+  and no open issue or PR wears it (one `label:"x" is:open` search per label; a failed search keeps
+  the label and logs it). Anything kept stays in the record so the next pass retries it. Every
+  deletion is audited as `workflow_label_removed` with the repository, label and the model key it
+  belonged to.
+- **Knob.** `workflow.label_gc` (`WorkflowConfig.LabelGC`, default `true`). `false` keeps every
+  label and logs what would have gone; the record is still maintained, so turning it back on
+  reclaims what accumulated. The knob is yaml-only (no Settings control; allowlisted in
+  `settings_parity_allowlist.txt`).
+- **Zero change for unbound repositories.** With no `ProvisionedStore` wired, or for a repository
+  that was never bound, nothing is remembered and nothing is deleted; the pre-P4 path is unchanged
+  and its tests are byte-identical.
+
+### Model replies as human-gate commands
+
+A model's `replies[state]` lists the verbs a human may answer the gate with. They now flow through
+three places, all for a repository bound to a non-default model only:
+
+- **Lookup.** `Profile.RepliesForNumber(stage)` returns the verbs for the state at a stage number;
+  `Profile.ReplyForNumber(stage, verb)` resolves one to a `ReplyEffect{Verb, From, To, Label}` —
+  the transition the model declares with that verb as its `on` event (if any), the target state,
+  and the label `labels.entries` maps to that state (if any). `NormalizeReply` folds case, inner
+  whitespace and a leading slash so "Approve Analysis", "approve  analysis" and "/approve analysis"
+  are one verb.
+- **Comments.** The `/hive` parser (`parseUnparkCommandFor`) tries the model's verbs first —
+  multi-word, longest match wins, trailing punctuation trimmed, the rest of the line is the
+  decision text — then the built-ins. With no verbs it *is* the old parser, so `/hive approve` on
+  an unbound repository is exactly what it was. On a parked issue the sweep answers a model verb
+  with `applyIssueModelReply`: the parking labels are cleared as for `/hive approve`
+  (`approved-direction` added, `needs-human` lifted), the mapped label is applied when there is one
+  (audited `hive_label_applied` with `reply=<verb>`), and one reply comment is posted that begins
+  with the same `Decision:` sentence the decision history reads, then says what the model did
+  ("moves the item from `a` to `b`; `label` applied" / "…the model maps no label to that state" /
+  "is recorded; the model declares no transition for it"). Answered replies are idempotency
+  watermarks like the built-ins. cmd/hive passes the stage engine's `WorkflowFor` to the un-park
+  sweep so comments see the same binding the labeller does.
+- **Dashboard.** The tracker payload's `workflows.repos[<repo>].replies` maps stage number →
+  verbs (hive-default's block carries none). `stageTrackerHumanGateVerbs` appends them after the
+  built-in verbs, deduped by label, as `wf:<verb>` actions; choosing one prompts for an optional
+  note and POSTs `{"decision":"model-reply","reply":"<verb>","comment":…}` to
+  `/api/repos/{repo}/items/{n}/decision`. The handler resolves the bound profile
+  (`workflowProfileForRepo`), refuses unbound repositories and verbs the model does not offer at
+  the item's state with 409, PRs with 400, and otherwise runs the same `applyIssueModelReply`
+  path, audited `repo_item_decision_model_reply`.
+
+### Known gaps (phase 4 follow-up)
+
+- Model replies act on **parked issues** only. A verb declared for a PR state (TechDocs'
+  `draft-review: approve / request changes`) is not offered by the pill or honoured in comments; PRs
+  keep GitHub's native review signal. Un-parked issue states with replies are likewise not
+  answered — the reply needs a gate to answer.
+- The pill offers model verbs only where it already shows a human gate; a model state with replies
+  but no `needs-human` / needs-decision label on the item shows nothing extra.
+- Label GC trusts the provisioned record: labels created by an earlier hive build (before the
+  record existed) are adopted into the record on the next provisioning pass only while the model
+  still declares them; labels a model dropped *before* this change shipped are never reclaimed
+  automatically.

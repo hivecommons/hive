@@ -1,1 +1,0 @@
-- Weekly competitor report: the publication gate no longer rejects the Discord post for the Discord formatting the prompt itself requires (bold headings, fenced project table, no sources details), which silently blocked the 2026-11-09 report.

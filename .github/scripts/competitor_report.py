@@ -210,10 +210,23 @@ def split_who_section(text):
 
 
 def table_projects(section):
-    rows = [line for line in section.splitlines() if line.strip().startswith("|")]
-    cells = [[c.strip() for c in row.strip().strip("|").split("|")] for row in rows]
-    return [row[0] for row in cells[2:] if row and row[0]], [
-        line for line in section.splitlines() if not line.strip().startswith("|")]
+    """Project names (first column) and the notes outside the table. The
+    table may be a Markdown pipe table or a fenced block of aligned columns."""
+    lines = section.splitlines()
+    rows = [line for line in lines if line.strip().startswith("|")]
+    if rows:
+        cells = [[c.strip() for c in row.strip().strip("|").split("|")] for row in rows]
+        projects = [row[0] for row in cells[2:] if row and row[0]]
+        notes = [line for line in lines if not line.strip().startswith("|")]
+        return projects, notes
+    fenced = re.findall(r"```[^\n]*\n(.*?)```", section, re.S)
+    projects = []
+    for block in fenced:
+        body = [line for line in block.splitlines()[1:] if line.strip()
+                and not re.fullmatch(r"[-+| ]+", line.strip())]
+        projects += [re.split(r"\s*\|\s*|\s{2,}", line.strip())[0] for line in body]
+    notes = re.sub(r"```.*?```", "", section, flags=re.S).splitlines()
+    return [p for p in projects if p], notes
 
 
 def check_discord_matches(report, message):
@@ -228,7 +241,7 @@ def check_discord_matches(report, message):
             "Discord and GitHub reports differ outside the project table "
             "(ledger and sources details belong only on GitHub)")
     projects, notes = table_projects(github_who)
-    require(projects, f'GitHub "{WHO_HEADING}" section needs a Markdown table')
+    require(projects, f'GitHub "{WHO_HEADING}" section needs a project table')
     fenced = re.findall(r"```[^\n]*\n(.*?)```", discord_who, re.S)
     require(fenced, f'Discord "{WHO_HEADING}" table must be a fenced code block')
     block = squash(" ".join(fenced))

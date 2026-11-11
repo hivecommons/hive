@@ -44,6 +44,15 @@ func buildCorpus(t *testing.T) string {
 	if n == 0 {
 		t.Fatalf("no fixture repositories under %s", fixtureCorpus)
 	}
+	// One repo with process conventions but no pipelines exercises the
+	// intake counts (RFC phase 5).
+	intake, err := filepath.Abs(filepath.Join("..", "..", "pkg", "workflowmodel", "ingest", "testdata", "k8s-owners"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.CopyFS(filepath.Join(repos, "example__k8s-owners"), os.DirFS(intake)); err != nil {
+		t.Fatal(err)
+	}
 	// A stray file in repos/ must be ignored, as must a repo not in projects.json.
 	if err := os.WriteFile(filepath.Join(repos, "README.md"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -82,8 +91,19 @@ func TestRealMainSurveysCorpus(t *testing.T) {
 	if err := json.Unmarshal(raw, &sum); err != nil {
 		t.Fatal(err)
 	}
-	if sum.Repos != 6 || sum.Valid != sum.Repos {
-		t.Errorf("repos=%d valid=%d, want 6 valid", sum.Repos, sum.Valid)
+	if sum.Repos != 7 || sum.Valid != sum.Repos {
+		t.Errorf("repos=%d valid=%d, want 7 valid", sum.Repos, sum.Valid)
+	}
+	if sum.Compiled != sum.Repos {
+		t.Errorf("compiled=%d of %d", sum.Compiled, sum.Repos)
+	}
+	if in := sum.Intake; in.ReposWithIntakeStates != 1 || in.ReposWithTriage != 1 || in.ReposWithRoles != 1 || in.ReposWithGates != 1 || in.ReposWithChecks != 1 || in.ReposWithBranchRules != 1 {
+		t.Errorf("intake summary %+v, want exactly the k8s-owners repo", in)
+	}
+	for _, r := range sum.Repos_ {
+		if r.Repo == "example/k8s-owners" && (r.Intake.IntakeStates != 3 || !r.Intake.Triage || r.Intake.MemberRoles != 2 || r.Intake.ManualChecks != 4 || r.Intake.CIChecks != 3 || r.Intake.IntakeFindings != 1) {
+			t.Errorf("k8s-owners intake %+v", r.Intake)
+		}
 	}
 	if sum.ReposWithGHA == 0 || sum.ReposWithTekton == 0 {
 		t.Errorf("expected both systems in the corpus: gha=%d tekton=%d", sum.ReposWithGHA, sum.ReposWithTekton)
@@ -94,7 +114,7 @@ func TestRealMainSurveysCorpus(t *testing.T) {
 	if got := sum.ByProject["graduated"]; got == nil || got.Repos != 1 {
 		t.Errorf("projects.json maturity join (case-insensitive) not applied: %+v", sum.ByProject)
 	}
-	if got := sum.ByProject["unknown"]; got == nil || got.Repos != 4 {
+	if got := sum.ByProject["unknown"]; got == nil || got.Repos != 5 {
 		t.Errorf("repos without a maturity should land in unknown: %+v", sum.ByProject)
 	}
 	if len(sum.Worst) != sum.Repos || len(sum.Top) != sum.Repos {
@@ -110,7 +130,7 @@ func TestRealMainSurveysCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"# Workflow model survey", "## Pipeline roles", "## Column sets (Activity Monitor)", "| graduated | 1 |", "trigger:pull_request"} {
+	for _, want := range []string{"# Workflow model survey", "## Pipeline roles", "## Column sets (Activity Monitor)", "## Intake proposals (RFC phase 5)", "| Triage state | 1 |", "| graduated | 1 |", "trigger:pull_request"} {
 		if !strings.Contains(string(md), want) {
 			t.Errorf("summary.md missing %q", want)
 		}

@@ -1318,8 +1318,15 @@
       if (bar.innerHTML !== html) bar.innerHTML = html;
     }
     function stageTrackerActionLabel(id) {
+      const modelVerb = typeof stageTrackerModelReplyVerb === 'function' ? stageTrackerModelReplyVerb(id) : '';
+      if (modelVerb) return typeof stageTrackerWorkflowReplyLabel === 'function' ? stageTrackerWorkflowReplyLabel(modelVerb) : modelVerb;
       const base = typeof stageTrackerActionBase === 'function' ? stageTrackerActionBase(id) : id;
       return STAGE_TRACKER_ACTION_LABELS[base] || id;
+    }
+    // Pure: the model verb a `wf:<verb>` human-gate action carries
+    // (hivecommons/hive#17620, RFC phase 4), '' for any other id.
+    function stageTrackerModelReplyVerb(id) {
+      return String(id || '').indexOf('wf:') === 0 ? String(id).slice(3).trim() : '';
     }
     // Pure: which endpoint an action hits for one item. `once` marks a
     // hive-wide call made one time per batch.
@@ -1375,6 +1382,13 @@
       }
       if (id === 'gate:confirm-sentinel') {
         return { url: '/api/repos/' + seg + '/items/' + n + '/sentinel-confirm', body: { comment: payload.comment || '', type } };
+      }
+      // A workflow model's reply verb: recorded as "/hive <verb>" on the
+      // parked issue; the server checks the verb against the bound model.
+      const modelVerb = typeof stageTrackerModelReplyVerb === 'function' ? stageTrackerModelReplyVerb(id) : '';
+      if (modelVerb) {
+        if (type !== 'issue') return null;
+        return { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'model-reply', reply: modelVerb, comment: payload.comment || '', type } };
       }
       if (id.indexOf('decide:') === 0) {
         const body = { decision: id.slice('decide:'.length), comment: payload.comment || '', type };
@@ -2201,6 +2215,11 @@
       if (stageTrackerActionBase(id) === 'decide:reroute') {
         const target = stageTrackerRerouteTargetOf(id) || STAGE_TRACKER_REROUTE_ANY;
         return (await stageTrackerAsk('decide:reroute', 'confirm', stageTrackerRerouteConfirm(refs, who, target, stageTrackerTakeoverOf(items[0])))) ? { to: target } : null;
+      }
+      const verb = typeof stageTrackerModelReplyVerb === 'function' ? stageTrackerModelReplyVerb(id) : '';
+      if (verb) {
+        const v = await stageTrackerAsk(id, 'prompt', { title: stageTrackerActionLabel(id) + ' — ' + refs, label: 'Record "/hive ' + verb + '" on ' + refs + ' as ' + who + '? The hive un-parks the issue and applies the label the workflow model maps to this reply, if any. Note (optional)', placeholder: 'e.g. keep the shorter outline', confirmLabel: 'Send' });
+        return v == null ? null : { comment: v };
       }
       return {};
     }

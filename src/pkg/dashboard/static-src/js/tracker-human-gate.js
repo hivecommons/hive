@@ -107,17 +107,32 @@
       out.sort((x, y) => STAGE_TRACKER_GATE_ORDER.indexOf(x.key) - STAGE_TRACKER_GATE_ORDER.indexOf(y.key));
       return out;
     }
+    // A model reply's action id: `wf:` + the verb as the model declares it.
+    const STAGE_TRACKER_GATE_MODEL_PREFIX = 'wf:';
     // Pure: the verbs for a set of reasons — the union in reason order,
     // de-duplicated, first label wins (so "Approve" on review + decision
     // reads "Approve", and "Approve as-is" when the decision stands alone).
-    function stageTrackerHumanGateVerbs(reasons, item) {
+    // modelVerbs are the bound workflow model's replies for the row's
+    // state (hivecommons/hive#17620, RFC phase 4): they follow the built-in
+    // verbs as `wf:<verb>`, each posting "/hive <verb>", skipping any whose
+    // label a built-in verb already reads.
+    function stageTrackerHumanGateVerbs(reasons, item, modelVerbs) {
       const ids = [];
       // A row with no PR has no head to approve or send back; those verbs
       // belong to PR rows (or an issue drawn through its covering PR).
       const onPR = item == null || stageTrackerGateIsPR(item);
       (reasons || []).forEach(r => (STAGE_TRACKER_GATE_VERBS[r.key] || []).forEach(id => { if (ids.indexOf(id) < 0 && (onPR || STAGE_TRACKER_GATE_PR_ONLY.indexOf(id) < 0)) ids.push(id); }));
       const onlyDecision = (reasons || []).length && reasons.every(r => r.key === 'decision');
-      return ids.map(id => ({ id, label: id === 'decide:approve' && onlyDecision ? STAGE_TRACKER_GATE_APPROVE_AS_IS : STAGE_TRACKER_GATE_LABELS[id] || id, posts: STAGE_TRACKER_GATE_POSTS[id] || '' }));
+      const out = ids.map(id => ({ id, label: id === 'decide:approve' && onlyDecision ? STAGE_TRACKER_GATE_APPROVE_AS_IS : STAGE_TRACKER_GATE_LABELS[id] || id, posts: STAGE_TRACKER_GATE_POSTS[id] || '' }));
+      const taken = out.map(v => String(v.label).replace(/…$/, '').toLowerCase());
+      (Array.isArray(modelVerbs) ? modelVerbs : []).forEach(verb => {
+        const v = String(verb || '').trim();
+        const id = STAGE_TRACKER_GATE_MODEL_PREFIX + v;
+        if (!v || out.some(x => x.id === id) || taken.indexOf(v.toLowerCase()) >= 0) return;
+        taken.push(v.toLowerCase());
+        out.push({ id, label: typeof stageTrackerWorkflowReplyLabel === 'function' ? stageTrackerWorkflowReplyLabel(v) : v, posts: 'Posts "/hive ' + v + '" — a reply the repository\'s workflow model declares for this state; the hive applies the state\'s label when the model maps one.', model: true });
+      });
+      return out;
     }
     // Pure: the status segment's words — "Needs human · review, sentinel".
     function stageTrackerHumanGateStatusText(reasons) {
@@ -182,7 +197,9 @@
       if (passive) return typeof stageTrackerLeadPillHtml === 'function' ? stageTrackerLeadPillHtml(item, passive) : '';
       // A gate owed on a PR drawn under this issue row renders on that sub-row.
       if (Array.isArray(subRows) && subRows.length && item.kind === 'issue' && !item.via_pr && !leads.length && subRows.some(s => stageTrackerHumanGateReasons(s).length)) return '';
-      const verbs = stageTrackerHumanGateVerbs(reasons, shown);
+      const workflows = opts && opts.workflows !== undefined ? opts.workflows : (typeof _stageTracker !== 'undefined' && _stageTracker ? _stageTracker.workflows : null);
+      const modelVerbs = typeof stageTrackerWorkflowReplies === 'function' ? stageTrackerWorkflowReplies(shown, workflows) : [];
+      const verbs = stageTrackerHumanGateVerbs(reasons, shown, modelVerbs);
       const text = stageTrackerHumanGateStatusText(reasons);
       const tip = stageTrackerHumanGateTip(reasons);
       const ico = typeof stageTrackerIcon === 'function' ? stageTrackerIcon('human', 'ham-ico ham-mod-ico') : '';

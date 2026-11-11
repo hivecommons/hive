@@ -40,7 +40,7 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 		return false, err
 	}
 	answered := c.answeredUnparkCommentIDs(comments)
-	candidate, command, err := c.eligibleUnparkCommand(ctx, owner, repo, comments, answered, cutoff, false)
+	candidate, command, err := c.eligibleUnparkCommand(ctx, owner, repo, comments, answered, cutoff, false, nil)
 	if err != nil {
 		return false, err
 	}

@@ -1,0 +1,6 @@
+name: Support Request
+description: Questions belong on the forum, not here
+body:
+  - type: markdown
+    attributes:
+      value: Please ask on discuss.example.org.

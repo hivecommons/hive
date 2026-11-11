@@ -1,0 +1,1 @@
+- Weekly competitor report: the publication gate accepts the "Who does what" project table as a fenced block on GitHub as well as a Markdown table (catch-up run 43065486702 failed on this).
