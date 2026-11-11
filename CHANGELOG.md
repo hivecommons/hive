@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.217.1)
+
+### Changed
+
+- CI: the `pull_request` workflows `mutation-advisory`, `pr-overlap`, `stream-image`, `ci-runner-image` and `docs-index-reminder` now check out with `persist-credentials: false`. None of those jobs pushes or fetches with the job token; steps that call the API keep getting it through their step `env`, scoped by the job's `permissions:` block (#17636).
+
+### Security
+
+- **proxy:** the GitHub GraphQL mutation gate no longer fails open when `mutation` follows a same-line prefix (a leading fragment definition, comma or BOM). It now uses the same string- and comment-aware depth-zero token scan as the Linear path, so read-only lanes cannot slip a mutation past the capability tier, write-surface and auto-merge checks (#17676).
+
 ## 2026-11-11 (v5.217.0)
 
 ### Added
