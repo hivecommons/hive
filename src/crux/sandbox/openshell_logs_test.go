@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -15,14 +16,19 @@ import (
 type fakeOpenShellLogs struct {
 	mu        sync.Mutex
 	list      []*openshell.Sandbox
+	listErr   error
 	selectors []string
 	logs      [][]openshell.LogLine
-	since     []time.Time
-	gets      []*openshell.Sandbox
-	getErr    error
-	logCalls  int
-	getCalls  int
-	closed    int
+	// logErrs[i] is returned by the i-th GetLogs call when set.
+	logErrs []error
+	// nilLogs makes every GetLogs call answer (nil, nil).
+	nilLogs  bool
+	since    []time.Time
+	gets     []*openshell.Sandbox
+	getErr   error
+	logCalls int
+	getCalls int
+	closed   int
 }
 
 func (f *fakeOpenShellLogs) Sandboxes() openshellSandboxes { return f }
@@ -47,6 +53,9 @@ func (f *fakeOpenShellLogs) ListAll(_ context.Context, _ string, opts ...openshe
 	for _, o := range opts {
 		f.selectors = append(f.selectors, o.LabelSelector)
 	}
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	return f.list, nil
 }
 
@@ -70,6 +79,12 @@ func (f *fakeOpenShellLogs) GetLogs(_ context.Context, _, _ string, opts ...open
 	f.since = append(f.since, openshellLogSince(opts))
 	i := f.logCalls
 	f.logCalls++
+	if i < len(f.logErrs) && f.logErrs[i] != nil {
+		return nil, f.logErrs[i]
+	}
+	if f.nilLogs {
+		return nil, nil
+	}
 	if i >= len(f.logs) {
 		return &openshell.LogResult{}, nil
 	}
@@ -204,4 +219,172 @@ func TestOpenShellStreamLogsStopsWithContext(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("StreamLogs kept polling after the context ended")
 	}
+}
+
+func TestOpenShellLogClientErrors(t *testing.T) {
+	boom := errors.New("dial failed")
+	l := &OpenShellLauncher{
+		Options:   OpenShellOptions{GatewayURL: "gw:8080"},
+		newClient: func(OpenShellOptions) (openshellClient, error) { return nil, boom },
+	}
+	if _, _, err := l.LatestSandbox(context.Background(), "x"); !errors.Is(err, boom) {
+		t.Fatalf("LatestSandbox err = %v, want %v", err, boom)
+	}
+	if _, err := l.StreamLogs(context.Background(), "sb", time.Millisecond, &strings.Builder{}); !errors.Is(err, boom) {
+		t.Fatalf("StreamLogs err = %v, want %v", err, boom)
+	}
+
+	// A client whose Sandboxes() cannot read logs is closed and refused.
+	narrow := &fakeOpenShell{}
+	l.newClient = func(OpenShellOptions) (openshellClient, error) { return narrow, nil }
+	_, _, err := l.LatestSandbox(context.Background(), "x")
+	if err == nil || !strings.Contains(err.Error(), "cannot read sandbox logs") {
+		t.Fatalf("err = %v", err)
+	}
+	if !narrow.closed {
+		t.Fatal("a refused client must still be closed")
+	}
+}
+
+func TestOpenShellLatestSandboxListError(t *testing.T) {
+	boom := errors.New("gateway down")
+	f := &fakeOpenShellLogs{listErr: boom}
+	_, found, err := openshellLogLauncher(f).LatestSandbox(context.Background(), "deps")
+	if found || !errors.Is(err, boom) || !strings.Contains(err.Error(), "listing sandboxes") {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if f.closed != 1 {
+		t.Fatalf("client closed %d times", f.closed)
+	}
+}
+
+func TestOpenShellSandboxNameUnix(t *testing.T) {
+	launch := LaunchName("deps")
+	good := openshellSandboxName(launch, time.Unix(1700000000, 0))
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{good, true},
+		{"nodash", false},
+		{"other-deps-1700000000", false},
+		{openshellNamePrefix + "deps-notanumber", false},
+		{openshellSandboxName(LaunchName("deps-bot"), time.Unix(1700000000, 0)), false},
+	}
+	for _, c := range cases {
+		unix, ok := openshellSandboxNameUnix(launch, c.name)
+		if ok != c.want {
+			t.Errorf("%q: ok=%v want %v", c.name, ok, c.want)
+		}
+		if ok && unix != 1700000000 {
+			t.Errorf("%q: unix=%d", c.name, unix)
+		}
+	}
+}
+
+func TestOpenShellSandboxInfoDeletingWithoutPhase(t *testing.T) {
+	now := time.Now()
+	s := &openshell.Sandbox{Name: "sb", DeletionTimestamp: &now}
+	info := openshellSandboxInfo(s)
+	if info.Phase != string(openshell.SandboxDeleting) || !info.Finished() || info.Exited {
+		t.Fatalf("info = %+v", info)
+	}
+	// A reported phase wins over the deletion marker.
+	s.Status.Phase = openshell.SandboxStopped
+	if got := openshellSandboxInfo(s); got.Phase != string(openshell.SandboxStopped) || !got.Finished() {
+		t.Fatalf("info = %+v", got)
+	}
+	if !(OpenShellSandboxInfo{Phase: string(openshell.SandboxError)}).Finished() {
+		t.Fatal("error phase must be finished")
+	}
+}
+
+func TestOpenShellStreamLogsSkipsStaleLinesAndNilResults(t *testing.T) {
+	t1 := time.Date(2026, 11, 11, 6, 0, 1, 0, time.UTC)
+	t2 := t1.Add(time.Second)
+	f := &fakeOpenShellLogs{
+		logs: [][]openshell.LogLine{
+			{{Timestamp: t2, Message: "now"}},
+			// The gateway replays an older line and the t2 line again.
+			{{Timestamp: t1, Message: "stale"}, {Timestamp: t2, Message: "now"}},
+		},
+		gets: []*openshell.Sandbox{osSandbox("sb", openshell.SandboxReady), osSandbox("sb", openshell.SandboxCompleted)},
+	}
+	var out strings.Builder
+	info, err := openshellLogLauncher(f).StreamLogs(context.Background(), "sb", time.Millisecond, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := t2.Format(time.RFC3339) + " now\n"; out.String() != want {
+		t.Fatalf("log = %q, want %q", out.String(), want)
+	}
+	if !info.Finished() || info.Exited {
+		t.Fatalf("info = %+v", info)
+	}
+
+	// A nil LogResult is an empty read, and poll <= 0 falls back to the default.
+	f = &fakeOpenShellLogs{nilLogs: true, gets: []*openshell.Sandbox{osSandbox("sb", openshell.SandboxCompleted)}}
+	out.Reset()
+	if _, err := openshellLogLauncher(f).StreamLogs(context.Background(), "sb", 0, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 || f.logCalls != 2 {
+		t.Fatalf("out=%q logCalls=%d", out.String(), f.logCalls)
+	}
+}
+
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestOpenShellStreamLogsReportsErrors(t *testing.T) {
+	boom := errors.New("boom")
+	notFound := &openshell.StatusError{Code: openshell.ErrorNotFound, Message: "gone"}
+
+	t.Run("get", func(t *testing.T) {
+		f := &fakeOpenShellLogs{getErr: boom}
+		if _, err := openshellLogLauncher(f).StreamLogs(context.Background(), "sb", time.Millisecond, &strings.Builder{}); !errors.Is(err, boom) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("logs", func(t *testing.T) {
+		f := &fakeOpenShellLogs{logErrs: []error{boom}, gets: []*openshell.Sandbox{osSandbox("sb", openshell.SandboxReady)}}
+		info, err := openshellLogLauncher(f).StreamLogs(context.Background(), "sb", time.Millisecond, &strings.Builder{})
+		if !errors.Is(err, boom) || info.Phase != string(openshell.SandboxReady) {
+			t.Fatalf("err=%v info=%+v", err, info)
+		}
+	})
+	t.Run("logs not found is not fatal while the sandbox lives", func(t *testing.T) {
+		f := &fakeOpenShellLogs{
+			logErrs: []error{notFound, nil, nil},
+			logs:    [][]openshell.LogLine{nil, {{Message: "late"}}},
+			gets:    []*openshell.Sandbox{osSandbox("sb", openshell.SandboxReady), osSandbox("sb", openshell.SandboxCompleted)},
+		}
+		var out strings.Builder
+		if _, err := openshellLogLauncher(f).StreamLogs(context.Background(), "sb", time.Millisecond, &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.String() != "late\n" {
+			t.Fatalf("out = %q", out.String())
+		}
+	})
+	t.Run("final drain", func(t *testing.T) {
+		f := &fakeOpenShellLogs{logErrs: []error{nil, boom}, gets: []*openshell.Sandbox{osSandbox("sb", openshell.SandboxCompleted)}}
+		if _, err := openshellLogLauncher(f).StreamLogs(context.Background(), "sb", time.Millisecond, &strings.Builder{}); !errors.Is(err, boom) {
+			t.Fatalf("err = %v", err)
+		}
+		f = &fakeOpenShellLogs{logErrs: []error{nil, notFound}, gets: []*openshell.Sandbox{osSandbox("sb", openshell.SandboxCompleted)}}
+		if _, err := openshellLogLauncher(f).StreamLogs(context.Background(), "sb", time.Millisecond, &strings.Builder{}); err != nil {
+			t.Fatalf("a sandbox deleted during the final drain is not an error, got %v", err)
+		}
+	})
+	t.Run("writer", func(t *testing.T) {
+		f := &fakeOpenShellLogs{
+			logs: [][]openshell.LogLine{{{Message: "x"}}},
+			gets: []*openshell.Sandbox{osSandbox("sb", openshell.SandboxReady)},
+		}
+		if _, err := openshellLogLauncher(f).StreamLogs(context.Background(), "sb", time.Millisecond, failingWriter{boom}); !errors.Is(err, boom) {
+			t.Fatalf("err = %v", err)
+		}
+	})
 }
