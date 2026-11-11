@@ -91,23 +91,7 @@ func (c *Engine) currentHumanMergePinOnly(repo string) (config.PinOnlyException,
 // upstream repository, not merely somewhere in its fork network. The sweep
 // lanes and /approve share this helper so they never disagree.
 func (c *Engine) humanMergePinOnlyExempt(ctx context.Context, owner, repo string, pr *gh.PullRequest, files []intent.ChangedFile, matches []string) (bool, string) {
-	if len(matches) == 0 || pr == nil {
-		return false, ""
-	}
-	policy, ok := c.currentHumanMergePinOnly(owner + "/" + repo)
-	if !ok {
-		return false, ""
-	}
-	author := strings.TrimSpace(hgithub.SafeGetLogin(pr.GetUser()))
-	if !pinOnlyTrustedLogin(policy, author) {
-		return false, "PR author is not in trusted_authors"
-	}
-	// ListChangedFiles already refuses a list shorter than GitHub's count;
-	// the exception additionally requires that count to be present and exact.
-	if reported := pr.GetChangedFiles(); reported <= 0 || reported != len(files) {
-		return false, "complete changed-file list not proven"
-	}
-	ok, why, pins := intent.ClassifyPinOnlyActions(files, matches, policy.Spec())
+	policy, pins, ok, why := c.humanMergePinOnlyCandidate(owner, repo, pr, files, matches)
 	if !ok {
 		return false, why
 	}
@@ -118,6 +102,38 @@ func (c *Engine) humanMergePinOnlyExempt(ctx context.Context, owner, repo string
 		return false, why
 	}
 	return true, "all changes are approved pin replacements by verified trusted-author commits, anchored upstream"
+}
+
+// humanMergePinOnlyCandidate is the part of humanMergePinOnlyExempt that
+// reads nothing from GitHub: the repo's enabled exception, a trusted author,
+// an exact changed-file count and a diff of approved pin replacements only.
+// ok is false, with the reason ("" when the repo has no enabled exception),
+// when the PR cannot qualify; true means it may still qualify once the
+// commits and the action pins are checked. The stage pass uses it on its own
+// to tell a PR the exception might admit (whose route stays as it was) from
+// one that stays a person's merge whatever is approved.
+func (c *Engine) humanMergePinOnlyCandidate(owner, repo string, pr *gh.PullRequest, files []intent.ChangedFile, matches []string) (config.PinOnlyException, []intent.ActionPin, bool, string) {
+	if len(matches) == 0 || pr == nil {
+		return config.PinOnlyException{}, nil, false, ""
+	}
+	policy, ok := c.currentHumanMergePinOnly(owner + "/" + repo)
+	if !ok {
+		return config.PinOnlyException{}, nil, false, ""
+	}
+	author := strings.TrimSpace(hgithub.SafeGetLogin(pr.GetUser()))
+	if !pinOnlyTrustedLogin(policy, author) {
+		return policy, nil, false, "PR author is not in trusted_authors"
+	}
+	// ListChangedFiles already refuses a list shorter than GitHub's count;
+	// the exception additionally requires that count to be present and exact.
+	if reported := pr.GetChangedFiles(); reported <= 0 || reported != len(files) {
+		return policy, nil, false, "complete changed-file list not proven"
+	}
+	ok, why, pins := intent.ClassifyPinOnlyActions(files, matches, policy.Spec())
+	if !ok {
+		return policy, nil, false, why
+	}
+	return policy, pins, true, ""
 }
 
 // pinOnlyActionPinsUpstream, pinOnlyCommitsTrusted and pinOnlyTrustedLogin

@@ -283,13 +283,16 @@ func (c *Engine) adoptionDiffRefusal(ctx context.Context, obs stageObservation) 
 // adoptionMergeFence is adoptionDiffRefusal for merge decisions: the same
 // head check and file evidence, judged by the lane's scoped merge fence
 // (contributorLaneMergeFence), so the stage engine's explanations and merge
-// asks name the fence the lane itself applies.
-func (c *Engine) adoptionMergeFence(ctx context.Context, obs stageObservation) (string, error) {
-	files, reason, err := c.adoptionDiffFiles(ctx, obs)
+// asks name the fence the lane itself applies. It also returns the PR and
+// the file list it judged (nil when it could not judge the head), so the
+// stage pass can record what else those files show without reading them
+// again (noteHumanMergePathFenceHead).
+func (c *Engine) adoptionMergeFence(ctx context.Context, obs stageObservation) (string, *gh.PullRequest, []intent.ChangedFile, error) {
+	pr, files, reason, err := c.adoptionDiffFilesPR(ctx, obs)
 	if reason != "" || err != nil {
-		return reason, err
+		return reason, nil, nil, err
 	}
-	return c.contributorLaneMergeFence(c.currentContributorLanePolicy(), obs.Owner, obs.Repo, obs.Number, obs.HeadSHA, files), nil
+	return c.contributorLaneMergeFence(c.currentContributorLanePolicy(), obs.Owner, obs.Repo, obs.Number, obs.HeadSHA, files), pr, files, nil
 }
 
 // adoptionDiffFiles reads obs's head's complete changed-file list for the
@@ -298,21 +301,28 @@ func (c *Engine) adoptionMergeFence(ctx context.Context, obs stageObservation) (
 // contributorLaneReasonFilesEvidence (err set for a transport failure, nil
 // for an incomplete list).
 func (c *Engine) adoptionDiffFiles(ctx context.Context, obs stageObservation) ([]intent.ChangedFile, string, error) {
+	_, files, reason, err := c.adoptionDiffFilesPR(ctx, obs)
+	return files, reason, err
+}
+
+// adoptionDiffFilesPR is adoptionDiffFiles that also returns the PR it read
+// the head from (nil whenever reason is set).
+func (c *Engine) adoptionDiffFilesPR(ctx context.Context, obs stageObservation) (*gh.PullRequest, []intent.ChangedFile, string, error) {
 	pr, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, obs.Number)
 	if err != nil {
-		return nil, contributorLaneReasonFilesEvidence, err
+		return nil, nil, contributorLaneReasonFilesEvidence, err
 	}
 	if head := pr.GetHead().GetSHA(); head == "" || head != obs.HeadSHA {
-		return nil, adoptionReasonHeadChanged, nil
+		return nil, nil, adoptionReasonHeadChanged, nil
 	}
 	files, err := ListChangedFiles(ctx, c.gh, obs.Owner, obs.Repo, pr)
 	if errors.Is(err, hgithub.ErrIncompletePRFileList) {
-		return nil, contributorLaneReasonFilesEvidence, nil
+		return nil, nil, contributorLaneReasonFilesEvidence, nil
 	}
 	if err != nil {
-		return nil, contributorLaneReasonFilesEvidence, err
+		return nil, nil, contributorLaneReasonFilesEvidence, err
 	}
-	return files, "", nil
+	return pr, files, "", nil
 }
 
 // adoptionReasonHeadChanged is adoptionDiffRefusal's verdict for a PR whose
@@ -641,11 +651,20 @@ func (c *Engine) headManualMergeRule(ctx context.Context, key string, obs stageO
 	if obs.HeadSHA == "" {
 		return ""
 	}
-	workflowManual := c.workflowFenceManual(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
+	// A head that touches a human-merge path is a person's merge, approved
+	// or not (automerge_human_merge_path_fence.go).
+	humanMergePath := c.humanMergePathFencePersonMerge(ctx, c.stageTrackerOrShared(), key, obs)
+	workflowManual := c.workflowFenceManual(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA) || humanMergePath
 	for _, reason := range []string{obs.Reason, obs.LaneReason} {
 		if manualMergeRuleReasonFor(reason, workflowManual) {
+			if humanMergePath && reason == contributorLaneReasonWorkflowPath {
+				return decisionCauseFor(autoMergeReasonHumanMergePath, true)
+			}
 			return decisionCauseFor(reason, workflowManual)
 		}
+	}
+	if humanMergePath {
+		return decisionCauseFor(autoMergeReasonHumanMergePath, true)
 	}
 	if obs.Lane != stageLaneContributor {
 		return ""
