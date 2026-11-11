@@ -36144,6 +36144,217 @@
             }
           }
         }
+      },
+      "/api/workflows/ingest/capabilities": {
+        "get": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "What the ingest sources can do on this spoke",
+          "description": "Whether a kube context is reachable for POST /api/workflows/ingest/cluster (kubectl on PATH with a kubeconfig or in-cluster token), the contexts kubectl knows, and whether a model gateway is configured for the optional LLM stage of POST /api/workflows/ingest/spec. RFC hivecommons/hive#17620 phase 6. Owner role required.",
+          "responses": {
+            "200": {
+              "description": "Capabilities",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowIngestCapabilities"
+                  }
+                }
+              }
+            },
+            "403": {
+              "description": "Owner role required"
+            }
+          }
+        }
+      },
+      "/api/workflows/ingest/cluster": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Ingest Tekton pipelines from a live cluster context",
+          "description": "Lists tekton.dev Pipelines, Tasks, the newest PipelineRuns per pipeline and Tekton Triggers objects from a kube context through kubectl, serialises them as cluster/<namespace>/<kind>/<name>.yaml and runs the same Tekton ingester as POST /api/workflows/ingest, so citations point at those virtual paths. The last run status per pipeline is recorded as an observed annotation (workflow.hivecommons.dev/observed-run/<pipeline id>) and a coverage finding, never as an inferred lifecycle element. Caps: 25 namespaces, 20 runs per pipeline, 500 objects, 8 MiB. Owner role required.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "context": {
+                      "type": "string",
+                      "description": "kube context name (default: the current context)"
+                    },
+                    "namespace": {
+                      "type": "string",
+                      "description": "namespace to read; required unless allNamespaces"
+                    },
+                    "allNamespaces": {
+                      "type": "boolean",
+                      "description": "read every namespace (capped at 25)"
+                    },
+                    "selector": {
+                      "type": "string",
+                      "description": "label selector passed to kubectl -l"
+                    },
+                    "runsPerPipeline": {
+                      "type": "integer",
+                      "description": "newest PipelineRuns kept per pipeline (default 3, max 20)"
+                    },
+                    "repository": {
+                      "type": "string",
+                      "description": "owner/name to scope the model to (default: cluster/<source slug>)"
+                    },
+                    "save": {
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "store name (default: slug of the source)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Ingested (not saved)",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowClusterIngestResult"
+                  }
+                }
+              }
+            },
+            "201": {
+              "description": "Ingested and saved",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowClusterIngestResult"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Bad request, or namespace required"
+            },
+            "403": {
+              "description": "Owner role required, or the kube credential may not list Tekton resources"
+            },
+            "404": {
+              "description": "Unknown kube context"
+            },
+            "413": {
+              "description": "Object or byte cap exceeded"
+            },
+            "422": {
+              "description": "No kube access configured on this spoke, or Tekton CRDs not installed"
+            },
+            "502": {
+              "description": "kubectl failed"
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        }
+      },
+      "/api/workflows/ingest/spec": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Ingest a written process spec into a draft workflow model",
+          "description": "Turns markdown or plain text (pasted, a default-branch file through the forge, or an https URL on a public host; 256 KiB cap) into a draft model. A deterministic stage reads step lists, conditional sentences and role nouns into a compiling skeleton; when useLLM is on (default: when a model gateway is configured) the configured gateway refines it and its answer is accepted only if it parses strictly and compiles, with one retry quoting the diagnostics before falling back to the skeleton. Every state, event and gate is confidence inferred and cites spec:<heading>#L<start>-L<end>; provenance is ingested-unreviewed; the LLM-assisted annotation names the model used. This is the only LLM use in the workflow-model stack. Owner role required.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string",
+                      "description": "pasted spec; exactly one of text, repo+path or url"
+                    },
+                    "repo": {
+                      "type": "string",
+                      "description": "owner/name of the repository holding the spec"
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "repo-relative path of the spec file"
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "https URL of the spec"
+                    },
+                    "useLLM": {
+                      "type": "boolean",
+                      "description": "ask the configured model gateway to refine the draft (default: true when a gateway is configured); 422 when requested without one"
+                    },
+                    "repository": {
+                      "type": "string",
+                      "description": "owner/name to scope the model to (default: repo, or spec/<origin slug>)"
+                    },
+                    "save": {
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "store name (default: slug of the first heading)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Ingested (not saved)",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowSpecIngestResult"
+                  }
+                }
+              }
+            },
+            "201": {
+              "description": "Ingested and saved",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowSpecIngestResult"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Bad request, empty spec, or URL not https / private host"
+            },
+            "403": {
+              "description": "Owner role required"
+            },
+            "413": {
+              "description": "Spec exceeds 256 KiB"
+            },
+            "422": {
+              "description": "useLLM requested but no model gateway is configured"
+            },
+            "502": {
+              "description": "Spec fetch failed"
+            },
+            "503": {
+              "description": "No forge client or no workflow store"
+            }
+          }
+        }
       }
   },
   "components": {
@@ -36985,6 +37196,151 @@
             },
             "pipelines": {
               "type": "integer"
+            },
+            "entry": {
+              "$ref": "#/components/schemas/WorkflowEntry"
+            }
+          }
+        },
+        "WorkflowIngestCapabilities": {
+          "type": "object",
+          "properties": {
+            "cluster": {
+              "type": "boolean",
+              "description": "kube access is configured on this spoke"
+            },
+            "clusterReason": {
+              "type": "string",
+              "description": "why cluster is false, or why contexts could not be listed"
+            },
+            "contexts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "spec": {
+              "type": "object",
+              "properties": {
+                "llm": {
+                  "type": "boolean",
+                  "description": "a model gateway is configured for the optional LLM stage"
+                },
+                "model": {
+                  "type": "string",
+                  "description": "gateway model id the LLM stage would use"
+                }
+              }
+            }
+          }
+        },
+        "WorkflowClusterIngestResult": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/WorkflowIngestResult"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "description": "cluster:<context>/<namespace>"
+                },
+                "runs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pipeline": {
+                        "type": "string"
+                      },
+                      "namespace": {
+                        "type": "string"
+                      },
+                      "run": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "completed": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "namespaces": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "WorkflowSpecIngestResult": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "$ref": "#/components/schemas/WorkflowModel"
+            },
+            "compiled": {
+              "type": "boolean"
+            },
+            "diagnostics": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/WorkflowDiagnostic"
+              }
+            },
+            "profile": {
+              "type": "object"
+            },
+            "source": {
+              "type": "string",
+              "description": "spec:<origin>"
+            },
+            "llm": {
+              "type": "object",
+              "properties": {
+                "used": {
+                  "type": "boolean"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "attempts": {
+                  "type": "integer"
+                },
+                "accepted": {
+                  "type": "boolean",
+                  "description": "the returned model is the gateway's answer (false: deterministic skeleton)"
+                },
+                "error": {
+                  "type": "string"
+                }
+              }
+            },
+            "sections": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "heading": {
+                    "type": "string"
+                  },
+                  "level": {
+                    "type": "integer"
+                  },
+                  "startLine": {
+                    "type": "integer"
+                  },
+                  "endLine": {
+                    "type": "integer"
+                  }
+                }
+              }
             },
             "entry": {
               "$ref": "#/components/schemas/WorkflowEntry"

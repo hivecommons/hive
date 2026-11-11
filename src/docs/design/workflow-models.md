@@ -584,3 +584,98 @@ three places, all for a repository bound to a non-default model only:
   record existed) are adopted into the record on the next provisioning pass only while the model
   still declares them; labels a model dropped *before* this change shipped are never reclaimed
   automatically.
+
+## Ingest from cluster and from written specs (RFC phase 6)
+
+Two more ways into a draft model, beside the repository ingest of phase 3a. Both end in the
+same place — a `WorkflowModel` with `meta.provenance: ingested-unreviewed` that has been through
+`Compile` — and both are owner-only, audited as `workflow_ingest`, and advertised by
+`GET /api/workflows/ingest/capabilities` (`{cluster, clusterReason, contexts[], spec: {llm, model}}`)
+so the Ingest view can grey out what the spoke cannot do.
+
+### Tekton from a live cluster — `pkg/workflowmodel/ingest/cluster`
+
+The hive has no Kubernetes client library; everything that talks to a cluster shells out to
+`kubectl`, and this package does the same through a `Runner` seam (`Kubectl{Kubeconfig}` in
+production, a table-driven fake in tests). `Fetch` runs
+`kubectl [--context C] get <plural> -o json (-n NS | --all-namespaces) [-l SELECTOR]` for
+`pipelines`, `tasks` and `pipelineruns` in `tekton.dev` and `eventlisteners`, `triggers`,
+`triggertemplates` and `triggerbindings` in `triggers.tekton.dev`, keeps the newest
+`RunsPerPipeline` runs per pipeline (default 3, max 20), serialises every object to YAML under
+`cluster/<namespace>/<kind>/<name>.yaml` and hands that file set to the **existing** file-based
+Tekton ingester. There is one Tekton parser; citations in the resulting model point at those
+virtual paths.
+
+Runs never become lifecycle elements. The last run per pipeline is reported in the response
+(`runs[]: {pipeline, namespace, run, status, completed}`), recorded on the model as an
+`observed` annotation (`workflow.hivecommons.dev/observed-run/<pipeline id>`) and as a
+`CodeObservedRun` coverage finding — so a reviewer sees "this pipeline last Succeeded" without
+the model claiming anything it did not read from a definition.
+
+Failure modes map to explicit errors and statuses: no Tekton CRDs → `ErrNoCRD` (422), RBAC
+denied → `ErrForbidden` (403), unknown context → `ErrNoContext` (404), no namespace and no
+`allNamespaces` → `ErrNamespaceRequired` (400), no kubectl/kubeconfig on the spoke →
+`ErrNoRunner` (422), caps exceeded → `ErrTooLarge` (413). Caps: 25 namespaces, 20 runs per
+pipeline, 500 objects after run trimming, 8 MiB of YAML, 60 s per kubectl call.
+
+```
+POST /api/workflows/ingest/cluster {context?, namespace | allNamespaces, selector?, runsPerPipeline?, repository?, save?, name?}
+→ {model, compiled, diagnostics, profile, files, pipelines, source: "cluster:<ctx>/<ns>", runs[], namespaces[], entry?}
+```
+
+### Written spec — `pkg/workflowmodel/ingest/spec`
+
+Input is markdown or plain text up to 256 KiB — pasted, read from a repository's default branch
+through the forge client, or fetched from an `https` URL on a public host (the contribute SSRF
+guard applies). `Split` cuts it into heading-delimited sections with line ranges; a section's
+reference is `spec:<heading>#L<start>-L<end>` and every citation in the output uses one.
+
+**Stage 1 — deterministic, no LLM.** `Extract` reads numbered and bulleted step lists into
+states in order; a small hint table maps words such as *triage*, *intake*, *request*, *review*,
+*approve*, *merge*, *publish*, *deploy* onto column hints; *if / when / after / unless*
+sentences within a step become transition guards; role nouns (*maintainer*, *reviewer*, *TOC*,
+*author*, …) become roles, and a step that names a role becomes a gate released by it. The
+skeleton always compiles: `Extract` is the fallback for everything below.
+
+**Stage 2 — LLM refinement, optional.** When a model gateway is configured (the same reviewer
+endpoint the owner-delegate decider and chat grounding use, through a `TurnRunner` with an
+8 000-token completion budget) and the caller leaves `useLLM` on, `Ingest` prompts it with the
+spec, the section references, the skeleton, a schema derived by reflection from the Go types,
+the fact vocabulary and the compiler's refusal rules (`prompt.go`, `schema.go`), asking for one
+Model JSON object. The answer is accepted only if it survives, in order:
+
+1. `json.Unmarshal` with `DisallowUnknownFields` into `workflowmodel.Model`;
+2. `Mark` — apiVersion/kind/name forced, `meta.version "1"`, `meta.source spec:<origin>`,
+   `meta.provenance ingested-unreviewed`, **every** state, event and gate set to
+   `origin: ingested` and `confidence: inferred`, every citation checked against the section
+   references (unknown ones replaced by a whole-document reference and reported as
+   `spec-llm-citation-replaced`), `pipelines`/`sources`/`agents` stripped;
+3. `Compile`.
+
+A failure at any step is fed back once (`MaxAttempts = 2`) as diagnostics appended to the
+prompt; a second failure falls back to the skeleton and reports `spec-llm-fell-back`. When the
+gateway's answer is used, the model carries the annotation
+`workflow.hivecommons.dev/llm-assisted: "LLM-assisted (model <id>)"` so the editor can show it.
+
+The boundary this keeps: **the LLM is consulted only here, only to draft, and only through the
+`Completer` seam of this package**. Nothing in derivation, compile, the engine or the other
+ingesters imports a gateway. Its output cannot carry `confidence: confirmed`, cannot cite
+anything but the spec, cannot add pipelines, and cannot bypass the compiler; the worst it can do
+is be ignored.
+
+```
+POST /api/workflows/ingest/spec {text | repo+path | url, useLLM?, repository?, save?, name?}
+→ {model, compiled, diagnostics, profile, source: "spec:<origin>", llm: {used, model, attempts, accepted, error?}, sections[], entry?}
+```
+
+`useLLM` defaults to "a gateway is configured"; asking for it without one is a 422 rather than a
+silent deterministic run.
+
+### Ingest view
+
+`static-src/js/config-workflows-ingest-sources.js` appends two collapsible panels to the Ingest
+view through one guarded hook at the end of `renderWorkflowIngest`: *From a cluster* (context
+from the capabilities route's list or a text field, namespace, selector, all-namespaces, the
+observed-run list) and *From a written spec* (paste, URL or repository file; a *Use AI
+assistance* checkbox rendered only when the spoke reports a gateway; the LLM note and section
+list in the result). Both reuse the repository ingest's result block, diagnostics and diagram.

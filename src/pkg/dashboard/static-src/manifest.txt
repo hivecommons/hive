@@ -24,6 +24,7 @@ css/feedback-faq.css
 css/config-dialog.css
 css/workflows.css
 css/workflows-editor.css
+css/workflows-ingest.css
 css/chat.css
 css/nous.css
 css/knowledge.css
@@ -139,6 +140,7 @@ js/config-governor.js
 js/config-workflows.js
 js/config-workflows-library.js
 js/config-workflows-editor.js
+js/config-workflows-ingest-sources.js
 js/config-watchdog-security.js
 js/config-features.js
 js/integration-execution-settings.js
