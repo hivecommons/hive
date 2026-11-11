@@ -1782,6 +1782,8 @@ func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boun
 		if expErr != nil {
 			return effects.Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v; expiry failed: %v)", journalErr, lookupErr, expErr)
 		}
+		// The boundary may already have expired the entry while refusing.
+		expired = expired || errors.Is(journalErr, effects.ErrUnresolvedExpired)
 		if !expired {
 			return effects.Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v)", journalErr, lookupErr)
 		}
