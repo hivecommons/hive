@@ -155,3 +155,31 @@ result at the next integer version under `name` (default: the repository slug).
 
 `cmd/workflow-survey` now compiles every corpus repository's lifecycle model (`lifecycle.json`
 alongside `model.json`) and reports pass/refusal counts by diagnostic code.
+
+## Workflows tab (RFC phase 3b)
+
+Settings → **Workflows** is the spoke's home for models (`static-src/js/config-workflows-library.js`,
+`css/workflows.css`). It has two sub-views and a detail page, all built from `GET /api/workflows`
+and `GET /api/workflows/{name}/{version}`:
+
+- **Library** — one row per `name@version`: provenance badge (`built-in` for the virtual
+  hive-default and any read-only entry, else `meta.provenance`), compile badge (`compiles`,
+  `compiles · N warnings`, `does not compile`, with the diagnostics as the tooltip), source,
+  states / columns, and the repositories bound to it. Built-in rows sort first. Owners get
+  Duplicate (saves a copy under a new name at version 1, provenance `local`) and Delete; Delete is
+  withheld while anything is bound (the API returns 409 anyway) and the row says `bound` instead.
+  Export shows the model JSON in-app (copy to clipboard) for everyone.
+- **Detail** — facts, the diagram, diagnostics, citations and the raw model/profile JSON.
+  `workflowDiagramSvg(model, profile)` is a pure function: the compiled profile's columns are lanes
+  in display order, each state is a chip carrying its padded stage number, transitions are bezier
+  edges (same-lane edges bow to the right, backward edges are styled `back`), inferred states are
+  dashed, the initial state and terminal column are marked. Duplicate and dangling transitions are
+  dropped rather than drawn.
+- **Ingest** — pick a configured repository (or type `owner/repo`), optionally a name (default: the
+  slug), then Preview or Ingest-and-save; both call `POST /api/workflows/ingest`. The result shows
+  the compile outcome, files read, pipelines found, and opens the saved entry.
+
+The tab never binds: binding stays on Settings → Repos so the per-repository decision sits next
+to the repository's other policy. The Activity Monitor's model badge deep-links here via
+`openWorkflowLibraryEntry(name, version)`. Every HTML builder is a pure function of its inputs so
+`workflows_library_ui_test.go` runs them under node without a DOM. Editing is phase 4.

@@ -41,7 +41,7 @@
     function stageTrackerWorkflowBadgeHtml(wf) {
       if (!wf) return '';
       const key = `${wf.name}@${wf.version}`;
-      return `<span class="ham-wf-badge" title="${esc('This repository follows the ' + key + ' workflow model; its columns are the model\'s, not hive-default\'s.')}">${esc(key)}</span>`;
+      return `<span class="ham-wf-badge" role="button" tabindex="0" data-action="openWorkflowLibraryEntry" data-keydown-action="openWorkflowLibraryEntry" data-arg0="${esc(wf.name)}" data-arg1="${esc(wf.version)}" data-stop="1" title="${esc('This repository follows the ' + key + ' workflow model; its columns are the model\'s, not hive-default\'s. Click to open it in Settings → Workflows.')}">${esc(key)}</span>`;
     }
 
     // The model's column header, drawn under a bound repository's group

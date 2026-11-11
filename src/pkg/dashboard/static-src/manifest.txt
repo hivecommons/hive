@@ -22,6 +22,7 @@ css/cost.css
 css/alerts-toasts.css
 css/feedback-faq.css
 css/config-dialog.css
+css/workflows.css
 css/chat.css
 css/nous.css
 css/knowledge.css
@@ -135,6 +136,7 @@ js/config-hub.js
 js/config-agent.js
 js/config-governor.js
 js/config-workflows.js
+js/config-workflows-library.js
 js/config-watchdog-security.js
 js/config-features.js
 js/integration-execution-settings.js
