@@ -1,0 +1,1 @@
+- Hub marketplace seeds curated workflow models from `pkg/hub/marketplace/curated/*.yaml` on startup and every refresh, ships the first one — `cncf-techdocs-assessment` (CNCF TechDocs AI-assisted assessment) — and adds `cncf/techdocs` to the ingest corpus via the new operator-added `extra.json` list (hivecommons/hive#17620).

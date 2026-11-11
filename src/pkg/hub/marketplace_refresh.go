@@ -23,8 +23,9 @@ import (
 
 // RFC #17620 phase 7: the marketplace's ingest refresh.
 //
-// Every run walks the CNCF survey corpus (pkg/workflowmodel/ingest/corpus)
-// plus any operator-added repos, fetches each default branch, hashes the
+// Every run first seeds the curated models (marketplace_curated.go), then
+// walks the CNCF survey corpus (pkg/workflowmodel/ingest/corpus, including
+// its operator-added extra.json) plus HIVE_HUB_MARKETPLACE_EXTRA_REPOS, fetches each default branch, hashes the
 // pipeline-file set and compares it with the last recorded run for that
 // repository. Unchanged → no-op. Changed → Lifecycle → Compile → bundle →
 // publish as `ingested-YYYYMMDD.N`, tier ingested-unreviewed. Curated
@@ -84,9 +85,12 @@ type marketplaceRefreshResult struct {
 	Repos      int       `json:"repos"`
 	Unchanged  int       `json:"unchanged"`
 	Published  []string  `json:"published"`
-	Skipped    int       `json:"skipped"`
-	Errors     []string  `json:"errors"`
-	Trigger    string    `json:"trigger"`
+	// Curated lists the curated name@version keys this run seeded (empty
+	// once they are all present; curated entries are immutable).
+	Curated []string `json:"curated,omitempty"`
+	Skipped int      `json:"skipped"`
+	Errors  []string `json:"errors"`
+	Trigger string   `json:"trigger"`
 }
 
 // marketplaceRefresher owns the run lock and the last-run summary.
@@ -221,6 +225,11 @@ func (s *HubServer) runMarketplaceRefresh(ctx context.Context, repos []string, t
 	}
 	res := &marketplaceRefreshResult{StartedAt: rf.now().UTC(), Trigger: trigger, Published: []string{}, Errors: []string{}}
 	s.logger.Info("marketplace refresh started", "trigger", trigger, "repos", len(repos))
+	seeded, seedErrs := s.seedCuratedModels(st, rf.now())
+	res.Curated = seeded
+	for _, err := range seedErrs {
+		res.Errors = append(res.Errors, "curated: "+err.Error())
+	}
 	for i, repo := range repos {
 		if ctx.Err() != nil {
 			res.Errors = append(res.Errors, "cancelled: "+ctx.Err().Error())
@@ -503,6 +512,9 @@ func (s *HubServer) StartMarketplaceRefresh(ctx context.Context) {
 	rf.mu.Unlock()
 	schedule := marketplaceSchedule()
 	s.logger.Info("marketplace refresh started", "schedule_utc", schedule, "corpus_repos", len(marketplaceRepos()))
+	// Curated models need no GitHub token and no delay: seed them first so
+	// the catalogue is never empty while the ingest crawl is pending.
+	s.seedCuratedModels(s.marketplace(), rf.now())
 	if due := s.marketplaceDueRepos(); len(due) > 0 {
 		s.logger.Warn("marketplace catalogue has repositories due for ingest: resuming in the background", "due", len(due), "delay", marketplaceSeedDelay.String())
 		marketplaceSleep(ctx, marketplaceSeedDelay)

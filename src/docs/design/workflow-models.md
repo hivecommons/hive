@@ -744,9 +744,34 @@ assert `local`/`local-published` (normalised to `local-published`) or
 `ingested-unreviewed`. `curated` and `built-in` require a hub-admin session with
 same-origin CSRF evidence. The hub never stores a bundle it did not itself `Verify`.
 
+**Curated seeding.** Reviewed models ship with the hub binary under
+`pkg/hub/marketplace/curated/*.yaml` (`go:embed`; loader `curated.Load`). On startup —
+before any ingest, and without a GitHub token — and again at the start of every refresh
+run, `seedCuratedModels` decodes each file strictly (unknown fields refused), checks the
+curated invariants (`spec.meta.provenance: curated`, a `spec.meta.version`, zero
+`inferred` elements), compiles it through `bundle.Export`, sets `Tier=curated` and
+`Publish`es it when that `name@version` is absent. A file that fails any step is logged
+(`marketplace: curated model refused` / `does not compile` / `not published`) and
+skipped; the rest of the catalogue still seeds and the error appears in the run's
+`errors` as `curated: …`. Seeded keys are reported in `lastRefresh.curated`, not
+`published`. Entries are immutable: re-running is a no-op, and editing a file without
+bumping its version is a `409` conflict at seed time, so **a new version is a new file**
+(`cncf-techdocs-assessment.yaml` carries `curated-2026.11.1`; the next revision is a
+second file with `curated-2026.12.1` or similar — the catalogue keeps both and the spoke
+pins what it imported). To add a curated model: write the YAML (start from
+`ingest.Lifecycle` + `spec.Ingest` output, confirm every inferred element, cite the
+source document in `workflow.hivecommons.dev/source*` annotations and the element
+`citations`), drop it in that directory, and add rules-evaluator cases to
+`curated_test.go` — `TestLoadEmbedded` already refuses anything that does not compile
+clean. The first curated model is the CNCF TechDocs assessment,
+[docs/workflows/techdocs-assessment.md](../workflows/techdocs-assessment.md).
+
 **Refresh.** The corpus is the CNCF survey list, now embedded as
-`pkg/workflowmodel/ingest/corpus` (262 projects / 299 repositories; `cmd/workflow-survey`
-falls back to it when no `projects.json` is given) plus
+`pkg/workflowmodel/ingest/corpus` (`corpus.json`, 262 projects / 299 repositories;
+`cmd/workflow-survey` falls back to it when no `projects.json` is given) plus the
+operator-added non-landscape list `extra.json` in the same package (`{"name",
+"category", "repos", "why"}` per entry; `cncf/techdocs` is there so its
+`ingested-unreviewed` version exists next to the curated one) plus
 `HIVE_HUB_MARKETPLACE_EXTRA_REPOS`. For each repository the hub fetches the default-branch
 tarball through its GitHub identity, keeps only pipeline files (`ingest.ReadTree`), and
 records `{format, sourceSHA, filesHash, files, checkedAt}`. Unchanged hash → no-op. Changed →
@@ -829,4 +854,5 @@ served cached data.
 - Hub-side marketplace settings are environment variables, not hub YAML.
 - The hub logs publishes/refreshes through its structured logger; it has no audit store.
 - Ingest versions are per-day sequence numbers, not semantic; curation (promoting an ingest
-  to `curated`) is a manual admin publish of a reviewed model.
+  to `curated`) is a manual admin publish of a reviewed model or a new file under
+  `pkg/hub/marketplace/curated/`.

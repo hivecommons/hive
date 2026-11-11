@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/internal/testutil"
+	"github.com/hivecommons/hive/pkg/hub/marketplace/curated"
 	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/workflowmodel/bundle"
 )
@@ -46,6 +47,16 @@ func marketplaceTestHub(t *testing.T, fetch marketplaceTreeFetcher) *HubServer {
 	mkUser(t, hubAdminUsername)
 	mkUser(t, "someuser")
 	return s
+}
+
+// mktCuratedCount is how many curated models the hub embeds and seeds.
+func mktCuratedCount(t *testing.T) int {
+	t.Helper()
+	entries, errs := curated.Load()
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	return len(entries)
 }
 
 func mktModel(t *testing.T) *workflowmodel.Model {
@@ -431,11 +442,17 @@ func TestMarketplaceRefreshNoopVsNewVersion(t *testing.T) {
 			t.Errorf("version naming: %s", k)
 		}
 	}
+	if len(res.Curated) != mktCuratedCount(t) {
+		t.Fatalf("curated seeded on first run: %v", res.Curated)
+	}
 	idx, _, _, err := s.marketplace().Index()
-	if err != nil || len(idx.Entries) != 2 {
+	if err != nil || len(idx.Entries) != 2+mktCuratedCount(t) {
 		t.Fatalf("index after first run: %v %d", err, len(idx.Entries))
 	}
 	for _, e := range idx.Entries {
+		if e.Tier == bundle.TierCurated {
+			continue
+		}
 		if e.Tier != bundle.TierIngestedUnreviewed || e.SourceSHA == "" {
 			t.Errorf("entry: %+v", e)
 		}
@@ -446,7 +463,7 @@ func TestMarketplaceRefreshNoopVsNewVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Published) != 0 || res.Unchanged != 3 || len(res.Errors) != 1 {
+	if len(res.Published) != 0 || len(res.Curated) != 0 || res.Unchanged != 3 || len(res.Errors) != 1 {
 		t.Fatalf("second run: %+v", res)
 	}
 
@@ -588,8 +605,11 @@ func TestMarketplaceRefreshRoutesAndStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if status["entries"].(float64) != 1 || status["schedule"] != hubMarketplaceDefaultSchedule || status["lastRefresh"] == nil || status["lastCheckedAt"] == nil {
+	if int(status["entries"].(float64)) != 1+mktCuratedCount(t) || status["schedule"] != hubMarketplaceDefaultSchedule || status["lastRefresh"] == nil || status["lastCheckedAt"] == nil {
 		t.Fatalf("status body: %s", rec.Body.String())
+	}
+	if byTier, _ := status["byTier"].(map[string]interface{}); int(byTier[bundle.TierCurated].(float64)) != mktCuratedCount(t) {
+		t.Fatalf("curated tier not counted: %s", rec.Body.String())
 	}
 	if status["pendingRepos"].(float64) != 0 || status["lastRefreshErrors"].(float64) != 0 {
 		t.Fatalf("pending/lastErrors: %s", rec.Body.String())
@@ -638,7 +658,8 @@ func TestMarketplaceSeedResumesAfterRestart(t *testing.T) {
 	if _, err := s.runMarketplaceRefresh(context.Background(), []string{"konflux-ci/konflux-ci"}, "seed"); err != nil {
 		t.Fatal(err)
 	}
-	if idx, _, _, _ := s.marketplace().Index(); len(idx.Entries) != 1 {
+	// One ingested entry plus the curated models every run seeds.
+	if idx, _, _, _ := s.marketplace().Index(); len(idx.Entries) != 1+mktCuratedCount(t) {
 		t.Fatalf("precondition: %d entries", len(idx.Entries))
 	}
 	due := s.marketplaceDueRepos()
