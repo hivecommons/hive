@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.211.26)
+
+### Fixed
+
+- Give the `inference no route` WARN its own `inference_no_route` fleet-report class and tag it with a `reason` (`cleared` or `never_set`), so it no longer lands in `unclassified_error_repeated`.
+
 ## 2026-11-11 (v5.211.25)
 
 ### Fixed

@@ -1,1 +1,0 @@
-- Give the `inference no route` WARN its own `inference_no_route` fleet-report class and tag it with a `reason` (`cleared` or `never_set`), so it no longer lands in `unclassified_error_repeated`.
