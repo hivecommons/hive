@@ -11,6 +11,36 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v6.13.5)
+
+### Fixed
+
+- Human-merge paths: a PR the hive held because it touched a path in `auto_merge.human_merge_paths` stayed held for good once a later head dropped that file (a dependency bot moving its workflow update to a separate PR, a contributor reverting the change). The hold's reason was read from the notice still on the thread, never from the current head, so the PR sat at needs-decision with a comment saying it changes a human-merge path when it changed none. The stage-label pass now re-matches the current head's complete file list with the matcher the merge lanes use. When nothing matches, it removes the hive's own `hold` and posts one notice for that head, and the merge lanes take the PR from there. A hold a person set, or one with a second hold source, stays, and the row, the 085 comment and the dashboard's hold sources stop naming a human-merge path for a head that touches none. The lift is the new write-back kind `human_merge_path_release` (default L5 with the opt-in label, overridable under `writeback.kinds`, the Settings kind table and the admin MCP `writeback.kind_policy` operation).
+
+## 2026-11-11 (v6.13.4)
+
+### Fixed
+
+- Merge requests: a re-request for a PR head whose earlier merge request was exhausted on a CI-gate verdict now re-evaluates the CI gate once instead of being refused for 24 hours; it merges if the gate now passes (for example after a gate false positive was fixed or a check was re-run green) and is still refused if the gate blocks. Exhaustions for conflicts, permissions or merge-queue-required are refused as before, so fork PRs no longer need a new commit or a manual merge to recover from a stale CI verdict (hivecommons/hive#17606).
+
+## 2026-11-11 (v6.13.3)
+
+### Fixed
+
+- **Advisory mutation report survives its time budget** — `mutation-report.sh` now runs gremlins under its own `MUTATION_BUDGET_SECONDS` budget (17 min by default, under the job's 20‑minute limit), so a size/XXL PR no longer ends with the runner killing the step before anything is written. The `<!-- hive-mutation -->` comment is always posted, names the PR head it reports on, and when the budget ran out it says which changed packages were left unfinished or not started instead of a stale report from an earlier push, or none, standing in for a clean result. ([#17602](https://github.com/hivecommons/hive/issues/17602))
+
+## 2026-11-10 (v6.13.2)
+
+### Fixed
+
+- Merge requests: a cancelled check (for example the 20-minute advisory mutation job timing out) no longer blocks the merge gate when the base branch's required checks cannot be read; GitHub still enforces the real required checks at merge time. When the required set is known to be empty (nothing enforced server-side), a cancelled non-advisory check still blocks locally, as do failed and timed-out checks (hivecommons/hive#17598).
+
+## 2026-11-10 (v6.13.1)
+
+### Fixed
+
+- **Unclaimed hives no longer file `github_app_not_installed` self-reports** — a hosted "available slot" hive that has not been onboarded yet legitimately has no GitHub App installation, so the runtime `github_app_not_installed` condition is now kept out of fleet self-reports for it. "Unclaimed" covers both an empty `project.org` and the synthetic `available-<id>` / legacy `placeholder` org the pool seeds into a slot (the hive behind the report carried `project.org=available-…`, not an empty org); that prefix list now lives in one place (`config.PlaceholderOrgPrefixes`) shared with the dashboard's `project_org` health check. The local warning log and the dashboard onboarding banner are unchanged, and a hive that *does* have a real org configured but no App installation still self-reports it as a real misconfiguration. A tracker already opened by a pre-fix release is closed out through the normal self-recovery path on the first evaluation after upgrade. ([#17593](https://github.com/hivecommons/hive/issues/17593))
+
 ## 2026-11-10 (v6.13.0)
 
 ### Added

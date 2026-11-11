@@ -71,7 +71,8 @@ func IsContentReason(reason string) bool {
 // ContentDedupeKinds are the kinds whose preview is a comment body the
 // content layer may dedupe. Kinds that re-run their gate check every tick
 // with a constant preview and keep their own idempotence (hold_gate_notice,
-// the closes, parent_issue_edit, ci_rerun, base_refresh, bot_rebase_request),
+// the closes, parent_issue_edit, ci_rerun, base_refresh, bot_rebase_request,
+// human_merge_path_release),
 // the label kinds and issue_file (no existing item) are deliberately absent.
 var ContentDedupeKinds = map[Kind]bool{
 	KindSentinel:             true,

@@ -123,6 +123,16 @@ on the same head SHA is refused within 24 hours: the request is moved to
 `.exhausted` and its result file repeats the recorded reason instead of starting
 another poll cycle. Pushing a new commit (a new head SHA) starts fresh.
 
+One carve-out: when the recorded reason is a CI-gate verdict (`ci gate: …`,
+including the never-created quarantine above), a re-request re-evaluates the
+gate once on the same head before refusing. If the gate is now green — a
+cancelled or flaky check re-run green, or a gate false positive fixed since —
+the exhausted record is cleared and the request proceeds; otherwise it is
+refused with the recorded reason plus `re-evaluated: <fresh verdict>`. Re-running
+the failing check green and re-requesting is therefore a valid recovery, and
+the only one available for a fork PR whose head the hive cannot move (#17606).
+Non-CI reasons (branch protection, merge queue, scope) still refuse outright.
+
 **Fork PR workflow approval remains manual.** When a cross-repo pull request's
 workflow runs conclude `action_required`, the watcher refuses the merge with a
 reason that says the fork PR workflow runs are awaiting maintainer approval.
@@ -1149,7 +1159,13 @@ A PR merges through this tier only when all of the following hold:
     (`merge-workflow-path`) and stays fenced for a person's merge, as an
     owner-released head does.
 
-  A listed file still gets the human-merge hold as well. List every
+  A listed file still gets the human-merge hold as well, and a head that
+  touches any `human_merge_paths` file is a person's merge whatever is
+  approved: the stage never asks for the owner approval on it, names the
+  human-merge path instead, and parks it at `090-ready-for-human-merge`
+  under that reason once it is reviewed, green and soaked (an unanswered
+  `requires_human` verdict still asks for its decision at 085). A PR the
+  pin-only exception might admit keeps the approval ask. List every
   reusable workflow and local action your release workflows call, not only
   the top-level files: an edit to an unlisted one merges after review.
   Three things ignore the scope:

@@ -69171,6 +69171,7 @@ function burnAreaChart() {
       return `<div class="settings-subsection config-field" id="event-triggers-section" data-setting-key="triggers">
         <div class="settings-subsection-title">Event triggers ${yamlHint('triggers[]')} ${settingHelpMark('cel-triggers', 'run-the-scanner-for-newly-seen-github-issues', 'Event triggers', 'Additive CEL rules select an existing agent on event evaluation. Only a persisted, compiled rule is used. Agent execution gates still apply.')}</div>
         <p class="config-help"><strong>First-seen semantics:</strong> <code>issue.opened</code> means the first time an ACTIONABLE issue is evaluated, once per hive process—not exclusively issues created after saving. Existing actionable issues may match once; a restart replays them once. Editing rules does not reset seen-item history. Pause, budget, on-demand and kick-channel gates still apply.</p>
+        <p class="config-help"><strong>Default-branch CI:</strong> <code>ci.failed</code> fires once per repository, check and commit when the newest completed run of a check on a default branch tip concludes failure or timed_out (not cancelled or skipped). It comes from the red-main sweep (every 10 minutes, no webhook needed) and is evaluated only for rules whose expression names <code>ci.failed</code>, e.g. <code>event.kind == "ci.failed"</code> → ci-maintainer. A restart may repeat it once for a commit that is still red.</p>
         <p class="config-help">Signed GitHub delivery is separate setup. Saving a rule does not install a source, register a webhook, or configure its secret. The existing GitHub App/hub relay or signed receiver wakes evaluation; without delivery, rules wait for normal evaluation. No separate enabled field exists: add a rule to configure it; remove it to stop its routing.</p>
         <div id="event-triggers-editor">${renderEventTriggersEditor(_configState.eventTriggers)}</div>
       </div>`;
@@ -69208,7 +69209,7 @@ function burnAreaChart() {
         <p class="config-help">Use Save Event trigger below; the dialog's Save &amp; close does not save this separate editor. Save or cancel this edit before editing another rule.</p>
         <div class="config-field"><label for="event-trigger-preset">Event / preset</label>
           <select id="event-trigger-preset" data-change-action="eventTriggerPresetChanged"${dis}>
-            ${[['scanner', 'Run scanner when an issue is first seen'], ['issue.opened', 'Issue first seen'], ['pr.opened', 'Pull request first seen'], ['advanced', 'Advanced CEL (preserve or edit expression)']].map(([value,label]) => `<option value="${value}"${d.preset === value ? ' selected' : ''}>${label}</option>`).join('')}
+            ${[['scanner', 'Run scanner when an issue is first seen'], ['issue.opened', 'Issue first seen'], ['pr.opened', 'Pull request first seen'], ['ci.failed', 'Default-branch CI failed'], ['advanced', 'Advanced CEL (preserve or edit expression)']].map(([value,label]) => `<option value="${value}"${d.preset === value ? ' selected' : ''}>${label}</option>`).join('')}
           </select></div>
         <div class="config-field-row">
           <div class="config-field"><label for="event-trigger-name">Name</label><input id="event-trigger-name" value="${esc(d.name)}" data-input-action="eventTriggerDraftChanged"${dis}></div>
@@ -69310,6 +69311,7 @@ function burnAreaChart() {
       eventTriggerDraftChanged();
       const d = model.draft;
       if (d.preset === 'scanner' && oldPreset !== 'scanner') d.agent = model.agents.includes('scanner') ? 'scanner' : '';
+      if (d.preset === 'ci.failed' && oldPreset !== 'ci.failed' && model.agents.includes('ci-maintainer')) d.agent = 'ci-maintainer';
       if (d.preset !== 'advanced') {
         const kind = d.preset === 'scanner' ? 'issue.opened' : d.preset;
         d.expr = d.repo ? 'event.kind == ' + JSON.stringify(kind) + ' && event.repo == ' + JSON.stringify(d.repo) : '';

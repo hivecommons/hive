@@ -268,7 +268,7 @@ gated. Defaults (override under `writeback.kinds.<kind>`):
 | `sentinel` comment + `sentinel-alert` label | dashboard only | dashboard only | opt-in label only | all PRs |
 | `hold_gate_notice` (mergeability / drift) | — | hive PRs only | hive PRs only | hive PRs only |
 | `stage_label`, `needs_decision_comment` on foreign PRs | internal tracking | internal tracking | opt-in label | opt-in label |
-| `supersession_notice`, `duplicate_fix_notice`, `reporter_trust_hold`, `covered_by_pr_label`, `issue_close`, `parent_issue_edit`, `gate_comment` | — | — | opt-in label | opt-in label |
+| `supersession_notice`, `duplicate_fix_notice`, `reporter_trust_hold`, `human_merge_path_release`, `covered_by_pr_label`, `issue_close`, `parent_issue_edit`, `gate_comment` | — | — | opt-in label | opt-in label |
 | `supersession_close`, `contributor_adopt`, `ci_rerun`, `base_refresh`, `bot_rebase_request` | — | — | — | opt-in label |
 | `verdict_label` | L3: opt-in label | opt-in label | opt-in label | opt-in label |
 | `claim_comment` | — | opt-in label | opt-in label | opt-in label |

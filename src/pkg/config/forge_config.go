@@ -191,6 +191,31 @@ type GitHubConfig struct {
 // and exited before the HTTP listener bound — invisible from the dashboard.
 const PlaceholderAppID int64 = 999999999
 
+// PlaceholderOrgPrefixes are the project.org prefixes a pooled hosted slot
+// carries before it is claimed: the pool replenisher seeds "available-<id>",
+// and older slots carry the legacy "placeholder" form. An unclaimed slot is
+// NOT org-less — the hub templates this synthetic org into the spoke
+// hive.yaml — so every "is this hive onboarded yet?" test must consult this
+// list rather than only checking for an empty org (#17593).
+var PlaceholderOrgPrefixes = []string{"available-", "placeholder"}
+
+// IsPlaceholderOrg reports whether org is the synthetic project.org of an
+// unclaimed pool slot (case-insensitive, surrounding whitespace ignored). An
+// empty org is NOT a placeholder; callers that also treat "no org at all" as
+// unclaimed must test for that separately.
+func IsPlaceholderOrg(org string) bool {
+	org = strings.ToLower(strings.TrimSpace(org))
+	if org == "" {
+		return false
+	}
+	for _, pre := range PlaceholderOrgPrefixes {
+		if strings.HasPrefix(org, pre) {
+			return true
+		}
+	}
+	return false
+}
+
 const (
 	// DefaultGitHubPRDetailTTL is the default freshness window for cached
 	// GET /repos/{owner}/{repo}/pulls/{number} detail responses.

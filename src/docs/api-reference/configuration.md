@@ -5,7 +5,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `PUT` | `/api/config/triggers` | Verified owner only | Compile-to-bool and durably compare-and-save `{rules:[{name,agent,expr,priority}],preset?:{index,kind,repo}}`; exact `If-Match` required (428 missing, 412 stale), validation 400, persistence failure 500 leaves live rules unchanged. No enabled field or source/webhook installation | `pkg/dashboard/api_event_triggers.go` |
+| `PUT` | `/api/config/triggers` | Verified owner only | Compile-to-bool and durably compare-and-save `{rules:[{name,agent,expr,priority}],preset?:{index,kind,repo}}` (preset `kind` is `issue.opened`, `pr.opened` or `ci.failed`; the server writes `event.kind == <kind> && event.repo == <repo>` into rule `index`); exact `If-Match` required (428 missing, 412 stale), validation 400, persistence failure 500 leaves live rules unchanged. No enabled field or source/webhook installation | `pkg/dashboard/api_event_triggers.go` |
 | `GET` | `/api/themes` | Dashboard auth/session | Embedded dashboard/contributor theme catalog with swatches for Settings → Appearance; `?scope=contributor` filters profile themes | `pkg/dashboard/api.go:48` |
 | `GET` | `/api/theme.css` | Dashboard auth/session | Effective dashboard theme stylesheet with strong ETag / 304 support; `?theme=<id>` previews an embedded preset; `?scope=contributor` emits contributor token aliases and layers hive custom CSS | `pkg/dashboard/api.go:49` |
 | `GET` | `/api/config` | Dashboard auth/session | Config | `pkg/dashboard/api.go:50` |

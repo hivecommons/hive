@@ -20,6 +20,16 @@ type eventTriggerPreset struct {
 	Repo  string `json:"repo"`
 }
 
+// eventTriggerPresetKind reports the kinds the Event triggers editor's
+// one-repository presets may generate.
+func eventTriggerPresetKind(kind string) bool {
+	switch kind {
+	case celtrigger.KindIssueOpened, celtrigger.KindPROpened, celtrigger.KindCIFailed:
+		return true
+	}
+	return false
+}
+
 func (s *Server) eventTriggersResponse(w http.ResponseWriter) {
 	cfg := s.deps.Config
 	rules := cfg.TriggerRulesSnapshot()
@@ -90,7 +100,10 @@ func (s *Server) handleEventTriggersPut(w http.ResponseWriter, r *http.Request) 
 	rules := *body.Rules
 	if body.Preset != nil {
 		p := body.Preset
-		if p.Index == nil || *p.Index < 0 || *p.Index >= len(rules) || (p.Kind != celtrigger.KindIssueOpened && p.Kind != celtrigger.KindPROpened) {
+		// A preset is one kind scoped to exactly one managed repository.
+		// ci.failed is edge-triggered like the first-seen kinds (once per
+		// repo, check and head SHA), so it gets the same one-repo preset.
+		if p.Index == nil || *p.Index < 0 || *p.Index >= len(rules) || !eventTriggerPresetKind(p.Kind) {
 			jsonError(w, "invalid first-seen event preset", http.StatusBadRequest)
 			return
 		}

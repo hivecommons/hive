@@ -42,6 +42,13 @@ const (
 	KindPRMerged       = "pr.merged"
 	KindCommentCreated = "comment.created"
 	KindStageCompleted = "run.stage_completed"
+	// KindCIFailed is a check that concluded failure or timed_out as the
+	// newest completed run on a repository's default branch tip. It comes
+	// from the red-main sweep, not from a forge item: Number is 0, Title is
+	// the check name, HeadBranch is the default branch and State is the
+	// conclusion. Only rules whose expression names it are evaluated for
+	// it (Engine.ForKind).
+	KindCIFailed = "ci.failed"
 )
 
 // maxEvalCost bounds CEL runtime work per rule evaluation. The budget is high
@@ -65,7 +72,7 @@ type NormalizedEvent struct {
 	Repo string `cel:"repo"`
 	// Labels is the set of labels attached to the issue/PR. Exposed as event.labels.
 	Labels []string `cel:"labels"`
-	// Title is the issue/PR title. Exposed as event.title.
+	// Title is the issue/PR title (the check name for ci.failed). Exposed as event.title.
 	Title string `cel:"title"`
 	// Author is the login/handle of the actor that produced the event. Exposed as event.author.
 	Author string `cel:"author"`
@@ -75,11 +82,13 @@ type NormalizedEvent struct {
 	IsDraft bool `cel:"is_draft"`
 	// Number is the issue/PR number. Exposed as event.number.
 	Number int `cel:"number"`
-	// State is the current state, e.g. "open"/"closed". Exposed as event.state.
+	// State is the current state, e.g. "open"/"closed" (the conclusion,
+	// "failure" or "timed_out", for ci.failed). Exposed as event.state.
 	State string `cel:"state"`
 	// BaseBranch is the target branch for a PR. Exposed as event.base_branch.
 	BaseBranch string `cel:"base_branch"`
-	// HeadBranch is the source branch for a PR. Exposed as event.head_branch.
+	// HeadBranch is the source branch for a PR (the default branch for
+	// ci.failed). Exposed as event.head_branch.
 	HeadBranch string `cel:"head_branch"`
 	// Assignees are the currently-assigned logins. Exposed as event.assignees.
 	Assignees []string `cel:"assignees"`
@@ -261,6 +270,31 @@ func (e *Engine) Match(event NormalizedEvent) []Rule {
 func isCostLimitExceeded(err error) bool {
 	var cancelled interpreter.EvalCancelledError
 	return errors.As(err, &cancelled) && cancelled.Cause == interpreter.CostLimitExceeded
+}
+
+// ForKind returns an Engine holding only the rules whose expression text
+// contains kind, sharing e's compiled programs, or nil when none does (or e
+// is nil). It is a plain substring test, so `event.kind == "ci.failed"` and
+// `event.kind in ["ci.failed", "pr.opened"]` both qualify.
+//
+// Kinds that a background sweep produces, rather than a forge item, are
+// matched through it: a rule written for issues and PRs that never tests the
+// kind (`event.repo == "org/x"`) keeps meaning what it meant before the kind
+// existed, and a rule set that never names the kind makes the sweep a no-op.
+func (e *Engine) ForKind(kind string) *Engine {
+	if e == nil || kind == "" {
+		return nil
+	}
+	var rules []compiledRule
+	for _, cr := range e.rules {
+		if strings.Contains(cr.rule.Expr, kind) {
+			rules = append(rules, cr)
+		}
+	}
+	if len(rules) == 0 {
+		return nil
+	}
+	return &Engine{env: e.env, rules: rules}
 }
 
 // Len reports the number of compiled rules held by the engine.

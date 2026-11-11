@@ -280,6 +280,11 @@ type StageTracker struct {
 	// from their annotations (foldUnclassifiedForkGuard); created on first
 	// use.
 	forkGuards map[string]forkGuardRead
+	// humanMergePathFence remembers, per key, whether the head's changed
+	// files make it a person's merge under auto_merge.human_merge_paths
+	// (automerge_human_merge_path_fence.go); created on first use. Unlike
+	// obs it survives drain: it is per head, not per pass.
+	humanMergePathFence map[string]humanMergePathFenceEntry
 }
 
 // stageOwner is the lane that set a PR's current stage, for which head, and
@@ -1133,6 +1138,27 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					result.Skipped++
 					store.ClearHold(key)
 					continue
+				}
+			}
+			// A human-merge-path hold whose PR no longer touches such a
+			// path at its current head is lifted, or, while something
+			// else keeps it, no longer described as one.
+			if prov.SelfImposed() && prov.HumanMergePath() {
+				lifted, stale, err := c.liftStaleHumanMergePathHold(ctx, obs, prov)
+				if err != nil {
+					c.warn("stage labels: could not lift stale human-merge-path hold", "repo", obs.Display, "pr", obs.Number, "error", err)
+					if firstErr == nil {
+						firstErr = err
+					}
+				}
+				if lifted {
+					result.Comments++
+					result.Skipped++
+					store.ClearHold(key)
+					continue
+				}
+				if stale {
+					prov = staleHumanMergePathHold(prov)
 				}
 			}
 			obs.Hold = prov

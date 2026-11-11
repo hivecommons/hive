@@ -12,6 +12,15 @@ import (
 	gh "github.com/google/go-github/v72/github"
 )
 
+// mergeRequestCIGateReasonPrefix starts every reason the watcher's pre-merge
+// CI gate (verifyMergeRequestCI) records; the exhausted-head re-evaluation
+// keys off it.
+const mergeRequestCIGateReasonPrefix = "ci gate: "
+
+func ciGateReason(format string, args ...any) string {
+	return mergeRequestCIGateReasonPrefix + fmt.Sprintf(format, args...)
+}
+
 // mergeCIVerdict is the merge-request watcher's pre-merge CI verdict (#6173).
 //
 // Before this gate existed the watcher issued MergePR unconditionally and could
@@ -150,7 +159,7 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	}
 	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_request_ci_gate"), owner, name, number)
 	if err != nil {
-		return mergeCIUnverified, "ci gate: fetching PR", fmt.Errorf("ci gate: fetching PR %s/%s#%d: %w", owner, name, number, err)
+		return mergeCIUnverified, ciGateReason("fetching PR"), fmt.Errorf(mergeRequestCIGateReasonPrefix+"fetching PR %s/%s#%d: %w", owner, name, number, err)
 	}
 	headSHA := pr.GetHead().GetSHA()
 	baseBranch := pr.GetBase().GetRef()
@@ -159,19 +168,20 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		sha = headSHA
 	}
 	if sha == "" {
-		return mergeCIUnverified, "ci gate: PR has no head SHA", fmt.Errorf("ci gate: PR %s/%s#%d has no head SHA", owner, name, number)
+		return mergeCIUnverified, ciGateReason("PR has no head SHA"), fmt.Errorf(mergeRequestCIGateReasonPrefix+"PR %s/%s#%d has no head SHA", owner, name, number)
 	}
 	if headSHA != "" && !strings.EqualFold(sha, headSHA) {
 		// The commit the governor judged eligible is no longer the PR head.
 		// MergePR's pinned-SHA merge would 409 anyway; refusing here means the
 		// CI of the WRONG commit is never what authorizes a merge.
-		return mergeCIRed, fmt.Sprintf("ci gate: head moved: request pinned %s but PR head is %s", shortSHA(sha), shortSHA(headSHA)), nil
+		return mergeCIRed, ciGateReason("head moved: request pinned %s but PR head is %s", shortSHA(sha), shortSHA(headSHA)), nil
 	}
 
 	cfgSet, cfgKnown := c.configRequiredChecksForRepo(owner + "/" + name)
 	required, requiredKnown, fromConfig, _, _ := RequiredStatusCheckContextsDetailedWithSource(ctx, c.client, owner, name, baseBranch, cfgSet, cfgKnown)
 	actualRequired, actualKnown := required, requiredKnown && !fromConfig
-	if actualKnown && len(required) == 0 {
+	noServerBackstop := actualKnown && len(required) == 0
+	if noServerBackstop {
 		// GitHub reports both "branch not protected" and "protected but no
 		// required checks" as a known empty set. For the merge-request watcher
 		// that must not mean "ignore failing CI": absent required-check config
@@ -209,13 +219,14 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		RequiredKnown:           requiredKnown,
 		RequiredKnownFromConfig: fromConfig,
 		FailOnAnyFailedCheck:    true,
+		NoServerBackstop:        noServerBackstop,
 		ExpectedChecks:          expected,
 		MinHeadAge:              minHeadAge,
 		HeadPushedAt:            minHeadAgeFrom,
 		HeadFirstSeenAt:         firstSeen,
 	})
 	if err != nil {
-		return mergeCIUnverified, "ci gate: " + st.Reason, fmt.Errorf("ci gate: %s for %s/%s@%s: %w", st.Reason, owner, name, shortSHA(sha), err)
+		return mergeCIUnverified, mergeRequestCIGateReasonPrefix + st.Reason, fmt.Errorf(mergeRequestCIGateReasonPrefix+"%s for %s/%s@%s: %w", st.Reason, owner, name, shortSHA(sha), err)
 	}
 	if cfgKnown && actualKnown {
 		c.warnRequiredChecksMismatch(owner, name, cfgSet, actualRequired, st.Observed)
@@ -240,25 +251,25 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	// skipped) carry no verdict of their own here.
 	opaque, err := c.opaqueWorkflowRuns(ctx, owner, name, sha)
 	if err != nil {
-		return mergeCIUnverified, "ci gate: workflow-runs", fmt.Errorf("ci gate: listing workflow runs for %s/%s@%s: %w", owner, name, shortSHA(sha), err)
+		return mergeCIUnverified, ciGateReason("workflow-runs"), fmt.Errorf(mergeRequestCIGateReasonPrefix+"listing workflow runs for %s/%s@%s: %w", owner, name, shortSHA(sha), err)
 	}
 
 	switch {
 	case len(opaque.failed) > 0:
-		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded: workflow run(s) %s concluded failure without producing a job (zero check runs)", strings.Join(opaque.failed, ", ")), nil
+		return mergeCIRed, ciGateReason("required status check has not succeeded: workflow run(s) %s concluded failure without producing a job (zero check runs)", strings.Join(opaque.failed, ", ")), nil
 	case !st.Green && !commitCIReasonIsPending(st.Reason):
-		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded (%s)", st.Reason), nil
+		return mergeCIRed, ciGateReason("required status check has not succeeded (%s)", st.Reason), nil
 	case requiredCheckNeverCreated(st, opaque, headPushedAt, now):
 		// The reason deliberately avoids GitHub's protection vocabulary so
 		// isRequiredCheckMergeBlocker never routes it to the fix loop: no
 		// code push can create a check whose workflow cannot be triggered.
-		return mergeCINeverCreated, fmt.Sprintf("ci gate: required check %s was never created on %s and nothing on the head is queued or in progress after %s (the PR author's token likely cannot trigger workflows); a human must re-trigger CI or merge it", quotedNames(st.MissingRequired), shortSHA(sha), mergeCIMissingRequiredGrace), nil
+		return mergeCINeverCreated, ciGateReason("required check %s was never created on %s and nothing on the head is queued or in progress after %s (the PR author's token likely cannot trigger workflows); a human must re-trigger CI or merge it", quotedNames(st.MissingRequired), shortSHA(sha), mergeCIMissingRequiredGrace), nil
 	case !st.Green:
-		return mergeCIPending, fmt.Sprintf("ci gate: CI still running (%s)", st.Reason), nil
+		return mergeCIPending, ciGateReason("CI still running (%s)", st.Reason), nil
 	case len(st.MissingRequired) > 0:
-		return mergeCIPending, fmt.Sprintf("ci gate: required check(s) not yet reported on %s: %s", shortSHA(sha), strings.Join(st.MissingRequired, ", ")), nil
+		return mergeCIPending, ciGateReason("required check(s) not yet reported on %s: %s", shortSHA(sha), strings.Join(st.MissingRequired, ", ")), nil
 	case len(opaque.pending) > 0:
-		return mergeCIPending, fmt.Sprintf("ci gate: workflow run(s) %s still in flight without a job yet", strings.Join(opaque.pending, ", ")), nil
+		return mergeCIPending, ciGateReason("workflow run(s) %s still in flight without a job yet", strings.Join(opaque.pending, ", ")), nil
 	case len(opaque.actionRequired) > 0:
 		return mergeCIRed, forkRunApprovalReason(owner, name, opaque.actionRequired, pullRequestIsFromFork(pr)), nil
 	case st.Evidence == 0:
@@ -268,11 +279,11 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		// opt-in downgrades this — and ONLY this — verdict; red and pending
 		// are never downgraded, and the default stays refuse.
 		if c.repoNoCIOK(owner, name) {
-			return mergeCIGreen, fmt.Sprintf("ci gate: no CI evidence on %s, permitted by explicit auto_merge.no_ci_ok opt-in for %s/%s", shortSHA(sha), owner, name), nil
+			return mergeCIGreen, ciGateReason("no CI evidence on %s, permitted by explicit auto_merge.no_ci_ok opt-in for %s/%s", shortSHA(sha), owner, name), nil
 		}
-		return mergeCIUnverified, fmt.Sprintf("ci gate: no commit statuses, check runs, or workflow runs found on %s - absent CI is not passing", shortSHA(sha)), nil
+		return mergeCIUnverified, ciGateReason("no commit statuses, check runs, or workflow runs found on %s - absent CI is not passing", shortSHA(sha)), nil
 	}
-	green := fmt.Sprintf("ci gate: %d status/check run(s) on %s, all gating checks succeeded", st.Evidence, shortSHA(sha))
+	green := ciGateReason("%d status/check run(s) on %s, all gating checks succeeded", st.Evidence, shortSHA(sha))
 	if len(opaque.heldButVerified) > 0 {
 		green += fmt.Sprintf("; held run(s) %s ignored: the same workflow(s) succeeded on this head under another event", strings.Join(opaque.heldButVerified, ", "))
 	}
@@ -505,9 +516,9 @@ func pullRequestIsFromFork(pr *gh.PullRequest) bool {
 
 func forkRunApprovalReason(owner, repo string, labels []string, fromFork bool) string {
 	if fromFork {
-		return fmt.Sprintf("ci gate: fork PR workflow runs are awaiting maintainer approval (action_required): %s. Approve the runs or relax the repo setting at https://github.com/%s/%s/settings/actions (Approval for running fork pull request workflows)", strings.Join(labels, ", "), owner, repo)
+		return ciGateReason("fork PR workflow runs are awaiting maintainer approval (action_required): %s. Approve the runs or relax the repo setting at https://github.com/%s/%s/settings/actions (Approval for running fork pull request workflows)", strings.Join(labels, ", "), owner, repo)
 	}
-	return fmt.Sprintf("ci gate: same-repo PR workflow runs are awaiting maintainer approval (action_required): %s. The PR is not from a fork; GitHub holds runs for PRs opened by a bot token (GITHUB_TOKEN) under the fork-PR approval policy. Approve the runs, have the opener dispatch the required workflows on the branch, or relax the repo setting at https://github.com/%s/%s/settings/actions (Approval for running fork pull request workflows)", strings.Join(labels, ", "), owner, repo)
+	return ciGateReason("same-repo PR workflow runs are awaiting maintainer approval (action_required): %s. The PR is not from a fork; GitHub holds runs for PRs opened by a bot token (GITHUB_TOKEN) under the fork-PR approval policy. Approve the runs, have the opener dispatch the required workflows on the branch, or relax the repo setting at https://github.com/%s/%s/settings/actions (Approval for running fork pull request workflows)", strings.Join(labels, ", "), owner, repo)
 }
 
 // logCIVerdict records the gate's decision for the operator with the same

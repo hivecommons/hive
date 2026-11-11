@@ -268,6 +268,12 @@ A repo whose required-check set or check runs cannot be read keeps its last
 observation (a read error neither trips nor clears the breaker). Trust levels,
 the trusted-merger definition and the self-merge floor are unchanged.
 
+The same sweep is the source of the `ci.failed` [CEL trigger](../cel-triggers.md#kick-an-agent-when-default-branch-ci-fails):
+when a trigger rule names `ci.failed`, it also reports every check (required
+or not) that concluded `failure` or `timed_out` on the tip, once per head SHA,
+so a rule can kick an agent such as `ci-maintainer` long before the
+threshold. Without such a rule the sweep does exactly what is described above.
+
 The threshold defaults to `6h`. Set it hive-wide under `project` and override
 it per repository; the value is a positive Go duration.
 
