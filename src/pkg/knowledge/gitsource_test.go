@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -524,5 +525,38 @@ func TestGitSourceSyncLoopStopsWhenSourceGoesAway(t *testing.T) {
 	}
 	if len(k.GitSources()) != 0 {
 		t.Fatalf("sources after disconnect = %+v, want none", k.GitSources())
+	}
+}
+
+// TestReplaceGitSourceDoesNotResurrectRemovedSource pins that a Remove landing
+// while the replacement clone is running wins: the freshly cloned source is
+// not published and the caller sees ErrGitSourceNotFound, so the handler does
+// not persist a source the operator just disconnected.
+func TestReplaceGitSourceDoesNotResurrectRemovedSource(t *testing.T) {
+	stubPublicGitSourceDNS(t, "github.com")
+	SetBaseDirForTest(t, t.TempDir())
+	origInit, origLoop := initGitSourceForConnect, startGitSourceSyncLoopForConnect
+	t.Cleanup(func() {
+		initGitSourceForConnect, startGitSourceSyncLoopForConnect = origInit, origLoop
+	})
+	startGitSourceSyncLoopForConnect = func(*GitSource, context.Context) {}
+	initGitSourceForConnect = func(*GitSource, context.Context) error { return nil }
+
+	const url = "https://github.com/org/repo"
+	k := &KnowledgeAPI{logger: slog.Default()}
+	if err := k.ConnectGitSource(context.Background(), GitSourceConfig{Name: "n", URL: url, Branch: "main", Layer: LayerProject}); err != nil {
+		t.Fatal(err)
+	}
+	// The disconnect lands mid-clone, after ReplaceGitSource has found the old source.
+	initGitSourceForConnect = func(*GitSource, context.Context) error {
+		return k.DisconnectGitSource(url, "")
+	}
+
+	err := k.ReplaceGitSource(context.Background(), url, "", GitSourceConfig{Name: "n", URL: url, Branch: "release", Layer: LayerProject})
+	if !errors.Is(err, ErrGitSourceNotFound) {
+		t.Fatalf("ReplaceGitSource after a mid-clone disconnect = %v, want ErrGitSourceNotFound", err)
+	}
+	if infos := k.GitSources(); len(infos) != 0 {
+		t.Fatalf("sources after replace = %+v, want the removed source to stay removed", infos)
 	}
 }

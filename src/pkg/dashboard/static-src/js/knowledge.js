@@ -2096,6 +2096,14 @@
       return _kbGitSourceEditing ? 'Save' : 'Clone & Index';
     }
 
+    // Keeps the submit label and Cancel visibility in step with _kbGitSourceEditing.
+    function kbSyncGitSourceFormMode() {
+      const btn = document.getElementById('kb-gs-submit');
+      if (btn) btn.textContent = kbGitSourceSubmitLabel();
+      const cancel = document.getElementById('kb-gs-cancel');
+      if (cancel) cancel.hidden = !_kbGitSourceEditing;
+    }
+
     function kbEditGitSource(url, subpath, name, branch, layer) {
       _kbGitSourceEditing = { url, subpath: subpath || '' };
       const fields = { 'kb-gs-url': url, 'kb-gs-name': name, 'kb-gs-subpath': subpath, 'kb-gs-branch': branch };
@@ -2109,10 +2117,7 @@
       if (layerSel) layerSel.value = layer || 'project';
       const form = document.getElementById('kb-gs-form');
       if (form) form.open = true;
-      const btn = document.getElementById('kb-gs-submit');
-      if (btn) btn.textContent = kbGitSourceSubmitLabel();
-      const cancel = document.getElementById('kb-gs-cancel');
-      if (cancel) cancel.hidden = false;
+      kbSyncGitSourceFormMode();
       document.getElementById('kb-gs-url')?.focus();
     }
 
@@ -2122,10 +2127,7 @@
       kbEditGitSource(f.url, f.subpath, f.name, f.branch, f.layer);
       // A failed Save keeps targeting the original source; a failed connect is a fresh add.
       _kbGitSourceEditing = f.editing || null;
-      const btn = document.getElementById('kb-gs-submit');
-      if (btn) btn.textContent = kbGitSourceSubmitLabel();
-      const cancel = document.getElementById('kb-gs-cancel');
-      if (cancel) cancel.hidden = !_kbGitSourceEditing;
+      kbSyncGitSourceFormMode();
     }
 
     function kbDismissGitSourceFailure() {
@@ -2143,10 +2145,7 @@
       }
       const layerSel = document.getElementById('kb-gs-layer');
       if (layerSel) layerSel.value = 'project';
-      const btn = document.getElementById('kb-gs-submit');
-      if (btn) btn.textContent = kbGitSourceSubmitLabel();
-      const cancel = document.getElementById('kb-gs-cancel');
-      if (cancel) cancel.hidden = true;
+      kbSyncGitSourceFormMode();
     }
 
     async function kbAddGitSource() {

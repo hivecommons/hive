@@ -1149,7 +1149,7 @@ func (k *KnowledgeAPI) DisconnectGitSource(url, subpath string) error {
 		newSources = append(newSources, gs)
 	}
 	if removed == nil {
-		return fmt.Errorf("git source not found: %s (subpath: %s)", url, subpath)
+		return fmt.Errorf("%w: %s (subpath: %s)", ErrGitSourceNotFound, url, subpath)
 	}
 	k.gitSources = newSources
 	removed.StopSyncLoop()
@@ -1193,7 +1193,9 @@ func (k *KnowledgeAPI) UpdateGitSourceMetadata(url, subpath, name string, layer 
 // unchanged (only the branch moved) the two want the same clone directory:
 // the new branch is cloned into a sibling staging directory and renamed over
 // the old clone only after it has been indexed. The old source's sync loop is
-// stopped once it is swapped out, so nothing keeps pulling the old remote.
+// stopped once it is swapped out, so nothing keeps pulling the old remote. If
+// the old source was disconnected while the clone ran, the new source is not
+// published: the operator's Remove wins and ErrGitSourceNotFound is returned.
 func (k *KnowledgeAPI) ReplaceGitSource(ctx context.Context, oldURL, oldSubpath string, config GitSourceConfig) error {
 	config.URL = strings.TrimSpace(config.URL)
 	if err := ValidateGitSourceURLContext(ctx, config.URL); err != nil {
@@ -1241,14 +1243,20 @@ func (k *KnowledgeAPI) ReplaceGitSource(ctx context.Context, oldURL, oldSubpath 
 	if err := initGitSourceForConnect(gs, ctx); err != nil {
 		return err
 	}
+	var promote func() error
 	if sameIdentity {
-		if err := promoteStagedClone(staging, finalDir); err != nil {
-			return fmt.Errorf("git source %s: promoting staged clone: %w", config.Name, err)
+		promote = func() error {
+			if err := promoteStagedClone(staging, finalDir); err != nil {
+				return fmt.Errorf("git source %s: promoting staged clone: %w", config.Name, err)
+			}
+			gs.relocate(finalDir)
+			return nil
 		}
-		gs.relocate(finalDir)
 	}
 
-	k.swapGitSource(oldURL, oldSubpath, gs)
+	if err := k.swapGitSource(oldURL, oldSubpath, gs, promote); err != nil {
+		return err
+	}
 	startGitSourceSync(gs, ctx)
 	k.logger.Info("git source replaced",
 		"old_url", oldURL, "old_subpath", oldSubpath,
@@ -1293,18 +1301,29 @@ func promoteStagedClone(staging, finalDir string) error {
 
 // swapGitSource publishes gs under url+subpath in place of the source that
 // held that identity, stopping the replaced source's sync loop so it no longer
-// pulls its remote or re-indexes its detached store.
-func (k *KnowledgeAPI) swapGitSource(url, subpath string, gs *GitSource) {
+// pulls its remote or re-indexes its detached store. The identity is matched
+// under the lock, so a source disconnected while the replacement clone ran is
+// not resurrected: swapGitSource returns ErrGitSourceNotFound and gs is never
+// published. promote, when non-nil, runs under the same lock just before gs is
+// published; it moves a staged clone into place, and its failure aborts the
+// swap with the old source untouched.
+func (k *KnowledgeAPI) swapGitSource(url, subpath string, gs *GitSource, promote func() error) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	for i, cur := range k.gitSources {
-		if cur.Config().URL == url && cur.Config().Subpath == subpath {
-			k.gitSources[i] = gs
-			cur.StopSyncLoop()
-			return
+		if cur.Config().URL != url || cur.Config().Subpath != subpath {
+			continue
 		}
+		if promote != nil {
+			if err := promote(); err != nil {
+				return err
+			}
+		}
+		k.gitSources[i] = gs
+		cur.StopSyncLoop()
+		return nil
 	}
-	k.gitSources = append(k.gitSources, gs)
+	return fmt.Errorf("%w: %s (subpath: %s)", ErrGitSourceNotFound, url, subpath)
 }
 
 // GitSources returns info about all connected git sources.

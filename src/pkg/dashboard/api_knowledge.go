@@ -1168,16 +1168,8 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if strings.Contains(req.Name, "..") || strings.ContainsAny(req.Name, "/\\") {
-		jsonError(w, "invalid name", http.StatusBadRequest)
-		return
-	}
-	if req.Branch != "" && strings.HasPrefix(req.Branch, "-") {
-		jsonError(w, "branch must not start with '-'", http.StatusBadRequest)
-		return
-	}
-	if req.Subpath != "" && (strings.HasPrefix(req.Subpath, "-") || strings.Contains(req.Subpath, "..")) {
-		jsonError(w, "subpath must not start with '-' or contain '..'", http.StatusBadRequest)
+	if err := validateGitSourceFields(req.Name, req.Branch, req.Subpath); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if req.Layer == "" {
@@ -1272,6 +1264,22 @@ func (s *Server) handleGitSourcesDisconnect(w http.ResponseWriter, r *http.Reque
 	jsonResponse(w, map[string]interface{}{"ok": true, "removed": req.URL})
 }
 
+// validateGitSourceFields rejects name, branch and subpath values that could
+// escape the clone directory or be read as git flags. Connect and Update share
+// it so the two handlers cannot drift.
+func validateGitSourceFields(name, branch, subpath string) error {
+	if strings.Contains(name, "..") || strings.ContainsAny(name, "/\\") {
+		return errors.New("invalid name")
+	}
+	if strings.HasPrefix(branch, "-") {
+		return errors.New("branch must not start with '-'")
+	}
+	if subpath != "" && (strings.HasPrefix(subpath, "-") || strings.Contains(subpath, "..")) {
+		return errors.New("subpath must not start with '-' or contain '..'")
+	}
+	return nil
+}
+
 // handleGitSourcesUpdate edits the connected git source identified by
 // {url, subpath}. Omitted fields keep their current value; new_url and
 // new_subpath move the source, and an explicit empty branch ("") re-resolves
@@ -1316,7 +1324,8 @@ func (s *Server) handleGitSourcesUpdate(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if current == nil {
-		jsonError(w, fmt.Sprintf("git source not found: %s (subpath: %s)", req.URL, req.Subpath), http.StatusNotFound)
+		err := fmt.Errorf("%w: %s (subpath: %s)", knowledge.ErrGitSourceNotFound, req.URL, req.Subpath)
+		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
@@ -1353,16 +1362,8 @@ func (s *Server) handleGitSourcesUpdate(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if strings.Contains(next.Name, "..") || strings.ContainsAny(next.Name, "/\\") {
-		jsonError(w, "invalid name", http.StatusBadRequest)
-		return
-	}
-	if strings.HasPrefix(next.Branch, "-") {
-		jsonError(w, "branch must not start with '-'", http.StatusBadRequest)
-		return
-	}
-	if next.Subpath != "" && (strings.HasPrefix(next.Subpath, "-") || strings.Contains(next.Subpath, "..")) {
-		jsonError(w, "subpath must not start with '-' or contain '..'", http.StatusBadRequest)
+	if err := validateGitSourceFields(next.Name, next.Branch, next.Subpath); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

@@ -94,11 +94,20 @@ func NewFileStore(rootDir string, name string, logger *slog.Logger) (*FileStore,
 }
 
 // Name returns the display name of this vault.
-func (s *FileStore) Name() string { return s.name }
+func (s *FileStore) Name() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.name
+}
 
 // SetName changes the display name of this vault (vanity rename).
-// The underlying directory path is unchanged.
-func (s *FileStore) SetName(name string) { s.name = name }
+// The underlying directory path is unchanged. It takes the store lock because
+// a git source's sync loop may be reindexing concurrently.
+func (s *FileStore) SetName(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.name = name
+}
 
 // RootDir returns the filesystem path.
 func (s *FileStore) RootDir() string {
@@ -259,6 +268,7 @@ func (s *FileStore) reindex() {
 	s.embedCache.Clear()
 	s.mu.Lock()
 	prevCount := s.prevPageCount
+	name := s.name
 	for slug, page := range s.derivedPages {
 		pages[slug] = page
 	}
@@ -269,7 +279,7 @@ func (s *FileStore) reindex() {
 
 	if len(pages) != prevCount {
 		s.logger.Info("vault indexed",
-			"name", s.name,
+			"name", name,
 			"dir", rootDir,
 			"pages", len(pages),
 			"page_delta", len(pages)-prevCount,
