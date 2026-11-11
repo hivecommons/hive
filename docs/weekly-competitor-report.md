@@ -43,8 +43,13 @@ unchanged.
 
 ## Publication gate
 
-The report uses identical visible text for GitHub and Discord. The GitHub body
-also ends with a fenced JSON provenance ledger. HTML comments cannot carry this
+The report carries the same visible text on GitHub and Discord. Discord gets
+the formatting the prompt asks for (bold headings instead of `#`, the "Who does
+what" table as a fenced code block, `<url>` links, no "Sources and queries"
+details), so the validator compares the prose after normalising those
+differences and checks the Discord table by project name and table notes rather
+than byte for byte. The GitHub body also ends with a fenced JSON provenance
+ledger. HTML comments cannot carry this
 ledger because gh-aw removes hidden comments. Exact source quotes travel as
 base64 UTF-8 data so URL, mention and template sanitization cannot alter quoted
 bytes; no decoded content is executed.
