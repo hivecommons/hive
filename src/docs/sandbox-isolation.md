@@ -286,6 +286,49 @@ The gateway, workspace, token, TLS and claim fields are cluster facts and fall b
 
 **Limitations (phase 1).** Kubernetes driver only (no Podman-driver path for standalone hosts yet); no Secret references into the sandbox; `policy_profile` is advisory; kernel and claim-label prerequisites are not preflighted; latency and image size are not yet measured ([#17643](https://github.com/hivecommons/hive/issues/17643)).
 
+## Running sandboxed kicks in a Substrate actor
+
+`sandbox.runtime: substrate` runs an agent's sandboxed kicks as an [Agent Substrate](https://github.com/agent-substrate/substrate) **actor** ([ADR-0026 phase 2](adr/0026-sandbox-runtime-selection.md#implementation-notes-phase-2-agent-substrate), epic [#17695](https://github.com/hivecommons/hive/issues/17695)). Substrate is a CNCF Sandbox project donated by Google: a `WorkerPool` of pods runs workloads under gVisor (`runsc`) or in a KVM microVM, every actor gets a SPIFFE identity, and all egress leaves through `atenet-router` under an `EgressPolicy`. It is the fourth runtime and, like OpenShell, opt-in; nothing changes for a hive that does not select it.
+
+Everything above about the kick path still holds; only step 2 changes. The launcher is `sandbox.SubstrateLauncher`, which talks to Substrate's gRPC **Control API** (`ate.control.v1`) with a trimmed, wire-compatible client generated in-repo (`crux/sandbox/substrateapi`; the upstream Go module needs a newer Go than hive builds with).
+
+```yaml
+agent_sandbox:
+  runtime: substrate
+  substrate:
+    endpoint: api.ate-system.svc:443       # Control API, host:port or https://
+    atespace: hive                          # Substrate's tenancy unit, default "default"
+    token_env: ATE_TOKEN                    # bearer token env var (or token_file for a projected SA token)
+    ca_file: /var/run/ate/ca.crt            # Control API CA; insecure_tls: true only for a lab
+    router_url: https://atenet-router.ate-system.svc:8444
+    router_client_bundle: /var/run/ate/credential-bundle.pem   # hive's own mTLS client identity
+    router_ca_file: /var/run/ate/router-ca.crt
+    image: ghcr.io/hivecommons/crux-sandbox@sha256:…   # digest-pinned; tags are refused
+    cpu_millicores: 2000
+    memory_bytes: 4294967296
+    worker_selector: {ate.dev/sandboxClass: gvisor}   # pick the pool (gvisor | microvm)
+    snapshot_on_idle: false
+    allow_hosts: [models.example.com, hub.example.com:8443]
+    timeout_s: 1800
+agents:
+  reviewer:
+    sandbox:
+      substrate:
+        snapshot_on_idle: true   # per-agent overrides merge onto the global block
+```
+
+**One actor per kick.** Hive creates an `ActorTemplate` (one container running the bridge command, the workspace as a `durableDir`, the operator's limits and `worker_selector`) and an `Actor` from it, both named `hive-kick-<agent>-<unix>`, attaches the egress policy, waits for the actor to report `RUNNING`, and then talks to a small HTTP **bridge** inside the actor (`crux substrate-bridge`, overridable with `bridge_command`, port `bridge_port`) through the router's mTLS `CONNECT` tunnel: it pushes the workspace as a tar, runs the kick with the sanitized environment, and pulls the workspace back. The hive-side workspace remains the source of truth and feeds the push broker exactly as for Podman. Substrate has no exec API and hive shares no PVC with the worker nodes, which is why the workspace is copied rather than mounted; the copy is bounded by the kick timeout.
+
+**The egress policy.** Hive derives an `atenet-egress` policy from the hosts its proxy brokers for a Podman sandbox — `github.com` and `api.github.com` on 443 — plus `allow_hosts` as `host` or `host:port`, all as TLS passthrough; URLs, userinfo and wildcards are rejected at validation, before any actor is created. Everything else, including all UDP and raw IP connects, is denied. Substrate's policy language has no per-method read-only mode, so `api.github.com` is reachable; the actor holds no token (`SanitizedEnv`) and hive performs every GitHub write itself after the kick. `network_mode: none` drops every rule. Credential brokering is unchanged: the agent inside the actor still receives `HTTPS_PROXY` pointing at the hive MITM proxy ([ADR-0002](adr/0002-mitm-proxy-network-enforcement.md)); Substrate's own zero-credential injection is complementary and not used by hive.
+
+**Lifecycle.** Success, failure and the kick timeout all delete the actor and then its template, on a fresh bounded context when the kick's own has expired, with exit code `-1` and `context deadline exceeded` on timeout, like a timed-out Job. With `snapshot_on_idle: true` the actor is **suspended** (snapshotted to Substrate's object storage) instead of deleted; the template is still deleted and the snapshot is not yet resumed on the next kick ([#17697](https://github.com/hivecommons/hive/issues/17697)). `policy_profile` is passed to the actor as `HIVE_POLICY_PROFILE` for in-actor tooling; Substrate has no annotations.
+
+**What hive checks, and what it cannot.** At boot and on reload (`config.AgentSandboxGateWarnings`) a substrate-runtime agent is warned about, and its kick refused, when `endpoint` or `router_url` is missing or `image` is not digest-pinned. Hive also preflights each distinct Control API (read-only `ListWorkers`, cached for five minutes, bounded to 30 s) and warns when it is unreachable, has no `ACTIVE` worker matching `worker_selector`, or its workers advertise no sandbox class. It cannot see the CRDs, the operator, the pod-certificate feature gates or `/dev/kvm` from inside its pod; those are the operator prerequisites in [deploy/substrate.md](../deploy/substrate.md) and the prover in [#17698](https://github.com/hivecommons/hive/issues/17698).
+
+**The terminal pane.** A substrate-runtime agent has no tmux session and, until [#17699](https://github.com/hivecommons/hive/issues/17699), no live pane: the ▶ terminal shows the last persisted transcript like the job viewer between kicks.
+
+**Limitations (phase 2).** Workspace copied, not shared; `crux substrate-bridge` entrypoint and a published sandbox image land with the prototype ([#17697](https://github.com/hivecommons/hive/issues/17697)); no resume of suspended actors; `api.github.com` not read-only at the policy layer; latency and image size not yet measured.
+
 ## Health and metrics for sandboxed agents
 
 A sandboxed agent (Podman or Job runtime) has no tmux session, no in-pod process and no `pluk` log between kicks: the manager parks it in the `idle` state and each kick runs to completion in a container or Job. The dashboard therefore must not read "not running" as "session down" for these agents, and the token collector cannot find their CLI session files because the CLI's home directory lives in the sandbox, not in the hive pod.
@@ -315,7 +358,7 @@ On-demand agents, paused agents and `pause`/`continuous` cadences are never over
 - The Job runtime is a first slice: one Job per kick, workspace shared through a PVC, no per-kick Secret minting. A clone-inside-the-Job transport for clusters without ReadWriteMany storage is future work.
 - Live Podman execution is covered by skip-when-absent tests; CI still needs a rootless-Podman runner lane for always-on integration coverage.
 - Sandboxed inference depends on an operator-provided restricted network/proxy policy. `none` is stronger but not yet usable for all model backends.
-- A stronger runtime than plain containers is under evaluation: [ADR-0026](adr/0026-sandbox-runtime-selection.md) (Proposed) compares NVIDIA OpenShell and OpenSandbox against this contract.
+- Stronger runtimes than plain containers ship opt-in: [ADR-0026](adr/0026-sandbox-runtime-selection.md) (Accepted) covers NVIDIA OpenShell (phase 1) and Agent Substrate (phase 2); both still need their prototype measurements and cluster preflights.
 
 ## Agent guardrails (defense in depth)
 

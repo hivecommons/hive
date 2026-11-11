@@ -1,1 +1,0 @@
-- The "agent git config declares a user identity outside the system gitconfig" warning is logged once per agent and config, not every cycle, so it no longer trips the repeated-error selfreport (#17703).
