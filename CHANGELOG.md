@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.212.0)
+
+### Added
+
+- Added `sandbox.runtime: openshell`, a third sandbox runtime behind the same `sandbox.Launcher` seam as `podman` and `job` (ADR-0026 phase 1, [#14092](https://github.com/hivecommons/hive/issues/14092)). A kick on it is created through an NVIDIA OpenShell gateway (`github.com/ai-openshell/sdk-go` v0.1.8) as a kernel-confined sandbox from the agent's image, runs the kick command with the same credential-filtered environment the other launchers pass, shares the workspace through the hive data PVC exactly as the Job runtime does, and is deleted on success, failure or kick timeout. Hive hands the gateway an egress policy derived from the hosts its own proxy brokers — `github.com` read-write for git, `api.github.com` read-only — plus `agent_sandbox.openshell.allow_hosts` for a model gateway or the hub; nothing else is reachable from the sandbox. Config lives under `agent_sandbox.openshell` (`gateway_url`, `namespace`, `token_env`, `workspace_claim`, `allow_hosts`, `timeout_s`, scheduling passthrough) with per-agent overrides; the runtime is inert unless selected, and a selected one with no `gateway_url` or `workspace_claim` is warned about at boot and refused at kick time before the agent is marked running.
+
 ## 2026-11-11 (v5.211.30)
 
 ### Changed
