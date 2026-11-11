@@ -1,0 +1,46 @@
+{
+  "columns": [
+    "Open",
+    "Actionable",
+    "Claimed",
+    "PR in progress",
+    "CI / Review",
+    "Merge queue",
+    "Merged",
+    "Main CI",
+    "Done"
+  ],
+  "roles": {
+    "pr-verify": 1
+  },
+  "pipelines": [
+    {
+      "id": "tkn-tekton-build-pipeline",
+      "role": "pr-verify",
+      "nodes": 18,
+      "levels": 7,
+      "events": [
+        "cel",
+        "pull_request",
+        "push",
+        "cel",
+        "cel"
+      ]
+    }
+  ],
+  "ciSubstages": [
+    "init",
+    "clone-repository",
+    "prefetch-dependencies",
+    "build-images",
+    "build-image-index",
+    "apply-tags · build-source-image · clamav-scan +10"
+  ],
+  "findings": {},
+  "columnDiff": [
+    "column \"CI / Review\" gains 6 CI substage(s) from 1 pipeline(s)",
+    "column \"Merged\" is no longer the cap",
+    "column \"Main CI\" added after merge",
+    "column \"Done\" added after merge"
+  ]
+}
