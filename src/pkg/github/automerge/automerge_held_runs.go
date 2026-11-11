@@ -211,8 +211,9 @@ func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, own
 		return workflowApprovalUntrustedPrefix + contextName
 	}
 	if integrationEligibilityProbe(ctx) {
-		// The read-only eligibility probe cannot comment; skipping before the
-		// first-seen mark leaves the post to the real sweep tick (#17673).
+		// The read-only eligibility probe cannot comment: its mutation
+		// boundary would refuse the post and WARN every tick. Skipping
+		// leaves the post to the live sweep.
 		return workflowApprovalRequiredPrefix + contextName
 	}
 	firstSeen, first := c.markWorkflowApprovalCommandSeen(owner, repo, number, headSHA)
