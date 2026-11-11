@@ -886,6 +886,9 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		case stageTrackerAdoptedResolving:
 			return "Rebase failed twice: the hive's copy #" + strconv.Itoa(rec.AdoptedBy) + " still conflicts with the base after two fixer attempts; a person decides", "maintainer"
 		}
+		if strings.TrimSpace(strings.ToLower(reason)) == stagelabels.LaneReasonBotAuthorFinding {
+			return joinClause("Reviewer finding on another bot's PR: the bot regenerates this branch, so the fix belongs on the base branch; a person decides", clause), "maintainer"
+		}
 		if strings.TrimSpace(strings.ToLower(reason)) == stagelabels.LaneReasonRebaseFailedTwice {
 			return "Rebase failed twice: the fixer could not resolve the conflicts with the base; a person decides", "maintainer"
 		}

@@ -176,6 +176,12 @@ type Options struct {
 	// PRs the self-authored sweep merges alongside the App's own (see
 	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
 	TrustedBotAuthors func() map[string]bool
+	// ReviewBotAuthors returns the live review.bot_authors patterns (exact
+	// logins, or `*suffix` such as `*[bot]`). A PR one of those bots opened
+	// is another bot's branch: when the reviewer asks for changes on it the
+	// stage pass parks it at 085 (stagelabels.LaneReasonBotAuthorFinding)
+	// instead of 071. nil leaves such a PR at 071.
+	ReviewBotAuthors func() []string
 	// TrustedBotSkipReview returns the live auto_merge.trusted_bot_skip_review
 	// switch: the review swarm's verdict is advisory on the trusted-bot lane
 	// (config.AutoMergeConfig.TrustedBotSkipsReview). nil means true.
@@ -414,6 +420,7 @@ type Engine struct {
 	queueOnApproveAndUnhold           func(repo string) bool
 	repoOnGitHub                      func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
+	reviewBotAuthors                  func() []string
 	trustedBotSkipReview              func() bool
 	botTakeoverEnabledFn              func() bool
 	onTerminalHold                    func(repo string, number int, headSHA, reason string)
@@ -555,6 +562,7 @@ func New(transport Transport, opts Options) *Engine {
 		queueOnApproveAndUnhold:           opts.QueueOnApproveAndUnhold,
 		repoOnGitHub:                      opts.RepoOnGitHub,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
+		reviewBotAuthors:                  opts.ReviewBotAuthors,
 		trustedBotSkipReview:              opts.TrustedBotSkipReview,
 		rateLimitCautious:                 opts.RateLimitCautious,
 		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,

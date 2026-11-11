@@ -852,13 +852,14 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 		return 0, nil
 	}
 	_, fixerExhausted := stagelabels.ParseFixerExhausted(obs.Reason)
-	if obs.Reason == autoMergeReasonHumanMergeRequired || fixerExhausted {
+	if obs.Reason == autoMergeReasonHumanMergeRequired || fixerExhausted || obs.Reason == stagelabels.LaneReasonBotAuthorFinding {
 		// The "waiting for a person" note on a breaking-titled or
 		// owner-flagged PR is an unsolicited write (hivecommons/hive#15442):
 		// it goes through the write-back gate like every other hive
 		// comment, and a refusal leaves the record unmarked so the next
 		// pass asks again. The fixer-exhausted note on the hive's own PR
-		// takes the same gate (hivecommons/hive#15744).
+		// takes the same gate (hivecommons/hive#15744), and so does the
+		// note on another bot's PR.
 		item := writebackItemForObservation(obs)
 		item.HiveAuthored = fixerExhausted
 		if d := c.writebackAllowed(obs.Display, item, writeback.KindNeedsDecisionComment, body); !d.Allowed {
@@ -963,6 +964,55 @@ func (c *Engine) fixerExhaustedRoute(obs stageObservation, fixer review.FixDispa
 		v = c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA)
 	}
 	return stagelabels.FixerExhaustedRoute(obs.HeadSHA, fixer.Attempts, fixerExhaustedSummary(v, obs.LaneReason), reauthoredFrom)
+}
+
+// botAuthorFinding returns the author login when obs is another bot's PR
+// (review.bot_authors, never this hive's App or agents, never an adoption)
+// that the reviewer swarm asked to change on its head and that would
+// otherwise return to its author at 071; "" otherwise. A person's own
+// change request is left to the usual route.
+func (c *Engine) botAuthorFinding(obs stageObservation, pass *stageengine.PRPassFacts, verdict stageVerdict) string {
+	if c == nil || c.reviewBotAuthors == nil || verdict.Terminal || verdict.Stage != fixingStage(obs) {
+		return ""
+	}
+	if obs.Lane == stageLaneSelf || (pass != nil && pass.AuthorIsApp) || obs.AuthorKind == authorkind.Hive || hasLabelFold(obs.Labels, stagelabels.AdoptedByHive.Label()) {
+		return ""
+	}
+	d := obs.Detail
+	if !d.VerdictKnown {
+		// The lanes that hand a PR to the human route read the verdict
+		// there, not into the observation.
+		d.Verdict, d.VerdictKnown = c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA), true
+	}
+	if strings.TrimSpace(d.HumanChangeRequester) != "" || !verdictBlocks(d) {
+		return ""
+	}
+	app := ""
+	if c.transport != nil {
+		app = c.transport.AppBotLogin()
+	}
+	login := strings.TrimSpace(obs.Author)
+	if !review.IsBotAuthor(login, c.reviewBotAuthors(), app) {
+		return ""
+	}
+	return login
+}
+
+// botAuthorFindingRoute is the 085 route (and so the entry comment, once
+// per head) for botAuthorFinding's PR.
+func (c *Engine) botAuthorFindingRoute(obs stageObservation, bot string) stagelabels.Route {
+	v := obs.Detail.Verdict
+	if !obs.Detail.VerdictKnown {
+		v = c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA)
+	}
+	summary := ""
+	for _, s := range v.HumanSummaries {
+		if s = strings.TrimSpace(s); s != "" {
+			summary = firstLine(s)
+			break
+		}
+	}
+	return stagelabels.BotAuthorFindingRoute(obs.HeadSHA, bot, obs.BaseRef, summary)
 }
 
 // fixerExhaustedSummary is the reviewer's one-line reason the fixer kept

@@ -1386,6 +1386,19 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				obs.Reason = stagelabels.LaneReasonRebaseFailedTwice
 				pass.RebaseFailedTwice = true
 			}
+			if bot := c.botAuthorFinding(obs, pass, verdict); bot != "" {
+				// Another bot's PR (a workflow's promotion or release PR,
+				// a dependency bump) the reviewer asked to change: the hive
+				// pushes nothing to it and the bot cannot act on a review,
+				// so a maintainer decides where the fix lands instead of
+				// the PR waiting at 071 on an author that never answers.
+				verdict.Stage = stagelabels.NeedsDecision
+				verdict.Rank = stageRankOwned
+				obs.Reason = stagelabels.LaneReasonBotAuthorFinding
+				pass.BotAuthorFinding = bot
+				route := c.botAuthorFindingRoute(obs, bot)
+				obs.Route = &route
+			}
 			if !verdict.Terminal && verdict.Stage == fixingStage(obs) && fixerKnown && fixer.Exhausted() {
 				// The hive's own PR whose fix dispatcher refuses another
 				// fix (re-engagement cap spent, hivecommons/hive#15744).

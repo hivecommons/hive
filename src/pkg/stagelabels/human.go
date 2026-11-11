@@ -388,6 +388,13 @@ const (
 	// attempt count (hivecommons/hive#15744). Before this the PR sat at 070
 	// reading "Fixing" with nobody on it (#15308, 13h).
 	LaneReasonFixerExhaustedPrefix = "fixer-exhausted:"
+	// LaneReasonBotAuthorFinding is the 085 reason for a PR another bot
+	// opened and regenerates (a workflow's promotion or release PR, a
+	// dependency bump) when the reviewer asked for changes on its head.
+	// Nobody can make the change on that branch: the hive does not push to
+	// it and the bot rewrites it, so the finding goes to a maintainer
+	// instead of back to the "author" (071).
+	LaneReasonBotAuthorFinding = "bot-author:finding"
 	// LaneReasonReauthoringPrefix opens the 070 reason for a hive-authored
 	// PR whose fixer gave up and which the hive is re-authoring itself
 	// ("re-authoring:16265"): the suffix is the issue a fresh PR is being
@@ -975,6 +982,36 @@ func FixerExhaustedRoute(head string, attempts int, summary string, reauthoredFr
 			"**Give direction** — reply `/hive decision <what to change>` (or *Give direction* in the tracker); the hive's fixer gets one more run with your note.",
 			"**Hand it to a person** — push to the branch yourself or say who takes it; the hive steps back while a human owns it.",
 			"**Close as not planned** — close the PR (or *Close as not planned* under Decide… in the tracker) when the change is no longer wanted.",
+		},
+	}
+}
+
+// BotAuthorFindingRoute is the 085 route for a PR another bot opened when
+// the reviewer asked for changes on head (LaneReasonBotAuthorFinding). bot
+// is the PR's author login, base the branch it targets ("" when unknown),
+// and summary the reviewer's one-line finding ("" when unknown). The hive
+// pushes nothing to the bot's branch and the bot cannot act on a review,
+// so the comment hands the finding to a maintainer with the places it can
+// land.
+func BotAuthorFindingRoute(head, bot, base, summary string) Route {
+	bot = strings.TrimSpace(bot)
+	reasons := []string{"the reviewer asked for changes @" + ShortSHA(head) + " on a PR that " + bot + " opened and regenerates: the hive does not push to this branch, and a bot cannot act on a review"}
+	if summary = strings.TrimSpace(summary); summary != "" {
+		reasons = append(reasons, "the review found: "+summary)
+	}
+	where := "the base branch"
+	if base = strings.TrimSpace(base); base != "" {
+		where = "`" + base + "`"
+	}
+	return Route{
+		Stage:          NeedsDecision,
+		Reasons:        reasons,
+		Head:           head,
+		ActionsHeading: "Your options:",
+		Actions: []string{
+			"**Fix it on " + where + "** — when the finding is about code this PR carries over, land the fix there (or open an issue for it); " + bot + "'s next run brings it into this PR, and the new head is reviewed again.",
+			"**Merge it as is** — merge this PR yourself when the finding should not hold it back.",
+			"**Close it** — close the PR when this run should not land.",
 		},
 	}
 }

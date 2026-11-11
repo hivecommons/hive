@@ -182,6 +182,10 @@ type DispatchOptions struct {
 	FixerAvailable func(string) bool
 	ProjectOrg     string
 	AIAuthor       string
+	// AppLogin is this hive's GitHub App bot login ("<slug>[bot]", "" when
+	// no App is installed). With AIAuthor it is what a PR opened by the hive
+	// itself carries, so neither is ever another bot (otherBotAuthor).
+	AppLogin string
 	// PostComments carries config.ReviewConfig.PostComments into the prompt
 	// builder, so reviewers are told to publish their verdict on the PR.
 	PostComments bool
@@ -414,6 +418,10 @@ type WithheldFix struct {
 // fixer push to PRs the hive did not open. It is what the audit entry cites.
 const WithheldFixSetting = "review.fix_human_prs"
 
+// WithheldFixBotSetting is the setting an other-bot withholding cites: the
+// review.bot_authors list that named the PR's author as another bot.
+const WithheldFixBotSetting = "review.bot_authors"
+
 type PendingReview struct {
 	Repo        string      `json:"repo"`
 	Number      int         `json:"number"`
@@ -645,6 +653,10 @@ const (
 	// to the reviewers instead of the fixer this cycle (hivecommons/hive#14665).
 	FixDispatchExcludedRevisitBodyEdited = "verdict-revisit:body-edited"
 	FixDispatchExcludedRevisitStale      = "verdict-revisit:stale-reviewer"
+	// FixDispatchExcludedOtherBotAuthor is a PR another bot opened and
+	// keeps regenerating (otherBotAuthor): a fix pushed there is
+	// overwritten on the bot's next run, so it spends no fix attempt.
+	FixDispatchExcludedOtherBotAuthor = "other-bot-author"
 )
 
 func LoadDispatchState(path string) (DispatchState, error) {
@@ -942,6 +954,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				Revise:                revisiting,
 				Perspectives:          opts.Perspectives,
 				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
+				ProposeFixesBotAuthor: proposeFixesBotAuthor(pr, opts),
 				WritingGuideSection:   opts.WritingGuideSection,
 				ReviewBotLogins:       opts.ReviewBotLogins,
 				ReviewBotMinPriority:  opts.ReviewBotMinPriority,
@@ -1012,6 +1025,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				Revise:                revisiting,
 				Perspectives:          opts.Perspectives,
 				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
+				ProposeFixesBotAuthor: proposeFixesBotAuthor(pr, opts),
 				WritingGuideSection:   opts.WritingGuideSection,
 				ReviewBotLogins:       opts.ReviewBotLogins,
 				ReviewBotMinPriority:  opts.ReviewBotMinPriority,
@@ -1585,8 +1599,54 @@ func hiveAuthored(pr PullRequest, opts DispatchOptions) bool {
 // The one person-login exception is a PR the stage reconciler adopted in
 // place (`stage/074-adopted-by-hive`): adoption is the explicit decision that the
 // hive owns the branch and fixes it there (hivecommons/hive#12987).
+//
+// A bot-shaped login is not enough on its own: a PR another bot opened
+// (otherBotAuthor) is that bot's branch, regenerated and force-pushed on its
+// next run, so a fix pushed there is lost and can leave the PR red until
+// then. The hive does not push to it; the finding belongs on the base branch.
 func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
-	return fixPushAuthorOK(pr.Author) || hasLabelFold(pr.Labels, stagelabels.AdoptedByHive.Label())
+	if hasLabelFold(pr.Labels, stagelabels.AdoptedByHive.Label()) {
+		return true
+	}
+	return fixPushAuthorOK(pr.Author) && !otherBotAuthor(pr, opts)
+}
+
+// otherBotAuthor reports whether pr was opened by a bot other than this hive:
+// its login matches review.bot_authors (the list the bot-author model route
+// already uses, `*[bot]` by default), it is not this hive's ai_author or App
+// login, and nothing ties the PR to this hive (no agent attribution, no
+// attribution trailer). Such a bot owns its branch: GitHub Actions
+// promotion and release PRs, Dependabot and Renovate all rewrite it on their
+// next run. An operator who lists no bots (`review.bot_authors: []`) keeps
+// the bot-login rule alone.
+func otherBotAuthor(pr PullRequest, opts DispatchOptions) bool {
+	if strings.TrimSpace(pr.AuthorAgent) != "" || pr.HiveAttributed {
+		return false
+	}
+	author := ownLoginKey(pr.Author)
+	for _, own := range []string{opts.AIAuthor, opts.AppLogin} {
+		if k := ownLoginKey(own); k != "" && k == author {
+			return false
+		}
+	}
+	return IsBotAuthor(pr.Author, opts.BotAuthorRoute.Authors, opts.AIAuthor)
+}
+
+// ownLoginKey folds a login for comparing it with this hive's own: case and
+// the App's `[bot]` suffix are ignored, so an ai_author of `hive-bot` still
+// owns the PRs its App opens as `hive-bot[bot]`.
+func ownLoginKey(login string) string {
+	login = strings.ToLower(strings.TrimSpace(login))
+	return strings.TrimSuffix(login, "[bot]")
+}
+
+// proposeFixesBotAuthor is the PromptOptions.ProposeFixesBotAuthor value for
+// pr: its author's login when that is another bot, else "".
+func proposeFixesBotAuthor(pr PullRequest, opts DispatchOptions) string {
+	if hasLabelFold(pr.Labels, stagelabels.AdoptedByHive.Label()) || !otherBotAuthor(pr, opts) {
+		return ""
+	}
+	return strings.TrimSpace(pr.Author)
 }
 
 // fixPushAuthorOK admits only bot-shaped logins, the ones the squash check
@@ -1652,23 +1712,27 @@ func (p *DispatchPlan) withholdFix(pr PullRequest, opts DispatchOptions, now tim
 	if opts.FixHumanPRs {
 		reason = "PR's login author is not a bot login, so a squash would attribute it to a person; a hive-signed fix commit would fail the squash sign-off gate, so the fix was proposed in the review, not pushed"
 	}
+	setting, enabled, excluded := WithheldFixSetting, opts.FixHumanPRs, FixDispatchExcludedNotHiveAuthored
+	if opts.FixHumanPRs {
+		excluded = FixDispatchExcludedNotHiveAuthoredDCO
+	}
+	if bot := proposeFixesBotAuthor(pr, opts); bot != "" {
+		reason = "PR was opened by another bot (" + bot + "), which regenerates its branch, so a pushed fix would be overwritten; the finding belongs on the base branch, so review published, fix not pushed"
+		setting, enabled, excluded = WithheldFixBotSetting, true, FixDispatchExcludedOtherBotAuthor
+	}
 	w := WithheldFix{
 		Repo:           pr.Repo,
 		Number:         pr.Number,
 		HeadSHA:        pr.HeadSHA,
 		Author:         strings.TrimSpace(pr.Author),
-		Setting:        WithheldFixSetting,
-		SettingEnabled: opts.FixHumanPRs,
+		Setting:        setting,
+		SettingEnabled: enabled,
 		Reason:         reason,
 		Withheld:       now,
 	}
 	p.State.Withheld = append(p.State.Withheld, w)
 	p.WithheldFixes = append(p.WithheldFixes, w)
-	reason = FixDispatchExcludedNotHiveAuthored
-	if opts.FixHumanPRs {
-		reason = FixDispatchExcludedNotHiveAuthoredDCO
-	}
-	p.recordFixExclusion(pr, reason, 0)
+	p.recordFixExclusion(pr, excluded, 0)
 }
 
 func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchOptions, now time.Time) {
