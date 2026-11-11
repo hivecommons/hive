@@ -28,6 +28,7 @@ var (
 	ErrDenied              = cruxeffects.ErrDenied
 	ErrNotApplied          = cruxeffects.ErrNotApplied
 	ErrNeedsReconciliation = cruxeffects.ErrNeedsReconciliation
+	ErrUnresolvedExpired   = cruxeffects.ErrUnresolvedExpired
 )
 
 type (
