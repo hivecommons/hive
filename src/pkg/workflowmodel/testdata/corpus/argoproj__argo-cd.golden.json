@@ -1,0 +1,65 @@
+{
+  "columns": [
+    "Open",
+    "Actionable",
+    "Claimed",
+    "PR in progress",
+    "CI / Review",
+    "Merge queue",
+    "Merged",
+    "Main CI",
+    "Release",
+    "Done"
+  ],
+  "roles": {
+    "pr-verify": 2,
+    "release": 1
+  },
+  "pipelines": [
+    {
+      "id": "gha-github-workflows-ci-build",
+      "role": "pr-verify",
+      "nodes": 14,
+      "levels": 4,
+      "events": [
+        "push",
+        "pull_request"
+      ]
+    },
+    {
+      "id": "gha-github-workflows-image",
+      "role": "pr-verify",
+      "nodes": 5,
+      "levels": 3,
+      "events": [
+        "push",
+        "pull_request"
+      ]
+    },
+    {
+      "id": "gha-github-workflows-release",
+      "role": "release",
+      "nodes": 8,
+      "levels": 6,
+      "events": [
+        "push"
+      ]
+    }
+  ],
+  "ciSubstages": [
+    "Detect changed files · Lint shell scripts · Set build variables",
+    "Build \u0026 cache Go code · Build, test \u0026 lint UI code · Check changes to generated code +6",
+    "Deploy to staging · Run unit tests for Go packages · Run unit tests with -race for Go packages +2",
+    "E2E Tests - Composite result · Process \u0026 analyze test artifacts"
+  ],
+  "findings": {
+    "concurrency-expression": 1
+  },
+  "columnDiff": [
+    "column \"CI / Review\" gains 4 CI substage(s) from 2 pipeline(s)",
+    "column \"Merged\" is no longer the cap",
+    "column \"Main CI\" added after merge",
+    "column \"Release\" added after merge",
+    "column \"Done\" added after merge"
+  ]
+}
