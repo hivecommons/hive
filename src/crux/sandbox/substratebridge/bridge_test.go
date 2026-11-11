@@ -392,3 +392,50 @@ func TestServeStopsOnContextAndListenerClose(t *testing.T) {
 		t.Errorf("Serve returned nil after the listener closed")
 	}
 }
+
+// Inside the actor /workspace is a durableDir mount point; PUT must empty it
+// in place rather than unlink it (which fails with EBUSY on a mount).
+func TestPutWorkspaceClearsInPlace(t *testing.T) {
+	ws := t.TempDir()
+	writeFile(t, filepath.Join(ws, "stale.txt"), "old")
+	writeFile(t, filepath.Join(ws, "nested", "deep.txt"), "old")
+	before, err := os.Stat(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(&Handler{Workspace: ws})
+	defer srv.Close()
+	body := tarStream(t, func(tw *tar.Writer) {
+		content := []byte("new")
+		_ = tw.WriteHeader(&tar.Header{Name: "fresh.txt", Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg})
+		_, _ = tw.Write(content)
+	})
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+PathWorkspace, body)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		t.Fatalf("put = %d", resp.StatusCode)
+	}
+	after, err := os.Stat(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error("workspace directory was recreated; it must be emptied in place")
+	}
+	if _, err := os.Stat(filepath.Join(ws, "stale.txt")); !os.IsNotExist(err) {
+		t.Error("stale.txt survived PUT")
+	}
+	if _, err := os.Stat(filepath.Join(ws, "nested")); !os.IsNotExist(err) {
+		t.Error("nested/ survived PUT")
+	}
+	if got, err := os.ReadFile(filepath.Join(ws, "fresh.txt")); err != nil || string(got) != "new" {
+		t.Errorf("fresh.txt = %q, %v", got, err)
+	}
+	if err := clearDir(filepath.Join(ws, "does-not-exist")); err != nil {
+		t.Errorf("clearDir of a missing dir = %v, want nil", err)
+	}
+}

@@ -303,6 +303,9 @@ func (l *SubstrateLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 	if spec.NetworkNone {
 		policy.Rules = nil
 	}
+	// The Control API requires the singleton policy's atespace to match the
+	// actor's (egress_policy.metadata.atespace is a required field).
+	policy.Metadata.Atespace = ref.Atespace
 	if err := control.CreateActorEgressPolicy(ctx, ref, policy); err != nil {
 		cleanupActor()
 		return res, fmt.Errorf("substrate: setting egress policy on actor %s: %w", name, err)
