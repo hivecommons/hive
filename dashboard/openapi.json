@@ -35655,6 +35655,249 @@
           }
         }
       },
+      "/api/workflows/{name}/versions": {
+        "get": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "List every saved version of a workflow model",
+          "description": "Newest save first. hive-default answers its single virtual, read-only entry.",
+          "parameters": [
+            {
+              "name": "name",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Versions",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "versions": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/components/schemas/WorkflowEntry"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "Unknown model"
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        }
+      },
+      "/api/workflows/{name}/diff": {
+        "get": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Structural diff between two saved workflow model versions",
+          "description": "Compares spec columns, states (regions flattened), transitions (keyed from>to), labels, derivation rules and meta. from/to are versions of {name}; fromName/toName override the model on either side so a local model can be compared against hive-default.",
+          "parameters": [
+            {
+              "name": "name",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "from",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "to",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "fromName",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "toName",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Diff",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "$ref": "#/components/schemas/WorkflowEntry"
+                      },
+                      "to": {
+                        "$ref": "#/components/schemas/WorkflowEntry"
+                      },
+                      "diff": {
+                        "$ref": "#/components/schemas/WorkflowModelDiff"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "from or to missing, or bad name/version"
+            },
+            "404": {
+              "description": "Either side not found"
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        }
+      },
+      "/api/workflows/{name}/{version}/confirm": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Confirm an ingested model's inferred elements as a new local version",
+          "description": "Owner only. Copies {name}@{version} with every inferred state, event and gate marked confirmed, provenance set to local and metadata.annotations[workflow.hivecommons.dev/confirmed-by] set to the caller, then saves it as the next free integer version. The source version is untouched. Audited as workflow_confirm.",
+          "parameters": [
+            {
+              "name": "name",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "version",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "201": {
+              "description": "Confirmed copy stored",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "entry": {
+                        "$ref": "#/components/schemas/WorkflowEntry"
+                      },
+                      "confirmed": {
+                        "type": "integer",
+                        "description": "Inferred elements that were confirmed"
+                      },
+                      "from": {
+                        "type": "string",
+                        "description": "Source name@version"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Bad name or version"
+            },
+            "403": {
+              "description": "Not an owner"
+            },
+            "404": {
+              "description": "Not found"
+            },
+            "409": {
+              "description": "hive-default is built-in and read-only"
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        }
+      },
+      "/api/workflows/{name}/{version}/labels": {
+        "get": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Preview the labels and commands a workflow model regenerates when bound",
+          "description": "The label vocabulary the engine reconciles into a bound repository (the model's labels block, stage colour filled in where unset, descriptions clamped), the human-gate verbs each state offers, and the built-in stage label each numbered state maps onto.",
+          "parameters": [
+            {
+              "name": "name",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "version",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Preview",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowLabelsPreview"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Model does not compile; body carries diagnostics"
+            },
+            "404": {
+              "description": "Not found"
+            },
+            "503": {
+              "description": "No workflow store"
+            }
+          }
+        }
+      },
       "/api/workflows/ingest": {
         "post": {
           "tags": [
@@ -36130,6 +36373,161 @@
           "type": "object",
           "description": "Compiled, derivation-ready form of a model (hash, states, columns, ordered rules). Never trusted from the wire: the spoke recompiles on save and on bind.",
           "additionalProperties": true
+        },
+        "WorkflowFieldChange": {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          }
+        },
+        "WorkflowChangeSet": {
+          "type": "object",
+          "properties": {
+            "added": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "removed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "changed": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/WorkflowFieldChange"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "WorkflowModelDiff": {
+          "type": "object",
+          "description": "Structural difference between two models; deterministic, lists sorted by key.",
+          "properties": {
+            "columns": {
+              "$ref": "#/components/schemas/WorkflowChangeSet"
+            },
+            "states": {
+              "$ref": "#/components/schemas/WorkflowChangeSet"
+            },
+            "transitions": {
+              "$ref": "#/components/schemas/WorkflowChangeSet"
+            },
+            "labels": {
+              "$ref": "#/components/schemas/WorkflowChangeSet"
+            },
+            "rules": {
+              "$ref": "#/components/schemas/WorkflowChangeSet"
+            },
+            "meta": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/WorkflowFieldChange"
+              }
+            },
+            "summary": {
+              "type": "string"
+            },
+            "empty": {
+              "type": "boolean"
+            }
+          }
+        },
+        "WorkflowLabelDef": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "color": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            }
+          }
+        },
+        "WorkflowLabelsPreview": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "hash": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": "string"
+            },
+            "labels": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/WorkflowLabelDef"
+              }
+            },
+            "commands": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string"
+                  },
+                  "verbs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "stages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "type": "integer"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
         },
         "WorkflowIngestResult": {
           "type": "object",
