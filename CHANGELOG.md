@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v6.14.0)
+
+### Added
+
+- CEL triggers have a new event kind, `ci.failed`: when the newest completed run of a check on a repository's default branch tip concludes `failure` or `timed_out`, a rule such as `event.kind == "ci.failed"` → `ci-maintainer` kicks that agent at once instead of leaving the red branch to its next cadence slot (one post-merge image build stayed red for over four hours unnoticed). It comes from the existing red-main sweep (every 10 minutes, no webhook needed), covers every check (not only required ones), skips cancelled runs and pull request runs, fires once per repository, check and commit, and is only evaluated for rules whose expression names `ci.failed`, so existing rules and hives without such a rule are unchanged. The Event triggers editor has a matching **Default-branch CI failed** preset; see `src/docs/cel-triggers.md`.
+
+### Fixed
+
+- Stage 085 / 090: with `auto_merge.contributor_lane.owner_approval_releases_workflow_fence` on, a contributor PR whose workflow edit is also listed in `auto_merge.human_merge_paths` was told that an owner's Approve review "releases the fence and the hive merges it". The approval only brought the lane to the human-merge-path rule, which holds the PR and never merges it, and the PR then sat at needs-decision with no step left. Under `workflow_fence_scope: human_merge_paths` that was every fenced PR. The stage now treats a head that touches a human-merge path as a person's merge from the start: no approval ask, the human-merge-path cause, and `stage/090-ready-for-human-merge` with the human-merge-path reason once the head is reviewed, green and soaked (an unanswered `requires_human` verdict still asks for its decision at 085). The hive's own human-merge-path `hold` routes the same way; a hold a person set keeps its route. The match reuses the file list the contributor lane already reads for its diff fence, so no extra GitHub call is made per sweep. A PR the pin-only exception might admit, and a workflow edit outside `human_merge_paths`, keep today's route.
+
 ## 2026-11-11 (v6.13.5)
 
 ### Fixed
