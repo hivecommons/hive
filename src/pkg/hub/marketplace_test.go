@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -536,11 +537,13 @@ func TestMarketplaceRefreshRoutesAndStatus(t *testing.T) {
 	}
 	s := marketplaceTestHub(t, fetch)
 
-	// Non-admin / anon are refused by requireAdmin.
-	rec := mktDo(s, httptest.NewRequest(http.MethodPost, "/api/marketplace/refresh?repo=a/b", nil))
-	if rec.Code != 401 && rec.Code != 403 {
-		t.Fatalf("anon refresh: %d", rec.Code)
+	// Anon is refused.
+	anon := httptest.NewRequest(http.MethodPost, "/api/marketplace/refresh?repo=a/b", nil)
+	anon.Header.Set("Origin", "http://localhost")
+	if rec := mktDo(s, anon); rec.Code != 401 {
+		t.Fatalf("anon refresh: %d %s", rec.Code, rec.Body.String())
 	}
+	var rec *httptest.ResponseRecorder
 	admin := func(target string) *http.Request {
 		req := httptest.NewRequest(http.MethodPost, target, nil)
 		req.AddCookie(testAuthCookie(hubAdminUsername))
@@ -600,9 +603,295 @@ func TestMarketplaceRefreshRoutesAndStatus(t *testing.T) {
 	if status["entries"].(float64) != 1 || status["schedule"] != hubMarketplaceDefaultSchedule || status["lastRefresh"] == nil || status["lastCheckedAt"] == nil {
 		t.Fatalf("status body: %s", rec.Body.String())
 	}
+	if status["pendingRepos"].(float64) != 0 || status["lastRefreshErrors"].(float64) != 0 {
+		t.Fatalf("pending/lastErrors: %s", rec.Body.String())
+	}
+	if _, ok := status["failing"]; ok {
+		t.Fatal("non-verbose status must not list failing repos")
+	}
 	byTier := status["byTier"].(map[string]interface{})
 	if byTier[bundle.TierIngestedUnreviewed].(float64) != 1 {
 		t.Fatalf("byTier: %v", byTier)
+	}
+}
+
+// Resume after restart: a store with a record for one repo and a published
+// entry must still trigger the startup pass for the rest, and a second
+// start with everything fresh must not crawl again.
+func TestMarketplaceSeedResumesAfterRestart(t *testing.T) {
+	t.Setenv(hubGitHubTokenEnv, "pat-token")
+	oldDelay := marketplaceSleep
+	marketplaceSleep = func(ctx context.Context, d time.Duration) {
+		if d != marketplaceSeedDelay {
+			<-ctx.Done() // the nightly park
+		}
+	}
+	t.Cleanup(func() { marketplaceSleep = oldDelay })
+
+	var mu sync.Mutex
+	fetched := map[string]int{}
+	fetch := func(ctx context.Context, repo string) (map[string][]byte, string, error) {
+		mu.Lock()
+		fetched[repo]++
+		mu.Unlock()
+		if repo == "konflux-ci/konflux-ci" {
+			return mktFixtureTree(t, "konflux-ci__konflux-ci"), "k1", nil
+		}
+		if repo == "broken/repo" {
+			return nil, "", errors.New("tarball: 404 Not Found")
+		}
+		return map[string][]byte{}, "none", nil
+	}
+	s := marketplaceTestHub(t, fetch)
+	t.Setenv(hubMarketplaceExtraReposEnv, "konflux-ci/konflux-ci,broken/repo")
+	all := marketplaceRepos()
+
+	// "Before the restart": one repo ingested and published, nothing else.
+	if _, err := s.runMarketplaceRefresh(context.Background(), []string{"konflux-ci/konflux-ci"}, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	if idx, _, _, _ := s.marketplace().Index(); len(idx.Entries) != 1 {
+		t.Fatalf("precondition: %d entries", len(idx.Entries))
+	}
+	due := s.marketplaceDueRepos()
+	if len(due) != len(all)-1 {
+		t.Fatalf("due after partial seed: %d, want %d", len(due), len(all)-1)
+	}
+	for _, r := range due {
+		if r == "konflux-ci/konflux-ci" {
+			t.Fatal("freshly ingested repo must not be due")
+		}
+	}
+
+	// "After the restart": StartMarketplaceRefresh resumes the rest.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.StartMarketplaceRefresh(ctx); close(done) }()
+	rf := s.refresher()
+	testutil.Eventually(t, 10*time.Second, func() bool {
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+		return rf.last != nil && rf.last.Trigger == "seed" && rf.last.Repos == len(all)-1
+	}, "startup pass did not resume the remaining repos")
+	cancel()
+	<-done
+	mu.Lock()
+	n := fetched["konflux-ci/konflux-ci"]
+	mu.Unlock()
+	if n != 1 {
+		t.Fatalf("konflux fetched %d times; the resume must skip fresh records", n)
+	}
+	if len(s.marketplace().refreshRecords()) != len(all) {
+		t.Fatalf("records after resume: %d, want %d", len(s.marketplace().refreshRecords()), len(all))
+	}
+
+	// Everything fresh except the failing repo, which is retried only after
+	// marketplaceRetryErrorAfter.
+	if due := s.marketplaceDueRepos(); len(due) != 0 {
+		t.Fatalf("fresh records must not be due: %v", due)
+	}
+	rec, _ := s.marketplace().refreshRecord("broken/repo")
+	rec.CheckedAt = rec.CheckedAt.Add(-marketplaceRetryErrorAfter)
+	_ = s.marketplace().saveRefreshRecord(rec)
+	if due := s.marketplaceDueRepos(); len(due) != 1 || due[0] != "broken/repo" {
+		t.Fatalf("stale error must be due: %v", due)
+	}
+
+	// Old-format records are due regardless of age.
+	now := rf.now()
+	if !marketplaceRepoDue(marketplaceRefreshRecord{Format: 1, CheckedAt: now}, true, now) {
+		t.Error("old format must be due")
+	}
+	if marketplaceRepoDue(marketplaceRefreshRecord{Format: marketplaceRecordFormat, CheckedAt: now.Add(-marketplaceStaleAfter + time.Minute)}, true, now) {
+		t.Error("fresh record must not be due")
+	}
+	if !marketplaceRepoDue(marketplaceRefreshRecord{Format: marketplaceRecordFormat, CheckedAt: now.Add(-marketplaceStaleAfter)}, true, now) {
+		t.Error("stale record must be due")
+	}
+}
+
+// The last-run summary survives a restart (a fresh refresher over the same
+// store), and the status route reports it with the error count.
+func TestMarketplaceLastRefreshPersists(t *testing.T) {
+	fetch := func(ctx context.Context, repo string) (map[string][]byte, string, error) {
+		if repo == "broken/repo" {
+			return nil, "", errors.New("tarball: 404 Not Found")
+		}
+		return map[string][]byte{}, "none", nil
+	}
+	s := marketplaceTestHub(t, fetch)
+	res, err := s.runMarketplaceRefresh(context.Background(), []string{"ok/repo", "broken/repo"}, "nightly")
+	if err != nil || len(res.Errors) != 1 {
+		t.Fatalf("run: %v %+v", err, res)
+	}
+
+	// Simulate a restart: a new HubServer over the same marketplace dir.
+	s2 := newHandlerHub()
+	s2.marketplaceRefresher = &marketplaceRefresher{fetch: fetch, now: time.Now}
+	rf := s2.refresher()
+	rf.mu.Lock()
+	last := rf.last
+	rf.mu.Unlock()
+	if last == nil || last.Trigger != "nightly" || last.Repos != 2 || len(last.Errors) != 1 || !last.StartedAt.Equal(res.StartedAt) {
+		t.Fatalf("persisted last refresh: %+v", last)
+	}
+
+	rec := mktDo(s2, httptest.NewRequest(http.MethodGet, "/api/marketplace/status", nil))
+	var status map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status["lastRefresh"] == nil || status["lastRefreshErrors"].(float64) != 1 || status["failingRepos"].(float64) != 1 {
+		t.Fatalf("status after restart: %s", rec.Body.String())
+	}
+	// Corrupt or missing summary → nil, not a crash.
+	st := s2.marketplace()
+	if err := os.WriteFile(st.lastRefreshPath(), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if st.loadLastRefresh() != nil {
+		t.Error("corrupt summary must load as nil")
+	}
+	if err := os.Remove(st.lastRefreshPath()); err != nil {
+		t.Fatal(err)
+	}
+	if st.loadLastRefresh() != nil {
+		t.Error("missing summary must load as nil")
+	}
+}
+
+// Auth matrix for POST /api/marketplace/refresh: anon 401, spoke bearer ok
+// (rate-limited), admin ok and unlimited; and the verbose status gate.
+func TestMarketplaceRefreshAuthMatrixAndVerboseStatus(t *testing.T) {
+	fetch := func(ctx context.Context, repo string) (map[string][]byte, string, error) {
+		if repo == "broken/repo" {
+			return nil, "", errors.New("tarball: 404 Not Found")
+		}
+		return map[string][]byte{}, "none", nil
+	}
+	s := marketplaceTestHub(t, fetch)
+	clock := s.refresher().now()
+	s.refresher().now = func() time.Time { return clock }
+	t.Setenv(hubMarketplaceExtraReposEnv, "broken/repo")
+
+	spoke := func(target string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, target, nil)
+		req.Header.Set("Authorization", heartbeatBearer(testHubSecret, mktTestHive))
+		req.Header.Set(marketplaceHiveIDHeader, mktTestHive)
+		return req
+	}
+	admin := func(method, target string) *http.Request {
+		req := httptest.NewRequest(method, target, nil)
+		req.AddCookie(testAuthCookie(hubAdminUsername))
+		req.Header.Set("Origin", "http://localhost")
+		return req
+	}
+
+	// Anon.
+	anon := httptest.NewRequest(http.MethodPost, "/api/marketplace/refresh", nil)
+	anon.Header.Set("Origin", "http://localhost")
+	if rec := mktDo(s, anon); rec.Code != 401 {
+		t.Fatalf("anon: %d %s", rec.Code, rec.Body.String())
+	}
+	// Non-admin session.
+	user := httptest.NewRequest(http.MethodPost, "/api/marketplace/refresh", nil)
+	user.AddCookie(testAuthCookie("someuser"))
+	user.Header.Set("Origin", "http://localhost")
+	if rec := mktDo(s, user); rec.Code != 403 {
+		t.Fatalf("non-admin session: %d", rec.Code)
+	}
+	// Spoke with a wrong bearer.
+	bad := spoke("/api/marketplace/refresh")
+	bad.Header.Set("Authorization", heartbeatBearer("wrong", mktTestHive))
+	if rec := mktDo(s, bad); rec.Code != 401 {
+		t.Fatalf("bad bearer: %d", rec.Code)
+	}
+
+	// Spoke single repo: ok, then burst-limited.
+	rec := mktDo(s, spoke("/api/marketplace/refresh?repo=broken/repo"))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "404 Not Found") {
+		t.Fatalf("spoke single: %d %s", rec.Code, rec.Body.String())
+	}
+	for i := 1; i < marketplaceRepoRefreshBurst; i++ {
+		if rec = mktDo(s, spoke("/api/marketplace/refresh?repo=ok/repo")); rec.Code != 200 {
+			t.Fatalf("spoke single #%d: %d", i, rec.Code)
+		}
+	}
+	rec = mktDo(s, spoke("/api/marketplace/refresh?repo=ok/repo"))
+	if rec.Code != 429 || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("spoke burst: %d %s retry-after=%q", rec.Code, rec.Body.String(), rec.Header().Get("Retry-After"))
+	}
+	// Admin single repo is not limited.
+	if rec = mktDo(s, admin(http.MethodPost, "/api/marketplace/refresh?repo=ok/repo")); rec.Code != 200 {
+		t.Fatalf("admin single while spoke limited: %d", rec.Code)
+	}
+	// Window passes → spoke allowed again.
+	clock = clock.Add(marketplaceRepoRefreshWindow)
+	if rec = mktDo(s, spoke("/api/marketplace/refresh?repo=ok/repo")); rec.Code != 200 {
+		t.Fatalf("spoke after window: %d", rec.Code)
+	}
+
+	// Spoke full run: 202 once per hour across callers; admin unaffected.
+	rf := s.refresher()
+	waitIdle := func() {
+		testutil.Eventually(t, 5*time.Second, func() bool {
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
+			return !rf.running
+		}, "background refresh did not finish")
+	}
+	rec = mktDo(s, spoke("/api/marketplace/refresh"))
+	if rec.Code != 202 {
+		t.Fatalf("spoke full: %d %s", rec.Code, rec.Body.String())
+	}
+	waitIdle()
+	rf.mu.Lock()
+	trigger := rf.last.Trigger
+	rf.mu.Unlock()
+	if trigger != "on-demand:hive:"+mktTestHive {
+		t.Fatalf("trigger = %q", trigger)
+	}
+	rec = mktDo(s, spoke("/api/marketplace/refresh"))
+	if rec.Code != 429 || !strings.Contains(rec.Body.String(), "try again in") {
+		t.Fatalf("spoke full again: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = mktDo(s, admin(http.MethodPost, "/api/marketplace/refresh")); rec.Code != 202 {
+		t.Fatalf("admin full while spoke limited: %d %s", rec.Code, rec.Body.String())
+	}
+	waitIdle()
+	clock = clock.Add(marketplaceFullRefreshInterval)
+	if rec = mktDo(s, spoke("/api/marketplace/refresh")); rec.Code != 202 {
+		t.Fatalf("spoke full after interval: %d", rec.Code)
+	}
+	waitIdle()
+
+	// Verbose status: anon 401, spoke and admin get the failing list.
+	if rec = mktDo(s, httptest.NewRequest(http.MethodGet, "/api/marketplace/status?verbose=1", nil)); rec.Code != 401 {
+		t.Fatalf("anon verbose: %d", rec.Code)
+	}
+	sv := httptest.NewRequest(http.MethodGet, "/api/marketplace/status?verbose=1", nil)
+	sv.Header.Set("Authorization", heartbeatBearer(testHubSecret, mktTestHive))
+	sv.Header.Set(marketplaceHiveIDHeader, mktTestHive)
+	rec = mktDo(s, sv)
+	if rec.Code != 200 {
+		t.Fatalf("spoke verbose: %d %s", rec.Code, rec.Body.String())
+	}
+	var verbose struct {
+		Failing []marketplaceFailingRepo `json:"failing"`
+		Pending []string                 `json:"pending"`
+		Pend    int                      `json:"pendingRepos"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &verbose); err != nil {
+		t.Fatal(err)
+	}
+	if len(verbose.Failing) != 1 || verbose.Failing[0].Repo != "broken/repo" || !strings.Contains(verbose.Failing[0].Error, "404") {
+		t.Fatalf("failing: %+v", verbose.Failing)
+	}
+	if verbose.Pending == nil || len(verbose.Pending) != verbose.Pend || verbose.Pend != 0 {
+		t.Fatalf("pending: %+v / %d", verbose.Pending, verbose.Pend)
+	}
+	if rec = mktDo(s, admin(http.MethodGet, "/api/marketplace/status?verbose=1")); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"failing"`) {
+		t.Fatalf("admin verbose: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -657,25 +946,48 @@ func TestMarketplaceHonourRateLimit(t *testing.T) {
 
 	h := http.Header{}
 	h.Set("X-RateLimit-Remaining", "1000")
-	marketplaceHonourRateLimit(context.Background(), h)
+	marketplaceHonourRateLimit(context.Background(), 200, h)
 	if slept != 0 {
 		t.Fatal("plenty remaining must not sleep")
 	}
 	h.Set("X-RateLimit-Remaining", "3")
 	h.Set("X-RateLimit-Reset", "garbage")
-	marketplaceHonourRateLimit(context.Background(), h)
+	marketplaceHonourRateLimit(context.Background(), 200, h)
 	if slept != 0 {
 		t.Fatal("unparseable reset must not sleep")
 	}
 	h.Set("X-RateLimit-Reset", "1")
-	marketplaceHonourRateLimit(context.Background(), h)
+	marketplaceHonourRateLimit(context.Background(), 200, h)
 	if slept != 0 {
 		t.Fatal("past reset must not sleep")
 	}
 	h.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(2*time.Hour).Unix(), 10))
-	marketplaceHonourRateLimit(context.Background(), h)
+	marketplaceHonourRateLimit(context.Background(), 200, h)
 	if slept != marketplaceRateMaxWait {
 		t.Fatalf("far reset should cap at max wait, slept %v", slept)
+	}
+
+	// Secondary rate limit: 403/429 + Retry-After sleeps that long even
+	// with budget remaining; capped; a 403 without Retry-After does not.
+	slept = 0
+	sec := http.Header{}
+	sec.Set("X-RateLimit-Remaining", "4000")
+	sec.Set("Retry-After", "7")
+	marketplaceHonourRateLimit(context.Background(), 403, sec)
+	if slept != 7*time.Second {
+		t.Fatalf("403 Retry-After: slept %v", slept)
+	}
+	slept = 0
+	sec.Set("Retry-After", "99999")
+	marketplaceHonourRateLimit(context.Background(), 429, sec)
+	if slept != marketplaceRateMaxWait {
+		t.Fatalf("429 Retry-After cap: slept %v", slept)
+	}
+	slept = 0
+	sec.Del("Retry-After")
+	marketplaceHonourRateLimit(context.Background(), 403, sec)
+	if slept != 0 {
+		t.Fatalf("403 without Retry-After and plenty remaining: slept %v", slept)
 	}
 }
 
@@ -692,8 +1004,8 @@ func TestMarketplaceStartRefreshDisabledAndSeedGate(t *testing.T) {
 	t.Setenv(hubMarketplaceDisableEnv, "")
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("HIVE_HUB_GITHUB_TOKEN", "")
-	if s.marketplaceShouldSeed() {
-		t.Error("no token → no seed")
+	if due := s.marketplaceDueRepos(); due != nil {
+		t.Errorf("no token → nothing due, got %d", len(due))
 	}
 
 	// Empty schedule: loop parks on ctx and exits on cancel.
@@ -715,6 +1027,12 @@ func mktTarball(t *testing.T, files map[string]string) []byte {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
+	// GitHub tarballs (git archive) lead with a pax_global_header; the
+	// production bug behind #17620's one-entry catalogue was treating it as
+	// a second top-level directory.
+	if err := tw.WriteHeader(&tar.Header{Name: "pax_global_header", Typeflag: tar.TypeXGlobalHeader, PAXRecords: map[string]string{"comment": "abc"}}); err != nil {
+		t.Fatal(err)
+	}
 	for name, body := range files {
 		if err := tw.WriteHeader(&tar.Header{Name: "repo-abc/" + name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
 			t.Fatal(err)
@@ -790,8 +1108,8 @@ func TestMarketplaceGitHubFetcher(t *testing.T) {
 		t.Error("branch lookup failure should fail")
 	}
 
-	// With a token and an empty catalogue the seed gate opens.
-	if !s.marketplaceShouldSeed() {
-		t.Error("token + empty catalogue → should seed")
+	// With a token and no records every corpus repo is due.
+	if due := s.marketplaceDueRepos(); len(due) != len(marketplaceRepos()) {
+		t.Errorf("token + empty catalogue → all due, got %d", len(due))
 	}
 }

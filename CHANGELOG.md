@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-11 (v5.222.0)
+
+### Added
+
+- Add Agent Substrate (CNCF Sandbox) as a fourth, opt-in `sandbox.runtime: substrate` (ADR-0026 phase 2). Actors are created through Substrate's gRPC Control API with a hive-derived `atenet-egress` policy, a digest-pinned image, and workspace transfer through an in-actor bridge over the atenet-router mTLS tunnel; `sandbox.substrate.snapshot_on_idle` suspends instead of deleting the actor. Credential brokering is unchanged (agents still use the hive MITM proxy). No new Go modules: a trimmed wire-compatible proto subset is generated in-repo.
+
+### Changed
+
+- Document Agent Substrate as the opt-in fourth `sandbox.runtime` (ADR-0026 phase 2): ADR amendment with the contract mapping, deviations and when to choose it over OpenShell, a `sandbox-isolation.md` section, `deploy/substrate.md` install and verification notes with the hive cluster survey, and the integrations table entry.
+
 ## 2026-11-11 (v5.221.1)
 
 ### Fixed

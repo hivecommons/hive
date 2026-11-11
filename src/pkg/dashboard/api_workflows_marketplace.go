@@ -464,8 +464,11 @@ func (s *Server) handleMarketplacePublish(w http.ResponseWriter, r *http.Request
 }
 
 // handleMarketplaceRefresh asks the hub to re-ingest its corpus (or one
-// ?repo=). Owner on the spoke; the hub applies its own admin policy and may
-// refuse, which is surfaced as 403.
+// ?repo=). Owner on the spoke; the request carries the spoke's heartbeat
+// bearer + X-Hive-ID, which the hub accepts for refresh the way it does
+// for publish. The hub's error body is relayed verbatim: 401/403 → 403,
+// 429 (hive rate limit) and 409 (run in progress) keep their status, and
+// anything else → 502.
 func (s *Server) handleMarketplaceRefresh(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -495,6 +498,12 @@ func (s *Server) handleMarketplaceRefresh(w http.ResponseWriter, r *http.Request
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		jsonError(w, "hub refused refresh: "+strings.TrimSpace(hubErrorMessage(body)), http.StatusForbidden)
+		return
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusConflict:
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			w.Header().Set("Retry-After", ra)
+		}
+		jsonError(w, "hub refresh not started: "+strings.TrimSpace(hubErrorMessage(body)), resp.StatusCode)
 		return
 	case resp.StatusCode >= 300:
 		jsonError(w, fmt.Sprintf("hub refresh failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(hubErrorMessage(body))), http.StatusBadGateway)
