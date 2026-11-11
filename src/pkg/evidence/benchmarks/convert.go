@@ -14,7 +14,8 @@ type Options struct {
 	HiveID      string
 	HiveVersion string
 	Cluster     string
-	// Since drops PRs whose newest record predates it. Zero exports all.
+	// Since drops PRs whose newest record is not strictly newer than it (the
+	// pusher passes its last watermark). Zero exports all.
 	Since time.Time
 	// Now stamps published_at; zero means time.Now().
 	Now time.Time
@@ -97,7 +98,7 @@ func Convert(bundles []*evidence.Bundle, opts Options) []Record {
 			continue
 		}
 		latest := pr.Bundle
-		if !opts.Since.IsZero() && latest.UpdatedAt.Before(opts.Since) {
+		if !opts.Since.IsZero() && !latest.UpdatedAt.After(opts.Since) {
 			continue
 		}
 		public := opts.RepoConsent && opts.RepoPublic != nil && opts.RepoPublic(latest.Repo)

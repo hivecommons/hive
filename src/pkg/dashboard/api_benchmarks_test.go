@@ -2,6 +2,8 @@ package dashboard
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,10 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/evidence/benchmarks"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/evidence"
+	"github.com/hivecommons/hive/pkg/evidence/benchmarks"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 func writeBenchmarkFixtureBundle(t *testing.T, root string, b *evidence.Bundle) {
@@ -102,5 +105,63 @@ func TestBenchmarksExportRespectsPublishOptOut(t *testing.T) {
 	}
 	if st := s.BenchmarksStatusBlock(); st == nil || st.Publish || st.HiveHash != benchmarks.HiveHash("h1") {
 		t.Errorf("status block = %+v", st)
+	}
+}
+
+func TestPushBenchmarksAdvancesWatermarkAndRecordsFailures(t *testing.T) {
+	s := benchmarksTestServer(t, true)
+	prevState := benchmarksPublishStatePath
+	benchmarksPublishStatePath = filepath.Join(t.TempDir(), "benchmarks-publish.json")
+	t.Cleanup(func() { benchmarksPublishStatePath = prevState })
+	t.Setenv(spoke.EnvHeartbeatKey, "spoke-key")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	var got struct {
+		HiveID  string              `json:"hive_id"`
+		Records []benchmarks.Record `json:"records"`
+	}
+	var bearer string
+	status := http.StatusAccepted
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bearer = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(status)
+	}))
+	defer hub.Close()
+
+	s.pushBenchmarks(t.Context(), hub.URL, logger)
+	if bearer != "Bearer spoke-key" || got.HiveID != "h1" || len(got.Records) != 1 {
+		t.Fatalf("push: bearer=%q hive=%q n=%d", bearer, got.HiveID, len(got.Records))
+	}
+	st := s.BenchmarksStatusBlock()
+	if st.TotalPushed != 1 || st.LastPushAt == "" || st.WatermarkAt == "" || st.LastError != "" {
+		t.Fatalf("status after push = %+v", st)
+	}
+	if _, err := os.Stat(benchmarksPublishStatePath); err != nil {
+		t.Fatalf("watermark not persisted: %v", err)
+	}
+
+	// Nothing new since the watermark: no second request.
+	got.Records = nil
+	s.pushBenchmarks(t.Context(), hub.URL, logger)
+	if got.Records != nil {
+		t.Fatal("pushed again with nothing newer than the watermark")
+	}
+
+	// A hub error is surfaced and keeps the watermark where it was.
+	s.benchmarks().state.Watermark = time.Time{}
+	status = http.StatusInternalServerError
+	s.pushBenchmarks(t.Context(), hub.URL, logger)
+	if st := s.BenchmarksStatusBlock(); st.LastError == "" || st.TotalPushed != 1 {
+		t.Fatalf("failure not recorded: %+v", st)
+	}
+
+	// Opt-out short-circuits before any request.
+	off := false
+	s.deps.Config.Benchmarks.Publish = &off
+	bearer = ""
+	s.pushBenchmarks(t.Context(), hub.URL, logger)
+	if bearer != "" {
+		t.Fatal("publish:false must not push")
 	}
 }

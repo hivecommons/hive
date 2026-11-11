@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/evidence/benchmarks"
 )
@@ -183,5 +184,70 @@ func TestValidBenchmarkRel(t *testing.T) {
 		if validBenchmarkRel(rel) != ok {
 			t.Errorf("%q: want %v", rel, ok)
 		}
+	}
+}
+
+func TestBenchmarksIngestRejectsMalformedBodies(t *testing.T) {
+	useTempBenchmarksStore(t)
+	s := npsTestHub("h1")
+	for name, tc := range map[string]struct {
+		body string
+		want int
+	}{
+		"not json":       {"{", http.StatusBadRequest},
+		"bad hive id":    {`{"hive_id":"../x","records":[]}`, http.StatusBadRequest},
+		"too large":      {`{"hive_id":"h1","records":[` + strings.Repeat(`{},`, benchmarksIngestMaxBodyBytes/3) + `{}]}`, http.StatusRequestEntityTooLarge},
+		"publish is off": {`{"hive_id":"h1","records":[]}`, http.StatusAccepted},
+	} {
+		if rec := benchIngest(s, tc.body, s.heartbeatKeyFor("h1")); rec.Code != tc.want {
+			t.Errorf("%s: code=%d want %d (%s)", name, rec.Code, tc.want, rec.Body.String())
+		}
+	}
+	nosecret := newTestHubServer("")
+	if rec := benchIngest(nosecret, `{"hive_id":"h1","records":[]}`, "x"); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("no hub secret: code=%d", rec.Code)
+	}
+}
+
+func TestBenchmarksStatePersistsAcrossLoad(t *testing.T) {
+	useTempBenchmarksStore(t)
+	hash := benchmarks.HiveHash("h1")
+	changed, _, err := storeBenchmarkRecords(hash, []benchmarks.Record{benchRecord(hash, "aaa", "2026-11-05T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hubBenchmarks.mu.Lock()
+	hubBenchmarks.pending[changed[0]] = true
+	hubBenchmarks.state.LastIngestAt = "2026-11-11T00:00:00Z"
+	hubBenchmarks.save()
+	hubBenchmarks.pending = map[string]bool{}
+	hubBenchmarks.state = BenchmarksPublishState{}
+	hubBenchmarks.loaded = false
+	hubBenchmarks.load()
+	defer hubBenchmarks.mu.Unlock()
+	if !hubBenchmarks.pending[changed[0]] || hubBenchmarks.state.LastIngestAt != "2026-11-11T00:00:00Z" {
+		t.Fatalf("state did not round-trip: pending=%v state=%+v", hubBenchmarks.pending, hubBenchmarks.state)
+	}
+}
+
+func TestPublishBenchmarksRecordsMissingIdentity(t *testing.T) {
+	useTempBenchmarksStore(t)
+	hash := benchmarks.HiveHash("h1")
+	changed, _, _ := storeBenchmarkRecords(hash, []benchmarks.Record{benchRecord(hash, "aaa", "")})
+	hubBenchmarks.mu.Lock()
+	hubBenchmarks.pending[changed[0]] = true
+	hubBenchmarks.mu.Unlock()
+	oldTok := hubGitHubAuthTokenForRequest
+	hubGitHubAuthTokenForRequest = func(ctx context.Context) string { return "" }
+	t.Cleanup(func() { hubGitHubAuthTokenForRequest = oldTok })
+	s := newTestHubServer("secret")
+	s.publishBenchmarks(t.Context())
+	hubBenchmarks.mu.Lock()
+	defer hubBenchmarks.mu.Unlock()
+	if hubBenchmarks.state.LastError == "" || len(hubBenchmarks.pending) != 1 {
+		t.Fatalf("missing identity must be surfaced and keep files pending: %+v pending=%v", hubBenchmarks.state, hubBenchmarks.pending)
+	}
+	if benchmarkMonth(benchmarks.Record{}) != time.Now().UTC().Format("2006-01") {
+		t.Error("record without timestamps must land in the current month")
 	}
 }

@@ -210,3 +210,63 @@ func checkSchema(t *testing.T, path string, schema map[string]any, v any) {
 		checkSchema(t, path+"."+k, sub, val)
 	}
 }
+
+func TestConvertEdgeCases(t *testing.T) {
+	// Backfilled merge (no Merge event), first bundle green, sentinel
+	// findings, nameless agent on an unknown backend/model, and a bundle
+	// that cannot be keyed — all with zero-value Options.
+	ledgerMerged := &evidence.Bundle{
+		SchemaVersion: evidence.SchemaVersion, ID: "e", Repo: "o/r", Number: 9, HeadSHA: "s1",
+		Author:    evidence.Author{Login: "bot", Kind: evidence.AuthorAgent, Backend: "mystery", Model: "zeta-9000"},
+		CI:        evidence.CI{Status: "success"},
+		Sentinel:  []evidence.SentinelFinding{{}},
+		Outcome:   &evidence.Outcome{Source: "ledger", State: evidence.BackfillStateMerged, At: t0(4 * time.Hour)},
+		Verdicts:  []evidence.Verdict{{Perspective: "security", Verdict: "approve"}}, // no model → no reviewer record
+		CreatedAt: t0(2 * time.Hour), UpdatedAt: t0(4 * time.Hour),
+	}
+	earlier := &evidence.Bundle{
+		SchemaVersion: evidence.SchemaVersion, ID: "f", Repo: "o/r", Number: 9, HeadSHA: "s0",
+		Author: ledgerMerged.Author, CI: evidence.CI{Status: "success"},
+		CreatedAt: t0(0), UpdatedAt: t0(time.Hour),
+	}
+	unkeyed := &evidence.Bundle{SchemaVersion: evidence.SchemaVersion, ID: "g"}
+	recs := Convert([]*evidence.Bundle{ledgerMerged, nil, unkeyed, earlier}, Options{HiveID: "x"})
+	if len(recs) != 1 {
+		t.Fatalf("want 1 author record, got %d: %+v", len(recs), recs)
+	}
+	r := recs[0]
+	if r.Agent.Name != "agent" || r.Agent.Harness != "other" || r.Model.Provider != "unknown" || r.Task.Kind != "unknown" {
+		t.Errorf("defaults: %+v %+v %+v", r.Agent, r.Model, r.Task)
+	}
+	if r.SandboxRuntime != SandboxRuntimeNone || r.Source.HiveVersion == "" || r.PublishedAt == "" {
+		t.Errorf("fallbacks: runtime=%q version=%q published=%q", r.SandboxRuntime, r.Source.HiveVersion, r.PublishedAt)
+	}
+	if !r.Outcome.PRMerged || r.Outcome.MergeMethod != evidence.MergeUnrecorded || r.Outcome.MergedAt == "" || r.Outcome.Retries != 1 {
+		t.Errorf("ledger-merged outcome: %+v", r.Outcome)
+	}
+	if r.Outcome.CIGreenFirstTry == nil || !*r.Outcome.CIGreenFirstTry {
+		t.Errorf("first bundle was green: %+v", r.Outcome.CIGreenFirstTry)
+	}
+	if r.Quality == nil || r.Quality.SentinelFindings == nil || *r.Quality.SentinelFindings != 1 {
+		t.Errorf("quality: %+v", r.Quality)
+	}
+
+	// A merge event with an unknown method is recorded as unrecorded.
+	odd := &evidence.Bundle{
+		SchemaVersion: evidence.SchemaVersion, ID: "h", Repo: "o/r", Number: 10, HeadSHA: "t1",
+		Author:    evidence.Author{Kind: evidence.AuthorAgent, Model: "openai/gpt-5", Agent: "ci-fixer"},
+		Policy:    evidence.Policy{ACMMLevel: 99},
+		Merge:     &evidence.MergeEvent{Actor: "x", Method: "teleport", At: t0(time.Hour)},
+		CreatedAt: t0(0), UpdatedAt: t0(time.Hour),
+	}
+	recs = Convert([]*evidence.Bundle{odd}, Options{HiveID: "x", Now: t0(2 * time.Hour)})
+	if len(recs) != 1 || recs[0].Outcome.MergeMethod != evidence.MergeUnrecorded || recs[0].Model.Provider != "openai" || recs[0].Task.Kind != "ci-repair" {
+		t.Errorf("odd merge: %+v", recs)
+	}
+	if recs[0].Quality != nil && recs[0].Quality.ACMMLevel != nil {
+		t.Errorf("out-of-range ACMM level must be dropped: %+v", recs[0].Quality)
+	}
+	if got := qualityOf(&evidence.Bundle{Policy: evidence.Policy{ACMMLevel: 99}}, &evidence.PR{}); got != nil {
+		t.Errorf("qualityOf with nothing to report = %+v, want nil", got)
+	}
+}
