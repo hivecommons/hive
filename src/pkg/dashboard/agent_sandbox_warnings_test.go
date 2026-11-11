@@ -37,8 +37,8 @@ func TestAgentStatusSandboxWarningsByRuntime(t *testing.T) {
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{}},
 	}
 	statuses := map[string]*crux.Process{}
-	for n := range cfg.Agents {
-		statuses[n] = &crux.Process{}
+	for n, a := range cfg.Agents {
+		statuses[n] = &crux.Process{Config: a}
 	}
 	payload := BuildAgentOnlyStatus(governor.State{Mode: "IDLE"}, statuses, cfg)
 
