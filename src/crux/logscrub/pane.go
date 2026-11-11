@@ -36,7 +36,9 @@ var deviceCodeLineRedactor = regexp.MustCompile(`(?m)^.*(?:login/device|Waiting 
 var apiKeyRedactor = regexp.MustCompile(`(^|[^A-Za-z0-9._-])(sk-[A-Za-z0-9._\-]{6,})`)
 
 // RedactPaneTokens masks GitHub tokens, sk- API keys and device-login one-time
-// codes/lines in text derived from an agent pane.
+// codes/lines in text derived from an agent pane, then runs ScrubString so every
+// other secret shape it covers (JWTs, AWS keys, Slack tokens/webhooks, Bearer
+// and Basic credentials, private-key blocks) is masked too (#17665).
 func RedactPaneTokens(s string) string {
 	s = statusJWTRedactor.ReplaceAllString(s, "[REDACTED]")
 	s = statusBearerRedactor.ReplaceAllString(s, "[REDACTED]")
@@ -48,5 +50,7 @@ func RedactPaneTokens(s string) string {
 	s = apiKeyRedactor.ReplaceAllString(s, "${1}sk-***REDACTED***")
 	s = deviceCodeRedactor.ReplaceAllString(s, "${1}****-****")
 	s = deviceCodeLineRedactor.ReplaceAllString(s, "[auth flow redacted]")
-	return s
+	// Runs last so the pane-style replacements above stay byte-identical: neither
+	// "ghp_abc***" nor "sk-***REDACTED***" matches a ScrubString pattern.
+	return ScrubString(s)
 }

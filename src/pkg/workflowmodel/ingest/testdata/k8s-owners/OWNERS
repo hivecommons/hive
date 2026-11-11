@@ -1,0 +1,9 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+approvers:
+  - sig-widgets-leads
+  - alice
+reviewers:
+  - sig-widgets-reviewers
+  - bob
+emeritus_approvers:
+  - carol

@@ -725,6 +725,9 @@ func (s *Server) featuresLinkedView() map[string]interface{} {
 // which is what the governor config GET serves.
 func (s *Server) featuresSectionWithLinked(cfg *config.Config) map[string]interface{} {
 	out := featuresSectionResponse(cfg)
+	for k, v := range s.featuresBenchmarksResponse(cfg) {
+		out[k] = v
+	}
 	for k, v := range s.featuresLinkedView() {
 		out[k] = v
 	}

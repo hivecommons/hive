@@ -35,6 +35,8 @@ import (
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
+	"github.com/hivecommons/hive/pkg/workflowmodel/hivedefault"
 )
 
 // StageLabelPolicy is the live `governor.labels.stage` policy.
@@ -268,6 +270,10 @@ type StageTracker struct {
 	// required caches the base branch's required check set (human
 	// routing); created on first use.
 	required map[string]humanRequiredEntry
+	// ensuredWorkflow is the hash of the bound workflow model whose
+	// labels were provisioned per repo; a rebinding changes the hash
+	// and the next pass re-provisions (hivecommons/hive#17620, P4).
+	ensuredWorkflow map[string]string
 	// superseded remembers when the hive-authored superseded check last
 	// ran per key+head, so a PR that legitimately sits at 085 is not
 	// re-read every pass.
@@ -342,7 +348,7 @@ func stageOwnerHolds(owner stageOwner, ok bool, list []stageObservation, obs sta
 
 // NewStageTracker returns an empty tracker.
 func NewStageTracker() *StageTracker {
-	return &StageTracker{obs: map[string]map[string]stageObservation{}, details: map[string]stageDetail{}, ensured: map[string]bool{}, checks: map[string]humanChecksEntry{}, fences: map[string]humanFenceEntry{}, superseded: map[string]time.Time{}, owners: map[string]stageOwner{}}
+	return &StageTracker{obs: map[string]map[string]stageObservation{}, details: map[string]stageDetail{}, ensured: map[string]bool{}, ensuredWorkflow: map[string]string{}, checks: map[string]humanChecksEntry{}, fences: map[string]humanFenceEntry{}, superseded: map[string]time.Time{}, owners: map[string]stageOwner{}}
 }
 
 var sharedStageTracker = NewStageTracker()
@@ -1908,10 +1914,25 @@ func (f *engineStatusForge) DeleteComment(ctx context.Context, id int64) error {
 // missing or whose colour drifted from the table. A PATCH keeps the label on
 // every PR wearing it, so a pre-existing `dco` label is recoloured in place
 // rather than re-added.
+//
+// A repository bound to a workflow model (hivecommons/hive#17620, P4) also
+// gets that model's own label vocabulary (Profile.LabelDefs) created or
+// recoloured, memoised by the model's hash so a rebinding — or a new
+// version of the bound model — re-provisions on the next pass, and the
+// labels a previous binding provisioned that the new one no longer
+// declares are reclaimed under the safety rules in
+// automerge_stage_labels_gc.go. An unbound repository that was never
+// bound takes exactly the built-in path.
 func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, tracker *StageTracker, kinds authorkind.Names) error {
 	full := strings.ToLower(owner + "/" + repo)
+	var model []workflowmodel.LabelDef
+	modelHash := ""
+	profile := c.workflowProfile(owner, repo)
+	if profile != nil {
+		model, modelHash = profile.LabelDefs(stagelabels.StageColor), profile.Hash
+	}
 	tracker.mu.Lock()
-	done := tracker.ensured[full]
+	done := tracker.ensured[full] && tracker.ensuredWorkflow[full] == modelHash
 	tracker.mu.Unlock()
 	if done {
 		return nil
@@ -1950,25 +1971,64 @@ func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, trac
 		}
 		existing[strings.ToLower(stage.Label())] = renamed
 	}
-	for _, def := range stagelabels.LabelDefsFor(kinds) {
-		cur, ok := existing[strings.ToLower(def.Name)]
+	ensure := func(name, color, description string) error {
+		cur, ok := existing[strings.ToLower(name)]
 		switch {
 		case !ok:
-			_, _, err := c.gh.Issues.CreateLabel(ctx, owner, repo, &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(stagelabels.ClampLabelDescription(def.Description))})
+			created, _, err := c.gh.Issues.CreateLabel(ctx, owner, repo, &gh.Label{Name: gh.Ptr(name), Color: gh.Ptr(color), Description: gh.Ptr(stagelabels.ClampLabelDescription(description))})
 			if err != nil && !isGitHubStatus(err, http.StatusUnprocessableEntity) {
-				return fmt.Errorf("creating label %s in %s: %w", def.Name, full, err)
+				return fmt.Errorf("creating label %s in %s: %w", name, full, err)
 			}
-		case !strings.EqualFold(cur.GetColor(), def.Color):
-			_, _, err := c.gh.Issues.EditLabel(ctx, owner, repo, cur.GetName(), &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(stagelabels.ClampLabelDescription(def.Description))})
+			if created == nil {
+				created = &gh.Label{Name: gh.Ptr(name), Color: gh.Ptr(color)}
+			}
+			existing[strings.ToLower(name)] = created
+		case !strings.EqualFold(cur.GetColor(), color):
+			_, _, err := c.gh.Issues.EditLabel(ctx, owner, repo, cur.GetName(), &gh.Label{Name: gh.Ptr(name), Color: gh.Ptr(color), Description: gh.Ptr(stagelabels.ClampLabelDescription(description))})
 			if err != nil {
-				return fmt.Errorf("recolouring label %s in %s: %w", def.Name, full, err)
+				return fmt.Errorf("recolouring label %s in %s: %w", name, full, err)
 			}
+			cur.Color = gh.Ptr(color)
+		}
+		return nil
+	}
+	for _, def := range stagelabels.LabelDefsFor(kinds) {
+		if err := ensure(def.Name, def.Color, def.Description); err != nil {
+			return err
 		}
 	}
+	for _, def := range model {
+		if err := ensure(def.Name, def.Color, def.Description); err != nil {
+			return err
+		}
+	}
+	// Remember what the model owns here and reclaim what a previous
+	// binding left behind (automerge_stage_labels_gc.go).
+	c.reconcileWorkflowLabels(ctx, owner, repo, profile, model, existing, kinds)
 	tracker.mu.Lock()
 	tracker.ensured[full] = true
+	if tracker.ensuredWorkflow == nil {
+		tracker.ensuredWorkflow = map[string]string{}
+	}
+	tracker.ensuredWorkflow[full] = modelHash
 	tracker.mu.Unlock()
 	return nil
+}
+
+// workflowProfile is the compiled workflow model bound to owner/repo, or
+// nil when the engine has no stage-engine options, no lookup (P2's
+// Options.WorkflowFor), the repository is unbound, or the binding is
+// hive-default (whose labels are the built-in family already provisioned
+// above).
+func (c *Engine) workflowProfile(owner, repo string) *workflowmodel.Profile {
+	if c == nil || c.stageEngine == nil || c.stageEngine.WorkflowFor == nil {
+		return nil
+	}
+	p := c.stageEngine.WorkflowFor(owner, repo)
+	if p == nil || p.Name == hivedefault.Name {
+		return nil
+	}
+	return p
 }
 
 // ApplyStageLabels runs the reconcile pass on a one-shot engine. The

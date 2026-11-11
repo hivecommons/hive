@@ -68,6 +68,9 @@
         if (tabId === 'Appearance') loadThemeConfig();
         if (tabId === 'Knowledge') { renderPublicKnowledgeControls(); loadKnowledgeConnectors(); loadKnowledgePipeline(); }
         if (tabId === 'Compliance') loadComplianceStatus();
+        // The workflow editor's canvas needs real pointer listeners and a
+        // measured viewport once its SVG is in the DOM.
+        if (tabId === 'Workflows' && typeof wfEdAfterRender === 'function') wfEdAfterRender();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
       // invariant on every render (requirement #4). Cheap and idempotent — a
@@ -257,6 +260,7 @@
         case 'Thresholds': return renderGovThresholds(d) + renderGovSLATargets(d);
         case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || [], d.requireLabels || []);
         case 'Repos': return renderGovRepos(d.repos || []);
+        case 'Workflows': return renderGovWorkflows();
         case 'Budget': return renderGovBudget(d.budget || {}, d.health || {});
         case 'Notifications': return renderGovNotifications(d.notifications || {});
         case 'Channels': return renderGovChannels(d.channels);

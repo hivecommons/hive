@@ -76,7 +76,7 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// plus pkg/workflowmodel/store, the spoke-local library of workflow
 	// models behind the /api/workflows routes and the tracker's per-repo
 	// column block (RFC hivecommons/hive#17620, phase 2).
-	const maxDashboardInternalImports = 68
+	const maxDashboardInternalImports = 69
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

@@ -23,6 +23,12 @@ func TestRedactPaneTokens(t *testing.T) {
 		{"waiting for authorization", "Waiting for authorization...\n", "[auth flow redacted]\n"},
 		{"press any key", "Press any key to copy code\ndone", "[auth flow redacted]\ndone"},
 		{"multiple secrets across lines", "a ghs_abcdefghij1234\nb sk-hive-qa1234\n", "a ghs_abc***\nb sk-***REDACTED***\n"},
+		{"jwt", "t eyJhbGciOiJIUzI1NiIsInR5cCI6.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFt.SflKxwRJSMeKKF2QT4fwpMeJf36POk end", "t [REDACTED] end"},
+		{"aws access key", "key AKIAIOSFODNN7EXAMPLE end", "key [REDACTED] end"},
+		{"slack token", "tok xoxb-1234567890-abcdefghij end", "tok [REDACTED] end"},
+		{"bearer header", "Authorization: Bearer abcdefghij0123456789xyz", "Authorization: [REDACTED]"},
+		{"private key block", "a\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\nb", "a\n[REDACTED]\nb"},
+		{"github and sk with aws", "ghp_abcdefghij1234567890 sk-hive-qa1234 AKIAIOSFODNN7EXAMPLE", "ghp_abc*** sk-***REDACTED*** [REDACTED]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

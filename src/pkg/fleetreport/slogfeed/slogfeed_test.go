@@ -1036,7 +1036,7 @@ func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {
 	logger2, seen, _ := newFeed(t)
 	logger2.Warn("inference upstream failed")
 	logger2.Warn("inference no route", "agent", "scanner")
-	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassInferenceUpstreamError || (*seen)[1].class != fleetreport.ClassUnclassifiedRepeated {
+	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassInferenceUpstreamError || (*seen)[1].class != fleetreport.ClassInferenceNoRoute {
 		t.Fatalf("unrelated inference failures = %+v", *seen)
 	}
 }

@@ -751,3 +751,30 @@ func TestWorkflowApprovalUntrustedReasonParksAtNeedsDecision(t *testing.T) {
 		t.Fatalf("decisionCause(%q) = %q, want Prow, the command and the workflow path named", reason, cause)
 	}
 }
+
+func TestWorkflowApprovalAttentionSkipsCommandInReadOnlyEligibilityProbe(t *testing.T) {
+	var comments []string
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.workflowRuns = []map[string]any{heldRun(1, "acme/widget")}
+		p.commentBodies = &comments
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+
+	probeCtx := context.WithValue(context.Background(), integrationEligibilityContextKey{}, &integrationEligibilityCapture{})
+	want := workflowApprovalRequiredPrefix + "ci/build"
+	if got := c.workflowApprovalAttention(probeCtx, "widget", "acme", "widget", 23, "sha23", "ci/build", 1); got != want {
+		t.Fatalf("probe reason = %q, want %q", got, want)
+	}
+	if len(comments) != 0 {
+		t.Fatalf("probe posted comments %q, want none", comments)
+	}
+	if got := c.workflowApprovalAttention(context.Background(), "widget", "acme", "widget", 23, "sha23", "ci/build", 1); got != want {
+		t.Fatalf("live reason = %q, want %q", got, want)
+	}
+	if len(comments) != 1 || comments[0] != workflowApprovalCommandBody("sha23") {
+		t.Fatalf("live comments = %q, want one command after the probe", comments)
+	}
+}

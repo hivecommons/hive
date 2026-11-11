@@ -13,6 +13,22 @@ agent_sandbox.job.volumes[].claim # TODO #11854
 agent_sandbox.job.volumes[].mount_path # TODO #11854
 agent_sandbox.job.volumes[].name # TODO #11854
 agent_sandbox.job.volumes[].read_only # TODO #11854
+agent_sandbox.openshell.allow_hosts[] # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.binaries[] # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.gateway_url # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.insecure_tls # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.namespace # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.node_selector.<key> # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.policy_profile # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.runtime_class_name # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.timeout_s # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.token_env # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.tolerations[].effect # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.tolerations[].key # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.tolerations[].operator # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.tolerations[].value # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.workspace_claim # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.openshell.workspace_claim_mount # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
 agent_sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
 agents.<key>.acmm_levels[] # TODO #11854
@@ -114,6 +130,22 @@ agents.<key>.sandbox.job.volumes[].read_only # TODO #11854
 agents.<key>.sandbox.job.workspace_claim # TODO #11854
 agents.<key>.sandbox.job.workspace_claim_mount # TODO #11854
 agents.<key>.sandbox.network_mode # TODO #11854
+agents.<key>.sandbox.openshell.allow_hosts[] # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.binaries[] # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.gateway_url # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.insecure_tls # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.namespace # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.node_selector.<key> # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.policy_profile # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.runtime_class_name # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.timeout_s # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.token_env # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.tolerations[].effect # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.tolerations[].key # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.tolerations[].operator # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.tolerations[].value # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.workspace_claim # TODO #17645 (OpenShell runtime; Settings control pending)
+agents.<key>.sandbox.openshell.workspace_claim_mount # TODO #17645 (OpenShell runtime; Settings control pending)
 agents.<key>.sandbox.runtime # TODO #11854
 agents.<key>.sandbox.timeout_s # TODO #11854
 agents.<key>.sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
@@ -413,6 +445,9 @@ knowledge.vaults[].auto_index # TODO #11854
 knowledge.vaults[].git_sync # TODO #11854
 knowledge.vaults[].name # TODO #11854
 knowledge.vaults[].path # TODO #11854
+network.upstream_proxy.hosts[] # deployment-level egress knob (corporate forward proxy), set via hive.yaml/env/hub clusters.json, not a Settings control (#17637)
+network.upstream_proxy.no_proxy[] # deployment-level egress knob (corporate forward proxy), set via hive.yaml/env/hub clusters.json, not a Settings control (#17637)
+network.upstream_proxy.url # deployment-level egress knob (corporate forward proxy), set via hive.yaml/env/hub clusters.json, not a Settings control (#17637)
 notifications.discord.rfc_announcer # opt-in rich RFC notify gates; yaml-only, documented in docs/notifications.md (#15926)
 notifications.discord.rfc_backlink_comment # opt-in rich RFC notify gates; yaml-only, documented in docs/notifications.md (#15926)
 notifications.discord.rfc_format # opt-in rich RFC notify gates; yaml-only, documented in docs/notifications.md (#15926)
@@ -713,3 +748,4 @@ data.workflows_dir # workflow-model store root; deployment knob, no Settings con
 project.workflow_bindings[].name # set through the per-repo workflow select on Settings → Repos via PUT /api/workflows/bindings, not a leaf-path control (RFC #17620)
 project.workflow_bindings[].repo # see project.workflow_bindings[].name
 project.workflow_bindings[].version # see project.workflow_bindings[].name
+workflow.label_gc # operator safety knob for model-label garbage collection on rebind; yaml-only, no Settings control planned (RFC #17620)

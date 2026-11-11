@@ -87,6 +87,10 @@
     {
       "name": "Workflows",
       "description": "Workflow models (RFC hivecommons/hive#17620): the spoke-local library of ingested/authored workflow definitions, per-repository bindings, and compilation. Writes are owner-gated and audited (workflow_save, workflow_delete, workflow_bind, workflow_unbind). Every route answers 503 when the hive has no workflow store."
+    },
+    {
+      "name": "Strategy Lab",
+      "description": "Nous experiment engine"
     }
   ],
   "paths": {
@@ -27114,6 +27118,67 @@
         }
       }
     },
+    "/api/benchmarks/export": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Export this hive's anonymized benchmark records",
+        "description": "Owner session. Folds the review evidence bundles under /data/evidence into hivecommons/benchmarks schema records (one per PR and agent role): model, harness, sandbox runtime, outcome, time-to-merge, ACMM level, keyed by this hive's salted hash. Repository and org names appear only for public repositories unless `benchmarks.repo_consent: false`. Returns `records: []` when `benchmarks.publish: false`. The same records are pushed hourly to the hub (hivecommons/hive#17694).",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "RFC3339 or YYYY-MM-DD; PRs whose newest bundle is older are skipped. Default: 90 days ago."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Benchmark records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hive_hash": {
+                      "type": "string"
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "publish": {
+                      "type": "boolean"
+                    },
+                    "since": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "count": {
+                      "type": "integer"
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "hivecommons/benchmarks schema/result.schema.json record"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad since"
+          }
+        }
+      }
+    },
     "/api/evidence/summary": {
       "get": {
         "tags": [
@@ -39100,6 +39165,116 @@
         }
       }
     },
+    "/api/workflows/yaml": {
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Convert a workflow model between JSON and YAML",
+        "description": "Editor helper. Send `model` to get its YAML (field names are the JSON tags), or `yaml` to get the parsed model back. A YAML parse or schema error answers 200 with `error` set so the editor can show it inline. Read-only; no store or owner role needed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "$ref": "#/components/schemas/WorkflowModel"
+                  },
+                  "yaml": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "yaml, or model (or error) depending on the input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "yaml": {
+                      "type": "string"
+                    },
+                    "model": {
+                      "$ref": "#/components/schemas/WorkflowModel"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Neither model nor yaml supplied, or malformed body"
+          }
+        }
+      }
+    },
+    "/api/workflows/simulate": {
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Simulate an issue or PR against an unsaved workflow model",
+        "description": "Editor variant of /api/workflows/{name}/{version}/simulate: the model travels in the body and `facts` are required (no forge fetch). Same decision and trace shape. Read-only; no store or owner role needed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "kind",
+                  "facts"
+                ],
+                "properties": {
+                  "model": {
+                    "$ref": "#/components/schemas/WorkflowModel"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "issue",
+                      "pr"
+                    ]
+                  },
+                  "facts": {
+                    "$ref": "#/components/schemas/WorkflowSimulateFacts"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision, trace and normalized facts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowSimulateResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing model, kind or facts"
+          },
+          "422": {
+            "description": "Model does not compile; body carries diagnostics"
+          }
+        }
+      }
+    },
     "/api/workflows/bindings": {
       "get": {
         "tags": [
@@ -39357,6 +39532,313 @@
         }
       }
     },
+    "/api/workflows/{name}/versions": {
+      "get": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "List every saved version of a workflow model",
+        "description": "Newest save first. hive-default answers its single virtual, read-only entry.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "versions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WorkflowEntry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown model"
+          },
+          "503": {
+            "description": "No workflow store"
+          }
+        }
+      }
+    },
+    "/api/workflows/{name}/diff": {
+      "get": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Structural diff between two saved workflow model versions",
+        "description": "Compares spec columns, states (regions flattened), transitions (keyed from>to), labels, derivation rules and meta. from/to are versions of {name}; fromName/toName override the model on either side so a local model can be compared against hive-default.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fromName",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "toName",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Diff",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "$ref": "#/components/schemas/WorkflowEntry"
+                    },
+                    "to": {
+                      "$ref": "#/components/schemas/WorkflowEntry"
+                    },
+                    "diff": {
+                      "$ref": "#/components/schemas/WorkflowModelDiff"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "from or to missing, or bad name/version"
+          },
+          "404": {
+            "description": "Either side not found"
+          },
+          "503": {
+            "description": "No workflow store"
+          }
+        }
+      }
+    },
+    "/api/workflows/{name}/{version}/confirm": {
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Confirm an ingested model's inferred elements as a new local version",
+        "description": "Owner only. Copies {name}@{version} with every inferred state, event and gate marked confirmed, provenance set to local and metadata.annotations[workflow.hivecommons.dev/confirmed-by] set to the caller, then saves it as the next free integer version. The source version is untouched. Audited as workflow_confirm.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Confirmed copy stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entry": {
+                      "$ref": "#/components/schemas/WorkflowEntry"
+                    },
+                    "confirmed": {
+                      "type": "integer",
+                      "description": "Inferred elements that were confirmed"
+                    },
+                    "from": {
+                      "type": "string",
+                      "description": "Source name@version"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad name or version"
+          },
+          "403": {
+            "description": "Not an owner"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "hive-default is built-in and read-only"
+          },
+          "503": {
+            "description": "No workflow store"
+          }
+        }
+      }
+    },
+    "/api/workflows/{name}/{version}/labels": {
+      "get": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Preview the labels and commands a workflow model regenerates when bound",
+        "description": "The label vocabulary the engine reconciles into a bound repository (the model's labels block, stage colour filled in where unset, descriptions clamped), the human-gate verbs each state offers, and the built-in stage label each numbered state maps onto.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowLabelsPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Model does not compile; body carries diagnostics"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "503": {
+            "description": "No workflow store"
+          }
+        }
+      }
+    },
+    "/api/workflows/{name}/{version}/simulate": {
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Simulate an issue or PR against a workflow model",
+        "description": "Derives the state a stored model would put an item in, using the same stageengine Facts the engine uses, and returns a per-rule trace explaining why. Send `facts` directly, or `repo`+`number` to best-effort fill them from the forge (the response lists which facts were filled and which stay unknown). Read-only; RFC phase 3c of the workflow-models RFC.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowSimulateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision, trace and normalized facts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowSimulateResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body, unknown kind, or kind does not match the fetched item"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Model does not compile, or no forge client is wired for repo+number fill"
+          },
+          "502": {
+            "description": "Forge fetch failed"
+          },
+          "503": {
+            "description": "No workflow store"
+          }
+        }
+      }
+    },
     "/api/workflows/ingest": {
       "post": {
         "tags": [
@@ -39426,6 +39908,525 @@
           },
           "503": {
             "description": "No forge client or no workflow store"
+          }
+        }
+      }
+    },
+    "/api/workflows/ingest/capabilities": {
+      "get": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "What the ingest sources can do on this spoke",
+        "description": "Whether a kube context is reachable for POST /api/workflows/ingest/cluster (kubectl on PATH with a kubeconfig or in-cluster token), the contexts kubectl knows, and whether a model gateway is configured for the optional LLM stage of POST /api/workflows/ingest/spec. RFC hivecommons/hive#17620 phase 6. Owner role required.",
+        "responses": {
+          "200": {
+            "description": "Capabilities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowIngestCapabilities"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/workflows/ingest/cluster": {
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Ingest Tekton pipelines from a live cluster context",
+        "description": "Lists tekton.dev Pipelines, Tasks, the newest PipelineRuns per pipeline and Tekton Triggers objects from a kube context through kubectl, serialises them as cluster/<namespace>/<kind>/<name>.yaml and runs the same Tekton ingester as POST /api/workflows/ingest, so citations point at those virtual paths. The last run status per pipeline is recorded as an observed annotation (workflow.hivecommons.dev/observed-run/<pipeline id>) and a coverage finding, never as an inferred lifecycle element. Caps: 25 namespaces, 20 runs per pipeline, 500 objects, 8 MiB. Owner role required.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "type": "string",
+                    "description": "kube context name (default: the current context)"
+                  },
+                  "namespace": {
+                    "type": "string",
+                    "description": "namespace to read; required unless allNamespaces"
+                  },
+                  "allNamespaces": {
+                    "type": "boolean",
+                    "description": "read every namespace (capped at 25)"
+                  },
+                  "selector": {
+                    "type": "string",
+                    "description": "label selector passed to kubectl -l"
+                  },
+                  "runsPerPipeline": {
+                    "type": "integer",
+                    "description": "newest PipelineRuns kept per pipeline (default 3, max 20)"
+                  },
+                  "repository": {
+                    "type": "string",
+                    "description": "owner/name to scope the model to (default: cluster/<source slug>)"
+                  },
+                  "save": {
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "store name (default: slug of the source)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ingested (not saved)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowClusterIngestResult"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Ingested and saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowClusterIngestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request, or namespace required"
+          },
+          "403": {
+            "description": "Owner role required, or the kube credential may not list Tekton resources"
+          },
+          "404": {
+            "description": "Unknown kube context"
+          },
+          "413": {
+            "description": "Object or byte cap exceeded"
+          },
+          "422": {
+            "description": "No kube access configured on this spoke, or Tekton CRDs not installed"
+          },
+          "502": {
+            "description": "kubectl failed"
+          },
+          "503": {
+            "description": "No workflow store"
+          }
+        }
+      }
+    },
+    "/api/workflows/ingest/spec": {
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Ingest a written process spec into a draft workflow model",
+        "description": "Turns markdown or plain text (pasted, a default-branch file through the forge, or an https URL on a public host; 256 KiB cap) into a draft model. A deterministic stage reads step lists, conditional sentences and role nouns into a compiling skeleton; when useLLM is on (default: when a model gateway is configured) the configured gateway refines it and its answer is accepted only if it parses strictly and compiles, with one retry quoting the diagnostics before falling back to the skeleton. Every state, event and gate is confidence inferred and cites spec:<heading>#L<start>-L<end>; provenance is ingested-unreviewed; the LLM-assisted annotation names the model used. This is the only LLM use in the workflow-model stack. Owner role required.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "description": "pasted spec; exactly one of text, repo+path or url"
+                  },
+                  "repo": {
+                    "type": "string",
+                    "description": "owner/name of the repository holding the spec"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "repo-relative path of the spec file"
+                  },
+                  "url": {
+                    "type": "string",
+                    "description": "https URL of the spec"
+                  },
+                  "useLLM": {
+                    "type": "boolean",
+                    "description": "ask the configured model gateway to refine the draft (default: true when a gateway is configured); 422 when requested without one"
+                  },
+                  "repository": {
+                    "type": "string",
+                    "description": "owner/name to scope the model to (default: repo, or spec/<origin slug>)"
+                  },
+                  "save": {
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "store name (default: slug of the first heading)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ingested (not saved)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowSpecIngestResult"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Ingested and saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowSpecIngestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request, empty spec, or URL not https / private host"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "413": {
+            "description": "Spec exceeds 256 KiB"
+          },
+          "422": {
+            "description": "useLLM requested but no model gateway is configured"
+          },
+          "502": {
+            "description": "Spec fetch failed"
+          },
+          "503": {
+            "description": "No forge client or no workflow store"
+          }
+        }
+      }
+    },
+    "/api/workflows/{name}/{version}/bundle": {
+      "get": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Export a stored workflow model as a signed bundle",
+        "description": "Compiles name@version and wraps model, compiled profile and the sha256 of the canonical model JSON in a WorkflowBundle (RFC #17620 phase 7). Any role. 422 when the model does not compile.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bundle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowBundle"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Model does not compile"
+          },
+          "503": {
+            "description": "Workflow store not enabled"
+          }
+        }
+      }
+    },
+    "/api/workflows/import": {
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Import a workflow bundle",
+        "description": "Verifies the bundle (hash over the canonical model, local recompile compared structurally with the published profile) and stores the model. The version is pinned to the bundle's when that slot is free, else the next integer version. The store recompiles; the published profile is never persisted. Owner role; audited as workflow_import.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowBundle"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Imported and recompiled locally",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowImportResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Bundle verification failed (hash or published profile does not match local compile)"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "503": {
+            "description": "Workflow store or marketplace not enabled"
+          },
+          "413": {
+            "description": "Bundle too large"
+          }
+        }
+      }
+    },
+    "/api/marketplace/workflows": {
+      "get": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Marketplace catalogue index (proxied from the hub)",
+        "description": "Returns the hub's catalogue index. The spoke caches it for workflow.marketplace.refresh_interval and revalidates with If-None-Match; ?refresh=1 forces revalidation. When the hub is unreachable the response is 502 with the last cached index and stale=true.",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "any value forces revalidation with the hub"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Index",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketplaceIndexResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Marketplace disabled (workflow.marketplace.enabled=false)"
+          },
+          "502": {
+            "description": "Hub unreachable; body carries the cached index (possibly empty) with stale=true",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketplaceIndexResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No hub URL configured"
+          }
+        }
+      }
+    },
+    "/api/marketplace/workflows/{name}/{version}/import": {
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Import a catalogue entry from the hub",
+        "description": "Fetches name@version's bundle from the hub, verifies it locally and stores it exactly as POST /api/workflows/import does. Owner role; audited as workflow_import.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Imported and recompiled locally",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowImportResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Bundle verification failed (hash or published profile does not match local compile)"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "Not in the marketplace or marketplace disabled"
+          },
+          "502": {
+            "description": "Hub unreachable or returned an invalid bundle"
+          },
+          "503": {
+            "description": "Workflow store not enabled or no hub URL"
+          }
+        }
+      }
+    },
+    "/api/marketplace/workflows/publish": {
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Publish a library entry to the hub marketplace",
+        "description": "Exports name@version as a bundle (tier local-published unless the model is ingested-unreviewed) and posts it to the hub with the spoke's heartbeat credential. Owner role; audited as workflow_publish.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "version"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Published",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "published": {
+                      "type": "string",
+                      "description": "name@version"
+                    },
+                    "hash": {
+                      "type": "string"
+                    },
+                    "tier": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Owner role required, or the hub refused the spoke credential"
+          },
+          "404": {
+            "description": "Entry not found"
+          },
+          "409": {
+            "description": "name@version already published with a different hash"
+          },
+          "422": {
+            "description": "Model does not compile or hub rejected the bundle"
+          },
+          "502": {
+            "description": "Hub unreachable"
+          },
+          "503": {
+            "description": "Workflow store not enabled or no hub URL"
+          }
+        }
+      }
+    },
+    "/api/marketplace/refresh": {
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Ask the hub to refresh its ingested catalogue",
+        "description": "Proxies POST /api/marketplace/refresh on the hub (optionally ?repo=owner/name). Owner role on the spoke; the hub applies its own admin policy. Audited as workflow_marketplace_refresh.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Refresh accepted by the hub"
+          },
+          "403": {
+            "description": "Owner role required or hub refused"
+          },
+          "404": {
+            "description": "Marketplace disabled"
+          },
+          "502": {
+            "description": "Hub unreachable or failed"
+          },
+          "503": {
+            "description": "No hub URL"
           }
         }
       }
@@ -39862,6 +40863,731 @@
           },
           "entry": {
             "$ref": "#/components/schemas/WorkflowEntry"
+          }
+        }
+      },
+      "WorkflowSimulateRequest": {
+        "type": "object",
+        "description": "Either `facts` (with `kind`) or `repo`+`number` must be given. When both are present `facts` wins and `repo`/`number` only seed the item reference.",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "issue",
+              "pr"
+            ]
+          },
+          "repo": {
+            "type": "string",
+            "description": "owner/repo"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "facts": {
+            "$ref": "#/components/schemas/WorkflowSimulateFacts"
+          }
+        }
+      },
+      "WorkflowSimulateFacts": {
+        "type": "object",
+        "description": "JSON mirror of stageengine.Facts. Enumerations are the engine's name helpers: author.kind hive|clanker|human|unknown; pr.checks green|red|pending|none|unknown; pr.review approved|changes_requested|pending|unavailable|requires_human; pr.dco yes|no|unknown.",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "merged": {
+            "type": "boolean"
+          },
+          "draft": {
+            "type": "boolean"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "author": {
+            "type": "object",
+            "properties": {
+              "login": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "selfAuthored": {
+                "type": "boolean"
+              },
+              "role": {
+                "type": "string"
+              }
+            }
+          },
+          "park": {
+            "type": "object",
+            "properties": {
+              "holds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "needsHuman": {
+                "type": "boolean"
+              },
+              "decisionLabel": {
+                "type": "string"
+              },
+              "possiblyExists": {
+                "type": "boolean"
+              },
+              "sentinel": {
+                "type": "boolean"
+              },
+              "humanOnlyReason": {
+                "type": "string"
+              },
+              "approvedDirection": {
+                "type": "boolean"
+              },
+              "decisionQuestion": {
+                "type": "string"
+              },
+              "decisionSuperseded": {
+                "type": "boolean"
+              }
+            }
+          },
+          "issue": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "bucket": {
+                "type": "string"
+              }
+            }
+          },
+          "pr": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "checks": {
+                "type": "string"
+              },
+              "review": {
+                "type": "string"
+              },
+              "dco": {
+                "type": "string"
+              },
+              "conflicting": {
+                "type": "boolean"
+              },
+              "changesRequested": {
+                "type": "boolean"
+              },
+              "humanApprover": {
+                "type": "boolean"
+              },
+              "lane": {
+                "type": "object",
+                "properties": {
+                  "lane": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "WorkflowSimulateResult": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string"
+              },
+              "column": {
+                "type": "string"
+              },
+              "stage": {
+                "type": "integer"
+              },
+              "label": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "abstain": {
+                "type": "boolean"
+              },
+              "covered": {
+                "type": "boolean"
+              },
+              "terminal": {
+                "type": "boolean"
+              }
+            }
+          },
+          "trace": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "evaluated": {
+                  "type": "boolean"
+                },
+                "matched": {
+                  "type": "boolean"
+                },
+                "skipped": {
+                  "type": "string"
+                },
+                "builtin": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "predicates": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "fact": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "type": "string"
+                      },
+                      "holds": {
+                        "type": "boolean"
+                      },
+                      "known": {
+                        "type": "boolean"
+                      },
+                      "actual": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "facts": {
+            "$ref": "#/components/schemas/WorkflowSimulateFacts"
+          },
+          "filled": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unknown": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "WorkflowFieldChange": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkflowChangeSet": {
+        "type": "object",
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "changed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkflowFieldChange"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "WorkflowModelDiff": {
+        "type": "object",
+        "description": "Structural difference between two models; deterministic, lists sorted by key.",
+        "properties": {
+          "columns": {
+            "$ref": "#/components/schemas/WorkflowChangeSet"
+          },
+          "states": {
+            "$ref": "#/components/schemas/WorkflowChangeSet"
+          },
+          "transitions": {
+            "$ref": "#/components/schemas/WorkflowChangeSet"
+          },
+          "labels": {
+            "$ref": "#/components/schemas/WorkflowChangeSet"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/WorkflowChangeSet"
+          },
+          "meta": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowFieldChange"
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "empty": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WorkflowLabelDef": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkflowLabelsPreview": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowLabelDef"
+            }
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string"
+                },
+                "verbs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string"
+                },
+                "number": {
+                  "type": "integer"
+                },
+                "label": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "WorkflowIngestCapabilities": {
+        "type": "object",
+        "properties": {
+          "cluster": {
+            "type": "boolean",
+            "description": "kube access is configured on this spoke"
+          },
+          "clusterReason": {
+            "type": "string",
+            "description": "why cluster is false, or why contexts could not be listed"
+          },
+          "contexts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "spec": {
+            "type": "object",
+            "properties": {
+              "llm": {
+                "type": "boolean",
+                "description": "a model gateway is configured for the optional LLM stage"
+              },
+              "model": {
+                "type": "string",
+                "description": "gateway model id the LLM stage would use"
+              }
+            }
+          }
+        }
+      },
+      "WorkflowClusterIngestResult": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WorkflowIngestResult"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "description": "cluster:<context>/<namespace>"
+              },
+              "runs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "pipeline": {
+                      "type": "string"
+                    },
+                    "namespace": {
+                      "type": "string"
+                    },
+                    "run": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "completed": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "namespaces": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "WorkflowSpecIngestResult": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "$ref": "#/components/schemas/WorkflowModel"
+          },
+          "compiled": {
+            "type": "boolean"
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowDiagnostic"
+            }
+          },
+          "profile": {
+            "type": "object"
+          },
+          "source": {
+            "type": "string",
+            "description": "spec:<origin>"
+          },
+          "llm": {
+            "type": "object",
+            "properties": {
+              "used": {
+                "type": "boolean"
+              },
+              "model": {
+                "type": "string"
+              },
+              "attempts": {
+                "type": "integer"
+              },
+              "accepted": {
+                "type": "boolean",
+                "description": "the returned model is the gateway's answer (false: deterministic skeleton)"
+              },
+              "error": {
+                "type": "string"
+              }
+            }
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "heading": {
+                  "type": "string"
+                },
+                "level": {
+                  "type": "integer"
+                },
+                "startLine": {
+                  "type": "integer"
+                },
+                "endLine": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "entry": {
+            "$ref": "#/components/schemas/WorkflowEntry"
+          }
+        }
+      },
+      "WorkflowBundle": {
+        "type": "object",
+        "description": "Portable workflow model envelope: model + the publisher's compiled profile + sha256 of the canonical model JSON. Importers verify the hash and recompile locally; the published profile is only ever compared, never trusted.",
+        "required": [
+          "apiVersion",
+          "model",
+          "profile",
+          "hash"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "enum": [
+              "workflow.hivecommons.dev/v1alpha1"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "WorkflowBundle"
+            ]
+          },
+          "model": {
+            "$ref": "#/components/schemas/WorkflowModel"
+          },
+          "profile": {
+            "type": "object",
+            "description": "compiled profile (see WorkflowProfile)"
+          },
+          "hash": {
+            "type": "string",
+            "description": "sha256 hex of the canonical (sorted-key) model JSON"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "built-in",
+              "curated",
+              "ingested-unreviewed",
+              "local",
+              "local-published"
+            ]
+          }
+        }
+      },
+      "WorkflowImportResult": {
+        "type": "object",
+        "properties": {
+          "entry": {
+            "$ref": "#/components/schemas/WorkflowEntry"
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "description": "name@version in the marketplace, for marketplace imports"
+          }
+        }
+      },
+      "MarketplaceIndexEntry": {
+        "type": "object",
+        "description": "One immutable catalogue row, keyed name@version plus hash.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "built-in",
+              "curated",
+              "ingested-unreviewed",
+              "local",
+              "local-published"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "repository or author the model came from"
+          },
+          "states": {
+            "type": "integer"
+          },
+          "columns": {
+            "type": "integer"
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "publishedBy": {
+            "type": "string"
+          },
+          "sourceSHA": {
+            "type": "string",
+            "description": "commit the model was ingested from"
+          },
+          "newerIngestAvailable": {
+            "type": "boolean",
+            "description": "set on curated entries when a later ingested-unreviewed version exists"
+          },
+          "adoption": {
+            "type": "object",
+            "description": "reserved; empty today"
+          },
+          "ratings": {
+            "type": "object",
+            "description": "reserved; empty today"
+          },
+          "benchmarks": {
+            "type": "object",
+            "description": "reserved; empty today"
+          }
+        }
+      },
+      "MarketplaceIndex": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarketplaceIndexEntry"
+            }
+          }
+        }
+      },
+      "MarketplaceIndexResponse": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "$ref": "#/components/schemas/MarketplaceIndex"
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "true when served from cache because the hub was unreachable"
+          },
+          "etag": {
+            "type": "string"
+          },
+          "fetchedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": "string"
           }
         }
       }

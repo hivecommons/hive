@@ -85,7 +85,9 @@ func TestPostAdvisoryDigest_UnpausedRepoUnchanged(t *testing.T) {
 	// Some OTHER repo is paused; this one is not.
 	c.SetRepoPausedFunc(pauseAll("some-other-repo"))
 	c.SetWritebackGate(writeback.New(writeback.Config{}, writeback.Deps{
-		RepoPause: func(r string) (writeback.RepoPauseInfo, bool) { return writeback.RepoPauseInfo{}, r == "some-other-repo" },
+		RepoPause: func(r string) (writeback.RepoPauseInfo, bool) {
+			return writeback.RepoPauseInfo{}, r == "some-other-repo"
+		},
 	}, ""))
 
 	if err := c.PostAdvisoryDigest(context.Background(), repo, 10, advisoryDigestPrefix+"\nlive"); err != nil {

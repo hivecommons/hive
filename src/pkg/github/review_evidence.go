@@ -814,6 +814,13 @@ func (c *Client) reviewEvidencePolicy(p evidence.Policy) evidence.Policy {
 	return p
 }
 
+// EvidenceAgentContext resolves the sandbox runtime and benchmark task kind
+// stamped on agent-authored bundles (Author.Runtime / Author.TaskKind,
+// hivecommons/hive#17694). The composition root installs the config-backed
+// resolver; the default leaves both empty, which the exporter reads as
+// "none" / "unknown".
+var EvidenceAgentContext = func(agent string) (runtime, taskKind string) { return "", "" }
+
 // evidenceAuthor classifies the PR author. A PR the audit log records as
 // opened by one of this hive's agents is "agent" even though GitHub shows the
 // App bot as its author, and carries the agent, backend and model that audit
@@ -821,7 +828,8 @@ func (c *Client) reviewEvidencePolicy(p evidence.Policy) evidence.Policy {
 func evidenceAuthor(repo string, number int, user *gh.User) evidence.Author {
 	login := strings.TrimSpace(user.GetLogin())
 	if m := auditAuthorMetaForPR(repo, number, reviewVerdictAuditPath, time.Now().UTC().Add(-reviewVerdictAuditLookback)); m.Agent != "" {
-		return evidence.Author{Login: login, Kind: evidence.AuthorAgent, Agent: m.Agent, Backend: m.Backend, Model: m.Model}
+		runtime, kind := EvidenceAgentContext(m.Agent)
+		return evidence.Author{Login: login, Kind: evidence.AuthorAgent, Agent: m.Agent, Backend: m.Backend, Model: m.Model, Runtime: runtime, TaskKind: kind}
 	}
 	switch {
 	case strings.EqualFold(user.GetType(), "Bot") || strings.HasSuffix(strings.ToLower(login), "[bot]"):

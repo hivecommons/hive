@@ -242,6 +242,54 @@ The relay touches the spool only through an `os.Root` opened at the workspace. A
 
 Out of scope: the quality and deps lanes are unchanged, and nothing inside a Job writes to GitHub directly.
 
+## Running sandboxed kicks in an OpenShell sandbox
+
+`sandbox.runtime: openshell` runs an agent's sandboxed kicks in an [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox instead of a Podman container or a plain Kubernetes Job ([ADR-0026](adr/0026-sandbox-runtime-selection.md), epic [#17642](https://github.com/hivecommons/hive/issues/17642)). OpenShell adds what the other two runtimes lack: the workload runs with no capabilities under Landlock and seccomp mediation, and **egress is default-deny** — every outbound connection goes through the gateway's proxy and is checked against a per-binary policy. Phase 1 is opt-in; nothing changes for a hive that does not select it.
+
+Everything above about the kick path still holds. Hive prepares the workspace on its own data PVC, writes the prompt, and after the sandbox exits reads the commits back and hands them to the push broker and PR path. Only step 2 changes: the launcher is `sandbox.OpenShellLauncher`, which talks to an OpenShell **gateway** over gRPC (`github.com/ai-openshell/sdk-go` v0.1.8); the gateway owns the sandbox pod.
+
+```yaml
+agent_sandbox:
+  enabled: true
+  runtime: openshell
+  openshell:
+    gateway_url: https://openshell-gateway.openshell.svc:8443   # host:port or http(s)://
+    namespace: hive                   # the OpenShell workspace (their term), default "default"
+    token_env: OPENSHELL_TOKEN        # env var holding the gateway bearer token; never the token itself
+    workspace_claim: hive-data        # the PVC hive's /data lives on
+    workspace_claim_mount: /data      # where hive sees it (default)
+    allow_hosts: [litellm.example.com, hub.hivecommons.dev]   # on top of github.com / api.github.com
+    timeout_s: 1800                   # bounds one sandbox from create to delete
+agents:
+  deps:
+    sandbox:
+      enabled: true
+      image: registry.example/project-dev@sha256:…   # digest-pinned
+      openshell:
+        node_selector: { kernel: "6.12" }
+        tolerations:
+          - { key: sandbox, operator: Exists, effect: NoSchedule }
+        binaries: [/usr/bin/git, /usr/lib/git-core/git-remote-https, /usr/local/bin/node]
+```
+
+The gateway, workspace, token, TLS and claim fields are cluster facts and fall back from the per-agent block to the global one; `allow_hosts`, `binaries`, `node_selector`, `tolerations` and `runtime_class_name` are per-agent choices and replace the global values when set.
+
+**Workspace transport is the shared claim again, not a copy.** The SDK's file transfer is single-file and not available on every gateway, so the OpenShell runtime mounts `workspace_claim` at a `sub_path` pointing at the per-kick workspace, at the same `/workspace` mount the other launchers use, through the gateway's Kubernetes driver config. That needs two things on the cluster side: the gateway setting `allow_driver_config = true`, and the claim labelled `openshell.ai/sandbox-attachable: "true"` and `openshell.ai/sandbox-attachable-workspace: "<namespace>"`. The same ReadWriteMany caveat as the Job runtime applies when the sandbox lands on another node, and `agent_sandbox.workspace_dir` must live under `workspace_claim_mount`.
+
+**The egress policy.** Hive derives an OpenShell network policy from the hosts its own proxy brokers for a Podman sandbox: `github.com` read-write (git's fetch-pack is a `POST` even when it only reads) and `api.github.com` **read-only** — a sandbox that somehow obtained a token still could not mutate through the API — plus whatever `allow_hosts` names, as `host` (443) or `host:port`. URLs, userinfo, wildcards and anything but a literal host name are rejected, and a unit-level prover renders the policy for the shipped examples to keep it that way. Everything else is unreachable, including a raw TCP connect to an arbitrary IP. OpenShell matches rules per **real binary path** and allows nothing for an unlisted binary, so the policy is attached to a default set (`git`, `git-remote-https`, `curl`, `node`, `python3`, `crux` at their usual paths) that `binaries` overrides when an image puts them elsewhere; a denied connection shows the path OpenShell identified in the sandbox log. `network_mode: none` drops every rule. `policy_profile` is recorded on the sandbox as the annotation `hive.dev/policy-profile` for gateway admission to act on; the SDK has no create-time profile selection.
+
+**The credential boundary.** Same rule as the Job runtime: environment variables from the allowlist are copied in with the same credential-name filter, hive's brokered GitHub token never enters the sandbox, and hive pushes and opens the PR from the returned workspace. There is **no** Secret-reference path into the sandbox in phase 1, so model credentials have to arrive through an allowlisted non-credential variable pointing at a routable gateway named in `allow_hosts`. The Cline backend, which needs a provider file or Secret, is refused on this runtime.
+
+**Lifecycle.** The sandbox is named `hive-kick-<agent>-<unix>` and labelled `app.kubernetes.io/managed-by=hive-openshell`. Hive waits for it to become ready, runs the kick command with the sanitized environment in `/workspace`, collects stdout, stderr and the exit code (capped at 16 MiB), and deletes the sandbox — on success, on failure, and on the kick timeout, in which case the kick ends with exit code `-1` and `context deadline exceeded`, exactly like a timed-out Job. Cleanup runs on a fresh, bounded context when the kick's own has expired, so a finished sandbox is not left behind because the deadline fired during log collection.
+
+**What hive checks, and what it cannot.** Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when an openshell-runtime agent resolves no `gateway_url` or no `workspace_claim`, and refuses the kick with the same message before the agent is marked running. It also preflights each distinct gateway (`Health().Check` and `Config().GetGateway`, read-only, cached for five minutes, bounded to 30 s) and adds a warning when the gateway is unreachable or unhealthy, `allow_driver_config` is not enabled, or telemetry is on. It cannot see the node kernel, the CNI or the claim's labels from inside its pod; those remain the operator prerequisites in [deploy/openshell.md](../deploy/openshell.md).
+
+**The terminal pane.** An openshell-runtime agent has no tmux session either, so its ▶ terminal opens the same read-only `/terminal/job/<agent>` viewer as a job-runtime agent, behind the same handoff and role check ([#17645](https://github.com/hivecommons/hive/issues/17645)). While a kick runs it follows the newest live `hive-kick-<agent>-<unix>` sandbox's gateway log (`GetLogs`, polled at up to the gateway's 2,000-line buffer per read, scrubbed of token-shaped values like the pod log); between kicks, once the launcher has deleted the sandbox, or when the gateway cannot be listed, it shows the last persisted transcript exactly as the job viewer does. The live view is weaker than the job pod log, and the pane says so: the gateway log carries the sandbox's supervisor, policy (OCSF) and tracing events — the network and filesystem decisions made around the kick — not the kick's stdout, because the kick runs as an exec session and [exec output reaches neither the gateway log nor the container log](https://docs.nvidia.com/openshell/observability/accessing-logs). Likewise the exit code the gateway reports on the sandbox is its main process's, not the kick's; the launcher takes the kick's exit code from the exec result and deletes the sandbox at once. So the pane ends by saying the kick has finished and that its output and exit code are in the transcript, which it shows on the next open. The dashboard reaches the gateway with the agent's own `gateway_url`, `namespace`, `token_env` and `insecure_tls`.
+
+**How to verify.** With a gateway reachable and the claim attachable, run the env-gated integration test from a pod that has the claim mounted: `OPENSHELL_GATEWAY_URL=… OPENSHELL_WORKSPACE_CLAIM=hive-data OPENSHELL_IMAGE=<digest-pinned> go test ./crux/sandbox -run TestOpenShellIntegration -v`. It writes a file through `/workspace`, reads it back on the hive side, and logs the round-trip latency. Then run a kick and confirm in the sandbox log that a `POST` to `api.github.com` is denied while `git fetch` succeeds — that denial is the whole point of the runtime.
+
+**Limitations (phase 1).** Kubernetes driver only (no Podman-driver path for standalone hosts yet); no Secret references into the sandbox; `policy_profile` is advisory; kernel and claim-label prerequisites are not preflighted; latency and image size are not yet measured ([#17643](https://github.com/hivecommons/hive/issues/17643)).
+
 ## Health and metrics for sandboxed agents
 
 A sandboxed agent (Podman or Job runtime) has no tmux session, no in-pod process and no `pluk` log between kicks: the manager parks it in the `idle` state and each kick runs to completion in a container or Job. The dashboard therefore must not read "not running" as "session down" for these agents, and the token collector cannot find their CLI session files because the CLI's home directory lives in the sandbox, not in the hive pod.

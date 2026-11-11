@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/escalate"
 	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/evidence/benchmarks"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
@@ -32,6 +33,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/worksource"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -1557,10 +1559,17 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 		approveOpts.TrustedBotSkipReview = func() bool { return cfg.AutoMerge.TrustedBotSkipsReview() }
 	}
 	approveEngine := automerge.New(ghClient, approveOpts)
+	// A bound workflow model's replies are accepted as `/hive <verb>`
+	// (hivecommons/hive#17620); unbound repositories see no change.
+	var workflowFor func(owner, repo string) *workflowmodel.Profile
+	if cfg != nil {
+		workflowFor = stageEngineOptions(cfg, logger).WorkflowFor
+	}
 	result, err := ghClient.SweepIssueUnparkCommands(ctx, github.IssueUnparkSweepOptions{
 		PRApproveReply:       approveEngine.PRApproveReply,
 		PRReplyOptions:       true,
 		MaxActions:           github.DefaultIssueUnparkSweepMaxActions,
+		WorkflowFor:          workflowFor,
 		LabelDriven:          issueUnparkLabelDriven(cfg),
 		LabelApproval:        labelApprovalPolicyResolver(cfg),
 		ReleaseOnApprove:     issueReleaseOnApprove(cfg),
@@ -2075,6 +2084,11 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
 		return reviewEvidenceSettings(cfg, repo)
 	})
+	// hivecommons/hive#17694: stamp the sandbox runtime and benchmark task
+	// kind on agent-authored bundles so the exporter need not guess.
+	github.EvidenceAgentContext = func(agent string) (string, string) {
+		return cfg.BenchmarkSandboxRuntime(agent), benchmarks.TaskKindFor(agent)
+	}
 	// hivecommons/hive#14581: issue-author credit on every merge path, read
 	// live so a reload of auto_merge.credit_issue_authors applies.
 	client.SetCreditIssueAuthors(func(string) bool { return cfg.AutoMerge.CreditIssueAuthorsEnabled() })

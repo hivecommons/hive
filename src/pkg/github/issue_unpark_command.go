@@ -14,6 +14,7 @@ import (
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -106,6 +107,9 @@ var fixedCommandTokens = []string{"/fixed", "/close"}
 type unparkCommand struct {
 	Kind     unparkCommandKind
 	Decision string
+	// Verb is the model reply as the model declares it, for
+	// unparkCommandModelReply only (hivecommons/hive#17620).
+	Verb string
 	// Text is the whole decision as the person wrote it: the rest of the
 	// command line plus every line after it, trimmed. Decision stays the
 	// first line so the reply's `Decision:` round-trip is unchanged; the PR
@@ -206,6 +210,12 @@ type IssueUnparkSweepOptions struct {
 	ClosedAudit func(IssueUnparkEvent)
 	// Now overrides the clock in tests.
 	Now func() time.Time
+	// WorkflowFor resolves the workflow model bound to a repository
+	// (hivecommons/hive#17620, RFC phase 4). On a bound repository a parked
+	// issue also answers `/hive <verb>` for each reply the model declares
+	// for the issue's current state. nil, or nil for a repository, keeps
+	// the built-in commands only.
+	WorkflowFor func(owner, repo string) *workflowmodel.Profile
 }
 
 // PullRequestDecisionEvent records one `/hive decision` on a hive-authored
@@ -344,6 +354,10 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 		if releasePolicy.enabled && opts.ReleaseVersionSource != nil {
 			releasePolicy.versionSource = opts.ReleaseVersionSource(repo)
 		}
+		var profile *workflowmodel.Profile
+		if opts.WorkflowFor != nil {
+			profile = opts.WorkflowFor(owner, repoName)
+		}
 		var policy LabelApprovalPolicy
 		labelApproval := false
 		if labelDriven {
@@ -445,7 +459,7 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 				continue
 			}
 			result.Seen++
-			acted, err := c.tryUnparkIssue(ctx, repo, owner, repoName, issue, cutoff, labelDriven, unparkLabelApproval{policy: policy, enabled: labelApproval, audit: opts.LabelApprovalAudit}, releasePolicy, result, opts.Audit, opts.ClosedAudit)
+			acted, err := c.tryUnparkIssue(ctx, repo, owner, repoName, issue, cutoff, labelDriven, unparkLabelApproval{policy: policy, enabled: labelApproval, audit: opts.LabelApprovalAudit}, releasePolicy, profile, result, opts.Audit, opts.ClosedAudit)
 			if acted || err != nil {
 				c.forgetUnparkRead(ctx, owner, repoName, issue.GetNumber())
 			}
@@ -571,7 +585,7 @@ func unparkTextsProposeOwnerStep(issue *gh.Issue, comments []*gh.IssueComment) b
 // gets no hint. With label approval (hivecommons/hive#11313) a trusted
 // acceptance label is acted on first, and `/hive approve` / `/hive decision`
 // remove only the park labels the hive added itself.
-func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, cutoff time.Time, labelDriven bool, la unparkLabelApproval, releasePolicy unparkReleasePolicy, result *IssueUnparkSweepResult, audit, closedAudit func(IssueUnparkEvent)) (bool, error) {
+func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, cutoff time.Time, labelDriven bool, la unparkLabelApproval, releasePolicy unparkReleasePolicy, profile *workflowmodel.Profile, result *IssueUnparkSweepResult, audit, closedAudit func(IssueUnparkEvent)) (bool, error) {
 	number := issue.GetNumber()
 	comments, err := c.unparkComments(ctx, owner, repo, issue, time.Time{})
 	if err != nil {
@@ -602,7 +616,8 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 	}
 
 	answered := c.answeredUnparkCommentIDs(comments)
-	candidate, command, err := c.eligibleUnparkCommand(ctx, owner, repo, comments, answered, cutoff, labelDriven && la.enabled)
+	verbs := issueModelReplyVerbs(profile, issue)
+	candidate, command, err := c.eligibleUnparkCommand(ctx, owner, repo, comments, answered, cutoff, labelDriven && la.enabled, verbs)
 	if err != nil {
 		return false, err
 	}
@@ -701,6 +716,22 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 	}
 
 	labels := issueLabelNames(issue.Labels)
+	if command.Kind == unparkCommandModelReply {
+		eff, ok := profile.ReplyForNumber(stagelabels.Current(labels).Number(), command.Verb)
+		if !ok {
+			return false, nil
+		}
+		event, err := c.applyIssueModelReply(ctx, owner, repo, number, labels, actor, eff, command.DecisionText(), candidate.GetID(), "")
+		if err != nil {
+			return false, err
+		}
+		event.Repo, event.CommentURL = displayRepo, candidate.GetHTMLURL()
+		result.Unparked = append(result.Unparked, event)
+		if audit != nil {
+			audit(event)
+		}
+		return true, nil
+	}
 	needsHuman := unparkNeedsHumanOutcome{}
 	hasNeedsHuman := c.hasNeedsHumanLabel(labels)
 	if hasNeedsHuman {
@@ -1241,7 +1272,10 @@ const unparkCandidateLimit = 5
 // every command posted before it is superseded and never replayed, even
 // after the issue is parked again (hivecommons/hive#14344). Otherwise a
 // retracted older decision would be acted on once the newer one is answered.
-func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, comments []*gh.IssueComment, answered map[int64]bool, cutoff time.Time, allowTriage bool) (*gh.IssueComment, unparkCommand, error) {
+//
+// verbs are the bound workflow model's replies for the item's current state
+// (hivecommons/hive#17620); nil admits the built-in commands only.
+func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, comments []*gh.IssueComment, answered map[int64]bool, cutoff time.Time, allowTriage bool, verbs []string) (*gh.IssueComment, unparkCommand, error) {
 	checked := 0
 	for i := len(comments) - 1; i >= 0 && checked < unparkCandidateLimit; i-- {
 		cm := comments[i]
@@ -1249,7 +1283,7 @@ func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, 
 			continue
 		}
 		if answered[cm.GetID()] {
-			if isUnparkWatermarkCommand(cm.GetBody()) {
+			if isUnparkWatermarkCommandFor(cm.GetBody(), verbs) {
 				break
 			}
 			continue
@@ -1262,7 +1296,7 @@ func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, 
 		if updated := cm.GetUpdatedAt().Time; updated.After(created) {
 			continue
 		}
-		cmd, isCommand := parseUnparkCommand(cm.GetBody())
+		cmd, isCommand := parseUnparkCommandFor(cm.GetBody(), verbs)
 		if !isCommand && !isUnparkProseAssent(cm.GetBody()) {
 			continue
 		}
@@ -1318,12 +1352,18 @@ func renderUnparkAIAuthorRefusal(login string) string {
 // isUnparkWatermarkCommand reports whether an answered comment carried a
 // command that acted on the park state, so nothing older may be replayed.
 func isUnparkWatermarkCommand(body string) bool {
-	cmd, ok := parseUnparkCommand(body)
+	return isUnparkWatermarkCommandFor(body, nil)
+}
+
+// isUnparkWatermarkCommandFor is isUnparkWatermarkCommand with a bound
+// model's reply verbs: an answered model reply is a watermark too.
+func isUnparkWatermarkCommandFor(body string, verbs []string) bool {
+	cmd, ok := parseUnparkCommandFor(body, verbs)
 	if !ok {
 		return false
 	}
 	switch cmd.Kind {
-	case unparkCommandApprove, unparkCommandDecision, unparkCommandFixed:
+	case unparkCommandApprove, unparkCommandDecision, unparkCommandFixed, unparkCommandModelReply:
 		return true
 	}
 	return false

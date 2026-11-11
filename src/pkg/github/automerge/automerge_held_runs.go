@@ -210,6 +210,12 @@ func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, own
 	if c.workflowApprovalUntrustedKnown(owner, repo, number) {
 		return workflowApprovalUntrustedPrefix + contextName
 	}
+	if integrationEligibilityProbe(ctx) {
+		// The read-only eligibility probe cannot comment: its mutation
+		// boundary would refuse the post and WARN every tick. Skipping
+		// leaves the post to the live sweep.
+		return workflowApprovalRequiredPrefix + contextName
+	}
 	firstSeen, first := c.markWorkflowApprovalCommandSeen(owner, repo, number, headSHA)
 	state, scanned := c.workflowApprovalCommentState(ctx, displayRepo, owner, repo, number, headSHA, first)
 	if scanned && (state.rejected || state.prowManaged) && !c.okToTestWorkflowInstalled(ctx, displayRepo, owner, repo) {

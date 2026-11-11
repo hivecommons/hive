@@ -22,10 +22,12 @@ var tektonDirs = []string{".tekton/", "tekton/", "pipelines/", ".pipelines/", "o
 // skipDirs are never descended into.
 var skipDirs = map[string]bool{".git": true, "node_modules": true, "vendor": true, "testdata": true, "third_party": true}
 
-// ReadTree walks a checkout and returns the CI definition files the ingest
-// reads, keyed by repo-relative slash path: every GitHub Actions workflow,
-// every YAML under a Tekton directory, and any other YAML whose name hints
-// at a pipeline and whose content looks like a Tekton document. Files over
+// ReadTree walks a checkout and returns the files the ingest reads, keyed
+// by repo-relative slash path: every GitHub Actions workflow, every YAML
+// under a Tekton directory, any other YAML whose name hints at a pipeline
+// and whose content looks like a Tekton document, and the process
+// convention files IsIntakePath names (issue and PR templates,
+// CONTRIBUTING, CODEOWNERS/OWNERS, label and settings files). Files over
 // MaxFileBytes are returned too (Repository reports them). The result is
 // what Repository and Lifecycle take.
 func ReadTree(root string) (map[string][]byte, error) {
@@ -45,10 +47,13 @@ func ReadTree(root string) (map[string][]byte, error) {
 			}
 			return nil
 		}
-		if !d.Type().IsRegular() || !isYAMLPath(rel) || len(files) >= MaxTreeFiles {
+		if !d.Type().IsRegular() || len(files) >= MaxTreeFiles {
 			return nil
 		}
 		switch {
+		case IsIntakePath(rel):
+		case !isYAMLPath(rel):
+			return nil
 		case githubactions.IsWorkflowPath(rel), underTektonDir(rel):
 		case hintsPipeline(rel):
 			data, err := os.ReadFile(p)

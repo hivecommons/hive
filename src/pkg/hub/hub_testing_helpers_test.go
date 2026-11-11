@@ -92,6 +92,7 @@ var hubTestPathVars = []hubTestPathVar{
 	{ptr: &journeyStatePath, prod: journeyStatePath, rel: filepath.Join("saas", "journey-state.json")},
 	{ptr: &alertAcksPath, prod: alertAcksPath, rel: filepath.Join("saas", "hub-alert-acks.json")},
 	{ptr: &revokedSessionsPath, prod: revokedSessionsPath, rel: filepath.Join("saas", "hub-revoked-sessions.json")},
+	{ptr: &hubMarketplaceDir, prod: hubMarketplaceDir, rel: "marketplace"},
 }
 
 // hubTestConfig is the resolved set of NewHubServer arguments plus the one

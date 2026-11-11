@@ -38,10 +38,30 @@
       return cols.findIndex(c => Array.isArray(c.numbers) && c.numbers.indexOf(n) >= 0);
     }
 
+    // Pure: the reply verbs the bound model declares for the item's
+    // current state (RFC phase 4, `workflows.repos[repo].replies` keyed by
+    // stage number), in the model's order; [] for an unbound repository, a
+    // PR row (the dashboard records model replies on issues only), or a
+    // state without replies.
+    function stageTrackerWorkflowReplies(item, workflows) {
+      if (!item || item.kind === 'pr' || item.via_pr) return [];
+      const wf = stageTrackerWorkflowOf({ workflows }, item.repo);
+      if (!wf || !wf.replies) return [];
+      const list = wf.replies[String(Number(item.stage) || 0)];
+      return Array.isArray(list) ? list.map(v => String(v || '').trim()).filter(Boolean) : [];
+    }
+
+    // Pure: a model verb as the pill prints it — "approve analysis" →
+    // "Approve analysis".
+    function stageTrackerWorkflowReplyLabel(verb) {
+      const v = String(verb || '').trim();
+      return v ? v.charAt(0).toUpperCase() + v.slice(1) : '';
+    }
+
     function stageTrackerWorkflowBadgeHtml(wf) {
       if (!wf) return '';
       const key = `${wf.name}@${wf.version}`;
-      return `<span class="ham-wf-badge" title="${esc('This repository follows the ' + key + ' workflow model; its columns are the model\'s, not hive-default\'s.')}">${esc(key)}</span>`;
+      return `<span class="ham-wf-badge" role="button" tabindex="0" data-action="openWorkflowLibraryEntry" data-keydown-action="openWorkflowLibraryEntry" data-arg0="${esc(wf.name)}" data-arg1="${esc(wf.version)}" data-stop="1" title="${esc('This repository follows the ' + key + ' workflow model; its columns are the model\'s, not hive-default\'s. Click to open it in Settings → Workflows.')}">${esc(key)}</span>`;
     }
 
     // The model's column header, drawn under a bound repository's group

@@ -257,3 +257,76 @@ func TestRoot(t *testing.T) {
 		t.Fatal("env must win")
 	}
 }
+
+func TestNextVersion(t *testing.T) {
+	s := Open(t.TempDir())
+	m := techdocs(t)
+	if v, err := s.NextVersion(m.Metadata.Name); err != nil || v != "1" {
+		t.Fatalf("empty: %q %v", v, err)
+	}
+	if _, err := s.NextVersion("Bad Name"); !errors.Is(err, ErrBadName) {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"1", "3", "2.0-rc1"} {
+		m.Spec.Meta.Version = v
+		if _, err := s.Save(m, "andy", t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v, err := s.NextVersion(m.Metadata.Name); err != nil || v != "4" {
+		t.Fatalf("after 1,3,2.0-rc1: %q %v", v, err)
+	}
+	if v, err := s.NextVersion(hivedefault.Name); err != nil || v != "2" {
+		t.Fatalf("builtin: %q %v", v, err)
+	}
+}
+
+func TestProvisionedLabelsRoundTrip(t *testing.T) {
+	s := Open(t.TempDir())
+	if rec, err := s.LoadProvisioned("Acme/Widget"); err != nil || rec != nil {
+		t.Fatalf("missing record: %v %v", rec, err)
+	}
+	if err := s.DeleteProvisioned("acme/widget"); err != nil {
+		t.Fatalf("delete missing: %v", err)
+	}
+	in := workflowmodel.ProvisionedLabels{Repo: "Acme/Widget", Name: "techdocs", Version: "1", Hash: "h", Labels: []string{"docs/010-requested"}, UpdatedAt: time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)}
+	if err := s.SaveProvisioned(in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(s.dir(), ProvisionedSubdir, "acme__widget.json")); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := s.LoadProvisioned("acme/widget")
+	if err != nil || rec == nil || rec.Repo != "acme/widget" || rec.Name != "techdocs" || rec.Hash != "h" || len(rec.Labels) != 1 || !rec.UpdatedAt.Equal(in.UpdatedAt) {
+		t.Fatalf("round trip: %+v %v", rec, err)
+	}
+	if err := s.SaveProvisioned(workflowmodel.ProvisionedLabels{Repo: "acme/widget"}); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ = s.LoadProvisioned("acme/widget"); rec == nil || rec.Labels == nil || len(rec.Labels) != 0 {
+		t.Fatalf("empty labels must marshal as []: %+v", rec)
+	}
+	if err := s.DeleteProvisioned("acme/widget"); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ = s.LoadProvisioned("acme/widget"); rec != nil {
+		t.Fatalf("still present: %+v", rec)
+	}
+	for _, bad := range []string{"", "widget", "/widget", "acme/"} {
+		if _, err := s.LoadProvisioned(bad); err == nil {
+			t.Errorf("LoadProvisioned(%q) accepted", bad)
+		}
+		if err := s.SaveProvisioned(workflowmodel.ProvisionedLabels{Repo: bad}); err == nil {
+			t.Errorf("SaveProvisioned(%q) accepted", bad)
+		}
+		if err := s.DeleteProvisioned(bad); err == nil {
+			t.Errorf("DeleteProvisioned(%q) accepted", bad)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(s.dir(), ProvisionedSubdir, "acme__broken.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LoadProvisioned("acme/broken"); err == nil {
+		t.Fatal("corrupt record accepted")
+	}
+}
