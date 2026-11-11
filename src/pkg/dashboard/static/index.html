@@ -44895,6 +44895,22 @@ function burnAreaChart() {
         html += '</div>';
         html += '<div class="kb-sources-note">Clone a GitHub repo locally. Hive indexes the markdown with Fisher-Rao scored search and syncs every 5 minutes.</div>';
 
+        _kbFailedGitSources.forEach((fs, i) => {
+          html += '<div class="card-inset row-between mb-3" data-kb-gs-error="1">';
+          html += '<div style="min-width:0;flex:1">';
+          html += `<div style="font-size:var(--fs-base);font-weight:600;color:var(--fg);display:flex;align-items:center;gap:var(--sp-3);white-space:nowrap;overflow:hidden">`;
+          html += `<span class="status-dot" data-status="error" style="width:7px;height:7px;min-width:7px"></span>`;
+          html += `<span style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(fs.name)}</span></div>`;
+          html += `<div style="font-size:0.7rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(fs.url)}`;
+          if (fs.subpath) html += ` / ${escapeHtml(fs.subpath)}`;
+          html += ` &middot; ${escapeHtml(fs.branch || 'repo default')}</div>`;
+          html += `<div role="alert" style="font-size:0.7rem;color:var(--red);white-space:normal;overflow-wrap:anywhere">status: error &mdash; ${escapeHtml(fs.error)}</div>`;
+          html += '</div>';
+          html += `<button class="hv-btn nous-btn btn-sm" data-action="kbRetryGitSource" data-arg0="${i}">Retry</button>`;
+          html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="kbDismissGitSourceError" data-arg0="${i}">Dismiss</button>`;
+          html += '</div>';
+        });
+
         if (gitSources && gitSources.length > 0) {
           for (const gs of gitSources) {
             const gsStatus = statusMeta(gs.ready ? 'ready' : 'initializing');
@@ -44914,7 +44930,7 @@ function burnAreaChart() {
             html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="gh18" data-arg0="${escapeHtml(gs.url)}" data-arg1="${escapeHtml(gs.subpath || '')}">Remove</button>`;
             html += '</div>';
           }
-        } else {
+        } else if (_kbFailedGitSources.length === 0) {
           html += '<div class="empty-dashed">No git sources yet.</div>';
         }
 
@@ -44923,7 +44939,7 @@ function burnAreaChart() {
         html += '<input id="kb-gs-url" type="text" class="kb-search-box" required aria-required="true" placeholder="Repository URL * (https://github.com/org/repo)">';
         html += '<input id="kb-gs-name" type="text" class="kb-search-box" required aria-required="true" placeholder="Display name *">';
         html += '<input id="kb-gs-subpath" type="text" class="kb-search-box" placeholder="Subpath (e.g. docs/skills)">';
-        html += '<input id="kb-gs-branch" type="text" class="kb-search-box" placeholder="Branch (default: main)">';
+        html += '<input id="kb-gs-branch" type="text" class="kb-search-box" placeholder="Branch (blank = repo default)">';
         html += `<select id="kb-gs-layer" class="field-input">
           <option value="project">Project</option>
           <option value="org">Org</option>
@@ -45104,32 +45120,65 @@ function burnAreaChart() {
       el.focus();
     }
 
+    // Connect attempts that failed, kept so the Sources panel shows them as
+    // error rows (with the reason) instead of only a transient alert.
+    var _kbFailedGitSources = [];
+
+    function _kbForgetFailedGitSource(url, subpath) {
+      _kbFailedGitSources = _kbFailedGitSources.filter(f => !(f.url === url && f.subpath === subpath));
+    }
+
     async function kbAddGitSource() {
       const url = document.getElementById('kb-gs-url')?.value?.trim();
       const name = document.getElementById('kb-gs-name')?.value?.trim();
-      const subpath = document.getElementById('kb-gs-subpath')?.value?.trim();
-      const branch = document.getElementById('kb-gs-branch')?.value?.trim();
+      const subpath = document.getElementById('kb-gs-subpath')?.value?.trim() || '';
+      const branch = document.getElementById('kb-gs-branch')?.value?.trim() || '';
       const layer = document.getElementById('kb-gs-layer')?.value;
 
       if (!url) { kbFieldError(document.getElementById('kb-gs-url'), 'Repository URL is required'); return; }
       if (!name) { kbFieldError(document.getElementById('kb-gs-name'), 'Display name is required'); return; }
 
-      const btn = document.querySelector('#kb-subs-content button[onclick="kbAddGitSource()"]');
-      if (btn) { btn.disabled = true; btn.textContent = 'Cloning...'; }
+      const btn = document.querySelector('#kb-subs-content [data-action="kbAddGitSource"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Cloning…'; }
 
+      let failure = '';
       try {
+        // A blank branch is resolved server-side to the remote's default branch.
         const r = await fetch('/api/knowledge/git-sources', {
           method: 'POST', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ url, name, subpath: subpath || '', branch: branch || 'main', layer }),
+          body: JSON.stringify({ url, name, subpath, branch, layer }),
         });
-        if (!r.ok) { const e = await r.json(); await hiveAlert(e.error || 'Failed to add git source'); return; }
-        kbLoadSubscriptions();
-        fetchKnowledgeStats();
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}));
+          failure = e.error || ('HTTP ' + r.status);
+        }
       } catch (e) {
-        await hiveAlert('Error: ' + e.message);
+        failure = e.message || String(e);
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Clone & Index'; }
       }
+      _kbForgetFailedGitSource(url, subpath);
+      if (failure) _kbFailedGitSources.push({ url, name, subpath, branch, layer, error: failure });
+      kbLoadSubscriptions();
+      if (failure) { await hiveAlert('Failed to add git source: ' + failure); return; }
+      fetchKnowledgeStats();
+    }
+
+    function kbRetryGitSource(idx) {
+      const f = _kbFailedGitSources[Number(idx)];
+      if (!f) return;
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+      set('kb-gs-url', f.url);
+      set('kb-gs-name', f.name);
+      set('kb-gs-subpath', f.subpath);
+      set('kb-gs-branch', f.branch);
+      set('kb-gs-layer', f.layer || 'project');
+      return kbAddGitSource();
+    }
+
+    function kbDismissGitSourceError(idx) {
+      _kbFailedGitSources.splice(Number(idx), 1);
+      kbLoadSubscriptions();
     }
 
     async function kbRemoveGitSource(url, subpath) {
@@ -45184,7 +45233,7 @@ function burnAreaChart() {
 
       if (!url) { kbFieldError(document.getElementById('kb-doc-url'), 'Document URL is required'); return; }
 
-      const btn = document.querySelector('#kb-subs-content button[onclick="kbImportDocFromModal()"]');
+      const btn = document.querySelector('#kb-subs-content [data-action="kbImportDocFromModal"]');
       if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
 
       try {

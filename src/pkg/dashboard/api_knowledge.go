@@ -1095,6 +1095,14 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// A blank branch was resolved to the remote default; record what was indexed.
+	for _, info := range s.deps.Knowledge.GitSources() {
+		if info.URL == req.URL && info.Subpath == req.Subpath {
+			req.Branch = info.Branch
+			break
+		}
+	}
+
 	alreadyInConfig := false
 	for _, gs := range s.deps.Config.Knowledge.GitSources {
 		if gs.URL == req.URL && gs.Subpath == req.Subpath {
@@ -1116,7 +1124,7 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.auditFromRequest(r, "git_source_connect", auditDetail("name", req.Name, "url", req.URL), "")
-	jsonResponse(w, map[string]interface{}{"ok": true, "name": req.Name, "url": req.URL})
+	jsonResponse(w, map[string]interface{}{"ok": true, "name": req.Name, "url": req.URL, "branch": req.Branch})
 }
 
 func (s *Server) handleGitSourcesDisconnect(w http.ResponseWriter, r *http.Request) {
