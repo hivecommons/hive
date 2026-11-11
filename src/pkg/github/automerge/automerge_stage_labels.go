@@ -1653,14 +1653,18 @@ func (f *engineStatusForge) DeleteComment(ctx context.Context, id int64) error {
 // A repository bound to a workflow model (hivecommons/hive#17620, P4) also
 // gets that model's own label vocabulary (Profile.LabelDefs) created or
 // recoloured, memoised by the model's hash so a rebinding — or a new
-// version of the bound model — re-provisions on the next pass. An unbound
-// repository takes exactly the built-in path.
+// version of the bound model — re-provisions on the next pass, and the
+// labels a previous binding provisioned that the new one no longer
+// declares are reclaimed under the safety rules in
+// automerge_stage_labels_gc.go. An unbound repository that was never
+// bound takes exactly the built-in path.
 func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, tracker *StageTracker, kinds authorkind.Names) error {
 	full := strings.ToLower(owner + "/" + repo)
 	var model []workflowmodel.LabelDef
 	modelHash := ""
-	if p := c.workflowProfile(owner, repo); p != nil {
-		model, modelHash = p.LabelDefs(stagelabels.StageColor), p.Hash
+	profile := c.workflowProfile(owner, repo)
+	if profile != nil {
+		model, modelHash = profile.LabelDefs(stagelabels.StageColor), profile.Hash
 	}
 	tracker.mu.Lock()
 	done := tracker.ensured[full] && tracker.ensuredWorkflow[full] == modelHash
@@ -1733,6 +1737,9 @@ func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, trac
 			return err
 		}
 	}
+	// Remember what the model owns here and reclaim what a previous
+	// binding left behind (automerge_stage_labels_gc.go).
+	c.reconcileWorkflowLabels(ctx, owner, repo, profile, model, existing, kinds)
 	tracker.mu.Lock()
 	tracker.ensured[full] = true
 	if tracker.ensuredWorkflow == nil {
