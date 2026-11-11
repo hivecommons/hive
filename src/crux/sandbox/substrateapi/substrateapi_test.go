@@ -335,10 +335,7 @@ func TestUnimplementedServerAnswersUnimplemented(t *testing.T) {
 	if _, err := u.GetActor(ctx, nil); err == nil {
 		t.Error("direct GetActor on the unimplemented server returned nil error")
 	}
-	var unsafeOK UnsafeControlServer = &fakeServer{}
-	if unsafeOK == nil {
-		t.Error("fakeServer does not satisfy UnsafeControlServer")
-	}
+	var _ UnsafeControlServer = &fakeServer{}
 }
 
 func TestRegisterControlServerRejectsNilEmbedding(t *testing.T) {
