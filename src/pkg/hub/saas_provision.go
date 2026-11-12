@@ -790,6 +790,15 @@ type SaaSHive struct {
 	// delivery (see AppIdentityDelivered), so a lost beat is retried.
 	PendingAppConfig *PendingAppIdentity `json:"pending_app_config,omitempty"`
 
+	// WebhookRelayKey is this hive's own HMAC key for webhooks the hub relays
+	// to its spoke (webhook_relay_key.go, hivecommons/hive#17911). Minted at
+	// provisioning (or on the first heartbeat of a hive provisioned before
+	// relay keys existed) and delivered over the heartbeat. Per hive so one
+	// spoke's key can never sign a relay another spoke accepts, and so no
+	// spoke ever needs the GitHub App webhook secret. Replacing or clearing it
+	// rotates the key: the next beat delivers the new one.
+	WebhookRelayKey string `json:"webhook_relay_key,omitempty"`
+
 	// RequestedRestartAt (RFC3339) arms a rolling restart of this hive's spoke,
 	// delivered on every heartbeat inside spokeRestartDeliveryWindow and then
 	// cleared. Durable on the hive record for the same reason as

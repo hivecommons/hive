@@ -308,18 +308,18 @@ accuracy guarantees of the ForgeState contract.
 A spoke accepts GitHub App webhooks on the public `POST /api/webhook/github`,
 either delivered directly by GitHub or relayed by the hub (the hub forwards the
 original signed body to the hive that manages the repository). The receiver
-fails closed: it rejects every delivery until `GITHUB_WEBHOOK_SECRET` is set to
-the App's webhook secret, and it verifies `X-Hub-Signature-256` over the raw
-body exactly as the hub does. Deliveries for repositories the hive does not
-manage are ignored.
+fails closed: it accepts a delivery only when `X-Hub-Signature-256` verifies
+against `GITHUB_WEBHOOK_SECRET` (exactly as the hub does), or when the hub's
+relay signature verifies against this hive's own relay key (hosted spokes,
+below). With neither configured it rejects every delivery with 503.
+Deliveries for repositories the hive does not manage are ignored.
 
 #### What the operator configures
 
-1. **Secret.** Set `GITHUB_WEBHOOK_SECRET` in the spoke's environment (a
-   Secret mount on Kubernetes; never in `hive.yaml`) to the App's webhook
-   secret. On a hosted spoke this is the same value as the hub's
-   `webhook-secret.key`. Without it the receiver answers 503 and the loop
-   stays on the polling cadence.
+1. **Secret (self-hosted only).** Set `GITHUB_WEBHOOK_SECRET` in the spoke's
+   environment (a Secret mount on Kubernetes; never in `hive.yaml`) to the
+   App's webhook secret. A hosted spoke needs nothing here: it never holds the
+   App secret and verifies relays with its hub relay key instead (item 3).
 2. **GitHub App webhook.** Point the App's webhook URL at the hub
    (`POST /api/github/webhook`) for hosted spokes, or at the spoke's own
    `/api/webhook/github` for a stand-alone hive (a repository or organization
@@ -332,8 +332,14 @@ manage are ignored.
    (organization-scoped; see [Work sources](../work-sources.md#type-github_projects--github-projects-projects-v2)).
 3. **Hub relay.** The hub verifies the HMAC and relays the body byte-for-byte,
    with the original signature and `X-GitHub-Delivery`, to the spoke whose
-   reported dashboard URL manages the repository. Nothing to configure on the
-   spoke beyond the shared secret.
+   reported dashboard URL manages the repository. For a hosted hive it also
+   adds `X-Hive-Relay-Timestamp` and `X-Hive-Relay-Signature-256`
+   (`sha256=` HMAC-SHA256 over `timestamp.delivery-id.body`) keyed with that
+   hive's own relay key, which the hub mints at provisioning and delivers over
+   the heartbeat (persisted on the spoke as `/data/webhook-relay.key`). The
+   spoke rejects a relay whose signature does not verify, whose timestamp is
+   more than 5 minutes off, or whose delivery ID it already accepted.
+   Nothing to configure.
 4. **Pacing (optional).** `governor.eval_interval_webhook_s` (default `900`)
    is the base tick while webhooks are healthy; `governor.webhook_wake_debounce_s`
    (default `10`) and `governor.webhook_wake_min_gap_s` (default `30`) pace the
@@ -736,11 +742,12 @@ periodic housekeeping cannot starve the governor:
 `webhooks: {healthy, last_event_at, events_1h, invalidations_1h,
 targeted_refreshes_1h, tracker_invalidations_1h, rejected_1h,
 last_rejected_at, mode, since, mode_reason, mode_reason_code,
-healthy_windows}` (the middle two count the single-item re-reads and the
+healthy_windows, verification}` (the middle two count the single-item re-reads and the
 tracker cache drops webhooks caused; `rejected_1h` and `last_rejected_at`
 count deliveries the receiver turned away; `mode` is `webhook` | `polling`
 and `since` when it began; `mode_reason_code` says why it is polling — see
-[webhooks.md](../webhooks.md));
+[webhooks.md](../webhooks.md); `verification` is `github-signed`,
+`relay (hub-signed)` or `none`);
 `/api/status` adds `evalMode` (`webhook` | `poll`), `evalIntervalS`,
 `lastWakeReason`, `lastWakeAt` and `webhookWakes`;
 `graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing

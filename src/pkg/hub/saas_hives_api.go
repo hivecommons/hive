@@ -1556,8 +1556,9 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		IsPublic: req.IsPublic == nil || *req.IsPublic,
 		// Per-hive GitHub host override (empty = cluster default). Lets a
 		// public-GitHub org provision correctly on a GHE-defaulted cluster.
-		GitHubBaseURL: req.GitHubBaseURL,
-		GitHubAPIURL:  req.GitHubAPIURL,
+		GitHubBaseURL:   req.GitHubBaseURL,
+		GitHubAPIURL:    req.GitHubAPIURL,
+		WebhookRelayKey: newWebhookRelayKey(),
 	}
 
 	if err := saveSaaSHive(h); err != nil {
@@ -1631,8 +1632,12 @@ func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 		return
 	}
+	// The relay key authenticates webhooks to this hive's spoke; it is
+	// delivered only over the spoke's own heartbeat, never to a browser.
+	out := *h
+	out.WebhookRelayKey = ""
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(h)
+	_ = json.NewEncoder(w).Encode(&out)
 }
 
 // handleOpenHive is the SSO handoff entry point: a hub-authenticated user hits

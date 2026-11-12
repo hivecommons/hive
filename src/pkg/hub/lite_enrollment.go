@@ -330,6 +330,7 @@ func (s *HubServer) requestHostedLiteSpoke(username, owner, repo, host string, i
 		ClusterID:          clusterID,
 		IsPublic:           false,
 		AutoUpgrade:        true,
+		WebhookRelayKey:    newWebhookRelayKey(),
 	}
 	if host != "" && host != publicGitHubHost {
 		h.GitHubHost = host

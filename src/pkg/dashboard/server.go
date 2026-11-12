@@ -106,7 +106,8 @@ const staleDropStarvationThreshold = 5
 type Server struct {
 	nativeQueueTracker  nativeQueueTrackerRuntime
 	integration         integrationRuntime
-	webhookNoSecretOnce sync.Once // warn once per process about a missing webhook secret (#13666)
+	webhookNoSecretOnce sync.Once               // warn once per process about a missing webhook secret (#13666)
+	webhookRelaySeen    webhookRelayReplayCache // hub-relayed delivery IDs already accepted (#17911)
 
 	feedbackRefreshBackoff feedbackBackoff
 
@@ -2701,8 +2702,9 @@ func (s *Server) isPublicPath(path string) bool {
 	case path == githubWebhookPath:
 		// GitHub App webhooks (direct or relayed by the hub): GitHub cannot
 		// hold a dashboard session. NOT actually open — the handler fails
-		// closed without GITHUB_WEBHOOK_SECRET and verifies the HMAC
-		// X-Hub-Signature-256 over the raw body.
+		// closed without GITHUB_WEBHOOK_SECRET or a hub relay key and
+		// verifies the HMAC X-Hub-Signature-256 (or the hub's relay
+		// signature, with replay protection) over the raw body.
 		return true
 	case path == linearAgentWebhookPath:
 		// Linear AgentSessionEvent webhooks: Linear's servers cannot hold a
@@ -4007,7 +4009,7 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 	// the hive still works on the polling cadence.
 	{
 		st, detail, snap := webhookHealthCheck()
-		wh := map[string]any{"status": st, "detail": detail, "mode": string(snap.Mode), "rejected_1h": snap.Rejected1h}
+		wh := map[string]any{"status": st, "detail": detail, "mode": string(snap.Mode), "rejected_1h": snap.Rejected1h, "verification": snap.Verification}
 		if snap.ReasonCode != "" {
 			wh["mode_reason_code"] = snap.ReasonCode
 		}

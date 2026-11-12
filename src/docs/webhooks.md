@@ -210,8 +210,11 @@ The dashboard reads the same machine:
   `/api/status.webhooks.since` — when the current mode began;
   `mode_reason` while polling after a degradation or while webhooks cannot
   work at all; `mode_reason_code` (`no_secret`, `signature_failed`,
-  `deliveries_rejected`, `no_deliveries`) whenever it is polling for a
-  reason; `rejected_1h` and `last_rejected_at` for deliveries the receiver
+  `deliveries_rejected`, `no_deliveries`, and for hub-relayed deliveries
+  `relay_signature_invalid`, `relay_timestamp_stale`,
+  `relay_delivery_replayed`, `relay_delivery_missing`) whenever it is
+  polling for a reason; `verification` (`github-signed`,
+  `relay (hub-signed)` or `none`) says how deliveries are authenticated; `rejected_1h` and `last_rejected_at` for deliveries the receiver
   turned away; `healthy_windows` while recovering
   (`src/pkg/github/webhook_cache.go:430`, `snapshot`).
   `webhooks.healthy` stays the raw window (a delivery inside
@@ -233,8 +236,9 @@ Operator checks:
    or the spoke; `polling` with a `mode_reason` is a configuration fault to
    fix (secret, App subscription, hub relay target), `polling` without one
    means no delivery has ever arrived. `mode_reason_code` tells the causes
-   apart: `no_secret` means `GITHUB_WEBHOOK_SECRET` is unset on this spoke
-   and every delivery, relayed or direct, is answered 503 (`rejected_1h` and
+   apart: `no_secret` means `GITHUB_WEBHOOK_SECRET` is unset on this spoke,
+   no hub relay key has arrived either, and every delivery, relayed or
+   direct, is answered 503 (`rejected_1h` and
    `last_rejected_at` show they are arriving); `signature_failed` means the
    secret does not match the sender's; `deliveries_rejected` means signed
    payloads did not decode; `no_deliveries` means the secret is set but
