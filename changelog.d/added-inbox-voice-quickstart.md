@@ -1,1 +1,1 @@
-- Added an inbox voice sources quickstart and a link from the Plaud knowledge source setup, covering recorder exports, inbox processing, and troubleshooting ([#17882](https://github.com/hivecommons/hive/issues/17882)).
+- Added an Inbox voice sources quickstart link to Plaud setup and Integrations ([#17882](https://github.com/hivecommons/hive/issues/17882)).

@@ -1,0 +1,17 @@
+    /* Inbox (voice recordings / dictations triage) */
+    .inbox-toolbar { flex-wrap: wrap; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+    .inbox-sources { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .inbox-toggle { display: inline-flex; align-items: center; gap: var(--sp-2); }
+    .inbox-list { max-height: none; }
+    .inbox-item { cursor: default; }
+    .inbox-check { display: flex; align-items: flex-start; padding-top: var(--sp-1); }
+    .inbox-icon { flex-shrink: 0; font-size: var(--fs-lg); line-height: 1; padding-top: var(--sp-1); }
+    .inbox-pills { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
+    .inbox-link { font-size: var(--fs-xs); }
+    .inbox-field { display: block; margin-top: var(--sp-4); }
+    .inbox-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+    .inbox-rule { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr) auto; gap: var(--sp-2); align-items: center; margin-bottom: var(--sp-2); }
+    .kb-plaud-paste textarea { width: 100%; margin-top: var(--sp-2); font-family: var(--font-mono); font-size: var(--fs-xs); }
+    @media (max-width: 720px) {
+      .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
+    }
