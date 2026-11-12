@@ -1,0 +1,1 @@
+- The Inbox now reads Plaud recordings directly from the connector (keyed by the Plaud file id) while it is signed in, falling back to synced facts otherwise.

@@ -238,21 +238,9 @@ func (c *plaudConnector) listFiles(ctx context.Context, client mcpClient, since 
 
 // fetchPage builds the knowledge page for one recording.
 func (c *plaudConnector) fetchPage(ctx context.Context, client mcpClient, f plaudFile) (Page, error) {
-	noteText, noteErr := client.Call(ctx, "get_note", map[string]any{"file_id": f.ID})
-	transcriptText, trErr := client.Call(ctx, "get_transcript", map[string]any{"file_id": f.ID})
-	if noteErr != nil && trErr != nil {
-		return Page{}, plaudAuthError(trErr)
-	}
-	if noteErr != nil {
-		noteText = ""
-	}
-	if trErr != nil {
-		transcriptText = ""
-	}
-	note := renderPlaudNote(noteText)
-	transcript := renderPlaudTranscript(transcriptText)
-	if strings.TrimSpace(note) == "" && strings.TrimSpace(transcript) == "" {
-		return Page{}, fmt.Errorf("no note or transcript available yet")
+	note, transcript, err := c.fetchNoteAndTranscript(ctx, client, f.ID)
+	if err != nil {
+		return Page{}, err
 	}
 	audioURL := ""
 	if c.includeAudio() {
@@ -426,4 +414,26 @@ func plaudTime(m map[string]any, keys ...string) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// fetchNoteAndTranscript renders the note and transcript of one recording.
+// It fails only when neither is available.
+func (c *plaudConnector) fetchNoteAndTranscript(ctx context.Context, client mcpClient, id string) (note, transcript string, err error) {
+	noteText, noteErr := client.Call(ctx, "get_note", map[string]any{"file_id": id})
+	transcriptText, trErr := client.Call(ctx, "get_transcript", map[string]any{"file_id": id})
+	if noteErr != nil && trErr != nil {
+		return "", "", plaudAuthError(trErr)
+	}
+	if noteErr != nil {
+		noteText = ""
+	}
+	if trErr != nil {
+		transcriptText = ""
+	}
+	note = renderPlaudNote(noteText)
+	transcript = renderPlaudTranscript(transcriptText)
+	if strings.TrimSpace(note) == "" && strings.TrimSpace(transcript) == "" {
+		return "", "", fmt.Errorf("no note or transcript available yet")
+	}
+	return note, transcript, nil
 }
