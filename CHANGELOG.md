@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.228.5)
+
+### Fixed
+
+- Contribute "Your army" card: a remote agent's "PRs awaiting rework" now lists only its open, not-yet-dispatched PRs — merged, closed and hive-adopted PRs are dropped (and a queued fix for a PR that is gone leaves the fix queue instead of reaching the relay); the line says why a fix is not dispatched (offline, no fix-pr capability, scope, orphaned dispatch, backoff, focus window, waiting for `ready`) instead of "not yet dispatched"; a fix dispatched to a socket that dropped is released at the relay's next `ready` and a completion reported on a reconnected socket settles it; links collapse to three inline plus a "show N more" disclosure.
+
 ## 2026-11-12 (v5.228.4)
 
 ### Security
