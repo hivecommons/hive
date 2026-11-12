@@ -363,6 +363,11 @@ type upgradeReachability struct {
 	// or a pin. Carried for logging: "held because :stable has not moved" and
 	// "held because the branch has not moved" are different operator stories.
 	Channel string
+	// ChannelSHA is the commit the channel tag itself carries right now, ""
+	// for a branch tag or a pin. SHA may be newer (an edge build published
+	// before the tag moved); comparing the two tells whether the spoke can
+	// roll on its channel tag or must pin to SHA's tag (#17978).
+	ChannelSHA string
 	// Resolved is false ONLY when the spoke tracks a channel that would not
 	// resolve. The caller must instruct nothing in that case: it knows the
 	// spoke's reachable set is not what branch HEAD says, and does not know
@@ -384,10 +389,25 @@ func (s *HubServer) reachableUpgradeTarget(branch, imageRef, trackedChannel stri
 	}
 	target := channelPublishedImageTarget(branch, channel, sha, s.logger)
 	if target.VerificationUnavailable {
-		return upgradeReachability{SHA: sha, Channel: channel, Resolved: true}
+		return upgradeReachability{SHA: sha, Channel: channel, ChannelSHA: sha, Resolved: true}
 	}
 	if target.SHA == "" {
 		return upgradeReachability{Channel: channel}
 	}
-	return upgradeReachability{SHA: target.SHA, Channel: channel, Resolved: true}
+	return upgradeReachability{SHA: target.SHA, Channel: channel, ChannelSHA: sha, Resolved: true}
+}
+
+// channelTagCarryingTarget returns the release channel to put in
+// HeartbeatResponse.UpgradeChannelTag when instructing target: the spoke's
+// channel when its tag already carries target or a newer build, "" when the
+// channel lags (or its order against target is not known yet), which keeps
+// the #10719 pin to the SHA tag (#17978).
+func channelTagCarryingTarget(reach upgradeReachability, target string, logger *slog.Logger) string {
+	if reach.Channel == "" || reach.ChannelSHA == "" || target == "" {
+		return ""
+	}
+	if !commitAtOrAheadOfTarget(reach.ChannelSHA, target, logger) {
+		return ""
+	}
+	return reach.Channel
 }
