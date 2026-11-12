@@ -2465,6 +2465,42 @@ func TestDCOCommitStatsForHiveSquashUnsafeCountsHiveIdentities(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#17789: a hive rebase + force-push makes the App bot the
+// committer of the PR author's own commit. A sign-off with the commit
+// author's own email, on a commit GitHub links to the PR author, certifies
+// the PR author (the squash attribution gate agrees), so it is never
+// squash-unsafe; a foreign sign-off under the same committer still is.
+func TestDCOCommitStatsForHiveAuthorSignedAfterHiveRebase(t *testing.T) {
+	rebased := func(authorLogin, authorEmail, signoff string) *gh.RepositoryCommit {
+		return &gh.RepositoryCommit{
+			Author:    &gh.User{Login: gh.Ptr(authorLogin)},
+			Committer: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)},
+			Commit: &gh.Commit{
+				Author:  &gh.CommitAuthor{Email: gh.Ptr(authorEmail)},
+				Message: gh.Ptr("fix: openshell sandbox names\n\nSigned-off-by: " + signoff),
+			},
+			Parents: []*gh.Commit{{}},
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		commit *gh.RepositoryCommit
+		want   int
+	}{
+		{"author's real email", rebased("clubanderson", "andy@clubanderson.com", "Andrew Anderson <andy@clubanderson.com>"), 0},
+		{"author email case differs", rebased("ClubAnderson", "Andy@ClubAnderson.com", "Andrew Anderson <andy@clubanderson.com>"), 0},
+		{"author's noreply", rebased("clubanderson", "andy@clubanderson.com", "A <123+clubanderson@users.noreply.github.com>"), 0},
+		{"someone else's sign-off", rebased("clubanderson", "andy@clubanderson.com", "Other <other@example.com>"), 1},
+		{"commit authored by someone else", rebased("collaborator", "andy@clubanderson.com", "Andrew Anderson <andy@clubanderson.com>"), 1},
+		{"author login unlinked", rebased("", "andy@clubanderson.com", "Andrew Anderson <andy@clubanderson.com>"), 1},
+	} {
+		stats := dcoCommitStatsForHive([]*gh.RepositoryCommit{tc.commit}, testHiveAppBotLogin, "clubanderson", false, nil)
+		if stats.unsigned != 0 || stats.squashUnsafeHive != tc.want {
+			t.Errorf("%s: %+v, want squashUnsafeHive=%d", tc.name, stats, tc.want)
+		}
+	}
+}
+
 // hivecommons/hive#16701: a split cached before hive identities counted filed
 // a project.ai_author commit as "other"; stageDCO reads that head's commits
 // once more so the hive's own commit can be re-signed, then trusts the
