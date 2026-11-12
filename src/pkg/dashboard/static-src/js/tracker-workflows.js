@@ -71,6 +71,62 @@
       return `<div class="ham-cols ham-wf-cols" aria-hidden="true" data-ham-workflow="${esc(wf.name + '@' + wf.version)}"><div class="ham-strip-row"><ol class="ham-strip">${cols}</ol><span class="ham-since">since</span></div></div>`;
     }
 
+    // Pure: the key a row's model resolves to ('' for hive-default).
+    function stageTrackerWorkflowKey(wf) { return wf ? wf.name + '@' + wf.version : ''; }
+
+    // Pure: the column header the rows under it follow — the model's own
+    // when they are bound to one, else hive-default's. The one path for
+    // the sticky header and the run headers, so the names above a strip
+    // are always the names its chevrons wear (hivecommons/hive#18002:
+    // hive-default's "PR in progress / Merge queue" over model chevrons).
+    function stageTrackerColumnsHeaderHtml(wf, stages) {
+      return wf ? stageTrackerWorkflowHeaderHtml(wf) : stageTrackerHeaderHtml(stages);
+    }
+
+    // Pure: an ungrouped page's rows partitioned, stably and in first-seen
+    // order, by the model each row's repository follows: [{ wf, key, rows }].
+    // One run when every row follows the same model (or none does), so a
+    // hive-default page is left exactly as sorted.
+    function stageTrackerWorkflowRuns(rows, ctx) {
+      const runs = [];
+      const by = {};
+      for (const it of rows || []) {
+        const wf = stageTrackerWorkflowOf(ctx, it.repo);
+        const key = stageTrackerWorkflowKey(wf);
+        if (!by[key]) { by[key] = { wf, key, rows: [] }; runs.push(by[key]); }
+        by[key].rows.push(it);
+      }
+      return runs;
+    }
+
+    // Run headers are keyed under the group prefix so the selection and
+    // the reconcile treat them as headers, never as item rows.
+    const STAGE_TRACKER_WORKFLOW_HEADER_KEY_PREFIX = STAGE_TRACKER_GROUP_KEY_PREFIX + 'workflow:';
+
+    // Pure: the page's keyed rows with a column header spliced in before
+    // each run after the first (the first run sits under the sticky
+    // header). A run whose lead row the train/preparation wrappers did not
+    // keep by key gets no header rather than a misplaced one.
+    function stageTrackerWorkflowRunHeaderRows(rows, runs, stages) {
+      const out = (rows || []).slice();
+      (runs || []).slice(1).forEach(run => {
+        const lead = run.rows[0] ? stageTrackerItemKey(run.rows[0]) : null;
+        const at = out.findIndex(r => r.key === lead);
+        if (at >= 0) out.splice(at, 0, { key: STAGE_TRACKER_WORKFLOW_HEADER_KEY_PREFIX + (run.key || 'hive-default'), html: stageTrackerColumnsHeaderHtml(run.wf, stages) });
+      });
+      return out;
+    }
+
+    // Under a group header: a bound repository's own column header; a
+    // hive-default repository's only when the sticky header above is a
+    // model's (ctx.leadWorkflow), so its rows are not read against that
+    // model's names. Collapsed groups draw none.
+    function stageTrackerGroupColumnsHtml(g, groupWorkflow, stages, ctx) {
+      if (!g || g.collapsed) return '';
+      if (groupWorkflow) return stageTrackerWorkflowHeaderHtml(groupWorkflow);
+      return ctx && ctx.leadWorkflow ? stageTrackerHeaderHtml(stages) : '';
+    }
+
     // One row's strip under its model: done before the anchored column,
     // active at it (the stage's own word from `stages`, or the column
     // label), todo after. An uncovered stage lights the first column amber
