@@ -11,6 +11,28 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.236.0)
+
+### Added
+
+- Claude agents can run on an operator-supplied long-lived token: set `HIVE_CLAUDE_OAUTH_TOKEN` (or mount it at `/secrets/claude-oauth-token`, or point `HIVE_CLAUDE_OAUTH_TOKEN_FILE` at it) to a `claude setup-token` token and every `claude`-backend agent is launched with it as `CLAUDE_CODE_OAUTH_TOKEN`, ahead of the 8-hour dashboard sign-in; unset, nothing changes.
+
+### Changed
+
+- Claude auth: while `HIVE_CLAUDE_OAUTH_TOKEN` (or its secret file) is set, Claude agents run on the operator's long-lived token and the shared `~/.claude/.credentials.json` is not what they authenticate with, so the per-agent credential re-bridge (launch, watchdog poll and post-sign-in) and the durable-credential watchdog's Claude probe are suspended: no credential files are moved, no `claude_token_missing` audit or "durable credential unusable" warning is raised for Claude. The suspension is logged once at startup; Copilot watching is unchanged, and with the token unset everything behaves exactly as before. (#17760)
+
+### Fixed
+
+- Docs: `releases.md` no longer claims candidate hives bypass the daily/weekly auto-upgrade cadence by default; since #11816 they follow their stored mode, and the page now explains how to switch a hive to `instant`.
+- Hosted hives accept GitHub webhooks relayed by the hub: the hub signs each relay with a per-hive relay key delivered over the heartbeat (never the App webhook secret), and the spoke verifies it with timestamp and delivery-ID replay protection, turning on event-driven review dispatch for hosted hives.
+- Inbox: the panel no longer sits on "Loading inbox…" forever on a hive with no voice connector configured — the Inbox service now always boots, `GET /api/inbox` returns `200` with an empty list, and a non-OK response renders a visible error instead of the loading placeholder.
+
+## 2026-11-12 (v5.235.1)
+
+### Fixed
+
+- `hive-baseline-check.sh` no longer always exits 2 under the gh wrapper ([#17835](https://github.com/hivecommons/hive/issues/17835)). Its sibling-PR lookup (`gh pr list --state open --json …statusCheckRollup`) was refused with `enumeration_disabled`, so the kick's mandatory baseline triage never produced a verdict. The helper now marks that one call with `HIVE_BASELINE_CHECK=1` and the wrapper lets only that narrow projection through (no `--search`; every other `gh pr list` stays blocked), and a wrapper policy block is now reported distinctly from a GitHub API failure.
+
 ## 2026-11-12 (v5.235.0)
 
 ### Added

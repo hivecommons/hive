@@ -212,13 +212,18 @@ separate, deliberate policy described in
 silently couples to it, on purpose — the operator explicitly asked for these
 to stay decoupled.
 
-Hub-managed hives on the `candidate` channel are canaries: by default the hub
-does not hold them behind the daily/weekly auto-upgrade cadence. Once the
-candidate image for a newer commit is published, the hub may arm the hive on the
-next poll as long as the existing idle, health and wave gates allow it. Stable
-channel hives keep the slower soak/cadence rules. Operators who deliberately
-want candidate hives to obey their stored cadence can set
-`HIVE_CANDIDATE_RESPECT_AUTO_UPGRADE_SCHEDULE=true` on the hub.
+Hub-managed hives on the `candidate` channel follow their stored auto-upgrade
+cadence (`auto_upgrade_mode`: `daily` by default, `weekly`, or `instant`) just
+like stable hives (#11816). A daily candidate hive therefore picks up the newest
+published candidate image once a day, in the first poll at or after 1pm ET; the
+hub reports the hold as `upgradeWhyNotNow: "before the daily window"` and the
+spoke's `/api/version` shows `state: behind` until then. To track every
+published candidate image, set the hive's mode to `instant`
+(`PUT /api/saas/hives/{id}/auto-upgrade` with
+`{"auto_upgrade": true, "auto_upgrade_mode": "instant"}`, or the Manage →
+Auto-upgrade control on the hub). Setting
+`HIVE_CANDIDATE_RESPECT_AUTO_UPGRADE_SCHEDULE=false` on the hub restores the
+old behaviour where every candidate hive bypasses its cadence.
 
 The hub itself does **not** follow the hosted-hive daily/weekly cadence: when
 hub auto-upgrade is enabled and not paused, the hub rolls itself **instantly**
