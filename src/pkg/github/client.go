@@ -3367,7 +3367,21 @@ const (
 
 	prowLgtmWarningMarker = "<!-- hive-prow-lgtm-status-warning -->"
 	prowWarningTimeout    = 15 * time.Second
+
+	// prowLgtmStatusForbiddenMsg is the WARN logged when GitHub answers the
+	// prow/lgtm status write with 403. Its text is the keyword behind the
+	// github_app_statuses_permission_missing self-report class
+	// (pkg/fleetreport/runtime.go), so it is emitted only for that case.
+	prowLgtmStatusForbiddenMsg = "could not set the prow/lgtm commit status: the GitHub App lacks the statuses: write permission"
 )
+
+// isStatusesPermissionDenied reports whether err is GitHub refusing the
+// status write with 403 ("Resource not accessible by integration"), the
+// signature of an App installation without Commit statuses read & write.
+func isStatusesPermissionDenied(err error) bool {
+	var ghErr *gh.ErrorResponse
+	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusForbidden
+}
 
 // bindProwLgtm records the `prow/lgtm` success status on headSHA, the commit
 // the queue review approved. On failure it returns the error, logs it when a
@@ -3399,8 +3413,17 @@ func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, numbe
 		return nil
 	}
 	if c.logger != nil {
-		c.logger.Warn("could not set the prow/lgtm commit status; the GitHub App likely lacks the statuses: write permission",
-			"repo", owner+"/"+repoName, "number", number, "error", err)
+		// Only a 403 names the permission gap: that line is the
+		// github_app_statuses_permission_missing self-report keyword. Any
+		// other failure (5xx, 422, transport, deadline) stays neutral so a
+		// transient outage is not filed as an installation-permission fault.
+		if isStatusesPermissionDenied(err) {
+			c.logger.Warn(prowLgtmStatusForbiddenMsg,
+				"repo", owner+"/"+repoName, "number", number, "error", err)
+		} else {
+			c.logger.Warn("could not set the prow/lgtm commit status",
+				"repo", owner+"/"+repoName, "number", number, "error", err)
+		}
 	}
 	note := "Hive queued this PR but could not set the `prow/lgtm` commit status, so Prow may strip the `lgtm` label and the auto-merge queue may not hold."
 	// A caller that withdrew has nothing left to warn about; a caller whose

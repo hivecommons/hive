@@ -1,0 +1,1 @@
+- Canceled stage-label check digest reads remain in local logs without generating repeated unclassified fleet reports; other digest failures remain reportable (#17944).

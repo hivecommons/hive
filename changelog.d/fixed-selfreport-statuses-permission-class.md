@@ -1,0 +1,1 @@
+- Fleet report: a GitHub App that lacks the `statuses: write` permission (the `prow/lgtm` status 403) is now reported under its own `github_app_statuses_permission_missing` class with a remediation hint instead of the catch-all `unclassified_error_repeated` (#17973).
