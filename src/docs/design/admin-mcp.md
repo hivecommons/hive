@@ -323,6 +323,7 @@ one.
 | issue/PR bands | `GET /api/overview/issues.json` (`issues_by_band`), `GET /api/overview/prs.json` (`prs_by_band`) | Thin wrappers over #9102's band classifier — see below. |
 | review queue | `GET /api/overview/issues.json` + `GET /api/overview/prs.json` (`review_queue`) | The one read tool that makes two GETs; the queue is computed in `pkg/adminmcp` — see below. |
 | contributor queue | `GET /api/contribute/queue` (`contributor_queue`) | The Operations card's own GET, so the rows and their order are the card's. The `contributor_queue.*` write previews add `?controls=1` for the stored pinned order and hold set, which the endpoint answers for owner/read-write only. |
+| GitHub API usage | `GET /api/gh-rate-limits?top=N&usage=1` (`github_api_usage`) | The GitHub API card's own endpoint. `top` is the tool's `limit` (the endpoint bounds it at 50, default 10) and `usage=1` adds the per-caller totals, window, budget thresholds and agent caps; without either parameter the payload is unchanged. No role floor beyond dashboard auth. The handler makes one `GET /rate_limit`, which GitHub does not charge, so a read spends no core call. |
 | governor setup | `GET /api/config/governor` (`governor_setup_proposal`) | Proposal computed in `pkg/adminmcp` from the settings read; writes nothing — see below. |
 | breaker, backup | `GET /api/breaker`, `GET /api/backup/status` | |
 

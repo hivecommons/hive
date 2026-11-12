@@ -235,6 +235,19 @@ for repositories, PRs, pages, REST fallbacks, errors, and the last GraphQL
 query cost. Per-PR REST reads still happen when the batch is disabled, a repo's
 GraphQL query fails, or GitHub returns `mergeable: UNKNOWN` for that PR.
 
+**Finding out who spends the quota.** The dashboard shows it on the GitHub API
+card and under Debug → GitHub API budget. The admin MCP's `github_api_usage`
+tool returns the same reading in one call: the core bucket, the budget mode,
+the calls that cost the most, the last hour summed per caller, and each
+agent's cap and calls. Reading it spends no core API call. See
+[GitHub API usage](../admin-mcp.md#github-api-usage).
+
+`GET /api/gh-rate-limits` takes two optional parameters for this. `?top=N`
+sets how many `top_consumers` rows come back (default 10, at most 50).
+`?usage=1` adds `by_caller`, `window_totals`, `window_seconds`,
+`top_consumers_total`, `core_reset_in_seconds`, `api_budget_thresholds` and
+`agent_caps`. Without them the payload is what it always was.
+
 ### Changing the agent caps
 
 Both caps can be changed without editing `hive.yaml`, which matters on a

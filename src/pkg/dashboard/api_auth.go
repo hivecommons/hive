@@ -538,12 +538,18 @@ func (s *Server) handleGHRateLimits(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "GitHub client not configured", http.StatusServiceUnavailable)
 		return
 	}
+	// ?top=N and ?usage=1 are optional; see gh_rate_limits_usage.go.
+	opts, err := ghRateLimitsOptionsFrom(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	limits, err := s.deps.GHClient.RateLimits(s.deps.Ctx)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, limits)
+	jsonResponse(w, s.ghRateLimitsView(limits, opts, time.Now()))
 }
 
 // maskSecret replaces the interior of a secret string with bullet characters,

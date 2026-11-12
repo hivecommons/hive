@@ -73,7 +73,11 @@ Every hive exposes `GET /api/gh-rate-limits` behind dashboard auth. The payload
 contains GitHub's core/search/GraphQL rate-limit windows, ETag cache counters
 and fill level (`etag_cache.hits/misses/entries/bytes/max_bytes/max_entries`),
 and a one-hour REST top-consumer list grouped by caller, method, and normalized
-endpoint. Operators can collect a hosted fleet view with:
+endpoint. `?top=N` sets the length of that list (default 10, at most 50), and
+`?usage=1` adds the same hour summed per caller (`by_caller`). The admin MCP's
+`github_api_usage` tool reads that view; see
+[GitHub API usage](../admin-mcp.md#github-api-usage). Operators can collect a
+hosted fleet view with:
 
 ```bash
 make quota-report
