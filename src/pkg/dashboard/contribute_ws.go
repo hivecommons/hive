@@ -1004,6 +1004,9 @@ type ContributeWSHub struct {
 	fixSched      *fixqueue.Scheduler
 	fixOwners     map[string]map[string]bool
 	fixDispatched func(*ContributorConnection, WSMessage)
+	// prOpenFn overrides the forge-cache lookup the fleet snapshot uses to
+	// drop merged/closed PRs from a contributor's rework; a test hook.
+	prOpenFn func(repo string, number int) (open, known bool)
 	// fixFailedSig is closed (and replaced) whenever a relay reports a
 	// fix-pr task failed, waking a Nudge that is waiting to learn whether its
 	// dispatch was refused (hivecommons/hive#14668). fixAckGrace overrides
@@ -4132,6 +4135,12 @@ func repoScopeGateReason(c *ContributorConnection) string {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return repoScopeGateReasonLocked(c)
+}
+
+// repoScopeGateReasonLocked is repoScopeGateReason for a caller that already
+// holds c.mu (the fleet snapshot explains an undispatched fix with it).
+func repoScopeGateReasonLocked(c *ContributorConnection) string {
 	if c.repoScopeInvalid {
 		return taskUnavailableRepoScopeInvalid
 	}

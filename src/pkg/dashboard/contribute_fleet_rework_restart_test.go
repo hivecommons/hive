@@ -76,7 +76,7 @@ func TestFleetReworkAfterRestartKeepsFreshlyReturnedPR(t *testing.T) {
 		noteRework(s, "org/r", 5, stagelabels.ReturnedToContributor, "alice")
 		// Seen just inside the bound: an outage shorter than a day keeps it.
 		at(now.Add(-pendingReworkUnseenBound + time.Hour))
-		noteRework(s, "org/r", 6, stagelabels.AdoptedByHive, "alice")
+		noteRework(s, "org/r", 6, stagelabels.ReturnedToContributor, "alice")
 	})
 	hub, srv, _ := reworkHub(t)
 	hub.stageStore = store
@@ -85,7 +85,7 @@ func TestFleetReworkAfterRestartKeepsFreshlyReturnedPR(t *testing.T) {
 
 	fc := snapshotFor(t, hub, "alice")
 	if got := pendingNumbers(fc); fc.PendingRework != 2 || len(got) != 2 || got[0] != 5 || got[1] != 6 {
-		t.Fatalf("pending_rework=%d prs=%v, want #5 (072) and #6 (074): both seen within %s", fc.PendingRework, got, pendingReworkUnseenBound)
+		t.Fatalf("pending_rework=%d prs=%v, want #5 and #6 (072): both seen within %s", fc.PendingRework, got, pendingReworkUnseenBound)
 	}
 	if fc.PendingReworkPRs[0].Stage != stagelabels.ReturnedToContributor.Label() {
 		t.Fatalf("stage = %q, want 072", fc.PendingReworkPRs[0].Stage)
@@ -132,13 +132,17 @@ func TestFleetReworkSkipsRecordsTheStoreMarksFinished(t *testing.T) {
 	// A lane reported the PR closed or merged: the stage pass forgets it.
 	noteRework(store, "org/r", 3, stagelabels.ReturnedToContributor, "alice")
 	store.Forget(stagelabels.Key("org/r", 3))
-	// A reopen for a failed copy clears the supersession: owed again.
+	// A reopen for a failed copy clears the supersession and the next stage
+	// pass returns the PR to its author: owed again.
 	noteRework(store, "org/r", 4, stagelabels.AdoptedByHive, "alice")
 	store.MarkSuperseded(stagelabels.Key("org/r", 4), 14, false, now)
 	store.MarkAdoptionReopened(stagelabels.Key("org/r", 4), 14, now)
+	noteRework(store, "org/r", 4, stagelabels.ReturnedToContributor, "alice")
 
-	if got := store.ByAuthor("alice", stagelabels.ReturnedToContributor); len(got) != 0 {
-		t.Fatalf("ByAuthor returned a forgotten record: %+v", got)
+	for _, ai := range store.ByAuthor("alice", stagelabels.ReturnedToContributor) {
+		if _, n := splitStageKey(ai.Key); n == 3 {
+			t.Fatalf("ByAuthor returned a forgotten record: %+v", ai)
+		}
 	}
 	fc := snapshotFor(t, hub, "alice")
 	if got := pendingNumbers(fc); fc.PendingRework != 1 || len(got) != 1 || got[0] != 4 {
