@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
 
@@ -123,18 +124,10 @@ func TestPreferDirectListDoesNotBlock(t *testing.T) {
 		}
 	}
 	fp.release()
-	var items []Item
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		items, _ = src.List(ctx)
-		if len(items) == 1 && items[0].Title == "Direct title" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("background refresh never landed: %+v", items)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	items := testutil.EventuallyValue(t, 5*time.Second, func() ([]Item, bool) {
+		got, _ := src.List(ctx)
+		return got, len(got) == 1 && got[0].Title == "Direct title"
+	}, "background refresh never landed")
 	if n := fp.calls.Load(); n != 1 {
 		t.Fatalf("ListRecordings calls = %d, want 1 (single-flight, cached for TTL)", n)
 	}
