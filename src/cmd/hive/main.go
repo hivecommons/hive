@@ -5499,6 +5499,16 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						"app_id", b.cfg.GitHub.AppID,
 						"installation_id", b.cfg.GitHub.InstallationID,
 					)
+				} else if discoveryAppAuthStale(b.appAuth, b.cfg.GitHub, rebuildKeyFile) {
+					// A real App with no installation yet (forge switch on claim):
+					// give installation discovery the NEW App's JWT so it polls
+					// the forge the repos actually live on.
+					newAppAuth, err := github.NewAppAuth(b.cfg.GitHub.AppID, 0, rebuildKeyFile, b.logger, b.cfg.GitHub.ResolvedAPIURL())
+					if err != nil {
+						b.logger.Error("github app auth init for installation discovery failed", "error", err)
+						return
+					}
+					b.adoptDiscoveryAppAuth(newAppAuth)
 				}
 
 			}),

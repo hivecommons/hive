@@ -257,16 +257,22 @@ type AgentProcess struct {
 	LastKickMessage   string
 	KickRefused       bool
 	KickRefusalReason string
-	LaunchedMode      AgentMode
-	HasLaunched       bool
-	poolLeaseID       string
-	poolLeaseCancel   context.CancelFunc
-	baseConfig        config.AgentConfig
-	agentSpecPrompt   string
-	tmuxSession       string
-	tmuxSocket        string
-	cancel            context.CancelFunc
-	forceRelaunch     bool
+	// lastKickInput is the last kick as handed to delivery, before the
+	// backend suffixes, so a refused canary kick can be re-delivered plain
+	// without doubling the suffixes. canaryRetryDone is set when the current
+	// kick IS that re-delivery, so it is never retried again.
+	lastKickInput   string
+	canaryRetryDone bool
+	LaunchedMode    AgentMode
+	HasLaunched     bool
+	poolLeaseID     string
+	poolLeaseCancel context.CancelFunc
+	baseConfig      config.AgentConfig
+	agentSpecPrompt string
+	tmuxSession     string
+	tmuxSocket      string
+	cancel          context.CancelFunc
+	forceRelaunch   bool
 	// launching is set true under m.mu while Start runs this agent's launch
 	// with m.mu RELEASED (so a slow /data NFS write or a hung MITM-proxy token
 	// mint during launch cannot block AllStatuses()/the heartbeat collect() and
@@ -677,6 +683,9 @@ type Manager struct {
 	// kickOutcomeObserver receives the verdict on how each kicked turn ended
 	// (#7421); the governor consumes it. Same discipline as kickObserver.
 	kickOutcomeObserver atomic.Pointer[func(agentName string, outcome KickOutcome)]
+	// canaryRetryDeliver, when set, replaces the goroutine+sendKick path a
+	// refused canary kick is re-delivered through (tests inject a recorder).
+	canaryRetryDeliver func(name, message string)
 
 	// kickDispatches tracks asynchronous kick dispatches (#5325): the in-flight
 	// guard that makes delivery exactly-once, and the latest outcome per agent

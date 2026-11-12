@@ -3187,6 +3187,16 @@ func (s *Server) UpdateGitHubClient(client *github.Client, auth *github.AppAuth)
 	}
 }
 
+// UpdateGitHubAppAuth swaps only the App credential the installation-discovery
+// loop polls with, leaving the client untouched. Used when a hub delivery names
+// a new App (or forge) whose installation is not known yet, so discovery asks
+// the right forge instead of the one the pod booted against.
+func (s *Server) UpdateGitHubAppAuth(auth *github.AppAuth) {
+	if s.deps != nil {
+		s.deps.GHAppAuth = auth
+	}
+}
+
 // SetGoodFirstIssueStats installs the provider of good-first-issue curation
 // counters; nil removes it.
 func (s *Server) SetGoodFirstIssueStats(fn func() any) {

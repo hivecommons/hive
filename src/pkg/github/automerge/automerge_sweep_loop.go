@@ -735,7 +735,8 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 // sweepPass runs the three lanes once, in order, sharing one merge budget,
 // then reconciles stage labels. targets narrows an event-driven pass to the
 // PRs a webhook named (nil: everything); cause names what started the pass
-// for the log. It returns nil when the self-authored lane failed outright
+// for the log. It returns nil when the self-authored lane failed outright or
+// the contributor lane was interrupted by cancellation of the sweep context
 // (its callers then keep the current cadence).
 func (c *Engine) sweepPass(ctx context.Context, maxMerges int, acmmAllowed bool, targets SweepTargets, cause string) *AutoMergeSweepResult {
 	c.sweepClock.begin(cause, targets, c.now())
@@ -784,6 +785,12 @@ func (c *Engine) sweepPass(ctx context.Context, maxMerges int, acmmAllowed bool,
 	if remaining > 0 && c.currentContributorLanePolicy().Enabled {
 		laneResult, laneErr := c.SweepContributorLaneAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: remaining, Targets: targets})
 		if laneErr != nil {
+			// A client hand-over or shutdown cancels the whole sweep. Do not
+			// report that expected interruption as a failed contributor pass,
+			// or start stage reconciliation on the canceled context.
+			if ctx.Err() == context.Canceled && errors.Is(laneErr, context.Canceled) {
+				return nil
+			}
 			c.warn("contributor-lane automerge sweep failed", "error", laneErr, "cause", cause)
 			if isRateLimited(laneErr) {
 				c.refreshRateLimitCache(ctx)
