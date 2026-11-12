@@ -109,19 +109,19 @@ func TestHubRelayedWebhookRejections(t *testing.T) {
 	t.Run("tampered body", func(t *testing.T) {
 		tampered := []byte(strings.Replace(string(body), `"number":5`, `"number":6`, 1))
 		rec := postRelayedWebhook(s, "pull_request", "tamper-1", now, signWebhookRelayForTest(key, now, "tamper-1", body), tampered)
-		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), webhookRelayReasonBadSignature) {
-			t.Fatalf("tampered body: %d %s, want 401 %s", rec.Code, rec.Body.String(), webhookRelayReasonBadSignature)
+		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), github.WebhookReasonRelaySignatureFailed) {
+			t.Fatalf("tampered body: %d %s, want 401 %s", rec.Code, rec.Body.String(), github.WebhookReasonRelaySignatureFailed)
 		}
 	})
 	t.Run("another hive's key", func(t *testing.T) {
 		rec := postRelayedWebhook(s, "pull_request", "other-1", now, signWebhookRelayForTest("relay-key-h2", now, "other-1", body), body)
-		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), webhookRelayReasonBadSignature) {
+		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), github.WebhookReasonRelaySignatureFailed) {
 			t.Fatalf("other hive's key: %d %s, want 401", rec.Code, rec.Body.String())
 		}
 	})
 	t.Run("delivery ID swapped after signing", func(t *testing.T) {
 		rec := postRelayedWebhook(s, "pull_request", "swapped-2", now, signWebhookRelayForTest(key, now, "swapped-1", body), body)
-		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), webhookRelayReasonBadSignature) {
+		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), github.WebhookReasonRelaySignatureFailed) {
 			t.Fatalf("swapped delivery: %d %s, want 401", rec.Code, rec.Body.String())
 		}
 	})
@@ -134,19 +134,19 @@ func TestHubRelayedWebhookRejections(t *testing.T) {
 	t.Run("stale timestamp", func(t *testing.T) {
 		old := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
 		rec := postRelayedWebhook(s, "pull_request", "stale-1", old, signWebhookRelayForTest(key, old, "stale-1", body), body)
-		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), webhookRelayReasonStale) {
-			t.Fatalf("stale timestamp: %d %s, want 401 %s", rec.Code, rec.Body.String(), webhookRelayReasonStale)
+		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), github.WebhookReasonRelayStale) {
+			t.Fatalf("stale timestamp: %d %s, want 401 %s", rec.Code, rec.Body.String(), github.WebhookReasonRelayStale)
 		}
 		future := strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10)
 		rec = postRelayedWebhook(s, "pull_request", "stale-2", future, signWebhookRelayForTest(key, future, "stale-2", body), body)
-		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), webhookRelayReasonStale) {
-			t.Fatalf("future timestamp: %d %s, want 401 %s", rec.Code, rec.Body.String(), webhookRelayReasonStale)
+		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), github.WebhookReasonRelayStale) {
+			t.Fatalf("future timestamp: %d %s, want 401 %s", rec.Code, rec.Body.String(), github.WebhookReasonRelayStale)
 		}
 	})
 	t.Run("missing delivery ID", func(t *testing.T) {
 		rec := postRelayedWebhook(s, "pull_request", "", now, signWebhookRelayForTest(key, now, "", body), body)
-		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), webhookRelayReasonNoDelivery) {
-			t.Fatalf("missing delivery: %d %s, want 401 %s", rec.Code, rec.Body.String(), webhookRelayReasonNoDelivery)
+		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), github.WebhookReasonRelayDeliveryMissing) {
+			t.Fatalf("missing delivery: %d %s, want 401 %s", rec.Code, rec.Body.String(), github.WebhookReasonRelayDeliveryMissing)
 		}
 	})
 	t.Run("replayed delivery ID", func(t *testing.T) {
@@ -155,8 +155,8 @@ func TestHubRelayedWebhookRejections(t *testing.T) {
 			t.Fatalf("first delivery: status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 		}
 		rec := postRelayedWebhook(s, "pull_request", "replay-1", now, sig, body)
-		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), webhookRelayReasonReplayed) {
-			t.Fatalf("replay: %d %s, want 401 %s", rec.Code, rec.Body.String(), webhookRelayReasonReplayed)
+		if rec.Code != http.StatusUnauthorized || !strings.Contains(relayErr(t, rec), github.WebhookReasonRelayReplayed) {
+			t.Fatalf("replay: %d %s, want 401 %s", rec.Code, rec.Body.String(), github.WebhookReasonRelayReplayed)
 		}
 	})
 }

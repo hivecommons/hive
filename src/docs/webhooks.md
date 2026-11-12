@@ -240,7 +240,10 @@ Operator checks:
    no hub relay key has arrived either, and every delivery, relayed or
    direct, is answered 503 (`rejected_1h` and
    `last_rejected_at` show they are arriving); `signature_failed` means the
-   secret does not match the sender's; `deliveries_rejected` means signed
+   secret does not match the sender's — or, on a hosted spoke with no
+   `GITHUB_WEBHOOK_SECRET`, that a relayed delivery arrived without
+   `X-Hive-Relay-Signature-256` (an unsigned or not-yet-provisioned relay,
+   not a secret mismatch); `deliveries_rejected` means signed
    payloads did not decode; `no_deliveries` means the secret is set but
    nothing verified has arrived, so look at the App webhook URL or the hub
    relay. `GET /api/health/deep` carries the same cause as a `webhooks`

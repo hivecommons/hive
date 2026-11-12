@@ -39,15 +39,6 @@ const (
 	webhookRelayReplayMax = 4096
 )
 
-// Rejection reasons for hub-relayed deliveries, logged, returned in the 401
-// body and recorded as the failure reason (webhooks.mode_reason_code).
-const (
-	webhookRelayReasonBadSignature = github.WebhookReasonRelaySignatureFailed
-	webhookRelayReasonNoDelivery   = github.WebhookReasonRelayDeliveryMissing
-	webhookRelayReasonStale        = github.WebhookReasonRelayStale
-	webhookRelayReasonReplayed     = github.WebhookReasonRelayReplayed
-)
-
 // verifyWebhookRelaySignature is the constant-time HMAC-SHA256 check of the
 // relay signature, in the same style as verifyGitHubWebhookSignature.
 func verifyWebhookRelaySignature(body []byte, timestamp, delivery, signature, key string) bool {
@@ -111,20 +102,20 @@ func (s *Server) verifyWebhookRelay(h http.Header, body []byte, key string, now 
 	ts := h.Get(webhookRelayTimestampHeader)
 	delivery := h.Get("X-GitHub-Delivery")
 	if !verifyWebhookRelaySignature(body, ts, delivery, h.Get(webhookRelaySignatureHeader), key) {
-		return webhookRelayReasonBadSignature
+		return github.WebhookReasonRelaySignatureFailed
 	}
 	if delivery == "" {
-		return webhookRelayReasonNoDelivery
+		return github.WebhookReasonRelayDeliveryMissing
 	}
 	sec, err := strconv.ParseInt(ts, 10, 64)
 	if err != nil {
-		return webhookRelayReasonStale
+		return github.WebhookReasonRelayStale
 	}
 	if skew := now.Sub(time.Unix(sec, 0)); skew > webhookRelayMaxSkew || skew < -webhookRelayMaxSkew {
-		return webhookRelayReasonStale
+		return github.WebhookReasonRelayStale
 	}
 	if !s.webhookRelaySeen.firstSeen(delivery, now) {
-		return webhookRelayReasonReplayed
+		return github.WebhookReasonRelayReplayed
 	}
 	return ""
 }
