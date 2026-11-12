@@ -29,6 +29,7 @@ func SetHeartbeatStateForTest(enabled bool, lastAttempt, lastSuccess time.Time) 
 // still had fresh stats to fall back on.
 func ResetHeartbeatStateForTest() {
 	SetHeartbeatStateForTest(false, time.Time{}, time.Time{})
+	heartbeatUnprovisionedUntil.Store(0)
 	lastGoodPayload.Lock()
 	// Invalidate any collect goroutine still running from an earlier test
 	// (same lock as its late store) so it cannot repopulate the cache.
