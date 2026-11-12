@@ -1,1 +1,0 @@
-- Settings → Inbox section to edit the default RFC repository, dibs URL and auto-routing rules from the dashboard Settings dialog.
