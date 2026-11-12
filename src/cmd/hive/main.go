@@ -1099,11 +1099,12 @@ func (b *boot) wireBootClosures() {
 			WorkflowItemSnapshot: func(ctx context.Context, repo string, number int) (github.WorkflowItemSnapshot, error) {
 				return b.ghClient.WorkflowItemSnapshot(ctx, repo, number)
 			},
-			WorkflowRepoFile:      workflowRepoFile(func() *github.Client { return b.ghClient }),
-			WorkflowClusterRunner: workflowClusterRunner(),
-			WorkflowSpecLLM:       newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
-			AgentMgr:              b.agentMgr,
-			CruxRuntimeHealth:     cruxRuntimeHealthFunc(b.cruxSupervision),
+			WorkflowRepoFile:        workflowRepoFile(func() *github.Client { return b.ghClient }),
+			WorkflowProvisionLabels: workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
+			WorkflowClusterRunner:   workflowClusterRunner(),
+			WorkflowSpecLLM:         newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
+			AgentMgr:                b.agentMgr,
+			CruxRuntimeHealth:       cruxRuntimeHealthFunc(b.cruxSupervision),
 			// Provider gateways (#5565 slice 3): concrete openrouter/watsonx/
 			// linearagent adapters behind the dashboard's consumer-defined
 			// interfaces — this composition root is the only non-test place that

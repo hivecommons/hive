@@ -235,7 +235,7 @@
         pr: { checks: 'unknown', review: 'pending', dco: 'unknown', conflicting: false } };
     }
     function wfSimDefaultState() { return { kind: 'pr', repo: '', facts: wfSimDefaultFacts(), result: null, error: '', busy: false, open: false }; }
-    const _wfLib = { view: 'library', selected: null, detail: null, detailError: '', loadingKey: '', pending: null,
+    const _wfLib = { view: 'library', selected: null, detail: null, detailError: '', loadingKey: '', pending: null, enabledBusy: false,
       ingest: { repo: '', name: '', busy: false, result: null, error: '' },
       sim: wfSimDefaultState() };
 
@@ -314,10 +314,30 @@
       }).join('');
     }
 
-    function renderWorkflowLibraryTable(workflows, bindings, owner) {
+    // renderWorkflowEnabledToggle is the Library header's owner switch for
+    // workflow.enabled (PUT /api/workflows/enabled). Pure: enabled is the
+    // live flag from GET /api/workflows, owner gates the control, busy dims
+    // it while a PUT is in flight.
+    function renderWorkflowEnabledToggle(enabled, owner, busy) {
+      const on = !!enabled;
+      const locked = !owner || !!busy;
+      const explain = on
+        ? 'On: a bound repository\'s stages are derived by its model\'s rules and the model\'s labels are provisioned in the repository.'
+        : 'Off: a binding only changes the Activity Monitor\'s columns; stages are still derived by the built-in engine.';
+      return '<div class="config-toggle wf-enabled-toggle" data-wf-enabled="' + (on ? 'on' : 'off') + '">' +
+        '<div class="config-toggle-switch' + (on ? ' on' : '') + (locked ? ' disabled' : '') + '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '" ' +
+        (locked ? 'aria-disabled="true" ' : 'data-action="wfToggleEnabled" data-arg-types="t" ') +
+        'title="' + (owner ? 'Turn model-based stage derivation ' + (on ? 'off' : 'on') : 'Owner role is required to change workflow.enabled') + '"></div>' +
+        '<span class="config-toggle-label">Derive stages from bound models <span class="text-muted">(' + yamlHint('workflow.enabled') + ')</span></span>' +
+        '</div>' +
+        '<p class="text-muted fs-sm wf-enabled-explain">' + explain + '</p>';
+    }
+
+    function renderWorkflowLibraryTable(workflows, bindings, owner, enabled, busy) {
       return '<div class="config-section" data-section="workflows-library">' +
         '<h3>Workflow library</h3>' +
-        '<p class="text-muted fs-base">Every workflow model this hive knows: the built-in <span class="mono">hive-default</span> lifecycle, models saved here, and drafts ingested from repository pipelines. A repository follows a model only once it is bound on Settings → Repos; binding changes the Activity Monitor\'s columns for that repository and, when ' + yamlHint('workflow.enabled') + ' is on, how its stages are derived.</p>' +
+        renderWorkflowEnabledToggle(enabled, owner, busy) +
+        '<p class="text-muted fs-base">Every workflow model this hive knows: the built-in <span class="mono">hive-default</span> lifecycle, models saved here, and drafts ingested from repository pipelines. A repository follows a model only once it is bound on Settings → Repos; binding changes the Activity Monitor\'s columns for that repository and, when the switch above is on, how its stages are derived.</p>' +
         '<table class="kc-table wf-table"><thead><tr><th>Model</th><th>Provenance</th><th>Source</th><th>Compile</th><th title="states / columns">S / C</th><th>Bound</th><th></th></tr></thead>' +
         '<tbody>' + renderWorkflowLibraryRows(workflows, bindings, owner) + '</tbody></table>' +
         '</div>';
@@ -783,7 +803,7 @@
       } else if (_wfLib.view === 'marketplace') {
         body = renderWorkflowMarketplaceView(owner);
       } else {
-        body = renderWorkflowLibraryTable(_workflowState.workflows, _workflowState.bindings, owner);
+        body = renderWorkflowLibraryTable(_workflowState.workflows, _workflowState.bindings, owner, _workflowState.enabled, _wfLib.enabledBusy);
       }
       return wfLibNav(_wfLib.view) + body;
     }
@@ -827,6 +847,45 @@
         return;
       }
       openConfigDialog('governor', null, 'Workflows');
+    }
+
+    // wfToggleEnabled flips workflow.enabled through PUT /api/workflows/enabled.
+    // Turning it on changes how every bound repository's stages are derived
+    // and creates labels in those repositories, so it asks first; turning it
+    // off is immediate (columns stay, derivation reverts to the built-in
+    // engine).
+    async function wfToggleEnabled(el) {
+      if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) { showToast('Owner role is required to change workflow.enabled.', 'error'); return; }
+      if (_wfLib.enabledBusy) return;
+      const next = !_workflowState.enabled;
+      if (next) {
+        const bound = (_workflowState.bindings || []).length;
+        const ok = await hiveConfirm({
+          title: 'Derive stages from bound models?',
+          message: 'Stages for ' + (bound ? bound + ' bound repositor' + (bound === 1 ? 'y' : 'ies') : 'any repository you bind') + ' will be derived by the bound model\'s rules instead of the built-in engine, and each model\'s labels are created in the repository now. Unbound repositories are unaffected. You can turn this off again at any time.',
+          confirmLabel: 'Turn on',
+        });
+        if (!ok) return;
+      }
+      _wfLib.enabledBusy = true;
+      wfLibRerender();
+      try {
+        const res = await fetch('/api/workflows/enabled', { method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify({ enabled: next }) });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        const data = await res.json();
+        _workflowState.enabled = !!data.enabled;
+        if (Array.isArray(data.bindings)) _workflowState.bindings = data.bindings;
+        if (Array.isArray(data.warnings) && data.warnings.length) {
+          showToast('Derivation is on, but some labels could not be provisioned yet (the next sweep retries): ' + data.warnings.join('; '), 'error');
+        } else {
+          showToast(_workflowState.enabled ? 'Stages are now derived from bound models.' : 'Stage derivation is back on the built-in engine; bound columns stay.');
+        }
+      } catch (err) {
+        showToast('Could not change workflow.enabled: ' + err.message, 'error');
+      } finally {
+        _wfLib.enabledBusy = false;
+        wfLibRerender();
+      }
     }
 
     async function wfLibReload() {

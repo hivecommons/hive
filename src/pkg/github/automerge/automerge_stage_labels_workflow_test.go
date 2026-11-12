@@ -369,3 +369,33 @@ func TestEnsureStageLabelsGCNoStoreOrRecordIsInert(t *testing.T) {
 		t.Fatalf("unbound repo touched GC routes: %v %v", gcAPI.searches, gcAPI.deleted)
 	}
 }
+
+// EnsureStageLabels is the dashboard's on-demand entry into the same
+// memoised path (PUT /api/workflows/enabled turning derivation on).
+func TestEnsureStageLabelsExportedUsesEngineTrackerAndPolicy(t *testing.T) {
+	ctx := context.Background()
+	api := &stageAPI{labels: map[string]string{}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	profile := workflowTestProfile(t, workflowmodel.LabelEntry{Name: "docs/010-requested", State: "requested"})
+	e, tracker := newWorkflowStageEngine(t, srv.URL, func(string, string) *workflowmodel.Profile { return profile })
+
+	if err := e.EnsureStageLabels(ctx, "acme", "widget"); err != nil {
+		t.Fatal(err)
+	}
+	if api.lists != 1 || !slices.Contains(api.creates, "docs/010-requested") || tracker.ensuredWorkflow["acme/widget"] != profile.Hash {
+		t.Fatalf("lists=%d creates=%v memo=%q", api.lists, api.creates, tracker.ensuredWorkflow["acme/widget"])
+	}
+	// The sweep's own path then finds the memo and does nothing.
+	if err := e.ensureStageLabels(ctx, "acme", "widget", tracker, authorkind.DefaultNames); err != nil || api.lists != 1 {
+		t.Fatalf("sweep after dashboard provisioning: err=%v lists=%d", err, api.lists)
+	}
+
+	var nilEngine *Engine
+	if err := nilEngine.EnsureStageLabels(ctx, "acme", "widget"); err == nil {
+		t.Fatal("nil engine must report an error")
+	}
+	if err := New(nil, Options{}).EnsureStageLabels(ctx, "acme", "widget"); err == nil {
+		t.Fatal("engine without a transport must report an error")
+	}
+}

@@ -2,12 +2,16 @@ package dashboard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -274,5 +278,103 @@ func TestStageTrackerWorkflowsBlock(t *testing.T) {
 	resp := s.buildStageTracker(&StatusPayload{HiveID: "h"}, nil, time.Now())
 	if resp.Workflows == nil || len(resp.Workflows.Repos) != 2 {
 		t.Fatalf("%+v", resp.Workflows)
+	}
+}
+
+// PUT /api/workflows/enabled flips workflow.enabled from the dashboard
+// (hivecommons/hive#17620): owner-gated, persisted to hive.yaml, audited,
+// and on the way on it provisions every bound repository's labels.
+func TestWorkflowEnabledPut(t *testing.T) {
+	s := workflowTestServer(t, true)
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	var provisioned []string
+	s.deps.WorkflowProvisionLabels = func(_ context.Context, repo string) error {
+		provisioned = append(provisioned, repo)
+		if repo == "repo2" {
+			return errors.New("no such repository")
+		}
+		return nil
+	}
+	if rec := wfReq(s, http.MethodPost, "/api/workflows", techdocsModel(t), true); rec.Code != http.StatusCreated {
+		t.Fatal(rec.Body.String())
+	}
+	for _, repo := range []string{"repo1", "repo2"} {
+		if _, err := s.deps.Config.SetWorkflowBinding(repo, "cncf-techdocs", "1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if rec := wfReq(s, http.MethodPut, "/api/workflows/enabled", map[string]bool{"enabled": true}, false); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owner: %d %s", rec.Code, rec.Body)
+	}
+	for _, bad := range []string{"{", "{}", `{"enabled":"yes"}`} {
+		if rec := wfReq(s, http.MethodPut, "/api/workflows/enabled", bad, true); rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: %d %s", bad, rec.Code, rec.Body)
+		}
+	}
+	if s.deps.Config.Workflow.Enabled || len(provisioned) != 0 {
+		t.Fatalf("rejected requests changed state: enabled=%v provisioned=%v", s.deps.Config.Workflow.Enabled, provisioned)
+	}
+
+	rec := wfReq(s, http.MethodPut, "/api/workflows/enabled", map[string]bool{"enabled": true}, true)
+	var out struct {
+		Enabled  bool
+		Changed  bool
+		Bindings []struct{ Repo string }
+		Warnings []string
+	}
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &out) != nil || !out.Enabled || !out.Changed || len(out.Bindings) != 2 {
+		t.Fatalf("enable: %d %s", rec.Code, rec.Body)
+	}
+	if !s.deps.Config.Workflow.Enabled {
+		t.Fatal("flag not applied to the live config")
+	}
+	if len(provisioned) != 2 || len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "repo2") {
+		t.Fatalf("provisioned=%v warnings=%v", provisioned, out.Warnings)
+	}
+	saved, err := os.ReadFile(s.deps.Config.SourcePath)
+	if err != nil || !bytes.Contains(saved, []byte("enabled: true")) {
+		t.Fatalf("hive.yaml not persisted: %v\n%s", err, saved)
+	}
+	rec = wfReq(s, http.MethodGet, "/api/workflows", nil, false)
+	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"enabled":true`)) {
+		t.Fatalf("list after enable: %d %s", rec.Code, rec.Body)
+	}
+
+	// Idempotent: same value again is not a change, not audited, but still
+	// re-provisions (the memo makes that cheap).
+	rec = wfReq(s, http.MethodPut, "/api/workflows/enabled", map[string]bool{"enabled": true}, true)
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &out) != nil || !out.Enabled || out.Changed {
+		t.Fatalf("enable again: %d %s", rec.Code, rec.Body)
+	}
+	provisioned = nil
+	out.Warnings = nil
+	rec = wfReq(s, http.MethodPut, "/api/workflows/enabled", map[string]bool{"enabled": false}, true)
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &out) != nil || out.Enabled || !out.Changed || len(out.Warnings) != 0 {
+		t.Fatalf("disable: %d %s", rec.Code, rec.Body)
+	}
+	if s.deps.Config.Workflow.Enabled || len(provisioned) != 0 {
+		t.Fatalf("disable: enabled=%v provisioned=%v", s.deps.Config.Workflow.Enabled, provisioned)
+	}
+
+	var actions []string
+	for _, e := range s.audit.Recent(0) {
+		if e.Action == "workflow_enabled" || e.Action == "workflow_disabled" {
+			actions = append(actions, e.Action)
+		}
+	}
+	if strings.Join(actions, ",") != "workflow_disabled,workflow_enabled" && strings.Join(actions, ",") != "workflow_enabled,workflow_disabled" {
+		t.Fatalf("audit actions %v", actions)
+	}
+
+	// A failed save leaves the live flag where it was.
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "missing", "hive.yaml")
+	if rec := wfReq(s, http.MethodPut, "/api/workflows/enabled", map[string]bool{"enabled": true}, true); rec.Code != http.StatusInternalServerError || s.deps.Config.Workflow.Enabled {
+		t.Fatalf("unsaveable: %d %s enabled=%v", rec.Code, rec.Body, s.deps.Config.Workflow.Enabled)
+	}
+
+	s.deps.Config = nil
+	if rec := wfReq(s, http.MethodPut, "/api/workflows/enabled", map[string]bool{"enabled": true}, true); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no config: %d", rec.Code)
 	}
 }
