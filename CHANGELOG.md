@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.228.4)
+
+### Security
+
+- The Plaud knowledge connector's stdio MCP server (`npx -y @plaud-ai/mcp@latest` by default) now starts with an allowlisted environment (`PATH`, `HOME`, locale, proxy/CA variables, `NODE_*`, `npm_config_*`, `PLAUD_*`) instead of the full hive process environment, so hub-injected credentials such as `DASHBOARD_AUTH_TOKEN`, `HIVE_TERMINAL_KEY` and `HIVE_UPSTREAM_PROXY_URL` no longer reach third-party code fetched at run time ([#17843](https://github.com/hivecommons/hive/issues/17843)).
+
 ## 2026-11-12 (v5.228.3)
 
 ### Security
