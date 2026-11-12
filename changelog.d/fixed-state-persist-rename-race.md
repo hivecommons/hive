@@ -1,0 +1,1 @@
+- Persisting hive state and reach state no longer fails with "rename ... no such file or directory" when two writers race: each write uses a unique temp file before the atomic rename (#17726, #17728).
