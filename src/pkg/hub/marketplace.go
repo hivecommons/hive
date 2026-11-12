@@ -222,7 +222,11 @@ func (s *HubServer) handleMarketplacePublish(w http.ResponseWriter, r *http.Requ
 // catalogue" button works through the spoke. Spokes are rate-limited (one
 // full run per marketplaceFullRefreshInterval across all spokes,
 // marketplaceRepoRefreshBurst single-repo runs per minute) → 429 with
-// Retry-After; admins are not.
+// Retry-After; admins are not. A spoke's ?repo= must also name a repository
+// the hub already tracks (the corpus or HIVE_HUB_MARKETPLACE_EXTRA_REPOS),
+// otherwise 403: the ingest runs with the hub's GitHub identity and
+// publishes under the hub's name, so only an admin may widen what it
+// fetches.
 func (s *HubServer) handleMarketplaceRefresh(w http.ResponseWriter, r *http.Request) {
 	if !s.marketplaceGate(w) {
 		return
@@ -241,6 +245,10 @@ func (s *HubServer) handleMarketplaceRefresh(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		if !who.admin {
+			if !marketplaceTracksRepo(repo) {
+				marketplaceJSONError(w, http.StatusForbidden, "repo is not in the marketplace corpus; only a hub admin may refresh other repositories")
+				return
+			}
 			if ok, wait := rf.allowRepoRefresh(now); !ok {
 				marketplaceTooMany(w, wait, "single-repository refresh")
 				return
