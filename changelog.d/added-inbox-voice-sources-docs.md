@@ -1,1 +1,1 @@
-- Knowledge → Integrations: the Plaud card now links to the Inbox and voice sources quickstart (`inbox-voice-sources.md`).
+- Knowledge → Integrations: the Plaud card now links to the Inbox and voice sources quickstart (`inbox-voice-sources.md`) ([#17882](https://github.com/hivecommons/hive/issues/17882)).
