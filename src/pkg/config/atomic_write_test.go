@@ -167,3 +167,122 @@ func TestSaveSurvivesKillMidWrite(t *testing.T) {
 	default:
 	}
 }
+
+func TestWriteFileAtomicMissingDirFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "no-such-dir", "hive.yaml")
+	err := writeFileAtomic(path, []byte("x"), 0o600)
+	if err == nil {
+		t.Fatal("expected error when target directory does not exist")
+	}
+	if !strings.Contains(err.Error(), "creating temp file") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWriteFileAtomicResolveErrorIsReported(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "regular")
+	if err := os.WriteFile(file, []byte("f"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Using a regular file as a path component makes EvalSymlinks fail with
+	// ENOTDIR, which is not ErrNotExist and must surface as a resolve error.
+	err := writeFileAtomic(filepath.Join(file, "hive.yaml"), []byte("x"), 0o600)
+	if err == nil {
+		t.Fatal("expected resolve error")
+	}
+	if !strings.Contains(err.Error(), "resolving") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWriteFileAtomicDanglingSymlinkIsReplaced(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "hive.yaml")
+	if err := os.Symlink(filepath.Join(dir, "missing-target"), link); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+	if err := writeFileAtomic(link, []byte("fresh"), 0o600); err != nil {
+		t.Fatalf("writeFileAtomic: %v", err)
+	}
+	got, err := os.ReadFile(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "fresh" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestWriteFileAtomicRenameFailureFallsBackAndReportsBoth(t *testing.T) {
+	dir := t.TempDir()
+	// A non-empty directory as the target: rename of a file onto it fails,
+	// and the in-place O_TRUNC fallback cannot open a directory for writing.
+	target := filepath.Join(dir, "hive.yaml")
+	if err := os.MkdirAll(filepath.Join(target, "child"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := writeFileAtomic(target, []byte("x"), 0o600)
+	if err == nil {
+		t.Fatal("expected rename + fallback failure")
+	}
+	if !strings.Contains(err.Error(), "in-place fallback also failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".hive.yaml.tmp-") {
+			t.Fatalf("temp file %s leaked after failure", e.Name())
+		}
+	}
+}
+
+func TestWriteFileInPlaceWritesAndSetsMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hive.yaml")
+	if err := os.WriteFile(path, []byte("old-longer-content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileInPlace(path, []byte("new"), 0o600); err != nil {
+		t.Fatalf("writeFileInPlace: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new" {
+		t.Fatalf("got %q, want truncated rewrite", got)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %o, want 600", st.Mode().Perm())
+	}
+}
+
+func TestWriteFileInPlaceOpenFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "hive.yaml")
+	if err := writeFileInPlace(path, []byte("x"), 0o600); err == nil {
+		t.Fatal("expected open failure for missing directory")
+	}
+}
+
+func TestSyncDirToleratesMissingDir(t *testing.T) {
+	syncDir(filepath.Join(t.TempDir(), "nope"))
+	syncDir(t.TempDir())
+}
+
+func TestSourceConfigModePreservesExistingOrDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hive.yaml")
+	if err := os.WriteFile(path, []byte("a: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := sourceConfigMode(path); got != 0o600 {
+		t.Fatalf("existing mode = %o, want 600", got)
+	}
+	if got := sourceConfigMode(filepath.Join(dir, "absent.yaml")); got != 0o644 {
+		t.Fatalf("default mode = %o, want 644", got)
+	}
+}
