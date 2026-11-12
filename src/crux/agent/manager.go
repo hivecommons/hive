@@ -609,6 +609,7 @@ type Manager struct {
 	// precedence for whatever fresh token the operator supplied.
 	copilotAuthTokenRejected bool
 	claudeAuthToken          string
+	claudeOperatorToken      string // HIVE_CLAUDE_OAUTH_TOKEN, read once at construction; a dashboard sign-in never replaces it
 	uidMap                   *UIDMap
 	sharedPool               SharedSessionPool
 	uidMapPath               string
@@ -918,6 +919,7 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 		copilotAuthTokenAuthoritative: copilotTokenAuthoritative,
 		copilotAuthTokenSource:        copilotTokenSource,
 		claudeAuthToken:               claudeToken,
+		claudeOperatorToken:           claude.OperatorToken(),
 		uidMap:                        uidMap,
 		sharedPool:                    opts.sharedPool,
 		uidMapPath:                    selectedUIDMapPath,
