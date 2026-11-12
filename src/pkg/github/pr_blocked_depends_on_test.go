@@ -28,6 +28,12 @@ type bpdItem struct {
 	labels   []string
 	comments []string
 	events   []map[string]any
+	// commentBy names, by index into comments, the comments someone other
+	// than the App bot wrote: {login, author_association}.
+	commentBy map[int][2]string
+	// commentsStatus, when set, is the HTTP status the comment listing
+	// answers with instead of the comments.
+	commentsStatus int
 }
 
 // bpdFake serves the PR listing, items, label events and comments the
@@ -51,6 +57,19 @@ func (f *bpdFake) put(ref string, it *bpdItem) {
 		it.author = "alice"
 	}
 	f.items[ref] = it
+}
+
+// commentAs appends a comment on ref written by login, whose
+// author_association is association.
+func (f *bpdFake) commentAs(ref, body, login, association string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	it := f.items[ref]
+	if it.commentBy == nil {
+		it.commentBy = map[int][2]string{}
+	}
+	it.commentBy[len(it.comments)] = [2]string{login, association}
+	it.comments = append(it.comments, body)
 }
 
 // event appends a `blocked` label event on ref by actor.
@@ -138,9 +157,19 @@ func (f *bpdFake) server(t *testing.T) *httptest.Server {
 		case len(parts) == 5 && parts[4] == "events" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(it.events)
 		case len(parts) == 5 && parts[4] == "comments" && r.Method == http.MethodGet:
+			if it.commentsStatus != 0 {
+				w.WriteHeader(it.commentsStatus)
+				_, _ = io.WriteString(w, `{"message":"unavailable"}`)
+				return
+			}
 			out := make([]map[string]any, 0, len(it.comments))
 			for i, c := range it.comments {
-				out = append(out, map[string]any{"id": i + 1, "body": c, "user": map[string]string{"login": testHiveAppBotLogin}})
+				cm := map[string]any{"id": i + 1, "body": c, "user": map[string]string{"login": testHiveAppBotLogin}}
+				if by, ok := it.commentBy[i]; ok {
+					cm["user"] = map[string]string{"login": by[0]}
+					cm["author_association"] = by[1]
+				}
+				out = append(out, cm)
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case len(parts) == 5 && parts[4] == "comments" && r.Method == http.MethodPost:
@@ -527,5 +556,414 @@ func TestOtherHoldSourcesForPRIgnoresDependsOnBlock(t *testing.T) {
 	_, c := newHoldSourceTest(t)
 	if got := c.OtherHoldSourcesForPR("acme/widget", 42, []string{"hold", BlockedLabel}, comments); len(got) != 0 {
 		t.Fatalf("other hold sources = %v, want none: `blocked` is not a hold source", got)
+	}
+}
+
+// bpdSuccessorTodayClause is the clause the lift note has always carried for
+// a target that closed without merging.
+const bpdSuccessorTodayClause = "acme/widget#71 closed without merging, so check that this PR still makes sense without it"
+
+// bpdClosedPR is a pull request closed without merging.
+func bpdClosedPR() *bpdItem { return &bpdItem{isPR: true, state: "closed"} }
+
+// bpdSuperseded makes ref a pull request closed without merging whose
+// maintainer said "Superseded by #next".
+func bpdSuperseded(f *bpdFake, ref string, next int) {
+	f.put(ref, bpdClosedPR())
+	f.commentAs(ref, fmt.Sprintf("Superseded by #%d.", next), "maintainer", "MEMBER")
+}
+
+// A maintainer re-does the pull request a PR depends on: the target closes
+// unmerged with "Superseded by #72". The hold moves to #72 with one comment,
+// stays there on later passes without another write, and lifts when #72
+// merges with a note naming both. Before, the first pass lifted the hold.
+func TestSweepBlockedPRDependencies_FollowsSuccessorUntilItMerges(t *testing.T) {
+	f := newBPDFake()
+	const body = "Adds the client.\n\nDepends-on: #71"
+	blockedPRFixture(t, f, "acme/widget#70", body, "acme/widget#71")
+	bpdSuperseded(f, "acme/widget#71", 72)
+	f.put("acme/widget#72", bpdOpenPR("the maintainer's redo"))
+	c := f.client(t)
+	t.Cleanup(func() { forgetBlockedOnSeen("acme/widget", 70) })
+
+	res := sweepBPD(t, c)
+	if res.Unblocked != 0 || res.Marked != 1 || res.Errors != 0 || !issueHasLabel(f.item("acme/widget#70").labels, BlockedLabel) {
+		t.Fatalf("first pass must keep the hold and mark the successor: %+v labels=%v", res, f.item("acme/widget#70").labels)
+	}
+	posted := f.postedOn("acme/widget#70")
+	if len(posted) != 1 {
+		t.Fatalf("want one successor comment, got %q", posted)
+	}
+	for _, want := range []string{
+		BlockedOnMarker("acme/widget", 72),
+		"<!-- hive:depends-on-successor pr=acme/widget#72 replaces=acme/widget#71 -->",
+		"acme/widget#71, which this pull request lists under `Depends-on:`, was not merged.",
+		"Update the `Depends-on:` line when convenient.",
+	} {
+		if !strings.Contains(posted[0], want) {
+			t.Fatalf("successor comment lacks %q: %q", want, posted[0])
+		}
+	}
+	if n, ok := ParseSupersededBy(posted[0]); ok {
+		t.Fatalf("the successor comment must not read as a supersession of the PR that carries it (parsed #%d): %q", n, posted[0])
+	}
+	if got := BlockedOnSeenReason("acme/widget", 70); got != "blocked on acme/widget#72" {
+		t.Fatalf("BlockedOnSeenReason = %q, want the successor", got)
+	}
+	if got := f.item("acme/widget#70").body; got != body {
+		t.Fatalf("the PR body must never be edited: %q", got)
+	}
+	if got := f.postedOn("acme/widget#71"); len(got)+len(f.postedOn("acme/widget#72")) != 0 {
+		t.Fatalf("neither the target nor its successor may be written: %q", got)
+	}
+
+	beforePosted, beforeAdded, beforeRemoved := f.counts()
+	res = sweepBPD(t, c)
+	afterPosted, afterAdded, afterRemoved := f.counts()
+	if res.Placed+res.Marked+res.Unblocked+res.Errors != 0 || afterPosted != beforePosted || afterAdded != beforeAdded || afterRemoved != beforeRemoved {
+		t.Fatalf("second pass must write nothing: %+v posted %d→%d added %d→%d removed %d→%d", res, beforePosted, afterPosted, beforeAdded, afterAdded, beforeRemoved, afterRemoved)
+	}
+	if !issueHasLabel(f.item("acme/widget#70").labels, BlockedLabel) {
+		t.Fatal("second pass must still hold on the successor")
+	}
+
+	f.mu.Lock()
+	f.items["acme/widget#72"].state, f.items["acme/widget#72"].merged = "closed", true
+	f.mu.Unlock()
+	res = sweepBPD(t, c)
+	if res.Unblocked != 1 || issueHasLabel(f.item("acme/widget#70").labels, BlockedLabel) {
+		t.Fatalf("the successor merged, so the hold must lift: %+v labels=%v", res, f.item("acme/widget#70").labels)
+	}
+	posted = f.postedOn("acme/widget#70")
+	note := posted[len(posted)-1]
+	for _, want := range []string{blockedUnblockedMarker, "Unblocked: acme/widget#71 was not merged and was replaced by acme/widget#72; acme/widget#72 merged."} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("lift note lacks %q: %q", want, note)
+		}
+	}
+}
+
+// Every statement the successor lookup trusts moves the hold, and a chain is
+// followed to the open pull request at its end, up to three replacements
+// away (the limit followSupersededChain applies for an issue blocked on a
+// PR).
+func TestSweepBlockedPRDependencies_HoldsOnDeclaredSuccessor(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(f *bpdFake)
+		want  int
+	}{
+		{name: "collaborator comment", want: 72, setup: func(f *bpdFake) {
+			f.put("acme/widget#71", bpdClosedPR())
+			f.commentAs("acme/widget#71", "superseded by #72", "helper", "COLLABORATOR")
+			f.put("acme/widget#72", bpdOpenPR("redo"))
+		}},
+		{name: "the closed target's author", want: 72, setup: func(f *bpdFake) {
+			f.put("acme/widget#71", bpdClosedPR())
+			f.commentAs("acme/widget#71", "Superseded by #72.", "alice", "NONE")
+			f.put("acme/widget#72", bpdOpenPR("redo"))
+		}},
+		{name: "the closed target's own body", want: 72, setup: func(f *bpdFake) {
+			closed := bpdClosedPR()
+			closed.body = "Superseded by #72."
+			f.put("acme/widget#71", closed)
+			f.put("acme/widget#72", bpdOpenPR("redo"))
+		}},
+		{name: "the hive's adoption marker", want: 72, setup: func(f *bpdFake) {
+			closed := bpdClosedPR()
+			closed.comments = []string{"<!-- hive:adopted by=hive reason=offline mode=supersede superseded_by=72 head=abc -->"}
+			f.put("acme/widget#71", closed)
+			f.put("acme/widget#72", bpdOpenPR("the hive's copy"))
+		}},
+		{name: "newest trusted statement wins over an older one", want: 73, setup: func(f *bpdFake) {
+			f.put("acme/widget#71", bpdClosedPR())
+			f.commentAs("acme/widget#71", "Superseded by #72.", "maintainer", "MEMBER")
+			f.commentAs("acme/widget#71", "Superseded by #73.", "maintainer", "OWNER")
+			f.commentAs("acme/widget#71", "Superseded by #99.", "mallory", "NONE")
+			f.put("acme/widget#72", bpdOpenPR("first redo"))
+			f.put("acme/widget#73", bpdOpenPR("second redo"))
+			f.put("acme/widget#99", bpdOpenPR("a stranger's pull request"))
+		}},
+		{name: "chain of two", want: 73, setup: func(f *bpdFake) {
+			bpdSuperseded(f, "acme/widget#71", 72)
+			bpdSuperseded(f, "acme/widget#72", 73)
+			f.put("acme/widget#73", bpdOpenPR("redo of the redo"))
+		}},
+		{name: "chain at the hop limit", want: 74, setup: func(f *bpdFake) {
+			bpdSuperseded(f, "acme/widget#71", 72)
+			bpdSuperseded(f, "acme/widget#72", 73)
+			bpdSuperseded(f, "acme/widget#73", 74)
+			f.put("acme/widget#74", bpdOpenPR("third redo"))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBPDFake()
+			blockedPRFixture(t, f, "acme/widget#70", "Depends-on: #71", "acme/widget#71")
+			tc.setup(f)
+			c := f.client(t)
+			t.Cleanup(func() { forgetBlockedOnSeen("acme/widget", 70) })
+
+			res := sweepBPD(t, c)
+			if res.Unblocked != 0 || res.Marked != 1 || res.Errors != 0 || !issueHasLabel(f.item("acme/widget#70").labels, BlockedLabel) {
+				t.Fatalf("the hold must move to #%d: %+v labels=%v", tc.want, res, f.item("acme/widget#70").labels)
+			}
+			posted := f.postedOn("acme/widget#70")
+			link := fmt.Sprintf("<!-- hive:depends-on-successor pr=acme/widget#%d replaces=acme/widget#71 -->", tc.want)
+			if len(posted) != 1 || !strings.Contains(posted[0], BlockedOnMarker("acme/widget", tc.want)) || !strings.Contains(posted[0], link) {
+				t.Fatalf("successor comment = %q, want the marker and link for #%d", posted, tc.want)
+			}
+			if res := sweepBPD(t, c); res.Marked+res.Unblocked != 0 || len(f.postedOn("acme/widget#70")) != 1 {
+				t.Fatalf("second pass must write nothing: %+v posted=%q", res, f.postedOn("acme/widget#70"))
+			}
+		})
+	}
+}
+
+// Whatever does not name an open pull request through a trusted statement
+// releases the hold exactly as before, with the note it always had: a
+// stranger's line, a successor that merged or closed, an issue, a missing
+// number, the held PR itself, a chain longer than the hop limit, and the
+// hive's own bookkeeping about a different blocker.
+func TestSweepBlockedPRDependencies_ReleasesAsBeforeWithoutAnOpenSuccessor(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(f *bpdFake)
+	}{
+		{name: "no statement at all", setup: func(f *bpdFake) {
+			f.put("acme/widget#71", bpdClosedPR())
+		}},
+		{name: "a commenter with no association who is not the author", setup: func(f *bpdFake) {
+			f.put("acme/widget#71", bpdClosedPR())
+			f.commentAs("acme/widget#71", "Superseded by #72.", "mallory", "NONE")
+			f.put("acme/widget#72", bpdOpenPR("a stranger's pull request"))
+		}},
+		{name: "a past contributor who is not the author", setup: func(f *bpdFake) {
+			f.put("acme/widget#71", bpdClosedPR())
+			f.commentAs("acme/widget#71", "Superseded by #72.", "drive-by", "CONTRIBUTOR")
+			f.put("acme/widget#72", bpdOpenPR("someone else's pull request"))
+		}},
+		{name: "the successor already merged", setup: func(f *bpdFake) {
+			bpdSuperseded(f, "acme/widget#71", 72)
+			f.put("acme/widget#72", &bpdItem{isPR: true, state: "closed", merged: true})
+		}},
+		{name: "the successor closed with no successor of its own", setup: func(f *bpdFake) {
+			bpdSuperseded(f, "acme/widget#71", 72)
+			f.put("acme/widget#72", bpdClosedPR())
+		}},
+		{name: "the successor is an issue", setup: func(f *bpdFake) {
+			bpdSuperseded(f, "acme/widget#71", 72)
+			f.put("acme/widget#72", &bpdItem{state: "open", body: "an issue, not a pull request"})
+		}},
+		{name: "the successor does not exist", setup: func(f *bpdFake) {
+			bpdSuperseded(f, "acme/widget#71", 72)
+		}},
+		{name: "the successor is the held pull request itself", setup: func(f *bpdFake) {
+			bpdSuperseded(f, "acme/widget#71", 70)
+		}},
+		{name: "two closed pull requests naming each other", setup: func(f *bpdFake) {
+			bpdSuperseded(f, "acme/widget#71", 72)
+			bpdSuperseded(f, "acme/widget#72", 71)
+		}},
+		{name: "a chain longer than the hop limit", setup: func(f *bpdFake) {
+			bpdSuperseded(f, "acme/widget#71", 72)
+			bpdSuperseded(f, "acme/widget#72", 73)
+			bpdSuperseded(f, "acme/widget#73", 74)
+			bpdSuperseded(f, "acme/widget#74", 75)
+			f.put("acme/widget#75", bpdOpenPR("four replacements away"))
+		}},
+		{name: "the hive's bookkeeping about another blocker", setup: func(f *bpdFake) {
+			closed := bpdClosedPR()
+			closed.comments = []string{BlockedOnMarker("acme/widget", 72) + "\nRe-targeted: blocker #5 was superseded by #72."}
+			f.put("acme/widget#71", closed)
+			f.put("acme/widget#72", bpdOpenPR("what the closed target itself waited on"))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBPDFake()
+			blockedPRFixture(t, f, "acme/widget#70", "Depends-on: #71", "acme/widget#71")
+			tc.setup(f)
+			c := f.client(t)
+			t.Cleanup(func() { forgetBlockedOnSeen("acme/widget", 70) })
+
+			res := sweepBPD(t, c)
+			if res.Unblocked != 1 || res.Marked != 0 || res.Errors != 0 || issueHasLabel(f.item("acme/widget#70").labels, BlockedLabel) {
+				t.Fatalf("the hold must lift as before: %+v labels=%v", res, f.item("acme/widget#70").labels)
+			}
+			posted := f.postedOn("acme/widget#70")
+			if len(posted) != 1 || !strings.Contains(posted[0], blockedUnblockedMarker) || !strings.Contains(posted[0], "Unblocked: "+bpdSuccessorTodayClause+".") {
+				t.Fatalf("lift note = %q, want only the note it always had", posted)
+			}
+			if strings.Contains(posted[0], "hive:depends-on-successor") {
+				t.Fatalf("no successor may be marked: %q", posted[0])
+			}
+		})
+	}
+}
+
+// A successor holds only in place of a listed target that is still closed
+// unmerged, and only when the hive itself linked it: dropping the target
+// from the body releases both, a target that merged after all releases its
+// successor, and a link marker a stranger posted holds nothing.
+func TestSweepBlockedPRDependencies_SuccessorStopsHoldingWithItsTarget(t *testing.T) {
+	succComment := blockedPRSuccessorMarkerComment(blockedPRTarget{repo: "acme/widget", number: 72}, blockedPRTarget{repo: "acme/widget", number: 71})
+	cases := []struct {
+		name    string
+		body    string
+		setup   func(f *bpdFake)
+		clauses []string
+	}{
+		{name: "target dropped from the body while held on its successor", body: "No dependencies any more.",
+			setup: func(f *bpdFake) {
+				f.item("acme/widget#70").comments = append(f.item("acme/widget#70").comments, succComment)
+				f.put("acme/widget#71", bpdClosedPR())
+			},
+			clauses: []string{"acme/widget#71 is no longer listed under `Depends-on:`", "acme/widget#72 no longer stands in for a listed dependency"}},
+		{name: "target reopened and merged while held on its successor", body: "Depends-on: #71",
+			setup: func(f *bpdFake) {
+				f.item("acme/widget#70").comments = append(f.item("acme/widget#70").comments, succComment)
+				f.put("acme/widget#71", &bpdItem{isPR: true, state: "closed", merged: true})
+			},
+			clauses: []string{"acme/widget#71 merged", "acme/widget#72 no longer stands in for a listed dependency"}},
+		{name: "a stranger's link marker", body: "Depends-on: #71",
+			setup: func(f *bpdFake) {
+				f.commentAs("acme/widget#70", succComment, "mallory", "NONE")
+				f.put("acme/widget#71", bpdClosedPR())
+			},
+			clauses: []string{bpdSuccessorTodayClause, "acme/widget#72 is no longer listed under `Depends-on:`"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBPDFake()
+			blockedPRFixture(t, f, "acme/widget#70", tc.body, "acme/widget#71")
+			f.put("acme/widget#72", bpdOpenPR("still open"))
+			tc.setup(f)
+			c := f.client(t)
+			t.Cleanup(func() { forgetBlockedOnSeen("acme/widget", 70) })
+
+			res := sweepBPD(t, c)
+			if res.Unblocked != 1 || res.Marked != 0 || issueHasLabel(f.item("acme/widget#70").labels, BlockedLabel) {
+				t.Fatalf("the hold must lift: %+v labels=%v", res, f.item("acme/widget#70").labels)
+			}
+			posted := f.postedOn("acme/widget#70")
+			if len(posted) != 1 || !strings.Contains(posted[0], "Unblocked: "+strings.Join(tc.clauses, "; ")+".") {
+				t.Fatalf("lift note = %q, want clauses %q", posted, tc.clauses)
+			}
+		})
+	}
+}
+
+// People still win. A person's `blocked` is neither lifted nor given a
+// successor marker, and a person who removed the hive's `blocked` while the
+// PR was held on a successor does not get it back.
+func TestSweepBlockedPRDependencies_SuccessorLeavesPeopleAlone(t *testing.T) {
+	succComment := blockedPRSuccessorMarkerComment(blockedPRTarget{repo: "acme/widget", number: 72}, blockedPRTarget{repo: "acme/widget", number: 71})
+	t.Run("person-applied blocked", func(t *testing.T) {
+		f := newBPDFake()
+		blockedPRFixture(t, f, "acme/widget#70", "Depends-on: #71", "acme/widget#71")
+		f.event("acme/widget#70", "labeled", "maintainer")
+		bpdSuperseded(f, "acme/widget#71", 72)
+		f.put("acme/widget#72", bpdOpenPR("redo"))
+		c := f.client(t)
+
+		res := sweepBPD(t, c)
+		posted, added, removed := f.counts()
+		if res.Marked+res.Unblocked+res.Placed != 0 || posted+added+removed != 0 || !issueHasLabel(f.item("acme/widget#70").labels, BlockedLabel) {
+			t.Fatalf("a person's blocked must be left alone: %+v posted=%d added=%d removed=%d", res, posted, added, removed)
+		}
+	})
+	t.Run("person removed the hive's blocked while held on the successor", func(t *testing.T) {
+		f := newBPDFake()
+		blockedPRFixture(t, f, "acme/widget#70", "Depends-on: #71", "acme/widget#71")
+		f.item("acme/widget#70").comments = append(f.item("acme/widget#70").comments, succComment)
+		f.mu.Lock()
+		f.items["acme/widget#70"].labels = nil
+		f.eventLocked("acme/widget#70", "unlabeled", "maintainer")
+		f.mu.Unlock()
+		f.put("acme/widget#71", bpdClosedPR())
+		f.put("acme/widget#72", bpdOpenPR("redo"))
+		c := f.client(t)
+
+		for pass := 1; pass <= 2; pass++ {
+			res := sweepBPD(t, c)
+			posted, added, removed := f.counts()
+			if res.Placed+res.Marked != 0 || posted+added+removed != 0 || issueHasLabel(f.item("acme/widget#70").labels, BlockedLabel) {
+				t.Fatalf("pass %d: the hive must not put its blocked back for a successor: %+v posted=%d added=%d removed=%d", pass, res, posted, added, removed)
+			}
+		}
+	})
+}
+
+// A successor the sweep may not mark (the write-back gate refuses) or could
+// not look up (the closed target's comments are unreadable) keeps the hold
+// for the pass and writes nothing; the next pass looks again.
+func TestSweepBlockedPRDependencies_SuccessorKeepsHoldWhenItCannotWriteOrRead(t *testing.T) {
+	t.Run("write-back gate off", func(t *testing.T) {
+		f := newBPDFake()
+		blockedPRFixture(t, f, "acme/widget#70", "Depends-on: #71", "acme/widget#71")
+		bpdSuperseded(f, "acme/widget#71", 72)
+		f.put("acme/widget#72", bpdOpenPR("redo"))
+		c := f.client(t)
+		c.SetWritebackGate(writeback.New(writeback.Config{PerRepo: map[string]writeback.RepoOverride{"acme/widget": {Mode: writeback.RepoModeOff}}}, writeback.Deps{}, ""))
+		t.Cleanup(func() { forgetBlockedOnSeen("acme/widget", 70) })
+
+		res := sweepBPD(t, c)
+		posted, added, removed := f.counts()
+		if posted+added+removed != 0 || res.Suppressed != 1 || res.Marked+res.Unblocked != 0 || !issueHasLabel(f.item("acme/widget#70").labels, BlockedLabel) {
+			t.Fatalf("gate off must write nothing and keep the hold: %+v posted=%d added=%d removed=%d", res, posted, added, removed)
+		}
+	})
+	t.Run("closed target's comments unreadable", func(t *testing.T) {
+		f := newBPDFake()
+		blockedPRFixture(t, f, "acme/widget#70", "Depends-on: #71", "acme/widget#71")
+		closed := bpdClosedPR()
+		closed.commentsStatus = http.StatusBadGateway
+		f.put("acme/widget#71", closed)
+		c := f.client(t)
+		t.Cleanup(func() { forgetBlockedOnSeen("acme/widget", 70) })
+
+		res := sweepBPD(t, c)
+		posted, added, removed := f.counts()
+		if posted+added+removed != 0 || res.Errors != 1 || res.Unblocked != 0 || !issueHasLabel(f.item("acme/widget#70").labels, BlockedLabel) {
+			t.Fatalf("an unreadable successor statement must keep the hold: %+v posted=%d added=%d removed=%d", res, posted, added, removed)
+		}
+		// The read works again: no statement, so the hold lifts as before.
+		f.mu.Lock()
+		f.items["acme/widget#71"].commentsStatus = 0
+		f.mu.Unlock()
+		if res := sweepBPD(t, c); res.Unblocked != 1 || !strings.Contains(strings.Join(f.postedOn("acme/widget#70"), "\n"), bpdSuccessorTodayClause) {
+			t.Fatalf("once readable, the hold must lift with the usual note: %+v posted=%q", res, f.postedOn("acme/widget#70"))
+		}
+	})
+}
+
+// The successor comment carries the marker every reader of the hold already
+// understands plus the link the sweep reads back, mentions no one, and its
+// link is read only from the hive's own comments.
+func TestBlockedPRSuccessorMarkerCommentRoundTrip(t *testing.T) {
+	succ, old := blockedPRTarget{repo: "acme/gadget", number: 12}, blockedPRTarget{repo: "acme/gadget", number: 11}
+	body := blockedPRSuccessorMarkerComment(succ, old)
+	if repo, pr, ok := ParseBlockedOnMarker(body); !ok || repo != "acme/gadget" || pr != 12 {
+		t.Fatalf("blocked-on marker = %s#%d ok=%v in %q", repo, pr, ok, body)
+	}
+	if strings.Contains(body, "@") {
+		t.Fatalf("the successor comment must mention no one: %q", body)
+	}
+	if _, ok := ParseSupersededBy(body); ok {
+		t.Fatalf("the successor comment must not parse as a supersession: %q", body)
+	}
+	if _, ok := blockedSuccessorStatement(body); ok {
+		t.Fatalf("the successor comment is bookkeeping, not a statement: %q", body)
+	}
+	c := newBPDFake().client(t)
+	own := &gh.IssueComment{Body: gh.Ptr(body), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}}
+	other := &gh.IssueComment{Body: gh.Ptr(body), User: &gh.User{Login: gh.Ptr("mallory")}, AuthorAssociation: gh.Ptr("MEMBER")}
+	links := c.blockedSuccessorLinks([]*gh.IssueComment{other, own, nil})
+	if len(links) != 1 || links[0].successor != succ || links[0].replaces != old {
+		t.Fatalf("links = %+v, want the hive's one link", links)
+	}
+	if got := blockedPRMarkedTargets([]*gh.IssueComment{own}); len(got) != 1 || got[0] != succ {
+		t.Fatalf("marked targets = %+v, want only the successor", got)
 	}
 }

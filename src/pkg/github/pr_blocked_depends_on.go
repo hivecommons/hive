@@ -18,6 +18,20 @@ package github
 // closed, or is no longer listed in the body, so a stale marker never holds
 // the PR for ever.
 //
+// A target that closed WITHOUT merging may have been replaced: a maintainer
+// re-did a contributor's pull request on another branch. Before releasing on
+// such a target the sweep looks for the successor a trusted statement names
+// (blocked_successor.go: who may declare one, and the hop limit). When that
+// successor is an open pull request the PR stays `blocked`, and ONE comment
+// carries the successor's blocked-on marker, a
+// `<!-- hive:depends-on-successor pr=owner/repo#B replaces=owner/repo#A -->`
+// marker and a short note. Later passes read that second marker with the
+// PR's comments: a successor counts as listed while the target it replaces
+// is listed and still closed unmerged, so it holds without the body being
+// edited and stops holding with the target it stands in for. Only a
+// successor already declared when the sweep sees the target closed is
+// followed; with none, the hold is released as before.
+//
 // People win:
 //
 //   - a `blocked` whose newest label event is not the App's (a person put it
@@ -81,6 +95,16 @@ type blockedPRTargetState struct {
 	isPR   bool
 	open   bool
 	merged bool
+	// body and author are the target's own text and login: the successor
+	// lookup reads them when the target closed without merging.
+	body   string
+	author string
+	// succDone: the declared-successor lookup ran this pass; succ, succOK
+	// and succErr are its answer (blockedPRDeclaredSuccessor).
+	succDone bool
+	succ     int
+	succOK   bool
+	succErr  error
 }
 
 // blockedPRUnreadable remembers which PR+ref pairs were already logged as
@@ -221,7 +245,7 @@ func (c *Client) reconcileBlockedPR(ctx context.Context, repo string, pr *gh.Pul
 			}
 		}
 		fresh := c.openBlockedPRTargets(ctx, repo, number, unmarked, cache)
-		c.liftOrKeepBlockedPR(ctx, repo, pr, labels, deps, marked, fresh, cache, res)
+		c.liftOrKeepBlockedPR(ctx, repo, pr, labels, deps, marked, fresh, comments, cache, res)
 		return
 	}
 	// Placement. An open target already marked counts too: the hive lifted
@@ -260,7 +284,12 @@ func (c *Client) reconcileBlockedPR(ctx context.Context, repo string, pr *gh.Pul
 // newly listed target is open, which it marks), and otherwise lifts it with
 // one unblocked note. A PR the hive blocked without any marker (not this
 // sweep's placement) is left alone. A target read error keeps the block.
-func (c *Client) liftOrKeepBlockedPR(ctx context.Context, repo string, pr *gh.PullRequest, labels []string, deps, marked, fresh []blockedPRTarget, cache map[string]blockedPRTargetState, res *BlockedPRSweepResult) {
+//
+// A listed target that closed without merging is followed to its declared
+// successor (see the file comment): one the hive already marked holds like
+// any listed target, and one found on this pass is marked and holds from
+// this pass on. A successor lookup that fails keeps the block for the pass.
+func (c *Client) liftOrKeepBlockedPR(ctx context.Context, repo string, pr *gh.PullRequest, labels []string, deps, marked, fresh []blockedPRTarget, comments []*gh.IssueComment, cache map[string]blockedPRTargetState, res *BlockedPRSweepResult) {
 	number := pr.GetNumber()
 	if len(marked) == 0 {
 		return
@@ -269,11 +298,19 @@ func (c *Client) liftOrKeepBlockedPR(ctx context.Context, repo string, pr *gh.Pu
 	for _, d := range deps {
 		listed[d.key()] = true
 	}
+	links := c.blockedSuccessorLinks(comments)
+	marked = blockedSuccessorMarked(marked, links)
+	self := blockedPRTarget{repo: repo, number: number}
 	var open []blockedPRTarget
+	var found []blockedSuccessorLink
 	var clauses []string
 	for _, t := range marked {
-		if !listed[t.key()] {
-			clauses = append(clauses, t.ref()+" is no longer listed under `Depends-on:`")
+		if !c.blockedSuccessorLive(ctx, t, listed, links, cache, map[string]bool{}) {
+			if blockedSuccessorIsSuccessor(t, links) {
+				clauses = append(clauses, t.ref()+" no longer stands in for a listed dependency")
+			} else {
+				clauses = append(clauses, t.ref()+" is no longer listed under `Depends-on:`")
+			}
 			continue
 		}
 		st := c.blockedPRTargetRead(ctx, t, cache)
@@ -287,12 +324,32 @@ func (c *Client) liftOrKeepBlockedPR(ctx context.Context, repo string, pr *gh.Pu
 		case st.merged:
 			clauses = append(clauses, t.ref()+" merged")
 		default:
-			clauses = append(clauses, t.ref()+" closed without merging, so check that this PR still makes sense without it")
+			if succ, ok := blockedSuccessorReplacedBy(t, links); ok {
+				// Already followed on an earlier pass: the successor is
+				// marked and settles on its own turn in this loop.
+				clauses = append(clauses, t.ref()+" was not merged and was replaced by "+succ.ref())
+				continue
+			}
+			succ, ok, err := c.blockedPRSuccessorOf(ctx, self, t, cache)
+			switch {
+			case err != nil:
+				res.Errors++
+				c.logger.Warn("blocked PR sweep: successor lookup failed; block kept", "repo", repo, "pr", number, "target", t.ref(), "error", err)
+				open = append(open, t)
+			case ok:
+				found = append(found, blockedSuccessorLink{successor: succ, replaces: t})
+				open = append(open, succ)
+			default:
+				clauses = append(clauses, t.ref()+" closed without merging, so check that this PR still makes sense without it")
+			}
 		}
 	}
 	if len(open)+len(fresh) > 0 {
 		if len(fresh) > 0 && c.blockedPRWriteAllowed(repo, pr, labels, "blocked on "+blockedPRRefs(fresh), res) {
 			c.markBlockedPRTargets(ctx, repo, number, fresh, res)
+		}
+		for _, l := range found {
+			c.markBlockedPRSuccessor(ctx, repo, pr, labels, l, res)
 		}
 		first := append(append([]blockedPRTarget(nil), open...), fresh...)[0]
 		noteBlockedOnSeen(repo, number, first.repo, first.number)
@@ -386,6 +443,8 @@ func (c *Client) blockedPRTargetRead(ctx context.Context, t blockedPRTarget, cac
 		st.isPR = issue.IsPullRequest()
 		st.open = strings.EqualFold(issue.GetState(), "open")
 		st.merged = !issue.GetPullRequestLinks().GetMergedAt().IsZero()
+		st.body = issue.GetBody()
+		st.author = safeGetLogin(issue.GetUser())
 	}
 	cache[t.key()] = st
 	return st

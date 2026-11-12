@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -1390,5 +1391,333 @@ func TestBlockedOnIssueTarget(t *testing.T) {
 				t.Fatalf("got %q %d %v", repo, n, ok)
 			}
 		})
+	}
+}
+
+// blockedSuccessorFake serves closed blocker issues, their comments, the
+// duplicate-of GraphQL lookup and the blocked issues' own comments, and
+// records every call and write. A comment posted on an issue is served back
+// on the next read, as GitHub would.
+type blockedSuccessorFake struct {
+	mu sync.Mutex
+	// issues maps "owner/repo#N" to the issue's JSON.
+	issues map[string]string
+	// comments maps "owner/repo#N" to the JSON objects of its comments.
+	comments map[string][]string
+	// duplicateOf maps a node id to the JSON of the canonical issue.
+	duplicateOf map[string]string
+	// moved maps "owner/repo#N" to the path GitHub redirects it to.
+	moved   map[string]string
+	calls   []string
+	graphQL int
+	posts   map[string][]string
+	removed []string
+}
+
+func newBlockedSuccessorFake() *blockedSuccessorFake {
+	return &blockedSuccessorFake{issues: map[string]string{}, comments: map[string][]string{}, duplicateOf: map[string]string{}, moved: map[string]string{}, posts: map[string][]string{}}
+}
+
+func (f *blockedSuccessorFake) server(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		f.calls = append(f.calls, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodPost && r.URL.Path == "/graphql" {
+			var req struct {
+				Variables struct {
+					ID string `json:"id"`
+				} `json:"variables"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.graphQL++
+			canonical, ok := f.duplicateOf[req.Variables.ID]
+			if !ok {
+				canonical = "null"
+			}
+			_, _ = io.WriteString(w, `{"data":{"node":{"duplicateOf":`+canonical+`}}}`)
+			return
+		}
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/repos/"), "/")
+		if len(parts) < 4 || parts[2] != "issues" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+			return
+		}
+		ref := parts[0] + "/" + parts[1] + "#" + parts[3]
+		switch {
+		case len(parts) == 4 && r.Method == http.MethodGet:
+			if to, ok := f.moved[ref]; ok {
+				w.Header().Set("Location", to)
+				w.WriteHeader(http.StatusMovedPermanently)
+				return
+			}
+			issue, ok := f.issues[ref]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+				return
+			}
+			_, _ = io.WriteString(w, issue)
+		case len(parts) == 5 && parts[4] == "comments" && r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, "["+strings.Join(f.comments[ref], ",")+"]")
+		case len(parts) == 5 && parts[4] == "comments" && r.Method == http.MethodPost:
+			var payload struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			f.posts[ref] = append(f.posts[ref], payload.Body)
+			f.comments[ref] = append(f.comments[ref], fmt.Sprintf(`{"id":%d,"body":%q,"user":{"login":%q}}`, 900+len(f.calls), payload.Body, testBot))
+			_, _ = io.WriteString(w, `{"id":9}`)
+		case r.Method == http.MethodDelete && len(parts) == 6 && parts[4] == "labels":
+			f.removed = append(f.removed, ref+" "+parts[5])
+			_, _ = io.WriteString(w, `[]`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// called reports whether the fake saw the exact "METHOD /path" call.
+func (f *blockedSuccessorFake) called(call string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.calls {
+		if c == call {
+			return true
+		}
+	}
+	return false
+}
+
+func blockedSuccessorRow(number int, blocker string) RepoWorkIssue {
+	return RepoWorkIssue{Repo: "o/r", Number: number, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on issue " + blocker}
+}
+
+// An issue blocked on another issue used to be unblocked the moment that
+// issue closed. Closed as a duplicate of an open issue (GitHub's own closure,
+// here across repositories), or replaced by one a trusted "Superseded by"
+// names, the block now moves to the open issue with one re-target comment. A
+// closed canonical issue, a plain closure, and a stranger's "Superseded by"
+// unblock exactly as before. A transferred blocker is not closed: GitHub
+// redirects its old URL, the client follows it, and the block stays.
+func TestReconcileBlockedIssuesFollowsIssueSuccessor(t *testing.T) {
+	f := newBlockedSuccessorFake()
+	// #1: closed as a duplicate of an open issue in another repository.
+	f.issues["o/r#100"] = `{"number":100,"state":"closed","state_reason":"duplicate","node_id":"N100","closed_at":"2026-11-10T10:00:00Z","user":{"login":"reporter"}}`
+	f.duplicateOf["N100"] = `{"number":7,"repository":{"nameWithOwner":"o/other"}}`
+	f.issues["o/other#7"] = `{"number":7,"state":"open"}`
+	// #2: closed as a duplicate of an issue that is closed too.
+	f.issues["o/r#200"] = `{"number":200,"state":"closed","state_reason":"duplicate","node_id":"N200","closed_at":"2026-11-10T10:00:00Z","user":{"login":"reporter"}}`
+	f.duplicateOf["N200"] = `{"number":201,"repository":{"nameWithOwner":"o/r"}}`
+	f.issues["o/r#201"] = `{"number":201,"state":"closed","state_reason":"completed","closed_at":"2026-11-09T10:00:00Z","user":{"login":"reporter"}}`
+	// #3: closed, and a maintainer said what replaced it.
+	f.issues["o/r#300"] = `{"number":300,"state":"closed","state_reason":"not_planned","closed_at":"2026-11-10T10:00:00Z","user":{"login":"reporter"}}`
+	f.comments["o/r#300"] = []string{`{"id":1,"body":"Superseded by #301.","user":{"login":"maintainer"},"author_association":"MEMBER"}`}
+	f.issues["o/r#301"] = `{"number":301,"state":"open"}`
+	// #4: closed as completed, nothing names a successor.
+	f.issues["o/r#400"] = `{"number":400,"state":"closed","state_reason":"completed","closed_at":"2026-11-10T10:00:00Z","user":{"login":"reporter"}}`
+	// #5: closed; only a stranger says what replaced it.
+	f.issues["o/r#500"] = `{"number":500,"state":"closed","state_reason":"completed","closed_at":"2026-11-10T10:00:00Z","user":{"login":"reporter"}}`
+	f.comments["o/r#500"] = []string{`{"id":1,"body":"Superseded by #501.","user":{"login":"mallory"},"author_association":"NONE"}`}
+	f.issues["o/r#501"] = `{"number":501,"state":"open"}`
+	// #6: a chain: duplicate of a closed issue whose author named an open one.
+	f.issues["o/r#600"] = `{"number":600,"state":"closed","state_reason":"duplicate","node_id":"N600","closed_at":"2026-11-10T10:00:00Z","user":{"login":"reporter"}}`
+	f.duplicateOf["N600"] = `{"number":601,"repository":{"nameWithOwner":"o/r"}}`
+	f.issues["o/r#601"] = `{"number":601,"state":"closed","state_reason":"completed","closed_at":"2026-11-09T10:00:00Z","user":{"login":"reporter"}}`
+	f.comments["o/r#601"] = []string{`{"id":1,"body":"Superseded by #602.","user":{"login":"reporter"},"author_association":"NONE"}`}
+	f.issues["o/r#602"] = `{"number":602,"state":"open"}`
+	// #7: transferred to another repository, where it is still open.
+	f.moved["o/r#700"] = "/repos/o/moved/issues/9"
+	f.issues["o/moved#9"] = `{"number":9,"state":"open","repository_url":"https://api.github.com/repos/o/moved"}`
+
+	c := testClient(t, f.server(t).URL)
+	c.appBotLogin = testBot
+	t.Cleanup(func() {
+		for _, n := range []int{1, 3, 6} {
+			forgetBlockedOnSeen("o/r", n)
+		}
+	})
+	rows := []RepoWorkIssue{
+		blockedSuccessorRow(1, "o/r#100"), blockedSuccessorRow(2, "o/r#200"), blockedSuccessorRow(3, "o/r#300"),
+		blockedSuccessorRow(4, "o/r#400"), blockedSuccessorRow(5, "o/r#500"), blockedSuccessorRow(6, "o/r#600"),
+		blockedSuccessorRow(7, "o/r#700"),
+	}
+	res := ReconcileBlockedIssues(context.Background(), c, &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{"o/r": {Issues: rows}}}, nil)
+	if res.Items != 7 || res.Retargeted != 3 || res.Unblocked != 3 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want Items=7 Retargeted=3 Unblocked=3 Errors=0", res)
+	}
+
+	f.mu.Lock()
+	posts, removed, graphQL := f.posts, strings.Join(f.removed, "\n"), f.graphQL
+	f.mu.Unlock()
+	retargets := map[string]string{
+		"o/r#1": "<!-- hive:blocked-on issue=o/other#7 -->\nRe-targeted: blocker o/r#100 is a duplicate of o/other#7, which is still open.",
+		"o/r#3": "<!-- hive:blocked-on issue=o/r#301 -->\nRe-targeted: blocker o/r#300 was replaced by o/r#301, which is still open.",
+		"o/r#6": "<!-- hive:blocked-on issue=o/r#602 -->\nRe-targeted: blocker o/r#600 was replaced by o/r#602, which is still open.",
+	}
+	for ref, want := range retargets {
+		if got := posts[ref]; len(got) != 1 || got[0] != want {
+			t.Errorf("%s comments = %q, want exactly %q", ref, got, want)
+		}
+		if strings.Contains(removed, ref+" blocked") {
+			t.Errorf("%s must stay blocked; removed labels:\n%s", ref, removed)
+		}
+	}
+	unblocks := map[string]string{"o/r#2": "o/r#200", "o/r#4": "o/r#400", "o/r#5": "o/r#500"}
+	for ref, blocker := range unblocks {
+		want := blockedUnblockedMarker + "\nUnblocked: " + blocker + " is closed. This issue is actionable again."
+		if got := posts[ref]; len(got) != 1 || got[0] != want {
+			t.Errorf("%s comments = %q, want exactly the note it always had, %q", ref, got, want)
+		}
+		if !strings.Contains(removed, ref+" blocked") {
+			t.Errorf("%s must be unblocked as before; removed labels:\n%s", ref, removed)
+		}
+	}
+	if len(posts["o/r#7"]) != 0 || strings.Contains(removed, "o/r#7 ") {
+		t.Errorf("a transferred blocker that is open in its new repository must keep the block: posts=%q removed:\n%s", posts["o/r#7"], removed)
+	}
+	if graphQL != 3 {
+		t.Errorf("the duplicate-of lookup runs once per duplicate closure (3), ran %d times", graphQL)
+	}
+	if f.called("GET /repos/o/r/issues/501") {
+		t.Error("a stranger's successor must not even be read")
+	}
+	if !f.called("GET /repos/o/moved/issues/9") {
+		t.Error("the transferred blocker's redirect must be followed to its new repository")
+	}
+
+	// A later pass: the newest marker names the open successor, so nothing
+	// is written again.
+	still := []RepoWorkIssue{blockedSuccessorRow(1, "o/r#100"), blockedSuccessorRow(3, "o/r#300"), blockedSuccessorRow(6, "o/r#600"), blockedSuccessorRow(7, "o/r#700")}
+	res = ReconcileBlockedIssues(context.Background(), c, &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{"o/r": {Issues: still}}}, nil)
+	if res.Retargeted != 0 || res.Unblocked != 0 || res.Errors != 0 {
+		t.Fatalf("second pass = %+v, want nothing re-targeted or unblocked", res)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, ref := range []string{"o/r#1", "o/r#3", "o/r#6"} {
+		if len(f.posts[ref]) != 1 {
+			t.Errorf("%s got a second comment on the later pass: %q", ref, f.posts[ref])
+		}
+	}
+	if f.graphQL != graphQL {
+		t.Errorf("a re-targeted issue must not look its old blocker up again: %d GraphQL calls, was %d", f.graphQL, graphQL)
+	}
+}
+
+// The re-target lives in a comment while the body still names the closed
+// blocker. On a pass whose comment budget ran out before the issue, the
+// sweep sees the old blocker from the body and finds its successor again; it
+// must read the comments before posting, see the newest marker already
+// names the successor, and write nothing.
+func TestReconcileBlockedIssuesSuccessorNotRepostedWhenBudgetExhausted(t *testing.T) {
+	f := newBlockedSuccessorFake()
+	f.issues["o/r#100"] = `{"number":100,"state":"closed","state_reason":"duplicate","node_id":"N100","closed_at":"2026-11-10T10:00:00Z"}`
+	f.duplicateOf["N100"] = `{"number":101,"repository":{"nameWithOwner":"o/r"}}`
+	f.issues["o/r#101"] = `{"number":101,"state":"open"}`
+	f.issues["o/r#400"] = `{"number":400,"state":"open"}`
+	f.comments["o/r#1"] = []string{fmt.Sprintf(`{"id":1,"body":%q,"user":{"login":%q}}`, blockedSuccessorIssueRetargetNote(blockedSuccessorIssue{repo: "o/r", number: 101, duplicate: true}, "o/r#100"), testBot)}
+
+	c := testClient(t, f.server(t).URL)
+	c.appBotLogin = testBot
+	var rows []RepoWorkIssue
+	for i := 0; i < blockedSweepCommentLookups; i++ {
+		rows = append(rows, blockedSuccessorRow(1000+i, "o/r#400"))
+	}
+	rows = append(rows, blockedSuccessorRow(1, "o/r#100"))
+	res := ReconcileBlockedIssues(context.Background(), c, &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{"o/r": {Issues: rows}}}, nil)
+	if res.Items != blockedSweepCommentLookups+1 || res.Retargeted != 0 || res.Unblocked != 0 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want Items=%d Retargeted=0 Unblocked=0 Errors=0", res, blockedSweepCommentLookups+1)
+	}
+	if !f.called("GET /repos/o/r/issues/1/comments") {
+		t.Fatal("issue 1's comments must be read before re-targeting")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.posts) != 0 || len(f.removed) != 0 {
+		t.Fatalf("nothing may be written when the newest marker already names the successor: posts=%v removed=%v", f.posts, f.removed)
+	}
+}
+
+// With the write-back gate refusing every comment in the repository, the
+// hive may not leave the re-target note, so the closed blocker unblocks the
+// issue exactly as before rather than holding it on a blocker nothing names.
+func TestReconcileBlockedIssuesSuccessorUnblocksAsBeforeWhenPolicyRefusesTheNote(t *testing.T) {
+	f := newBlockedSuccessorFake()
+	f.issues["o/r#100"] = `{"number":100,"state":"closed","state_reason":"duplicate","node_id":"N100","closed_at":"2026-11-10T10:00:00Z"}`
+	f.duplicateOf["N100"] = `{"number":101,"repository":{"nameWithOwner":"o/r"}}`
+	f.issues["o/r#101"] = `{"number":101,"state":"open"}`
+	f.issues["o/r#1"] = `{"number":1,"state":"open","labels":[{"name":"blocked"}],"user":{"login":"reporter"},"created_at":"2026-11-01T00:00:00Z"}`
+
+	c := testClient(t, f.server(t).URL)
+	c.appBotLogin = testBot
+	c.SetWritebackGate(writeback.New(writeback.Config{PerRepo: map[string]writeback.RepoOverride{"o/r": {Mode: writeback.RepoModeOff}}}, writeback.Deps{}, ""))
+	rows := []RepoWorkIssue{blockedSuccessorRow(1, "o/r#100")}
+	res := ReconcileBlockedIssues(context.Background(), c, &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{"o/r": {Issues: rows}}}, nil)
+	if res.Retargeted != 0 || res.Unblocked != 1 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want Retargeted=0 Unblocked=1 Errors=0", res)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	want := blockedUnblockedMarker + "\nUnblocked: o/r#100 is closed. This issue is actionable again."
+	if got := f.posts["o/r#1"]; len(got) != 1 || got[0] != want {
+		t.Fatalf("comments = %q, want exactly the note it always had, %q", got, want)
+	}
+}
+
+// A statement only counts from someone trusted to make it, and the blocked
+// sweeps' own comments are bookkeeping about what an item waits on, never a
+// statement that the item was replaced.
+func TestBlockedSuccessorTrustAndStatements(t *testing.T) {
+	c := testClient(t, "http://127.0.0.1:1")
+	c.appBotLogin = testBot
+	comment := func(login, association string) *gh.IssueComment {
+		return &gh.IssueComment{Body: gh.Ptr("Superseded by #9."), User: &gh.User{Login: gh.Ptr(login)}, AuthorAssociation: gh.Ptr(association)}
+	}
+	for _, tt := range []struct {
+		name   string
+		cm     *gh.IssueComment
+		author string
+		want   bool
+	}{
+		{"the hive's own bot", comment(testBot, "NONE"), "reporter", true},
+		{"the closed item's author", comment("Reporter", "NONE"), "reporter", true},
+		{"owner", comment("someone", "OWNER"), "reporter", true},
+		{"member", comment("someone", "member"), "reporter", true},
+		{"collaborator", comment("someone", "COLLABORATOR"), "reporter", true},
+		{"contributor", comment("someone", "CONTRIBUTOR"), "reporter", false},
+		{"first-time contributor", comment("someone", "FIRST_TIME_CONTRIBUTOR"), "reporter", false},
+		{"no association", comment("someone", "NONE"), "reporter", false},
+		{"no association and no known author", comment("someone", "NONE"), "", false},
+		{"no comment", nil, "reporter", false},
+	} {
+		if got := c.blockedSuccessorTrustedComment(tt.cm, tt.author); got != tt.want {
+			t.Errorf("%s: trusted = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+	for _, tt := range []struct {
+		text string
+		want int
+	}{
+		{"Superseded by #12.", 12},
+		{"<!-- hive:adopted by=hive mode=supersede superseded_by=14 head=abc -->", 14},
+		{BlockedOnMarker("o/r", 12) + "\nRe-targeted: blocker #11 was superseded by #12.", 0},
+		{blockedOnIssueMarker("o/r", 12) + "\nRe-targeted: blocker o/r#11 was replaced by o/r#12, which is still open.", 0},
+		{blockedUnblockedMarker + "\nUnblocked: o/r#12 (superseding #11) is no longer open. Superseded by #12.", 0},
+		{"No successor here.", 0},
+	} {
+		got, ok := blockedSuccessorStatement(tt.text)
+		if got != tt.want || ok != (tt.want != 0) {
+			t.Errorf("blockedSuccessorStatement(%q) = (%d, %v), want %d", tt.text, got, ok, tt.want)
+		}
+	}
+	if repo, n, ok := parseBlockedOnIssueMarker(blockedOnIssueMarker("o/other", 7)); !ok || repo != "o/other" || n != 7 {
+		t.Errorf("blockedOnIssueMarker does not round-trip: %q %d %v", repo, n, ok)
 	}
 }
