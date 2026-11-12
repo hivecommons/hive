@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.234.1)
+
+### Fixed
+
+- `check-action-pins.sh` no longer reports a SHA-pinned action as `MISSING-SHA` when the GitHub API merely failed to answer. Only a definite `HTTP 404`/`HTTP 422` is a missing pin; a rate limit, a 5xx or a dropped connection is retried three times and then reported as `UNRESOLVED <repo>@<sha> … re-run, this is not a missing pin`, so a transient API error on a docs-only commit can no longer read as a fabricated pin that needs bumping (it sent hivecommons/crux `main` red on a README change whose `actions/setup-go` pin was tagged `v7.0.0` upstream all along).
+
 ## 2026-11-12 (v5.234.0)
 
 ### Added
