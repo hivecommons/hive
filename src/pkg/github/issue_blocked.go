@@ -19,7 +19,9 @@ package github
 // tracked PR merges or closes. The issue form, `<!-- hive:blocked-on
 // issue=owner/repo#N -->`, names an issue the block waits on instead (a
 // contributor's blocked verdict on another repository's work); the sweep
-// lifts that label once the issue closes and never as marker-less.
+// lifts that label once the issue closes and never as marker-less. A blocker
+// issue closed as a duplicate of, or replaced by, an issue that is still
+// open moves the block to that issue instead (blocked_successor.go).
 //
 // A blocked issue with no tracked PR may instead carry a deadline,
 // `<!-- hive:recheck-after <RFC3339> -->` (hivecommons/hive#13310): the
@@ -536,7 +538,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 		// A block that names what it waits on is not one the repair converts.
 		forgetBlockedRepairHeld(c, t)
 		if onIssue {
-			reconcileBlockedOnIssue(ctx, c, t, prRepo, prNumber, &res, logger)
+			reconcileBlockedOnIssue(ctx, c, t, prRepo, prNumber, scanned, &res, logger)
 			continue
 		}
 		settled, merged, err := c.pullRequestSettledDetails(ctx, prRepo, prNumber)
@@ -958,8 +960,16 @@ func parseBlockedOnReason(reason string) (repo string, number int, issue bool, o
 // projectbluefin/utah#10 and #855 back to triage, where contributor after
 // contributor re-verified "still blocked" and re-applied it. A lookup error
 // is counted and leaves the block; a missing issue reads as open, so a
-// mistyped reference never lifts it.
-func reconcileBlockedOnIssue(ctx context.Context, c *Client, t blockedIssueTarget, repo string, number int, res *BlockedIssueResult, logger *slog.Logger) {
+// mistyped reference never lifts it. A transferred issue is not closed
+// either: GitHub redirects the old URL and the client follows it, so the
+// block follows the issue's state in its new repository.
+//
+// A closed blocker is first followed to its successor
+// (blockedSuccessorRetargetIssue): closed as a duplicate of an open issue,
+// or replaced by one a trusted "Superseded by #N" names, it leaves the block
+// on with one re-target comment naming the open issue. scanned says t's
+// comments were read this pass (see there).
+func reconcileBlockedOnIssue(ctx context.Context, c *Client, t blockedIssueTarget, repo string, number int, scanned bool, res *BlockedIssueResult, logger *slog.Logger) {
 	ref := repo + "#" + strconv.Itoa(number)
 	owner, name := c.splitRepo(repo)
 	_, closed, err := c.IssueClosedAt(ctx, owner, name, number)
@@ -972,11 +982,15 @@ func reconcileBlockedOnIssue(ctx context.Context, c *Client, t blockedIssueTarge
 		stripBlockedHelpWanted(ctx, c, t, res, logger)
 		return
 	}
+	if blockedSuccessorRetargetIssue(ctx, c, t, repo, number, scanned, res, logger) {
+		return
+	}
 	if err := c.unblockIssue(ctx, t.repo, t.number); err != nil {
 		res.Errors++
 		logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 		return
 	}
+	blockedSuccessorLookupSettled(blockedSuccessorLookupKey(t.repo, t.number, ref))
 	c.postUnblockedNote(ctx, t.repo, t.number, blockedUnblockedMarker+"\nUnblocked: "+ref+" is closed. This issue is actionable again.", logger)
 	res.Unblocked++
 	logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "blocker", ref)
