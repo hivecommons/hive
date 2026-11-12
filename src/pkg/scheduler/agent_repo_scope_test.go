@@ -243,3 +243,30 @@ func TestFilterIssuesForRepos(t *testing.T) {
 		t.Errorf("filterIssuesForRepos = %v, want the b issue", got)
 	}
 }
+
+// project.reference_repos (hivecommons/hive#18015): the kick names each
+// reference repo with its tier and tells the agent an item whose deliverables
+// mention one is in scope, so the scanner stops classifying it out-of-scope.
+func TestBuildReposSectionFor_ReferenceRepos(t *testing.T) {
+	s := scopeScheduler(t, map[string]config.AgentConfig{"scanner": {Backend: "claude"}})
+	s.cfg.Project.ReferenceRepos = []config.ReferenceRepo{
+		{Repo: "hivecommons/docs"},
+		{Repo: "hivecommons/hive", Write: []string{"issues", "prs"}},
+	}
+	section := s.buildReposSectionFor("scanner")
+	for _, want := range []string{
+		"REFERENCE REPOS",
+		"https://github.com/hivecommons/docs  [reference · read-only]",
+		"https://github.com/hivecommons/hive  [reference · issues+prs]",
+		"IN SCOPE, not a scope violation",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%q missing:\n%s", want, section)
+		}
+	}
+	// A hive without the key sees no trace of it.
+	s.cfg.Project.ReferenceRepos = nil
+	if strings.Contains(s.buildReposSectionFor("scanner"), "REFERENCE REPOS") {
+		t.Error("reference block emitted with no reference repos configured")
+	}
+}

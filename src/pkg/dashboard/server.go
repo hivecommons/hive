@@ -657,11 +657,15 @@ type StatusPayload struct {
 	Governor         FrontendGovernor          `json:"governor"`
 	Tokens           FrontendTokens            `json:"tokens"`
 	Repos            []FrontendRepo            `json:"repos"`
-	Swarm            SwarmStatus               `json:"swarm"`
-	Beads            FrontendBeads             `json:"beads"`
-	Planning         FrontendPlanning          `json:"planning"`
-	Runs             RunsSummary               `json:"runs"`
-	Health           map[string]any            `json:"health"`
+	// ReferenceRepos are project.reference_repos (hivecommons/hive#18015):
+	// studied, not worked. Kept apart from Repos so no queue, ACMM or
+	// work-item consumer ever treats one as managed.
+	ReferenceRepos []FrontendReferenceRepo `json:"referenceRepos,omitempty"`
+	Swarm          SwarmStatus             `json:"swarm"`
+	Beads          FrontendBeads           `json:"beads"`
+	Planning       FrontendPlanning        `json:"planning"`
+	Runs           RunsSummary             `json:"runs"`
+	Health         map[string]any          `json:"health"`
 	// DeepHealth carries the spoke's own deep health checks (HealthSummary:
 	// ready, github_auth, agents, …) — the same checks the heartbeat reports
 	// to the hub. The dashboard's header Health pill renders from these, NOT
@@ -1209,6 +1213,13 @@ type FrontendRestartRefresh struct {
 	// fresh read this process; ReposTotal is the unpaused configured count.
 	ReposScanned int `json:"reposScanned"`
 	ReposTotal   int `json:"reposTotal"`
+}
+
+// FrontendReferenceRepo is one project.reference_repos entry for the repos
+// card: the slug and its tier ("read-only", "issues", "prs", "issues+prs").
+type FrontendReferenceRepo struct {
+	Full string `json:"full"`
+	Tier string `json:"tier"`
 }
 
 type FrontendRepo struct {
