@@ -1632,7 +1632,7 @@ What the GraphQL read does not cover:
 
 - It helps only while the GraphQL budget has room. If that read fails too, or returns no pull request, the result is the REST lookup failure, unchanged.
 - A pull request authored by a bot or App account is not confirmed this way. GraphQL reports such a login without the `[bot]` suffix REST uses, and the hub does not guess the REST form. It stays unverified, as before.
-- A secondary (abuse) rate limit is never answered with a second request.
+- A refusal the hub can recognise as a secondary (abuse) rate limit is not answered with a second request. One case cannot be recognised: when a secondary refusal also reported the hourly budget at zero, the client library records that zero and afterwards refuses REST reads itself, in the same words as for the hourly limit. A later lookup inside that window therefore does make the one GraphQL read.
 - On a GitHub Enterprise host whose API base ends in `/api/v3`, the GraphQL endpoint is `/api/graphql`. The client library keeps a separate local budget only for the exact path `/graphql`, so there its refusal covers the GraphQL read as well and the result is the lookup failure, as before.
 - The GraphQL read is given ten seconds, so a completion is not held on the contributor's message loop while the rate-limit pacer is queueing requests.
 
