@@ -14,10 +14,7 @@ func agentDeliveryFailure(proc *crux.Process, cfg *config.Config) string {
 	if ready, ok := watchdog.FindCondition(proc.WatchdogConditions, watchdog.ConditionReady); ok && ready.Reason == string(watchdog.ClassNoSession) {
 		return "tmux session missing"
 	}
-	threshold := 3
-	if cfg != nil && cfg.Dashboard.KickFailureThreshold > 0 {
-		threshold = cfg.Dashboard.KickFailureThreshold
-	}
+	threshold := cfg.KickFailureThresholdOrDefault()
 	if proc.ConsecutiveKickFailures >= threshold {
 		return fmt.Sprintf("%d consecutive kick delivery failures: %s", proc.ConsecutiveKickFailures, proc.LastKickError)
 	}
