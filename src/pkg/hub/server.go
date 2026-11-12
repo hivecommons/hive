@@ -1213,6 +1213,9 @@ type HubServer struct {
 	// lastHostAliasesReconcile throttles the per-cluster host_aliases
 	// reconcile (cluster_host_aliases.go). Same mutex, same rationale.
 	lastHostAliasesReconcile time.Time
+	// lastStartupProbeReconcile throttles the template startupProbe / init
+	// image reconcile (startup_probe_reconcile.go). Same mutex, same rationale.
+	lastStartupProbeReconcile time.Time
 	// lastContributeIngressReconcile throttles the hive-contribute Ingress
 	// auth-url reconcile (contribute_ingress_reconcile.go), which puts the
 	// #7457 annotations onto spokes provisioned before that fix (#7517).

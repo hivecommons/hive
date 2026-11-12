@@ -11,6 +11,36 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.228.3)
+
+### Security
+
+- Bound the hub's GitHub bearer-token validation cache and reclaim expired entries before admitting new tokens, preventing unbounded cache growth from unauthenticated requests.
+
+## 2026-11-12 (v5.228.2)
+
+### Fixed
+
+- crux serve: requests refused with a 401 by authentication are now counted in the new `crux.serve.auth.rejections` metric, labelled only by a fixed `reason` (`missing_or_invalid_token`, `project_forbidden` or `no_token_configured`); they never reached `crux.serve.requests` before.
+- The hub now remembers a rejected or rate-limited `Bearer` token (60 s, or until its `X-RateLimit-Reset` capped at 15 min; [#17836](https://github.com/hivecommons/hive/issues/17836)) instead of re-probing `GET /user` with that token on every request, which charged the token owner's already-exhausted core quota and prolonged the outage; the probes are visible in `/api/gh-rate-limits` as caller `agent:hub-bearer-validate`, and hub release-notes contents reads now go through the shared ETag/accounting transport.
+
+## 2026-11-12 (v5.228.1)
+
+### Fixed
+
+- hub: a reconcile sweep now converges the template startupProbe and the current init-container image repository onto pre-existing hosted hive Deployments, so a slow boot no longer becomes a permanent liveness crash-loop (#17827)
+- Substrate `snapshot_on_idle` no longer accumulates suspended actors: the previous idle snapshot of an agent is deleted when the next one is taken (actors from before a hive restart are not reclaimed).
+
+## 2026-11-12 (v5.228.0)
+
+### Added
+
+- Knowledge: new `plaud` connector syncs Plaud Note voice recordings (Plaud summary + transcript) into the vault through the free official Plaud MCP server, with Connect/Disconnect sign-in on the Knowledge → Integrations card and no cost beyond the Plaud plan.
+
+### Fixed
+
+- The hive binary no longer delays the dashboard bind on the startup advisory-issue ensure: it is now capped at 15s, so a slow or unreachable GitHub Enterprise (~8s per App token mint) can no longer push `:3002` past the kubelet liveness budget and crash-loop the pod ([#17827](https://github.com/hivecommons/hive/issues/17827)).
+
 ## 2026-11-12 (v5.227.1)
 
 ### Fixed

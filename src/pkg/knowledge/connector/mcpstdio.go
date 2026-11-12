@@ -266,9 +266,62 @@ func (b *lockedBuffer) Tail(n int) string {
 	return s
 }
 
+// mcpChildEnvNames are the exact environment variables a stdio MCP server
+// inherits from the hive process; mcpChildEnvPrefixes extend the set by
+// prefix. The server is third-party code fetched at run time (the Plaud
+// default is `npx -y @plaud-ai/mcp@latest`), so it gets what a Node process
+// needs to start and reach the registry through the egress proxy — never the
+// hub-injected credentials the hive process carries (DASHBOARD_AUTH_TOKEN,
+// HIVE_TERMINAL_KEY, HIVE_UPSTREAM_PROXY_URL, provider API keys, …), which
+// crux/agent strips from agent panes for the same reason.
+var mcpChildEnvNames = map[string]bool{
+	"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "SHELL": true,
+	"TMPDIR": true, "TMP": true, "TEMP": true, "TZ": true, "TERM": true, "LANG": true, "LANGUAGE": true,
+	"HTTP_PROXY": true, "HTTPS_PROXY": true, "NO_PROXY": true,
+	"http_proxy": true, "https_proxy": true, "no_proxy": true,
+	"SSL_CERT_FILE": true, "SSL_CERT_DIR": true, "NODE_EXTRA_CA_CERTS": true,
+}
+
+var mcpChildEnvPrefixes = []string{"LC_", "XDG_", "NODE_", "NPM_CONFIG_", "npm_config_", "PLAUD_"}
+
+// mcpChildEnv filters base (KEY=VALUE pairs) down to the allowlisted names.
+// A name that looks like a credential is dropped even when it matches, so a
+// future prefix cannot readmit one.
+func mcpChildEnv(base []string) []string {
+	out := make([]string, 0, len(base))
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok || key == "" || mcpCredentialName(key) {
+			continue
+		}
+		if mcpChildEnvNames[key] {
+			out = append(out, entry)
+			continue
+		}
+		for _, p := range mcpChildEnvPrefixes {
+			if strings.HasPrefix(key, p) {
+				out = append(out, entry)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func mcpCredentialName(key string) bool {
+	u := strings.ToUpper(key)
+	for _, marker := range []string{"TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"} {
+		if strings.Contains(u, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // stdioMCPDialer starts command as a child process per session. home, when
 // non-empty, overrides HOME so the server keeps its own token store in a
-// persistent directory.
+// persistent directory. The child's environment is the allowlisted subset
+// mcpChildEnv keeps, not the hive process environment.
 func stdioMCPDialer(command, home string) mcpDialer {
 	return func(ctx context.Context) (mcpClient, error) {
 		argv, err := splitCommandLine(command)
@@ -279,7 +332,7 @@ func stdioMCPDialer(command, home string) mcpDialer {
 			return nil, errors.New("mcp: command is empty")
 		}
 		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-		cmd.Env = os.Environ()
+		cmd.Env = mcpChildEnv(os.Environ())
 		if home != "" {
 			if err := os.MkdirAll(home, 0o700); err != nil {
 				return nil, fmt.Errorf("mcp: creating home %s: %w", home, err)
