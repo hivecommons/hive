@@ -562,13 +562,14 @@
       ocUpdateSidebarAgents();
       dashboardRenderSection('debug', ['debug-section'], () => renderDebugSection(), data);
       dashboardRenderSection('faq', ['faq-section'], () => renderFAQ(), data);
+      dashboardRenderSection('inbox', ['inbox-section'], () => renderInbox(), data);
       initializeDashboardSectionCards();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'advisory-digest-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
         'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
-        'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
+        'knowledge-section', 'inbox-section', 'contributors-section', 'debug-section', 'logs-section',
         'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'
       ];
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);

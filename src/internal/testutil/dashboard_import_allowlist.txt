@@ -49,6 +49,9 @@ github.com/hivecommons/hive/pkg/housestyle
 github.com/hivecommons/hive/pkg/hub
 github.com/hivecommons/hive/pkg/hubactivity
 github.com/hivecommons/hive/pkg/hubbackup
+# pkg/inbox: Inbox triage API (hivecommons/hive#17876) — dashboard routes
+# /api/inbox* wrap the inbox service; no existing seam covers it.
+github.com/hivecommons/hive/pkg/inbox
 github.com/hivecommons/hive/pkg/inferencehealth
 github.com/hivecommons/hive/pkg/ioscan
 github.com/hivecommons/hive/pkg/knowledge

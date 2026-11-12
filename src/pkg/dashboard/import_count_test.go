@@ -66,8 +66,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// shared with the scheduler's kick injection (hivecommons/hive#17244),
 	// plus pkg/workflowmodel/store, the spoke-local library of workflow
 	// models behind the /api/workflows routes and the tracker's per-repo
-	// column block (RFC hivecommons/hive#17620, phase 2).
-	const maxDashboardInternalImports = 60
+	// column block (RFC hivecommons/hive#17620, phase 2), plus pkg/inbox,
+	// the source-agnostic voice-recording triage service (items keyed by
+	// source + item id, spek_rfc/dibs destinations) behind the /api/inbox
+	// routes and the Inbox dashboard section.
+	const maxDashboardInternalImports = 61
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

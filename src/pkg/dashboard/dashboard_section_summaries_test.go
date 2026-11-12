@@ -39,7 +39,7 @@ func TestDashboardSectionCardsHaveCollapsedSummaries(t *testing.T) {
 		"overview-section", "advisory-section", "hive-advice-section", "fleet-report-section",
 		"acmm-reco-section", "lifecycle-section", "pr-throughput-section", "repos-section",
 		"acmm-eval-section", "approvals-section", "audit-section",
-		"review-queue-section", "nous-section", "inception-section", "knowledge-section",
+		"review-queue-section", "nous-section", "inception-section", "knowledge-section", "inbox-section",
 		"contributors-section", "debug-section", "logs-section", "agents-section", "faq-section",
 	}
 	for _, id := range refreshRequired {
