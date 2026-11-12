@@ -40,7 +40,7 @@ func connectorConfigs(entries []config.KnowledgeConnector) []connector.Connector
 // searchable like any other vault. Cursors and status persist under
 // <baseDir>/connector-state. A nil reg uses connector.DefaultRegistry().
 // Returns nil when no connectors are configured.
-func newKnowledgeConnectorSyncer(entries []config.KnowledgeConnector, reg *connector.Registry, api *knowledge.KnowledgeAPI, baseDir string, logger *slog.Logger) (*connector.Syncer, error) {
+func newKnowledgeConnectorSyncer(entries []config.KnowledgeConnector, reg *connector.Registry, api *knowledge.KnowledgeAPI, baseDir string, logger *slog.Logger, afterSync func(connector.Status)) (*connector.Syncer, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
@@ -79,6 +79,9 @@ func newKnowledgeConnectorSyncer(entries []config.KnowledgeConnector, reg *conne
 			if store := api.GetVaultStore(filepath.Join(baseDir, "connectors", st.Layer)); store != nil {
 				store.Reindex()
 			}
+			if afterSync != nil {
+				afterSync(st)
+			}
 		},
 	})
 }
@@ -86,7 +89,11 @@ func newKnowledgeConnectorSyncer(entries []config.KnowledgeConnector, reg *conne
 // bootKnowledgeConnectors builds and starts the connector syncer. A failure
 // is logged and leaves connectors off; it never blocks the rest of boot.
 func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
-	s, err := newKnowledgeConnectorSyncer(b.cfg.Knowledge.Connectors, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger)
+	// The Inbox always boots, even with no connectors, so GET /api/inbox
+	// answers 200 with an empty list and the panel renders its empty state
+	// (#17918) instead of waiting forever on a 404.
+	b.bootInbox(knowledge.BaseDir())
+	s, err := newKnowledgeConnectorSyncer(b.cfg.Knowledge.Connectors, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger, b.inboxAfterSync)
 	if err != nil {
 		b.logger.Warn("knowledge connectors disabled", "error", err)
 		return

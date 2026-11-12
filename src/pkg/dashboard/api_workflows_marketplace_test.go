@@ -458,3 +458,58 @@ func TestMarketplaceBaseFallsBackToHubURL(t *testing.T) {
 		t.Fatal("server without deps should be enabled but have no base")
 	}
 }
+
+func TestImportedProvenance(t *testing.T) {
+	cases := []struct {
+		model workflowmodel.Provenance
+		tier  string
+		want  workflowmodel.Provenance
+	}{
+		// Empty model provenance takes the envelope tier.
+		{"", bundle.TierCurated, workflowmodel.ProvenanceCurated},
+		{"", bundle.TierLocalPublished, workflowmodel.ProvenanceLocal},
+		{"", bundle.TierBuiltIn, workflowmodel.ProvenanceLocal},
+		{"", "", workflowmodel.ProvenanceLocal},
+		// A vouched tier the envelope agrees with is kept (built-in still lands as local).
+		{workflowmodel.ProvenanceCurated, bundle.TierCurated, workflowmodel.ProvenanceCurated},
+		{workflowmodel.ProvenanceBuiltIn, bundle.TierBuiltIn, workflowmodel.ProvenanceLocal},
+		// A vouched tier the envelope does not assert is laundering: fall back to the tier.
+		{workflowmodel.ProvenanceCurated, bundle.TierLocalPublished, workflowmodel.ProvenanceLocal},
+		{workflowmodel.ProvenanceCurated, bundle.TierIngestedUnreviewed, workflowmodel.ProvenanceIngestedUnreviewed},
+		{workflowmodel.ProvenanceCurated, "", workflowmodel.ProvenanceLocal},
+		{workflowmodel.ProvenanceBuiltIn, bundle.TierLocalPublished, workflowmodel.ProvenanceLocal},
+		// Lower tiers in the model are honoured as-is.
+		{workflowmodel.ProvenanceIngestedUnreviewed, bundle.TierLocalPublished, workflowmodel.ProvenanceIngestedUnreviewed},
+		{workflowmodel.ProvenanceLocal, bundle.TierCurated, workflowmodel.ProvenanceLocal},
+	}
+	for _, tc := range cases {
+		if got := importedProvenance(tc.model, tc.tier); got != tc.want {
+			t.Errorf("importedProvenance(%q, %q) = %q, want %q", tc.model, tc.tier, got, tc.want)
+		}
+	}
+}
+
+// A bundle whose envelope the hub normalised to local-published but whose
+// hash-covered model still claims curated must not import as curated.
+func TestWorkflowImportDoesNotLaunderCuratedProvenance(t *testing.T) {
+	s := marketplaceServer(t, "")
+	m := techdocsModel(t)
+	m.Spec.Meta.Provenance = workflowmodel.ProvenanceCurated
+	b, err := bundle.Export(m, "spoke", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Tier = bundle.TierLocalPublished
+	raw, _ := bundle.Encode(b)
+	rec := wfReq(s, http.MethodPost, "/api/workflows/import", string(raw), true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("import: %d %s", rec.Code, rec.Body.String())
+	}
+	got, _, err := s.deps.WorkflowStore.Get("cncf-techdocs", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Meta.Provenance != workflowmodel.ProvenanceLocal {
+		t.Fatalf("laundered provenance = %q, want local", got.Spec.Meta.Provenance)
+	}
+}

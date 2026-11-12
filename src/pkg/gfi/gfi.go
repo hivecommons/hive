@@ -447,6 +447,17 @@ type Forge interface {
 	UpsertIssueMarkerComment(ctx context.Context, repo string, number int, marker, body string, create bool) (MarkerComment, error)
 }
 
+// ArchivedWriteTracker remembers GitHub's explicit archived-repository write
+// refusals. A nil error asks whether the repository was already recorded.
+type ArchivedWriteTracker interface {
+	ArchivedWrite(repo string, err error) bool
+}
+
+func archivedWrite(forge Forge, repo string, err error) bool {
+	tracker, ok := forge.(ArchivedWriteTracker)
+	return ok && tracker.ArchivedWrite(repo, err)
+}
+
 // LabelReader is the optional half of Forge the sweep uses to re-read an
 // issue's labels immediately before advertising it. Candidates come from
 // the last enumeration, which can be many minutes old; hivecommons/hive
@@ -653,6 +664,10 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 	labelledPerRepo := map[string]int{}
 	for _, c := range candidates {
 		res.Scanned++
+		if archivedWrite(forge, c.Repo, nil) {
+			res.Skipped["archived-repo"]++
+			continue
+		}
 		if lowerSet(c.Labels)[Label] {
 			labelledPerRepo[c.Repo]++
 		}
@@ -688,6 +703,11 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 			if d.AlreadyLabelled && Withdrawable(d.Skip) {
 				if _, released := s.releasedUntil(c.Key(), p.ReselectCooldown); !released {
 					if err := s.Withdraw(ctx, forge, c, d.Skip, opts); err != nil {
+						if archivedWrite(forge, c.Repo, err) {
+							logger.Info("gfi: repository is archived and read-only; skipping until restart", "repo", c.Repo, "error", err)
+							res.Skipped["archived-repo"]++
+							continue
+						}
 						res.Errors++
 					} else {
 						res.Withdrawn = append(res.Withdrawn, c.Key())
@@ -714,6 +734,10 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 		})
 		picked := 0
 		for _, sc := range list {
+			if archivedWrite(forge, repo, nil) {
+				res.Skipped["archived-repo"]++
+				continue
+			}
 			if picked >= p.MaxPerSweep {
 				res.Skipped["sweep-cap"]++
 				logger.Debug("gfi skip", "issue", sc.c.Key(), "reason", "sweep-cap")
@@ -744,6 +768,11 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 			}
 			added, err := s.apply(ctx, forge, sc.c, body)
 			if err != nil {
+				if archivedWrite(forge, repo, err) {
+					logger.Info("gfi: repository is archived and read-only; skipping until restart", "repo", repo, "error", err)
+					res.Skipped["archived-repo"]++
+					continue
+				}
 				if errors.Is(err, errSuperseded) {
 					res.Skipped["previously-released"]++
 					logger.Debug("gfi skip", "issue", sc.c.Key(), "reason", "previously-released")

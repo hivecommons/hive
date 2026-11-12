@@ -14,6 +14,7 @@ package slogfeed
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -114,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -133,6 +134,38 @@ func (h *Handler) feed(r slog.Record) {
 		}
 	}
 	h.observe(class, key, r.Message, diagnostics(r, h.attrs))
+}
+
+// signedCommitOwnershipSkip is the reconciler's deliberate refusal to rewrite
+// a foreign or merge commit. The warning and PR remedy remain visible; repeated
+// skips across PRs are not a runtime defect.
+func signedCommitOwnershipSkip(r slog.Record) bool {
+	return r.Level == slog.LevelWarn && strings.TrimSpace(r.Message) == "signed-commit reconciler: skipped; the PR keeps an unsigned commit"
+}
+
+// canceledError applies the existing cancellation exclusion to structured
+// errors too. An accompanying different error must remain reportable.
+func canceledError(r slog.Record, bound []slog.Attr) bool {
+	found, other := false, false
+	check := func(a slog.Attr) bool {
+		if a.Key == "error" {
+			value := a.Value.Resolve()
+			err, ok := value.Any().(error)
+			if ok && errors.Is(err, context.Canceled) {
+				found = true
+			} else if text := value.String(); text == context.Canceled.Error() || strings.HasSuffix(text, ": "+context.Canceled.Error()) {
+				found = true
+			} else {
+				other = true
+			}
+		}
+		return true
+	}
+	for _, a := range bound {
+		check(a)
+	}
+	r.Attrs(check)
+	return found && !other
 }
 
 // expectedKickHold reports whether a "failed to send kick" record carries the

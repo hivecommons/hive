@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/api"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -333,4 +335,43 @@ func collectStatusClasses(t *testing.T, reader *sdkmetric.ManualReader) []string
 		}
 	}
 	return classes
+}
+
+func TestAuthRejectionsCountedByReason(t *testing.T) {
+	reader := useTestMetrics(t)
+	_, h := principalFixture(t)
+
+	callWith(h, api.PathHealth, "wrong-secret-token")
+	callWith(h, api.PathHealth, "")
+	callWith(h, api.PathHealth, testProjectToken)
+	callWith(h, api.PathHealth, "another-wrong-token")
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := map[string]int64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != authRejectionMetric {
+				continue
+			}
+			for _, dp := range m.Data.(metricdata.Sum[int64]).DataPoints {
+				if dp.Attributes.Len() != 1 {
+					t.Errorf("attributes = %v, want only reason", dp.Attributes)
+				}
+				reason, _ := dp.Attributes.Value(attrReason)
+				got[reason.AsString()] = dp.Value
+			}
+		}
+	}
+	want := map[string]int64{rejectInvalidToken: 3, rejectProjectForbidden: 1}
+	if len(got) != len(want) {
+		t.Fatalf("rejections = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("rejections[%s] = %d, want %d", k, got[k], v)
+		}
+	}
 }

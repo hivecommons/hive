@@ -29,6 +29,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 	"github.com/hivecommons/hive/pkg/mention"
@@ -237,6 +238,7 @@ type boot struct {
 	// bootKnowledge
 	gitSyncer            *knowledge.GitSyncer
 	knowledgeConnectors  *connector.Syncer
+	inboxSvc             *inbox.Service
 	knowledgePublish     *connector.Mirror
 	promotionScheduler   *knowledge.PromotionScheduler
 	quotaAccount         string

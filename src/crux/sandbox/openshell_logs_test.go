@@ -270,7 +270,7 @@ func TestOpenShellSandboxNameUnix(t *testing.T) {
 		{good, true},
 		{"nodash", false},
 		{"other-deps-1700000000", false},
-		{openshellNamePrefix + "deps-notanumber", false},
+		{openshellNamePrefix + "deps-not.a.number", false},
 		{openshellSandboxName(LaunchName("deps-bot"), time.Unix(1700000000, 0)), false},
 	}
 	for _, c := range cases {

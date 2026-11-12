@@ -13,7 +13,7 @@ func TestSearchPaneRegisteredAsSection(t *testing.T) {
 	for _, want := range []string{
 		`<a class="oc-nav-item" data-section="search-section" data-action="ocNavigate" data-arg0="search-section" hidden>`,
 		`id="search-section" data-dashboard-section="search-section" style="display:none"`,
-		`'knowledge-section','search-section','review-queue-section'`,
+		`'knowledge-section','search-section','inbox-section','review-queue-section'`,
 		`'search-section': { title: '🔍 Search', summary: 'search' },`,
 		`'search-section': { heading: 'Search', help: `,
 		`id="search-query" type="search"`,

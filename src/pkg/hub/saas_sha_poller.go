@@ -715,6 +715,15 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// rate-limited to perHiveEnvMaxPatchesPerCycle patches per cycle, because
 	// each patch rolls that hive's pod. See perhive_env_reconcile.go.
 	s.reconcilePerHiveEnvIfDue()
+	// Converge per-cluster host_aliases (clusters.json) onto existing hive
+	// Deployments so GHE-behind-reverse-proxy clusters never need a manual
+	// kubectl patch again (#17801). Throttled and rate-limited like the lane
+	// above because each patch rolls a pod.
+	s.reconcileHostAliasesIfDue()
+	// Converge the template startupProbe (#9692) and current init image repo
+	// onto hive Deployments provisioned before them, so a slow boot is not a
+	// permanent liveness kill-loop (#17827). Throttled and rate-limited.
+	s.reconcileStartupProbeIfDue()
 	// Put #7457's auth-url / auth-response-headers onto the hive-contribute
 	// Ingress of every hosted spoke provisioned before that fix, so
 	// /api/contribute/me learns who is calling there too (#7517). The
@@ -789,6 +798,8 @@ func (s *HubServer) pollLatestSHAsTick(ctx context.Context, now time.Time) {
 	s.reconcileNetAdminIfDue()
 	s.reconcileNodeHealthRBACIfDue()
 	s.reconcilePerHiveEnvIfDue()
+	s.reconcileHostAliasesIfDue()
+	s.reconcileStartupProbeIfDue()
 	s.reapOrphanedPodsIfDue()
 	s.retireExpiredGenerationsIfDue()
 	s.sweepExpiredAccessIfDue()

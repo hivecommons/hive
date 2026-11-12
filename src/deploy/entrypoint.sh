@@ -64,7 +64,9 @@ EXIT_NET_ADMIN_REQUIRED=77
 # file is the only copy of the live config, and mutating it at boot risks
 # losing owner customisations with no warning. The old name is picked up
 # read-only until the first save writes the new one, after which both
-# exist and the new one wins.
+# exist and the new one wins. Once the new name is the boot source, every
+# clean boot refreshes the old name from it (#17862) so the fallback is
+# never months stale; see hive_refresh_legacy_fallback.
 HIVE_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
 HIVE_CONFIG_RUNTIME="/data/hive.yaml.runtime"
 HIVE_CONFIG_RUNTIME_LEGACY="/data/hive.yaml.bak"
@@ -775,16 +777,87 @@ for _cfg in "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" /data/hive.yaml
 done
 unset _cfg
 
+# hive_file_mtime echoes a file's mtime as epoch seconds (0 when unreadable).
+# Both stat dialects are tried because the image is Debian but the helper
+# must also behave on the BusyBox/macOS shells the tests run under.
+hive_file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
+}
+
 # hive_runtime_config_read echoes the path to read the persisted runtime
 # config from: the new name when it is present and non-empty, else the
 # legacy name when that is, else empty. Read-only — it never creates,
 # renames or removes anything on the PVC.
+#
+# #17862: falling back to the legacy name is never routine any more. Every
+# clean boot refreshes it from the runtime config (hive_refresh_legacy_fallback),
+# so reaching it means the runtime config was lost or truncated since the
+# last boot. Say so LOUDLY on stderr with both files' ages: a hive that
+# silently booted a 3-month-old hive.yaml.bak (level 3 instead of 6) is the
+# incident this guards against. When the legacy copy is OLDER than the
+# runtime file it is replacing — i.e. the runtime file was written after
+# the last refresh and then damaged — the WARN says the fallback is stale
+# and names the overlay/audit paths an operator can reconstruct from.
 hive_runtime_config_read() {
   if [ -f "$HIVE_CONFIG_RUNTIME" ] && [ -s "$HIVE_CONFIG_RUNTIME" ]; then
     echo "$HIVE_CONFIG_RUNTIME"
   elif [ -f "$HIVE_CONFIG_RUNTIME_LEGACY" ] && [ -s "$HIVE_CONFIG_RUNTIME_LEGACY" ]; then
+    _rt_state="missing"
+    _rt_mtime=0
+    if [ -f "$HIVE_CONFIG_RUNTIME" ]; then
+      _rt_state="present but EMPTY (0 bytes — likely truncated by a kill mid-save)"
+      _rt_mtime="$(hive_file_mtime "$HIVE_CONFIG_RUNTIME")"
+    fi
+    _lg_mtime="$(hive_file_mtime "$HIVE_CONFIG_RUNTIME_LEGACY")"
+    _now="$(date +%s)"
+    _lg_age_h=$(( (_now - _lg_mtime) / 3600 ))
+    echo "[entrypoint] WARN: runtime config $HIVE_CONFIG_RUNTIME is $_rt_state; FALLING BACK to legacy $HIVE_CONFIG_RUNTIME_LEGACY (last refreshed ${_lg_age_h}h ago)." >&2
+    if [ "$_rt_mtime" -gt "$_lg_mtime" ] 2>/dev/null; then
+      echo "[entrypoint] WARN: the legacy fallback is OLDER than the damaged runtime config ($(( (_rt_mtime - _lg_mtime) / 3600 ))h behind). Settings saved since then (acmm_level, agent roster, pauses, models) are NOT in this file — check /data/hive.yaml.dashboard and /data/audit.jsonl before trusting the booted config. See hivecommons/hive#17862." >&2
+    fi
+    unset _rt_state _rt_mtime _lg_mtime _now _lg_age_h
     echo "$HIVE_CONFIG_RUNTIME_LEGACY"
   fi
+}
+
+# hive_refresh_legacy_fallback copies a GOOD runtime config over the legacy
+# fallback name so the fallback is at most one boot stale (#17862). Before
+# this, hive.yaml.bak was frozen at the rename (Aug 2026) on every hive, and
+# a truncated runtime file booted a months-old config.
+#
+# Only runs when THIS boot is reading from the new name (so the legacy file
+# is strictly older, never the only copy — the Docker/LXC worry behind the
+# original never-write rule) and the runtime file parses as YAML with a
+# project section (so a half-written file is never promoted to fallback).
+# Copies to a temp name and renames so the fallback is never itself
+# truncated by a kill. Best-effort: a failure here only means the fallback
+# stays at its previous age.
+hive_refresh_legacy_fallback() {
+  [ "$1" = "$HIVE_CONFIG_RUNTIME" ] || return 0
+  [ -s "$HIVE_CONFIG_RUNTIME" ] || return 0
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import sys, yaml
+with open(sys.argv[1]) as f:
+    d = yaml.safe_load(f)
+sys.exit(0 if isinstance(d, dict) and isinstance(d.get("project"), dict) else 1)
+' "$HIVE_CONFIG_RUNTIME" 2>/dev/null || {
+      echo "[entrypoint] WARN: $HIVE_CONFIG_RUNTIME does not parse as a hive config; legacy fallback $HIVE_CONFIG_RUNTIME_LEGACY left untouched" >&2
+      return 0
+    }
+  fi
+  if cmp -s "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" 2>/dev/null; then
+    return 0
+  fi
+  _lg_tmp="${HIVE_CONFIG_RUNTIME_LEGACY}.tmp.$$"
+  if cp "$HIVE_CONFIG_RUNTIME" "$_lg_tmp" 2>/dev/null && mv -f "$_lg_tmp" "$HIVE_CONFIG_RUNTIME_LEGACY" 2>/dev/null; then
+    hive_harden_runtime_config "$HIVE_CONFIG_RUNTIME_LEGACY"
+    echo "[entrypoint] Legacy fallback $HIVE_CONFIG_RUNTIME_LEGACY refreshed from $HIVE_CONFIG_RUNTIME"
+  else
+    rm -f "$_lg_tmp" 2>/dev/null
+    echo "[entrypoint] WARN: could not refresh legacy fallback $HIVE_CONFIG_RUNTIME_LEGACY from $HIVE_CONFIG_RUNTIME" >&2
+  fi
+  unset _lg_tmp
 }
 
 # hive_ghe_git_host echoes this hive's configured GitHub host when it is NOT
@@ -1022,6 +1095,7 @@ if [ "$IS_KUBERNETES" = "true" ]; then
   # result equal to its own input on every boot.
   HIVE_CONFIG_BOOT="$(hive_runtime_config_read)"
   if [ -n "$HIVE_CONFIG_BOOT" ]; then
+    hive_refresh_legacy_fallback "$HIVE_CONFIG_BOOT"
     # Steady state: boot from what this hive last had. The ConfigMap seed is
     # deliberately NOT merged — it is frozen at provision and every field it
     # could contribute is either already here or re-asserted by the hub on
@@ -1211,6 +1285,7 @@ else
   # first boot on new code seeds hive.yaml.runtime from the legacy content
   # without touching the legacy file itself.
   HIVE_CONFIG_SOURCE="$(hive_runtime_config_read)"
+  hive_refresh_legacy_fallback "$HIVE_CONFIG_SOURCE"
   if [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ -z "$HIVE_CONFIG_SOURCE" ]; then
     # First boot: config exists but no PVC runtime config yet — seed it
     cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME"

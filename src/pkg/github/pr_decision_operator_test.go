@@ -390,6 +390,42 @@ func TestRecordOperatorPullRequestApprovalSkipsCommandsProwRejected(t *testing.T
 	}
 }
 
+// On a Prow-managed PR the hive account opened, a `/lgtm` from that account
+// is a self-LGTM Prow always rebukes; only `/approve` is relayed
+// (hivecommons/hive#17863). A person's PR and a non-Prow repo keep both.
+func TestRecordOperatorPullRequestApprovalSkipsSelfLGTMOnProwPR(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		pr          unparkWireIssue
+		wantLGTM    bool
+		wantSkipped bool
+	}{
+		{"hive-authored prow-managed", parkedPR(liveDecisionPR, "hive[bot]", []string{PRNeedsDecisionStageLabel, "author/hive", "size/M"}), false, true},
+		{"hive-authored not prow-managed", hiveParkedPR(), true, false},
+		{"person-authored prow-managed", parkedPR(liveDecisionPR, "contributor", []string{PRNeedsDecisionStageLabel, "author/human", "size/M"}), true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, rec := newUnparkPRClient(t, []unparkWireIssue{tc.pr}, map[string]string{"maintainer": "write"})
+			event, err := c.RecordOperatorPullRequestApproval(context.Background(), "org/repo", liveDecisionPR, "maintainer")
+			if err != nil {
+				t.Fatalf("approval: %v", err)
+			}
+			if event.LGTMSkipped != tc.wantSkipped {
+				t.Fatalf("event = %+v, want LGTMSkipped=%v", event, tc.wantSkipped)
+			}
+			posted := rec.posted[liveDecisionPR]
+			var gotLGTM, gotApprove bool
+			for _, body := range posted {
+				gotLGTM = gotLGTM || strings.HasPrefix(body, "/lgtm\n")
+				gotApprove = gotApprove || strings.HasPrefix(body, "/approve\n")
+			}
+			if gotLGTM != tc.wantLGTM || !gotApprove {
+				t.Fatalf("posted %v, want lgtm=%v and /approve", posted, tc.wantLGTM)
+			}
+		})
+	}
+}
+
 // On a Prow repo where rejection has not been observed yet, Prow answers the
 // relayed commands after they are posted. The approval event reports that
 // reply instead of leaving the board at "approved" (hivecommons/hive#17475).
@@ -418,8 +454,9 @@ func TestRecordOperatorPullRequestApprovalReportsProwRejectionAfterPost(t *testi
 			if err != nil {
 				t.Fatalf("approval: %v", err)
 			}
-			if event.ProwRejected != tc.want || event.CommandsSkipped != "" || len(rec.posted[liveDecisionPR]) != len(PRApprovalCommands) {
-				t.Fatalf("event = %+v, want ProwRejected %v with commands posted", event, tc.want)
+			// Hive-authored and Prow-managed: only `/approve` is relayed (#17863).
+			if event.ProwRejected != tc.want || event.CommandsSkipped != "" || !event.LGTMSkipped || len(rec.posted[liveDecisionPR]) != len(PRApprovalCommands)-1 {
+				t.Fatalf("event = %+v, want ProwRejected %v with /approve posted", event, tc.want)
 			}
 		})
 	}

@@ -245,6 +245,13 @@ type ClusterConfig struct {
 	// reachable only via the proxy). Injected into new pool slots as
 	// HIVE_UPSTREAM_PROXY_URL / HIVE_UPSTREAM_PROXY_HOSTS / HIVE_NO_PROXY.
 	UpstreamProxy *ClusterUpstreamProxy `json:"upstream_proxy,omitempty" yaml:"upstream_proxy,omitempty"`
+	// HostAliases are Pod hostAliases entries rendered into every hive
+	// Deployment on THIS cluster, for GitHub Enterprise hosts reachable only
+	// through a TLS reverse proxy pinned to a fixed IP (no CONNECT proxy, so
+	// upstream_proxy cannot express it). Validated at load by
+	// normalizeClusterHostAliases; existing hives are converged by the
+	// host_aliases reconcile sweep (cluster_host_aliases.go, #17801).
+	HostAliases []ClusterHostAlias `json:"host_aliases,omitempty" yaml:"host_aliases,omitempty"`
 	// GitHubAppSlug is the GitHub App's URL slug on THIS cluster's GitHub
 	// host. A GitHub Enterprise instance hosts its own App registration,
 	// which is rarely named "kubestellar-hive" — without this the spoke's
@@ -2680,6 +2687,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"UpstreamProxyURL":     cluster.UpstreamProxy.url(),
 		"UpstreamProxyHosts":   cluster.UpstreamProxy.hosts(),
 		"UpstreamProxyNoProxy": cluster.UpstreamProxy.noProxy(),
+		"HostAliases":          cluster.HostAliases,
 		"IsPublic":             h.IsPublic,
 		"HiveType":             "hosted",
 		"HasGHE":               effectiveGitHubBaseURL(h, cluster) != "",
@@ -3424,6 +3432,18 @@ spec:
         app: hive
         hive-id: {{.ID}}
     spec:
+{{- if .HostAliases}}
+      # Per-cluster host_aliases (clusters.json): pins GHE hostnames to a TLS
+      # reverse-proxy IP where no CONNECT proxy exists. See #17801.
+      hostAliases:
+{{- range .HostAliases}}
+      - ip: "{{.IP}}"
+        hostnames:
+{{- range .Hostnames}}
+        - "{{.}}"
+{{- end}}
+{{- end}}
+{{- end}}
 {{- if .RequiresSCC}}
       serviceAccountName: hive-sa
 {{- else}}
@@ -3464,11 +3484,12 @@ spec:
         # Steady state (#17468): /etc/hive is an emptyDir, so a regular file
         # there is a throwaway cache and operator edits to it vanished on
         # restart. Symlink it to the PVC runtime config instead, so the path
-        # every runbook names IS the persisted boot source. Config.Save writes
-        # the config path in place (O_TRUNC, no rename), so the link survives
-        # saves. Only the NEW name is linked: the legacy .bak is never written
-        # (config.RuntimeConfigFileLegacy), and linking it would make every
-        # save write it.
+        # every runbook names IS the persisted boot source. Config.Save
+        # resolves the link and renames its temp file onto the TARGET
+        # (#17862), so the link survives saves. Only the NEW name is linked:
+        # the legacy .bak is refreshed by the entrypoint from a good runtime
+        # file on clean boots (never written by Save), and linking it would
+        # make every save write it.
         command: ["sh", "-c", "if [ -s /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; ln -sf /data/hive.yaml.runtime /etc/hive/hive.yaml && echo config-path-linked-to-runtime || echo config-path-link-failed; elif [ -s /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied-first-boot; fi"]
         volumeMounts:
         - name: config

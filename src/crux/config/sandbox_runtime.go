@@ -7,10 +7,11 @@ const (
 	SandboxRuntimePodman    = "podman"
 	SandboxRuntimeJob       = "job"
 	SandboxRuntimeOpenShell = "openshell"
+	SandboxRuntimeSubstrate = "substrate"
 )
 
 // ValidSandboxRuntimes is the closed set a config may name.
-var ValidSandboxRuntimes = map[string]bool{SandboxRuntimePodman: true, SandboxRuntimeJob: true, SandboxRuntimeOpenShell: true}
+var ValidSandboxRuntimes = map[string]bool{SandboxRuntimePodman: true, SandboxRuntimeJob: true, SandboxRuntimeOpenShell: true, SandboxRuntimeSubstrate: true}
 
 // SandboxJobConfig is everything the Job runtime needs beyond the image
 // (#6311). The pod-template fields pass through to Kubernetes verbatim.

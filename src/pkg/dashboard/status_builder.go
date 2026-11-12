@@ -1202,6 +1202,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
 			SandboxRun:      sandboxRun,
 			SandboxRuntime:  effectiveSandboxRuntime(agentCfg, cfg),
+			SandboxWarnings: config.SandboxPreflightWarningsFor(effectiveSandboxRuntime(agentCfg, cfg)),
 			Session:         name,
 			State:           string(proc.State),
 			Starting:        proc.Starting && proc.State != crux.StateRunning,

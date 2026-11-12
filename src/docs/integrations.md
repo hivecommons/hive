@@ -94,6 +94,7 @@ per-backend confinement matrix.
 <tr><td><img src="assets/logos/podman.svg" height="40" alt="Podman logo"></td><td>Rootless Podman agent sandbox</td><td>Opt-in</td><td><a href="sandbox-isolation.md#current-wiring">sandbox-isolation.md</a></td></tr>
 <tr><td><img src="assets/logos/kubernetes.svg" height="40" alt="Kubernetes logo"></td><td>Kubernetes Job sandbox runtime</td><td>Opt-in</td><td><a href="sandbox-isolation.md#running-sandboxed-kicks-as-kubernetes-jobs">sandbox-isolation.md</a></td></tr>
 <tr><td><img src="assets/logos/nvidia.svg" height="40" alt="NVIDIA logo"></td><td>NVIDIA OpenShell sandbox runtime</td><td>In progress (opt-in, phase 1)</td><td><a href="sandbox-isolation.md#running-sandboxed-kicks-in-an-openshell-sandbox">sandbox-isolation.md</a> · <a href="https://github.com/hivecommons/hive/issues/17642">#17642</a></td></tr>
+<tr><td><img src="assets/logos/cncf.svg" height="40" alt="CNCF logo"></td><td>Agent Substrate sandbox runtime (CNCF Sandbox)</td><td>In progress (opt-in, phase 2)</td><td><a href="sandbox-isolation.md#running-sandboxed-kicks-in-a-substrate-actor">sandbox-isolation.md</a> · <a href="https://github.com/hivecommons/hive/issues/17695">#17695</a></td></tr>
 <tr><td><img src="assets/logos/opensandbox-badge.svg" height="40" alt="OpenSandbox"></td><td>AAIF OpenSandbox (evaluation)</td><td>Planned</td><td><a href="https://github.com/hivecommons/hive/issues/14092">#14092</a></td></tr>
 </table>
 

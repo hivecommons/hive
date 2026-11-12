@@ -22,10 +22,12 @@
 # search: GET /api/repos/{owner}/{repo}/health serves the report-only repo health score the search indexer computes (search.Health), wired through a setter so the dashboard never builds or walks the index (hivecommons/hive#14638).
 # search: GET /api/search reads the portfolio search Backend the indexer publishes; pkg/search is a leaf (no dashboard deps) (hivecommons/hive#14637).
 # workflowmodel: /api/workflows handlers compile lifecycle models (Compile, Profile diagnostics) and the tracker emits per-repo workflow columns; the store and bindings already route through Dependencies (hivecommons/hive#17620 P2).
+# egressmark: deployment_upgrade.go dials the in-cluster Kubernetes API for the hive's own rollout; the dial must carry the forced-egress SO_MARK or nodes without xt_owner redirect it into the MITM proxy (hivecommons/hive#17817).
 github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agent
 github.com/hivecommons/hive/crux/agentparse
 github.com/hivecommons/hive/crux/claude
+github.com/hivecommons/hive/crux/egressmark
 github.com/hivecommons/hive/crux/kubejob
 github.com/hivecommons/hive/crux/logread
 github.com/hivecommons/hive/crux/logscrub
@@ -67,6 +69,9 @@ github.com/hivecommons/hive/pkg/housestyle
 github.com/hivecommons/hive/pkg/hub
 github.com/hivecommons/hive/pkg/hubactivity
 github.com/hivecommons/hive/pkg/hubbackup
+# pkg/inbox: Inbox triage API (hivecommons/hive#17876) — dashboard routes
+# /api/inbox* wrap the inbox service; no existing seam covers it.
+github.com/hivecommons/hive/pkg/inbox
 github.com/hivecommons/hive/pkg/inferencehealth
 github.com/hivecommons/hive/pkg/ioscan
 github.com/hivecommons/hive/pkg/knowledge

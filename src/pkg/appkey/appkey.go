@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -62,6 +64,17 @@ type Resolver struct {
 	ProvisionedKeyPath string
 	// FileMode is applied to keys this Resolver writes.
 	FileMode os.FileMode
+
+	fpMu    sync.Mutex
+	fpCache map[string]heldFingerprint
+}
+
+// heldFingerprint memoizes a key file's fingerprint against the size and mtime
+// it was computed from, so an unchanged file is never re-read.
+type heldFingerprint struct {
+	size  int64
+	mtime time.Time
+	fp    string
 }
 
 type tempKeyFile interface {
@@ -77,8 +90,9 @@ var (
 	createTempKey = func(dir, pattern string) (tempKeyFile, error) {
 		return os.CreateTemp(dir, pattern)
 	}
-	removeFile = os.Remove
-	renameFile = os.Rename
+	fingerprintFromFile = config.AppKeyFingerprintFromFile
+	removeFile          = os.Remove
+	renameFile          = os.Rename
 )
 
 // Default returns a Resolver using the production spoke layout.
@@ -125,6 +139,10 @@ func (r *Resolver) HeldFingerprints() map[string]string {
 		return nil
 	}
 	var held map[string]string
+	r.fpMu.Lock()
+	defer r.fpMu.Unlock()
+	seen := make(map[string]heldFingerprint)
+	defer func() { r.fpCache = seen }()
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -138,10 +156,21 @@ func (r *Resolver) HeldFingerprints() map[string]string {
 		if convErr != nil || id <= 0 {
 			continue
 		}
-		fp, fpErr := config.AppKeyFingerprintFromFile(filepath.Join(r.DataDir, name))
-		if fpErr != nil || fp == "" {
+		var fp string
+		info, infoErr := e.Info()
+		if infoErr != nil {
 			continue
 		}
+		if c, ok := r.fpCache[name]; ok && c.size == info.Size() && c.mtime.Equal(info.ModTime()) {
+			fp = c.fp
+		} else {
+			var fpErr error
+			fp, fpErr = fingerprintFromFile(filepath.Join(r.DataDir, name))
+			if fpErr != nil || fp == "" {
+				continue
+			}
+		}
+		seen[name] = heldFingerprint{size: info.Size(), mtime: info.ModTime(), fp: fp}
 		if held == nil {
 			held = make(map[string]string)
 		}

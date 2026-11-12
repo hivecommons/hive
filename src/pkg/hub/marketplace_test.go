@@ -320,6 +320,18 @@ func TestMarketplacePublishAuth(t *testing.T) {
 	if rec := mktDo(s, mktSpokeReq(mktBody(t, mktBundle(t, bundle.TierCurated)))); rec.Code != 403 {
 		t.Fatalf("spoke curated: %d %s", rec.Code, rec.Body.String())
 	}
+	// Spoke asserting curated inside the hash-covered model (envelope tier
+	// legitimate) → 403: the hub cannot normalise it, so it must refuse.
+	launder := mktModel(t)
+	launder.Spec.Meta.Provenance = workflowmodel.ProvenanceCurated
+	lb, err := bundle.Export(launder, "spoke", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lb.Tier = bundle.TierLocalPublished
+	if rec := mktDo(s, mktSpokeReq(mktBody(t, lb))); rec.Code != 403 || !strings.Contains(rec.Body.String(), "model provenance") {
+		t.Fatalf("spoke model-curated: %d %s", rec.Code, rec.Body.String())
+	}
 	// Spoke OK: `local` is normalised to local-published.
 	rec := mktDo(s, mktSpokeReq(body))
 	if rec.Code != 201 {
@@ -784,7 +796,7 @@ func TestMarketplaceRefreshAuthMatrixAndVerboseStatus(t *testing.T) {
 	s := marketplaceTestHub(t, fetch)
 	clock := s.refresher().now()
 	s.refresher().now = func() time.Time { return clock }
-	t.Setenv(hubMarketplaceExtraReposEnv, "broken/repo")
+	t.Setenv(hubMarketplaceExtraReposEnv, "broken/repo,ok/repo")
 
 	spoke := func(target string) *http.Request {
 		req := httptest.NewRequest(http.MethodPost, target, nil)
@@ -819,8 +831,21 @@ func TestMarketplaceRefreshAuthMatrixAndVerboseStatus(t *testing.T) {
 		t.Fatalf("bad bearer: %d", rec.Code)
 	}
 
+	// Spoke single repo outside the corpus: refused before any fetch or
+	// rate-limit accounting; the same request as admin is allowed.
+	rec := mktDo(s, spoke("/api/marketplace/refresh?repo=outside/corpus"))
+	if rec.Code != 403 || !strings.Contains(rec.Body.String(), "not in the marketplace corpus") {
+		t.Fatalf("spoke outside corpus: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = mktDo(s, admin(http.MethodPost, "/api/marketplace/refresh?repo=outside/corpus")); rec.Code != 200 {
+		t.Fatalf("admin outside corpus: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := s.marketplace().refreshRecord("outside/corpus"); !ok {
+		t.Fatal("admin refresh of an outside-corpus repo should have run")
+	}
+
 	// Spoke single repo: ok, then burst-limited.
-	rec := mktDo(s, spoke("/api/marketplace/refresh?repo=broken/repo"))
+	rec = mktDo(s, spoke("/api/marketplace/refresh?repo=broken/repo"))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "404 Not Found") {
 		t.Fatalf("spoke single: %d %s", rec.Code, rec.Body.String())
 	}
@@ -845,18 +870,29 @@ func TestMarketplaceRefreshAuthMatrixAndVerboseStatus(t *testing.T) {
 
 	// Spoke full run: 202 once per hour across callers; admin unaffected.
 	rf := s.refresher()
-	waitIdle := func() {
+	waitRefresh := func(previous *marketplaceRefreshResult) {
+		t.Helper()
 		testutil.Eventually(t, 5*time.Second, func() bool {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
-			return !rf.running
+			return rf.last != previous && !rf.running
 		}, "background refresh did not finish")
 	}
-	rec = mktDo(s, spoke("/api/marketplace/refresh"))
-	if rec.Code != 202 {
-		t.Fatalf("spoke full: %d %s", rec.Code, rec.Body.String())
+	refreshAndWait := func(req *http.Request, description string) {
+		t.Helper()
+		rf.mu.Lock()
+		previous := rf.last
+		rf.mu.Unlock()
+		rec := mktDo(s, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("%s: %d %s", description, rec.Code, rec.Body.String())
+		}
+		// Even a later fatal assertion must not restore fixture globals while
+		// this accepted refresh is still starting or running.
+		t.Cleanup(func() { waitRefresh(previous) })
+		waitRefresh(previous)
 	}
-	waitIdle()
+	refreshAndWait(spoke("/api/marketplace/refresh"), "spoke full")
 	rf.mu.Lock()
 	trigger := rf.last.Trigger
 	rf.mu.Unlock()
@@ -867,15 +903,9 @@ func TestMarketplaceRefreshAuthMatrixAndVerboseStatus(t *testing.T) {
 	if rec.Code != 429 || !strings.Contains(rec.Body.String(), "try again in") {
 		t.Fatalf("spoke full again: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec = mktDo(s, admin(http.MethodPost, "/api/marketplace/refresh")); rec.Code != 202 {
-		t.Fatalf("admin full while spoke limited: %d %s", rec.Code, rec.Body.String())
-	}
-	waitIdle()
+	refreshAndWait(admin(http.MethodPost, "/api/marketplace/refresh"), "admin full while spoke limited")
 	clock = clock.Add(marketplaceFullRefreshInterval)
-	if rec = mktDo(s, spoke("/api/marketplace/refresh")); rec.Code != 202 {
-		t.Fatalf("spoke full after interval: %d", rec.Code)
-	}
-	waitIdle()
+	refreshAndWait(spoke("/api/marketplace/refresh"), "spoke full after interval")
 
 	// Verbose status: anon 401, spoke and admin get the failing list.
 	if rec = mktDo(s, httptest.NewRequest(http.MethodGet, "/api/marketplace/status?verbose=1", nil)); rec.Code != 401 {

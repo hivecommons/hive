@@ -274,6 +274,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	for _, w := range advisorWarnings {
 		log.Printf("WARNING: %s", w)
 	}
+	if err := ValidateInbox(c.Inbox); err != nil {
+		return err
+	}
 	if err := ValidateKnowledgeConnectors(c.Knowledge.Connectors); err != nil {
 		return err
 	}

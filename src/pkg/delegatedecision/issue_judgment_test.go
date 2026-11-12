@@ -28,6 +28,14 @@ func TestDecideIssueLikeTheOwner(t *testing.T) {
 			actions: []ActionKind{ActionLabelsAdd, ActionRecommendOnly},
 		},
 		{
+			name: "missing Dependabot alerts permission is operator action",
+			in: Input{Title: "[selfreport] github_app_alerts_permission_missing: scoped token mint",
+				Body: "<!-- hive:selfreport fp=x hive=spoke -->\nclass `github_app_alerts_permission_missing`\n| owner(s) | @clubanderson |\n| spoke | spoke |"},
+			rule: "selfreport-operator-action", verdict: VerdictOperatorAction,
+			text:    []string{"@clubanderson", "Dependabot alerts read-only", "re-accept", "spoke"},
+			actions: []ActionKind{ActionLabelsAdd, ActionRecommendOnly},
+		},
+		{
 			name: "hive#15329 RFC on hive-filed proposals (human author) → recommend only, with a real recommendation",
 			in:   fixtureHive15329, rule: "hive-policy", verdict: VerdictRecommendOnly,
 			text:    []string{"hive recommends: approve `", "should not be actionable", "default-on", "owner to confirm"},
@@ -160,7 +168,8 @@ func TestSelfreportOpsClassesMatchFleetReport(t *testing.T) {
 	for _, c := range []string{
 		fleetreport.ClassAgentLoginRequired, fleetreport.ClassInferenceAuthFailed, fleetreport.ClassDataDiskPressure,
 		fleetreport.ClassGitHubAppTokenMintFailed, fleetreport.ClassGitHubAppNotInstalled, fleetreport.ClassGitHubAppRepoNotCovered,
-		fleetreport.ClassProxyConnectDialFailed, fleetreport.ClassProxyTLSHandshakeFailed, fleetreport.ClassCruxRuntimeUnavailable,
+		fleetreport.ClassGitHubAppAlertsPermission, fleetreport.ClassGitHubAppStatusesPermission, fleetreport.ClassForgeUnreachable,
+		fleetreport.ClassProxyConnectDialFailed, fleetreport.ClassProxyPlainForwardFailed, fleetreport.ClassProxyTLSHandshakeFailed, fleetreport.ClassCruxRuntimeUnavailable,
 		fleetreport.ClassModelDiscoveryDegraded, fleetreport.ClassInferenceUpstreamError, fleetreport.ClassInferenceCallerUnknown,
 		fleetreport.ClassLabelProvisioningFailed, fleetreport.ClassSharedCIRerunForbidden,
 	} {
