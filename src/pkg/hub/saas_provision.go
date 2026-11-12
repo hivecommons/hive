@@ -3464,11 +3464,12 @@ spec:
         # Steady state (#17468): /etc/hive is an emptyDir, so a regular file
         # there is a throwaway cache and operator edits to it vanished on
         # restart. Symlink it to the PVC runtime config instead, so the path
-        # every runbook names IS the persisted boot source. Config.Save writes
-        # the config path in place (O_TRUNC, no rename), so the link survives
-        # saves. Only the NEW name is linked: the legacy .bak is never written
-        # (config.RuntimeConfigFileLegacy), and linking it would make every
-        # save write it.
+        # every runbook names IS the persisted boot source. Config.Save
+        # resolves the link and renames its temp file onto the TARGET
+        # (#17862), so the link survives saves. Only the NEW name is linked:
+        # the legacy .bak is refreshed by the entrypoint from a good runtime
+        # file on clean boots (never written by Save), and linking it would
+        # make every save write it.
         command: ["sh", "-c", "if [ -s /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; ln -sf /data/hive.yaml.runtime /etc/hive/hive.yaml && echo config-path-linked-to-runtime || echo config-path-link-failed; elif [ -s /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied-first-boot; fi"]
         volumeMounts:
         - name: config
