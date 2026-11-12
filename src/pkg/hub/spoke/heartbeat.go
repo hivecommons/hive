@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/egressmark"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/hivestate"
@@ -2279,6 +2280,7 @@ func inClusterHTTPClient(cfg *inClusterConfig) (*http.Client, error) {
 		Timeout: routeExistenceProbeTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+			DialContext:     egressmark.Dialer(0).DialContext,
 		},
 	}, nil
 }
