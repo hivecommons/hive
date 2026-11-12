@@ -151,6 +151,21 @@ func warnNoPlukPatternsOnce(backend string) bool {
 	return !loaded
 }
 
+// logPlukAttached reports a successful pipe-pane attach. A backend with no
+// pattern set warns once per process; later attaches for it log at debug.
+func (m *Manager) logPlukAttached(plukPath, backend, agentName, logFile string) {
+	if plukHasPatterns(plukPath, backend) {
+		m.logger.Info("pluk publisher attached", "agent", agentName, "cli", backend, "log", logFile)
+		return
+	}
+	if warnNoPlukPatternsOnce(backend) {
+		m.logger.Warn(fmt.Sprintf("no pluk pattern set for cli=%s; only raw_output will be recorded", backend),
+			"agent", agentName, "log", logFile)
+		return
+	}
+	m.logger.Debug("no pluk pattern set; only raw_output will be recorded", "agent", agentName, "cli", backend, "log", logFile)
+}
+
 // plukHasPatterns reports whether pluk will classify events for backend: either
 // Hive ships a pattern file for it, or the installed pluk package bundles one.
 func plukHasPatterns(plukPath, backend string) bool {
