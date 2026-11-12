@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.237.0)
+
+### Added
+
+- The crux inference translator now records an OTel `crux.proxy.inference.requests` counter and `crux.proxy.inference.duration` histogram with bounded `status_class` and `outcome` attributes, plus one server span per request, following the `crux serve` HTTP metrics pattern; nothing is exported unless `OTEL_*` is configured (hivecommons/crux#153).
+
 ## 2026-11-12 (v5.236.5)
 
 ### Fixed
