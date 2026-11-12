@@ -175,6 +175,10 @@ when optional issue activity or CI trail fetches are shed below the reserve,
 their warnings remain in local logs but do not create repeated-error reports.
 Issue activity keeps its last rollup and is retried by the collector.
 
+Canceled maintainer-edit access reads during an in-place adoption sweep stay in
+local logs without triggering the catch-all; adoption is preserved and the
+read is retried on the next sweep. Other access-read errors remain reportable.
+
 Callers that fail closed on a GitHub HTTP 500 from the combined-status
 endpoint — the merge-eligible lane gate, the trusted-author and contributor-lane
 automerge sweeps, and the stage-label check digest — also stay in the logs
