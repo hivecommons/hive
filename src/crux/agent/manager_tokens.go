@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -933,6 +935,18 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 				"agent", agent.Name, "tier", tier, "error", err)
 		}
 		m.observeCondition(crux.ClassGitHubAppNotInstalled, agent.Name, "github app installation id is unset: "+err.Error(), "")
+	} else if err != nil && isForgeTransportErr(err) {
+		// The GitHub host did not answer (dial timeout, connection refused,
+		// deadline exceeded). Nothing about the App key or installation can
+		// be concluded from that, so report it as a forge-reachability
+		// condition rather than a mint failure — the latter tells the
+		// operator to re-check App permissions, which is wrong during an
+		// egress outage. The mint-failed condition is cleared so a hive that
+		// slid from a real mint error into an outage does not hold both open.
+		m.logger.Warn("per-agent scoped token NOT delivered — GitHub host unreachable from the pod; this agent's GitHub writes (gh + git push) will FAIL until egress is restored",
+			"agent", agent.Name, "tier", tier, "error", err)
+		m.clearCondition(crux.ClassGitHubAppTokenMintFailed, agent.Name)
+		m.observeCondition(crux.ClassForgeUnreachable, agent.Name, "github host unreachable during token mint: "+err.Error(), "")
 	} else if err != nil {
 		// Be precise about the blast radius. Since audit H3 the shared-cache
 		// fallback is GONE: gh-wrapper.sh and git-credential-hive.sh no
@@ -944,17 +958,39 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 		// token delivery is repaired — not a silent privilege escalation.
 		m.logger.Warn("per-agent scoped token NOT delivered — this agent's GitHub writes (gh + git push) will FAIL (no shared-cache fallback by design; see audit H3)",
 			"agent", agent.Name, "tier", tier, "error", err)
+		m.clearCondition(crux.ClassForgeUnreachable, agent.Name)
 		m.observeCondition(crux.ClassGitHubAppTokenMintFailed, agent.Name, "github app token mint failed: "+err.Error(), "")
 	} else {
 		m.appNotInstalledWarned.Delete(agent.Name)
 		m.clearCondition(crux.ClassGitHubAppNotInstalled, agent.Name)
 		m.clearCondition(crux.ClassGitHubAppTokenMintFailed, agent.Name)
+		m.clearCondition(crux.ClassForgeUnreachable, agent.Name)
 	}
 	// Additionally issue an opt-in short-lived mint token (no-op when the mint
 	// is disabled). This is additive and fail-safe — it never blocks launch.
 	if agent.UID > 0 {
 		m.issueAgentMintToken(agent.Name, tier, agent.UID)
 	}
+}
+
+// isForgeTransportErr reports whether a mint error never got an answer from
+// the GitHub host: a deadline, a *url.Error (dial/TLS/timeout from the HTTP
+// client) or any net.Error. An HTTP status from GitHub (401/404/422) is not
+// a transport error and keeps its mint-failed classification. Mirrors the
+// dashboard's forge probe (#17427) so both report the same outage.
+func isForgeTransportErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 // agentTokenCacheEnabled keeps the shared-UID read path opt-in and App-only.
