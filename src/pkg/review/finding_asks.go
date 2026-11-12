@@ -52,3 +52,40 @@ func findingAskOneLine(s string) string {
 	}
 	return s
 }
+
+// blockSummaryReason is one blocking perspective's summary as the aggregate
+// keeps it (Aggregate.BlockSummaries), or "" when the report has none.
+func blockSummaryReason(r PerspectiveReport) string {
+	summary := strings.TrimSpace(r.Summary)
+	if summary == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s: %s", r.Perspective, summary)
+}
+
+// BlockSummaryAsks renders what the blocking reviewers said in their
+// summaries, one plain line each, at most limit of them (limit <= 0 means
+// all), trimmed like a finding line. The changes_requested / reject
+// perspectives come first (BlockSummaries), then the perspectives that
+// asked for a person (HumanSummaries): those block too when the aggregate
+// routes as changes_requested. The contributor nudge lists these lines
+// only when the verdict blocks and has no in-scope finding to list, so a
+// PR returned to its author never says only that the review asked for
+// something.
+func (a Aggregate) BlockSummaryAsks(limit int) []string {
+	var lines []string
+	seen := map[string]bool{}
+	for _, list := range [][]string{a.BlockSummaries, a.HumanSummaries} {
+		for _, s := range list {
+			if s = findingAskOneLine(s); s != "" && !seen[s] {
+				seen[s] = true
+				lines = append(lines, s)
+			}
+		}
+	}
+	if limit > 0 && len(lines) > limit {
+		more := len(lines) - limit
+		lines = append(lines[:limit:limit], fmt.Sprintf("and %d more reviewer summary line(s) in the review", more))
+	}
+	return lines
+}

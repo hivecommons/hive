@@ -1662,6 +1662,20 @@ mess before taking on new stuff"). Code:
 `src/pkg/github/automerge/automerge_contributor_nudge.go`, `src/pkg/fixqueue`
 and `src/pkg/dashboard/contribute_fixqueue.go`.
 
+When the review swarm asked for changes, the nudge's **Review asks** say what
+it asked for, not only that it asked. After the line "the review swarm
+requested changes" comes one `review finding: path:line title` line per
+in-scope finding of the head's verdict (at most five, then one line counting
+the rest). A reviewer can also block without a structured finding and explain
+itself only in its summary ("still present at this head"); the nudge then
+lists one `review summary: <perspective>: <summary>` line per blocking
+reviewer instead, so a blocking verdict never reads as the lead line alone.
+The relay's `fix-pr` task carries the same lines. A PR that a gate holds (an
+open sentinel alert, a hold-class label) gets the same list: the contributor
+lane stops at the gate before it reads the verdict, so the stage pass, which
+reads the verdict itself to send the PR back, hands what the review asked for
+to the nudge. A verdict that does not block adds no such lines.
+
 One exception: a PR the merge train holds because **another open PR already
 fixes the same issue** (lane reason `merge-train:duplicate-of#<winner>:…`)
 is parked with its author — 072 for a relay contributor, 071 for a person,

@@ -1320,6 +1320,14 @@ type HubServer struct {
 	// a-ks-wec2 n0sv loop: 18 ReplicaSets in 8 minutes, none Ready). A
 	// different tag, or a cleared switch, resets the clock.
 	heartbeatSwitchSent map[string]switchSend
+	// heartbeatChannelPinSent records, per hive, the target last sent as
+	// UpgradeTo to a release-channel follower. A follower whose channel lagged
+	// that target pins its Deployment to the target's SHA tag; the tracked-
+	// channel re-arm leaves that pin alone instead of rolling the pod a second
+	// time just to restore the channel tag, and the next upgrade returns it to
+	// the channel (#17978). In memory only: after a hub restart the re-arm
+	// behaves as before.
+	heartbeatChannelPinSent map[string]string
 
 	// pendingWebhooks stores GitHub App installation webhooks that arrived
 	// before the matching spoke heartbeat.  Key: lowercase org name.
@@ -3037,8 +3045,18 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"pinned_digest", saasHive.DigestPin.Digest, "pinned_by", saasHive.DigestPin.By,
 			"reported_image", payload.ImageRef)
 	}
+	// A follower on the SHA tag it was just sent as UpgradeTo pinned there
+	// because its channel lagged the target (#10719). Switching it back now
+	// rolls the pod a second time onto a channel that may still be behind;
+	// the next upgrade returns it to the channel tag in the same roll (#17978).
+	pinnedToSentTarget := saasHive != nil && isReleaseChannel(saasHive.TrackedChannel) &&
+		s.channelPinSentMatches(payload.HiveID, saasHive.TrackedChannel, imageTagOf(sanitizeImageRef(payload.ImageRef)))
+	if pinnedToSentTarget && switchTag == "" && !payload.Upgrading {
+		s.logger.Debug("heartbeat: tracked-channel re-arm skipped - follower is pinned to the upgrade target it was sent",
+			"hive_id", payload.HiveID, "channel", saasHive.TrackedChannel, "reported_image", payload.ImageRef)
+	}
 	if !spokeUpgradesPausedNow && !digestPinnedNow && switchTag == "" && saasHive != nil && isReleaseChannel(saasHive.TrackedChannel) &&
-		!payload.Upgrading && payload.ImageRef != "" &&
+		!payload.Upgrading && payload.ImageRef != "" && !pinnedToSentTarget &&
 		imageTagOf(sanitizeImageRef(payload.ImageRef)) != saasHive.TrackedChannel {
 		switchTag = saasHive.TrackedChannel
 		s.mu.Lock()
@@ -3137,6 +3155,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// Without this a :stable spoke armed at the v4 tip re-pulls :stable, comes
 	// back on the same commit, and is re-told to upgrade on every beat:
 	// "Upgrading" forever, ✓ on the SHA (12 spokes on 2026-09-09).
+	var hbReach upgradeReachability
 	if hbTarget != "" && payload.GitHash != "" {
 		trackedChannel := ""
 		if saasHive != nil {
@@ -3144,6 +3163,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 		if channel := spokeReleaseChannel(payload.ImageRef, trackedChannel); channel != "" {
 			reach := s.reachableUpgradeTarget(branch, payload.ImageRef, trackedChannel)
+			hbReach = reach
 			switch {
 			case !reach.Resolved || reach.SHA == "":
 				// Unknown reachable set: do not deliver a target we cannot vouch for.
@@ -3244,6 +3264,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// the armed kubectl-fallback target below, exactly as it did when this was
 	// a single inline condition.
 	spokeManagedTarget, spokeManagedChannel := "", ""
+	var spokeManagedReach upgradeReachability
 	if spokeManaged && !spokeUpgradesPausedNow && !digestPinnedNow && payload.GitHash != "" {
 		trackedChannel := ""
 		if saasHive != nil {
@@ -3266,6 +3287,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				"current", payload.GitHash, "channel_sha", reach.SHA)
 		default:
 			spokeManagedTarget, spokeManagedChannel = reach.SHA, reach.Channel
+			spokeManagedReach = reach
 		}
 	}
 
@@ -3292,21 +3314,25 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		if req, ok := s.upgradeInterrupts.pending(payload.HiveID, time.Now()); ok && req.appliesTo(spokeManagedTarget) {
 			resp.UpgradeInterrupt = true
 		}
+		resp.UpgradeChannelTag = s.noteChannelUpgradeSent(payload.HiveID, spokeManagedReach, spokeManagedTarget)
 		s.logger.Info("heartbeat: instructing spoke-managed hive to upgrade",
 			"hive_id", payload.HiveID,
 			"from", payload.GitHash,
 			"to", spokeManagedTarget,
 			"channel", spokeManagedChannel,
+			"channel_tag_carries_target", resp.UpgradeChannelTag != "",
 		)
 	} else if hbTarget != "" && !sameCommit(payload.GitHash, hbTarget) {
 		resp.UpgradeTo = hbTarget
 		if req, ok := s.upgradeInterrupts.pending(payload.HiveID, time.Now()); ok && req.appliesTo(hbTarget) {
 			resp.UpgradeInterrupt = true
 		}
+		resp.UpgradeChannelTag = s.noteChannelUpgradeSent(payload.HiveID, hbReach, hbTarget)
 		s.logger.Info("heartbeat: instructing hub-managed hive to upgrade (kubectl fallback)",
 			"hive_id", payload.HiveID,
 			"from", payload.GitHash,
 			"to", hbTarget,
+			"channel_tag_carries_target", resp.UpgradeChannelTag != "",
 		)
 	}
 

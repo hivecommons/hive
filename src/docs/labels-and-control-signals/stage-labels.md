@@ -841,7 +841,11 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
 1. `stage/072-returned-to-contributor` and ONE `<!-- hive:contributor-nudge
    reason=<slug> head=<sha> n=<1|2> mode=<comment|queued|spawn|preempt> -->`
    comment per PR and reason class @-mentioning the author with the failing
-   checks / review asks and "reply here or push a new head". When the CI gate
+   checks / review asks and "reply here or push a new head". On a review-swarm
+   `changes_requested` the review asks list the verdict's findings
+   (`review finding: path:line title`), or the blocking reviewers' summaries
+   when it has none, and they do so on a PR a sentinel alert or a hold label
+   holds too (see [hive-merge.md](../hive-merge.md#stage-labels)). When the CI gate
    names no check (a base branch with no required checks), the nudge lists
    the checks that are red on the head instead of the gate's `check-failure`
    token. A new head or a

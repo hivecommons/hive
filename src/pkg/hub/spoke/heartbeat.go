@@ -1489,6 +1489,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onSwitchBranch(resp.SwitchToTag)
 		} else if resp.UpgradeTo != "" && onUpgrade != nil {
 			setUpgradeInterrupt(resp.UpgradeInterrupt)
+			setUpgradeChannelTag(resp.UpgradeTo, resp.UpgradeChannelTag)
 			onUpgrade(resp.UpgradeTo)
 		}
 		if resp.GitHubAppConfig != nil && onGitHubAppConfig != nil {
@@ -2848,10 +2849,17 @@ type HeartbeatResponse struct {
 	UpgradeTo string `json:"upgrade_to,omitempty"`
 	// UpgradeInterrupt rides with UpgradeTo when the owner asked the upgrade
 	// to proceed without draining in-flight agent turns (#14950).
-	UpgradeInterrupt bool   `json:"upgrade_interrupt,omitempty"`
-	HubGitHash       string `json:"hub_git_hash,omitempty"`
-	LatestSHA        string `json:"latest_sha,omitempty"`
-	LatestTag        string `json:"latest_tag,omitempty"`
+	UpgradeInterrupt bool `json:"upgrade_interrupt,omitempty"`
+	// UpgradeChannelTag rides with UpgradeTo when the spoke follows a release
+	// channel whose tag already carries the target (or a newer build), naming
+	// that channel (#17978). The spoke then rolls once on the channel tag
+	// instead of pinning to the target's SHA tag, which the hub would switch
+	// straight back. Empty (an older hub, or a channel that lags the target)
+	// keeps the #10719 behaviour: pin to the immutable SHA tag.
+	UpgradeChannelTag string `json:"upgrade_channel_tag,omitempty"`
+	HubGitHash        string `json:"hub_git_hash,omitempty"`
+	LatestSHA         string `json:"latest_sha,omitempty"`
+	LatestTag         string `json:"latest_tag,omitempty"`
 	// SwitchToTag instructs the spoke to change its own deployment image to
 	// ghcr.io/hivecommons/hive:<SwitchToTag> and restart. Used for branch
 	// switches on clusters the hub can't reach over kubectl — the spoke has

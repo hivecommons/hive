@@ -251,6 +251,11 @@ type ReviewVerdict struct {
 	// each (review.Aggregate.FindingAsks), so the contributor nudge on a
 	// changes_requested lists what the review asked for.
 	FindingAsks []string
+	// SummaryAsks are what the blocking reviewers said in their summaries,
+	// one readable line each (review.Aggregate.BlockSummaryAsks). The nudge
+	// lists them when a blocking verdict carries no FindingAsks: a reviewer
+	// can ask for changes and explain itself only in its summary.
+	SummaryAsks []string
 	// HiveAuthoredKnown is true for verdicts read from aggregates that recorded
 	// authorship. The stage fallback normalizer leaves those alone: aggregation
 	// already applied the configured self-authored decision policy.
