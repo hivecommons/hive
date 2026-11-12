@@ -178,6 +178,10 @@ logger-bound attributes: typed errors wrapping `context.Canceled`, exact
 Warnings remain in local logs; deadlines and other errors remain reportable,
 including when another `error` attribute accompanies a cancellation.
 
+When a client hand-over or shutdown cancels an in-flight contributor-lane
+automerge pass, the pass stops without warning or stage reconciliation. Other
+contributor sweep failures remain reportable.
+
 The GitHub rate-limit exclusion also covers the local REST reserve guard:
 when optional issue activity or CI trail fetches are shed below the reserve,
 their warnings remain in local logs but do not create repeated-error reports.
