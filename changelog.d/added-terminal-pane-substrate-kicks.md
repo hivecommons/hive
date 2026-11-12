@@ -1,0 +1,1 @@
+- The dashboard's read-only terminal pane now covers `sandbox.runtime: substrate` agents: it shows the kick's Substrate actor (name, state, worker SPIFFE id, suspend/resume transitions) and streams the kick's output live from the actor bridge's `/run`.
