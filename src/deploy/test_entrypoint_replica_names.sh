@@ -103,9 +103,9 @@ agents:
 YAML
 
 # #14685: review.reviewers.autoscale grows the lane's base agent up to `max`
-# at runtime, so the entrypoint pre-creates those names (mirrors
-# config.ReviewerAutoscaleAgent and DefaultReviewerAutoscaleMax).
-expect "autoscale expands the role:reviewer lane to max" "reviewer reviewer-2 reviewer-3 scanner" <<'YAML'
+# at runtime, so the entrypoint pre-creates those names for every agent the
+# lane can resolve to (config.ReviewerAutoscaleLane, DefaultReviewerAutoscaleMax).
+expect "autoscale expands the keyword-admitted reviewer lane to max" "reviewer reviewer-2 reviewer-3 scanner" <<'YAML'
 agents:
   scanner: {backend: codex}
   reviewer: {backend: claude, role: reviewer, replicas: 2}
@@ -122,16 +122,42 @@ review:
     autoscale: {enabled: true}
 YAML
 
-expect "autoscale honours an explicit lane agent and the replica cap" "critic critic-2 critic-3 critic-4 critic-5 reviewer" <<'YAML'
+expect "autoscale honours an explicit lane agent and the replica cap" "critic critic-2 critic-3 critic-4 critic-5 scanner" <<'YAML'
 agents:
-  reviewer: {backend: claude, role: reviewer}
+  scanner: {backend: claude}
   critic: {backend: codex}
 review:
+  reviewer_agents: [critic]
   reviewers:
     autoscale: {enabled: true, agent: critic, max: 9}
 YAML
 
-expect "autoscale falls back to review.reviewer_agents[0]" "qa qa-2 qa-3 qa-4" <<'YAML'
+# The lane is a reviewer the swarm dispatches to, never a role:reviewer agent
+# review.reviewer_agents leaves out: its replicas could not take a review.
+expect "autoscale skips a role:reviewer agent the reviewer list leaves out" "adjudicator reviewer reviewer-2" <<'YAML'
+agents:
+  adjudicator: {backend: claude, role: reviewer}
+  reviewer: {backend: claude, role: reviewer}
+review:
+  reviewer_agents: [reviewer]
+  reviewers:
+    autoscale: {enabled: true, max: 2}
+YAML
+
+# The dashboard can move the lane to another listed reviewer without a
+# restart, so every listed reviewer gets its replica names up front.
+expect "autoscale pre-creates every listed reviewer's replicas" "critic critic-2 critic-3 reviewer reviewer-2 reviewer-3 scanner" <<'YAML'
+agents:
+  scanner: {backend: claude}
+  critic: {backend: codex}
+  reviewer: {backend: claude, role: reviewer}
+review:
+  reviewer_agents: [reviewer, critic]
+  reviewers:
+    autoscale: {enabled: true, agent: reviewer, max: 3}
+YAML
+
+expect "autoscale uses the first review.reviewer_agents entry" "qa qa-2 qa-3 qa-4" <<'YAML'
 agents:
   qa: {backend: claude}
 review:

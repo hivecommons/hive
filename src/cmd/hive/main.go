@@ -4015,8 +4015,11 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		newCfg.HiveID = b.cfg.HiveID
 		// The reviewer autoscaler's current lane size survives a reload so
 		// an edit elsewhere in hive.yaml does not snap reviewers back to the
-		// declared count (hivecommons/hive#14685).
+		// declared count (hivecommons/hive#14685). The count travels with the
+		// agent it was set for, so a reload that moves the lane to another
+		// agent does not hand the new lane the old lane's size.
 		newCfg.ReviewerAutoscaleActive = b.cfg.ReviewerAutoscaleActive
+		newCfg.ReviewerAutoscaleActiveAgent = b.cfg.ReviewerAutoscaleActiveAgent
 
 		// Preserve ACMM level from the agent manager — it is the
 		// authoritative source. The file may have a stale value if

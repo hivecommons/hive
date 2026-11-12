@@ -1025,7 +1025,8 @@ governor:
 #   reviewers:
 #     autoscale:        # size the reviewer lane to its backlog (#14685); off by default
 #       enabled: false
-#       agent: ""       # base reviewer to scale; default: first role:reviewer agent, else reviewer_agents[0]
+#       agent: ""       # base reviewer to scale; must be an agent the swarm dispatches reviews to.
+#                       # Default: the first reviewer_agents entry, else the first "review" keyword match
 #       min: 1          # floor of active replicas (the base agent is never retired)
 #       max: 4          # ceiling; capped at the agents.<name>.replicas limit (5)
 #       target_backlog_per_reviewer: 2 # PRs waiting per reviewer before the lane is "behind"

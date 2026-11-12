@@ -363,6 +363,15 @@
       const liveLine = live && live.enabled
         ? `<p class="am-trusted-authors-note">Now: <strong>${live.current}</strong> reviewer${live.current === 1 ? '' : 's'} (target ${live.target}, band ${live.min}–${live.max})${live.draining && live.draining.length ? ', draining ' + live.draining.map(esc).join(', ') : ''}; backlog ${live.backlog}${live.oldestWait ? ', oldest ' + esc(live.oldestWait) : ''}${live.lastDecision ? ' — last: ' + esc(reviewerAutoscaleDecisionText(live.lastDecision)) : ''}</p>`
         : '';
+      // Which agent the saved setting scales, as the server resolved it
+      // (GET /api/config/review reviewer_autoscale). Hidden while an unsaved
+      // edit to the switch or the agent would make it stale.
+      const res = (rv && rv.reviewer_autoscale) || {};
+      const laneHelp = settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', 'Scaled agent', 'The agent whose replicas grow and shrink, as saved. With no lane agent named, the hive picks the first agent in the reviewer list, or with no list the first agent the &quot;review&quot; keyword scan admits. It never picks an agent the review gate sends no reviews to.');
+      const laneLine = !(a.enabled && res.enabled) || (a.agent || '') !== (res.agent || '') ? ''
+        : res.effective_agent
+          ? `<p class="am-trusted-authors-note" id="review-reviewer-autoscale-lane">Scaling <strong>${esc(res.effective_agent)}</strong>${res.agent ? '' : ' (chosen by the hive)'} ${laneHelp}</p>`
+          : `<p class="am-trusted-authors-note" id="review-reviewer-autoscale-lane">Not scaling any agent: ${esc(res.reason || 'no agent takes reviews from the review gate')} ${laneHelp}</p>`;
       const num = (key, yamlPath, label, help, step) => `<div class="config-field"><label>${label} ${yamlHint(yamlPath)} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', label, help)}</label>
               <input type="number" min="0"${step ? ' step="' + step + '"' : ''} value="${esc(String(a[key] || ''))}" placeholder="${esc(String(REVIEWER_AUTOSCALE_DEFAULTS[key]))}" data-change-action="markDirtyReviewerAutoscale" data-arg0="${key}" data-arg-types="s,N"${dis}></div>`;
       const fields = a.enabled ? `
@@ -380,7 +389,7 @@
             <div class="config-field-row mt-3">
               ${num('cpu_per_reviewer', 'review.reviewers.autoscale.cpu_per_reviewer', 'CPU per reviewer (cores)', 'The CPU one reviewer is assumed to need. A scale-up is refused when the pod cgroup has less than this free; unknown limits (no cgroup) never block.', '0.1')}
               ${num('mem_per_reviewer_mb', 'review.reviewers.autoscale.mem_per_reviewer_mb', 'Memory per reviewer (MiB)', 'The memory one reviewer is assumed to need. A scale-up is refused when the pod cgroup has less than this free.')}
-              <div class="config-field"><label>Lane agent ${yamlHint('review.reviewers.autoscale.agent')} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', 'Lane agent', 'The base reviewer agent whose replicas scale. Empty picks the first agent with role reviewer, then review.reviewer_agents[0].')}</label>
+              <div class="config-field"><label>Lane agent ${yamlHint('review.reviewers.autoscale.agent')} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', 'Lane agent', 'The base reviewer agent whose replicas scale. It must be a reviewer the review gate sends reviews to (see Reviewers above); any other agent is refused, because its replicas could not take a waiting PR. Empty picks the first agent in the reviewer list, or with no list the first agent the &quot;review&quot; keyword scan admits. Changing it retires the old agent&#39;s extra replicas and starts the new agent from its own replica count.')}</label>
                 <input type="text" value="${esc(a.agent || '')}" placeholder="reviewer" data-change-action="markDirtyReviewerAutoscale" data-arg0="agent" data-arg-types="s,w"${dis}></div>
             </div>` : '';
       return `<div id="review-reviewer-autoscale" class="mt-4">
@@ -388,7 +397,7 @@
               <div class="config-toggle-switch ${a.enabled ? 'on' : ''}${canEdit ? '' : ' disabled'}" data-action="toggleReviewerAutoscaleEnabled" role="switch" aria-checked="${a.enabled ? 'true' : 'false'}"></div>
               <span class="config-toggle-label">Scale reviewers with the backlog ${yamlHint('review.reviewers.autoscale.enabled')} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', 'Scale reviewers with the backlog', `Off by default. On, the reviewer lane grows from Min to Max replicas while PRs wait for a free reviewer, and drains back when idle. Replicas added this way are ordinary reviewer-N agents (same role, prompt, scoped token, pane and cadence as a configured replica). Scale-ups are refused when the pod cgroup lacks CPU or memory for another reviewer, when the provider budget latch is on or provider headroom is under 10%, or when reviewer kicks are failing to reach the CLI input prompt — a saturated pod, not demand. Each decision is logged as &quot;reviewer autoscale: 2→3 reason=…&quot;. Owner only.`)}</span>
             </div>
-            ${liveLine}${fields}
+            ${laneLine}${liveLine}${fields}
           </div>`;
     }
     function reviewerAutoscaleDecisionText(d) {
