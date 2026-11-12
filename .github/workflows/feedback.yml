@@ -14,5 +14,35 @@ permissions:
   pull-requests: write
 
 jobs:
+  # The reusable workflow thanks every merged PR unconditionally; the gate
+  # keeps the comment for a person's first merged PR only (#17863). Rules and
+  # knobs: src/scripts/feedback-gate.sh.
+  gate:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      post: ${{ steps.gate.outputs.post }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Self-test feedback gate
+        run: bash src/scripts/test-feedback-gate.sh
+      - id: gate
+        name: Decide whether to thank the author
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FEEDBACK_SKIP_BOTS: '1'
+          FEEDBACK_SKIP_BRANCHES: 'scanner/* hive/*'
+          FEEDBACK_SKIP_HIVE_ORIGIN: '1'
+          FEEDBACK_FIRST_TIME_ONLY: '1'
+        run: bash src/scripts/feedback-gate.sh
+
   feedback:
+    needs: gate
+    if: needs.gate.outputs.post == 'true'
     uses: hivecommons/infra/.github/workflows/reusable-feedback.yml@f1c0b61675386f54e63c04cf07b3aa933cc963eb # hivecommons/infra main as of 2026-09-02
