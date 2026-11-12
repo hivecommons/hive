@@ -36,8 +36,8 @@ func TestKickFailuresTrackPreflightAndSnapshot(t *testing.T) {
 		}
 	}
 	status, err := m.GetStatus(a.Name)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || status.ConsecutiveKickFailures != 3 || status.LastKickError == "" {
+		t.Fatalf("full snapshot after failures = %+v, %v", status, err)
 	}
 
 	// A synchronous successful write clears both fields, not just the count.
