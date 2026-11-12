@@ -14,6 +14,7 @@ package slogfeed
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -114,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || canceledStageDigest(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) {
+	if canceledAdoptionRead(r) || expectedKickHold(r) || canceledStageDigest(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -148,6 +149,24 @@ func canceledStageDigest(r slog.Record) bool {
 			canceled = err == "context canceled" || strings.HasSuffix(err, ": context canceled")
 		}
 		return !canceled
+	})
+	return canceled
+}
+
+// A canceled sweep leaves the existing adoption intact and retries later.
+// Other failures reading push access still warrant a repeated-error report.
+func canceledAdoptionRead(r slog.Record) bool {
+	if strings.TrimSpace(r.Message) != "stage labels: could not read maintainer_can_modify; keeping in-place adoption this sweep" {
+		return false
+	}
+	canceled := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" {
+			err, ok := a.Value.Any().(error)
+			canceled = (ok && errors.Is(err, context.Canceled)) || a.Value.String() == context.Canceled.Error()
+			return !canceled
+		}
+		return true
 	})
 	return canceled
 }

@@ -433,6 +433,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassUpgradeStalled, message: "standalone upgrade helper did not finish within 10m0s"},
 		{class: ClassDataDiskPressure, message: "data disk pressure: disk-full: /data is 97% used (threshold 95%)"},
 		{class: ClassGitHubAppTokenMintFailed, message: "github app token mint failed: POST /app/installations/123/access_tokens: 401"},
+		{class: ClassForgeUnreachable, message: "github host unreachable during token mint: creating installation token: context deadline exceeded"},
 		{class: ClassUnexpectedHub5xx, message: "hub heartbeat returned HTTP 503"},
 		{class: ClassUnclassifiedRepeated, message: "weird error from somewhere"},
 		{class: ClassAgentStall, message: "agent stalled after kick: 3 continue nudges sent without the pane moving"},
