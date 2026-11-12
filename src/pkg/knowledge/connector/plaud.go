@@ -58,7 +58,6 @@ type plaudConnector struct {
 type plaudLogin struct {
 	client mcpClient
 	cancel context.CancelFunc
-	url    string
 	result string
 	done   chan struct{}
 }
