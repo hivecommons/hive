@@ -64,6 +64,24 @@ func TestHandlerSkipsBenignAndExplicitClasses(t *testing.T) {
 	}
 }
 
+func TestCanceledAdoptionReadStaysInLog(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "stage labels: could not read maintainer_can_modify; keeping in-place adoption this sweep"
+	for range 8 {
+		logger.Warn(msg, "repo", "server", "pr", 649, "error", &url.Error{Op: "GET", URL: "https://api.github.com", Err: context.Canceled})
+	}
+	logger.Warn(msg, "error", "context canceled")
+	if len(*seen) != 0 || strings.Count(out.String(), "\n") != 9 {
+		t.Fatalf("canceled reads: observations=%+v, log=%s", *seen, out.String())
+	}
+	logger.Warn(msg, "error", errors.New("permission denied"))
+	logger.Warn(msg, "error", context.DeadlineExceeded)
+	logger.Warn("another operation failed", "error", context.Canceled)
+	if len(*seen) != 3 {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
 // #16510: polling an exhausted rebase episode must keep warning locally
 // without turning the intentional handoff into a repeated runtime defect.
 func TestRebaseAttemptsExhaustedLogsWithoutFleetReport(t *testing.T) {
