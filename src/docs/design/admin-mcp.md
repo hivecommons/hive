@@ -666,6 +666,20 @@ Phase 5 registers the fleet-level write operations under that contract:
   op merges nothing itself. `human_merge_pin_only` is set one repository at a time the same way
   (the whole exception for that repository, or `null` to remove it); turning one on or giving
   it more paths, kinds or trusted authors is named as widening.
+- `review.settings` wraps `PUT /api/config/review`, the endpoint behind Settings → Review Gate.
+  Unlike the endpoints above, every field of its body is a pointer, so a partial update is
+  native: the op sends only the fields the caller names and never reads the section to send it
+  back whole, which would overwrite a concurrent dashboard edit. Sub-objects (`severity`,
+  `backlog`, `reviewer_autoscale`, `contributor_prs`, `review_bots`) are changed field by field;
+  for `verdict_labels` and `recommendations`, which the endpoint replaces whole, the preview
+  shows every key the change clears. The preview reads `settings_read` section `review` for the
+  before/after, and its `ConfirmGuard` fingerprints the named fields, so a stale preview is
+  refused. The op refuses any field the endpoint does not read, listing the accepted ones, and a
+  test in `pkg/dashboard` compares its field list with the handler's named body type
+  (`reviewConfigPutBody`) by reflection, so neither can drift from the other. The endpoint's
+  own validation is not repeated; its 400 reaches the caller as a hive refusal. The endpoint
+  answers only `{"status":"updated"}`, so the op implements `ConfirmResult`, and
+  `write_confirm` reads the named fields back and reports them as `after`.
 
 The Activity monitor's row actions are registered as the `repository.rescan` and
 `repository.item_*` operations, each sending the request the dashboard's button sends
