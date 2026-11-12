@@ -224,8 +224,11 @@ func TestGHRateLimitsTopParameterStopsAtTheBound(t *testing.T) {
 	}
 	body := ghUsageGet(t, s, "/api/gh-rate-limits?top=5000&usage=1")
 	rows, _ := body["top_consumers"].([]any)
-	if len(rows) != ghRateLimitsMaxTop || len(rows) != adminmcp.MaxResultLimit {
-		t.Fatalf("?top=5000 returned %d rows, want the bound %d, which is the admin MCP row cap %d", len(rows), ghRateLimitsMaxTop, adminmcp.MaxResultLimit)
+	if ghRateLimitsMaxTop != adminmcp.MaxResultLimit {
+		t.Fatalf("ghRateLimitsMaxTop = %d, want the admin MCP row cap %d", ghRateLimitsMaxTop, adminmcp.MaxResultLimit)
+	}
+	if len(rows) != ghRateLimitsMaxTop {
+		t.Fatalf("?top=5000 returned %d rows, want the bound %d", len(rows), ghRateLimitsMaxTop)
 	}
 	if total, _ := body["top_consumers_total"].(float64); total < ghUsageRecordedRows+40 {
 		t.Fatalf("top_consumers_total = %v, want at least %d", total, ghUsageRecordedRows+40)
