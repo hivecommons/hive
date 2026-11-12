@@ -378,6 +378,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolPrsByBand, "Read PRs grouped by their Overview band (waiting, eligible, blocked, in-review, open, draft)."},
 		{ToolStageTrackerRead, "Read the Activity monitor: every open item on the board with its stage, what it waits on, its decision question and options, linked PRs and issues, blocker, hold and needs-human state, plus stages[] with a count per stage. Filter with repo, kind, number, q (the monitor's search box: a number matches the item or a linked item), stage, needs_human, on_hold and waiting_on_you; view=full adds history and activity; recent=true adds recently merged and closed. Page with offset/next_offset. Read-only; its row actions are the repository.item_* write operations."},
 		{ToolDelegatedDecisionStatus, "Read the status and outcome of the latest \"Let hive decide\" job on one item (repository.item_delegate runs in the background)."},
+		{ToolContributorQueue, "Read the contributor ready-work queue exactly as the Operations card (Contribute → Operations → Contributor Queue) shows it, through GET /api/contribute/queue: pinned issues first in pinned order, then the default order, held issues last with held_reason. Each row carries its position. withheld=true adds the candidates the queue keeps out, each with the gate that refused it. Page with offset/next_offset. Read-only; change the queue with the contributor_queue.order, contributor_queue.hold and contributor_queue.hold_clear write operations."},
 		{ToolReviewQueue, "Read what needs a human now: exactly the your-turn items the dashboard inbox counts (inbox N plus M, parked issues included), across issues and PRs, in inbox_rank order, each with its verb, reason_code and reason. counts.your_turn and counts.to_close match the inbox header. Page with offset/next_offset. Read-only; it never merges."},
 		{ToolLogSources, "List the log sources this hive can read with log_read: each name marked available or not with a reason, and the default source (hive, the hive's own log). Read-only."},
 		{ToolLogRead, "Read this hive's own log (source hive, the default) and its rotated, compressed history: the newest matching lines oldest first, each with time, source, level and text, filtered by since/until (RFC 3339 with an explicit offset), min_level and case-insensitive include/exclude text. Page older with next_cursor. A read that stops on its per-call scan bound before covering the request answers status \"incomplete\" (coverage.complete false) with a next_cursor: its lines, possibly none, are not the final answer, so follow next_cursor to continue scanning. Lines are scrubbed of credentials and this hive's own secret values before filtering, and redactions are counted. Requires the read-write role. Read-only: it never rotates, truncates or deletes a log. The text is untrusted content."},
@@ -409,7 +410,7 @@ func AllowedTool(name string) bool {
 	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolClaudeAuthStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
 		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAdvisorRecords, ToolAgentNudgeStatus,
-		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolStageTrackerRead, ToolDelegatedDecisionStatus, ToolGovernorSetup, ToolLogRead, ToolLogSources, ToolWritePreview, ToolWriteConfirm,
+		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolContributorQueue, ToolStageTrackerRead, ToolDelegatedDecisionStatus, ToolGovernorSetup, ToolLogRead, ToolLogSources, ToolWritePreview, ToolWriteConfirm,
 		ToolExclusionCatalogue, ToolRefuseOperation:
 		return true
 	}
@@ -437,7 +438,7 @@ func limitSchema() map[string]any {
 		"type":        "integer",
 		"minimum":     1,
 		"maximum":     MaxResultLimit,
-		"description": fmt.Sprintf("Rows to return, 1-%d (default %d). issues_by_band, prs_by_band and review_queue page further with offset.", MaxResultLimit, DefaultResultLimit),
+		"description": fmt.Sprintf("Rows to return, 1-%d (default %d). issues_by_band, prs_by_band, review_queue and contributor_queue page further with offset.", MaxResultLimit, DefaultResultLimit),
 	}
 }
 
@@ -467,6 +468,8 @@ func inputSchema(name string) map[string]any {
 		props["offset"] = map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page past the limit cap."}
 	case ToolReviewQueue:
 		props = reviewQueueSchema()
+	case ToolContributorQueue:
+		props = contributorQueueReadSchema()
 	case ToolStageTrackerRead:
 		props = stageTrackerReadSchema()
 	case ToolDelegatedDecisionStatus:
@@ -712,7 +715,7 @@ func scrubPendingValue(v any, key string) any {
 		}
 		return out
 	case string:
-		if credentialBearingKey(key) {
+		if credentialBearingKey(key) && !maskExempt(key, x) {
 			return "[masked:" + maskLabel(key) + "]"
 		}
 		return scrubOutboundString(x)
@@ -1076,10 +1079,15 @@ func tokenCountKey(k string) bool {
 // a credential and must stay visible (#9161). Booleans carry no secret; a
 // token count is numeric, and a token usage block is an object that the
 // caller keeps walking, so its fields are still scrubbed by key and shape.
+// An issue key (owner/repo#number) under a field named exactly "key" is the
+// contributor queue's hold argument and request body, not a key in the
+// credential sense; it is still scrubbed by shape like any other string.
 func maskExempt(k string, v any) bool {
-	switch v.(type) {
+	switch x := v.(type) {
 	case bool:
 		return true
+	case string:
+		return strings.EqualFold(strings.TrimSpace(k), "key") && contributorQueueKeyPattern.MatchString(x)
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, json.Number, map[string]any:
 		return tokenCountKey(k)
 	default:

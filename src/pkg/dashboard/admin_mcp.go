@@ -122,6 +122,19 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 	if adminmcp.DiagTool(tool) {
 		return p.readDiag(tool, args)
 	}
+	if tool == adminmcp.ToolContributorQueue || tool == adminmcp.ContributorQueueStateRead {
+		// The Operations card's own GET, as the caller: its controls view
+		// (the write previews' state read) answers owner/read-write only.
+		path, err := adminmcp.ContributorQueueReadPath(tool, args)
+		if err != nil {
+			return nil, err
+		}
+		data, err := p.get(tool, path)
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.ContributorQueueReadResult(tool, data, args)
+	}
 	if tool == adminmcp.ToolStageTrackerRead {
 		data, err := p.get(tool, adminmcp.StageTrackerReadPath())
 		if err != nil {

@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.22.2)
+
+### Fixed
+
+- A pull request held by a sentinel alert or a hold-class label (`hold`, `blocked`) whose head conflicts with its base now goes back to its author like any other conflict. The merge lanes stop at the gate before they read mergeability, so the stage route never learned about the conflict: a held contributor PR that GitHub reported `dirty` got no `stage/072-returned-to-contributor`, no contributor nudge and no fix-queue entry, and a green, reviewed one was moved to `stage/090-ready-for-human-merge` on a head GitHub would refuse to merge. The route now reads the head's `mergeable_state` from the PR detail the enumeration already fetches for every held PR (no extra GitHub request), for exactly the current head; `unknown` is not a conflict. A dirty head goes to 072 for a contributor, 071 for a person's own PR and 070 for the hive's own, with the gate still riding as a pill and still blocking the merge. A head GitHub reports `dirty` is never routed to 090 or 060, gated or not; a decision still owed on a contributor's PR is asked first, as before. The hold guard no longer posts its "someone must merge or rebase by hand" note on a held contributor PR (`author/clanker`) the stage route sends back for the conflict; it keeps that note for the hive's own held PRs, a person's own PR, and a PR parked with `needs-human` or `do-not-merge`.
+
 ## 2026-11-12 (v6.22.1)
 
 ### Fixed
