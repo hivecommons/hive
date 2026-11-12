@@ -955,12 +955,16 @@ type FrontendAgent struct {
 	// SandboxRuntime is the effective sandbox.runtime for a sandboxed agent
 	// ("podman" or "job"); the SPA routes "▶ terminal" to the Job pod log
 	// viewer for "job" (hivecommons/hive#14798). Empty when not sandboxed.
-	SandboxRuntime  string `json:"sandboxRuntime,omitempty"`
-	LastError       string `json:"lastError,omitempty"`
-	StallNudges     int    `json:"stallNudges,omitempty"`
-	StallRecoveries int    `json:"stallRecoveries,omitempty"`
-	ActionNudges    int    `json:"actionNudges,omitempty"`
-	TransientNudges int    `json:"transientNudges,omitempty"`
+	SandboxRuntime string `json:"sandboxRuntime,omitempty"`
+	// SandboxWarnings are the boot/reload preflight findings for this agent's
+	// sandbox runtime (openshell or substrate), from the stored
+	// config.AgentSandboxGateReport; no preflight runs on the status path.
+	SandboxWarnings []string `json:"sandbox_warnings,omitempty"`
+	LastError       string   `json:"lastError,omitempty"`
+	StallNudges     int      `json:"stallNudges,omitempty"`
+	StallRecoveries int      `json:"stallRecoveries,omitempty"`
+	ActionNudges    int      `json:"actionNudges,omitempty"`
+	TransientNudges int      `json:"transientNudges,omitempty"`
 	// SessionRssMb is the resident memory of the agent's CLI process tree
 	// (MiB) and SessionAge how long the current CLI session has been up,
 	// both sampled on the health tick (#14842). SessionRecycles counts
