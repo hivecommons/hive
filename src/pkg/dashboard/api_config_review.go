@@ -86,6 +86,113 @@ func reviewSectionResponse(cfg *config.Config) reviewSection {
 	return reviewSection{rc, builtin, reviewerCandidates(cfg)}
 }
 
+// reviewConfigPutBody is the PUT /api/config/review body. Every field is a
+// pointer, so an absent key leaves that setting untouched. It is a named type
+// so the admin MCP op review.settings can be checked against it: that op
+// refuses a field this body does not have, and a test fails when this body
+// gains a field the op does not know (admin_mcp_review_settings_test.go).
+type reviewConfigPutBody struct {
+	RequireApproval                 *bool     `json:"require_approval"`
+	Shadow                          *bool     `json:"shadow"` // hive.yaml review.shadow
+	FanOut                          *bool     `json:"fan_out"`
+	MaxParallelReviews              *int      `json:"max_parallel_reviews"`
+	MaxPerspectives                 *int      `json:"max_perspectives_per_pr"`
+	ReviewerAgents                  *[]string `json:"reviewer_agents"`
+	FixerAgent                      *string   `json:"fixer_agent"`
+	FixerFallbackAgents             *[]string `json:"fixer_fallback_agents"`
+	FixerFallbackAfterUndeliverable *int      `json:"fixer_fallback_after_undeliverable"`
+	AllAuthors                      *bool     `json:"all_authors"`
+	FixHumanPRs                     *bool     `json:"fix_human_prs"`
+	ContributorPRs                  *struct {
+		BaseSync *bool `json:"base_sync"`
+	} `json:"contributor_prs"`
+	AcknowledgeNoFind  *bool   `json:"acknowledge_no_findings"`
+	HumanDecisionLabel *string `json:"human_decision_label"`
+	SelfDecisionPolicy *string `json:"self_authored_decision_policy"`
+	ConfidenceScore    *bool   `json:"confidence_score"`
+	PriorityLabels     *bool   `json:"priority_labels"`
+	// RequireLabels replaces review.require_labels whole; an empty list
+	// turns the PR review label gate off.
+	RequireLabels *[]string `json:"require_labels"`
+	// VerdictLabels replaces review.verdict_labels whole: its four keys
+	// only mean something together (one label per state), and an empty
+	// object turns the feature off (hivecommons/hive#13833).
+	VerdictLabels     *config.ReviewVerdictLabelsConfig `json:"verdict_labels"`
+	MaxReviewsPerHead *int                              `json:"max_reviews_per_head"`
+	PostComments      *bool                             `json:"post_comments"`
+	// EventDrivenMode is review.event_driven as auto|on|off: the key is a
+	// *bool whose unset value means "on when signed webhooks arrive", which
+	// a JSON bool cannot express. auto clears it back to unset.
+	EventDrivenMode *string `json:"event_driven_mode"`
+	EventDebounceS  *int    `json:"event_debounce_s"`
+	// PendingTTL is a Go duration; empty or "0" uses the default and a
+	// negative value disables expiry, exactly as the loader reads it.
+	PendingTTL                 *string `json:"pending_ttl"`
+	MaxRedispatch              *int    `json:"max_redispatch"`
+	HeadMaxRetries             *int    `json:"head_max_retries"`
+	OutOfScopeBacklogDisabled  *bool   `json:"out_of_scope_backlog_disabled"`
+	MaxOutOfScopeBacklogIssues *int    `json:"max_out_of_scope_backlog_issues"`
+	// Perspectives and PerspectivePrompts travel together: a hive-defined
+	// perspective is only valid once its prompt exists, so validating one
+	// without the other would reject a correct pair sent in two requests.
+	// The dialog always sends both when it sends either.
+	Perspectives         *[]string          `json:"perspectives"`
+	PerspectivePrompts   *map[string]string `json:"perspective_prompts"`
+	CombinedPerspectives *bool              `json:"combined_perspectives"`
+	// ReviseRepos / ReviseVerdictsBefore drive the reviewer's revisit
+	// lane (#7706). Both were config-file-only until now, which left the
+	// pilot switch reachable only by a hand edit that the periodic saver
+	// then overwrote. An empty cutoff clears it; a non-empty one must be
+	// RFC 3339 so a typo is refused here rather than silently ignored by
+	// parseReviseCutoff at dispatch time.
+	ReviseRepos          *[]string `json:"revise_repos"`
+	ReviseVerdictsBefore *string   `json:"revise_verdicts_before"`
+	// Recommendations arrives as a whole object rather than one pointer
+	// per knob: its fields are only meaningful together (enabling it
+	// without a repo list means "every watched repo"), and the Features
+	// dialog always sends the full sub-object it rendered. Absent key
+	// still leaves the block untouched, matching the contract above.
+	Recommendations *config.RecommendationsConfig `json:"recommendations"`
+	// ReviewBots carries the one editable classification.review_bots
+	// field (#10481). Logins are deliberately not accepted: adding one
+	// grants thread-resolution rights and stays a config-file edit.
+	ReviewBots *struct {
+		MinPriority *string `json:"min_priority"`
+	} `json:"review_bots"`
+	// Severity and Backlog are the 'Severity & backlog' settings
+	// (#11088). Pointer fields keep "absent means unchanged".
+	Severity *struct {
+		BlockAt      *string `json:"block_at"`
+		CommentBelow *bool   `json:"comment_below"`
+		BacklogBelow *bool   `json:"backlog_below"`
+	} `json:"severity"`
+	Backlog *struct {
+		Destination     *string   `json:"destination"`
+		ProjectColumnID *string   `json:"project_column_id"`
+		LinearState     *string   `json:"linear_state"`
+		JiraStatus      *string   `json:"jira_status"`
+		Labels          *[]string `json:"labels"`
+		MaxPerPRPerDay  *int      `json:"max_per_pr_per_day"`
+		MaxPerPR        *int      `json:"max_per_pr"`
+		MinSeverity     *string   `json:"min_severity"`
+	} `json:"backlog"`
+	// ReviewerAutoscale is review.reviewers.autoscale
+	// (hivecommons/hive#14685). Pointer fields keep "absent means
+	// unchanged"; the band is validated before anything is mutated.
+	ReviewerAutoscale *struct {
+		Enabled                  *bool    `json:"enabled"`
+		Agent                    *string  `json:"agent"`
+		Min                      *int     `json:"min"`
+		Max                      *int     `json:"max"`
+		TargetBacklogPerReviewer *int     `json:"target_backlog_per_reviewer"`
+		ScaleUpCycles            *int     `json:"scale_up_cycles"`
+		ScaleDownCycles          *int     `json:"scale_down_cycles"`
+		Cooldown                 *string  `json:"cooldown"`
+		CPUPerReviewer           *float64 `json:"cpu_per_reviewer"`
+		MemPerReviewerMB         *int     `json:"mem_per_reviewer_mb"`
+	} `json:"reviewer_autoscale"`
+}
+
 // handleReviewConfigPut updates the review-swarm merge-gate settings from the
 // governor Features dialog. Every field is a pointer so an absent key leaves
 // the corresponding config untouched — the same "only what you send is
@@ -99,107 +206,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
 	}
-	var body struct {
-		RequireApproval                 *bool     `json:"require_approval"`
-		Shadow                          *bool     `json:"shadow"` // hive.yaml review.shadow
-		FanOut                          *bool     `json:"fan_out"`
-		MaxParallelReviews              *int      `json:"max_parallel_reviews"`
-		MaxPerspectives                 *int      `json:"max_perspectives_per_pr"`
-		ReviewerAgents                  *[]string `json:"reviewer_agents"`
-		FixerAgent                      *string   `json:"fixer_agent"`
-		FixerFallbackAgents             *[]string `json:"fixer_fallback_agents"`
-		FixerFallbackAfterUndeliverable *int      `json:"fixer_fallback_after_undeliverable"`
-		AllAuthors                      *bool     `json:"all_authors"`
-		FixHumanPRs                     *bool     `json:"fix_human_prs"`
-		ContributorPRs                  *struct {
-			BaseSync *bool `json:"base_sync"`
-		} `json:"contributor_prs"`
-		AcknowledgeNoFind  *bool   `json:"acknowledge_no_findings"`
-		HumanDecisionLabel *string `json:"human_decision_label"`
-		SelfDecisionPolicy *string `json:"self_authored_decision_policy"`
-		ConfidenceScore    *bool   `json:"confidence_score"`
-		PriorityLabels     *bool   `json:"priority_labels"`
-		// RequireLabels replaces review.require_labels whole; an empty list
-		// turns the PR review label gate off.
-		RequireLabels *[]string `json:"require_labels"`
-		// VerdictLabels replaces review.verdict_labels whole: its four keys
-		// only mean something together (one label per state), and an empty
-		// object turns the feature off (hivecommons/hive#13833).
-		VerdictLabels     *config.ReviewVerdictLabelsConfig `json:"verdict_labels"`
-		MaxReviewsPerHead *int                              `json:"max_reviews_per_head"`
-		PostComments      *bool                             `json:"post_comments"`
-		// EventDrivenMode is review.event_driven as auto|on|off: the key is a
-		// *bool whose unset value means "on when signed webhooks arrive", which
-		// a JSON bool cannot express. auto clears it back to unset.
-		EventDrivenMode *string `json:"event_driven_mode"`
-		EventDebounceS  *int    `json:"event_debounce_s"`
-		// PendingTTL is a Go duration; empty or "0" uses the default and a
-		// negative value disables expiry, exactly as the loader reads it.
-		PendingTTL                 *string `json:"pending_ttl"`
-		MaxRedispatch              *int    `json:"max_redispatch"`
-		HeadMaxRetries             *int    `json:"head_max_retries"`
-		OutOfScopeBacklogDisabled  *bool   `json:"out_of_scope_backlog_disabled"`
-		MaxOutOfScopeBacklogIssues *int    `json:"max_out_of_scope_backlog_issues"`
-		// Perspectives and PerspectivePrompts travel together: a hive-defined
-		// perspective is only valid once its prompt exists, so validating one
-		// without the other would reject a correct pair sent in two requests.
-		// The dialog always sends both when it sends either.
-		Perspectives         *[]string          `json:"perspectives"`
-		PerspectivePrompts   *map[string]string `json:"perspective_prompts"`
-		CombinedPerspectives *bool              `json:"combined_perspectives"`
-		// ReviseRepos / ReviseVerdictsBefore drive the reviewer's revisit
-		// lane (#7706). Both were config-file-only until now, which left the
-		// pilot switch reachable only by a hand edit that the periodic saver
-		// then overwrote. An empty cutoff clears it; a non-empty one must be
-		// RFC 3339 so a typo is refused here rather than silently ignored by
-		// parseReviseCutoff at dispatch time.
-		ReviseRepos          *[]string `json:"revise_repos"`
-		ReviseVerdictsBefore *string   `json:"revise_verdicts_before"`
-		// Recommendations arrives as a whole object rather than one pointer
-		// per knob: its fields are only meaningful together (enabling it
-		// without a repo list means "every watched repo"), and the Features
-		// dialog always sends the full sub-object it rendered. Absent key
-		// still leaves the block untouched, matching the contract above.
-		Recommendations *config.RecommendationsConfig `json:"recommendations"`
-		// ReviewBots carries the one editable classification.review_bots
-		// field (#10481). Logins are deliberately not accepted: adding one
-		// grants thread-resolution rights and stays a config-file edit.
-		ReviewBots *struct {
-			MinPriority *string `json:"min_priority"`
-		} `json:"review_bots"`
-		// Severity and Backlog are the 'Severity & backlog' settings
-		// (#11088). Pointer fields keep "absent means unchanged".
-		Severity *struct {
-			BlockAt      *string `json:"block_at"`
-			CommentBelow *bool   `json:"comment_below"`
-			BacklogBelow *bool   `json:"backlog_below"`
-		} `json:"severity"`
-		Backlog *struct {
-			Destination     *string   `json:"destination"`
-			ProjectColumnID *string   `json:"project_column_id"`
-			LinearState     *string   `json:"linear_state"`
-			JiraStatus      *string   `json:"jira_status"`
-			Labels          *[]string `json:"labels"`
-			MaxPerPRPerDay  *int      `json:"max_per_pr_per_day"`
-			MaxPerPR        *int      `json:"max_per_pr"`
-			MinSeverity     *string   `json:"min_severity"`
-		} `json:"backlog"`
-		// ReviewerAutoscale is review.reviewers.autoscale
-		// (hivecommons/hive#14685). Pointer fields keep "absent means
-		// unchanged"; the band is validated before anything is mutated.
-		ReviewerAutoscale *struct {
-			Enabled                  *bool    `json:"enabled"`
-			Agent                    *string  `json:"agent"`
-			Min                      *int     `json:"min"`
-			Max                      *int     `json:"max"`
-			TargetBacklogPerReviewer *int     `json:"target_backlog_per_reviewer"`
-			ScaleUpCycles            *int     `json:"scale_up_cycles"`
-			ScaleDownCycles          *int     `json:"scale_down_cycles"`
-			Cooldown                 *string  `json:"cooldown"`
-			CPUPerReviewer           *float64 `json:"cpu_per_reviewer"`
-			MemPerReviewerMB         *int     `json:"mem_per_reviewer_mb"`
-		} `json:"reviewer_autoscale"`
-	}
+	var body reviewConfigPutBody
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return

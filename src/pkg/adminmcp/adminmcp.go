@@ -507,6 +507,14 @@ type confirmGuardOp interface {
 	ConfirmGuard(ctx context.Context, args map[string]any, provider Provider) (string, error)
 }
 
+// confirmResultOp is implemented by write ops whose endpoint answers a write
+// with a bare acknowledgement (review.settings: {"status":"updated"}). After
+// the write succeeds, ConfirmWrite asks the op to read the setting back and
+// returns what it read as "after", so the caller sees what the hive now holds.
+type confirmResultOp interface {
+	ConfirmResult(ctx context.Context, args map[string]any, provider Provider) (any, error)
+}
+
 func (h *Handler) PreviewWrite(ctx context.Context, args map[string]any) (any, error) {
 	if !h.writesUsable() {
 		return nil, h.writesDisabledErr()
@@ -614,7 +622,17 @@ func (h *Handler) ConfirmWrite(ctx context.Context, args map[string]any) (any, e
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"type": "write_result", "confirmation_id": id, "operation": pending.Operation, "hive": pending.Hive, "result": result}, nil
+	out := map[string]any{"type": "write_result", "confirmation_id": id, "operation": pending.Operation, "hive": pending.Hive, "result": result}
+	if reader, ok := op.(confirmResultOp); ok {
+		// The write already happened: a failed read-back is reported next to
+		// the result, never as a failed write.
+		if after, err := reader.ConfirmResult(ctx, pending.Args, h.Provider); err != nil {
+			out["after_error"] = "the write succeeded, but reading the settings back failed: " + err.Error()
+		} else {
+			out["after"] = after
+		}
+	}
+	return out, nil
 }
 
 func (h *Handler) now() time.Time {

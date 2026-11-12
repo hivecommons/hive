@@ -36,6 +36,7 @@ func DefaultWriteOps() []WriteOp {
 	ops = append(ops, autoMergeWriteOps()...)
 	ops = append(ops, decisionsWriteOps()...)
 	ops = append(ops, cadenceWritebackWriteOps()...)
+	ops = append(ops, reviewSettingsWriteOps()...)
 	return append(ops, governorWriteOps()...)
 }
 
