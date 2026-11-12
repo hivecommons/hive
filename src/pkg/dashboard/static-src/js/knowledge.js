@@ -1975,6 +1975,12 @@
         html += '<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbImportDocFromModal">Import</button>';
         html += '</div></div></details>';
 
+        html += '<details class="kb-sources-add"><summary class="summary-label">🎙️ Plaud voice notes</summary>';
+        html += '<div class="stack kb-sources-form">';
+        html += '<div class="muted-xs">Make your Plaud Note recordings (Plaud summary + transcript) searchable knowledge via the free official Plaud MCP server. $0 beyond your Plaud plan; sign-in is Plaud OAuth in your browser.</div>';
+        html += '<div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenPlaudIntegration">Configure in Integrations</button></div>';
+        html += '</div></details>';
+
         html += '<details open class="kb-sources-add"><summary class="summary-label">📚 Import from Context7</summary>';
         html += '<div class="stack kb-sources-form">';
         html += '<div class="muted-xs">Search Context7 for library documentation (e.g. "vllm", "next.js", "kubernetes").</div>';
@@ -2421,9 +2427,11 @@
       html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
       html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
+      if (type === 'plaud') html += kbPlaudAuthLine(c.name);
       html += '</div>';
       if (owner) {
         html += '<div class="kb-integration-actions">';
+        if (type === 'plaud') html += kbPlaudAuthButtons(c.name);
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationEdit" data-arg0="' + escapeHtml(c.name) + '">Edit</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationToggle" data-arg0="' + escapeHtml(c.name) + '">' + (c.enabled ? 'Disable' : 'Enable') + '</button>';
@@ -2460,6 +2468,7 @@
       html += '<label class="muted-note">Credential reference<input class="kb-search-box mt-2" type="text" data-kb-kc-auth-value value="' + escapeHtml(authVal) + '" placeholder="TOKEN_ENV or /run/secrets/token" autocomplete="off"></label></div>';
       html += '<div class="kb-integration-scope-grid">' + kcScopeFieldsHTML(type, c.scope || {}) + '</div>';
       if (type === 'context7') html += kbContext7FormExtras(c);
+      if (type === 'plaud') html += '<p class="muted-xs" data-kb-plaud-note>Leave the credential source as None: Plaud signs in with its own OAuth flow (Connect on the entry above) and keeps the token in the MCP server\'s own store. Requires Node.js ≥ 20 on the hive host and costs nothing beyond your Plaud plan.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
       html += '<div class="row-end kb-integration-form-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationValidate">Validate</button><button type="button" class="hv-btn btn-primary btn-sm" data-action="kbIntegrationSave">Save</button></div></div>';
@@ -2543,3 +2552,83 @@
       await kcSyncNow(name);
       setTimeout(() => kbLoadIntegrationsModal(_kbIntegrationSelected), 1500);
     }
+
+    // ── Plaud sign-in (OAuth through the Plaud MCP server) ──
+    // Cached per connector name; loaded lazily when the Plaud card renders.
+    const _kbPlaudAuth = {};
+    function kbPlaudAuthLine(name) {
+      const a = _kbPlaudAuth[name];
+      if (!a) {
+        setTimeout(() => kbPlaudAuthLoad(name, false), 0);
+        return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '">Plaud: checking sign-in…</div>';
+      }
+      let text;
+      if (a.error) text = 'Plaud: ' + a.error;
+      else if (a.pending) text = 'Plaud: waiting for authorization' + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">open the Plaud authorization page ↗</a> (remote hive: forward port 8199 first)' : ' (URL pending…)');
+      else if (a.connected) text = 'Plaud: connected' + (a.account ? ' as <strong>' + escapeHtml(a.account) + '</strong>' : '');
+      else text = 'Plaud: not connected' + (a.message ? ' — ' + escapeHtml(a.message) : '');
+      return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '" data-connected="' + (a.connected ? '1' : '0') + '">' + text + '</div>';
+    }
+    function kbPlaudAuthButtons(name) {
+      const a = _kbPlaudAuth[name] || {};
+      const n = escapeHtml(name);
+      let html = '';
+      if (a.connected) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudDisconnect" data-arg0="' + n + '">Disconnect</button>';
+      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (a.pending ? ' disabled' : '') + '>Connect Plaud</button>';
+      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '" title="Re-check sign-in with Plaud">Check</button>';
+      return html;
+    }
+    async function kbPlaudAuthLoad(name, refresh) {
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth' + (refresh ? '?refresh=1' : ''));
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+      } catch (e) {
+        _kbPlaudAuth[name] = { error: e.message };
+      }
+      if (document.querySelector('[data-kb-plaud-auth="' + CSS.escape(name) + '"]')) kbRenderIntegrationsModal();
+    }
+    async function kbPlaudRefreshAuth(name) {
+      showToast('Checking Plaud sign-in…', 'info');
+      await kbPlaudAuthLoad(name, true);
+    }
+    async function kbPlaudConnect(name) {
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/connect', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+        kbRenderIntegrationsModal();
+        if (data.connected) showToast('Plaud connected' + (data.account ? ' as ' + data.account : ''), 'success');
+        else if (data.auth_url) { showToast('Open the Plaud authorization link shown on the card, then click Check.', 'info'); kbPlaudPollAuth(name, 0); }
+        else showToast('Plaud login started; the authorization URL will appear on the card shortly.', 'info');
+        if (!data.connected && !data.auth_url) kbPlaudPollAuth(name, 0);
+      } catch (e) {
+        showToast('Plaud connect failed: ' + e.message, 'error');
+      }
+    }
+    // Poll the cached state while a login is pending (URL arrival, completion).
+    function kbPlaudPollAuth(name, attempt) {
+      if (attempt > 60) return;
+      setTimeout(async () => {
+        await kbPlaudAuthLoad(name, false);
+        const a = _kbPlaudAuth[name] || {};
+        if (a.connected) { showToast('Plaud connected' + (a.account ? ' as ' + a.account : ''), 'success'); return; }
+        if (a.pending) kbPlaudPollAuth(name, attempt + 1);
+      }, 5000);
+    }
+    async function kbPlaudDisconnect(name) {
+      if (!(await hiveConfirm('Sign out of Plaud? Synced recordings stay in the vault until you remove the connector.'))) return;
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/disconnect', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+        kbRenderIntegrationsModal();
+        showToast('Plaud disconnected', 'success');
+      } catch (e) {
+        showToast('Plaud disconnect failed: ' + e.message, 'error');
+      }
+    }
+    function kbOpenPlaudIntegration() { _kbIntegrationSelected = 'plaud'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
