@@ -256,6 +256,14 @@ stores or logs the token. By default the connector points the MCP server's
 so the token survives restarts; set `home: inherit` to use the hive process's
 HOME instead.
 
+The MCP server is third-party code fetched at run time, so it does not inherit
+the hive process environment. It is started with an allowlist only — `PATH`,
+`HOME`, locale, `TMPDIR`, `TERM`, the `HTTP(S)_PROXY`/`NO_PROXY` and CA-bundle
+variables, `NODE_*`/`npm_config_*` and `PLAUD_*` — and never the hub-injected
+credentials (`DASHBOARD_AUTH_TOKEN`, `HIVE_TERMINAL_KEY`, `HIVE_UPSTREAM_PROXY_URL`,
+provider API keys). Pin `scope.command` to a specific `@plaud-ai/mcp@<version>`
+if you do not want a sync to pull a new upstream release unreviewed.
+
 ### Setup
 
 1. The hive host (or container image) needs **Node.js ≥ 20** so `npx` can run
