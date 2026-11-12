@@ -153,10 +153,6 @@ it or are the CLI routes above under another method.
 `start_failure_class`. It is a subset by design: the full snapshot carries
 engine-internal state that is neither stable nor meaningful off-process.
 
-Full snapshots also carry `consecutive_kick_failures` and `last_kick_error`:
-the current delivery-failure streak and most recent error. A delivered kick
-clears both; the deliberate post-restart hold leaves them unchanged.
-
 `definition` on `POST /v1/agents` is the JSON form of
 `crux/config.AgentConfig`, the per-agent overlay hive reads from
 `agents_dir`. The server applies the same gate and defaults the YAML loader

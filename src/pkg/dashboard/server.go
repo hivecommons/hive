@@ -3815,6 +3815,9 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 					ac["status"] = "fail"
 					ac["detail"] = detail
 					failCount++
+					if overall == "ok" {
+						overall = "degraded"
+					}
 				}
 			} else if agentDisabledInConfig(s.deps.Config, name, proc) {
 				// Switched off in config, so nothing ever starts it and it has
@@ -4035,8 +4038,6 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 
 	if failCount > 2 {
 		overall = "critical"
-	} else if failCount > 0 {
-		overall = "degraded"
 	}
 
 	w.Header().Set("Content-Type", "application/json")

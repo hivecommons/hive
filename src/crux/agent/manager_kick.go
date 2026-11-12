@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -451,14 +452,15 @@ func (m *Manager) kickDeliveryFailedLocked(agent *AgentProcess, stage string, er
 	return err
 }
 
-// recordKickFailureLocked counts failed attempts, excluding the deliberate
-// post-restart hold. Caller holds m.mu.
+// recordKickFailureLocked counts delivery failures, not busy or restart deferrals.
+// Caller holds m.mu.
 func recordKickFailureLocked(agent *AgentProcess, err error) {
-	if err == nil || errors.Is(err, errKickHeldAfterRestart) {
+	if err == nil || errors.Is(err, errKickHeldAfterRestart) ||
+		errors.Is(err, errKickCancelledByRestart) || errors.Is(err, crux.ErrAgentBusy) {
 		return
 	}
 	agent.ConsecutiveKickFailures++
-	agent.LastKickError = err.Error()
+	agent.LastKickError = logscrub.RedactPaneTokens(logscrub.ScrubString(err.Error()))
 }
 
 func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigger string) {

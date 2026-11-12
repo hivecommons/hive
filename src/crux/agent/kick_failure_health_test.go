@@ -1,9 +1,8 @@
 package agent
 
 import (
-	"encoding/json"
 	"errors"
-	"strings"
+	"fmt"
 	"testing"
 	"time"
 
@@ -39,10 +38,6 @@ func TestKickFailuresTrackPreflightAndSnapshot(t *testing.T) {
 	status, err := m.GetStatus(a.Name)
 	if err != nil {
 		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(status)
-	if err != nil || !strings.Contains(string(encoded), `"consecutive_kick_failures":3`) || !strings.Contains(string(encoded), `"last_kick_error":`) {
-		t.Fatalf("snapshot JSON = %s, error %v", encoded, err)
 	}
 
 	// A synchronous successful write clears both fields, not just the count.
@@ -134,15 +129,18 @@ func TestKickFailuresSurviveHoldRestartAndDeferral(t *testing.T) {
 	}
 }
 
-func TestKickFailureCountsBusyAndCancellation(t *testing.T) {
+func TestKickFailureIgnoresBusyAndCancellation(t *testing.T) {
 	m, a, _ := kickLogTestManager(t, "")
 	m.mu.Lock()
-	recordKickFailureLocked(a, crux.ErrAgentBusy)
-	recordKickFailureLocked(a, errKickCancelledByRestart)
+	recordKickFailureLocked(a, errors.New("original failure"))
+	for range 3 {
+		recordKickFailureLocked(a, fmt.Errorf("deferred: %w", crux.ErrAgentBusy))
+		recordKickFailureLocked(a, errKickCancelledByRestart)
+	}
 	m.mu.Unlock()
 	status, err := m.GetStatus(a.Name)
-	if err != nil || status.ConsecutiveKickFailures != 2 || status.LastKickError != errKickCancelledByRestart.Error() {
-		t.Fatalf("failure status = %+v, %v", status, err)
+	if err != nil || status.ConsecutiveKickFailures != 1 || status.LastKickError != "original failure" {
+		t.Fatalf("deferrals changed failure status = %+v, %v", status, err)
 	}
 }
 

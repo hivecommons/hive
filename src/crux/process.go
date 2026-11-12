@@ -25,8 +25,8 @@ type Process struct {
 	StartedAt               *time.Time
 	LastKick                *time.Time
 	KicksUndeliverable      int
-	ConsecutiveKickFailures int    `json:"consecutive_kick_failures"`
-	LastKickError           string `json:"last_kick_error"`
+	ConsecutiveKickFailures int
+	LastKickError           string
 	BusySince               time.Time
 	LastTranscriptActivity  time.Time
 	CodeWork                *CodeWork
