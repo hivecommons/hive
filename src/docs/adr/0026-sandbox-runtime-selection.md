@@ -242,7 +242,7 @@ opt-in and inert unless selected.
 |---|---|---|
 | Kernel-enforced confinement | gVisor user-space kernel or a microVM; worker pods are `privileged: false` but keep `SYS_ADMIN`/`NET_ADMIN` | selects the class through `worker_selector`; no change to hive |
 | Default-deny egress | `atenet-egress` `EgressPolicy` per actor; rules are TLS-passthrough or terminate per host:port, no per-method read-only mode | `SubstrateEgressPolicy`: `github.com` and `api.github.com` on 443 plus `sandbox.substrate.allow_hosts`, TLS passthrough; everything else (and all UDP) denied |
-| Credentials never in the sandbox | zero-credential model: actors have a SPIFFE id, credentials are injected at the router | unchanged hive brokering — the agent still gets `HTTPS_PROXY` to the hive MITM proxy (ADR-0002); Substrate's injection is **not** used, the two are complementary |
+| Credentials never in the sandbox | zero-credential model: actors have a SPIFFE id, credentials are injected at the router | actors run credential-free: no `HTTPS_PROXY`/MITM broker inside the actor and no GitHub credential enters it; hive does every push and GitHub write after the kick; Substrate's injection is **not** used (see the amendment below) |
 | Workspace in, commits out | `durableDir` volumes and object-storage snapshots; no exec/attach API | an in-actor HTTP **bridge** (`crux substrate-bridge`) reached through the router's mTLS `CONNECT` tunnel: push tar → `POST /run` → pull tar; the hive-side workspace stays authoritative |
 | Cleanup and timeouts | `DeleteActor` / `SuspendActor` / `DeleteActorTemplate` | one template + actor per kick, both deleted on success, failure and timeout (fresh bounded context, `ExitCode -1`, 16 MiB cap, as `job`/`openshell`) |
 
@@ -256,6 +256,25 @@ opt-in and inert unless selected.
 | no `policy_profile` concept | passed to the actor as `HIVE_POLICY_PROFILE`; Substrate has no annotations |
 | snapshot/resume as the normal lifecycle | `snapshot_on_idle: true` suspends (snapshot to object storage) instead of deleting; only the latest suspended actor per agent per hive process is retained (the previous one is deleted on the next suspend; actors from before a restart are not reclaimed); resume-on-next-kick is not implemented (#17697) |
 | `api.github.com` read-only | TLS passthrough like `github.com`; the actor holds no token and hive does every write after the kick |
+
+### Amendment (2026-11-12, #17695): credential-free actors
+
+Decision by the hive owner on #17695, option A:
+
+- Substrate actors run **credential-free**. There is no `HTTPS_PROXY` or MITM
+  broker inside the actor and no GitHub credential enters it; the actor's
+  egress is governed only by Substrate's `EgressPolicy`.
+- Hive brokers pushes **post-kick**: it performs git pushes and GitHub writes
+  itself, from the workspace the bridge returns.
+- **Phase 3 (future)**: SVID-authenticated broker delegation over the atenet
+  mTLS channel, so hive can delegate scoped GitHub writes to the actor without
+  a credential entering it. It is gated on hosted clusters serving the podcert
+  feature gates (`PodCertificateRequest` / `ClusterTrustBundle`,
+  `certificates.k8s.io/v1beta1`) and is tracked as a child issue of #17695.
+
+This supersedes the earlier statement that hive's credential brokering is
+unchanged for Substrate. The podman, `job` and `openshell` runtimes keep
+their proxy model (ADR-0002).
 
 ### Cluster prerequisites and which hive clusters qualify
 
