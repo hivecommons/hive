@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.228.2)
+
+### Fixed
+
+- crux serve: requests refused with a 401 by authentication are now counted in the new `crux.serve.auth.rejections` metric, labelled only by a fixed `reason` (`missing_or_invalid_token`, `project_forbidden` or `no_token_configured`); they never reached `crux.serve.requests` before.
+- The hub now remembers a rejected or rate-limited `Bearer` token (60 s, or until its `X-RateLimit-Reset` capped at 15 min; [#17836](https://github.com/hivecommons/hive/issues/17836)) instead of re-probing `GET /user` with that token on every request, which charged the token owner's already-exhausted core quota and prolonged the outage; the probes are visible in `/api/gh-rate-limits` as caller `agent:hub-bearer-validate`, and hub release-notes contents reads now go through the shared ETag/accounting transport.
+
 ## 2026-11-12 (v5.228.1)
 
 ### Fixed
