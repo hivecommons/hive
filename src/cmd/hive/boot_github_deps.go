@@ -26,8 +26,9 @@ func defaultBootGitHubDeps() bootGitHubDeps {
 // notifier, ACMM inference, attribution hook, and on-disk default policy seed
 // run for real (cfg.Policies.LocalDir points a test at a temp dir).
 type bootAdvisoryDeps struct {
-	ensureAdvisoryIssue func(ctx context.Context, c *github.Client, repo string) (int, error)
-	classifyAppFailure  func(ctx context.Context, appAuth *github.AppAuth, expectedOwner string, logger *slog.Logger) (bool, string, github.AppAuthState)
+	ensureAdvisoryIssue  func(ctx context.Context, c *github.Client, repo string) (int, error)
+	classifyAppFailure   func(ctx context.Context, appAuth *github.AppAuth, expectedOwner string, logger *slog.Logger) (bool, string, github.AppAuthState)
+	classifyRepoCoverage func(ctx context.Context, appAuth *github.AppAuth, org string, repos []string, logger *slog.Logger) (bool, string, github.AppAuthState)
 }
 
 func defaultBootAdvisoryDeps() bootAdvisoryDeps {
@@ -35,6 +36,7 @@ func defaultBootAdvisoryDeps() bootAdvisoryDeps {
 		ensureAdvisoryIssue: func(ctx context.Context, c *github.Client, repo string) (int, error) {
 			return c.EnsureAdvisoryIssue(ctx, repo)
 		},
-		classifyAppFailure: classifyGitHubAppFailure,
+		classifyAppFailure:   classifyGitHubAppFailure,
+		classifyRepoCoverage: classifyGitHubAppRepoCoverage,
 	}
 }

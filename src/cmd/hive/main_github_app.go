@@ -487,6 +487,22 @@ func classifyGitHubAppRepoCoverage(ctx context.Context, appAuth *github.AppAuth,
 	return apphealth.ClassifyRepoCoverage(ctx, appAuth, org, repos, logger)
 }
 
+// appCoverageRepos includes the primary repo even when it is not in the
+// watched list; it is also used for advisory writes.
+func appCoverageRepos(cfg *config.Config) []string {
+	repos := cfg.Project.Repos
+	primary := cfg.Project.PrimaryRepo
+	if primary == "" {
+		return repos
+	}
+	for _, repo := range repos {
+		if strings.EqualFold(repo, primary) || strings.EqualFold(repo, cfg.Project.Org+"/"+primary) || strings.EqualFold(cfg.Project.Org+"/"+repo, primary) {
+			return repos
+		}
+	}
+	return append(append([]string(nil), repos...), primary)
+}
+
 // The advisory digest posting policy moved to pkg/advisory (#7238 stage 2).
 // These wrappers keep the existing call sites unchanged; advisoryPostGate is
 // now an owned instance rather than a package-level struct tests reset.
