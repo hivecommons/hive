@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.236.3)
+
+### Fixed
+
+- Avoid repeated fleet reports for canceled in-place adoption access reads while retaining other access errors.
+- Per-agent GitHub App token mints that fail at the transport layer (dial timeout, connection refused, context deadline) now raise a `forge_unreachable` condition instead of `github_app_token_mint_failed`, so an egress outage no longer tells operators to re-check their App permissions.
+
 ## 2026-11-12 (v5.236.2)
 
 ### Fixed
