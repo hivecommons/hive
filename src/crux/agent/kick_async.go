@@ -181,6 +181,7 @@ func (m *Manager) SendKickAsync(name string, message string) (started bool, err 
 	// and fully synchronous, so run them inline and report the real result.
 	if m.agentSandboxEnabledLocked(agent) {
 		sErr := m.startSandboxKickLocked(agent, message, "sandbox-kick")
+		recordKickFailureLocked(agent, sErr)
 		m.mu.Unlock()
 		if sErr != nil {
 			return false, sErr
@@ -195,6 +196,7 @@ func (m *Manager) SendKickAsync(name string, message string) (started bool, err 
 	}
 
 	if err := m.validatePaneKickLocked(agent, name); err != nil {
+		recordKickFailureLocked(agent, err)
 		m.mu.Unlock()
 		return false, err
 	}
@@ -249,13 +251,21 @@ func (m *Manager) validatePaneKickLocked(agent *AgentProcess, name string) error
 // It holds NO lock on entry and holds none on return; every m.mu acquisition
 // below is balanced within this function, mirroring SendKick's unlock/relock
 // dance around the two slow waits.
-func (m *Manager) deliverKickAsync(name, message string) error {
+func (m *Manager) deliverKickAsync(name, message string) (err error) {
 	m.mu.Lock()
 	agent, ok := m.agents[name]
 	if !ok {
 		m.mu.Unlock()
 		return fmt.Errorf("agent %s not found", name)
 	}
+	kickAgent := agent
+	defer func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.agents[name] == kickAgent {
+			recordKickFailureLocked(kickAgent, err)
+		}
+	}()
 	if agent.State != StateRunning {
 		if m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped {
 			m.mu.Unlock()

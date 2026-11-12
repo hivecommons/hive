@@ -1,0 +1,1 @@
+- Deep health and hub heartbeats now report missing agent tmux sessions and repeated kick delivery failures instead of relying only on the manager's running state; `dashboard.kick_failure_threshold` tunes the failure threshold (default 3).

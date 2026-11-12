@@ -28,6 +28,13 @@ History point limits, timestamp cutoffs, incremental cost reads and ETag/304 beh
 
 ## Health, status, events
 
+Deep health's `checks.agents.<name>` reports `fail` and a `detail` when the
+watchdog's latest observation is `no-session` or consecutive kick delivery
+failures reach `dashboard.kick_failure_threshold` (default 3). A delivered
+kick clears the failure streak; the post-restart hold is ignored. Paused and
+disabled agents remain skipped. The same verdict reaches the hub health
+summary and the `health_deep_read` diagnostic tool.
+
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
 | `GET` | `/api/version` | Dashboard auth/session | Build/version metadata; includes `upgradeMarker` (`target`, `current`, `attempts`, `maxAttempts`, `failed`, `requestedAt`, `lastError`) while a self-upgrade is in flight or has failed ([#6765](https://github.com/hivecommons/hive/issues/6765)), the hub-delivered `upgradePolicy` (`hub_managed`, `spoke_managed`, `schedule`, `schedule_hour`, `schedule_timezone`, `schedule_weekday`, `paused`, `branch`, `channel`, `target_sha`, `target_resolved`, `armed_target`, and `next_update_at` — the hub's RFC3339 ETA for the next promotion into the `stable` channel, omitted when unknown ([#10256](https://github.com/hivecommons/hive/issues/10256))) when available, and an `autoUpdate` object (`enabled`, `state` — one of `disabled`/`up_to_date`/`behind`/`retrying`/`failed`/`unknown` — `healthy`, `period`, `targetBranch`, `targetCommit`, `currentCommit`, `commitsBehind`, `lastAttemptAt`, `lastError`, `detail`, and `nextUpdateAt` — the hub's RFC3339 ETA for the next update, omitted when unknown, disabled or paused ([#10257](https://github.com/hivecommons/hive/issues/10257))) that never reports a failed or unknown update as healthy ([#6962](https://github.com/hivecommons/hive/issues/6962), [#6963](https://github.com/hivecommons/hive/issues/6963)); also `hub_build` (the hub's short SHA) and, once a stdio `hive-admin-mcp` client has called `/api/version`, `/api/status` or `/api/status/summary` with its `hive-admin-mcp/<version>+<short>` User-Agent, `last_seen_stdio_build` and `last_seen_stdio_at` (RFC3339) so the dashboard can flag build skew ([#12318](https://github.com/hivecommons/hive/issues/12318)) | `pkg/dashboard/api.go:46` |

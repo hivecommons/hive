@@ -19,6 +19,9 @@ type DashboardConfig struct {
 	Port               int    `yaml:"port"`
 	AuthToken          string `yaml:"auth_token"`
 	AgentPollIntervalS int    `yaml:"agent_poll_interval_s"`
+	// KickFailureThreshold is the number of consecutive failed kick deliveries
+	// that makes agent health fail. Non-positive values use the default of 3.
+	KickFailureThreshold int `yaml:"kick_failure_threshold,omitempty" json:"kick_failure_threshold,omitempty"`
 	// Matrix is the default-off Code activity source configuration.
 	// The dashboard.matrix name is deprecated but retained for compatibility.
 	Matrix DashboardMatrixConfig `yaml:"matrix,omitempty" json:"matrix,omitempty"`

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -151,6 +152,7 @@ type SandboxExecutor struct {
 	Logger      *slog.Logger
 	Now         func() time.Time
 	Mutation    effects.Boundary
+	onStarted   func()
 }
 
 func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (SandboxKickResult, error) {
@@ -218,6 +220,11 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	}()
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
+	var notifyStarted func()
+	if e.onStarted != nil {
+		var once sync.Once
+		notifyStarted = func() { once.Do(e.onStarted) }
+	}
 	sres, runErr := e.launcher().Run(runCtx, sandbox.LaunchSpec{
 		Image:          spec.Image,
 		Name:           sandbox.LaunchName(spec.Agent),
@@ -229,7 +236,13 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		EnvAllowlist:   spec.EnvAllowlist,
 		NetworkMode:    spec.NetworkMode,
 		ClineProvider:  provider,
+		OnStarted:      notifyStarted,
 	})
+	// Launchers that only report a final successful result still prove the
+	// run was accepted; do not infer acceptance from queueing alone.
+	if runErr == nil && notifyStarted != nil {
+		notifyStarted()
+	}
 	if provider != nil {
 		sres.Stdout = provider.Redact(sres.Stdout)
 		sres.Stderr = provider.Redact(sres.Stderr)

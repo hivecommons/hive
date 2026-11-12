@@ -16,44 +16,46 @@ import (
 // The field meanings are documented on agent.AgentProcess. A snapshot is a
 // read-only display value; writing to one does not change the runtime.
 type Process struct {
-	Name                   string
-	ID                     string
-	Config                 config.AgentConfig
-	State                  ProcessState
-	PID                    int
-	UID                    int
-	StartedAt              *time.Time
-	LastKick               *time.Time
-	KicksUndeliverable     int
-	BusySince              time.Time
-	LastTranscriptActivity time.Time
-	CodeWork               *CodeWork
-	BusyCondition          string
-	BusyConditionMessage   string
-	Paused                 bool
-	PausedAt               time.Time
-	PausedReason           string
-	PausedTrigger          string
-	PausedBy               string
-	OperatorStopped        bool
-	PinnedCLI              string
-	PinnedModel            string
-	ModelOverride          string
-	BackendOverride        string
-	RestartCount           int
-	RestartEvents          []RestartEvent
-	LastRestartReason      string
-	OutputBuffer           *RingBuffer
-	SubAgentModels         []SubAgentModel
-	KickHistory            []KickRecord
-	LastKickMessage        string
-	KickRefused            bool
-	KickRefusalReason      string
-	LaunchedMode           AgentMode
-	HasLaunched            bool
-	BootstrapOverride      string
-	LastError              string
-	NeedsLogin             bool
+	Name                    string
+	ID                      string
+	Config                  config.AgentConfig
+	State                   ProcessState
+	PID                     int
+	UID                     int
+	StartedAt               *time.Time
+	LastKick                *time.Time
+	KicksUndeliverable      int
+	ConsecutiveKickFailures int    `json:"consecutive_kick_failures"`
+	LastKickError           string `json:"last_kick_error"`
+	BusySince               time.Time
+	LastTranscriptActivity  time.Time
+	CodeWork                *CodeWork
+	BusyCondition           string
+	BusyConditionMessage    string
+	Paused                  bool
+	PausedAt                time.Time
+	PausedReason            string
+	PausedTrigger           string
+	PausedBy                string
+	OperatorStopped         bool
+	PinnedCLI               string
+	PinnedModel             string
+	ModelOverride           string
+	BackendOverride         string
+	RestartCount            int
+	RestartEvents           []RestartEvent
+	LastRestartReason       string
+	OutputBuffer            *RingBuffer
+	SubAgentModels          []SubAgentModel
+	KickHistory             []KickRecord
+	LastKickMessage         string
+	KickRefused             bool
+	KickRefusalReason       string
+	LaunchedMode            AgentMode
+	HasLaunched             bool
+	BootstrapOverride       string
+	LastError               string
+	NeedsLogin              bool
 	// CredentialBridgeBroken is true for a per-UID claude agent whose
 	// $HOME/.claude/.credentials.json is a regular file instead of the symlink
 	// to the shared login: a Claude Code token refresh replaced the link with

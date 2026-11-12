@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -129,6 +130,14 @@ func (m *Manager) SendKickWithSource(name string, message string, source string)
 	if !ok {
 		return fmt.Errorf("agent %s not found", name)
 	}
+	// Preserve the identity across unlocked waits: a removed/replaced agent
+	// must not receive a stale attempt's failure.
+	kickAgent := agent
+	defer func() {
+		if m.agents[name] == kickAgent {
+			recordKickFailureLocked(kickAgent, err)
+		}
+	}()
 	role = name
 	span.SetAttributes(attribute.String("agent.name", role))
 
@@ -442,8 +451,20 @@ func (m *Manager) kickDeliveryFailedLocked(agent *AgentProcess, stage string, er
 	return err
 }
 
+// recordKickFailureLocked counts failed attempts, excluding the deliberate
+// post-restart hold. Caller holds m.mu.
+func recordKickFailureLocked(agent *AgentProcess, err error) {
+	if err == nil || errors.Is(err, errKickHeldAfterRestart) {
+		return
+	}
+	agent.ConsecutiveKickFailures++
+	agent.LastKickError = err.Error()
+}
+
 func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigger string) {
 	now := time.Now()
+	agent.ConsecutiveKickFailures = 0
+	agent.LastKickError = ""
 	m.resetBusyVisibilityLocked(agent)
 	agent.LastKick = &now
 	agent.LastKickMessage = message
@@ -523,12 +544,14 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 	if !m.waitForCLIReadyForAgent(agent) {
 		m.logger.Warn("startup kick dropped: CLI never became ready",
 			"name", agent.Name, "session", agent.tmuxSession, "trigger", "startup")
+		m.recordStartupKickFailure(agent, gen, fmt.Errorf("agent %s CLI never became ready for startup kick", agent.Name))
 		m.clearStartupKickInFlight(agent, gen)
 		return
 	}
 	if !m.waitForInputPromptForAgent(agent) {
 		m.logger.Warn("startup kick dropped: CLI never reached input prompt",
 			"name", agent.Name, "session", agent.tmuxSession, "trigger", "startup")
+		m.recordStartupKickFailure(agent, gen, fmt.Errorf("agent %s CLI never reached input prompt for startup kick", agent.Name))
 		m.clearStartupKickInFlight(agent, gen)
 		return
 	}
@@ -583,11 +606,21 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 		return
 	}
 	if err := m.deliverKickLocked(agent, prompt, trigger); err != nil {
+		recordKickFailureLocked(agent, err)
 		m.logger.Warn("startup kick delivery failed", "name", agent.Name, "error", err)
 		return
 	}
 	if fromQueue {
 		removeDeferredMentionKickLocked(agent, trigger)
+	}
+}
+
+// recordStartupKickFailure ignores work invalidated by a newer launch.
+func (m *Manager) recordStartupKickFailure(agent *AgentProcess, gen int, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.agents[agent.Name] == agent && agent.launchGen == gen && agent.State == StateRunning {
+		recordKickFailureLocked(agent, err)
 	}
 }
 
