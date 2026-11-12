@@ -1,0 +1,1 @@
+- The github-proxy no longer logs `proxy: CONNECT dial failed` at WARN when the CONNECT target hostname does not resolve (for example a placeholder host from an example config); it now logs at Debug, so a misconfigured host no longer triggers the fleet repeated-error self-report. Other CONNECT dial failures still warn.
