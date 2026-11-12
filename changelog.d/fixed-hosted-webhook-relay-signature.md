@@ -1,1 +1,0 @@
-- Hosted hives accept GitHub webhooks relayed by the hub: the hub signs each relay with a per-hive relay key delivered over the heartbeat (never the App webhook secret), and the spoke verifies it with timestamp and delivery-ID replay protection, turning on event-driven review dispatch for hosted hives.

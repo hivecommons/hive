@@ -142,7 +142,25 @@ type Dispatch struct {
 	// At is when the dispatch was handed out (the contributor's relay took
 	// the fix task); the stage tracker reads it as when the rework began.
 	At time.Time
+	// Reason is why the scheduler logged this event when it took items out
+	// of a queue or a dispatch (remove, dequeue, requeue, return, release,
+	// overflow): a RemoveFor caller's cause, or the scheduler's own. Empty
+	// on a dispatch handed out to a relay.
+	Reason string
 }
+
+// Scheduler-side reasons on the log lines of events that move items out of
+// a queue or a dispatch; RemoveFor callers pass their own.
+const (
+	ReasonFixFinished       = "fix-finished"
+	ReasonRelayFailed       = "relay-failed"
+	ReasonRelayNotFree      = "relay-not-free"
+	ReasonRelayNeverReplied = "relay-never-reported"
+	ReasonOverflow          = "overflow-grace-elapsed"
+	// ReasonUnspecified marks a removal through the plain Remove, whose
+	// caller gave no cause.
+	ReasonUnspecified = "unspecified"
+)
 
 // Status is the per-contributor view exposed on the profile API.
 type Status struct {
@@ -277,8 +295,18 @@ func sortQueue(q []Item) {
 }
 
 // Remove drops a PR from user's queue or in-flight set (it went green, was
-// closed, or left stage 072). It returns true when a slot was freed.
+// closed, or left stage 072). It returns true when a slot was freed. The
+// log line says "unspecified"; callers that know why use RemoveFor.
 func (s *Scheduler) Remove(user, repo string, number int) bool {
+	return s.RemoveFor(user, repo, number, ReasonUnspecified)
+}
+
+// RemoveFor is Remove with the cause logged on the "remove" line (and on the
+// "dequeue" line when it empties a dispatch), so no removal is silent.
+func (s *Scheduler) RemoveFor(user, repo string, number int, reason string) bool {
+	if reason = strings.TrimSpace(reason); reason == "" {
+		reason = ReasonUnspecified
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.by[norm(user)]
@@ -289,16 +317,17 @@ func (s *Scheduler) Remove(user, repo string, number int) bool {
 	for i, q := range c.queue {
 		if q.Key() == key {
 			c.queue = append(c.queue[:i], c.queue[i+1:]...)
-			s.log("remove", user, Dispatch{Items: []Item{q}}, len(c.queue))
+			s.log("remove", user, Dispatch{Items: []Item{q}, Reason: reason}, len(c.queue))
 			return false
 		}
 	}
 	for i, d := range c.inflight {
-		if _, ok := d.items[key]; ok {
+		if it, ok := d.items[key]; ok {
 			delete(d.items, key)
+			s.log("remove", user, Dispatch{ID: d.id, Mode: d.mode, Items: []Item{it}, Reason: reason}, len(c.queue))
 			if len(d.items) == 0 {
 				c.inflight = append(c.inflight[:i], c.inflight[i+1:]...)
-				s.settle(user, c, d)
+				s.settle(user, c, d, reason)
 				return true
 			}
 			return false
@@ -308,13 +337,16 @@ func (s *Scheduler) Remove(user, repo string, number int) bool {
 }
 
 // settle records a finished dispatch: a completed preemption starts the
-// focus window for the resumed primary task.
-func (s *Scheduler) settle(user string, c *contributor, d *dispatch) {
+// focus window for the resumed primary task. reason goes on the "dequeue"
+// line.
+func (s *Scheduler) settle(user string, c *contributor, d *dispatch, reason string) {
 	if d.mode == ModePreempt {
 		c.preempted = false
 		c.focusUntil = s.opts.Now().Add(s.opts.MinFocusWindow)
 	}
-	s.log("dequeue", user, d.public(), len(c.queue))
+	out := d.public()
+	out.Reason = reason
+	s.log("dequeue", user, out, len(c.queue))
 }
 
 // Complete marks the fix session covering repo#number done (the relay
@@ -331,7 +363,7 @@ func (s *Scheduler) Complete(user, repo string, number int) bool {
 	for i, d := range c.inflight {
 		if _, ok := d.items[key]; ok {
 			c.inflight = append(c.inflight[:i], c.inflight[i+1:]...)
-			s.settle(user, c, d)
+			s.settle(user, c, d, ReasonFixFinished)
 			return true
 		}
 	}
@@ -349,7 +381,7 @@ func (s *Scheduler) CompleteDispatch(user, id string) bool {
 	for i, d := range c.inflight {
 		if d.id == id {
 			c.inflight = append(c.inflight[:i], c.inflight[i+1:]...)
-			s.settle(user, c, d)
+			s.settle(user, c, d, ReasonFixFinished)
 			return true
 		}
 	}
@@ -362,7 +394,7 @@ func (s *Scheduler) CompleteDispatch(user, id string) bool {
 // straight back to a relay that just refused it. It returns the requeued
 // items; nil when id is not in flight.
 func (s *Scheduler) Requeue(user, id string, backoff time.Duration) []Item {
-	return s.unwind(user, id, backoff, true, true, "requeue")
+	return s.unwind(user, id, backoff, true, true, "requeue", ReasonRelayFailed)
 }
 
 // Return is Requeue for a dispatch the relay never started because it was
@@ -370,7 +402,7 @@ func (s *Scheduler) Requeue(user, id string, backoff time.Duration) []Item {
 // with the same backoff but Attempts unchanged, so a refusal that says
 // nothing about the fix never moves a PR toward the relay hand-off limit.
 func (s *Scheduler) Return(user, id string, backoff time.Duration) []Item {
-	return s.unwind(user, id, backoff, false, true, "return")
+	return s.unwind(user, id, backoff, false, true, "return", ReasonRelayNotFree)
 }
 
 // Release puts an in-flight dispatch back at the head of user's queue
@@ -379,10 +411,10 @@ func (s *Scheduler) Return(user, id string, backoff time.Duration) []Item {
 // still booked), so nothing about the PR itself failed. nil when id is not
 // in flight.
 func (s *Scheduler) Release(user, id string) []Item {
-	return s.unwind(user, id, 0, false, false, "release")
+	return s.unwind(user, id, 0, false, false, "release", ReasonRelayNeverReplied)
 }
 
-func (s *Scheduler) unwind(user, id string, backoff time.Duration, countAttempt, backOff bool, event string) []Item {
+func (s *Scheduler) unwind(user, id string, backoff time.Duration, countAttempt, backOff bool, event, reason string) []Item {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.by[norm(user)]
@@ -410,7 +442,7 @@ func (s *Scheduler) unwind(user, id string, backoff time.Duration, countAttempt,
 			c.queue = append(c.queue, out[j])
 		}
 		sortQueue(c.queue)
-		s.log(event, user, Dispatch{ID: d.id, Mode: d.mode, Items: out}, len(c.queue))
+		s.log(event, user, Dispatch{ID: d.id, Mode: d.mode, Items: out, Reason: reason}, len(c.queue))
 		return out
 	}
 	return nil
@@ -543,7 +575,7 @@ func (s *Scheduler) Overflow(user string, grace time.Duration) []Item {
 	}
 	c.queue = rest
 	if len(out) > 0 {
-		s.log("overflow", user, Dispatch{Items: out}, len(c.queue))
+		s.log("overflow", user, Dispatch{Items: out, Reason: ReasonOverflow}, len(c.queue))
 	}
 	return out
 }
