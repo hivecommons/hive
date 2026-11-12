@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) {
+	if expectedKickHold(r) || canceledStageDigest(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -133,6 +133,23 @@ func (h *Handler) feed(r slog.Record) {
 		}
 	}
 	h.observe(class, key, r.Message, diagnostics(r, h.attrs))
+}
+
+// canceledStageDigest is an interrupted stage-label read, not a digest
+// failure. Keep the warning locally and retry on a later sweep.
+func canceledStageDigest(r slog.Record) bool {
+	if strings.TrimSpace(r.Message) != "stage labels: check digest failed" {
+		return false
+	}
+	canceled := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" {
+			err := a.Value.String()
+			canceled = err == "context canceled" || strings.HasSuffix(err, ": context canceled")
+		}
+		return !canceled
+	})
+	return canceled
 }
 
 // expectedKickHold reports whether a "failed to send kick" record carries the
