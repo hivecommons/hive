@@ -1,0 +1,1 @@
+- Bound the hub's GitHub bearer-token validation cache and reclaim expired entries before admitting new tokens, preventing unbounded cache growth from unauthenticated requests.

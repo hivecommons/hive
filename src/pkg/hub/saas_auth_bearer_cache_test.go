@@ -68,6 +68,74 @@ func TestValidateGitHubToken_RejectedTokenIsNegativelyCached(t *testing.T) {
 	}
 }
 
+func TestValidateGitHubToken_CacheCapacityAndExpiry(t *testing.T) {
+	ghTokenCacheMu.Lock()
+	original := ghTokenCache
+	ghTokenCache = make(map[string]ghTokenCacheEntry)
+	ghTokenCacheMu.Unlock()
+	t.Cleanup(func() {
+		ghTokenCacheMu.Lock()
+		ghTokenCache = original
+		ghTokenCacheMu.Unlock()
+	})
+
+	hits := withBearerProbeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "Bearer valid-overflow" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"login": "valid-user"})
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	srv := newHubServerForTest(t)
+	for i := range ghTokenCacheMaxEntries + 1 {
+		token := "rejected-capacity-" + strconv.Itoa(i)
+		if got := srv.validateGitHubToken(token); got != "" {
+			t.Fatalf("rejected token resolved to %q", got)
+		}
+	}
+	ghTokenCacheMu.RLock()
+	size := len(ghTokenCache)
+	ghTokenCacheMu.RUnlock()
+	if size != ghTokenCacheMaxEntries {
+		t.Fatalf("cache has %d entries, want %d", size, ghTokenCacheMaxEntries)
+	}
+
+	// Both rejected and accepted tokens still probe when the cache is full.
+	for range 2 {
+		if got := srv.validateGitHubToken("rejected-capacity-" + strconv.Itoa(ghTokenCacheMaxEntries)); got != "" {
+			t.Fatalf("overflow rejected token resolved to %q", got)
+		}
+		if got := srv.validateGitHubToken("valid-overflow"); got != "valid-user" {
+			t.Fatalf("overflow accepted token resolved to %q", got)
+		}
+	}
+	if got, want := atomic.LoadInt32(hits), int32(ghTokenCacheMaxEntries+5); got != want {
+		t.Fatalf("GET /user probed %d times, want %d", got, want)
+	}
+	ghTokenCacheMu.Lock()
+	entry := ghTokenCache["rejected-capacity-0"]
+	entry.expiresAt = time.Now().Add(-time.Second)
+	ghTokenCache["rejected-capacity-0"] = entry
+	ghTokenCacheMu.Unlock()
+
+	// A full cache sweeps expired entries and makes room for a new positive entry.
+	for range 2 {
+		if got := srv.validateGitHubToken("valid-overflow"); got != "valid-user" {
+			t.Fatalf("accepted token after expiry resolved to %q", got)
+		}
+	}
+	if got, want := atomic.LoadInt32(hits), int32(ghTokenCacheMaxEntries+6); got != want {
+		t.Fatalf("GET /user probed %d times after expiry, want %d", got, want)
+	}
+	ghTokenCacheMu.RLock()
+	_, expiredPresent := ghTokenCache["rejected-capacity-0"]
+	size = len(ghTokenCache)
+	ghTokenCacheMu.RUnlock()
+	if expiredPresent || size != ghTokenCacheMaxEntries {
+		t.Fatalf("after sweep: expired present = %t, cache size = %d", expiredPresent, size)
+	}
+}
+
 // An expired negative entry probes again, and a token that has since become
 // valid resolves — the negative cache is a short hold, not a ban.
 func TestValidateGitHubToken_ExpiredNegativeEntryReprobes(t *testing.T) {
