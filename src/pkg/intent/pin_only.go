@@ -23,6 +23,27 @@ var (
 	unsafePinRE  = regexp.MustCompile(`(?i)(permissions|secrets[.]|\benv\b|\brun:|\bwith:|id-token|cosign|attest|provenance|credential|signing|codeowners)`)
 )
 
+// Pin kinds a PinOnlySpec may name. pinLineKinds are the kinds one
+// removed/added pair satisfies on its own, in match precedence order.
+// pinKindActionSHARef (pin_only_sha_ref.go) is decided across the whole diff,
+// and only for a pair every line kind has declined.
+const (
+	pinKindActionSHA    = "action-sha"
+	pinKindImageDigest  = "image-digest"
+	pinKindVersionPin   = "version-pin"
+	pinKindActionSHARef = "action-sha-ref"
+)
+
+var pinLineKinds = []string{pinKindActionSHA, pinKindImageDigest, pinKindVersionPin}
+
+// PinOnlyKinds returns every kind a PinOnlySpec may name, in the order the
+// settings editors offer them. It is the one list: config validation, the
+// dashboard and the admin MCP all read it, so a kind the classifier knows is
+// never missing from an editor and an editor never offers one it refuses.
+func PinOnlyKinds() []string {
+	return append(slices.Clone(pinLineKinds), pinKindActionSHARef)
+}
+
 // ActionPin is one accepted action-sha replacement: the upstream action
 // repository ("owner/repo", without any sub-path), the new 40-hex commit, and
 // the trailing version comment ("v4", "v4.1.2"; empty when absent).
@@ -51,18 +72,22 @@ func ClassifyPinOnly(files []ChangedFile, matches []string, spec PinOnlySpec) (b
 // the distinct action-sha pins it accepted. GitHub resolves a `uses:` SHA
 // across the whole fork network of owner/repo, so the syntax alone does not
 // tie the new SHA to the upstream action; the caller resolves each pin.
+//
+// With the action-sha-ref kind, a bare `key: <40-hex>` line is also accepted,
+// but only when it carries the old and the new commit of an action-sha
+// replacement accepted somewhere in the same diff. Such a line adds no pin:
+// the returned list is the `uses:` pins alone, exactly as without the kind.
 func ClassifyPinOnlyActions(files []ChangedFile, matches []string, spec PinOnlySpec) (bool, string, []ActionPin) {
 	if len(files) == 0 || len(matches) == 0 || len(spec.Paths) == 0 || len(spec.Kinds) == 0 {
 		return false, "missing pin-only evidence or policy", nil
 	}
+	known := PinOnlyKinds()
 	kinds := make(map[string]bool)
 	for _, kind := range spec.Kinds {
-		switch kind {
-		case "action-sha", "image-digest", "version-pin":
-			kinds[kind] = true
-		default:
+		if !slices.Contains(known, kind) {
 			return false, "unknown pin kind: " + kind, nil
 		}
+		kinds[kind] = true
 	}
 	guarded := make(map[string]bool)
 	for _, match := range matches {
@@ -70,6 +95,11 @@ func ClassifyPinOnlyActions(files []ChangedFile, matches []string, spec PinOnlyS
 	}
 	seen := make(map[string]bool)
 	var pins []ActionPin
+	// moves holds the old -> new commit of every accepted action-sha
+	// replacement; refs holds the action-sha-ref candidates, which are only
+	// decided once every file has been read (pin_only_sha_ref.go).
+	moves := make(map[pinSHAMove]bool)
+	var refs []pinSHARefCandidate
 	for _, file := range files {
 		name := file.Filename
 		if name == "" || path.Clean(name) != name || strings.HasPrefix(name, "../") || strings.HasPrefix(name, "/") || seen[name] {
@@ -82,14 +112,20 @@ func ClassifyPinOnlyActions(files []ChangedFile, matches []string, spec PinOnlyS
 		if strings.Contains(strings.ToLower(name), "owners") || file.Status != "modified" || file.Patch == "" {
 			return false, name + ": not an existing modified pin file with a patch", nil
 		}
-		filePins, err := classifyPinPatch(file, kinds)
+		got, err := classifyPinPatch(file, kinds)
 		if err != nil {
 			return false, name + ": " + err.Error(), nil
 		}
-		for _, pin := range filePins {
+		for _, pin := range got.pins {
 			if !slices.Contains(pins, pin) {
 				pins = append(pins, pin)
 			}
+		}
+		for _, move := range got.moves {
+			moves[move] = true
+		}
+		for _, move := range got.refs {
+			refs = append(refs, pinSHARefCandidate{file: name, move: move})
 		}
 	}
 	for match := range guarded {
@@ -97,11 +133,23 @@ func ClassifyPinOnlyActions(files []ChangedFile, matches []string, spec PinOnlyS
 			return false, match + ": missing matched file", nil
 		}
 	}
+	if why := pinSHARefsUnmatched(refs, moves); why != "" {
+		return false, why, nil
+	}
 	return true, "all changes are approved pin replacements (syntax only)", pins
 }
 
-func classifyPinPatch(file ChangedFile, kinds map[string]bool) ([]ActionPin, error) {
-	var pins []ActionPin
+// pinPatchResult is what one file's patch contributes: the action pins it
+// accepted, the old -> new commit of each of them, and the action-sha-ref
+// candidates, which the caller accepts or refuses against every file's moves.
+type pinPatchResult struct {
+	pins  []ActionPin
+	moves []pinSHAMove
+	refs  []pinSHAMove
+}
+
+func classifyPinPatch(file ChangedFile, kinds map[string]bool) (*pinPatchResult, error) {
+	res := &pinPatchResult{}
 	var removed, added []string
 	oldLeft, newLeft, additions, deletions, hunks := 0, 0, 0, 0, 0
 	flush := func() error {
@@ -109,12 +157,20 @@ func classifyPinPatch(file ChangedFile, kinds map[string]bool) ([]ActionPin, err
 			return fmt.Errorf("unpaired addition/removal")
 		}
 		for i := range removed {
-			pin, ok := matchPinReplacement(removed[i], added[i], kinds)
+			pin, oldSHA, ok := matchPinReplacement(removed[i], added[i], kinds)
 			if !ok {
-				return fmt.Errorf("non-pin or unsafe replacement")
+				// Only a pair every line kind declined may be a companion
+				// ref, and it stays a candidate until a uses: pin vouches.
+				ref, isRef := pinSHARefMove(removed[i], added[i], kinds)
+				if !isRef {
+					return fmt.Errorf("non-pin or unsafe replacement")
+				}
+				res.refs = append(res.refs, ref)
+				continue
 			}
 			if pin != nil {
-				pins = append(pins, *pin)
+				res.pins = append(res.pins, *pin)
+				res.moves = append(res.moves, pinSHAMove{old: oldSHA, next: pin.SHA})
 			}
 		}
 		removed, added = nil, nil
@@ -185,29 +241,32 @@ func classifyPinPatch(file ChangedFile, kinds map[string]bool) ([]ActionPin, err
 	if hunks == 0 || oldLeft != 0 || newLeft != 0 || additions == 0 || additions != file.Additions || deletions != file.Deletions {
 		return nil, fmt.Errorf("incomplete patch or mismatched changed-line counts")
 	}
-	return pins, nil
+	return res, nil
 }
 
 func pinReplacement(old, next string, kinds map[string]bool) bool {
-	_, ok := matchPinReplacement(old, next, kinds)
+	_, _, ok := matchPinReplacement(old, next, kinds)
 	return ok
 }
 
 // matchPinReplacement reports whether old -> next is an accepted pin
-// replacement and, for an action-sha replacement, the new pin.
-func matchPinReplacement(old, next string, kinds map[string]bool) (*ActionPin, bool) {
+// replacement and, for an action-sha replacement, the new pin and the
+// lowercased commit it replaces. The old commit is returned beside the pin,
+// not in it: ActionPin is what callers resolve upstream, and it stays the new
+// commit only.
+func matchPinReplacement(old, next string, kinds map[string]bool) (*ActionPin, string, bool) {
 	if old == next || unsafePinRE.MatchString(old) || unsafePinRE.MatchString(next) {
-		return nil, false
+		return nil, "", false
 	}
-	for _, kind := range []string{"action-sha", "image-digest", "version-pin"} {
+	for _, kind := range pinLineKinds {
 		if !kinds[kind] {
 			continue
 		}
 		re := actionPinRE
 		switch kind {
-		case "image-digest":
+		case pinKindImageDigest:
 			re = imagePinRE
-		case "version-pin":
+		case pinKindVersionPin:
 			re = versionPinRE
 		}
 		a, b := re.FindStringSubmatch(old), re.FindStringSubmatch(next)
@@ -216,13 +275,13 @@ func matchPinReplacement(old, next string, kinds map[string]bool) (*ActionPin, b
 		}
 		// Only action version comments may change; all other suffixes (image
 		// aliases, whitespace and quoting) must remain byte-identical.
-		if kind == "action-sha" {
+		if kind == pinKindActionSHA {
 			if strings.Contains(a[3], "#") != strings.Contains(b[3], "#") {
 				continue
 			}
-			return actionPinFrom(b), true
+			return actionPinFrom(b), strings.ToLower(a[2]), true
 		}
-		if kind == "version-pin" {
+		if kind == pinKindVersionPin {
 			// Do not permit quote changes to alter YAML interpretation.
 			quote := func(s string) byte {
 				if s[0] == '\'' || s[0] == '"' {
@@ -239,10 +298,10 @@ func matchPinReplacement(old, next string, kinds map[string]bool) (*ActionPin, b
 			}
 		}
 		if a[3] == b[3] {
-			return nil, true
+			return nil, "", true
 		}
 	}
-	return nil, false
+	return nil, "", false
 }
 
 // actionPinFrom builds the pin from an actionPinRE match of the new line.

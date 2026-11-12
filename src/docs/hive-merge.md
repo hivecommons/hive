@@ -245,6 +245,58 @@ and literal `version: 1.2.3` / `ARG TOOL_VERSION=1.2.3` updates. Other syntax,
 missing patches, line-count mismatches, added/renamed files, owner files,
 permission/credential/signing text and non-pin edits fail closed.
 
+**Bare SHA lines that follow a `uses:` pin (`action-sha-ref`).** A workflow
+that pins a reusable workflow by commit often passes the same commit on as an
+input, so the code that workflow checks out is the code it was written for:
+
+```yaml
+jobs:
+  test:
+    uses: some-org/shared/.github/workflows/test.yml@<sha> # v1
+    with:
+      test_ref: <sha> # v1
+```
+
+The same commit may also be an input in another workflow file that has no
+`uses:` change of its own, for example a release workflow that holds
+`gate_test_ref: <sha> # v1`. A dependency bot bumps all three lines in one
+pull request. Only the `uses:` line is an `action-sha` pin, so without this
+kind the other two lines make the whole pull request a person's merge.
+
+The kind `action-sha-ref` is off unless an exception lists it in `kinds`.
+With it, a changed line is accepted as a companion of a `uses:` pin when all
+of these hold:
+
+- Both the removed and the added line are a plain `key: <40-hex>` line: an
+  unquoted mapping key (letters, digits, `_`, `-`), one space, the commit and
+  nothing else except an optional `# vN[.N[.N]]` comment set off by
+  whitespace. A list item (`- key:`), a quoted value, a short SHA or any
+  other text does not qualify.
+- The key and its indentation are byte-identical on both lines.
+- As for `action-sha`, an existing version comment may change, but a comment
+  may not appear or disappear.
+- Neither line holds one of the words the classifier refuses everywhere
+  (`with:`, `env`, `secrets.`, `permissions`, signing and credential words).
+- The commit really changes, and its old and new value (compared without
+  regard to letter case) are exactly the old and new commit of an `action-sha`
+  replacement accepted in the same pull request, in any file the exception
+  covers. The old commit of one pin with the new commit of another does not
+  match.
+
+A bare SHA line that no `uses:` bump in the pull request vouches for keeps
+the whole pull request a person's merge, with the reason `<file>: bare SHA
+line with no matching uses: pin`. So the kind admits nothing by itself: it needs
+`action-sha` in the same `kinds` list and a matching `uses:` bump in the same
+pull request. An exception that lists `action-sha-ref` without `action-sha`
+accepts no `uses:` pin, so every bare SHA line is refused. The existing kinds
+are tried first, and a line they accept is never treated as a companion.
+
+A companion adds nothing to verify. Its commit is the `uses:` pin's commit,
+and that pin goes through every check above: the pull request is admitted
+only when the upstream tag or default branch anchors that commit. The hive
+does not read what the key feeds; the line is tied to the pin because it held
+the pin's old commit and now holds its new one.
+
 This classifier proves **syntax only**, not authenticated identity, exact-head
 binding, file-list completeness, semantic interpretation or review of upstream
 references. The sweep supplies the author (GitHub's PR author login), the

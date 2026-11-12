@@ -282,7 +282,7 @@ Go callers keep reading `cfg.Agents`, `cfg.Governor.Gateways` and so on through 
 | `config.refuse_gate_regression` | `false` | Safety-gate regression guard ([#16438](https://github.com/hivecommons/hive/issues/16438)). At boot the hive compares the effective config against any previous runtime overlay still on the PVC (`/data/hive.yaml.runtime`, an operator's `hive.yaml.runtime.bak`, `/data/hive.yaml.dashboard`) for `review.require_labels`, `project.issue_filter.require_labels`, `project.paused_repos` and `writeback.per_repo` modes. A gate the overlay carried that the effective config lacks or loosens — typically a boot from the ConfigMap seed after the overlay was moved aside — is logged once per gate as `WARN safety gate dropped: <gate> (was <value>) — effective config has <value>`, listed in `/api/status` under `config.gate_regressions`, and shown as a banner at the top of Settings. `true` makes it fatal: the hive exits (code 21) with the gates named instead of running with weaker gates. Set it in the overlay itself; the ConfigMap seed is the file the regression usually comes from. Legacy `/data/hive.yaml.bak` is not consulted — it is frozen at the rename and would warn forever about gates removed on purpose. |
 | `auto_merge.allow_unprotected_base` | Deprecated no-op. | Accepted so older configs keep loading. `hive-merge` now merges into any protected or unprotected branch the App can write, subject to the CI-evidence gate and GitHub's own merge rules. |
 | `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
-| `auto_merge.human_merge_pin_only` | Unset (off); enforced by the automerge sweep lanes and `/approve` (#16266), and by the `hive-merge` relay (#16265), which additionally requires the requested head SHA to match the PR head before and after fetching files. | Per-repo schema for `enabled`, `paths`, `kinds` (`action-sha`, `image-digest`, `version-pin`) and `trusted_authors`. Enabled entries require all three lists. The sweep does not place a human-merge-path hold on a PR whose author is in `trusted_authors`, whose complete diff (every changed file, guarded or not) is pin replacements, whose every commit is authored by a `trusted_authors` login with a GitHub-verified signature, and whose every new action SHA resolves in its upstream action repository (the `# vN` tag points at it, or it is on the default branch; #16399); it never clears an existing hold. Owners set it per repository from **Settings → Features → Auto-merge** or with the admin MCP operation `auto_merge.update`; an enabled entry is refused for a repository with no `human_merge_paths`. See [hive-merge.md](../hive-merge.md) for grammar, restrictions and outstanding integration/deployment requirements (#16242). |
+| `auto_merge.human_merge_pin_only` | Unset (off); enforced by the automerge sweep lanes and `/approve` (#16266), and by the `hive-merge` relay (#16265), which additionally requires the requested head SHA to match the PR head before and after fetching files. | Per-repo schema for `enabled`, `paths`, `kinds` (`action-sha`, `image-digest`, `version-pin`, `action-sha-ref`) and `trusted_authors`. Enabled entries require all three lists. The sweep does not place a human-merge-path hold on a PR whose author is in `trusted_authors`, whose complete diff (every changed file, guarded or not) is pin replacements, whose every commit is authored by a `trusted_authors` login with a GitHub-verified signature, and whose every new action SHA resolves in its upstream action repository (the `# vN` tag points at it, or it is on the default branch; #16399); it never clears an existing hold. Owners set it per repository from **Settings → Features → Auto-merge** or with the admin MCP operation `auto_merge.update`; an enabled entry is refused for a repository with no `human_merge_paths`. See [hive-merge.md](../hive-merge.md) for grammar, restrictions and outstanding integration/deployment requirements (#16242). |
 | `auto_merge.human_merge_paths` | Unset (off). | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge. Applies to every merge lane (App self-merge, trusted-author, label-queued, merge-request relay) whatever the intent tier; a matching PR is held with one comment, and an incomplete changed-file list fails closed. The hive lifts its own hold once a later head touches none of the paths. Details in the sweep key table below. |
 | `auto_merge.human_merge_title_prefixes` | `["⚠️", "⚠"]` | Title prefixes (after trimming) that mark a PR as a breaking change a person must merge. Every auto-merge lane and the merge train skip the PR; the tracker parks it at 090 *Ready for human merge · human merge*. Set to `[]` to disable. |
 | `auto_merge.human_merge_labels` | `["needs-owner-merge"]` | Labels (case-insensitive) that mark a PR a person must merge; same effect as the title prefixes. Set to `[]` to disable. |
@@ -660,8 +660,31 @@ auto_merge:
 | Repository key | Case-insensitive `owner/repo`; configure each consumer separately. |
 | `enabled` | Absent/false preserves the existing human-merge-path gate. |
 | `paths` | Explicit allowed paths within the protected path matches, not a replacement for `human_merge_paths`. Required when enabled. |
-| `kinds` | Explicit subset of `action-sha`, `image-digest`, `version-pin`; unknown kinds rejected. Required when enabled. An `action-sha` pin is admitted only when the upstream repo's `tags/<version comment>` (annotated tags dereferenced) points at the new SHA, or, without a comment, the SHA is an ancestor of the upstream default branch; any lookup failure holds. |
+| `kinds` | Explicit subset of `action-sha`, `image-digest`, `version-pin`, `action-sha-ref`; unknown kinds rejected. Required when enabled. An `action-sha` pin is admitted only when the upstream repo's `tags/<version comment>` (annotated tags dereferenced) points at the new SHA, or, without a comment, the SHA is an ancestor of the upstream default branch; any lookup failure holds. `action-sha-ref` is described below the table. |
 | `trusted_authors` | Explicit author allowlist; required when enabled. Matched against the PR author login and against the author login of every commit behind the head; each commit must also be committed by GitHub (`web-flow`) or by a trusted login and carry a GitHub-verified signature, since GitHub verifies the committer, not the author (web-flow-committed bot commits qualify; human authors must commit and sign as themselves). Not permission to trust arbitrary bot-looking logins. |
+
+**The `action-sha-ref` kind.** A workflow often passes the commit it pins a
+reusable workflow at on as an input, so a dependency bump changes a bare
+`key: <40-hex>` line next to the `uses:` line, sometimes in another workflow
+file too:
+
+```yaml
+    uses: some-org/shared/.github/workflows/test.yml@<sha> # v1
+    with:
+      test_ref: <sha> # v1
+```
+
+`action-sha-ref` lets such a line through. It is off unless listed, and it
+admits nothing by itself: the line must carry exactly the old and the new
+commit of a `uses:` pin that `action-sha` accepts in the same pull request
+(in any file the exception covers), with the key unchanged. So list it
+together with `action-sha`, for example `kinds: [action-sha, action-sha-ref]`;
+listed without `action-sha` it has no effect, and every bare SHA line is
+refused. A bare SHA line with no matching `uses:` bump keeps the whole pull
+request a person's merge. The commit is the `uses:` pin's own, so the
+upstream check on that pin covers it and nothing more is looked up. The full
+rule is in [hive-merge.md](../hive-merge.md), under "Bare SHA lines that
+follow a `uses:` pin".
 
 **Setting it.** On a build that has the editor, owners set the exception from
 **Settings → Features → Auto-merge → Pin bumps that skip the hand merge**, one

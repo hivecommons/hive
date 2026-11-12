@@ -24,8 +24,13 @@ type PinOnlyException struct {
 }
 
 // PinOnlyKinds is every kind a PinOnlyException may name. The settings
-// editors offer exactly these; validate refuses anything else.
-var PinOnlyKinds = []string{"action-sha", "image-digest", "version-pin"}
+// editors offer exactly these; validate refuses anything else. The list is
+// the classifier's own (intent.PinOnlyKinds), so the two cannot drift.
+//
+// action-sha-ref is the one kind that admits nothing by itself: it lets a
+// bare `key: <40-hex>` line follow a `uses:` pin that action-sha accepts in
+// the same pull request, so it only has an effect next to action-sha.
+var PinOnlyKinds = intent.PinOnlyKinds()
 
 func (p PinOnlyException) validate() error {
 	for _, kind := range p.Kinds {

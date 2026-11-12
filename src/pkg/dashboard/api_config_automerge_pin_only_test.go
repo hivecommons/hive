@@ -75,8 +75,13 @@ func TestAutoMergePinOnly_PutGetRoundTrip(t *testing.T) {
 	if !ok || !entry.Enabled || strings.Join(entry.Paths, ",") != ".github/workflows/*.yml,Containerfile" || strings.Join(entry.TrustedAuthors, ",") != "renovate[bot]" {
 		t.Fatalf("human_merge_pin_only did not round-trip: %+v", got.PinOnly)
 	}
-	if strings.Join(got.Kinds, ",") != "action-sha,image-digest,version-pin" {
+	if strings.Join(got.Kinds, ",") != "action-sha,image-digest,version-pin,action-sha-ref" {
 		t.Fatalf("pin_only_kinds = %v", got.Kinds)
+	}
+	// Offering a kind never turns it on: the stored exception still holds
+	// only the kinds that were sent.
+	if strings.Join(entry.Kinds, ",") != "action-sha,image-digest" {
+		t.Fatalf("stored kinds = %v, want only the kinds that were sent", entry.Kinds)
 	}
 
 	// Absent leaves it alone; an empty map clears it, like human_merge_paths.
@@ -91,6 +96,34 @@ func TestAutoMergePinOnly_PutGetRoundTrip(t *testing.T) {
 	}
 	if s.deps.Config.AutoMerge.HumanMergePinOnly != nil {
 		t.Fatalf("an empty map did not clear the exception: %+v", s.deps.Config.AutoMerge.HumanMergePinOnly)
+	}
+}
+
+// action-sha-ref is a kind the endpoint takes like any other: stored when it
+// is sent, and handed to the classifier as part of the exception's spec.
+func TestAutoMergePinOnly_ActionSHARefKindRoundTrips(t *testing.T) {
+	s := autoMergePinOnlyServer(t)
+	body := autoMergePinOnlyEntryBody()
+	body["kinds"] = []string{"action-sha", "action-sha-ref"}
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"human_merge_pin_only": map[string]any{"api": body}}); rec.Code != http.StatusOK {
+		t.Fatalf("put with action-sha-ref: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	policy, ok := s.deps.Config.AutoMerge.HumanMergePinOnlyFor("acme/api")
+	if !ok || strings.Join(policy.Kinds, ",") != "action-sha,action-sha-ref" || strings.Join(policy.Spec().Kinds, ",") != "action-sha,action-sha-ref" {
+		t.Fatalf("stored policy = %+v, enabled %v", policy, ok)
+	}
+	rec := doOwnerGet(s, "/api/config/auto-merge")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET after put: expected 200, got %d", rec.Code)
+	}
+	var got struct {
+		PinOnly map[string]config.PinOnlyException `json:"human_merge_pin_only"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode GET: %v", err)
+	}
+	if kinds := got.PinOnly["acme/api"].Kinds; strings.Join(kinds, ",") != "action-sha,action-sha-ref" {
+		t.Fatalf("GET kinds = %v", kinds)
 	}
 }
 
@@ -261,6 +294,14 @@ func TestAutoMergePinOnlySettingsStaticWiring(t *testing.T) {
 		"markDirty('auto-merge', 'human_merge_pin_only'",
 		"am.human_merge_pin_only",
 		"am.pin_only_kinds",
+		// A kind's box is ticked only when the repository's own exception
+		// lists it, so a kind the server starts offering (action-sha-ref)
+		// is never on by default.
+		"${p.kinds.includes(k) ? ' checked' : ''}",
+		// The list the page falls back to when the server sends none is
+		// the server's own, kind for kind.
+		"am.pin_only_kinds : ['" + strings.Join(config.PinOnlyKinds, "', '") + "'];",
+		"action-sha-ref adds nothing by itself",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("static dashboard missing %q", want)

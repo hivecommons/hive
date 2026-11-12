@@ -1,8 +1,10 @@
 package config
 
 import (
+	"slices"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/intent"
 	"gopkg.in/yaml.v3"
 )
 
@@ -57,6 +59,11 @@ func TestHumanMergePinOnlyInvalidConfig(t *testing.T) {
 		{"blank author", func(p *PinOnlyException) { p.TrustedAuthors = []string{" "} }, false},
 		{"blank path", func(p *PinOnlyException) { p.Paths = []string{""} }, false},
 		{"unknown kind", func(p *PinOnlyException) { p.Kinds = []string{"sha-shaped-text"} }, false},
+		{"action-sha-ref with action-sha", func(p *PinOnlyException) { p.Kinds = []string{"action-sha", "action-sha-ref"} }, true},
+		// Valid but inert: without action-sha no uses: pin is accepted, so
+		// the classifier refuses every bare SHA line (see pkg/intent).
+		{"action-sha-ref alone", func(p *PinOnlyException) { p.Kinds = []string{"action-sha-ref"} }, true},
+		{"near miss of action-sha-ref", func(p *PinOnlyException) { p.Kinds = []string{"action-sha", "action-sha-refs"} }, false},
 		{"disabled unknown kind", func(p *PinOnlyException) { p.Enabled = false; p.Kinds = []string{"anything"} }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,5 +91,22 @@ func TestHumanMergePinOnlyInvalidConfig(t *testing.T) {
 	}
 	if _, ok := a.HumanMergePinOnlyFor("o/r"); ok {
 		t.Fatal("ambiguous policy enabled")
+	}
+}
+
+// The kinds config accepts are the classifier's own list, so a kind the
+// editors offer is never one the classifier refuses, and the reverse.
+func TestPinOnlyKindsMatchClassifier(t *testing.T) {
+	if !slices.Equal(PinOnlyKinds, intent.PinOnlyKinds()) {
+		t.Fatalf("config.PinOnlyKinds = %v, classifier knows %v", PinOnlyKinds, intent.PinOnlyKinds())
+	}
+	if !slices.Contains(PinOnlyKinds, "action-sha-ref") {
+		t.Fatalf("config.PinOnlyKinds = %v, want action-sha-ref offered", PinOnlyKinds)
+	}
+	for _, kind := range PinOnlyKinds {
+		p := PinOnlyException{Enabled: true, Paths: []string{".github/workflows/*.yml"}, Kinds: []string{kind}, TrustedAuthors: []string{"maintainer"}}
+		if err := p.validate(); err != nil {
+			t.Errorf("kind %q refused: %v", kind, err)
+		}
 	}
 }
