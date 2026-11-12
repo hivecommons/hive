@@ -1,0 +1,1 @@
+- Inbox: the panel no longer sits on "Loading inbox…" forever on a hive with no voice connector configured — the Inbox service now always boots, `GET /api/inbox` returns `200` with an empty list, and a non-OK response renders a visible error instead of the loading placeholder.

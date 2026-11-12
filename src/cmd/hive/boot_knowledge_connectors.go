@@ -89,6 +89,10 @@ func newKnowledgeConnectorSyncer(entries []config.KnowledgeConnector, reg *conne
 // bootKnowledgeConnectors builds and starts the connector syncer. A failure
 // is logged and leaves connectors off; it never blocks the rest of boot.
 func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
+	// The Inbox always boots, even with no connectors, so GET /api/inbox
+	// answers 200 with an empty list and the panel renders its empty state
+	// (#17918) instead of waiting forever on a 404.
+	b.bootInbox(knowledge.BaseDir())
 	s, err := newKnowledgeConnectorSyncer(b.cfg.Knowledge.Connectors, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger, b.inboxAfterSync)
 	if err != nil {
 		b.logger.Warn("knowledge connectors disabled", "error", err)
@@ -102,7 +106,6 @@ func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
 		deps.startConnectorSyncer(b.ctx, s)
 	}
 	b.logger.Info("knowledge connectors started", "count", len(b.cfg.Knowledge.Connectors))
-	b.bootInbox(knowledge.BaseDir())
 }
 
 // knowledgeConnectorRuntime exposes the syncer to the dashboard. A nil
