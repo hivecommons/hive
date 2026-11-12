@@ -255,7 +255,7 @@ func TestDependencyBotRedCICommentHonorsTransientTriage(t *testing.T) {
 	}
 	for _, tc := range cases {
 		pr := depBotPR("renovate[bot]", "sha-1", func(p *github.PullRequest) { redCI(p); p.TransientCITriaged = tc.transient })
-		c := dependencyBotRedCIComment(pr)
+		c := dependencyBotRedCIComment(pr, depBotTransientRerun{})
 		if !strings.Contains(c, "Renovate PR has failed `build`, `test`") {
 			t.Errorf("%s: comment = %q, want the failing checks named", tc.name, c)
 		}

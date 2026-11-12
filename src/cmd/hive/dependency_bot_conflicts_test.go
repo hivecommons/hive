@@ -128,17 +128,23 @@ type depBotHarness struct {
 	store  *depBotConflictStore
 	writer *depBotFakeWriter
 	reader *depBotFakeReader
+	// ledger is the escalation ledger the sweep reads for the transient
+	// re-run (dbrLedger): a fresh one per harness, so no test sees another
+	// test's re-run.
+	ledger *escalation.Store
 }
 
 func newDepBotHarness(t *testing.T) *depBotHarness {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "dependency-bot-conflicts.json")
+	ledger, _ := newTestEscalationStore(t)
 	return &depBotHarness{
 		t:      t,
 		path:   path,
 		store:  loadDepBotConflictStore(path),
 		writer: &depBotFakeWriter{},
 		reader: &depBotFakeReader{body: renovateNeverBody},
+		ledger: ledger,
 	}
 }
 
