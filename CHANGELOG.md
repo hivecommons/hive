@@ -11,6 +11,25 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.236.5)
+
+### Fixed
+
+- Avoid false repeated-error self-reports for structured context cancellations, including wrapped cancellations, while retaining local warnings (#17935, #17944, #17949).
+
+## 2026-11-12 (v5.236.4)
+
+### Security
+
+- The per-agent pluk session log under `/var/run/pluk/logs` is now prepared without following symlinks: the open uses `O_NOFOLLOW`, the descriptor is checked to be a regular file, and the owner and shared mode are applied through that descriptor rather than by path. The logs directory is group-writable by every agent uid, so a path-based chmod/chown let one agent widen any `dev`-owned 0600 file (the MITM CA key, the installation-token cache) to the shared group by linking its own session log at it; a planted symlink or FIFO is now replaced by a regular log instead (#17966).
+
+## 2026-11-12 (v5.236.3)
+
+### Fixed
+
+- Avoid repeated fleet reports for canceled in-place adoption access reads while retaining other access errors.
+- Per-agent GitHub App token mints that fail at the transport layer (dial timeout, connection refused, context deadline) now raise a `forge_unreachable` condition instead of `github_app_token_mint_failed`, so an egress outage no longer tells operators to re-check their App permissions.
+
 ## 2026-11-12 (v5.236.2)
 
 ### Fixed

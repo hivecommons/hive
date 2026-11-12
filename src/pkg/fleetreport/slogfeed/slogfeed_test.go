@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -80,7 +81,7 @@ func TestCanceledStageDigestStaysLocal(t *testing.T) {
 	logger.Warn(msg, "error", errors.New("context deadline exceeded"))
 	logger.Warn(msg, "error", errors.New("permission denied"))
 	logger.Warn("another failure", "error", context.Canceled)
-	if len(*seen) != 3 {
+	if len(*seen) != 2 {
 		t.Fatalf("unexpected errors must remain reportable: %+v", *seen)
 	}
 }
@@ -98,7 +99,32 @@ func TestCanceledAdoptionReadStaysInLog(t *testing.T) {
 	logger.Warn(msg, "error", errors.New("permission denied"))
 	logger.Warn(msg, "error", context.DeadlineExceeded)
 	logger.Warn("another operation failed", "error", context.Canceled)
-	if len(*seen) != 3 {
+	if len(*seen) != 2 {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
+func TestStructuredCancellationDoesNotCreateFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "stage labels reconcile failed"
+	for range 10 {
+		logger.Warn(msg, "error", context.Canceled, "items", 6, "writes", 0)
+	}
+	logger.With("error", context.Canceled).Warn(msg)
+	logger.Warn("stage labels: check digest failed", "error", fmt.Errorf("GET checks: %w", context.Canceled))
+	logger.Warn("stage labels: check digest failed", "error", "GET checks: context canceled")
+	logger.With("error", fmt.Errorf("listing PRs: %w", context.Canceled)).Warn(msg, "error", context.Canceled)
+	logger.Warn(msg, "error", &url.Error{Op: "GET", URL: "https://api.github.com", Err: context.Canceled})
+	if len(*seen) != 0 || strings.Count(out.String(), "\n") != 15 {
+		t.Fatalf("observed=%+v logs=%s", *seen, out.String())
+	}
+	logger.Warn(msg, "error", context.DeadlineExceeded)
+	logger.Warn(msg, "error", "permission denied")
+	logger.With("error", context.Canceled).Warn(msg, "error", "permission denied")
+	logger.With("error", fmt.Errorf("listing PRs: %w", context.Canceled)).Warn(msg, "error", "permission denied")
+	logger.Warn(msg, "error", "context canceled: permission denied")
+	logger.Warn(msg, "error", fmt.Errorf("request: %w", context.DeadlineExceeded))
+	if len(*seen) != 6 {
 		t.Fatalf("other failures must remain reportable: %+v", *seen)
 	}
 }
