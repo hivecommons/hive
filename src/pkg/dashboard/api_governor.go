@@ -3369,20 +3369,6 @@ func firstRepoPathSegment(ref string) string {
 // a repo the operator is about to add, and — when it cannot — returns the
 // per-forge App install/authorize URL so the Repos tab can guide the user to
 // grant access before the repo is finally accepted (requirement #3).
-//
-// The check today probes at ORG granularity: DiscoverInstallationID(org) returns
-// ErrNoInstallationForOrg when the App is not installed on the repo's org at all,
-// which is the common "new org the App was never installed on" case and the one
-// that hard-blocks reads and writes. On a positive result we report ok:true.
-//
-// TODO(repo-access-probe): tighten to REPO granularity. An App installed on the
-// org "Only select repositories" may still lack THIS repo (see #2353's
-// write-forbidden case). The deeper probe should mint an installation token and
-// GET /repos/{org}/{repo} (s.deps.GHClient.GetRepo) — a 404/403 there means the
-// installation exists but this repo is not in its selected set, which needs the
-// same "manage installation" URL to add the repo to the selection. That probe is
-// scoped out of this change to keep it focused; the org-level check plus the
-// install workflow already covers the "App not installed on the org" footgun.
 func (s *Server) handleGovernorRepoCheckAccess(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Repo string `json:"repo"`
@@ -3423,6 +3409,18 @@ func (s *Server) handleGovernorRepoCheckAccess(w http.ResponseWriter, r *http.Re
 		jsonError(w, "cannot determine the org for this repo — use org/repo format", http.StatusBadRequest)
 		return
 	}
+	if len(parts) == 1 {
+		parts = []string{org, parts[0]}
+	}
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		jsonError(w, "cannot determine the repository — use org/repo format", http.StatusBadRequest)
+		return
+	}
+	repo := strings.TrimSuffix(parts[1], ".git")
+	if repo == "" {
+		jsonError(w, "cannot determine the repository — use org/repo format", http.StatusBadRequest)
+		return
+	}
 
 	// An App-less hive (advisory-only, no private key) cannot and need not probe
 	// installation access: it never writes. Treat it as "no access check needed"
@@ -3436,13 +3434,13 @@ func (s *Server) handleGovernorRepoCheckAccess(w http.ResponseWriter, r *http.Re
 	if ctx == nil {
 		ctx = r.Context()
 	}
-	if _, err := s.deps.GHAppAuth.DiscoverInstallationID(ctx, org); err != nil {
-		// Not installed on this org (or discovery failed). Surface the correct
-		// per-forge install URL and arm the existing pending-install mechanism so
-		// the banner/recheck plumbing the App-required flow already uses drives
-		// this to completion. AppInstallURL() returns "" for a GHE host whose App
-		// slug was never configured — the UI renders that as a config message
-		// rather than a dead link.
+	installationID, err := s.deps.GHAppAuth.DiscoverInstallationID(ctx, org)
+	if err != nil {
+		if !errors.Is(err, github.ErrNoInstallationForOrg) {
+			s.logger.Warn("repo add: installation discovery failed", "org", org, "error", err)
+			jsonError(w, "could not check GitHub App installation access; please retry", http.StatusServiceUnavailable)
+			return
+		}
 		installURL := ""
 		if s.deps.Config != nil {
 			installURL = s.deps.Config.GitHub.AppInstallURL()
@@ -3457,6 +3455,41 @@ func (s *Server) handleGovernorRepoCheckAccess(w http.ResponseWriter, r *http.Re
 			"org":          org,
 			"installUrl":   installURL,
 			"error":        fmt.Sprintf("the Hive GitHub App is not installed on %q, so it cannot read or write %s. Install/authorize the App for %q, then re-check.", org, ref, org),
+		})
+		return
+	}
+	coverage, err := s.deps.GHAppAuth.InstallationCoverageForID(ctx, installationID)
+	if err != nil {
+		s.logger.Warn("repo add: installation repository coverage failed", "org", org, "repo", repo, "error", err)
+		jsonError(w, "could not check GitHub App repository access; please retry", http.StatusServiceUnavailable)
+		return
+	}
+	if _, found := coverage.Repos[strings.ToLower(org+"/"+repo)]; !found {
+		if coverage.Truncated {
+			covered, err := s.deps.GHAppAuth.RepositoryCoveredByInstallation(ctx, installationID, org, repo)
+			if err != nil {
+				s.logger.Warn("repo add: repository installation probe failed", "org", org, "repo", repo, "error", err)
+				jsonError(w, "could not check GitHub App repository access; please retry", http.StatusServiceUnavailable)
+				return
+			}
+			if covered {
+				okResponse(w, map[string]string{"status": "ok", "org": org})
+				return
+			}
+		}
+		installURL := (github.AppAuthDiagnosis{
+			ExpectedAccount: org,
+			InstallationID:  installationID,
+			APIURL:          s.deps.Config.GitHub.ResolvedAPIURL(),
+		}).InstallationSettingsURL()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":           false,
+			"needsInstall": true,
+			"org":          org,
+			"installUrl":   installURL,
+			"error":        fmt.Sprintf("the Hive GitHub App installation cannot access %s/%s. Add the repository to the installation's repository access, then re-check.", org, repo),
 		})
 		return
 	}

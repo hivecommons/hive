@@ -144,17 +144,24 @@ func parseProxyURL(raw string) (*url.URL, error) {
 	if !strings.Contains(raw, "://") {
 		raw = "http://" + raw
 	}
+	// Errors are logged by the caller; the URL's userinfo is the proxy's
+	// Basic credential, so never echo raw.
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("upstream proxy url %q: %w", raw, err)
+		// *url.Error.Error() repeats the full URL; keep only its inner cause.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return nil, fmt.Errorf("upstream proxy url %q: %w", redactUserinfo(raw), err)
 	}
 	switch u.Scheme {
 	case "http", "https":
 	default:
-		return nil, fmt.Errorf("upstream proxy url %q: scheme %q not supported (http or https)", raw, u.Scheme)
+		return nil, fmt.Errorf("upstream proxy url %q: scheme %q not supported (http or https)", u.Redacted(), u.Scheme)
 	}
 	if u.Hostname() == "" {
-		return nil, fmt.Errorf("upstream proxy url %q: missing host", raw)
+		return nil, fmt.Errorf("upstream proxy url %q: missing host", u.Redacted())
 	}
 	if u.Port() == "" {
 		port := "80"
@@ -164,6 +171,21 @@ func parseProxyURL(raw string) (*url.URL, error) {
 		u.Host = net.JoinHostPort(u.Hostname(), port)
 	}
 	return u, nil
+}
+
+// redactUserinfo masks everything between "://" and the first "@" of raw, for
+// URLs url.Parse rejected and so cannot be redacted structurally.
+func redactUserinfo(raw string) string {
+	i := strings.Index(raw, "://")
+	if i < 0 {
+		return raw
+	}
+	rest := raw[i+3:]
+	at := strings.Index(rest, "@")
+	if at < 0 {
+		return raw
+	}
+	return raw[:i+3] + "xxxxx@" + rest[at+1:]
 }
 
 func envList(getenv func(string) string, name string) ([]string, bool) {

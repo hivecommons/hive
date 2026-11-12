@@ -202,6 +202,13 @@ assert.deepStrictEqual(ids(['hold'], { kind: 'issue', stage: 10 }), ['Release ho
 assert.deepStrictEqual(stageTrackerHumanGateReasons(Object.assign({}, row140, { sentinel_notice: true })), []);
 assert.deepStrictEqual(stageTrackerHumanGateReasons(Object.assign({}, row17480, { modifiers: ['needs-decision', 'draft'] })), []);
 assert.deepStrictEqual(stageTrackerHumanGateReasons({ kind: 'pr', stage: 110, modifiers: ['merged', 'hold'] }), []);
+// hivecommons/hive#17789: a 071 row flagged needs_human on a DCO sign-off
+// ask is the author's move, not a decision; another 071 reason still is.
+const row17780 = { repo: 'hivecommons/hive', number: 17780, kind: 'pr', stage: 71, head: '0e5ccbe', author: 'clubanderson', author_kind: 'human', needs_human: true, reason: 'hive-signoff-attribution' };
+assert.deepStrictEqual(stageTrackerHumanGateReasons(row17780), []);
+assert.deepStrictEqual(stageTrackerHumanGateReasons(Object.assign({}, row17780, { reason: 'dco-missing' })), []);
+assert.deepStrictEqual(stageTrackerHumanGateReasons(Object.assign({}, row17780, { reason: 'label:needs-rebase' })).map(r => r.key), ['decision']);
+assert.deepStrictEqual(stageTrackerHumanGateReasons(Object.assign({}, row17780, { modifiers: ['needs-decision'] })).map(r => r.key), ['decision'], 'an explicit needs-decision still gates');
 assert.ok(!stageTrackerRowHtml({ repo: 'acme/console', number: 1, kind: 'pr', stage: 50 }, stages, ctx).includes('ham-human-gate'), 'a clean row has no gate');
 
 // (d) secondary rows #17463 / #17476 of the shared PR #17480 (primary row

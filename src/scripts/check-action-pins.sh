@@ -17,6 +17,7 @@ set -uo pipefail
 
 DIR="${1:-.github/workflows}"
 fail=0
+RESOLVE_ERR=""
 
 # Every `uses:` on a third-party action must be a 40-hex SHA, not a tag or
 # branch. A moving ref is a supply-chain hole; that part is shape-only and needs
@@ -33,6 +34,29 @@ while IFS= read -r line; do
 # -H keeps the file name in front of the line number even for a single-file
 # DIR, so `${line%%:*}` names the workflow and not its line number.
 done < <(grep -rHnE '^\s*(-\s*)?uses:\s*[a-zA-Z0-9._-]+/' "$DIR" 2>/dev/null | grep -v '^\s*#')
+
+# resolve_pin OWNER/REPO SHA — 0 the commit exists, 1 the API says it does not
+# (422 "No commit found for SHA" or 404 for the repository itself), 2 the API
+# gave no verdict. Only a definite 404/422 may be reported as MISSING-SHA:
+# a rate limit, a 5xx or a dropped connection says nothing about the pin, and
+# calling it "does not exist" sent crux main red on a README-only commit whose
+# setup-go pin was tagged v7.0.0 upstream all along. Transient errors are
+# retried briefly, then reported as UNRESOLVED so a re-run — not a pin bump —
+# is the visible next step.
+resolve_pin() {
+  local repo="$1" sha="$2" err attempt
+  for attempt in 1 2 3; do
+    if err="$(gh api "repos/$repo/commits/$sha" --jq '.sha' 2>&1 >/dev/null)"; then
+      return 0
+    fi
+    case "$err" in
+      *"(HTTP 404)"*|*"(HTTP 422)"*) return 1 ;;
+    esac
+    [ "$attempt" -lt 3 ] && sleep "$attempt"
+  done
+  RESOLVE_ERR="$(printf '%s' "$err" | head -1)"
+  return 2
+}
 
 # Resolve each unique pin. Skipped without a token so the script stays usable
 # offline; CI always has one.
@@ -51,10 +75,17 @@ if command -v gh >/dev/null 2>&1; then
     [ -z "$ref" ] && continue
     sha="${ref#*@}"; path="${ref%@*}"
     repo="$(printf '%s' "$path" | cut -d/ -f1,2)"
-    if ! gh api "repos/$repo/commits/$sha" --jq '.sha' >/dev/null 2>&1; then
-      echo "MISSING-SHA $repo@$sha does not exist in that repository"
-      fail=1
-    fi
+    resolve_pin "$repo" "$sha"
+    case "$?" in
+      1)
+        echo "MISSING-SHA $repo@$sha does not exist in that repository"
+        fail=1
+        ;;
+      2)
+        echo "UNRESOLVED $repo@$sha: the GitHub API gave no verdict after 3 attempts ($RESOLVE_ERR); re-run, this is not a missing pin"
+        fail=1
+        ;;
+    esac
   done <<<"$pins"
 fi
 

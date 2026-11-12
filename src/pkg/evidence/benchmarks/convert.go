@@ -27,6 +27,9 @@ type Options struct {
 	// SandboxRuntime resolves the runtime an agent's kicks ran under
 	// ("none" when sandboxing is off). nil means "none" for every agent.
 	SandboxRuntime func(agent string) string
+	// CostLookup attributes kick spend to a PR (author: the PR and the issues
+	// it closed; reviewer: the PR). nil leaves cost.basis "unknown".
+	CostLookup CostLookup
 }
 
 // Roles.
@@ -133,6 +136,7 @@ func Convert(bundles []*evidence.Bundle, opts Options) []Record {
 			rec.Model = Model{Provider: providerOf(a.Model), Name: strings.TrimSpace(a.Model)}
 			rec.SandboxRuntime = runtimeOf(opts, a, name)
 			rec.Task.Kind = kindOf(a.TaskKind, name)
+			rec.Cost = costOf(opts.CostLookup, authorCostRefs(latest))
 			out = append(out, rec)
 		}
 		if backend, model, ok := dominantReviewer(latest.Verdicts); ok {
@@ -142,11 +146,55 @@ func Convert(bundles []*evidence.Bundle, opts Options) []Record {
 			rec.Model = Model{Provider: providerOf(model), Name: model}
 			rec.SandboxRuntime = SandboxRuntimeNone
 			rec.Task.Kind = kindPRReview
+			rec.Cost = costOf(opts.CostLookup, prCostRefs(latest.Repo, latest.Number, costKindPR))
 			out = append(out, rec)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+const (
+	costKindIssue = "issue"
+	costKindPR    = "pr"
+)
+
+// prCostRefs spells one ref both ways the kick path records it.
+func prCostRefs(repo string, number int, kind string) []CostRef {
+	full := repo + "#" + strconv.Itoa(number)
+	refs := []CostRef{{Ref: full, Kind: kind}}
+	if _, short, ok := strings.Cut(repo, "/"); ok && short != "" {
+		refs = append(refs, CostRef{Ref: short + "#" + strconv.Itoa(number), Kind: kind})
+	}
+	return refs
+}
+
+// authorCostRefs lists the refs an authoring kick may have been launched
+// against: the PR itself and every same-repo issue it closed.
+func authorCostRefs(b *evidence.Bundle) []CostRef {
+	refs := prCostRefs(b.Repo, b.Number, costKindIssue)
+	for _, c := range b.IssueClosures {
+		repo := c.Repo
+		if repo == "" {
+			repo = b.Repo
+		}
+		if c.Issue > 0 {
+			refs = append(refs, prCostRefs(repo, c.Issue, costKindIssue)...)
+		}
+	}
+	return refs
+}
+
+func costOf(lookup CostLookup, refs []CostRef) Cost {
+	if lookup != nil {
+		if c, ok := lookup(refs); ok && c.USDEst != nil && *c.USDEst > 0 {
+			if c.Basis == "" {
+				c.Basis = CostBasisTokensXPricing
+			}
+			return c
+		}
+	}
+	return Cost{Basis: CostBasisUnknown}
 }
 
 // maxACMM is the highest ACMM level the schema accepts.

@@ -63,7 +63,7 @@ func (s *Server) HubActivitySnapshot(ctx context.Context) (hubactivity.Snapshot,
 	if status == nil {
 		return hubactivity.Snapshot{}, false
 	}
-	body, _, _, _ := s.stageTrackerPayloadFrom(ctx, status, time.Now().UTC(), false)
+	body, _, _, _ := s.stageTrackerPayloadFrom(ctx, status, time.Now().UTC(), false, true)
 	if body == nil {
 		return hubactivity.Snapshot{}, false
 	}

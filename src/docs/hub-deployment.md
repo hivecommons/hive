@@ -103,6 +103,8 @@ For push-reported clusters where the hub cannot run `kubectl`, follow the manife
 
 ### Push-reported cluster entries
 
+`/data/saas/clusters.json` also accepts per-cluster network overrides for hives it provisions: `upstream_proxy` (`{url, hosts[], no_proxy[]}`, a CONNECT forward proxy, injected as `HIVE_UPSTREAM_PROXY_*` env) and `host_aliases` (`[{ip, hostnames[]}]`, rendered as Pod `hostAliases` for a GHE reachable only via a TLS reverse proxy on a fixed IP; existing hives are converged by a rate-limited reconcile sweep). See [network-requirements.md](network-requirements.md).
+
 `/data/saas/clusters.json` keeps the historical compatibility key `pull_only`. Set `pull_only: true` when the hub cannot reach that cluster's Kubernetes API and the spokes must dial out to the hub instead. Operator-facing surfaces call these clusters **push-reported** because their node stats, dashboard token proofs, and liveness arrive in spoke heartbeats pushed from the cluster.
 
 A push-reported entry still needs its stable identity (for example `id`, `name`, `domain`, app/forge fields), but it does not need a usable `kubeconfig_path` for hub-side reads. If node stats are absent, upgrade the spokes to a build that sends heartbeat cluster health and then check the error reason shown in the Clusters panel.

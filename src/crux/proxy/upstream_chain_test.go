@@ -23,6 +23,7 @@ type testConnectProxy struct {
 	ln      net.Listener
 	targets atomic.Int32
 	last    atomic.Value
+	refuse  atomic.Bool
 }
 
 func startTestConnectProxy(t *testing.T) *testConnectProxy {
@@ -55,6 +56,10 @@ func (cp *testConnectProxy) serve(c net.Conn) {
 	}
 	cp.targets.Add(1)
 	cp.last.Store(req.Host)
+	if cp.refuse.Load() {
+		_, _ = io.WriteString(c, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+		return
+	}
 	up, err := net.DialTimeout("tcp", req.Host, 5*time.Second)
 	if err != nil {
 		_, _ = io.WriteString(c, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
@@ -240,7 +245,8 @@ func TestDialUpstreamRawChainsAndGuardsPrivateLiterals(t *testing.T) {
 func TestDialUpstreamTLSSurfacesProxyRefusal(t *testing.T) {
 	cp := startTestConnectProxy(t)
 	p := newChainedTestProxy(t, cp, []string{"ghe.corp.invalid"})
-	// The test proxy dials the target itself; an unresolvable name yields 502.
+	// The test proxy is told to refuse so the test does not depend on DNS.
+	cp.refuse.Store(true)
 	_, err := p.dialUpstreamTLS("ghe.corp.invalid:443", "ghe.corp.invalid", 3*time.Second)
 	if err == nil || !strings.Contains(err.Error(), "refused") {
 		t.Fatalf("err = %v, want CONNECT refusal", err)

@@ -397,6 +397,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		if !ok {
 			p.logger.Warn("inference request from unidentified caller refused",
 				p.translatorRefusalAttrs(r)...)
+			setTranslatorOutcome(r.Context(), outcomeUnidentifiedCaller)
 			http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"caller could not be identified"}}`, http.StatusUnauthorized)
 			return
 		}
@@ -412,6 +413,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		route := p.inference.Get(agentName)
 		if route == nil {
 			p.logger.Warn("inference no route", "agent", agentName, "reason", p.inference.MissReason(agentName))
+			setTranslatorOutcome(r.Context(), outcomeNoRoute)
 			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"no inference route for agent"}}`, http.StatusBadGateway)
 			return
 		}
@@ -585,7 +587,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		_, _ = w.Write(translated)
 	})
 
-	return mux
+	return instrumentTranslator(mux)
 }
 
 // StartInferenceTranslator runs the Anthropic-compatible inference translator

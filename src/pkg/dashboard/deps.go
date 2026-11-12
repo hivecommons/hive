@@ -28,6 +28,7 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/nous"
@@ -133,6 +134,9 @@ type Dependencies struct {
 	// KnowledgePublish is the running knowledge.publish mirror; nil when
 	// publishing is not configured or failed to start.
 	KnowledgePublish KnowledgePublishRuntime
+	// Inbox is the voice-source triage service; nil when no voice
+	// connector is configured.
+	Inbox *inbox.Service
 	// RotationMgr is the provider-rotation headroom reporter (RFC #3958). Nil
 	// when rotation is disabled; the headroom endpoint then reports
 	// enabled=false.

@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -904,5 +905,25 @@ func TestNoAuth_AllEndpointsAccessible(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 when auth is not configured, got %d", resp.StatusCode)
+	}
+}
+
+func TestBroadcast_SlowClientDropsWarnOncePerInterval(t *testing.T) {
+	var buf bytes.Buffer
+	s := newTestServer()
+	s.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	full := make(chan []byte, 1)
+	full <- []byte("old-data")
+	s.sseMu.Lock()
+	s.sseClients[full] = struct{}{}
+	s.sseMu.Unlock()
+
+	for i := 0; i < 20; i++ {
+		s.broadcastFrame("data: {}\n\n")
+	}
+
+	if got := strings.Count(buf.String(), "level=WARN"); got != 1 {
+		t.Errorf("WARN lines: want 1, got %d\n%s", got, buf.String())
 	}
 }

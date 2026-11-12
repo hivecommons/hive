@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/egressmark"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 )
@@ -356,7 +357,7 @@ func kubernetesSelfUpgradeRBACPrecheck() error {
 	}
 	client := &http.Client{
 		Timeout:   selfUpgradePrecheckTimeout,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}},
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}, DialContext: egressmark.Dialer(0).DialContext},
 	}
 	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, selfUpgradeDeploymentName)
 	if err := kubernetesSelfUpgradeRequest(client, http.MethodGet, path, nil, token); err != nil {

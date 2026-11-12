@@ -99,11 +99,15 @@
        by the Go server under the same /terminal prefix so openTerminal()'s
        handoff code and assertion cookie apply unchanged. openshell agents
        (#17645) run each kick in a gateway-owned sandbox and use the same
-       viewer, which streams the sandbox's log instead. */
+       viewer, which streams the sandbox's log instead; substrate agents
+       (#17777) run each kick in a Substrate actor and the viewer streams the
+       kick's output from the actor's bridge. */
     const JOB_SANDBOX_RUNTIME = 'job';
     const OPENSHELL_SANDBOX_RUNTIME = 'openshell';
+    const SUBSTRATE_SANDBOX_RUNTIME = 'substrate';
     function sandboxRuntimeWithoutTmux(sandboxRuntime) {
-      return sandboxRuntime === JOB_SANDBOX_RUNTIME || sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME;
+      return sandboxRuntime === JOB_SANDBOX_RUNTIME || sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME
+        || sandboxRuntime === SUBSTRATE_SANDBOX_RUNTIME;
     }
     function agentUsesJobTerminal(a) {
       return !!a && sandboxRuntimeWithoutTmux(a.sandboxRuntime);
@@ -119,6 +123,9 @@
     }
     function terminalLinkTitle(a, tmuxTitle) {
       if (!agentUsesJobTerminal(a)) return tmuxTitle;
+      if (a.sandboxRuntime === SUBSTRATE_SANDBOX_RUNTIME) {
+        return 'Stream this agent\'s kick output and Substrate actor state (read-only: it runs in a Substrate actor, not a tmux session)';
+      }
       return a.sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME
         ? 'Stream the log of this agent\'s OpenShell sandbox (read-only: it runs in a gateway-owned sandbox, not a tmux session)'
         : 'Stream the log of this agent\'s sandbox Job pod (read-only: it runs as a Kubernetes Job, not a tmux session)';
@@ -859,6 +866,12 @@
        tmux session or in-pod process to be "down". Their health comes from
        the server-side sandboxRun verdict (last run + cadence), never from
        state !== 'running'. */
+    /* Preflight findings for this agent's sandbox runtime (openshell or
+       substrate), computed at boot/reload and carried as sandbox_warnings. */
+    function agentSandboxWarningsHtml(a) {
+      const ws = a && Array.isArray(a.sandbox_warnings) ? a.sandbox_warnings : [];
+      return ws.map(w => `<div class="agent-error" title="${esc(w)}">⚠ ${esc(w)}</div>`).join('');
+    }
     function agentSandboxRun(a) {
       return (a && a.sandboxed && a.sandboxRun && a.sandboxRun.health) ? a.sandboxRun : null;
     }
@@ -1098,6 +1111,7 @@
             const prefix = retrying ? 'retrying: ' : '';
             return `<div class="agent-error" title="${esc(a.lastError)}">⚠ ${esc(prefix)}${esc(a.lastError)}</div>`;
           })()}
+          ${agentSandboxWarningsHtml(a)}
           <div class="agent-card-details" data-agent-resize-y data-agent="${esc(a.name)}"${layoutHeightAttr}>
           <div class="agent-field"><span class="label" title="${isInferenceBackendName(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot). Pin to prevent governor from switching it.'}">${isInferenceBackendName(a.cli) ? 'method' : 'cli'}</span><span class="value">${cliChip(a.cli, a.pinnedBoth || a.pinnedCli, a.name)}${(a.pinnedBoth || a.pinnedCli) ? '' : ` <button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" title="Pin CLI — lock current backend">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="The LLM model powering this agent. Governor may change it based on budget or mode. Pin to lock.">model</span><span class="value">${modelChip(a.model, a.govReason, a.pinnedBoth || a.pinnedModel, a.name)}${(a.pinnedBoth || a.pinnedModel) ? '' : ` <button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" title="Pin model — lock current model">📌</button>`}</span></div>

@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // bootDashboardAPIDeps are the long-lived effects bootDashboardAPI performs
@@ -22,13 +24,12 @@ import (
 type bootDashboardAPIDeps struct {
 	registerAPI          func(srv *dashboard.Server, d *dashboard.Dependencies)
 	setForgeAppInventory func(srv *dashboard.Server, fn func() dashboard.ForgeAppInventory)
+	classifyRepoCoverage func(context.Context, *github.AppAuth, string, []string, *slog.Logger) (bool, string, github.AppAuthState)
 	// startInstallDiscovery runs tryDiscover once immediately and then every
 	// githubAppDiscoveryInterval until ctx is done.
 	startInstallDiscovery func(ctx context.Context, tryDiscover func())
 	// startSelfHeal runs heal every githubAppSelfHealInterval until ctx is
-	// done. It does NOT run immediately: boot has just applied the classified
-	// App state and the first tick is cheap because heal no-ops while the
-	// banner is not showing.
+	// done. It does NOT run immediately: boot has just checked coverage.
 	startSelfHeal         func(ctx context.Context, heal func())
 	startInceptionWatcher func(ctx context.Context, w *dashboard.InceptionWatcher)
 }
@@ -39,15 +40,13 @@ type bootDashboardAPIDeps struct {
 // requiring anyone to paste it.
 const githubAppDiscoveryInterval = 5 * time.Minute
 
-// githubAppSelfHealInterval mirrors the heartbeat cadence so a stale banner
-// clears within one heartbeat window of the app becoming healthy, without
-// adding meaningful GitHub API load (the check only runs while the banner is
-// actually showing).
+// githubAppSelfHealInterval paces both coverage checks and banner healing.
 const githubAppSelfHealInterval = 2 * time.Minute
 
 func defaultBootDashboardAPIDeps() bootDashboardAPIDeps {
 	return bootDashboardAPIDeps{
-		registerAPI: func(srv *dashboard.Server, d *dashboard.Dependencies) { srv.RegisterAPI(d) },
+		classifyRepoCoverage: classifyGitHubAppRepoCoverage,
+		registerAPI:          func(srv *dashboard.Server, d *dashboard.Dependencies) { srv.RegisterAPI(d) },
 		setForgeAppInventory: func(srv *dashboard.Server, fn func() dashboard.ForgeAppInventory) {
 			srv.SetForgeAppInventoryFn(fn)
 		},

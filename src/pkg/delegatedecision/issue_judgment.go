@@ -94,20 +94,24 @@ func ParseSelfReport(title, body string) (SelfReport, bool) {
 // constants (pinned by TestSelfreportOpsClassesMatchFleetReport) without
 // importing that package's dependency tree into this leaf.
 var selfreportOpsRemedies = map[string]string{
-	"agent_login_required":          "re-authenticate the agent provider (run the provider's login on the spoke so the agent CLI has a current session)",
-	"inference_auth_failed":         "renew the inference credentials or API key the spoke's agents use",
-	"data_disk_pressure":            "free or grow the data disk on the spoke",
-	"github_app_token_mint_failed":  "check the GitHub App key and installation the spoke is configured with",
-	"github_app_not_installed":      "install the GitHub App on the organisation or repositories the spoke serves",
-	"github_app_repo_not_covered":   "add the repository to the GitHub App installation the spoke uses",
-	"proxy_connect_dial_failed":     "restore the spoke's outbound proxy or network path",
-	"proxy_tls_handshake_failed":    "fix the spoke's proxy TLS trust (certificate or CA bundle)",
-	"crux_runtime_unavailable":      "restart or re-deploy the crux runtime sidecar on the spoke",
-	"model_discovery_degraded":      "check the model endpoint and credentials the spoke's provider is configured with",
-	"inference_upstream_error":      "check the inference endpoint the spoke's provider points at",
-	"inference_caller_unidentified": "set the inference caller identity in the spoke's configuration",
-	"label_provisioning_failed":     "grant the spoke's GitHub identity the label-admin permission it lacks",
-	"shared_ci_rerun_forbidden":     "grant the spoke's GitHub identity the actions permission needed to re-run shared CI",
+	"agent_login_required":                   "re-authenticate the agent provider (run the provider's login on the spoke so the agent CLI has a current session)",
+	"inference_auth_failed":                  "renew the inference credentials or API key the spoke's agents use",
+	"data_disk_pressure":                     "free or grow the data disk on the spoke",
+	"github_app_token_mint_failed":           "check the GitHub App key and installation the spoke is configured with",
+	"forge_unreachable":                      "the GitHub host did not answer from the pod — check cluster egress, DNS and any proxy or hostAliases in front of it, not the App",
+	"github_app_not_installed":               "install the GitHub App on the organisation or repositories the spoke serves",
+	"github_app_repo_not_covered":            "add the repository to the GitHub App installation the spoke uses",
+	"github_app_alerts_permission_missing":   "grant Dependabot alerts read-only in the GitHub App settings and re-accept the permission on its installation",
+	"github_app_statuses_permission_missing": "grant Commit statuses read & write in the GitHub App settings and re-accept the permission on its installation",
+	"proxy_connect_dial_failed":              "restore the spoke's outbound proxy or network path",
+	"proxy_plain_forward_failed":             "check the requested HTTP host, DNS and outbound network path on the spoke",
+	"proxy_tls_handshake_failed":             "fix the spoke's proxy TLS trust (certificate or CA bundle)",
+	"crux_runtime_unavailable":               "restart or re-deploy the crux runtime sidecar on the spoke",
+	"model_discovery_degraded":               "check the model endpoint and credentials the spoke's provider is configured with",
+	"inference_upstream_error":               "check the inference endpoint the spoke's provider points at",
+	"inference_caller_unidentified":          "set the inference caller identity in the spoke's configuration",
+	"label_provisioning_failed":              "grant the spoke's GitHub identity the label-admin permission it lacks",
+	"shared_ci_rerun_forbidden":              "grant the spoke's GitHub identity the actions permission needed to re-run shared CI",
 }
 
 // selfreportOpsClass reports whether a self-report class is an operator's to

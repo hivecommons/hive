@@ -581,6 +581,10 @@
       "OnError": ""
     }
   },
+  "inbox": {
+    "spek": {},
+    "dibs": {}
+  },
   "Hub": {
     "Enabled": false,
     "URL": "https://hive.hivecommons.dev",

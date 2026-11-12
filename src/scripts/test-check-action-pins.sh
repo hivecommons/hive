@@ -48,14 +48,19 @@ assert_eq() {
 # Fake `gh`: only `gh api repos/<owner>/<repo>/commits/<sha> --jq .sha` is
 # ever called by the check. Every call is appended to $FAKE_GH_LOG; a call
 # whose SHA equals $FAKE_GH_MISSING fails like the real API does for a commit
-# that does not exist in the repository.
+# that does not exist in the repository (HTTP 422 on stderr), and one whose
+# SHA equals $FAKE_GH_TRANSIENT fails like a rate limit (HTTP 403), which is
+# not a verdict on the pin.
 BIN="$TMP/bin"
 mkdir -p "$BIN"
 cat >"$BIN/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${FAKE_GH_LOG:?}"
 case "$2" in
-  *"/commits/${FAKE_GH_MISSING:-no-such-sha}") exit 1 ;;
+  *"/commits/${FAKE_GH_MISSING:-no-such-sha}")
+    echo "gh: No commit found for SHA: ${2##*/} (HTTP 422)" >&2; exit 1 ;;
+  *"/commits/${FAKE_GH_TRANSIENT:-no-such-sha}")
+    echo "gh: API rate limit exceeded for installation ID 1 (HTTP 403)" >&2; exit 1 ;;
 esac
 printf '%s\n' "${2##*/}"
 exit 0
@@ -183,7 +188,8 @@ cat >"$BIN/gh" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"\${FAKE_GH_LOG:?}"
 case "\$2" in
-  */commits/\${FAKE_GH_MISSING:-no-such-sha}|*/commits/$FAKE_SECOND_MISSING) exit 1 ;;
+  */commits/\${FAKE_GH_MISSING:-no-such-sha}|*/commits/$FAKE_SECOND_MISSING)
+    echo "gh: No commit found for SHA: \${2##*/} (HTTP 422)" >&2; exit 1 ;;
 esac
 printf '%s\n' "\${2##*/}"
 exit 0
@@ -199,11 +205,32 @@ cat >"$BIN/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${FAKE_GH_LOG:?}"
 case "$2" in
-  *"/commits/${FAKE_GH_MISSING:-no-such-sha}") exit 1 ;;
+  *"/commits/${FAKE_GH_MISSING:-no-such-sha}")
+    echo "gh: No commit found for SHA: ${2##*/} (HTTP 422)" >&2; exit 1 ;;
+  *"/commits/${FAKE_GH_TRANSIENT:-no-such-sha}")
+    echo "gh: API rate limit exceeded for installation ID 1 (HTTP 403)" >&2; exit 1 ;;
 esac
 printf '%s\n' "${2##*/}"
 exit 0
 SH
+
+echo "case: an API error that is not 404/422 is not a missing SHA"
+D="$TMP/transient"
+workflow "$D" ci.yml <<EOF
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@$SHA_A
+      - uses: actions/setup-go@$SHA_B # v7.0.0
+EOF
+run_check transient FAKE_GH_TRANSIENT="$SHA_B" -- "$D"
+assert_exit 1 "$RC" "an unresolved pin still fails closed"
+assert_not_contains "$OUT" "MISSING-SHA" "a rate limit is not reported as a missing SHA"
+assert_contains "$OUT" "UNRESOLVED actions/setup-go@$SHA_B" "reports the pin as UNRESOLVED instead"
+assert_contains "$OUT" "(HTTP 403)" "quotes the API error"
+assert_contains "$OUT" "action pin check FAILED" "prints the failure banner"
+assert_eq 3 "$(grep -c "commits/$SHA_B" <<<"$GH_CALLS")" "the transient failure is retried three times"
+assert_eq 1 "$(grep -c "commits/$SHA_A" <<<"$GH_CALLS")" "a pin that resolves first time is not retried"
 
 echo "case: a directory with no third-party actions passes with gh present"
 D="$TMP/nopins"

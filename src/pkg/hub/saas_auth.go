@@ -8,11 +8,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/net/publicsuffix"
+
+	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
 func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -691,11 +694,81 @@ var (
 	ghTokenCache   = map[string]ghTokenCacheEntry{}
 )
 
-const ghTokenCacheTTL = 5 * time.Minute
+const (
+	ghTokenCacheMaxEntries = 10_000
+	ghTokenCacheTTL        = 5 * time.Minute
+	// ghTokenNegativeTTL bounds how long a rejected bearer token (401/403,
+	// including a rate-limited one) is remembered without re-probing
+	// GET /user. Without it every request carrying a dead or exhausted token
+	// re-hit GitHub, charging the token owner's own core quota while it was
+	// already at zero and stretching the outage.
+	ghTokenNegativeTTL = 60 * time.Second
+	// ghTokenNegativeMaxTTL caps how far a 403's X-RateLimit-Reset may push
+	// the negative entry so a skewed clock cannot lock a user out for long.
+	ghTokenNegativeMaxTTL  = 15 * time.Minute
+	ghTokenValidateTimeout = 10 * time.Second
+	ghTokenValidateCaller  = "agent:hub-bearer-validate"
+)
 
 type ghTokenCacheEntry struct {
 	username  string
 	expiresAt time.Time
+}
+
+// cacheGHToken bounds both positive and negative entries. At capacity, expired
+// entries are reclaimed; if all entries are live, new tokens are not cached.
+func cacheGHToken(token string, entry ghTokenCacheEntry) {
+	ghTokenCacheMu.Lock()
+	defer ghTokenCacheMu.Unlock()
+
+	if len(ghTokenCache) >= ghTokenCacheMaxEntries {
+		now := time.Now()
+		for key, cached := range ghTokenCache {
+			if !now.Before(cached.expiresAt) {
+				delete(ghTokenCache, key)
+			}
+		}
+		if len(ghTokenCache) >= ghTokenCacheMaxEntries {
+			if _, exists := ghTokenCache[token]; !exists {
+				return
+			}
+		}
+	}
+	ghTokenCache[token] = entry
+}
+
+// ghTokenValidateHTTPClient probes GET /user for bearer validation. It is a
+// plain client on purpose: the probe carries the CALLER's token, and routing
+// it through pkg/github's shared transport chain would let one exhausted user
+// bucket push the hub's own App traffic into rate-limit caution. The probe is
+// still recorded in REST accounting (see validateGitHubToken).
+func ghTokenValidateHTTPClient() *http.Client {
+	return &http.Client{Timeout: ghTokenValidateTimeout}
+}
+
+// ghTokenNegativeExpiry picks the expiry of a negative cache entry for a
+// rejected probe: the default short TTL, extended up to ghTokenNegativeMaxTTL
+// when GitHub says the token is rate-limited until X-RateLimit-Reset.
+func ghTokenNegativeExpiry(status int, hdr http.Header, now time.Time) time.Time {
+	exp := now.Add(ghTokenNegativeTTL)
+	if status != http.StatusForbidden && status != http.StatusTooManyRequests {
+		return exp
+	}
+	if hdr.Get("X-RateLimit-Remaining") != "0" {
+		return exp
+	}
+	reset, err := strconv.ParseInt(strings.TrimSpace(hdr.Get("X-RateLimit-Reset")), 10, 64)
+	if err != nil {
+		return exp
+	}
+	until := time.Unix(reset, 0)
+	if until.After(now.Add(ghTokenNegativeMaxTTL)) {
+		until = now.Add(ghTokenNegativeMaxTTL)
+	}
+	if until.After(exp) {
+		exp = until
+	}
+	return exp
 }
 
 func (s *HubServer) validateGitHubToken(token string) string {
@@ -710,19 +783,29 @@ func (s *HubServer) validateGitHubToken(token string) string {
 	}
 	ghTokenCacheMu.RUnlock()
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := ghTokenValidateHTTPClient()
 	// Hub always validates tokens against github.com (the hub is a SaaS service).
-	req, err := http.NewRequest("GET", defaultGHUserURL, nil)
+	req, err := http.NewRequest(http.MethodGet, defaultGHUserURL, nil)
 	if err != nil {
 		return ""
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode != 200 {
+	if err != nil {
 		return ""
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Attributed under the pass-through ("agent:") caller prefix: visible in
+	// /api/gh-rate-limits, but the caller's rate-limit headers never overwrite
+	// the hub's own core-bucket snapshot.
+	hgithub.RecordRESTRequest(ghTokenValidateCaller, req.Method, req.URL.Path, resp.StatusCode, resp.Header)
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+			cacheGHToken(token, ghTokenCacheEntry{expiresAt: ghTokenNegativeExpiry(resp.StatusCode, resp.Header, time.Now())})
+		}
+		return ""
+	}
 	var user struct {
 		Login string `json:"login"`
 	}
@@ -730,9 +813,7 @@ func (s *HubServer) validateGitHubToken(token string) string {
 		return ""
 	}
 
-	ghTokenCacheMu.Lock()
-	ghTokenCache[token] = ghTokenCacheEntry{username: user.Login, expiresAt: time.Now().Add(ghTokenCacheTTL)}
-	ghTokenCacheMu.Unlock()
+	cacheGHToken(token, ghTokenCacheEntry{username: user.Login, expiresAt: time.Now().Add(ghTokenCacheTTL)})
 
 	return user.Login
 }

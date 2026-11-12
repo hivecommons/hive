@@ -122,10 +122,37 @@ func HeartbeatKickInterval(govState governor.State, name string, proc *crux.Proc
 		return 0
 	}
 	cadence, ok := govState.Cadences[name]
-	if !ok || cadence.Paused || cadence.Interval <= 0 {
+	if !ok || cadence.Paused {
+		return 0
+	}
+	if cadence.Schedule != "" && cadence.Schedule.Mode() != config.CadenceModeInterval {
+		return scheduledKickGap(cadence, govState.LastKick[name], time.Now())
+	}
+	if cadence.Interval <= 0 {
 		return 0
 	}
 	return cadence.Interval
+}
+
+// scheduledKickGap is the cadence evidence for a times/cron agent: the gap
+// from the slot it last fired at to the slot it fires at next. The hub's
+// idle rule compares pane quiet against this (plus slack), so without it a
+// "09:00,12:00,15:00 weekdays" agent reads as idle-with-work every evening
+// and all weekend — exactly when it is supposed to be quiet. With no fired
+// slot yet the gap runs from now to the first slot. Zero means no evidence.
+func scheduledKickGap(cadence governor.AgentCadence, lastKick, now time.Time) time.Duration {
+	base := cadence.LastOccurrence
+	if base.IsZero() {
+		base = lastKick
+	}
+	if base.IsZero() || base.After(now) {
+		base = now
+	}
+	next, ok := cadence.Schedule.NextAfter(base)
+	if !ok || !next.After(base) {
+		return 0
+	}
+	return next.Sub(base)
 }
 
 func QuotaExhaustedAgentCount(agents []AgentSummary) int {

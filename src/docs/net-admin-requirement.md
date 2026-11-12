@@ -127,6 +127,8 @@ match no traffic even mid-probe) and is unconditionally torn down:
 | `xt_REDIRECT` | the `REDIRECT` target that forces `:443` through the proxy | **FATAL, exit 77** |
 | `xt_owner` | owner-UID self-exemption (`-m owner`) | WARN only — optional by design; OpenShift/OVN runs without it and the mark exemption carries the proxy's egress |
 
+Without `xt_owner` the mark is the only exemption, so every outbound `:443` dial the hive makes for itself must carry it. The proxy's upstream dials and the in-cluster Kubernetes API clients (self-upgrade, startup-probe backfill, node metrics, ingress probes, kubejob) share `crux/egressmark.Dialer`; an unmarked dial to `kubernetes.default.svc` would be redirected into the proxy and closed by its private-range forward guard (`EOF`), which is how IBM Cloud IKS spokes failed every self-upgrade with `reading startup probe before upgrade … EOF`.
+
 When a required module is missing, the FATAL names it explicitly:
 
 ```

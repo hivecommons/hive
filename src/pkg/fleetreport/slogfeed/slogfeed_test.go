@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -61,6 +62,89 @@ func TestHandlerSkipsBenignAndExplicitClasses(t *testing.T) {
 	logger.Warn("")
 	if len(*seen) != 0 {
 		t.Fatalf("observed = %+v, want none", *seen)
+	}
+}
+
+func TestSignedCommitOwnershipSkipStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "signed-commit reconciler: skipped; the PR keeps an unsigned commit"
+	for range 6 {
+		logger.Warn(msg, "repo", "o/r", "pr", 1403, "reason", "commit is authored by another account")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected ownership skips produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), msg); n != 6 || !strings.Contains(out.String(), "another account") {
+		t.Fatalf("local logs lost the warning or its reason: %s", out.String())
+	}
+	logger.Warn("signed-commit reconciler: listing PR commits failed", "err", "unexpected failure")
+	logger.Error(msg, "reason", "unexpected failure")
+	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated || (*seen)[1].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
+func TestCanceledStageDigestStaysLocal(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "stage labels: check digest failed"
+	for range 6 {
+		logger.Warn(msg, "repo", "utah", "pr", 1194, "error", context.Canceled)
+	}
+	logger.Warn(msg, "error", errors.New("GET checks: context canceled"))
+	if len(*seen) != 0 {
+		t.Fatalf("canceled reads produced fleet observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 7 {
+		t.Fatalf("local log records = %d, want 7", n)
+	}
+	logger.Warn(msg, "error", errors.New("context deadline exceeded"))
+	logger.Warn(msg, "error", errors.New("permission denied"))
+	logger.Warn("another failure", "error", context.Canceled)
+	if len(*seen) != 2 {
+		t.Fatalf("unexpected errors must remain reportable: %+v", *seen)
+	}
+}
+
+func TestCanceledAdoptionReadStaysInLog(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "stage labels: could not read maintainer_can_modify; keeping in-place adoption this sweep"
+	for range 8 {
+		logger.Warn(msg, "repo", "server", "pr", 649, "error", &url.Error{Op: "GET", URL: "https://api.github.com", Err: context.Canceled})
+	}
+	logger.Warn(msg, "error", "context canceled")
+	if len(*seen) != 0 || strings.Count(out.String(), "\n") != 9 {
+		t.Fatalf("canceled reads: observations=%+v, log=%s", *seen, out.String())
+	}
+	logger.Warn(msg, "error", errors.New("permission denied"))
+	logger.Warn(msg, "error", context.DeadlineExceeded)
+	logger.Warn("another operation failed", "error", context.Canceled)
+	if len(*seen) != 2 {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
+func TestStructuredCancellationDoesNotCreateFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "stage labels reconcile failed"
+	for range 10 {
+		logger.Warn(msg, "error", context.Canceled, "items", 6, "writes", 0)
+	}
+	logger.With("error", context.Canceled).Warn(msg)
+	logger.Warn("stage labels: check digest failed", "error", fmt.Errorf("GET checks: %w", context.Canceled))
+	logger.Warn("stage labels: check digest failed", "error", "GET checks: context canceled")
+	logger.With("error", fmt.Errorf("listing PRs: %w", context.Canceled)).Warn(msg, "error", context.Canceled)
+	logger.Warn(msg, "error", &url.Error{Op: "GET", URL: "https://api.github.com", Err: context.Canceled})
+	if len(*seen) != 0 || strings.Count(out.String(), "\n") != 15 {
+		t.Fatalf("observed=%+v logs=%s", *seen, out.String())
+	}
+	logger.Warn(msg, "error", context.DeadlineExceeded)
+	logger.Warn(msg, "error", "permission denied")
+	logger.With("error", context.Canceled).Warn(msg, "error", "permission denied")
+	logger.With("error", fmt.Errorf("listing PRs: %w", context.Canceled)).Warn(msg, "error", "permission denied")
+	logger.Warn(msg, "error", "context canceled: permission denied")
+	logger.Warn(msg, "error", fmt.Errorf("request: %w", context.DeadlineExceeded))
+	if len(*seen) != 6 {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
 	}
 }
 
@@ -359,6 +443,26 @@ func TestRequiredChecksOverrideMismatchLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestMissingAlertsPermissionReportsOperatorCondition(t *testing.T) {
+	now := time.Date(2026, 11, 12, 15, 40, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "scoped token mint with vulnerability_alerts:read failed; retrying without it — the sec-check Dependabot alerts call will 403 until the App grants Dependabot alerts read-only and the installation re-accepts it; see docs/github-app-setup.md"
+	for range 5 {
+		logger.Warn(msg, "tier", "sec-check", "error", "permissions requested are not granted")
+		now = now.Add(time.Minute)
+	}
+	ev := tr.Evidence()
+	if len(ev) != 1 || ev[0].Class != fleetreport.ClassGitHubAppAlertsPermission || ev[0].Count != 5 {
+		t.Fatalf("missing permission evidence = %+v", ev)
+	}
+	now = now.Add(21 * time.Minute)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("quiet condition did not clear: %+v", ev)
+	}
+}
+
 func TestFeedLogFedPath(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -512,7 +616,7 @@ func TestPostRestartKickHoldLogsWithoutFleetReport(t *testing.T) {
 	}
 	// Other kick send failures must remain reportable.
 	logger.Warn("failed to send kick", "agent", "reviewer-2", "error", "tmux send-keys exit 1")
-	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassAgentLifecycleRepeated {
 		t.Fatalf("other kick failures must remain reportable: %+v", *seen)
 	}
 }

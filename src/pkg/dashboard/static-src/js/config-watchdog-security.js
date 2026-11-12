@@ -541,6 +541,69 @@
       markDirty('security', key, n);
     }
 
+    const SUBSTRATE_SANDBOX_FIELDS = [
+      { key: 'endpoint', label: 'Endpoint', kind: 'text', global: 'agent_sandbox.substrate.endpoint', agent: 'agents.<key>.sandbox.substrate.endpoint', help: `Substrate Control API address (host:port or an http(s):// URL). Empty uses api.ate-system.svc:443.` },
+      { key: 'atespace', label: 'Atespace', kind: 'text', global: 'agent_sandbox.substrate.atespace', agent: 'agents.<key>.sandbox.substrate.atespace', help: `Substrate atespace (its tenant namespace, not a Kubernetes namespace) actors are created in. Empty uses hive.` },
+      { key: 'token_env', label: 'Token env', kind: 'text', global: 'agent_sandbox.substrate.token_env', agent: 'agents.<key>.sandbox.substrate.token_env', help: `Environment variable holding a Control API bearer token. Empty reads the token file instead.` },
+      { key: 'token_file', label: 'Token file', kind: 'text', global: 'agent_sandbox.substrate.token_file', agent: 'agents.<key>.sandbox.substrate.token_file', help: `Projected ServiceAccount token file hive authenticates with. Empty uses /var/run/secrets/ate/token.` },
+      { key: 'ca_file', label: 'CA file', kind: 'text', global: 'agent_sandbox.substrate.ca_file', agent: 'agents.<key>.sandbox.substrate.ca_file', help: `PEM bundle the Control API serving certificate chains to. Empty uses the projected CA when present, else the system roots.` },
+      { key: 'insecure_tls', label: 'Insecure TLS', kind: 'bool', global: 'agent_sandbox.substrate.insecure_tls', agent: 'agents.<key>.sandbox.substrate.insecure_tls', help: `Skip Control API and router certificate verification. Dev only.` },
+      { key: 'timeout_s', label: 'Timeout (seconds)', kind: 'int', global: 'agent_sandbox.substrate.timeout_s', agent: 'agents.<key>.sandbox.substrate.timeout_s', help: `Bounds one actor from create to delete. 0 uses the sandbox timeout.` },
+      { key: 'router_url', label: 'Router URL', kind: 'text', global: 'agent_sandbox.substrate.router_url', agent: 'agents.<key>.sandbox.substrate.router_url', help: `atenet-router CONNECT listener hive reaches the actor bridge through. Empty uses the in-cluster default.` },
+      { key: 'router_client_bundle', label: 'Router client bundle', kind: 'text', global: 'agent_sandbox.substrate.router_client_bundle', agent: 'agents.<key>.sandbox.substrate.router_client_bundle', help: `podCertificate bundle the router authenticates hive with. Empty uses the default path.` },
+      { key: 'router_ca_file', label: 'Router CA file', kind: 'text', global: 'agent_sandbox.substrate.router_ca_file', agent: 'agents.<key>.sandbox.substrate.router_ca_file', help: `CA the router serving certificate chains to. Empty uses the default path.` },
+      { key: 'bridge_port', label: 'Bridge port', kind: 'int', global: 'agent_sandbox.substrate.bridge_port', agent: 'agents.<key>.sandbox.substrate.bridge_port', help: `Port the in-actor bridge listens on. 0 uses 8477.` },
+      { key: 'image', label: 'Image', kind: 'text', global: 'agent_sandbox.substrate.image', agent: 'agents.<key>.sandbox.substrate.image', help: `Digest-pinned sandbox image (…@sha256:…) actors run. Substrate refuses tag-only references.` },
+      { key: 'bridge_command', label: 'Bridge command', kind: 'lines', global: 'agent_sandbox.substrate.bridge_command[]', agent: 'agents.<key>.sandbox.substrate.bridge_command[]', help: `Actor entrypoint that serves the bridge. One argument per line; empty uses the crux substrate-bridge subcommand.` },
+      { key: 'cpu_millicores', label: 'CPU (millicores)', kind: 'int', global: 'agent_sandbox.substrate.cpu_millicores', agent: 'agents.<key>.sandbox.substrate.cpu_millicores', help: `ActorTemplate CPU limit. 0 uses 2000.` },
+      { key: 'memory_bytes', label: 'Memory (bytes)', kind: 'int', global: 'agent_sandbox.substrate.memory_bytes', agent: 'agents.<key>.sandbox.substrate.memory_bytes', help: `ActorTemplate memory limit. 0 uses 4 GiB.` },
+      { key: 'worker_selector', label: 'Worker selector', kind: 'map', global: 'agent_sandbox.substrate.worker_selector.<key>', agent: 'agents.<key>.sandbox.substrate.worker_selector.<key>', help: `Pins actors to WorkerPools carrying these labels, one key=value per line. Empty means any pool.` },
+      { key: 'snapshot_on_idle', label: 'Snapshot on idle', kind: 'bool', global: 'agent_sandbox.substrate.snapshot_on_idle', agent: 'agents.<key>.sandbox.substrate.snapshot_on_idle', help: `Suspend the actor with a snapshot after the kick instead of deleting it. Only the latest snapshot per agent is kept while hive runs (the previous one is deleted on the next suspend); each costs object storage.` },
+      { key: 'allow_hosts', label: 'Allow hosts', kind: 'lines', global: 'agent_sandbox.substrate.allow_hosts[]', agent: 'agents.<key>.sandbox.substrate.allow_hosts[]', help: `Additional egress hosts (host or host:port, leading *. wildcard allowed), one per line, on top of the GitHub hosts.` },
+      { key: 'policy_profile', label: 'Policy profile', kind: 'text', global: 'agent_sandbox.substrate.policy_profile', agent: 'agents.<key>.sandbox.substrate.policy_profile', help: `Operator-side policy profile recorded on the template.` },
+    ];
+
+    /* substrateSandboxFields renders the Substrate runtime block for either the
+       global agent_sandbox.substrate (section 'security') or one agent's
+       sandbox.substrate override (section 'general'). */
+    function substrateSandboxFields(section, sub) {
+      const dirtyKey = section === 'security' ? 'agentSandboxSubstrate' : 'sandboxSubstrate';
+      sub = sub || {};
+      return SUBSTRATE_SANDBOX_FIELDS.map(f => {
+        const yaml = section === 'security' ? f.global : f.agent;
+        const label = 'Substrate ' + f.label.toLowerCase();
+        const head = '<div class="config-field"><label>' + esc(label) + ' ' + yamlHint(yaml) + ' ' + settingHelpMark('settings', 'security-and-access', label, esc(f.help)) + '</label>';
+        const attrs = 'data-arg0="' + section + '" data-arg1="' + dirtyKey + '" data-arg2="' + f.key + '" data-arg3="' + f.kind + '"';
+        const v = sub[f.key];
+        if (f.kind === 'bool') {
+          return head + '<input type="checkbox"' + (v ? ' checked' : '') + ' data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,c"></div>';
+        }
+        if (f.kind === 'int') {
+          return head + '<input type="number" min="0" value="' + Number(v || 0) + '" data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,v"></div>';
+        }
+        if (f.kind === 'lines' || f.kind === 'map') {
+          const text = f.kind === 'map'
+            ? Object.keys(v || {}).sort().map(k => k + '=' + v[k]).join('\n')
+            : (v || []).join('\n');
+          return head + '<textarea rows="3" class="mono" data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,v">' + esc(text) + '</textarea></div>';
+        }
+        return head + '<input type="text" value="' + esc(v || '') + '" data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,v"></div>';
+      }).join('\n');
+    }
+
+    function markSubstrateSandbox(section, dirtyKey, field, kind, value) {
+      const pending = _configState.dirty[section] && _configState.dirty[section][dirtyKey];
+      const base = pending || ((_configState.data && _configState.data[section]) || {})[dirtyKey] || {};
+      const next = Object.assign({}, base);
+      if (kind === 'bool') next[field] = !!value;
+      else if (kind === 'int') next[field] = Math.max(0, Math.floor(Number(value) || 0));
+      else if (kind === 'lines') next[field] = String(value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      else if (kind === 'map') next[field] = parseSettingsMap(value);
+      else next[field] = String(value || '').trim();
+      if (_configState.data && _configState.data[section]) _configState.data[section][dirtyKey] = next;
+      markDirty(section, dirtyKey, next);
+    }
+
     function parseSecurityList(value) {
       return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
     }
@@ -963,6 +1026,9 @@
         <div class="config-field"><label>Job TTL (seconds) ${yamlHint('agent_sandbox.job.ttl_seconds')} ${settingHelpMark('settings', 'security-and-access', 'Job TTL (seconds)', `Seconds a finished sandbox Job is kept. 0 uses the default.`)}</label><input type="number" min="0" value="${Number(sec.agentSandboxJobTtlSeconds || 0)}" data-change-action="markSecurityNumber" data-arg0="agentSandboxJobTtlSeconds" data-arg-types="s,v"></div>
         <div class="config-field"><label>Job workspace claim ${yamlHint('agent_sandbox.job.workspace_claim')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim', `PVC holding the workspace for the job runtime. Required for runtime job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaim || '')}" placeholder="PersistentVolumeClaim name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaim" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job workspace claim mount ${yamlHint('agent_sandbox.job.workspace_claim_mount')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim mount', `Where the workspace claim is mounted in the Job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaimMount || '')}" placeholder="mount path" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaimMount" data-arg-types="s,s,v"></div>
+        <details class="settings-subsection-details"><summary class="settings-subsection-summary">Substrate sandbox</summary>
+        ${substrateSandboxFields('security', sec.agentSandboxSubstrate)}
+        </details>
         </details>`;
 
       /* Backup encryption key: painted asynchronously from presence-only

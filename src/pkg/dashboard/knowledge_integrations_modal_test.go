@@ -142,3 +142,89 @@ func TestKnowledgeIntegrationsModalContext7Card(t *testing.T) {
 		}
 	}
 }
+
+// TestKnowledgeIntegrationsModalPlaudCard guards the Plaud entry: the card
+// exposes Connect/Disconnect/Check wired to the connector auth endpoints,
+// the Knowledge pane links to it, and no browser-native dialog is used.
+func TestKnowledgeIntegrationsModalPlaudCard(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`'plaud': { label: 'Plaud voice notes'`,
+		`'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@latest']`,
+		`if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);`,
+		`data-action="kbPlaudPasteComplete"`,
+		`'/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/complete'`,
+		`if (type === 'plaud') html += kbPlaudAuthButtons(c.name);`,
+		`data-action="kbPlaudConnect"`,
+		`data-action="kbPlaudDisconnect"`,
+		`data-action="kbPlaudRefreshAuth"`,
+		`data-action="kbOpenPlaudIntegration"`,
+		`'/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/connect'`,
+		`'/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/disconnect'`,
+		`async function kbPlaudConnect(name)`,
+		`async function kbPlaudDisconnect(name)`,
+		`async function kbPlaudRefreshAuth(name)`,
+		`function kbOpenPlaudIntegration()`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing Plaud card snippet %q", want)
+		}
+	}
+	start := strings.Index(html, "const _kbPlaudAuth = {};")
+	end := strings.Index(html, "function kbOpenPlaudIntegration()")
+	if start < 0 || end < start {
+		t.Fatal("Plaud sign-in block not found")
+	}
+	block := html[start:end]
+	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
+		if strings.Contains(block, native) {
+			t.Errorf("Plaud sign-in block uses a browser-native dialog %q", native)
+		}
+	}
+}
+
+// TestKnowledgeIntegrationsModalWisprFlowCard guards the Wispr Flow entry:
+// it is a plain local-file connector (no sign-in buttons), the card shows
+// the configured path, the Knowledge pane links to it and documents the
+// direct-dictation path, and no browser-native dialog is used.
+func TestKnowledgeIntegrationsModalWisprFlowCard(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`'wisprflow': { label: 'Wispr Flow dictation'`,
+		`'wisprflow': [['path', 'flow.sqlite or export folder (empty = app default)'`,
+		`['group', 'Fact per dictation or day', 'dictation']`,
+		`if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);`,
+		`data-kb-wisprflow-note`,
+		`data-action="kbOpenWisprFlowIntegration"`,
+		`function kbWisprFlowSourceLine(c)`,
+		`function kbOpenWisprFlowIntegration()`,
+		`Wispr Flow dictation</summary>`,
+		`+ New Fact</strong> and hold the Flow key`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing Wispr Flow card snippet %q", want)
+		}
+	}
+	if !strings.Contains(html, `'sharepoint', 'wisprflow']`) {
+		t.Error("wisprflow missing from KB_CONNECTOR_TYPE_ORDER")
+	}
+	start := strings.Index(html, "function kbWisprFlowSourceLine(c)")
+	end := strings.Index(html, "function kbOpenWisprFlowIntegration()")
+	if start < 0 || end < start {
+		t.Fatal("Wispr Flow block not found")
+	}
+	block := html[start:end]
+	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
+		if strings.Contains(block, native) {
+			t.Errorf("Wispr Flow block uses a browser-native dialog %q", native)
+		}
+	}
+}

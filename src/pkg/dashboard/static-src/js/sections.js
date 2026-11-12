@@ -13,7 +13,7 @@
     // marker key records whether the browser predates the defaults ('legacy',
     // keeps the historical all-expanded default forever) or is new ('v1').
     const DASHBOARD_DEFAULT_COLLAPSED_SECTIONS = Object.freeze([
-      'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section',
+      'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section', 'inbox-section',
       'contributors-section', 'inception-section', 'acmm-eval-section', 'debug-section', 'audit-section',
       'logs-section', 'nous-section', 'faq-section', 'runs-section', 'search-section'
     ]);
@@ -129,6 +129,7 @@
       'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'search-section': { title: '🔍 Search', summary: 'search' },
+      'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
@@ -167,6 +168,7 @@
       'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'search-section': { heading: 'Search', help: 'Find past pull requests, issues, review records and findings across your projects by keyword, with a link to each one.' },
+      'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },

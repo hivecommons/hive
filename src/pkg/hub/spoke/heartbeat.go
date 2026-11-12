@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/egressmark"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/hivestate"
@@ -1552,9 +1553,36 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			logger.Info("hub heartbeat stopped")
 			return
 		case <-ticker.C:
+			if heartbeatUnprovisionedBackoffActive(time.Now()) {
+				// Keep the attempt clock advancing so /api/livez does not
+				// read the deliberate pause as a stalled loop.
+				recordHeartbeatAttempt()
+				continue
+			}
 			processHeartbeatResponse(sendHeartbeat(ctx, hubURL, collect, logger, freshCollect))
 		}
 	}
+}
+
+// heartbeatUnprovisionedBackoff is how long the loop pauses after the hub
+// answers 403 "hosted/saas hive IDs can only be created via provisioning".
+// The hub never auto-creates hosted IDs, so retrying every tick cannot
+// succeed until an operator provisions (or the hive is re-IDed); a slow probe
+// still notices when that happens. A var so tests can shorten it.
+var heartbeatUnprovisionedBackoff = 10 * time.Minute
+
+// heartbeatUnprovisionedUntil is the UnixNano deadline of that pause (0 = none).
+var heartbeatUnprovisionedUntil atomic.Int64
+
+func heartbeatUnprovisionedBackoffActive(now time.Time) bool {
+	until := heartbeatUnprovisionedUntil.Load()
+	return until != 0 && now.UnixNano() < until
+}
+
+// hubHeartbeatRejectsUnprovisioned reports whether the hub refused the beat
+// because it does not know this hosted/saas hive ID (a permanent condition).
+func hubHeartbeatRejectsUnprovisioned(status int, body string) bool {
+	return status == http.StatusForbidden && strings.Contains(body, "can only be created via provisioning")
 }
 
 // waitForReady's knobs are vars (not consts) for the same reason as
@@ -1867,6 +1895,12 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if hubHeartbeatRejectsUnprovisioned(resp.StatusCode, string(respBody)) {
+			heartbeatUnprovisionedUntil.Store(time.Now().Add(heartbeatUnprovisionedBackoff).UnixNano())
+			logger.Warn("hub heartbeat rejected: hive id is not provisioned on the hub — backing off",
+				"status", resp.StatusCode, "body", string(respBody), "retry_in", heartbeatUnprovisionedBackoff.String())
+			return nil
+		}
 		logger.Warn("hub heartbeat rejected", "status", resp.StatusCode, "body", string(respBody))
 		if hubHeartbeatStatusIsDefect(resp.StatusCode) {
 			fleetreport.Observe(fleetreport.ClassUnexpectedHub5xx, "heartbeat", fmt.Sprintf("hub heartbeat returned HTTP %d", resp.StatusCode), string(respBody))
@@ -1874,6 +1908,7 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 		return nil
 	}
 	fleetreport.Clear(fleetreport.ClassUnexpectedHub5xx, "heartbeat")
+	heartbeatUnprovisionedUntil.Store(0)
 
 	// The hub accepted the beat (status < 300) — this is what /api/livez
 	// treats as "the heartbeat goroutine is alive and doing its job", so
@@ -2304,6 +2339,7 @@ func inClusterHTTPClient(cfg *inClusterConfig) (*http.Client, error) {
 		Timeout: routeExistenceProbeTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+			DialContext:     egressmark.Dialer(0).DialContext,
 		},
 	}, nil
 }
