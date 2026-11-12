@@ -1,0 +1,1 @@
+- Avoid reporting unsupported signed-commit rewrites as API errors and explain how to sign the unchanged branch safely.
