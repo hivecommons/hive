@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -266,6 +267,7 @@ func TestOpsClankerRowRendersCapacityAndRework(t *testing.T) {
 		".work-kind.new{",
 		".work-kind.rework{",
 		".clanker-idle-rework,.clanker-rework-pending{color:var(--status-error)",
+		".clanker-rework-more>summary{",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("operations page missing %q", want)
@@ -273,7 +275,7 @@ func TestOpsClankerRowRendersCapacityAndRework(t *testing.T) {
 	}
 	script := `
 const assert = require('node:assert/strict');
-var ccDeferredClankers = null, ccKnownClankers = {}, adminEnabled = false;
+var ccDeferredClankers = null, ccKnownClankers = {}, adminEnabled = false, ccOpenPanes = {}, CLANKER_REWORK_INLINE_MAX = 3;
 const fleet = { querySelector() { return null; }, set innerHTML(v) { this.html = v; } };
 const document = { getElementById(id) { return id === 'clanker-list' ? fleet : {}; } };
 function ccUpdateArmy() {}
@@ -330,6 +332,29 @@ assert.doesNotMatch(html, /idle: no matching work/, 'idle reason replaced while 
 assert.match(html, /class="clanker-sub clanker-rework-pending" title="org\/r#2 \(build\), org\/r#3">2 PRs awaiting rework \(not yet dispatched\) &middot; fix queue 1: <a class="cc-issue-link work-ref" href="https:\/\/x\/2">org\/r#2<\/a>, <a class="cc-issue-link work-ref" href="https:\/\/github.com\/org\/r\/issues\/3">org\/r#3<\/a></, 'awaiting-rework line');
 assert.match(html, /clanker-status idle/, 'status pill is idle');
 
+// The hub says why the fix is held: the reason replaces "not yet dispatched".
+renderClankers([{github_username: 'erin', parallel_capacity: 1, fix_mode: 'preempt', fix_queue_depth: 1, pending_rework: 1,
+  pending_rework_blocked: 'earlier fix dispatch fix-erin-1 is still booked in flight on a dropped connection; released at the relay\'s next ready',
+  pending_rework_prs: [{repo: 'org/r', number: 9, url: 'https://x/9'}]}]);
+html = fleet.html;
+assert.match(html, /1 PR awaiting rework \(not dispatched: <span class="clanker-rework-why">earlier fix dispatch fix-erin-1 is still booked[^<]*<\/span>\) &middot; fix queue 1: <a class="cc-issue-link work-ref" href="https:\/\/x\/9">org\/r#9<\/a>/, 'block reason');
+assert.doesNotMatch(html, /not yet dispatched/, 'generic wording gone when the hub explains');
+
+// Five pending: three inline, the other two behind a closed disclosure.
+var five = [1,2,3,4,5].map(function(n){return {repo: 'org/r', number: n, url: 'https://x/' + n};});
+renderClankers([{github_username: 'frank', fix_queue_depth: 5, pending_rework: 5, pending_rework_prs: five}]);
+html = fleet.html;
+assert.equal((html.match(/class="cc-issue-link work-ref"/g) || []).length, 5, 'every PR is still linked');
+var moreAt = html.indexOf('<details class="clanker-rework-more" data-pane="frank:rework"><summary>show 2 more</summary>');
+assert.ok(moreAt > 0, 'disclosure present and closed');
+assert.ok(html.indexOf('org/r#3</a>') < moreAt && html.indexOf('org/r#4</a>') > moreAt, 'first three inline, rest behind the summary');
+ccOpenPanes['frank:rework'] = true;
+renderClankers([{github_username: 'frank', fix_queue_depth: 5, pending_rework: 5, pending_rework_prs: five}]);
+assert.match(fleet.html, /clanker-rework-more" data-pane="frank:rework" open>/, 'disclosure stays open across re-renders');
+delete ccOpenPanes['frank:rework'];
+renderClankers([{github_username: 'gina', fix_queue_depth: 3, pending_rework: 3, pending_rework_prs: five.slice(0,3)}]);
+assert.doesNotMatch(fleet.html, /clanker-rework-more/, 'three or fewer: no disclosure');
+
 // Idle, nothing pending: the pre-#12502 idle reason line is unchanged.
 renderClankers([{github_username: 'carol', idle_reason: 'no_matching_work', pending_rework: 0}]);
 html = fleet.html;
@@ -362,14 +387,15 @@ func TestFleetReworkAdoptionState(t *testing.T) {
 	store.NoteAuthor(stagelabels.Key("org/r", 3), "alice")
 
 	fc := snapshotFor(t, hub, "alice")
-	if fc.Stale || len(fc.PendingReworkPRs) != 3 {
+	// The 074 PR is the hive's now: not listed, not counted.
+	if fc.Stale || fc.PendingRework != 2 || len(fc.PendingReworkPRs) != 2 {
 		t.Fatalf("live: %+v", fc.FleetRework)
 	}
 	byNumber := map[int]FleetReworkPR{}
 	for _, pr := range fc.PendingReworkPRs {
 		byNumber[pr.Number] = pr
 	}
-	if byNumber[1].State != "" || byNumber[2].State != "" || byNumber[3].State != FleetReworkStateAdopted || byNumber[3].Stage != stagelabels.AdoptedByHive.Label() {
+	if _, adopted := byNumber[3]; adopted || byNumber[1].State != "" || byNumber[2].State != "" {
 		t.Fatalf("live states: %+v", fc.PendingReworkPRs)
 	}
 
@@ -384,9 +410,12 @@ func TestFleetReworkAdoptionState(t *testing.T) {
 	for _, pr := range fc.PendingReworkPRs {
 		byNumber[pr.Number] = pr
 	}
-	// Nudged and unanswered → adopting; never nudged → plain 072; 074 → adopted.
-	if byNumber[1].State != FleetReworkStateAdopting || byNumber[2].State != "" || byNumber[3].State != FleetReworkStateAdopted {
+	// Nudged and unanswered → adopting; never nudged → plain 072; 074 → gone.
+	if _, adopted := byNumber[3]; adopted || byNumber[1].State != FleetReworkStateAdopting || byNumber[2].State != "" {
 		t.Fatalf("stale states: %+v", fc.PendingReworkPRs)
+	}
+	if fc.PendingReworkBlocked != FleetReworkBlockedOffline {
+		t.Fatalf("offline relay must say so: %q", fc.PendingReworkBlocked)
 	}
 	raw, _ := json.Marshal(fc.PendingReworkPRs)
 	if !strings.Contains(string(raw), `"state":"adopting (contributor offline)"`) {
@@ -417,5 +446,156 @@ func TestContributeHubPresence(t *testing.T) {
 	p = hub.Presence(context.Background(), "alice")
 	if !p.Registered || p.Online || !p.LastSeen.Equal(gone) {
 		t.Fatalf("offline relay: %+v", p)
+	}
+}
+
+// Only the contributor's OPEN PRs are their rework: a PR the forge cache
+// reports merged or closed, or a stage-store record the lane stopped
+// observing, is dropped from the count and (when queued) from the fix
+// queue, so the relay is never handed a fix for a PR that is gone.
+func TestFleetReworkDropsMergedClosedAndUnobserved(t *testing.T) {
+	hub, _, store := reworkHub(t)
+	now := time.Now()
+	fixConn(hub, "alice", fixCaps(capFixPRInterrupt), now)
+
+	closed := map[string]bool{"org/r#2": true, "org/r#3": true}
+	hub.prOpenFn = func(repo string, number int) (bool, bool) {
+		k := fixqueue.Key(repo, number)
+		if closed[k] {
+			return false, true
+		}
+		if k == "org/r#1" {
+			return true, true
+		}
+		return false, false
+	}
+	for _, n := range []int{1, 2, 3, 4} {
+		store.Observe(stagelabels.Key("org/r", n), stagelabels.ReturnedToContributor, "check-failing:build")
+		store.NoteAuthor(stagelabels.Key("org/r", n), "alice")
+	}
+	// Queue #2 (closed) and #4 (unknown to the cache, fresh in the store).
+	hub.fixQueue().Enqueue("alice", fixqueue.Item{Repo: "org/r", Number: 2, Title: "closed"})
+	hub.fixQueue().Enqueue("alice", fixqueue.Item{Repo: "org/r", Number: 4, Title: "open"})
+	hub.rememberFixOwner("alice", "org/r#2")
+	hub.rememberFixOwner("alice", "org/r#4")
+
+	fc := snapshotFor(t, hub, "alice")
+	got := map[int]bool{}
+	for _, pr := range fc.PendingReworkPRs {
+		got[pr.Number] = true
+	}
+	if fc.PendingRework != 2 || !got[1] || !got[4] || got[2] || got[3] {
+		t.Fatalf("pending: %+v", fc.FleetRework)
+	}
+	if fc.FixQueueDepth != 1 {
+		t.Fatalf("closed PR must leave the fix queue: %+v", fc.FleetRework)
+	}
+	if q := hub.fixQueue().Queued("alice"); len(q) != 1 || q[0].Number != 4 {
+		t.Fatalf("scheduler still holds the closed PR: %+v", q)
+	}
+	if fc.PendingReworkBlocked != FleetReworkBlockedAwaitReady {
+		t.Fatalf("idle relay with a queued fix waits for ready: %q", fc.PendingReworkBlocked)
+	}
+}
+
+// A stage-store record the lane has not re-observed within
+// pendingReworkUnseenBound describes a PR that left the open listing.
+func TestFleetReworkDropsRecordTheLaneStoppedObserving(t *testing.T) {
+	hub, _, _ := reworkHub(t)
+	now := time.Now()
+	fixConn(hub, "alice", fixCaps(capFixPRInterrupt), now)
+	clock := now.Add(-2 * pendingReworkUnseenBound)
+	store := stagelabels.NewStore("", func() time.Time { return clock })
+	hub.stageStore = store
+	store.Observe(stagelabels.Key("org/r", 1), stagelabels.ReturnedToContributor, "check-failing:build")
+	store.NoteAuthor(stagelabels.Key("org/r", 1), "alice")
+	clock = now
+	store.Observe(stagelabels.Key("org/r", 2), stagelabels.ReturnedToContributor, "check-failing:build")
+	store.NoteAuthor(stagelabels.Key("org/r", 2), "alice")
+
+	fc := snapshotFor(t, hub, "alice")
+	if fc.PendingRework != 1 || fc.PendingReworkPRs[0].Number != 2 {
+		t.Fatalf("unobserved #1 must be dropped: %+v", fc.FleetRework)
+	}
+	// With no fix queue entry the hub can only wait for the engine's re-nudge.
+	if fc.PendingReworkBlocked != FleetReworkBlockedNotQueued {
+		t.Fatalf("block reason: %q", fc.PendingReworkBlocked)
+	}
+}
+
+// A fix dispatched to a socket that then dropped stays booked in the
+// scheduler with nobody holding it: capacity 1 is "busy" for good, so the
+// relay is served nothing — not the fix, not new work. The snapshot names
+// the orphan, and the relay's next `ready` releases and re-dispatches it.
+func TestFleetReworkOrphanedDispatchIsNamedAndReleasedAtReady(t *testing.T) {
+	hub, _, store := reworkHub(t)
+	got := captureFixDispatch(hub)
+	now := time.Now()
+	c := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), now)
+	store.Observe(stagelabels.Key("org/r", 1), stagelabels.ReturnedToContributor, "check-failing:build")
+	store.NoteAuthor(stagelabels.Key("org/r", 1), "alice")
+	hub.Nudge(context.Background(), fixNudge("r", 1, "build"))
+	if len(*got) != 1 {
+		t.Fatalf("preempt dispatch expected, got %d", len(*got))
+	}
+	orphanID := (*got)[0].TaskID
+
+	// The socket that took the fix dies; the relay comes back on a new one.
+	hub.mu.Lock()
+	delete(hub.connections, c.connID)
+	hub.mu.Unlock()
+	c2 := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), now.Add(time.Second))
+	c2.lastIdleReason = taskUnavailableFixInFlight
+
+	// Another red PR queues behind the orphan.
+	hub.Nudge(context.Background(), fixNudge("r", 2, "lint"))
+	fc := snapshotFor(t, hub, "alice")
+	if fc.PendingRework != 1 || fc.PendingReworkPRs[0].Number != 2 || len(fc.InFlight) != 0 {
+		t.Fatalf("pending: %+v", fc.FleetRework)
+	}
+	want := fmt.Sprintf(FleetReworkBlockedOrphan, orphanID) + "; relay last reported idle: " + taskUnavailableFixInFlight
+	if fc.PendingReworkBlocked != want {
+		t.Fatalf("block reason:\n got %q\nwant %q", fc.PendingReworkBlocked, want)
+	}
+
+	// `ready` on the new socket: the orphan is released (no attempt counted)
+	// and the queue head goes out as a boundary fix.
+	msg := hub.selectFixTask(c2)
+	if msg == nil || msg.Kind != taskKindFixPR || msg.Mode != "boundary" {
+		t.Fatalf("boundary fix expected after release: %+v", msg)
+	}
+	if n := len(hub.fixQueue().InFlight("alice")); n != 1 {
+		t.Fatalf("exactly the new dispatch in flight, got %d", n)
+	}
+	for _, it := range hub.fixQueue().Queued("alice") {
+		if it.Attempts != 0 {
+			t.Fatalf("release must not count an attempt: %+v", it)
+		}
+	}
+}
+
+// A relay that finished a fix handed out on an earlier socket reports
+// task_complete on the new one; the scheduler settles it all the same.
+func TestFleetReworkCompleteFixOnReconnectedSocket(t *testing.T) {
+	hub, _, _ := reworkHub(t)
+	got := captureFixDispatch(hub)
+	now := time.Now()
+	c := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), now)
+	hub.Nudge(context.Background(), fixNudge("r", 1, "build"))
+	if len(*got) != 1 {
+		t.Fatalf("preempt dispatch expected, got %d", len(*got))
+	}
+	hub.mu.Lock()
+	delete(hub.connections, c.connID)
+	hub.mu.Unlock()
+	c2 := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), now.Add(time.Second))
+	if !hub.completeFixTask(c2, (*got)[0].TaskID) {
+		t.Fatal("completion on the new socket must settle the scheduler's dispatch")
+	}
+	if st := hub.FixQueueStatus("alice"); st.InFlight != 0 || st.Queued != 0 {
+		t.Fatalf("dispatch should be settled: %+v", st)
+	}
+	if hub.completeFixTask(c2, "fix-alice-999") {
+		t.Fatal("an unknown task id is not a fix task")
 	}
 }
