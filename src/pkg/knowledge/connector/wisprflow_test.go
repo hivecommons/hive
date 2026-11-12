@@ -2,9 +2,12 @@ package connector
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +28,8 @@ func newTestWispr(t *testing.T, scope map[string]string) *wisprConnector {
 }
 
 // wisprFixtureDB builds flow.sqlite from testdata/wisprflow/history.sql with
-// the sqlite3 CLI the connector itself shells out to.
+// the sqlite3 CLI the connector itself shells out to; callers skip when the
+// CLI is absent (CI runners), so the sync tests use wisprFakeQuery instead.
 func wisprFixtureDB(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("sqlite3"); err != nil {
@@ -42,6 +46,63 @@ func wisprFixtureDB(t *testing.T) string {
 		t.Fatalf("building fixture db: %v: %s", err, out)
 	}
 	return db
+}
+
+var wisprSinceRE = regexp.MustCompile(`datetime\('([^']+)'\)`)
+
+// wisprFakeQuery stands in for the sqlite3 CLI: it serves the rows of
+// testdata/wisprflow/history.json (the same data as history.sql) and applies
+// the WHERE clause of wisprHistorySQL — status, isArchived and the since
+// bound — so the connector sees exactly what sqlite3 -json would return.
+func wisprFakeQuery(t *testing.T) func(ctx context.Context, dbPath, sql string) ([]byte, error) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "wisprflow", "history.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(data, &rows); err != nil {
+		t.Fatal(err)
+	}
+	return func(_ context.Context, dbPath, sql string) ([]byte, error) {
+		if _, err := os.Stat(dbPath); err != nil {
+			return nil, fmt.Errorf("wisprflow: sqlite3 failed: unable to open database")
+		}
+		m := wisprSinceRE.FindStringSubmatch(sql)
+		if m == nil || !strings.Contains(sql, "status='formatted'") {
+			return nil, fmt.Errorf("unexpected sql: %s", sql)
+		}
+		since, err := time.Parse("2006-01-02 15:04:05", m[1])
+		if err != nil {
+			return nil, err
+		}
+		var out []map[string]any
+		for _, r := range rows {
+			at := wisprParseTime(r["at"].(string))
+			if r["status"] != "formatted" || r["isArchived"] != float64(0) || !at.After(since) {
+				continue
+			}
+			out = append(out, r)
+		}
+		return json.Marshal(out)
+	}
+}
+
+// newFakeWispr returns a connector whose sqlite3 runner is wisprFakeQuery
+// and whose path points at an existing (empty) flow.sqlite file.
+func newFakeWispr(t *testing.T, scope map[string]string) *wisprConnector {
+	t.Helper()
+	db := filepath.Join(t.TempDir(), "flow.sqlite")
+	if err := os.WriteFile(db, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if scope == nil {
+		scope = map[string]string{}
+	}
+	scope["path"] = db
+	c := newTestWispr(t, scope)
+	c.query = wisprFakeQuery(t)
+	return c
 }
 
 func collectWispr(t *testing.T, c *wisprConnector, cur Cursor) ([]Page, Cursor, error) {
@@ -63,7 +124,7 @@ func wisprIDs(pages []Page) []string {
 }
 
 func TestWisprValidate(t *testing.T) {
-	c := newTestWispr(t, nil)
+	c := newTestWispr(t, map[string]string{"path": "/x/flow.sqlite"})
 	cases := []struct {
 		name string
 		cfg  ConnectorConfig
@@ -88,8 +149,7 @@ func TestWisprValidate(t *testing.T) {
 }
 
 func TestWisprSyncSQLite(t *testing.T) {
-	db := wisprFixtureDB(t)
-	c := newTestWispr(t, map[string]string{"path": db, "tags": "voice", "include_raw": "true"})
+	c := newFakeWispr(t, map[string]string{"tags": "voice", "include_raw": "true"})
 
 	pages, cur, err := collectWispr(t, c, "")
 	if err != nil {
@@ -136,8 +196,7 @@ func TestWisprSyncSQLite(t *testing.T) {
 }
 
 func TestWisprSyncAppsFilterAndDayGroup(t *testing.T) {
-	db := wisprFixtureDB(t)
-	c := newTestWispr(t, map[string]string{"path": db, "apps": "slack, vscode", "group": "day", "since_days": "3650"})
+	c := newFakeWispr(t, map[string]string{"apps": "slack, vscode", "group": "day", "since_days": "3650"})
 	pages, _, err := collectWispr(t, c, "")
 	if err != nil {
 		t.Fatal(err)
@@ -157,6 +216,23 @@ func TestWisprSyncAppsFilterAndDayGroup(t *testing.T) {
 		if strings.Contains(p.Markdown, "Ancient") {
 			t.Error("apps filter did not drop the Chrome dictation")
 		}
+	}
+}
+
+// TestWisprSQLite3CLI runs the real sqlite3 CLI against the fixture database
+// and checks it agrees with the fake used by the other tests.
+func TestWisprSQLite3CLI(t *testing.T) {
+	db := wisprFixtureDB(t)
+	c := newTestWispr(t, map[string]string{"path": db, "since_days": "3650"})
+	pages, cur, err := collectWispr(t, c, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wisprIDs(pages); strings.Join(got, ",") != "d-old,d-1,d-2" {
+		t.Fatalf("pages = %v", got)
+	}
+	if cur != "2026-11-11T17:55:30Z" {
+		t.Fatalf("cursor = %q", cur)
 	}
 }
 
