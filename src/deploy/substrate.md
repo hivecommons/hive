@@ -84,8 +84,8 @@ Then create the pieces hive's runtime depends on, in Substrate terms:
   it is tracked in [#17697](https://github.com/hivecommons/hive/issues/17697).
 - **Egress**: hive writes its own `EgressPolicy` per actor (`github.com`,
   `api.github.com`, `allow_hosts`). Do **not** also configure Substrate's
-  credential injection for GitHub — hive's MITM proxy brokers credentials and
-  the two would conflict.
+  credential injection for GitHub — actors run credential-free and hive
+  brokers pushes after the kick (ADR-0026, #17695).
 
 ## Verify
 

@@ -1,0 +1,1 @@
+- docs: ADR-0026  Substrate actors run credential-free; hive brokers pushes post-kick (#17934)
