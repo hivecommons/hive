@@ -11,6 +11,25 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.20.3)
+
+### Fixed
+
+- The Operations "Ready-work queue" no longer keeps issues that closed, or the labels they were filed with, on a tab whose live event stream stays open. The stream sends the queue only once, in its hello frame, and the page stopped re-reading `/api/contribute/queue` as soon as the stream opened, so a long-lived tab showed the queue it connected with for hours (the header's cooldown count, which comes from a separate poll, stayed current beside it). The page now keeps re-reading the queue every 30 seconds while the stream is open, every 6 seconds while it is down as before, at once when the stream drops, and at once when a background tab is shown again. The server-side queue and contributor dispatch were already current and are unchanged.
+
+## 2026-11-12 (v6.20.2)
+
+### Fixed
+
+- A claude agent no longer launches with the Copilot CLI's spelling of a Claude model. An agent switched from copilot to claude could keep `claude-sonnet-5.5` (the Copilot id), which Claude Code refuses on every turn ("There's an issue with the selected model"), until the agent was parked for repeated model rejections. The claude backend now rewrites known Copilot spellings to the Claude CLI's ids at launch (`claude-sonnet-5.5` → `claude-sonnet-5-5`, `claude-haiku-4.5` → `claude-haiku-4-5-20251001`), so an already-stored bad id self-corrects; aliases and unknown ids pass through unchanged. The boot replay of `hive-state.json` now restores an agent's backend override before its model override, so a model saved for claude is no longer re-spelled for the agent's configured copilot backend on every restart. A backend switch re-spells the stored model for the new backend (or clears one the new backend cannot run, with a warning), and `PUT /api/config/agent/{name}/models` now replaces a stale live model override with the saved model whenever the request names a backend or a model, so the operator's choice takes effect and survives restarts.
+- **Primed knowledge is now about the task, not about the hive's own routing.** The "# Relevant Knowledge" search built its query from an issue's labels, complexity tier and title words. On hive-routed work those were mostly the hive's own: `epic`, `approved-direction`, `stage/010-actionable`, `agent/reviewer`, `medium`, and the `[reviewer] Review backlog (style):` title stem. They match review and planning notes in every repo, so a scanner task on `projectbluefin/utah-packages#879` was primed with entries about other repos, and on the projectbluefin hive the reviewer, quality and sec-check kicks carried the same section whatever their work. The query now leaves out what the hive itself put on the item: its routing label families (`stage/`, `agent/`, `origin/`, `hive/`, `hive:`, `hive-pause/`, `author/`, `triage/`, `size/`, `lifecycle/`, `do-not-merge`, `needs-`, `dco-signoff`, `sentinel-`), Prow's (`tide/`, `ok-to-test`, `release-note`, `cncf-cla:`), the labels `approved-direction`, `hive-review`, `lgtm`, `approved` and `claimed`, the hive's never-claim labels (`claims.never_claim_labels`, default `epic`), the complexity tier, a leading `[<agent>]` tag when it names a hive lane, origin source or configured agent (a person's `[nvidia] …` keeps `nvidia`), and the review backlog stem, cut down to its perspective (`style`, `security`). When that leaves nothing to search on, or what is left matches no entry, the search runs again with the query earlier releases built, so no kick loses the section it got before. This applies to resident kicks and to contributor role guidance alike. See [Knowledge: the kick primer](src/docs/agent-knowledge-and-memory.md#1-knowledge-the-kick-primer-push).
+
+## 2026-11-12 (v6.20.1)
+
+### Fixed
+
+- Claude auth on per-UID hives: a Claude Code token refresh writes a temp file and renames it over `~/.claude/.credentials.json`, which replaced the per-agent symlink to the shared login with a private 0600 file; the refreshed token (and the rotated refresh grant) never reached the shared credential and the fleet logged out about every eight hours. The hive now detects the replaced link at agent launch, every 5s from the credential watchdog (`HIVE_CLAUDE_CREDENTIAL_BRIDGE_INTERVAL`) and after a dashboard sign-in, reads the agent's private file as its owner through `su-exec` when the server cannot open it, publishes the newer usable token into the shared login (the previous shared file is kept as `.credentials.json.stale-<ts>`), moves the private copy aside and restores the link. Per-agent `~/.claude` memory stays isolated; only the login is shared, with no operator switch. Audited as `claude_credential_rebridged`. Also hardens the shared-home permission guard and credential promotion against non-regular files: shared logins and CLI configs are written through a randomly named temporary with fd-based mode/owner, the root guard only repairs regular files in regular directories, and the shared dot-dirs get the sticky bit.
+
 ## 2026-11-12 (v6.20.0)
 
 ### Added

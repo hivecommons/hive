@@ -4,13 +4,19 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/hivecommons/hive/crux/agentsmd"
 	"github.com/hivecommons/hive/crux/skillreg"
+	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 const maxIssuesToPrime = 5
@@ -386,7 +392,7 @@ func (s *Scheduler) renderKnowledge(primer *knowledge.Primer, cfg *config.Config
 		return knowledgeInjection{}, nil
 	}
 
-	keywords := extractKeywords(issues)
+	keywords := extractKeywordsFor(cfg, issues)
 	if len(keywords) == 0 {
 		s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
 		return knowledgeInjection{}, nil
@@ -401,7 +407,19 @@ func (s *Scheduler) renderKnowledge(primer *knowledge.Primer, cfg *config.Config
 		}
 		scope = &agentScope
 	}
-	primed := primer.PrimeForKick(context.Background(), scope, kickContextFor(cfg, agentName, issues), keywords)
+	kc := kickContextFor(cfg, agentName, issues)
+	primed := primer.PrimeForKick(context.Background(), scope, kc, keywords)
+	// The issue's own terms matched nothing: search again with the terms
+	// earlier releases used, so leaving the hive's routing words out never
+	// costs a kick the section it got before.
+	if len(primed.Facts) == 0 {
+		if legacy := legacyKeywords(issues); len(legacy) > 0 && !slices.Equal(legacy, keywords) {
+			s.logger.Info("knowledge primer: no entry matched the issue terms, retrying with the full query",
+				"sample", keywordSample(keywords), "full_sample", keywordSample(legacy))
+			keywords = legacy
+			primed = primer.PrimeForKick(context.Background(), scope, kc, keywords)
+		}
+	}
 	result, omitted := primed.Render()
 	inj := knowledgeInjection{
 		Section:       result,
@@ -578,39 +596,139 @@ func kickContextFor(cfg *config.Config, agentName string, issues []github.Issue)
 	return kc
 }
 
-// extractKeywords pulls searchable terms from issue labels and titles.
+// extractKeywords is extractKeywordsFor with no hive config: the built-in
+// lanes and origin sources are the only filers, and the default never-claim
+// labels apply.
+func extractKeywords(issues []github.Issue) []string {
+	return extractKeywordsFor(nil, issues)
+}
+
+// extractKeywordsFor pulls searchable terms from issue labels and titles.
 // Title words are included because labels alone are often all noise
 // (triage/accepted, kind/bug) and produce zero keywords after filtering.
-func extractKeywords(issues []github.Issue) []string {
+//
+// What the hive itself puts on an item is dropped, because it says where the
+// item sits in the hive, not what it is about: its routing labels
+// (isRoutingLabel), its complexity tier, the "[<agent>]" filer tag on a title
+// it filed, and the "Review backlog" stem. On utah-packages#879 those made up
+// most of the query (stage/010-actionable, agent/reviewer, medium, "reviewer
+// review backlog") and pulled in review notes from unrelated repos. When
+// nothing is left, the terms earlier releases used are returned instead
+// (legacyKeywords); renderKnowledge also falls back to them when these terms
+// match no entry.
+func extractKeywordsFor(cfg *config.Config, issues []github.Issue) []string {
+	filers := hiveFilers(cfg)
+	neverClaim := neverClaimLabels(cfg)
+	keywords := collectKeywords(issues,
+		func(label string) bool { return !isRoutingLabel(label) && !neverClaim[label] },
+		false,
+		func(title string) string { return searchableTitle(filers, title) })
+	if len(keywords) == 0 {
+		return legacyKeywords(issues)
+	}
+	return keywords
+}
+
+// legacyKeywords is the query earlier releases built: every label outside
+// noiseLabels, the complexity tier, and every title word.
+func legacyKeywords(issues []github.Issue) []string {
+	return collectKeywords(issues,
+		func(label string) bool { return !isNoiseLabel(label) },
+		true,
+		func(title string) string { return title })
+}
+
+// collectKeywords is the shared walk: each issue's kept labels, then its tier
+// when withTier is set, then the words of title(issue.Title), lower-cased,
+// noise words dropped and each term once.
+func collectKeywords(issues []github.Issue, keepLabel func(string) bool, withTier bool, title func(string) string) []string {
 	seen := make(map[string]bool)
 	var keywords []string
+	add := func(word string) {
+		if !seen[word] {
+			keywords = append(keywords, word)
+			seen[word] = true
+		}
+	}
 
 	for _, issue := range issues {
 		for _, label := range issue.Labels {
-			lower := strings.ToLower(label)
-			if !seen[lower] && !isNoiseLabel(lower) {
-				keywords = append(keywords, lower)
-				seen[lower] = true
+			if lower := strings.ToLower(label); keepLabel(lower) {
+				add(lower)
 			}
 		}
 
-		if issue.ComplexityTier != "" {
-			tier := strings.ToLower(issue.ComplexityTier)
-			if !seen[tier] {
-				keywords = append(keywords, tier)
-				seen[tier] = true
-			}
+		if withTier && issue.ComplexityTier != "" {
+			add(strings.ToLower(issue.ComplexityTier))
 		}
 
-		for _, word := range splitTitleWords(issue.Title) {
-			if !seen[word] && !isNoiseWord(word) {
-				keywords = append(keywords, word)
-				seen[word] = true
+		for _, word := range splitTitleWords(title(issue.Title)) {
+			if !isNoiseWord(word) {
+				add(word)
 			}
 		}
 	}
 
 	return keywords
+}
+
+// reviewBacklogTitleRE matches the stem the hive puts on its review backlog
+// items, "[reviewer] Review backlog (<perspective>): <finding>", with or
+// without the filer tag (the same shape as pkg/github's
+// reviewBacklogTitleCategoryRE).
+var reviewBacklogTitleRE = regexp.MustCompile(`^(?:\[[^\]\s]+\]\s*)?Review backlog \(([^)]+)\):\s*`)
+
+// searchableTitle is the part of an issue title that says what the issue is
+// about. A review backlog title is cut down to its perspective, which names
+// the kind of finding ("security", "style"), and the finding; the words
+// "review backlog" match every review-related entry in the vault whatever the
+// repo. Otherwise a leading "[<tag>]" is dropped only when it names a hive
+// filer (hiveFilers): any lowercase word in brackets has the filer shape, and
+// a person's "[nvidia] driver fails to build" keeps "nvidia".
+func searchableTitle(filers map[string]bool, title string) string {
+	title = strings.TrimSpace(title)
+	if m := reviewBacklogTitleRE.FindStringSubmatch(title); m != nil {
+		return m[1] + " " + title[len(m[0]):]
+	}
+	if tag := issueshape.AgentPrefix(title); tag != "" && filers[strings.ToLower(tag)] {
+		return issueshape.StripAgentPrefix(title)
+	}
+	return title
+}
+
+// hiveFilers is the set of names that file issues for the hive: the built-in
+// lanes (scanner, reviewer, …), the other origin sources (selfreport,
+// governor, …) and the agents configured on this hive.
+func hiveFilers(cfg *config.Config) map[string]bool {
+	filers := make(map[string]bool)
+	for _, lane := range config.KnownOriginLanes {
+		filers[lane] = true
+	}
+	for _, source := range config.KnownOriginSources() {
+		filers[source] = true
+	}
+	if cfg != nil {
+		for name := range cfg.Agents {
+			filers[strings.ToLower(name)] = true
+			filers[strings.ToLower(cfg.BaseAgentName(name))] = true
+		}
+	}
+	return filers
+}
+
+// neverClaimLabels is the hive's never-claim set (claims.never_claim_labels,
+// default "epic"), lower-cased. Those labels mark trackers the hive will not
+// work, so like routing labels they say nothing about the work.
+func neverClaimLabels(cfg *config.Config) map[string]bool {
+	labels := claims.DefaultNeverClaimLabels
+	if cfg != nil {
+		labels = cfg.Governor.Claims.EffectiveNeverClaimLabels()
+	}
+	out := make(map[string]bool, len(labels))
+	for _, l := range labels {
+		out[strings.ToLower(strings.TrimSpace(l))] = true
+	}
+	return out
 }
 
 // splitTitleWords extracts lowercase words from an issue title, dropping
@@ -667,4 +785,46 @@ var noiseLabels = map[string]bool{
 
 func isNoiseLabel(label string) bool {
 	return noiseLabels[label]
+}
+
+// routingLabelPrefixes are the label families the hive, Prow and the review
+// bots use to route and gate work: where an item sits in the pipeline
+// (stage/, needs-), who holds or filed it (agent/ and origin/, see
+// isRoutingLabel; hive/claimed-by-…; hive: churn-triaged), a hive's hold
+// (hive-pause/<id>), the author class (author/human, …), and review, test or
+// merge state (tide/, do-not-merge, release-note, cncf-cla:). They say nothing
+// about what the issue is about, and they are on most items, so as search
+// terms they match the same review and scanning entries for every task.
+var routingLabelPrefixes = []string{
+	stagelabels.Prefix, "hive/", "hive:", github.HiveHoldLabelPrefix, authorkind.Prefix,
+	"triage/", "size/", "lifecycle/", "do-not-merge", "needs-", "dco-signoff",
+	"sentinel-", "tide/", "release-note", "cncf-cla:",
+}
+
+// routingLabels are single hive, Prow or review-bot labels outside those
+// families.
+var routingLabels = map[string]bool{
+	"approved-direction": true,
+	"hive-review":        true,
+	"lgtm":               true,
+	"approved":           true,
+	"claimed":            true,
+	"ok-to-test":         true,
+}
+
+// isRoutingLabel reports whether a lower-cased label is one the hive's search
+// leaves out: noiseLabels, and every routing label above.
+func isRoutingLabel(label string) bool {
+	if noiseLabels[label] || routingLabels[label] {
+		return true
+	}
+	if config.IsAgentLaneLabel(label) || config.IsOriginLabel(label) {
+		return true
+	}
+	for _, prefix := range routingLabelPrefixes {
+		if strings.HasPrefix(label, prefix) {
+			return true
+		}
+	}
+	return false
 }
