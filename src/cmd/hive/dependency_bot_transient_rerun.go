@@ -88,9 +88,9 @@ func dbrLedger() dbrTransientLedger {
 type depBotRerunState int
 
 const (
-	// depBotRerunNone: no re-run is owed or spent on this head (not
+	// The zero value: no re-run is owed or spent on this head (not
 	// triaged as transient, or the author is not a trusted bot).
-	depBotRerunNone depBotRerunState = iota
+	_ depBotRerunState = iota
 	// depBotRerunOwed: the head is transient-triaged and the re-run has
 	// not been attempted yet.
 	depBotRerunOwed
