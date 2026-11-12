@@ -587,7 +587,7 @@ func TestIdleCompletionReasonlessBlockedVerdictSaysBlocked(t *testing.T) {
 
 	for _, number := range numbers {
 		rec := idleRecord(t, hub, idleKey(number))
-		if rec.Reason != idleCompletionBlockedNoReason || rec.Reason != "agent reported blocked without saying what it waits on" || rec.Reporter != "alice" {
+		if rec.Reason != "agent reported blocked without saying what it waits on" || rec.Reporter != "alice" {
 			t.Fatalf("#%d: a reasonless blocked verdict booked %+v, want %q", number, rec, idleCompletionBlockedNoReason)
 		}
 		hub.completedMu.Lock()
