@@ -2252,6 +2252,11 @@ func governorStatusEvalInterval(cfg *config.Config, apiBudget ...map[string]any)
 			effective = cfg.Governor.EvalIntervalMaxS
 		}
 	}
+	// API budget pacing (governor.api_budget_pacing) only ever lengthens the
+	// interval; while it holds a stretch the next kick is that far away.
+	if p := github.APIBudgetPacingSnapshot(); p.Active && p.EffectiveIntervalS > effective {
+		effective = p.EffectiveIntervalS
+	}
 	return time.Duration(effective) * time.Second
 }
 

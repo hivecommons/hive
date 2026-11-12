@@ -125,6 +125,7 @@ func evalIntervalAndModeForConfig(cfg *config.Config, client *github.Client, log
 	mode, degraded, recovered := github.ObserveWebhookMode()
 	webhookCadence := mode.Mode == github.WebhookModeWebhook
 	interval := webhookAwareEvalInterval(budget, webhookS, maxS, webhookCadence)
+	interval = apiBudgetPacedEvalInterval(cfg, interval, logger)
 	if logger != nil && (degraded || recovered) {
 		snap := github.WebhookHealthSnapshot()
 		args := []any{"window_seconds", 2 * base, "eval_interval_s", base, "eval_interval_webhook_s", webhookS,

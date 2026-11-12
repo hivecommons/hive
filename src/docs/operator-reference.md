@@ -93,6 +93,8 @@ The reference is organized into the sections below. Existing links to this page 
 - [Agent CLI session recycling](operator-reference/runtime-and-quota.md#agent-cli-session-recycling)
 <a id="github-api-quota"></a>
 - [GitHub API quota](operator-reference/runtime-and-quota.md#github-api-quota)
+<a id="api-budget-pacing"></a>
+  - [API budget pacing](operator-reference/runtime-and-quota.md#api-budget-pacing)
 <a id="webhook-driven-pr-cache-invalidation"></a>
   - [Webhook-driven PR cache invalidation](operator-reference/runtime-and-quota.md#webhook-driven-pr-cache-invalidation)
 <a id="what-the-operator-configures"></a>

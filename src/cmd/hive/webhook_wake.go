@@ -172,7 +172,7 @@ func (s *evalLoopState) snapshot() dashboard.EvalLoopStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := dashboard.EvalLoopStatus{Mode: s.mode, IntervalS: s.intervalS, LastWakeReason: s.lastWakeReason, WebhookWakes: s.webhookWakes,
-		CachedCycles: s.cachedCycles, WebhookPatches: s.webhookPatches}
+		CachedCycles: s.cachedCycles, WebhookPatches: s.webhookPatches, APIBudgetPacing: apiBudgetPacingStatus()}
 	if out.Mode == "" {
 		out.Mode = evalModePoll
 	}

@@ -726,7 +726,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | GitHub                       | `github.agent_api_hourly_cap`                                                                                                                                                                                         |
 | Fleet                        | `fleet.autonomy_level`                                                                                                                                                                                                |
 | Plans                        | `plan.propose`, `plan.approve`, `plan.reject`                                                                                                                                                                         |
-| Governor                     | `governor.feature_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                                                      |
+| Governor                     | `governor.feature_settings`, `governor.general_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                         |
 | Issue filter                 | `project.issue_filter`                                                                                                                                                                                                |
 | Sentinel                     | `sentinel.settings`                                                                                                                                                                                                   |
 | Write-back                   | `writeback.kind_policy`                                                                                                                                                                                               |
@@ -979,6 +979,37 @@ dashboard's Review Gate controls. It is owner only.
   (`after`), because the endpoint answers only `{"status":"updated"}`.
 - The endpoint records a `config_review` audit entry naming you. The op
   merges, approves and closes nothing.
+
+`governor.general_settings` changes the governor settings on Settings →
+General through `PUT /api/config/governor/general-advanced`, the endpoint that
+tab saves through. It is owner only. Use it to set the eval interval or to
+turn [API budget pacing](operator-reference/runtime-and-quota.md#api-budget-pacing)
+on or off.
+
+- **Pass only what changes.** The fields are `eval_interval_s` (10 to 86400),
+  `api_budget_pacing` (`true` or `false`), `eval_interval_max_s`,
+  `eval_interval_webhook_s`, `webhook_wake_debounce_s`,
+  `webhook_wake_min_gap_s`, `conserve_interval_multiplier`,
+  `optional_sweep_every_n_cycles`, `provider_budget_probe_interval_s` (for
+  these seven, `0` restores the default), `explain_mode` (`off`, `brief`,
+  `full`, or empty to clear it) and `attribution_trailer`. An unknown field is
+  refused, and the refusal lists the fields that are accepted.
+- **Only the fields that differ are sent.** The preview reads the current
+  settings and shows each change before and after. A field already at the
+  requested value is listed as not sent; if nothing would change, the preview
+  is refused.
+- **A stale preview is refused.** `write_confirm` reads the settings again
+  and refuses if a setting the change names moved after the preview.
+- **What it opens is disclosed.** A shorter eval interval, a lower cap or
+  multiplier, or turning pacing off lets the hive call GitHub more often, and
+  the preview says so. Turning pacing on is not widening.
+- The loop reads these settings every cycle, so a change applies from the
+  next eval cycle without a restart. It kicks, merges and labels nothing.
+
+```json
+{"operation": "governor.general_settings", "args": {"api_budget_pacing": true}}
+{"operation": "governor.general_settings", "args": {"eval_interval_s": 300}}
+```
 
 ### Contributor queue
 
