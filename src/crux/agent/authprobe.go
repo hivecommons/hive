@@ -447,5 +447,11 @@ func (m *Manager) AgentHasValidCredential(agentName string) bool {
 	if proc.BackendOverride != "" {
 		backend = proc.BackendOverride
 	}
+	// A claude agent on the operator's long-lived token does not use the
+	// credentials file, so a fresh dashboard sign-in there proves nothing:
+	// login text on its pane is Claude rejecting the token (#17759).
+	if backend == "claude" && m.claudeOperatorTokenMode() {
+		return false
+	}
 	return m.credentialFileProves(agentName, proc.UID, backend)
 }

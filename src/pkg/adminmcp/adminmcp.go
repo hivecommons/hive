@@ -29,6 +29,7 @@ const (
 	ToolHiveStatus         = "hive_status"
 	ToolFleetStatus        = "fleet_status"
 	ToolVersionRead        = "version_read"
+	ToolClaudeAuthStatus   = "claude_auth_status"
 	ToolAgentsList         = "agents_list"
 	ToolRunsList           = "runs_list"
 	ToolLeasesList         = "leases_list"
@@ -365,6 +366,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolPlansList, "Read the capped list of saved plans."},
 		{ToolAuditLog, "Read the capped audit log for this hive."},
 		{ToolSettingsRead, settingsReadDescription()},
+		{ToolClaudeAuthStatus, "Read which Claude auth mode is active through the existing /api/claude-auth/status endpoint: mode is \"long-lived token\" (an operator-supplied claude setup-token token) or \"dashboard sign-in\", with logged_in. Never returns token material. Read-only."},
 		{ToolAutonomyReadiness, "Read autonomy/readiness status through the existing Nous status endpoint."},
 		{ToolSpendRead, "Read spend and budget status through the existing cost endpoint."},
 		{ToolContributorsList, "Read the capped list of contributors known to this hive."},
@@ -404,7 +406,7 @@ func AllowedTool(name string) bool {
 		return true
 	}
 	switch name {
-	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
+	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolClaudeAuthStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
 		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAdvisorRecords, ToolAgentNudgeStatus,
 		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolStageTrackerRead, ToolDelegatedDecisionStatus, ToolGovernorSetup, ToolLogRead, ToolLogSources, ToolWritePreview, ToolWriteConfirm,
@@ -473,7 +475,7 @@ func inputSchema(name string) map[string]any {
 		required = s["required"].([]string)
 	case ToolSettingsRead:
 		props = settingsReadSchema()
-	case ToolGovernorSetup, ToolLogSources:
+	case ToolGovernorSetup, ToolLogSources, ToolClaudeAuthStatus:
 		props = map[string]any{}
 	case ToolLogRead:
 		props = logReadSchema()
@@ -796,6 +798,8 @@ func ReadPath(tool string, limit int) (string, bool) {
 		return "/api/status", true
 	case ToolVersionRead:
 		return "/api/version", true
+	case ToolClaudeAuthStatus:
+		return "/api/claude-auth/status", true
 	case ToolAgentsList:
 		return "/api/agents" + suffix, true
 	case ToolRunsList, ToolLeasesList:

@@ -20,6 +20,7 @@ type fakeLoginScanManager struct {
 	validCreds     map[string]bool
 	outputErrs     map[string]error
 	firstOutputErr error
+	longLivedToken bool
 
 	getOutputCalls []string
 	lines          []int
@@ -49,6 +50,8 @@ func (m *fakeLoginScanManager) GetOutput(name string, lines int) ([]string, erro
 func (m *fakeLoginScanManager) AgentHasValidCredential(agentName string) bool {
 	return m.validCreds[agentName]
 }
+
+func (m *fakeLoginScanManager) ClaudeLongLivedToken() bool { return m.longLivedToken }
 
 func (m *fakeLoginScanManager) RefreshAgentTokenFor(ctx context.Context, name string) error {
 	m.refreshes = append(m.refreshes, name)

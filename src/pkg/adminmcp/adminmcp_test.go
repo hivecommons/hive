@@ -785,3 +785,34 @@ func TestLimitSchemaDescribesCap(t *testing.T) {
 		}
 	}
 }
+
+// TestClaudeAuthStatusToolReadsStatusEndpoint: claude_auth_status is a listed,
+// argument-free read-only tool answered by GET /api/claude-auth/status, so the
+// in-hive provider and stdio hive-admin-mcp report the same auth mode the
+// dashboard does (#17759).
+func TestClaudeAuthStatusToolReadsStatusEndpoint(t *testing.T) {
+	if !AllowedTool(ToolClaudeAuthStatus) {
+		t.Fatal("claude_auth_status is not an allowed tool")
+	}
+	if path, ok := ReadPath(ToolClaudeAuthStatus, 0); !ok || path != "/api/claude-auth/status" {
+		t.Fatalf("claude_auth_status path = %q, %v", path, ok)
+	}
+	var found bool
+	for _, tool := range Tools() {
+		if tool["name"] != ToolClaudeAuthStatus {
+			continue
+		}
+		found = true
+		annotations, _ := tool["annotations"].(map[string]any)
+		if annotations["readOnlyHint"] != true {
+			t.Fatalf("annotations = %#v", annotations)
+		}
+		schema, _ := tool["inputSchema"].(map[string]any)
+		if props, _ := schema["properties"].(map[string]any); len(props) != 0 {
+			t.Fatalf("claude_auth_status takes no arguments, schema properties = %#v", props)
+		}
+	}
+	if !found {
+		t.Fatal("claude_auth_status tool not listed")
+	}
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 
+	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -270,7 +271,16 @@ func (m *Manager) markStartFailureLocked(agent *AgentProcess, class StartFailure
 //
 // Caller holds m.mu.
 func (m *Manager) recordStartFailureLocked(agent *AgentProcess, backend string, class StartFailureClass, detail string) (time.Duration, bool) {
-	return m.markStartFailureLocked(agent, class, startFailureReason(backend, class, detail), time.Now())
+	reason := startFailureReason(backend, class, detail)
+	if class == StartFailureLoginRequired && backend == "claude" && m.claudeOperatorTokenMode() {
+		// On the long-lived token a login prompt is Claude answering 401 to
+		// that token; "not logged in" would send the operator to /login.
+		reason = claude.TokenRejectedMessage
+		if d := strings.TrimSpace(detail); d != "" {
+			reason += " (" + d + ")"
+		}
+	}
+	return m.markStartFailureLocked(agent, class, reason, time.Now())
 }
 
 // clearStartFailureLocked retires the whole start-failure record. Called when a

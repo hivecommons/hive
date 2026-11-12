@@ -38,3 +38,24 @@ func OperatorToken() string {
 	}
 	return strings.TrimSpace(string(data))
 }
+
+// Claude auth modes, as the dashboard status and the admin MCP
+// claude_auth_status read report them. Neither names any token material.
+const (
+	AuthModeLongLivedToken  = "long-lived token"
+	AuthModeDashboardSignIn = "dashboard sign-in"
+)
+
+// TokenRejectedMessage is what an operator sees when Claude answers 401 while
+// agents run on the long-lived token. `/login` cannot fix that: the token
+// itself was revoked or has expired, so the fix is a new one.
+const TokenRejectedMessage = "Claude token rejected: generate a new one with claude setup-token"
+
+// AuthMode reports which Claude auth mode is active: the operator's
+// long-lived token when one is configured, otherwise the dashboard sign-in.
+func AuthMode() string {
+	if OperatorToken() != "" {
+		return AuthModeLongLivedToken
+	}
+	return AuthModeDashboardSignIn
+}

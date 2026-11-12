@@ -388,6 +388,13 @@ type claudeUsageResponse struct {
 func (p ClaudeProber) Provider() string { return "anthropic" }
 
 func (p ClaudeProber) Probe(ctx context.Context) Headroom {
+	// Agents on the operator's long-lived token (claude setup-token) run on an
+	// inference-only token that cannot read /api/oauth/usage, and the
+	// credentials file is not what they use, so its expiry says nothing about
+	// them. Headroom is unknown; the error must not read as a logout.
+	if claude.AuthMode() == claude.AuthModeLongLivedToken {
+		return failOpen(p.Provider(), errors.New("claude usage unknown: agents run on the long-lived token, which has no usage scope"))
+	}
 	credPath := p.CredentialsPath
 	if credPath == "" {
 		// The hive main process runs with HOME=/home/dev (Dockerfile), but the

@@ -381,3 +381,26 @@ func TestStartFailureStateReportsUnknownAgent(t *testing.T) {
 		t.Errorf("StartFailureState = (%+v, %v)", got, ok)
 	}
 }
+
+// On the operator's long-lived token a claude login prompt is Claude
+// rejecting that token, so the recorded reason names the fix (a new
+// setup-token) rather than "not logged in" (#17759).
+func TestStartFailureReasonClaudeLongLivedTokenRejected(t *testing.T) {
+	clearStartFailureEnv(t)
+	m := &Manager{claudeOperatorToken: "sk-ant-oat01-REASON-SENTINEL-3e7a"}
+	a := newStartFailureAgent("scanner")
+	m.recordStartFailureLocked(a, "claude", StartFailureLoginRequired, "")
+	if want := "Claude token rejected: generate a new one with claude setup-token"; a.StartFailureReason != want {
+		t.Fatalf("reason = %q, want %q", a.StartFailureReason, want)
+	}
+	if strings.Contains(a.StartFailureReason, "sk-ant") {
+		t.Fatalf("reason exposes the token: %q", a.StartFailureReason)
+	}
+
+	m = &Manager{}
+	b := newStartFailureAgent("scanner")
+	m.recordStartFailureLocked(b, "claude", StartFailureLoginRequired, "")
+	if b.StartFailureReason != "claude: not logged in" {
+		t.Fatalf("dashboard sign-in reason = %q", b.StartFailureReason)
+	}
+}

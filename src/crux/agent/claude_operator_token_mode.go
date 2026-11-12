@@ -25,6 +25,14 @@ func (m *Manager) claudeOperatorTokenMode() bool {
 	return m.claudeOperatorToken != ""
 }
 
+// ClaudeLongLivedToken is claudeOperatorTokenMode for callers outside the
+// package (the login-prompt scanner, pkg/loginscan.ClaudeAuthModeReporter):
+// the same snapshot AgentHasValidCredential and the start-failure reason
+// read, so a pause verdict and its notice never come from different modes.
+func (m *Manager) ClaudeLongLivedToken() bool {
+	return m.claudeOperatorTokenMode()
+}
+
 // logClaudeOperatorTokenModeOnce says, once per process, that the Claude
 // credential re-bridge and watchdog alerts are suspended, so an operator
 // reading the log knows why neither will ever fire. Never logs the token.

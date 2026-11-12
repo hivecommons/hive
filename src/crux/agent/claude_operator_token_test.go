@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/claude"
+	"github.com/hivecommons/hive/crux/claude/claudetest"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -19,11 +20,7 @@ const operatorTokenSentinel = "sk-ant-oat01-OPERATOR-SENTINEL-7f3c9a1e5b"
 // token ("" for unset) and the default secret file points at a missing path.
 func stageOperatorToken(t *testing.T, token string) {
 	t.Helper()
-	t.Setenv(claude.OperatorTokenEnvVar, token)
-	t.Setenv(claude.OperatorTokenFileEnvVar, "")
-	orig := claude.OperatorTokenFile
-	claude.OperatorTokenFile = filepath.Join(t.TempDir(), "missing")
-	t.Cleanup(func() { claude.OperatorTokenFile = orig })
+	claudetest.SetOperatorToken(t, token)
 }
 
 // With a long-lived operator token set, an agent whose credential file is
@@ -164,4 +161,25 @@ func TestClaudeOperatorToken_StrippedFromInheritedPaneEnv(t *testing.T) {
 		}
 	}
 	t.Fatalf("%s is not in inheritedCredentialEnvVars; it would reach every agent pane via the tmux global environment", claude.OperatorTokenEnvVar)
+}
+
+// On the long-lived token a fresh dashboard sign-in on disk proves nothing
+// about the credential the agent uses, so login text on its pane is the token
+// being rejected and must reach the operator, not the restart heal (#17759).
+func TestClaudeOperatorToken_CredentialFileProvesNothing(t *testing.T) {
+	stageSharedClaudeCredential(t, map[string]any{
+		"accessToken": "sk-ant-oat-live",
+		"expiresAt":   time.Now().Add(6 * time.Hour).UnixMilli(),
+	})
+	stageOperatorToken(t, "")
+	m, agent := claudeAgentFixture(t, "")
+	if !m.AgentHasValidCredential(agent.Name) {
+		t.Fatal("precondition: without the operator token a usable shared credential must qualify")
+	}
+
+	stageOperatorToken(t, operatorTokenSentinel)
+	m, agent = claudeAgentFixture(t, "")
+	if m.AgentHasValidCredential(agent.Name) {
+		t.Fatal("on the long-lived token the dashboard credential file must not read as proof")
+	}
 }

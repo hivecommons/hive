@@ -287,7 +287,7 @@ confirming counter is `oom_kill` in `/sys/fs/cgroup/memory.events`
 
 Agents run in tmux sessions named `hive-<agent>` managed by Hive's agent manager. There is no v1 `AGENT_READY_MARKER` or `bin/supervisor.sh` loop: the manager drives each agent by delivering a *kick* (its next work prompt) directly into the session and, once running, auto-dismisses the CLI's own startup consent screens.
 
-The login detector (`scanForLoginRequired` in `src/cmd/hive/main.go`) scans recent tmux pane output for the regexes in `governor.sensing.login_patterns`. On a match it logs `login required detected`, pauses the agent, and sends a high-priority notification telling you to attach to `hive-<agent>` and run that backend's login command.
+The login detector (`scanForLoginRequired` in `src/cmd/hive/main.go`) scans recent tmux pane output for the regexes in `governor.sensing.login_patterns`. On a match it logs `login required detected`, pauses the agent, and sends a high-priority notification telling you to attach to `hive-<agent>` and run that backend's login command. For a `claude` agent running on the operator's long-lived token (`HIVE_CLAUDE_OAUTH_TOKEN` or its `_FILE` source) the notification is titled `Claude token rejected: <agent>` instead and omits the login command, since `/login` cannot fix a rejected token; follow [Replace a Claude operator token](backend-auth-recovery-runbook.md#replace-a-claude-operator-token) in the runbook.
 
 Useful checks from inside the Hive container/pod:
 
