@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.20.0)
+
+### Added
+
+- Hub marketplace seeds curated workflow models from `pkg/hub/marketplace/curated/*.yaml` on startup and every refresh, ships the first one — `cncf-techdocs-assessment` (CNCF TechDocs AI-assisted assessment) — and adds `cncf/techdocs` to the ingest corpus via the new operator-added `extra.json` list (hivecommons/hive#17620).
+
 ## 2026-11-12 (v6.19.2)
 
 ### Fixed
