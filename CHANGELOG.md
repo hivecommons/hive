@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.236.5)
+
+### Fixed
+
+- Avoid false repeated-error self-reports for structured context cancellations, including wrapped cancellations, while retaining local warnings (#17935, #17944, #17949).
+
 ## 2026-11-12 (v5.236.4)
 
 ### Security
