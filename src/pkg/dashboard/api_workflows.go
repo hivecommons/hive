@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -24,6 +25,7 @@ func (s *Server) registerWorkflowRoutes() {
 	s.mux.HandleFunc("POST /api/workflows/ingest", s.handleWorkflowIngest)
 	s.mux.HandleFunc("GET /api/workflows/bindings", s.handleWorkflowBindingsGet)
 	s.mux.HandleFunc("PUT /api/workflows/bindings", s.handleWorkflowBindingPut)
+	s.mux.HandleFunc("PUT /api/workflows/enabled", s.handleWorkflowEnabledPut)
 	s.mux.HandleFunc("GET /api/workflows/{name}/{version}", s.handleWorkflowGet)
 	s.mux.HandleFunc("PUT /api/workflows/{name}/{version}", s.handleWorkflowSave)
 	s.mux.HandleFunc("DELETE /api/workflows/{name}/{version}", s.handleWorkflowDelete)
@@ -235,4 +237,89 @@ func (s *Server) handleWorkflowBindingPut(w http.ResponseWriter, r *http.Request
 		s.auditFromRequest(r, action, fmt.Sprintf("%s -> %s@%s", body.Repo, body.Name, body.Version), "")
 	}
 	jsonResponse(w, map[string]interface{}{"changed": changed, "bindings": s.workflowBindings()})
+}
+
+// workflowProvisionTimeout bounds the label provisioning PUT
+// /api/workflows/enabled runs across every bound repository when it turns
+// derivation on: one label list plus a create per missing label per
+// repository, all within the request.
+const workflowProvisionTimeout = 60 * time.Second
+
+// handleWorkflowEnabledPut flips workflow.enabled (hivecommons/hive#17620)
+// from the dashboard so a hosted hive with no hive.yaml access can turn
+// model-based stage derivation on or off. The stage engine
+// (cmd/hive stageEngineWorkflowFor) and the tracker read the live config
+// on every call, so the change takes effect on the next derivation pass
+// with no restart or reload. Turning it on also provisions every bound
+// repository's model labels now through Dependencies.WorkflowProvisionLabels;
+// a provisioning failure is reported in the response as a warning, never as
+// a failure of the flip itself, because the sweep retries it on its next
+// pass. Audited as workflow_enabled / workflow_disabled; a no-op flip is
+// not audited.
+func (s *Server) handleWorkflowEnabledPut(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Enabled == nil {
+		jsonError(w, "body must be {\"enabled\": true|false}", http.StatusBadRequest)
+		return
+	}
+	changed := s.deps.Config.Workflow.Enabled != *body.Enabled
+	if changed {
+		s.deps.Config.Workflow.Enabled = *body.Enabled
+		if err := s.saveConfig(); err != nil {
+			s.deps.Config.Workflow.Enabled = !*body.Enabled
+			jsonError(w, "save config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		action := "workflow_disabled"
+		if *body.Enabled {
+			action = "workflow_enabled"
+		}
+		s.auditFromRequest(r, action, fmt.Sprintf("%d bound repositories", len(s.workflowBindings())), "")
+	}
+	resp := map[string]interface{}{
+		"enabled":  s.deps.Config.Workflow.Enabled,
+		"changed":  changed,
+		"bindings": s.workflowBindings(),
+	}
+	if *body.Enabled {
+		if warnings := s.provisionBoundWorkflowLabels(r.Context()); len(warnings) > 0 {
+			resp["warnings"] = warnings
+		}
+	}
+	jsonResponse(w, resp)
+}
+
+// provisionBoundWorkflowLabels runs WorkflowProvisionLabels for every bound
+// repository and returns one message per repository it could not provision.
+func (s *Server) provisionBoundWorkflowLabels(ctx context.Context) []string {
+	if s.deps.WorkflowProvisionLabels == nil {
+		return nil
+	}
+	bindings := s.workflowBindings()
+	if len(bindings) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, workflowProvisionTimeout)
+	defer cancel()
+	var warnings []string
+	for _, b := range bindings {
+		if err := s.deps.WorkflowProvisionLabels(ctx, b.Repo); err != nil {
+			s.logger.Warn("workflow labels: provisioning on enable failed; the next sweep retries", "repo", b.Repo, "workflow", b.Key(), "err", err)
+			warnings = append(warnings, fmt.Sprintf("%s: %s", b.Repo, err.Error()))
+		}
+	}
+	return warnings
 }

@@ -1511,3 +1511,14 @@ nous:
 #     role: experimenter
 #     engine: nous
 #     interval: 24h
+
+# Workflow models (hivecommons/hive#17620, docs/design/workflow-models.md).
+# Repositories are bound to a model on Settings → Repos (project.workflow_bindings).
+# A binding always changes the Activity Monitor's columns for that repository;
+# `enabled` decides whether the bound model's rules also derive its stages and
+# whether the model's labels are provisioned in the repository. Owners can flip
+# it from Settings → Workflows → Library (PUT /api/workflows/enabled) without
+# editing this file; the change applies on the next derivation pass.
+# workflow:
+#   enabled: false           # false (default): bindings are columns only
+#   label_gc: true           # delete labels a previous binding provisioned once nothing wears them
