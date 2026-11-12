@@ -1072,9 +1072,9 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			//
 			// Logged rather than skipped silently: an issue that is never offered
 			// should not be a mystery to the operator watching the queue.
-			if isTracker, _ := issue["is_tracker"].(bool); isTracker {
+			if hold := contributeTrackerHoldFor(issue); hold.held {
 				h.logger.Info("[contribute-ws] skipping tracker/umbrella issue",
-					"repo", repo.Full, "number", number, "title", title)
+					"repo", repo.Full, "number", number, "title", title, "open_sub_issues", hold.openSubIssues)
 				return
 			}
 			if requestedRole != "" && !h.issueMatchesAgentRole(requestedRole, title, labels, lane) {

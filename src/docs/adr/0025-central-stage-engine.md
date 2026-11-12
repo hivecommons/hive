@@ -80,7 +80,7 @@ hub read that store and nothing else (`stageStoreOrShared`,
    `src/pkg/github/stage_labeler.go:114`); the PR-claim sync writes 040
    (`src/pkg/github/prclaims.go:1777`, `src/pkg/github/prclaims.go:2037`) and so
    does a dashboard verdict-settle handler through a plain `AddLabels`
-   (`src/pkg/dashboard/contribute_verdict_settle.go:216`). Agents may add the
+   (`src/pkg/dashboard/contribute_verdict_settle.go:226`). Agents may add the
    parking stages through the label relay (`agentMayAddLabel`,
    `src/pkg/github/issue_request_label.go:75`), so a clanker can set a stage
    label and only the next sweep's self-heal corrects it. The docs admit the
