@@ -48,22 +48,23 @@ func TestFleetReworkExcludesMergedAndClosedPRs(t *testing.T) {
 	}
 }
 
-func TestFleetReworkKeepsOpenDraftAndAdoptedPRs(t *testing.T) {
+func TestFleetReworkKeepsOpenDraftDropsAdoptedPRs(t *testing.T) {
 	hub, srv, store := reworkHub(t)
 	fixConn(hub, "alice", fixCaps(capFixPRInterrupt), time.Now())
 
 	noteRework(store, "org/r", 4, stagelabels.ReturnedToContributor, "alice")
 	noteRework(store, "org/r", 5, stagelabels.AdoptedByHive, "alice")
 	// A draft is not in OpenPrs; the enumeration carries it as a sidelined
-	// row, which is still the canonical open set.
+	// row, which is still the canonical open set. #5 is open too, but the
+	// hive owns a 074 PR: it is no longer this contributor's rework.
 	setReworkStatus(srv, FrontendRepo{Name: "r", Full: "org/r",
 		OpenPrs:          []any{FrontendPR{PullRequest: github.PullRequest{Repo: "org/r", Number: 5}}},
 		NonActionablePrs: []any{github.RepoWorkPR{Repo: "org/r", Number: 4, Draft: true, Bucket: "draft"}},
 	})
 
 	fc := snapshotFor(t, hub, "alice")
-	if got := pendingNumbers(fc); fc.PendingRework != 2 || len(got) != 2 || got[0] != 4 || got[1] != 5 {
-		t.Fatalf("pending_rework=%d prs=%v, want open #4 (draft) and #5 (074)", fc.PendingRework, got)
+	if got := pendingNumbers(fc); fc.PendingRework != 1 || len(got) != 1 || got[0] != 4 {
+		t.Fatalf("pending_rework=%d prs=%v, want only the open draft #4; #5 (074) is the hive's", fc.PendingRework, got)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -260,6 +261,23 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 		Clankers: make([]FleetClanker, 0, len(h.connections)),
 		Work:     make([]FleetWorkItem, 0),
 	}
+	// Fix-pr task IDs held per contributor across all their live sockets,
+	// gathered before any row lock is taken so no two connections are ever
+	// locked at once (fleetReworkFor names a dispatch nobody holds).
+	heldFix := map[string]map[string]bool{}
+	for _, c := range h.connections {
+		c.mu.Lock()
+		if c.profile != nil && len(c.fixTasks) > 0 {
+			user := strings.ToLower(c.profile.GitHubUsername)
+			if heldFix[user] == nil {
+				heldFix[user] = map[string]bool{}
+			}
+			for id := range c.fixTasks {
+				heldFix[user][id] = true
+			}
+		}
+		c.mu.Unlock()
+	}
 	for _, c := range h.connections {
 		c.mu.Lock()
 		fc := FleetClanker{
@@ -353,7 +371,11 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 		if task == nil {
 			fc.IdleReason = c.lastIdleReason
 		}
-		fc.FleetRework = h.fleetReworkFor(c, fc.Stale, openPRs)
+		var held map[string]bool
+		if c.profile != nil {
+			held = heldFix[strings.ToLower(c.profile.GitHubUsername)]
+		}
+		fc.FleetRework = h.fleetReworkFor(c, fc.Stale, openPRs, held)
 		c.mu.Unlock()
 		fc.CurrentTask = task
 		fc.PromptPreview = promptPreview

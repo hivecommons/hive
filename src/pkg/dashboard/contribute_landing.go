@@ -472,6 +472,11 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .work-kind.rework{background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);color:var(--status-attention);border-color:color-mix(in srgb,var(--status-attention) var(--component-border),transparent)}
 .clanker-idle-rework,.clanker-rework-pending{color:var(--status-error);font-weight:600}
 .clanker-rework-pending .cc-issue-link{color:var(--status-error)}
+.clanker-rework-pending .clanker-rework-why{font-weight:400;color:var(--text-muted)}
+.clanker-rework-more{display:inline;font-weight:400}
+.clanker-rework-more>summary{display:inline;cursor:pointer;color:var(--text-faint);user-select:none;list-style:none}
+.clanker-rework-more>summary::-webkit-details-marker{display:none}
+.clanker-rework-more[open]>summary{display:none}
 .clanker-pane{margin-top:var(--sp-3);font-size:.72rem}
 .clanker-pane>summary{cursor:pointer;color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;user-select:none;list-style:none}
 .clanker-pane>summary::before{content:"\25B8";display:inline-block;width:1em;color:var(--text-muted)}
@@ -5538,14 +5543,29 @@ function clankerIdleLine(c){
   if(pend>0)return '<div class="clanker-sub clanker-idle-rework">idle &middot; '+pend+' PR'+(pend===1?'':'s')+' awaiting rework</div>';
   return c.idle_reason?('<div class="clanker-sub">idle: '+esc(idleReasonLabel(c.idle_reason))+'</div>'):'';
 }
+// At most this many pending PRs are linked inline; the rest sit behind a
+// "show N more" disclosure (the card is a status line, not a backlog).
+var CLANKER_REWORK_INLINE_MAX=3;
 function clankerPendingReworkLine(c){
   var pend=c.pending_rework|0;
   if(pend<=0)return '';
-  var prs=(c.pending_rework_prs||[]).map(function(p){return (p.repo||'')+'#'+(p.number||'')+(p.cause?(' ('+p.cause+')'):'')+(p.state?(' — '+p.state):'');}).join(', ');
-  var links=(c.pending_rework_prs||[]).map(function(p){return clankerWorkRef(p)+(p.state?(' <i class="clanker-rework-state">'+esc(p.state)+'</i>'):'');}).join(', ');
+  var items=c.pending_rework_prs||[];
+  var prs=items.map(function(p){return (p.repo||'')+'#'+(p.number||'')+(p.cause?(' ('+p.cause+')'):'')+(p.state?(' — '+p.state):'');}).join(', ');
+  var refs=items.map(function(p){return clankerWorkRef(p)+(p.state?(' <i class="clanker-rework-state">'+esc(p.state)+'</i>'):'');});
+  var links=refs.slice(0,CLANKER_REWORK_INLINE_MAX).join(', ');
+  var rest=refs.slice(CLANKER_REWORK_INLINE_MAX);
+  if(rest.length){
+    var key=(c.github_username||c.contributor_id||'').toLowerCase()+':rework';
+    var open=ccOpenPanes[key]?' open':'';
+    links+=', <details class="clanker-rework-more" data-pane="'+esc(key)+'"'+open+'><summary>show '+rest.length+' more</summary>'+rest.join(', ')+'</details>';
+  }
   var depth=c.fix_queue_depth|0;
   var q=depth>0?(' &middot; fix queue '+depth):'';
-  return '<div class="clanker-sub clanker-rework-pending" title="'+esc(prs)+'">'+pend+' PR'+(pend===1?'':'s')+' awaiting rework (not yet dispatched)'+q+(links?(': '+links):'')+'</div>';
+  // The server's own account of why the dispatcher is holding the fix
+  // (offline, no fix-pr capability, orphaned dispatch, backoff, focus
+  // window, waiting for the relay's next ready); older hubs send none.
+  var why=c.pending_rework_blocked?('not dispatched: <span class="clanker-rework-why">'+esc(c.pending_rework_blocked)+'</span>'):'not yet dispatched';
+  return '<div class="clanker-sub clanker-rework-pending" title="'+esc(prs)+'">'+pend+' PR'+(pend===1?'':'s')+' awaiting rework ('+why+')'+q+(links?(': '+links):'')+'</div>';
 }
 // #7317 item 3 helpers. Both return '' when there is nothing to show so a
 // healthy row is byte-for-byte what it was before.
@@ -5566,7 +5586,7 @@ function clankerPaneBlock(lines,key){
   return '<details class="clanker-pane" data-pane="'+esc(key)+'"'+open+'><summary>agent pane &middot; '+lines.length+' line'+(lines.length===1?'':'s')+'</summary><pre>'+esc(lines.join('\n'))+'</pre></details>';
 }
 onEl('clanker-list','toggle',function(e){
-  var d=e.target;if(!d||!d.classList||!d.classList.contains('clanker-pane'))return;
+  var d=e.target;if(!d||!d.classList||!(d.classList.contains('clanker-pane')||d.classList.contains('clanker-rework-more')))return;
   var k=d.getAttribute('data-pane');if(!k)return;
   if(d.open)ccOpenPanes[k]=true;else delete ccOpenPanes[k];
 },true);
