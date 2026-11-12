@@ -474,6 +474,8 @@ func (r *ActionableResult) applyWebhookItem(snap WebhookItemSnapshot) bool {
 	p := snap.Patch
 	if snap.IsPR {
 		p = p.withLinkedIssues(prev.linkedIssues)
+	} else {
+		p = p.withIssueChildren(nil, prev.issueChildren())
 	}
 	added := false
 	switch p.Bucket {

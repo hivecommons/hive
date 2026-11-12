@@ -149,7 +149,7 @@ func (c *Client) FetchWebhookItemSnapshot(ctx context.Context, repo string, numb
 	// issue payload lacks the PR fields, and the PR-side delivery for it
 	// carries its own re-read.
 	if snap.Open() && !snap.IsPR {
-		snap.Patch = c.classifyWebhookIssue(repo, issue, blockedBy, labels, now)
+		snap.Patch = c.classifyWebhookIssue(repo, issue, blockedBy, labels, now).withIssueChildren(children, nil)
 	}
 	return snap, nil
 }

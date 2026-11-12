@@ -225,6 +225,12 @@ func (c *Client) decomposedChildren(ctx context.Context, owner, repoName string,
 		sort.Ints(children)
 		return children, open, len(children) > 0, nil
 	}
+	return c.splitLedgerChildren(ctx, owner, repoName, parent)
+}
+
+// splitLedgerChildren is the ledger half of decomposedChildren: each child
+// the split-parents ledger records under parent, read by number.
+func (c *Client) splitLedgerChildren(ctx context.Context, owner, repoName string, parent int) (children []int, open int, ok bool, err error) {
 	ledger, lerr := LoadSplitParents("")
 	if lerr != nil {
 		return nil, 0, false, nil
