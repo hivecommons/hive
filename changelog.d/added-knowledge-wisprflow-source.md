@@ -1,1 +1,0 @@
-- Knowledge: new `wisprflow` connector syncs Wispr Flow dictation history (text, time, source app) into the vault from the desktop app's local `flow.sqlite` or an export folder — read-only, no sign-in, one fact per dictation or per day, with a Knowledge → Integrations card; dictating straight into **+ New Fact** needs no connector at all.

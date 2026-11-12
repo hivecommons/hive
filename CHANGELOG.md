@@ -11,6 +11,32 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.230.0)
+
+### Added
+
+- Settings → Workflows → Library gains an owner-only **Derive stages from bound models** switch (`workflow.enabled`, [#17620](https://github.com/hivecommons/hive/issues/17620)) backed by the new `PUT /api/workflows/enabled {enabled}`, so a hosted hive with no `hive.yaml` access can turn model-based stage derivation on or off from the dashboard. Off: a binding only changes the Activity Monitor's columns; on: a bound repository's stages are derived by its model's rules and the model's labels are provisioned in the repository immediately. Persists `hive.yaml`, takes effect on the next derivation pass without a restart, audited as `workflow_enabled` / `workflow_disabled`; the Repos binding row now says *columns only — turn on derivation in Workflows* when a repository is bound while the flag is off.
+
+### Fixed
+
+- Classify repeated plain HTTP proxy forwarding failures separately, with diagnostics for the requested host and network path.
+
+## 2026-11-12 (v5.229.0)
+
+### Added
+
+- Knowledge: new `wisprflow` connector syncs Wispr Flow dictation history (text, time, source app) into the vault from the desktop app's local `flow.sqlite` or an export folder — read-only, no sign-in, one fact per dictation or per day, with a Knowledge → Integrations card; dictating straight into **+ New Fact** needs no connector at all.
+
+### Fixed
+
+- Agents whose pluk session log under `/var/run/pluk/logs` was left behind by another uid (for example the supervisor's `hive-supervisor.jsonl`) no longer fail log setup with `permission denied`; the stale file is replaced with a peer-readable one so `hive-panes` and the dashboard can read it ([#17871](https://github.com/hivecommons/hive/issues/17871)).
+
+## 2026-11-12 (v5.228.6)
+
+### Fixed
+
+- Detect missing GitHub App repository coverage at boot, during self-heal, and when connecting a repository, with a settings link to fix the installation selection (#17696).
+
 ## 2026-11-12 (v5.228.5)
 
 ### Fixed

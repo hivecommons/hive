@@ -103,7 +103,10 @@ type Config struct {
 	Data               DataConfig          `yaml:"data"`
 	Deployment         DeploymentConfig    `yaml:"deployment,omitempty" json:"deployment,omitempty"`
 	Knowledge          KnowledgeConfig     `yaml:"knowledge"`
-	Hub                HubConfig           `yaml:"hub"`
+	// Inbox routes voice-recorder items (Plaud, Wispr Flow) to spek RFCs or
+	// dibs from the dashboard Inbox.
+	Inbox InboxConfig `yaml:"inbox,omitempty" json:"inbox,omitempty"`
+	Hub   HubConfig   `yaml:"hub"`
 	// Issues tunes issue lifecycle automation. Zero value keeps the safe
 	// defaults: close issues after their fix PR merges, and backfill hourly.
 	Issues IssuesConfig `yaml:"issues,omitempty" json:"issues,omitempty"`

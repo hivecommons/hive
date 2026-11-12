@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -50,6 +52,16 @@ func ensurePlukLogFile(runDir, session string) (string, error) {
 	path := plukSessionLogPath(runDir, session)
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, plukLogFileMode)
+	if errors.Is(err, fs.ErrPermission) {
+		// A log left behind by another uid (a pane shell's `>>` under a tight
+		// umask, or an earlier run as a different user) cannot be opened or
+		// chmodded by us, but the shared setgid logs dir is group-writable, so
+		// the stale file can be replaced. Replacing beats leaving the session's
+		// log unreadable to peers.
+		if rmErr := os.Remove(path); rmErr == nil {
+			f, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, plukLogFileMode)
+		}
+	}
 	if err != nil {
 		return "", fmt.Errorf("creating %s: %w", path, err)
 	}
