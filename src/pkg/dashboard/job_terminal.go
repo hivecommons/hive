@@ -66,8 +66,20 @@ import (
 // So while a kick runs the pane shows what the sandbox did around it
 // (network and filesystem decisions, supervisor state) and then points the
 // operator at the transcript, which is where the kick's own output and
-// exit code land once the launcher's Exec().Run returns. Only the job pod
-// log shows the kick's stdout live.
+// exit code land once the launcher's Exec().Run returns. The job pod log
+// and the substrate stream below show the kick's stdout live.
+//
+// Substrate runtime (hivecommons/hive#17777). An agent with
+// sandbox.runtime: substrate runs each kick in a Substrate actor, again with
+// no tmux session, so it uses the same page, route and three states. The
+// Control API has no ListActors and Substrate no logs RPC, so the live
+// source is sandbox.SubstrateLogReader: the launcher, in this same process,
+// records the actor (name, atespace, every state it passes through, the
+// worker's SPIFFE id) and tees the kick's stdout and stderr from the
+// bridge's streamed /run into it. Unlike OpenShell this is the kick's own
+// output and exit code. When the launcher is done the actor is deleted or,
+// with snapshot_on_idle, suspended; the pane names which, and between kicks
+// shows how the last actor ended above the persisted transcript.
 
 const (
 	// Both live under terminalPathPrefix so the terminal handoff code,
@@ -99,6 +111,7 @@ type jobPodLogReader interface {
 type jobTerminalDeps struct {
 	reader        jobPodLogReader
 	openshell     sandbox.OpenShellLogReader
+	substrate     sandbox.SubstrateLogReader
 	workspaceRoot string
 	pollInterval  time.Duration
 }
@@ -139,6 +152,15 @@ func (s *Server) openshellLogReader(name string) sandbox.OpenShellLogReader {
 	return &sandbox.OpenShellLauncher{Options: opts}
 }
 
+// substrateLogReader is the substrate counterpart: the process-wide record
+// the substrate launcher writes each kick into.
+func (s *Server) substrateLogReader() sandbox.SubstrateLogReader {
+	if s.jobTerminal.substrate != nil {
+		return s.jobTerminal.substrate
+	}
+	return sandbox.DefaultSubstrateKicks
+}
+
 func (s *Server) jobTerminalWorkspaceRoot() string {
 	if s.jobTerminal.workspaceRoot != "" {
 		return s.jobTerminal.workspaceRoot
@@ -163,11 +185,11 @@ func (s *Server) jobTerminalPollInterval() time.Duration {
 // runtime runs its kicks outside the hive pod, so it has no tmux session
 // and its terminal is this read-only viewer.
 func sandboxRuntimeWithoutTmux(rt string) bool {
-	return rt == config.SandboxRuntimeJob || rt == config.SandboxRuntimeOpenShell
+	return rt == config.SandboxRuntimeJob || rt == config.SandboxRuntimeOpenShell || rt == config.SandboxRuntimeSubstrate
 }
 
 // jobTerminalAgent resolves the path's agent and checks that its effective
-// sandbox runtime has no tmux session (job or openshell), returning that
+// sandbox runtime has no tmux session (job, openshell or substrate), returning that
 // runtime. The status code says which precondition failed: 404 for an
 // unknown agent, 409 for one that has a tmux terminal instead.
 func (s *Server) jobTerminalAgent(r *http.Request) (string, string, int, string) {
@@ -185,7 +207,7 @@ func (s *Server) jobTerminalAgent(r *http.Request) (string, string, int, string)
 	}
 	rt := agentCfg.SandboxRuntime(cfg.AgentSandbox)
 	if !sandboxRuntimeWithoutTmux(rt) {
-		return "", "", http.StatusConflict, fmt.Sprintf("agent %q runs sandbox kicks with runtime %q, not as a Kubernetes Job or OpenShell sandbox; there is no sandbox log to show", name, rt)
+		return "", "", http.StatusConflict, fmt.Sprintf("agent %q runs sandbox kicks with runtime %q, not as a Kubernetes Job, OpenShell sandbox or Substrate actor; there is no sandbox log to show", name, rt)
 	}
 	return name, rt, http.StatusOK, ""
 }
@@ -289,6 +311,10 @@ func (s *Server) handleJobTerminalStream(w http.ResponseWriter, r *http.Request)
 	ctx := r.Context()
 	if rt == config.SandboxRuntimeOpenShell {
 		s.streamOpenShellSandbox(ctx, out, name, s.openshellLogReader(name))
+		return
+	}
+	if rt == config.SandboxRuntimeSubstrate {
+		s.streamSubstrateActor(ctx, out, name, s.substrateLogReader())
 		return
 	}
 	reader := s.jobPodLogReader()
@@ -407,6 +433,89 @@ func (s *Server) streamOpenShellSandbox(ctx context.Context, out *jobTerminalWri
 	}
 }
 
+// streamSubstrateActor is the substrate-runtime counterpart: name the
+// agent's newest actor and its state and SPIFFE id, follow the kick's
+// output as the bridge streams it, scrubbed line by line, with each actor
+// state transition as a status line, then report the kick's exit code and
+// whether the actor was suspended or deleted. A finished kick's actor is
+// still named, above the persisted transcript.
+func (s *Server) streamSubstrateActor(ctx context.Context, out *jobTerminalWriter, name string, reader sandbox.SubstrateLogReader) {
+	info, found, err := reader.LatestActor(ctx, sandbox.LaunchName(name))
+	if err != nil {
+		out.status("cannot read Substrate actors for agent %q: %v", name, err)
+		out.status("showing the last persisted transcript instead")
+		s.writeSandboxTranscript(out, name, substrateTerms)
+		return
+	}
+	if !found {
+		s.writeSandboxTranscript(out, name, substrateTerms)
+		return
+	}
+	out.status("substrate actor %s", describeSubstrateActor(info))
+	if info.Finished() {
+		out.status("%s", substrateActorEnd(info))
+		s.writeSandboxTranscript(out, name, substrateTerms)
+		return
+	}
+	out.status("%s", substrateLiveLogNote)
+	last := info
+	scrub := &kubejob.LineFilterWriter{Dst: out, Fn: scrubLogLine}
+	final, err := reader.StreamRun(ctx, info.Name, s.jobTerminalPollInterval(), scrub, func(next sandbox.SubstrateActorInfo) {
+		if next.State == last.State && next.SpiffeID == last.SpiffeID {
+			return
+		}
+		last = next
+		out.status("actor %s", describeSubstrateActor(next))
+	})
+	_ = scrub.Close()
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		out.status("output stream ended with an error: %v", err)
+	}
+	if final.Name == "" {
+		final.Name = info.Name
+	}
+	if final.Exited {
+		out.status("kick exited with code %d", final.ExitCode)
+	}
+	out.status("%s", substrateActorEnd(final))
+}
+
+// describeSubstrateActor is "<name> · <STATE> · <spiffe id>", leaving out
+// what the launcher has not learned yet.
+func describeSubstrateActor(i sandbox.SubstrateActorInfo) string {
+	parts := []string{i.Name, orUnknown(i.State)}
+	if i.Atespace != "" {
+		parts[0] = i.Atespace + "/" + i.Name
+	}
+	if i.SpiffeID != "" {
+		parts = append(parts, i.SpiffeID)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// substrateActorEnd says what became of the actor once the launcher was done
+// with it, or that it has not finished.
+func substrateActorEnd(i sandbox.SubstrateActorInfo) string {
+	switch {
+	case i.Suspended:
+		return fmt.Sprintf("actor %s was suspended with a snapshot (snapshot_on_idle): the kick has finished. %s", i.Name, substrateKickResultNote)
+	case i.Done:
+		return fmt.Sprintf("actor %s was deleted by the launcher: the kick has finished. %s", i.Name, substrateKickResultNote)
+	default:
+		return fmt.Sprintf("actor %s · %s (exit code not reported). %s", i.Name, orUnknown(i.State), substrateKickResultNote)
+	}
+}
+
+const (
+	// substrateLiveLogNote opens every live substrate stream.
+	substrateLiveLogNote = "this is the kick's stdout and stderr as the actor's bridge streams /run, scrubbed; actor state changes are shown as they happen"
+	// substrateKickResultNote closes it.
+	substrateKickResultNote = "the full output and exit code are in the persisted transcript; reopen this pane to see them"
+)
+
 const (
 	// openshellLiveLogNote opens every live OpenShell stream so an operator
 	// never mistakes the sandbox's event log for the kick's output.
@@ -440,11 +549,20 @@ var (
 		live:  "OpenShell sandbox", where: "on the gateway",
 		gone: "the launcher deletes a sandbox when its kick finishes",
 	}
+	substrateTerms = sandboxTerms{
+		title: "substrate actor log",
+		about: "the kick runs in a Substrate actor, so this is the kick's output as the actor's bridge streams it while it runs and the kick's transcript afterwards",
+		live:  "Substrate actor", where: "started by this hive process",
+		gone: "the launcher deletes, or with snapshot_on_idle suspends, an actor when its kick finishes",
+	}
 )
 
 func sandboxTermsFor(rt string) sandboxTerms {
-	if rt == config.SandboxRuntimeOpenShell {
+	switch rt {
+	case config.SandboxRuntimeOpenShell:
 		return openshellTerms
+	case config.SandboxRuntimeSubstrate:
+		return substrateTerms
 	}
 	return jobTerms
 }

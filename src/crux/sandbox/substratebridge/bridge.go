@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -57,14 +58,24 @@ type RunRequest struct {
 	Command []string          `json:"command"`
 	Env     map[string]string `json:"env,omitempty"`
 	WorkDir string            `json:"workdir,omitempty"`
+	// Stream asks for the output as it is produced: the response is then a
+	// sequence of JSON RunResponse frames, every one but the last marked
+	// Partial and carrying only new output, the last carrying the exit
+	// code. A bridge that predates the field ignores it and answers with a
+	// single complete RunResponse, which a streaming client reads as a
+	// final frame, so either side can be upgraded first.
+	Stream bool `json:"stream,omitempty"`
 }
 
-// RunResponse is the body POST /run answers with once the command exits.
+// RunResponse is the body POST /run answers with once the command exits,
+// or one frame of a streamed answer (see RunRequest.Stream).
 type RunResponse struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	ExitCode int    `json:"exit_code"`
 	Error    string `json:"error,omitempty"`
+	// Partial marks a streamed output frame; its ExitCode means nothing.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // Handler serves the bridge protocol for one workspace directory.
@@ -159,16 +170,79 @@ func (h *Handler) run(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel = context.WithTimeout(ctx, h.RunTimeout)
 		defer cancel()
 	}
-	resp := Run(ctx, req, h.workspace())
 	w.Header().Set("Content-Type", contentTypeJSON)
+	if !req.Stream {
+		resp := Run(ctx, req, h.workspace())
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(resp)
+	frames := &frameEncoder{enc: json.NewEncoder(w)}
+	if f, ok := w.(http.Flusher); ok {
+		frames.flush = f.Flush
+	}
+	resp := run(ctx, req, h.workspace(), &frameWriter{frames: frames, stderr: false}, &frameWriter{frames: frames, stderr: true})
+	frames.send(RunResponse{ExitCode: resp.ExitCode, Error: resp.Error})
+}
+
+// frameEncoder serializes the streamed frames of one POST /run; stdout and
+// stderr are written from separate goroutines by os/exec.
+type frameEncoder struct {
+	mu    sync.Mutex
+	enc   *json.Encoder
+	flush func()
+}
+
+func (f *frameEncoder) send(frame RunResponse) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_ = f.enc.Encode(frame)
+	if f.flush != nil {
+		f.flush()
+	}
+}
+
+// frameWriter turns one of the command's output streams into Partial
+// frames, capped at MaxOutput like the buffered answer. It never fails the
+// command: a client that went away only loses the rest of the output.
+type frameWriter struct {
+	frames  *frameEncoder
+	stderr  bool
+	written int
+}
+
+func (w *frameWriter) Write(p []byte) (int, error) {
+	chunk := p
+	if room := MaxOutput - w.written; len(chunk) > room {
+		chunk = chunk[:max(room, 0)]
+	}
+	if len(chunk) > 0 {
+		w.written += len(chunk)
+		frame := RunResponse{Partial: true}
+		if w.stderr {
+			frame.Stderr = string(chunk)
+		} else {
+			frame.Stdout = string(chunk)
+		}
+		w.frames.send(frame)
+	}
+	return len(p), nil
 }
 
 // Run executes one RunRequest with the request env replacing the process
 // env — the launcher already filtered it through hive's credential-free
 // allowlist — and reports the exit code the way the Podman launcher does.
 func Run(ctx context.Context, req RunRequest, workspace string) RunResponse {
+	var stdout, stderr bytes.Buffer
+	resp := run(ctx, req, workspace, &stdout, &stderr)
+	resp.Stdout, resp.Stderr = capString(stdout.Bytes()), capString(stderr.Bytes())
+	return resp
+}
+
+// run executes req with its output going to stdout and stderr and reports
+// the exit code; the output fields of the result are left empty.
+func run(ctx context.Context, req RunRequest, workspace string, stdout, stderr io.Writer) RunResponse {
 	cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...)
 	cmd.Dir = req.WorkDir
 	if cmd.Dir == "" {
@@ -187,10 +261,9 @@ func Run(ctx context.Context, req RunRequest, workspace string) RunResponse {
 		env = append(env, "PATH="+os.Getenv("PATH"))
 	}
 	cmd.Env = env
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 	err := cmd.Run()
-	resp := RunResponse{Stdout: capString(stdout.Bytes()), Stderr: capString(stderr.Bytes())}
+	var resp RunResponse
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
@@ -267,7 +340,10 @@ func Pack(dir string, w io.Writer) error {
 	return gz.Close()
 }
 
-// Unpack reads a Pack stream into dir, refusing entries that would escape it.
+// Unpack reads a Pack stream into dir, refusing entries that escape it
+// lexically (absolute or ".." names) or through symlinks: every write goes
+// through an os.Root, so a symlink entry may be created but nothing is ever
+// written through one that leaves dir.
 func Unpack(r io.Reader, dir string) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
@@ -277,6 +353,11 @@ func Unpack(r io.Reader, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
@@ -286,34 +367,34 @@ func Unpack(r io.Reader, dir string) error {
 		if err != nil {
 			return fmt.Errorf("tar: %w", err)
 		}
-		target, err := safeJoin(dir, hdr.Name)
+		rel, err := safeRel(hdr.Name)
 		if err != nil {
 			return err
 		}
-		if err := unpackEntry(tr, hdr, target); err != nil {
-			return err
+		if err := unpackEntry(tr, hdr, root, rel); err != nil {
+			return fmt.Errorf("tar: entry %q: %w", hdr.Name, err)
 		}
 	}
 }
 
-func unpackEntry(tr *tar.Reader, hdr *tar.Header, target string) error {
+func unpackEntry(tr *tar.Reader, hdr *tar.Header, root *os.Root, rel string) error {
 	switch hdr.Typeflag {
 	case tar.TypeDir:
-		return os.MkdirAll(target, os.FileMode(hdr.Mode)&os.ModePerm|0o700)
+		return root.MkdirAll(rel, os.FileMode(hdr.Mode)&os.ModePerm|0o700)
 	case tar.TypeSymlink:
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 			return err
 		}
-		_ = os.Remove(target)
-		return os.Symlink(hdr.Linkname, target)
+		_ = root.Remove(rel)
+		return root.Symlink(hdr.Linkname, rel)
 	case tar.TypeReg:
 		if hdr.Size > maxTarEntry {
 			return fmt.Errorf("tar: entry %q is too large (%d bytes)", hdr.Name, hdr.Size)
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 			return err
 		}
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&os.ModePerm|0o600)
+		f, err := root.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&os.ModePerm|0o600)
 		if err != nil {
 			return err
 		}
@@ -328,12 +409,13 @@ func unpackEntry(tr *tar.Reader, hdr *tar.Header, target string) error {
 	}
 }
 
-func safeJoin(dir, name string) (string, error) {
+// safeRel is the lexical first filter; os.Root enforces the rest.
+func safeRel(name string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(name))
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("tar: entry %q escapes the workspace", name)
 	}
-	return filepath.Join(dir, clean), nil
+	return clean, nil
 }
 
 // Serve runs the bridge on ln until ctx ends. The actor's command is
