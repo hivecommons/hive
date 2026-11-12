@@ -1096,7 +1096,7 @@ func DecisionActions(r Route) string {
 		}
 	}
 	if r.Sentinel {
-		steps = append(steps, "resolve the sentinel alert and have a maintainer clear its label")
+		steps = append(steps, oneApproveSentinelStep(r))
 	}
 	for _, h := range r.Holds {
 		if h == "hold" && r.Hold.SelfImposed() {

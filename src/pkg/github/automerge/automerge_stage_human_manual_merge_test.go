@@ -171,7 +171,8 @@ func TestWorkflowFenceApprovalReleaseNamedWhileSentinelBlocks(t *testing.T) {
 		"awaiting owner approval",
 		"with a GitHub **Approve** review",
 		"releases the CI workflow-file fence and settles the reviewer's `requires_human` verdict",
-		"- resolve the sentinel alert and have a maintainer clear its label",
+		"- one action answers both the approval above and the sentinel alert: **Approve** on this PR's row in the hive dashboard's Activity monitor",
+		"a typed `/hive decision approve` reply approves but leaves the label for a maintainer to remove",
 	} {
 		if !strings.Contains(c, want) {
 			t.Fatalf("085 comment missing %q:\n%s", want, c)
