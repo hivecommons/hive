@@ -1,0 +1,1 @@
+- Dashboard Settings: surface the `agent_sandbox.substrate.*` and per-agent `agents.<name>.sandbox.substrate.*` leaves (endpoint, atespace, token, TLS, router, bridge, resources, worker selector, egress hosts, policy profile) in the Settings dialog.

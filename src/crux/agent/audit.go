@@ -27,6 +27,8 @@ const (
 
 	AuditCopilotTokenMissing = crux.AuditCopilotTokenMissing
 	AuditClaudeTokenMissing  = crux.AuditClaudeTokenMissing
+
+	AuditClaudeCredentialRebridged = crux.AuditClaudeCredentialRebridged
 )
 
 // auditActorSystem attributes an event to the hive process itself rather than
