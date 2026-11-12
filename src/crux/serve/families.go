@@ -148,16 +148,7 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	if !s.readOptionalJSON(w, r, &req) {
 		return
 	}
-	var err error
-	switch {
-	case req.Bootstrap != "":
-		err = s.Runtime.RestartWithBootstrap(s.LaunchContext, name, req.Bootstrap)
-	case req.ModelChange:
-		err = s.Runtime.RestartAfterModelChange(s.LaunchContext, name, req.By)
-	default:
-		err = s.Runtime.Restart(s.LaunchContext, name)
-	}
-	if err != nil {
+	if err := s.restartFor(name, req); err != nil {
 		s.writeRuntimeError(w, name, "restart", err)
 		return
 	}

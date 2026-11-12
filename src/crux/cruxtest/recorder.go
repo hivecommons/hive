@@ -274,11 +274,6 @@ func (r *Recorder) RestartWithBootstrap(_ context.Context, name, prompt string) 
 	return r.errFor(name)
 }
 
-func (r *Recorder) RestartAfterModelChange(_ context.Context, name, by string) error {
-	r.record("RestartAfterModelChange", name, by)
-	return r.errFor(name)
-}
-
 func (r *Recorder) Pause(name, trigger, reason string) error {
 	r.record("Pause", name, trigger, reason)
 	return r.setPaused(name, true, trigger, reason, "")
