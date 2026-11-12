@@ -394,9 +394,13 @@ func TestRouterBridgeDrivesTheBridgeProtocol(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(actorWS, "sub", "file.txt")); string(got) != "before" {
 		t.Fatalf("actor workspace = %q", got)
 	}
-	out, err := b.Run(ctx, ref, substratebridge.RunRequest{Command: []string{"sh", "-c", "echo after > sub/file.txt; echo ran; exit 4"}})
+	var live strings.Builder
+	out, err := b.Run(ctx, ref, substratebridge.RunRequest{Command: []string{"sh", "-c", "echo after > sub/file.txt; echo ran; exit 4"}}, &live)
 	if err != nil || out.ExitCode != 4 || !strings.Contains(out.Stdout, "ran") {
 		t.Fatalf("Run: %+v %v", out, err)
+	}
+	if live.String() != "ran\n" {
+		t.Errorf("streamed output = %q", live.String())
 	}
 	if err := b.Pull(ctx, ref, local); err != nil {
 		t.Fatalf("Pull: %v", err)
@@ -427,7 +431,7 @@ func TestRouterBridgeErrors(t *testing.T) {
 	if err := b.Push(ctx, ref, t.TempDir()); err == nil || !strings.Contains(err.Error(), "400") || !strings.Contains(err.Error(), "unpack failed") {
 		t.Errorf("non-2xx: %v", err)
 	}
-	if _, err := b.Run(ctx, ref, substratebridge.RunRequest{Command: []string{"x"}}); err == nil {
+	if _, err := b.Run(ctx, ref, substratebridge.RunRequest{Command: []string{"x"}}, nil); err == nil {
 		t.Error("Run swallowed a non-2xx")
 	}
 	if err := b.Pull(ctx, ref, t.TempDir()); err == nil {
@@ -438,7 +442,7 @@ func TestRouterBridgeErrors(t *testing.T) {
 	_, b = newConnectRouter(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("{not json"))
 	}))
-	if _, err := b.Run(ctx, ref, substratebridge.RunRequest{Command: []string{"x"}}); err == nil || !strings.Contains(err.Error(), "decoding run response") {
+	if _, err := b.Run(ctx, ref, substratebridge.RunRequest{Command: []string{"x"}}, nil); err == nil || !strings.Contains(err.Error(), "decoding run response") {
 		t.Errorf("bad json: %v", err)
 	}
 	ws := filepath.Join(t.TempDir(), "ws")
