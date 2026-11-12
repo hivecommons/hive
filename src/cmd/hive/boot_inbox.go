@@ -14,9 +14,10 @@ import (
 // inboxSweepTimeout bounds the auto-routing sweep run after a connector sync.
 const inboxSweepTimeout = 2 * time.Minute
 
-// bootInbox builds the Inbox service when at least one configured knowledge
-// connector is a voice source (inbox.sources, default plaud/wisprflow).
-// Items are read from the connector vaults under <baseDir>/connectors;
+// bootInbox builds the Inbox service. Sources are the configured knowledge
+// connectors whose type is a voice source (inbox.sources, default
+// plaud/wisprflow); with none configured the service still exists and lists
+// nothing, so the dashboard shows the empty state. Items are read from the connector vaults under <baseDir>/connectors;
 // route state persists at <baseDir>/connector-state/_inbox.json (connector
 // names cannot start with "_", so it never collides with a connector).
 func (b *boot) bootInbox(baseDir string) {
@@ -30,9 +31,6 @@ func (b *boot) bootInbox(baseDir string) {
 		if configured[typ] {
 			srcs = append(srcs, b.inboxSource(baseDir, typ))
 		}
-	}
-	if len(srcs) == 0 {
-		return
 	}
 	token := func(ctx context.Context, _ string) (string, error) {
 		if b.appAuth == nil {

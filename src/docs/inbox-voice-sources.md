@@ -95,3 +95,9 @@ See [api-reference/knowledge.md](api-reference/knowledge.md) for
 `GET /api/inbox`, `POST /api/inbox/route`, `POST /api/inbox/dismiss`,
 `GET|POST /api/inbox/settings` and
 `POST /api/knowledge/connectors/{name}/auth/complete`.
+
+`GET /api/inbox` always answers `200`: on a hive with no voice connector
+configured it returns an empty `items` list and every source as
+`configured: false`, and the Inbox panel shows its empty state with a
+"Connect sources" button. A connector added under Knowledge → Integrations
+starts syncing after the next hive restart.

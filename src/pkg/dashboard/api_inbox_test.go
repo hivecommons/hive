@@ -79,8 +79,17 @@ func decodeInboxList(t *testing.T, body []byte) InboxListResponse {
 
 func TestInboxEndpoints(t *testing.T) {
 	s, deps := apiServer(t)
-	if rec := doGet(s, "/api/inbox"); rec.Code != http.StatusNotFound {
-		t.Fatalf("inbox without service = %d, want 404", rec.Code)
+	// No service: still 200 with an empty list so the panel renders its
+	// empty state instead of "Loading inbox…" forever (#17891).
+	rec0 := doGet(s, "/api/inbox")
+	if rec0.Code != http.StatusOK {
+		t.Fatalf("inbox without service = %d, want 200: %s", rec0.Code, rec0.Body.String())
+	}
+	if empty := decodeInboxList(t, rec0.Body.Bytes()); empty.Items == nil || len(empty.Items) != 0 || empty.Sources == nil || empty.Settings.Rules == nil {
+		t.Fatalf("empty inbox = %s", rec0.Body.String())
+	}
+	if rec := doGet(s, "/api/inbox/settings"); rec.Code != http.StatusNotFound {
+		t.Fatalf("settings without service = %d, want 404", rec.Code)
 	}
 	spek := &inboxTestDest{name: inbox.DestSpekRFC}
 	dibs := &inboxTestDest{name: inbox.DestDibs, err: errors.New("dibs down")}
