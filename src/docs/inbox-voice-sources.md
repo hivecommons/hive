@@ -36,7 +36,8 @@ see the issue linked from the changelog entry.
 - **Auto-routing rules** (⚙ Auto-routing in the Inbox, or `inbox.rules`):
   `source?`, `title_prefix` or `tag`, `destination`, `repo?`. Rules run once
   for each item that arrives after a connector sync; the first match wins;
-  items already in the Inbox are never re-routed.
+  items already in the Inbox are never re-routed. The same editor, with the
+  default RFC repository and dibs URL, is under Settings → Inbox.
 
 ## Configuration
 
