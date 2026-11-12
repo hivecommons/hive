@@ -37,6 +37,9 @@ type bootDashboardAPIFake struct {
 func newBootDashboardAPIFake() *bootDashboardAPIFake {
 	f := &bootDashboardAPIFake{}
 	f.deps = bootDashboardAPIDeps{
+		classifyRepoCoverage: func(context.Context, *github.AppAuth, string, []string, *slog.Logger) (bool, string, github.AppAuthState) {
+			return false, "", github.AppStateUnknown
+		},
 		registerAPI: func(srv *dashboard.Server, d *dashboard.Dependencies) {
 			f.registeredOn, f.registered = srv, d
 		},
@@ -218,6 +221,39 @@ func TestBootDashboardAPIWith_TickBodiesAreCheapWhenNothingToDo(t *testing.T) {
 	}
 	if b.dashSrv.IsGitHubAppRequired() {
 		t.Fatal("idle self-heal tick raised the banner")
+	}
+}
+
+func TestSelfHealDetectsCoverageWithoutExistingBanner(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		raise bool
+		state github.AppAuthState
+	}{
+		{"missing", true, github.AppStateRepoNotCovered},
+		{"transient", false, github.AppStateUnknown},
+		{"covered", false, github.AppStateOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBootDashboardAPIFake()
+			cfg := bootDashboardAPIConfig()
+			cfg.Project.PrimaryRepo = "private"
+			b := newBootDashboardAPIBoot(t, f, cfg)
+			b.ghClient = fakeGitHubClient(t)
+			called := false
+			f.deps.classifyRepoCoverage = func(_ context.Context, _ *github.AppAuth, org string, repos []string, _ *slog.Logger) (bool, string, github.AppAuthState) {
+				called = true
+				if org != "acme" || len(repos) != 3 || repos[2] != "private" {
+					t.Fatalf("coverage inputs: %q %v", org, repos)
+				}
+				return tc.raise, "select private in the installation", tc.state
+			}
+			b.bootDashboardAPIWith(f.deps)
+			f.healTick()
+			if !called || b.dashSrv.IsGitHubAppRequired() != tc.raise {
+				t.Fatalf("called=%v required=%v", called, b.dashSrv.IsGitHubAppRequired())
+			}
+		})
 	}
 }
 
