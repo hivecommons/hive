@@ -30271,11 +30271,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        by the Go server under the same /terminal prefix so openTerminal()'s
        handoff code and assertion cookie apply unchanged. openshell agents
        (#17645) run each kick in a gateway-owned sandbox and use the same
-       viewer, which streams the sandbox's log instead. */
+       viewer, which streams the sandbox's log instead; substrate agents
+       (#17777) run each kick in a Substrate actor and the viewer streams the
+       kick's output from the actor's bridge. */
     const JOB_SANDBOX_RUNTIME = 'job';
     const OPENSHELL_SANDBOX_RUNTIME = 'openshell';
+    const SUBSTRATE_SANDBOX_RUNTIME = 'substrate';
     function sandboxRuntimeWithoutTmux(sandboxRuntime) {
-      return sandboxRuntime === JOB_SANDBOX_RUNTIME || sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME;
+      return sandboxRuntime === JOB_SANDBOX_RUNTIME || sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME
+        || sandboxRuntime === SUBSTRATE_SANDBOX_RUNTIME;
     }
     function agentUsesJobTerminal(a) {
       return !!a && sandboxRuntimeWithoutTmux(a.sandboxRuntime);
@@ -30291,6 +30295,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function terminalLinkTitle(a, tmuxTitle) {
       if (!agentUsesJobTerminal(a)) return tmuxTitle;
+      if (a.sandboxRuntime === SUBSTRATE_SANDBOX_RUNTIME) {
+        return 'Stream this agent\'s kick output and Substrate actor state (read-only: it runs in a Substrate actor, not a tmux session)';
+      }
       return a.sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME
         ? 'Stream the log of this agent\'s OpenShell sandbox (read-only: it runs in a gateway-owned sandbox, not a tmux session)'
         : 'Stream the log of this agent\'s sandbox Job pod (read-only: it runs as a Kubernetes Job, not a tmux session)';

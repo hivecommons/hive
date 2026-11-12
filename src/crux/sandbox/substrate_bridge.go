@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,9 +53,14 @@ func (b *routerBridge) Push(ctx context.Context, ref *substrateapi.ObjectRef, wo
 	return resp.Body.Close()
 }
 
-// Run executes the kick command in the actor and waits for it to exit.
-func (b *routerBridge) Run(ctx context.Context, ref *substrateapi.ObjectRef, req substratebridge.RunRequest) (substratebridge.RunResponse, error) {
+// Run executes the kick command in the actor and waits for it to exit. It
+// asks the bridge to stream (RunRequest.Stream) and copies stdout and
+// stderr to live as they arrive, so the dashboard's terminal pane can follow
+// the kick; the returned RunResponse still carries the whole (capped)
+// output for the transcript. live may be nil.
+func (b *routerBridge) Run(ctx context.Context, ref *substrateapi.ObjectRef, req substratebridge.RunRequest, live io.Writer) (substratebridge.RunResponse, error) {
 	var out substratebridge.RunResponse
+	req.Stream = true
 	body, err := json.Marshal(req)
 	if err != nil {
 		return out, err
@@ -64,10 +70,44 @@ func (b *routerBridge) Run(ctx context.Context, ref *substrateapi.ObjectRef, req
 		return out, err
 	}
 	defer resp.Body.Close()
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return out, fmt.Errorf("decoding run response: %w", err)
+	return substrateDecodeRun(resp.Body, live)
+}
+
+// substrateDecodeRun reads a /run answer: Partial frames from a streaming
+// bridge, then the final frame with the exit code. A bridge that does not
+// stream answers with one complete, non-Partial RunResponse, which is read
+// the same way.
+func substrateDecodeRun(r io.Reader, live io.Writer) (substratebridge.RunResponse, error) {
+	var out substratebridge.RunResponse
+	var stdout, stderr bytes.Buffer
+	dec := json.NewDecoder(r)
+	for {
+		var frame substratebridge.RunResponse
+		if err := dec.Decode(&frame); err != nil {
+			if errors.Is(err, io.EOF) {
+				err = io.ErrUnexpectedEOF
+			}
+			return out, fmt.Errorf("decoding run response: %w", err)
+		}
+		substrateAppendCapped(&stdout, frame.Stdout)
+		substrateAppendCapped(&stderr, frame.Stderr)
+		if live != nil {
+			_, _ = io.WriteString(live, frame.Stdout)
+			_, _ = io.WriteString(live, frame.Stderr)
+		}
+		if !frame.Partial {
+			out.Stdout, out.Stderr = stdout.String(), stderr.String()
+			out.ExitCode, out.Error = frame.ExitCode, frame.Error
+			return out, nil
+		}
 	}
-	return out, nil
+}
+
+func substrateAppendCapped(buf *bytes.Buffer, s string) {
+	if room := substratebridge.MaxOutput - buf.Len(); len(s) > room {
+		s = s[:max(room, 0)]
+	}
+	buf.WriteString(s)
 }
 
 // Pull replaces the local workspace with the actor's, so the commits the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -174,7 +175,8 @@ type substrateControl interface {
 type substrateBridge interface {
 	WaitReady(ctx context.Context, ref *substrateapi.ObjectRef, poll time.Duration) error
 	Push(ctx context.Context, ref *substrateapi.ObjectRef, workspace string) error
-	Run(ctx context.Context, ref *substrateapi.ObjectRef, req substratebridge.RunRequest) (substratebridge.RunResponse, error)
+	// Run copies the kick's output to live (nil allowed) as it arrives.
+	Run(ctx context.Context, ref *substrateapi.ObjectRef, req substratebridge.RunRequest, live io.Writer) (substratebridge.RunResponse, error)
 	Pull(ctx context.Context, ref *substrateapi.ObjectRef, workspace string) error
 }
 
@@ -192,6 +194,16 @@ type SubstrateLauncher struct {
 	newClient func(SubstrateOptions) (substrateClient, error)
 	// now overrides the clock in tests.
 	now func() time.Time
+	// kicks is where each kick's actor states and output are recorded for
+	// the dashboard's terminal pane; nil means DefaultSubstrateKicks.
+	kicks *SubstrateKicks
+}
+
+func (l *SubstrateLauncher) kickRecord() *SubstrateKicks {
+	if l.kicks != nil {
+		return l.kicks
+	}
+	return DefaultSubstrateKicks
 }
 
 func (l *SubstrateLauncher) client() (substrateClient, error) {
@@ -277,14 +289,18 @@ func (l *SubstrateLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 	}
 	cleanupTemplate := func() { _ = control.DeleteActorTemplate(live(), ref) }
 
-	if _, err := control.CreateActor(ctx, &substrateapi.Actor{
+	created, err := control.CreateActor(ctx, &substrateapi.Actor{
 		Metadata:       &substrateapi.ResourceMetadata{Atespace: ref.Atespace, Name: name},
 		ActorTemplate:  ref,
 		WorkerSelector: substrateSelector(l.Options.WorkerSelector),
-	}); err != nil {
+	})
+	if err != nil {
 		cleanupTemplate()
 		return res, fmt.Errorf("substrate: creating actor %s: %w", name, err)
 	}
+	kicks := l.kickRecord()
+	kick := kicks.begin(spec.Name, SubstrateActorInfo{Name: name, Atespace: ref.Atespace, State: SubstrateStateCreated})
+	kicks.observe(kick, created)
 	// Delete is the default: a kick is a one-shot and keeping a snapshot
 	// around costs object storage. snapshot_on_idle keeps a resumable
 	// snapshot instead, so the next kick's warm state (caches, builds) is
@@ -292,11 +308,15 @@ func (l *SubstrateLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 	cleanupActor := func() {
 		if l.Options.SnapshotOnIdle && ctx.Err() == nil {
 			if err := control.SuspendActor(live(), ref, substrateapi.DurabilityMode_DURABILITY_MODE_ASYNCHRONOUS); err == nil {
+				kicks.update(kick, func(i *SubstrateActorInfo) {
+					i.State, i.Suspended, i.Done = SubstrateStateSuspended, true, true
+				})
 				cleanupTemplate()
 				return
 			}
 		}
 		_ = control.DeleteActor(live(), ref)
+		kicks.update(kick, func(i *SubstrateActorInfo) { i.State, i.Done = SubstrateStateDeleting, true })
 		cleanupTemplate()
 	}
 
@@ -314,7 +334,9 @@ func (l *SubstrateLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 		cleanupActor()
 		return res, fmt.Errorf("substrate: resuming actor %s: %w", name, err)
 	}
-	if err := substrateWaitRunning(ctx, control, ref, substrateReadyPoll); err != nil {
+	kicks.update(kick, func(i *SubstrateActorInfo) { i.State = SubstrateStateResuming })
+	observe := func(a *substrateapi.Actor) { kicks.observe(kick, a) }
+	if err := substrateWaitRunning(ctx, control, ref, substrateReadyPoll, observe); err != nil {
 		cleanupActor()
 		if ctx.Err() != nil {
 			return res, ctx.Err()
@@ -336,9 +358,10 @@ func (l *SubstrateLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 	if workDir == "" {
 		workDir = SubstrateWorkspaceMount
 	}
-	out, runErr := bridge.Run(ctx, ref, substratebridge.RunRequest{Command: spec.Command, Env: substrateEnv(spec), WorkDir: workDir})
+	out, runErr := bridge.Run(ctx, ref, substratebridge.RunRequest{Command: spec.Command, Env: substrateEnv(spec), WorkDir: workDir}, kicks.output(kick))
 	if runErr == nil {
 		res.Stdout, res.Stderr, res.ExitCode = out.Stdout, out.Stderr, out.ExitCode
+		kicks.update(kick, func(i *SubstrateActorInfo) { i.Exited, i.ExitCode = true, out.ExitCode })
 		if out.Error != "" {
 			runErr = errors.New(out.Error)
 		}
@@ -364,14 +387,18 @@ func (l *SubstrateLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 
 // substrateWaitRunning polls GetActor until the actor is RUNNING, or fails
 // when it crashes. A deleted or suspended actor during the wait is a failure
-// too: nothing hive did asked for it.
-func substrateWaitRunning(ctx context.Context, control substrateControl, ref *substrateapi.ObjectRef, poll time.Duration) error {
+// too: nothing hive did asked for it. observe (nil allowed) sees every
+// actor GetActor returns.
+func substrateWaitRunning(ctx context.Context, control substrateControl, ref *substrateapi.ObjectRef, poll time.Duration, observe func(*substrateapi.Actor)) error {
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for {
 		actor, err := control.GetActor(ctx, ref)
 		if err != nil {
 			return err
+		}
+		if observe != nil {
+			observe(actor)
 		}
 		switch state := actor.GetStatus().GetState(); state {
 		case substrateapi.ActorState_ACTOR_STATE_RUNNING:

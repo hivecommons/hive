@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,7 @@ type fakeSubstrate struct {
 	getErr          error
 	states          []substrateapi.ActorState
 	crashMsg        string
+	spiffeID        string
 	getCancels      context.CancelFunc
 	waitReadyErr    error
 	pushErr         error
@@ -98,7 +100,10 @@ func (f *fakeSubstrate) GetActor(ctx context.Context, ref *substrateapi.ObjectRe
 	}
 	return &substrateapi.Actor{
 		Metadata: &substrateapi.ResourceMetadata{Name: ref.GetName()},
-		Status:   &substrateapi.ActorStatus{State: state, Crash: &substrateapi.ActorCrash{Message: f.crashMsg}},
+		Status: &substrateapi.ActorStatus{
+			State: state, Crash: &substrateapi.ActorCrash{Message: f.crashMsg},
+			WorkerAssignment: &substrateapi.WorkerAssignment{WorkerSpiffeId: f.spiffeID},
+		},
 	}, nil
 }
 
@@ -143,9 +148,12 @@ func (f *fakeSubstrate) Push(ctx context.Context, _ *substrateapi.ObjectRef, ws 
 	return f.pushErr
 }
 
-func (f *fakeSubstrate) Run(ctx context.Context, _ *substrateapi.ObjectRef, req substratebridge.RunRequest) (substratebridge.RunResponse, error) {
+func (f *fakeSubstrate) Run(ctx context.Context, _ *substrateapi.ObjectRef, req substratebridge.RunRequest, live io.Writer) (substratebridge.RunResponse, error) {
 	f.note("Run", ctx)
 	f.runReq = req
+	if live != nil {
+		_, _ = io.WriteString(live, f.runResp.Stdout+f.runResp.Stderr)
+	}
 	if f.runCancels != nil {
 		f.runCancels()
 	}
@@ -181,6 +189,7 @@ func newTestSubstrate(fake *fakeSubstrate) *SubstrateLauncher {
 	}}
 	l.newClient = func(SubstrateOptions) (substrateClient, error) { return fake, nil }
 	l.now = func() time.Time { return time.Unix(1_700_000_000, 0) }
+	l.kicks = &SubstrateKicks{}
 	return l
 }
 
@@ -499,14 +508,14 @@ func TestSubstrateWaitRunningPollsUntilRunning(t *testing.T) {
 		substrateapi.ActorState_ACTOR_STATE_RUNNING,
 	}}
 	ref := &substrateapi.ObjectRef{Atespace: "hive", Name: "a"}
-	if err := substrateWaitRunning(context.Background(), fake, ref, time.Millisecond); err != nil {
+	if err := substrateWaitRunning(context.Background(), fake, ref, time.Millisecond, nil); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(fake.calls); n != 3 {
 		t.Errorf("GetActor calls = %d, want 3", n)
 	}
 	fake = &fakeSubstrate{states: []substrateapi.ActorState{substrateapi.ActorState_ACTOR_STATE_SUSPENDING}}
-	if err := substrateWaitRunning(context.Background(), fake, ref, time.Millisecond); err == nil || !strings.Contains(err.Error(), "SUSPENDING") {
+	if err := substrateWaitRunning(context.Background(), fake, ref, time.Millisecond, nil); err == nil || !strings.Contains(err.Error(), "SUSPENDING") {
 		t.Errorf("err = %v", err)
 	}
 }

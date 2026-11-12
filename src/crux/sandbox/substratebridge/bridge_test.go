@@ -469,3 +469,57 @@ func TestPutWorkspaceClearsInPlace(t *testing.T) {
 		t.Errorf("clearDir of a missing dir = %v, want nil", err)
 	}
 }
+
+func TestHandlerStreamsRunOutput(t *testing.T) {
+	srv, ws := newBridgeServer(t)
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(RunRequest{Command: []string{"sh", "-c", "echo one; echo two >&2; exit 2"}, Stream: true})
+	resp, err := http.Post(srv.URL+PathRun, contentTypeJSON, bytes.NewReader(body))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("run: %v %v", err, resp)
+	}
+	defer resp.Body.Close()
+	dec := json.NewDecoder(resp.Body)
+	var stdout, stderr strings.Builder
+	var frames []RunResponse
+	for {
+		var f RunResponse
+		if err := dec.Decode(&f); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		frames = append(frames, f)
+		stdout.WriteString(f.Stdout)
+		stderr.WriteString(f.Stderr)
+	}
+	if len(frames) < 2 {
+		t.Fatalf("frames = %+v", frames)
+	}
+	for _, f := range frames[:len(frames)-1] {
+		if !f.Partial {
+			t.Fatalf("only the last frame may be final: %+v", frames)
+		}
+	}
+	if last := frames[len(frames)-1]; last.Partial || last.ExitCode != 2 || last.Stdout != "" || last.Stderr != "" {
+		t.Fatalf("final frame = %+v", last)
+	}
+	if stdout.String() != "one\n" || stderr.String() != "two\n" {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestFrameWriterCapsOutput(t *testing.T) {
+	var buf bytes.Buffer
+	w := &frameWriter{frames: &frameEncoder{enc: json.NewEncoder(&buf)}}
+	big := make([]byte, MaxOutput+5)
+	if n, err := w.Write(big); err != nil || n != len(big) {
+		t.Fatalf("Write = %d %v", n, err)
+	}
+	buf.Reset()
+	if n, err := w.Write([]byte("more")); err != nil || n != 4 || buf.Len() != 0 {
+		t.Fatalf("past the cap: n=%d err=%v frames=%q", n, err, buf.String())
+	}
+}
