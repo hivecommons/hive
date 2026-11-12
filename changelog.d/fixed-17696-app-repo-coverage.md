@@ -1,1 +1,0 @@
-- Detect missing GitHub App repository coverage at boot, during self-heal, and when connecting a repository, with a settings link to fix the installation selection (#17696).
