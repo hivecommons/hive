@@ -158,7 +158,7 @@ CLI subprocess.
 
 | State | Where | Citation |
 |---|---|---|
-| Pause flag (one bool per agent) | `/data/hive.yaml` via `AgentConfig.Paused` | `src/crux/config/agent_config.go:219`; writer `SetAgentPausedAndSave` `src/pkg/config/save.go:64` |
+| Pause flag (one bool per agent) | `/data/hive.yaml` via `AgentConfig.Paused` | `src/crux/config/agent_config.go:219`; writer `SetAgentPausedAndSave` `src/pkg/config/save.go:72`, which also mirrors the bool into the agent's overlay file when it has one |
 | Pause provenance (`PausedAt`, `PausedReason`, `PausedTrigger`, `PausedBy`), CLI/model pins, model/backend overrides, restart count, `LastKick`, truncated kick history | `/data/hive-state.json` via `snapshot.AgentState` | `src/pkg/snapshot/state.go:82-117`; path `src/cmd/hive/spokewire.go:3` |
 | Watchdog failure count, crash-loop latch, backoff deadline, healthy-since, conditions | same file, `snapshot.PersistedState.Watchdog` | `src/pkg/snapshot/state.go:48`; `watchdog.PersistedAgent` `src/crux/watchdog/reconciler.go:216` |
 | Fleet-breaker engagement + held set | same file, `BreakerState` | `src/pkg/snapshot/state.go:56` |

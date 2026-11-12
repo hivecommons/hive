@@ -35,6 +35,17 @@ func (s *Server) updateAgentProcessConfig(name string, cfg config.AgentConfig) e
 	return s.deps.AgentMgr.UpdateConfig(name, cfg)
 }
 
+// restartForAgentConfigChange restarts an agent to apply a config edit. When
+// the edit changed the agent's model or backend, the restart is the runtime's
+// RestartAfterModelChange, which first lifts a pause the CLI's model
+// rejection caused (only that pause); otherwise it is a plain Restart.
+func (s *Server) restartForAgentConfigChange(r *http.Request, name string, modelOrBackendChanged bool) error {
+	if modelOrBackendChanged {
+		return s.deps.AgentMgr.RestartAfterModelChange(s.deps.Ctx, name, requestUser(r))
+	}
+	return s.deps.AgentMgr.Restart(s.deps.Ctx, name)
+}
+
 // defaultLaunchCmdForBackend renders the launch command shown for an agent
 // with no launch_cmd of its own. An empty model omits --model entirely
 // (config.ModelFlag): a bare `--model` makes the CLI consume the next flag as
@@ -962,7 +973,7 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if modelChanged || backendChanged || jevModeChanged {
-		if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
+		if err := s.restartForAgentConfigChange(r, name, modelChanged || backendChanged); err != nil {
 			s.logger.Warn("restart after config-dialog model/backend/jev_mode change failed", "agent", name, "error", err)
 		}
 	}
@@ -1224,7 +1235,7 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		resp["warning"] = modelWarning
 	}
 	if modelChanged || backendChanged || effortChanged {
-		if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
+		if err := s.restartForAgentConfigChange(r, name, modelChanged || backendChanged); err != nil {
 			// Persisted and applied to the launch configuration, but the
 			// running session (if any) is still on the old flags. Say so in
 			// the response rather than returning a bare "updated" — the

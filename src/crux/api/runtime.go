@@ -113,9 +113,12 @@ type SnapshotList struct {
 }
 
 // RestartRequest is the body of POST /v1/agents/{name}/restart. A non-empty
-// Bootstrap selects Lifecycle.RestartWithBootstrap.
+// Bootstrap selects Lifecycle.RestartWithBootstrap; ModelChange selects
+// Lifecycle.RestartAfterModelChange, with By as its acting user.
 type RestartRequest struct {
-	Bootstrap string `json:"bootstrap,omitempty"`
+	Bootstrap   string `json:"bootstrap,omitempty"`
+	ModelChange bool   `json:"model_change,omitempty"`
+	By          string `json:"by,omitempty"`
 }
 
 // PauseRequest is the body of POST /v1/agents/{name}/pause. By selects
@@ -634,15 +637,16 @@ type Route struct {
 // holds this table and the interface to each other.
 var RuntimeRoutes = map[string]Route{
 	// Lifecycle
-	"Start":                {"POST", PathAgents + "/{name}/start"},
-	"Stop":                 {"POST", PathAgents + "/{name}/stop"},
-	"Restart":              {"POST", PathAgents + "/{name}/restart"},
-	"RestartWithBootstrap": {"POST", PathAgents + "/{name}/restart"},
-	"Pause":                {"POST", PathAgents + "/{name}/pause"},
-	"PauseBy":              {"POST", PathAgents + "/{name}/pause"},
-	"Resume":               {"POST", PathAgents + "/{name}/resume"},
-	"IsPaused":             {"GET", PathAgents + "/{name}"},
-	"ResetRestartCount":    {"DELETE", PathAgents + "/{name}/restart-count"},
+	"Start":                   {"POST", PathAgents + "/{name}/start"},
+	"Stop":                    {"POST", PathAgents + "/{name}/stop"},
+	"Restart":                 {"POST", PathAgents + "/{name}/restart"},
+	"RestartWithBootstrap":    {"POST", PathAgents + "/{name}/restart"},
+	"RestartAfterModelChange": {"POST", PathAgents + "/{name}/restart"},
+	"Pause":                   {"POST", PathAgents + "/{name}/pause"},
+	"PauseBy":                 {"POST", PathAgents + "/{name}/pause"},
+	"Resume":                  {"POST", PathAgents + "/{name}/resume"},
+	"IsPaused":                {"GET", PathAgents + "/{name}"},
+	"ResetRestartCount":       {"DELETE", PathAgents + "/{name}/restart-count"},
 	// Observer
 	"GetStatus":       {"GET", PathAgents + "/{name}/snapshot"},
 	"GetStatusFast":   {"GET", PathAgents + "/{name}/snapshot"},

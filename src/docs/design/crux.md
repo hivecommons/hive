@@ -544,7 +544,7 @@ the six dashboard families and gained nothing new to call.
 
 | Family | Methods | Consumer today |
 |---|---|---|
-| `Lifecycle` | `Start`, `Stop`, `Restart`, `RestartWithBootstrap`, `Pause`, `PauseBy`, `Resume`, `IsPaused`, `ResetRestartCount` | dashboard, cmd/hive |
+| `Lifecycle` | `Start`, `Stop`, `Restart`, `RestartWithBootstrap`, `RestartAfterModelChange`, `Pause`, `PauseBy`, `Resume`, `IsPaused`, `ResetRestartCount` | dashboard, cmd/hive |
 | `Observer` | `GetStatus`, `GetStatusFast`, `AllStatuses`, `ResolveAgent`, `GetOutput`, `GetBufferOutput`, `CaptureFullLog`, `FullLogHeader` | dashboard, cmd/hive, `crux` CLI |
 | `Kicker` | `SendKick`, `SendKickAsync`, `ValidateKick`, `KickDispatchState`, `ListKickLogs`, `ReadKickLog`, `SetKickObserver` | dashboard, cmd/hive, CLI |
 | `Definitions` | `AddAgent`, `RemoveAgent`, `UpdateConfig`, `ReconcileAgents`, `SetModelOverride`, `SetBackendOverride`, `PinCLI`, `PinModel`, `UnpinCLI`, `UnpinModel`, `ClearModeOverrides`, `SyncModeFiles`, `RefreshInferenceRoutes` | dashboard, cmd/hive |

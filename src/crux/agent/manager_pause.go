@@ -135,6 +135,26 @@ func (m *Manager) SeedPauseState(name string, pausedAt time.Time, trigger, reaso
 	}
 }
 
+// clearPauseLocked drops agent's pause and everything a resume resets with
+// it. It is the one list of what "unpaused" means: Resume and the
+// model-change lift (liftModelRejectedPause) both use it, so a new reset
+// belongs here, not in either caller. The caller records the resume and
+// relaunches. Caller holds m.mu.
+func (m *Manager) clearPauseLocked(agent *AgentProcess, now time.Time) {
+	agent.Paused = false
+	agent.Config.Paused = false
+	agent.PausedAt = time.Time{}
+	agent.PausedReason = ""
+	agent.PausedTrigger = ""
+	agent.PausedBy = ""
+	agent.restartStormBackoffUntil = time.Time{}
+	agent.clearTokenRestartCap()
+	// A resume is the operator saying "try again": a model-rejection park
+	// gets a fresh count, and is parked again after the same number of
+	// identical failures if the model is still wrong.
+	m.clearModelRejectionLocked(agent, now)
+}
+
 func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) error {
 	m.mu.Lock()
 	agent, ok := m.agents[name]
@@ -149,14 +169,7 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	// even when Resume relaunches the agent before returning.
 	resumeBackend := agent.effectiveBackend()
 	resumeModel := agent.effectiveModel()
-	agent.Paused = false
-	agent.Config.Paused = false
-	agent.restartStormBackoffUntil = time.Time{}
-	agent.clearTokenRestartCap()
-	// A resume is the operator saying "try again": a model-rejection park
-	// gets a fresh count, and is parked again after the same number of
-	// identical failures if the model is still wrong.
-	m.clearModelRejectionLocked(agent, time.Now())
+	m.clearPauseLocked(agent, time.Now())
 	if persistPause := m.persistPauseCallback; persistPause != nil {
 		// Deferred so it runs after this function's explicit m.mu.Unlock on
 		// every return path: the callback does config disk I/O and may
@@ -171,10 +184,6 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 		})
 		defer persistPause(name, false)
 	}
-	agent.PausedAt = time.Time{}
-	agent.PausedReason = ""
-	agent.PausedTrigger = ""
-	agent.PausedBy = ""
 	needsRelaunch := agent.State == StatePaused
 	if m.agentSandboxEnabledLocked(agent) {
 		if needsRelaunch {
