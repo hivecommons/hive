@@ -1443,7 +1443,7 @@ human-authored PR → `stage/071-needs-author`, on a clanker PR →
 review or `/hive decision <text>` on a hive-authored PR's current head →
 `stage/070-fixing` with reason `human-changes-requested` and one fix kick
 carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041)),
-hold / sentinel alert → a **gate on the PR's real stage**, not a stage of its own (the column follows CI / review / merge-queue progress, the Merge queue cell reads *Held · sentinel · confirm intent* / *Held · hold*, and the lanes refuse the merge on the label itself — a parked PR never merges unattended, [#17327](https://github.com/hivecommons/hive/issues/17327)), hive-authored PR whose fix
+hold / sentinel alert → a **gate on the PR's real stage**, not a stage of its own (the column follows CI / review / merge-queue progress, the Merge queue cell reads *Held · sentinel · confirm intent* / *Held · hold*, and the lanes refuse the merge on the label itself — a parked PR never merges unattended, [#17327](https://github.com/hivecommons/hive/issues/17327); a gated head GitHub reports `dirty` still goes back to its author for the conflict, 072 / 071 / 070, with the gate kept), hive-authored PR whose fix
 dispatch is refused with `fix-attempts-exhausted` → `stage/085-needs-decision`
 with reason `fixer-exhausted:<N>` and a once-per-head decision comment (re-author /
 hand to a person / close as not planned; a stale `decision-answered` cannot pull it

@@ -208,6 +208,13 @@ type Evidence struct {
 	// the only blocker (projectbluefin/common#1619). It never changes the
 	// stage: the trust decision is still the person's to make.
 	BehindBase string
+	// HeadDirty is true when GitHub reports mergeable_state `dirty` for
+	// exactly Head: the head conflicts with its base, so neither the hive
+	// nor a person's merge click can land it. Conflict is what routes the
+	// PR to its author; HeadDirty only keeps a dirty head from being
+	// called ready (060 / 090) when nothing else sent it back. A decision
+	// still owed is asked first (hivecommons/hive#14607).
+	HeadDirty bool
 }
 
 // Hard-stop tokens for a hive-authored superseding PR: the only reasons
@@ -359,6 +366,9 @@ const (
 	LaneReasonDCOMissing             = "dco-missing"
 	LaneReasonHiveSignoffAttribution = "hive-signoff-attribution"
 	LaneReasonConflicting            = "conflicting"
+	// mergeConflictReason is the route reason for a conflicting head; the
+	// contributor nudge matches its "merge conflict" prefix.
+	mergeConflictReason = "merge conflict with the base branch"
 	// LaneReasonReviewerQuestion is the 071 reason when the reviewer's
 	// requires_human verdict lands on a PR a person pushed themselves
 	// (hivecommons/hive#15202): the human the reviewer wants is the author,
@@ -577,7 +587,7 @@ func routeProgress(e Evidence) Route {
 		note("DCO sign-off missing", LaneReasonDCOMissing)
 	}
 	if e.Conflict {
-		note("merge conflict with the base branch", LaneReasonConflicting)
+		note(mergeConflictReason, LaneReasonConflicting)
 	}
 	if len(fix) > 0 {
 		return Route{Stage: fixing, Reasons: fix, LaneReason: laneReason, Summary: summary}
@@ -665,6 +675,12 @@ func routeProgress(e Evidence) Route {
 	if len(decide) > 0 {
 		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict,
 			Holds: append([]string(nil), e.Holds...), Sentinel: e.Sentinel, ManualMerge: e.ManualMerge, ApprovalReleasesFence: e.ManualMerge && e.ApprovalReleasesFence, HumanApprover: approver, Hold: e.Hold}
+	}
+	if e.HeadDirty {
+		// GitHub reports this very head `dirty`: it cannot merge, by the
+		// hive or by a person's click, until the conflict is resolved, so
+		// it is never 060 or 090. The author resolves it.
+		return Route{Stage: fixing, Reasons: []string{mergeConflictReason}, LaneReason: LaneReasonConflicting, Summary: summary}
 	}
 	var wait []string
 	switch {
