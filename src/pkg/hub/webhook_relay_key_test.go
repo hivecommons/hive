@@ -231,9 +231,7 @@ func TestWebhookRelayKeyHeartbeatWire(t *testing.T) {
 // users like the hub's other secret stores. A pre-existing world-readable hive
 // directory must be tightened on save too.
 func TestSaveSaaSHiveKeepsRelayKeyPrivate(t *testing.T) {
-	oldHives := saasHivesDir
-	saasHivesDir = t.TempDir()
-	t.Cleanup(func() { saasHivesDir = oldHives })
+	useTempSaaSHivesDir(t)
 
 	dir := filepath.Join(saasHivesDir, "legacy")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -267,9 +265,7 @@ func TestSaveSaaSHiveNeverWidensReadOnlyDir(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root; read-only dir cannot force a write failure")
 	}
-	oldHives := saasHivesDir
-	saasHivesDir = t.TempDir()
-	t.Cleanup(func() { saasHivesDir = oldHives })
+	useTempSaaSHivesDir(t)
 
 	dir := filepath.Join(saasHivesDir, "frozen")
 	if err := os.MkdirAll(dir, 0o555); err != nil {
