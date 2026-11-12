@@ -98,6 +98,7 @@ var selfreportOpsRemedies = map[string]string{
 	"inference_auth_failed":                "renew the inference credentials or API key the spoke's agents use",
 	"data_disk_pressure":                   "free or grow the data disk on the spoke",
 	"github_app_token_mint_failed":         "check the GitHub App key and installation the spoke is configured with",
+	"forge_unreachable":                    "the GitHub host did not answer from the pod — check cluster egress, DNS and any proxy or hostAliases in front of it, not the App",
 	"github_app_not_installed":             "install the GitHub App on the organisation or repositories the spoke serves",
 	"github_app_repo_not_covered":          "add the repository to the GitHub App installation the spoke uses",
 	"github_app_alerts_permission_missing": "grant Dependabot alerts read-only in the GitHub App settings and re-accept the permission on its installation",
