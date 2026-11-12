@@ -62,6 +62,7 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 		"HIVE_UPSTREAM_PROXY_HOSTS=ghe.corp.example",
 		"HIVE_UPSTREAM_PROXY_NO_PROXY=10.0.0.0/8",
 		"HIVE_NO_PROXY=10.0.0.0/8",
+		"HIVE_CLAUDE_OAUTH_TOKEN=sk-ant-oat01-operator_leaked",
 	)
 	if out, err := start.CombinedOutput(); err != nil {
 		t.Fatalf("starting tmux server: %v: %s", err, out)
@@ -126,7 +127,7 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 		"LINEAR_API_KEY", "LINEAR_CLIENT_SECRET", "LINEAR_WEBHOOK_SECRET", "HIVE_GITHUB_TOKEN", "GITHUB_TOKEN",
 		"DASHBOARD_AUTH_TOKEN", "HIVE_DASHBOARD_TOKEN", "HIVE_TERMINAL_KEY", "HIVE_INVITE_KEY", "HIVE_HEARTBEAT_KEY",
 		"HIVE_HUB_SECRET", "HIVE_TTYD_CREDENTIAL", "HIVE_UPSTREAM_PROXY_URL", "HIVE_UPSTREAM_PROXY_HOSTS",
-		"HIVE_UPSTREAM_PROXY_NO_PROXY", "HIVE_NO_PROXY",
+		"HIVE_UPSTREAM_PROXY_NO_PROXY", "HIVE_NO_PROXY", "HIVE_CLAUDE_OAUTH_TOKEN",
 	} {
 		if v, ok := after[k]; ok {
 			t.Errorf("%s=%q still reaches a pane after applySessionEnv — the inherited credential was not removed", k, v)
