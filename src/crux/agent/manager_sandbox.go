@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -154,6 +155,11 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source st
 	now := time.Now()
 	agent.State = StateRunning
 	agent.StartedAt = &now
+	// Each sandbox kick is a launch: the generation lets the run goroutine
+	// detect that a later kick or restart superseded it (manager_kick.go uses
+	// the same token for stale startup kicks).
+	agent.launchGen++
+	gen := agent.launchGen
 	agent.LastKick = &now
 	agent.LastKickMessage = message
 	agent.LastKickSource = source
@@ -224,8 +230,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source st
 		prClient = m.sandboxPRClient
 		pushEnabled = true
 	}
-	go m.runSandboxKick(runCtx, agent.Name, runtime, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, mutationBoundary)
-	m.notifyKickObserver(agent.Name, KickObserverEventDelivered, source)
+	go m.runSandboxKick(runCtx, agent, gen, runtime, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, mutationBoundary)
 	return nil
 }
 
@@ -250,8 +255,10 @@ func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter 
 	}
 }
 
-func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, mutationBoundary effects.Boundary) {
+func (m *Manager) runSandboxKick(ctx context.Context, agent *AgentProcess, gen int, runtime string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, mutationBoundary effects.Boundary) {
+	name := agent.Name
 	started := time.Now()
+	var accepted atomic.Bool
 	exec := &SandboxExecutor{
 		Launcher:    launcher,
 		Runner:      runner,
@@ -261,6 +268,16 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 		PRClient:    prClient,
 		Mutation:    mutationBoundary,
 		Logger:      m.logger,
+		onStarted: func() {
+			accepted.Store(true)
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if m.agents[name] == agent && agent.launchGen == gen {
+				agent.ConsecutiveKickFailures = 0
+				agent.LastKickError = ""
+				m.notifyKickObserver(name, KickObserverEventDelivered, agent.LastKickSource)
+			}
+		},
 	}
 	res, err := exec.Run(ctx, spec)
 	ended := time.Now()
@@ -285,9 +302,12 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 	}()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	agent, ok := m.agents[name]
-	if !ok {
+	current, ok := m.agents[name]
+	if !ok || current != agent || agent.launchGen != gen {
 		return
+	}
+	if err != nil && !accepted.Load() {
+		recordKickFailureLocked(agent, err)
 	}
 	agent.cancel = nil
 	kickSource := agent.LastKickSource

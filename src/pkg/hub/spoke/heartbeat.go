@@ -1072,6 +1072,13 @@ type HeartbeatPayload struct {
 	// its cluster. The hub honours it as an override: a deliberate per-hive
 	// credential is never overwritten by the cluster default.
 	GitHubAppKeyPerHive bool `json:"github_app_key_per_hive,omitempty"`
+	// WebhookRelayKeyFingerprint is the NON-SECRET "sha256:<hex>" of the hub
+	// webhook relay key this spoke holds (github.WebhookRelayKeyFingerprint).
+	// The hub delivers the key only while this does not match its record, so
+	// a missing or rotated-out key is repaired on the next beat. Empty means
+	// no key (or a spoke too old to report one); the key itself never travels
+	// spoke → hub.
+	WebhookRelayKeyFingerprint string `json:"webhook_relay_key_fingerprint,omitempty"`
 	// GitHubAppID is the App ID this spoke believes it is authenticating AS —
 	// cfg.GitHub.AppID, non-secret. It exists to make one specific distinction
 	// decidable on the hub: a per-hive key that is WRONG versus a per-hive key
@@ -2733,6 +2740,15 @@ type HeartbeatGitHubAppConfig struct {
 	// nil for every hive without a SecondaryAppID, which is the entire fleet
 	// today, so the heartbeat payload is byte-identical for them.
 	SecondaryKey *HeartbeatAppKey `json:"secondary_key,omitempty"`
+	// WebhookRelayKey is this hive's OWN key for verifying the signature the
+	// hub adds to every GitHub webhook it relays here (hivecommons/hive#17911).
+	// It is per hive and is never the GitHub App webhook secret, so it cannot
+	// sign anything another spoke would accept. Secret — never logged; the
+	// spoke persists it 0600 (github.AdoptWebhookRelayKey).
+	//
+	// Empty means "leave the spoke's key unchanged" — never a way to blank a
+	// working key.
+	WebhookRelayKey string `json:"webhook_relay_key,omitempty"`
 }
 
 // HeartbeatAppKey is one (app_id, private key) pair the hub delivers alongside

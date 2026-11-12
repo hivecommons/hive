@@ -87,3 +87,29 @@ func TestReadDiagToolsPassThrough(t *testing.T) {
 		t.Fatalf("a refused argument must not reach the hive: %q", got)
 	}
 }
+
+func TestReadHealthDeepPreservesAgentFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/diag/health" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"type":"health_deep","truncated":false,"health":{"status":"degraded","fails":1,"checks":{"agents":{"scanner":{"status":"fail","detail":"3 consecutive kick failures: no session"}}}}}`))
+	}))
+	defer server.Close()
+	r := &roster{hives: []hiveConfig{{Name: "active", Address: server.URL, Token: "token"}}, active: 0, timeout: time.Second}
+	data, err := (readProvider{roster: r}).Read(context.Background(), adminmcp.ToolHealthDeepRead, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, _ := data.(map[string]any)
+	health, _ := result["health"].(map[string]any)
+	checks, _ := health["checks"].(map[string]any)
+	agents, _ := checks["agents"].(map[string]any)
+	scanner, _ := agents["scanner"].(map[string]any)
+	if result["truncated"] != false || health["status"] != "degraded" || health["fails"] != float64(1) ||
+		scanner["status"] != "fail" || scanner["detail"] != "3 consecutive kick failures: no session" {
+		t.Fatalf("health_deep_read = %#v", data)
+	}
+}

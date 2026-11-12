@@ -147,3 +147,32 @@ process.stdout.write(JSON.stringify(el));
 		}
 	}
 }
+
+func TestNavbarHealthShowsAgentFailureDetail(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: navbar health rendering was not executed")
+	}
+	html := indexHTML(t)
+	var script strings.Builder
+	for _, name := range []string{"navbarHealthGroups", "navbarHealthTitle", "renderNavbarHealthBadge"} {
+		script.WriteString(jsFunc(t, html, name))
+		script.WriteByte('\n')
+	}
+	script.WriteString(`
+const el = { dataset: {}, style: {}, innerHTML: '', title: '' };
+renderNavbarHealthBadge(el, { deepHealth: { checks: [
+  { name: 'agents', status: 'fail', detail: 'scanner: 3 consecutive kick failures: no session' }
+]}});
+process.stdout.write(JSON.stringify(el));
+`)
+	out, err := exec.Command(node, "-e", script.String()).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node navbar health render failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+	for _, want := range []string{`"status":"error"`, "Degraded", "agents: scanner: 3 consecutive kick failures: no session"} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("navbar health output missing %q in %s", want, out)
+		}
+	}
+}

@@ -50,6 +50,10 @@ type WebhookHealth struct {
 	// WebhookModeStatus is the reconcile cadence the health drives:
 	// `mode` webhook|polling and `since` (hivecommons/hive#13381).
 	WebhookModeStatus
+	// Verification is how this spoke authenticates deliveries:
+	// "github-signed", "relay (hub-signed)" or "none" (WebhookVerification,
+	// hivecommons/hive#17911).
+	Verification string `json:"verification,omitempty"`
 }
 
 // WebhookEventResult reports what one delivered GitHub webhook did.
@@ -442,7 +446,7 @@ func (t *webhookTracker) snapshot() WebhookHealth {
 	out := WebhookHealth{Healthy: healthy, Events1h: len(t.events), Invalidations1h: len(t.invalidations),
 		TargetedRefreshes1h: len(t.refreshes), TrackerInvalidations1h: len(t.trackerDrops),
 		CIEvents1h: len(t.ciEvents), CIEventsApplied1h: len(t.ciApplied), CIRefetches1h: len(t.ciRefetches),
-		Rejected1h: t.rejected.total(now), WebhookModeStatus: t.mode.status(t.window, now)}
+		Rejected1h: t.rejected.total(now), WebhookModeStatus: t.mode.status(t.window, now), Verification: WebhookVerification()}
 	t.annotateModeLocked(&out.WebhookModeStatus, now)
 	if !t.lastFailure.IsZero() {
 		at := t.lastFailure.UTC()

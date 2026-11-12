@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -219,6 +221,55 @@ func TestDeliverKickAsync_PromptTimeoutFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "did not reach input prompt") {
 		t.Errorf("error = %q, want the input-prompt timeout reason", err)
+	}
+}
+
+// TestDeliverKickAsync_PromptTimeoutDuringLiveTurnIsBusy is the other side of
+// the coin: the prompt wait times out because the agent is mid-turn (its
+// transcript was active moments ago). That is a busy deferral, not a delivery
+// failure, so the error must wrap crux.ErrAgentBusy and the deferred
+// recordKickFailureLocked must leave ConsecutiveKickFailures at 0 — otherwise
+// three governor re-kicks during one long turn trip the deep-health threshold
+// and report a working agent as down.
+func TestDeliverKickAsync_PromptTimeoutDuringLiveTurnIsBusy(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	origTimeout, origPoll := inputPromptTimeout, inputPromptPollInterval
+	inputPromptTimeout = 400 * time.Millisecond
+	inputPromptPollInterval = 20 * time.Millisecond
+	t.Cleanup(func() {
+		inputPromptTimeout, inputPromptPollInterval = origTimeout, origPoll
+	})
+
+	m := newKickAsyncManager(t, "kasync-liveturn")
+	agent := setAgentRunning(t, m, "kasync-liveturn", "hive-kasync-liveturn")
+	m.mu.Lock()
+	agent.LastTranscriptActivity = time.Now()
+	m.mu.Unlock()
+
+	newRawTmuxSession(t, "hive-kasync-liveturn")
+	paneInject(t, "hive-kasync-liveturn", "Claude Code is starting")
+
+	err := m.deliverKickAsync("kasync-liveturn", "hello")
+	if err == nil {
+		t.Fatal("deliverKickAsync with no input prompt returned no error")
+	}
+	if !errors.Is(err, crux.ErrAgentBusy) {
+		t.Errorf("error = %q, want it to wrap crux.ErrAgentBusy for a live turn", err)
+	}
+	if !strings.Contains(err.Error(), "did not reach input prompt") {
+		t.Errorf("error = %q, want the original input-prompt timeout reason preserved", err)
+	}
+
+	m.mu.Lock()
+	failures, lastErr := agent.ConsecutiveKickFailures, agent.LastKickError
+	m.mu.Unlock()
+	if failures != 0 {
+		t.Errorf("ConsecutiveKickFailures = %d, want 0: a live turn is not a delivery failure", failures)
+	}
+	if lastErr != "" {
+		t.Errorf("LastKickError = %q, want empty for a busy deferral", lastErr)
 	}
 }
 

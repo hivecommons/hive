@@ -5285,6 +5285,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// nothing and a spoke holding the wrong one self-heals.
 				GitHubAppKeyFingerprint: spoke.TimedSection("app_key_fingerprint", func() string { return appKeys.ReportedFingerprint(b.cfg.GitHub.KeyFile, b.cfg.GitHub.AppID) }),
 				GitHubAppKeyPerHive:     spoke.TimedSection("app_key_per_hive", func() bool { return appKeys.HasPerHiveKey(b.cfg.GitHub.KeyFile, b.cfg.GitHub.AppID) }),
+				// Fingerprint only (#17911): the hub re-delivers the webhook
+				// relay key until this matches the key on its record.
+				WebhookRelayKeyFingerprint: github.WebhookRelayKeyFingerprint(),
 				// Report the App this hive believes it authenticates as. The hub
 				// pairs it with the fingerprint above to tell a per-hive key that
 				// is WRONG for this App from one that is deliberately for another.
@@ -5666,6 +5669,15 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					"installation_id", ghCfg.InstallationID,
 					"has_key", ghCfg.PrivateKey != "",
 				)
+
+				// The webhook relay key (#17911) is independent of the App
+				// identity below, so it is adopted before the identity guard can
+				// refuse the rest of the delivery. Empty never blanks a held key.
+				if changed, err := github.AdoptWebhookRelayKey(ghCfg.WebhookRelayKey); err != nil {
+					b.logger.Error("webhook relay key adopted in memory but not persisted", "error", err)
+				} else if changed {
+					b.logger.Info("adopted webhook relay key from hub", "fingerprint", github.WebhookRelayKeyFingerprint())
+				}
 
 				// WRITE-PATH GUARD. Compute the identity this push WOULD produce and
 				// refuse the whole delivery if it is internally inconsistent.
