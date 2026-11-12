@@ -703,7 +703,32 @@ and exits non-zero instead of posting a possible duplicate.
 `.github/scripts/test-hive-status-card.sh` and
 `src/scripts/test-comment-merged-refs.sh` pin this behaviour.
 
+### Per-PR workflow comments post only on a finding
+
+Three workflow comments used to land on every PR regardless of outcome, and
+after the runtime's own reducers they were ~70% of the comments on a merged
+PR ([#17863](https://github.com/hivecommons/hive/issues/17863)). Each now
+posts only when it has something to say; the full report, including the
+clean case, still goes to the job's step summary:
+
+| Workflow / script | Comment | Behaviour |
+| --- | --- | --- |
+| Open PR Overlap (`.github/workflows/pr-overlap.yml`, `.github/scripts/pr-overlap.sh`) | `<!-- hive-pr-overlap -->` table of conflicting / same-file open PRs | **Posts** only when at least one sibling PR conflicts or shares a file; **edits** the one marker comment in place on later pushes; when a later run finds nothing and a comment exists, **edits it** to a one-line "✅ Resolved" note; a PR that never had an overlap gets no comment. The `conflicts-with-open-pr` label is unchanged. |
+| Mutation (advisory) (`.github/workflows/mutation-advisory.yml`, `src/scripts/mutation-report.sh post`) | `<!-- hive-mutation -->` surviving / uncovered mutant report | **Posts** only for a non-`pass` verdict (`lived`, `uncovered`, `misrouted`, `error`); **edits** the one marker comment on later pushes; a later `pass` **edits** the existing comment to a one-line "✅ Resolved" note; a PR whose every run passes gets no comment. |
+| Feedback Wanted (`.github/workflows/feedback.yml` → `hivecommons/infra` `reusable-feedback.yml`, gated by `src/scripts/feedback-gate.sh`) | "Thank you for your contribution! Your PR has been merged." | **Posts** only for a person's first merged PR in the repo. Skipped for `[bot]` / App authors, hive-managed head branches (`scanner/*`, `hive/*`), PR bodies carrying a `<!-- hive:` marker (hive-agent PRs on any branch, e.g. `fix-*`), and any author with another merged PR. Knobs are the workflow's `env:` (`FEEDBACK_SKIP_BOTS`, `FEEDBACK_SKIP_BRANCHES`, `FEEDBACK_SKIP_HIVE_ORIGIN`, `FEEDBACK_SKIP_LOGINS`, `FEEDBACK_FIRST_TIME_ONLY`); a failed merged-PR lookup skips the comment rather than guessing. |
+
+`.github/scripts/test-pr-overlap.sh`, `src/scripts/test-mutation-report.sh`
+and `src/scripts/test-feedback-gate.sh` pin these rules.
+
 **Outside Hive's control.** Comments from external bots, such as Prow, tide
 and kubestellar-prow, are posted by their own services and cannot be edited,
 folded or skipped from this repository. Hive does not try to suppress them;
-configure those bots in the project that runs them.
+configure those bots in the project that runs them. For hivecommons repos
+that configuration is `prow/plugins.yaml` and `prow/config.yaml` in
+`kubestellar/infra` (org-wide `approve` with `require_self_approval: true`
+and `lgtm` with `review_acts_as_lgtm: true`; tide requires both `lgtm` and
+`approved`). What Hive does control is its own relay: a dashboard approval
+on a Prow-managed PR the hive account opened posts `/approve` only, because
+a `/lgtm` from the PR's own author draws Prow's "you cannot LGTM your own
+PR" every time (`PullRequestApprovalEvent.LGTMSkipped`, #17863); no hive
+lane reads the relayed `/lgtm`.
