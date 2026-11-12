@@ -281,3 +281,29 @@ func TestBootAdvisoryWithRateLimitDoesNotClassify(t *testing.T) {
 		t.Fatalf("log:\n%s", log.String())
 	}
 }
+
+func TestBootAdvisoryWithBoundsBlockedEnsure(t *testing.T) {
+	old := advisoryEnsureBudget
+	advisoryEnsureBudget = 50 * time.Millisecond
+	defer func() { advisoryEnsureBudget = old }()
+
+	cfg := bootAdvisoryConfig(t)
+	b, _ := newDepsTestBoot(t, cfg)
+	b.ghClient = fakeGitHubClient(t)
+	f := newBootAdvisoryFake()
+	f.deps.ensureAdvisoryIssue = func(ctx context.Context, _ *github.Client, _ string) (int, error) {
+		<-ctx.Done()
+		return 0, ctx.Err()
+	}
+
+	done := make(chan struct{})
+	go func() { b.bootAdvisoryWith(f.deps); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("bootAdvisory must not block on a hung advisory-issue ensure")
+	}
+	if len(b.advisoryIssues) != 0 {
+		t.Fatalf("advisoryIssues = %v", b.advisoryIssues)
+	}
+}
