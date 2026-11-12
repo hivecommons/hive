@@ -1978,6 +1978,7 @@
         html += '<details class="kb-sources-add"><summary class="summary-label">🎙️ Plaud voice notes</summary>';
         html += '<div class="stack kb-sources-form">';
         html += '<div class="muted-xs">Make your Plaud Note recordings (Plaud summary + transcript) searchable knowledge via the free official Plaud MCP server. $0 beyond your Plaud plan; sign-in is Plaud OAuth in your browser.</div>';
+        html += '<div class="muted-xs"><a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inbox-voice-sources.md" target="_blank" rel="noopener noreferrer">Inbox voice sources quickstart ↗</a></div>';
         html += '<div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenPlaudIntegration">Configure in Integrations</button></div>';
         html += '</div></details>';
 
