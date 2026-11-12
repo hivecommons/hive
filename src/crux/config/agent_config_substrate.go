@@ -106,8 +106,12 @@ type SandboxSubstrateConfig struct {
 	// pool.
 	WorkerSelector map[string]string `yaml:"worker_selector,omitempty" json:"worker_selector,omitempty"`
 	// SnapshotOnIdle suspends the actor (asynchronous snapshot) after the
-	// kick instead of deleting it, so Substrate keeps a resumable image.
-	// Default false: a kick is one-shot and snapshots cost object storage.
+	// kick instead of deleting it, so Substrate keeps a snapshot. The
+	// snapshot is retained until the agent's next idle snapshot replaces it
+	// (at most one per agent per hive process); it is not yet resumed on the
+	// next kick, and actors left from before a hive restart are not
+	// reclaimed. Default false: a kick is one-shot and snapshots cost
+	// object storage.
 	SnapshotOnIdle bool `yaml:"snapshot_on_idle,omitempty" json:"snapshot_on_idle,omitempty"`
 	// AllowHosts are additional egress hosts (host or host:port, leading
 	// *. wildcard allowed) the actor may reach, on top of the GitHub hosts

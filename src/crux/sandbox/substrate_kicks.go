@@ -73,6 +73,9 @@ var _ SubstrateLogReader = (*SubstrateKicks)(nil)
 type SubstrateKicks struct {
 	mu       sync.Mutex
 	byLaunch map[string]*substrateKick
+	// lastSuspended is the newest actor each launch name left suspended
+	// (snapshot_on_idle); in memory only, so a hive restart forgets it.
+	lastSuspended map[string]string
 }
 
 // substrateKick is one recorded kick: every state snapshot it went through
@@ -94,6 +97,19 @@ func (s *SubstrateKicks) begin(launchName string, info SubstrateActorInfo) *subs
 	k := &substrateKick{history: []SubstrateActorInfo{info}}
 	s.byLaunch[launchName] = k
 	return k
+}
+
+// swapSuspended records name as launchName's retained suspended actor and
+// returns the one it replaces, or "" when there was none.
+func (s *SubstrateKicks) swapSuspended(launchName, name string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastSuspended == nil {
+		s.lastSuspended = map[string]string{}
+	}
+	prev := s.lastSuspended[launchName]
+	s.lastSuspended[launchName] = name
+	return prev
 }
 
 // update applies fn to the kick's latest state and records the result as

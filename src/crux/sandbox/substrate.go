@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"time"
 
@@ -302,9 +303,11 @@ func (l *SubstrateLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 	kick := kicks.begin(spec.Name, SubstrateActorInfo{Name: name, Atespace: ref.Atespace, State: SubstrateStateCreated})
 	kicks.observe(kick, created)
 	// Delete is the default: a kick is a one-shot and keeping a snapshot
-	// around costs object storage. snapshot_on_idle keeps a resumable
-	// snapshot instead, so the next kick's warm state (caches, builds) is
-	// a resume rather than a cold boot.
+	// around costs object storage. snapshot_on_idle keeps the actor
+	// suspended instead. Nothing resumes it yet (the next kick is a cold
+	// boot), so only the latest snapshot per agent is retained: the one it
+	// replaces is deleted. The Control API has no ListActors, so actors left
+	// by an earlier hive process are not reclaimed.
 	cleanupActor := func() {
 		if l.Options.SnapshotOnIdle && ctx.Err() == nil {
 			if err := control.SuspendActor(live(), ref, substrateapi.DurabilityMode_DURABILITY_MODE_ASYNCHRONOUS); err == nil {
@@ -312,6 +315,12 @@ func (l *SubstrateLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 					i.State, i.Suspended, i.Done = SubstrateStateSuspended, true, true
 				})
 				cleanupTemplate()
+				if prev := kicks.swapSuspended(spec.Name, name); prev != "" && prev != name {
+					prevRef := &substrateapi.ObjectRef{Atespace: ref.Atespace, Name: prev}
+					if err := control.DeleteActor(live(), prevRef); err != nil {
+						log.Printf("[substrate] deleting superseded suspended actor %s: %v", prev, err)
+					}
+				}
 				return
 			}
 		}
