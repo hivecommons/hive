@@ -95,7 +95,7 @@ func kickLayoutMessage(t *testing.T, s *Scheduler, issues ...github.Issue) strin
 // one dynamic thing ahead of the static prefix (ADR-0008).
 func stripCanary(t *testing.T, msg string) string {
 	t.Helper()
-	if !strings.HasPrefix(msg, "SECURITY CANARY: "+ioscan.CanaryPrefix) {
+	if !strings.HasPrefix(msg, ioscan.CanaryPreamblePrefix) {
 		t.Fatalf("canary preamble must lead the kick:\n%s", msg[:min(len(msg), 200)])
 	}
 	end := strings.Index(msg, "\n\n")
@@ -187,7 +187,7 @@ func TestKickLayoutSeamOrderIsFixed(t *testing.T) {
 	msg := kickLayoutMessage(t, s, makeIssue("test-org/console", 1, "first issue", "scanner", 5, nil, false))
 
 	order := []string{
-		"SECURITY CANARY: " + ioscan.CanaryPrefix,
+		ioscan.CanaryPreamblePrefix,
 		"[agent:scanner]",
 		governorWorkSourceRule,
 		"## Independent review",
@@ -228,14 +228,14 @@ func TestKickLayoutKeepsCanaryAndRepoScopedTarget(t *testing.T) {
 	b := kickLayoutMessage(t, s, issue)
 
 	preamble := func(msg string) string {
-		end := strings.Index(msg, "\n")
+		end := strings.Index(msg, "\n\n")
 		if end < 0 {
 			return msg
 		}
 		return msg[:end]
 	}
 	for _, msg := range []string{a, b} {
-		if !strings.HasPrefix(msg, "SECURITY CANARY: "+ioscan.CanaryPrefix) {
+		if !strings.HasPrefix(msg, ioscan.CanaryPreamblePrefix) {
 			t.Fatalf("canary preamble must lead the kick:\n%s", msg[:min(len(msg), 200)])
 		}
 		if !strings.Contains(msg, "REPO-SCOPED CADENCE TARGET: test-org/console") {
