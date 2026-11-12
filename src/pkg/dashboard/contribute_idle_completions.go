@@ -47,7 +47,31 @@ const (
 	// idleCompletionNotGiven: a relay that sends neither a reason nor a
 	// completion signal (one predating both fields, or the headless path).
 	idleCompletionNotGiven = "no reason given"
+	// idleCompletionUnverifiedPR: the relay reported a pull request and the
+	// hub could not verify it (a GitHub lookup that failed, another author,
+	// another repository), so the completion was booked with no PR. The agent
+	// did not drop the issue, and saying it "gave no reason" would be false.
+	idleCompletionUnverifiedPR = "relay reported a pull request the hub could not verify"
+	// idleCompletionUnsettledPR: the reported pull request verified, but the
+	// hub could not settle the completion as shipped (a donated standby PR
+	// whose required hold label could not be applied).
+	idleCompletionUnsettledPR = "relay reported a pull request the hub verified but could not settle as shipped"
 )
+
+// idleCompletionReportedPRReason is the reason for a completion booked idle
+// although the relay reported a pull request: what the hub made of that pull
+// request, with the verifier's own reason when it has one. It is used only
+// when the relay sent no reason of its own.
+func idleCompletionReportedPRReason(verified bool, verifyReason string) string {
+	if verified {
+		return idleCompletionUnsettledPR
+	}
+	verifyReason = strings.Join(strings.Fields(verifyReason), " ")
+	if verifyReason == "" {
+		return idleCompletionUnverifiedPR
+	}
+	return idleCompletionUnverifiedPR + ": " + verifyReason
+}
 
 // idleCompletionRetention is how long an idle reason is kept without a newer
 // completion replacing it. It matches the no-PR streak's own reset window, so

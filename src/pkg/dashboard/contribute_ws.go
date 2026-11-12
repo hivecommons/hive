@@ -4725,7 +4725,14 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// none, so the log line and the run record below say why the
 			// issue was dropped (contribute_idle_completions.go).
 			if verdict == completionVerdictIdle && verifiedPR == "" && verdictReason == "" {
-				verdictReason = normalizeIdleCompletionReason("", msg.CompletionSignal)
+				if strings.TrimSpace(msg.PRURL) != "" {
+					// The relay did report a pull request; the hub booked
+					// the completion without it. Say that, not that the
+					// agent stopped without one.
+					verdictReason = idleCompletionReportedPRReason(prDetail.Verified, prDetail.Reason)
+				} else {
+					verdictReason = normalizeIdleCompletionReason("", msg.CompletionSignal)
+				}
 			}
 			// A needs-decision verdict that stands parks the issue at 045 with
 			// the relay's label alone; the hub posts the question when the

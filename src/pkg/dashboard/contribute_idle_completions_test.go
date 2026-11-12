@@ -261,6 +261,93 @@ func TestIdleCompletionOlderRelayBookedIdleWithNoReasonGiven(t *testing.T) {
 	}
 }
 
+// A completion can be booked idle although the relay reported a pull request:
+// the hub could not verify it (a GitHub lookup that failed, another author).
+// The reason on record says that, with the verifier's own reason. It must not
+// say the agent stopped without a pull request.
+func TestIdleCompletionReportedPRReasonSaysWhatTheHubMadeOfIt(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		verified     bool
+		verifyReason string
+		want         string
+	}{
+		{"lookup failed", false, "github lookup failed", "relay reported a pull request the hub could not verify: github lookup failed"},
+		{"reason on several lines", false, " author mismatch:\n alice ", "relay reported a pull request the hub could not verify: author mismatch: alice"},
+		{"no verifier reason", false, "", "relay reported a pull request the hub could not verify"},
+		{"verified, not settled", true, "", "relay reported a pull request the hub verified but could not settle as shipped"},
+	} {
+		if got := idleCompletionReportedPRReason(tc.verified, tc.verifyReason); got != tc.want {
+			t.Errorf("%s: reason %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Over the WebSocket: a relay reports a pull request the hub cannot verify (the
+// test hub has no GitHub client) and sends no reason. The completion is booked
+// idle, and the ledger and the run record say the pull request was reported
+// and not verified.
+func TestIdleCompletionWithUnverifiedReportedPRSaysSo(t *testing.T) {
+	s, ts := setupWSTest(t)
+	defer ts.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/contribute/register", strings.NewReader(`{"github_username":"alice"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	var reg map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &reg); err != nil {
+		t.Fatalf("register response: %v", err)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	readMsg(t, conn) // challenge
+	conn.WriteJSON(WSMessage{Type: "auth_response", RegistrationToken: reg["registration_token"], CLIBackend: "claude"})
+	readMsg(t, conn) // auth_ok
+
+	idleStatus(s, idleIssue(32))
+	conn.WriteJSON(WSMessage{Type: "ready", Seq: 2})
+	assign := readMsg(t, conn)
+	if assign.Type != "task_assign" {
+		t.Fatalf("expected task_assign, got %+v", assign)
+	}
+	prURL := "https://github.com/" + idleRepo + "/pull/77"
+	conn.WriteJSON(WSMessage{Type: "task_complete", TaskID: assign.TaskID, Result: "completed", PRURL: prURL, CompletionSignal: completionSignalVerdict})
+	// The hub handles one frame at a time, so the answer to this `ready` is
+	// written only after the completion above has been booked.
+	conn.WriteJSON(WSMessage{Type: "ready", Seq: 3})
+	if next := readMsg(t, conn); next.Type != "task_unavailable" {
+		t.Fatalf("the issue is in its completion cooldown and must not be handed back, got %+v", next)
+	}
+
+	hub := s.contributeHub
+	runs, err := readTaskRunsForUser(hub.taskRunLogPath(), "alice", time.Hour, 10)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("task-run log: %d records, err %v; want the one completion", len(runs), err)
+	}
+	run := runs[0]
+	if run.Verdict != completionVerdictIdle || run.PRVerified || run.ReportedPRURL != prURL || run.PRVerifyReason == "" {
+		t.Fatalf("run record %+v, want an idle with the reported pull request unverified and a verifier reason", run)
+	}
+	want := idleCompletionReportedPRReason(false, run.PRVerifyReason)
+	if !strings.HasPrefix(want, idleCompletionUnverifiedPR+": ") {
+		t.Fatalf("expected reason %q does not carry the verifier's reason", want)
+	}
+	if run.VerdictReason != want {
+		t.Fatalf("run record reason %q, want %q", run.VerdictReason, want)
+	}
+	if rec := idleRecord(t, hub, idleKey(32)); rec.Reason != want || rec.Reporter != "alice" {
+		t.Fatalf("ledger booked %+v, want %q by alice", rec, want)
+	}
+	if strings.Contains(run.VerdictReason, "without a pull request") {
+		t.Fatalf("reason %q says the agent opened no pull request, but one was reported", run.VerdictReason)
+	}
+}
+
 // The Activity monitor's issue row carries the same clause the withheld list
 // shows, and only while no pull request covers the issue.
 func TestStageTrackerLastIdle(t *testing.T) {
