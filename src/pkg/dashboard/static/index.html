@@ -46406,14 +46406,33 @@ function burnAreaChart() {
         '<input class="kb-search-box" data-rule-field="repo" placeholder="owner/repo (RFC only)" value="' + escapeHtml(rule.repo || '') + '" aria-label="Repository">' +
         '<button type="button" class="hv-btn btn-icon btn-sm" data-action="inboxRemoveRule" data-arg0="' + i + '" aria-label="Remove rule">✕</button></div>';
     }
-    function inboxReadRules() {
-      return Array.from(document.querySelectorAll('#inbox-settings-rules .inbox-rule')).map(row => {
+    // The same form renders in the Inbox page modal and inline under
+    // Settings → Inbox, and both can sit in the DOM at once (the settings
+    // tab stays mounted; the closed modal keeps its last body). Every read
+    // and write therefore goes through the active form root: the modal
+    // while it is open, otherwise the inline section.
+    function inboxSettingsRoot() {
+      const overlay = document.getElementById('kb-modal-overlay');
+      if (overlay && overlay.style.display !== 'none') {
+        const modal = overlay.querySelector('.inbox-settings-form');
+        if (modal) return modal;
+      }
+      return document.querySelector('#inbox-settings-inline .inbox-settings-form');
+    }
+    function inboxSettingsField(root, name) {
+      return root ? root.querySelector('[data-inbox-field="' + name + '"]') : null;
+    }
+    function inboxReadRules(root) {
+      root = root || inboxSettingsRoot();
+      if (!root) return [];
+      return Array.from(root.querySelectorAll('.inbox-settings-rules .inbox-rule')).map(row => {
         const v = f => { const el = row.querySelector('[data-rule-field="' + f + '"]'); return el ? el.value.trim() : ''; };
         return { source: v('source'), title_prefix: v('title_prefix'), tag: v('tag'), destination: v('destination'), repo: v('repo') };
       });
     }
-    function inboxRenderRules() {
-      const host = document.getElementById('inbox-settings-rules');
+    function inboxRenderRules(root) {
+      root = root || inboxSettingsRoot();
+      const host = root ? root.querySelector('.inbox-settings-rules') : null;
       if (!host) return;
       host.innerHTML = _inboxDraftRules.length ? _inboxDraftRules.map(inboxRuleRowHtml).join('') : '<p class="muted-xs">No rules — every item waits here for manual triage.</p>';
     }
@@ -46422,14 +46441,14 @@ function burnAreaChart() {
         ? '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>'
         : '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
           '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>';
-      return '<p class="muted-note m-0">New items are checked against these rules in order after every connector sync; the first match routes the item automatically. Items that arrived before a rule existed are never re-routed.</p>' +
+      return '<div class="inbox-settings-form" data-inbox-form="' + (inline ? 'inline' : 'modal') + '"><p class="muted-note m-0">New items are checked against these rules in order after every connector sync; the first match routes the item automatically. Items that arrived before a rule existed are never re-routed.</p>' +
         '<div class="inbox-settings-grid">' +
-        '<label class="muted-note inbox-field">Default RFC repository<input class="kb-search-box mt-2" type="text" id="inbox-settings-spek-repo" placeholder="owner/repo" autocomplete="off" value="' + escapeHtml(settings.spek_repo || '') + '"></label>' +
-        '<label class="muted-note inbox-field">dibs URL<input class="kb-search-box mt-2" type="text" id="inbox-settings-dibs-url" placeholder="https://dibs.example.org" autocomplete="off" value="' + escapeHtml(settings.dibs_url || '') + '"></label></div>' +
+        '<label class="muted-note inbox-field">Default RFC repository<input class="kb-search-box mt-2" type="text" data-inbox-field="spek-repo" placeholder="owner/repo" autocomplete="off" value="' + escapeHtml(settings.spek_repo || '') + '"></label>' +
+        '<label class="muted-note inbox-field">dibs URL<input class="kb-search-box mt-2" type="text" data-inbox-field="dibs-url" placeholder="https://dibs.example.org" autocomplete="off" value="' + escapeHtml(settings.dibs_url || '') + '"></label></div>' +
         '<p class="muted-xs">The dibs token is read from the environment variable named by <code>inbox.dibs.token_env</code>' + (settings.dibs_token_set ? ' (set)' : ' (not set)') + '.</p>' +
         '<div class="row-between mt-4 mb-2"><div class="section-label m-0">Rules</div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddRule">Add rule</button></div>' +
-        '<div id="inbox-settings-rules"></div>' +
-        '<div class="hive-dialog-error" role="alert" id="inbox-settings-error"></div>' + buttons;
+        '<div class="inbox-settings-rules"></div>' +
+        '<div class="hive-dialog-error" role="alert" data-inbox-field="error"></div>' + buttons + '</div>';
     }
     function inboxOpenSettings() {
       const settings = (_inboxCache || {}).settings || {};
@@ -46453,7 +46472,7 @@ function burnAreaChart() {
         _inboxCache = Object.assign({}, _inboxCache, { settings: data });
         _inboxDraftRules = (data.rules || []).map(x => Object.assign({}, x));
         host.innerHTML = inboxSettingsFormHtml(data, true);
-        inboxRenderRules();
+        inboxRenderRules(host.querySelector('.inbox-settings-form'));
       } catch (e) {
         host.innerHTML = '<p class="kc-error muted-xs">Inbox settings unavailable: ' + escapeHtml(e.message) + '</p>';
       }
@@ -46469,15 +46488,16 @@ function burnAreaChart() {
       inboxRenderRules();
     }
     async function inboxSaveSettings() {
-      const errEl = document.getElementById('inbox-settings-error');
-      const rules = inboxReadRules().map(r => { const o = {}; for (const k of Object.keys(r)) if (r[k]) o[k] = r[k]; return o; });
-      const payload = { rules, spek_repo: (document.getElementById('inbox-settings-spek-repo') || {}).value || '', dibs_url: (document.getElementById('inbox-settings-dibs-url') || {}).value || '' };
+      const root = inboxSettingsRoot();
+      if (!root) return;
+      const errEl = inboxSettingsField(root, 'error');
+      const rules = inboxReadRules(root).map(r => { const o = {}; for (const k of Object.keys(r)) if (r[k]) o[k] = r[k]; return o; });
+      const payload = { rules, spek_repo: (inboxSettingsField(root, 'spek-repo') || {}).value || '', dibs_url: (inboxSettingsField(root, 'dibs-url') || {}).value || '' };
       try {
         const r = await fetch('/api/inbox/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-        const inline = !!document.getElementById('inbox-settings-inline');
-        if (!inline) kbCloseModal();
+        if (root.dataset.inboxForm !== 'inline') kbCloseModal();
         showToast('Inbox settings saved', 'success');
         await fetchInbox();
       } catch (e) {

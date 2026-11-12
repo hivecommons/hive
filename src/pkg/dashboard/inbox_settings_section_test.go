@@ -22,7 +22,9 @@ func TestSettingsInboxSectionWiring(t *testing.T) {
 		"yamlHint('inbox.dibs.url')",
 		"yamlHint('inbox.rules')",
 		"Default RFC repository",
-		"id=\"inbox-settings-dibs-url\"",
+		"data-inbox-field=\"dibs-url\"",
+		"function inboxSettingsRoot",
+		"data-inbox-form=",
 		"key: 'inbox.spek.repo'",
 	} {
 		if !strings.Contains(page, want) {
