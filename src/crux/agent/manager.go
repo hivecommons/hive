@@ -594,12 +594,16 @@ type Manager struct {
 	// precedence for whatever fresh token the operator supplied.
 	copilotAuthTokenRejected bool
 	claudeAuthToken          string
-	uidMap                   *UIDMap
-	sharedPool               SharedSessionPool
-	uidMapPath               string
-	appAuth                  AppTokenMinter
-	appNotInstalledWarned    sync.Map        // agent name -> struct{}: not-installed mint failure already logged
-	agentMint                AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
+	claudeOperatorToken      string // HIVE_CLAUDE_OAUTH_TOKEN, read once at construction; a dashboard sign-in never replaces it
+	// claudeOperatorModeLogOnce guards the one-time "re-bridge and watchdog
+	// suspended" log for operator-token mode (claude_operator_token_mode.go).
+	claudeOperatorModeLogOnce sync.Once
+	uidMap                    *UIDMap
+	sharedPool                SharedSessionPool
+	uidMapPath                string
+	appAuth                   AppTokenMinter
+	appNotInstalledWarned     sync.Map        // agent name -> struct{}: not-installed mint failure already logged
+	agentMint                 AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
 
 	// sharedPoolRenewInterval overrides the lease watcher tick (zero means
 	// defaultSharedPoolRenewInterval). Set before any watcher starts; it is
@@ -886,6 +890,7 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 		copilotAuthTokenAuthoritative: copilotTokenAuthoritative,
 		copilotAuthTokenSource:        copilotTokenSource,
 		claudeAuthToken:               claudeToken,
+		claudeOperatorToken:           claude.OperatorToken(),
 		uidMap:                        uidMap,
 		sharedPool:                    opts.sharedPool,
 		uidMapPath:                    selectedUIDMapPath,

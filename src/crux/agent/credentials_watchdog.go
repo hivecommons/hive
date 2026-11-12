@@ -220,7 +220,13 @@ func credentialWatches() []credentialWatch {
 // Safe to start unconditionally at boot: like StartAgentTokenRefresh it tracks
 // live state each tick rather than a boot-time snapshot, so a hive that gains
 // or loses a backend via config reload is evaluated correctly.
+//
+// Operator-token mode (HIVE_CLAUDE_OAUTH_TOKEN set): the Claude agents do not
+// use the shared credentials file, so the Claude re-bridge and the Claude
+// probe are suspended and said so once at start; Copilot is watched as
+// before. See claude_operator_token_mode.go.
 func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
+	m.logClaudeOperatorTokenModeOnce()
 	ticker := time.NewTicker(credentialWatchdogInterval())
 	defer ticker.Stop()
 	bridgeTicker := time.NewTicker(claudeBridgeInterval())
@@ -254,8 +260,9 @@ func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 // use) and emits a transition-edge log + audit event. lastUnusable carries the
 // previous observation per backend across ticks.
 func (m *Manager) evalCredentialWatch(w credentialWatch, lastUnusable map[string]bool) {
-	if !m.backendInUse(w.backend) {
-		// Not in use: nothing to watch. Reset the tracker so a later config
+	if !m.backendInUse(w.backend) || (w.backend == "claude" && m.claudeOperatorTokenMode()) {
+		// Not in use (or, for Claude, the operator token is in use instead of
+		// the file): nothing to watch. Reset the tracker so a later config
 		// change that adds this backend with a bad credential alerts on its
 		// first miss rather than being masked as "no transition".
 		delete(lastUnusable, w.backend)
