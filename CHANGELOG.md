@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.233.0)
+
+### Added
+
+- Settings → Inbox section to edit the default RFC repository, dibs URL and auto-routing rules from the dashboard Settings dialog.
+
 ## 2026-11-12 (v5.232.0)
 
 ### Added
