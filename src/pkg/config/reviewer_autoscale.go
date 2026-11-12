@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
@@ -51,18 +50,21 @@ type ReviewersConfig struct {
 // (hivecommons/hive#14685). Opt-in: the zero value keeps the static
 // agents.<reviewer>.replicas behaviour.
 //
-// When enabled, the lane's base agent (Agent, or the first reviewer-role
-// agent) is expanded to the controller's current target instead of its
-// declared replicas; the declared value only seeds the initial count,
-// clamped into [Min, Max]. Dynamic replicas are ordinary replicas —
-// reviewer-3, reviewer-4 — with the same role, prompt, beads dir, scoped
-// token and cadence key family as reviewer-2, so nothing downstream can
-// tell them apart.
+// When enabled, the lane's base agent (Agent, or the first agent the review
+// swarm dispatches to; see ReviewerAutoscaleLane) is expanded to the
+// controller's current target instead of its declared replicas; the declared
+// value only seeds the initial count, clamped into [Min, Max]. Dynamic
+// replicas are ordinary replicas — reviewer-3, reviewer-4 — with the same
+// role, prompt, beads dir, scoped token and cadence key family as
+// reviewer-2, so nothing downstream can tell them apart.
 type ReviewerAutoscaleConfig struct {
 	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	// Agent names the base reviewer agent that scales. Empty picks the
-	// first (name-sorted) enabled agent with role "reviewer", falling back
-	// to review.reviewer_agents[0].
+	// Agent names the base reviewer agent that scales. It must be one the
+	// review swarm dispatches to, because the swarm's backlog is what the
+	// lane is sized against. Empty picks the first entry of
+	// review.reviewer_agents that qualifies, else (with no list) the first
+	// name-sorted agent the swarm's keyword rule admits; see
+	// ReviewerAutoscaleLane.
 	Agent string `yaml:"agent,omitempty" json:"agent,omitempty"`
 	Min   int    `yaml:"min,omitempty" json:"min,omitempty"`
 	Max   int    `yaml:"max,omitempty" json:"max,omitempty"`
@@ -194,67 +196,49 @@ func (a ReviewerAutoscaleConfig) Validate() error {
 	return nil
 }
 
-// ReviewerAutoscaleAgent resolves the base agent the autoscaler manages:
-// the configured name when it is a declared base agent, else the first
-// name-sorted enabled base agent with role "reviewer", else
-// review.reviewer_agents[0]. Empty when nothing qualifies.
-func (c *Config) ReviewerAutoscaleAgent() string {
-	if c == nil {
-		return ""
-	}
-	a := c.Review.Reviewers.Autoscale
-	if name := strings.TrimSpace(a.Agent); name != "" {
-		if agent, ok := c.Agents[name]; ok && agent.ReplicaOf == "" {
-			return name
-		}
-		return ""
-	}
-	names := make([]string, 0, len(c.Agents))
-	for name, agent := range c.Agents {
-		if agent.ReplicaOf != "" || !agent.Enabled {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(agent.Role), "reviewer") {
-			names = append(names, name)
-		}
-	}
-	if len(names) > 0 {
-		sort.Strings(names)
-		return names[0]
-	}
-	for _, name := range c.Review.ReviewerAgents {
-		if agent, ok := c.Agents[name]; ok && agent.ReplicaOf == "" {
-			return name
-		}
-	}
-	return ""
-}
-
 // ReviewerAutoscaleEnabled reports whether the lane is under autoscale
-// control and resolves to a real base agent.
+// control and resolves to a base agent the review swarm dispatches to.
 func (c *Config) ReviewerAutoscaleEnabled() bool {
 	return c != nil && c.Review.Reviewers.Autoscale.Enabled && c.ReviewerAutoscaleAgent() != ""
 }
 
 // reviewerAutoscaleReplicaCount is the replica count ExpandAgentReplicas
 // materialises for the autoscaled lane: the controller's current target when
-// it has set one, else the declared replicas clamped into the band.
-func (c *Config) reviewerAutoscaleReplicaCount(declared int) int {
+// it has set one for this lane, else the declared replicas clamped into the
+// band. A target set for another agent is ignored: it counted that agent's
+// reviewers, so a lane that has just become the autoscaled one starts from
+// its own declared count.
+func (c *Config) reviewerAutoscaleReplicaCount(lane string, declared int) int {
 	a := c.Review.Reviewers.Autoscale
-	if c.ReviewerAutoscaleActive > 0 {
+	if c.ReviewerAutoscaleActive > 0 && c.ReviewerAutoscaleActiveAgent == lane {
 		return a.Clamp(c.ReviewerAutoscaleActive)
 	}
 	return a.Clamp(normalizeReplicaCount(declared))
 }
 
 // SetReviewerAutoscaleActive records the controller's target replica count
-// and re-expands agents so the lane materialises it. It is the single write
-// path for ReviewerAutoscaleActive.
+// for the lane that resolves now and re-expands agents so the lane
+// materialises it.
 func (c *Config) SetReviewerAutoscaleActive(n int) error {
 	if c == nil {
 		return nil
 	}
 	c.ReviewerAutoscaleActive = c.Review.Reviewers.Autoscale.Clamp(n)
+	c.ReviewerAutoscaleActiveAgent = c.ReviewerAutoscaleAgent()
+	return c.ExpandAgentReplicas()
+}
+
+// ResetReviewerAutoscaleActive forgets the controller's target and
+// re-expands agents: every agent is back on its declared replicas, and the
+// lane that resolves now (if any) on its declared replicas clamped into the
+// band. The autoscaler calls it when the lane is turned on, turned off or
+// moved to another agent, so no lane keeps a count that was set for another.
+func (c *Config) ResetReviewerAutoscaleActive() error {
+	if c == nil {
+		return nil
+	}
+	c.ReviewerAutoscaleActive = 0
+	c.ReviewerAutoscaleActiveAgent = ""
 	return c.ExpandAgentReplicas()
 }
 

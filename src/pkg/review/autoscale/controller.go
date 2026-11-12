@@ -190,10 +190,33 @@ func New(cfg config.ReviewerAutoscaleConfig, agent string) *Controller {
 	}
 }
 
-// Reconfigure swaps the band and thresholds without losing streaks.
-func (c *Controller) Reconfigure(cfg config.ReviewerAutoscaleConfig, agent string) {
+// Agent is the base agent whose replicas the controller sizes.
+func (c *Controller) Agent() string {
+	if c == nil {
+		return ""
+	}
+	return c.agent
+}
+
+// Reconfigure swaps the band and thresholds without losing streaks, and
+// reports whether agent differs from the one the controller was managing.
+// A different agent is a different lane: the streaks, the cooldown clock,
+// the draining set and the last decision all described the old lane's
+// reviewers, so they are dropped and the new lane starts clean. The backlog
+// ages stay, because they say how long PRs have waited, whichever lane
+// serves them.
+func (c *Controller) Reconfigure(cfg config.ReviewerAutoscaleConfig, agent string) bool {
 	c.cfg = cfg
+	if agent == c.agent {
+		return false
+	}
 	c.agent = agent
+	c.draining = map[string]bool{}
+	c.upStreak, c.downStreak = 0, 0
+	c.lastAction = time.Time{}
+	c.last = nil
+	c.current, c.target = 0, 0
+	return true
 }
 
 // Draining reports whether kicks to name should be withheld.

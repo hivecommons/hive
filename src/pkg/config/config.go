@@ -285,6 +285,11 @@ type Config struct {
 	// by the caller, and zero means "use the declared replicas". Written
 	// via SetReviewerAutoscaleActive.
 	ReviewerAutoscaleActive int `yaml:"-" json:"-"`
+	// ReviewerAutoscaleActiveAgent is the base agent ReviewerAutoscaleActive
+	// was set for. Runtime-only and carried with it. ExpandAgentReplicas
+	// honours the count only for this agent, so a lane that has just become
+	// the autoscaled one never inherits another lane's size.
+	ReviewerAutoscaleActiveAgent string `yaml:"-" json:"-"`
 }
 
 // WorkflowConfig is the `workflow:` block (hivecommons/hive#17620).
@@ -386,7 +391,7 @@ func (c *Config) ExpandAgentReplicas() error {
 	}
 	effectiveReplicas := func(name string, agent AgentConfig) int {
 		if autoscaled != "" && name == autoscaled {
-			return c.reviewerAutoscaleReplicaCount(agent.Replicas)
+			return c.reviewerAutoscaleReplicaCount(name, agent.Replicas)
 		}
 		return normalizeReplicaCount(agent.Replicas)
 	}

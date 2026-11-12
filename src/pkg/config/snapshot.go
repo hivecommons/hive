@@ -17,6 +17,7 @@ func (c *Config) Snapshot() (*Config, error) {
 	}
 	out.SourcePath = c.SourcePath
 	out.ReviewerAutoscaleActive = c.ReviewerAutoscaleActive
+	out.ReviewerAutoscaleActiveAgent = c.ReviewerAutoscaleActiveAgent
 	out.LaunchCmdDegradations = append([]LaunchCmdDegradation(nil), c.LaunchCmdDegradations...)
 	// Environment overrides are runtime policy, not persisted YAML.
 	if p := c.GitHub.selfAuthorizationHoldEnvOverride; p != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -36,6 +37,9 @@ type reviewerAutoscaleRuntime struct {
 	prober   *autoscale.Prober
 	headroom rotation.HeadroomReporter
 	status   autoscale.Status
+	// warned is the last "switched on but scaling nothing" warning logged,
+	// so the same reason is logged once rather than every cycle.
+	warned string
 }
 
 // SetHeadroomReporter wires the provider headroom probe when rotation is on.
@@ -87,6 +91,12 @@ func (r *reviewerAutoscaleRuntime) withholdDrainingReviewers(agentsDue, agentsSk
 // decision: a scale-up or retire re-expands the lane's replicas and
 // reconciles the agent manager and governor the same way a dashboard
 // replicas edit does; a drain only changes what Draining answers.
+//
+// It also follows the lane itself. When autoscale is turned on, turned off,
+// or resolves to a different agent than the controller was managing, the
+// lane it leaves goes back to its declared replicas and the lane it enters
+// starts from its own declared count clamped into the band, straight away
+// rather than at the next scaling decision (see resetLane).
 func (r *reviewerAutoscaleRuntime) Run(ctx context.Context, cfg *config.Config, plan review.DispatchPlan, agentMgr crux.Runtime, gov *governor.Governor, logger *slog.Logger, now time.Time) {
 	if r == nil || cfg == nil {
 		return
@@ -95,27 +105,30 @@ func (r *reviewerAutoscaleRuntime) Run(ctx context.Context, cfg *config.Config, 
 	defer r.mu.Unlock()
 	if !cfg.ReviewerAutoscaleEnabled() {
 		if r.ctrl != nil {
+			prev := r.ctrl.Agent()
 			r.ctrl = nil
 			r.status = autoscale.Status{}
-			if cfg.ReviewerAutoscaleActive != 0 {
-				cfg.ReviewerAutoscaleActive = 0
-				r.reconcile(ctx, cfg, agentMgr, gov, logger)
-			}
-			logger.Info("reviewer autoscale: disabled; lane back on declared replicas")
+			retired := r.resetLane(ctx, cfg, agentMgr, gov, logger)
+			logger.Info("reviewer autoscale: disabled; lane back on declared replicas", "agent", prev, "retired", retired)
 		}
+		r.warnNotScaling(cfg, logger)
 		return
 	}
+	r.warned = ""
 	agent := cfg.ReviewerAutoscaleAgent()
 	acfg := cfg.Review.Reviewers.Autoscale
 	if r.ctrl == nil {
 		r.ctrl = autoscale.New(acfg, agent)
+		r.resetLane(ctx, cfg, agentMgr, gov, logger)
 		logger.Info("reviewer autoscale: enabled", "agent", agent, "min", acfg.EffectiveMin(), "max", acfg.EffectiveMax(), "target_backlog_per_reviewer", acfg.EffectiveTargetBacklogPerReviewer(), "cooldown", acfg.EffectiveCooldown().String())
-	} else {
-		r.ctrl.Reconfigure(acfg, agent)
+	} else if prev := r.ctrl.Agent(); r.ctrl.Reconfigure(acfg, agent) {
+		retired := r.resetLane(ctx, cfg, agentMgr, gov, logger)
+		logger.Info("reviewer autoscale: lane agent changed; the old lane is back on its declared replicas", "from", prev, "to", agent, "retired", retired, "replicas", len(cfg.ReviewerAutoscaleReplicas()))
 	}
 	names := cfg.ReviewerAutoscaleReplicas()
-	if cfg.ReviewerAutoscaleActive == 0 {
+	if cfg.ReviewerAutoscaleActive == 0 || cfg.ReviewerAutoscaleActiveAgent != agent {
 		cfg.ReviewerAutoscaleActive = acfg.Clamp(len(names))
+		cfg.ReviewerAutoscaleActiveAgent = agent
 	}
 
 	obs := autoscale.Observation{
@@ -176,6 +189,57 @@ func (r *reviewerAutoscaleRuntime) Run(ctx context.Context, cfg *config.Config, 
 	r.status = r.ctrl.Status()
 }
 
+// warnNotScaling logs, once per reason, that autoscale is switched on but
+// resolves to no lane (config.ReviewerAutoscaleWarnings): a hive.yaml that
+// names an agent the review swarm cannot dispatch to still loads, and this
+// line is how the operator learns the reviewer count is not scaling.
+func (r *reviewerAutoscaleRuntime) warnNotScaling(cfg *config.Config, logger *slog.Logger) {
+	warning := ""
+	if w := config.ReviewerAutoscaleWarnings(cfg); len(w) > 0 {
+		warning = w[0]
+	}
+	if warning != "" && warning != r.warned {
+		logger.Warn("reviewer autoscale: not scaling", "issue", warning)
+	}
+	r.warned = warning
+}
+
+// resetLane drops the controller's replica target and re-expands the agents,
+// so the lane autoscale just left is back on its declared replicas and the
+// lane it just entered (if any) is on its own declared count clamped into
+// the band. It returns the replicas that no longer exist, sorted, and
+// reconciles the agent manager and governor when the agent set changed. Like
+// a dashboard replicas edit, it does not wait for a removed replica's turn
+// to end; a review it held is re-dispatched once review.pending_ttl expires.
+func (r *reviewerAutoscaleRuntime) resetLane(ctx context.Context, cfg *config.Config, agentMgr crux.Runtime, gov *governor.Governor, logger *slog.Logger) []string {
+	before := make(map[string]bool, len(cfg.Agents))
+	for name := range cfg.Agents {
+		before[name] = true
+	}
+	if err := cfg.ResetReviewerAutoscaleActive(); err != nil {
+		logger.Warn("reviewer autoscale: expanding replicas failed", "error", err)
+		return nil
+	}
+	var retired []string
+	for name := range before {
+		if _, ok := cfg.Agents[name]; !ok {
+			retired = append(retired, name)
+		}
+	}
+	sort.Strings(retired)
+	added := false
+	for name := range cfg.Agents {
+		if !before[name] {
+			added = true
+			break
+		}
+	}
+	if len(retired) > 0 || added {
+		r.reconcile(ctx, cfg, agentMgr, gov, logger)
+	}
+	return retired
+}
+
 // reconcile pushes the config's current agent set into the agent manager
 // and governor. ReconcileAgents starts nothing itself and kills the tmux
 // session of any replica no longer configured, so a retire needs no
@@ -183,12 +247,6 @@ func (r *reviewerAutoscaleRuntime) Run(ctx context.Context, cfg *config.Config, 
 func (r *reviewerAutoscaleRuntime) reconcile(ctx context.Context, cfg *config.Config, agentMgr crux.Runtime, gov *governor.Governor, logger *slog.Logger) {
 	if agentMgr == nil {
 		return
-	}
-	if cfg.ReviewerAutoscaleActive == 0 {
-		if err := cfg.ExpandAgentReplicas(); err != nil {
-			logger.Warn("reviewer autoscale: expanding replicas failed", "error", err)
-			return
-		}
 	}
 	enabled := cfg.EnabledAgents()
 	for _, added := range agentMgr.ReconcileAgents(enabled) {
