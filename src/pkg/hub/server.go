@@ -3359,6 +3359,21 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp.GitHubAppConfig.SecondaryKey = secCfg
 	}
 
+	// Per-hive webhook relay key (#17911), attached the same independent way as
+	// the secondary key: it rides whatever config the branches above produced,
+	// or an otherwise-empty one, and only until the spoke reports holding it.
+	if relayKey := s.webhookRelayKeyForHeartbeat(&payload); relayKey != "" {
+		if resp.GitHubAppConfig == nil {
+			resp.GitHubAppConfig = &HeartbeatGitHubAppConfig{}
+		}
+		resp.GitHubAppConfig.WebhookRelayKey = relayKey
+		s.logger.Info("heartbeat: delivering webhook relay key to spoke",
+			"hive_id", payload.HiveID,
+			"fingerprint", webhookRelayKeyFingerprint(relayKey),
+			"spoke_fingerprint", payload.WebhookRelayKeyFingerprint,
+		)
+	}
+
 	// SECURITY (C1/N3, CWE-200/639): the fleet-wide additional-key broadcast that
 	// once ran here was removed. It attached every OTHER tenant's App private key
 	// to every heartbeat, and — because the handler trusts the body-supplied

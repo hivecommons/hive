@@ -343,6 +343,7 @@ type HeartbeatPayload struct {
 	GatewayHealth                []inferencehealth.GatewayStatus `json:"gateway_health,omitempty"`
 	GitHubAppKeyFingerprint      string                          `json:"github_app_key_fingerprint,omitempty"`
 	GitHubAppKeyPerHive          bool                            `json:"github_app_key_per_hive,omitempty"`
+	WebhookRelayKeyFingerprint   string                          `json:"webhook_relay_key_fingerprint,omitempty"`
 	GitHubAppID                  int64                           `json:"github_app_id,omitempty"`
 	GitHubAppSlug                string                          `json:"github_app_slug,omitempty"`
 	GitHubInstallationID         int64                           `json:"github_installation_id,omitempty"`
@@ -411,6 +412,10 @@ type HeartbeatGitHubAppConfig struct {
 	BaseURL           string            `json:"base_url,omitempty"`
 	AdditionalKeys    []HeartbeatAppKey `json:"additional_keys,omitempty"`
 	SecondaryKey      *HeartbeatAppKey  `json:"secondary_key,omitempty"`
+	// WebhookRelayKey is this hive's own key for verifying webhooks the hub
+	// relays to it (webhook_relay_key.go). Never the App webhook secret.
+	// Empty means "leave the spoke's key unchanged".
+	WebhookRelayKey string `json:"webhook_relay_key,omitempty"`
 }
 
 type HeartbeatAppKey struct {
