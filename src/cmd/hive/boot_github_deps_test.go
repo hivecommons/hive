@@ -144,8 +144,14 @@ func TestBootAdvisoryDetectsMissingRepoCoverage(t *testing.T) {
 			b.ghClient = fakeGitHubClient(t)
 			f := newBootAdvisoryFake()
 			called := false
-			f.deps.classifyRepoCoverage = func(_ context.Context, _ *github.AppAuth, org string, repos []string, _ *slog.Logger) (bool, string, github.AppAuthState) {
+			var coverageCtx context.Context
+			f.deps.classifyRepoCoverage = func(ctx context.Context, _ *github.AppAuth, org string, repos []string, _ *slog.Logger) (bool, string, github.AppAuthState) {
 				called = true
+				coverageCtx = ctx
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) > advisoryEnsureBudget {
+					t.Fatalf("coverage deadline = %v, present=%v", deadline, ok)
+				}
 				if org != "acme" || len(repos) != 3 || repos[2] != "private" {
 					t.Fatalf("coverage inputs: %q %v", org, repos)
 				}
@@ -154,6 +160,9 @@ func TestBootAdvisoryDetectsMissingRepoCoverage(t *testing.T) {
 			b.bootAdvisoryWith(f.deps)
 			if !called || b.githubAppRequired != tc.raise {
 				t.Fatalf("called=%v required=%v", called, b.githubAppRequired)
+			}
+			if coverageCtx.Err() != context.Canceled {
+				t.Fatalf("coverage context not canceled after check: %v", coverageCtx.Err())
 			}
 			if tc.raise && (b.githubAppState != tc.state || b.githubAppDiag != "select private in the installation") {
 				t.Fatalf("coverage diagnosis: %v %q", b.githubAppState, b.githubAppDiag)

@@ -320,6 +320,12 @@ banner identifies missing repository coverage; update the installation and
 re-check it. A rejected advisory issue creation can then be retried without
 waiting for the next UTC day.
 
+Boot coverage checks have a time limit; a timeout is inconclusive and the
+background recheck can detect missing coverage later. On installations with
+more than 1,000 repositories, the dashboard checks the repository's App
+installation directly when the bounded repository listing is incomplete.
+Temporary GitHub errors still block adding the repository until a check succeeds.
+
 ## `/gh-setup` flow
 
 When the app's Setup URL points at `https://<hive-host>/gh-setup`, GitHub redirects back with `setup_action` and, for install/update, `installation_id`.

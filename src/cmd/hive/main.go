@@ -1785,7 +1785,10 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 	// Installation-level permissions do not establish that every configured
 	// repository is selected, including when advisory reads happen to succeed.
 	if b.ghClient != nil {
-		if raise, diag, state := deps.classifyRepoCoverage(b.ctx, b.ghClient.AppAuth(), b.cfg.Project.Org, appCoverageRepos(b.cfg), b.logger); raise {
+		coverageCtx, cancelCoverage := context.WithTimeout(b.ctx, advisoryEnsureBudget)
+		raise, diag, state := deps.classifyRepoCoverage(coverageCtx, b.ghClient.AppAuth(), b.cfg.Project.Org, appCoverageRepos(b.cfg), b.logger)
+		cancelCoverage()
+		if raise {
 			b.githubAppRequired = true
 			b.githubAppDiag, b.githubAppState = diag, state
 			b.logger.Warn("GitHub App installation does not cover every configured repo", "state", state.String(), "detail", diag)

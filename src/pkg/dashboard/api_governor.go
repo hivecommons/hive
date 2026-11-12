@@ -3463,8 +3463,16 @@ func (s *Server) handleGovernorRepoCheckAccess(w http.ResponseWriter, r *http.Re
 	}
 	if _, found := coverage.Repos[strings.ToLower(org+"/"+repo)]; !found {
 		if coverage.Truncated {
-			jsonError(w, "could not confirm GitHub App repository access because the installation repository list is incomplete; please retry", http.StatusServiceUnavailable)
-			return
+			covered, err := s.deps.GHAppAuth.RepositoryCoveredByInstallation(ctx, installationID, org, repo)
+			if err != nil {
+				s.logger.Warn("repo add: repository installation probe failed", "org", org, "repo", repo, "error", err)
+				jsonError(w, "could not check GitHub App repository access; please retry", http.StatusServiceUnavailable)
+				return
+			}
+			if covered {
+				okResponse(w, map[string]string{"status": "ok", "org": org})
+				return
+			}
 		}
 		installURL := (github.AppAuthDiagnosis{
 			ExpectedAccount: org,

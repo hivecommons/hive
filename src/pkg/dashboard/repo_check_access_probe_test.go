@@ -250,21 +250,51 @@ func TestGovernorRepoCheckAccess_DiscoveryFailure(t *testing.T) {
 	}
 }
 
-func TestGovernorRepoCheckAccess_TruncatedCoverageIsUnknown(t *testing.T) {
-	srv := newFullServer(t)
-	base := installedOrgHandler("truncated-org", 4242)
-	srv.deps.GHAppAuth = newDiscoveryAppAuth(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/installation/repositories" {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Link", `<http://example.invalid/installation/repositories?page=2>; rel="next"`)
-			_, _ = w.Write([]byte(`{"repositories":[]}`))
-			return
-		}
-		base(w, r)
-	})
-	w := checkAccessRequest(t, srv, `{"repo":"truncated-org/widget"}`)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("code = %d, want 503; body: %s", w.Code, w.Body.String())
+func TestGovernorRepoCheckAccess_TruncatedCoverageUsesRepositoryInstallation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		body       string
+		wantStatus int
+	}{
+		{"selected", http.StatusOK, `{"id":4242}`, http.StatusOK},
+		{"not selected", http.StatusNotFound, `{"message":"Not Found"}`, http.StatusConflict},
+		{"different installation", http.StatusOK, `{"id":2}`, http.StatusServiceUnavailable},
+		{"missing installation id", http.StatusOK, `{}`, http.StatusServiceUnavailable},
+		{"forbidden", http.StatusForbidden, `{"message":"rate limit"}`, http.StatusServiceUnavailable},
+		{"rate limited", http.StatusTooManyRequests, `{"message":"rate limit"}`, http.StatusServiceUnavailable},
+		{"server failure", http.StatusInternalServerError, `{"message":"unavailable"}`, http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newFullServer(t)
+			base := installedOrgHandler("truncated-org", 4242)
+			probed := false
+			srv.deps.GHAppAuth = newDiscoveryAppAuth(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/installation/repositories":
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("Link", `<http://example.invalid/installation/repositories?page=2>; rel="next"`)
+					_, _ = w.Write([]byte(`{"repositories":[]}`))
+				case "/repos/truncated-org/widget/installation":
+					probed = true
+					if auth := r.Header.Get("Authorization"); !strings.HasPrefix(auth, "Bearer ") || auth == "Bearer installation-token" {
+						t.Errorf("repository installation probe did not use App JWT: %q", auth)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				default:
+					base(w, r)
+				}
+			})
+			w := checkAccessRequest(t, srv, `{"repo":"truncated-org/widget"}`)
+			if !probed || w.Code != tc.wantStatus {
+				t.Fatalf("probed=%v code=%d, want %d; body: %s", probed, w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantStatus == http.StatusConflict && !strings.Contains(w.Body.String(), "/organizations/truncated-org/settings/installations/4242") {
+				t.Fatalf("missing installation settings link: %s", w.Body.String())
+			}
+		})
 	}
 }
 

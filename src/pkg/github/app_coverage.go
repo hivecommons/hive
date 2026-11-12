@@ -69,6 +69,32 @@ func (a *AppAuth) InstallationCoverageForID(ctx context.Context, installationID 
 	return a.installationCoverageWithToken(ctx, token)
 }
 
+// RepositoryCoveredByInstallation checks one repository with the App JWT.
+// Unlike a repository GET with an installation token, this endpoint identifies
+// the actual installation and cannot mistake public read access for selection.
+// A 404 means the App has no installation for the repository; other failures
+// and an unexpected installation are inconclusive.
+func (a *AppAuth) RepositoryCoveredByInstallation(ctx context.Context, installationID int64, owner, repo string) (bool, error) {
+	if a == nil || !a.HasKey() || installationID <= 0 || owner == "" || repo == "" {
+		return false, fmt.Errorf("invalid repository installation probe")
+	}
+	token, err := a.generateJWT()
+	if err != nil {
+		return false, fmt.Errorf("generating JWT: %w", err)
+	}
+	inst, resp, err := newJWTClient(token, a.apiURL).Apps.FindRepositoryInstallation(ctx, owner, repo)
+	if err != nil {
+		if resp != nil && resp.StatusCode == 404 {
+			return false, nil
+		}
+		return false, fmt.Errorf("finding repository installation: %w", err)
+	}
+	if inst == nil || inst.GetID() != installationID {
+		return false, fmt.Errorf("repository installation does not match discovered installation %d", installationID)
+	}
+	return true, nil
+}
+
 func (a *AppAuth) installationCoverageWithToken(ctx context.Context, token string) (InstallationCoverage, error) {
 	cov := InstallationCoverage{Repos: map[string]struct{}{}}
 
