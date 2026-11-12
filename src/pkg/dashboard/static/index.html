@@ -46222,7 +46222,13 @@ function burnAreaChart() {
     async function fetchInbox() {
       try {
         const r = await fetch('/api/inbox');
-        if (!r.ok) return;
+        if (!r.ok) {
+          // Never leave "Loading inbox…" up: a 404/500 becomes a visible error.
+          const body = await r.json().catch(() => ({}));
+          _inboxCache = { items: [], sources: [], settings: {}, error: body.error || ('HTTP ' + r.status) };
+          renderInbox();
+          return;
+        }
         _inboxCache = await r.json();
         renderInbox();
         clearTimeout(_inboxBusyTimer);
@@ -46309,7 +46315,7 @@ function burnAreaChart() {
         html += '<div class="kc-actions mb-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' +
           (sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismissSelected">Knowledge only (' + sel + ')</button>' : '') + '</div>';
       }
-      if (!shown.length) html += '<div class="muted-note">' + (items.length ? 'Everything is triaged. Toggle “show processed” to see filed and dismissed items.' : 'Nothing yet. Connect Plaud or another voice source under Knowledge → Integrations; new recordings land here after the next sync.') + '</div>';
+      if (!shown.length) html += '<div class="muted-note">' + (items.length ? 'Everything is triaged. Toggle “show processed” to see filed and dismissed items.' : 'Nothing yet. Connect Plaud or another voice source under Knowledge → Integrations; new recordings land here after the next sync (a newly added connector starts on the next hive restart).') + '</div>';
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
       panel.innerHTML = html;
     }

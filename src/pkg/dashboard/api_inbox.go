@@ -60,12 +60,19 @@ func (s *Server) inboxService(w http.ResponseWriter) (*inbox.Service, bool) {
 }
 
 func (s *Server) handleInboxList(w http.ResponseWriter, r *http.Request) {
-	svc, ok := s.inboxService(w)
-	if !ok {
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), inboxListTimeout)
 	defer cancel()
+	if s == nil || s.deps == nil || s.deps.Inbox == nil {
+		// No service (older boot path / tests): still a valid, empty inbox —
+		// the panel must render its empty state, not spin on a 404.
+		resp := InboxListResponse{Items: []inbox.Item{}, Sources: []InboxSourceStatus{}, Repos: s.inboxRepos(), Settings: inbox.Settings{Rules: []config.InboxRule{}}}
+		if s != nil && s.deps != nil && s.deps.Config != nil {
+			resp.Sources = s.inboxSources(ctx, s.deps.Config.Inbox.EffectiveSources())
+		}
+		jsonResponse(w, resp)
+		return
+	}
+	svc := s.deps.Inbox
 	items, err := svc.Items(ctx)
 	resp := InboxListResponse{
 		Items:       items,
@@ -115,7 +122,7 @@ func (s *Server) inboxSources(ctx context.Context, types []string) []InboxSource
 }
 
 func (s *Server) inboxRepos() []string {
-	if s.deps == nil || s.deps.Config == nil {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
 		return []string{}
 	}
 	repos := append([]string(nil), s.deps.Config.Project.Repos...)
