@@ -274,6 +274,7 @@ gated. Defaults (override under `writeback.kinds.<kind>`):
 | `claim_comment` | — | opt-in label | opt-in label | opt-in label |
 | `welcome_comment` | — | — | opt-in label | all items |
 | `issue_file` (new hive-authored issues) | L3+ | yes | yes | yes |
+| `blocked_repair` (a `blocked` label the hive applied itself, with no blocker named) | L1+ | yes | yes | yes |
 
 `ci_rerun` also covers the one transient re-run of a red PR from
 `auto_merge.trusted_bot_authors` (a hive PR is its own item and is not gated):
@@ -282,6 +283,14 @@ on a bot PR it needs the opt-in label unless
 hands the PR to a person with the reason. `bot_rebase_request` only ticks
 Renovate's rebase/retry box; a stranded Dependabot PR is handed to a person
 instead, because Dependabot refuses commands from apps.
+
+`blocked_repair` replaces a marker-less `blocked` the hive applied with a
+`needs-human` ask (see
+[`blocked`](labels-and-control-signals/reference.md#blocked)). It needs no
+opt-in label and ignores the backfill guard, because the hive has already
+written to that issue: a contributor relay applies the label with a task
+token at any level, so the repair has the lowest floor. On an issue whose
+`blocked` the hive did not apply, the kind is never used.
 
 In practice: **L4 means hive files issues and talks only on its own PRs**;
 **L5 adds comments and labels on PRs a maintainer labelled `hive-review`**;

@@ -84,6 +84,10 @@ var ContentDedupeKinds = map[Kind]bool{
 	KindClaimComment:         true,
 	KindGateComment:          true,
 	KindWelcomeComment:       true,
+	// The repair's note is one constant body: the burst hold is what keeps
+	// a repo with many marker-less blocks from getting them all in one
+	// sweep, as it did while the note went out under gate_comment.
+	KindBlockedRepair: true,
 }
 
 // RateCapExemptKinds are never held by the hourly cap: everything on the

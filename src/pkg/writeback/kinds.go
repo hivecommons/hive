@@ -105,6 +105,14 @@ const (
 	// the file to another PR, a contributor dropped the change). A hold a
 	// person set, or one with another hold source, is never removed.
 	KindHumanMergePathRelease Kind = "human_merge_path_release"
+	// KindBlockedRepair turns a `blocked` label the hive itself applied, with
+	// nothing naming what the issue waits on, into a needs-human ask: it
+	// adds `needs-human`, removes `blocked` and posts one note saying what
+	// was missing and the two ways out. The caller states that the label is
+	// the hive's on the item (Item.HiveAppliedBlock); the gate then skips the
+	// backfill guard and the opt-in label for it (ReasonHiveAppliedBlock).
+	// A person's `blocked` is never repaired and never reaches the gate.
+	KindBlockedRepair Kind = "blocked_repair"
 )
 
 // KindPolicy is the per-kind rule. A write of this kind on an item the hive
@@ -167,6 +175,15 @@ func DefaultKinds() map[Kind]KindPolicy {
 		// changes a human-merge path: wherever the hive could say so, it can
 		// take the hold back when that stops being true.
 		KindHumanMergePathRelease: {MinLevel: 5, RequireLabel: true},
+		// The label this kind repairs is put on by a contributor relay with
+		// a hub-minted task token: a write no ACMM level and no write-back
+		// kind gates, so a marker-less hive `blocked` can sit on an issue at
+		// any level. The floor is therefore the lowest level there is:
+		// wherever the hive's label could land, its repair can follow, and
+		// an unset level still refuses. RequireLabel governs only a call
+		// that does not state Item.HiveAppliedBlock (none does today), so a
+		// caller that forgets the fact is held like any other gated kind.
+		KindBlockedRepair: {MinLevel: 1, RequireLabel: true},
 	}
 }
 
