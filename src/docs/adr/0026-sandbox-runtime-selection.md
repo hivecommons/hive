@@ -254,7 +254,7 @@ opt-in and inert unless selected.
 | Go client `go.ate.dev/substrate` | **not imported**: it needs Go 1.27 (hive is on 1.26) and a very large module graph. A trimmed, wire-compatible proto subset is generated in-repo (`crux/sandbox/substrateapi`, field numbers pinned by tests); zero new Go modules, +578 KB on the `crux` binary |
 | image by tag or digest | digest-pinned `sandbox.substrate.image` only, enforced at boot (`AgentSandboxGateWarnings`) and at kick |
 | no `policy_profile` concept | passed to the actor as `HIVE_POLICY_PROFILE`; Substrate has no annotations |
-| snapshot/resume as the normal lifecycle | `snapshot_on_idle: true` suspends (snapshot to object storage) instead of deleting; resume-on-next-kick is not implemented (#17697) |
+| snapshot/resume as the normal lifecycle | `snapshot_on_idle: true` suspends (snapshot to object storage) instead of deleting; only the latest suspended actor per agent per hive process is retained (the previous one is deleted on the next suspend; actors from before a restart are not reclaimed); resume-on-next-kick is not implemented (#17697) |
 | `api.github.com` read-only | TLS passthrough like `github.com`; the actor holds no token and hive does every write after the kick |
 
 ### Cluster prerequisites and which hive clusters qualify
