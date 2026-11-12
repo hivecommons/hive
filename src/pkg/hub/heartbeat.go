@@ -466,7 +466,12 @@ type HeartbeatResponse struct {
 	// UpgradeInterrupt rides with UpgradeTo when the owner asked the upgrade
 	// to proceed without draining in-flight agent turns (#14950). The spoke
 	// skips its drain for this instruction only.
-	UpgradeInterrupt   bool     `json:"upgrade_interrupt,omitempty"`
+	UpgradeInterrupt bool `json:"upgrade_interrupt,omitempty"`
+	// UpgradeChannelTag names the release channel whose tag already carries
+	// UpgradeTo (or a newer build), so a channel-following spoke rolls once on
+	// that tag instead of pinning to the SHA tag (#17978). Empty keeps the
+	// pin. Decoded by spoke.HeartbeatResponse.UpgradeChannelTag.
+	UpgradeChannelTag  string   `json:"upgrade_channel_tag,omitempty"`
 	HubGitHash         string   `json:"hub_git_hash,omitempty"`
 	LatestSHA          string   `json:"latest_sha,omitempty"`
 	LatestTag          string   `json:"latest_tag,omitempty"`
