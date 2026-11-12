@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +67,50 @@ func TestWaitForInputPrompt_WorkingGate(t *testing.T) {
 	if !m.waitForInputPromptForAgent(agent) {
 		t.Error("working marker in scrollback only: returned not ready; " +
 			"want ready (gate must use the visible pane, not scrollback)")
+	}
+}
+
+// A prompt wait that times out because the agent is still mid-turn must not
+// log the WARN pane dump: the slog feed files that line as agent_pane_timeout,
+// so every re-kick that outwaited a long turn self-reported (#17993). A pane
+// that never reaches a prompt for any other reason still dumps at WARN.
+func TestWaitForInputPrompt_TimeoutWhileWorkingIsNotWarned(t *testing.T) {
+	origTimeout, origPoll := inputPromptTimeout, inputPromptPollInterval
+	inputPromptTimeout = 200 * time.Millisecond
+	inputPromptPollInterval = 10 * time.Millisecond
+	defer func() {
+		inputPromptTimeout, inputPromptPollInterval = origTimeout, origPoll
+	}()
+
+	run := func(pane string) string {
+		t.Helper()
+		var logBuf bytes.Buffer
+		m := NewManager(
+			map[string]config.AgentConfig{"quality": {Backend: "claude"}},
+			slog.New(slog.NewTextHandler(&logBuf, nil)), ProjectContext{})
+		m.mu.Lock()
+		agent := m.agents["quality"]
+		m.mu.Unlock()
+		ft := termSeams(m)
+		ft.captureVisiblePane = func(*AgentProcess) string { return pane }
+		ft.capturePane = func(*AgentProcess) string { return pane }
+		if m.waitForInputPromptForAgent(agent) {
+			t.Fatalf("pane %q: returned ready; want not ready", pane)
+		}
+		return logBuf.String()
+	}
+
+	busy := run(" ◉ Working · 42.6 KiB esc interrupt   Claude Fable 5\n❯")
+	if strings.Contains(busy, "prompt timeout — dumping pane") {
+		t.Errorf("mid-turn timeout logged a WARN pane dump; want an INFO line only:\n%s", busy)
+	}
+	if !strings.Contains(busy, "prompt wait ended: agent still mid-turn") {
+		t.Errorf("mid-turn timeout did not log the mid-turn INFO line:\n%s", busy)
+	}
+
+	stuck := run("some unrecognised screen with no prompt")
+	if !strings.Contains(stuck, "prompt timeout — dumping pane") {
+		t.Errorf("non-working timeout must still dump the pane at WARN:\n%s", stuck)
 	}
 }
 

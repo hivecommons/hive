@@ -1,0 +1,1 @@
+- A kick that outwaits an agent's still-running turn no longer logs a WARN pane dump, so busy agents stop filing `agent_pane_timeout` self-reports; panes that never reach a prompt for other reasons still dump at WARN (#17993).
