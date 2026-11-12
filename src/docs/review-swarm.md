@@ -578,7 +578,7 @@ review:
   reviewers:
     autoscale:
       enabled: true
-      agent: reviewer              # optional; default: first role:reviewer agent, else reviewer_agents[0]
+      agent: reviewer              # optional; must be a reviewer the swarm dispatches to (see "Which agent scales")
       min: 1
       max: 4                       # capped at the replicas limit (5)
       target_backlog_per_reviewer: 2
@@ -588,6 +588,17 @@ review:
       cpu_per_reviewer: 1.0
       mem_per_reviewer_mb: 2048
 ```
+
+**Which agent scales.** The backlog the lane is sized against is the review swarm's, so the lane must be an agent the swarm dispatches reviews to: a declared base agent that is enabled, kick-driven, not on-demand, and admitted by [`review.reviewer_agents`](#reviewer-selection) (or, when that list is empty, by the `review` keyword scan). A replica of any other agent could not take one of the waiting PRs. The role alone does not decide it: the L5/L6 packs ship two agents with `role: reviewer`, the swarm's `reviewer` and the escalated-PR `adjudicator`, and with `reviewer_agents: [reviewer]` only the first receives reviews. With `agent` unset the hive picks, in order:
+
+1. the first entry of `review.reviewer_agents` that qualifies;
+2. with no reviewer list, the first agent in name order that the keyword scan admits.
+
+A pause is not counted, so pausing the lane's agent does not move the lane. If nothing qualifies, autoscale stays off and says why. Naming an agent that does not qualify is refused when the setting is saved (`PUT /api/config/review` answers 400 with the reason, for example `review.reviewers.autoscale.agent "adjudicator" is not in review.reviewer_agents, so the review swarm never dispatches a review to it`; the admin MCP `review.settings` op hands that refusal back unchanged). A `hive.yaml` that already names such an agent still loads: autoscale stays off for it and the governor logs one warning, `reviewer autoscale: not scaling`, with the same reason.
+
+`GET /api/config/review` returns a `reviewer_autoscale` block next to the stored settings: `enabled`, `agent` (as stored, empty when the hive chooses), `effective_agent` (the agent that scales, or would once autoscale is on) and `reason` (why there is none). The Settings control shows it as *Scaling **reviewer*** or *Not scaling any agent: …*, and `settings_read` section `review` on the admin MCP returns the same block.
+
+**Changing the agent.** When the lane moves to another agent (a new `agent`, or a change to `reviewer_agents` that changes the default), the next governor cycle follows it. The old agent goes back to its declared `replicas` and its extra replicas are retired, the new agent starts from its own declared `replicas` clamped into `[min, max]` (not from the old lane's size), and the controller's streaks, cooldown and draining state start again for the new lane. One line records it: `reviewer autoscale: lane agent changed; the old lane is back on its declared replicas from=adjudicator to=reviewer retired=[adjudicator-2] replicas=1`. Turning autoscale off and on again does the same in two steps. As with a `replicas` edit, a retired replica is stopped without waiting for its turn to end; a review it held is re-dispatched when [`review.pending_ttl`](#pending-review-expiry-reviewpending_ttl-reviewmax_redispatch) expires. Each replica needs the per-agent user and token cache the entrypoint creates at boot. It creates them, up to `max`, for every agent that could be the lane (each `reviewer_agents` entry, or each keyword-admitted agent when the list is empty, plus a named `agent`), so moving the lane between reviewers needs no restart. Replica names that did not exist at boot (autoscale turned on for the first time, or a reviewer agent added since) are created at the next restart.
 
 **Demand.** Each governor cycle the planner records the PRs it left *waiting*: PRs with perspectives still to review on their current head for which every eligible reviewer was busy (`no-free-reviewer`) or the `max_parallel_reviews` budget was spent (`no-parallel-slot`). Drafts, held PRs and PRs whose review is already dispatched are not waiting. The controller ages each wait across cycles, keyed on repo, number and head, so a push restarts the clock.
 

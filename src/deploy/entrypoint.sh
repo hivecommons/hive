@@ -445,10 +445,13 @@ hive_ensure_agent_user() {
 #
 # Reviewer autoscale (#14685): review.reviewers.autoscale grows the lane's
 # base agent up to `max` replicas at runtime, so those names are pre-created
-# here too. autoscale_lane mirrors config.ReviewerAutoscaleAgent (the
-# configured agent, else the first name-sorted enabled role:reviewer agent,
-# else review.reviewer_agents[0]) and the default/ceiling mirror
-# DefaultReviewerAutoscaleMax / MaxAgentReplicas.
+# here too. The lane (config.ReviewerAutoscaleLane) is the named agent, else
+# the first review.reviewer_agents entry the swarm dispatches to, else the
+# first agent its "review" keyword rule admits, and the dashboard can move it
+# to another reviewer without a restart. autoscale_lanes therefore lists
+# every agent that rule can resolve to, so the new lane's replicas can read
+# their tokens too. The default/ceiling mirror DefaultReviewerAutoscaleMax /
+# MaxAgentReplicas.
 hive_collect_agent_names() {
   HIVE_COLLECT_CONFIG="$1" python3 - <<'PY'
 import glob, json, os, yaml
@@ -468,28 +471,29 @@ def replica_names(name, spec, floor=0):
         return []
     return ['%s-%d' % (name, i) for i in range(2, n + 1)]
 
-def autoscale_lane(cfg, agent_specs):
+def review_keyword(name, spec):  # config.reviewerAdmitted with no reviewer list
+    fields = [name, spec.get('role')]
+    for key in ('aliases', 'lane_keywords', 'detect_keywords'):
+        fields += spec.get(key) if isinstance(spec.get(key), list) else []
+    return any('review' in str(f or '').lower() for f in fields)
+
+def autoscale_lanes(cfg, agent_specs):
     review = cfg.get('review') if isinstance(cfg.get('review'), dict) else {}
     reviewers = review.get('reviewers') if isinstance(review.get('reviewers'), dict) else {}
     auto = reviewers.get('autoscale') if isinstance(reviewers.get('autoscale'), dict) else {}
     if not auto.get('enabled'):
-        return None, 0
+        return set(), 0
     try:
         mx = int(auto.get('max') or 0) or AUTOSCALE_DEFAULT_MAX
     except (TypeError, ValueError):
         mx = AUTOSCALE_DEFAULT_MAX
     mx = min(mx, MAX_REPLICAS)
-    lane = str(auto.get('agent') or '').strip()
-    if lane:
-        return (lane if lane in agent_specs else None), mx
-    for name in sorted(agent_specs):
-        spec = agent_specs[name]
-        if isinstance(spec, dict) and spec.get('enabled', True) is not False and str(spec.get('role') or '').strip().lower() == 'reviewer':
-            return name, mx
-    for name in review.get('reviewer_agents') or []:
-        if name in agent_specs:
-            return name, mx
-    return None, 0
+    listed = review.get('reviewer_agents') if isinstance(review.get('reviewer_agents'), list) else []
+    lanes = {str(n).strip() for n in listed} | {str(auto.get('agent') or '').strip()}
+    if not listed:
+        lanes |= {n for n, spec in agent_specs.items()
+                  if isinstance(spec, dict) and spec.get('enabled', True) is not False and review_keyword(n, spec)}
+    return {n for n in lanes if n in agent_specs}, mx
 
 def head_slug(s):
     out, dash = [], False
@@ -553,10 +557,10 @@ if isinstance(agents, dict):
     agent_specs = dict(agents)
 elif isinstance(agents, list):
     agent_specs = {a['name']: a for a in agents if isinstance(a, dict) and 'name' in a}
-lane, lane_max = autoscale_lane(cfg, agent_specs)
+lanes, lane_max = autoscale_lanes(cfg, agent_specs)
 for name, spec in agent_specs.items():
     names.add(name)
-    names.update(replica_names(name, spec, lane_max if name == lane else 0))
+    names.update(replica_names(name, spec, lane_max if name in lanes else 0))
     names.update(head_names(name, spec))
 
 # Also check pack YAML when an ACMM level is in force

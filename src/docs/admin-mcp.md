@@ -971,7 +971,8 @@ dashboard's Review Gate controls. It is owner only.
   `require_approval` off, a less strict `severity.block_at`, and turning
   `reviewer_autoscale` on or raising its `max` are disclosed as widening.
 - **The endpoint's checks are its own.** A value it refuses, such as an
-  autoscale `min` above `max`, comes back as its error, unchanged.
+  autoscale `min` above `max` or an autoscale `agent` the review swarm does
+  not dispatch to, comes back as its error, unchanged.
 - **A stale preview is refused,** as for `auto_merge.update`, when a named
   field changed after the preview. After the write, `write_confirm` reads the
   settings back and reports the named fields as the hive now holds them

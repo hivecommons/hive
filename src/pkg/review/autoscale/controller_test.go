@@ -281,10 +281,14 @@ func TestReconfigureAndDrainingNamesAndPrune(t *testing.T) {
 		t.Fatalf("drain string = %q", s)
 	}
 
+	// A new band for the same agent keeps the lane's state, draining set
+	// included.
 	cfg := testCfg()
 	cfg.Max = 2
-	c.Reconfigure(cfg, "reviewer-x")
-	if st := c.Status(); st.Max != 2 || st.Agent != "reviewer-x" {
+	if c.Reconfigure(cfg, "reviewer") {
+		t.Fatal("the same agent must not be reported as a lane change")
+	}
+	if st := c.Status(); st.Max != 2 || st.Agent != "reviewer" || len(st.Draining) != 1 || st.LastDecision == nil {
 		t.Fatalf("reconfigure not reflected: %+v", st)
 	}
 
@@ -351,5 +355,58 @@ func TestProberToleratesMalformedCgroupFiles(t *testing.T) {
 	}
 	if r := p.Probe(t0.Add(time.Second)); r.CPUUsed != 0 {
 		t.Fatalf("zero wall time must not divide: %+v", r)
+	}
+}
+
+// A different agent is a different lane: nothing the controller remembered
+// about the old lane's reviewers may steer the new one.
+func TestReconfigureToAnotherAgentStartsTheLaneClean(t *testing.T) {
+	c := New(testCfg(), "adjudicator")
+	one := []Reviewer{{Name: "adjudicator", Index: 1}}
+	two := []Reviewer{{Name: "adjudicator", Index: 1}, {Name: "adjudicator-2", Index: 2}}
+	if d := drive(c, 0, 2, one, 5, nil); d.Action != ActionScaleUp || d.To != 2 {
+		t.Fatalf("old lane scale-up: %+v", d)
+	}
+	// One more cycle behind: a streak of 1, with the cooldown running.
+	if d := drive(c, 2, 1, two, 5, nil); d.Action != ActionHold {
+		t.Fatalf("old lane third cycle: %+v", d)
+	}
+	if st := c.Status(); st.UpStreak != 1 || st.LastDecision == nil || st.Current != 2 {
+		t.Fatalf("old lane status: %+v", st)
+	}
+	if c.Agent() != "adjudicator" {
+		t.Fatalf("agent = %q", c.Agent())
+	}
+
+	if !c.Reconfigure(testCfg(), "reviewer") {
+		t.Fatal("a different agent must be reported as a lane change")
+	}
+	st := c.Status()
+	if st.Agent != "reviewer" || st.UpStreak != 0 || st.DownStreak != 0 || st.LastDecision != nil || st.Current != 0 || st.Target != 0 || st.Draining != nil {
+		t.Fatalf("new lane did not start clean: %+v", st)
+	}
+	// The waits are the PRs', not the lane's: they keep their age.
+	if st.Backlog != 5 || st.OldestWait == "" {
+		t.Fatalf("backlog ages lost: %+v", st)
+	}
+	// The old lane acted two minutes ago and the cooldown is five. The new
+	// lane owes it nothing: behind for scale_up_cycles, it scales.
+	newLane := []Reviewer{{Name: "reviewer", Index: 1}}
+	if d := drive(c, 3, 2, newLane, 5, nil); d.Action != ActionScaleUp || d.From != 1 || d.To != 2 {
+		t.Fatalf("new lane scale-up: %+v", d)
+	}
+
+	// A replica the old lane was draining is not carried over either.
+	c = New(testCfg(), "adjudicator")
+	if d := drive(c, 0, 3, two, 0, nil); d.Action != ActionDrain || d.Agent != "adjudicator-2" {
+		t.Fatalf("old lane drain: %+v", d)
+	}
+	c.Reconfigure(testCfg(), "reviewer")
+	if c.Draining("adjudicator-2") || c.DrainingNames() != nil {
+		t.Fatalf("old lane's draining replica carried over: %v", c.DrainingNames())
+	}
+	var nilCtrl *Controller
+	if nilCtrl.Agent() != "" {
+		t.Fatal("nil controller has no agent")
 	}
 }

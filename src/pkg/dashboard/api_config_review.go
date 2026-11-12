@@ -30,6 +30,10 @@ type reviewSection struct {
 	// section can offer a pick-list for review.reviewer_agents and warn when a
 	// fan-out would run every review on one engine (#13460).
 	ReviewerCandidates []reviewerCandidate `json:"reviewer_candidates"`
+	// ReviewerAutoscale says which agent review.reviewers.autoscale scales:
+	// the agent as stored, the one it resolves to, and the reason when it
+	// resolves to none.
+	ReviewerAutoscale reviewerAutoscaleResolved `json:"reviewer_autoscale"`
 }
 
 // reviewerCandidate is one row of reviewSection.ReviewerCandidates.
@@ -83,7 +87,7 @@ func reviewSectionResponse(cfg *config.Config) reviewSection {
 	if cfg != nil {
 		rc = cfg.Review
 	}
-	return reviewSection{rc, builtin, reviewerCandidates(cfg)}
+	return reviewSection{rc, builtin, reviewerCandidates(cfg), reviewerAutoscaleResolution(cfg)}
 }
 
 // reviewConfigPutBody is the PUT /api/config/review body. Every field is a
@@ -311,6 +315,10 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 			autoscaleCfg.MemPerReviewerMB = *a.MemPerReviewerMB
 		}
 		if err := autoscaleCfg.Validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := reviewerAutoscaleAgentError(cfg, autoscaleCfg, body.ReviewerAgents); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
