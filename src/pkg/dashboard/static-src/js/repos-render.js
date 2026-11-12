@@ -370,8 +370,8 @@
           ? 'Reference repo: agents may clone and read it; every write is refused by the proxy.'
           : `Reference repo: agents may clone and read it, and may open ${tier.replace('+', ' and ')} (never merge, push to the default branch, label, assign, review, or close others' items).`;
         return `<div class="repo-card repo-card-reference" data-repo="${esc(full)}">
-          <div class="repo-provider-label" style="color:var(--muted)" title="This repo lives on ${esc(hostLabel)} and is outside this project">${esc(hostLabel)}</div>
-          <div class="repo-name"><a href="${esc(base + '/' + full)}" target="_blank" rel="noopener" title="${esc(full)}" style="color:inherit;text-decoration:none">${esc(full)}</a><span class="repo-header-badges"><span class="repo-reference-pill" title="${esc(tip)}">📚 reference · ${esc(tier)}</span></span></div>
+          <div class="repo-provider-label repo-reference-provider" title="This repo lives on ${esc(hostLabel)} and is outside this project">${esc(hostLabel)}</div>
+          <div class="repo-name"><a class="repo-reference-link" href="${esc(base + '/' + full)}" target="_blank" rel="noopener" title="${esc(full)}">${esc(full)}</a><span class="repo-header-badges"><span class="repo-reference-pill" title="${esc(tip)}">📚 reference · ${esc(tier)}</span></span></div>
           <div class="repo-reference-note">Outside this project — studied, not worked. No work items, no ACMM evaluation.</div>
         </div>`;
       }).join('');

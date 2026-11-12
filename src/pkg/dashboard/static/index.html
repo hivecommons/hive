@@ -3302,6 +3302,8 @@
     /* project.reference_repos (#18015): a studied-not-worked repo. Muted
        border, no stats block, one tier chip. */
     .repo-card-reference { border-style: dashed; opacity: 0.85; }
+    .repo-reference-provider { color: var(--muted); }
+    .repo-reference-link { color: inherit; text-decoration: none; }
     .repo-reference-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; border: 1px solid color-mix(in srgb, var(--indigo) 45%, transparent); background: color-mix(in srgb, var(--indigo) 12%, transparent); color: var(--indigo); cursor: help; }
     .repo-reference-note { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-2); }
     .repo-pause-btn { flex: 0 0 auto; margin-left: 0; font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
@@ -36835,8 +36837,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ? 'Reference repo: agents may clone and read it; every write is refused by the proxy.'
           : `Reference repo: agents may clone and read it, and may open ${tier.replace('+', ' and ')} (never merge, push to the default branch, label, assign, review, or close others' items).`;
         return `<div class="repo-card repo-card-reference" data-repo="${esc(full)}">
-          <div class="repo-provider-label" style="color:var(--muted)" title="This repo lives on ${esc(hostLabel)} and is outside this project">${esc(hostLabel)}</div>
-          <div class="repo-name"><a href="${esc(base + '/' + full)}" target="_blank" rel="noopener" title="${esc(full)}" style="color:inherit;text-decoration:none">${esc(full)}</a><span class="repo-header-badges"><span class="repo-reference-pill" title="${esc(tip)}">📚 reference · ${esc(tier)}</span></span></div>
+          <div class="repo-provider-label repo-reference-provider" title="This repo lives on ${esc(hostLabel)} and is outside this project">${esc(hostLabel)}</div>
+          <div class="repo-name"><a class="repo-reference-link" href="${esc(base + '/' + full)}" target="_blank" rel="noopener" title="${esc(full)}">${esc(full)}</a><span class="repo-header-badges"><span class="repo-reference-pill" title="${esc(tip)}">📚 reference · ${esc(tier)}</span></span></div>
           <div class="repo-reference-note">Outside this project — studied, not worked. No work items, no ACMM evaluation.</div>
         </div>`;
       }).join('');
