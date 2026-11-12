@@ -235,6 +235,7 @@ func TestEveryMethodReachesTheRuntime(t *testing.T) {
 	must("Stop", rt.Stop("alpha"))
 	must("Restart", rt.Restart(ctx, "alpha"))
 	must("RestartWithBootstrap", rt.RestartWithBootstrap(ctx, "alpha", "hello"))
+	must("RestartAfterModelChange", rt.RestartAfterModelChange(ctx, "alpha", "me"))
 	must("Pause", rt.Pause("alpha", "op", "why"))
 	must("PauseBy", rt.PauseBy("alpha", "op", "why", "me"))
 	must("PauseByCause", rt.PauseByCause("alpha", "op", "why", "me", crux.PauseCausation{Depth: 1, HookName: "h"}))

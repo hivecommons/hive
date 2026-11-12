@@ -116,7 +116,7 @@ it or are the CLI routes above under another method.
 | Family | Route | Runtime method(s) | Notes |
 |---|---|---|---|
 | Lifecycle | `POST /v1/agents/{name}/start` ⚑ | `Start` | |
-| | `POST /v1/agents/{name}/restart` ⚑ | `Restart`, `RestartWithBootstrap` (`{"bootstrap":…}`) | |
+| | `POST /v1/agents/{name}/restart` ⚑ | `Restart`, `RestartWithBootstrap` (`{"bootstrap":…}`), `RestartAfterModelChange` (`{"model_change":true,"by":…}`) | body selects the variant |
 | | `POST /v1/agents/{name}/pause` ⚑ | `Pause`, `PauseBy`, `Supervisor.PauseByCause` | body selects the variant |
 | | `POST /v1/agents/{name}/resume` ⚑ | `Resume` | |
 | | `DELETE /v1/agents/{name}/restart-count` ⚑ | `ResetRestartCount` | |

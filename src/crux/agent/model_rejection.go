@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -194,6 +195,102 @@ func (m *Manager) clearModelRejectionLocked(agent *AgentProcess, now time.Time) 
 	if agent.ProviderErrorClass == ModelRejectedClass {
 		m.clearProviderErrorLocked(agent, now)
 	}
+}
+
+// ModelChangeResumeTrigger is the resume trigger recorded when an operator's
+// model or backend change lifts a model-rejected pause.
+const ModelChangeResumeTrigger = "model-change"
+
+// modelChangeResumeReason is the resume reason recorded with it.
+const modelChangeResumeReason = "operator changed the agent's model or backend"
+
+// RestartAfterModelChange restarts the agent to apply an operator's model or
+// backend change. A pause the CLI's model rejection put on the agent
+// (ModelRejectedTrigger) is lifted first, because the operator just did what
+// that pause asks for ("set a valid model for this agent, then resume it"):
+// the restart then launches the CLI on the new model. Every other pause (an
+// operator's own, a login prompt, a restart storm, a full disk, an on-demand
+// agent's) stays, and the restart keeps it exactly as Restart does. If the
+// new model is wrong too, the CLI rejects it and the agent is parked again
+// after the usual modelRejectionParkAfter failures. by is the acting user,
+// or empty when unknown.
+//
+// Operator model/backend entry points call this instead of Restart; the boot
+// replay of hive-state and the hive's own model and backend writes never do,
+// so a restored or automatic change cannot lift the pause.
+func (m *Manager) RestartAfterModelChange(ctx context.Context, name, by string) error {
+	if _, err := m.liftModelRejectedPause(name, by); err != nil {
+		return err
+	}
+	return m.Restart(ctx, name)
+}
+
+// liftModelRejectedPause resumes name without relaunching it when, and only
+// when, its current pause is a model-rejection park. It records the resume
+// like Resume does (audit line, audit event, pause persistence, transition
+// event) and reports whether it lifted anything. The caller relaunches.
+func (m *Manager) liftModelRejectedPause(name, by string) (bool, error) {
+	m.mu.Lock()
+	agent, ok := m.agents[name]
+	if !ok {
+		m.mu.Unlock()
+		return false, fmt.Errorf("agent %s not found", name)
+	}
+	if !agent.Paused || agent.PausedTrigger != ModelRejectedTrigger {
+		m.mu.Unlock()
+		return false, nil
+	}
+	now := time.Now()
+	prevReason := agent.PausedReason
+	agent.Paused = false
+	agent.Config.Paused = false
+	agent.PausedAt = time.Time{}
+	agent.PausedReason = ""
+	agent.PausedTrigger = ""
+	agent.PausedBy = ""
+	agent.restartStormBackoffUntil = time.Time{}
+	if agent.State == StatePaused {
+		// Nothing runs until the caller's restart: stopped, not paused, so a
+		// failed restart leaves an agent the crash recovery can start.
+		agent.State = StateStopped
+	}
+	m.clearModelRejectionLocked(agent, now)
+	persistPause := m.persistPauseCallback
+	m.logger.Info("audit: agent resumed",
+		"name", name,
+		"trigger", ModelChangeResumeTrigger,
+		"reason", modelChangeResumeReason,
+		"by", by,
+		"prev_trigger", ModelRejectedTrigger,
+		"prev_reason", prevReason,
+	)
+	actor := auditActorSystem
+	if by != "" {
+		actor = by
+	}
+	m.auditWithActor(actor, AuditAgentResumed, name, auditFields(
+		"outcome", "success",
+		"backend", agent.effectiveBackend(),
+		"model", agent.effectiveModel(),
+		"trigger", ModelChangeResumeTrigger,
+		"reason", modelChangeResumeReason,
+	))
+	m.mu.Unlock()
+
+	// After the unlock, as in Resume: the callback does config disk I/O and
+	// may re-enter the manager.
+	if persistPause != nil {
+		persistPause(name, false)
+	}
+	m.emitPauseTransition(PauseTransitionEvent{
+		Agent:   name,
+		Paused:  false,
+		Trigger: ModelChangeResumeTrigger,
+		Reason:  modelChangeResumeReason,
+		By:      by,
+		At:      now,
+	})
+	return true, nil
 }
 
 // clearStaleModelRejectionLocked clears the rejection state when model (the

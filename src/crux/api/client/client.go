@@ -145,6 +145,10 @@ func (r *Runtime) RestartWithBootstrap(ctx context.Context, name, prompt string)
 	return r.callCtx(ctx, http.MethodPost, api.RestartPath(esc(name)), api.RestartRequest{Bootstrap: prompt}, nil)
 }
 
+func (r *Runtime) RestartAfterModelChange(ctx context.Context, name, by string) error {
+	return r.callCtx(ctx, http.MethodPost, api.RestartPath(esc(name)), api.RestartRequest{ModelChange: true, By: by}, nil)
+}
+
 func (r *Runtime) Pause(name, trigger, reason string) error {
 	return r.call(http.MethodPost, api.PausePath(esc(name)), api.PauseRequest{Trigger: trigger, Reason: reason}, nil)
 }

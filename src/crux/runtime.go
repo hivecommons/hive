@@ -65,6 +65,11 @@ type Lifecycle interface {
 	// RestartWithBootstrap relaunches an agent with a one-off bootstrap
 	// prompt. Dashboard: inception watcher.
 	RestartWithBootstrap(ctx context.Context, name, prompt string) error
+	// RestartAfterModelChange is Restart for an operator's model or backend
+	// change: it first lifts a pause the CLI's model rejection put on the
+	// agent, and no other pause. by is the acting user, if known. Dashboard:
+	// api_agent_config.go, api_agent_control.go.
+	RestartAfterModelChange(ctx context.Context, name, by string) error
 	// Pause quiesces an agent with a machine trigger and a human reason.
 	// Dashboard: api_packs.go (ACMM pack level), inception_handlers.go.
 	Pause(name, trigger, reason string) error

@@ -149,9 +149,12 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-	if req.Bootstrap != "" {
+	switch {
+	case req.Bootstrap != "":
 		err = s.Runtime.RestartWithBootstrap(s.LaunchContext, name, req.Bootstrap)
-	} else {
+	case req.ModelChange:
+		err = s.Runtime.RestartAfterModelChange(s.LaunchContext, name, req.By)
+	default:
 		err = s.Runtime.Restart(s.LaunchContext, name)
 	}
 	if err != nil {

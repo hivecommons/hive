@@ -78,7 +78,9 @@ func (c *Config) SetAgentPausedAndSave(name string, paused bool) (bool, error) {
 	}
 	ac.Paused = paused
 	c.Agents[name] = ac
-	return true, c.saveLocked()
+	err := c.saveLocked()
+	c.syncAgentOverlayPausedLocked(name, paused)
+	return true, err
 }
 
 // ReconcilePausedAndSave sets each named agent's Paused field to the given
@@ -91,13 +93,19 @@ func (c *Config) SetAgentPausedAndSave(name string, paused bool) (bool, error) {
 func (c *Config) ReconcilePausedAndSave(livePaused map[string]bool) error {
 	saveMu.Lock()
 	defer saveMu.Unlock()
+	var changed []string
 	for name, paused := range livePaused {
 		if ac, ok := c.Agents[name]; ok && ac.Paused != paused {
 			ac.Paused = paused
 			c.Agents[name] = ac
+			changed = append(changed, name)
 		}
 	}
-	return c.saveLocked()
+	err := c.saveLocked()
+	for _, name := range changed {
+		c.syncAgentOverlayPausedLocked(name, livePaused[name])
+	}
+	return err
 }
 
 // saveLocked performs the actual marshal-and-write. Callers MUST hold saveMu.
@@ -312,6 +320,53 @@ func guardLivePVCPathUnderTest(current, production, label string) bool {
 	}
 	log.Printf("[config] test binary: refusing to write the live %s at %s — point config.%s at a temp dir to exercise it", label, current, label)
 	return true
+}
+
+// productionAgentOverlayDir is DefaultAgentOverlayDir's production value. A
+// test binary never rewrites a per-agent overlay there.
+const productionAgentOverlayDir = "/data/agent-configs"
+
+// syncAgentOverlayPausedLocked keeps the paused bit in name's per-agent
+// overlay file (Data.AgentsDir/<name>.yaml) equal to the pause just
+// persisted to the main config. The overlay replaces the agent's whole
+// main-config entry at load (MergeAgentOverrides), paused included, but it is
+// written only by config edits (SaveAgentFile) and pack applies, never by a
+// pause or resume. So it kept whatever the agent's state was at its last
+// config edit: an agent whose model was changed while it was paused came
+// back paused after a later resume and a hive restart, and because
+// hive-state.json no longer recorded that pause, it came back with no
+// trigger, reason, actor or time (an operator pause, as far as anything could
+// tell). An agent with no overlay file is left alone. Failures are logged:
+// the main config, the pause's authority, is already saved. Caller holds
+// saveMu.
+func (c *Config) syncAgentOverlayPausedLocked(name string, paused bool) {
+	dir := c.Data.AgentsDir
+	if dir == "" || (testing.Testing() && dir == productionAgentOverlayDir) {
+		return
+	}
+	if strings.Contains(name, "..") || strings.ContainsAny(name, `/\`) {
+		return
+	}
+	path := filepath.Join(dir, name+".yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("[config] warning: could not read agent overlay %s to record its pause state: %v", path, err)
+		}
+		return
+	}
+	var overlay AgentConfig
+	if err := yaml.Unmarshal(data, &overlay); err != nil {
+		log.Printf("[config] warning: could not parse agent overlay %s to record its pause state: %v", path, err)
+		return
+	}
+	if overlay.Paused == paused {
+		return
+	}
+	overlay.Paused = paused
+	if err := SaveAgentFile(dir, name, overlay); err != nil {
+		log.Printf("[config] warning: could not record pause state in agent overlay %s: %v", path, err)
+	}
 }
 
 // saTokenFile is the Kubernetes serviceaccount token path IsKubernetesPod
