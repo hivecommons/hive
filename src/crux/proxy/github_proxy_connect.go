@@ -616,7 +616,7 @@ func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 			p.refuseTunnel(conn, r, p.identifyAgentFromConn(conn, r), denied)
 			return
 		}
-		p.logger.Warn("proxy: CONNECT dial failed", "host", r.Host, "error", err)
+		p.logConnectDialFailed(r.Host, err)
 		_, _ = fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\nconnection failed\n")
 		return
 	}
@@ -625,6 +625,19 @@ func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 	_, _ = fmt.Fprintf(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
 
 	relayTunnel(conn, upstream)
+}
+
+// logConnectDialFailed logs a failed CONNECT dial. A name that does not
+// resolve is operator configuration (a placeholder or unreachable host), not a
+// proxy defect, so it logs at Debug rather than tripping WARN consumers such as
+// the fleet self-reporter on every attempt.
+func (p *GitHubProxy) logConnectDialFailed(host string, err error) {
+	level := slog.LevelWarn
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+		level = slog.LevelDebug
+	}
+	p.logger.Log(context.Background(), level, "proxy: CONNECT dial failed", "host", host, "error", err)
 }
 
 // refuseTunnel answers a CONNECT whose destination the guard barred, with the

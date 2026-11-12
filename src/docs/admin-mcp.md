@@ -346,6 +346,7 @@ capped at 256 KiB.
 | `claude_auth_status` | Claude auth mode (`long-lived token` or `dashboard sign-in`); no token   |
 | `autonomy_readiness` | Autonomy readiness                                                       |
 | `spend_read`         | Spend                                                                    |
+| `github_api_usage`   | GitHub API budget and who is spending it (see note 7); optional `limit`  |
 
 **Agents, runs and plans**
 
@@ -433,6 +434,13 @@ capped at 256 KiB.
    - If you have label interests on the hive, matching rows float to the
      front, as the card shows them to you.
    - To change the queue, see [Contributor queue](#contributor-queue).
+7. **`github_api_usage`:** reads `GET /api/gh-rate-limits`, the endpoint
+   behind the dashboard's GitHub API card: the core bucket, the API budget
+   mode, the calls that cost the most, the same hour summed per caller, the
+   per-agent caps and the ETag cache.
+   - It needs what the endpoint needs: a signed-in caller, with no role floor.
+   - Reading it spends no core API call.
+   - See [GitHub API usage](#github-api-usage) for how to read the answer.
 
 **Meta tools**
 
@@ -487,6 +495,81 @@ Not reachable:
 
 A test fails when the dashboard serves a new `GET /api/config` route that is
 neither a section nor one of these exclusions.
+
+### GitHub API usage
+
+`github_api_usage` answers "why does this hive keep running out of GitHub API
+calls?". It returns what the dashboard shows on the GitHub API card and under
+Debug → GitHub API budget, plus the last hour summed per caller.
+
+The tool reads `GET /api/gh-rate-limits?usage=1`, the dashboard's own endpoint,
+as the caller. That endpoint asks for a signed-in caller and nothing more, and
+the tool adds no role floor of its own.
+
+**It spends no core API call.** The hive makes one `GET /rate_limit`, which
+GitHub does not charge to any bucket. Everything else in the answer is the
+hive's own in-memory count of the requests it made in the last hour.
+
+| Field                 | What it holds                                                                                                                                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `core`                | The core REST bucket: `limit`, `remaining`, `reset`, `observed_at` (when the hive last saw that reading) and `reset_in_seconds`               |
+| `api_budget`          | `mode`, `since` (when the mode last changed), `skipped_steps`, and the configured `reserve`, `critical` and `agent_reserve_floor` thresholds  |
+| `top_consumers`       | The most charged rows, one per caller, method and endpoint: `requests`, `charged`, `not_modified`, `rate_limited`, `last_status`, `last_seen` |
+| `top_consumers_total` | How many such rows the hour holds. When it is more than `limit`, `top_consumers_truncated` is `true`                                          |
+| `by_caller`           | The same hour summed per caller: `requests`, `charged`, `not_modified`, `rate_limited`. Never cut by `limit`                                  |
+| `window_totals`       | The whole hour summed. `by_caller` adds up to it                                                                                              |
+| `agent_caps`          | The fleet cap, and each agent's proxy cap, where the cap comes from, and its calls in the current hour                                        |
+| `etag_cache`          | `hits`, `misses`, `entries`, and the fill level (`bytes`, `max_bytes`, `max_entries`, `evictions`)                                            |
+| `graphql`, `search`   | The other two buckets: `limit`, `remaining`, `reset`                                                                                          |
+| `window_seconds`      | How far back the counts look: `3600`, one hour                                                                                                |
+
+`limit` (default 20, maximum 50) sets how many `top_consumers` rows come back.
+It does not cut `by_caller` or `window_totals`.
+
+**Reading the counts**
+
+- `requests` is every request a caller made.
+- `charged` is the requests GitHub billed: every answer except a `304` and
+  `GET /rate_limit`. This is what spends the budget.
+- `not_modified` is the conditional requests GitHub answered `304`. They are
+  free. A caller with many requests and few charged is polling cheaply.
+- `rate_limited` is the answers refused because a limit was used up.
+- A row on `/graphql` is charged to the GraphQL bucket, not to core.
+
+**Reading the callers**
+
+- `agent:<name>` is an agent, going through the hive's GitHub proxy.
+- `hive:<name>` is one of the hive's own sweeps or steps, such as
+  `hive:eval_cycle`. See
+  [the sweep names](operator-reference/sweeps-and-operations.md#github-api-budget-governor).
+- Plain `hive` is what none of those names cover.
+
+Start with `by_caller`. A caller that spreads its calls over many endpoints
+can be small in `top_consumers` and still be the biggest spender.
+
+**The budget modes**
+
+| Mode       | When                                                    | What the hive does                                                                  |
+| ---------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `normal`   | `core.remaining` is at or above `reserve` (default 800) | Everything runs                                                                     |
+| `conserve` | `core.remaining` is below `reserve`                     | Skips the optional sweeps and slows the eval loop. Merging and unsticking still run |
+| `critical` | `core.remaining` is below `critical` (default 250)      | Also skips the unstick steps, and slows the eval loop further                       |
+
+- `skipped_steps` names what the last cycle left out.
+- The hive leaves `conserve` or `critical` once `remaining` is 100 calls above
+  the threshold, or when the bucket resets.
+- Below `agent_reserve_floor` (default 400) the proxy refuses agent reads,
+  whatever each agent's own cap says.
+
+See [GitHub API quota](operator-reference/runtime-and-quota.md#github-api-quota)
+for the caps and the floor, and
+[GitHub API budget governor](operator-reference/sweeps-and-operations.md#github-api-budget-governor)
+for the modes.
+
+**An older hive.** A hive built before this tool answers with `usage_view`
+`false`, its fixed ten `top_consumers`, and a `note` saying that `by_caller`,
+`window_totals`, `agent_caps` and `window_seconds` are missing. Upgrade the
+hive for the full answer.
 
 ### What a read masks
 
@@ -726,7 +809,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | GitHub                       | `github.agent_api_hourly_cap`                                                                                                                                                                                         |
 | Fleet                        | `fleet.autonomy_level`                                                                                                                                                                                                |
 | Plans                        | `plan.propose`, `plan.approve`, `plan.reject`                                                                                                                                                                         |
-| Governor                     | `governor.feature_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                                                      |
+| Governor                     | `governor.feature_settings`, `governor.general_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                         |
 | Issue filter                 | `project.issue_filter`                                                                                                                                                                                                |
 | Sentinel                     | `sentinel.settings`                                                                                                                                                                                                   |
 | Write-back                   | `writeback.kind_policy`                                                                                                                                                                                               |
@@ -984,6 +1067,37 @@ dashboard's Review Gate controls. It is owner only.
   (`after`), because the endpoint answers only `{"status":"updated"}`.
 - The endpoint records a `config_review` audit entry naming you. The op
   merges, approves and closes nothing.
+
+`governor.general_settings` changes the governor settings on Settings →
+General through `PUT /api/config/governor/general-advanced`, the endpoint that
+tab saves through. It is owner only. Use it to set the eval interval or to
+turn [API budget pacing](operator-reference/runtime-and-quota.md#api-budget-pacing)
+on or off.
+
+- **Pass only what changes.** The fields are `eval_interval_s` (10 to 86400),
+  `api_budget_pacing` (`true` or `false`), `eval_interval_max_s`,
+  `eval_interval_webhook_s`, `webhook_wake_debounce_s`,
+  `webhook_wake_min_gap_s`, `conserve_interval_multiplier`,
+  `optional_sweep_every_n_cycles`, `provider_budget_probe_interval_s` (for
+  these seven, `0` restores the default), `explain_mode` (`off`, `brief`,
+  `full`, or empty to clear it) and `attribution_trailer`. An unknown field is
+  refused, and the refusal lists the fields that are accepted.
+- **Only the fields that differ are sent.** The preview reads the current
+  settings and shows each change before and after. A field already at the
+  requested value is listed as not sent; if nothing would change, the preview
+  is refused.
+- **A stale preview is refused.** `write_confirm` reads the settings again
+  and refuses if a setting the change names moved after the preview.
+- **What it opens is disclosed.** A shorter eval interval, a lower cap or
+  multiplier, or turning pacing off lets the hive call GitHub more often, and
+  the preview says so. Turning pacing on is not widening.
+- The loop reads these settings every cycle, so a change applies from the
+  next eval cycle without a restart. It kicks, merges and labels nothing.
+
+```json
+{"operation": "governor.general_settings", "args": {"api_budget_pacing": true}}
+{"operation": "governor.general_settings", "args": {"eval_interval_s": 300}}
+```
 
 ### Contributor queue
 

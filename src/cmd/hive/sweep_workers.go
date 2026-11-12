@@ -214,6 +214,7 @@ func (b *boot) startSweepWorkers() func() {
 	firstDelays := sweepFirstDelays(jobs)
 	for i, job := range jobs {
 		wg.Add(1)
+		job.interval = apiBudgetPacedSweepInterval(job.interval)
 		go func() {
 			defer wg.Done()
 			runSweepWorker(ctx, job, firstDelays[i], b.sweepConfig.Load, func(d time.Duration) loopTicker { return realTicker{time.NewTicker(d)} }, time.Now, func(cfg *config.Config, attempt uint64) {

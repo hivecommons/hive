@@ -369,6 +369,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolClaudeAuthStatus, "Read which Claude auth mode is active through the existing /api/claude-auth/status endpoint: mode is \"long-lived token\" (an operator-supplied claude setup-token token) or \"dashboard sign-in\", with logged_in. Never returns token material. Read-only."},
 		{ToolAutonomyReadiness, "Read autonomy/readiness status through the existing Nous status endpoint."},
 		{ToolSpendRead, "Read spend and budget status through the existing cost endpoint."},
+		{ToolGitHubAPIUsage, gitHubAPIUsageDescription},
 		{ToolContributorsList, "Read the capped list of contributors known to this hive."},
 		{ToolKnowledgeRead, "Read knowledge-system health and statistics."},
 		{ToolHiveAdvisor, "Read hive advisor recommendations."},
@@ -408,7 +409,7 @@ func AllowedTool(name string) bool {
 	}
 	switch name {
 	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolClaudeAuthStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
-		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
+		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead, ToolGitHubAPIUsage,
 		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAdvisorRecords, ToolAgentNudgeStatus,
 		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolContributorQueue, ToolStageTrackerRead, ToolDelegatedDecisionStatus, ToolGovernorSetup, ToolLogRead, ToolLogSources, ToolWritePreview, ToolWriteConfirm,
 		ToolExclusionCatalogue, ToolRefuseOperation:
@@ -470,6 +471,8 @@ func inputSchema(name string) map[string]any {
 		props = reviewQueueSchema()
 	case ToolContributorQueue:
 		props = contributorQueueReadSchema()
+	case ToolGitHubAPIUsage:
+		props = gitHubAPIUsageSchema()
 	case ToolStageTrackerRead:
 		props = stageTrackerReadSchema()
 	case ToolDelegatedDecisionStatus:

@@ -1217,7 +1217,13 @@ A PR merges through this tier only when all of the following hold:
   does. When the approval is already recorded and the PR is parked for
   another reason, **What to do** says there is nothing more to approve
   instead of asking for it again
-  ([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)). When released
+  ([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)). While the
+  approval is still owed and a sentinel alert is open on the same PR, **What
+  to do** says that **Approve** on the PR's Activity monitor row (or
+  `approve` through the admin MCP's `repository.item_decision`) records the
+  approval and clears the alert's label in one action, and that an Approve
+  review or a typed `/hive decision approve` approves but leaves the label
+  for a maintainer to remove. When released
   the lane logs `workflow-path fence released by owner approval login=…
   head=…`, leaves one `<!-- hive:workflow-approval head=… by=… -->` audit
   comment per head (with `from=<approved head>` when the approval carried

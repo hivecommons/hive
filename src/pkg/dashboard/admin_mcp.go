@@ -135,6 +135,16 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 		}
 		return adminmcp.ContributorQueueReadResult(tool, data, args)
 	}
+	if tool == adminmcp.ToolGitHubAPIUsage {
+		// The GitHub API card's own endpoint, as the caller, with the
+		// per-caller view. It makes one free GET /rate_limit and no other
+		// GitHub call.
+		data, err := p.get(tool, adminmcp.GitHubAPIUsageReadPath(args))
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.GitHubAPIUsageResult(data, args)
+	}
 	if tool == adminmcp.ToolStageTrackerRead {
 		data, err := p.get(tool, adminmcp.StageTrackerReadPath())
 		if err != nil {

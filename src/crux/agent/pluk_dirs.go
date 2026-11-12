@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // plukRunDir is where pluk's run state and per-session logs live.
@@ -80,11 +83,29 @@ func ensurePlukRunDirs(runDir string) error {
 				return fmt.Errorf("chowning %s to %d:%d: %w", dir, DevUID, NodeGID, err)
 			}
 		}
-		if err := os.Chmod(dir, plukSharedDirMode); err != nil {
+		if err := chmodPlukDir(dir, plukSharedDirMode); err != nil {
 			return fmt.Errorf("chmoding %s to %s: %w", dir, plukSharedDirMode, err)
 		}
 	}
 	return nil
+}
+
+// plukChmod is a test seam for simulating EPERM.
+var plukChmod = os.Chmod
+
+// chmodPlukDir widens dir to mode. A directory left by an earlier run under
+// another uid rejects chmod with EPERM; that is benign when it already grants
+// the group access the shared mode is meant to provide.
+func chmodPlukDir(dir string, mode os.FileMode) error {
+	err := plukChmod(dir, mode)
+	if err == nil || !errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+	info, statErr := os.Stat(dir)
+	if statErr == nil && info.IsDir() && info.Mode().Perm()&mode.Perm() == mode.Perm() {
+		return nil
+	}
+	return err
 }
 
 // plukPipePaneCmd builds the shell command tmux pipe-pane runs for one agent
@@ -140,6 +161,30 @@ var plukPatternsDir = "/opt/hive/pluk-patterns"
 // hivePlukPatternBackends lists backends whose pattern file is shipped in
 // plukPatternsDir and must be passed to pluk via --patterns-dir.
 var hivePlukPatternBackends = map[string]struct{}{"omp": {}}
+
+var plukNoPatternsWarned sync.Map
+
+// warnNoPlukPatternsOnce returns true only the first time it is called for a
+// backend, so a pattern-less backend does not emit a WARN on every agent attach.
+func warnNoPlukPatternsOnce(backend string) bool {
+	_, loaded := plukNoPatternsWarned.LoadOrStore(backend, struct{}{})
+	return !loaded
+}
+
+// logPlukAttached reports a successful pipe-pane attach. A backend with no
+// pattern set warns once per process; later attaches for it log at debug.
+func (m *Manager) logPlukAttached(plukPath, backend, agentName, logFile string) {
+	if plukHasPatterns(plukPath, backend) {
+		m.logger.Info("pluk publisher attached", "agent", agentName, "cli", backend, "log", logFile)
+		return
+	}
+	if warnNoPlukPatternsOnce(backend) {
+		m.logger.Warn(fmt.Sprintf("no pluk pattern set for cli=%s; only raw_output will be recorded", backend),
+			"agent", agentName, "log", logFile)
+		return
+	}
+	m.logger.Debug("no pluk pattern set; only raw_output will be recorded", "agent", agentName, "cli", backend, "log", logFile)
+}
 
 // plukHasPatterns reports whether pluk will classify events for backend: either
 // Hive ships a pattern file for it, or the installed pluk package bundles one.

@@ -238,3 +238,15 @@ func TestPlukHasPatterns(t *testing.T) {
 		t.Fatal("omp not detected despite shipped pattern file")
 	}
 }
+
+func TestWarnNoPlukPatternsOnce(t *testing.T) {
+	const backend = "test-only-backend-warn-once"
+	plukNoPatternsWarned.Delete(backend)
+	defer plukNoPatternsWarned.Delete(backend)
+	if !warnNoPlukPatternsOnce(backend) {
+		t.Fatal("first call must warn")
+	}
+	if warnNoPlukPatternsOnce(backend) {
+		t.Fatal("repeat call must not warn again")
+	}
+}

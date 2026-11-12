@@ -615,7 +615,7 @@ func TestDecisionCommentNamesActionsPerLane(t *testing.T) {
 	multi := readyEvidence()
 	multi.Verdict = VerdictRequiresHuman
 	multi.Sentinel = true
-	if got := DecisionComment(RouteHuman(multi)); !strings.Contains(got, "**What to do:**\n\n- a trusted merger approves") || !strings.Contains(got, "\n- resolve the sentinel alert") {
+	if got := DecisionComment(RouteHuman(multi)); !strings.Contains(got, "**What to do:**\n\n- a trusted merger approves") || !strings.Contains(got, "\n- one action answers both the approval above and the sentinel alert") {
 		t.Fatalf("multiple steps not listed:\n%s", got)
 	}
 	if got := DecisionActions(Route{Stage: ReadyForHumanMerge, Verdict: VerdictRequiresHuman}); got != "" {
@@ -653,7 +653,9 @@ func TestDecisionActionsWorkflowFenceApprovalReleases(t *testing.T) {
 		"releases the CI workflow-file fence and settles the reviewer's `requires_human` verdict",
 		"the hive merges the PR once the other gates clear",
 		"a `/hive approve` reply does not release the fence",
-		"\n- resolve the sentinel alert and have a maintainer clear its label",
+		"\n- one action answers both the approval above and the sentinel alert: **Approve** on this PR's row in the hive dashboard's Activity monitor",
+		"records the approval and clears the alert's label",
+		"a typed `/hive decision approve` reply approves but leaves the label for a maintainer to remove",
 		"\n- resolve the reason for `hold` and have a maintainer remove that label",
 	} {
 		if !strings.Contains(got, want) {
@@ -978,7 +980,7 @@ func TestDecisionActionsDoNotReaskARecordedApproval(t *testing.T) {
 	if strings.Contains(got, "a trusted merger approves this head") || strings.Contains(got, "approve this head") {
 		t.Fatalf("actions re-ask a recorded approval:\n%s", got)
 	}
-	for _, want := range []string{"nothing more to approve: @Danathar approved this head (`abc1234`)", "resolve the sentinel alert"} {
+	for _, want := range []string{"nothing more to approve: @Danathar approved this head (`abc1234`)", "the sentinel alert is still open and needs no second approval", "presses **Confirm safe**"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("actions missing %q:\n%s", want, got)
 		}

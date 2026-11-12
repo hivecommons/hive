@@ -235,6 +235,150 @@ for repositories, PRs, pages, REST fallbacks, errors, and the last GraphQL
 query cost. Per-PR REST reads still happen when the batch is disabled, a repo's
 GraphQL query fails, or GitHub returns `mergeable: UNKNOWN` for that PR.
 
+### API budget pacing
+
+`governor.api_budget_pacing` (default `false`) makes the hive spread its own
+GitHub calls over the rate-limit window. Without it the loops run at their
+configured speed until the budget is nearly gone. A polling hive with many
+repositories can spend an hour's calls in the first half of the hour and then
+make no GitHub calls at all until the reset, which stops reviews, merges,
+hand-offs and fix dispatches for that time. The
+[API budget modes](sweeps-and-operations.md#github-api-budget-governor)
+only react once few calls are left (800 by default), which is too late to
+help.
+
+**The rule.** Each time the governor loop recomputes its interval it reads
+three things: the hive's own charged core calls per minute over the last 10
+minutes (the burn rate), the calls left in the core bucket, and the time until
+the window resets.
+
+- If, at that rate, the calls left above the reserve (`github.api_reserve`,
+  default `800`) would last until the reset, nothing changes.
+- If they would run out first, the loop interval is multiplied by
+  `rate × minutes to the reset ÷ (calls left − reserve)`. A hive using 200
+  calls a minute with 7,000 calls and 60 minutes left gets
+  `200 × 60 ÷ 6,200 = 1.94`: a 120-second loop runs every 233 seconds and the
+  budget lasts the hour.
+- The interval never goes past `governor.eval_interval_max_s` (default
+  `1800`), and never past the reset itself: a stretched loop's next cycle
+  lands just after the reset, when the budget is full again.
+
+**It only ever slows the loop down.** The paced interval is compared with the
+interval the loop would use anyway (the API budget mode stretch and the
+webhook interval), and the longer one wins. With the setting off nothing is
+measured and the interval is exactly what it was before.
+
+**It does not flap.** A slowed loop spends less, so the measured rate falls as
+soon as pacing works. The rule therefore works on the rate the loop would have
+at its usual speed: the measured rate multiplied by the stretch in effect
+while it was measured. For 10 minutes after the factor changes the measurement
+still mixes two speeds, so the earlier estimate is kept. A held factor is then
+kept until one of these happens:
+
+- the factor the rule asks for differs from it by more than 25% (it is
+  re-sized);
+- the factor the rule asks for is 0.8 or lower, which means the usual speed
+  would fit with a 20% margin (the stretch is released);
+- a new rate-limit window starts (the factor is sized again for it).
+
+Each change is logged once at INFO as `github api budget pacing changed`, with
+`remaining`, `reset_in_s`, `burn_per_min`, `factor`, `unpaced_interval_s`,
+`effective_interval_s` and `reason`. It is not logged every cycle.
+
+**When there is nothing to go on, it does not pace.** That is: no rate-limit
+reading from the hive's own responses yet, less than 5 minutes of recorded
+calls (a fresh start), or a reset time that has already passed.
+
+**Early wakes still run at once.** A verified webhook delivery, a review
+verdict or a continuous re-kick wakes an eval cycle as before; pacing does not
+delay or drop it. The paced interval only sets when the next *scheduled* cycle
+runs. On a hive whose work is mostly webhook-driven, pacing therefore has
+little to slow down.
+
+**What is paced.**
+
+| Loop                                    | Usual cadence              | Paced                   |
+| --------------------------------------- | -------------------------- | ----------------------- |
+| Governor eval loop and every step in it | `governor.eval_interval_s` | Yes                     |
+| Steps a status publish starts           | once per eval cycle        | Yes, with the eval loop |
+| Periodic sweep workers                  | each sweep's own interval  | Yes, by the same ratio  |
+
+The steps a status publish starts are the closed-item sweep and the
+review-question auto-decide; each also keeps its own minimum gap.
+
+The sweep workers are `automerge`, `supersession`, `duplicate_fix`,
+`shared_ci_rerun`, `red_main`, `shared_ci_issues`, `blocked_issues`,
+`task_list`, `duplicate`, `issue_unpark`, `closed_issue_stage`,
+`clarity_resume`, `prior_art_resume`, `sentinel`, `legacy_fleet_report`,
+`good_first_issue`, `first_timer`, `rfc_existing`, `rfc_notify` and
+`code_scanning`. Each sweep's interval (30 seconds to 1 hour) is multiplied by
+the same ratio as the eval loop, up to `governor.eval_interval_max_s`; a sweep
+that is already slower than that keeps its interval. Their stretch ends the
+moment the window resets, without waiting for the next eval cycle.
+
+**What is not paced.** These run on their own timers and are left alone. Most
+already follow the API budget mode, the reserve floor or the rate-limit pacing
+priority. Their calls still count: they lower the calls left, so the paced
+loops slow down further to make room for them.
+
+| Not paced                                                    | Usual cadence                                         |
+| ------------------------------------------------------------ | ----------------------------------------------------- |
+| ForgeState reconcile                                         | `forgestate.reconcile_interval_s`, default 15 minutes |
+| Automerge lanes (self-authored, trusted author, contributor) | every 5 minutes, plus webhook-triggered passes        |
+| Metrics collector, fleet-stats collector                     | 5 minutes, 30 minutes                                 |
+| Matrix ingest, mention poller, question auto-close           | 2, 5 and 5 minutes, when enabled                      |
+| Rebase-then-merge follow-through                             | 2 minutes                                             |
+| Contribute hub claim loops                                   | 30 seconds and 5 minutes                              |
+| Compliance posture, bead synthesizer                         | 1 hour each, when enabled                             |
+| Nous artifact mirror                                         | 5 minutes, when enabled                               |
+| Finished-PR accounting, request watchers                     | only when work is queued                              |
+| Webhook-driven re-reads and early eval cycles                | per delivery                                          |
+| Agents' own calls through the proxy                          | the per-agent cap and the reserve floor               |
+| Calls a browser causes                                       | per request                                           |
+
+Pacing changes how often a cycle runs, never what a cycle does. It does not
+change the conserve and critical thresholds or the per-agent caps.
+
+**Turning it on.** Settings → General → *Pace GitHub API calls over the
+rate-limit window*, `governor.api_budget_pacing: true` in `hive.yaml`, or the
+admin MCP's [`governor.general_settings`](../admin-mcp.md#registered-operations)
+operation with `{"api_budget_pacing": true}`. Owner only. The loop reads the
+setting every cycle, so it applies from the next eval cycle without a restart.
+
+**Reading the state.** `/api/status` carries an `api_budget_pacing` block next
+to `evalMode` and `evalIntervalS` (which is already the paced interval), and
+`GET /api/config/governor/general-advanced` carries the same block as
+`api_budget_pacing_state` beside the `api_budget_pacing` setting. The General
+tab shows it under the toggle.
+
+| Field                  | Meaning                                         |
+| ---------------------- | ----------------------------------------------- |
+| `enabled`              | The setting, as the loop last read it.          |
+| `active`               | `true` while a stretch is held.                 |
+| `factor`               | The held stretch; `1` when not pacing.          |
+| `effective_interval_s` | The loop interval after pacing, in seconds.     |
+| `burn_per_min`         | The measured burn rate (see below).             |
+| `reason`               | Why it is or is not stretching, in plain words. |
+
+`burn_per_min` is the hive's own charged core calls per minute over the last
+10 minutes, as measured. Agent calls, `304` answers, and search and GraphQL
+calls are not counted. Right after the setting is saved, and until the loop
+next looks, the general-advanced block shows the saved value with the reason
+`saved; applies from the next eval cycle`.
+
+**Finding out who spends the quota.** The dashboard shows it on the GitHub API
+card and under Debug → GitHub API budget. The admin MCP's `github_api_usage`
+tool returns the same reading in one call: the core bucket, the budget mode,
+the calls that cost the most, the last hour summed per caller, and each
+agent's cap and calls. Reading it spends no core API call. See
+[GitHub API usage](../admin-mcp.md#github-api-usage).
+
+`GET /api/gh-rate-limits` takes two optional parameters for this. `?top=N`
+sets how many `top_consumers` rows come back (default 10, at most 50).
+`?usage=1` adds `by_caller`, `window_totals`, `window_seconds`,
+`top_consumers_total`, `core_reset_in_seconds`, `api_budget_thresholds` and
+`agent_caps`. Without them the payload is what it always was.
+
 ### Changing the agent caps
 
 Both caps can be changed without editing `hive.yaml`, which matters on a
@@ -749,7 +893,8 @@ and `since` when it began; `mode_reason_code` says why it is polling — see
 [webhooks.md](../webhooks.md); `verification` is `github-signed`,
 `relay (hub-signed)` or `none`);
 `/api/status` adds `evalMode` (`webhook` | `poll`), `evalIntervalS`,
-`lastWakeReason`, `lastWakeAt` and `webhookWakes`;
+`lastWakeReason`, `lastWakeAt`, `webhookWakes` and the `api_budget_pacing`
+block ([API budget pacing](#api-budget-pacing));
 `graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing
 changed.
 
