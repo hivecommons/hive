@@ -142,3 +142,45 @@ func TestKnowledgeIntegrationsModalContext7Card(t *testing.T) {
 		}
 	}
 }
+
+// TestKnowledgeIntegrationsModalPlaudCard guards the Plaud entry: the card
+// exposes Connect/Disconnect/Check wired to the connector auth endpoints,
+// the Knowledge pane links to it, and no browser-native dialog is used.
+func TestKnowledgeIntegrationsModalPlaudCard(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`'plaud': { label: 'Plaud voice notes'`,
+		`'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@latest']`,
+		`if (type === 'plaud') html += kbPlaudAuthLine(c.name);`,
+		`if (type === 'plaud') html += kbPlaudAuthButtons(c.name);`,
+		`data-action="kbPlaudConnect"`,
+		`data-action="kbPlaudDisconnect"`,
+		`data-action="kbPlaudRefreshAuth"`,
+		`data-action="kbOpenPlaudIntegration"`,
+		`'/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/connect'`,
+		`'/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/disconnect'`,
+		`async function kbPlaudConnect(name)`,
+		`async function kbPlaudDisconnect(name)`,
+		`async function kbPlaudRefreshAuth(name)`,
+		`function kbOpenPlaudIntegration()`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing Plaud card snippet %q", want)
+		}
+	}
+	start := strings.Index(html, "const _kbPlaudAuth = {};")
+	end := strings.Index(html, "function kbOpenPlaudIntegration()")
+	if start < 0 || end < start {
+		t.Fatal("Plaud sign-in block not found")
+	}
+	block := html[start:end]
+	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
+		if strings.Contains(block, native) {
+			t.Errorf("Plaud sign-in block uses a browser-native dialog %q", native)
+		}
+	}
+}

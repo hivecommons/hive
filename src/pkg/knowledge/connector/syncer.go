@@ -159,6 +159,16 @@ func (s *Syncer) update(name string, fn func(*Status)) Status {
 	return st
 }
 
+// Connector returns the built connector for name; ok is false for an
+// unknown name or one whose config failed to build.
+func (s *Syncer) Connector(name string) (Connector, bool) {
+	e, ok := s.entries[name]
+	if !ok || e.buildErr != nil || e.conn == nil {
+		return nil, false
+	}
+	return e.conn, true
+}
+
 // SyncNow runs one sync of the named connector immediately, whether or not
 // it is enabled. It returns ErrSyncInProgress if a sync is already running.
 func (s *Syncer) SyncNow(ctx context.Context, name string) (Status, error) {

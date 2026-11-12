@@ -1,0 +1,1 @@
+- Knowledge: new `plaud` connector syncs Plaud Note voice recordings (Plaud summary + transcript) into the vault through the free official Plaud MCP server, with Connect/Disconnect sign-in on the Knowledge → Integrations card and no cost beyond the Plaud plan.

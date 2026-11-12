@@ -1,6 +1,6 @@
 # Knowledge connectors
 
-External knowledge systems (Confluence, Notion, Google Drive, SharePoint/OneDrive, git repositories, documents and GitHub wikis) are synced into the file vault by connectors configured under `knowledge.connectors` in `hive.yaml`. Each upstream page becomes one markdown fact, and agents read those facts like any other vault content. Operators manage connectors from the Knowledge card's **🔌 Integrations** modal or from **Settings → Knowledge → Connectors** in the dashboard.
+External knowledge systems (Confluence, Notion, Google Drive, SharePoint/OneDrive, git repositories, documents, GitHub wikis and Plaud voice notes) are synced into the file vault by connectors configured under `knowledge.connectors` in `hive.yaml`. Each upstream page becomes one markdown fact, and agents read those facts like any other vault content. Operators manage connectors from the Knowledge card's **🔌 Integrations** modal or from **Settings → Knowledge → Connectors** in the dashboard.
 
 For the shared configuration fields, the fact format and how connectors relate to `git_sources` and `documents`, see [knowledge-curator.md → Connectors](knowledge-curator.md#connectors-knowledgeconnectors).
 
@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -217,6 +217,91 @@ knowledge:
   16 KiB), and a `… truncated: N snippets / M bytes omitted (size cap)` line
   ends the content when any were dropped. See
   [Context7 content cap](knowledge-curator.md#context7-content-cap).
+
+## Plaud Note Pro (voice notes, `type: plaud`)
+
+The Plaud connector turns the recordings on a [Plaud Note / Note Pro](https://plaud.ai)
+into knowledge facts: one fact per recording with the recording time,
+duration, Plaud's AI summary and the full speaker-labelled transcript. Agents
+search and cite them like any other fact, so a voice memo recorded on the way
+to work can inform the issue or PR an agent picks up an hour later.
+
+It talks to the **official, free Plaud MCP server** (`npx -y @plaud-ai/mcp`)
+over stdio as an MCP client — there is no Zapier/Make/IFTTT hop and nothing to
+pay beyond your existing Plaud plan. Plaud lists the MCP server as a Preview
+feature on every tier including Starter; Plaud's docs note that preview
+features may later move behind paid plans.
+
+```yaml
+knowledge:
+  connectors:
+    - name: plaud
+      type: plaud
+      layer: personal
+      interval: 15m
+      scope:
+        command: npx -y @plaud-ai/mcp@latest   # default; any stdio MCP command
+        since_days: "30"                       # how far back the first sync reaches
+        max_files: "200"                       # recordings fetched per sync
+        include_audio: "false"                 # add Plaud's 24h presigned MP3 link
+        query: ""                              # optional name filter (list_files query)
+        tags: "voice, ideas"                   # extra tags written as attr_tags
+        # home: /data/knowledge/connector-state/plaud/home   # token store; default shown, or "inherit"
+```
+
+No `auth` block: Plaud signs you in with its own OAuth flow and keeps the token
+in the MCP server's store (`$HOME/.plaud/tokens-mcp.json`). hive never sees,
+stores or logs the token. By default the connector points the MCP server's
+`HOME` at its own state directory under `/data/knowledge/connector-state/<name>/home`
+so the token survives restarts; set `home: inherit` to use the hive process's
+HOME instead.
+
+### Setup
+
+1. The hive host (or container image) needs **Node.js ≥ 20** so `npx` can run
+   the Plaud MCP server.
+2. Add the connector from **Knowledge → 🔌 Integrations → Plaud voice notes**
+   (or the YAML above) and restart the hive so the syncer picks it up.
+3. On the Plaud card click **Connect Plaud**. The card shows the Plaud
+   authorization URL; open it, sign in and click **Authorize**. The OAuth
+   callback lands on `localhost:8199` of the machine running hive, so for a
+   remote hive forward that port first (`ssh -L 8199:localhost:8199 user@host`)
+   and open the URL from the forwarding machine. The login session stays open
+   for 10 minutes; click **Check** to confirm "connected as …".
+   - Alternative when port-forwarding is impractical: authorize once on your
+     laptop with `npx -y @plaud-ai/mcp@latest install`, then copy
+     `~/.plaud/tokens-mcp.json` into the connector's `home` directory
+     (`…/connector-state/<name>/home/.plaud/`). The file is Plaud's own
+     token store, not a hive secret.
+4. Click **Sync now**. New recordings are picked up every `interval`.
+
+### Behaviour
+
+- Each sync calls `list_files` (from the newest recording seen minus a 24 h
+  overlap, or `since_days` back on the first run), then `get_note` and
+  `get_transcript` for each recording. A recording whose transcript and
+  summary are both still processing is skipped and retried next sync; the
+  status reports it as a partial sync.
+- Facts carry `source: plaud`, `attr_plaud_file_id`, `attr_recorded_at`,
+  `attr_duration_ms` and `attr_device_serial`. Audio is never downloaded;
+  with `include_audio: true` the fact links Plaud's 24-hour presigned URL.
+- The listing is incremental, so recordings deleted in Plaud are not
+  tombstoned automatically; remove the fact file or the connector.
+- Sign-in state (`connected as`, pending authorization, last error) comes from
+  `GET /api/knowledge/connectors/{name}/auth`; see [API](#api).
+
+### Privacy and cost
+
+- Transcripts and summaries are produced in **Plaud's cloud** and fetched from
+  there; the hive stores them in the vault for the layer you choose (use
+  `personal` unless the whole hive should see them). Do not record material
+  that may not leave your organisation.
+- **Local-only alternative:** Plaud's app can auto-sync notes to an Obsidian
+  vault or Drive/Dropbox folder, and exports TXT/Markdown/DOCX by hand. Point
+  the existing `git` connector at a Git-synced copy of that folder (see the
+  Obsidian entry in 🔌 Integrations), or import single files with a
+  `document` connector (`file_path`). No code, still $0, and no MCP sign-in.
+- Everything in this section costs **$0** beyond your Plaud subscription.
 
 ## Notion (`type: notion`)
 
