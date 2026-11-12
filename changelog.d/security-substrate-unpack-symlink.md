@@ -1,1 +1,0 @@
-- The Substrate sandbox runtime no longer follows symlinks when unpacking a workspace pulled from an actor, so a sandboxed kick cannot write outside the local workspace on the hive host.
