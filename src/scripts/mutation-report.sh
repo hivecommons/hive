@@ -100,11 +100,33 @@ post_comment() {
     echo "PR_NUMBER/GITHUB_REPOSITORY unset; not posting a comment."
     return 0
   fi
+  # The report always lands in the step summary; the PR comment is reserved
+  # for findings (any verdict but `pass`). A clean run never creates a
+  # comment, and one that follows an earlier finding edits that comment down
+  # to a one-line resolved note instead of posting again (#17863).
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    cat "$body" >> "$GITHUB_STEP_SUMMARY"
+  fi
+  local verdict="" resolved=""
+  [ -f "$verdict_file" ] && verdict=$(cat "$verdict_file")
+  if [ "$verdict" = pass ]; then
+    # shellcheck disable=SC2016 # backticks are literal Markdown
+    resolved="$(printf '%s\n### Mutation testing\n\n✅ Resolved: no surviving or uncovered mutants in changed files on the current head.\n\n_Verdict: `pass` (#17349)._\n' "$marker")"
+  fi
   # Only upsert the bot's own report so another participant cannot pre-seat or
   # get overwritten by a comment that merely starts with the marker.
   local id
   id=$(gh api --paginate "repos/${repo}/issues/${pr_number}/comments" \
     --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" 2>/dev/null | head -n 1 || true)
+  if [ -n "$resolved" ]; then
+    if [ -z "$id" ]; then
+      echo "mutation: verdict pass and no earlier comment; not posting (report is in the step summary)."
+      return 0
+    fi
+    gh api -X PATCH "repos/${repo}/issues/comments/${id}" -f "body=${resolved}" >/dev/null \
+      || echo "::warning::could not edit mutation comment"
+    return 0
+  fi
   if [ -n "$id" ]; then
     gh api -X PATCH "repos/${repo}/issues/comments/${id}" -F "body=@${body}" >/dev/null \
       || echo "::warning::could not edit mutation comment"
