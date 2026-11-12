@@ -22,6 +22,7 @@ css/cost.css
 css/alerts-toasts.css
 css/feedback-faq.css
 css/config-dialog.css
+css/config-webhooks.css
 css/workflows.css
 css/workflows-editor.css
 css/workflows-ingest.css

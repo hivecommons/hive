@@ -5045,6 +5045,33 @@
       .config-body { --config-body-pad: 14px; padding: var(--sp-0) var(--config-body-pad) var(--config-body-pad); }
       .config-field-row, .config-field-row4 { grid-template-columns: 1fr; }
     }
+    /* Settings → Forge App → GitHub webhooks (hivecommons/hive#18017) */
+    .wh-section-title { font-weight: 600; font-size: var(--fs-base); margin: var(--sp-5) 0 var(--sp-2); }
+    .wh-intro { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-3); }
+    .wh-muted { color: var(--muted); }
+    div.wh-muted { font-size: var(--fs-sm); }
+    .wh-small { font-size: var(--fs-sm); }
+    .wh-warn { color: var(--yellow); }
+    .wh-ok { color: var(--green); }
+    .wh-error { font-size: var(--fs-sm); color: var(--red); }
+    .wh-note { margin-top: var(--sp-2); }
+    .wh-card { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-5); background: var(--surface); }
+    .wh-card-head { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; margin-bottom: var(--sp-4); }
+    .wh-card-title { font-weight: 600; font-size: var(--fs-md); }
+    .wh-step { font-size: var(--fs-sm); font-weight: 600; margin: var(--sp-2) 0 var(--sp-1); }
+    .wh-step-gap { margin-top: var(--sp-4); }
+    .wh-code { font-size: var(--fs-xs); user-select: all; }
+    .wh-chip { font-size: var(--fs-xs); font-weight: 600; padding: var(--sp-1) var(--sp-4); border-radius: var(--r); border: 1px solid currentColor; }
+    .wh-chip-muted { color: var(--muted); }
+    .wh-chip-ok { color: var(--green); }
+    .wh-chip-warn { color: var(--yellow); }
+    .wh-actions { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; font-size: var(--fs-sm); }
+    .wh-actions .hv-btn { margin-left: var(--sp-2); }
+    .wh-secret-once { border: 1px solid var(--green); border-radius: var(--r); padding: var(--sp-3) var(--sp-4); margin: var(--sp-2) 0; font-size: var(--fs-sm); }
+    .wh-secret-once-title { font-weight: 600; color: var(--green); }
+    .wh-secret-value { margin: var(--sp-1) 0; word-break: break-all; }
+    .wh-create { border-top: 1px solid var(--border); margin-top: var(--sp-4); padding-top: var(--sp-4); }
+    .gov-stat.wh-clickable { cursor: pointer; }
     /* Settings → Workflows (#17620 phase 3): library, detail, diagram, ingest */
     .wf-nav { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-5); border-bottom: var(--line-width) solid var(--border); }
     .wf-nav-item { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; font-size: var(--fs-sm); font-weight: 700; padding: var(--sp-2) var(--sp-4); cursor: pointer; }
@@ -32541,9 +32568,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         : `Verification: ${wh.verification}. Cadence: ${wh.mode || 'polling'}${wh.mode_reason ? ' (' + wh.mode_reason + ')' : ''}. ${n} deliveries in the last hour.`;
       const tip = 'WEBHOOKS — does GitHub tell this hive about changes as they happen?\n\nWHAT: With webhooks on, pushes, PRs, reviews and checks wake the governor at once, CI failures kick the owning agent, and the safety-net cadence slows to save API calls.\n\nHOW: ' + how
         + (owner ? '\n\nClick to set up or check webhooks (Settings → Forge App).' : '');
-      const action = owner ? ' style="cursor:pointer" data-action="openConfigDialog" data-config-type="governor" data-tab="Forge App"' : '';
+      const action = owner ? ' data-action="openConfigDialog" data-config-type="governor" data-tab="Forge App"' : '';
       const label = owner && none ? 'webhooks · set up →' : 'webhooks';
-      return `<div class="gov-stat"${action} title="${escapeHtml(tip)}"><div class="label">${label}</div><div class="val${cls}">${escapeHtml(val)}</div></div>`;
+      return `<div class="gov-stat${owner ? ' wh-clickable' : ''}"${action} title="${escapeHtml(tip)}"><div class="label">${label}</div><div class="val${cls}">${escapeHtml(val)}</div></div>`;
     }
 
     function renderGovernor(gov, cadenceMatrix, data) {
@@ -59372,13 +59399,13 @@ function burnAreaChart() {
 
     function renderGovWebhooksSection() {
       return `
-        <div style="font-weight:600;font-size:0.85rem;margin:18px 0 6px">GitHub webhooks</div>
-        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:8px">
+        <div class="wh-section-title">GitHub webhooks</div>
+        <div class="wh-intro">
           Webhooks let GitHub tell this hive about pushes, PRs, reviews and checks as they
           happen: faster kicks, fewer API calls, a slower safety-net cadence.
           <a href="${webhookDocsHref()}" target="_blank" rel="noopener noreferrer">Owner guide ↗</a>
         </div>
-        <div id="webhook-setup-host"><div style="color:var(--muted);font-size:0.8rem">Loading webhook status…</div></div>`;
+        <div id="webhook-setup-host"><div class="wh-muted">Loading webhook status…</div></div>`;
     }
 
     function webhookDocsHref() {
@@ -59391,25 +59418,25 @@ function burnAreaChart() {
       try {
         const res = await fetch('/api/config/github/webhooks');
         if (res.status === 403) {
-          host.innerHTML = '<div style="color:var(--muted);font-size:0.78rem">Owner access required to view webhook setup.</div>';
+          host.innerHTML = '<div class="wh-muted">Owner access required to view webhook setup.</div>';
           return;
         }
         if (!res.ok) throw new Error('HTTP ' + res.status);
         _webhookSetup = await res.json();
         renderWebhookSetup();
       } catch (e) {
-        host.innerHTML = `<div style="color:var(--red);font-size:0.8rem">Failed to load webhook status: ${esc(e.message)}</div>`;
+        host.innerHTML = `<div class="wh-error">Failed to load webhook status: ${esc(e.message)}</div>`;
       }
     }
 
     function webhookStatusChip(d) {
       const h = d.health || {};
-      if (d.verification === 'none') return chip('not configured', 'var(--muted)');
-      if (h.events_1h > 0 || h.healthy) return chip(`receiving · ${h.events_1h || 0}/1h`, 'var(--green)');
-      if (h.last_event_at) return chip('quiet · last ' + webhookAgo(h.last_event_at), 'var(--yellow)');
-      return chip('no events yet', 'var(--yellow)');
-      function chip(text, color) {
-        return `<span style="font-size:var(--fs-xs);font-weight:600;padding:var(--sp-1) var(--sp-4);border-radius:10px;border:1px solid ${color};color:${color}">${esc(text)}</span>`;
+      if (d.verification === 'none') return chip('not configured', 'muted');
+      if (h.events_1h > 0 || h.healthy) return chip(`receiving · ${h.events_1h || 0}/1h`, 'ok');
+      if (h.last_event_at) return chip('quiet · last ' + webhookAgo(h.last_event_at), 'warn');
+      return chip('no events yet', 'warn');
+      function chip(text, tone) {
+        return `<span class="wh-chip wh-chip-${tone}">${esc(text)}</span>`;
       }
     }
 
@@ -59424,7 +59451,7 @@ function burnAreaChart() {
     }
 
     function webhookCopyBtn(text, label) {
-      return `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="webhookCopy" data-arg-types="t" data-copy="${esc(text)}" style="margin-left:6px">${esc(label || 'Copy')}</button>`;
+      return `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="webhookCopy" data-arg-types="t" data-copy="${esc(text)}">${esc(label || 'Copy')}</button>`;
     }
 
     async function webhookCopy(btn) {
@@ -59439,70 +59466,70 @@ function burnAreaChart() {
       if (!host || !d) return;
       const h = d.health || {};
       const row = (label, valueHtml) => forgeAppRow(label, valueHtml);
-      const code = (t) => `<code style="font-size:0.74rem;user-select:all">${esc(t)}</code>`;
+      const code = (t) => `<code class="wh-code">${esc(t)}</code>`;
       const relayHeld = !!d.hosted;
       const direct = d.secret_source !== '';
 
-      let html = `<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:var(--sp-5);background:var(--surface)">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:var(--sp-4);flex-wrap:wrap">
-          <span style="font-weight:600;font-size:0.9rem">Receiver status</span>
+      let html = `<div class="wh-card">
+        <div class="wh-card-head">
+          <span class="wh-card-title">Receiver status</span>
           ${webhookStatusChip(d)}
         </div>
-        ${row('Verification', code(d.verification || 'none') + (relayHeld && !direct ? ' <span class="text-muted">— hub relay; the GitHub App installation delivers through the hub, nothing to set up</span>' : ''))}
-        ${row('Last event', h.last_event_at ? esc(new Date(h.last_event_at).toLocaleString()) + ' <span class="text-muted">(' + esc(webhookAgo(h.last_event_at)) + ')</span>' : '<span class="text-muted">none yet</span>')}
-        ${row('Deliveries (1h)', esc(String(h.events_1h || 0)) + ' <span class="text-muted">· ' + esc(String(h.invalidations_1h || 0)) + ' cache patches · ' + esc(String(h.ci_events_1h || 0)) + ' CI events</span>')}
-        ${row('Cadence', code(h.mode || 'polling') + (h.mode_reason ? ' <span style="color:var(--yellow)">' + esc(h.mode_reason) + '</span>' : ''))}
-        ${(!h.last_event_at && d.verification !== 'none') ? '<div style="font-size:0.76rem;color:var(--yellow);margin-top:6px">No events yet — on GitHub open the webhook (Settings → Webhooks → your hook → Recent deliveries) and check the response code: 401 means the secret differs, 404 means the path is wrong, 503 means this hive has no secret.</div>' : ''}
+        ${row('Verification', code(d.verification || 'none') + (relayHeld && !direct ? ' <span class="wh-muted">— hub relay; the GitHub App installation delivers through the hub, nothing to set up</span>' : ''))}
+        ${row('Last event', h.last_event_at ? esc(formatDashboardDateTime(h.last_event_at)) + ' <span class="wh-muted">(' + esc(webhookAgo(h.last_event_at)) + ')</span>' : '<span class="wh-muted">none yet</span>')}
+        ${row('Deliveries (1h)', esc(String(h.events_1h || 0)) + ' <span class="wh-muted">· ' + esc(String(h.invalidations_1h || 0)) + ' cache patches · ' + esc(String(h.ci_events_1h || 0)) + ' CI events</span>')}
+        ${row('Cadence', code(h.mode || 'polling') + (h.mode_reason ? ' <span class="wh-warn">' + esc(h.mode_reason) + '</span>' : ''))}
+        ${(!h.last_event_at && d.verification !== 'none') ? '<div class="wh-warn wh-note">No events yet — on GitHub open the webhook (Settings → Webhooks → your hook → Recent deliveries) and check the response code: 401 means the secret differs, 404 means the path is wrong, 503 means this hive has no secret.</div>' : ''}
       </div>`;
 
-      html += `<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:var(--sp-5);background:var(--surface)">
-        <div style="font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-4)">${relayHeld ? 'Direct webhook (optional)' : 'Set up a webhook on GitHub'}</div>
-        ${relayHeld ? '<div style="font-size:0.76rem;color:var(--muted);margin-bottom:8px">This hive already receives deliveries the hub relays from the GitHub App installation. A direct webhook with your own secret is only needed for repositories the App is not installed on.</div>' : ''}
-        <div style="font-size:0.78rem;font-weight:600;margin:6px 0 2px">1. Secret</div>
+      html += `<div class="wh-card">
+        <div class="wh-card-title wh-card-head">${relayHeld ? 'Direct webhook (optional)' : 'Set up a webhook on GitHub'}</div>
+        ${relayHeld ? '<div class="wh-muted wh-intro">This hive already receives deliveries the hub relays from the GitHub App installation. A direct webhook with your own secret is only needed for repositories the App is not installed on.</div>' : ''}
+        <div class="wh-step">1. Secret</div>
         ${renderWebhookSecretBlock(d)}
-        <div style="font-size:0.78rem;font-weight:600;margin:12px 0 2px">2. Add the webhook in GitHub</div>
-        <div style="font-size:0.76rem;color:var(--muted)">Organization (one hook for every repo) → <b>Settings → Webhooks → Add webhook</b>, or per repository under the repo's Settings.</div>
-        ${row('Payload URL', d.payload_url ? code(d.payload_url) + webhookCopyBtn(d.payload_url) + ' <span class="text-muted">(' + esc(d.payload_url_source) + ')</span>' : '<span style="color:var(--yellow)">unknown — set <code>dashboard.public_url</code> to this hive\u2019s public origin; the path is <code>' + esc(d.path) + '</code></span>')}
+        <div class="wh-step wh-step-gap">2. Add the webhook in GitHub</div>
+        <div class="wh-muted">Organization (one hook for every repo) → <b>Settings → Webhooks → Add webhook</b>, or per repository under the repo's Settings.</div>
+        ${row('Payload URL', d.payload_url ? code(d.payload_url) + webhookCopyBtn(d.payload_url) + ' <span class="wh-muted">(' + esc(d.payload_url_source) + ')</span>' : '<span class="wh-warn">unknown — set <code>dashboard.public_url</code> to this hive\u2019s public origin; the path is <code>' + esc(d.path) + '</code></span>')}
         ${row('Content type', code(d.content_type))}
-        ${row('Secret', '<span class="text-muted">the value from step 1</span>')}
-        ${row('SSL verification', '<span class="text-muted">keep enabled</span>')}
-        ${row('Events', '<span class="text-muted">"Let me select individual events", then tick:</span><br>' + (d.events || []).map(e => code(e)).join(' ') + webhookCopyBtn((d.events || []).join(', '), 'Copy list'))}
-        ${row('Optional', Object.entries(d.optional_events || {}).map(([k, v]) => code(k) + ' <span class="text-muted">— ' + esc(v) + '</span>').join('<br>'))}
+        ${row('Secret', '<span class="wh-muted">the value from step 1</span>')}
+        ${row('SSL verification', '<span class="wh-muted">keep enabled</span>')}
+        ${row('Events', '<span class="wh-muted">"Let me select individual events", then tick:</span><br>' + (d.events || []).map(e => code(e)).join(' ') + webhookCopyBtn((d.events || []).join(', '), 'Copy list'))}
+        ${row('Optional', Object.entries(d.optional_events || {}).map(([k, v]) => code(k) + ' <span class="wh-muted">— ' + esc(v) + '</span>').join('<br>'))}
         ${renderWebhookCreateBlock(d)}
       </div>`;
       host.innerHTML = html;
     }
 
     function renderWebhookSecretBlock(d) {
-      const code = (t) => `<code style="font-size:0.74rem;user-select:all">${esc(t)}</code>`;
+      const code = (t) => `<code class="wh-code">${esc(t)}</code>`;
       let html = '';
       if (_webhookSecretOnce) {
-        html += `<div style="border:1px solid var(--green);border-radius:var(--r);padding:8px 10px;margin:6px 0;font-size:0.78rem">
-          <div style="font-weight:600;color:var(--green)">New secret — shown once</div>
-          <div style="margin:4px 0;word-break:break-all">${code(_webhookSecretOnce)}${webhookCopyBtn(_webhookSecretOnce)}</div>
-          <div class="text-muted">Paste it into the GitHub webhook\u2019s <b>Secret</b> field. The hive keeps only the file; closing this dialog forgets the value.</div>
+        html += `<div class="wh-secret-once">
+          <div class="wh-secret-once-title">New secret — shown once</div>
+          <div class="wh-secret-value">${code(_webhookSecretOnce)}${webhookCopyBtn(_webhookSecretOnce)}</div>
+          <div class="wh-muted">Paste it into the GitHub webhook\u2019s <b>Secret</b> field. The hive keeps only the file; closing this dialog forgets the value.</div>
         </div>`;
       }
       if (d.secret_source === 'env') {
-        html += `<div style="font-size:0.76rem">Configured from <code>GITHUB_WEBHOOK_SECRET</code> (a Secret mount). Use that same value in GitHub; rotate it in the deployment, not here.</div>`;
+        html += `<div class="wh-small">Configured from <code>GITHUB_WEBHOOK_SECRET</code> (a Secret mount). Use that same value in GitHub; rotate it in the deployment, not here.</div>`;
         return html;
       }
       const state = d.secret_source === 'file'
         ? `Configured · stored at <code>${esc(d.secret_path || '')}</code>${_webhookSecretOnce ? '' : ' (value not shown again — regenerate if lost)'}`
-        : '<span style="color:var(--yellow)">No secret yet — generate one. Without it every delivery is rejected with 503.</span>';
+        : '<span class="wh-warn">No secret yet — generate one. Without it every delivery is rejected with 503.</span>';
       const label = _webhookConfirmRegenerate ? 'Confirm: replace secret' : (d.secret_source === 'file' ? 'Regenerate secret' : 'Generate secret');
       const cls = _webhookConfirmRegenerate ? 'btn-danger' : 'btn-primary';
-      html += `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:0.76rem;margin-top:4px">
+      html += `<div class="wh-actions wh-note">
         <span>${state}</span>
         <button type="button" class="hv-btn ${cls} btn-sm" data-action="webhookGenerateSecret" data-arg-types="t">${esc(label)}</button>
-        ${_webhookConfirmRegenerate ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="webhookCancelRegenerate">Cancel</button><span class="text-muted">GitHub hooks using the old secret will start failing with 401 until you update them.</span>' : ''}
+        ${_webhookConfirmRegenerate ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="webhookCancelRegenerate">Cancel</button><span class="wh-muted">GitHub hooks using the old secret will start failing with 401 until you update them.</span>' : ''}
       </div>`;
       return html;
     }
 
     function renderWebhookCreateBlock(d) {
       if (d.app_probe_error) {
-        return `<div style="font-size:0.74rem;color:var(--muted);margin-top:10px">Could not read the App installation\u2019s permissions (${esc(d.app_probe_error)}); create the hook by hand as above.</div>`;
+        return `<div class="wh-muted wh-note">Could not read the App installation\u2019s permissions (${esc(d.app_probe_error)}); create the hook by hand as above.</div>`;
       }
       if (!d.app_org_hooks && !d.app_repo_hooks) return '';
       const scopes = [];
@@ -59510,14 +59537,14 @@ function burnAreaChart() {
       if (d.app_repo_hooks) (d.repos || []).forEach(r => scopes.push(`<option value="repository:${esc(r)}">repository ${esc(d.org)}/${esc(r)}</option>`));
       const disabled = !d.create_available;
       const why = !d.secret_configured ? 'generate a secret first' : (!d.payload_url ? 'set dashboard.public_url first' : '');
-      return `<div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
-        <div style="font-size:0.78rem;font-weight:600;margin-bottom:4px">Or let the App create it</div>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:0.76rem">
-          <select id="webhook-create-scope" style="font-size:0.76rem">${scopes.join('')}</select>
+      return `<div class="wh-create">
+        <div class="wh-step">Or let the App create it</div>
+        <div class="wh-actions">
+          <select id="webhook-create-scope" class="wh-small">${scopes.join('')}</select>
           <button type="button" class="hv-btn btn-primary btn-sm" data-action="webhookCreateHook" data-arg-types="t" ${disabled ? 'disabled' : ''}>Create webhook for me</button>
-          ${why ? '<span class="text-muted">— ' + esc(why) + '</span>' : '<span class="text-muted">uses the App installation\u2019s hooks permission; subscribes the events above with this hive\u2019s secret</span>'}
+          ${why ? '<span class="wh-muted">— ' + esc(why) + '</span>' : '<span class="wh-muted">uses the App installation\u2019s hooks permission; subscribes the events above with this hive\u2019s secret</span>'}
         </div>
-        <div id="webhook-create-result" style="font-size:0.76rem;margin-top:6px"></div>
+        <div id="webhook-create-result" class="wh-small wh-note"></div>
       </div>`;
     }
 
@@ -59561,10 +59588,10 @@ function burnAreaChart() {
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
-        if (out) out.innerHTML = `<span style="color:var(--green)">Created ${esc(body.scope)} hook #${esc(String(body.hook_id))} on ${esc(body.target)}.</span> <a href="${esc(body.url)}" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a> — push a commit or comment on a PR and watch “Deliveries (1h)” move.`;
+        if (out) out.innerHTML = `<span class="wh-ok">Created ${esc(body.scope)} hook #${esc(String(body.hook_id))} on ${esc(body.target)}.</span> <a href="${esc(body.url)}" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a> — push a commit or comment on a PR and watch “Deliveries (1h)” move.`;
         showToast('Webhook created', 'info');
       } catch (e) {
-        if (out) out.innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`;
+        if (out) out.innerHTML = `<span class="wh-error">${esc(e.message)}</span>`;
       } finally {
         if (btn) btn.disabled = false;
       }
