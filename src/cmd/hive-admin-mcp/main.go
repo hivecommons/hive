@@ -354,6 +354,21 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 	if adminmcp.DiagTool(tool) {
 		return p.readDiag(ctx, tool, args)
 	}
+	if tool == adminmcp.ToolContributorQueue || tool == adminmcp.ContributorQueueStateRead {
+		path, err := adminmcp.ContributorQueueReadPath(tool, args)
+		if err != nil {
+			return nil, err
+		}
+		client, _, err := p.roster.activeClient()
+		if err != nil {
+			return nil, err
+		}
+		data, err := getPath(ctx, client, path)
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.ContributorQueueReadResult(tool, data, args)
+	}
 	if tool == adminmcp.ToolSettingsRead {
 		// An unknown section or a missing agent is refused with its reason.
 		if _, err := adminmcp.SettingsReadPath(args); err != nil {

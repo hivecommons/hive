@@ -185,7 +185,9 @@ func TestDetailLessWriteOpsPreviewAndConfirm(t *testing.T) {
 }
 
 // Every registered op that takes no arguments must preview with none, so a
-// new argument-less op cannot ship refused the same way.
+// new argument-less op cannot ship refused the same way. The provider holds
+// one contributor queue issue, so contributor_queue.hold_clear has something
+// to resume rather than refusing a change that does nothing.
 func TestArgumentLessWriteOpsPreviewWithNoArgs(t *testing.T) {
 	seen := 0
 	for _, op := range DefaultWriteRegistry().Ops() {
@@ -194,7 +196,7 @@ func TestArgumentLessWriteOpsPreviewWithNoArgs(t *testing.T) {
 			continue
 		}
 		seen++
-		h := NewHandler(&writeProvider{}, WithWritesEnabled(true), WithHiveID("hive-a"))
+		h := NewHandler(&cqProvider{hold: []string{"acme/widgets#7"}}, WithWritesEnabled(true), WithHiveID("hive-a"))
 		if _, err := h.PreviewWrite(context.Background(), map[string]any{"operation": op.Name(), "args": map[string]any{}}); err != nil {
 			t.Errorf("write_preview refused argument-less op %s: %v", op.Name(), err)
 		}

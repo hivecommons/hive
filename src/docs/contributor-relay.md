@@ -1243,6 +1243,10 @@ The **Operations** tab lets an operator reorder and park individual issues in th
 | `POST /api/contribute/queue/hold` | `contribute_queue_hold` + `contribute_queue_hold_reasons` | Body `{"key":"owner/repo#number","held":true,"reason":"optional note"}`. A held issue is never offered until it is resumed (`"held":false`), unlike cooldown, which clears itself. Held rows stay visible on the Operations tab, greyed with an "on hold" badge; the optional reason is shown in the badge tooltip and pruned automatically when the hold is lifted. |
 | `POST /api/contribute/queue/hold/clear` | `contribute_queue_hold` | Resumes every held issue in one call. Same role gate and persistence as the single-issue endpoint. |
 
+`GET /api/contribute/queue?controls=1` adds `controls`: the stored `order` (`contribute_queue_order` as saved, including keys that are not in the queue now), `hold`, and `hold_reasons` as a list of `{"key","reason"}`. It answers owner and read-write only, like the three endpoints above. Without the parameter the GET is unchanged and public.
+
+The admin MCP has the same controls and uses these same endpoints, so their role gate, audit entries and persistence apply unchanged. The `contributor_queue` read tool returns the card's rows in the card's order. The `contributor_queue.order` (the whole list, `pin` with a `position`, or `unpin`), `contributor_queue.hold` and `contributor_queue.hold_clear` write operations show the change before and after in their preview. See [Contributor queue](admin-mcp.md#contributor-queue).
+
 ### Why an issue is not queued (Withheld)
 
 The Contributor Queue is not every open issue, and the reason a candidate is missing used to be invisible: each exclusion was a bare skip inside the admission pass, so the only symptom was an absent row. Since [#6902](https://github.com/hivecommons/hive/issues/6902) the Operations tab groups the queue into three, and the third one explains itself:

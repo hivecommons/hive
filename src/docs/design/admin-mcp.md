@@ -322,6 +322,7 @@ one.
 | hive advisor | `POST /api/chat`, `GET /api/chat/messages` | The one path where Hive input-scans the operator's text *for* the client rather than the reverse: `handleDashboardChat` calls `ioscan.EnforceInput` and refuses a blocked message with `chat.dashboard.refused`. |
 | issue/PR bands | `GET /api/overview/issues.json` (`issues_by_band`), `GET /api/overview/prs.json` (`prs_by_band`) | Thin wrappers over #9102's band classifier — see below. |
 | review queue | `GET /api/overview/issues.json` + `GET /api/overview/prs.json` (`review_queue`) | The one read tool that makes two GETs; the queue is computed in `pkg/adminmcp` — see below. |
+| contributor queue | `GET /api/contribute/queue` (`contributor_queue`) | The Operations card's own GET, so the rows and their order are the card's. The `contributor_queue.*` write previews add `?controls=1` for the stored pinned order and hold set, which the endpoint answers for owner/read-write only. |
 | governor setup | `GET /api/config/governor` (`governor_setup_proposal`) | Proposal computed in `pkg/adminmcp` from the settings read; writes nothing — see below. |
 | breaker, backup | `GET /api/breaker`, `GET /api/backup/status` | |
 
@@ -550,6 +551,7 @@ start-up script, its process launch, PIDs, signal handling and exit codes are un
 | let hive decide | `POST /api/repos/{owner}/{repo}/items/{number}/decide-delegated` → `GET` same path (`delegated_decision_status`) | `delegateDecisionEnabled`, `canToggleRepoHold`; needs a user; always `no_merge` |
 | spend | `PUT /api/config/governor/budget`, `POST /api/config/governor/budget/reset`, `POST /api/budget-ignore` | `requireOwnerRole` |
 | contributors | `PUT /api/contributors/{id}/trust`, `PUT /api/contributors/{id}/agent-role`, `PUT /api/contributors/{id}/agent-role-grants`, `POST /api/contributors/{id}/revoke`, `/requeue`, `DELETE /api/contributors/{id}` | `requireOwnerRole` except `/requeue`, which remains `requireContributorWrite` |
+| contributor queue | `PUT /api/contribute/queue/order`, `POST /api/contribute/queue/hold`, `POST /api/contribute/queue/hold/clear` | `requireContributorWrite` (owner or read-write) in each handler; the `/api/contribute` prefix is exempt from `roleEnforcement`'s read-only block. The previews read `GET /api/contribute/queue?controls=1` behind the same gate |
 | backup | `POST /api/backup` | `requireOwnerRole` |
 | breaker | `POST /api/breaker/engage`, `/api/breaker/release` | `requireOwnerRole` |
 
