@@ -1,0 +1,1 @@
+- Stop contributor automerge passes cleanly when a client hand-over or shutdown cancels an in-flight sweep, without filing a spurious failure report.
