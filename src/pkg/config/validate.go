@@ -237,6 +237,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Review.ValidatePendingFixTTL(); err != nil {
 		return err
 	}
+	if err := c.Governor.validateReviewerBackend(); err != nil {
+		return err
+	}
 	if err := c.validateReviewPerspectiveModels(); err != nil {
 		return err
 	}

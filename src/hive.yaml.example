@@ -796,6 +796,12 @@ governor:
     # on_divergence: pause               # pause | alert
     # exempt_agents: [outreach]
 
+  # How the one-shot reviewer turns (Let hive decide's model step, grounded
+  # chat answers) reach a model: auto (the endpoint above when one resolves,
+  # else the Claude CLI on the hive's Claude login, run with every tool off),
+  # http (endpoint only) or claude-cli (always the CLI).
+  # reviewer_backend: auto
+
   # LiteLLM inference backend (optional) — route agents through an
   # OpenAI-compatible LiteLLM proxy. Agents using backend "litellm" launch
   # the claude CLI in bare mode and reach the endpoint through the hive's
