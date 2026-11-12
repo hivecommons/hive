@@ -213,6 +213,7 @@ Voice recordings and dictations waiting for you to file them as an RFC, send to 
 - The sidebar count and the summary count items with no destination yet and not marked "Knowledge only".
 - Each item shows one pill per destination it was sent to: queued, running, filed (with a link) or failed.
 - Auto-routing rules run once per new item after a sync; the first matching rule wins.
+- The default RFC repository, dibs URL and rules can also be edited under Settings → Inbox.
 
 **What it is good for.** Record an idea on your recorder, then turn it into an RFC with child issues (→ RFC), a dibs idea (→ dibs), or just keep it searchable (Knowledge only) without leaving the dashboard. See [Inbox and voice sources](../inbox-voice-sources.md).
 
