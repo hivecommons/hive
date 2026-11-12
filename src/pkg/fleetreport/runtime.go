@@ -79,6 +79,7 @@ const (
 	ClassGitHubAppRepoNotCovered    = "github_app_repo_not_covered"
 	ClassHubHeartbeatUnprovisioned  = "hub_heartbeat_rejected_unprovisioned"
 	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
+	ClassProxyPlainForwardFailed    = "proxy_plain_forward_failed"
 	ClassProxyPlainForwardRefused   = "proxy_plain_forward_refused"
 	ClassInferenceUpstreamError     = "inference_upstream_error"
 	ClassInferenceCallerUnknown     = "inference_caller_unidentified"
@@ -201,6 +202,7 @@ var Classes = map[string]ClassSpec{
 	ClassHubHeartbeatUnprovisioned:  {Component: "agent-runtime", Severity: "medium", MinCount: 1, IdleClear: 3 * time.Hour, LogFed: true, Keywords: []string{"hub heartbeat rejected: hive id is not provisioned"}},
 	ClassGitHubAppRepoNotCovered:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
 	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed", "copilot sniff: upstream dial failed"}},
+	ClassProxyPlainForwardFailed:    {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward failed"}},
 	ClassProxyPlainForwardRefused:   {Component: "github-proxy", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward refused"}},
 	ClassInferenceCallerUnknown:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference request from unidentified caller refused"}},
 	ClassInferenceNoRoute:           {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference no route"}},
