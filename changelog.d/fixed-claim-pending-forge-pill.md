@@ -1,1 +1,0 @@
-- Hub fleet view: a placeholder assigned with an explicit forge now shows that forge (e.g. github.com) in the Location pill while the claim is pending, instead of the cluster default the spoke still heartbeats from its pre-claim config (github.ibm.com on vllm-d).
