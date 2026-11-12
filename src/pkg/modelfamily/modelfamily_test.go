@@ -57,3 +57,37 @@ func TestSameFamily(t *testing.T) {
 		t.Fatalf("unknown author: got same=%v known=%v", same, known)
 	}
 }
+
+func TestResolveFoldsRuntimeSpellings(t *testing.T) {
+	cases := []struct {
+		in, provider string
+		want         Resolved
+	}{
+		{"claude-sonnet-5-5", "anthropic", Resolved{Canonical: "claude-sonnet-5.5", Vendor: "anthropic"}},
+		{"claude-sonnet-5.5", "anthropic", Resolved{Canonical: "claude-sonnet-5.5", Vendor: "anthropic"}},
+		{"openai-codex/gpt-6.1-sol", "openai-codex", Resolved{Canonical: "gpt-6.1-sol", Vendor: "openai"}},
+		{"gpt-6.1-sol", "openai", Resolved{Canonical: "gpt-6.1-sol", Vendor: "openai"}},
+		{"auto", "unknown", Resolved{Canonical: Auto, Vendor: Auto}},
+		{"default", "", Resolved{Canonical: Auto, Vendor: Auto}},
+		{"claude-opus-4-6", "", Resolved{Canonical: "claude-opus-4.6", Vendor: "anthropic"}},
+		{"claude-opus-4.6", "", Resolved{Canonical: "claude-opus-4.6", Vendor: "anthropic"}},
+		{"gemini-3.8-flash-low", "google", Resolved{Canonical: "gemini-3.8-flash", Vendor: "google", Effort: "low"}},
+		{"anthropic/claude-sonnet-5:max", "anthropic", Resolved{Canonical: "claude-sonnet-5", Vendor: "anthropic", Effort: "max"}},
+		{"openai-codex/gpt-5.6-sol:high", "openai-codex", Resolved{Canonical: "gpt-5.6-sol", Vendor: "openai", Effort: "high"}},
+		{"aws/claude-haiku-4-5", "aws", Resolved{Canonical: "claude-haiku-4.5", Vendor: "anthropic"}},
+		{"github-copilot/gemini-3.8-flash", "github-copilot", Resolved{Canonical: "gemini-3.8-flash", Vendor: "google"}},
+		{"rits/zai-org/glm-5-3", "rits", Resolved{Canonical: "glm-5.3", Vendor: "z-ai"}},
+		{"lemonade/ornith-1.5-35b-a3b-gguf-q6_k", "lemonade", Resolved{Canonical: "ornith-1.5-35b-a3b-gguf-q6-k", Vendor: "lemonade"}},
+		{"pi-claude-code-provider/sonnet", "pi-claude-code-provider", Resolved{Canonical: "claude-sonnet", Vendor: "anthropic"}},
+		{"GPT-5.6 Terra", "openai", Resolved{Canonical: "gpt-5.6-terra", Vendor: "openai"}},
+		{"claude-sonnet-4-5-20250929", "", Resolved{Canonical: "claude-sonnet-4.5", Vendor: "anthropic"}},
+		{"kimi-k3", "moonshot", Resolved{Canonical: "kimi-k3", Vendor: "moonshot"}},
+		{"unknown", "unknown", Resolved{Canonical: Unknown, Vendor: Unknown}},
+		{"", "", Resolved{Canonical: Unknown, Vendor: Unknown}},
+	}
+	for _, c := range cases {
+		if got := Resolve(c.in, c.provider); got != c.want {
+			t.Errorf("Resolve(%q,%q)=%+v want %+v", c.in, c.provider, got, c.want)
+		}
+	}
+}
