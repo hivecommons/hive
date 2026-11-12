@@ -1,0 +1,1 @@
+- Wispr Flow facts include recording timestamps and a transcript section for voice Inbox ingestion.
