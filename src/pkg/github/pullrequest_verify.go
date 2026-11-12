@@ -2,11 +2,14 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 // PRRef identifies a pull request parsed out of a GitHub PR URL.
@@ -103,6 +106,13 @@ type PRVerification struct {
 // short cooldown / no trust credit rather than crashing or stranding the
 // contributor. A nil client (hive without GitHub credentials) is treated the
 // same way — it cannot verify, so it must not grant trust.
+//
+// One failure is retried through another door. When the REST read is refused
+// because the hive's PRIMARY (hourly) REST budget is spent, the same pull
+// request is read once through GraphQL, which GitHub meters in a separate
+// bucket, and the same checks run on what it returns (see
+// verifyReportedPRViaGraphQL). If that read fails too, or cannot be mapped to
+// the REST form with certainty, the result is the REST failure unchanged.
 func (c *Client) VerifyReportedPR(ctx context.Context, expectedRepo, prURL, expectedAuthor string) PRVerification {
 	if c == nil || c.client == nil {
 		return PRVerification{Reason: "no github client configured", Err: ErrNoGitHubClient}
@@ -117,6 +127,15 @@ func (c *Client) VerifyReportedPR(ctx context.Context, expectedRepo, prURL, expe
 
 	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:pullrequest_verify"), ref.Owner, ref.Repo, ref.Number)
 	if err != nil {
+		if prVerifyPrimaryRateLimited(err) {
+			// The REST budget for the hour is spent, so the PR itself was
+			// never looked at. GraphQL is a separate bucket: ask there once.
+			// Anything short of a settled lookup falls through to the REST
+			// failure below.
+			if v, ok := c.verifyReportedPRViaGraphQL(ctx, ref, expectedRepo, expectedAuthor, err); ok {
+				return v
+			}
+		}
 		// Transient/permission/404 — fail CLOSED on trust, but surface Err so the
 		// caller logs it and treats the completion as unverified rather than
 		// aborting. We do NOT distinguish 404 here: a PR the App cannot see is,
@@ -132,18 +151,185 @@ func (c *Client) VerifyReportedPR(ctx context.Context, expectedRepo, prURL, expe
 	// Merged/Title are recorded even on the negative paths below: they describe
 	// the PR that was looked up, not the verdict.
 	v := PRVerification{Author: author, BaseRepo: baseRepo, Merged: pr.GetMerged(), State: pr.GetState(), MergedAt: pr.GetMergedAt().Time, Title: pr.GetTitle()}
+	return prVerifyAssignedAndAuthor(v, expectedRepo, expectedAuthor)
+}
 
-	if !prBaseRepoMatches(baseRepo, expectedRepo) {
-		v.Reason = fmt.Sprintf("PR base repo %q does not match assigned repo %q", baseRepo, expectedRepo)
+// prVerifyAssignedAndAuthor runs checks 2 and 3 of VerifyReportedPR on a pull
+// request that was looked up (v.BaseRepo and v.Author filled in) and returns v
+// with the verdict. It is the one place those checks and their reason texts
+// live, so the REST read and the GraphQL fallback cannot drift apart.
+func prVerifyAssignedAndAuthor(v PRVerification, expectedRepo, expectedAuthor string) PRVerification {
+	if !prBaseRepoMatches(v.BaseRepo, expectedRepo) {
+		v.Reason = fmt.Sprintf("PR base repo %q does not match assigned repo %q", v.BaseRepo, expectedRepo)
 		return v
 	}
-	if expectedAuthor == "" || author == "" || !strings.EqualFold(author, expectedAuthor) {
-		v.Reason = fmt.Sprintf("PR author %q does not match contributor %q", author, expectedAuthor)
+	if expectedAuthor == "" || v.Author == "" || !strings.EqualFold(v.Author, expectedAuthor) {
+		v.Reason = fmt.Sprintf("PR author %q does not match contributor %q", v.Author, expectedAuthor)
 		return v
 	}
 
 	v.Verified = true
 	return v
+}
+
+// prVerifyPrimaryRateLimited reports whether a failed REST read was refused
+// for the PRIMARY (hourly) rate limit: go-github's *RateLimitError, which it
+// returns both when GitHub answers 403 with X-RateLimit-Remaining: 0 and when
+// the library refuses locally until the recorded reset ("not making remote
+// request"). That is the only failure the GraphQL fallback answers.
+//
+// A secondary (abuse) limit is excluded on purpose: there GitHub is asking the
+// hive to slow down, and another request is the wrong reply. go-github types a
+// 403 as *RateLimitError whenever X-RateLimit-Remaining is 0, BEFORE it looks
+// for the secondary-limit markers, so a secondary refusal that also reports an
+// empty budget arrives as *RateLimitError too. The two markers the pacer uses
+// to tell them apart (slowstart.go: a Retry-After header, or the "secondary
+// rate limit" phrase) are therefore checked here as well.
+func prVerifyPrimaryRateLimited(err error) bool {
+	var abuse *gh.AbuseRateLimitError
+	if errors.As(err, &abuse) {
+		return false
+	}
+	var rl *gh.RateLimitError
+	if !errors.As(err, &rl) || rl == nil {
+		return false
+	}
+	if rl.Response != nil && strings.TrimSpace(rl.Response.Header.Get("Retry-After")) != "" {
+		return false
+	}
+	return !strings.Contains(strings.ToLower(rl.Message), "secondary rate limit")
+}
+
+// prVerifyGraphQLFallbackTimeout bounds the GraphQL fallback read. The
+// completion handler awaits VerifyReportedPR on the contributor's message
+// loop, and while the rate-limit pacer is cautious a request may wait for a
+// slot; a deadline makes the pacer refuse at once when the slot is further
+// away than this instead of queueing behind it.
+const prVerifyGraphQLFallbackTimeout = 10 * time.Second
+
+// prVerifyGraphQLQuery reads the fields VerifyReportedPR takes from the REST
+// pull request. Owner, name and number travel as variables, never in the text.
+const prVerifyGraphQLQuery = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      state
+      merged
+      mergedAt
+      title
+      author { __typename login }
+      baseRepository { nameWithOwner }
+    }
+  }
+}`
+
+// prVerifyGraphQLResponse is the data object prVerifyGraphQLQuery returns.
+// Every level is a pointer because GraphQL answers null for a repository or
+// pull request it cannot resolve and for a deleted author.
+type prVerifyGraphQLResponse struct {
+	Repository *struct {
+		PullRequest *struct {
+			State    string     `json:"state"`
+			Merged   bool       `json:"merged"`
+			MergedAt *time.Time `json:"mergedAt"`
+			Title    string     `json:"title"`
+			Author   *struct {
+				TypeName string `json:"__typename"`
+				Login    string `json:"login"`
+			} `json:"author"`
+			BaseRepository *struct {
+				NameWithOwner string `json:"nameWithOwner"`
+			} `json:"baseRepository"`
+		} `json:"pullRequest"`
+	} `json:"repository"`
+}
+
+// prVerificationFromGraphQL maps a GraphQL pull request onto the fields the
+// REST read fills, in the REST form, or returns an error when it cannot do so
+// with certainty:
+//
+//   - State: GraphQL says OPEN, CLOSED or MERGED; REST says "open" or
+//     "closed", and a merged pull request is "closed" with Merged true.
+//   - BaseRepo: baseRepository.nameWithOwner is REST's base.repo.full_name.
+//   - Author: only a User author is accepted. For a Bot, GraphQL returns the
+//     login without the "[bot]" suffix REST carries, and nothing guarantees
+//     that adding it back gives the REST login for every bot; the other actor
+//     types (Mannequin, Organization, EnterpriseUserAccount) and a deleted
+//     author (null) are not mapped either. Those pull requests stay unverified
+//     through the fallback, exactly as they were before it existed.
+func prVerificationFromGraphQL(out prVerifyGraphQLResponse) (PRVerification, error) {
+	if out.Repository == nil || out.Repository.PullRequest == nil {
+		return PRVerification{}, errors.New("graphql returned no pull request")
+	}
+	pr := out.Repository.PullRequest
+	if pr.Author == nil {
+		return PRVerification{}, errors.New("graphql returned no author for the pull request")
+	}
+	if pr.Author.TypeName != "User" {
+		return PRVerification{}, fmt.Errorf("pull request author is a %q account; its REST login cannot be derived with certainty", pr.Author.TypeName)
+	}
+	v := PRVerification{Author: pr.Author.Login, Merged: pr.Merged, Title: pr.Title}
+	switch pr.State {
+	case "OPEN":
+		v.State = "open"
+	case "CLOSED", "MERGED":
+		v.State = "closed"
+	default:
+		return PRVerification{}, fmt.Errorf("unrecognized pull request state %q", pr.State)
+	}
+	if pr.BaseRepository != nil {
+		v.BaseRepo = pr.BaseRepository.NameWithOwner
+	}
+	if pr.MergedAt != nil {
+		v.MergedAt = *pr.MergedAt
+	}
+	return v, nil
+}
+
+// verifyReportedPRViaGraphQL is VerifyReportedPR's fallback for a REST read
+// refused by the primary rate limit (restErr). It reads the same pull request
+// once through GraphQL and runs the same base-repo and author checks. ok is
+// false when the read failed, returned no pull request, or could not be mapped
+// to the REST form; the caller then returns the REST failure it already has,
+// so nothing downstream sees a new kind of result. The fallback's own error is
+// only logged.
+//
+// The request carries the same caller tag as the REST read, the convention for
+// a component that uses both APIs (pr_contributor_link.go), so API-usage
+// accounting lists it under hive:pullrequest_verify on endpoint /graphql.
+//
+// It helps only while the GraphQL bucket has room. On a host whose GraphQL
+// path is not exactly "/graphql" (graphQLEndpoint maps a ".../api/v3" REST
+// base to "/api/graphql"), go-github files the request under the core
+// category, so its local refusal covers this request too and the result is
+// the REST failure, as before.
+func (c *Client) verifyReportedPRViaGraphQL(ctx context.Context, ref PRRef, expectedRepo, expectedAuthor string, restErr error) (PRVerification, bool) {
+	pr := ref.FullName() + "#" + strconv.Itoa(ref.Number)
+	fctx, cancel := context.WithTimeout(WithRESTCaller(ctx, "hive:pullrequest_verify"), prVerifyGraphQLFallbackTimeout)
+	defer cancel()
+
+	var out prVerifyGraphQLResponse
+	vars := map[string]any{"owner": ref.Owner, "name": ref.Repo, "number": ref.Number}
+	err := c.graphQL(fctx, prVerifyGraphQLQuery, vars, &out)
+	var v PRVerification
+	if err == nil {
+		v, err = prVerificationFromGraphQL(out)
+	}
+	if err != nil {
+		if c.logger != nil {
+			// "error" is the REST rate-limit refusal that started this, so the
+			// line is classed with the rest of the rate-limit episode.
+			c.logger.Warn("PR verification: REST read was rate limited and the GraphQL fallback did not settle it; result is the REST failure",
+				"pr", pr, "error", restErr.Error(), "fallback_error", err.Error())
+		}
+		return PRVerification{}, false
+	}
+
+	v = prVerifyAssignedAndAuthor(v, expectedRepo, expectedAuthor)
+	if c.logger != nil {
+		c.logger.Info("PR verification: REST read was rate limited; pull request read through GraphQL instead",
+			"pr", pr, "verified", v.Verified, "reason", v.Reason, "author", v.Author, "base_repo", v.BaseRepo, "state", v.State, "merged", v.Merged)
+	}
+	return v, true
 }
 
 // prBaseRepoMatches reports whether a PR's base repo ("owner/repo", from the API)
