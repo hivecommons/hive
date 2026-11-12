@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -393,6 +394,47 @@ func TestSignedReconcile_UnchangedHeadIsNotRelisted(t *testing.T) {
 	}
 	if got := m.countExact(openPRListCall); got != 3 {
 		t.Errorf("each pass should cost one open-PR list, calls:\n%s", strings.Join(m.calls, "\n"))
+	}
+}
+
+// Unsupported file modes are a deliberate safety refusal, not an API outage.
+// Keep the branch intact, explain how to unblock it, and settle the head.
+func TestSignedReconcile_UnsupportedModeSettlesWithActionableNote(t *testing.T) {
+	for _, mode := range []string{"100755", "120000", "160000"} {
+		t.Run(mode, func(t *testing.T) {
+			m, c := reconcileFixture(t, true)
+			m.treeMode["tests/new_test.py"] = mode
+			m.prCommits = []map[string]any{prCommitJSON(m.headSHA, false, "", "quality@hive.kubestellar.io")}
+			var logs strings.Builder
+			c.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+			c.reconcileSignedCommits(context.Background())
+			c.reconcileSignedCommits(context.Background())
+
+			if m.refPatch != nil || m.graphql != nil || m.callIndex("POST /repos/o/r/git/refs") >= 0 {
+				t.Fatalf("unsupported mode must leave the branch untouched: %v", m.calls)
+			}
+			if m.countCalls(prCommitsCall) != 1 {
+				t.Errorf("unchanged unsupported head must be settled: %v", m.calls)
+			}
+			if len(m.posted) != 1 || !strings.Contains(m.posted[0], mode) ||
+				!strings.Contains(m.posted[0], "their own verified signature") ||
+				strings.Contains(m.posted[0], "drop your own commit") {
+				t.Fatalf("expected one actionable mode-specific comment, got %q", m.posted)
+			}
+			if strings.Contains(logs.String(), "could not re-author the unsigned tail") {
+				t.Errorf("expected skip must not be reported as an API failure: %s", logs.String())
+			}
+
+			newHead := "dddd000000000000000000000000000000000030"
+			m.headSHA = newHead
+			m.openPRs = []map[string]any{reconcilePR(77, reconcileBot, newHead)}
+			m.prCommits = []map[string]any{prCommitJSON(newHead, false, "", "quality@hive.kubestellar.io")}
+			c.reconcileSignedCommits(context.Background())
+			if m.countCalls(prCommitsCall) != 2 || len(m.posted) != 1 {
+				t.Errorf("new head must be retried without another comment: calls=%v posted=%q", m.calls, m.posted)
+			}
+		})
 	}
 }
 
