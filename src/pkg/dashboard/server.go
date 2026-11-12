@@ -3811,6 +3811,14 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 					ac["status"] = "warn"
 					ac["detail"] = "refused kick: " + proc.KickRefusalReason
 				}
+				if detail := agentDeliveryFailure(proc, s.deps.Config); detail != "" {
+					ac["status"] = "fail"
+					ac["detail"] = detail
+					failCount++
+					if overall == "ok" {
+						overall = "degraded"
+					}
+				}
 			} else if agentDisabledInConfig(s.deps.Config, name, proc) {
 				// Switched off in config, so nothing ever starts it and it has
 				// no session — the same DELIBERATE non-running state the paused
@@ -5192,6 +5200,11 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 				providerAuthNames = append(providerAuthNames, name)
 			}
 			if proc.State == crux.StateRunning {
+				if detail := agentDeliveryFailure(proc, s.deps.Config); detail != "" {
+					down++
+					downNames = append(downNames, fmt.Sprintf("%s (%s)", name, detail))
+					continue
+				}
 				// A RUNNING agent sitting at a login prompt is alive but cannot
 				// work — the pane poller has literally seen "/login" on its
 				// terminal (proc.NeedsLogin). Counting it as running rendered a

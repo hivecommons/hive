@@ -298,6 +298,11 @@ func (l *OpenShellLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 		execOpts.WorkDir = OpenShellWorkspaceMount
 	}
 	out, runErr := client.Exec().Run(ctx, ws, name, spec.Command, execOpts)
+	// The SDK's Run is synchronous; a result is the first evidence that the
+	// gateway accepted the command rather than merely creating the sandbox.
+	if out != nil && spec.OnStarted != nil {
+		spec.OnStarted()
+	}
 	if out != nil {
 		res.Stdout = openshellCap(out.Stdout)
 		res.Stderr = openshellCap(out.Stderr)

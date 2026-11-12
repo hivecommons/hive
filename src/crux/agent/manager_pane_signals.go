@@ -83,6 +83,8 @@ func (a *AgentProcess) snapshot() crux.Process {
 		StartedAt:                 a.StartedAt,
 		LastKick:                  a.LastKick,
 		KicksUndeliverable:        a.KicksUndeliverable,
+		ConsecutiveKickFailures:   a.ConsecutiveKickFailures,
+		LastKickError:             a.LastKickError,
 		BusySince:                 a.BusySince,
 		LastTranscriptActivity:    a.LastTranscriptActivity,
 		CodeWork:                  cloneCodeWork(a.CodeWork),

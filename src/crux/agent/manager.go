@@ -217,6 +217,9 @@ type AgentProcess struct {
 	// delivery or restart and is surfaced so operators can distinguish "due
 	// now" from "due but still busy".
 	KicksUndeliverable int
+	// ConsecutiveKickFailures survives restarts and resets only on delivery.
+	ConsecutiveKickFailures int
+	LastKickError           string
 	// BusySince is the first undeliverable-kick time in the current busy run.
 	BusySince time.Time
 	// LastTranscriptActivity is the newest events.jsonl mtime seen under this

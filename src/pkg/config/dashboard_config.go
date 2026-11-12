@@ -19,6 +19,10 @@ type DashboardConfig struct {
 	Port               int    `yaml:"port"`
 	AuthToken          string `yaml:"auth_token"`
 	AgentPollIntervalS int    `yaml:"agent_poll_interval_s"`
+	// KickFailureThreshold is the number of consecutive failed kick deliveries
+	// that makes agent health fail. Non-positive values use
+	// defaultKickFailureThreshold; read it via KickFailureThresholdOrDefault.
+	KickFailureThreshold int `yaml:"kick_failure_threshold,omitempty" json:"kick_failure_threshold,omitempty"`
 	// Matrix is the default-off Code activity source configuration.
 	// The dashboard.matrix name is deprecated but retained for compatibility.
 	Matrix DashboardMatrixConfig `yaml:"matrix,omitempty" json:"matrix,omitempty"`
@@ -474,6 +478,18 @@ type DashboardStageTrackerConfig struct {
 	// ceiling, not a delay. 0 means the default (8); values under 3 read
 	// as 3.
 	MergedHoldS int `yaml:"merged_hold_s,omitempty" json:"merged_hold_s,omitempty"`
+}
+
+// defaultKickFailureThreshold is the default dashboard.kick_failure_threshold.
+const defaultKickFailureThreshold = 3
+
+// KickFailureThresholdOrDefault is the effective
+// dashboard.kick_failure_threshold; non-positive values read as the default.
+func (c *Config) KickFailureThresholdOrDefault() int {
+	if c != nil && c.Dashboard.KickFailureThreshold > 0 {
+		return c.Dashboard.KickFailureThreshold
+	}
+	return defaultKickFailureThreshold
 }
 
 // defaultStageTrackerClosedSweepInterval is the default
