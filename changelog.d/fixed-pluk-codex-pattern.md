@@ -1,0 +1,1 @@
+- Hive no longer logs the "no pluk pattern set for cli=…" warning on every agent attach; it is logged once per backend per process (e.g. codex), so it no longer trips the repeated-error self-report.

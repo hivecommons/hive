@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // plukRunDir is where pluk's run state and per-session logs live.
@@ -140,6 +141,15 @@ var plukPatternsDir = "/opt/hive/pluk-patterns"
 // hivePlukPatternBackends lists backends whose pattern file is shipped in
 // plukPatternsDir and must be passed to pluk via --patterns-dir.
 var hivePlukPatternBackends = map[string]struct{}{"omp": {}}
+
+var plukNoPatternsWarned sync.Map
+
+// warnNoPlukPatternsOnce returns true only the first time it is called for a
+// backend, so a pattern-less backend does not emit a WARN on every agent attach.
+func warnNoPlukPatternsOnce(backend string) bool {
+	_, loaded := plukNoPatternsWarned.LoadOrStore(backend, struct{}{})
+	return !loaded
+}
 
 // plukHasPatterns reports whether pluk will classify events for backend: either
 // Hive ships a pattern file for it, or the installed pluk package bundles one.
