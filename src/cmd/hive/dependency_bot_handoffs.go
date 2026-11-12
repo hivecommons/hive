@@ -55,6 +55,9 @@ type depBotObservation struct {
 	HeadSHA string    `json:"head_sha"`
 	Reason  string    `json:"reason,omitempty"`
 	Since   time.Time `json:"since"`
+	// RerunOwedSince is when the sweep first saw this head's transient
+	// re-run owed (depBotTransientRerunOwedSince); zero until then.
+	RerunOwedSince time.Time `json:"rerun_owed_since,omitzero"`
 }
 
 // depBotHold is the latest terminal required-check hold the automerge sweep
@@ -295,6 +298,23 @@ func (s *depBotConflictStore) observe(key, headSHA, reason string, now time.Time
 	s.observed[key] = &depBotObservation{HeadSHA: headSHA, Reason: reason, Since: now}
 	s.saveObservedLocked()
 	return now
+}
+
+// rerunOwedSince returns when this head's transient re-run was first seen
+// owed, stamping now on the first sighting. It rides on the observation
+// observe just recorded for the head, so a new head starts a fresh clock.
+func (s *depBotConflictStore) rerunOwedSince(key, headSHA string, now time.Time) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.observed[key]
+	if o == nil || o.HeadSHA != headSHA {
+		return now
+	}
+	if o.RerunOwedSince.IsZero() {
+		o.RerunOwedSince = now
+		s.saveObservedLocked()
+	}
+	return o.RerunOwedSince
 }
 
 // pruneObservations drops grace clocks for PRs that no longer show a waiting

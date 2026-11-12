@@ -134,9 +134,13 @@ func depBotTransientRerunFor(ledger dbrTransientLedger, repo string, pr github.P
 }
 
 // holdsHandoff reports that the red-CI hand-off must wait: the re-run is
-// still owed and the head has not been red past the backstop.
-func (r depBotTransientRerun) holdsHandoff(red time.Duration) bool {
-	return r.State == depBotRerunOwed && red < depBotRedCIGrace+depBotTransientRerunBackstop
+// still owed, and either the head has not been red past the backstop or the
+// re-run has been owed for less than depBotTransientRerunBackstop. The second
+// clause covers a triage that lands late: without it a head red for longer
+// than the backstop was handed off (needs-human) in the same pass that first
+// saw the re-run owed, and the label then kept the re-run from ever running.
+func (r depBotTransientRerun) holdsHandoff(red, owed time.Duration) bool {
+	return r.State == depBotRerunOwed && (red < depBotRedCIGrace+depBotTransientRerunBackstop || owed < depBotTransientRerunBackstop)
 }
 
 // depBotTransientRerunRunning reports that the hive re-ran this head's

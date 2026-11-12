@@ -400,7 +400,11 @@ func sweepDependencyBotConflicts(
 			// not allowed.
 			rerun := depBotTransientRerunFor(dbrLedger(), repo, pr)
 			red := now().Sub(store.observe(key, pr.HeadSHA, reason, now()))
-			if red < depBotRedCIGrace || holdHandoff || rerun.holdsHandoff(red) {
+			var owed time.Duration
+			if rerun.State == depBotRerunOwed {
+				owed = now().Sub(store.rerunOwedSince(key, pr.HeadSHA, now()))
+			}
+			if red < depBotRedCIGrace || holdHandoff || rerun.holdsHandoff(red, owed) {
 				continue
 			}
 			comment = dependencyBotRedCIComment(pr, rerun)

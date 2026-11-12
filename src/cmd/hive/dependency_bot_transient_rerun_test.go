@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -240,5 +241,52 @@ func TestDependencyBotRedCICommentAfterRerun(t *testing.T) {
 				t.Errorf("%s: comment = %q, must not contain %q", tc.name, c, w)
 			}
 		}
+	}
+}
+
+// A re-run owed on a head that has been red longer than the backstop still
+// holds the hand-off until it has been owed for the backstop. Before, a
+// triage that landed after a held hand-off (a pending rebase request) was
+// handed off with needs-human in the same pass, and the label then kept the
+// re-run from ever running.
+func TestDependencyBotTransientRerunHoldsAfterLateTriage(t *testing.T) {
+	owed := depBotTransientRerun{State: depBotRerunOwed}
+	limit := depBotRedCIGrace + depBotTransientRerunBackstop
+	cases := []struct {
+		name      string
+		rerun     depBotTransientRerun
+		red, owed time.Duration
+		want      bool
+	}{
+		{"owed, inside the red backstop", owed, limit - time.Minute, 0, true},
+		{"owed, red past the backstop, just triaged", owed, limit + time.Hour, 0, true},
+		{"owed, red past the backstop, owed past the backstop", owed, limit + time.Hour, depBotTransientRerunBackstop, false},
+		{"done", depBotTransientRerun{State: depBotRerunDone}, time.Minute, 0, false},
+		{"not triaged", depBotTransientRerun{}, time.Minute, 0, false},
+	}
+	for _, tc := range cases {
+		if got := tc.rerun.holdsHandoff(tc.red, tc.owed); got != tc.want {
+			t.Errorf("%s: holdsHandoff(%s, %s) = %v, want %v", tc.name, tc.red, tc.owed, got, tc.want)
+		}
+	}
+}
+
+// The owed clock starts on the first sighting, survives later passes on the
+// same head, and starts again on a new head.
+func TestDependencyBotRerunOwedSince(t *testing.T) {
+	s := loadDepBotConflictStore(filepath.Join(t.TempDir(), "dependency-bot-conflicts.json"))
+	t0 := depBotT0
+	s.observe("acme/widgets#7", "sha-a", depBotHandoffRedCI, t0)
+	t1 := t0.Add(9 * time.Hour)
+	if got := s.rerunOwedSince("acme/widgets#7", "sha-a", t1); !got.Equal(t1) {
+		t.Fatalf("first sighting = %v, want %v", got, t1)
+	}
+	if got := s.rerunOwedSince("acme/widgets#7", "sha-a", t1.Add(time.Hour)); !got.Equal(t1) {
+		t.Fatalf("later pass = %v, want the first sighting %v", got, t1)
+	}
+	t2 := t1.Add(2 * time.Hour)
+	s.observe("acme/widgets#7", "sha-b", depBotHandoffRedCI, t2)
+	if got := s.rerunOwedSince("acme/widgets#7", "sha-b", t2.Add(time.Minute)); !got.Equal(t2.Add(time.Minute)) {
+		t.Fatalf("new head = %v, want a fresh clock", got)
 	}
 }
