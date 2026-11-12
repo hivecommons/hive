@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.22.3)
+
+### Fixed
+
+- Deep health and hub heartbeats now report missing agent tmux sessions and repeated kick delivery failures instead of relying only on the manager's running state; `dashboard.kick_failure_threshold` tunes the failure threshold (default 3).
+- The automerge sweep no longer posts `@dependabot rebase` as the App on a Dependabot PR whose last commit an automation (`github-actions[bot]`, a `GITHUB_TOKEN` autofix) pushed and whose required check therefore never ran. Dependabot refuses every comment command a GitHub App posts ("only users with push access can use that command", [dependabot/dependabot-core#9147](https://github.com/dependabot/dependabot-core/issues/9147)), so the command did nothing and the hand-off that followed said the check had not run "even after a rebase was requested". The sweep now posts nothing to Dependabot and reports the head as `required-check-never-ran-autofix:<check>`, and the dependency-bot hand-off says in plain words that an automation pushed the last commit, that Dependabot does not accept commands from apps, and that someone with push access should comment `@dependabot recreate`, push to the branch, or close and reopen the PR. `required-check-never-ran:<check>` now means only a `github-actions[bot]` PR whose one bot takeover did not replace it, and its hand-off says that; an older `required-check-never-ran:` hold on a Dependabot PR gets the new autofix wording. This completes [#17919](https://github.com/hivecommons/hive/pull/17919), which removed the stranded-branch `@dependabot recreate` the hive posted as the App; the hive now posts no Dependabot command anywhere, and the unused `PostBotCommand` helper is gone.
+- Hosted hives accept GitHub webhooks relayed by the hub: the hub signs each relay with a per-hive relay key delivered over the heartbeat (never the App webhook secret), and the spoke verifies it with timestamp and delivery-ID replay protection, turning on event-driven review dispatch for hosted hives.
+
 ## 2026-11-12 (v6.22.2)
 
 ### Fixed
