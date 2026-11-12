@@ -56,7 +56,8 @@ type SubstrateLogReader interface {
 	// not run a substrate kick since hive started.
 	LatestActor(ctx context.Context, launchName string) (info SubstrateActorInfo, found bool, err error)
 	// StreamRun writes the kick's output to w, calling onState for every
-	// state the actor passes through after the first, polling every poll
+	// state the actor reaches after the call (the caller has already shown
+	// the one LatestActor reported), polling every poll
 	// until the launcher is done with the actor or ctx ends, and returns
 	// the last state it observed.
 	StreamRun(ctx context.Context, actorName string, poll time.Duration, w io.Writer, onState func(SubstrateActorInfo)) (SubstrateActorInfo, error)
@@ -177,7 +178,11 @@ func (s *SubstrateKicks) StreamRun(ctx context.Context, actorName string, poll t
 	}
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
-	seenStates, seenOut := 1, 0
+	// The caller has just rendered LatestActor's snapshot, the newest one:
+	// replaying older history would show the actor going backwards.
+	s.mu.Lock()
+	seenStates, seenOut := len(k.history), 0
+	s.mu.Unlock()
 	for {
 		s.mu.Lock()
 		states := append([]SubstrateActorInfo(nil), k.history[seenStates:]...)

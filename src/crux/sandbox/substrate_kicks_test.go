@@ -2,8 +2,10 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,17 +88,45 @@ func TestSubstrateLauncherRecordsSuspendAndFailure(t *testing.T) {
 	}
 }
 
+// substrateStreamWriter records what StreamRun writes and closes started on
+// the first write, so a test knows the stream has begun polling before it
+// records further transitions.
+type substrateStreamWriter struct {
+	strings.Builder
+	started chan struct{}
+	once    sync.Once
+}
+
+func newSubstrateStreamWriter() *substrateStreamWriter {
+	return &substrateStreamWriter{started: make(chan struct{})}
+}
+
+func (w *substrateStreamWriter) Write(p []byte) (int, error) {
+	defer w.once.Do(func() { close(w.started) })
+	return w.Builder.Write(p)
+}
+
+func substrateStateNames(infos []SubstrateActorInfo) string {
+	var states []string
+	for _, i := range infos {
+		states = append(states, i.State)
+	}
+	return strings.Join(states, ",")
+}
+
 func TestSubstrateKicksStreamRunFollowsStatesAndOutput(t *testing.T) {
 	kicks := &SubstrateKicks{}
 	k := kicks.begin("deps-sandbox", SubstrateActorInfo{Name: "a1", State: SubstrateStateCreated})
 	kicks.update(k, func(i *SubstrateActorInfo) { i.State = SubstrateStateResuming })
+	w := kicks.output(k)
+	_, _ = w.Write([]byte("line 0\n"))
 
 	type event struct{ state, out string }
 	var events []event
-	var buf strings.Builder
+	buf := newSubstrateStreamWriter()
 	done := make(chan SubstrateActorInfo)
 	go func() {
-		final, err := kicks.StreamRun(context.Background(), "a1", time.Millisecond, &buf, func(i SubstrateActorInfo) {
+		final, err := kicks.StreamRun(context.Background(), "a1", time.Millisecond, buf, func(i SubstrateActorInfo) {
 			events = append(events, event{state: i.State, out: buf.String()})
 		})
 		if err != nil {
@@ -104,34 +134,121 @@ func TestSubstrateKicksStreamRunFollowsStatesAndOutput(t *testing.T) {
 		}
 		done <- final
 	}()
+	<-buf.started
 	kicks.observe(k, &substrateapi.Actor{Status: &substrateapi.ActorStatus{
 		State:            substrateapi.ActorState_ACTOR_STATE_RUNNING,
 		WorkerAssignment: &substrateapi.WorkerAssignment{WorkerSpiffeId: "spiffe://x/w"},
 	}})
-	w := kicks.output(k)
 	_, _ = w.Write([]byte("line 1\n"))
 	_, _ = w.Write([]byte("line 2\n"))
 	kicks.update(k, func(i *SubstrateActorInfo) { i.Exited, i.ExitCode = true, 0 })
 	kicks.update(k, func(i *SubstrateActorInfo) { i.State, i.Suspended, i.Done = SubstrateStateSuspended, true, true })
 
 	final := <-done
-	if buf.String() != "line 1\nline 2\n" {
+	if buf.String() != "line 0\nline 1\nline 2\n" {
 		t.Fatalf("streamed = %q", buf.String())
 	}
 	if final.State != SubstrateStateSuspended || !final.Done || final.SpiffeID != "spiffe://x/w" {
 		t.Fatalf("final = %+v", final)
 	}
-	// The first state is the one LatestActor already reported; RESUMING
-	// may have been recorded before the stream started and is replayed.
+	// RESUMING is what LatestActor reported before the stream started, so
+	// only the transitions recorded afterwards are reported.
 	var states []string
 	for _, e := range events {
 		states = append(states, e.state)
 	}
-	if got := strings.Join(states, ","); !strings.Contains(got, "RUNNING") || !strings.HasSuffix(got, "SUSPENDED") {
+	if got := strings.Join(states, ","); got != "RUNNING,RUNNING,SUSPENDED" {
 		t.Fatalf("states = %s", got)
 	}
-	if last := events[len(events)-1]; last.out != "line 1\nline 2\n" {
+	if last := events[len(events)-1]; last.out != "line 0\nline 1\nline 2\n" {
 		t.Fatalf("SUSPENDED must be reported after the output, saw output %q", last.out)
+	}
+}
+
+func TestSubstrateKicksStreamRunMidKickDoesNotReplayOlderStates(t *testing.T) {
+	kicks := &SubstrateKicks{}
+	k := kicks.begin("deps-sandbox", SubstrateActorInfo{Name: "a1", State: SubstrateStateCreated})
+	kicks.update(k, func(i *SubstrateActorInfo) { i.State = SubstrateStateResuming })
+	kicks.update(k, func(i *SubstrateActorInfo) { i.State, i.SpiffeID = SubstrateStateRunning, "spiffe://x/w" })
+	w := kicks.output(k)
+	_, _ = w.Write([]byte("booting\n"))
+
+	// The viewer connects while the kick is already RUNNING.
+	info, found, err := kicks.LatestActor(context.Background(), "deps-sandbox")
+	if err != nil || !found || info.State != SubstrateStateRunning {
+		t.Fatalf("LatestActor = %+v %v %v", info, found, err)
+	}
+	var seen []SubstrateActorInfo
+	buf := newSubstrateStreamWriter()
+	done := make(chan error)
+	go func() {
+		_, err := kicks.StreamRun(context.Background(), info.Name, time.Millisecond, buf, func(i SubstrateActorInfo) {
+			seen = append(seen, i)
+		})
+		done <- err
+	}()
+	<-buf.started
+	kicks.update(k, func(i *SubstrateActorInfo) { i.Exited, i.ExitCode = true, 3 })
+	kicks.update(k, func(i *SubstrateActorInfo) { i.State, i.Done = SubstrateStateDeleting, true })
+	if err := <-done; err != nil {
+		t.Fatalf("StreamRun: %v", err)
+	}
+	for _, st := range seen {
+		if st.State == SubstrateStateCreated || st.State == SubstrateStateResuming {
+			t.Fatalf("a state older than RUNNING was replayed: %s", substrateStateNames(seen))
+		}
+	}
+	if got := substrateStateNames(seen); got != "RUNNING,DELETING" {
+		t.Fatalf("states = %s", got)
+	}
+	if !seen[0].Exited || seen[0].ExitCode != 3 || !seen[1].Done {
+		t.Fatalf("transitions = %+v", seen)
+	}
+	if buf.String() != "booting\n" {
+		t.Fatalf("streamed = %q", buf.String())
+	}
+}
+
+func TestSubstrateKicksStreamRunWriteError(t *testing.T) {
+	kicks := &SubstrateKicks{}
+	k := kicks.begin("deps-sandbox", SubstrateActorInfo{Name: "a1", State: SubstrateStateRunning})
+	_, _ = kicks.output(k).Write([]byte("out"))
+	boom := errors.New("viewer gone")
+	final, err := kicks.StreamRun(context.Background(), "a1", time.Millisecond, failingWriter{err: boom}, nil)
+	if !errors.Is(err, boom) || final.State != SubstrateStateRunning || final.Done {
+		t.Fatalf("StreamRun = %+v %v", final, err)
+	}
+}
+
+func TestSubstrateKicksStreamRunReplacedKick(t *testing.T) {
+	kicks := &SubstrateKicks{}
+	kicks.begin("other-sandbox", SubstrateActorInfo{Name: "b1", State: SubstrateStateRunning})
+	kicks.begin("deps-sandbox", SubstrateActorInfo{Name: "a1", State: SubstrateStateRunning})
+	kicks.begin("deps-sandbox", SubstrateActorInfo{Name: "a2", State: SubstrateStateCreated})
+	final, err := kicks.StreamRun(context.Background(), "a1", time.Millisecond, &strings.Builder{}, func(SubstrateActorInfo) {
+		t.Fatal("a replaced kick has no transitions to report")
+	})
+	if err != nil || !final.Done || final.Name != "a1" {
+		t.Fatalf("replaced kick: %+v %v", final, err)
+	}
+}
+
+func TestSubstrateLauncherDefaultsToProcessKicks(t *testing.T) {
+	if got := (&SubstrateLauncher{}).kickRecord(); got != DefaultSubstrateKicks {
+		t.Fatalf("kickRecord = %p, want DefaultSubstrateKicks", got)
+	}
+	own := &SubstrateKicks{}
+	if got := (&SubstrateLauncher{kicks: own}).kickRecord(); got != own {
+		t.Fatalf("kickRecord = %p, want %p", got, own)
+	}
+}
+
+func TestSubstrateStateName(t *testing.T) {
+	if got := substrateStateName(substrateapi.ActorState_ACTOR_STATE_UNSPECIFIED); got != "" {
+		t.Errorf("UNSPECIFIED = %q", got)
+	}
+	if got := substrateStateName(substrateapi.ActorState_ACTOR_STATE_RUNNING); got != SubstrateStateRunning {
+		t.Errorf("RUNNING = %q", got)
 	}
 }
 
@@ -188,5 +305,27 @@ func TestSubstrateDecodeRunStreamedAndLegacy(t *testing.T) {
 	// A stream cut before the final frame is an error, not exit code 0.
 	if _, err := substrateDecodeRun(strings.NewReader(`{"stdout":"a","partial":true}`), nil); err == nil || !strings.Contains(err.Error(), "decoding run response") {
 		t.Fatalf("truncated: %v", err)
+	}
+}
+
+func TestSubstrateDecodeRunCapsOutput(t *testing.T) {
+	big := strings.Repeat("o", substratebridge.MaxOutput)
+	var stream strings.Builder
+	enc := json.NewEncoder(&stream)
+	for _, frame := range []substratebridge.RunResponse{
+		{Stdout: big, Partial: true},
+		{Stdout: "more", Stderr: "e", Partial: true},
+		{ExitCode: 0},
+	} {
+		if err := enc.Encode(frame); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := substrateDecodeRun(strings.NewReader(stream.String()), nil)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Stdout) != substratebridge.MaxOutput || strings.Contains(out.Stdout, "more") || out.Stderr != "e" {
+		t.Fatalf("stdout %d bytes, stderr %q", len(out.Stdout), out.Stderr)
 	}
 }
