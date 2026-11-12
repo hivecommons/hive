@@ -495,6 +495,12 @@ _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state merged -S review (block
   pr list --repo test/repo --state merged -S review
 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state merged --search=x (blocked: equals search flag)" \
   pr list --repo test/repo --state merged --search=x
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 0 "-" "$ENUM_DENY" "pr list --state open statusCheckRollup with HIVE_BASELINE_CHECK=1 (allowed: baseline helper's sibling lookup)" \
+  pr list --repo test/repo --state open --limit 100 --json number,headRefOid,isCrossRepository,statusCheckRollup
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state open --search with HIVE_BASELINE_CHECK=1 (blocked)" \
+  pr list --repo test/repo --state open --search foo
+_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state open --json statusCheckRollup without HIVE_BASELINE_CHECK (blocked)" \
+  pr list --repo test/repo --state open --json statusCheckRollup
 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state with no value (blocked)" \
   pr list --repo test/repo --state
 _run_test_staff_gate 1 "$ENUM_DENY" "-" "issue list --state merged (blocked: issues are never merged)" \

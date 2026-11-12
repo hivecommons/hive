@@ -592,6 +592,32 @@ _pr_list_merged_only() {
   [[ "$(_lower "$state")" = "merged" ]]
 }
 
+# The one `gh pr list` that bin/hive-baseline-check.sh makes for its sibling-PR
+# lookup (#17835): the kick mandates that helper before any check is retried,
+# and names that lookup as the sanctioned exception to the enumeration ban. The
+# helper marks its call with HIVE_BASELINE_CHECK=1; even then only the narrow
+# projection is let through — open PRs, a --json list naming statusCheckRollup,
+# and no --search, whose qualifiers would widen it into a general work queue.
+_pr_list_baseline_check() {
+  [[ "${HIVE_BASELINE_CHECK:-}" = "1" ]] || return 1
+  [[ "$subcmd" = "pr" && "$action" = "list" ]] || return 1
+  local i a state="" json=""
+  for ((i=0; i<${#args[@]}; i++)); do
+    a="${args[$i]}"
+    case "$a" in
+      --search|--search=*|-S|-S?*) return 1 ;;
+      --state=*) state="${a#--state=}" ;;
+      -s=*) state="${a#-s=}" ;;
+      --state|-s) state="${args[$((i+1))]:-}" ;;
+      -s?*) state="${a#-s}" ;;
+      --json=*) json="${a#--json=}" ;;
+      --json) json="${args[$((i+1))]:-}" ;;
+    esac
+  done
+  [[ "$(_lower "$state")" = "open" ]] || return 1
+  [[ ",${json}," == *,statusCheckRollup,* ]]
+}
+
 # Resolve the authenticated GitHub login. Initialize the cache internally so a
 # caller-controlled environment cannot seed a trusted identity (#3982).
 #
@@ -726,6 +752,8 @@ if [ "$_gh_author_scoped" = true ]; then
     :
   elif _pr_list_merged_only; then
     : # Merged PRs only: history, not a work queue (see _pr_list_merged_only).
+  elif _pr_list_baseline_check; then
+    : # hive-baseline-check.sh's sibling lookup (see _pr_list_baseline_check).
   else
     # Root-caused in a live hive (2026-08-20): agents read this two-line
     # message as "all gh $subcmd commands are blocked" and silently skipped
