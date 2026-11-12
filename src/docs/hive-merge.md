@@ -582,6 +582,19 @@ so the hand-off comment asks someone with push access to comment
 `@dependabot recreate`. Renovate PRs still get the rebase/retry checkbox
 ticked first (write-back kind `bot_rebase_request`).
 
+The same holds for a Dependabot PR whose last commit was pushed by
+`github-actions[bot]` (a `GITHUB_TOKEN` autofix, for example a NOTICE update).
+GitHub does not start workflows for that push, so a required check that only
+such a workflow reports never appears. The self-authored sweep never posts a
+command to Dependabot about it: once the head is older than 30 minutes it
+reports `required-check-never-ran-autofix:<check>`, and the dependency-bot
+hand-off tells a person that an automation pushed the last commit, that
+Dependabot does not accept commands from apps, and that someone with push
+access should comment `@dependabot recreate`, push to the branch, or close and
+reopen the PR. The bot takeover (re-authoring the PR as the App) is only for
+PRs `github-actions[bot]` opened itself; when that one attempt does not
+replace the PR, the hold is `required-check-never-ran:<check>`.
+
 ### Event-driven sweeps on the ForgeState cache
 
 With `forgestate.enabled: true` the three sweep lanes (self-authored,

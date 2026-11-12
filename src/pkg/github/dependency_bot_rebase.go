@@ -3,12 +3,9 @@ package github
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
-
-	"github.com/hivecommons/hive/pkg/effects"
 )
 
 // Rebase requests to a dependency bot that has stopped maintaining its own
@@ -16,9 +13,11 @@ import (
 // dependency bot's branch (DependencyBotBranch); these ask the bot to
 // regenerate it through the bot's own mechanism instead. Callers consult
 // the write-back gate first. Only Renovate is asked: Dependabot refuses
-// comment commands from a GitHub App (dependabot/dependabot-core#9147), so a
-// stranded Dependabot PR goes to a person, whom the hand-off comment asks to
-// post DependabotRecreateCommand.
+// comment commands from a GitHub App (dependabot/dependabot-core#9147), so the
+// hive never posts a Dependabot command anywhere: a stranded Dependabot PR,
+// like an autofix-pushed Dependabot head whose required check never ran, goes
+// to a person, whom the hand-off comment asks to post
+// DependabotRecreateCommand.
 
 // RenovateRebaseCheckMarker is the HTML comment Renovate puts on the
 // rebase/retry checkbox line of every PR description it writes
@@ -118,32 +117,4 @@ func (c *Client) RequestRenovateRebase(ctx context.Context, repo string, number 
 	c.recordWriteAudit(AuditActionDependencyBotRebaseRequested, hiveWriteMeta(), WriteTarget{Repo: owner + "/" + repoName, Number: number},
 		"head", headSHA, "via", "renovate-checkbox")
 	return state, nil
-}
-
-// PostBotCommand posts command, verbatim and alone, as a comment on PR
-// number, at most once per head: the mutation journal keys the operation on
-// (PR, head SHA, command), so the same command on a later head is a new
-// operation rather than a replay of the first. It is the one poster for the
-// commands the hive sends a dependency bot (the automerge sweep's
-// `@dependabot rebase` nudge); a bot parses the comment as a command, so it
-// carries no marker. onPosted, when set, runs once the comment is created.
-// Callers own any write-back gate check.
-func PostBotCommand(ctx context.Context, boundary effects.Boundary, client *gh.Client, owner, repo string, number int, headSHA, command, actor, restCaller string, onPosted func()) error {
-	_, err := effects.Execute(ctx, boundary, effects.Claim{
-		Repo:   owner + "/" + repo,
-		Kind:   effects.KindIssueComment,
-		Target: strconv.Itoa(number),
-		Actor:  actor,
-		Inputs: map[string]string{"head_sha": headSHA, "body": effects.StableDigest(command)},
-	}, func(ctx context.Context) (effects.Result, error) {
-		comment, _, apiErr := client.Issues.CreateComment(WithRESTCaller(ctx, restCaller), owner, repo, number, &gh.IssueComment{Body: gh.Ptr(command)})
-		if apiErr != nil {
-			return effects.Result{}, effects.NotApplied(apiErr)
-		}
-		if onPosted != nil {
-			onPosted()
-		}
-		return effects.Result{Provenance: comment.GetHTMLURL()}, nil
-	})
-	return err
 }

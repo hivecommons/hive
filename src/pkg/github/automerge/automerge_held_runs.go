@@ -17,12 +17,20 @@ package automerge
 //     (notice-autofix.yml with GITHUB_TOKEN) and the missing context comes
 //     from a `pull_request_target`-only workflow (`verify PR contents`). Such
 //     pushes never trigger that workflow, so the context is absent forever
-//     (#11923). Dependabot's own re-push restores normal triggers, so the
-//     sweep asks for one `@dependabot rebase` per head instead of polling.
+//     (#11923). Only a push made without a workflow token (a person's, or
+//     Dependabot's after a person comments `@dependabot recreate`) or a
+//     close/reopen restores it, and Dependabot refuses every comment command
+//     a GitHub App posts (dependabot/dependabot-core#9147), so the sweep
+//     posts nothing: it reports `required-check-never-ran-autofix:<ctx>`
+//     and the dependency-bot sweep hands the PR to a person.
 //  4. The PR itself was opened by `github-actions[bot]` with GITHUB_TOKEN, so
 //     no `pull_request` workflow ever runs for it. The bot cannot be asked to
 //     re-push, so the sweep re-authors the PR as the App once per head
-//     (automerge_bot_takeover.go, #12003).
+//     (automerge_bot_takeover.go, #12003); if that leaves no App PR, the head
+//     reports `required-check-never-ran:<ctx>`. The takeover is limited to
+//     github-actions[bot] PRs (botTakeoverEligible): it closes the bot PR,
+//     and Dependabot treats a closed PR as "skip this version", so case 3
+//     never falls through to it.
 //
 // The App's own PRs and configured trusted bots are the only lanes this file
 // acts for (trySweepSelfAuthoredPR); human-authored lanes are untouched so a
@@ -61,20 +69,25 @@ const (
 	// requiredCheckNeverStartedPrefix: no `pull_request` run exists for a head
 	// older than heldRunNeverStartedGrace; polling cannot make one appear.
 	requiredCheckNeverStartedPrefix = "required-check-never-started:"
-	// requiredCheckNeverRanPrefix: a trusted-bot head pushed by
-	// github-actions[bot] is missing a context no held run will produce; the
-	// sweep nudged the bot to rebase (#11923).
+	// requiredCheckNeverRanPrefix: a github-actions[bot] PR's required check
+	// never ran, and the one bot takeover for this head did not leave an App
+	// PR in its place (automerge_bot_takeover.go, #12003).
 	requiredCheckNeverRanPrefix = "required-check-never-ran:"
+	// requiredCheckNeverRanAutofixPrefix: a trusted-lane Dependabot head
+	// pushed by github-actions[bot] is missing a context no `pull_request`
+	// run will produce (#11923). The sweep cannot fix it (Dependabot refuses
+	// commands from GitHub Apps), so it posts nothing and the PR goes to a
+	// person.
+	requiredCheckNeverRanAutofixPrefix = "required-check-never-ran-autofix:"
 	// requiredCheckSkippedByDesignPrefix logs a required context counted as
 	// satisfied because its workflow concluded `skipped` on a trusted bot's head.
 	requiredCheckSkippedByDesignPrefix = "required-check-skipped-by-design:"
 	workflowRunConclusionSkipped       = "skipped"
 	// githubActionsBotLogin authors commits pushed with a workflow GITHUB_TOKEN.
 	githubActionsBotLogin = "github-actions[bot]"
-	// dependabotLogin is the only trusted bot that understands the rebase nudge.
+	// dependabotLogin authors Dependabot's PRs; only its autofix-pushed heads
+	// get the never-ran-autofix hold.
 	dependabotLogin = "dependabot[bot]"
-	// dependabotRebaseComment asks Dependabot to re-push the branch itself.
-	dependabotRebaseComment = "@dependabot rebase"
 	// workflowRunConclusionActionRequired is GitHub's conclusion for a run
 	// waiting on a person's approval.
 	workflowRunConclusionActionRequired   = "action_required"
@@ -121,7 +134,8 @@ const (
 // for a trusted-lane PR. It returns the original reason when nothing is known,
 // a workflow-approval-required reason when GitHub is waiting for approval and
 // Hive has posted `/ok-to-test`, or a never-started/never-ran reason when
-// polling cannot progress. It never approves a run with the App token.
+// polling cannot progress. It never approves a run with the App token, and it
+// never posts a command to Dependabot, which refuses commands from apps.
 func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA, reason string, headPushedAt time.Time) string {
 	if c == nil || c.gh == nil || !strings.HasPrefix(reason, requiredCheckMissingPrefix) {
 		return reason
@@ -141,12 +155,17 @@ func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, o
 	}
 	held := heldSameRepoWorkflowRuns(runs.WorkflowRuns, owner+"/"+repo)
 	if len(held) == 0 {
-		if c.rebaseNudged(owner, repo, number, headSHA) || c.botTakeoverAttempted(owner, repo, number, headSHA) {
+		if c.botTakeoverAttempted(owner, repo, number, headSHA) {
 			return requiredCheckNeverRanPrefix + missing
 		}
+		if c.autofixDependabotHeadKnown(owner, repo, number, headSHA) {
+			return requiredCheckNeverRanAutofixPrefix + missing
+		}
 		if headOlderThan(c.now, headPushedAt, heldRunNeverStartedGrace) && c.isAutofixPushedDependabotHead(ctx, displayRepo, owner, repo, pr, number, headSHA) {
-			c.nudgeDependabotRebase(ctx, displayRepo, owner, repo, number, headSHA, missing)
-			return requiredCheckNeverRanPrefix + missing
+			c.markAutofixDependabotHead(owner, repo, number, headSHA)
+			c.warn("automerge required check never ran on autofix-pushed Dependabot head; Dependabot refuses commands from apps, so a person must act",
+				"repo", displayRepo, "pr", number, "sha", headSHA, "context", missing)
+			return requiredCheckNeverRanAutofixPrefix + missing
 		}
 		if c.botTakeoverEligible(pr, len(runs.WorkflowRuns), headPushedAt) {
 			return c.takeOverBotPR(ctx, displayRepo, owner, repo, pr, number, headSHA, missing)
@@ -593,9 +612,12 @@ func headOlderThan(now func() time.Time, headPushedAt time.Time, grace time.Dura
 }
 
 // isTerminalRequiredCheckHold reports whether reason is a hold polling cannot
-// cure (held for approval, runs never created, or never-ran after a nudge).
+// cure (held for approval, runs never created, never-ran after a bot
+// takeover, or never-ran on an autofix-pushed Dependabot head).
 func isTerminalRequiredCheckHold(reason string) bool {
-	return strings.HasPrefix(reason, workflowApprovalRequiredPrefix) || strings.HasPrefix(reason, requiredCheckNeverStartedPrefix) || strings.HasPrefix(reason, requiredCheckNeverRanPrefix) || strings.HasPrefix(reason, requiredCheckNeverReportedPrefix)
+	return strings.HasPrefix(reason, workflowApprovalRequiredPrefix) || strings.HasPrefix(reason, requiredCheckNeverStartedPrefix) ||
+		strings.HasPrefix(reason, requiredCheckNeverRanPrefix) || strings.HasPrefix(reason, requiredCheckNeverRanAutofixPrefix) ||
+		strings.HasPrefix(reason, requiredCheckNeverReportedPrefix)
 }
 
 // isAutofixPushedDependabotHead reports whether pr is a trusted-lane
@@ -621,49 +643,31 @@ func (c *Engine) isAutofixPushedDependabotHead(ctx context.Context, displayRepo,
 	return strings.EqualFold(commit.GetCommit().GetAuthor().GetName(), githubActionsBotLogin)
 }
 
-// nudgeDependabotRebase logs one WARN naming the missing context and posts
-// `@dependabot rebase` once per PR head. A failed post is not retried for the
-// same head; the hold reason still surfaces in the sweep log.
-func (c *Engine) nudgeDependabotRebase(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, missing string) {
-	if !c.markRebaseNudged(owner, repo, number, headSHA) {
-		return
-	}
-	c.warn("automerge required check never ran on autofix-pushed Dependabot head; asking Dependabot to rebase",
-		"repo", displayRepo, "pr", number, "sha", headSHA, "context", missing)
-	err := hgithub.PostBotCommand(ctx, c.mutation, c.gh, owner, repo, number, headSHA, dependabotRebaseComment, "automerge", "hive:automerge_sweep", func() {
-		c.noteOwnStageComment(owner, repo, number)
-	})
-	if err != nil {
-		c.warn("automerge failed to post Dependabot rebase nudge", "repo", displayRepo, "pr", number, "sha", headSHA, "error", err)
-	}
+// autofixDependabotHeadKey keys the per-head memo of a positive
+// isAutofixPushedDependabotHead verdict. A commit's author never changes, so
+// later ticks on the same head skip the head-commit lookup and the WARN.
+func autofixDependabotHeadKey(prKey, headSHA string) string {
+	return "autofix-dependabot-head:" + prKey + "@" + strings.ToLower(headSHA)
 }
 
-// rebaseNudged reports whether the nudge was already attempted for this PR
-// head, so later ticks skip the head-commit lookup.
-func (c *Engine) rebaseNudged(owner, repo string, number int, headSHA string) bool {
+// autofixDependabotHeadKnown reports whether this PR head was already found
+// to be an autofix-pushed Dependabot head.
+func (c *Engine) autofixDependabotHeadKnown(owner, repo string, number int, headSHA string) bool {
 	c.heldRunApprovalsMu.Lock()
 	defer c.heldRunApprovalsMu.Unlock()
-	return c.heldRunApprovals[rebaseNudgeKey(c.evaluatedHeadKey(owner, repo, number), headSHA)]
+	return c.heldRunApprovals[autofixDependabotHeadKey(c.evaluatedHeadKey(owner, repo, number), headSHA)]
 }
 
-func rebaseNudgeKey(prKey, headSHA string) string {
-	return "rebase-nudge:" + prKey + "@" + strings.ToLower(headSHA)
-}
-
-// markRebaseNudged records that the rebase nudge was attempted for this PR
-// head and reports whether this is the first attempt.
-func (c *Engine) markRebaseNudged(owner, repo string, number int, headSHA string) bool {
-	key := rebaseNudgeKey(c.evaluatedHeadKey(owner, repo, number), headSHA)
+// markAutofixDependabotHead records that this PR head is an autofix-pushed
+// Dependabot head.
+func (c *Engine) markAutofixDependabotHead(owner, repo string, number int, headSHA string) {
+	key := autofixDependabotHeadKey(c.evaluatedHeadKey(owner, repo, number), headSHA)
 	c.heldRunApprovalsMu.Lock()
 	defer c.heldRunApprovalsMu.Unlock()
 	if c.heldRunApprovals == nil {
 		c.heldRunApprovals = make(map[string]bool)
 	}
-	if c.heldRunApprovals[key] {
-		return false
-	}
 	c.heldRunApprovals[key] = true
-	return true
 }
 
 // markTerminalHoldLogged records that the hold was reported for this PR head

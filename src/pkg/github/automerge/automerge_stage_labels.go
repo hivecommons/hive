@@ -796,7 +796,7 @@ func (c *Engine) standingChangeRequests(reviews []*gh.PullRequestReview) []prsta
 }
 
 // noteOwnStageComment records that this engine posted a comment on the PR
-// outside ApplyStageLabels (takeover notice, rebase request, stale-approval
+// outside ApplyStageLabels (takeover notice, ok-to-test command, stale-approval
 // or hold-release note), so the next observed comment count does not read
 // as outside activity and restart the quiet clock. When a lane already
 // fetched the PR this cycle the credit goes on that observation (the fetch

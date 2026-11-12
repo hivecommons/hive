@@ -16,7 +16,6 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/oktotest"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -139,6 +138,8 @@ func TestTerminalRequiredCheckHoldLoggedOncePerHeadAndReason(t *testing.T) {
 	}{
 		{"held", workflowApprovalRequiredPrefix + "ci/build", true},
 		{"never started", "required-check-never-started:ci/build", true},
+		{"never ran after takeover", "required-check-never-ran:ci/build", true},
+		{"never ran on autofix head", "required-check-never-ran-autofix:ci/build", true},
 		{"missing", "required-check-missing:ci/build", false},
 		{"empty", "", false},
 	}
@@ -207,9 +208,12 @@ func TestReportTerminalHoldNotifiesOncePerHead(t *testing.T) {
 }
 
 // #11923: a Dependabot head autofix-pushed by github-actions[bot] can never
-// produce a pull_request_target-only required context. The sweep names it
-// required-check-never-ran and asks Dependabot to rebase exactly once per head.
-func TestTrySweepTrustedBotNudgesDependabotRebaseOncePerHead(t *testing.T) {
+// produce a pull_request_target-only required context. Dependabot refuses
+// every comment command a GitHub App posts (dependabot/dependabot-core#9147),
+// so the sweep posts nothing — no `@dependabot` comment, no mutation-journal
+// claim — and names the head required-check-never-ran-autofix on every tick,
+// a terminal hold the dependency-bot sweep hands to a person.
+func TestTrySweepTrustedBotHandsAutofixDependabotHeadToAPerson(t *testing.T) {
 	now := time.Date(2026, 10, 14, 19, 0, 0, 0, time.UTC)
 	var comments []string
 	pr := missingRequiredPR(func(p *selfAuthoredPR) {
@@ -227,8 +231,10 @@ func TestTrySweepTrustedBotNudgesDependabotRebaseOncePerHead(t *testing.T) {
 	c.now = func() time.Time { return now }
 	rec := &recordingBoundary{}
 	c.mutation = rec
+	var holds []string
+	c.onTerminalHold = func(_ string, _ int, _ string, reason string) { holds = append(holds, reason) }
 
-	want := requiredCheckNeverRanPrefix + "ci/build"
+	want := requiredCheckNeverRanAutofixPrefix + "ci/build"
 	for tick := 1; tick <= 3; tick++ {
 		_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
 		if err != nil {
@@ -237,22 +243,69 @@ func TestTrySweepTrustedBotNudgesDependabotRebaseOncePerHead(t *testing.T) {
 		if reason != want {
 			t.Fatalf("tick %d reason = %q, want %q", tick, reason, want)
 		}
+		c.reportTerminalHold("acme/widget", "acme", "widget", 23, "sha23", reason)
 	}
-	if len(comments) != 1 || comments[0] != dependabotRebaseComment {
-		t.Fatalf("comments = %q, want exactly one %q", comments, dependabotRebaseComment)
+	for _, body := range comments {
+		if strings.Contains(strings.ToLower(body), "@dependabot") {
+			t.Fatalf("comments = %q, want no @dependabot command posted as the App", comments)
+		}
 	}
-	if len(rec.claims) != 1 || rec.claims[0].Kind != effects.KindIssueComment || rec.claims[0].Target != "23" || rec.claims[0].Inputs["head_sha"] != "sha23" {
-		t.Fatalf("mutation claims = %#v, want one issue_comment claim for PR 23 head sha23", rec.claims)
+	if len(comments) != 0 {
+		t.Fatalf("comments = %q, want none", comments)
+	}
+	if len(rec.claims) != 0 {
+		t.Fatalf("mutation claims = %#v, want none", rec.claims)
 	}
 	if !isTerminalRequiredCheckHold(want) {
-		t.Fatalf("isTerminalRequiredCheckHold(%q) = false, want true so the hold logs once", want)
+		t.Fatalf("isTerminalRequiredCheckHold(%q) = false, want true so the hold is handed off once", want)
+	}
+	if len(holds) != 1 || holds[0] != want {
+		t.Fatalf("OnTerminalHold reasons = %q, want exactly one %q", holds, want)
+	}
+	if !c.autofixDependabotHeadKnown("acme", "widget", 23, "sha23") {
+		t.Fatal("autofix verdict not remembered for the head; later ticks would re-read the head commit")
 	}
 	if len(merged) != 0 {
 		t.Fatalf("merged = %v, want no merge", merged)
 	}
 }
 
-func TestTrySweepTrustedBotDoesNotNudgeOutsideAutofixShape(t *testing.T) {
+// A hive upgraded from a build that posted `@dependabot rebase` may still
+// hold that build's per-head marker. The marker is ignored: the head gets the
+// same autofix hold as a fresh one, and nothing is posted.
+func TestTrySweepTrustedBotIgnoresOldRebaseNudgeMarker(t *testing.T) {
+	now := time.Date(2026, 10, 14, 19, 0, 0, 0, time.UTC)
+	var comments []string
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.author = "dependabot[bot]"
+		p.updatedAt = now.Add(-2 * heldRunNeverStartedGrace).Format(time.RFC3339)
+		p.workflowRuns = []map[string]any{{"id": 1, "name": "v2 CI", "status": "completed", "conclusion": "success", "head_repository": map[string]any{"full_name": "acme/widget"}}}
+		p.headCommitAuthor = githubActionsBotLogin
+		p.commentBodies = &comments
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	c.trustedBotAuthors = func() map[string]bool { return map[string]bool{"dependabot[bot]": true} }
+	c.now = func() time.Time { return now }
+	rec := &recordingBoundary{}
+	c.mutation = rec
+	c.heldRunApprovals = map[string]bool{"rebase-nudge:" + c.evaluatedHeadKey("acme", "widget", 23) + "@sha23": true}
+
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+	if err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+	}
+	if want := requiredCheckNeverRanAutofixPrefix + "ci/build"; reason != want {
+		t.Fatalf("reason = %q, want %q", reason, want)
+	}
+	if len(comments) != 0 || len(rec.claims) != 0 {
+		t.Fatalf("comments = %q, claims = %#v, want nothing posted", comments, rec.claims)
+	}
+}
+
+func TestTrySweepTrustedBotNoAutofixHoldOutsideAutofixShape(t *testing.T) {
 	now := time.Date(2026, 10, 14, 19, 0, 0, 0, time.UTC)
 	old := now.Add(-2 * heldRunNeverStartedGrace).Format(time.RFC3339)
 	for _, tc := range []struct {
@@ -296,7 +349,9 @@ func TestTrySweepTrustedBotDoesNotNudgeOutsideAutofixShape(t *testing.T) {
 	}
 }
 
-func TestDependabotRebaseNudgeDegradesOnAPIErrors(t *testing.T) {
+// A failed head-commit lookup is not an autofix verdict: the head keeps its
+// existing hold, nothing is remembered for it, and nothing is posted.
+func TestAutofixDependabotHeadLookupFailureIsNotAutofix(t *testing.T) {
 	posts := 0
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
@@ -313,13 +368,11 @@ func TestDependabotRebaseNudgeDegradesOnAPIErrors(t *testing.T) {
 	if c.isAutofixPushedDependabotHead(context.Background(), "widget", "acme", "widget", pr, 23, "sha23") {
 		t.Fatal("head-commit lookup failure must not be treated as an autofix head")
 	}
-	c.nudgeDependabotRebase(context.Background(), "widget", "acme", "widget", 23, "sha23", "ci/build")
-	c.nudgeDependabotRebase(context.Background(), "widget", "acme", "widget", 23, "sha23", "ci/build")
-	if posts != 1 {
-		t.Fatalf("comment POSTs = %d, want 1 (a failed nudge is not retried for the same head)", posts)
+	if c.autofixDependabotHeadKnown("acme", "widget", 23, "sha23") {
+		t.Fatal("a failed lookup must not be remembered as an autofix head")
 	}
-	if !c.rebaseNudged("acme", "widget", 23, "SHA23") {
-		t.Fatal("rebaseNudged = false after an attempted nudge")
+	if posts != 0 {
+		t.Fatalf("POSTs = %d, want none", posts)
 	}
 }
 

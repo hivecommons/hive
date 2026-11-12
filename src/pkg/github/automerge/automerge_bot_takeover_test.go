@@ -308,8 +308,12 @@ func TestBotTakeoverIdempotencyKeyIsPerHead(t *testing.T) {
 	if !c.botTakeoverAttempted("acme", "widget", 23, "ABC") {
 		t.Fatal("botTakeoverAttempted = false after an attempt")
 	}
-	if c.rebaseNudged("acme", "widget", 23, "abc") || !c.markRebaseNudged("acme", "widget", 23, "abc") {
-		t.Fatal("takeover key must not collide with the rebase-nudge key")
+	if c.autofixDependabotHeadKnown("acme", "widget", 23, "abc") {
+		t.Fatal("takeover key must not collide with the autofix-Dependabot-head key")
+	}
+	c.markAutofixDependabotHead("acme", "widget", 23, "abc")
+	if !c.autofixDependabotHeadKnown("acme", "widget", 23, "ABC") || c.autofixDependabotHeadKnown("acme", "widget", 23, "def") {
+		t.Fatal("autofixDependabotHeadKnown must be per head, SHA case-insensitive")
 	}
 }
 

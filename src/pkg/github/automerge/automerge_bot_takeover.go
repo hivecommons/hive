@@ -6,8 +6,9 @@ package automerge
 // triggers `pull_request` workflows (GitHub's anti-recursion rule). When the
 // base branch's required contexts come from those workflows the PR sits at
 // `required-check-missing:<ctx>` forever, even with github-actions[bot] in
-// auto_merge.trusted_bot_authors. Unlike Dependabot (#11923) the bot does not
-// understand a comment, so the sweep re-authors the change as the App: one
+// auto_merge.trusted_bot_authors. Nobody can ask the bot to re-push (unlike
+// Dependabot, #11923, which a person with push access can ask), so the sweep
+// re-authors the change as the App: one
 // signed-off commit carrying the bot head's tree on top of the merge base,
 // pushed to `hive/takeover-<n>`, opened as an App PR that supersedes the bot
 // PR, after which the bot PR is closed. App-pushed refs trigger workflows

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +84,7 @@ func TestDependencyBotHandoffReason(t *testing.T) {
 		{"held check", depBotPR("dependabot[bot]", "s", nil), "required-check-held:ci/build", depBotHandoffHeld, true},
 		{"never started", depBotPR("dependabot[bot]", "s", nil), "required-check-never-started:ci/build", depBotHandoffHeld, true},
 		{"never ran", depBotPR("dependabot[bot]", "s", nil), "required-check-never-ran:ci/build", depBotHandoffHeld, true},
+		{"never ran on autofix head", depBotPR("dependabot[bot]", "s", nil), "required-check-never-ran-autofix:ci/build", depBotHandoffHeld, true},
 		{"conflict", depBotPR("dependabot[bot]", "s", conflicting), "", depBotHandoffConflict, true},
 		{"needs-rebase label", depBotPR("dependabot[bot]", "s", func(p *github.PullRequest) { p.Labels = []string{"needs-rebase"} }), "", depBotHandoffConflict, true},
 		{"red ci", depBotPR("dependabot[bot]", "s", redCI), "", depBotHandoffRedCI, true},
@@ -374,7 +376,7 @@ func TestDependencyBotHeldCheckComment(t *testing.T) {
 	}{
 		{"required-check-held:ci/build", []string{"`ci/build`", "waiting for approval", "gh run approve"}},
 		{"required-check-never-started:ci/build", []string{"`ci/build`", "never started", "close and reopen"}},
-		{"required-check-never-ran:ci/build", []string{"`ci/build`", "even after a rebase was requested", "merge the PR by hand"}},
+		{"required-check-never-ran:ci/build", []string{"`ci/build`", "tried once to re-open the change as its own PR", "merge the PR by hand"}},
 		{"workflow-approval-required:missing-workflow:ci/build", []string{"`ci/build`", "/ok-to-test", "hive-ok-to-test", "hivectl ok-to-test-template"}},
 	}
 	for _, tc := range cases {
@@ -390,6 +392,98 @@ func TestDependencyBotHeldCheckComment(t *testing.T) {
 	}
 }
 
+// The never-ran hand-offs say what actually happened. No rebase was ever
+// requested on either path: Dependabot refuses commands from apps, and the
+// takeover path re-authors the PR instead. The old
+// `required-check-never-ran:` reason on a Dependabot PR (from a build that
+// posted `@dependabot rebase`) reads as the autofix case.
+func TestDependencyBotNeverRanCommentSaysWhatHappened(t *testing.T) {
+	autofix := []string{
+		"`ci/build`", "Dependabot PR",
+		"An automation (`github-actions[bot]`) pushed the last commit",
+		"Dependabot does not accept commands from apps",
+		"someone with push access comments `" + github.DependabotRecreateCommand + "`",
+		"closes and reopens the PR",
+	}
+	cases := []struct {
+		name   string
+		author string
+		reason string
+		want   []string
+	}{
+		{"autofix dependabot head", "dependabot[bot]", "required-check-never-ran-autofix:ci/build", autofix},
+		{"old never-ran reason on a dependabot PR", "dependabot[bot]", "required-check-never-ran:ci/build", autofix},
+		{"takeover attempted", "github-actions[bot]", "required-check-never-ran:ci/build", []string{"`ci/build`", "github-actions PR", "tried once to re-open the change as its own PR", "close and reopen"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := dependencyBotHeldCheckComment(tc.author, tc.reason)
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Fatalf("comment = %q, want it to contain %q", got, w)
+				}
+			}
+			if strings.Contains(got, "rebase was requested") {
+				t.Fatalf("comment = %q, must not claim a rebase was requested", got)
+			}
+		})
+	}
+}
+
+// An autofix-pushed Dependabot head is handed to a person at once with the
+// recreate wording, once per head.
+func TestDependencyBotHandoffAutofixNeverRanHold(t *testing.T) {
+	h := newDepBotHarness(t)
+	h.store.noteHold(depBotKey, "sha-1", "required-check-never-ran-autofix:ci/build")
+	pr := depBotPR("dependabot[bot]", "sha-1", func(p *github.PullRequest) { p.MergeableState = "blocked"; p.CIStatus = "pending" })
+
+	h.passAt(depBotT0, pr)
+	h.passAt(depBotT0.Add(time.Hour), pr)
+	if len(h.writer.comments) != 1 || len(h.writer.adds) != 1 {
+		t.Fatalf("comments=%v adds=%v, want one hand-off and one needs-human", h.writer.comments, h.writer.adds)
+	}
+	c := h.writer.comments[0]
+	if !strings.Contains(c, "`"+github.DependabotRecreateCommand+"`") || strings.Contains(c, "rebase was requested") {
+		t.Fatalf("comment = %q, want the recreate action and no claim that a rebase was requested", c)
+	}
+}
+
+// State left by a build that posted `@dependabot rebase`: the ledger already
+// records the check-held hand-off for this head. A hold reported again for
+// the same head (old or new reason) does not post a second comment.
+func TestDependencyBotHandoffOldNeverRanLedgerKeepsOneComment(t *testing.T) {
+	h := newDepBotHarness(t)
+	ledger := `{"` + depBotKey + `":{"head_sha":"sha-1","reason":"` + depBotHandoffHeld + `","commented_at":"2026-10-12T11:00:00Z","label_applied":true}}`
+	if err := os.WriteFile(h.path, []byte(ledger), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.store = loadDepBotConflictStore(h.path)
+	pr := depBotPR("dependabot[bot]", "sha-1", func(p *github.PullRequest) { p.MergeableState = "blocked"; p.CIStatus = "pending" })
+	for _, reason := range []string{"required-check-never-ran:ci/build", "required-check-never-ran-autofix:ci/build"} {
+		h.store.noteHold(depBotKey, "sha-1", reason)
+		h.passAt(depBotT0, pr)
+	}
+	if len(h.writer.comments) != 0 || len(h.writer.adds) != 0 {
+		t.Fatalf("comments=%v adds=%v, want the earlier hand-off left standing", h.writer.comments, h.writer.adds)
+	}
+}
+
+// The old `required-check-never-ran:` reason on a Dependabot PR with no
+// hand-off yet gets the corrected autofix wording, not "a rebase was
+// requested".
+func TestDependencyBotHandoffOldNeverRanReasonGetsAutofixWording(t *testing.T) {
+	fresh := newDepBotHarness(t)
+	pr := depBotPR("dependabot[bot]", "sha-1", func(p *github.PullRequest) { p.MergeableState = "blocked"; p.CIStatus = "pending" })
+	fresh.store.noteHold(depBotKey, "sha-1", "required-check-never-ran:ci/build")
+	fresh.passAt(depBotT0, pr)
+	if len(fresh.writer.comments) != 1 {
+		t.Fatalf("comments = %v, want one hand-off for the old reason", fresh.writer.comments)
+	}
+	if c := fresh.writer.comments[0]; !strings.Contains(c, "`"+github.DependabotRecreateCommand+"`") || strings.Contains(c, "rebase was requested") {
+		t.Fatalf("comment = %q, want the autofix wording for the old reason", c)
+	}
+}
+
 // hivecommons/hive#13013: the sweep no longer approves held runs itself; it
 // posts `/ok-to-test` and reports workflow-approval-required:<ctx>. That hold
 // is not handed off while the repository workflow may still approve the
@@ -401,6 +495,7 @@ func TestDependencyBotHoldNeedsPerson(t *testing.T) {
 		"required-check-held:ci/build":                         true,
 		"required-check-never-started:ci/build":                true,
 		"required-check-never-ran:ci/build":                    true,
+		"required-check-never-ran-autofix:ci/build":            true,
 	}
 	for reason, want := range cases {
 		if got := dependencyBotHoldNeedsPerson(reason); got != want {
