@@ -419,6 +419,11 @@ type EvalLoopStatus struct {
 	// counts items webhook re-reads upserted into that snapshot.
 	CachedCycles   int `json:"cachedCycles,omitempty"`
 	WebhookPatches int `json:"webhookPatches,omitempty"`
+	// APIBudgetPacing is the API budget pacing state
+	// (governor.api_budget_pacing): whether the loop interval is being
+	// stretched to make the GitHub budget last until the reset, by how much,
+	// and why. IntervalS above is already the paced interval.
+	APIBudgetPacing *ghpkg.APIBudgetPacing `json:"api_budget_pacing,omitempty"`
 }
 
 // NousScopeRepo is the only experiment scope the Experiment Lab supports.

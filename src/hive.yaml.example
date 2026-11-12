@@ -579,6 +579,8 @@ governor:
   webhook_wake_min_gap_s: 30              # Minimum gap between webhook-triggered eval cycles
   conserve_interval_multiplier: 2         # Eval interval multiplier in API budget conserve mode
   optional_sweep_every_n_cycles: 1        # Run optional sweeps every Nth normal cycle (1 = every cycle)
+  # api_budget_pacing: true               # Off by default. Lengthen the eval and sweep intervals when the current GitHub call rate
+  #                                       # would use up the budget (above github.api_reserve) before the rate-limit window resets
 
   # First-time contributor welcome (see docs/good-first-issue.md#welcoming-first-time-contributors).
   # When a human whose GitHub author_association is FIRST_TIME_CONTRIBUTOR /

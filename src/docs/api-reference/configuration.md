@@ -99,8 +99,8 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/config/review` | Dashboard auth/session | Review Config Get | `pkg/dashboard/api.go:254` |
 | `PUT` | `/api/config/review` | Owner only | Review Config Set | `pkg/dashboard/api.go:257` |
 | `PUT` | `/api/config/governor/features` | Owner only | Governor Features | `pkg/dashboard/api.go:263` |
-| `GET` | `/api/config/governor/general-advanced` | Owner only | Governor General Advanced Get | `pkg/dashboard/api.go:264` |
-| `PUT` | `/api/config/governor/general-advanced` | Owner only | Governor General Advanced Set | `pkg/dashboard/api.go:265` |
+| `GET` | `/api/config/governor/general-advanced` | Owner only | Settings → General governor settings: `eval_interval_s`, the loop pacing knobs with `loop_defaults`, `explain_mode`, `attribution_trailer`, `api_budget_pacing` (`governor.api_budget_pacing`) and `api_budget_pacing_state` `{enabled, active, factor, effective_interval_s, burn_per_min, reason}`, what the loop is doing with it | `pkg/dashboard/api.go:264` |
+| `PUT` | `/api/config/governor/general-advanced` | Owner only | Change those settings; every field is optional and an absent one is left alone. `api_budget_pacing` (boolean) turns GitHub API budget pacing on or off from the next eval cycle. Returns the GET payload | `pkg/dashboard/api.go:265` |
 | `GET` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Get | `pkg/dashboard/api.go:269` |
 | `PUT` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Set | `pkg/dashboard/api.go:270` |
 | `PATCH` | `/api/config/auto-merge` | Owner only | Partially update auto-merge settings, including nested `merge_train`; omitted fields stay unchanged; returns effective settings and bot-author metadata | `pkg/dashboard/api_config_automerge.go` |

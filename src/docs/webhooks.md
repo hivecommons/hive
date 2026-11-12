@@ -138,7 +138,9 @@ governor loop publishes 2 × `eval_interval_s`), and
 `src/pkg/github/webhook_mode.go:38` (`WebhookRecoveryHealthyWindows`). The
 effective tick is composed in `webhookAwareEvalInterval`
 (`src/cmd/hive/api_budget_decision.go:82`): the API-budget stretch still
-applies and the larger interval wins.
+applies and the larger interval wins. With `governor.api_budget_pacing` on,
+pacing can lengthen that tick further, never shorten it; see
+[API budget pacing](operator-reference/runtime-and-quota.md#api-budget-pacing).
 
 ```yaml
 governor:

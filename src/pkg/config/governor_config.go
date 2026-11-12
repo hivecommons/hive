@@ -43,6 +43,7 @@ type GovernorConfig struct {
 	mergeTrainStallWarnSet     bool `yaml:"-" json:"-"`
 	ConserveIntervalMultiplier int  `yaml:"conserve_interval_multiplier,omitempty"`
 	OptionalSweepEveryNCycles  int  `yaml:"optional_sweep_every_n_cycles,omitempty"`
+	APIBudgetPacing            bool `yaml:"api_budget_pacing,omitempty" json:"api_budget_pacing,omitempty"` // spread GitHub calls over the rate-limit window; off by default
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see

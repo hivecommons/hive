@@ -25,6 +25,7 @@ func governorWriteOps() []WriteOp {
 	return []WriteOp{
 		governorThresholdsOp{},
 		governorThresholdScalingOp{},
+		governorGeneralSettingsOp{},
 	}
 }
 
