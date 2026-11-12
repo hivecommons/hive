@@ -1,1 +1,0 @@
-- Docs: `releases.md` no longer claims candidate hives bypass the daily/weekly auto-upgrade cadence by default; since #11816 they follow their stored mode, and the page now explains how to switch a hive to `instant`.
