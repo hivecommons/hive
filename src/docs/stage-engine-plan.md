@@ -134,7 +134,7 @@ Scope: no out-of-cycle code names a stage label.
   (`src/pkg/github/issue_inprogress.go:126-141`, `src/pkg/github/issue_inprogress.go:186`).
 - `src/pkg/github/prclaims.go`: 040 add/remove → `CoveredBy`/`Uncovered`
   (`src/pkg/github/prclaims.go:1777`, `src/pkg/github/prclaims.go:2037`).
-- `src/pkg/dashboard/contribute_verdict_settle.go:226` → `CoveredBy`.
+- `src/pkg/dashboard/contribute_verdict_settle.go:216` → `CoveredBy`.
 - `src/pkg/github/issue_request_label.go`: an agent request for a parking
   label becomes `Parked`; `agentMayAddLabel` keeps the allow-list for the
   non-stage `needs-human` (`src/pkg/github/issue_request_label.go:75`).
