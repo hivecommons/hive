@@ -258,3 +258,33 @@ func TestSaveSaaSHiveKeepsRelayKeyPrivate(t *testing.T) {
 		t.Fatalf("hive dir mode = %o, want 700", got)
 	}
 }
+
+// Tightening must only strip group/other bits. A hive directory that has
+// been made read-only must stay read-only so the save fails loudly instead
+// of being silently widened back to writable (which also masked the forced
+// save failures in reset_assignment_sweep_branches_test.go).
+func TestSaveSaaSHiveNeverWidensReadOnlyDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root; read-only dir cannot force a write failure")
+	}
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+
+	dir := filepath.Join(saasHivesDir, "frozen")
+	if err := os.MkdirAll(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+
+	if err := saveSaaSHive(&SaaSHive{ID: "frozen", WebhookRelayKey: newWebhookRelayKey()}); err == nil {
+		t.Fatal("saveSaaSHive succeeded into a read-only hive dir; want write failure")
+	}
+	di, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := di.Mode().Perm(); got != 0o500 {
+		t.Fatalf("hive dir mode = %o, want 500 (group/other stripped, owner bits untouched)", got)
+	}
+}

@@ -2096,8 +2096,13 @@ func saveSaaSHive(h *SaaSHive) error {
 	// WriteFile error below.
 	_ = os.MkdirAll(dir, 0o700)
 	// MkdirAll leaves pre-existing directories untouched, so tighten hives
-	// provisioned before meta.json carried key material.
-	_ = os.Chmod(dir, 0o700)
+	// provisioned before meta.json carried key material. Only group/other
+	// bits are stripped: owner bits are left as found so a directory an
+	// operator (or a test) made read-only is never silently widened back to
+	// writable, and the WriteFile below still reports the failure.
+	if fi, err := os.Stat(dir); err == nil && fi.Mode().Perm()&0o077 != 0 {
+		_ = os.Chmod(dir, fi.Mode().Perm()&^0o077)
+	}
 	data, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return err
