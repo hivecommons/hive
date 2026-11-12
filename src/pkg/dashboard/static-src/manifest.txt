@@ -22,6 +22,7 @@ css/cost.css
 css/alerts-toasts.css
 css/feedback-faq.css
 css/config-dialog.css
+css/config-webhooks.css
 css/workflows.css
 css/workflows-editor.css
 css/workflows-ingest.css
@@ -138,6 +139,7 @@ js/config-state.js
 js/settings-search.js
 js/config-dialog.js
 js/config-tabs.js
+js/config-webhooks.js
 js/config-hub.js
 js/config-agent.js
 js/config-governor.js
