@@ -695,7 +695,8 @@ var (
 )
 
 const (
-	ghTokenCacheTTL = 5 * time.Minute
+	ghTokenCacheMaxEntries = 10_000
+	ghTokenCacheTTL        = 5 * time.Minute
 	// ghTokenNegativeTTL bounds how long a rejected bearer token (401/403,
 	// including a rate-limited one) is remembered without re-probing
 	// GET /user. Without it every request carrying a dead or exhausted token
@@ -712,6 +713,28 @@ const (
 type ghTokenCacheEntry struct {
 	username  string
 	expiresAt time.Time
+}
+
+// cacheGHToken bounds both positive and negative entries. At capacity, expired
+// entries are reclaimed; if all entries are live, new tokens are not cached.
+func cacheGHToken(token string, entry ghTokenCacheEntry) {
+	ghTokenCacheMu.Lock()
+	defer ghTokenCacheMu.Unlock()
+
+	if len(ghTokenCache) >= ghTokenCacheMaxEntries {
+		now := time.Now()
+		for key, cached := range ghTokenCache {
+			if !now.Before(cached.expiresAt) {
+				delete(ghTokenCache, key)
+			}
+		}
+		if len(ghTokenCache) >= ghTokenCacheMaxEntries {
+			if _, exists := ghTokenCache[token]; !exists {
+				return
+			}
+		}
+	}
+	ghTokenCache[token] = entry
 }
 
 // ghTokenValidateHTTPClient probes GET /user for bearer validation. It is a
@@ -779,9 +802,7 @@ func (s *HubServer) validateGitHubToken(token string) string {
 	hgithub.RecordRESTRequest(ghTokenValidateCaller, req.Method, req.URL.Path, resp.StatusCode, resp.Header)
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-			ghTokenCacheMu.Lock()
-			ghTokenCache[token] = ghTokenCacheEntry{expiresAt: ghTokenNegativeExpiry(resp.StatusCode, resp.Header, time.Now())}
-			ghTokenCacheMu.Unlock()
+			cacheGHToken(token, ghTokenCacheEntry{expiresAt: ghTokenNegativeExpiry(resp.StatusCode, resp.Header, time.Now())})
 		}
 		return ""
 	}
@@ -792,9 +813,7 @@ func (s *HubServer) validateGitHubToken(token string) string {
 		return ""
 	}
 
-	ghTokenCacheMu.Lock()
-	ghTokenCache[token] = ghTokenCacheEntry{username: user.Login, expiresAt: time.Now().Add(ghTokenCacheTTL)}
-	ghTokenCacheMu.Unlock()
+	cacheGHToken(token, ghTokenCacheEntry{username: user.Login, expiresAt: time.Now().Add(ghTokenCacheTTL)})
 
 	return user.Login
 }
