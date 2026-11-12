@@ -1,0 +1,1 @@
+- Classify repeated missing Dependabot alerts permission warnings as an operator-action self-report with GitHub App remediation, rather than an unclassified code defect.
