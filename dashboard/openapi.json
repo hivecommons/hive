@@ -12676,6 +12676,379 @@
         }
       }
     },
+    "/api/knowledge/connectors/{name}/auth": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Get a knowledge connector's sign-in state",
+        "description": "Returns the cached sign-in state of a connector that authenticates interactively (e.g. `plaud` via the Plaud MCP OAuth flow). Pass `refresh=1` to re-query the upstream account. Tokens are never returned; they stay in the connector's own credential store.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Connector name"
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "true"
+              ]
+            },
+            "description": "Re-query the upstream account instead of returning the cached state"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sign-in state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Interactive sign-in state of a connector that authenticates through its own OAuth flow (currently `plaud`).",
+                  "properties": {
+                    "connected": {
+                      "type": "boolean",
+                      "description": "Upstream reports a signed-in account"
+                    },
+                    "account": {
+                      "type": "string",
+                      "description": "Signed-in identity (email or display name), if known"
+                    },
+                    "pending": {
+                      "type": "boolean",
+                      "description": "A login is waiting for the user to authorize in the browser"
+                    },
+                    "auth_url": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "Authorization URL to open while pending"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Last human-readable login/logout outcome"
+                    },
+                    "checked_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Connector type does not use interactive sign-in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connector, or no connectors configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/connectors/{name}/auth/connect": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Start a knowledge connector's interactive sign-in",
+        "description": "Owner-only. Starts the connector's OAuth login (for `plaud`, the MCP server's `login` tool) and returns the pending state including `auth_url` for the user to open in a browser. The login session is kept alive for the callback; poll `GET /api/knowledge/connectors/{name}/auth?refresh=1` for the outcome.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Connector name"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Login started (or already connected)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Interactive sign-in state of a connector that authenticates through its own OAuth flow (currently `plaud`).",
+                  "properties": {
+                    "connected": {
+                      "type": "boolean",
+                      "description": "Upstream reports a signed-in account"
+                    },
+                    "account": {
+                      "type": "string",
+                      "description": "Signed-in identity (email or display name), if known"
+                    },
+                    "pending": {
+                      "type": "boolean",
+                      "description": "A login is waiting for the user to authorize in the browser"
+                    },
+                    "auth_url": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "Authorization URL to open while pending"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Last human-readable login/logout outcome"
+                    },
+                    "checked_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Connector type does not use interactive sign-in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connector, or no connectors configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The connector's MCP server failed to start the login",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/connectors/{name}/auth/disconnect": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Sign a knowledge connector out",
+        "description": "Owner-only. Signs the connector out upstream (for `plaud`, the MCP server's `logout` tool), which removes the token from the connector's own credential store, and returns the new state.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Connector name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Signed out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Interactive sign-in state of a connector that authenticates through its own OAuth flow (currently `plaud`).",
+                  "properties": {
+                    "connected": {
+                      "type": "boolean",
+                      "description": "Upstream reports a signed-in account"
+                    },
+                    "account": {
+                      "type": "string",
+                      "description": "Signed-in identity (email or display name), if known"
+                    },
+                    "pending": {
+                      "type": "boolean",
+                      "description": "A login is waiting for the user to authorize in the browser"
+                    },
+                    "auth_url": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "Authorization URL to open while pending"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Last human-readable login/logout outcome"
+                    },
+                    "checked_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Connector type does not use interactive sign-in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connector, or no connectors configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The connector's MCP server failed to sign out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/knowledge/connectors/{name}/sync": {
       "post": {
         "tags": [
