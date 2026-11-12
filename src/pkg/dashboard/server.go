@@ -106,7 +106,8 @@ const staleDropStarvationThreshold = 5
 type Server struct {
 	nativeQueueTracker  nativeQueueTrackerRuntime
 	integration         integrationRuntime
-	webhookNoSecretOnce sync.Once // warn once per process about a missing webhook secret (#13666)
+	webhookNoSecretOnce sync.Once               // warn once per process about a missing webhook secret (#13666)
+	webhookRelaySeen    webhookRelayReplayCache // hub-relayed delivery IDs already accepted (#17911)
 
 	feedbackRefreshBackoff feedbackBackoff
 
@@ -2494,8 +2495,9 @@ func (s *Server) isPublicPath(path string) bool {
 	case path == githubWebhookPath:
 		// GitHub App webhooks (direct or relayed by the hub): GitHub cannot
 		// hold a dashboard session. NOT actually open — the handler fails
-		// closed without GITHUB_WEBHOOK_SECRET and verifies the HMAC
-		// X-Hub-Signature-256 over the raw body.
+		// closed without GITHUB_WEBHOOK_SECRET or a hub relay key and
+		// verifies the HMAC X-Hub-Signature-256 (or the hub's relay
+		// signature, with replay protection) over the raw body.
 		return true
 	case path == linearAgentWebhookPath:
 		// Linear AgentSessionEvent webhooks: Linear's servers cannot hold a
