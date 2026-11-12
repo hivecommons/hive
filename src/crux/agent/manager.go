@@ -595,12 +595,15 @@ type Manager struct {
 	copilotAuthTokenRejected bool
 	claudeAuthToken          string
 	claudeOperatorToken      string // HIVE_CLAUDE_OAUTH_TOKEN, read once at construction; a dashboard sign-in never replaces it
-	uidMap                   *UIDMap
-	sharedPool               SharedSessionPool
-	uidMapPath               string
-	appAuth                  AppTokenMinter
-	appNotInstalledWarned    sync.Map        // agent name -> struct{}: not-installed mint failure already logged
-	agentMint                AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
+	// claudeOperatorModeLogOnce guards the one-time "re-bridge and watchdog
+	// suspended" log for operator-token mode (claude_operator_token_mode.go).
+	claudeOperatorModeLogOnce sync.Once
+	uidMap                    *UIDMap
+	sharedPool                SharedSessionPool
+	uidMapPath                string
+	appAuth                   AppTokenMinter
+	appNotInstalledWarned     sync.Map        // agent name -> struct{}: not-installed mint failure already logged
+	agentMint                 AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
 
 	// sharedPoolRenewInterval overrides the lease watcher tick (zero means
 	// defaultSharedPoolRenewInterval). Set before any watcher starts; it is
