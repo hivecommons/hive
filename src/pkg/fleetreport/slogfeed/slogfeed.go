@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledAdoptionRead(r) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -143,22 +143,29 @@ func signedCommitOwnershipSkip(r slog.Record) bool {
 	return r.Level == slog.LevelWarn && strings.TrimSpace(r.Message) == "signed-commit reconciler: skipped; the PR keeps an unsigned commit"
 }
 
-// A canceled sweep leaves the existing adoption intact and retries later.
-// Other failures reading push access still warrant a repeated-error report.
-func canceledAdoptionRead(r slog.Record) bool {
-	if strings.TrimSpace(r.Message) != "stage labels: could not read maintainer_can_modify; keeping in-place adoption this sweep" {
-		return false
-	}
-	canceled := false
-	r.Attrs(func(a slog.Attr) bool {
+// canceledError applies the existing cancellation exclusion to structured
+// errors too. An accompanying different error must remain reportable.
+func canceledError(r slog.Record, bound []slog.Attr) bool {
+	found, other := false, false
+	check := func(a slog.Attr) bool {
 		if a.Key == "error" {
-			err, ok := a.Value.Any().(error)
-			canceled = (ok && errors.Is(err, context.Canceled)) || a.Value.String() == context.Canceled.Error()
-			return !canceled
+			value := a.Value.Resolve()
+			err, ok := value.Any().(error)
+			if ok && errors.Is(err, context.Canceled) {
+				found = true
+			} else if text := value.String(); text == context.Canceled.Error() || strings.HasSuffix(text, ": "+context.Canceled.Error()) {
+				found = true
+			} else {
+				other = true
+			}
 		}
 		return true
-	})
-	return canceled
+	}
+	for _, a := range bound {
+		check(a)
+	}
+	r.Attrs(check)
+	return found && !other
 }
 
 // expectedKickHold reports whether a "failed to send kick" record carries the
