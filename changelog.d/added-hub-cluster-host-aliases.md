@@ -1,0 +1,1 @@
+- Hub `clusters.json` accepts per-cluster `host_aliases` (`[{ip, hostnames[]}]`, validated at load) rendered as Pod `hostAliases` on every hosted-hive Deployment, plus a rate-limited reconcile sweep that converges existing hives — for GitHub Enterprise hosts reachable only through a TLS reverse proxy on a fixed IP, where `upstream_proxy` cannot help (#17801).
