@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.231.1)
+
+### Changed
+
+- PR comment noise: the three per-PR workflow comments that survived the hive-App reducers now post only on a finding ([#17863](https://github.com/hivecommons/hive/issues/17863)). `.github/scripts/pr-overlap.sh` creates its `<!-- hive-pr-overlap -->` comment only when a sibling PR conflicts or shares a file and, when a later push clears that, edits the existing comment to a one-line "Resolved" note instead of re-posting "no overlaps found" on every PR; `src/scripts/mutation-report.sh post` does the same for `<!-- hive-mutation -->` on a `pass` verdict (the full report, clean case included, still goes to the step summary); the "Thank you for your contribution!" merge comment (`feedback.yml`) is gated by the new `src/scripts/feedback-gate.sh` to a person's first merged PR — bot/App authors, `scanner/*` and `hive/*` branches, hive-origin bodies and returning contributors are skipped, with `FEEDBACK_*` workflow `env` knobs. A dashboard approval on a Prow-managed PR the hive account opened now relays `/approve` only, since a self-`/lgtm` is rebuked by Prow every time (`PullRequestApprovalEvent.LGTMSkipped`). Expected effect: roughly half of the comments on a typical merged PR.
+
+### Fixed
+
+- Config saves now write `/etc/hive/hive.yaml` and `/data/hive.yaml.runtime` atomically (temp file + fsync + rename onto the symlink target), the entrypoint refreshes the legacy `/data/hive.yaml.bak` fallback from a validated runtime config on every clean boot, and falling back to it logs a loud WARN — a liveness kill mid-save no longer boots a months-old ACMM level and roster (#17862).
+
 ## 2026-11-12 (v5.231.0)
 
 ### Added
