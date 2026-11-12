@@ -224,7 +224,7 @@ JS (`js/`): `boot`, `core`, `feedback`, `sections`, `layout`, `agent-detail`,
 `review-queue`, `contributors`, `refresh`, `inception`, `debug-logs`,
 `tooltips-dialogs`, `plan-agent-controls`, `acmm`, `version`, `sse-bootstrap`,
 `config-state`, `settings-search`, `config-dialog`, `config-tabs`,
-`config-hub`, `config-agent`, `config-governor`, `config-watchdog-security`,
+`config-webhooks`, `config-hub`, `config-agent`, `config-governor`, `config-watchdog-security`,
 `config-features`, `config-sentinel`, `compliance`, `config-helpers`,
 `linear-repos-save`, `chat`, `gh-auth`, `nps`, `welcome`, `shimmy-handlers`.
 

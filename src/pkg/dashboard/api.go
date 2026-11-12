@@ -316,6 +316,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Read-only inventory for the Forge App tab: every App credential this
 	// spoke holds (active config + per-app-id PVC keys), fingerprints only.
 	s.mux.HandleFunc("GET /api/config/github/forge-apps", s.handleConfigGitHubForgeApps)
+	// Owner-facing webhook setup for the same tab: payload URL, events,
+	// secret generation and App-side hook creation (hivecommons/hive#18017).
+	s.registerGitHubWebhookSetupRoutes()
 
 	s.mux.HandleFunc("GET /api/agents", s.handleAgentsList)
 	s.mux.HandleFunc("POST /api/agents", s.handleAgentCreate)
