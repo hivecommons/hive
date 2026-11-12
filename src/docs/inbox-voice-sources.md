@@ -22,9 +22,9 @@ see the issue linked from the changelog entry.
     --title <title> --publish --repo <owner/repo>` on the transcript and
     files one RFC issue plus native child issues with the hive handshake
     marker. The hive's normal scanner then claims the children. If no
-    `spektacular` binary is on the host, set `inbox.spek.agent` and the hive
-    hands the same job to that spoke agent as a kick prompt (state
-    `delegated`).
+    `spektacular` binary is on the host, the hive hands the same job to a
+    spoke agent as a kick prompt (state `delegated`): `inbox.spek.agent` if
+    set, otherwise the first enabled, unpaused agent by name.
   - **→ dibs** (`dibs`): posts title, summary, transcript and the
     `plaud://recordings/<id>` provenance to `POST {inbox.dibs.url}/api/ideas`
     as a private draft idea (Bearer token from `inbox.dibs.token_env`).
@@ -46,7 +46,7 @@ inbox:
   spek:
     repo: hivecommons/hive        # default RFC target
     binary: spektacular           # or an absolute path; empty = look on PATH
-    agent: ""                     # spoke agent used when no binary is present
+    agent: ""                     # fallback agent; default: first enabled agent
   dibs:
     url: https://dibs.example.org
     token_env: DIBS_TOKEN
@@ -80,9 +80,9 @@ allows additional redirect URIs for its client.
 ## Requirements on the hive image
 
 - Node.js ≥ 20 for the Plaud MCP server (the image ships Node 26).
-- `spektacular` for → RFC: not in the image yet; install it on the host
-  (`go install github.com/hivecommons/spektacular/cmd/spektacular@latest`) or
-  set `inbox.spek.agent`.
+- `spektacular` for → RFC: not in the image yet (tracked as a child of the
+  Inbox RFC); until then the agent fallback runs by default, or install it on
+  the host (`go install github.com/hivecommons/spektacular/cmd/spektacular@latest`).
 - A GitHub token with issue-write on the target repo (the hive's app token
   is injected as `GITHUB_TOKEN`).
 

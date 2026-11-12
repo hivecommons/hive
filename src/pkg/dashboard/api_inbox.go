@@ -354,7 +354,7 @@ func NewInboxDestinations(cfg *config.Config, token func(ctx context.Context, re
 		Binary:      binary,
 		DefaultRepo: cfg.Inbox.Spek.Repo,
 		Token:       token,
-		Agent:       cfg.Inbox.Spek.Agent,
+		Agent:       cfg.InboxSpekAgent(),
 		Kick:        kick,
 	}
 	dibs := &inbox.DibsDestination{URL: cfg.Inbox.Dibs.URL}
@@ -374,7 +374,7 @@ func InboxReadiness(cfg *config.Config) (spek func() bool, dibs func() bool) {
 		if _, err := exec.LookPath(binary); err == nil {
 			return true
 		}
-		return cfg.Inbox.Spek.Agent != ""
+		return cfg.InboxSpekAgent() != ""
 	}
 	dibs = func() bool {
 		return cfg.Inbox.Dibs.TokenEnv != "" && os.Getenv(cfg.Inbox.Dibs.TokenEnv) != ""

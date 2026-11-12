@@ -46298,7 +46298,7 @@ function burnAreaChart() {
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
-      if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs a <code>spektacular</code> binary on the hive host (set <code>inbox.spek.binary</code>) or a spoke agent (<code>inbox.spek.agent</code>) that files it from a prompt.</p>';
+      if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs a <code>spektacular</code> binary on the hive host (<code>inbox.spek.binary</code>) or at least one enabled agent to hand the job to (<code>inbox.spek.agent</code> overrides the default).</p>';
       const shown = items.filter(it => _inboxShowProcessed || !it.processed);
       if (owner && shown.length) {
         const sel = _inboxSelected.size;
