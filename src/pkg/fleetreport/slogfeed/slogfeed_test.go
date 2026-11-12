@@ -84,6 +84,27 @@ func TestSignedCommitOwnershipSkipStaysInLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestCanceledStageDigestStaysLocal(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "stage labels: check digest failed"
+	for range 6 {
+		logger.Warn(msg, "repo", "utah", "pr", 1194, "error", context.Canceled)
+	}
+	logger.Warn(msg, "error", errors.New("GET checks: context canceled"))
+	if len(*seen) != 0 {
+		t.Fatalf("canceled reads produced fleet observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 7 {
+		t.Fatalf("local log records = %d, want 7", n)
+	}
+	logger.Warn(msg, "error", errors.New("context deadline exceeded"))
+	logger.Warn(msg, "error", errors.New("permission denied"))
+	logger.Warn("another failure", "error", context.Canceled)
+	if len(*seen) != 2 {
+		t.Fatalf("unexpected errors must remain reportable: %+v", *seen)
+	}
+}
+
 func TestCanceledAdoptionReadStaysInLog(t *testing.T) {
 	logger, seen, out := newFeed(t)
 	const msg = "stage labels: could not read maintainer_can_modify; keeping in-place adoption this sweep"
