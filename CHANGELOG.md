@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.231.0)
+
+### Added
+
+- **Inbox: voice recorders as first-class input sources.** A new 📥 Inbox section (sidebar → Intelligence) lists recordings and dictations synced by voice knowledge connectors (Plaud today, Wispr Flow next) keyed by `(source, item_id)`, and lets the owner file each one as a spektacular RFC with child issues on a chosen repo (`spektacular voice --publish`, run inside the hive or handed to a spoke agent), send it to dibs as a draft idea, or keep it as a Knowledge fact only — single or bulk, with per-source auto-routing rules (`inbox.rules`) applied after every sync. The Plaud card in Knowledge → Integrations now only shows connection state plus a paste-to-finish sign-in for hosted hives (`POST /api/knowledge/connectors/{name}/auth/complete`), since Plaud's OAuth client only redirects to `localhost:8199`. New routes `GET /api/inbox`, `POST /api/inbox/route`, `POST /api/inbox/dismiss`, `GET|POST /api/inbox/settings`; docs in `inbox-voice-sources.md`.
+
 ## 2026-11-12 (v5.230.0)
 
 ### Added
