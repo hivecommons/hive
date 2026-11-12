@@ -200,6 +200,43 @@ output=$(MUTATION_OUT_DIR="$TMP/missing" bash "$SCRIPT" verdict 2>&1); rc=$?
 [ "$rc" -eq 1 ] && out_grep -q '::error::mutation: no verdict at' \
   && pass "missing verdict file fails the verdict phase" || bad "missing verdict rc=$rc: $output"
 
+echo "post phase (#17863)"
+# Stub gh: lists $GH_EXISTING_ID (if set) as the bot's marker comment and logs writes.
+cat > "$TMP/bin/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+case "$*" in
+  *-X*) printf '%s\n' "$*" >> "$GH_WRITE_LOG"; exit 0 ;;
+  *'/comments'*) if [ -n "${GH_EXISTING_ID:-}" ]; then printf '%s\n' "$GH_EXISTING_ID"; fi; exit 0 ;;
+  *) echo "unexpected gh call: $*" >&2; exit 2 ;;
+esac
+GHSTUB
+chmod +x "$TMP/bin/gh"
+run_post() {  # run_post <out-dir> [existing-id]
+  GH_WRITE_LOG="$TMP/gh-writes.log"; : > "$GH_WRITE_LOG"
+  SUMMARY="$TMP/summary.md"; : > "$SUMMARY"
+  output=$(cd "$repo" && GH_WRITE_LOG="$GH_WRITE_LOG" GH_EXISTING_ID="${2:-}" GITHUB_STEP_SUMMARY="$SUMMARY" \
+    MUTATION_OUT_DIR="$1" PR_NUMBER=42 GITHUB_REPOSITORY=example/hive bash "$SCRIPT" post 2>&1)
+  writes=$(cat "$GH_WRITE_LOG")
+}
+mkdir -p "$TMP/out-pass" "$TMP/out-lived"
+printf '<!-- hive-mutation -->\n### Mutation testing\n\nAll 3 mutant(s) in changed files were killed.\n' > "$TMP/out-pass/comment.md"
+echo pass > "$TMP/out-pass/verdict"
+printf '<!-- hive-mutation -->\n### Mutation testing\n\ngremlins found **1 surviving mutant(s)**\n' > "$TMP/out-lived/comment.md"
+echo lived > "$TMP/out-lived/verdict"
+run_post "$TMP/out-pass"
+[ -z "$writes" ] && pass "pass verdict with no earlier comment posts nothing" || bad "pass posted: $writes"
+out_grep -q 'verdict pass and no earlier comment; not posting' && pass "skip is logged" || bad "skip not logged: $output"
+grep -q 'All 3 mutant(s) in changed files were killed' "$SUMMARY" && pass "clean report still lands in the step summary" || bad "summary missing report"
+run_post "$TMP/out-lived"
+grep -q "^api -X POST repos/example/hive/issues/42/comments" <<<"$writes" && pass "lived verdict posts a new comment" || bad "lived did not post: $writes"
+run_post "$TMP/out-lived" 99
+grep -q "^api -X PATCH repos/example/hive/issues/comments/99" <<<"$writes" && pass "lived verdict edits the existing comment" || bad "lived did not edit: $writes"
+grep -q 'POST' <<<"$writes" && bad "lived posted a duplicate" || pass "no duplicate comment"
+run_post "$TMP/out-pass" 99
+grep -q "^api -X PATCH repos/example/hive/issues/comments/99 -f body=<!-- hive-mutation -->" <<<"$writes" && pass "pass after a finding edits the existing comment, keeping the marker" || bad "pass did not edit: $writes"
+grep -q 'Resolved: no surviving or uncovered mutants' <<<"$writes" && pass "edited body is the one-line resolved note" || bad "resolved note missing: $writes"
+grep -q 'All 3 mutant' <<<"$writes" && bad "full report was written to the comment" || pass "full report stays out of the comment"
+
 if [ "$fail" -ne 0 ]; then
   echo "test-mutation-report.sh: FAILED"
   exit 1

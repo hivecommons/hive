@@ -94,6 +94,13 @@ type PullRequestApprovalEvent struct {
 	// reply stays on the PR, so the next Approve takes the CommandsSkipped
 	// path (hivecommons/hive#17475).
 	ProwRejected bool
+	// LGTMSkipped is true when only `/approve` was relayed: the PR is
+	// Prow-managed and was opened by the hive's own account, so a `/lgtm`
+	// posted from that account is the PR author's and Prow's lgtm plugin
+	// answers every one with "you cannot LGTM your own PR"
+	// (hivecommons/hive#17863). No hive lane reads the relayed `/lgtm`;
+	// the `/approve` comment carries the attribution they use.
+	LGTMSkipped bool
 	// ReportingError preserves partial progress: the native approval stands,
 	// but comments, labels or stage reporting must be retried/reconciled.
 	ReportingError string
@@ -503,17 +510,38 @@ func (c *Client) reportOperatorPullRequestApproval(ctx context.Context, owner, n
 			c.logger.Info("pull request approval commands not posted: Prow rejected the hive's earlier commands on this PR (bot is not an approver); the hive's own approval record stands", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
 		}
 	} else {
-		for _, command := range PRApprovalCommands {
+		commands := PRApprovalCommands
+		if event.ProwManaged && selfAuthored {
+			commands = prApprovalCommandsWithoutLGTM(commands)
+			event.LGTMSkipped = true
+		}
+		// Each relayed command carries the prApprovalCommentMarkerPrefix
+		// marker bound to head, which is what prowRejectedHiveCommands and
+		// the sentinel/workflow-approval readers key on; once posted for a
+		// head it is not posted again (CommandsSkipped above).
+		for _, command := range commands {
 			if err := c.CreateIssueComment(ctx, full, number, renderPRApprovalCommandComment(command, actor, head)); err != nil {
 				return fmt.Errorf("posting %s on %s/%s#%d: %w", command, owner, name, number, err)
 			}
 		}
 		if c.logger != nil {
-			c.logger.Info("pull request approval commands posted by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
+			c.logger.Info("pull request approval commands posted by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head, "lgtm_skipped_self_authored", event.LGTMSkipped)
 		}
 		event.ProwRejected = c.awaitProwRejection(ctx, owner, name, number, event.ProwManaged)
 	}
 	return ctx.Err()
+}
+
+// prApprovalCommandsWithoutLGTM returns commands minus `/lgtm`, for a
+// Prow-managed PR the posting account itself authored (#17863).
+func prApprovalCommandsWithoutLGTM(commands []string) []string {
+	out := make([]string, 0, len(commands))
+	for _, command := range commands {
+		if command != "/lgtm" {
+			out = append(out, command)
+		}
+	}
+	return out
 }
 
 // ProwManagedLabels reports whether labels carry Prow's plugin markers:
