@@ -19,11 +19,14 @@ type transientCIRerunner interface {
 	RerunTransientCIFailures(ctx context.Context, pr github.PullRequest) (github.TransientCIRerunOutcome, error)
 }
 
-// rerunTransientTriagedPRs is the fix loop's answer to a red hive-authored PR
+// rerunTransientTriagedPRs is the fix loop's answer to a red hive-authored or
+// trusted-bot PR (auto_merge.trusted_bot_authors, dbrTransientRerunAuthor)
 // whose every failing check run an agent triaged as infrastructure, not this
 // change (`hive-ci-transient` markers, github.PullRequest.TransientCITriaged):
 // it re-runs the failed jobs once per head through rerun-failed-jobs, and
-// never kicks a fixer or pushes a commit for it. On
+// never kicks a fixer or pushes a commit for it. A trusted-bot PR's red-CI
+// hand-off waits for this re-run and reads its outcome from the ledger
+// (dependency_bot_transient_rerun.go). On
 // projectbluefin/common#1647 the fix loop instead kicked the owning agent six
 // times on one head, each kick answered with "infrastructure, not this
 // change", escalated the PR to a person, and a lane then pushed an empty
@@ -40,7 +43,9 @@ type transientCIRerunner interface {
 // caller skips them there (reaperSkipAfterRerun) so a re-run and a fix kick
 // never go out together for one head (hivecommons/hive#17002 review). A PR
 // whose re-run was skipped (no failed runs, re-run forbidden) is not
-// returned: the fix loop resumes on it, as intended.
+// returned: the fix loop resumes on it, as intended. A trusted-bot PR is
+// returned too when re-run; the reaper only walks hive-agent PRs, so its
+// key in the skip set changes nothing.
 func rerunTransientTriagedPRs(
 	ctx context.Context,
 	cfg *config.Config,
@@ -60,7 +65,7 @@ func rerunTransientTriagedPRs(
 		if attempted >= transientCIRerunMaxPerPass {
 			break
 		}
-		if !isHiveAgentAuthor(cfg, pr.Author) || !pr.TransientCITriaged || pr.CIChecksRunning || !pr.HasFailingRequiredCheck() {
+		if !dbrTransientRerunAuthor(cfg, pr.Author) || !pr.TransientCITriaged || pr.CIChecksRunning || !pr.HasFailingRequiredCheck() {
 			continue
 		}
 		o := escalationObservation(cfg, pr, nil)
@@ -83,14 +88,21 @@ func rerunTransientTriagedPRs(
 		if !outcome.Settled {
 			continue
 		}
-		store.RecordTransientRerun(o.Repo, o.Number, o.HeadSHA)
 		if len(outcome.RunIDs) == 0 {
+			// Kept with the spent head so a dependency-bot hand-off can
+			// say the re-run was not allowed (or found nothing to re-run).
+			skipped := outcome.Skipped
+			if skipped == "" {
+				skipped = "rerun-failed"
+			}
+			store.RecordTransientRerunOutcome(o.Repo, o.Number, o.HeadSHA, skipped)
 			if logger != nil {
-				logger.Info("transient CI rerun skipped; the fix loop resumes on this head",
-					"repo", o.Repo, "pr", o.Number, "head", o.HeadSHA, "reason", outcome.Skipped)
+				logger.Info("transient CI rerun skipped; the fix loop (or, for a dependency-bot PR, the red-CI hand-off) resumes on this head",
+					"repo", o.Repo, "pr", o.Number, "head", o.HeadSHA, "reason", skipped)
 			}
 			continue
 		}
+		store.RecordTransientRerun(o.Repo, o.Number, o.HeadSHA)
 		if logger != nil {
 			logger.Info("transient CI rerun: re-ran failed jobs instead of a fix kick",
 				"repo", o.Repo, "pr", o.Number, "head", o.HeadSHA, "runs", outcome.RunIDs)

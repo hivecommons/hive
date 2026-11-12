@@ -55,6 +55,9 @@ type depBotObservation struct {
 	HeadSHA string    `json:"head_sha"`
 	Reason  string    `json:"reason,omitempty"`
 	Since   time.Time `json:"since"`
+	// RerunOwedSince is when the sweep first saw this head's transient
+	// re-run owed (depBotTransientRerunOwedSince); zero until then.
+	RerunOwedSince time.Time `json:"rerun_owed_since,omitzero"`
 }
 
 // depBotHold is the latest terminal required-check hold the automerge sweep
@@ -67,9 +70,11 @@ type depBotHold struct {
 // dependencyBotRedCI reports a red required check on the PR's current head
 // that the bot PR itself must answer for: CI has settled, and the failure was
 // not triaged as an upstream or shared-CI incident. A failure triaged as
-// transient (TransientCITriaged) is still handed off, because nothing in Hive
-// re-runs a single PR's check, but dependencyBotRedCIComment then asks for a
-// re-run instead of blaming the bump (hivecommons/hive#12977).
+// transient (TransientCITriaged) is a red-CI reason too, but on a trusted-bot
+// PR the sweep holds the hand-off while the hive's one re-run of the head is
+// owed (dependency_bot_transient_rerun.go), and dependencyBotRedCIComment
+// then says whether that re-run happened and failed again or was not
+// allowed, instead of blaming the bump (hivecommons/hive#12977).
 func dependencyBotRedCI(pr github.PullRequest) bool {
 	return pr.HasFailingRequiredCheck() && !pr.CIChecksRunning && !pr.ExternalCIDeferred && pr.SharedCIIncident == 0
 }
@@ -155,9 +160,12 @@ func dependencyBotWaitedConflictComment(author, base string) string {
 
 // dependencyBotRedCIComment is posted when a required check has stayed red on
 // the PR's current head past depBotRedCIGrace. It does not assume the bump is
-// at fault: when a hive-ci-transient triage marker covers every failing run
-// at this head, it says so and asks only for a re-run (hivecommons/hive#12977).
-func dependencyBotRedCIComment(pr github.PullRequest) string {
+// at fault: when Hive re-ran the head's failed jobs after a transient triage
+// it says they failed again; when that re-run re-ran nothing it says why;
+// and when a hive-ci-transient triage marker covers every failing run at
+// this head with no re-run (the author is not a trusted bot), it asks only
+// for a re-run (hivecommons/hive#12977).
+func dependencyBotRedCIComment(pr github.PullRequest, rerun depBotTransientRerun) string {
 	checks := "a required check"
 	if len(pr.FailingChecks) > 0 {
 		names := pr.FailingChecks
@@ -174,7 +182,19 @@ func dependencyBotRedCIComment(pr github.PullRequest) string {
 	}
 	name := dependencyBotDisplayName(pr.Author)
 	waited := depBotHours(depBotRedCIGrace)
-	if pr.TransientCITriaged {
+	switch {
+	case rerun.State == depBotRerunDone:
+		return fmt.Sprintf("This %s PR has failed %s on its current head for over %s. "+
+			"Hive's triage of this head found the failure transient or infrastructure-related, so Hive re-ran the failed jobs once, and they failed again. "+
+			"To fix it, read the new run's log: if the cause is still outside this PR, re-run the failed check once it has cleared; "+
+			"if the bump breaks the build, fix the code or lockfile on this branch, pin or ignore the dependency in the bot's config, or close the PR.",
+			name, checks, waited)
+	case rerun.State == depBotRerunNotRun:
+		return fmt.Sprintf("This %s PR has failed %s on its current head for over %s. "+
+			"Hive's triage of this head found the failure transient or infrastructure-related, not caused by the bump, but %s. "+
+			"To fix it, re-run the failed check once the cause has cleared.",
+			name, checks, waited, depBotRerunNotRunText(rerun.Skipped))
+	case pr.TransientCITriaged:
 		return fmt.Sprintf("This %s PR has failed %s on its current head for over %s. "+
 			"Hive's triage of this head found the failure transient or infrastructure-related, not caused by the bump, "+
 			"and nothing has re-run the check since. "+
@@ -278,6 +298,23 @@ func (s *depBotConflictStore) observe(key, headSHA, reason string, now time.Time
 	s.observed[key] = &depBotObservation{HeadSHA: headSHA, Reason: reason, Since: now}
 	s.saveObservedLocked()
 	return now
+}
+
+// rerunOwedSince returns when this head's transient re-run was first seen
+// owed, stamping now on the first sighting. It rides on the observation
+// observe just recorded for the head, so a new head starts a fresh clock.
+func (s *depBotConflictStore) rerunOwedSince(key, headSHA string, now time.Time) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.observed[key]
+	if o == nil || o.HeadSHA != headSHA {
+		return now
+	}
+	if o.RerunOwedSince.IsZero() {
+		o.RerunOwedSince = now
+		s.saveObservedLocked()
+	}
+	return o.RerunOwedSince
 }
 
 // pruneObservations drops grace clocks for PRs that no longer show a waiting

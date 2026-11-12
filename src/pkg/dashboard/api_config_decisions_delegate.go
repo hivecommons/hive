@@ -116,10 +116,10 @@ func decisionsDelegateSectionResponse(cfg *config.Config) map[string]interface{}
 	if masked {
 		model = ""
 	}
-	endpoint, _, reviewerModel := cfg.Governor.ResolveReviewer()
-	effectiveModel := strings.TrimSpace(reviewerModel)
-	if d.LLMModel() != "" {
-		effectiveModel = model
+	route := reviewerTurnRoute(cfg, model)
+	effectiveModel := route.Model
+	if masked {
+		effectiveModel = ""
 	}
 	projectRepos := make([]string, 0, len(cfg.Project.Repos))
 	for _, repo := range cfg.Project.Repos {
@@ -136,17 +136,35 @@ func decisionsDelegateSectionResponse(cfg *config.Config) map[string]interface{}
 			"model":        model,
 			"model_masked": masked,
 		},
-		// llm_reviewer_ready says whether the decider turn has an endpoint
-		// and a model to call; with llm on and this false, every decision
-		// keeps the rules' reversible default. llm_model_effective is the
-		// model the turn uses (the override, else the reviewer model). The
-		// endpoint and its key are never returned.
-		"llm_reviewer_ready":       strings.TrimSpace(endpoint) != "" && effectiveModel != "" && !masked,
+		// llm_reviewer_ready says whether the decider turn can run; with
+		// llm on and this false, every decision keeps the rules' reversible
+		// default. llm_reviewer_path is where it runs (http: the reviewer
+		// endpoint; claude-cli: the Claude CLI on the hive's Claude login,
+		// with no tools; none) and llm_reviewer_reason why it cannot, when
+		// it cannot (governor.reviewer_backend picks the path).
+		// llm_model_effective is the model the turn uses (the override,
+		// else the reviewer model; empty on claude-cli means the CLI's own
+		// default). The endpoint and its key are never returned.
+		"llm_reviewer_ready":       route.Ready && !masked,
+		"llm_reviewer_path":        route.Path,
+		"llm_reviewer_reason":      delegateReviewerReason(route, masked),
 		"llm_model_effective":      effectiveModel,
 		"effect_timeout":           strings.TrimSpace(d.EffectTimeout),
 		"effect_timeout_effective": d.EffectTimeoutDuration().String(),
 		"project_repos":            projectRepos,
 	}
+}
+
+// delegateReviewerReason is llm_reviewer_reason: why the decider turn cannot
+// run, or "" when it can.
+func delegateReviewerReason(route config.ReviewerTurnRoute, masked bool) string {
+	if masked {
+		return "the stored decisions.delegate.llm.model looks like an API key, so it is not used; enter a model name"
+	}
+	if route.Ready {
+		return ""
+	}
+	return route.Reason
 }
 
 type decisionsDelegateRepoSetting struct {

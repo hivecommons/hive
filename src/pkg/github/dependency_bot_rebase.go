@@ -15,7 +15,10 @@ import (
 // branch (write-back kind bot_rebase_request). The hive never pushes to a
 // dependency bot's branch (DependencyBotBranch); these ask the bot to
 // regenerate it through the bot's own mechanism instead. Callers consult
-// the write-back gate before calling either method.
+// the write-back gate first. Only Renovate is asked: Dependabot refuses
+// comment commands from a GitHub App (dependabot/dependabot-core#9147), so a
+// stranded Dependabot PR goes to a person, whom the hand-off comment asks to
+// post DependabotRecreateCommand.
 
 // RenovateRebaseCheckMarker is the HTML comment Renovate puts on the
 // rebase/retry checkbox line of every PR description it writes
@@ -25,13 +28,14 @@ import (
 const RenovateRebaseCheckMarker = "<!-- rebase-check -->"
 
 // DependabotRecreateCommand asks Dependabot to regenerate its PR from the
-// current base. `@dependabot rebase` is refused once anyone else has pushed
+// current base. The hive only names it in hand-off comments for a person
+// with push access to post; it never posts it itself. `@dependabot rebase` is refused once anyone else has pushed
 // to the branch ("Looks like this PR has been edited by someone other than
 // Dependabot"); recreate is the command Dependabot names for that case.
 const DependabotRecreateCommand = "@dependabot recreate"
 
 // AuditActionDependencyBotRebaseRequested is recorded when the hive ticks a
-// Renovate rebase/retry box or posts the Dependabot recreate command.
+// Renovate rebase/retry box.
 const AuditActionDependencyBotRebaseRequested = "dependency_bot_rebase_requested"
 
 // ErrDependencyBotHeadMoved means the PR's head is no longer the one the
@@ -121,8 +125,7 @@ func (c *Client) RequestRenovateRebase(ctx context.Context, repo string, number 
 // (PR, head SHA, command), so the same command on a later head is a new
 // operation rather than a replay of the first. It is the one poster for the
 // commands the hive sends a dependency bot (the automerge sweep's
-// `@dependabot rebase` nudge and the dependency-bot sweep's
-// `@dependabot recreate`); a bot parses the comment as a command, so it
+// `@dependabot rebase` nudge); a bot parses the comment as a command, so it
 // carries no marker. onPosted, when set, runs once the comment is created.
 // Callers own any write-back gate check.
 func PostBotCommand(ctx context.Context, boundary effects.Boundary, client *gh.Client, owner, repo string, number int, headSHA, command, actor, restCaller string, onPosted func()) error {
@@ -143,23 +146,4 @@ func PostBotCommand(ctx context.Context, boundary effects.Boundary, client *gh.C
 		return effects.Result{Provenance: comment.GetHTMLURL()}, nil
 	})
 	return err
-}
-
-// PostDependabotRecreate comments DependabotRecreateCommand on a Dependabot
-// PR, at most once per head (PostBotCommand). The caller must have consulted
-// the write-back gate (bot_rebase_request).
-func (c *Client) PostDependabotRecreate(ctx context.Context, repo string, number int, headSHA string) error {
-	if c == nil || c.client == nil {
-		return ErrNoGitHubClient
-	}
-	owner, repoName := c.splitRepo(repo)
-	full := owner + "/" + repoName
-	err := PostBotCommand(ctx, c.mutationBoundary(), c.client, owner, repoName, number, strings.ToLower(headSHA), DependabotRecreateCommand, "dependency-bot-sweep", "hive:dependency_bot_rebase", nil)
-	c.recordNotificationWrite(ctx, notificationWrite{kind: notificationWriteComment, repo: full, item: number, body: DependabotRecreateCommand, class: NotificationClassProtocolCommand, err: err})
-	if err != nil {
-		return err
-	}
-	c.recordWriteAudit(AuditActionDependencyBotRebaseRequested, hiveWriteMeta(), WriteTarget{Repo: full, Number: number},
-		"head", headSHA, "via", "dependabot-recreate")
-	return nil
 }

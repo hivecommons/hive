@@ -63,8 +63,7 @@ func (s *Server) registerClaudeAuthRoutes() {
 // read it.
 func (s *Server) handleClaudeAuthStatus(w http.ResponseWriter, r *http.Request) {
 	mode := claude.AuthMode()
-	loggedIn := mode == claude.AuthModeLongLivedToken || claudeReadToken(claudeCredPath) != ""
-	jsonResponse(w, map[string]interface{}{"logged_in": loggedIn, "mode": mode})
+	jsonResponse(w, map[string]interface{}{"logged_in": claudeSignedIn(), "mode": mode})
 }
 
 // handleClaudeAuthStart generates PKCE params and returns the authorize URL.

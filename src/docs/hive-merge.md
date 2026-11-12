@@ -558,6 +558,30 @@ on "every reported check green" and warns once per repo per hour
 the human-gate reason. Declare the repo's real set under
 `auto_merge.repos.<repo>.required_checks` to clear either condition.
 
+A trusted bot's PR that is red only because of an infrastructure problem gets
+the same one re-run a hive PR gets. When every failing check run on its head
+carries an agent's `hive-ci-transient` triage marker, the eval cycle re-runs
+that head's failed jobs once (`rerun-failed-jobs`, write-back kind
+`ci_rerun`), and the dependency-bot red-CI hand-off waits for it: no
+`needs-human` while the re-run is owed or running. The hand-off goes out only
+when the head is still red after the re-run (the comment says the re-run
+failed again), or when the re-run re-ran nothing (refused by the write-back
+gate, no Actions write permission, or no failed run to re-run; the comment
+says the re-run was not allowed, with the reason). On a bot PR `ci_rerun`
+needs the opt-in label, like every write-back kind on an item the hive did not
+open, unless `writeback.kinds.ci_rerun.unlabeled_min_level` lets it reach
+unlabeled PRs at your level. Bot PRs never get fix kicks; this re-run is the
+only repair the hive tries on them.
+
+A stranded Dependabot PR (behind its base, with a head commit Dependabot did
+not write) is handed to a person instead of being asked to rebase: Dependabot
+refuses every comment command a GitHub App posts ("only users with push access
+can use that command",
+[dependabot/dependabot-core#9147](https://github.com/dependabot/dependabot-core/issues/9147)),
+so the hand-off comment asks someone with push access to comment
+`@dependabot recreate`. Renovate PRs still get the rebase/retry checkbox
+ticked first (write-back kind `bot_rebase_request`).
+
 ### Event-driven sweeps on the ForgeState cache
 
 With `forgestate.enabled: true` the three sweep lanes (self-authored,
@@ -1419,7 +1443,7 @@ human-authored PR → `stage/071-needs-author`, on a clanker PR →
 review or `/hive decision <text>` on a hive-authored PR's current head →
 `stage/070-fixing` with reason `human-changes-requested` and one fix kick
 carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041)),
-hold / sentinel alert → a **gate on the PR's real stage**, not a stage of its own (the column follows CI / review / merge-queue progress, the Merge queue cell reads *Held · sentinel · confirm intent* / *Held · hold*, and the lanes refuse the merge on the label itself — a parked PR never merges unattended, [#17327](https://github.com/hivecommons/hive/issues/17327)), hive-authored PR whose fix
+hold / sentinel alert → a **gate on the PR's real stage**, not a stage of its own (the column follows CI / review / merge-queue progress, the Merge queue cell reads *Held · sentinel · confirm intent* / *Held · hold*, and the lanes refuse the merge on the label itself — a parked PR never merges unattended, [#17327](https://github.com/hivecommons/hive/issues/17327); a gated head GitHub reports `dirty` still goes back to its author for the conflict, 072 / 071 / 070, with the gate kept), hive-authored PR whose fix
 dispatch is refused with `fix-attempts-exhausted` → `stage/085-needs-decision`
 with reason `fixer-exhausted:<N>` and a once-per-head decision comment (re-author /
 hand to a person / close as not planned; a stale `decision-answered` cannot pull it

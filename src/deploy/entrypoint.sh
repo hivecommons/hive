@@ -2061,6 +2061,32 @@ if spek.get('enabled') and hub.get('enabled') is not False:
     SPEK_EXECUTOR_PROVISION=true
   fi
 
+  # The one-shot reviewer turns (Let hive decide, grounded chat) run through
+  # the Claude CLI when the hive has no reviewer endpoint
+  # (governor.reviewer_backend: auto or claude-cli). That CLI runs as its own
+  # UID (hive-<identity>), never as dev, the same way and for the same reason
+  # as the Spektacular hub executor above, and like it gets no workspace or
+  # token group. The identity is fixed (dashboard.ReviewerTurnIdentity).
+  # Skipped when governor.reviewer_backend is http, which never runs it, and
+  # on a hive with no agents, which has no UID isolation to join (the CLI then
+  # runs as dev, as every agent CLI there does).
+  REVIEWER_TURN_IDENTITY="hive-turn"
+  REVIEWER_TURN_PROVISION=false
+  _reviewer_backend=""
+  if [ -f "$HIVE_CONFIG" ]; then
+    _reviewer_backend=$(HIVE_CONFIG="$HIVE_CONFIG" python3 -c "
+import os, yaml
+with open(os.environ['HIVE_CONFIG']) as f:
+    cfg = yaml.safe_load(f) or {}
+print(str((cfg.get('governor') or {}).get('reviewer_backend') or '').strip().lower())
+" 2>/dev/null) || _reviewer_backend=""
+  fi
+  if [ -n "$AGENT_NAMES" ] && [ "$_reviewer_backend" != "http" ] \
+     && ! printf '%s\n' "$AGENT_NAMES" | grep -qxF "$REVIEWER_TURN_IDENTITY"; then
+    AGENT_NAMES=$(printf '%s\n%s\n' "$AGENT_NAMES" "$REVIEWER_TURN_IDENTITY" | sed '/^$/d')
+    REVIEWER_TURN_PROVISION=true
+  fi
+
   # Pre-cleanup: remove stale workspace artifacts from agent dirs.
   # Runs in BACKGROUND to avoid blocking startup — on slow CephFS with many
   # dirs, sequential rm -rf can exceed the startup probe timeout (10 min),
@@ -2111,6 +2137,14 @@ if spek.get('enabled') and hub.get('enabled') is not False:
       if [ -n "$SPEK_EXECUTOR_UID" ]; then
         hive_ensure_agent_user "$SPEK_EXECUTOR_IDENTITY" "$SPEK_EXECUTOR_UID"
         echo "[entrypoint] Spektacular hub executor user: hive-${SPEK_EXECUTOR_IDENTITY} (UID ${SPEK_EXECUTOR_UID})"
+      fi
+    fi
+    if [ "$REVIEWER_TURN_PROVISION" = "true" ]; then
+      REVIEWER_TURN_UID=$(printf '%s\n' "$AGENT_UID_LINES" | awk -F '\t' -v n="$REVIEWER_TURN_IDENTITY" '$1 == n { print $2 }')
+      AGENT_UID_LINES=$(printf '%s\n' "$AGENT_UID_LINES" | awk -F '\t' -v n="$REVIEWER_TURN_IDENTITY" '$1 != n')
+      if [ -n "$REVIEWER_TURN_UID" ]; then
+        hive_ensure_agent_user "$REVIEWER_TURN_IDENTITY" "$REVIEWER_TURN_UID"
+        echo "[entrypoint] Reviewer turn CLI user: hive-${REVIEWER_TURN_IDENTITY} (UID ${REVIEWER_TURN_UID})"
       fi
     fi
     export AGENT_UID_LINES

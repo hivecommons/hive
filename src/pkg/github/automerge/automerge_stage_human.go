@@ -492,10 +492,15 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	// human-merge-path refusal, so it is never asked for.
 	humanMergePath := c.humanMergePathFencePersonMerge(ctx, tracker, key, obs)
 	workflowManual := c.workflowFenceManual(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA) || humanMergePath
+	// A gate stops the lane before it reads mergeability, so the head's
+	// mergeable_state comes from the hive's own reads of it
+	// (automerge_stage_gated_conflict.go).
+	headDirty := c.stageHeadDirty(key, obs)
 	e := stagelabels.Evidence{
 		Head:             obs.HeadSHA,
+		HeadDirty:        headDirty,
 		Verdict:          humanVerdict(contributorVerdict),
-		Conflict:         humanConflict(obs),
+		Conflict:         humanConflict(obs) || stageGatedConflict(obs, headDirty),
 		Holds:            stagelabels.Holds(obs.Labels),
 		Hold:             obs.Hold,
 		Cause:            cause,

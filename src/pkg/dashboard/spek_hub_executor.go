@@ -829,10 +829,10 @@ func spekHubExecUserSpec(identity string) (string, error) {
 	}
 	uid := uidMap.LookupByName(identity)
 	if uid <= 0 {
-		return "", fmt.Errorf("per-agent UID isolation is active but the hub executor identity %q has no UID; restart hive so the entrypoint provisions it", identity)
+		return "", fmt.Errorf("per-agent UID isolation is active but the CLI user identity %q has no UID; restart hive so the entrypoint provisions it", identity)
 	}
 	if _, err := exec.LookPath("su-exec"); err != nil {
-		return "", fmt.Errorf("su-exec unavailable to run the agent CLI as the hub executor user: %w", err)
+		return "", fmt.Errorf("su-exec unavailable to run the agent CLI as its own user: %w", err)
 	}
 	name := "hive-" + identity
 	if _, err := user.Lookup(name); err == nil {

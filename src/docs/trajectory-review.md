@@ -60,8 +60,9 @@ Trajectory Review panel, and exported on `/metrics` as
 
 **Dashboard:** Governor Config → **Features** tab has a full **Trajectory Review**
 panel: an on/off toggle (on by default), a status chip that distinguishes
-*On — active* from *On — no reviewer endpoint (not running)* so the control is
-never silently inert, an explanation of why it exists and what it requires, and
+*On — active (HTTP endpoint)* from *On — no reviewer endpoint (not running; …)*
+so the control is never silently inert, an explanation of why it exists and
+what it requires, and
 inline fields for the reviewer model, review interval, reviewer endpoint, and
 the pause/alert-only choice. Changes persist immediately and take effect on the
 next restart. Exemptions remain in `hive.yaml`.
@@ -104,6 +105,11 @@ endpoint needs a key; a bare vLLM server needs none). When left empty, the
 reviewer inherits the `governor.litellm` endpoint and key, so no new secret is
 introduced for hives that already run LiteLLM. Pointing the reviewer at a cheap
 local vLLM model is a good way to run oversight without spending gateway tokens.
+
+This lane needs that endpoint. `governor.reviewer_backend`'s Claude CLI path
+serves only the one-shot turns (Let hive decide's model step and grounded chat
+answers), so a hive with no endpoint shows this lane as not running even when
+those turns run on the Claude CLI.
 
 Protocol compatibility is all that's required — but model *capability* still
 matters: a tiny local model emits weaker verdicts. Because the lane fails open,
