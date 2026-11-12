@@ -44,12 +44,7 @@ func (s *Server) handleGovernorGeneralAdvancedPut(w http.ResponseWriter, r *http
 		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	var body struct {
-		EvalIntervalS      *int    `json:"eval_interval_s"`
-		AttributionTrailer *bool   `json:"attribution_trailer"`
-		ExplainMode        *string `json:"explain_mode"`
-		governorLoopSettings
-	}
+	var body generalAdvancedBody
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
@@ -83,6 +78,10 @@ func (s *Server) handleGovernorGeneralAdvancedPut(w http.ResponseWriter, r *http
 		cfg.Governor.EvalIntervalS = *body.EvalIntervalS
 	}
 	body.governorLoopSettings.apply(&cfg.Governor)
+	// The loop reads the pacing switch every cycle: no restart needed.
+	if body.APIBudgetPacing != nil {
+		cfg.Governor.APIBudgetPacing = *body.APIBudgetPacing
+	}
 	if body.AttributionTrailer != nil {
 		v := *body.AttributionTrailer
 		cfg.Governor.AttributionTrailer = &v
@@ -125,6 +124,9 @@ func generalAdvancedSectionResponse(cfg *config.Config) map[string]interface{} {
 		"conserve_interval_multiplier":     cfg.Governor.ConserveIntervalMultiplier,
 		"optional_sweep_every_n_cycles":    cfg.Governor.OptionalSweepEveryNCycles,
 		"provider_budget_probe_interval_s": cfg.Governor.ProviderBudget.ProbeIntervalS,
+		// The pacing switch, and what the loop is doing with it right now.
+		"api_budget_pacing":       cfg.Governor.APIBudgetPacing,
+		"api_budget_pacing_state": apiBudgetPacingStateFor(cfg),
 		// Display-only: who owns the explicit mode thresholds. "pack" means an
 		// ACMM pack seeded them and they still scale with repo count; empty
 		// means the operator set them (editing any threshold clears it).

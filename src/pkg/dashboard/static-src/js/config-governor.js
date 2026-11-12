@@ -38,6 +38,7 @@
           <input type="number" min="10" max="86400" value="${evalInterval || ''}" placeholder="300" data-change-action="gh70" style="width:140px">
           <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Applies from the next eval cycle.</span>
         </div>
+        ${renderGovApiBudgetPacing(genAdv)}
         <div class="config-field" style="margin-top:14px">
           <label>Default explain mode ${yamlHint('governor.explain_mode')} ${settingHelpMark('agent-configuration', 'fleet-wide-default', 'Default explain mode', `Hive-wide default for agents that leave their own Explain Mode unset. Asks agents to say WHY they made each tool call, on EXPLAIN: lines alongside the work &mdash; they still act, they do not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. An agent with its own explicit value, including &quot;off&quot;, keeps it. Takes precedence over the HIVE_EXPLAIN_MODE deployment environment variable.`)}</label>
           <select data-change-action="gh75" style="width:320px">
@@ -50,6 +51,33 @@
           <span class="config-toggle-label">Show attribution trailer on PRs/issues ${settingHelpMark('settings', 'general', 'Show attribution trailer on PRs/issues', `Append attribution trailer (agent, backend, model) to agent-created PRs and issues &mdash; audit log always records regardless. Hive-wide: one setting for all agents.`)}</span>
         </div>
         ${renderGovLoopPacing(genAdv)}`;
+    }
+
+    // renderGovApiBudgetPacing is the API budget pacing toggle
+    // (governor.api_budget_pacing) and its live read-out, under the eval
+    // interval on the General tab. The toggle saves at once through PUT
+    // /api/config/governor/general-advanced, like the attribution toggle.
+    function renderGovApiBudgetPacing(genAdv) {
+      const on = genAdv.api_budget_pacing === true;
+      const owner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const action = owner ? 'data-action="toggleApiBudgetPacing" data-arg-types="t"' : 'aria-disabled="true"';
+      return `
+        <div class="config-toggle mt-4">
+          <div class="config-toggle-switch ${on ? 'on' : ''}" role="switch" aria-checked="${on ? 'true' : 'false'}" ${action}></div>
+          <span class="config-toggle-label">Pace GitHub API calls over the rate-limit window ${yamlHint('governor.api_budget_pacing')} ${settingHelpMark('settings', 'general', 'Pace GitHub API calls over the rate-limit window', `Off by default. When on, the hive measures how fast its own loops spend the GitHub API budget. If that rate would use up the calls left above the reserve (github.api_reserve) before the rate-limit window resets, the eval interval and the sweep intervals are lengthened so the budget lasts until the reset. It never shortens an interval and never goes past the max eval interval. Webhook and review wakes still run at once. Owner only; applies from the next eval cycle.`)}</span>
+        </div>
+        <div class="config-help" id="gov-api-budget-pacing-state">${apiBudgetPacingStateHtml(genAdv.api_budget_pacing_state)}</div>`;
+    }
+
+    // apiBudgetPacingStateHtml is the live pacing read-out: api_budget_pacing_state
+    // of the general-advanced settings (the same block /api/status serves).
+    function apiBudgetPacingStateHtml(st) {
+      if (!st) return '';
+      if (!st.enabled) return 'Pacing is off: the loop runs at its usual interval.';
+      const head = st.active ? `Pacing now: interval stretched &times;${esc(String(st.factor))}.` : 'Pacing is on and not stretching.';
+      const interval = st.effective_interval_s ? ` Eval interval now ${esc(String(st.effective_interval_s))}s.` : '';
+      const burn = ` The hive's own loops use about ${esc(String(st.burn_per_min || 0))} GitHub calls a minute.`;
+      return `${head}${interval}${burn} ${esc(st.reason || '')}`;
     }
 
     // renderGovLoopPacing is the governor eval-loop pacing block on the General
@@ -139,6 +167,29 @@
       } catch (err) {
         el.classList.toggle('on'); // revert on failure
         showToast('Failed to update attribution trailer: ' + err.message, 'error');
+      }
+    }
+
+    async function toggleApiBudgetPacing(el) {
+      const turningOn = !el.classList.contains('on');
+      el.classList.toggle('on');
+      el.setAttribute('aria-checked', turningOn ? 'true' : 'false');
+      try {
+        const res = await fetch('/api/config/governor/general-advanced', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ api_budget_pacing: turningOn }),
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        const data = await res.json();
+        _configState.data.general_advanced = data;
+        const note = document.getElementById('gov-api-budget-pacing-state');
+        if (note) note.innerHTML = apiBudgetPacingStateHtml(data.api_budget_pacing_state);
+        showToast('GitHub API budget pacing ' + (turningOn ? 'on' : 'off') + ' — applies from the next eval cycle');
+      } catch (err) {
+        el.classList.toggle('on'); // revert on failure
+        el.setAttribute('aria-checked', turningOn ? 'false' : 'true');
+        showToast('Failed to update GitHub API budget pacing: ' + err.message, 'error');
       }
     }
 

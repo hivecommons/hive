@@ -43,6 +43,10 @@ type restAccountingEvent struct {
 	charged     bool
 	notModified bool
 	rateLimited bool
+	// core is true when the response was served from the core bucket (or
+	// named no bucket), so API budget pacing can leave search and GraphQL
+	// calls out of the core burn rate.
+	core bool
 }
 
 type restAccountingStore struct {
@@ -194,6 +198,7 @@ func coreRateLimitEvidence() (RateLimitEntry, bool) {
 func (s *restAccountingStore) record(ev restAccountingEvent, h http.Header, daemonCredential bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	ev.core = h.Get("X-RateLimit-Resource") == "" || strings.EqualFold(h.Get("X-RateLimit-Resource"), githubCoreRateLimitResource)
 	s.events = append(s.events, ev)
 	s.pruneLocked(ev.at)
 	if !daemonCredential {

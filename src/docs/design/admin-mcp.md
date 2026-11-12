@@ -620,6 +620,11 @@ Phase 5 registers the fleet-level write operations under that contract:
 - `governor.feature_settings` wraps `PUT /api/config/governor/features`, preserves the
   endpoint's pointer-field partial update contract, and calls out protective toggles such as
   ioscan, claims, checkpoint gates, and autonomy automation before confirmation.
+- `governor.general_settings` wraps `PUT /api/config/governor/general-advanced` (Settings →
+  General: the eval interval, the loop pacing knobs, `governor.api_budget_pacing`, the default
+  explain mode and the attribution trailer). It sends only the fields that differ from the
+  settings it read, refuses a field the endpoint's body does not have (a test compares the two),
+  and its confirm guard refuses when a setting the change names moved after the preview.
 - `governor.thresholds` and `governor.threshold_scaling` wrap
   `PUT /api/config/governor/thresholds` and `PUT /api/config/governor/threshold-scaling`, the
   mode ladder an owner setting up a new hive actually has to pick. Thresholds are the one
