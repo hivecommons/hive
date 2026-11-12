@@ -1,1 +1,0 @@
-- Automerge no longer waits forever when GitHub leaves a head's workflow runs orphaned in `queued` with zero jobs: once every same-repo run is older than the never-started grace (30m) without a job, the sweep treats the head as never started so the existing rebase-nudge / bot-takeover recovery and terminal hold apply instead of the bare `required-check-missing` reason (#17775).
