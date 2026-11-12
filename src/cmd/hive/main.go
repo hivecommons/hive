@@ -1652,6 +1652,11 @@ func (b *boot) newKnowledgePrimer() *knowledge.Primer {
 	return p
 }
 
+// advisoryEnsureBudget caps the startup advisory-issue ensure (and the failure
+// classification after it) so a slow or unreachable GitHub cannot hold the
+// dashboard bind past the kubelet liveness budget (#17827).
+var advisoryEnsureBudget = 15 * time.Second
+
 // bootAdvisory builds the notifier, infers the ACMM level, seeds the
 // GitHub App banner state, opens the mutation-convergence ledger and journal,
 // finds or creates the pinned advisory issue and seeds the embedded default
@@ -1733,7 +1738,12 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 			primaryRepo = b.cfg.Project.Repos[0]
 		}
 		if primaryRepo != "" {
-			num, err := deps.ensureAdvisoryIssue(b.ctx, b.ghClient, primaryRepo)
+			// Bounded: every GitHub App token mint against an unreachable
+			// GHE burns ~8s, and this runs before the dashboard binds. An
+			// unresolved issue is retried per eval cycle (ensurePinnedAdvisoryIssue).
+			ensureCtx, cancelEnsure := context.WithTimeout(b.ctx, advisoryEnsureBudget)
+			num, err := deps.ensureAdvisoryIssue(ensureCtx, b.ghClient, primaryRepo)
+			cancelEnsure()
 			if err != nil {
 				b.logger.Error("failed to ensure advisory issue", "repo", primaryRepo, "error", err)
 				// GitHub returns 403 for rate limiting too — a transient
@@ -1750,7 +1760,9 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 					// vanished on the first Re-check with nothing fixed.
 					// classifyGitHubAppFailure is the same verdict Re-check
 					// uses, and it declines to raise on AppStateUnknown.
-					raise, diag, state := deps.classifyAppFailure(b.ctx, b.ghClient.AppAuth(), b.cfg.Project.Org, b.logger)
+					classifyCtx, cancelClassify := context.WithTimeout(b.ctx, advisoryEnsureBudget)
+					raise, diag, state := deps.classifyAppFailure(classifyCtx, b.ghClient.AppAuth(), b.cfg.Project.Org, b.logger)
+					cancelClassify()
 					if raise {
 						b.githubAppRequired = true
 						b.githubAppDiag, b.githubAppState = diag, state

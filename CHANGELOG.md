@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.227.1)
+
+### Fixed
+
+- A hive whose ID the hub refuses to auto-create (heartbeat 403 "hosted/saas hive IDs can only be created via provisioning") now backs off to one probe every 10 minutes and reports a dedicated `hub_heartbeat_rejected_unprovisioned` fleet-report class, instead of warning every tick and filing `unclassified_error_repeated` ([#17815](https://github.com/hivecommons/hive/issues/17815)).
+- Persisting hive state and reach state no longer fails with "rename ... no such file or directory" when two writers race: each write uses a unique temp file before the atomic rename (#17726, #17728).
+
 ## 2026-11-12 (v5.227.0)
 
 ### Added
