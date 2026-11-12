@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -51,8 +52,8 @@ type FleetInFlightItem struct {
 	StartedAt string `json:"started_at,omitempty"`
 }
 
-// FleetReworkPR is one of the contributor's PRs waiting in stage 072 that has
-// not been dispatched to them.
+// FleetReworkPR is one of the contributor's OPEN PRs waiting in stage 072
+// that has not been dispatched to them.
 type FleetReworkPR struct {
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
@@ -63,16 +64,39 @@ type FleetReworkPR struct {
 	Since string `json:"since,omitempty"`
 	// Cause is the failing check / review ask, when the fix queue knows it.
 	Cause string `json:"cause,omitempty"`
-	// State explains what the hive is doing about a PR the contributor is
-	// not working: "adopting (contributor offline)" while the connection is
-	// stale and the nudge went unanswered; "adopted by hive" once stage 074
-	// took it over (hivecommons/hive#12436).
+	// State is "adopting (contributor offline)" while the connection is
+	// stale and the nudge went unanswered (hivecommons/hive#12436). A PR
+	// stage 074 already took over is not the contributor's any more and is
+	// not listed at all.
 	State string `json:"state,omitempty"`
 }
 
 const (
 	FleetReworkStateAdopting = "adopting (contributor offline)"
-	FleetReworkStateAdopted  = "adopted by hive"
+	// FleetReworkStateAdopted names the hand-off in logs and tests; such a
+	// PR no longer appears on the contributor's card.
+	FleetReworkStateAdopted = "adopted by hive"
+)
+
+// fleetReworkSeenWithin bounds how long a stage-store record may go
+// unobserved and still count as an open PR. The stage lane re-observes every
+// open PR each sweep (about a minute); a record it has not touched for this
+// long describes a PR that left the open listing (merged or closed) and is
+// only waiting for the store's 14-day prune.
+const fleetReworkSeenWithin = time.Hour
+
+// Why a queued fix is not on its way to the relay (FleetRework.PendingReworkBlocked).
+const (
+	FleetReworkBlockedOffline      = "relay offline: no heartbeat within the presence window; the hive adopts the PR if the nudge stays unanswered"
+	FleetReworkBlockedNoFixPR      = "relay does not accept fix-pr tasks (no fix_pr_interrupt_v1 capability); the PR only gets a GitHub comment"
+	FleetReworkBlockedScope        = "relay's repository scope is not acknowledged (%s); the task boundary serves nothing until it is"
+	FleetReworkBlockedOrphan       = "earlier fix dispatch %s is still booked in flight on a dropped connection; released at the relay's next ready"
+	FleetReworkBlockedBackoff      = "retry backoff until %s after %d failed dispatch(es)"
+	FleetReworkBlockedFocus        = "primary task protected by the focus window until %s; served at the next task boundary"
+	FleetReworkBlockedSlotsBusy    = "all %d fix slot(s) busy"
+	FleetReworkBlockedAwaitReady   = "waiting for the relay's next ready (fixes are served before new work)"
+	FleetReworkBlockedNotQueued    = "not in this hub's fix queue; queued when the stage engine re-nudges"
+	fleetReworkBlockedIdleReasonFm = "%s; relay last reported idle: %s"
 )
 
 // FleetRework is the per-contributor rework view spliced onto FleetClanker.
@@ -88,14 +112,19 @@ type FleetRework struct {
 	// InFlight lists every item this connection is working: the primary task
 	// plus any fix-pr tasks running beside / instead of it.
 	InFlight []FleetInFlightItem `json:"in_flight,omitempty"`
-	// FixQueueDepth is how many red PRs wait in the contributor's fix queue.
+	// FixQueueDepth is how many open red PRs wait in the contributor's fix queue.
 	FixQueueDepth int `json:"fix_queue_depth"`
-	// PendingRework counts the contributor's PRs in
+	// PendingRework counts the contributor's OPEN PRs in
 	// stage/072-returned-to-contributor that have NOT been dispatched to them
-	// (fix queue ∪ stage store, minus in-flight). Non-zero while the relay is
-	// idle is the operator's tell that rework is not reaching the agent.
+	// (fix queue ∪ stage store, minus in-flight, minus anything merged,
+	// closed, adopted by the hive or no longer observed by the stage lane).
+	// Non-zero while the relay is idle is the operator's tell that rework is
+	// not reaching the agent.
 	PendingRework    int             `json:"pending_rework"`
 	PendingReworkPRs []FleetReworkPR `json:"pending_rework_prs,omitempty"`
+	// PendingReworkBlocked says why the pending rework is not on its way to
+	// the relay right now (FleetReworkBlocked*); empty when nothing pends.
+	PendingReworkBlocked string `json:"pending_rework_blocked,omitempty"`
 }
 
 // stageStoreOrShared returns the injected stage store or the process-wide one.
@@ -104,6 +133,44 @@ func (h *ContributeWSHub) stageStoreOrShared() *stagelabels.Store {
 		return h.stageStore
 	}
 	return stagelabels.Shared()
+}
+
+// prOpenState answers whether repo#number is still open from the forge
+// cache the hive already holds (never a GitHub call): known=false when the
+// cache has no entry. prOpenFn is the test seam.
+func (h *ContributeWSHub) prOpenState(repo string, number int) (open, known bool) {
+	if h.prOpenFn != nil {
+		return h.prOpenFn(repo, number)
+	}
+	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		return false, false
+	}
+	fs := h.server.deps.GHClient.ForgeState()
+	if fs == nil {
+		return false, false
+	}
+	item, ok := fs.PR(repo, number)
+	if !ok {
+		return false, false
+	}
+	return item.Open(), true
+}
+
+// reworkCandidateOpen reports whether a rework candidate is still an open
+// PR of the contributor's: the forge cache decides when it knows the PR;
+// otherwise a stage-store record the lane stopped observing means closed.
+// A record stage 074 took over is the hive's now, not the contributor's.
+func (h *ContributeWSHub) reworkCandidateOpen(repo string, number int, rec stagelabels.Record, hasRec bool, now time.Time) bool {
+	if hasRec && rec.Stage == stagelabels.AdoptedByHive {
+		return false
+	}
+	if open, known := h.prOpenState(repo, number); known {
+		return open
+	}
+	if hasRec && !rec.LastSeen.IsZero() && now.Sub(rec.LastSeen) > fleetReworkSeenWithin {
+		return false
+	}
+	return true
 }
 
 // isReworkStage reports whether a stage means "this PR is being repaired".
@@ -140,9 +207,12 @@ func workKindFor(store *stagelabels.Store, taskKind, repo string, number int) (k
 
 // fleetReworkFor builds the rework view for one connection. Call with c.mu
 // held; it takes only the fix scheduler's and stage store's own locks.
-func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool) FleetRework {
+// heldFixIDs are the fix-pr task IDs every live connection of this
+// contributor holds (FleetSnapshot gathers them before locking c).
+func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool, heldFixIDs map[string]bool) FleetRework {
 	var out FleetRework
 	store := h.stageStoreOrShared()
+	now := time.Now()
 	cap := h.fixCapacity(c)
 	switch {
 	case cap.Parallel:
@@ -202,8 +272,6 @@ func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool) F
 		return out
 	}
 	sched := h.fixQueue()
-	queued := sched.Queued(user)
-	out.FixQueueDepth = len(queued)
 	// Dispatched on ANY of this contributor's connections counts as in flight.
 	for _, d := range sched.InFlight(user) {
 		for _, it := range d.Items {
@@ -211,7 +279,16 @@ func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool) F
 		}
 	}
 	pending := map[string]FleetReworkPR{}
-	for _, it := range queued {
+	for _, it := range sched.Queued(user) {
+		rec, hasRec := store.Get(stagelabels.Key(it.Repo, it.Number))
+		if !h.reworkCandidateOpen(it.Repo, it.Number, rec, hasRec, now) {
+			// Merged, closed or adopted while queued: nothing left for the
+			// relay to fix, and handing it out would waste the agent's turn.
+			sched.Remove(user, it.Repo, it.Number)
+			h.forgetFixOwner(user, it.Key())
+			continue
+		}
+		out.FixQueueDepth++
 		if inFlightKeys[it.Key()] {
 			continue
 		}
@@ -236,26 +313,15 @@ func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool) F
 		if repo == "" || number == 0 {
 			continue
 		}
+		if !h.reworkCandidateOpen(repo, number, ai.Record, true, now) {
+			continue
+		}
 		pr := FleetReworkPR{Repo: repo, Number: number, Stage: ai.Record.Stage.Label()}
 		if !ai.Record.EnteredAt.IsZero() {
 			pr.Since = ai.Record.EnteredAt.UTC().Format(time.RFC3339)
 		}
 		if stale && ai.Record.NudgeCount > 0 {
 			pr.State = FleetReworkStateAdopting
-		}
-		pending[ai.Key] = pr
-	}
-	for _, ai := range store.ByAuthor(user, stagelabels.AdoptedByHive) {
-		if _, dup := pending[ai.Key]; dup {
-			continue
-		}
-		repo, number := splitStageKey(ai.Key)
-		if repo == "" || number == 0 {
-			continue
-		}
-		pr := FleetReworkPR{Repo: repo, Number: number, Stage: ai.Record.Stage.Label(), State: FleetReworkStateAdopted}
-		if !ai.Record.EnteredAt.IsZero() {
-			pr.Since = ai.Record.EnteredAt.UTC().Format(time.RFC3339)
 		}
 		pending[ai.Key] = pr
 	}
@@ -268,7 +334,57 @@ func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool) F
 		out.PendingReworkPRs = append(out.PendingReworkPRs, pending[k])
 	}
 	out.PendingRework = len(out.PendingReworkPRs)
+	if out.PendingRework > 0 {
+		out.PendingReworkBlocked = h.fleetReworkBlockReason(c, stale, user, cap, sched, heldFixIDs, now)
+	}
 	return out
+}
+
+// fleetReworkBlockReason explains why user's pending rework is not on its
+// way to the relay, in the order the dispatcher itself refuses. Call with
+// c.mu held.
+func (h *ContributeWSHub) fleetReworkBlockReason(c *ContributorConnection, stale bool, user string, cap fixqueue.Capacity, sched *fixqueue.Scheduler, heldFixIDs map[string]bool, now time.Time) string {
+	reason := func(r string) string {
+		if c.currentTask == nil && c.lastIdleReason != "" {
+			return fmt.Sprintf(fleetReworkBlockedIdleReasonFm, r, c.lastIdleReason)
+		}
+		return r
+	}
+	if stale {
+		return FleetReworkBlockedOffline
+	}
+	if !relaySupportsFixPR(c) {
+		return FleetReworkBlockedNoFixPR
+	}
+	if gate := repoScopeGateReasonLocked(c); gate != "" {
+		return reason(fmt.Sprintf(FleetReworkBlockedScope, gate))
+	}
+	queued := sched.Queued(user)
+	if len(queued) == 0 {
+		return reason(FleetReworkBlockedNotQueued)
+	}
+	inflight := sched.InFlight(user)
+	for _, d := range inflight {
+		if !heldFixIDs[d.ID] {
+			return reason(fmt.Sprintf(FleetReworkBlockedOrphan, d.ID))
+		}
+	}
+	if head := queued[0]; now.Before(head.NotBefore) {
+		return reason(fmt.Sprintf(FleetReworkBlockedBackoff, head.NotBefore.UTC().Format(time.RFC3339), head.Attempts))
+	}
+	st := sched.Status(user, cap)
+	if c.currentTask != nil {
+		if st.FocusUntil != nil && now.Before(*st.FocusUntil) {
+			return fmt.Sprintf(FleetReworkBlockedFocus, st.FocusUntil.UTC().Format(time.RFC3339))
+		}
+		if len(inflight) >= cap.Slots() {
+			return fmt.Sprintf(FleetReworkBlockedSlotsBusy, cap.Slots())
+		}
+	}
+	if len(inflight) >= cap.BoundarySlots() {
+		return reason(fmt.Sprintf(FleetReworkBlockedSlotsBusy, cap.BoundarySlots()))
+	}
+	return reason(FleetReworkBlockedAwaitReady)
 }
 
 // splitStageKey inverts stagelabels.Key ("owner/repo#N").
