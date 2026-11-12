@@ -1,0 +1,1 @@
+- Repeated `review swarm kick not delivered` warnings for the same PR head and cause are now logged once (then at debug) instead of every cycle.
