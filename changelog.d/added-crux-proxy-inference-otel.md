@@ -1,1 +1,0 @@
-- The crux inference translator now records an OTel `crux.proxy.inference.requests` counter and `crux.proxy.inference.duration` histogram with bounded `status_class` and `outcome` attributes, plus one server span per request, following the `crux serve` HTTP metrics pattern; nothing is exported unless `OTEL_*` is configured (hivecommons/crux#153).
