@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -577,5 +578,354 @@ func TestCloseOnMergeSkipsClaimedPullRequestTarget(t *testing.T) {
 	}
 	if len(writes) != 0 {
 		t.Fatalf("unexpected write requests: %v", writes)
+	}
+}
+
+// openSubIssuesFixture serves acme/widgets with one open issue, #7, whose
+// payload carries (or lacks) GitHub's sub_issues_summary block in the
+// single-issue read and in the open-issue listing alike. It records every
+// write, so a test can prove close-on-merge wrote nothing at all.
+type openSubIssuesFixture struct {
+	t *testing.T
+	// summary is #7's sub_issues_summary; nil leaves the block out.
+	summary *IssueChildren
+	labels  []string
+	// comments is what GET /issues/7/comments answers, grown by posts.
+	comments []string
+	// writes is every non-GET request, "METHOD path".
+	writes []string
+	posted []string
+	added  []string
+	closed bool
+	// issueGets counts GET /issues/7; listGets counts GET /issues.
+	issueGets int
+	listGets  int
+	requests  int
+}
+
+func (f *openSubIssuesFixture) issue() map[string]any {
+	labels := make([]map[string]string, 0, len(f.labels))
+	for _, l := range f.labels {
+		labels = append(labels, map[string]string{"name": l})
+	}
+	state := "open"
+	if f.closed {
+		state = "closed"
+	}
+	out := map[string]any{"number": 7, "state": state, "body": "body", "user": map[string]string{"login": "reporter", "type": "User"}, "labels": labels}
+	if f.summary != nil {
+		out["sub_issues_summary"] = f.summary
+	}
+	return out
+}
+
+func (f *openSubIssuesFixture) server() *httptest.Server {
+	const repo = "/repos/acme/widgets"
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		f.requests++
+		if r.Method != http.MethodGet {
+			f.writes = append(f.writes, r.Method+" "+r.URL.Path)
+		}
+		switch {
+		case r.Method == "GET" && r.URL.Path == repo+"/issues":
+			f.listGets++
+			out := []map[string]any{}
+			if !f.closed {
+				out = append(out, f.issue())
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == "GET" && r.URL.Path == repo+"/issues/7":
+			f.issueGets++
+			_ = json.NewEncoder(w).Encode(f.issue())
+		case r.Method == "GET" && r.URL.Path == repo+"/issues/7/comments":
+			out := make([]map[string]string, 0, len(f.comments))
+			for _, b := range f.comments {
+				out = append(out, map[string]string{"body": b})
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == "GET" && r.URL.Path == repo+"/issues/7/timeline":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == "GET" && r.URL.Path == repo+"/pulls/42":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number": 42, "title": "fix", "body": "Fixes #7", "merged": true,
+				"merged_at": "2026-10-09T12:00:00Z", "merge_commit_sha": "abcdef0123456789",
+				"user": map[string]string{"login": "hive[bot]"},
+				"head": map[string]string{"ref": "scanner/other", "sha": "headsha"},
+				"base": map[string]any{"repo": map[string]string{"full_name": "acme/widgets"}},
+			})
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, repo+"/labels/"):
+			_ = json.NewEncoder(w).Encode(map[string]string{"name": strings.TrimPrefix(r.URL.Path, repo+"/labels/")})
+		case r.Method == "POST" && r.URL.Path == repo+"/issues/7/comments":
+			var req map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.posted = append(f.posted, req["body"])
+			f.comments = append(f.comments, req["body"])
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": len(f.posted), "body": req["body"]})
+		case r.Method == "POST" && r.URL.Path == repo+"/issues/7/labels":
+			var req []string
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.added = append(f.added, req...)
+			_ = json.NewEncoder(w).Encode([]map[string]string{})
+		case r.Method == "PATCH" && r.URL.Path == repo+"/issues/7":
+			var req map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req["state"] != "closed" || req["state_reason"] != "completed" {
+				f.t.Errorf("patch = %+v, want closed/completed", req)
+			}
+			f.closed = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, repo+"/issues/7/labels/"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			f.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// openSubIssuesPR is the merged PR the fixture serves as acme/widgets#42.
+func openSubIssuesPR(body string) *gh.PullRequest {
+	pr := mergedTestPR(42, "hive[bot]", "scanner/other", body)
+	pr.Base.Repo.FullName = gh.Ptr("acme/widgets")
+	return pr
+}
+
+// openSubIssuesHeldLines counts the INFO lines that say an issue was left
+// alone for its open sub-issues, and checks each names what it is about.
+func openSubIssuesHeldLines(t *testing.T, logs string) int {
+	t.Helper()
+	n := 0
+	for _, line := range strings.Split(logs, "\n") {
+		if !strings.Contains(line, "issue has open sub-issues") {
+			continue
+		}
+		n++
+		for _, want := range []string{"level=INFO", "issue=7", "pr=42", "open=", "total=3"} {
+			if !strings.Contains(line, want) {
+				t.Fatalf("held line lacks %q: %s", want, line)
+			}
+		}
+	}
+	return n
+}
+
+// The issue read by the function itself (no sweep listing). An issue with an
+// open sub-issue gets no "Fixed by" comment, no awaiting comment, no
+// hive/likely-done and no close; with every sub-issue closed, or none, it is
+// commented on, labelled and closed exactly as before.
+func TestCloseOnMergeLeavesIssueWithOpenSubIssuesAlone(t *testing.T) {
+	closing := openSubIssuesPR("Fixes #7")
+	for _, tc := range []struct {
+		name       string
+		summary    *IssueChildren
+		labels     []string
+		pr         *gh.PullRequest
+		wantAction CloseOnMergeAction
+		wantReason string
+		wantPosted []string
+		wantAdded  []string
+		wantClosed bool
+		wantHeld   bool
+		// wantIssueGets is checked when non-zero.
+		wantIssueGets int
+	}{
+		{name: "three sub-issues, none completed: nothing written", summary: &IssueChildren{Total: 3}, pr: closing,
+			wantAction: CloseOnMergeSkipped, wantReason: "open_sub_issues", wantHeld: true, wantIssueGets: 1},
+		{name: "one of three still open: nothing written", summary: &IssueChildren{Total: 3, Completed: 2}, pr: closing,
+			wantAction: CloseOnMergeSkipped, wantReason: "open_sub_issues", wantHeld: true, wantIssueGets: 1},
+		{name: "confirmation path, open sub-issues: no awaiting comment, no likely-done", summary: &IssueChildren{Total: 3}, labels: []string{"needs-human"}, pr: closing,
+			wantAction: CloseOnMergeSkipped, wantReason: "open_sub_issues", wantHeld: true},
+		{name: "every sub-issue completed: commented and closed as before", summary: &IssueChildren{Total: 3, Completed: 3}, pr: closing,
+			wantAction: CloseOnMergeClosed, wantReason: "closed_completed", wantPosted: []string{closeOnMergeCloseComment(closing)}, wantClosed: true, wantIssueGets: 2},
+		{name: "no sub-issues (empty summary): commented and closed as before", summary: &IssueChildren{}, pr: closing,
+			wantAction: CloseOnMergeClosed, wantReason: "closed_completed", wantPosted: []string{closeOnMergeCloseComment(closing)}, wantClosed: true, wantIssueGets: 2},
+		{name: "no summary block: commented and closed as before", pr: closing,
+			wantAction: CloseOnMergeClosed, wantReason: "closed_completed", wantPosted: []string{closeOnMergeCloseComment(closing)}, wantClosed: true, wantIssueGets: 2},
+		{name: "confirmation path, every sub-issue completed: awaiting comment and likely-done as before", summary: &IssueChildren{Total: 3, Completed: 3}, labels: []string{"needs-human"}, pr: closing,
+			wantAction: CloseOnMergeAwaiting, wantReason: "needs_confirmation_or_human", wantPosted: []string{closeOnMergeAwaitingComment(closing)}, wantAdded: []string{LikelyDoneLabel}},
+		{name: "confirmation path, no summary block: awaiting comment and likely-done as before", labels: []string{"needs-human"}, pr: closing,
+			wantAction: CloseOnMergeAwaiting, wantReason: "needs_confirmation_or_human", wantPosted: []string{closeOnMergeAwaitingComment(closing)}, wantAdded: []string{LikelyDoneLabel}},
+		{name: "refs-only PR on a parent is still partially addressed", summary: &IssueChildren{Total: 3}, pr: openSubIssuesPR("Refs #7"),
+			wantAction: CloseOnMergeSkipped, wantReason: "partially_addressed", wantAdded: []string{PartiallyAddressedLabel}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &openSubIssuesFixture{t: t, summary: tc.summary, labels: tc.labels}
+			srv := f.server()
+			defer srv.Close()
+			var logBuf strings.Builder
+			c := newTestClient(t, srv, "acme", []string{"widgets"})
+			res := c.closeIssueForMergedPRClaim(context.Background(), "acme/widgets", 7, tc.pr, true, CloseOnMergeOptions{
+				Identity: HiveIdentity{AppLogin: "hive[bot]"},
+				Logger:   slog.New(slog.NewTextHandler(&logBuf, nil)),
+			})
+			if res.Action != tc.wantAction || res.Reason != tc.wantReason {
+				t.Fatalf("result = %s/%s, want %s/%s", res.Action, res.Reason, tc.wantAction, tc.wantReason)
+			}
+			if strings.Join(f.posted, "\x00") != strings.Join(tc.wantPosted, "\x00") {
+				t.Fatalf("posted = %q, want %q", f.posted, tc.wantPosted)
+			}
+			if strings.Join(f.added, ",") != strings.Join(tc.wantAdded, ",") {
+				t.Fatalf("labels added = %v, want %v", f.added, tc.wantAdded)
+			}
+			if f.closed != tc.wantClosed {
+				t.Fatalf("closed = %v, want %v", f.closed, tc.wantClosed)
+			}
+			if tc.wantHeld && len(f.writes) != 0 {
+				t.Fatalf("an issue with open sub-issues was written to: %v", f.writes)
+			}
+			held := 0
+			if tc.wantHeld {
+				held = 1
+			}
+			if got := openSubIssuesHeldLines(t, logBuf.String()); got != held {
+				t.Fatalf("held log lines = %d, want %d:\n%s", got, held, logBuf.String())
+			}
+			if tc.wantHeld && !res.Settles() {
+				t.Fatalf("result %+v must settle the claim, like tracking_issue", res)
+			}
+			// The sub-issue summary rides on the read the function already
+			// made: one GET when nothing is written, plus CloseIssue's own
+			// pre-close read when the issue is closed.
+			if tc.wantIssueGets != 0 && f.issueGets != tc.wantIssueGets {
+				t.Fatalf("GET issues/7 = %d, want %d", f.issueGets, tc.wantIssueGets)
+			}
+		})
+	}
+}
+
+// The ledger sweep with one eligible claim reads the issue itself. A parent
+// with open sub-issues is settled without a write; while settled it costs no
+// request; re-verified past the recheck window it is still left alone; and
+// once its sub-issues are all closed and it is still open, the next
+// re-verification comments and closes as close-on-merge always did.
+func TestCloseOnMergeLedgerSweepSettlesIssueWithOpenSubIssues(t *testing.T) {
+	defer resetPRDetailCacheForTest(nil, 0)()
+	f := &openSubIssuesFixture{t: t, summary: &IssueChildren{Total: 3}}
+	srv := f.server()
+	defer srv.Close()
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), nil)
+	if err := ledger.Record(IssueClaim{Repo: "acme/widgets", Issue: 7, PRNumber: 42, PRRepo: "acme/widgets", MergedPR: true}); err != nil {
+		t.Fatal(err)
+	}
+	c := newTestClient(t, srv, "acme", []string{"widgets"})
+	now := time.Now()
+	var logBuf strings.Builder
+	opts := CloseOnMergeOptions{
+		Identity: HiveIdentity{AppLogin: "hive[bot]"},
+		Logger:   slog.New(slog.NewTextHandler(&logBuf, nil)),
+		Now:      func() time.Time { return now },
+	}
+	wantHeld := func(pass string, s CloseOnMergeSweep) {
+		t.Helper()
+		if len(s.Results) != 1 || s.Results[0].Action != CloseOnMergeSkipped || s.Results[0].Reason != "open_sub_issues" || s.Marked != 1 {
+			t.Fatalf("%s = %+v, want one settled open_sub_issues skip", pass, s)
+		}
+		if len(f.writes) != 0 {
+			t.Fatalf("%s wrote to an issue with open sub-issues: %v", pass, f.writes)
+		}
+	}
+
+	wantHeld("first sweep", c.CloseOnMergeLedgerSweep(context.Background(), ledger, opts))
+	if f.listGets != 0 || f.issueGets != 1 {
+		t.Fatalf("first sweep: list GETs = %d, issue GETs = %d, want 0 and 1 (the read v6 already made)", f.listGets, f.issueGets)
+	}
+	if got := openSubIssuesHeldLines(t, logBuf.String()); got != 1 {
+		t.Fatalf("held log lines = %d, want 1:\n%s", got, logBuf.String())
+	}
+
+	// Inside the recheck window the settled claim costs nothing.
+	requests := f.requests
+	now = now.Add(time.Hour)
+	if s := c.CloseOnMergeLedgerSweep(context.Background(), ledger, opts); len(s.Results) != 0 || s.SkippedSettled != 1 {
+		t.Fatalf("settled sweep = %+v, want the claim skipped", s)
+	}
+	if f.requests != requests {
+		t.Fatalf("settled sweep made %d request(s)", f.requests-requests)
+	}
+
+	// Past the window it is verified again, and still left alone.
+	now = now.Add(DefaultCloseOnMergeRecheck)
+	wantHeld("recheck sweep", c.CloseOnMergeLedgerSweep(context.Background(), ledger, opts))
+
+	// The sub-issues close; the parent is still open at the next recheck.
+	f.summary = &IssueChildren{Total: 3, Completed: 3}
+	now = now.Add(2 * DefaultCloseOnMergeRecheck)
+	s := c.CloseOnMergeLedgerSweep(context.Background(), ledger, opts)
+	if len(s.Results) != 1 || s.Results[0].Action != CloseOnMergeClosed || s.Results[0].Reason != "closed_completed" {
+		t.Fatalf("sweep after the sub-issues closed = %+v, want the issue closed", s)
+	}
+	if !f.closed || len(f.posted) != 1 || !strings.Contains(f.posted[0], CloseOnMergeMarker) || !strings.Contains(f.posted[0], "Fixed by #42") {
+		t.Fatalf("closed = %v, posted = %q, want one Fixed-by comment and the close", f.closed, f.posted)
+	}
+}
+
+// The ledger sweep with two eligible claims in a repo, and the backfill,
+// hand the function an issue from their open-issue listing. The sub-issue
+// summary on that listing row is what holds the parent: no issue read is
+// added, and with every sub-issue closed the listed issue is closed with
+// only CloseIssue's own read, as before.
+func TestCloseOnMergeListedIssueWithOpenSubIssues(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		summary       *IssueChildren
+		wantAction    CloseOnMergeAction
+		wantReason    string
+		wantClosed    bool
+		wantIssueGets int
+	}{
+		{name: "open sub-issues", summary: &IssueChildren{Total: 3}, wantAction: CloseOnMergeSkipped, wantReason: "open_sub_issues"},
+		{name: "every sub-issue completed", summary: &IssueChildren{Total: 3, Completed: 3}, wantAction: CloseOnMergeClosed, wantReason: "closed_completed", wantClosed: true, wantIssueGets: 1},
+		{name: "no summary block", wantAction: CloseOnMergeClosed, wantReason: "closed_completed", wantClosed: true, wantIssueGets: 1},
+	} {
+		check := func(t *testing.T, f *openSubIssuesFixture, results []CloseOnMergeResult) {
+			t.Helper()
+			if len(results) != 1 || results[0].Issue != 7 || results[0].PR != 42 || results[0].Action != tc.wantAction || results[0].Reason != tc.wantReason {
+				t.Fatalf("results = %+v, want #7 for PR 42 %s/%s", results, tc.wantAction, tc.wantReason)
+			}
+			if f.closed != tc.wantClosed {
+				t.Fatalf("closed = %v, want %v", f.closed, tc.wantClosed)
+			}
+			if !tc.wantClosed && len(f.writes) != 0 {
+				t.Fatalf("an issue with open sub-issues was written to: %v", f.writes)
+			}
+			if tc.wantClosed && (len(f.posted) != 1 || !strings.Contains(f.posted[0], "Fixed by #42")) {
+				t.Fatalf("posted = %q, want the one Fixed-by comment", f.posted)
+			}
+			if f.listGets != 1 || f.issueGets != tc.wantIssueGets {
+				t.Fatalf("list GETs = %d, issue GETs = %d, want 1 and %d", f.listGets, f.issueGets, tc.wantIssueGets)
+			}
+		}
+		t.Run("ledger sweep/"+tc.name, func(t *testing.T) {
+			defer resetPRDetailCacheForTest(nil, 0)()
+			f := &openSubIssuesFixture{t: t, summary: tc.summary}
+			srv := f.server()
+			defer srv.Close()
+			ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), nil)
+			// Two eligible claims make the sweep list the repo's open issues
+			// once; #8 is not in the listing, so only #7 is worked.
+			for issue, pr := range map[int]int{7: 42, 8: 43} {
+				if err := ledger.Record(IssueClaim{Repo: "acme/widgets", Issue: issue, PRNumber: pr, PRRepo: "acme/widgets", MergedPR: true}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c := newTestClient(t, srv, "acme", []string{"widgets"})
+			check(t, f, c.CloseOnMergeForLedger(context.Background(), ledger, CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}}))
+		})
+		t.Run("backfill/"+tc.name, func(t *testing.T) {
+			defer resetPRDetailCacheForTest(nil, 0)()
+			f := &openSubIssuesFixture{t: t, summary: tc.summary, labels: []string{LikelyDoneLabel}, comments: []string{"covered by PR #42"}}
+			srv := f.server()
+			defer srv.Close()
+			c := newTestClient(t, srv, "acme", []string{"widgets"})
+			opts := CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}}
+			check(t, f, c.CloseOnMergeBackfill(context.Background(), opts))
+			if tc.wantClosed {
+				return
+			}
+			// A second backfill pass writes nothing either.
+			f.listGets = 0
+			check(t, f, c.CloseOnMergeBackfill(context.Background(), opts))
+		})
 	}
 }

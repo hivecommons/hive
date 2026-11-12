@@ -762,6 +762,12 @@ func handleMergedPRIssueStage(ctx context.Context, client *Client, in IssueStage
 	if !in.Claim.Closing {
 		return false, false
 	}
+	// A parent with an open sub-issue is not fixed by the PR that merged:
+	// no "Fixed by" note and no close. closeDecomposedParent closes it once
+	// every child is closed.
+	if mergedPRIssueStageHeldForOpenChildren(client, in, logger) {
+		return false, false
+	}
 	marker := mergedPRClosedStageMarkerFor(in.Claim.PRNumber)
 	// Close-on-merge's own "Fixed by #N" (CloseOnMergeMarker) counts as the
 	// closing comment too: one per issue, never both (hivecommons/hive#15727
