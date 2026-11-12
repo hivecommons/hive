@@ -1,0 +1,1 @@
+- crux serve: requests refused with a 401 by authentication are now counted in the new `crux.serve.auth.rejections` metric, labelled only by a fixed `reason` (`missing_or_invalid_token`, `project_forbidden` or `no_token_configured`); they never reached `crux.serve.requests` before.

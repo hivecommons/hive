@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.228.1)
+
+### Fixed
+
+- hub: a reconcile sweep now converges the template startupProbe and the current init-container image repository onto pre-existing hosted hive Deployments, so a slow boot no longer becomes a permanent liveness crash-loop (#17827)
+- Substrate `snapshot_on_idle` no longer accumulates suspended actors: the previous idle snapshot of an agent is deleted when the next one is taken (actors from before a hive restart are not reclaimed).
+
 ## 2026-11-12 (v5.228.0)
 
 ### Added

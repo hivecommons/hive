@@ -1,1 +1,0 @@
-- hub: a reconcile sweep now converges the template startupProbe and the current init-container image repository onto pre-existing hosted hive Deployments, so a slow boot no longer becomes a permanent liveness crash-loop (#17827)
