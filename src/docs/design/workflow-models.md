@@ -719,6 +719,7 @@ Storage is a directory under the hub data dir:
   workflows/<name>/<version>.bundle.json   immutable; refuse overwrite of name@version
   index.json                               derived; rebuilt from the bundles if missing
   refresh/<owner>__<repo>.json             last ingest run per repository
+  last-refresh.json                        summary of the last completed run
 ```
 
 Entries are keyed `name@version` plus hash. Publishing the identical bundle again is a
@@ -734,8 +735,8 @@ Routes (see [hub-server.md](../api-reference/hub-server.md)):
 | `GET /api/marketplace/workflows` | public | index; `If-None-Match` → `304` |
 | `GET /api/marketplace/workflows/{name}/{version}/bundle` | public | one bundle, `Cache-Control: immutable` |
 | `POST /api/marketplace/workflows` | spoke bearer or hub admin | publish; hub re-verifies |
-| `POST /api/marketplace/refresh[?repo=]` | hub admin | on-demand ingest |
-| `GET /api/marketplace/status` | public | last refresh, counts by tier |
+| `POST /api/marketplace/refresh[?repo=]` | spoke bearer or hub admin | on-demand ingest; spokes rate-limited (`429`) |
+| `GET /api/marketplace/status[?verbose=1]` | public (`verbose`: spoke bearer or hub admin) | last refresh, counts by tier, failing repos with their errors; `verbose` adds pending repos |
 
 **Who may publish what.** A spoke authenticates with its heartbeat bearer bound to the
 `X-Hive-ID` header (the same per-hive key the heartbeat and NPS lanes verify) and may
@@ -743,21 +744,69 @@ assert `local`/`local-published` (normalised to `local-published`) or
 `ingested-unreviewed`. `curated` and `built-in` require a hub-admin session with
 same-origin CSRF evidence. The hub never stores a bundle it did not itself `Verify`.
 
+**Curated seeding.** Reviewed models ship with the hub binary under
+`pkg/hub/marketplace/curated/*.yaml` (`go:embed`; loader `curated.Load`). On startup —
+before any ingest, and without a GitHub token — and again at the start of every refresh
+run, `seedCuratedModels` decodes each file strictly (unknown fields refused), checks the
+curated invariants (`spec.meta.provenance: curated`, a `spec.meta.version`, zero
+`inferred` elements), compiles it through `bundle.Export`, sets `Tier=curated` and
+`Publish`es it when that `name@version` is absent. A file that fails any step is logged
+(`marketplace: curated model refused` / `does not compile` / `not published`) and
+skipped; the rest of the catalogue still seeds and the error appears in the run's
+`errors` as `curated: …`. Seeded keys are reported in `lastRefresh.curated`, not
+`published`. Entries are immutable: re-running is a no-op, and editing a file without
+bumping its version is a `409` conflict at seed time, so **a new version is a new file**
+(`cncf-techdocs-assessment.yaml` carries `curated-2026.11.1`; the next revision is a
+second file with `curated-2026.12.1` or similar — the catalogue keeps both and the spoke
+pins what it imported). To add a curated model: write the YAML (start from
+`ingest.Lifecycle` + `spec.Ingest` output, confirm every inferred element, cite the
+source document in `workflow.hivecommons.dev/source*` annotations and the element
+`citations`), drop it in that directory, and add rules-evaluator cases to
+`curated_test.go` — `TestLoadEmbedded` already refuses anything that does not compile
+clean. The first curated model is the CNCF TechDocs assessment,
+[docs/workflows/techdocs-assessment.md](../workflows/techdocs-assessment.md).
+
 **Refresh.** The corpus is the CNCF survey list, now embedded as
-`pkg/workflowmodel/ingest/corpus` (262 projects / 299 repositories; `cmd/workflow-survey`
-falls back to it when no `projects.json` is given) plus
+`pkg/workflowmodel/ingest/corpus` (`corpus.json`, 262 projects / 299 repositories;
+`cmd/workflow-survey` falls back to it when no `projects.json` is given) plus the
+operator-added non-landscape list `extra.json` in the same package (`{"name",
+"category", "repos", "why"}` per entry; `cncf/techdocs` is there so its
+`ingested-unreviewed` version exists next to the curated one) plus
 `HIVE_HUB_MARKETPLACE_EXTRA_REPOS`. For each repository the hub fetches the default-branch
-tarball through its GitHub identity, keeps only pipeline files (`ingest.ReadTree`), and
-records `{sourceSHA, filesHash, files, checkedAt}`. Unchanged hash → no-op. Changed →
+tarball through its GitHub identity and streams it (`ingest.ReadTarball`): only the paths
+`ingest.ReadTree` would select are kept (per file ≤ 1 MiB, ≤ 32 MiB in total), everything
+else is discarded as it streams, so a monorepo's source size never matters. It then
+records `{format, sourceSHA, filesHash, files, checkedAt}`. Unchanged hash → no-op. Changed →
 `ingest.Lifecycle` → `bundle.Export` → publish as `ingested-YYYYMMDD.N`, tier
 `ingested-unreviewed`, with the source SHA in an annotation. Curated versions are never
 touched; `marketplaceNormaliseIndex` flags a curated entry `newerIngestAvailable` when a
-later ingest of the same name exists. The crawl is sequential with a short pause between
-repositories and honours `X-RateLimit-Remaining`/`Reset`. It runs nightly at
-`HIVE_HUB_MARKETPLACE_REFRESH_SCHEDULE` (HH:MM UTC, default `03:00`, empty disables), on
-demand, and once at hub start when the catalogue is empty and a GitHub token is present
-(in a goroutine; startup is not blocked). `HIVE_HUB_MARKETPLACE_DISABLED` turns the
-routes off (`404`).
+later ingest of the same name exists. The crawl is sequential in sorted repository order
+with a short pause between repositories, logs progress every 25, honours
+`X-RateLimit-Remaining`/`Reset` and sleeps on a `403`/`429` with `Retry-After` (secondary
+limits). It runs nightly at `HIVE_HUB_MARKETPLACE_REFRESH_SCHEDULE` (HH:MM UTC, default
+`03:00`, empty disables) and on demand. `HIVE_HUB_MARKETPLACE_DISABLED` turns the routes off
+(`404`).
+
+**Seeding is resumable.** Each repository's record is persisted as the crawl goes, so a
+run interrupted by a hub restart (releases roll several times a day) loses nothing. At
+start, after a short delay and when a GitHub token is present, the hub ingests every corpus
+repository that is *due*: no record, a record older than the nightly interval (24 h) or in
+an older `format`, or an error older than one hour. A hub that restarts repeatedly
+therefore only re-crawls what is missing instead of hammering GitHub, and a catalogue that
+seeded one entry before a roll fills in on the next boot. Bumping
+`marketplaceRecordFormat` forces a full re-ingest when the ingest itself changes (format 2:
+tarball extraction recognises git's `pax_global_header`, without which the wrapped
+directory was not detected and almost every repository read as having no pipeline files).
+The last run's summary is persisted (`last-refresh.json`) so `status.lastRefresh` survives a
+restart.
+
+**Refresh auth.** `POST /api/marketplace/refresh` takes the same credentials as publish: a
+hub-admin session (same-origin CSRF evidence) or a registered spoke's heartbeat bearer +
+`X-Hive-ID`, so a hive owner's **Refresh catalogue** button works through the spoke proxy.
+Spokes are rate-limited across all hives — one full run per hour, ten `?repo=` runs per
+minute — and get `429` with `Retry-After`; admins are not limited. A run already in flight
+is `409`. The spoke relays the hub's `401/403` as `403`, keeps `429`/`409`, and maps other
+failures to `502`, always with the hub's message in the body.
 
 ### Spoke — import, publish, browse
 
@@ -785,8 +834,10 @@ Routes (`pkg/dashboard/api_workflows_marketplace.go`):
 - `POST /api/marketplace/workflows/publish {name, version}` (owner) — export and POST to
   the hub with the spoke's heartbeat credential; `201 {published, hash, tier}`. Audit
   `workflow_publish`.
-- `POST /api/marketplace/refresh[?repo=]` (owner) — forwards to the hub; a non-admin hive
-  surfaces the hub's `403`. Audit `workflow_marketplace_refresh`.
+- `POST /api/marketplace/refresh[?repo=]` (owner) — forwards to the hub with the spoke's
+  heartbeat credential; the hub's `429` (rate limit, with `Retry-After`) and `409` (run in
+  progress) pass through with its message, `401/403` → `403`. Audit
+  `workflow_marketplace_refresh`.
 
 Imported models are pinned `name@version`; a newer catalogue version is a new library entry
 and **bindings never move automatically** — rebinding stays an explicit act on Settings →
@@ -805,4 +856,5 @@ served cached data.
 - Hub-side marketplace settings are environment variables, not hub YAML.
 - The hub logs publishes/refreshes through its structured logger; it has no audit store.
 - Ingest versions are per-day sequence numbers, not semantic; curation (promoting an ingest
-  to `curated`) is a manual admin publish of a reviewed model.
+  to `curated`) is a manual admin publish of a reviewed model or a new file under
+  `pkg/hub/marketplace/curated/`.

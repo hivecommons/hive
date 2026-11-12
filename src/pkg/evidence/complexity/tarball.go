@@ -46,6 +46,14 @@ func ExtractTarGz(r io.Reader, dest string, maxBytes int64) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		// git archive (and so GitHub's tarball endpoint) leads with a
+		// "pax_global_header" entry carrying the commit SHA; the reader
+		// surfaces it as a header. It is not a tree entry and must not
+		// count as a second top-level name, or the wrapped directory is
+		// never detected and callers read paths with the wrapper prefix.
+		if hdr.Typeflag == tar.TypeXGlobalHeader || hdr.Typeflag == tar.TypeXHeader {
+			continue
+		}
 		name := filepath.Clean(filepath.FromSlash(hdr.Name))
 		if name == "." || name == "" {
 			continue

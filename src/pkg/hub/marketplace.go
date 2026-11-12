@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,8 +18,9 @@ import (
 //	GET  /api/marketplace/workflows                         index (ETag / 304)
 //	GET  /api/marketplace/workflows/{name}/{version}/bundle one bundle
 //	POST /api/marketplace/workflows                         publish (spoke bearer or admin)
-//	POST /api/marketplace/refresh[?repo=]                   on-demand ingest (admin)
-//	GET  /api/marketplace/status                            last refresh + counts by tier
+//	POST /api/marketplace/refresh[?repo=]                   on-demand ingest (spoke bearer or admin)
+//	GET  /api/marketplace/status[?verbose=1]                last refresh + counts by tier + failing repos
+//	                                                        (verbose: pending repos; spoke bearer or admin)
 //
 // Tier policy: a publisher may assert `local`, `local-published` or
 // `ingested-unreviewed`; `curated` and `built-in` require a hub admin
@@ -34,7 +36,7 @@ func (s *HubServer) registerMarketplaceRoutes() {
 	s.mux.HandleFunc("GET /api/marketplace/workflows", s.handleMarketplaceIndex)
 	s.mux.HandleFunc("GET /api/marketplace/workflows/{name}/{version}/bundle", s.handleMarketplaceBundle)
 	s.mux.HandleFunc("POST /api/marketplace/workflows", s.handleMarketplacePublish)
-	s.mux.HandleFunc("POST /api/marketplace/refresh", s.requireAdmin(s.handleMarketplaceRefresh))
+	s.mux.HandleFunc("POST /api/marketplace/refresh", s.handleMarketplaceRefresh)
 	s.mux.HandleFunc("GET /api/marketplace/status", s.handleMarketplaceStatus)
 }
 
@@ -178,6 +180,13 @@ func (s *HubServer) handleMarketplacePublish(w http.ResponseWriter, r *http.Requ
 		marketplaceJSONError(w, http.StatusBadRequest, "unknown tier "+b.Tier)
 		return
 	}
+	// The model's own provenance is hash-covered, so it cannot be normalised
+	// like the envelope tier; a vouched tier claimed there needs the same
+	// admin the envelope does, otherwise importers would store it as vouched.
+	if p := string(b.Model.Spec.Meta.Provenance); (p == bundle.TierCurated || p == bundle.TierBuiltIn) && !who.admin {
+		marketplaceJSONError(w, http.StatusForbidden, fmt.Sprintf("model provenance %q requires a hub admin", p))
+		return
+	}
 	if err := bundle.Verify(b); err != nil {
 		marketplaceJSONError(w, http.StatusUnprocessableEntity, "bundle verification failed: "+err.Error())
 		return
@@ -207,18 +216,37 @@ func (s *HubServer) handleMarketplacePublish(w http.ResponseWriter, r *http.Requ
 // handleMarketplaceRefresh runs an on-demand ingest in the background and
 // answers 202 immediately; ?repo= limits it to one repository (and runs
 // synchronously, since a single repo is quick enough to await).
+//
+// Callers are the same as publish: a hub admin session or a registered
+// spoke with its heartbeat bearer + X-Hive-ID, so a hive owner's "Refresh
+// catalogue" button works through the spoke. Spokes are rate-limited (one
+// full run per marketplaceFullRefreshInterval across all spokes,
+// marketplaceRepoRefreshBurst single-repo runs per minute) → 429 with
+// Retry-After; admins are not.
 func (s *HubServer) handleMarketplaceRefresh(w http.ResponseWriter, r *http.Request) {
 	if !s.marketplaceGate(w) {
 		return
 	}
+	who, code, msg := s.marketplaceAuthenticate(r)
+	if code != 0 {
+		marketplaceJSONError(w, code, msg)
+		return
+	}
 	repo := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("repo")))
-	user := s.getRealAuthUser(r)
+	rf := s.refresher()
+	now := rf.now().UTC()
 	if repo != "" {
 		if !strings.Contains(repo, "/") {
 			marketplaceJSONError(w, http.StatusBadRequest, "repo must be owner/name")
 			return
 		}
-		res, err := s.runMarketplaceRefresh(r.Context(), []string{repo}, "on-demand:"+user)
+		if !who.admin {
+			if ok, wait := rf.allowRepoRefresh(now); !ok {
+				marketplaceTooMany(w, wait, "single-repository refresh")
+				return
+			}
+		}
+		res, err := s.runMarketplaceRefresh(r.Context(), []string{repo}, "on-demand:"+who.name)
 		if errors.Is(err, errMarketplaceRefreshBusy) {
 			marketplaceJSONError(w, http.StatusConflict, err.Error())
 			return
@@ -227,12 +255,11 @@ func (s *HubServer) handleMarketplaceRefresh(w http.ResponseWriter, r *http.Requ
 			marketplaceJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		s.logger.Info("marketplace refresh (single repo)", "by", user, "repo", repo, "published", res.Published, "errors", res.Errors)
+		s.logger.Info("marketplace refresh (single repo)", "by", who.name, "repo", repo, "published", res.Published, "errors", res.Errors)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"accepted": true, "repo": repo, "result": res})
 		return
 	}
-	rf := s.refresher()
 	rf.mu.Lock()
 	busy := rf.running
 	rf.mu.Unlock()
@@ -240,9 +267,15 @@ func (s *HubServer) handleMarketplaceRefresh(w http.ResponseWriter, r *http.Requ
 		marketplaceJSONError(w, http.StatusConflict, errMarketplaceRefreshBusy.Error())
 		return
 	}
-	s.logger.Info("marketplace refresh requested", "by", user)
+	if !who.admin {
+		if ok, wait := rf.allowFullRefresh(now); !ok {
+			marketplaceTooMany(w, wait, "full catalogue refresh")
+			return
+		}
+	}
+	s.logger.Info("marketplace refresh requested", "by", who.name)
 	go func() {
-		if _, err := s.runMarketplaceRefresh(s.marketplaceBackgroundContext(), nil, "on-demand:"+user); err != nil {
+		if _, err := s.runMarketplaceRefresh(s.marketplaceBackgroundContext(), nil, "on-demand:"+who.name); err != nil {
 			s.logger.Warn("marketplace on-demand refresh skipped", "error", err)
 		}
 	}()
@@ -251,10 +284,39 @@ func (s *HubServer) handleMarketplaceRefresh(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"accepted": true, "repos": len(marketplaceRepos())})
 }
 
-// handleMarketplaceStatus reports the last refresh and tier counts.
+// marketplaceTooMany answers 429 with Retry-After and an honest message:
+// the spoke relays the body into the operator's toast.
+func marketplaceTooMany(w http.ResponseWriter, wait time.Duration, what string) {
+	secs := int(wait.Round(time.Second) / time.Second)
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	marketplaceJSONError(w, http.StatusTooManyRequests, fmt.Sprintf("%s was requested recently by a hive; try again in %s (hub admins are not limited)", what, (time.Duration(secs)*time.Second).String()))
+}
+
+// marketplaceFailingRepo is one verbose-status row for a repo whose last
+// ingest failed.
+type marketplaceFailingRepo struct {
+	Repo      string    `json:"repo"`
+	Error     string    `json:"error"`
+	CheckedAt time.Time `json:"checkedAt"`
+}
+
+// handleMarketplaceStatus reports the last refresh and tier counts, plus
+// the failing repositories with their error strings (repo names and fetch
+// errors carry no secrets, so any caller sees them). ?verbose=1 (spoke
+// bearer or admin) adds the repositories still awaiting a first ingest.
 func (s *HubServer) handleMarketplaceStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.marketplaceGate(w) {
 		return
+	}
+	verbose := r.URL.Query().Get("verbose") != ""
+	if verbose {
+		if _, code, msg := s.marketplaceAuthenticate(r); code != 0 {
+			marketplaceJSONError(w, code, msg)
+			return
+		}
 	}
 	idx, _, etag, err := s.marketplace().Index()
 	if err != nil {
@@ -272,30 +334,44 @@ func (s *HubServer) handleMarketplaceStatus(w http.ResponseWriter, r *http.Reque
 	rf.mu.Unlock()
 	records := s.marketplace().refreshRecords()
 	var lastChecked time.Time
-	failing := 0
+	failing := []marketplaceFailingRepo{}
 	for _, rec := range records {
 		if rec.CheckedAt.After(lastChecked) {
 			lastChecked = rec.CheckedAt
 		}
 		if rec.Error != "" {
-			failing++
+			failing = append(failing, marketplaceFailingRepo{Repo: rec.Repo, Error: rec.Error, CheckedAt: rec.CheckedAt})
 		}
 	}
+	pending := s.marketplacePendingRepos()
+	lastErrors := 0
+	if last != nil {
+		lastErrors = len(last.Errors)
+	}
 	out := map[string]interface{}{
-		"entries":       len(idx.Entries),
-		"byTier":        byTier,
-		"etag":          etag,
-		"generatedAt":   idx.GeneratedAt,
-		"corpusRepos":   len(marketplaceRepos()),
-		"trackedRepos":  len(records),
-		"failingRepos":  failing,
-		"refreshing":    running,
-		"schedule":      marketplaceSchedule(),
-		"lastRefresh":   last,
-		"lastCheckedAt": nil,
+		"entries":           len(idx.Entries),
+		"byTier":            byTier,
+		"etag":              etag,
+		"generatedAt":       idx.GeneratedAt,
+		"corpusRepos":       len(marketplaceRepos()),
+		"trackedRepos":      len(records),
+		"failingRepos":      len(failing),
+		"pendingRepos":      len(pending),
+		"lastRefreshErrors": lastErrors,
+		"refreshing":        running,
+		"schedule":          marketplaceSchedule(),
+		"lastRefresh":       last,
+		"lastCheckedAt":     nil,
 	}
 	if !lastChecked.IsZero() {
 		out["lastCheckedAt"] = lastChecked
+	}
+	out["failing"] = failing
+	if verbose {
+		if pending == nil {
+			pending = []string{}
+		}
+		out["pending"] = pending
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)

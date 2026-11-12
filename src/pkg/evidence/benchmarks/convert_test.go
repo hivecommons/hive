@@ -28,9 +28,10 @@ func fixtureBundles() []*evidence.Bundle {
 			{Perspective: "security", Model: "claude-fable-5.1", Backend: "copilot", Verdict: "approve", Confidence: 0.9},
 			{Perspective: "style", Model: "claude-fable-5.1", Backend: "copilot", Verdict: "comment", Confidence: 0.7},
 		},
-		HumanActions: []evidence.Action{{Actor: "andy", Kind: "label", At: t0(2 * time.Hour)}},
-		Merge:        &evidence.MergeEvent{Actor: "hive", Method: "squash", At: t0(3 * time.Hour), OpenedAt: t0(-time.Hour)},
-		CreatedAt:    t0(2 * time.Hour), UpdatedAt: t0(3 * time.Hour),
+		HumanActions:  []evidence.Action{{Actor: "andy", Kind: "label", At: t0(2 * time.Hour)}},
+		IssueClosures: []evidence.IssueClosure{{Repo: "hivecommons/hive", Issue: 40, At: t0(3 * time.Hour)}},
+		Merge:         &evidence.MergeEvent{Actor: "hive", Method: "squash", At: t0(3 * time.Hour), OpenedAt: t0(-time.Hour)},
+		CreatedAt:     t0(2 * time.Hour), UpdatedAt: t0(3 * time.Hour),
 	}
 	private := &evidence.Bundle{
 		SchemaVersion: evidence.SchemaVersion, ID: "c", Repo: "acme/secret", Number: 7,
@@ -53,6 +54,66 @@ func testOptions() Options {
 		RepoConsent:    true,
 		RepoPublic:     func(repo string) bool { return strings.HasPrefix(repo, "hivecommons/") },
 		SandboxRuntime: func(agent string) string { return "none" },
+		CostLookup:     fixtureCostLookup,
+	}
+}
+
+// fixtureCostLookup mimics the launch-cost store: the governor kicked short
+// "hive#40" (issue the PR closed), the swarm reviewed full "hivecommons/hive#42".
+func fixtureCostLookup(refs []CostRef) (Cost, bool) {
+	spend := map[CostRef]float64{
+		{Ref: "hive#40", Kind: "issue"}:          1.25,
+		{Ref: "hivecommons/hive#42", Kind: "pr"}: 0.40,
+		{Ref: "acme/secret#7", Kind: "issue"}:    0, // kick landed no usage
+	}
+	var usd float64
+	n := 0
+	for _, r := range refs {
+		if v, ok := spend[r]; ok {
+			usd += v
+			n++
+		}
+	}
+	if n == 0 {
+		return Cost{Basis: CostBasisUnknown}, false
+	}
+	return Cost{Basis: CostBasisTokensXPricing, USDEst: &usd, Launches: n, PriceTableDate: "2026-11-09"}, true
+}
+
+func TestConvertAttributesCost(t *testing.T) {
+	recs := Convert(fixtureBundles(), testOptions())
+	author := byRole(recs, "hivecommons/hive", RoleAuthor)
+	if author == nil || author.Cost.Basis != CostBasisTokensXPricing || author.Cost.USDEst == nil || *author.Cost.USDEst != 1.25 {
+		t.Fatalf("author cost via closed issue short ref: %+v", author)
+	}
+	reviewer := byRole(recs, "hivecommons/hive", RoleReviewer)
+	if reviewer == nil || reviewer.Cost.USDEst == nil || *reviewer.Cost.USDEst != 0.40 || reviewer.Cost.Launches != 1 {
+		t.Fatalf("reviewer cost via full pr ref: %+v", reviewer)
+	}
+	private := byRole(recs, "", RoleAuthor)
+	if private == nil || private.Cost.Basis != CostBasisUnknown || private.Cost.USDEst != nil {
+		t.Fatalf("zero-usage kick must be unknown: %+v", private)
+	}
+	noLookup := testOptions()
+	noLookup.CostLookup = nil
+	for _, r := range Convert(fixtureBundles(), noLookup) {
+		if r.Cost.Basis != CostBasisUnknown {
+			t.Fatalf("nil lookup must yield unknown, got %+v", r.Cost)
+		}
+	}
+}
+
+func TestCostRefsSpellBothForms(t *testing.T) {
+	b := &evidence.Bundle{Repo: "o/r", Number: 5, IssueClosures: []evidence.IssueClosure{{Issue: 3}}}
+	got := authorCostRefs(b)
+	want := []CostRef{{"o/r#5", "issue"}, {"r#5", "issue"}, {"o/r#3", "issue"}, {"r#3", "issue"}}
+	if len(got) != len(want) {
+		t.Fatalf("refs %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ref %d = %v want %v", i, got[i], want[i])
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -50,14 +51,25 @@ const (
 	// on the created sandbox.
 	OpenShellPolicyProfileAnnotation = "hive.dev/policy-profile"
 
-	openshellNamePrefix   = "hive-kick-"
-	openshellNameMax      = 63
+	// openshellNamePrefix and openshellNameMax follow the gateway's
+	// MAX_ROUTABLE_NAME_LEN (19): a sandbox name is one of three segments
+	// in a 63-char DNS label (<workspace>--<sandbox>--<service>), so the
+	// prefix is short and the timestamp is base36 (measured on 0.1.8,
+	// hivecommons/hive#17643).
+	openshellNamePrefix   = "hk-"
+	openshellNameMax      = 19
+	openshellNameUnixBase = 36
+	openshellNameTagLen   = 3
+	openshellNameTagMod   = 36 * 36 * 36
 	openshellRequestWait  = 30 * time.Second
 	openshellReadyPoll    = 2 * time.Second
 	openshellMaxOutput    = 16 << 20
 	openshellManagedLabel = "app.kubernetes.io/managed-by"
 	openshellManagedValue = "hive-openshell"
-	openshellHTTPSPort    = 443
+	// openshellWorkspaceVolume names hive's claim in driver_config; the
+	// gateway reserves the bare name "workspace" for its own volumes.
+	openshellWorkspaceVolume = "hive-workspace"
+	openshellHTTPSPort       = 443
 )
 
 // OpenShellAlwaysAllowedHosts are the egress hosts every hive sandbox gets:
@@ -361,12 +373,12 @@ func (l *OpenShellLauncher) execEnv(spec LaunchSpec) map[string]string {
 func (l *OpenShellLauncher) driverConfig(subPath, mount string, readOnly bool) map[string]any {
 	k8s := map[string]any{
 		"volumes": []any{map[string]any{
-			"name":                    "workspace",
+			"name":                    openshellWorkspaceVolume,
 			"persistent_volume_claim": map[string]any{"claim_name": l.Options.WorkspaceClaim, "read_only": false},
 		}},
 		"containers": map[string]any{"agent": map[string]any{
 			"volume_mounts": []any{map[string]any{
-				"name":       "workspace",
+				"name":       openshellWorkspaceVolume,
 				"mount_path": mount,
 				"sub_path":   subPath,
 				"read_only":  readOnly,
@@ -550,16 +562,28 @@ func openshellWorkspaceSubPath(workspace, claimMount string) (string, error) {
 var openshellNameUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)
 
 // openshellSandboxName builds a unique, DNS-label-safe sandbox name from the
-// launch name and a timestamp: hive-kick-<agent>-<unix>.
+// launch name and a timestamp: hk-<agent>-<unix in base36>, at most
+// openshellNameMax characters. The launch name's hive-/-sandbox wrapping is
+// dropped so the agent slug gets the room; a slug that still does not fit is
+// cut and tagged with a short hash of the whole slug, so two agents sharing
+// a long prefix never map to the same sandbox name.
 func openshellSandboxName(launchName string, now time.Time) string {
-	base := strings.Trim(openshellNameUnsafe.ReplaceAllString(strings.ToLower(strings.TrimSuffix(launchName, "-sandbox")), "-"), "-")
+	base := strings.ToLower(strings.TrimSuffix(launchName, launchNameSuffix))
+	base = strings.TrimPrefix(base, launchNamePrefix)
+	base = strings.Trim(openshellNameUnsafe.ReplaceAllString(base, "-"), "-")
 	if base == "" {
 		base = "agent"
 	}
-	suffix := fmt.Sprintf("-%d", now.Unix())
+	suffix := "-" + strconv.FormatInt(now.Unix(), openshellNameUnixBase)
 	room := openshellNameMax - len(openshellNamePrefix) - len(suffix)
 	if len(base) > room {
-		base = strings.TrimRight(base[:room], "-")
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(base))
+		tag := strconv.FormatUint(uint64(h.Sum32())%openshellNameTagMod, openshellNameUnixBase)
+		for len(tag) < openshellNameTagLen {
+			tag = "0" + tag
+		}
+		base = strings.TrimRight(base[:room-openshellNameTagLen], "-") + tag
 	}
 	return openshellNamePrefix + base + suffix
 }

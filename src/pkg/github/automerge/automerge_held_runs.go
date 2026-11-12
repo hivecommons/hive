@@ -115,13 +115,19 @@ const (
 	// is still treated as "GitHub has not scheduled them yet".
 	heldRunNeverStartedGrace = 30 * time.Minute
 	workflowRunsPageSize     = 100
+	// workflowRunStatusQueued is the status of a run GitHub has not started.
+	workflowRunStatusQueued = "queued"
+	// orphanedRunWarnKey keys the once-per-head orphaned-run warning in
+	// terminalHoldLogged.
+	orphanedRunWarnKey = "orphaned-queued-runs:"
 )
 
 // resolveMissingRequiredCheck refines a `required-check-missing:<ctx>` skip
 // for a trusted-lane PR. It returns the original reason when nothing is known,
 // a workflow-approval-required reason when GitHub is waiting for approval and
 // Hive has posted `/ok-to-test`, or a never-started/never-ran reason when
-// polling cannot progress. It never approves a run with the App token.
+// polling cannot progress. Runs GitHub orphaned in `queued` with zero jobs
+// count as never started (#17775). It never approves a run with the App token.
 func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA, reason string, headPushedAt time.Time) string {
 	if c == nil || c.gh == nil || !strings.HasPrefix(reason, requiredCheckMissingPrefix) {
 		return reason
@@ -141,6 +147,14 @@ func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, o
 	}
 	held := heldSameRepoWorkflowRuns(runs.WorkflowRuns, owner+"/"+repo)
 	if len(held) == 0 {
+		startedRuns := len(runs.WorkflowRuns)
+		if orphaned := c.orphanedQueuedWorkflowRuns(ctx, owner, repo, runs.WorkflowRuns); orphaned > 0 && orphaned == startedRuns {
+			startedRuns = 0
+			if c.markTerminalHoldLogged(owner, repo, number, headSHA, orphanedRunWarnKey+missing) {
+				c.warn("automerge workflow runs for head are orphaned in queued with no jobs; treating them as never started",
+					"repo", displayRepo, "pr", number, "sha", headSHA, "orphaned", orphaned, "context", missing)
+			}
+		}
 		if c.rebaseNudged(owner, repo, number, headSHA) || c.botTakeoverAttempted(owner, repo, number, headSHA) {
 			return requiredCheckNeverRanPrefix + missing
 		}
@@ -148,10 +162,10 @@ func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, o
 			c.nudgeDependabotRebase(ctx, displayRepo, owner, repo, number, headSHA, missing)
 			return requiredCheckNeverRanPrefix + missing
 		}
-		if c.botTakeoverEligible(pr, len(runs.WorkflowRuns), headPushedAt) {
+		if c.botTakeoverEligible(pr, startedRuns, headPushedAt) {
 			return c.takeOverBotPR(ctx, displayRepo, owner, repo, pr, number, headSHA, missing)
 		}
-		if len(runs.WorkflowRuns) == 0 && headOlderThan(c.now, headPushedAt, heldRunNeverStartedGrace) {
+		if startedRuns == 0 && headOlderThan(c.now, headPushedAt, heldRunNeverStartedGrace) {
 			return requiredCheckNeverStartedPrefix + missing
 		}
 		return reason
@@ -580,6 +594,32 @@ func heldSameRepoWorkflowRuns(runs []*gh.WorkflowRun, fullName string) []*gh.Wor
 		held = append(held, run)
 	}
 	return held
+}
+
+// orphanedQueuedWorkflowRuns counts same-repo runs GitHub created but left in
+// `queued` past heldRunNeverStartedGrace without materializing a single job.
+// Such runs never progress, so they are no evidence CI is coming (#17775).
+func (c *Engine) orphanedQueuedWorkflowRuns(ctx context.Context, owner, repo string, runs []*gh.WorkflowRun) int {
+	orphaned := 0
+	for _, run := range runs {
+		if run == nil || !strings.EqualFold(run.GetStatus(), workflowRunStatusQueued) {
+			continue
+		}
+		if run.GetHeadRepository() == nil || !strings.EqualFold(run.GetHeadRepository().GetFullName(), owner+"/"+repo) {
+			continue
+		}
+		if !headOlderThan(c.now, run.GetCreatedAt().Time, heldRunNeverStartedGrace) {
+			continue
+		}
+		jobs, _, err := c.gh.Actions.ListWorkflowJobs(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, run.GetID(), &gh.ListWorkflowJobsOptions{
+			ListOptions: gh.ListOptions{PerPage: 1},
+		})
+		if err != nil || jobs == nil || jobs.GetTotalCount() > 0 || len(jobs.Jobs) > 0 {
+			continue
+		}
+		orphaned++
+	}
+	return orphaned
 }
 
 func headOlderThan(now func() time.Time, headPushedAt time.Time, grace time.Duration) bool {

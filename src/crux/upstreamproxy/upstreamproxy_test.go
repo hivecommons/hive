@@ -144,6 +144,27 @@ func TestResolveRejectsBadInput(t *testing.T) {
 	}
 }
 
+func TestResolveErrorsRedactUserinfo(t *testing.T) {
+	// The caller logs the error; the URL's userinfo is the proxy's Basic
+	// credential and must not reach the log through any rejection branch.
+	for _, raw := range []string{
+		"socks5://alice:s3cret-pw@proxy.corp:1080", // unsupported scheme
+		"http://alice:s3cret-pw@",                  // missing host
+		"http://alice:s3cret-pw@proxy.corp:%zz",    // url.Parse failure
+	} {
+		_, err := Resolve(Config{URL: raw}, nil)
+		if err == nil {
+			t.Fatalf("%q: accepted", raw)
+		}
+		if strings.Contains(err.Error(), "s3cret-pw") {
+			t.Fatalf("%q: error leaks password: %v", raw, err)
+		}
+		if !strings.Contains(err.Error(), "alice") && !strings.Contains(err.Error(), "xxxxx") {
+			t.Fatalf("%q: error lost the redacted URL entirely: %v", raw, err)
+		}
+	}
+}
+
 func TestGitEnv(t *testing.T) {
 	sel, _ := Resolve(Config{URL: "http://p:3128", Hosts: []string{"github.ibm.com", "*.github.ibm.com"}, NoProxy: []string{"github.com"}}, nil)
 	got := strings.Join(sel.GitEnv(), "\n")

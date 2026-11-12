@@ -11,6 +11,53 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.224.0)
+
+### Added
+
+- Benchmark records exported by `GET /api/benchmarks/export` (and pushed to hivecommons/benchmarks) now carry an estimated cost (#17790, #17694): `cost.basis` is `tokens_x_pricing` with `cost.usd_est`, token share, `launches` and `price_table_date` when the launch-cost collector attributed a kick to the PR (the swarm's PR ref, or the governor's issue ref of an issue the PR closed), else `unknown`. Figures are list-price estimates from the spoke's own launch attribution, never billed amounts; no per-session usage leaves the spoke.
+- Hub marketplace seeds curated workflow models from `pkg/hub/marketplace/curated/*.yaml` on startup and every refresh, ships the first one — `cncf-techdocs-assessment` (CNCF TechDocs AI-assisted assessment) — and adds `cncf/techdocs` to the ingest corpus via the new operator-added `extra.json` list (hivecommons/hive#17620).
+
+### Fixed
+
+- Marketplace ingest streams each repository tarball and keeps only pipeline files (1 MiB per file, 32 MiB total) instead of extracting the whole source tree under a 256 MiB cap, so large monorepos (kubernetes/kubernetes, kserve, meshery, …) no longer fail with `archive exceeds size cap`; `GET /api/marketplace/status` now lists failing repos with their errors without `?verbose=1`; four renamed corpus repositories (composefs, OpenMetrics, ratify, kuberay) now point at their current GitHub names.
+
+### Security
+
+- The upstream forward-proxy loader no longer echoes the configured proxy URL's `user:password` userinfo in the error it returns for a malformed URL (unsupported scheme such as `socks5://`, missing host, or an unparseable value). Boot logs that error to the hive JSON log before falling back to direct egress, so a typo in `network.upstream_proxy.url` / `HIVE_UPSTREAM_PROXY_URL` used to write the corporate proxy's Basic credential to the log stream on every start; the password is now masked as `xxxxx` (#17730).
+
+## 2026-11-11 (v5.223.0)
+
+### Added
+
+- Extend the `sandbox.runtime: substrate` preflight into a cluster prover (#17698): when hive runs in-cluster it now also reports, read-only and cached per control plane, missing Substrate CRDs or operator Deployments/atelet, WorkerPools with no ready replica, a cluster without gVisor (no `gvisor` SandboxConfig or `runsc` RuntimeClass) or without KVM for a microVM pool, node kernels below gVisor's floor, the `PodCertificateRequest`/`ClusterTrustBundle` APIs not being served, and an atenet-router that is unreachable or rejects hive's client certificate; each is one actionable warning. `deploy/k8s/sandbox-substrate-preflight-rbac.yaml` grants the read access it needs Two fixes found by the first real kick on a Substrate v1.0.0 cluster (#17697) ride along: the per-actor egress policy now carries the actor's atespace (the Control API rejects it otherwise) and the in-actor bridge empties `/workspace` in place instead of unlinking the durableDir mount point.
+
+### Fixed
+
+- Marketplace: the CNCF catalogue now actually fills — tarball extraction recognises git's `pax_global_header`, so pipeline files are read for every repository (previously only tektoncd/pipeline survived); seeding resumes across hub restarts by ingesting only repositories that are due (no record, stale, old format, or an hour-old error); the last refresh summary is persisted so `/api/marketplace/status` survives a restart and reports `pendingRepos`/`lastRefreshErrors`, with `?verbose=1` listing failing repos and their errors; `POST /api/marketplace/refresh` accepts a spoke's heartbeat credential (rate-limited, `429` + `Retry-After`) so a hive owner's "Refresh catalogue" works, and the crawl backs off on `403`/`429` `Retry-After` and logs progress every 25 repositories.
+- OpenShell runtime: sandbox names now fit the gateway's 19-character limit (`hk-<agent>-<base36 unix>`), the shared claim mounts as `hive-workspace` instead of the reserved `workspace`, and the deploy doc covers the Agent Sandbox prerequisite, `allowed_pod_labels`/annotations, sandbox uid, workspace storage class and the measured #17643 latency (#17643)
+- The "contributor-lane ok-to-test not posted again" warning is logged once per PR rejection, not again after a restart once the PR already records it, so it no longer trips the repeated-error selfreport (#17738).
+- The status builder publishes a (possibly stale) snapshot after a bounded number of consecutive stale drops instead of livelocking and warning on every drop during mutation bursts (#17727).
+
+## 2026-11-11 (v5.222.1)
+
+### Fixed
+
+- The effect ledger no longer leaves an `issue_create` op stuck in Unknown forever after an ambiguous GitHub response: once a refused retry finds it unresolved past the kind's TTL (1h), the boundary expires it to NotApplied, clears the `effect_ledger_op_stuck` self-report and lets the caller's next attempt (which re-runs its own duplicate search first) create, without ever retrying the ambiguous write in the refused call (#17693).
+- Good-first-issue curation skips archived read-only repositories after GitHub refuses a write, instead of repeatedly reporting failures.
+- Fixed a startup panic in the stage engine when hive ran with no loaded config, which made the auto-merge sweep test flaky (#17736).
+- A read-only integration lane no longer retries removing the hive:unauthorized label every cycle and warning each time; the removal is skipped and left to a write-capable lane with a single debug line (#17720).
+
+## 2026-11-11 (v5.222.0)
+
+### Added
+
+- Add Agent Substrate (CNCF Sandbox) as a fourth, opt-in `sandbox.runtime: substrate` (ADR-0026 phase 2). Actors are created through Substrate's gRPC Control API with a hive-derived `atenet-egress` policy, a digest-pinned image, and workspace transfer through an in-actor bridge over the atenet-router mTLS tunnel; `sandbox.substrate.snapshot_on_idle` suspends instead of deleting the actor. Credential brokering is unchanged (agents still use the hive MITM proxy). No new Go modules: a trimmed wire-compatible proto subset is generated in-repo.
+
+### Changed
+
+- Document Agent Substrate as the opt-in fourth `sandbox.runtime` (ADR-0026 phase 2): ADR amendment with the contract mapping, deviations and when to choose it over OpenShell, a `sandbox-isolation.md` section, `deploy/substrate.md` install and verification notes with the hive cluster survey, and the integrations table entry.
+
 ## 2026-11-11 (v5.221.1)
 
 ### Fixed

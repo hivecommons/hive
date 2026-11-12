@@ -108,6 +108,10 @@ func newFakeHub(t *testing.T) (*fakeHub, *httptest.Server) {
 			_, _ = w.Write([]byte(`{"error":"nope"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/marketplace/refresh":
 			h.refreshes.Add(1)
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || r.Header.Get(marketplaceHiveIDHeader) == "" {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"accepted":true,"repo":"` + r.URL.Query().Get("repo") + `"}`))
 		default:
@@ -403,18 +407,34 @@ func TestMarketplaceRefreshProxy(t *testing.T) {
 		t.Fatalf("refresh: %d %s", rec.Code, rec.Body.String())
 	}
 	deny := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.RawQuery, "boom") {
+		switch {
+		case strings.Contains(r.URL.RawQuery, "boom"):
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte("plain text failure"))
-			return
+		case strings.Contains(r.URL.RawQuery, "slow"):
+			w.Header().Set("Retry-After", "42")
+			http.Error(w, `{"error":"full catalogue refresh was requested recently by a hive; try again in 42s"}`, http.StatusTooManyRequests)
+		case strings.Contains(r.URL.RawQuery, "busy"):
+			http.Error(w, `{"error":"marketplace: refresh already running"}`, http.StatusConflict)
+		default:
+			http.Error(w, `{"error":"admin only"}`, http.StatusForbidden)
 		}
-		http.Error(w, `{"error":"admin only"}`, http.StatusForbidden)
 	}))
 	defer deny.Close()
 	s.deps.Config.Workflow.Marketplace.URL = deny.URL
 	rec = wfReq(s, http.MethodPost, "/api/marketplace/refresh", nil, true)
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "admin only") {
 		t.Fatalf("denied: %d %s", rec.Code, rec.Body.String())
+	}
+	// Hub rate limit and busy keep their status and message so the toast
+	// tells the owner when to retry.
+	rec = wfReq(s, http.MethodPost, "/api/marketplace/refresh?repo=slow/x", nil, true)
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "42" || !strings.Contains(rec.Body.String(), "try again in 42s") {
+		t.Fatalf("rate limited: %d %s retry-after=%q", rec.Code, rec.Body.String(), rec.Header().Get("Retry-After"))
+	}
+	rec = wfReq(s, http.MethodPost, "/api/marketplace/refresh?repo=busy/x", nil, true)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "already running") {
+		t.Fatalf("busy: %d %s", rec.Code, rec.Body.String())
 	}
 	rec = wfReq(s, http.MethodPost, "/api/marketplace/refresh?repo=boom", nil, true)
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "plain text failure") {
@@ -436,5 +456,60 @@ func TestMarketplaceBaseFallsBackToHubURL(t *testing.T) {
 	bare := &Server{}
 	if !bare.marketplaceEnabled() || bare.marketplaceBase() != "" {
 		t.Fatal("server without deps should be enabled but have no base")
+	}
+}
+
+func TestImportedProvenance(t *testing.T) {
+	cases := []struct {
+		model workflowmodel.Provenance
+		tier  string
+		want  workflowmodel.Provenance
+	}{
+		// Empty model provenance takes the envelope tier.
+		{"", bundle.TierCurated, workflowmodel.ProvenanceCurated},
+		{"", bundle.TierLocalPublished, workflowmodel.ProvenanceLocal},
+		{"", bundle.TierBuiltIn, workflowmodel.ProvenanceLocal},
+		{"", "", workflowmodel.ProvenanceLocal},
+		// A vouched tier the envelope agrees with is kept (built-in still lands as local).
+		{workflowmodel.ProvenanceCurated, bundle.TierCurated, workflowmodel.ProvenanceCurated},
+		{workflowmodel.ProvenanceBuiltIn, bundle.TierBuiltIn, workflowmodel.ProvenanceLocal},
+		// A vouched tier the envelope does not assert is laundering: fall back to the tier.
+		{workflowmodel.ProvenanceCurated, bundle.TierLocalPublished, workflowmodel.ProvenanceLocal},
+		{workflowmodel.ProvenanceCurated, bundle.TierIngestedUnreviewed, workflowmodel.ProvenanceIngestedUnreviewed},
+		{workflowmodel.ProvenanceCurated, "", workflowmodel.ProvenanceLocal},
+		{workflowmodel.ProvenanceBuiltIn, bundle.TierLocalPublished, workflowmodel.ProvenanceLocal},
+		// Lower tiers in the model are honoured as-is.
+		{workflowmodel.ProvenanceIngestedUnreviewed, bundle.TierLocalPublished, workflowmodel.ProvenanceIngestedUnreviewed},
+		{workflowmodel.ProvenanceLocal, bundle.TierCurated, workflowmodel.ProvenanceLocal},
+	}
+	for _, tc := range cases {
+		if got := importedProvenance(tc.model, tc.tier); got != tc.want {
+			t.Errorf("importedProvenance(%q, %q) = %q, want %q", tc.model, tc.tier, got, tc.want)
+		}
+	}
+}
+
+// A bundle whose envelope the hub normalised to local-published but whose
+// hash-covered model still claims curated must not import as curated.
+func TestWorkflowImportDoesNotLaunderCuratedProvenance(t *testing.T) {
+	s := marketplaceServer(t, "")
+	m := techdocsModel(t)
+	m.Spec.Meta.Provenance = workflowmodel.ProvenanceCurated
+	b, err := bundle.Export(m, "spoke", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Tier = bundle.TierLocalPublished
+	raw, _ := bundle.Encode(b)
+	rec := wfReq(s, http.MethodPost, "/api/workflows/import", string(raw), true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("import: %d %s", rec.Code, rec.Body.String())
+	}
+	got, _, err := s.deps.WorkflowStore.Get("cncf-techdocs", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Meta.Provenance != workflowmodel.ProvenanceLocal {
+		t.Fatalf("laundered provenance = %q, want local", got.Spec.Meta.Provenance)
 	}
 }

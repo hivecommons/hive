@@ -343,6 +343,8 @@
       const r = stageTrackerReworkOf(item);
       if (!r) return '';
       if (r.state === 'requested' && r.evidence === 'queued') return 'queued';
+      // A DCO ask on the pushed head queues no re-review (hivecommons/hive#17789).
+      if (r.state === 'pushed' && /^(dco-missing|hive-signoff-attribution)$/.test(String(item.reason || '').trim())) return 'sign-off owed';
       return STAGE_TRACKER_REWORK_WORDS[r.state];
     }
     // "re-review pending" means the HIVE's reviewer owes a pass on the new
@@ -360,6 +362,7 @@
       const on = k => { const a = item[k + '_activity']; return a && (!a.head || !item.head || a.head === item.head) ? a.state || 'unknown' : 'unknown'; };
       if (on('ci') === 'failing' || on('review') === 'changes_requested') return false;
       if (/conflict/i.test(String(item.reason || '')) && !item.rebase) return false;
+      if (/^(dco-missing|hive-signoff-attribution)$/.test(String(item.reason || '').trim())) return false;
       return true;
     }
     // "re-review of d88928e" — the owed pass, named by head.

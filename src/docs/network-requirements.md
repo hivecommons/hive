@@ -97,6 +97,36 @@ slots on that cluster are provisioned with the env vars above:
 Existing hive Deployments are not reconciled; patch them once with
 `kubectl -n <hive-ns> set env deploy/hive -c hive HIVE_UPSTREAM_PROXY_URL=... HIVE_UPSTREAM_PROXY_HOSTS=...`.
 
+### GitHub Enterprise behind a TLS reverse proxy (hostAliases)
+
+Some networks expose an enterprise GitHub not through a CONNECT forward proxy
+but through a **TLS reverse proxy** pinned to a fixed IP: the proxy serves a
+certificate valid for the GHE hostnames on :443 and forwards to GHE, while
+`CONNECT` is rejected (e.g. openresty answering `405 Not Allowed`) and direct
+egress to GHE times out. `upstream_proxy` cannot express that; the fix is a
+Pod `hostAliases` entry that resolves the GHE hostnames to the proxy IP so TLS
+SNI/verification and every path (API, git smart-HTTP, MITM) keep working.
+
+Hosted hubs declare it per cluster in `/data/saas/clusters.json`:
+
+```json
+{
+  "id": "corp-cluster",
+  "host_aliases": [
+    { "ip": "129.34.104.21", "hostnames": ["github.ibm.com", "api.github.ibm.com"] }
+  ]
+}
+```
+
+Entries are validated at load (the IP must parse, every entry needs at least
+one hostname; hostnames are lowercased). An invalid `host_aliases` block is
+logged and ignored — it never drops the cluster. New pool slots on the cluster
+are provisioned with the matching `spec.template.spec.hostAliases`, and a
+throttled reconcile sweep (at most 3 patches per 15 minutes, since each one
+rolls that hive's pod) converges existing hives. Unrelated hand-applied
+aliases for other IPs are preserved. Non-hub (standalone) deployments add the
+same `hostAliases` block to their own pod spec.
+
 ## Firewall recommendations
 
 - Public edge: expose only the dashboard/hub front door (3001 for Docker/hub, or your HTTPS Ingress/Route for Kubernetes). Keep 3002 and 7681 cluster/private unless you have an explicit operator access path.

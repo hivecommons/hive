@@ -357,7 +357,28 @@
     "cost": {
       "type": "object",
       "additionalProperties": false,
+      "description": "Estimated spend for this record. usd_est is ALWAYS an estimate (list prices, apportioned kicks); basis says how it was derived. Records with basis=unknown carry no usd_est and are excluded from cost aggregates.",
       "properties": {
+        "usd_est": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Estimated USD for this PR/review."
+        },
+        "basis": {
+          "type": "string",
+          "enum": [
+            "reported",
+            "tokens_x_pricing",
+            "fleet_model_median",
+            "unknown"
+          ],
+          "description": "reported: the harness/gateway returned a billed figure. tokens_x_pricing: hive's per-kick token counts \u00d7 schema/pricing.json list prices, apportioned to this PR via launch attribution (kick refs \u2192 issue_closures/PR). fleet_model_median: no attribution for this PR; median tokens_x_pricing cost for the same (model, role) across the fleet. unknown: nothing available."
+        },
+        "usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Billed USD when basis=reported."
+        },
         "input_tokens": {
           "type": "integer",
           "minimum": 0
@@ -374,25 +395,20 @@
           "type": "integer",
           "minimum": 0
         },
-        "usd": {
-          "type": "number",
-          "minimum": 0
-        },
-        "basis": {
-          "type": "string",
-          "description": "How usd was computed (GET /api/cost: estimated from public price table, or apportioned from per-agent totals).",
-          "enum": [
-            "estimated",
-            "apportioned",
-            "billed",
-            "unpriced"
-          ]
+        "launches": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Agent kicks attributed to this PR (tokens_x_pricing only)."
         },
         "price_table_date": {
           "type": "string",
-          "format": "date"
+          "format": "date",
+          "description": "as_of of the price table used."
         }
-      }
+      },
+      "required": [
+        "basis"
+      ]
     },
     "quality": {
       "type": "object",
