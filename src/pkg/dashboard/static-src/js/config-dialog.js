@@ -53,6 +53,7 @@
 
     function closeConfigDialog() {
       _configModalOpen = false;
+      if (typeof webhookSetupReset === 'function') webhookSetupReset();
       // Invalidate any in-flight load so a late reply cannot repopulate a
       // dialog the operator has already dismissed.
       _configLoadSeq++;

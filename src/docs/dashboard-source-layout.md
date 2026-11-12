@@ -198,7 +198,7 @@ CSS (`css/`): `base` (tokens, reset, shared primitives), `sidebar`, `topbar`,
 `agent-detail`, `agent-cards`, `auth`, `agent-state`, `tracker` (Hive activity
 monitor), `tracker-native-queue`, `agent-fields`, `governor`, `advisory-lifecycle`, `evidence`,
 `throughput`, `repos`, `label-filter`, `overview`, `sparklines-indicators`,
-`governor-matrix`, `cost`, `alerts-toasts`, `feedback-faq`, `config-dialog`,
+`governor-matrix`, `cost`, `alerts-toasts`, `feedback-faq`, `config-dialog`, `config-webhooks`,
 `chat`, `nous`, `knowledge`, `sections-collapse`, `design-system`,
 `responsive`, `recipes-utilities`, `welcome`, `review-campaigns`, `variables`.
 
@@ -224,7 +224,7 @@ JS (`js/`): `boot`, `core`, `feedback`, `sections`, `layout`, `agent-detail`,
 `review-queue`, `contributors`, `refresh`, `inception`, `debug-logs`,
 `tooltips-dialogs`, `plan-agent-controls`, `acmm`, `version`, `sse-bootstrap`,
 `config-state`, `settings-search`, `config-dialog`, `config-tabs`,
-`config-hub`, `config-agent`, `config-governor`, `config-watchdog-security`,
+`config-webhooks`, `config-hub`, `config-agent`, `config-governor`, `config-watchdog-security`,
 `config-features`, `config-sentinel`, `compliance`, `config-helpers`,
 `linear-repos-save`, `chat`, `gh-auth`, `nps`, `welcome`, `shimmy-handlers`.
 
