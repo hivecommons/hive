@@ -39,6 +39,13 @@ type Item struct {
 	// caller whose policy closes superseded originals on adopt
 	// (governor.labels.stage.adoption.close_superseded: on_adopt).
 	SupersededBy int
+	// HiveAppliedBlock is true when the caller has established that the
+	// item's `blocked` label was most recently applied by the hive's own
+	// bot (the actor of the newest labeled event for it). Set only by the
+	// blocked sweep's repair of a block that names nothing it waits on;
+	// with KindBlockedRepair it lifts the backfill guard and the opt-in
+	// label requirement (ReasonHiveAppliedBlock). No other kind reads it.
+	HiveAppliedBlock bool
 	// Labels is the item's current label set.
 	Labels []string
 	// CreatedAt is the item's creation time; the backfill guard compares it
@@ -84,6 +91,14 @@ const (
 	// sign-off, so the close is the hive's own housekeeping, not an
 	// unsolicited write on a person's work.
 	ReasonSupersededAgentPR = "superseded-agent-pr"
+	// ReasonHiveAppliedBlock allows the blocked-repair kind on an item whose
+	// `blocked` label the hive itself applied. The hive has already written
+	// to that item, whatever its age and with no opt-in label, so replacing
+	// its own label with a needs-human ask is upkeep of the hive's state,
+	// not a first unsolicited write: the backfill guard and the opt-in
+	// label do not apply. A pause, the repo mode, project membership,
+	// own_only and the kind's minimum level still do.
+	ReasonHiveAppliedBlock = "hive-applied-block"
 )
 
 // RepoPauseInfo is the provenance of an operator pause, as config records
@@ -194,7 +209,10 @@ type Gate struct {
 	recent  []Suppressed
 	summary map[string]bool
 	// dedupe is the content layer's table (dedupe.go).
-	dedupe         *dedupeState
+	dedupe *dedupeState
+	// held is the last refusal reason reported per item for a writer that
+	// asks again on every sweep (held.go).
+	held           map[heldKey]string
 	attentionOnce  sync.Once
 	attentionStore *attention.Store
 	attentionErr   error
@@ -460,7 +478,11 @@ func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
 	// carrying the opt-in label was asked for by a human, so the backfill
 	// guard (which exists for items nobody asked about) does not apply.
 	optedIn := g.optedInLocked(repo, item)
-	if !optedIn {
+	// Repairing a `blocked` the hive applied acts on an item the hive has
+	// already written to, so neither the backfill guard here nor the opt-in
+	// label below applies to it. The level still does.
+	hiveBlock := kind == KindBlockedRepair && item.HiveAppliedBlock
+	if !optedIn && !hiveBlock {
 		if backfilled, cut := g.backfillBlockedLocked(repo, item); backfilled {
 			return Decision{Reason: ReasonBackfill, Detail: fmt.Sprintf("#%d was created %s, before hive could write to %s (%s); writeback.unsolicited.backfill is off", item.Number, item.CreatedAt.UTC().Format(time.RFC3339), repo, cut.Format(time.RFC3339))}
 		}
@@ -488,6 +510,12 @@ func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
 	}
 	if level <= 0 {
 		return Decision{Reason: ReasonLevelUnknown, Detail: "acmm_level is unset; unsolicited writes need a level"}
+	}
+	if hiveBlock {
+		if level >= p.MinLevel {
+			return Decision{Allowed: true, Reason: ReasonHiveAppliedBlock, Detail: fmt.Sprintf("the hive applied the `blocked` label on #%d itself and L%d ≥ L%d", item.Number, level, p.MinLevel)}
+		}
+		return Decision{Reason: ReasonBelowLevel, Detail: fmt.Sprintf("%s needs L%d; %s is at L%d", kind, p.MinLevel, repo, level)}
 	}
 	if !p.RequireLabel {
 		if level >= p.MinLevel {
