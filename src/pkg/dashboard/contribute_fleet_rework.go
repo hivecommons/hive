@@ -150,24 +150,50 @@ func (h *ContributeWSHub) prOpenState(repo string, number int) (open, known bool
 }
 
 // reworkCandidateOpen reports whether a rework candidate is still an open
-// PR of the contributor's. A record stage 074 took over is the hive's now,
-// not the contributor's. Where the open-PR index vouches for the repo it
-// decides; otherwise the forge cache decides when it knows the PR; otherwise
-// owedRework's unseen bound on the stage record.
-func (h *ContributeWSHub) reworkCandidateOpen(open openPRIndex, repo string, number int, rec stagelabels.Record, hasRec bool, now time.Time) bool {
+// PR of the contributor's (reworkCandidateGone says which check decided
+// otherwise). enqueuedAt is when a queued fix entered the fix queue; zero
+// for a stage-store candidate.
+func (h *ContributeWSHub) reworkCandidateOpen(open openPRIndex, repo string, number int, rec stagelabels.Record, hasRec bool, enqueuedAt, now time.Time) bool {
+	return h.reworkCandidateGone(open, repo, number, rec, hasRec, enqueuedAt, now) == ""
+}
+
+// reworkCandidateGone returns "" while a rework candidate is still an open
+// PR of the contributor's, else the check that says it is not
+// (fleetReworkGone*). A record stage 074 took over is the hive's now, not
+// the contributor's. Where the open-PR index vouches for the repo it
+// decides, unless the listing predates the evidence that the PR is open (a
+// 071/072 record observed, or the fix enqueued, after the listing ran):
+// then the index steps aside. Otherwise the forge cache decides when it
+// knows the PR; otherwise owedRework's unseen bound on the stage record.
+func (h *ContributeWSHub) reworkCandidateGone(open openPRIndex, repo string, number int, rec stagelabels.Record, hasRec bool, enqueuedAt, now time.Time) string {
 	if hasRec && rec.Stage == stagelabels.AdoptedByHive {
-		return false
+		return fleetReworkGoneAdopted
 	}
 	if open.vouches(repo) {
-		return !open.closed(repo, number)
+		if !open.closed(repo, number) {
+			return ""
+		}
+		if !open.predates(rec, hasRec, enqueuedAt) {
+			return fleetReworkGoneNotListed
+		}
+		open = openPRIndex{}
 	}
 	if isOpen, known := h.prOpenState(repo, number); known {
-		return isOpen
+		if isOpen {
+			return ""
+		}
+		return fleetReworkGoneForgeClosed
 	}
 	if !hasRec {
-		return true
+		return ""
 	}
-	return owedRework(open, repo, number, rec, now)
+	if rec.Superseded() {
+		return fleetReworkGoneSuperseded
+	}
+	if !owedRework(open, repo, number, rec, now) {
+		return fleetReworkGoneUnseen
+	}
+	return ""
 }
 
 // isReworkStage reports whether a stage means "this PR is being repaired".
@@ -209,6 +235,9 @@ func workKindFor(store *stagelabels.Store, taskKind, repo string, number int) (k
 type openPRIndex struct {
 	repos map[string]bool // lower-cased owner/repo with a complete PR list
 	prs   map[string]bool // stagelabels.Key of every listed open PR
+	// listedAt is when the enumeration behind the listing ran
+	// (StatusPayload.ListedAt); zero when the snapshot does not say.
+	listedAt time.Time
 }
 
 // openPRIndex builds the index from the hub server's current status. A repo
@@ -228,6 +257,7 @@ func (h *ContributeWSHub) openPRIndex() openPRIndex {
 		return idx
 	}
 	idx.repos, idx.prs = map[string]bool{}, map[string]bool{}
+	idx.listedAt = status.ListedAt
 	for _, repo := range status.Repos {
 		if !ownershipRowsComplete(repo) || repo.CountsStale || repo.UnlistedPRs > 0 {
 			continue
@@ -369,10 +399,10 @@ func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool, o
 	pending := map[string]FleetReworkPR{}
 	for _, it := range sched.Queued(user) {
 		rec, hasRec := store.Get(stagelabels.Key(it.Repo, it.Number))
-		if !h.reworkCandidateOpen(open, it.Repo, it.Number, rec, hasRec, now) {
+		if gone := h.reworkCandidateGone(open, it.Repo, it.Number, rec, hasRec, it.EnqueuedAt, now); gone != "" {
 			// Merged, closed or adopted while queued: nothing left for the
 			// relay to fix, and handing it out would waste the agent's turn.
-			sched.Remove(user, it.Repo, it.Number)
+			sched.RemoveFor(user, it.Repo, it.Number, fixRemoveFleetCardPrefix+gone)
 			h.forgetFixOwner(user, it.Key())
 			continue
 		}
@@ -398,7 +428,7 @@ func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool, o
 			continue
 		}
 		repo, number := splitStageKey(ai.Key)
-		if repo == "" || number == 0 || !h.reworkCandidateOpen(open, repo, number, ai.Record, true, now) {
+		if repo == "" || number == 0 || !h.reworkCandidateOpen(open, repo, number, ai.Record, true, time.Time{}, now) {
 			continue
 		}
 		pr := FleetReworkPR{Repo: repo, Number: number, Stage: ai.Record.Stage.Label()}
