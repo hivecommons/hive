@@ -369,6 +369,17 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 		}
 		return adminmcp.ContributorQueueReadResult(tool, data, args)
 	}
+	if tool == adminmcp.ToolGitHubAPIUsage {
+		client, _, err := p.roster.activeClient()
+		if err != nil {
+			return nil, err
+		}
+		data, err := getPath(ctx, client, adminmcp.GitHubAPIUsageReadPath(args))
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.GitHubAPIUsageResult(data, args)
+	}
 	if tool == adminmcp.ToolSettingsRead {
 		// An unknown section or a missing agent is refused with its reason.
 		if _, err := adminmcp.SettingsReadPath(args); err != nil {

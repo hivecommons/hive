@@ -352,6 +352,16 @@ func (s *restAccountingStore) top(limit int) []RESTConsumer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pruneLocked(now)
+	out := s.consumersLocked()
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// consumersLocked returns every caller + method + endpoint row of the events
+// held, most charged first. The caller prunes and holds s.mu.
+func (s *restAccountingStore) consumersLocked() []RESTConsumer {
 	byKey := make(map[string]*RESTConsumer)
 	for _, ev := range s.events {
 		key := ev.caller + "\x00" + ev.method + "\x00" + ev.endpoint
@@ -386,11 +396,16 @@ func (s *restAccountingStore) top(limit int) []RESTConsumer {
 		if out[i].Requests != out[j].Requests {
 			return out[i].Requests > out[j].Requests
 		}
-		return out[i].Endpoint < out[j].Endpoint
+		if out[i].Endpoint != out[j].Endpoint {
+			return out[i].Endpoint < out[j].Endpoint
+		}
+		// Caller and method settle rows that tie on everything above, so a
+		// list cut at a limit holds the same rows on every read.
+		if out[i].Caller != out[j].Caller {
+			return out[i].Caller < out[j].Caller
+		}
+		return out[i].Method < out[j].Method
 	})
-	if len(out) > limit {
-		out = out[:limit]
-	}
 	return out
 }
 
