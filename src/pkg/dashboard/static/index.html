@@ -71754,8 +71754,8 @@ function burnAreaChart() {
       // Status line: distinguish ON+running from ON+not-configured from OFF.
       let trajStatus, trajStatusColor;
       if (!trajOn) { trajStatus = 'Off'; trajStatusColor = 'var(--muted)'; }
-      else if (trajReady) { trajStatus = 'On — active'; trajStatusColor = 'var(--green)'; }
-      else { trajStatus = 'On — no reviewer endpoint (not running)'; trajStatusColor = 'var(--amber)'; }
+      else if (trajReady) { trajStatus = 'On — active (HTTP endpoint)'; trajStatusColor = 'var(--green)'; }
+      else { trajStatus = 'On — no reviewer endpoint (not running; this lane needs an HTTP endpoint, the Claude CLI path serves only Let hive decide and chat)'; trajStatusColor = 'var(--amber)'; }
       return `
         ${securityModelDatalistHtml()}
         <p class="text-muted fs-sm mb-5">Opt-in capabilities, grouped by what they govern. Each section below has a stable heading; use the chips to jump to one. Hive's own telemetry export lives under <b>Integrations &amp; observability</b>; use <b>Project Observability</b> to choose what telemetry and operations agents target in managed repositories.</p>
@@ -72932,8 +72932,13 @@ function burnAreaChart() {
         const choices = [['', `hive-wide (${on ? 'on' : 'off'})`], ['on', 'on'], ['off', 'off']];
         return `<tr class="dd-repo-row" data-repo="${esc(r)}"><td><code>${esc(r)}</code></td><td><select aria-label="Let hive decide for ${esc(r)}" data-change-action="markDirtyDecisionsDelegateRepo" data-arg0="${esc(r)}" data-arg-types="s,v">${choices.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></td></tr>`;
       }).join('');
-      const readyNote = llmOn && dd.llm_reviewer_ready === false
-        ? '<div class="config-help">No reviewer endpoint or model is configured (governor.trajectory or governor.litellm), so every decision keeps the rules\' reversible default until one is.</div>' : '';
+      // Which path the decider turn takes (governor.reviewer_backend) and,
+      // when it cannot run, why: the same llm_reviewer_* fields the admin MCP
+      // reads through settings_read.
+      const ddPathLabel = ({ http: 'the reviewer endpoint (HTTP)', 'claude-cli': 'the Claude CLI on this hive\'s Claude login, with every tool off' })[dd.llm_reviewer_path] || '';
+      const readyNote = !llmOn ? '' : (dd.llm_reviewer_ready === false
+        ? '<div class="config-help">The model step cannot run: ' + esc(dd.llm_reviewer_reason || 'no reviewer endpoint or model is configured (governor.trajectory or governor.litellm)') + '. Every decision keeps the rules\' reversible default until it can. governor.reviewer_backend picks the path: auto (default), http or claude-cli.</div>'
+        : (ddPathLabel ? '<div class="config-help">The model step runs through ' + ddPathLabel + ' (governor.reviewer_backend).</div>' : ''));
       const maskedNote = llm.model_masked
         ? '<div class="config-help">The stored model looks like an API key, so it is hidden. Enter a model name to replace it.</div>' : '';
       return `
@@ -72945,7 +72950,7 @@ function burnAreaChart() {
           </div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${llmOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="decisions-delegate" data-key="llm_enabled"></div>
-            <span class="config-toggle-label">Ask a model when the rules cannot decide ${yamlHint('decisions.delegate.llm.enabled')} ${settingHelpMark('settings', 'features', 'Ask a model when the rules cannot decide', `Off by default. When on, an item the rules leave at the reversible default is sent to the model: its title, body, comments and linked items go to the governor reviewer endpoint, and the model's verdict passes the same safety rails as a rule decision. Any failure keeps the reversible default. This spends tokens on each such decision.`)}</span>
+            <span class="config-toggle-label">Ask a model when the rules cannot decide ${yamlHint('decisions.delegate.llm.enabled')} ${settingHelpMark('settings', 'features', 'Ask a model when the rules cannot decide', `Off by default. When on, an item the rules leave at the reversible default is sent to the model: its title, body, comments and linked items go to the reviewer model (the governor reviewer endpoint, or the Claude CLI with every tool off when the hive has no endpoint), and the model's verdict passes the same safety rails as a rule decision. Any failure keeps the reversible default. This spends tokens on each such decision.`)}</span>
           </div>
           ${readyNote}
           <div class="config-field"><label>Decider model ${yamlHint('decisions.delegate.llm.model')} ${settingHelpMark('settings', 'features', 'Decider model', `Model for the decider turn. Empty uses the governor reviewer model. A model name only: the key belongs to the reviewer endpoint, and a value that looks like a key is refused.`)}</label><input type="text" value="${esc(llm.model || '')}" placeholder="${esc(dd.llm_model_effective || 'reviewer model')}" data-change-action="markDirty" data-arg0="decisions-delegate" data-arg1="llm_model" data-arg-types="s,s,w"></div>

@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -18,8 +16,10 @@ import (
 // delegateDeciderRunner runs the owner-delegate decider turn behind "Let hive
 // decide" (decisions.delegate.llm) as one chat completion on the governor
 // reviewer endpoint — the same endpoint/key resolution the intent-alignment
-// and trajectory reviewers use. Config is read per call so a reload takes
-// effect without a restart.
+// and trajectory reviewers use. On a hive with no endpoint and a Claude login,
+// governor.reviewer_backend (auto by default) runs the same turn through the
+// Claude CLI instead (reviewer_cli_runner.go). Config is read per call so a
+// reload takes effect without a restart.
 type delegateDeciderRunner struct {
 	cfg  func() *config.Config
 	http *http.Client
@@ -28,6 +28,9 @@ type delegateDeciderRunner struct {
 	model func(*config.Config) string
 	// maxTokens caps the completion; zero means delegateDeciderMaxTokens.
 	maxTokens int
+	// cli runs the turn through the Claude CLI when governor.reviewer_backend
+	// routes it there (reviewer_cli_runner.go); nil means HTTP only.
+	cli *reviewerCLIRunner
 }
 
 // workflowSpecMaxTokens fits a whole WorkflowModel JSON document.
@@ -35,7 +38,9 @@ const workflowSpecMaxTokens = 8000
 
 // newWorkflowSpecRunner is the same reviewer-endpoint turn for the optional
 // LLM refinement of written-spec ingest (POST /api/workflows/ingest/spec,
-// RFC #17620 phase 6): the reviewer model, a larger completion budget.
+// RFC #17620 phase 6): the reviewer model, a larger completion budget. It
+// stays on the HTTP endpoint (no cli), matching the ReviewerReady() check its
+// endpoint reports readiness with.
 func newWorkflowSpecRunner(cfg func() *config.Config) delegatedecision.TurnRunner {
 	return &delegateDeciderRunner{
 		cfg:       cfg,
@@ -54,17 +59,18 @@ const (
 var errDelegateDeciderUnconfigured = errors.New("owner-delegate decider: no reviewer endpoint or model resolved")
 
 func newDelegateDeciderRunner(cfg func() *config.Config) delegatedecision.TurnRunner {
-	return &delegateDeciderRunner{cfg: cfg, http: &http.Client{Timeout: delegateDeciderTimeout}}
+	return &delegateDeciderRunner{cfg: cfg, http: &http.Client{Timeout: delegateDeciderTimeout}, cli: newReviewerCLIRunner()}
 }
 
-// newChatGroundingRunner is the same reviewer-endpoint turn for the
-// dashboard's grounded chat answers (chat.grounded_answers), with that
-// block's model override instead of the decider's.
+// newChatGroundingRunner is the same reviewer turn for the dashboard's
+// grounded chat answers (chat.grounded_answers), with that block's model
+// override instead of the decider's.
 func newChatGroundingRunner(cfg func() *config.Config) delegatedecision.TurnRunner {
 	return &delegateDeciderRunner{
 		cfg:   cfg,
 		http:  &http.Client{Timeout: delegateDeciderTimeout},
 		model: func(c *config.Config) string { return c.Chat.GroundedAnswersModel() },
+		cli:   newReviewerCLIRunner(),
 	}
 }
 
@@ -93,18 +99,18 @@ func (r *delegateDeciderRunner) RunDeciderTurn(ctx context.Context, profile, sys
 	if cfg == nil {
 		return "", errDelegateDeciderUnconfigured
 	}
-	endpoint, apiKey, model := cfg.Governor.ResolveReviewer()
-	override := cfg.Decisions.Delegate.LLMModel
+	override := cfg.Decisions.Delegate.LLMModel()
 	if r.model != nil {
-		override = func() string { return r.model(cfg) }
+		override = r.model(cfg)
 	}
-	if m := override(); m != "" {
-		model = m
+	route := r.route(cfg, override)
+	if !route.Ready {
+		return "", fmt.Errorf("%w: %s", errDelegateDeciderUnconfigured, route.Reason)
 	}
-	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
-	if endpoint == "" || strings.TrimSpace(model) == "" {
-		return "", errDelegateDeciderUnconfigured
+	if route.Path == config.ReviewerPathClaudeCLI {
+		return r.cli.run(ctx, profile, system, user, route.Model)
 	}
+	endpoint, apiKey, model := route.Endpoint, route.APIKey, route.Model
 	body, err := json.Marshal(delegateDeciderRequest{
 		Model:       model,
 		Messages:    []delegateDeciderMessage{{Role: "system", Content: system}, {Role: "user", Content: user}},
@@ -132,18 +138,28 @@ func (r *delegateDeciderRunner) RunDeciderTurn(ctx context.Context, profile, sys
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("%s: endpoint returned %d", profile, resp.StatusCode)
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, delegateDeciderMaxReply))
+	raw, err := readTurnReply(profile, resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("%s: read response: %w", profile, err)
+		return "", err
 	}
 	var cr delegateDeciderResponse
-	if err := json.Unmarshal(raw, &cr); err != nil {
-		return "", fmt.Errorf("%s: decode response: %w", profile, err)
+	if err := decodeTurnReply(profile, raw, &cr); err != nil {
+		return "", err
 	}
 	if len(cr.Choices) == 0 {
 		return "", fmt.Errorf("%s: no choices", profile)
 	}
 	return cr.Choices[0].Message.Content, nil
+}
+
+// route picks the turn's path (config.ResolveReviewerTurn). A runner with
+// no cli (the workflow-spec runner) is HTTP only, whatever
+// governor.reviewer_backend says.
+func (r *delegateDeciderRunner) route(cfg *config.Config, override string) config.ReviewerTurnRoute {
+	if r.cli == nil {
+		return cfg.Governor.ResolveReviewerTurnVia(config.ReviewerBackendHTTP, override, false)
+	}
+	return cfg.Governor.ResolveReviewerTurn(override, r.cli.signedIn())
 }
 
 func (r *delegateDeciderRunner) completionBudget() int {

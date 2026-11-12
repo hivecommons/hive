@@ -11071,11 +11071,24 @@
                     },
                     "llm_reviewer_ready": {
                       "type": "boolean",
-                      "description": "Whether the decider turn has a reviewer endpoint and a model to call. The endpoint and its key are never returned."
+                      "description": "Whether the decider turn can run on the path in llm_reviewer_path. The endpoint and its key are never returned."
+                    },
+                    "llm_reviewer_path": {
+                      "type": "string",
+                      "enum": [
+                        "http",
+                        "claude-cli",
+                        "none"
+                      ],
+                      "description": "Where the decider turn runs, chosen by governor.reviewer_backend: http (the OpenAI-compatible reviewer endpoint), claude-cli (the Claude CLI on the hive's Claude login, with every tool off) or none."
+                    },
+                    "llm_reviewer_reason": {
+                      "type": "string",
+                      "description": "Why the decider turn cannot run; empty when llm_reviewer_ready is true."
                     },
                     "llm_model_effective": {
                       "type": "string",
-                      "description": "The model the decider turn uses: the override, else the reviewer model."
+                      "description": "The model the decider turn uses: the override, else the reviewer model. Empty on the claude-cli path means the CLI's own default model."
                     },
                     "effect_timeout": {
                       "type": "string",
