@@ -227,3 +227,30 @@ func TestPlaudRenderHelpers(t *testing.T) {
 		t.Fatalf("auth error = %q", got)
 	}
 }
+
+func TestPlaudListAndReadRecording(t *testing.T) {
+	pc := newTestPlaud(t, newPlaudTestServer(), map[string]string{"tags": "voice, ideas"})
+	recs, err := pc.ListRecordings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 || recs[0].ID != "rec-2" || recs[1].ID != "rec-1" {
+		t.Fatalf("recs = %+v", recs)
+	}
+	if recs[1].Title != "Standup ideas" || recs[1].DurationMS != 125000 || len(recs[1].Tags) != 2 {
+		t.Fatalf("rec-1 = %+v", recs[1])
+	}
+	if want := time.Date(2026, 11, 10, 8, 58, 0, 0, time.UTC); !recs[1].RecordedAt.Equal(want) {
+		t.Fatalf("recorded at = %v", recs[1].RecordedAt)
+	}
+	c, err := pc.ReadRecording(context.Background(), "rec-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c.Summary, "ship plaud connector") || !strings.Contains(c.Transcript, "Hello hive") {
+		t.Fatalf("content = %+v", c)
+	}
+	if _, err := pc.ReadRecording(context.Background(), "rec-2"); err == nil {
+		t.Fatal("recording with no note or transcript should error")
+	}
+}

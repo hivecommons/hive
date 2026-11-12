@@ -15,8 +15,10 @@ see the issue linked from the changelog entry.
   `wisprflow`). Connecting a source happens in **Knowledge → 🔌 Integrations**;
   that card shows only the connection state and an **Open Inbox** button.
 - **Item** — one recording, keyed `(source, item_id)` (for Plaud, the
-  `attr_plaud_file_id`). Every item **is already a Knowledge fact**; the Inbox
-  only tracks what you did with it. "📚 Fact" opens the fact in Knowledge.
+  `attr_plaud_file_id`). When the source is connected the Inbox lists
+  recordings directly from it, so an item may appear before the sync has
+  written its Knowledge fact; the Inbox only tracks what you did with it.
+  "📚 Fact" opens the fact in Knowledge once that fact exists.
 - **Destination** — where an item goes:
   - **→ RFC** (`spek_rfc`): the hive runs `spektacular voice --from stdin
     --title <title> --publish --repo <owner/repo>` on the transcript and
