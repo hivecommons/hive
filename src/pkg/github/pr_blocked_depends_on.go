@@ -288,7 +288,9 @@ func (c *Client) reconcileBlockedPR(ctx context.Context, repo string, pr *gh.Pul
 // A listed target that closed without merging is followed to its declared
 // successor (see the file comment): one the hive already marked holds like
 // any listed target, and one found on this pass is marked and holds from
-// this pass on. A successor lookup that fails keeps the block for the pass.
+// this pass on. A successor lookup GitHub definitely refuses releases at
+// once, as before; one that fails for a reason that may pass keeps the block
+// for at most blockedSuccessorLookupGrace, then releases as before.
 func (c *Client) liftOrKeepBlockedPR(ctx context.Context, repo string, pr *gh.PullRequest, labels []string, deps, marked, fresh []blockedPRTarget, comments []*gh.IssueComment, cache map[string]blockedPRTargetState, res *BlockedPRSweepResult) {
 	number := pr.GetNumber()
 	if len(marked) == 0 {
@@ -331,6 +333,17 @@ func (c *Client) liftOrKeepBlockedPR(ctx context.Context, repo string, pr *gh.Pu
 				continue
 			}
 			succ, ok, err := c.blockedPRSuccessorOf(ctx, self, t, cache)
+			lookup := blockedSuccessorLookupKey(repo, number, t.ref())
+			if err == nil {
+				blockedSuccessorLookupSettled(lookup)
+			} else if giveUp, news := blockedSuccessorLookupFailed(lookup); giveUp {
+				// The lookup kept failing past the grace: release as if
+				// nothing named a successor, which is what happened before.
+				if news {
+					c.logger.Warn("blocked PR sweep: successor lookup for a closed blocker kept failing for "+blockedSuccessorLookupGrace.String()+"; releasing as before", "repo", repo, "pr", number, "blocker", t.ref(), "error", err)
+				}
+				ok, err = false, nil
+			}
 			switch {
 			case err != nil:
 				res.Errors++
@@ -363,6 +376,9 @@ func (c *Client) liftOrKeepBlockedPR(ctx context.Context, repo string, pr *gh.Pu
 		res.Errors++
 		c.logger.Warn("blocked PR sweep: unblock failed", "repo", repo, "pr", number, "error", err)
 		return
+	}
+	for _, t := range marked {
+		blockedSuccessorLookupSettled(blockedSuccessorLookupKey(repo, number, t.ref()))
 	}
 	c.postUnblockedNote(ctx, repo, number, note, c.logger)
 	res.Unblocked++

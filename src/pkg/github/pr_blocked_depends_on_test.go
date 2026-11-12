@@ -1,10 +1,12 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/writeback"
@@ -915,6 +918,7 @@ func TestSweepBlockedPRDependencies_SuccessorKeepsHoldWhenItCannotWriteOrRead(t 
 		}
 	})
 	t.Run("closed target's comments unreadable", func(t *testing.T) {
+		resetBlockedSuccessorLookups(t)
 		f := newBPDFake()
 		blockedPRFixture(t, f, "acme/widget#70", "Depends-on: #71", "acme/widget#71")
 		closed := bpdClosedPR()
@@ -965,5 +969,150 @@ func TestBlockedPRSuccessorMarkerCommentRoundTrip(t *testing.T) {
 	}
 	if got := blockedPRMarkedTargets([]*gh.IssueComment{own}); len(got) != 1 || got[0] != succ {
 		t.Fatalf("marked targets = %+v, want only the successor", got)
+	}
+}
+
+// resetBlockedSuccessorLookups empties the record of failing successor
+// lookups now and when the test ends, so tests leak nothing into each other
+// whatever order they run in.
+func resetBlockedSuccessorLookups(t *testing.T) {
+	t.Helper()
+	wipe := func() {
+		blockedSuccessorLookups.Lock()
+		blockedSuccessorLookups.m = map[string]blockedSuccessorLookupState{}
+		blockedSuccessorLookups.Unlock()
+	}
+	wipe()
+	t.Cleanup(wipe)
+}
+
+// blockedSuccessorLookupRecorded reports whether a failing lookup is on
+// record for the held item and its closed blocker.
+func blockedSuccessorLookupRecorded(repo string, number int, blocker string) bool {
+	blockedSuccessorLookups.Lock()
+	defer blockedSuccessorLookups.Unlock()
+	_, ok := blockedSuccessorLookups.m[blockedSuccessorLookupKey(repo, number, blocker)]
+	return ok
+}
+
+// blockedSuccessorClock pins the clock the lookup grace is measured on and
+// returns the function that moves it forward. It also resets the record of
+// failing lookups.
+func blockedSuccessorClock(t *testing.T) func(time.Duration) {
+	t.Helper()
+	resetBlockedSuccessorLookups(t)
+	now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	prev := blockedSuccessorNow
+	blockedSuccessorNow = func() time.Time { return now }
+	t.Cleanup(func() { blockedSuccessorNow = prev })
+	return func(d time.Duration) { now = now.Add(d) }
+}
+
+// blockedSuccessorGaveUpLog is what the one give-up warning says.
+const blockedSuccessorGaveUpLog = "successor lookup for a closed blocker kept failing for 1h0m0s; releasing as before"
+
+// A comment list GitHub definitely refuses (404) names no successor: the
+// hold is released on the first pass with the note it always had, and
+// nothing is kept on record.
+func TestSweepBlockedPRDependencies_SuccessorLookupRefusedReleasesAtOnce(t *testing.T) {
+	resetBlockedSuccessorLookups(t)
+	f := newBPDFake()
+	blockedPRFixture(t, f, "acme/widget#80", "Depends-on: #81", "acme/widget#81")
+	closed := bpdClosedPR()
+	closed.commentsStatus = http.StatusNotFound
+	f.put("acme/widget#81", closed)
+	c := f.client(t)
+	t.Cleanup(func() { forgetBlockedOnSeen("acme/widget", 80) })
+
+	res := sweepBPD(t, c)
+	if res.Unblocked != 1 || res.Errors != 0 || issueHasLabel(f.item("acme/widget#80").labels, BlockedLabel) {
+		t.Fatalf("a refused lookup must release on the first pass: %+v labels=%v", res, f.item("acme/widget#80").labels)
+	}
+	posted := f.postedOn("acme/widget#80")
+	if len(posted) != 1 || !strings.Contains(posted[0], "Unblocked: acme/widget#81 closed without merging, so check that this PR still makes sense without it.") {
+		t.Fatalf("lift note = %q, want the note it always had", posted)
+	}
+	if blockedSuccessorLookupRecorded("acme/widget", 80, "acme/widget#81") {
+		t.Fatal("a refused lookup must leave nothing on record")
+	}
+}
+
+// A lookup that fails for a reason that may pass (500) keeps the hold, but
+// only within the grace: once it has failed for longer, the hold is released
+// with the note it always had and the give-up is logged once. Before the
+// bound, such a failure would have held the PR for as long as it lasted.
+func TestSweepBlockedPRDependencies_SuccessorLookupFailureIsBounded(t *testing.T) {
+	advance := blockedSuccessorClock(t)
+	f := newBPDFake()
+	blockedPRFixture(t, f, "acme/widget#82", "Depends-on: #83", "acme/widget#83")
+	closed := bpdClosedPR()
+	closed.commentsStatus = http.StatusInternalServerError
+	f.put("acme/widget#83", closed)
+	c := f.client(t)
+	var logs bytes.Buffer
+	c.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	t.Cleanup(func() { forgetBlockedOnSeen("acme/widget", 82) })
+
+	for pass, wait := range []time.Duration{0, 30 * time.Minute} {
+		advance(wait)
+		res := sweepBPD(t, c)
+		posted, added, removed := f.counts()
+		if res.Errors != 1 || res.Unblocked != 0 || posted+added+removed != 0 || !issueHasLabel(f.item("acme/widget#82").labels, BlockedLabel) {
+			t.Fatalf("pass %d inside the grace must keep the hold and write nothing: %+v posted=%d added=%d removed=%d", pass+1, res, posted, added, removed)
+		}
+	}
+	if !blockedSuccessorLookupRecorded("acme/widget", 82, "acme/widget#83") || strings.Contains(logs.String(), blockedSuccessorGaveUpLog) {
+		t.Fatalf("inside the grace the failure is on record and nothing is given up: %s", logs.String())
+	}
+
+	advance(blockedSuccessorLookupGrace)
+	res := sweepBPD(t, c)
+	if res.Unblocked != 1 || issueHasLabel(f.item("acme/widget#82").labels, BlockedLabel) {
+		t.Fatalf("past the grace the hold must be released as before: %+v labels=%v", res, f.item("acme/widget#82").labels)
+	}
+	posted := f.postedOn("acme/widget#82")
+	if len(posted) != 1 || !strings.Contains(posted[0], "Unblocked: acme/widget#83 closed without merging, so check that this PR still makes sense without it.") {
+		t.Fatalf("lift note = %q, want the note it always had", posted)
+	}
+	if got := strings.Count(logs.String(), blockedSuccessorGaveUpLog); got != 1 {
+		t.Fatalf("the give-up must be logged once, got %d in:\n%s", got, logs.String())
+	}
+	if blockedSuccessorLookupRecorded("acme/widget", 82, "acme/widget#83") {
+		t.Fatal("the record must go with the released hold")
+	}
+
+	advance(5 * time.Minute)
+	res = sweepBPD(t, c)
+	if res.Unblocked+res.Placed+res.Marked != 0 || len(f.postedOn("acme/widget#82")) != 1 || strings.Count(logs.String(), blockedSuccessorGaveUpLog) != 1 {
+		t.Fatalf("a pass after the release must do nothing new: %+v posted=%q", res, f.postedOn("acme/widget#82"))
+	}
+}
+
+// A lookup that failed once and then works is followed as usual: the hold
+// moves to the open successor and the failure is forgotten.
+func TestSweepBlockedPRDependencies_SuccessorLookupRecovers(t *testing.T) {
+	advance := blockedSuccessorClock(t)
+	f := newBPDFake()
+	blockedPRFixture(t, f, "acme/widget#84", "Depends-on: #85", "acme/widget#85")
+	bpdSuperseded(f, "acme/widget#85", 86)
+	f.item("acme/widget#85").commentsStatus = http.StatusInternalServerError
+	f.put("acme/widget#86", bpdOpenPR("redo"))
+	c := f.client(t)
+	t.Cleanup(func() { forgetBlockedOnSeen("acme/widget", 84) })
+
+	if res := sweepBPD(t, c); res.Errors != 1 || res.Unblocked+res.Marked != 0 || !blockedSuccessorLookupRecorded("acme/widget", 84, "acme/widget#85") {
+		t.Fatalf("the failed lookup must keep the hold and go on record: %+v", res)
+	}
+	f.mu.Lock()
+	f.items["acme/widget#85"].commentsStatus = 0
+	f.mu.Unlock()
+	advance(5 * time.Minute)
+	res := sweepBPD(t, c)
+	posted := f.postedOn("acme/widget#84")
+	if res.Marked != 1 || res.Unblocked != 0 || res.Errors != 0 || len(posted) != 1 || !strings.Contains(posted[0], BlockedOnMarker("acme/widget", 86)) {
+		t.Fatalf("once readable, the hold must move to the successor: %+v posted=%q", res, posted)
+	}
+	if blockedSuccessorLookupRecorded("acme/widget", 84, "acme/widget#85") {
+		t.Fatal("a lookup that completed must clear the record")
 	}
 }

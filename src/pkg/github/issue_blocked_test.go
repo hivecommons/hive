@@ -1407,15 +1407,23 @@ type blockedSuccessorFake struct {
 	// duplicateOf maps a node id to the JSON of the canonical issue.
 	duplicateOf map[string]string
 	// moved maps "owner/repo#N" to the path GitHub redirects it to.
-	moved   map[string]string
-	calls   []string
-	graphQL int
-	posts   map[string][]string
-	removed []string
+	moved map[string]string
+	// commentsStatus maps "owner/repo#N" to the HTTP status its comment
+	// listing answers with instead of the comments.
+	commentsStatus map[string]int
+	// graphQLStatus, when set, is the HTTP status the GraphQL endpoint
+	// answers with; graphQLReply, when set, is the body it answers with
+	// instead of the duplicate-of data.
+	graphQLStatus int
+	graphQLReply  string
+	calls         []string
+	graphQL       int
+	posts         map[string][]string
+	removed       []string
 }
 
 func newBlockedSuccessorFake() *blockedSuccessorFake {
-	return &blockedSuccessorFake{issues: map[string]string{}, comments: map[string][]string{}, duplicateOf: map[string]string{}, moved: map[string]string{}, posts: map[string][]string{}}
+	return &blockedSuccessorFake{issues: map[string]string{}, comments: map[string][]string{}, duplicateOf: map[string]string{}, moved: map[string]string{}, commentsStatus: map[string]int{}, posts: map[string][]string{}}
 }
 
 func (f *blockedSuccessorFake) server(t *testing.T) *httptest.Server {
@@ -1433,6 +1441,15 @@ func (f *blockedSuccessorFake) server(t *testing.T) *httptest.Server {
 			}
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			f.graphQL++
+			if f.graphQLStatus != 0 {
+				w.WriteHeader(f.graphQLStatus)
+				_, _ = io.WriteString(w, `{"message":"unavailable"}`)
+				return
+			}
+			if f.graphQLReply != "" {
+				_, _ = io.WriteString(w, f.graphQLReply)
+				return
+			}
 			canonical, ok := f.duplicateOf[req.Variables.ID]
 			if !ok {
 				canonical = "null"
@@ -1462,6 +1479,11 @@ func (f *blockedSuccessorFake) server(t *testing.T) *httptest.Server {
 			}
 			_, _ = io.WriteString(w, issue)
 		case len(parts) == 5 && parts[4] == "comments" && r.Method == http.MethodGet:
+			if status := f.commentsStatus[ref]; status != 0 {
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `{"message":"unavailable"}`)
+				return
+			}
 			_, _ = io.WriteString(w, "["+strings.Join(f.comments[ref], ",")+"]")
 		case len(parts) == 5 && parts[4] == "comments" && r.Method == http.MethodPost:
 			var payload struct {
@@ -1719,5 +1741,156 @@ func TestBlockedSuccessorTrustAndStatements(t *testing.T) {
 	}
 	if repo, n, ok := parseBlockedOnIssueMarker(blockedOnIssueMarker("o/other", 7)); !ok || repo != "o/other" || n != 7 {
 		t.Errorf("blockedOnIssueMarker does not round-trip: %q %d %v", repo, n, ok)
+	}
+}
+
+// A read of the successor lookup that GitHub definitely refuses means "no
+// successor": the issue is unblocked on the first pass, exactly as before. A
+// GraphQL errors array that says rate limit is not a refusal: the block is
+// kept and the next pass looks again.
+func TestReconcileBlockedIssuesSuccessorLookupRefusalAndRateLimit(t *testing.T) {
+	const duplicate = `{"number":%d,"state":"closed","state_reason":"duplicate","node_id":"N%d","closed_at":"2026-11-10T10:00:00Z","user":{"login":"reporter"}}`
+	cases := []struct {
+		name        string
+		issue       int
+		blocker     int
+		setup       func(f *blockedSuccessorFake)
+		wantUnblock bool
+	}{
+		{name: "GraphQL answers an errors array of type FORBIDDEN", issue: 11, blocker: 110, wantUnblock: true, setup: func(f *blockedSuccessorFake) {
+			f.issues["o/r#110"] = fmt.Sprintf(duplicate, 110, 110)
+			f.graphQLReply = `{"data":{"node":null},"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by integration"}]}`
+		}},
+		{name: "the closed blocker's comment list answers 404", issue: 13, blocker: 130, wantUnblock: true, setup: func(f *blockedSuccessorFake) {
+			f.issues["o/r#130"] = `{"number":130,"state":"closed","state_reason":"completed","closed_at":"2026-11-10T10:00:00Z","user":{"login":"reporter"}}`
+			f.commentsStatus["o/r#130"] = http.StatusNotFound
+		}},
+		{name: "GraphQL answers an errors array that says rate limit", issue: 14, blocker: 140, wantUnblock: false, setup: func(f *blockedSuccessorFake) {
+			f.issues["o/r#140"] = fmt.Sprintf(duplicate, 140, 140)
+			f.graphQLReply = `{"data":{"node":null},"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded for installation."}]}`
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			blockedSuccessorClock(t)
+			f := newBlockedSuccessorFake()
+			tc.setup(f)
+			c := testClient(t, f.server(t).URL)
+			c.appBotLogin = testBot
+			blocker := "o/r#" + strconv.Itoa(tc.blocker)
+			ref := "o/r#" + strconv.Itoa(tc.issue)
+			rows := []RepoWorkIssue{blockedSuccessorRow(tc.issue, blocker)}
+			res := ReconcileBlockedIssues(context.Background(), c, &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{"o/r": {Issues: rows}}}, nil)
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if !tc.wantUnblock {
+				if res.Unblocked != 0 || res.Retargeted != 0 || res.Errors != 1 || len(f.posts) != 0 || len(f.removed) != 0 {
+					t.Fatalf("a rate limit must keep the block and write nothing: %+v posts=%v removed=%v", res, f.posts, f.removed)
+				}
+				if !blockedSuccessorLookupRecorded("o/r", tc.issue, blocker) {
+					t.Fatal("the failing lookup must go on record so the grace can run out")
+				}
+				return
+			}
+			want := blockedUnblockedMarker + "\nUnblocked: " + blocker + " is closed. This issue is actionable again."
+			if res.Unblocked != 1 || res.Retargeted != 0 || res.Errors != 0 {
+				t.Fatalf("a refused lookup must unblock on the first pass: %+v", res)
+			}
+			if got := f.posts[ref]; len(got) != 1 || got[0] != want {
+				t.Fatalf("comments = %q, want exactly the note it always had, %q", got, want)
+			}
+			if blockedSuccessorLookupRecorded("o/r", tc.issue, blocker) {
+				t.Fatal("a refused lookup must leave nothing on record")
+			}
+		})
+	}
+}
+
+// The duplicate-of lookup fails for a reason that may pass (HTTP 502): the
+// block is kept, but only within the grace. Once the lookup has failed for
+// longer, the issue is unblocked with the note it always had and the give-up
+// is logged once.
+func TestReconcileBlockedIssuesSuccessorLookupFailureIsBounded(t *testing.T) {
+	advance := blockedSuccessorClock(t)
+	f := newBlockedSuccessorFake()
+	f.issues["o/r#120"] = `{"number":120,"state":"closed","state_reason":"duplicate","node_id":"N120","closed_at":"2026-11-10T10:00:00Z","user":{"login":"reporter"}}`
+	f.graphQLStatus = http.StatusBadGateway
+	c := testClient(t, f.server(t).URL)
+	c.appBotLogin = testBot
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	rows := []RepoWorkIssue{blockedSuccessorRow(12, "o/r#120")}
+	sweep := func() BlockedIssueResult {
+		return ReconcileBlockedIssues(context.Background(), c, &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{"o/r": {Issues: rows}}}, logger)
+	}
+
+	for pass, wait := range []time.Duration{0, 30 * time.Minute} {
+		advance(wait)
+		res := sweep()
+		f.mu.Lock()
+		wrote := len(f.posts) + len(f.removed)
+		f.mu.Unlock()
+		if res.Errors != 1 || res.Unblocked != 0 || res.Retargeted != 0 || wrote != 0 {
+			t.Fatalf("pass %d inside the grace must keep the block and write nothing: %+v wrote=%d", pass+1, res, wrote)
+		}
+	}
+	if !blockedSuccessorLookupRecorded("o/r", 12, "o/r#120") || strings.Contains(logs.String(), blockedSuccessorGaveUpLog) {
+		t.Fatalf("inside the grace the failure is on record and nothing is given up: %s", logs.String())
+	}
+
+	advance(blockedSuccessorLookupGrace)
+	res := sweep()
+	if res.Unblocked != 1 || res.Retargeted != 0 {
+		t.Fatalf("past the grace the issue must be unblocked as before: %+v", res)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	want := blockedUnblockedMarker + "\nUnblocked: o/r#120 is closed. This issue is actionable again."
+	if got := f.posts["o/r#12"]; len(got) != 1 || got[0] != want {
+		t.Fatalf("comments = %q, want exactly the note it always had, %q", got, want)
+	}
+	if got := strings.Count(logs.String(), blockedSuccessorGaveUpLog); got != 1 {
+		t.Fatalf("the give-up must be logged once, got %d in:\n%s", got, logs.String())
+	}
+	if blockedSuccessorLookupRecorded("o/r", 12, "o/r#120") {
+		t.Fatal("the record must go with the released block")
+	}
+}
+
+// What counts as GitHub definitely refusing a read (release at once) and
+// what counts as a failure that may pass (keep the hold within the grace).
+func TestBlockedSuccessorRefused(t *testing.T) {
+	rest := func(status int) error {
+		return &gh.ErrorResponse{Response: &http.Response{StatusCode: status, Request: httptest.NewRequest(http.MethodGet, "/repos/o/r/issues/1/comments", nil)}}
+	}
+	graphQL := func(typ, msg string) error {
+		return &graphQLErrors{Errors: []graphQLError{{Type: typ, Message: msg}}}
+	}
+	for _, tt := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"REST 404", rest(http.StatusNotFound), true},
+		{"REST 404, wrapped", fmt.Errorf("listing comments: %w", rest(http.StatusNotFound)), true},
+		{"REST 410", rest(http.StatusGone), true},
+		{"REST 403", rest(http.StatusForbidden), true},
+		{"REST 500", rest(http.StatusInternalServerError), false},
+		{"REST 502", rest(http.StatusBadGateway), false},
+		{"primary rate limit", &gh.RateLimitError{}, false},
+		{"secondary rate limit", &gh.AbuseRateLimitError{}, false},
+		{"deadline", context.DeadlineExceeded, false},
+		{"invalid repository reference", &invalidRepoRefError{msg: "bad"}, true},
+		{"GraphQL FORBIDDEN", graphQL("FORBIDDEN", "Resource not accessible by integration"), true},
+		{"GraphQL NOT_FOUND", graphQL("NOT_FOUND", "Could not resolve to a node"), true},
+		{"GraphQL untyped error", graphQL("", "Something went wrong while executing your query"), true},
+		{"GraphQL RATE_LIMITED", graphQL("RATE_LIMITED", "API rate limit exceeded"), false},
+		{"GraphQL rate limit in the message only", graphQL("", "You have exceeded a secondary rate limit"), false},
+		{"GraphQL refusal beside a rate limit", &graphQLErrors{Errors: []graphQLError{{Type: "FORBIDDEN"}, {Type: "RATE_LIMITED"}}}, false},
+	} {
+		if got := blockedSuccessorRefused(tt.err); got != tt.want {
+			t.Errorf("%s: refused = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

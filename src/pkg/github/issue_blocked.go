@@ -990,6 +990,7 @@ func reconcileBlockedOnIssue(ctx context.Context, c *Client, t blockedIssueTarge
 		logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 		return
 	}
+	blockedSuccessorLookupSettled(blockedSuccessorLookupKey(t.repo, t.number, ref))
 	c.postUnblockedNote(ctx, t.repo, t.number, blockedUnblockedMarker+"\nUnblocked: "+ref+" is closed. This issue is actionable again.", logger)
 	res.Unblocked++
 	logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "blocker", ref)

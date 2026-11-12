@@ -40,14 +40,25 @@ package github
 // blockedSuccessorMaxHops hops per lookup. Only a successor that is already
 // declared when the sweep sees the blocker closed is followed: a line
 // written after the sweep released the hold changes nothing.
+//
+// A lookup must never turn "released at once" into "never released". A read
+// GitHub definitely refuses (not found, no access, a GraphQL errors array
+// that is not a rate limit) means "no successor", and the hold is released
+// at once as before. A read that fails for a reason that may pass (a rate
+// limit, a 5xx, the network) keeps the hold, but for at most
+// blockedSuccessorLookupGrace from the first failure; after that the sweep
+// gives up, says so once, and releases as before.
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/writeback"
@@ -57,6 +68,100 @@ import (
 // this many replacements away from the closed blocker. It is the limit
 // followSupersededChain applies for an issue blocked on a PR.
 const blockedSuccessorMaxHops = 3
+
+// blockedSuccessorLookupGrace is how long a successor lookup that keeps
+// failing for a reason that may pass can delay a release: longer than one
+// GitHub rate-limit window, so a limit that resets is waited out, and short
+// enough that a failure that never passes costs one hour, not the hold.
+const blockedSuccessorLookupGrace = time.Hour
+
+// blockedSuccessorNow is the clock the grace is measured on; tests override
+// it.
+var blockedSuccessorNow = time.Now
+
+// blockedSuccessorLookupState remembers one held item's failing lookup.
+type blockedSuccessorLookupState struct {
+	// first is when the lookup first failed.
+	first time.Time
+	// gaveUp: the grace ran out and the give-up was logged.
+	gaveUp bool
+}
+
+// blockedSuccessorLookups holds the lookups that are failing right now,
+// keyed by the held item and the closed blocker
+// (blockedSuccessorLookupKey). It is in memory only: a restart starts the
+// grace again, which delays a release by at most one more grace.
+var blockedSuccessorLookups = struct {
+	sync.Mutex
+	m map[string]blockedSuccessorLookupState
+}{m: map[string]blockedSuccessorLookupState{}}
+
+// blockedSuccessorLookupKey names the lookup for the held item repo#number
+// and its closed blocker ("owner/repo#N").
+func blockedSuccessorLookupKey(repo string, number int, blocker string) string {
+	return blockedOnSeenKey(repo, number) + "|" + strings.ToLower(strings.TrimSpace(blocker))
+}
+
+// blockedSuccessorLookupFailed records that the lookup for key failed for a
+// reason that may pass. giveUp is false while the first failure is younger
+// than blockedSuccessorLookupGrace: the caller keeps the hold. After that it
+// is true on every further failure, and the caller releases as if there
+// were no successor; news is true only the first time, so the give-up is
+// logged once. The record is kept until the lookup completes or the hold is
+// released (blockedSuccessorLookupSettled), so a release that could not be
+// written on the give-up pass does not start a new grace on the next one.
+func blockedSuccessorLookupFailed(key string) (giveUp, news bool) {
+	now := blockedSuccessorNow()
+	blockedSuccessorLookups.Lock()
+	defer blockedSuccessorLookups.Unlock()
+	st, ok := blockedSuccessorLookups.m[key]
+	if !ok {
+		blockedSuccessorLookups.m[key] = blockedSuccessorLookupState{first: now}
+		return false, false
+	}
+	if now.Sub(st.first) <= blockedSuccessorLookupGrace {
+		return false, false
+	}
+	news = !st.gaveUp
+	st.gaveUp = true
+	blockedSuccessorLookups.m[key] = st
+	return true, news
+}
+
+// blockedSuccessorLookupSettled forgets the failing lookup for key: it
+// completed (with a successor or none), or the hold it delayed is gone.
+func blockedSuccessorLookupSettled(key string) {
+	blockedSuccessorLookups.Lock()
+	defer blockedSuccessorLookups.Unlock()
+	delete(blockedSuccessorLookups.m, key)
+}
+
+// blockedSuccessorRefused reports whether err is GitHub definitely refusing
+// a read of a successor lookup, as opposed to failing in a way that may
+// pass. Definite: a REST 404, 410, 422, 401 or a 403 that is not a rate
+// limit (isDefiniteIssueRefusal), a repository reference GitHub could never
+// accept, and a GraphQL errors array (FORBIDDEN, NOT_FOUND, …) none of whose
+// entries says rate limit. Everything else is treated as passing: a rate
+// limit in any form, a 5xx, a network failure, a deadline.
+func blockedSuccessorRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ge *graphQLErrors
+	if errors.As(err, &ge) {
+		for _, e := range ge.Errors {
+			if strings.Contains(strings.ToUpper(e.Type), "RATE_LIMIT") || strings.Contains(strings.ToLower(e.Message), "rate limit") {
+				return false
+			}
+		}
+		return true
+	}
+	var bad *invalidRepoRefError
+	if errors.As(err, &bad) {
+		return true
+	}
+	return isDefiniteIssueRefusal(err)
+}
 
 // blockedSuccessorMarkerRE reads the link the Depends-on sweep leaves beside
 // a successor's blocked-on marker: the successor, then the target it
@@ -221,8 +326,9 @@ func blockedSuccessorStatement(text string) (int, bool) {
 // blockedSuccessorDeclared returns the number a trusted statement names as
 // the successor of the closed item repo#number: its own body first, then its
 // comments, newest first (the order pullRequestSupersededBy reads them in).
-// A comment read failure is returned, so the caller keeps the hold for the
-// pass instead of releasing on a guess.
+// A comment list GitHub definitely refuses names no successor. A read that
+// fails for a reason that may pass is returned, and the caller keeps the
+// hold within the grace (blockedSuccessorLookupFailed).
 func (c *Client) blockedSuccessorDeclared(ctx context.Context, repo string, number int, body, author string) (int, bool, error) {
 	if n, ok := ParseSupersededBy(body); ok && n != number {
 		return n, true, nil
@@ -230,6 +336,9 @@ func (c *Client) blockedSuccessorDeclared(ctx context.Context, repo string, numb
 	owner, name := c.splitRepo(repo)
 	comments, err := c.listIssueComments(ctx, owner, name, number)
 	if err != nil {
+		if blockedSuccessorRefused(err) {
+			return 0, false, nil
+		}
 		return 0, false, err
 	}
 	for i := len(comments) - 1; i >= 0; i-- {
@@ -248,6 +357,9 @@ func (c *Client) blockedSuccessorDeclared(ctx context.Context, repo string, numb
 func (c *Client) blockedPRDeclaredSuccessor(ctx context.Context, t blockedPRTarget, cache map[string]blockedPRTargetState) (int, bool, error) {
 	st := c.blockedPRTargetRead(ctx, t, cache)
 	if st.err != nil {
+		if blockedSuccessorRefused(st.err) {
+			return 0, false, nil
+		}
 		return 0, false, st.err
 	}
 	if !st.succDone {
@@ -266,7 +378,7 @@ func (c *Client) blockedPRDeclaredSuccessor(ctx context.Context, t blockedPRTarg
 // leads back to self, the PR being held. In each of those cases the caller
 // releases the hold as it always did. An error means a read failed for a
 // reason that may pass (rate limit, 5xx, network): the caller keeps the hold
-// and the next pass looks again.
+// within the grace and the next pass looks again.
 func (c *Client) blockedPRSuccessorOf(ctx context.Context, self, t blockedPRTarget, cache map[string]blockedPRTargetState) (blockedPRTarget, bool, error) {
 	seen := map[string]bool{t.key(): true, self.key(): true}
 	cur := t
@@ -285,7 +397,7 @@ func (c *Client) blockedPRSuccessorOf(ctx context.Context, self, t blockedPRTarg
 		seen[next.key()] = true
 		st := c.blockedPRTargetRead(ctx, next, cache)
 		switch {
-		case st.err != nil && isDefiniteIssueRefusal(st.err):
+		case st.err != nil && blockedSuccessorRefused(st.err):
 			return blockedPRTarget{}, false, nil
 		case st.err != nil:
 			return blockedPRTarget{}, false, fmt.Errorf("reading %s, named as the successor of %s: %w", next.ref(), cur.ref(), st.err)
@@ -338,8 +450,9 @@ const blockedSuccessorDuplicateOfQuery = `query($id:ID!){node(id:$id){... on Iss
 
 // blockedSuccessorDuplicateOf returns the issue GitHub recorded nodeID as a
 // duplicate of. The canonical issue may be in another repository. No node id,
-// a node the token cannot see and an issue with no canonical all report
-// false; any other failure is returned.
+// an issue with no canonical and a lookup GitHub definitely refuses (an
+// errors array such as NOT_FOUND or FORBIDDEN, a REST-style refusal of the
+// request) all report false; a failure that may pass is returned.
 func (c *Client) blockedSuccessorDuplicateOf(ctx context.Context, nodeID string) (repo string, number int, ok bool, err error) {
 	nodeID = strings.TrimSpace(nodeID)
 	if nodeID == "" {
@@ -356,7 +469,7 @@ func (c *Client) blockedSuccessorDuplicateOf(ctx context.Context, nodeID string)
 		} `json:"node"`
 	}
 	if err := c.graphQL(ctx, blockedSuccessorDuplicateOfQuery, map[string]any{"id": nodeID}, &out); err != nil {
-		if isGraphQLNotFound(err) {
+		if blockedSuccessorRefused(err) {
 			return "", 0, false, nil
 		}
 		return "", 0, false, err
@@ -395,8 +508,8 @@ func blockedSuccessorIssueRef(issue *gh.Issue, repo string, number int) (string,
 // the blocker's own repository. It reports false when nothing names a
 // successor, when the chain ends on something that is not an open issue the
 // App can read, when it loops, or when it leads back to t itself; the caller
-// then unblocks as it always did. An error means a read failed and the
-// caller keeps the block for the pass.
+// then unblocks as it always did. An error means a read failed for a reason
+// that may pass and the caller keeps the block within the grace.
 func (c *Client) blockedIssueSuccessorOf(ctx context.Context, t blockedIssueTarget, repo string, number int) (blockedSuccessorIssue, bool, error) {
 	none := blockedSuccessorIssue{}
 	norm := func(r string) string {
@@ -408,6 +521,9 @@ func (c *Client) blockedIssueSuccessorOf(ctx context.Context, t blockedIssueTarg
 	seen := map[string]bool{blockedOnSeenKey(curRepo, curNumber): true, selfKey: true}
 	cur, err := c.blockedSuccessorReadIssue(ctx, curRepo, curNumber)
 	if err != nil {
+		if blockedSuccessorRefused(err) {
+			return none, false, nil
+		}
 		return none, false, fmt.Errorf("reading closed blocker %s#%d: %w", curRepo, curNumber, err)
 	}
 	curRepo, curNumber = blockedSuccessorIssueRef(cur, curRepo, curNumber)
@@ -433,7 +549,7 @@ func (c *Client) blockedIssueSuccessorOf(ctx context.Context, t blockedIssueTarg
 		seen[blockedOnSeenKey(nextRepo, nextNumber)] = true
 		next, err := c.blockedSuccessorReadIssue(ctx, nextRepo, nextNumber)
 		if err != nil {
-			if isDefiniteIssueRefusal(err) {
+			if blockedSuccessorRefused(err) {
 				return none, false, nil
 			}
 			return none, false, fmt.Errorf("reading %s#%d, named as the successor of %s#%d: %w", nextRepo, nextNumber, curRepo, curNumber, err)
@@ -454,9 +570,7 @@ func (c *Client) blockedIssueSuccessorOf(ctx context.Context, t blockedIssueTarg
 	return none, false, nil
 }
 
-// blockedSuccessorReadIssue reads one issue of a successor chain. A
-// repository reference GitHub could never accept is reported like any other
-// read failure.
+// blockedSuccessorReadIssue reads one issue of a successor chain.
 func (c *Client) blockedSuccessorReadIssue(ctx context.Context, repo string, number int) (*gh.Issue, error) {
 	owner, name := c.splitRepo(repo)
 	if err := validateRepoRef(owner, name); err != nil {
@@ -517,10 +631,12 @@ func blockedSuccessorIssueRetargetNote(succ blockedSuccessorIssue, ref string) s
 // blockedSuccessorRetargetIssue runs when the issue t waits on (repo#number)
 // is closed. It reports true when the block must stay for this pass: the
 // blocker was replaced by an open issue and the block now names it (or
-// already did, or the note could not be written yet), or a lookup failed.
-// It reports false when the caller should unblock exactly as before: no
-// successor, one that is closed or unreadable, or a write-back policy that
-// does not let the hive comment on this issue.
+// already did, or the note could not be written yet), or a read failed for
+// a reason that may pass and the grace has not run out. It reports false
+// when the caller should unblock exactly as before: no successor, one that
+// is closed or unreadable, a read GitHub definitely refuses, a read that
+// kept failing past the grace, or a write-back policy that does not let the
+// hive comment on this issue.
 //
 // scanned says the caller read t's comments this pass. When it did not (the
 // per-pass comment budget ran out), the body may still name a blocker an
@@ -528,33 +644,49 @@ func blockedSuccessorIssueRetargetNote(succ blockedSuccessorIssue, ref string) s
 // anything is posted, as the PR re-target does.
 func blockedSuccessorRetargetIssue(ctx context.Context, c *Client, t blockedIssueTarget, repo string, number int, scanned bool, res *BlockedIssueResult, logger *slog.Logger) bool {
 	ref := repo + "#" + strconv.Itoa(number)
+	key := blockedSuccessorLookupKey(t.repo, t.number, ref)
+	// failed settles one failed read of this step: true keeps the block for
+	// the pass, false releases it as before (a refusal, or the grace ran out).
+	failed := func(err error, what string) bool {
+		if blockedSuccessorRefused(err) {
+			blockedSuccessorLookupSettled(key)
+			return false
+		}
+		giveUp, news := blockedSuccessorLookupFailed(key)
+		if !giveUp {
+			res.Errors++
+			logger.Warn("blocked sweep: "+what+" failed; block kept", "repo", t.repo, "issue", t.number, "blocker", ref, "error", err)
+			return true
+		}
+		if news {
+			logger.Warn("blocked sweep: successor lookup for a closed blocker kept failing for "+blockedSuccessorLookupGrace.String()+"; releasing as before", "repo", t.repo, "issue", t.number, "blocker", ref, "error", err)
+		}
+		return false
+	}
 	succ, ok, err := c.blockedIssueSuccessorOf(ctx, t, repo, number)
 	if err != nil {
-		res.Errors++
-		logger.Warn("blocked sweep: successor lookup for a closed blocker failed; block kept", "repo", t.repo, "issue", t.number, "blocker", ref, "error", err)
-		return true
+		return failed(err, "successor lookup for a closed blocker")
 	}
 	if !ok {
+		blockedSuccessorLookupSettled(key)
 		return false
 	}
 	if !scanned {
 		scan, scanErr := c.blockedSweepComments(ctx, t.repo, t.number, t.recheckAfter)
 		if scanErr != nil {
-			res.Errors++
-			logger.Warn("blocked sweep: comment lookup before re-target failed", "repo", t.repo, "issue", t.number, "error", scanErr)
-			return true
+			return failed(scanErr, "comment lookup before re-target")
 		}
 		if scan.ok && (!scan.issue || !strings.EqualFold(scan.prRepo, repo) || scan.pr != number) {
+			blockedSuccessorLookupSettled(key)
 			stripBlockedHelpWanted(ctx, c, t, res, logger)
 			return true
 		}
 	}
 	item, err := c.WritebackItemForNumber(ctx, t.repo, t.number)
 	if err != nil {
-		res.Errors++
-		logger.Warn("blocked sweep: item lookup before re-target failed; block kept", "repo", t.repo, "issue", t.number, "error", err)
-		return true
+		return failed(err, "item lookup before re-target")
 	}
+	blockedSuccessorLookupSettled(key)
 	note := blockedSuccessorIssueRetargetNote(succ, ref)
 	gateRepo := c.blockedRepairRepo(t.repo)
 	if d := c.WritebackAllowed(gateRepo, item, writeback.KindGateComment, note); !d.Allowed {
