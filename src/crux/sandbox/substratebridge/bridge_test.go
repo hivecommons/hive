@@ -154,6 +154,36 @@ func TestUnpackSymlinkReplacesExistingAndNestedEntries(t *testing.T) {
 	}
 }
 
+func TestUnpackRefusesWriteThroughSymlink(t *testing.T) {
+	for name, linkname := range map[string]func(outside string) string{
+		"absolute": func(outside string) string { return outside },
+		"relative": func(string) string { return "../outside-rel" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			parent := t.TempDir()
+			dst := filepath.Join(parent, "ws")
+			outside := t.TempDir()
+			if name == "relative" {
+				outside = filepath.Join(parent, "outside-rel")
+				if err := os.Mkdir(outside, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stream := tarStream(t, func(tw *tar.Writer) {
+				_ = tw.WriteHeader(&tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: linkname(outside), Mode: 0o777})
+				_ = tw.WriteHeader(&tar.Header{Name: "link/pwned", Typeflag: tar.TypeReg, Size: 2, Mode: 0o644})
+				_, _ = tw.Write([]byte("no"))
+			})
+			if err := Unpack(stream, dst); err == nil {
+				t.Fatal("write through escaping symlink succeeded")
+			}
+			if _, err := os.Stat(filepath.Join(outside, "pwned")); !os.IsNotExist(err) {
+				t.Errorf("file written outside the workspace: %v", err)
+			}
+		})
+	}
+}
+
 func TestUnpackEntryErrorsWhenParentIsAFile(t *testing.T) {
 	dst := t.TempDir()
 	writeFile(t, filepath.Join(dst, "blocker"), "x")
