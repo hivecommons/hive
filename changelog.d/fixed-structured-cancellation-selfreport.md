@@ -1,0 +1,1 @@
+- Avoid false repeated-error self-reports for structured context cancellations, including wrapped cancellations, while retaining local warnings (#17935, #17944, #17949).
