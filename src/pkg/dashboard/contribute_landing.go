@@ -6073,7 +6073,16 @@ var ccQueue=[];            // current ready-work items (top = next up)
 var ccLogLines=[];         // dev-log scrollback
 var ccLogCap=60;           // capped scrollback length
 var ccEs=null;             // EventSource handle
-var ccQueuePollTimer=null; // fallback poll timer
+var ccQueuePollTimer=null; // queue poll timer (fast while the stream is down, slow while it is open)
+// The event stream carries the ready-work queue ONCE, in its hello frame; the
+// server never pushes a later queue. So the queue is polled on both transports:
+// every CC_QUEUE_POLL_MS while the stream is down and every CC_QUEUE_LIVE_POLL_MS
+// while it is open. Stopping the poll on open left a tab whose stream stayed up
+// showing the queue it connected with for hours: issues closed since, and the
+// labels they were filed with.
+var CC_QUEUE_POLL_MS=6000;
+var CC_QUEUE_LIVE_POLL_MS=30000;
+var ccStreamOpen=false;    // the event stream is open (set by onopen, cleared by onerror)
 var ccKnownClankers={};    // username -> true, for enter/leave detection
 // ccKnownQueueKeys tracks the queue-item keys (repo#number) present in the PREVIOUS
 // row render so the cc-popin enter animation only plays for GENUINELY-new arrivals —
@@ -7290,7 +7299,8 @@ function ccOnWallEvent(ev){
   }
   ccRenderWall();
 }
-function ccQueuePoll(){ // fallback when SSE is down: refresh queue only
+function ccQueuePoll(){ // refresh the queue now, then on the cadence the stream state picks
+  ccStopFallback(); // one pending poll at a time, whoever called
   fetch('/api/contribute/queue').then(function(r){return r.json();}).then(function(d){
     if(!d)return;
     // Adopt the viewer's interests the personalised endpoint echoes (#2637) so the
@@ -7298,7 +7308,7 @@ function ccQueuePoll(){ // fallback when SSE is down: refresh queue only
     ccApplyInterestsFromResponse(d.interests);
     if(d.queue){ccQueue=d.queue.slice();ccRenderQueue();}
   }).catch(function(){});
-  ccQueuePollTimer=setTimeout(ccQueuePoll,6000);
+  ccQueuePollTimer=setTimeout(ccQueuePoll,ccStreamOpen?CC_QUEUE_LIVE_POLL_MS:CC_QUEUE_POLL_MS);
 }
 function ccStopFallback(){if(ccQueuePollTimer){clearTimeout(ccQueuePollTimer);ccQueuePollTimer=null;}}
 function ccStart(){
@@ -7324,7 +7334,9 @@ function ccStart(){
   function connect(){
     ccSetLive('connecting');
     try{ccEs=new EventSource('/api/contribute/events');}catch(err){ccSetLive('poll');ccQueuePoll();return;}
-    ccEs.onopen=function(){ccSetLive('live');ccStopFallback();};
+    // Open: the hello frame brings the queue now; keep polling it slowly so it
+    // follows closes, label changes and new issues while the stream stays up.
+    ccEs.onopen=function(){ccSetLive('live');ccStreamOpen=true;if(!ccQueuePollTimer)ccQueuePollTimer=setTimeout(ccQueuePoll,CC_QUEUE_LIVE_POLL_MS);};
     ccEs.onmessage=function(m){
       try{var ev=JSON.parse(m.data);}catch(err){return;}
       if(ev.type==='hello')ccHydrate(ev);
@@ -7337,13 +7349,19 @@ function ccStart(){
     ccEs.onerror=function(){
       // Stream dropped. Show polling state, start the queue fallback, and let the
       // browser's built-in EventSource auto-reconnect re-establish the live stream.
+      // A stream that was open has only the slow poll pending: poll now, which
+      // reschedules at the fast cadence.
       ccSetLive('poll');
-      if(!ccQueuePollTimer)ccQueuePoll();
+      var wasOpen=ccStreamOpen;ccStreamOpen=false;
+      if(wasOpen||!ccQueuePollTimer)ccQueuePoll();
       // If the connection is fully closed (not merely reconnecting), rebuild it.
       if(ccEs&&ccEs.readyState===2){try{ccEs.close();}catch(e){}ccEs=null;setTimeout(connect,4000);}
     };
   }
   connect();
+  // A tab the browser throttled or froze in the background catches up as soon
+  // as it is shown again, instead of on its next (possibly much later) tick.
+  try{document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')ccQueuePoll();});}catch(e){}
 }
 // ── Playlist SEARCH wiring (#2592) ─────────────────────────────────────────────
 // Live, case-insensitive VIEW filter. Updates ccQueueSearch and re-renders; it does
