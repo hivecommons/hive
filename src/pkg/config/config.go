@@ -7752,18 +7752,14 @@ func (c *Config) saveLocked() error {
 	// layer this Save is about to persist.
 	overlayErr := c.saveDashboardOverlay()
 
-	// Open the existing file (preserving its inode) rather than creating a
-	// temp file and renaming. Rename breaks Docker bind mounts because it
-	// replaces the inode — the host file is never updated, so acmm_level
-	// and other runtime changes are lost on container restart.
+	// Replace the primary config atomically (temp file + fsync + rename onto
+	// the resolved target) — see writeFileAtomic for why that is safe on the
+	// #17468 symlink and still works on single-file Docker bind mounts.
 	//
-	// #17468: the same in-place write is what keeps hosted spokes durable.
-	// There the copy-config init container makes SourcePath
-	// (/etc/hive/hive.yaml, an emptyDir) a symlink to RuntimeConfigFile on
-	// the PVC; O_WRONLY|O_TRUNC follows the link and writes the PVC file,
-	// whereas a temp-file+rename would replace the link with a regular
-	// emptyDir file and silently revert the fix. Pinned by
-	// TestSaveThroughSymlinkKeepsLink — do not switch this to a rename.
+	// #17862: the previous O_WRONLY|O_TRUNC in-place write could be killed
+	// between truncate and write (liveness probe on a crash-looping hive),
+	// leaving a 0-byte runtime config that the entrypoint skipped in favour
+	// of a months-stale hive.yaml.bak. Pinned by TestSaveSurvivesKillMidWrite.
 	//
 	// #3961: a source-path failure must NOT abort the save. On deployments
 	// that mount the config read-only (a ConfigMap mounted straight at
@@ -7777,23 +7773,8 @@ func (c *Config) saveLocked() error {
 	// writing the runtime layer, and report success iff the state will actually
 	// survive a restart.
 	var srcErr error
-	f, err := os.OpenFile(c.SourcePath, os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		// File may not exist yet — fall back to create. Continue below so
-		// the PVC backup and dashboard overlay are still written.
-		if writeErr := os.WriteFile(c.SourcePath, data, 0o644); writeErr != nil {
-			srcErr = fmt.Errorf("writing config (create fallback): %w", writeErr)
-		}
-	} else {
-		if _, err := f.Write(data); err != nil {
-			_ = f.Close() // best-effort cleanup; the write error is what's recorded
-			srcErr = fmt.Errorf("writing config: %w", err)
-		} else if err := f.Sync(); err != nil {
-			_ = f.Close() // best-effort cleanup; the sync error is what's recorded
-			srcErr = fmt.Errorf("syncing config: %w", err)
-		} else if err := f.Close(); err != nil {
-			srcErr = fmt.Errorf("closing config: %w", err)
-		}
+	if err := writeFileAtomic(c.SourcePath, data, sourceConfigMode(c.SourcePath)); err != nil {
+		srcErr = fmt.Errorf("writing config: %w", err)
 	}
 
 	// Persist the runtime config to the PVC. In K8s this is the boot input
@@ -7817,11 +7798,11 @@ func (c *Config) saveLocked() error {
 	if guardLivePVCPathUnderTest(runtimePath, defaultRuntimeConfigFile, "RuntimeConfigFile") {
 		// Not written, so not persisted: keep the primary-path error visible.
 		runtimeErr = errLivePVCPathGuarded
-	} else if err := os.WriteFile(runtimePath, data, 0o600); err != nil {
+	} else if err := writeFileAtomic(runtimePath, data, 0o600); err != nil {
 		// Common cause: init container created the file as root, runtime user
 		// can't overwrite. Remove and retry so runtime state is not silently lost.
-		_ = os.Remove(runtimePath) // best-effort; the retry's own WriteFile error is what's recorded below
-		if retryErr := os.WriteFile(runtimePath, data, 0o600); retryErr != nil {
+		_ = os.Remove(runtimePath) // best-effort; the retry's own error is what's recorded below
+		if retryErr := writeFileAtomic(runtimePath, data, 0o600); retryErr != nil {
 			runtimeErr = retryErr
 			log.Printf("[config] warning: failed to write PVC runtime config to %s (even after remove): %v", runtimePath, retryErr)
 		} else {
@@ -7829,12 +7810,6 @@ func (c *Config) saveLocked() error {
 		}
 	} else {
 		log.Printf("[config] PVC runtime config written to %s", runtimePath)
-		// os.WriteFile's mode only applies when it CREATES the file; a
-		// pre-existing world-readable inode (every hive deployed before
-		// this fix) keeps its old 0644 bits, so tighten explicitly.
-		if chmodErr := os.Chmod(runtimePath, 0o600); chmodErr != nil {
-			log.Printf("[config] warning: failed to tighten permissions on %s: %v", runtimePath, chmodErr)
-		}
 	}
 
 	if srcErr == nil {
@@ -7851,6 +7826,16 @@ func (c *Config) saveLocked() error {
 		return nil
 	}
 	return srcErr
+}
+
+// sourceConfigMode returns the mode Save should give the primary config
+// path: the existing file's permission bits when it exists (an operator may
+// have tightened them), else the historical 0644 default.
+func sourceConfigMode(path string) os.FileMode {
+	if fi, err := os.Stat(path); err == nil {
+		return fi.Mode().Perm()
+	}
+	return 0o644
 }
 
 // RuntimeConfigFile is where Save() persists the full runtime config on the
@@ -7877,11 +7862,12 @@ const defaultRuntimeConfigFile = "/data/hive.yaml.runtime"
 
 // RuntimeConfigFileLegacy is the pre-rename name of RuntimeConfigFile.
 //
-// It is READ as a fallback and never written, renamed or removed: ~51 live
-// hives carry only this file, and on Docker/LXC it is the single copy of
-// their live configuration. Mutating it at boot could lose owner
-// customisations with no warning, so the migration is copy-forward only —
-// readers prefer RuntimeConfigFile and fall back to this one.
+// It is READ as a fallback and never written by Save: ~51 live hives carry
+// only this file, and on Docker/LXC it is the single copy of their live
+// configuration. Readers prefer RuntimeConfigFile and fall back to this one.
+// The entrypoint refreshes it from a good RuntimeConfigFile on every clean
+// boot (#17862) — a fallback frozen at the Aug 2026 rename booted a
+// months-old level/roster when a kill mid-save truncated the runtime file.
 //
 // Removable one release after every live hive has written the new name.
 const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
