@@ -732,6 +732,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | Write-back                   | `writeback.kind_policy`                                                                                                                                                                                               |
 | Merge settings               | `auto_merge.update`                                                                                                                                                                                                   |
 | Let hive decide              | `decisions.delegate_settings`                                                                                                                                                                                         |
+| Review settings              | `review.settings`                                                                                                                                                                                                     |
 | Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                                                                       |
 | Activity monitor row actions | see below                                                                                                                                                                                                             |
 | Budget                       | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                                                                                      |
@@ -942,6 +943,41 @@ endpoint as Settings → Features → *Let hive decide*. It is owner only.
   refused; the model's key stays on the governor reviewer endpoint.
 - It starts no decision and merges nothing. A delegated decision does what it
   did before.
+
+`review.settings` changes the review settings (the `review` block, Settings →
+Review Gate) through `PUT /api/config/review`, the same endpoint as the
+dashboard's Review Gate controls. It is owner only.
+
+- **Pass only what changes,** shaped like the endpoint's body, for example
+  `{"reviewer_autoscale": {"enabled": true, "max": 2}}` or
+  `{"severity": {"block_at": "P1"}, "require_approval": true}`. Only those
+  fields are sent. Every other review setting keeps its value, including one
+  changed on the dashboard after the preview: the op never reads the section
+  and sends it back whole.
+- **Sub-objects change field by field:** `reviewer_autoscale`, `severity`,
+  `backlog`, `contributor_prs` and `review_bots`. A list (`reviewer_agents`,
+  `perspectives`, `require_labels`, ...) and `perspective_prompts` are
+  replaced by the value you give. `verdict_labels` and `recommendations` are
+  replaced whole by the endpoint, so a key you leave out of them is cleared
+  (`recommendations.labels` is kept); the preview shows each cleared key.
+- **An unknown field is refused,** at the top level or inside a sub-object,
+  and the refusal lists the accepted names, so a typo cannot silently change
+  nothing. `null` is refused too, because the endpoint reads it as no change.
+  The accepted fields are the endpoint's own: a test fails when the
+  endpoint's body and the op's field list differ.
+- **The preview shows each named field before and after,** read through
+  `settings_read` section `review` (`review_bots.min_priority` from section
+  `governor`). A field already at the requested value is not sent. Turning
+  `require_approval` off, a less strict `severity.block_at`, and turning
+  `reviewer_autoscale` on or raising its `max` are disclosed as widening.
+- **The endpoint's checks are its own.** A value it refuses, such as an
+  autoscale `min` above `max`, comes back as its error, unchanged.
+- **A stale preview is refused,** as for `auto_merge.update`, when a named
+  field changed after the preview. After the write, `write_confirm` reads the
+  settings back and reports the named fields as the hive now holds them
+  (`after`), because the endpoint answers only `{"status":"updated"}`.
+- The endpoint records a `config_review` audit entry naming you. The op
+  merges, approves and closes nothing.
 
 ### Contributor queue
 
