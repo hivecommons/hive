@@ -24,20 +24,17 @@ type (
 // ReloadClaudeToken re-reads the Claude credentials file and updates the
 // cached token (dashboard sign-in or logout). When the shared credential is
 // usable afterwards, it re-bridges agents whose link a token refresh replaced
-// with a private file, so the new login reaches them.
+// with a private file (after m.mu is released), so the new login reaches them.
 func (m *Manager) ReloadClaudeToken() {
+	defer m.rebridgeClaudeCredentialsAfterSignIn() // LIFO: runs after Unlock
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.claudeAuthToken = claude.ReadAccessToken(claude.CredentialsPath)
-	m.mu.Unlock()
-	if claude.HasUsableToken(sharedClaudeBridgeTarget()) {
-		m.RepairClaudeCredentialBridges(claudeBridgeTriggerSignIn)
-	}
 }
 
 // Copilot token sources, as reported by CopilotTokenSource. Operator-facing
-// phrases: they are spliced verbatim into the model-picker notice and the
-// "rejected by upstream" log line, so each one has to read as an answer to
-// "which credential did GitHub just reject?".
+// phrases, spliced verbatim into the model-picker notice and the "rejected by
+// upstream" log line: each must answer "which credential did GitHub reject?".
 const (
 	// Defined in the crux root package; see crux.CopilotTokenSourceEnv.
 	CopilotTokenSourceEnv            = crux.CopilotTokenSourceEnv

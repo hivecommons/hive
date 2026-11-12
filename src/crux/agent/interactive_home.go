@@ -429,6 +429,12 @@ func (m *Manager) setupPerAgentCLIHome(agentName, home string, uid int, spec per
 	for _, name := range spec.bridges {
 		link := filepath.Join(dir, name)
 		target := filepath.Join(shared, name)
+		if spec.dir == claudeHomeDirName && name == claudeCredentialsFileName {
+			// A token refresh since the last launch replaced the link with a
+			// private file; publish it to the shared login and relink BEFORE
+			// bridgeHomeEntry, which refuses to clobber a regular file.
+			m.rebridgeClaudeCredential(agentName, link, target, claudeBridgeTriggerLaunch)
+		}
 		if _, err := os.Stat(target); err != nil && isPerAgentCLIBridgeDir(spec.dir, name) {
 			// Absent target: a dangling FILE link goes live on first login; a
 			// dangling DIRECTORY link would make the CLI's own mkdir -p fail,
