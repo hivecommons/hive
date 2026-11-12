@@ -1,1 +1,0 @@
-- The hub activity digest now reads the last stage-tracker body immediately when the cache is stale and rebuilds in the background, so heartbeats stop dropping the activity block when a rebuild takes longer than 5 s.
