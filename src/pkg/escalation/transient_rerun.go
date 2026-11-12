@@ -41,6 +41,14 @@ func (s *Store) TransientRerunOwed(repo string, number int, headSHA string) bool
 // write-back gate or by GitHub, or nothing left to re-run. An attempt that
 // failed for a reason a later pass can clear (an API error) is not recorded.
 func (s *Store) RecordTransientRerun(repo string, number int, headSHA string) {
+	s.RecordTransientRerunOutcome(repo, number, headSHA, "")
+}
+
+// RecordTransientRerunOutcome is RecordTransientRerun that also keeps why the
+// spent re-run re-ran nothing (skipped; "" when the failed jobs were re-run),
+// so the dependency-bot hand-off can tell a person whether the re-run
+// happened (TransientRerunOutcome).
+func (s *Store) RecordTransientRerunOutcome(repo string, number int, headSHA, skipped string) {
 	if headSHA == "" {
 		return
 	}
@@ -53,6 +61,23 @@ func (s *Store) RecordTransientRerun(repo string, number int, headSHA string) {
 		s.entries[key] = e
 	}
 	e.TransientRerunSHA = headSHA
+	e.TransientRerunSkipped = skipped
 	e.UpdatedAt = s.now()
 	s.saveLocked()
+}
+
+// TransientRerunOutcome reports whether the head's one transient re-run is
+// spent and, if it is, why it re-ran nothing ("" when the failed jobs were
+// re-run).
+func (s *Store) TransientRerunOutcome(repo string, number int, headSHA string) (spent bool, skipped string) {
+	if headSHA == "" {
+		return false, ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.entries[Key(repo, number)]
+	if e == nil || e.TransientRerunSHA != headSHA {
+		return false, ""
+	}
+	return true, e.TransientRerunSkipped
 }

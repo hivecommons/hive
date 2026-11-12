@@ -30,12 +30,19 @@ import (
 // stopped rebasing it — its head commit is not the bot's, or its Renovate
 // config rebases never — the sweep asks the bot to rebase through the bot's
 // own mechanism, at most once per head (write-back kind bot_rebase_request):
-// it ticks Renovate's rebase/retry box, or comments `@dependabot recreate`.
-// If the head has not moved one window later, a person gets the PR through
-// the ordinary hand-off (one comment plus needs-human, reason
-// depBotHandoffStranded). It never asks when the branch carries a commit
-// someone else wrote other than a merge of the base, because the bot's
-// regeneration would drop it; that PR goes to a person instead.
+// it ticks Renovate's rebase/retry box. If the head has not moved one window
+// later, a person gets the PR through the ordinary hand-off (one comment
+// plus needs-human, reason depBotHandoffStranded). It never asks when the
+// branch carries a commit someone else wrote other than a merge of the base,
+// because the bot's regeneration would drop it; that PR goes to a person
+// instead.
+//
+// A Dependabot PR is never asked: Dependabot answers every comment command
+// a GitHub App posts with "Sorry, only users with push access can use that
+// command." (dependabot/dependabot-core#9147), so the `@dependabot recreate`
+// the sweep used to post could not work. Where the sweep would have asked,
+// it hands the PR to a person at once, and the comment says that someone
+// with push access has to comment the command.
 
 // depBotHandoffStranded is the hand-off reason for a PR whose bot will not
 // rebase it.
@@ -48,8 +55,19 @@ const depBotStrandedReasonText = "dependency bot will not rebase this branch"
 const (
 	depBotViaRenovateCheckbox = "renovate-checkbox"
 	depBotViaAlreadyTicked    = "renovate-checkbox-already-ticked"
-	depBotViaDependabot       = "dependabot-recreate"
+	// depBotViaDependabotLegacy is only read: older builds recorded it
+	// after commenting `@dependabot recreate`, which Dependabot refuses
+	// from an App. A record carrying it is handed to a person at once.
+	depBotViaDependabotLegacy = "dependabot-recreate"
 )
+
+// depBotDependabotAuthor is the login Dependabot opens its PRs as.
+const depBotDependabotAuthor = "dependabot[bot]"
+
+// depBotDependabotNoAppText is the plain-words reason a stranded Dependabot
+// PR goes to a person instead of to Dependabot.
+const depBotDependabotNoAppText = "Hive cannot ask Dependabot to rebase it, because Dependabot does not accept commands from apps " +
+	"(it answers \"only users with push access can use that command\")."
 
 // depBotRebaseState is the persisted stranded-branch record for one PR head.
 // StuckSince is when the head was first seen behind or conflicting (zero
@@ -99,7 +117,6 @@ type depBotCommitLister interface {
 // *github.Client satisfies it.
 type depBotRebaseRequester interface {
 	RequestRenovateRebase(ctx context.Context, repo string, number int, headSHA string) (github.RenovateRebaseCheckbox, error)
-	PostDependabotRecreate(ctx context.Context, repo string, number int, headSHA string) error
 }
 
 // depBotRebasePolicy is a reader that answers the bot_rebase_request policy
@@ -266,6 +283,11 @@ func (c depBotRebaseCheck) step(ctx context.Context, repo, key string, pr github
 	st := c.store.noteStuck(key, pr.HeadSHA, c.now)
 	if !st.RequestedAt.IsZero() {
 		// Asked once on this head; never again. A new head resets it.
+		if st.Via == depBotViaDependabotLegacy {
+			// An older build's `@dependabot recreate`, which Dependabot
+			// refused: nothing is coming, so a person gets it now.
+			return depBotStrandedHandoff
+		}
 		if c.now.Sub(st.RequestedAt) < c.window {
 			return depBotStrandedHold
 		}
@@ -324,17 +346,13 @@ func (c depBotRebaseCheck) request(ctx context.Context, repo, key string, pr git
 		}
 		return depBotStrandedHandoff
 	}
-	if strings.EqualFold(pr.Author, "dependabot[bot]") {
-		if !c.requestAllowed(ctx, repo, pr, github.DependabotRecreateCommand) {
-			return refused()
-		}
-		if err := requester.PostDependabotRecreate(ctx, repo, pr.Number, pr.HeadSHA); err != nil {
-			c.logger.Warn("dependency-bot rebase request failed; will retry next pass", "repo", repo, "pr", pr.Number, "error", err)
-			return depBotStrandedHold
-		}
-		c.store.markRebaseRequested(key, pr.HeadSHA, depBotViaDependabot, c.now)
-		c.logger.Info("asked Dependabot to recreate a stranded PR", "repo", repo, "pr", pr.Number, "head", pr.HeadSHA)
-		return depBotStrandedHold
+	if strings.EqualFold(pr.Author, depBotDependabotAuthor) {
+		// Dependabot refuses comment commands from a GitHub App
+		// (dependabot/dependabot-core#9147): hand the PR to a person, who
+		// can comment the command, instead of posting one that cannot work.
+		c.logger.Info("stranded Dependabot PR handed to a person; Dependabot does not accept commands from apps",
+			"repo", repo, "pr", pr.Number, "head", pr.HeadSHA)
+		return depBotStrandedHandoff
 	}
 	if !c.requestAllowed(ctx, repo, pr, "tick the rebase/retry checkbox") {
 		return refused()
@@ -376,7 +394,8 @@ func dependencyBotStrandedComment(pr github.PullRequest, st depBotRebaseState, f
 	}
 	b.WriteString(". ")
 	fix := "rebase the branch by hand, or close the PR so the bot can open a fresh one."
-	if strings.EqualFold(pr.Author, "dependabot[bot]") {
+	dependabot := strings.EqualFold(pr.Author, depBotDependabotAuthor)
+	if dependabot {
 		fix = "comment `" + github.DependabotRecreateCommand + "` on this PR (it discards any commits on the branch that are not Dependabot's), or rebase the branch by hand."
 	} else if depBotRenovateBranch(pr) || st.Via == depBotViaRenovateCheckbox || st.Via == depBotViaAlreadyTicked {
 		fix = "tick 'If you want to rebase/retry this PR, check this box' in the description if it has one (Renovate regenerates the branch and discards commits that are not its own), or rebase the branch by hand."
@@ -388,12 +407,14 @@ func dependencyBotStrandedComment(pr github.PullRequest, st depBotRebaseState, f
 	case st.Via == depBotViaAlreadyTicked:
 		fmt.Fprintf(&b, "The rebase/retry box has been ticked for over %s and the branch has not moved. ", depBotHours(window))
 		fix = "check the bot's logs or dependency dashboard for why it did not regenerate the branch, rebase it by hand, or close the PR so the bot can open a fresh one."
-	case st.Via == depBotViaDependabot:
-		fmt.Fprintf(&b, "Hive commented `%s` %s ago and the branch has not moved since. ", github.DependabotRecreateCommand, depBotHours(window))
-		fix = "check Dependabot's reply on this PR, rebase the branch by hand, or close the PR so Dependabot can open a fresh one."
 	case factsKnown && facts.ForeignWork:
 		b.WriteString("Hive did not ask the bot to regenerate it, because that would drop commits someone else pushed to the branch. ")
 		fix = "rebase the branch by hand keeping those commits, or, if they may go, " + fix
+	case dependabot:
+		// Also covers a record an older build wrote after commenting the
+		// command itself (depBotViaDependabotLegacy): Dependabot refused it.
+		b.WriteString(depBotDependabotNoAppText + " ")
+		fix = "someone with push access comments `" + github.DependabotRecreateCommand + "` on this PR (it discards any commits on the branch that are not Dependabot's), or rebases the branch by hand."
 	}
 	b.WriteString("To fix it, " + fix)
 	return b.String()

@@ -208,6 +208,11 @@ type Entry struct {
 	// per head and hold fix kicks while it is owed (transient_rerun.go).
 	TransientTriagedSHA string `json:"transient_triaged_sha,omitempty"`
 	TransientRerunSHA   string `json:"transient_rerun_sha,omitempty"`
+	// TransientRerunSkipped is why the re-run spent on TransientRerunSHA
+	// re-ran nothing (a write-back gate reason, "rerun-forbidden",
+	// "no-failed-runs"); "" when the failed jobs were re-run. It is only
+	// read together with TransientRerunSHA.
+	TransientRerunSkipped string `json:"transient_rerun_skipped,omitempty"`
 }
 
 // Store is the on-PVC attempt ledger. All methods are safe for concurrent use.

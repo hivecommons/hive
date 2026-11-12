@@ -275,6 +275,14 @@ gated. Defaults (override under `writeback.kinds.<kind>`):
 | `welcome_comment` | — | — | opt-in label | all items |
 | `issue_file` (new hive-authored issues) | L3+ | yes | yes | yes |
 
+`ci_rerun` also covers the one transient re-run of a red PR from
+`auto_merge.trusted_bot_authors` (a hive PR is its own item and is not gated):
+on a bot PR it needs the opt-in label unless
+`writeback.kinds.ci_rerun.unlabeled_min_level` is set, and a refused re-run
+hands the PR to a person with the reason. `bot_rebase_request` only ticks
+Renovate's rebase/retry box; a stranded Dependabot PR is handed to a person
+instead, because Dependabot refuses commands from apps.
+
 In practice: **L4 means hive files issues and talks only on its own PRs**;
 **L5 adds comments and labels on PRs a maintainer labelled `hive-review`**;
 **L6 lets sentinel and welcome comments reach unlabelled PRs**. A repo

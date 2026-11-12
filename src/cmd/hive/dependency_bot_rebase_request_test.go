@@ -17,7 +17,7 @@ import (
 const depBotRebaseWindow = time.Duration(config.DefaultDependencyBotRebaseAfterS) * time.Second
 
 // depBotRebaseFakeReader is a reader that can also list commits and make
-// the two rebase requests. Its Renovate request runs the real checkbox edit
+// the Renovate rebase request. Its request runs the real checkbox edit
 // against body, so tests see the exact description that would be written.
 type depBotRebaseFakeReader struct {
 	depBotFakeReader
@@ -25,7 +25,6 @@ type depBotRebaseFakeReader struct {
 	commitReads int
 	denied      bool
 	edits       []string
-	recreates   []string
 }
 
 func (r *depBotRebaseFakeReader) ListPRCommits(context.Context, string, int) ([]github.PRCommit, error) {
@@ -40,11 +39,6 @@ func (r *depBotRebaseFakeReader) RequestRenovateRebase(_ context.Context, _ stri
 		r.body = ticked
 	}
 	return state, nil
-}
-
-func (r *depBotRebaseFakeReader) PostDependabotRecreate(_ context.Context, _ string, _ int, headSHA string) error {
-	r.recreates = append(r.recreates, headSHA)
-	return nil
 }
 
 func (r *depBotRebaseFakeReader) BotRebaseRequestAllowed(string, int) bool { return !r.denied }
@@ -68,6 +62,7 @@ type depBotRebaseHarness struct {
 func newDepBotRebaseHarness(t *testing.T, body string, commits ...github.PRCommit) *depBotRebaseHarness {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "dependency-bot-conflicts.json")
+	newTestEscalationStore(t) // the sweep reads the transient re-run ledger
 	return &depBotRebaseHarness{
 		t:      t,
 		path:   path,
@@ -84,11 +79,11 @@ func (h *depBotRebaseHarness) passAt(at time.Time, prs ...github.PullRequest) {
 	sweepDependencyBotConflicts(context.Background(), h.store, "acme", 0, h.writer, h.reader, a, func() time.Time { return at }, discardLogger())
 }
 
-func (h *depBotRebaseHarness) assertWrites(stage string, edits, recreates, comments, labels int) {
+func (h *depBotRebaseHarness) assertWrites(stage string, edits, comments, labels int) {
 	h.t.Helper()
-	if len(h.reader.edits) != edits || len(h.reader.recreates) != recreates || len(h.writer.comments) != comments || len(h.writer.adds) != labels {
-		h.t.Fatalf("%s: edits=%d recreates=%v comments=%v labels=%v; want %d edits, %d recreates, %d comments, %d labels",
-			stage, len(h.reader.edits), h.reader.recreates, h.writer.comments, h.writer.adds, edits, recreates, comments, labels)
+	if len(h.reader.edits) != edits || len(h.writer.comments) != comments || len(h.writer.adds) != labels {
+		h.t.Fatalf("%s: edits=%d comments=%v labels=%v; want %d edits, %d comments, %d labels",
+			stage, len(h.reader.edits), h.writer.comments, h.writer.adds, edits, comments, labels)
 	}
 }
 
@@ -138,14 +133,14 @@ func TestDependencyBotStrandedRenovateTicksOnlyTheCheckbox(t *testing.T) {
 			pr := depBotRRBehindPR("renovate[bot]", "sha-2")
 			h.passAt(depBotT0, pr)
 			h.passAt(depBotT0.Add(depBotRebaseWindow-time.Minute), pr)
-			h.assertWrites("before the window", 0, 0, 0, 0)
+			h.assertWrites("before the window", 0, 0, 0)
 
 			h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
-			h.assertWrites("at the window", 1, 0, 0, 0)
+			h.assertWrites("at the window", 1, 0, 0)
 			depBotRRWantCheckboxEdit(t, body, h.reader.edits[0])
 
 			h.passAt(depBotT0.Add(depBotRebaseWindow+time.Minute), pr)
-			h.assertWrites("next pass", 1, 0, 0, 0)
+			h.assertWrites("next pass", 1, 0, 0)
 			if h.reader.commitReads != 1 {
 				t.Fatalf("commit reads = %d, want 1 per head", h.reader.commitReads)
 			}
@@ -159,11 +154,11 @@ func TestDependencyBotStrandedAlreadyTickedIsNotEdited(t *testing.T) {
 	pr := depBotRRBehindPR("renovate[bot]", "sha-2")
 	h.passAt(depBotT0, pr)
 	h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
-	h.assertWrites("ticked box at the window", 0, 0, 0, 0)
+	h.assertWrites("ticked box at the window", 0, 0, 0)
 
 	// The box stayed ticked a whole window and the head did not move.
 	h.passAt(depBotT0.Add(2*depBotRebaseWindow), pr)
-	h.assertWrites("a window after", 0, 0, 1, 1)
+	h.assertWrites("a window after", 0, 1, 1)
 	if !strings.Contains(h.writer.comments[0], "has been ticked") {
 		t.Fatalf("comment = %q, want it to say the box was already ticked", h.writer.comments[0])
 	}
@@ -174,7 +169,7 @@ func TestDependencyBotStrandedNoCheckboxHandsOff(t *testing.T) {
 	pr := depBotRRBehindPR("mergeraptor[bot]", "sha-2")
 	h.passAt(depBotT0, pr)
 	h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
-	h.assertWrites("no checkbox", 0, 0, 1, 1)
+	h.assertWrites("no checkbox", 0, 1, 1)
 }
 
 func TestDependencyBotBotHeadOnlyBehindIsLeftAlone(t *testing.T) {
@@ -185,7 +180,7 @@ func TestDependencyBotBotHeadOnlyBehindIsLeftAlone(t *testing.T) {
 	for _, at := range []time.Duration{0, depBotRebaseWindow - time.Minute, depBotRebaseWindow, 3 * depBotRebaseWindow, 30 * time.Hour} {
 		h.passAt(depBotT0.Add(at), pr)
 	}
-	h.assertWrites("bot head behind", 0, 0, 0, 0)
+	h.assertWrites("bot head behind", 0, 0, 0)
 	if h.reader.commitReads != 1 || h.reader.bodyFetches != 1 {
 		t.Fatalf("commit reads = %d, body fetches = %d; want one of each per head", h.reader.commitReads, h.reader.bodyFetches)
 	}
@@ -197,24 +192,71 @@ func TestDependencyBotForeignHeadBeforeWindowIsLeftAlone(t *testing.T) {
 	h.passAt(depBotT0, pr)
 	h.passAt(depBotT0.Add(depBotRebaseWindow/2), pr)
 	h.passAt(depBotT0.Add(depBotRebaseWindow-time.Second), pr)
-	h.assertWrites("before the window", 0, 0, 0, 0)
+	h.assertWrites("before the window", 0, 0, 0)
 	if h.reader.commitReads != 0 {
 		t.Fatalf("commit reads = %d, want none before the window", h.reader.commitReads)
 	}
 }
 
-func TestDependencyBotStrandedDependabotRecreates(t *testing.T) {
+// Dependabot refuses every comment command a GitHub App posts ("Sorry, only
+// users with push access can use that command.",
+// dependabot/dependabot-core#9147), so a stranded Dependabot PR is handed to
+// a person at the window, with the reason in plain words, and no
+// `@dependabot` command is ever posted.
+func TestDependencyBotStrandedDependabotHandsOffWithoutCommand(t *testing.T) {
 	h := newDepBotRebaseHarness(t, "Bumps widget from 1 to 2.\n", depBotRRCommit("dependabot[bot]", "c1"), depBotRRBaseMerge("alice", "sha-2"))
 	pr := depBotRRBehindPR("dependabot[bot]", "sha-2")
 	h.passAt(depBotT0, pr)
+	h.passAt(depBotT0.Add(depBotRebaseWindow-time.Minute), pr)
+	h.assertWrites("before the window", 0, 0, 0)
+
 	h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
-	h.passAt(depBotT0.Add(depBotRebaseWindow+time.Hour), pr)
-	h.assertWrites("dependabot", 0, 1, 0, 0)
-	if h.reader.recreates[0] != "sha-2" {
-		t.Fatalf("recreate requested for %q, want the current head", h.reader.recreates[0])
+	h.assertWrites("at the window", 0, 1, 1)
+	c := h.writer.comments[0]
+	for _, want := range []string{
+		depBotStrandedReasonText,
+		"does not accept commands from apps",
+		"someone with push access comments `" + github.DependabotRecreateCommand + "`",
+	} {
+		if !strings.Contains(c, want) {
+			t.Errorf("comment = %q, want %q", c, want)
+		}
+	}
+	if rec, ok := h.store.get(depBotKey); !ok || rec.Reason != depBotHandoffStranded || rec.HeadSHA != "sha-2" {
+		t.Fatalf("record = %+v (ok=%v), want the stranded hand-off on sha-2", rec, ok)
+	}
+	if st, _ := h.store.rebaseState(depBotKey); !st.RequestedAt.IsZero() || st.Via != "" {
+		t.Fatalf("rebase state = %+v, want no request recorded", st)
+	}
+
+	h.passAt(depBotT0.Add(2*depBotRebaseWindow), pr)
+	h.assertWrites("later pass", 0, 1, 1)
+	for _, posted := range h.writer.comments {
+		if strings.TrimSpace(strings.TrimPrefix(posted, depBotKey+": ")) == github.DependabotRecreateCommand {
+			t.Fatalf("posted the bare %q command as the App", github.DependabotRecreateCommand)
+		}
 	}
 	if h.reader.bodyFetches != 0 {
 		t.Fatalf("body fetches = %d, want none for Dependabot", h.reader.bodyFetches)
+	}
+}
+
+// A record an older build wrote after commenting `@dependabot recreate`
+// (refused by Dependabot) still loads, and the PR goes to a person on the
+// next pass instead of waiting a window for a rebase that is not coming.
+func TestDependencyBotStrandedLegacyDependabotRecordHandsOff(t *testing.T) {
+	h := newDepBotRebaseHarness(t, "Bumps widget from 1 to 2.\n", depBotRRCommit("dependabot[bot]", "c1"), depBotRRBaseMerge("alice", "sha-2"))
+	pr := depBotRRBehindPR("dependabot[bot]", "sha-2")
+	h.store.markRebaseRequested(depBotKey, "sha-2", depBotViaDependabotLegacy, depBotT0)
+	h.store = loadDepBotConflictStore(h.path)
+	if st, ok := h.store.rebaseState(depBotKey); !ok || st.Via != "dependabot-recreate" {
+		t.Fatalf("reloaded state = %+v (ok=%v), want the legacy record", st, ok)
+	}
+
+	h.passAt(depBotT0.Add(time.Minute), pr)
+	h.assertWrites("legacy record", 0, 1, 1)
+	if c := h.writer.comments[0]; !strings.Contains(c, "does not accept commands from apps") {
+		t.Fatalf("comment = %q, want the plain-words reason", c)
 	}
 }
 
@@ -224,10 +266,10 @@ func TestDependencyBotStrandedHeadUnchangedHandsOffOnce(t *testing.T) {
 	h.passAt(depBotT0, pr)
 	h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
 	h.passAt(depBotT0.Add(2*depBotRebaseWindow-time.Minute), pr)
-	h.assertWrites("before the second window", 1, 0, 0, 0)
+	h.assertWrites("before the second window", 1, 0, 0)
 
 	h.passAt(depBotT0.Add(2*depBotRebaseWindow), pr)
-	h.assertWrites("a window after the request", 1, 0, 1, 1)
+	h.assertWrites("a window after the request", 1, 1, 1)
 	c := h.writer.comments[0]
 	if !strings.Contains(c, depBotStrandedReasonText) || !strings.Contains(c, "Hive ticked the rebase/retry box") || !strings.Contains(c, "behind `main`") {
 		t.Fatalf("comment = %q, want the reason, the request and the base named", c)
@@ -240,7 +282,7 @@ func TestDependencyBotStrandedHeadUnchangedHandsOffOnce(t *testing.T) {
 	labeled.Labels = []string{escalation.NeedsHumanLabel}
 	h.passAt(depBotT0.Add(3*depBotRebaseWindow), labeled)
 	h.passAt(depBotT0.Add(4*depBotRebaseWindow), pr) // label seen absent on a stale snapshot
-	h.assertWrites("later passes", 1, 0, 1, 1)
+	h.assertWrites("later passes", 1, 1, 1)
 	if rec, ok := h.store.get(depBotKey); !ok || rec.Reason != depBotHandoffStranded || rec.HeadSHA != "sha-2" {
 		t.Fatalf("record = %+v (ok=%v), want the stranded hand-off on sha-2", rec, ok)
 	}
@@ -251,7 +293,7 @@ func TestDependencyBotStrandedNewHeadResets(t *testing.T) {
 	pr := depBotRRBehindPR("renovate[bot]", "sha-2")
 	h.passAt(depBotT0, pr)
 	h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
-	h.assertWrites("request", 1, 0, 0, 0)
+	h.assertWrites("request", 1, 0, 0)
 
 	// Renovate regenerated the branch; base moved again since.
 	h.reader.commits = []github.PRCommit{depBotRRCommit("renovate[bot]", "sha-3")}
@@ -263,7 +305,7 @@ func TestDependencyBotStrandedNewHeadResets(t *testing.T) {
 		t.Fatalf("state = %+v (ok=%v), want a fresh record for sha-3", st, ok)
 	}
 	h.passAt(depBotT0.Add(5*depBotRebaseWindow), next)
-	h.assertWrites("new bot head", 1, 0, 0, 0)
+	h.assertWrites("new bot head", 1, 0, 0)
 }
 
 func TestDependencyBotStrandedKindOffReportsOnly(t *testing.T) {
@@ -272,9 +314,9 @@ func TestDependencyBotStrandedKindOffReportsOnly(t *testing.T) {
 	pr := depBotRRBehindPR("renovate[bot]", "sha-2")
 	h.passAt(depBotT0, pr)
 	h.passAt(depBotT0.Add(depBotRebaseWindow-time.Minute), pr)
-	h.assertWrites("before the window", 0, 0, 0, 0)
+	h.assertWrites("before the window", 0, 0, 0)
 	h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
-	h.assertWrites("at the window", 0, 0, 1, 1)
+	h.assertWrites("at the window", 0, 1, 1)
 	if c := h.writer.comments[0]; !strings.Contains(c, depBotStrandedReasonText) || !strings.Contains(c, "its last commit is not the bot's") {
 		t.Fatalf("comment = %q, want the stranded reason", c)
 	}
@@ -286,9 +328,9 @@ func TestDependencyBotStrandedKindOffConflictKeepsExistingPath(t *testing.T) {
 	pr := depBotPR("dependabot[bot]", "sha-2", conflicting)
 	h.passAt(depBotT0, pr)
 	h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
-	h.assertWrites("before the conflict grace", 0, 0, 0, 0)
+	h.assertWrites("before the conflict grace", 0, 0, 0)
 	h.passAt(depBotT0.Add(depBotConflictGrace), pr)
-	h.assertWrites("conflict grace", 0, 0, 1, 1)
+	h.assertWrites("conflict grace", 0, 1, 1)
 	if !strings.Contains(h.writer.comments[0], "Dependabot PR has conflicted with `main` for over 24 hours") {
 		t.Fatalf("comment = %q, want the existing conflict hand-off", h.writer.comments[0])
 	}
@@ -301,19 +343,19 @@ func TestDependencyBotStrandedConflictAsksBeforeHandingOff(t *testing.T) {
 	pr := renovateConflictPR("sha-1")
 	h.passAt(depBotT0, pr)
 	h.passAt(depBotT0.Add(time.Hour), pr)
-	h.assertWrites("before the window", 0, 0, 0, 0)
+	h.assertWrites("before the window", 0, 0, 0)
 
 	h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
-	h.assertWrites("at the window", 1, 0, 0, 0)
+	h.assertWrites("at the window", 1, 0, 0)
 	depBotRRWantCheckboxEdit(t, renovateNeverBody, h.reader.edits[0])
 
 	h.passAt(depBotT0.Add(2*depBotRebaseWindow), pr)
-	h.assertWrites("a window after the request", 1, 0, 1, 1)
+	h.assertWrites("a window after the request", 1, 1, 1)
 	if !strings.Contains(h.writer.comments[0], "has conflicted with `main`") {
 		t.Fatalf("comment = %q, want the conflict named", h.writer.comments[0])
 	}
 	h.passAt(depBotT0.Add(depBotConflictGrace+time.Hour), pr)
-	h.assertWrites("past the conflict grace", 1, 0, 1, 1)
+	h.assertWrites("past the conflict grace", 1, 1, 1)
 }
 
 func TestDependencyBotStrandedForeignWorkIsNotRegenerated(t *testing.T) {
@@ -321,7 +363,7 @@ func TestDependencyBotStrandedForeignWorkIsNotRegenerated(t *testing.T) {
 	pr := depBotRRBehindPR("renovate[bot]", "sha-2")
 	h.passAt(depBotT0, pr)
 	h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
-	h.assertWrites("foreign work", 0, 0, 1, 1)
+	h.assertWrites("foreign work", 0, 1, 1)
 	if !strings.Contains(h.writer.comments[0], "drop commits someone else pushed") {
 		t.Fatalf("comment = %q, want it to say why the bot was not asked", h.writer.comments[0])
 	}
@@ -334,7 +376,7 @@ func TestDependencyBotStrandedStateSurvivesRestart(t *testing.T) {
 
 	h.store = loadDepBotConflictStore(h.path)
 	h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
-	h.assertWrites("first-seen kept across a restart", 1, 0, 0, 0)
+	h.assertWrites("first-seen kept across a restart", 1, 0, 0)
 
 	h.store = loadDepBotConflictStore(h.path)
 	st, ok := h.store.rebaseState(depBotKey)
@@ -342,9 +384,9 @@ func TestDependencyBotStrandedStateSurvivesRestart(t *testing.T) {
 		t.Fatalf("reloaded state = %+v (ok=%v), want the request on sha-2", st, ok)
 	}
 	h.passAt(depBotT0.Add(2*depBotRebaseWindow-time.Minute), pr)
-	h.assertWrites("after the second restart", 1, 0, 0, 0)
+	h.assertWrites("after the second restart", 1, 0, 0)
 	h.passAt(depBotT0.Add(2*depBotRebaseWindow), pr)
-	h.assertWrites("hand-off on the persisted request clock", 1, 0, 1, 1)
+	h.assertWrites("hand-off on the persisted request clock", 1, 1, 1)
 }
 
 func TestDependencyBotStrandedHandoffUndoneWhenCaughtUp(t *testing.T) {
@@ -353,7 +395,7 @@ func TestDependencyBotStrandedHandoffUndoneWhenCaughtUp(t *testing.T) {
 	pr := depBotRRBehindPR("renovate[bot]", "sha-2")
 	h.passAt(depBotT0, pr)
 	h.passAt(depBotT0.Add(depBotRebaseWindow), pr)
-	h.assertWrites("hand-off", 0, 0, 1, 1)
+	h.assertWrites("hand-off", 0, 1, 1)
 
 	clean := depBotPR("renovate[bot]", "sha-4", func(p *github.PullRequest) {
 		p.HeadRef = "renovate/widget-2.x"

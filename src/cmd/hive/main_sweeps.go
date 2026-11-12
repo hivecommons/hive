@@ -186,6 +186,12 @@ func recordRedStaleness(cfg *config.Config, actionable *github.ActionableResult)
 	owners := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
 	obs := hivePRObservations(cfg, actionable, owners)
 	getEscalationStore().ObserveRed(obs)
+	// Trusted-bot PRs are folded in only so their transient-triaged head can
+	// owe the one re-run (dependency_bot_transient_rerun.go); they fire no
+	// hook and stay out of the fix loop.
+	if botObs := dbrTrustedBotObservations(cfg, actionable); len(botObs) > 0 {
+		getEscalationStore().ObserveRed(botObs)
+	}
 	for _, ob := range obs {
 		if !ob.Red {
 			continue

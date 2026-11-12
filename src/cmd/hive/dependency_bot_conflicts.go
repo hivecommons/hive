@@ -243,7 +243,9 @@ func dependencyBotConflictComment(base string) string {
 //   - a conflict: at once for a Renovate `rebaseWhen: never` PR, otherwise
 //     once it has conflicted past depBotConflictGrace;
 //   - a failing required check that stayed red on the same head past
-//     depBotRedCIGrace (the PR stays out of the fix loop);
+//     depBotRedCIGrace (the PR stays out of the fix loop); on a trusted-bot
+//     head triaged as transient, only once the hive's one re-run of it
+//     failed again or re-ran nothing (dependency_bot_transient_rerun.go);
 //   - a terminal required-check hold the automerge sweep reported (held for
 //     approval, never started, never ran);
 //   - a stranded branch: behind or conflicting past
@@ -255,9 +257,10 @@ func dependencyBotConflictComment(base string) string {
 // It takes that label back off once the reason is over (see
 // depBotHandoffResolved) or the PR closes — only if this sweep is the one
 // that added it. It never pushes, rebases, closes or approves; the only
-// writes besides the hand-off are that one rebase request per head (a
-// ticked Renovate rebase/retry box or `@dependabot recreate`), gated as
-// write-back kind bot_rebase_request.
+// write besides the hand-off is that one rebase request per head (a ticked
+// Renovate rebase/retry box), gated as write-back kind bot_rebase_request.
+// A stranded Dependabot PR is handed to a person instead of asked:
+// Dependabot refuses comment commands from GitHub Apps.
 func runDependencyBotConflictSweep(ctx context.Context, cfg *config.Config, writer forge.IssueWriter, reader depBotPRReader, actionable *github.ActionableResult, logger *slog.Logger) {
 	org := ""
 	if cfg != nil {
@@ -339,6 +342,12 @@ func sweepDependencyBotConflicts(
 			}
 		}
 		if !ok {
+			if botAuthor && heldReason == "" && depBotTransientRerunRunning(dbrLedger(), repo, pr) {
+				// The hive re-ran this head's failed jobs and CI is running
+				// again: keep the red-CI grace clock, so a head that fails
+				// again is handed off without a fresh grace period.
+				waiting[key] = true
+			}
 			continue
 		}
 		if rec, ok := store.get(key); ok && rec.HeadSHA == pr.HeadSHA && rec.Reason == reason {
@@ -385,10 +394,20 @@ func sweepDependencyBotConflicts(
 			}
 		case depBotHandoffRedCI:
 			waiting[key] = true
-			if now().Sub(store.observe(key, pr.HeadSHA, reason, now())) < depBotRedCIGrace || holdHandoff {
+			// A trusted-bot head triaged as transient waits for the hive's
+			// one re-run (rerunTransientTriagedPRs, later in this cycle);
+			// the comment then says whether it ran and failed again or was
+			// not allowed.
+			rerun := depBotTransientRerunFor(dbrLedger(), repo, pr)
+			red := now().Sub(store.observe(key, pr.HeadSHA, reason, now()))
+			var owed time.Duration
+			if rerun.State == depBotRerunOwed {
+				owed = now().Sub(store.rerunOwedSince(key, pr.HeadSHA, now()))
+			}
+			if red < depBotRedCIGrace || holdHandoff || rerun.holdsHandoff(red, owed) {
 				continue
 			}
-			comment = dependencyBotRedCIComment(pr)
+			comment = dependencyBotRedCIComment(pr, rerun)
 		case depBotHandoffStranded:
 			st, _ := store.rebaseState(key)
 			facts, known := store.branchFactsFor(key, pr.HeadSHA)

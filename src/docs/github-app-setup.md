@@ -146,11 +146,12 @@ retries no more than once per repository per permission cooldown (one hour).
 An unchanged PR remains eligible after the cooldown; a successful rerun or
 observing no failed runs clears the recovery block.
 
-The transient-CI re-run (a red hive PR whose failing runs all carry
-`hive-ci-transient`, see ADR-0010) uses the same `rerun-failed-jobs` call and
-the same per-repository refusal backoff. Without Actions write it logs
-`transient CI rerun forbidden` and posts no note, and the head goes back to
-the ordinary fix loop. It is turned off together with the fix loop by
+The transient-CI re-run (a red hive or trusted-bot PR whose failing runs all
+carry `hive-ci-transient`, see ADR-0010) uses the same `rerun-failed-jobs`
+call and the same per-repository refusal backoff. Without Actions write it
+logs `transient CI rerun forbidden` and posts no note, and the head goes back
+to the ordinary fix loop (a trusted-bot PR goes to a person, with a hand-off
+comment saying the re-run was not allowed). It is turned off together with the fix loop by
 `escalation.disabled`.
 
 A maintainer may re-run the named workflow with their already-authorized
