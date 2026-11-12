@@ -83,6 +83,24 @@ func TestSignedCommitOwnershipSkipStaysInLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestCanceledAdoptionReadStaysInLog(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "stage labels: could not read maintainer_can_modify; keeping in-place adoption this sweep"
+	for range 8 {
+		logger.Warn(msg, "repo", "server", "pr", 649, "error", &url.Error{Op: "GET", URL: "https://api.github.com", Err: context.Canceled})
+	}
+	logger.Warn(msg, "error", "context canceled")
+	if len(*seen) != 0 || strings.Count(out.String(), "\n") != 9 {
+		t.Fatalf("canceled reads: observations=%+v, log=%s", *seen, out.String())
+	}
+	logger.Warn(msg, "error", errors.New("permission denied"))
+	logger.Warn(msg, "error", context.DeadlineExceeded)
+	logger.Warn("another operation failed", "error", context.Canceled)
+	if len(*seen) != 3 {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
 // #16510: polling an exhausted rebase episode must keep warning locally
 // without turning the intentional handoff into a repeated runtime defect.
 func TestRebaseAttemptsExhaustedLogsWithoutFleetReport(t *testing.T) {
@@ -351,6 +369,26 @@ func TestRequiredChecksOverrideMismatchLogsWithoutFleetReport(t *testing.T) {
 	}
 	if ev := tr.Evidence(); len(ev) != 1 || ev[0].Class != fleetreport.ClassUnclassifiedRepeated || ev[0].Message != failure || ev[0].Count != 5 {
 		t.Fatalf("protection lookup failure should still produce fleet evidence: %+v", ev)
+	}
+}
+
+func TestMissingAlertsPermissionReportsOperatorCondition(t *testing.T) {
+	now := time.Date(2026, 11, 12, 15, 40, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "scoped token mint with vulnerability_alerts:read failed; retrying without it — the sec-check Dependabot alerts call will 403 until the App grants Dependabot alerts read-only and the installation re-accepts it; see docs/github-app-setup.md"
+	for range 5 {
+		logger.Warn(msg, "tier", "sec-check", "error", "permissions requested are not granted")
+		now = now.Add(time.Minute)
+	}
+	ev := tr.Evidence()
+	if len(ev) != 1 || ev[0].Class != fleetreport.ClassGitHubAppAlertsPermission || ev[0].Count != 5 {
+		t.Fatalf("missing permission evidence = %+v", ev)
+	}
+	now = now.Add(21 * time.Minute)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("quiet condition did not clear: %+v", ev)
 	}
 }
 

@@ -39,6 +39,7 @@ const (
 	ClassDataDiskPressure         = crux.ClassDataDiskPressure
 	ClassGitHubAppTokenMintFailed = crux.ClassGitHubAppTokenMintFailed
 	ClassGitHubAppNotInstalled    = crux.ClassGitHubAppNotInstalled
+	ClassForgeUnreachable         = crux.ClassForgeUnreachable
 	ClassUnexpectedHub5xx         = "unexpected_http_5xx_from_hub"
 	ClassUnclassifiedRepeated     = "unclassified_error_repeated"
 	// ClassAgentStall, ClassAgentCrashLoop and ClassCIPollNudge replace the
@@ -77,6 +78,7 @@ const (
 	ClassBeadFactIngestFailed       = "bead_fact_ingest_failed"
 	ClassSelfReportClearedFailed    = "selfreport_cleared_comment_failed"
 	ClassGitHubAppRepoNotCovered    = "github_app_repo_not_covered"
+	ClassGitHubAppAlertsPermission  = "github_app_alerts_permission_missing"
 	ClassHubHeartbeatUnprovisioned  = "hub_heartbeat_rejected_unprovisioned"
 	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
 	ClassProxyPlainForwardFailed    = "proxy_plain_forward_failed"
@@ -182,6 +184,7 @@ var Classes = map[string]ClassSpec{
 	ClassDataDiskPressure:           {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"disk full", "disk pressure", "no space left"}},
 	ClassGitHubAppTokenMintFailed:   {Component: "github-client", Severity: "high", MinCount: 1, Keywords: []string{"token mint failed", "installation token"}},
 	ClassGitHubAppNotInstalled:      {Component: "github-client", Severity: "medium", MinCount: 1, Keywords: []string{"github app installation id is unset", "github app has no installation"}},
+	ClassForgeUnreachable:           {Component: "network", Severity: "medium", MinCount: 1, Keywords: []string{"github host unreachable", "forge unreachable"}},
 	ClassUnexpectedHub5xx:           {Component: "dashboard", Severity: "medium", MinCount: hub5xxStreak, Keywords: []string{"hub 5", "hub returned 5"}},
 	ClassUnclassifiedRepeated:       {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear},
 	ClassAgentStall:                 {Component: "agent-runtime", Severity: "medium", MinCount: AgentStallNudgeStreak, Keywords: []string{"agent stall", "stalled after kick", "continue nudge"}},
@@ -201,6 +204,7 @@ var Classes = map[string]ClassSpec{
 	ClassSelfReportClearedFailed:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"fleet report: cleared comment failed"}},
 	ClassHubHeartbeatUnprovisioned:  {Component: "agent-runtime", Severity: "medium", MinCount: 1, IdleClear: 3 * time.Hour, LogFed: true, Keywords: []string{"hub heartbeat rejected: hive id is not provisioned"}},
 	ClassGitHubAppRepoNotCovered:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
+	ClassGitHubAppAlertsPermission:  {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"scoped token mint with vulnerability_alerts:read failed; retrying without it"}},
 	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed", "copilot sniff: upstream dial failed"}},
 	ClassProxyPlainForwardFailed:    {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward failed"}},
 	ClassProxyPlainForwardRefused:   {Component: "github-proxy", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward refused"}},
