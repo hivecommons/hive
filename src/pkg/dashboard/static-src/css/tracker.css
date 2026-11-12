@@ -272,6 +272,14 @@
     .ham-wf-badge { flex: 0 0 auto; font-family: var(--font-mono); font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; color: var(--indigo); background: color-mix(in srgb, var(--indigo) 12%, transparent); border: 1px solid color-mix(in srgb, var(--indigo) 40%, transparent); }
     .ham-wf-cols { position: static; }
     .ham-wf-cols .ham-wf-col { color: var(--indigo); }
+    /* Model chevrons wear the column's stage icon (hivecommons/hive#18033):
+       alone and dimmed in a done / todo step, leading the word in the lit
+       one. An emoji override is sized to the SVG glyph so the row keeps
+       its height. */
+    .ham-seg.ham-wf-seg .ham-stage-ico { flex: 0 0 auto; }
+    .ham-seg.ham-wf-seg.active .ham-stage-ico { margin-right: var(--sp-1); }
+    .ham-seg.ham-wf-seg.done .ham-stage-ico { opacity: 0.6; }
+    .ham-emoji-ico { display: inline-block; width: 12px; height: 12px; font-size: 11px; line-height: 12px; text-align: center; font-style: normal; }
     .ham-seg.ham-wf-uncovered { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); outline: 1px dashed var(--amber); }
     .ham-group-dist { flex: 0 0 auto; margin-left: auto; margin-right: calc(4em + var(--sp-3)); display: inline-flex; align-items: flex-end; gap: var(--sp-1); height: 0.9em; }
     .ham-gd { display: inline-block; width: 0.45em; height: 15%; border-radius: var(--sp-1); background: color-mix(in srgb, var(--text-faint) 35%, transparent); }
