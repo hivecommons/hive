@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/paneclass"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/notify"
@@ -35,6 +36,28 @@ func CommandForBackend(backend string) string {
 	default:
 		return "Run the login command for " + backend
 	}
+}
+
+// PauseNotice renders the notification title, body and login hint for an
+// agent paused at a login prompt. A claude agent running on the operator's
+// long-lived token (longLivedToken) is at that prompt because Claude answered
+// 401 to the token itself: `/login` would only start a sign-in the agent does
+// not use, so the hint is claude.TokenRejectedMessage instead.
+func PauseNotice(name, backend string, longLivedToken bool) (title, body, hint string) {
+	if backend == "claude" && longLivedToken {
+		return fmt.Sprintf("\U0001F511 Claude token rejected: %s", name),
+			fmt.Sprintf("Agent '%s' was paused. %s, replace %s with it, and restart the hive.",
+				name, claude.TokenRejectedMessage, claude.OperatorTokenEnvVar),
+			claude.TokenRejectedMessage
+	}
+	hint = CommandForBackend(backend)
+	return fmt.Sprintf("\U0001F511 Login required: %s", name),
+		fmt.Sprintf(
+			"Agent '%s' needs authentication. Open the agent's terminal "+
+				"(tmux attach -t hive-%s) and run the login command for the CLI (%s). %s",
+			name, name, backend, hint,
+		),
+		hint
 }
 
 // Action is what the detector should do about one agent this cycle.
@@ -303,7 +326,7 @@ func Scan(
 			continue
 		case ActionPause:
 			// Determine the login instruction based on the agent's backend
-			loginCmd := CommandForBackend(backend)
+			title, body, loginCmd := PauseNotice(name, backend, claude.OperatorToken() != "")
 
 			// This WARN is what the fleet selfreport for class
 			// agent_login_required is built from (hivecommons/hive#16953):
@@ -338,15 +361,7 @@ func Scan(
 				dashSrv.AuditLog("system", "pause", "trigger=login-detector", name)
 			}
 
-			notifier.Send(
-				fmt.Sprintf("\U0001F511 Login required: %s", name),
-				fmt.Sprintf(
-					"Agent '%s' needs authentication. Open the agent's terminal "+
-						"(tmux attach -t hive-%s) and run the login command for the CLI (%s). %s",
-					name, name, backend, loginCmd,
-				),
-				notify.PriorityHigh,
-			)
+			notifier.Send(title, body, notify.PriorityHigh)
 		}
 	}
 	// Agents that vanished (removed from config, stopped) must not keep a

@@ -165,3 +165,24 @@ func TestClaudeOperatorToken_StrippedFromInheritedPaneEnv(t *testing.T) {
 	}
 	t.Fatalf("%s is not in inheritedCredentialEnvVars; it would reach every agent pane via the tmux global environment", claude.OperatorTokenEnvVar)
 }
+
+// On the long-lived token a fresh dashboard sign-in on disk proves nothing
+// about the credential the agent uses, so login text on its pane is the token
+// being rejected and must reach the operator, not the restart heal (#17759).
+func TestClaudeOperatorToken_CredentialFileProvesNothing(t *testing.T) {
+	stageSharedClaudeCredential(t, map[string]any{
+		"accessToken": "sk-ant-oat-live",
+		"expiresAt":   time.Now().Add(6 * time.Hour).UnixMilli(),
+	})
+	stageOperatorToken(t, "")
+	m, agent := claudeAgentFixture(t, "")
+	if !m.AgentHasValidCredential(agent.Name) {
+		t.Fatal("precondition: without the operator token a usable shared credential must qualify")
+	}
+
+	stageOperatorToken(t, operatorTokenSentinel)
+	m, agent = claudeAgentFixture(t, "")
+	if m.AgentHasValidCredential(agent.Name) {
+		t.Fatal("on the long-lived token the dashboard credential file must not read as proof")
+	}
+}

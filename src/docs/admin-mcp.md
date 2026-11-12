@@ -343,6 +343,7 @@ capped at 256 KiB.
 | `hive_status`        | Hive status summary                                                      |
 | `fleet_status`       | Fleet state, including memory limit and out-of-memory kills (see note 1) |
 | `version_read`       | Running build from `/api/version` (see note 2)                           |
+| `claude_auth_status` | Claude auth mode (`long-lived token` or `dashboard sign-in`); no token   |
 | `autonomy_readiness` | Autonomy readiness                                                       |
 | `spend_read`         | Spend                                                                    |
 

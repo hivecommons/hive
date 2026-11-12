@@ -177,6 +177,13 @@ signing in again on the dashboard does not replace it. Each agent retains its
 own Claude home and private state; sharing the token does not require sharing
 the whole home. Without an operator token, dashboard sign-in works as before.
 
+To see which mode is live, read `GET /api/claude-auth/status` or the admin MCP
+`claude_auth_status` tool: `mode` is `long-lived token` or `dashboard sign-in`.
+Neither shows the token or any part of it. When Claude answers 401 to the
+long-lived token, Hive reports `Claude token rejected: generate a new one with
+claude setup-token` rather than asking for `/login`. The token cannot read the
+Claude usage API, so Claude usage headroom reads as unknown in this mode.
+
 To replace an expired or revoked token, run `claude setup-token` again, update
 the configured secret source, then recreate or restart Hive to load the new
 token and restart the affected Claude agents so their new sessions receive

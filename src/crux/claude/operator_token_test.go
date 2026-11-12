@@ -39,3 +39,19 @@ func TestOperatorTokenSources(t *testing.T) {
 		t.Fatalf("env must win over the file: got %q", got)
 	}
 }
+
+func TestAuthMode(t *testing.T) {
+	orig := OperatorTokenFile
+	OperatorTokenFile = filepath.Join(t.TempDir(), "missing")
+	t.Cleanup(func() { OperatorTokenFile = orig })
+	t.Setenv(OperatorTokenFileEnvVar, "")
+
+	t.Setenv(OperatorTokenEnvVar, "")
+	if got := AuthMode(); got != AuthModeDashboardSignIn {
+		t.Fatalf("unset: AuthMode() = %q, want %q", got, AuthModeDashboardSignIn)
+	}
+	t.Setenv(OperatorTokenEnvVar, "sk-ant-oat01-mode")
+	if got := AuthMode(); got != AuthModeLongLivedToken {
+		t.Fatalf("set: AuthMode() = %q, want %q", got, AuthModeLongLivedToken)
+	}
+}

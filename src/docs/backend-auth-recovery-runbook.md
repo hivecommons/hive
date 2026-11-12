@@ -58,8 +58,11 @@ recovered and no action is needed.
 
 ### Replace a Claude operator token
 
-If `HIVE_CLAUDE_OAUTH_TOKEN` or its secret file is configured, a rejected
-token may have expired or been revoked. Run `claude setup-token` interactively
+If `HIVE_CLAUDE_OAUTH_TOKEN` or its secret file is configured
+(`GET /api/claude-auth/status`, or the admin MCP `claude_auth_status` tool,
+reports `mode: long-lived token`), Hive reports a 401 as `Claude token
+rejected: generate a new one with claude setup-token`. The token may have
+expired or been revoked. Run `claude setup-token` interactively
 as the licensed operator and complete its prompts. The replacement lasts about
 a year and is inference-only. Store it securely in the same Hive environment
 secret or in the file named by `HIVE_CLAUDE_OAUTH_TOKEN_FILE` (default

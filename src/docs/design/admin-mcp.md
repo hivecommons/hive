@@ -309,6 +309,7 @@ one.
 | agent detail | `GET /api/agents`, `GET /api/config/agent/{name}`, `GET /api/agents/{name}/kicks` | `GET /api/config/agent/{name}` reports the last kick as `prompt`. |
 | leases and claims | `GET /api/runs`, `GET /api/runs/{key}`, `GET /api/claims` | Two distinct notions of "who holds this work", and both are wanted — see below. |
 | plans | `GET /api/plans`, `GET /api/plan/{epicID}` | `ListPlans` returns drafts first; the detail view is the epic plus children with execution tags and dependency edges. |
+| claude auth mode | `GET /api/claude-auth/status` | Added by #17759 for `claude_auth_status`: `logged_in` and `mode` (`long-lived token` or `dashboard sign-in`) only, never token material, so it is not part of the excluded credential family below. |
 | logs | `GET /api/logs/sources`, `GET /api/logs/read` | Added by #11942 for `log_sources` / `log_read`; see [Log read](#log-read). |
 | audit | `GET /api/audit`, `GET /api/runs/audit` | `handleAuditLog` requires `RoleAtLeast(role, RoleReadWrite)`, not owner. Both read-only by construction. |
 | settings | `GET /api/config`, `GET /api/config/governor`, `GET /api/packs` | Every setting a write tool can change is readable, so a preview can state a before as well as an after. |
@@ -871,6 +872,8 @@ explicitly not to.
   `POST /api/contribute/reissue-token`, `POST /api/agents/{name}/login-code`. The surface
   exists to hand Hive state to a language model, and credential material is the one class of
   content that must never reach one. There is no version of this design in which these belong.
+  The one `claude-auth` route in scope is `GET /api/claude-auth/status`, read by
+  `claude_auth_status`, which answers only the auth mode and whether one is configured.
 
 **Shape**
 

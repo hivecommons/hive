@@ -57,14 +57,14 @@ func (s *Server) registerClaudeAuthRoutes() {
 	s.mux.HandleFunc("POST /api/claude-auth/logout", s.handleClaudeAuthLogout)
 }
 
-// handleClaudeAuthStatus returns the current Claude auth state.
+// handleClaudeAuthStatus returns the current Claude auth state and which mode
+// is active: the operator's long-lived token or the dashboard sign-in. It
+// never returns token material, so the admin MCP claude_auth_status tool can
+// read it.
 func (s *Server) handleClaudeAuthStatus(w http.ResponseWriter, r *http.Request) {
-	token := claudeReadToken(claudeCredPath)
-	if token == "" {
-		jsonResponse(w, map[string]interface{}{"logged_in": false})
-		return
-	}
-	jsonResponse(w, map[string]interface{}{"logged_in": true})
+	mode := claude.AuthMode()
+	loggedIn := mode == claude.AuthModeLongLivedToken || claudeReadToken(claudeCredPath) != ""
+	jsonResponse(w, map[string]interface{}{"logged_in": loggedIn, "mode": mode})
 }
 
 // handleClaudeAuthStart generates PKCE params and returns the authorize URL.
