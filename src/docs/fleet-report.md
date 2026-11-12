@@ -246,6 +246,16 @@ nudge-delivery failures remain eligible for reporting when repeated.
 
 It also skips `stage transition suppressed by dampener` (`stageDampenerSuppression`, `pkg/fleetreport/slogfeed/slogfeed.go`): the stage-label store suppresses flapping transitions during its dampener hold window (hivecommons/hive#17103). That is the dampener working as designed, not a runtime error. The same function skips `stage flap suppressed` (`suppressStageFlap`, `pkg/stageengine/writer.go`): the stage engine refuses a same-head, same-evidence reversal of its last label write inside its flap window (hivecommons/hive#17142).
 
+It also skips the exact WARN `signed-commit reconciler: skipped; the PR keeps an
+unsigned commit` (`signedCommitOwnershipSkip`, `pkg/fleetreport/slogfeed/slogfeed.go`;
+emitted by `pkg/github/pr_signed_reconcile.go`): the signed-commit reconciler
+deliberately refuses to rewrite a merge commit or a commit authored or committed
+by anyone other than a hive agent, and records the remedy on the PR
+(`noteSignedSkip`). Repeated refusals are the ownership guard working as
+designed, not a repeated runtime defect (hivecommons/hive#17924). The WARN and
+its `reason` stay in local logs; other reconciler failures and the same message
+at ERROR remain reportable.
+
 The re-engagement sweep logs `re-engagement kick undeliverable; budget not
 charged` at INFO rather than WARN when the cause is `shared session pool is
 busy` (`deliverReEngagement`, `src/cmd/hive/main_sweeps.go`): a saturated shared CLI
