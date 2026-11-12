@@ -372,6 +372,8 @@ func delegateSettingsPlanFor(ctx context.Context, args map[string]any, provider 
 		effectiveModel = modelAfter
 	}
 	ready, _ := current["llm_reviewer_ready"].(bool)
+	path, _ := current["llm_reviewer_path"].(string)
+	reason, _ := current["llm_reviewer_reason"].(string)
 	plan.notes = delegateSettingsWidening(delegateSettingsWidenInput{
 		hiveBefore: hiveBefore, hiveAfter: hiveAfter,
 		reposBefore: reposBefore, reposAfter: reposAfter,
@@ -379,6 +381,7 @@ func delegateSettingsPlanFor(ctx context.Context, args map[string]any, provider 
 		llmBefore:    llmBefore, llmAfter: llmAfter,
 		modelChanged: parsed.llmModel != nil && (modelAfter != modelBefore || modelMasked),
 		model:        effectiveModel, reviewerReady: ready,
+		reviewerPath: path, reviewerReason: reason,
 	})
 	plan.fingerprint = settingsFingerprint(before)
 	return plan, nil
@@ -473,6 +476,10 @@ type delegateSettingsWidenInput struct {
 	modelChanged            bool
 	model                   string
 	reviewerReady           bool
+	// reviewerPath and reviewerReason are llm_reviewer_path and
+	// llm_reviewer_reason from the same settings read: where the decider
+	// turn runs (governor.reviewer_backend) and why it cannot, if it cannot.
+	reviewerPath, reviewerReason string
 }
 
 // delegateSettingsWidening says what the change lets the hive do that it could not
@@ -513,13 +520,24 @@ func delegateSettingsWidening(in delegateSettingsWidenInput) []string {
 		notes = append(notes, note)
 	}
 	model := strings.TrimSpace(in.model)
+	via := " through the governor reviewer endpoint"
+	if in.reviewerPath == "claude-cli" {
+		via = " through the Claude CLI on the hive's Claude login, run with every tool off"
+		if model == "" {
+			model = "the Claude CLI's default model"
+		}
+	}
 	if model == "" {
 		model = "the governor reviewer model"
 	}
 	switch {
 	case !in.llmBefore && in.llmAfter:
-		note := "The LLM step is turned on: for an item the rules leave at the reversible default, the item's text (title, body, comments and linked items) is sent to " + model + " through the governor reviewer endpoint, and its verdict goes through the same safety rails as a rule decision."
-		if !in.reviewerReady {
+		note := "The LLM step is turned on: for an item the rules leave at the reversible default, the item's text (title, body, comments and linked items) is sent to " + model + via + ", and its verdict goes through the same safety rails as a rule decision."
+		switch {
+		case in.reviewerReady:
+		case strings.TrimSpace(in.reviewerReason) != "":
+			note += " The decider cannot run yet (" + strings.TrimSpace(in.reviewerReason) + "), so until it can, every decision keeps the rules' reversible default."
+		default:
 			note += " No reviewer endpoint or model is configured yet, so until one is, every decision keeps the rules' reversible default."
 		}
 		notes = append(notes, note)

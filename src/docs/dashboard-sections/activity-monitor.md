@@ -841,6 +841,16 @@ With `decisions.delegate.llm.enabled: true` (default **false**), an item the rul
 
 An accepted reply is recorded under rule `llm-delegate` and goes through the same safety rails and executor as a rule decision; a model error or rejected reply keeps the reversible default and the job's `notes` say why. Rules-first stays authoritative: every case a rule decides, and every item wearing `hold`, never reaches the model. The call uses the governor reviewer endpoint (`governor.trajectory`, falling back to `governor.litellm`); `decisions.delegate.llm.model` overrides the model.
 
+**Which model path the turn takes.** `governor.reviewer_backend` (default `auto`) picks it, and Settings → Features → *Let hive decide* shows the path in use and, when the turn cannot run, why (`llm_reviewer_path` and `llm_reviewer_reason` on `GET /api/config/decisions/delegate`, which the admin MCP `settings_read` and `decisions.delegate_settings` read too):
+
+| `governor.reviewer_backend` | Path                                                                                                                 |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `auto` (default)            | The reviewer endpoint when one is configured, exactly as before. With none, the Claude CLI when Claude is signed in. |
+| `http`                      | The reviewer endpoint only. With none configured the turn does not run; it never falls back to a CLI.                |
+| `claude-cli`                | The Claude CLI on the hive's own Claude login, even when an endpoint is configured.                                  |
+
+The Claude CLI path is for a hive that runs its agents on a Claude subscription and has no OpenAI-compatible endpoint. The login is used only through the official `claude` CLI, never for raw API calls. Because the prompt carries untrusted issue and comment text, the CLI runs with nothing it could act with: every built-in tool off (`--tools ""`), no MCP server (`--strict-mcp-config` with no config, plus `--disallowedTools "mcp__*"`), hooks off, one turn, no saved or resumed session, a fresh empty working directory and HOME that are deleted afterwards, and an environment holding only `PATH`, `HOME` and the Claude login (no GitHub or hive token). The prompt goes in on stdin, never on the command line. With per-agent UID isolation on, the CLI runs as its own user (`hive-hive-turn`, created by the entrypoint like the Spektacular hub executor's user), not as the hive. At most two such CLIs run at once, each with the same 60-second limit and reply-size cap as the HTTP call. The model is the same one the HTTP path would use (`decisions.delegate.llm.model`, else the reviewer model), and empty means the CLI's own default. The dashboard's grounded chat answers (`chat.grounded_answers`) take the same path. The other reviewer users (the trajectory and advisor lanes, intent alignment, the ioscan classifier's endpoint mode, Jam replies and the written-spec refinement) still need the HTTP endpoint, and their readiness says so. The Copilot CLI is not offered: its prompt mode takes the prompt only as a command-line argument.
+
 
 ## Agent activity
 

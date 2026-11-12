@@ -196,6 +196,6 @@ func chatScopeUsage(scope, question, reason string) string {
 	default:
 		b.WriteString("Bare `" + cmd + "` gives the summary. ")
 	}
-	b.WriteString("Questions with arguments are answered from the live hive state when `chat.grounded_answers.enabled` is on and a governor reviewer endpoint is configured.")
+	b.WriteString("Questions with arguments are answered from the live hive state when `chat.grounded_answers.enabled` is on and a reviewer model is reachable: a governor reviewer endpoint, or the Claude CLI on the hive's Claude login (`governor.reviewer_backend`).")
 	return b.String()
 }
