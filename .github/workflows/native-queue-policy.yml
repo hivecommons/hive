@@ -74,7 +74,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const { evaluate, PendingEvidence, ProviderUnavailable } = require('./.github/scripts/native-queue-policy.cjs');
+            const { evaluate, PendingEvidence, QueuedBacklog, ProviderUnavailable } = require('./.github/scripts/native-queue-policy.cjs');
             const attempts = 90;
             const intervalMs = 15000;
             for (let attempt = 0; attempt < attempts; attempt++) {
@@ -88,6 +88,17 @@ jobs:
                     .addRaw(error.message)
                     .write();
                   core.setFailed(error.message);
+                  return;
+                }
+                // A platform backlog is not a PR defect. Report it as pending
+                // for PRs only; merge_group still requires the evidence.
+                if (error instanceof QueuedBacklog && attempt === attempts - 1 &&
+                    context.eventName === 'pull_request_target') {
+                  core.warning(error.message);
+                  await core.summary
+                    .addHeading('Evidence pending: Actions queue backlog')
+                    .addRaw(error.message + '. Re-run this check once the queued workflows have started; the merge queue re-validates all evidence.')
+                    .write();
                   return;
                 }
                 if (!(error instanceof PendingEvidence) || attempt === attempts - 1) throw error;

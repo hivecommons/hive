@@ -38,6 +38,10 @@ const PROBOT_DCO_PATH = 'DCO path: probot DCO (App 1861)';
 const closedNoop = (pr) => `PR #${pr.number} is closed; nothing to evaluate`;
 
 class PendingEvidence extends Error {}
+class MissingEvidence extends PendingEvidence {}
+// The evidence is missing because the head's workflow runs have not started
+// (Actions platform backlog), which says nothing about the PR itself.
+class QueuedBacklog extends PendingEvidence {}
 
 // A provider's inability to evaluate is not a negative sign-off verdict. It
 // still blocks admission, and is deliberately not PendingEvidence: polling or
@@ -109,7 +113,7 @@ function assertEligible(pr, head, base) {
 function evidenceForHead(runs, head, checks) {
   return Object.entries(checks).map(([name, source]) => {
     const run = runs.filter(r => r.name === name).sort((a, b) => b.id - a.id)[0];
-    if (!run) throw new PendingEvidence(`Missing ${name} on ${head}`);
+    if (!run) throw new MissingEvidence(`Missing ${name} on ${head}`);
     const app = source ? ACTIONS_APP_ID : DCO_APP_ID;
     if (run.app?.id !== app || run.head_sha !== head) {
       throw new Error(`Untrusted provider or wrong head for ${name}`);
@@ -233,6 +237,14 @@ async function assertEvidence(github, repo, number, head, checks, pr) {
     if (dco?.prow) await assertProwDCO(github, repo, head);
   } catch (error) {
     if (dco && !(error instanceof ProviderUnavailable)) error.message += ` [${dco.path}]`;
+    if (error instanceof MissingEvidence) {
+      const queued = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
+        ...repo, head_sha: head, status: 'queued', per_page: 100,
+      });
+      if (queued.length) {
+        throw new QueuedBacklog(`${error.message}; ${queued.length} workflow run(s) still queued`, { cause: error });
+      }
+    }
     throw error;
   }
   return dco?.path || PROBOT_DCO_PATH;
@@ -410,7 +422,7 @@ async function evaluateOnce({ github, context }) {
 
 module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
-  PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
+  PendingEvidence, MissingEvidence, QueuedBacklog, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict, BLOCKED_LABEL,
   ProviderUnavailable, FORWARD_MERGE, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX, DCO_ENUMERATION_SUMMARY_FALLBACK,

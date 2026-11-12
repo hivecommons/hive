@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
-  PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
+  PendingEvidence, QueuedBacklog, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict,
   ProviderUnavailable, FORWARD_MERGE, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX,
@@ -60,6 +60,7 @@ function fixture(eventName = 'merge_group') {
       },
       actions: {
         listJobsForWorkflowRun: 'jobs',
+        listWorkflowRunsForRepo: 'queuedRuns',
         getWorkflowRun: async ({ run_id: id }) => {
           const definition = [...Object.entries(POLICY_CHECKS), ...Object.entries(BUILD_CHECKS)][id - 1000];
           const source = definition[1];
@@ -86,6 +87,7 @@ function fixture(eventName = 'merge_group') {
           status: 'completed', conclusion: 'success',
         }];
       }
+      if (method === 'queuedRuns') return clone(state.queuedRuns || []);
       if (method === 'checks') {
         state.workflowHead = args.ref;
         return clone(state.runs.get(args.ref));
@@ -114,6 +116,16 @@ function fixture(eventName = 'merge_group') {
   };
   return { github, context, state };
 }
+
+test('missing gate is pending backlog only while the head has queued workflow runs', async () => {
+  for (const queued of [[{ id: 1, status: 'queued' }], []]) {
+    const f = fixture('pull_request_target');
+    f.state.runs.set(sha(11), f.state.runs.get(sha(11)).filter(r => r.name !== 'gate'));
+    f.state.queuedRuns = queued;
+    await assert.rejects(evaluate(f), error => error instanceof PendingEvidence &&
+      /Missing gate/.test(error.message) && (error instanceof QueuedBacklog) === queued.length > 0);
+  }
+});
 
 test('all members, not merely the PR encoded in the group ref', () => {
   assert.deepEqual(membersForGroup(entries, group).map(e => e.pullRequest.number), [1, 2]);
