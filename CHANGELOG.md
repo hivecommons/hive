@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.229.0)
+
+### Added
+
+- Knowledge: new `wisprflow` connector syncs Wispr Flow dictation history (text, time, source app) into the vault from the desktop app's local `flow.sqlite` or an export folder — read-only, no sign-in, one fact per dictation or per day, with a Knowledge → Integrations card; dictating straight into **+ New Fact** needs no connector at all.
+
+### Fixed
+
+- Agents whose pluk session log under `/var/run/pluk/logs` was left behind by another uid (for example the supervisor's `hive-supervisor.jsonl`) no longer fail log setup with `permission denied`; the stale file is replaced with a peer-readable one so `hive-panes` and the dashboard can read it ([#17871](https://github.com/hivecommons/hive/issues/17871)).
+
 ## 2026-11-12 (v5.228.6)
 
 ### Fixed
