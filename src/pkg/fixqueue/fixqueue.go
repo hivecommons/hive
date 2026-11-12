@@ -362,6 +362,19 @@ func (s *Scheduler) CompleteDispatch(user, id string) bool {
 // straight back to a relay that just refused it. It returns the requeued
 // items; nil when id is not in flight.
 func (s *Scheduler) Requeue(user, id string, backoff time.Duration) []Item {
+	return s.unwind(user, id, backoff, true, "requeue")
+}
+
+// Release puts an in-flight dispatch back at the head of user's queue
+// without counting an attempt or booking a backoff: the relay never reported
+// on it (its socket dropped, or it asked for new work while the dispatch was
+// still booked), so nothing about the PR itself failed. nil when id is not
+// in flight.
+func (s *Scheduler) Release(user, id string) []Item {
+	return s.unwind(user, id, 0, false, "release")
+}
+
+func (s *Scheduler) unwind(user, id string, backoff time.Duration, countAttempt bool, event string) []Item {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.by[norm(user)]
@@ -380,12 +393,14 @@ func (s *Scheduler) Requeue(user, id string, backoff time.Duration) []Item {
 		out := d.public().Items
 		notBefore := s.opts.Now().Add(backoff)
 		for j := range out {
-			out[j].Attempts++
-			out[j].NotBefore = notBefore
+			if countAttempt {
+				out[j].Attempts++
+				out[j].NotBefore = notBefore
+			}
 			c.queue = append(c.queue, out[j])
 		}
 		sortQueue(c.queue)
-		s.log("requeue", user, Dispatch{ID: d.id, Mode: d.mode, Items: out}, len(c.queue))
+		s.log(event, user, Dispatch{ID: d.id, Mode: d.mode, Items: out}, len(c.queue))
 		return out
 	}
 	return nil
