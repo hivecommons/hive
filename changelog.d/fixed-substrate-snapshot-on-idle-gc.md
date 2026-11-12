@@ -1,1 +1,0 @@
-- Substrate `snapshot_on_idle` no longer accumulates suspended actors: the previous idle snapshot of an agent is deleted when the next one is taken (actors from before a hive restart are not reclaimed).
