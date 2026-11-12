@@ -595,27 +595,54 @@ _pr_list_merged_only() {
 # The one `gh pr list` that bin/hive-baseline-check.sh makes for its sibling-PR
 # lookup (#17835): the kick mandates that helper before any check is retried,
 # and names that lookup as the sanctioned exception to the enumeration ban. The
-# helper marks its call with HIVE_BASELINE_CHECK=1; even then only the narrow
-# projection is let through — open PRs, a --json list naming statusCheckRollup,
-# and no --search, whose qualifiers would widen it into a general work queue.
+# helper marks its call with HIVE_BASELINE_CHECK=1. That marker is a caller-set
+# hint, not a trust boundary — any agent can set it, exactly as with
+# HIVE_CONTRIBUTOR_MODE above — so what makes the exception safe is that only
+# the helper's exact projection is let through, checked as an allowlist that a
+# forgotten flag cannot widen: the sole flags accepted are --repo/-R, --state/-s
+# (must resolve to open), --limit/-L (at most 100, what the helper sends) and
+# --json whose every field is one of number, headRefOid, isCrossRepository,
+# statusCheckRollup. Any other flag or positional (--label, --search, --author,
+# --base, -q, ...) refuses, since each would turn it into a general work queue.
 _pr_list_baseline_check() {
   [[ "${HIVE_BASELINE_CHECK:-}" = "1" ]] || return 1
   [[ "$subcmd" = "pr" && "$action" = "list" ]] || return 1
-  local i a state="" json=""
+  local i a state="" json="" limit="" seen_sub=0 seen_act=0
   for ((i=0; i<${#args[@]}; i++)); do
     a="${args[$i]}"
     case "$a" in
-      --search|--search=*|-S|-S?*) return 1 ;;
+      --repo=*|-R=*|-R?*) ;;
+      --repo|-R) i=$((i+1)) ;;
       --state=*) state="${a#--state=}" ;;
       -s=*) state="${a#-s=}" ;;
-      --state|-s) state="${args[$((i+1))]:-}" ;;
       -s?*) state="${a#-s}" ;;
+      --state|-s) i=$((i+1)); state="${args[$i]:-}" ;;
+      --limit=*) limit="${a#--limit=}" ;;
+      -L=*) limit="${a#-L=}" ;;
+      -L?*) limit="${a#-L}" ;;
+      --limit|-L) i=$((i+1)); limit="${args[$i]:-}" ;;
       --json=*) json="${a#--json=}" ;;
-      --json) json="${args[$((i+1))]:-}" ;;
+      --json) i=$((i+1)); json="${args[$i]:-}" ;;
+      -*) return 1 ;;
+      pr) [[ "$seen_sub" = 0 ]] || return 1; seen_sub=1 ;;
+      list) [[ "$seen_sub" = 1 && "$seen_act" = 0 ]] || return 1; seen_act=1 ;;
+      *) return 1 ;;
     esac
   done
   [[ "$(_lower "$state")" = "open" ]] || return 1
-  [[ ",${json}," == *,statusCheckRollup,* ]]
+  if [[ -n "$limit" ]]; then
+    [[ "$limit" =~ ^[0-9]+$ && "$limit" -le 100 ]] || return 1
+  fi
+  [[ -n "$json" ]] || return 1
+  local f _fields
+  IFS=',' read -ra _fields <<<"$json"
+  for f in "${_fields[@]}"; do
+    case "$f" in
+      number|headRefOid|isCrossRepository|statusCheckRollup) ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
 }
 
 # Resolve the authenticated GitHub login. Initialize the cache internally so a
