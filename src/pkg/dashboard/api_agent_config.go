@@ -950,14 +950,15 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	// masked by a pre-existing override from a card dropdown. SetModelOverride
 	// with the saved value (or "" to clear back to the launch-command default)
 	// keeps the dialog and the card in sync; a single restart applies both.
-	if modelChanged {
-		if err := s.deps.AgentMgr.SetModelOverride(name, agentCfg.Model); err != nil {
-			s.logger.Warn("failed to apply model from config dialog", "agent", name, "error", err)
-		}
-	}
+	// Backend first, so SetModelOverride spells the model for the new backend.
 	if backendChanged {
 		if err := s.deps.AgentMgr.SetBackendOverride(name, agentCfg.Backend); err != nil {
 			s.logger.Warn("failed to apply backend from config dialog", "agent", name, "error", err)
+		}
+	}
+	if modelChanged {
+		if err := s.deps.AgentMgr.SetModelOverride(name, agentCfg.Model); err != nil {
+			s.logger.Warn("failed to apply model from config dialog", "agent", name, "error", err)
 		}
 	}
 	if modelChanged || backendChanged || jevModeChanged {
@@ -1078,9 +1079,11 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 	// request against those effective values so a change is detected — and
 	// applied — even when the config field already matched (#7374).
 	prevModel, prevBackend := agentCfg.Model, agentCfg.Backend
+	liveModelOverride := ""
 	if proc, err := s.deps.AgentMgr.GetStatus(name); err == nil && proc != nil {
 		if proc.ModelOverride != "" {
 			prevModel = proc.ModelOverride
+			liveModelOverride = proc.ModelOverride
 		}
 		if proc.BackendOverride != "" {
 			prevBackend = proc.BackendOverride
@@ -1128,6 +1131,29 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		agentCfg.ModelOwner = config.FieldOwnerOperator
 		effectiveModel = agentCfg.Model
 		modelChanged = agentCfg.Model != prevModel
+	}
+	// A backend change with no model in the request keeps the saved model,
+	// so re-spell it for the new backend: the Copilot spelling
+	// claude-sonnet-5.5 is refused by the Claude CLI, and a model the new
+	// backend cannot run at all is cleared rather than kept.
+	if backendChanged && body.Model == "" && agentCfg.Model != "" {
+		respelled, ok := crux.ModelForBackend(agentCfg.Model, effectiveBackend)
+		if !ok {
+			modelWarning = fmt.Sprintf("model %q cannot run on the %s backend, so it was cleared and the agent launches on the backend's default model; pick a %s model to choose one.",
+				agentCfg.Model, effectiveBackend, effectiveBackend)
+		}
+		agentCfg.Model = respelled
+		effectiveModel = agentCfg.Model
+	}
+	// Once this request names a backend or a model, the saved config is what
+	// the agent must launch with. A live model override that still differs
+	// (left by a card dropdown, a pin, or a boot replay of hive-state) would
+	// otherwise keep winning at launch and be persisted again, so the
+	// operator's write never took effect: a PUT carrying only the backend the
+	// agent already ran on left a stale override in place with no restart.
+	if (body.Backend != "" || body.Model != "") && liveModelOverride != "" && liveModelOverride != agentCfg.Model {
+		modelChanged = true
+		effectiveModel = agentCfg.Model
 	}
 	if body.ReasoningEffort != nil {
 		effort := sanitizeString(*body.ReasoningEffort)
@@ -1180,15 +1206,17 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 	// override to the saved value keeps config, status and the next launch
 	// in agreement; the effort lives in agent.Config and is already synced.
 	// Model, backend and effort are all launch-time flags, so the change is
-	// applied by restarting — once, for however many of them moved.
-	if modelChanged {
-		if err := s.deps.AgentMgr.SetModelOverride(name, agentCfg.Model); err != nil {
-			s.logger.Warn("failed to apply model from config endpoint", "agent", name, "error", err)
-		}
-	}
+	// applied by restarting — once, for however many of them moved. The
+	// backend goes first: SetModelOverride spells the model for the agent's
+	// effective backend, so it must already be the new one.
 	if backendChanged {
 		if err := s.deps.AgentMgr.SetBackendOverride(name, agentCfg.Backend); err != nil {
 			s.logger.Warn("failed to apply backend from config endpoint", "agent", name, "error", err)
+		}
+	}
+	if modelChanged {
+		if err := s.deps.AgentMgr.SetModelOverride(name, agentCfg.Model); err != nil {
+			s.logger.Warn("failed to apply model from config endpoint", "agent", name, "error", err)
 		}
 	}
 	resp := map[string]any{"ok": true, "status": "updated", "agent": name, "applied": true, "restarted": false}
