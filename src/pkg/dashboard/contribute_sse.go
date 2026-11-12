@@ -423,8 +423,8 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 			// explanation is visible in review as a bare `continue` among
 			// annotated ones, and the shared ladder test fails it.
 			cand := withheldCandidateFrom(repo.Full, ref, issue)
-			if isTracker, _ := issue["is_tracker"].(bool); isTracker {
-				withheld.addReason(cand, withheldReasonTracker)
+			if hold := contributeTrackerHoldFor(issue); hold.held {
+				withheld.add(withheldTrackerItem(cand, hold))
 				return
 			}
 			if h.isTaskInCooldownKey(itemKey) {

@@ -8549,6 +8549,33 @@ function markIssueNeedsDecision(task, reason) {
   markIssueLabel(task, reason, label, 'Waiting on a maintainer decision; not contributor work until a human clears the label', 'needs_decision');
 }
 
+// readOpenSubIssues asks GitHub, with the task credential, how many of the
+// issue's native sub-issues are still open: one read of the issue, whose
+// payload carries a `sub_issues_summary` block ({ total, completed }) on a
+// parent and none on a leaf. Returns { open, total }, or { error } when the
+// read failed or its output is not that block. The host is pinned to the one
+// the label call's issue URL names.
+function readOpenSubIssues(task, env) {
+  let out;
+  try {
+    out = execSync(
+      `gh api --hostname github.com ${shellQuote(`repos/${task.repo}/issues/${task.number}`)} --jq .sub_issues_summary 2>/dev/null`,
+      { encoding: 'utf8', timeout: 20000, env });
+  } catch (e) {
+    return { error: ((e && e.message) || 'unknown error').toString().trim() };
+  }
+  const text = String(out || '').trim();
+  if (text === 'null') return { open: 0, total: 0 };
+  let summary = null;
+  try { summary = JSON.parse(text); } catch (_) { /* reported below */ }
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) {
+    return { error: `unexpected sub_issues_summary output: ${text.slice(0, 120) || '(empty)'}` };
+  }
+  const total = Number(summary.total) || 0;
+  const completed = Number(summary.completed) || 0;
+  return { open: Math.max(0, total - completed), total };
+}
+
 function markIssueAlreadyDone(task, reason) {
   if (!task || task.kind !== 'issue' || !task.repo || !(task.number > 0) || task.external_id) return;
   const hub = task._hub || hubs[activeHubIndex];
@@ -8559,6 +8586,19 @@ function markIssueAlreadyDone(task, reason) {
   let token = null;
   try { token = fs.readFileSync(GH_TOKEN_CACHE, 'utf8').trim() || null; } catch (_) {}
   const env = token ? { ...process.env, GH_TOKEN: token } : process.env;
+  // An issue with an open sub-issue is a parent waiting on its children, not
+  // finished work: the label would mark it done and keep it out of the queue
+  // while the children are still open. When the read fails the label is
+  // skipped too — the hub's own hold already suppresses the re-offer.
+  const kids = readOpenSubIssues(task, env);
+  if (kids.error) {
+    console.log(`Task ${task.task_id}: already-done verdict on ${task.repo}#${task.number}, but its sub-issues could not be read (${kids.error}) — not applying the '${ALREADY_DONE_WORKFLOW_LABEL}' label; the hub's already-done hold suppresses re-offer`);
+    return;
+  }
+  if (kids.open > 0) {
+    console.log(`Task ${task.task_id}: already-done verdict on ${task.repo}#${task.number}, but it has ${kids.open} open sub-issue(s) of ${kids.total} — not applying the '${ALREADY_DONE_WORKFLOW_LABEL}' label; a parent is done when its sub-issues are`);
+    return;
+  }
   const issueURL = `https://github.com/${task.repo}/issues/${task.number}`;
   const addLabel = () => execSync(
     `gh issue edit ${shellQuote(issueURL)} --add-label ${shellQuote(ALREADY_DONE_WORKFLOW_LABEL)} 2>&1`,
@@ -10768,6 +10808,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     markIssueBlocked,
     markIssueNeedsDecision,
     markIssueAlreadyDone,
+    readOpenSubIssues,
     detectHiveVerdict,
     detectHiveVerdicts,
     detectCompletionVerdict,
