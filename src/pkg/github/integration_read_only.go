@@ -24,6 +24,13 @@ func WithIntegrationReadOnly(ctx context.Context) context.Context {
 	return context.WithValue(ctx, integrationReadOnlyKey{}, true)
 }
 
+// IntegrationReadOnly reports whether ctx carries WithIntegrationReadOnly, so
+// callers can skip writes the transport would refuse anyway.
+func IntegrationReadOnly(ctx context.Context) bool {
+	guarded, _ := ctx.Value(integrationReadOnlyKey{}).(bool)
+	return guarded
+}
+
 func integrationReadOnlyRequest(request *http.Request) error {
 	if guarded, _ := request.Context().Value(integrationReadOnlyKey{}).(bool); !guarded {
 		return nil

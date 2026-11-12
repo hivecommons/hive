@@ -18,6 +18,7 @@ import (
 
 func init() {
 	config.SetOpenShellPreflight(openShellPreflightWarnings)
+	config.SetSubstratePreflight(substratePreflightWarnings)
 }
 
 // openShellPreflightWarnings checks each distinct gateway the openshell
@@ -112,7 +113,7 @@ func (m *Manager) validateSandboxKickLocked(agent *AgentProcess) (string, error)
 	// does, instead of failing it after the state machine has moved.
 	runtime := agent.Config.SandboxRuntime(m.sandboxConfig)
 	if !config.ValidSandboxRuntimes[runtime] {
-		return "", fmt.Errorf("agent %s sandbox runtime %q is not one hive has (%s, %s or %s)", agent.Name, runtime, config.SandboxRuntimePodman, config.SandboxRuntimeJob, config.SandboxRuntimeOpenShell)
+		return "", fmt.Errorf("agent %s sandbox runtime %q is not one hive has (%s, %s, %s or %s)", agent.Name, runtime, config.SandboxRuntimePodman, config.SandboxRuntimeJob, config.SandboxRuntimeOpenShell, config.SandboxRuntimeSubstrate)
 	}
 	switch runtime {
 	case config.SandboxRuntimeJob:
@@ -128,6 +129,15 @@ func (m *Manager) validateSandboxKickLocked(agent *AgentProcess) (string, error)
 		}
 		if effectiveBackend(agent) == "cline" {
 			return "", fmt.Errorf("agent %s: the Cline backend is not supported on the openshell sandbox runtime (no credential path into the sandbox); use podman or job", agent.Name)
+		}
+	case config.SandboxRuntimeSubstrate:
+		// ADR-0026 phase 2: same contract as openshell — inert unless
+		// selected, refused before the state machine moves.
+		if err := SubstrateOptionsFromConfig(agent.Config.SandboxSubstrate(m.sandboxConfig)).Validate(); err != nil {
+			return "", fmt.Errorf("agent %s sandbox substrate runtime: %w", agent.Name, err)
+		}
+		if effectiveBackend(agent) == "cline" {
+			return "", fmt.Errorf("agent %s: the Cline backend is not supported on the substrate sandbox runtime (no credential path into the sandbox); use podman or job", agent.Name)
 		}
 	}
 	if effectiveBackend(agent) == "cline" {
@@ -149,6 +159,8 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 		launcher = m.jobLauncherLocked(agent.Config.SandboxJob(m.sandboxConfig))
 	case config.SandboxRuntimeOpenShell:
 		launcher = m.openshellLauncherLocked(agent.Config.SandboxOpenShell(m.sandboxConfig))
+	case config.SandboxRuntimeSubstrate:
+		launcher = m.substrateLauncherLocked(agent.Config.SandboxSubstrate(m.sandboxConfig))
 	}
 	repo := m.project.PrimaryRepo()
 	now := time.Now()

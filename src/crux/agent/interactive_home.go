@@ -425,6 +425,12 @@ func (m *Manager) setupPerAgentCLIHome(agentName, home string, uid int, spec per
 	for _, name := range spec.bridges {
 		link := filepath.Join(dir, name)
 		target := filepath.Join(shared, name)
+		if spec.dir == claudeHomeDirName && name == claudeCredentialsFileName {
+			// A token refresh since the last launch replaced the link with a
+			// private file; publish it to the shared login and relink BEFORE
+			// bridgeHomeEntry, which refuses to clobber a regular file.
+			m.rebridgeClaudeCredential(agentName, link, target, claudeBridgeTriggerLaunch)
+		}
 		if _, err := os.Stat(target); err != nil && isPerAgentCLIBridgeDir(spec.dir, name) {
 			// Absent target: a dangling FILE link goes live on first login; a
 			// dangling DIRECTORY link would make the CLI's own mkdir -p fail,
@@ -519,6 +525,9 @@ func (m *Manager) warnOnStrayGitIdentity(agentName, home string) {
 	for _, rel := range gitIdentityConfigCandidates {
 		path := filepath.Join(home, rel)
 		if !gitConfigDeclaresUserIdentity(path) {
+			continue
+		}
+		if !m.strayGitIdentity.shouldWarn(agentName, path) {
 			continue
 		}
 		m.logger.Warn("agent git config declares a user identity outside the system /etc/gitconfig; commits still use the pinned per-lane GIT_AUTHOR_*/GIT_COMMITTER_* identity, but `git config user.email` reads this shared value instead (hivecommons/hive#9478)",

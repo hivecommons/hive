@@ -40,6 +40,15 @@ const (
 	// failure shape and same operator-login recovery as the Copilot case; the
 	// detail's outcome= distinguishes "missing" from "invalid or expired".
 	AuditClaudeTokenMissing = "claude_token_missing"
+
+	// AuditClaudeCredentialRebridged is recorded when an agent's per-agent
+	// ~/.claude/.credentials.json symlink to the shared Claude login had been
+	// replaced by a regular file (Claude Code saves a token refresh by renaming
+	// over the path) and hive re-bridged it: either promoting the agent's
+	// fresher token into the shared login or re-linking the agent to the
+	// shared one. The detail's kept= says which; it never carries token
+	// material.
+	AuditClaudeCredentialRebridged = "claude_credential_rebridged"
 )
 
 // AuditSink receives agent lifecycle events for durable, queryable recording.

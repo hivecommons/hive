@@ -1,8 +1,10 @@
 package dashboard
 
 import (
+	"errors"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -33,27 +35,28 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		IntentAlignmentModel             *string `json:"intentAlignmentModel"`
 		// Intent classifier lists. An empty list restores the built-in
 		// defaults (nil), matching how the intent package treats them.
-		IntentTestPathPatterns      *[]string `json:"intentTestPathPatterns"`
-		IntentDocsPathPatterns      *[]string `json:"intentDocsPathPatterns"`
-		IntentGuardrailPathPatterns *[]string `json:"intentGuardrailPathPatterns"`
-		IntentFeatureSignals        *[]string `json:"intentFeatureSignals"`
-		ReviewRequire               *bool     `json:"reviewRequireApproval"`
-		ReviewFanOut                *bool     `json:"reviewFanOut"`
-		ReviewMaxParallel           *int      `json:"reviewMaxParallelReviews"`
-		ReviewReviewerAgents        *[]string `json:"reviewReviewerAgents"`
-		ReviewFixerAgent            *string   `json:"reviewFixerAgent"`
-		AgentSandboxEnabled         *bool     `json:"agentSandboxEnabled"`
-		SandboxImage                *string   `json:"agentSandboxImage"`
-		SandboxEnvAllowlist         *[]string `json:"agentSandboxEnvAllowlist"`
-		SandboxNetworkMode          *string   `json:"agentSandboxNetworkMode"`
-		SandboxTimeoutS             *int      `json:"agentSandboxTimeoutS"`
-		SandboxWorkspaceDir         *string   `json:"agentSandboxWorkspaceDir"`
-		SandboxRuntime              *string   `json:"agentSandboxRuntime"`
-		SandboxJobServiceAccount    *string   `json:"agentSandboxJobServiceAccount"`
-		SandboxJobSchedulerName     *string   `json:"agentSandboxJobSchedulerName"`
-		SandboxJobTTLSeconds        *int      `json:"agentSandboxJobTtlSeconds"`
-		SandboxJobWorkspaceClaim    *string   `json:"agentSandboxJobWorkspaceClaim"`
-		SandboxJobClaimMount        *string   `json:"agentSandboxJobWorkspaceClaimMount"`
+		IntentTestPathPatterns      *[]string                      `json:"intentTestPathPatterns"`
+		IntentDocsPathPatterns      *[]string                      `json:"intentDocsPathPatterns"`
+		IntentGuardrailPathPatterns *[]string                      `json:"intentGuardrailPathPatterns"`
+		IntentFeatureSignals        *[]string                      `json:"intentFeatureSignals"`
+		ReviewRequire               *bool                          `json:"reviewRequireApproval"`
+		ReviewFanOut                *bool                          `json:"reviewFanOut"`
+		ReviewMaxParallel           *int                           `json:"reviewMaxParallelReviews"`
+		ReviewReviewerAgents        *[]string                      `json:"reviewReviewerAgents"`
+		ReviewFixerAgent            *string                        `json:"reviewFixerAgent"`
+		AgentSandboxEnabled         *bool                          `json:"agentSandboxEnabled"`
+		SandboxImage                *string                        `json:"agentSandboxImage"`
+		SandboxEnvAllowlist         *[]string                      `json:"agentSandboxEnvAllowlist"`
+		SandboxNetworkMode          *string                        `json:"agentSandboxNetworkMode"`
+		SandboxTimeoutS             *int                           `json:"agentSandboxTimeoutS"`
+		SandboxWorkspaceDir         *string                        `json:"agentSandboxWorkspaceDir"`
+		SandboxRuntime              *string                        `json:"agentSandboxRuntime"`
+		SandboxJobServiceAccount    *string                        `json:"agentSandboxJobServiceAccount"`
+		SandboxJobSchedulerName     *string                        `json:"agentSandboxJobSchedulerName"`
+		SandboxJobTTLSeconds        *int                           `json:"agentSandboxJobTtlSeconds"`
+		SandboxJobWorkspaceClaim    *string                        `json:"agentSandboxJobWorkspaceClaim"`
+		SandboxJobClaimMount        *string                        `json:"agentSandboxJobWorkspaceClaimMount"`
+		SandboxSubstrate            *config.SandboxSubstrateConfig `json:"agentSandboxSubstrate"`
 		// Sentinel (suspicious-activity alerts) is pointer-typed per field
 		// so an absent key means "unchanged" — a save that only toggled a
 		// behavior must not wipe the sensitive-path list.
@@ -263,6 +266,14 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 			job.TTLSeconds = *body.SandboxJobTTLSeconds
 		}
 	}
+	if body.SandboxSubstrate != nil {
+		sub, err := sanitizeSubstrateConfig(*body.SandboxSubstrate)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg.AgentSandbox.Substrate = sub
+	}
 	if nextSentinel != nil {
 		cfg.Sentinel = *nextSentinel
 	}
@@ -361,6 +372,7 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"agentSandboxJobTtlSeconds":          sandboxJobOrEmpty(cfg).TTLSeconds,
 		"agentSandboxJobWorkspaceClaim":      sandboxJobOrEmpty(cfg).WorkspaceClaim,
 		"agentSandboxJobWorkspaceClaimMount": sandboxJobOrEmpty(cfg).WorkspaceClaimMount,
+		"agentSandboxSubstrate":              substrateOrEmpty(cfg.AgentSandbox.Substrate),
 		"sandboxedAgents":                    sandboxed,
 		"totalAgents":                        len(cfg.Agents),
 		"sandboxWarnings":                    sandboxWarnings,
@@ -457,4 +469,51 @@ func sandboxJobOrEmpty(cfg *config.Config) config.SandboxJobConfig {
 		return config.SandboxJobConfig{}
 	}
 	return *cfg.AgentSandbox.Job
+}
+
+func substrateOrEmpty(sub *config.SandboxSubstrateConfig) config.SandboxSubstrateConfig {
+	if sub == nil {
+		return config.SandboxSubstrateConfig{}
+	}
+	return *sub
+}
+
+// sanitizeSubstrateConfig trims and validates a Substrate block from the
+// Settings dialog. An all-empty block returns nil so the YAML key is dropped.
+func sanitizeSubstrateConfig(in config.SandboxSubstrateConfig) (*config.SandboxSubstrateConfig, error) {
+	if in.TimeoutS < 0 || in.BridgePort < 0 || in.CPUMillicores < 0 || in.MemoryBytes < 0 {
+		return nil, errors.New("substrate numeric settings must be >= 0")
+	}
+	clean := func(s string) string { return sanitizeString(strings.TrimSpace(s)) }
+	out := config.SandboxSubstrateConfig{
+		Endpoint:           clean(in.Endpoint),
+		Atespace:           clean(in.Atespace),
+		TokenEnv:           clean(in.TokenEnv),
+		TokenFile:          clean(in.TokenFile),
+		CAFile:             clean(in.CAFile),
+		InsecureTLS:        in.InsecureTLS,
+		TimeoutS:           in.TimeoutS,
+		RouterURL:          clean(in.RouterURL),
+		RouterClientBundle: clean(in.RouterClientBundle),
+		RouterCAFile:       clean(in.RouterCAFile),
+		BridgePort:         in.BridgePort,
+		Image:              clean(in.Image),
+		BridgeCommand:      sanitizeStringSlice(in.BridgeCommand),
+		CPUMillicores:      in.CPUMillicores,
+		MemoryBytes:        in.MemoryBytes,
+		WorkerSelector:     sanitizedHeaderMap(in.WorkerSelector),
+		SnapshotOnIdle:     in.SnapshotOnIdle,
+		AllowHosts:         sanitizeStringSlice(in.AllowHosts),
+		PolicyProfile:      clean(in.PolicyProfile),
+	}
+	if len(out.BridgeCommand) == 0 {
+		out.BridgeCommand = nil
+	}
+	if len(out.AllowHosts) == 0 {
+		out.AllowHosts = nil
+	}
+	if reflect.DeepEqual(out, config.SandboxSubstrateConfig{}) {
+		return nil, nil
+	}
+	return &out, nil
 }

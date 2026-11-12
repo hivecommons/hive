@@ -193,13 +193,27 @@ func (s *Server) importBundle(st *wfstore.Store, b *bundle.Bundle, by string) (w
 		version = next
 	}
 	m.Spec.Meta.Version = version
-	if m.Spec.Meta.Provenance == "" {
-		m.Spec.Meta.Provenance = workflowmodel.Provenance(b.Tier)
-	}
-	if m.Spec.Meta.Provenance == workflowmodel.ProvenanceBuiltIn || string(m.Spec.Meta.Provenance) == bundle.TierLocalPublished {
-		m.Spec.Meta.Provenance = workflowmodel.ProvenanceLocal
-	}
+	m.Spec.Meta.Provenance = importedProvenance(m.Spec.Meta.Provenance, b.Tier)
 	return st.Save(m, by, time.Now().UTC())
+}
+
+// importedProvenance decides what provenance an imported model is stored
+// with. The envelope tier is the field the hub polices (curated/built-in
+// need a hub admin); the model's own provenance is hash-covered and set by
+// whoever authored the model, so a vouched tier claimed there is honoured
+// only when the envelope asserts the same tier. built-in and
+// local-published always land as local: this hive did not ship the model
+// and has not published it.
+func importedProvenance(model workflowmodel.Provenance, tier string) workflowmodel.Provenance {
+	p := model
+	vouched := p == workflowmodel.ProvenanceCurated || p == workflowmodel.ProvenanceBuiltIn
+	if p == "" || (vouched && string(p) != tier) {
+		p = workflowmodel.Provenance(tier)
+	}
+	if p == workflowmodel.ProvenanceBuiltIn || string(p) == bundle.TierLocalPublished || p == "" {
+		p = workflowmodel.ProvenanceLocal
+	}
+	return p
 }
 
 // hubRequest builds an authenticated spoke→hub request.
@@ -450,8 +464,11 @@ func (s *Server) handleMarketplacePublish(w http.ResponseWriter, r *http.Request
 }
 
 // handleMarketplaceRefresh asks the hub to re-ingest its corpus (or one
-// ?repo=). Owner on the spoke; the hub applies its own admin policy and may
-// refuse, which is surfaced as 403.
+// ?repo=). Owner on the spoke; the request carries the spoke's heartbeat
+// bearer + X-Hive-ID, which the hub accepts for refresh the way it does
+// for publish. The hub's error body is relayed verbatim: 401/403 → 403,
+// 429 (hive rate limit) and 409 (run in progress) keep their status, and
+// anything else → 502.
 func (s *Server) handleMarketplaceRefresh(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -481,6 +498,12 @@ func (s *Server) handleMarketplaceRefresh(w http.ResponseWriter, r *http.Request
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		jsonError(w, "hub refused refresh: "+strings.TrimSpace(hubErrorMessage(body)), http.StatusForbidden)
+		return
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusConflict:
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			w.Header().Set("Retry-After", ra)
+		}
+		jsonError(w, "hub refresh not started: "+strings.TrimSpace(hubErrorMessage(body)), resp.StatusCode)
 		return
 	case resp.StatusCode >= 300:
 		jsonError(w, fmt.Sprintf("hub refresh failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(hubErrorMessage(body))), http.StatusBadGateway)

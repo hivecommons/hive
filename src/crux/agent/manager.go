@@ -552,7 +552,8 @@ type Manager struct {
 	// own mutex: the pane pollers that consult it must not take m.mu.
 	rateLimitRelaunchMu   sync.Mutex
 	lastRateLimitRelaunch time.Time
-	cliMemory             cliMemoryState // shared-store warning and drain hook, see cli_memory_drain.go
+	cliMemory             cliMemoryState         // shared-store warning and drain hook, see cli_memory_drain.go
+	strayGitIdentity      strayGitIdentityWarned // warn-once state, see git_identity_warn_dedupe.go
 
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
 	// the output-capture goroutines, and taking m.mu there risks startup
@@ -766,6 +767,9 @@ type Manager struct {
 	// sandboxOpenShellLauncherFactory is the same seam for
 	// sandbox.runtime: openshell (ADR-0026).
 	sandboxOpenShellLauncherFactory func(config.SandboxOpenShellConfig) sandbox.Launcher
+	// sandboxSubstrateLauncherFactory is the same seam for
+	// sandbox.runtime: substrate (ADR-0026 phase 2).
+	sandboxSubstrateLauncherFactory func(config.SandboxSubstrateConfig) sandbox.Launcher
 	sandboxRunner                   sandboxCommandRunner
 	// sandboxRunPersister overrides persistSandboxRun in tests.
 	sandboxRunPersister  func(workDir string, entry SandboxRunHistoryEntry) error

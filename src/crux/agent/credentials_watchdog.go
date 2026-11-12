@@ -25,6 +25,19 @@ const (
 	// only for overrides) — disabling is intentionally not offered so the
 	// safety net cannot be silently turned off.
 	CredentialWatchdogIntervalEnv = "HIVE_CREDENTIAL_WATCHDOG_INTERVAL"
+
+	// defaultClaudeBridgeInterval is how often the watchdog checks each
+	// per-agent Claude credential link for a token refresh that replaced it
+	// (claude_credential_bridge.go). Short on purpose: every agent holds the
+	// SAME access token, so they all reach expiry together and refresh within
+	// a minute or two of each other; the first refresh rotates the grant, and
+	// each agent that tries before that refresh is published fails and signs
+	// itself out. The check is one Lstat per claude agent, so 5s costs
+	// nothing; the su-exec read happens only when a link has been replaced.
+	defaultClaudeBridgeInterval = 5 * time.Second
+	// ClaudeBridgeIntervalEnv overrides the bridge poll interval with a Go
+	// duration string.
+	ClaudeBridgeIntervalEnv = "HIVE_CLAUDE_CREDENTIAL_BRIDGE_INTERVAL"
 )
 
 // credentialWatchdogInterval resolves the watchdog interval from
@@ -36,6 +49,17 @@ func credentialWatchdogInterval() time.Duration {
 		}
 	}
 	return defaultCredentialWatchdogInterval
+}
+
+// claudeBridgeInterval resolves the bridge poll interval from
+// ClaudeBridgeIntervalEnv, falling back to the default.
+func claudeBridgeInterval() time.Duration {
+	if v := os.Getenv(ClaudeBridgeIntervalEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultClaudeBridgeInterval
 }
 
 // credentialWatch describes one CLI backend whose usable credential lives in a
@@ -199,6 +223,8 @@ func credentialWatches() []credentialWatch {
 func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 	ticker := time.NewTicker(credentialWatchdogInterval())
 	defer ticker.Stop()
+	bridgeTicker := time.NewTicker(claudeBridgeInterval())
+	defer bridgeTicker.Stop()
 	// Per-backend transition tracker so we log/audit on TRANSITIONS (usable ->
 	// unusable and back) rather than every tick — a standing condition would
 	// otherwise flood the Audit Log at the tick rate.
@@ -207,7 +233,16 @@ func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-bridgeTicker.C:
+			if m.backendInUse("claude") {
+				m.RepairClaudeCredentialBridges(claudeBridgeTriggerWatchdog)
+			}
 		case <-ticker.C:
+			// Re-bridge before probing, so a just-published refresh is what
+			// the shared-credential probe sees.
+			if m.backendInUse("claude") {
+				m.RepairClaudeCredentialBridges(claudeBridgeTriggerWatchdog)
+			}
 			for _, w := range credentialWatches() {
 				m.evalCredentialWatch(w, lastUnusable)
 			}
