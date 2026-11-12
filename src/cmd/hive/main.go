@@ -4143,6 +4143,10 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// unconditionally: with HIVE_PROXY_INJECT_GH_AUTH unset (the default)
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
+		// project.reference_repos (#18015): study-only repos outside the
+		// project, with a rare per-entry issues/prs opt-in served by a
+		// credential verified here (boot refuses otherwise).
+		b.wireReferenceRepos()
 		// Durable attempted-vs-blocked write counters (#12069); observation only.
 		if err := proxy.MigrateWriteCounters(proxy.LegacyWriteCountersPath, proxy.WriteCountersPath, time.Now()); err != nil {
 			b.logger.Warn("write counters: legacy file not migrated", "error", err)

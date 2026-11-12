@@ -846,6 +846,18 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 		b.WriteString(fmt.Sprintf("⏸️ PAUSED BY THE OPERATOR (watched, but OUT OF SCOPE this session): %s\n", strings.Join(pausedFull, ", ")))
 		b.WriteString("   The hive is deliberately quiet on those repos — a release freeze, an incident, a repo declared but not yet onboarded. Writes to them are refused deterministically by the proxy and by the hive-open-pr/hive-merge relays, so retrying cannot succeed. This is an operator decision, NOT an outage and NOT scope loss: do not work them, do not route around it, and do not file an issue about it.\n")
 	}
+	// project.reference_repos (hivecommons/hive#18015): repos outside the
+	// project an agent may STUDY — e.g. a docs-assessment hive reading the
+	// repos it assesses. Without this block the scanner reads any item whose
+	// deliverables name them as out-of-scope/critical, and agents either
+	// refuse the work or try to write to them.
+	if refs := s.cfg.Project.ReferenceRepos; len(refs) > 0 {
+		b.WriteString("📚 REFERENCE REPOS (outside this project — study them, do not work them):\n")
+		for _, rr := range refs {
+			b.WriteString(fmt.Sprintf("  %s/%s  [reference · %s]\n", strings.TrimRight(host, "/"), rr.Repo, rr.WriteLabel()))
+		}
+		b.WriteString("   You MAY clone them (public, unauthenticated), read their files, and GET their issues/PRs/API. An authorized-repo item whose deliverables name a reference repo is IN SCOPE, not a scope violation: do NOT classify it out-of-scope, critical, or a security concern. Findings about a reference repo belong in the deliverable inside the AUTHORIZED repo (the assessment document, the report), never as issues or PRs on the reference repo itself — unless its tier above says issues/prs, in which case you may ONLY open an issue, open a PR from your own branch, or comment on an issue/PR you opened; the proxy refuses merges, default-branch pushes, labels, assignments, reviews and closing others' items deterministically, so retrying cannot succeed.\n")
+	}
 	b.WriteString("⛔ NEVER access, search, list, file issues in, or open PRs on repos not listed above.\n")
 	b.WriteString(fmt.Sprintf("⛔ Every repo above is on %s. This hive is single-host — never touch a repo on a different GitHub host.\n", host))
 	// SCOPE vs PROVISIONING (#4464). This list is what `include_repos: true`

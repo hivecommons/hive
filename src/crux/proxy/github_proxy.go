@@ -86,6 +86,16 @@ type GitHubProxy struct {
 	logger        *slog.Logger
 	uidMap        *agent.UIDMap
 	allowedRepos  map[string]bool
+	// Reference repos (#18015): study-only repositories outside allowedRepos,
+	// read-only by default with a per-entry issues/prs opt-in. Reads to them
+	// are forwarded without the hive's credential; writes are gated by
+	// referenceRepoRefusal. referenceDefaults caches each repo's default
+	// branch for the push guard; referenceLookup is the GET those checks use
+	// (nil = defaultReferenceLookup; tests inject one).
+	referenceMu       sync.RWMutex
+	referenceRepos    map[string]ReferenceRepoPolicy
+	referenceDefaults map[string]referenceDefaultBranch
+	referenceLookup   referenceLookupFunc
 
 	// repoPaused reports whether a repo ("owner/repo", as ExtractRepo yields it)
 	// is under an operator pause (#6203). Guarded because the dashboard can
