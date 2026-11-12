@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.235.1)
+
+### Fixed
+
+- `hive-baseline-check.sh` no longer always exits 2 under the gh wrapper ([#17835](https://github.com/hivecommons/hive/issues/17835)). Its sibling-PR lookup (`gh pr list --state open --json …statusCheckRollup`) was refused with `enumeration_disabled`, so the kick's mandatory baseline triage never produced a verdict. The helper now marks that one call with `HIVE_BASELINE_CHECK=1` and the wrapper lets only that narrow projection through (no `--search`; every other `gh pr list` stays blocked), and a wrapper policy block is now reported distinctly from a GitHub API failure.
+
 ## 2026-11-12 (v5.235.0)
 
 ### Added
