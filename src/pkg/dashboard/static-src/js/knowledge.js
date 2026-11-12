@@ -1981,6 +1981,12 @@
         html += '<div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenPlaudIntegration">Configure in Integrations</button></div>';
         html += '</div></details>';
 
+        html += '<details class="kb-sources-add"><summary class="summary-label">🗣️ Wispr Flow dictation</summary>';
+        html += '<div class="stack kb-sources-form">';
+        html += '<div class="muted-xs">Dictate straight into any field here — put the cursor in <strong>+ New Fact</strong> and hold the Flow key; no connector needed. To also pull your past dictations in, the Wispr Flow connector reads the app\'s local history (flow.sqlite or an export folder). $0 beyond your Wispr Flow plan.</div>';
+        html += '<div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenWisprFlowIntegration">Configure in Integrations</button></div>';
+        html += '</div></details>';
+
         html += '<details open class="kb-sources-add"><summary class="summary-label">📚 Import from Context7</summary>';
         html += '<div class="stack kb-sources-form">';
         html += '<div class="muted-xs">Search Context7 for library documentation (e.g. "vllm", "next.js", "kubernetes").</div>';
@@ -2428,6 +2434,7 @@
       html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
       if (type === 'plaud') html += kbPlaudAuthLine(c.name);
+      if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
         html += '<div class="kb-integration-actions">';
@@ -2468,6 +2475,7 @@
       html += '<label class="muted-note">Credential reference<input class="kb-search-box mt-2" type="text" data-kb-kc-auth-value value="' + escapeHtml(authVal) + '" placeholder="TOKEN_ENV or /run/secrets/token" autocomplete="off"></label></div>';
       html += '<div class="kb-integration-scope-grid">' + kcScopeFieldsHTML(type, c.scope || {}) + '</div>';
       if (type === 'context7') html += kbContext7FormExtras(c);
+      if (type === 'wisprflow') html += '<p class="muted-xs" data-kb-wisprflow-note>Leave the credential source as None: the connector reads Wispr Flow\'s local history read-only with the sqlite3 CLI. Leave the path empty for the default app location on the hive host (macOS: ~/Library/Application Support/Wispr Flow/flow.sqlite; Windows: %APPDATA%\\Wispr Flow\\flow.sqlite), or point it at a copy of flow.sqlite or a folder of exported .json/.ndjson/.csv/.md files. New dictations need no connector at all — dictate into + New Fact directly.</p>';
       if (type === 'plaud') html += '<p class="muted-xs" data-kb-plaud-note>Leave the credential source as None: Plaud signs in with its own OAuth flow (Connect on the entry above) and keeps the token in the MCP server\'s own store. Requires Node.js ≥ 20 on the hive host and costs nothing beyond your Plaud plan.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
@@ -2632,3 +2640,11 @@
       }
     }
     function kbOpenPlaudIntegration() { _kbIntegrationSelected = 'plaud'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+
+    // ── Wispr Flow (local dictation history, no sign-in) ──
+    function kbWisprFlowSourceLine(c) {
+      const path = (c.scope && c.scope.path) || '';
+      const group = (c.scope && c.scope.group) === 'day' ? 'one fact per day' : 'one fact per dictation';
+      return '<div class="muted-xs" data-kb-wisprflow-source>Wispr Flow: ' + (path ? '<code>' + escapeHtml(path) + '</code>' : 'default app location on the hive host') + ' · ' + group + '</div>';
+    }
+    function kbOpenWisprFlowIntegration() { _kbIntegrationSelected = 'wisprflow'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
