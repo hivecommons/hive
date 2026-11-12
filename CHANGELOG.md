@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.26.0)
+
+### Added
+
+- The admin MCP can now say where a hive's GitHub API budget goes, which an operator could only see on the dashboard (the GitHub API card and Debug → GitHub API budget) before. The new `github_api_usage` read tool returns, in one call: the core bucket (`limit`, `remaining`, `reset`, `observed_at`, `reset_in_seconds`); the API budget mode (`normal`, `conserve` or `critical`) with `since`, `skipped_steps` and the configured `reserve` and `critical` thresholds; `top_consumers`, the most charged caller + method + endpoint rows, with a `limit` argument (default 20, maximum 50); `by_caller`, the same hour summed per caller and never cut, with `window_totals`; `agent_caps`, each agent's proxy cap and calls this hour; the ETag cache counters; and `window_seconds`, the one hour the counts cover. `charged` counts the requests GitHub billed and `not_modified` the free `304` answers. It needs what the endpoint needs, a signed-in caller with no role floor, and reading it spends no core API call: the hive makes one `GET /rate_limit`, which GitHub does not charge. `GET /api/gh-rate-limits` gains two optional parameters for this: `?top=N` (default 10, at most 50) sets the number of `top_consumers` rows, and `?usage=1` adds the per-caller view; without them the payload is unchanged. Rows that tie in `top_consumers` now come back in one fixed order.
+
+### Fixed
+
+- The `stage/085-needs-decision` comment now says when one action answers both the reviewer and Sentinel. A PR that needed a person's approval (a `requires_human` verdict, or a CI workflow-file fence an approval releases) and also carried an open sentinel alert was told two separate steps: "a trusted merger approves this head" and "resolve the sentinel alert and have a maintainer clear its label". A maintainer who removed the label by hand found the PR still parked and had to approve as well — two actions for one trust decision. **Approve** on the PR's row in the dashboard's Activity monitor (or `approve` through the admin MCP's `repository.item_decision`, which uses the same endpoint) already records the approval for the head and clears the alert's label, and the comment now says so, adding that a GitHub **Approve** review or a typed `/hive approve` / `/hive decision approve` reply approves but leaves the label for a maintainer to remove. When the approval is already on record and the alert is still open, the comment says the only step left for the alert is clearing its label (on GitHub, or **Confirm safe** on the row). A sentinel alert with no approval owed, and an approval with no sentinel alert, read exactly as before. Wording only: no gate, label or decision logic changes.
+- The github-proxy no longer logs `proxy: CONNECT dial failed` at WARN when the CONNECT target hostname does not resolve (for example a placeholder host from an example config); it now logs at Debug, so a misconfigured host no longer triggers the fleet repeated-error self-report. Other CONNECT dial failures still warn.
+
 ## 2026-11-12 (v6.25.0)
 
 ### Added
