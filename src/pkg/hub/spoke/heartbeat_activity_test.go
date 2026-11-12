@@ -102,6 +102,31 @@ func TestHeartbeatKickInterval(t *testing.T) {
 	}
 }
 
+func TestScheduledKickGapSpansSlots(t *testing.T) {
+	// Weekday 09:00/12:00/15:00 UTC. Last fired Friday 15:00 → next slot is
+	// Monday 09:00, so the gap must cover the whole weekend, not 3h.
+	cad := governor.AgentCadence{Schedule: config.Cadence(`tod:{"times":["09:00","12:00","15:00"],"tz":"UTC","days":["mon","tue","wed","thu","fri"]}`)}
+	if err := cad.Schedule.Validate(); err != nil {
+		t.Fatalf("fixture cadence invalid: %v", err)
+	}
+	fri := time.Date(2026, 11, 13, 15, 0, 0, 0, time.UTC)
+	cad.LastOccurrence = fri
+	if got := scheduledKickGap(cad, fri, fri.Add(5*time.Hour)); got != 66*time.Hour {
+		t.Errorf("weekend gap = %v, want 66h", got)
+	}
+	// Mid-day slot: 09:00 → 12:00.
+	cad.LastOccurrence = time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	if got := scheduledKickGap(cad, time.Time{}, cad.LastOccurrence.Add(time.Hour)); got != 3*time.Hour {
+		t.Errorf("intra-day gap = %v, want 3h", got)
+	}
+	// Never fired: gap runs from now to the first slot.
+	cad.LastOccurrence = time.Time{}
+	now := time.Date(2026, 11, 11, 7, 0, 0, 0, time.UTC)
+	if got := scheduledKickGap(cad, time.Time{}, now); got != 2*time.Hour {
+		t.Errorf("unfired gap = %v, want 2h", got)
+	}
+}
+
 func TestQuotaExhaustedCountsAndReasons(t *testing.T) {
 	statuses := map[string]*crux.Process{
 		"counted":   {State: crux.StateRunning, QuotaExhausted: true},
