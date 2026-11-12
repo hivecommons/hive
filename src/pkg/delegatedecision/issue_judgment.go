@@ -101,6 +101,7 @@ var selfreportOpsRemedies = map[string]string{
 	"github_app_not_installed":      "install the GitHub App on the organisation or repositories the spoke serves",
 	"github_app_repo_not_covered":   "add the repository to the GitHub App installation the spoke uses",
 	"proxy_connect_dial_failed":     "restore the spoke's outbound proxy or network path",
+	"proxy_plain_forward_failed":    "check the requested HTTP host, DNS and outbound network path on the spoke",
 	"proxy_tls_handshake_failed":    "fix the spoke's proxy TLS trust (certificate or CA bundle)",
 	"crux_runtime_unavailable":      "restart or re-deploy the crux runtime sidecar on the spoke",
 	"model_discovery_degraded":      "check the model endpoint and credentials the spoke's provider is configured with",

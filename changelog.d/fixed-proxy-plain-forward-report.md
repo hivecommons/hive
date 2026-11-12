@@ -1,0 +1,1 @@
+- Classify repeated plain HTTP proxy forwarding failures separately, with diagnostics for the requested host and network path.
