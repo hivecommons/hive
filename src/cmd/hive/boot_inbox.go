@@ -28,7 +28,7 @@ func (b *boot) bootInbox(baseDir string) {
 	var srcs []inbox.Source
 	for _, typ := range sources {
 		if configured[typ] {
-			srcs = append(srcs, &inbox.FactSource{ConnectorsDir: filepath.Join(baseDir, "connectors"), SourceType: typ})
+			srcs = append(srcs, b.inboxSource(baseDir, typ))
 		}
 	}
 	if len(srcs) == 0 {
@@ -58,6 +58,31 @@ func (b *boot) bootInbox(baseDir string) {
 	svc.SetReadiness(dashboard.InboxReadiness(b.cfg))
 	b.inboxSvc = svc
 	b.logger.Info("inbox started", "sources", len(srcs), "rules", len(b.cfg.Inbox.Rules))
+}
+
+// inboxSource returns the fact-backed source for typ. For Plaud it prefers
+// reading recordings directly from the connector while it is signed in.
+func (b *boot) inboxSource(baseDir, typ string) inbox.Source {
+	facts := &inbox.FactSource{ConnectorsDir: filepath.Join(baseDir, "connectors"), SourceType: typ}
+	if typ != inbox.PlaudType || b.knowledgeConnectors == nil {
+		return facts
+	}
+	for _, c := range b.cfg.Knowledge.Connectors {
+		if c.Type != typ {
+			continue
+		}
+		conn, ok := b.knowledgeConnectors.Connector(c.Name)
+		reader, isReader := conn.(connector.PlaudReader)
+		if !ok || !isReader {
+			continue
+		}
+		direct := &inbox.PlaudSource{Name: c.Name, Reader: reader}
+		if auth, ok := conn.(connector.Authenticator); ok {
+			direct.Ready = func(ctx context.Context) bool { return auth.AuthStatus(ctx, false).Connected }
+		}
+		return &inbox.PreferDirect{Direct: direct, Facts: facts}
+	}
+	return facts
 }
 
 // inboxAfterSync runs the auto-routing rules once a voice connector synced.
