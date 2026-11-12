@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -339,9 +340,16 @@ const productionAgentOverlayDir = "/data/agent-configs"
 // tell). An agent with no overlay file is left alone. Failures are logged:
 // the main config, the pause's authority, is already saved. Caller holds
 // saveMu.
+//
+// Only the paused key is patched, in place (yaml.Node): every other key and
+// comment in the file is kept byte-for-byte in meaning. Round-tripping the
+// file through AgentConfig would not be: enabled and clear_on_kick default
+// to true only while the key is absent (UnmarshalYAML), and marshaling
+// writes them back as explicit false, so a hand-authored overlay without
+// them would come back disabled on the next load.
 func (c *Config) syncAgentOverlayPausedLocked(name string, paused bool) {
 	dir := c.Data.AgentsDir
-	if dir == "" || (testing.Testing() && dir == productionAgentOverlayDir) {
+	if dir == "" || guardLivePVCPathUnderTest(dir, productionAgentOverlayDir, "AgentsDir") {
 		return
 	}
 	if strings.Contains(name, "..") || strings.ContainsAny(name, `/\`) {
@@ -355,18 +363,82 @@ func (c *Config) syncAgentOverlayPausedLocked(name string, paused bool) {
 		}
 		return
 	}
-	var overlay AgentConfig
-	if err := yaml.Unmarshal(data, &overlay); err != nil {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
 		log.Printf("[config] warning: could not parse agent overlay %s to record its pause state: %v", path, err)
 		return
 	}
-	if overlay.Paused == paused {
+	changed, err := setOverlayPausedNode(&doc, paused)
+	if err != nil {
+		log.Printf("[config] warning: could not record pause state in agent overlay %s: %v", path, err)
 		return
 	}
-	overlay.Paused = paused
-	if err := SaveAgentFile(dir, name, overlay); err != nil {
+	if !changed {
+		return
+	}
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		log.Printf("[config] warning: could not record pause state in agent overlay %s: %v", path, err)
+		return
+	}
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, out, 0o644); err != nil {
+		log.Printf("[config] warning: could not record pause state in agent overlay %s: %v", path, err)
+		return
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
 		log.Printf("[config] warning: could not record pause state in agent overlay %s: %v", path, err)
 	}
+}
+
+// setOverlayPausedNode sets the top-level paused key of a parsed overlay
+// document to paused, adding the key when it is absent and paused is true
+// (an absent key already means false). It reports whether the document
+// changed.
+func setOverlayPausedNode(doc *yaml.Node, paused bool) (bool, error) {
+	root := doc
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			root.Content = []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}
+		}
+		root = root.Content[0]
+	}
+	if root.Kind == 0 {
+		// An empty file parses to an empty node; make it a document holding
+		// one mapping so the key has somewhere to go.
+		*doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
+		root = doc.Content[0]
+	}
+	if root.Kind != yaml.MappingNode {
+		return false, fmt.Errorf("top level is %v, not a mapping", root.Tag)
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "paused" {
+			continue
+		}
+		val := root.Content[i+1]
+		var cur bool
+		if err := val.Decode(&cur); err != nil {
+			return false, fmt.Errorf("paused: %w", err)
+		}
+		if cur == paused {
+			return false, nil
+		}
+		val.Kind = yaml.ScalarNode
+		val.Tag = "!!bool"
+		val.Style = 0
+		val.Value = strconv.FormatBool(paused)
+		val.Content = nil
+		return true, nil
+	}
+	if !paused {
+		return false, nil
+	}
+	root.Content = append(root.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "paused"},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
+	return true, nil
 }
 
 // saTokenFile is the Kubernetes serviceaccount token path IsKubernetesPod

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -126,4 +127,65 @@ func TestReconcilePausedAndSave_SyncsOverlayPause(t *testing.T) {
 		t.Fatalf("after restart: worker paused=%v other paused=%v, want both paused",
 			reloaded.Agents["worker"].Paused, reloaded.Agents["other"].Paused)
 	}
+}
+
+// The sync must patch only the paused key. enabled and clear_on_kick default
+// to true only while the key is absent; a round trip through AgentConfig
+// writes them back as explicit false, so a hand-authored overlay without
+// them would come back disabled after the first pause or resume. Other keys
+// and comments must survive too.
+func TestSetAgentPausedAndSave_OverlaySyncKeepsAbsentDefaults(t *testing.T) {
+	cfg, path, agentsDir := overlayPauseSyncConfig(t)
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	overlay := "# hand-authored overlay\nbackend: claude\nmodel: claude-sonnet-5-5 # pinned\nrepos:\n  - repo1\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "worker.yaml"), []byte(overlay), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(step string, wantPaused bool) {
+		t.Helper()
+		reloaded, err := Load(path)
+		if err != nil {
+			t.Fatalf("%s: Load: %v", step, err)
+		}
+		ac := reloaded.Agents["worker"]
+		if ac.Paused != wantPaused {
+			t.Errorf("%s: paused = %v, want %v", step, ac.Paused, wantPaused)
+		}
+		if !ac.Enabled {
+			t.Errorf("%s: overlay without an enabled key loaded as Enabled=false", step)
+		}
+		if !ac.ClearOnKick {
+			t.Errorf("%s: overlay without a clear_on_kick key loaded as ClearOnKick=false", step)
+		}
+		if ac.Model != "claude-sonnet-5-5" || len(ac.Repos) != 1 || ac.Repos[0] != "repo1" {
+			t.Errorf("%s: other overlay keys changed: model=%q repos=%v", step, ac.Model, ac.Repos)
+		}
+	}
+
+	if _, err := cfg.SetAgentPausedAndSave("worker", true); err != nil {
+		t.Fatal(err)
+	}
+	check("after pause", true)
+	raw, err := os.ReadFile(filepath.Join(agentsDir, "worker.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# hand-authored overlay", "# pinned", "paused: true"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("after pause: overlay lost %q:\n%s", want, raw)
+		}
+	}
+	for _, reject := range []string{"enabled:", "clear_on_kick:"} {
+		if strings.Contains(string(raw), reject) {
+			t.Errorf("after pause: overlay gained an explicit %s key:\n%s", reject, raw)
+		}
+	}
+
+	if _, err := cfg.SetAgentPausedAndSave("worker", false); err != nil {
+		t.Fatal(err)
+	}
+	check("after resume", false)
 }

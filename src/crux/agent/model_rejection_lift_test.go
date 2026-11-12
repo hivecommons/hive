@@ -14,7 +14,7 @@ import (
 // CLI never launched on the corrected model until someone resumed the agent
 // by hand.
 
-const liftTestRejectReason = "model claude-sonnet-5.5 rejected by the CLI 3 times in a row; set a valid model for this agent, then resume it"
+const liftTestRejectReason = "model claude-sonnet-5.5 rejected by the CLI 3 times in a row; set a valid model for this agent (the change resumes it)"
 
 // pauseTriggersThatStay are the pauses a model change must never lift.
 var pauseTriggersThatStay = []string{

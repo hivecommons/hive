@@ -14,7 +14,7 @@ import (
 // mrpModelRejectedTrigger is crux/agent.ModelRejectedTrigger.
 const mrpModelRejectedTrigger = "model-rejected"
 
-const mrpRejectReason = "model claude-sonnet-5.5 rejected by the CLI 3 times in a row; set a valid model for this agent, then resume it"
+const mrpRejectReason = "model claude-sonnet-5.5 rejected by the CLI 3 times in a row; set a valid model for this agent (the change resumes it)"
 
 func mrpAssertUnpaused(t *testing.T, deps *Dependencies, what string) {
 	t.Helper()

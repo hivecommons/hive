@@ -183,7 +183,7 @@ func (m *Manager) parkForModelRejection(name, model string, count int) bool {
 
 // modelRejectionPauseReason is the operator-facing pause reason.
 func modelRejectionPauseReason(model string, count int) string {
-	return fmt.Sprintf("model %s rejected by the CLI %d times in a row; set a valid model for this agent, then resume it", model, count)
+	return fmt.Sprintf("model %s rejected by the CLI %d times in a row; set a valid model for this agent (the change resumes it)", model, count)
 }
 
 // clearModelRejectionLocked drops the rejection count and, when the active
@@ -207,8 +207,8 @@ const modelChangeResumeReason = "operator changed the agent's model or backend"
 // RestartAfterModelChange restarts the agent to apply an operator's model or
 // backend change. A pause the CLI's model rejection put on the agent
 // (ModelRejectedTrigger) is lifted first, because the operator just did what
-// that pause asks for ("set a valid model for this agent, then resume it"):
-// the restart then launches the CLI on the new model. Every other pause (an
+// that pause asks for ("set a valid model for this agent"): the restart then
+// launches the CLI on the new model. Every other pause (an
 // operator's own, a login prompt, a restart storm, a full disk, an on-demand
 // agent's) stays, and the restart keeps it exactly as Restart does. If the
 // new model is wrong too, the CLI rejects it and the agent is parked again
@@ -226,9 +226,14 @@ func (m *Manager) RestartAfterModelChange(ctx context.Context, name, by string) 
 }
 
 // liftModelRejectedPause resumes name without relaunching it when, and only
-// when, its current pause is a model-rejection park. It records the resume
+// when, its current pause is a model-rejection park. It clears the pause
+// with clearPauseLocked, the same reset Resume uses, and records the resume
 // like Resume does (audit line, audit event, pause persistence, transition
-// event) and reports whether it lifted anything. The caller relaunches.
+// event), then reports whether it lifted anything. What it deliberately
+// leaves out of Resume is the relaunch: the forceRelaunch flag, the sandbox
+// branch's idle transition, the tmux session, token mint and pool lease all
+// belong to the caller's Restart, which does them for the sandbox and
+// non-sandbox cases alike.
 func (m *Manager) liftModelRejectedPause(name, by string) (bool, error) {
 	m.mu.Lock()
 	agent, ok := m.agents[name]
@@ -242,19 +247,12 @@ func (m *Manager) liftModelRejectedPause(name, by string) (bool, error) {
 	}
 	now := time.Now()
 	prevReason := agent.PausedReason
-	agent.Paused = false
-	agent.Config.Paused = false
-	agent.PausedAt = time.Time{}
-	agent.PausedReason = ""
-	agent.PausedTrigger = ""
-	agent.PausedBy = ""
-	agent.restartStormBackoffUntil = time.Time{}
+	m.clearPauseLocked(agent, now)
 	if agent.State == StatePaused {
 		// Nothing runs until the caller's restart: stopped, not paused, so a
 		// failed restart leaves an agent the crash recovery can start.
 		agent.State = StateStopped
 	}
-	m.clearModelRejectionLocked(agent, now)
 	persistPause := m.persistPauseCallback
 	m.logger.Info("audit: agent resumed",
 		"name", name,

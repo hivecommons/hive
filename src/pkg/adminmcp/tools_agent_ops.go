@@ -226,7 +226,7 @@ func (agentModelOp) Preview(_ context.Context, args map[string]any) (WritePrevie
 		return WritePreview{}, err
 	}
 	path := "/api/model/" + url.PathEscape(agent) + "/" + url.PathEscape(model)
-	return WritePreview{Operation: WriteOpAgentModel, Summary: "Set model for agent " + agent + " to " + model, Target: agent, Request: WriteRequest{Method: http.MethodPost, Path: path}, Effects: []string{"Hive validates the model against the effective backend, persists operator ownership, and restarts the agent session."}, WideningDisclosure: "No authority widening: this changes model selection for exactly one named agent but not its interaction tier.", ConfirmationMessage: "Confirm setting agent " + agent + " model to " + model + ".", Details: map[string]any{"agent": agent, "model": model}}, nil
+	return WritePreview{Operation: WriteOpAgentModel, Summary: "Set model for agent " + agent + " to " + model, Target: agent, Request: WriteRequest{Method: http.MethodPost, Path: path}, Effects: []string{"Hive validates the model against the effective backend, persists operator ownership, and restarts the agent session.", "If the agent is paused because the CLI rejected its model (pause trigger `model-rejected`), the change lifts that pause so the restart launches the CLI on the new model, even when the model is unchanged; no other pause is lifted."}, WideningDisclosure: "No authority widening: this changes model selection for exactly one named agent but not its interaction tier.", ConfirmationMessage: "Confirm setting agent " + agent + " model to " + model + ".", Details: map[string]any{"agent": agent, "model": model}}, nil
 }
 
 func (agentBackendOp) Name() string { return WriteOpAgentBackend }
@@ -240,7 +240,7 @@ func (agentBackendOp) Preview(_ context.Context, args map[string]any) (WritePrev
 		return WritePreview{}, err
 	}
 	path := "/api/switch/" + url.PathEscape(agent) + "/" + url.PathEscape(backend)
-	return WritePreview{Operation: WriteOpAgentBackend, Summary: "Set backend for agent " + agent + " to " + backend, Target: agent, Request: WriteRequest{Method: http.MethodPost, Path: path}, Effects: []string{"Hive persists operator ownership of the backend and restarts the agent session."}, WideningDisclosure: "No authority widening: this changes backend selection for exactly one named agent but not its interaction tier.", ConfirmationMessage: "Confirm setting agent " + agent + " backend to " + backend + ".", Details: map[string]any{"agent": agent, "backend": backend}}, nil
+	return WritePreview{Operation: WriteOpAgentBackend, Summary: "Set backend for agent " + agent + " to " + backend, Target: agent, Request: WriteRequest{Method: http.MethodPost, Path: path}, Effects: []string{"Hive persists operator ownership of the backend and restarts the agent session.", "If the agent is paused because the CLI rejected its model (pause trigger `model-rejected`), the change lifts that pause so the restart launches the CLI on the new backend, even when the backend is unchanged; no other pause is lifted."}, WideningDisclosure: "No authority widening: this changes backend selection for exactly one named agent but not its interaction tier.", ConfirmationMessage: "Confirm setting agent " + agent + " backend to " + backend + ".", Details: map[string]any{"agent": agent, "backend": backend}}, nil
 }
 
 func (agentEffortOp) Name() string { return WriteOpAgentEffort }

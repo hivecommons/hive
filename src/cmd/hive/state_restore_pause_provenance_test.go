@@ -26,7 +26,7 @@ import (
 // (which recorded the resume) had nothing to restore. The next persist then
 // wrote {"paused": true} with no provenance at all.
 
-const provenanceTestRejectReason = "model claude-sonnet-5.5 rejected by the CLI 3 times in a row; set a valid model for this agent, then resume it"
+const provenanceTestRejectReason = "model claude-sonnet-5.5 rejected by the CLI 3 times in a row; set a valid model for this agent (the change resumes it)"
 
 func TestModelRejectedPauseProvenanceSurvivesHiveRestart(t *testing.T) {
 	dir := t.TempDir()
