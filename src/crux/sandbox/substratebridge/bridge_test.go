@@ -441,7 +441,10 @@ func TestPutWorkspaceClearsInPlace(t *testing.T) {
 }
 
 func TestHandlerStreamsRunOutput(t *testing.T) {
-	srv, _ := newBridgeServer(t)
+	srv, ws := newBridgeServer(t)
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	body, _ := json.Marshal(RunRequest{Command: []string{"sh", "-c", "echo one; echo two >&2; exit 2"}, Stream: true})
 	resp, err := http.Post(srv.URL+PathRun, contentTypeJSON, bytes.NewReader(body))
 	if err != nil || resp.StatusCode != http.StatusOK {
