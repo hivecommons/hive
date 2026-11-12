@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.236.4)
+
+### Security
+
+- The per-agent pluk session log under `/var/run/pluk/logs` is now prepared without following symlinks: the open uses `O_NOFOLLOW`, the descriptor is checked to be a regular file, and the owner and shared mode are applied through that descriptor rather than by path. The logs directory is group-writable by every agent uid, so a path-based chmod/chown let one agent widen any `dev`-owned 0600 file (the MITM CA key, the installation-token cache) to the shared group by linking its own session log at it; a planted symlink or FIFO is now replaced by a regular log instead (#17966).
+
 ## 2026-11-12 (v5.236.3)
 
 ### Fixed
