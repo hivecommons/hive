@@ -1,1 +1,0 @@
-- The signed-commit reconciler's intentional refusal to rewrite a foreign or merge commit no longer files repeated unclassified-error fleet reports; its warning and PR remediation remain visible ([#17924](https://github.com/hivecommons/hive/issues/17924)).
