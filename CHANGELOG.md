@@ -11,6 +11,26 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.225.0)
+
+### Added
+
+- Hub `clusters.json` accepts per-cluster `host_aliases` (`[{ip, hostnames[]}]`, validated at load) rendered as Pod `hostAliases` on every hosted-hive Deployment, plus a rate-limited reconcile sweep that converges existing hives — for GitHub Enterprise hosts reachable only through a TLS reverse proxy on a fixed IP, where `upstream_proxy` cannot help (#17801).
+- Dashboard Settings: surface the `agent_sandbox.substrate.*` and per-agent `agents.<name>.sandbox.substrate.*` leaves (endpoint, atespace, token, TLS, router, bridge, resources, worker selector, egress hosts, policy profile) in the Settings dialog.
+
+### Fixed
+
+- Repeated agent-lifecycle log lines (failed kick send, bare-shell crash, missing tmux session, kill-session failure, watchdog observe-mode restart) now file under the `agent_lifecycle_repeated` class instead of `unclassified_error_repeated`.
+- Automerge no longer waits forever when GitHub leaves a head's workflow runs orphaned in `queued` with zero jobs: once every same-repo run is older than the never-started grace (30m) without a job, the sweep treats the head as never started so the existing rebase-nudge / bot-takeover recovery and terminal hold apply instead of the bare `required-check-missing` reason (#17775).
+- Claude auth on per-UID hives: a Claude Code token refresh writes a temp file and renames it over `~/.claude/.credentials.json`, which replaced the per-agent symlink to the shared login with a private 0600 file; the refreshed token (and the rotated refresh grant) never reached the shared credential and the fleet logged out about every eight hours. The hive now detects the replaced link at agent launch, every 5s from the credential watchdog (`HIVE_CLAUDE_CREDENTIAL_BRIDGE_INTERVAL`) and after a dashboard sign-in, reads the agent's private file as its owner through `su-exec` when the server cannot open it, publishes the newer usable token into the shared login (the previous shared file is kept as `.credentials.json.stale-<ts>`), moves the private copy aside and restores the link. Per-agent `~/.claude` memory stays isolated; only the login is shared, with no operator switch. Audited as `claude_credential_rebridged`. Also hardens the shared-home permission guard and credential promotion against non-regular files: shared logins and CLI configs are written through a randomly named temporary with fd-based mode/owner, the root guard only repairs regular files in regular directories, and the shared dot-dirs get the sticky bit.
+- DCO: a PR author's own signed commit is no longer filed as the hive's to re-sign after a hive rebase makes the App the committer (a sign-off with the commit author's own email on a commit GitHub links to the PR author now counts, matching the squash attribution gate), and the dashboard no longer shows a `Needs human · decision` pill or "waiting on 🐝 hive reviewer" on a row parked on `hive-signoff-attribution` or `dco-missing` — the waiting-on pill names the author instead.
+- The hub activity digest now reads the last stage-tracker body immediately when the cache is stale and rebuilds in the background, so heartbeats stop dropping the activity block when a rebuild takes longer than 5 s.
+- Log the issue-claims GitHub side-effect retry at INFO instead of WARN; only exhausted retries warn, so expected transient timeouts no longer trip the fleet-report repeated-error classifier (#17782).
+
+### Security
+
+- Workflow marketplace: a bundle's hash-covered `spec.meta.provenance` can no longer launder a vouched tier past the hub's admin-only policy. The hub refuses (403) a non-admin publish whose model claims `curated` or `built-in`, and a spoke importing a bundle (from the hub or by direct upload) stores a vouched provenance only when the envelope tier asserts the same tier; otherwise it falls back to the envelope tier, so the library badge "Reviewed and vouched for by a human" reflects a hub admin's vouching, not the publisher's claim.
+
 ## 2026-11-12 (v5.224.0)
 
 ### Added
