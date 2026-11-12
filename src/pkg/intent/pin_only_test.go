@@ -153,3 +153,165 @@ func TestClassifyPinOnlyActionsReturnsAcceptedPins(t *testing.T) {
 		t.Fatalf("refused diff: ok=%v pins=%+v, want no pins", ok, pins)
 	}
 }
+
+// action-sha-ref: a bare `key: <40-hex>` line is admitted only when it
+// carries the same old -> new commit as a `uses:` pin accepted in the same
+// diff, in any file. It never admits a line on its own and adds no pin.
+func TestClassifyPinOnlyActionSHARef(t *testing.T) {
+	const (
+		ci        = ".github/workflows/ci.yml"
+		release   = ".github/workflows/release.yml"
+		unmatched = ": bare SHA line with no matching uses: pin"
+		notAPin   = ": non-pin or unsafe replacement"
+	)
+	oldSHA, newSHA, otherSHA := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)
+	uses := func(sha, version string) string {
+		return "    uses: some-org/shared/.github/workflows/test.yml@" + sha + " # " + version
+	}
+	oldRef, newRef := "      test_ref: "+oldSHA+" # v1", "      test_ref: "+newSHA+" # v2"
+	oldGate, newGate := "      gate_test_ref: "+oldSHA+" # v1", "      gate_test_ref: "+newSHA+" # v2"
+	// ciFile bumps the reusable workflow and the input next to it;
+	// releaseFile holds only a bare input line and no uses: change.
+	ciFile := func(oldLine, newLine string) ChangedFile {
+		return ChangedFile{Filename: ci, Status: "modified", Additions: 2, Deletions: 2, Patch: "@@ -10,4 +10,4 @@\n" +
+			"   test:\n" +
+			"-" + uses(oldSHA, "v1") + "\n" +
+			"+" + uses(newSHA, "v2") + "\n" +
+			"     with:\n" +
+			"-" + oldLine + "\n" +
+			"+" + newLine}
+	}
+	releaseFile := func(oldLine, newLine string) ChangedFile {
+		return ChangedFile{Filename: release, Status: "modified", Additions: 1, Deletions: 1,
+			Patch: "@@ -20 +20 @@\n-" + oldLine + "\n+" + newLine}
+	}
+	usesOnly := ChangedFile{Filename: ci, Status: "modified", Additions: 1, Deletions: 1,
+		Patch: "@@ -11 +11 @@\n-" + uses(oldSHA, "v1") + "\n+" + uses(newSHA, "v2")}
+	both := []string{"action-sha", "action-sha-ref"}
+	spec := func(kinds []string) PinOnlySpec {
+		return PinOnlySpec{Paths: []string{".github/workflows/*.yml"}, Kinds: kinds}
+	}
+	wantPins := []ActionPin{{Repo: "some-org/shared", SHA: newSHA, Version: "v2"}}
+
+	// The pins a caller resolves upstream are those of the uses: lines alone.
+	ok, why, pinsAlone := ClassifyPinOnlyActions([]ChangedFile{usesOnly}, []string{ci}, spec([]string{"action-sha"}))
+	if !ok || !slices.Equal(pinsAlone, wantPins) {
+		t.Fatalf("uses: bump alone: ok=%v (%s) pins=%+v, want %+v", ok, why, pinsAlone, wantPins)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		kinds  []string
+		files  []ChangedFile
+		reason string // "" means accepted
+	}{
+		{"companions in two files follow the uses: pin", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(oldGate, newGate)}, ""},
+		{"companion file listed before the uses: file", both,
+			[]ChangedFile{releaseFile(oldGate, newGate), ciFile(oldRef, newRef)}, ""},
+		{"letter case of the commit does not matter", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      gate_test_ref: "+strings.ToUpper(oldSHA), "      gate_test_ref: "+strings.ToUpper(newSHA))}, ""},
+		{"no version comment on either line", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      gate_test_ref: "+oldSHA, "      gate_test_ref: "+newSHA)}, ""},
+
+		{"new SHA is not the uses: pin's", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(oldGate, "      gate_test_ref: "+otherSHA+" # v2")}, release + unmatched},
+		{"old SHA is not the uses: pin's", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      gate_test_ref: "+otherSHA+" # v1", newGate)}, release + unmatched},
+		{"the uses: move reversed", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(newGate, oldGate)}, release + unmatched},
+		{"no uses: pin in the pull request", both,
+			[]ChangedFile{releaseFile(oldGate, newGate)}, release + unmatched},
+		{"action-sha-ref without action-sha admits nothing", []string{"action-sha-ref"},
+			[]ChangedFile{releaseFile(oldGate, newGate)}, release + unmatched},
+		{"action-sha-ref without action-sha refuses the uses: line too", []string{"action-sha-ref"},
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(oldGate, newGate)}, ci + notAPin},
+		{"kind not enabled", []string{"action-sha"},
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(oldGate, newGate)}, ci + notAPin},
+		{"kind not enabled, other kinds on", []string{"action-sha", "image-digest", "version-pin"},
+			[]ChangedFile{usesOnly, releaseFile(oldGate, newGate)}, release + notAPin},
+
+		{"unsafe key: with", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      with: "+oldSHA, "      with: "+newSHA)}, release + notAPin},
+		{"unsafe key: env", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      env: "+oldSHA, "      env: "+newSHA)}, release + notAPin},
+		{"unsafe key: secrets.", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      secrets.ref: "+oldSHA, "      secrets.ref: "+newSHA)}, release + notAPin},
+		{"unsafe key: signing", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      signing_ref: "+oldSHA, "      signing_ref: "+newSHA)}, release + notAPin},
+		{"unsafe key: id-token", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      id-token: "+oldSHA, "      id-token: "+newSHA)}, release + notAPin},
+		{"key changes", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(oldGate, "      other_ref: "+newSHA+" # v2")}, release + notAPin},
+		{"indentation changes", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(oldGate, "  "+newGate)}, release + notAPin},
+		{"version comment appears", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      gate_test_ref: "+oldSHA, newGate)}, release + notAPin},
+		{"version comment disappears", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(oldGate, "      gate_test_ref: "+newSHA)}, release + notAPin},
+		{"comment that is not a version", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(oldGate, "      gate_test_ref: "+newSHA+" # v2 and more")}, release + notAPin},
+		{"comment not set off by a space", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      gate_test_ref: "+oldSHA+"# v1", "      gate_test_ref: "+newSHA+"# v2")}, release + notAPin},
+		{"comment changes but the commit does not", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(oldGate, "      gate_test_ref: "+oldSHA+" # v2")}, release + notAPin},
+		{"quoted value", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile(`      gate_test_ref: "`+oldSHA+`"`, `      gate_test_ref: "`+newSHA+`"`)}, release + notAPin},
+		{"list item", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      - gate_test_ref: "+oldSHA, "      - gate_test_ref: "+newSHA)}, release + notAPin},
+		{"short SHA", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      gate_test_ref: "+oldSHA[:12], "      gate_test_ref: "+newSHA[:12])}, release + notAPin},
+		{"text after the SHA", both,
+			[]ChangedFile{ciFile(oldRef, newRef), releaseFile("      gate_test_ref: "+oldSHA, "      gate_test_ref: "+newSHA+" extra")}, release + notAPin},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var matches []string
+			for _, f := range tc.files {
+				matches = append(matches, f.Filename)
+			}
+			ok, why, pins := ClassifyPinOnlyActions(tc.files, matches, spec(tc.kinds))
+			if tc.reason != "" {
+				if ok || why != tc.reason || pins != nil {
+					t.Fatalf("got (%v, %q, %+v), want refused with %q and no pins", ok, why, pins, tc.reason)
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("refused: %s", why)
+			}
+			// A companion adds nothing for the caller to resolve upstream.
+			if !slices.Equal(pins, pinsAlone) {
+				t.Fatalf("pins = %+v, want exactly the uses: pin %+v", pins, pinsAlone)
+			}
+		})
+	}
+
+	// A companion must carry one pin's own move, never the old commit of one
+	// pin and the new commit of another.
+	second := ChangedFile{Filename: ".github/workflows/lint.yml", Status: "modified", Additions: 1, Deletions: 1,
+		Patch: "@@ -5 +5 @@\n-    uses: acme/widgets@" + otherSHA + "\n+    uses: acme/widgets@" + strings.Repeat("d", 40)}
+	crossed := releaseFile("      gate_test_ref: "+oldSHA, "      gate_test_ref: "+strings.Repeat("d", 40))
+	files := []ChangedFile{usesOnly, second, crossed}
+	if ok, why := ClassifyPinOnly(files, []string{ci, second.Filename, release}, spec(both)); ok || why != release+unmatched {
+		t.Fatalf("crossed move: got (%v, %q), want refused with %q", ok, why, release+unmatched)
+	}
+}
+
+// Every kind the classifier accepts is offered, and nothing else is.
+func TestPinOnlyKindsListsEveryKind(t *testing.T) {
+	want := []string{"action-sha", "image-digest", "version-pin", "action-sha-ref"}
+	if got := PinOnlyKinds(); !slices.Equal(got, want) {
+		t.Fatalf("PinOnlyKinds() = %v, want %v", got, want)
+	}
+	// The returned slice is the caller's: changing it must not change the list.
+	mine := PinOnlyKinds()
+	mine[0] = "anything"
+	if got := PinOnlyKinds(); !slices.Equal(got, want) {
+		t.Fatalf("PinOnlyKinds() after a caller edit = %v, want %v", got, want)
+	}
+	file := ChangedFile{Filename: "Containerfile", Status: "modified", Additions: 1, Deletions: 1,
+		Patch: "@@ -1 +1 @@\n-ARG TOOL_VERSION=1.2.3\n+ARG TOOL_VERSION=1.2.4"}
+	if ok, why := ClassifyPinOnly([]ChangedFile{file}, []string{file.Filename}, PinOnlySpec{Paths: []string{"Containerfile"}, Kinds: want}); !ok {
+		t.Fatalf("every known kind together refused: %s", why)
+	}
+}

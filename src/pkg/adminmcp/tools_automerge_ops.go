@@ -189,7 +189,7 @@ func (f *amField) schema() map[string]any {
 			"properties": map[string]any{
 				"enabled":         map[string]any{"type": "boolean"},
 				"paths":           map[string]any{"type": "array", "items": stringSchema(), "description": "Glob patterns, within the repository's human_merge_paths, a pin bump may touch."},
-				"kinds":           map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": config.PinOnlyKinds}},
+				"kinds":           map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": config.PinOnlyKinds}, "description": autoMergePinOnlyKindsHelp},
 				"trusted_authors": map[string]any{"type": "array", "items": stringSchema(), "description": "Logins that must author the pull request and every commit behind its head."},
 			},
 			"required":             []string{"enabled"},
@@ -888,6 +888,28 @@ func autoMergeCheckPinOnlyGuarded(plan amPlan, current map[string]any) error {
 	return nil
 }
 
+// autoMergePinOnlyKindsHelp describes each kind in the operation's schema.
+const autoMergePinOnlyKindsHelp = "Which pin bumps qualify. action-sha: a uses: owner/repo@<40-hex> line. image-digest: a FROM or image: line pinned by @sha256 digest. version-pin: a literal version: or ARG *_VERSION= value. " + autoMergePinOnlySHARefHelp + ". Nothing is on unless listed."
+
+// autoMergePinOnlySHARefHelp says what action-sha-ref admits, for the schema
+// and for the preview of a change that turns it on. It has no closing full
+// stop: the preview joins notes into one sentence.
+const autoMergePinOnlySHARefHelp = "action-sha-ref: a bare \"key: <40-hex>\" line (a commit passed on as an input, for example) only when it carries the same old and new commit as a uses: line bumped in the same pull request; it admits nothing by itself, so it needs action-sha"
+
+// autoMergePinOnlyKindNote is appended to a widening note whose exception
+// holds action-sha-ref, so the preview says what that kind lets through and
+// when it can never apply.
+func autoMergePinOnlyKindNote(kinds []string) string {
+	if !slices.Contains(kinds, "action-sha-ref") {
+		return ""
+	}
+	note := "; " + autoMergePinOnlySHARefHelp
+	if !slices.Contains(kinds, "action-sha") {
+		note += " (this exception does not list action-sha, so action-sha-ref has no effect)"
+	}
+	return note
+}
+
 // autoMergePinOnlyWidening names what a human_merge_pin_only change lets merge without
 // a hand merge: a repository whose exception turns on, or an enabled one that
 // gains paths, kinds or trusted authors. Removing any of those narrows it.
@@ -903,7 +925,7 @@ func autoMergePinOnlyWidening(before, after any) []string {
 		b, had := was[repo]
 		bump := "pin bumps (" + strings.Join(e.Kinds, ", ") + ") to " + strings.Join(e.Paths, ", ") + " in " + repo + " by " + strings.Join(e.TrustedAuthors, ", ")
 		if !had || !b.Enabled {
-			notes = append(notes, "human_merge_pin_only["+repo+"] turned on: "+bump+" will merge without a hand merge")
+			notes = append(notes, "human_merge_pin_only["+repo+"] turned on: "+bump+" will merge without a hand merge"+autoMergePinOnlyKindNote(e.Kinds))
 			continue
 		}
 		var gained []string
@@ -922,7 +944,7 @@ func autoMergePinOnlyWidening(before, after any) []string {
 			}
 		}
 		if len(gained) > 0 {
-			notes = append(notes, "human_merge_pin_only["+repo+"] adds "+strings.Join(gained, "; ")+": "+bump+" will merge without a hand merge")
+			notes = append(notes, "human_merge_pin_only["+repo+"] adds "+strings.Join(gained, "; ")+": "+bump+" will merge without a hand merge"+autoMergePinOnlyKindNote(e.Kinds))
 		}
 	}
 	return notes

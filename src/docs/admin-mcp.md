@@ -970,6 +970,11 @@ only.
   pin-only exception, `{"enabled": true, "paths": [...], "kinds": [...],
   "trusted_authors": [...]}`; `null` removes it. An enabled exception needs
   `human_merge_paths` for the repository, set already or in the same change.
+  `kinds` takes the same list the dashboard offers (`action-sha`,
+  `image-digest`, `version-pin`, `action-sha-ref`), and the schema says what
+  each admits. `action-sha-ref` lets a bare `key: <40-hex>` line follow a
+  `uses:` pin bumped in the same pull request; it needs `action-sha`, and the
+  preview says so when an exception lists it without.
   An unknown field is refused.
 - **One repository's workflow fence scope:**
   `{"contributor_lane": {"workflow_fence_scope_repos": {"org/a": "human_merge_paths"}}}`

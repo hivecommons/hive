@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // auto_merge.update and auto_merge.human_merge_pin_only: the pin-only
@@ -152,5 +154,72 @@ func TestAutoMergeUpdatePinOnlyRefusals(t *testing.T) {
 	})
 	if !strings.Contains(preview.WideningDisclosure, "human_merge_pin_only[org/c] turned on") {
 		t.Fatalf("disclosure = %s", preview.WideningDisclosure)
+	}
+}
+
+// The operation's schema offers every kind the hive accepts, so a caller can
+// name action-sha-ref, and says what that kind admits.
+func TestAutoMergeUpdatePinOnlySchemaListsKinds(t *testing.T) {
+	op, ok := DefaultWriteRegistry().Get(WriteOpAutoMergeUpdate)
+	if !ok {
+		t.Fatalf("%s is not registered", WriteOpAutoMergeUpdate)
+	}
+	props, _ := op.InputSchema()["properties"].(map[string]any)
+	pin, _ := props["human_merge_pin_only"].(map[string]any)
+	perRepo, _ := pin["additionalProperties"].(map[string]any)
+	anyOf, _ := perRepo["anyOf"].([]any)
+	if len(anyOf) == 0 {
+		t.Fatalf("human_merge_pin_only schema = %#v", pin)
+	}
+	entry, _ := anyOf[0].(map[string]any)
+	fields, _ := entry["properties"].(map[string]any)
+	kinds, _ := fields["kinds"].(map[string]any)
+	items, _ := kinds["items"].(map[string]any)
+	enum, _ := items["enum"].([]string)
+	if got, want := strings.Join(enum, ","), strings.Join(config.PinOnlyKinds, ","); got != want || got != "action-sha,image-digest,version-pin,action-sha-ref" {
+		t.Fatalf("kinds enum = %q, config accepts %q", got, want)
+	}
+	help, _ := kinds["description"].(string)
+	for _, want := range append([]string{"same old and new commit as a uses: line", "needs action-sha"}, config.PinOnlyKinds...) {
+		if !strings.Contains(help, want) {
+			t.Fatalf("kinds description does not mention %q: %s", want, help)
+		}
+	}
+}
+
+// Turning action-sha-ref on is widening like any other kind, and the preview
+// says what it admits; on an exception without action-sha it says the kind
+// has no effect. An exception that does not hold the kind is described as
+// before.
+func TestAutoMergeUpdatePinOnlyDescribesActionSHARef(t *testing.T) {
+	paths, ra := []any{".github/workflows/*.yml", "Containerfile"}, []any{"renovate[bot]"}
+	preview := func(kinds []any) string {
+		t.Helper()
+		p, _ := autoMergePreview(t, autoMergeHandler(&autoMergeProvider{settings: autoMergePinOnlyFixture()}), map[string]any{
+			"human_merge_pin_only": map[string]any{"org/a": autoMergePinOnlyArg(paths, kinds, ra)},
+		})
+		return p.WideningDisclosure
+	}
+	const admits, inert = "same old and new commit as a uses: line bumped in the same pull request", "action-sha-ref has no effect"
+
+	got := preview([]any{"action-sha", "image-digest", "action-sha-ref"})
+	for _, want := range []string{"Widening:", "kinds action-sha-ref", "pin bumps (action-sha, image-digest, action-sha-ref)", "will merge without a hand merge", admits} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("disclosure missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, inert) {
+		t.Fatalf("disclosure calls the kind inert next to action-sha: %s", got)
+	}
+
+	got = preview([]any{"image-digest", "action-sha-ref"})
+	for _, want := range []string{"Widening:", "kinds action-sha-ref", admits, inert} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("disclosure missing %q: %s", want, got)
+		}
+	}
+
+	if got = preview([]any{"action-sha", "image-digest", "version-pin"}); strings.Contains(got, "action-sha-ref") {
+		t.Fatalf("an exception without the kind is described with it: %s", got)
 	}
 }
