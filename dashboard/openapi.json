@@ -36029,6 +36029,78 @@
           }
         }
       },
+      "/api/workflows/enabled": {
+        "put": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Turn model-based stage derivation on or off",
+          "description": "Owner only. Sets workflow.enabled from the dashboard so a hosted hive with no hive.yaml access can enable it (hivecommons/hive#17620). Body {enabled}. Persists hive.yaml; the stage engine and the tracker read the live flag, so it takes effect on the next derivation pass without a restart. Turning it on also provisions every bound repository's model labels immediately; a repository that could not be provisioned is listed in warnings and the next sweep retries it. Audited as workflow_enabled / workflow_disabled; a no-op is not audited.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "enabled"
+                  ],
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Flag after the change",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "changed": {
+                        "type": "boolean"
+                      },
+                      "bindings": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/components/schemas/WorkflowBinding"
+                        }
+                      },
+                      "warnings": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Bound repositories whose labels could not be provisioned now (only when turning on)"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Body is not {enabled: boolean}"
+            },
+            "403": {
+              "description": "Not an owner"
+            },
+            "500": {
+              "description": "hive.yaml could not be saved; the flag is left unchanged"
+            },
+            "503": {
+              "description": "No config"
+            }
+          }
+        }
+      },
       "/api/workflows/{name}/{version}": {
         "get": {
           "tags": [

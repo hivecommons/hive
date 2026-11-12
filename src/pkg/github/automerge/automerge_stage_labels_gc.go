@@ -180,3 +180,18 @@ func (c *Engine) workflowLabelInUse(ctx context.Context, owner, repo, name strin
 	}
 	return res.GetTotal(), nil
 }
+
+// EnsureStageLabels provisions owner/repo's label vocabulary now — the
+// built-in family plus the bound workflow model's LabelDefs — through the
+// same memoised path the sweep's stage pass uses (ensureStageLabels), so a
+// dashboard action that turns model-based derivation on can create the
+// bound models' labels immediately instead of waiting for the next PR that
+// needs a label write. The shared tracker's memo is honoured and updated:
+// a repository already provisioned for the current profile hash is a
+// no-op, and the sweep will not re-list it afterwards.
+func (c *Engine) EnsureStageLabels(ctx context.Context, owner, repo string) error {
+	if c == nil || c.gh == nil {
+		return fmt.Errorf("stage labels: no GitHub transport")
+	}
+	return c.ensureStageLabels(ctx, owner, repo, c.stageTrackerOrShared(), c.stagePolicy().AuthorKindLabels)
+}
