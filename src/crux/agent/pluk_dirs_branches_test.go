@@ -83,6 +83,42 @@ func TestEnsurePlukLogFileWidensExistingTightLog(t *testing.T) {
 	}
 }
 
+// TestEnsurePlukLogFileReplacesUnopenableLog pins the supervisor failure: a log
+// left by another uid that we cannot open (modelled as mode 0000) is replaced
+// in the group-writable logs dir instead of failing with permission denied.
+func TestEnsurePlukLogFileReplacesUnopenableLog(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permission checks")
+	}
+	runDir := filepath.Join(t.TempDir(), "pluk")
+	if err := ensurePlukRunDirs(runDir); err != nil {
+		t.Fatalf("ensure pluk dirs: %v", err)
+	}
+
+	path := plukSessionLogPath(runDir, "hive-supervisor")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("seed log: %v", err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatalf("lock log: %v", err)
+	}
+
+	got, err := ensurePlukLogFile(runDir, "hive-supervisor")
+	if err != nil {
+		t.Fatalf("ensure pluk log file with unopenable log: %v", err)
+	}
+	if got != path {
+		t.Errorf("returned path = %q, want %q", got, path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o660 {
+		t.Errorf("replaced log mode = %04o, want 0660", perm)
+	}
+}
+
 // TestEnsurePlukLogFileErrorWhenLogsDirMissing covers the OpenFile error
 // return: with no logs/ directory the create fails, the error is wrapped
 // (fs.ErrNotExist stays reachable through errors.Is), and it names the path.

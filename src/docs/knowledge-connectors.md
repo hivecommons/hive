@@ -1,6 +1,6 @@
 # Knowledge connectors
 
-External knowledge systems (Confluence, Notion, Google Drive, SharePoint/OneDrive, git repositories, documents, GitHub wikis and Plaud voice notes) are synced into the file vault by connectors configured under `knowledge.connectors` in `hive.yaml`. Each upstream page becomes one markdown fact, and agents read those facts like any other vault content. Operators manage connectors from the Knowledge card's **🔌 Integrations** modal or from **Settings → Knowledge → Connectors** in the dashboard.
+External knowledge systems (Confluence, Notion, Google Drive, SharePoint/OneDrive, git repositories, documents, GitHub wikis, Plaud voice notes and Wispr Flow dictation) are synced into the file vault by connectors configured under `knowledge.connectors` in `hive.yaml`. Each upstream page becomes one markdown fact, and agents read those facts like any other vault content. Operators manage connectors from the Knowledge card's **🔌 Integrations** modal or from **Settings → Knowledge → Connectors** in the dashboard.
 
 For the shared configuration fields, the fact format and how connectors relate to `git_sources` and `documents`, see [knowledge-curator.md → Connectors](knowledge-curator.md#connectors-knowledgeconnectors).
 
@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -310,6 +310,99 @@ if you do not want a sync to pull a new upstream release unreviewed.
   Obsidian entry in 🔌 Integrations), or import single files with a
   `document` connector (`file_path`). No code, still $0, and no MCP sign-in.
 - Everything in this section costs **$0** beyond your Plaud subscription.
+
+## Wispr Flow (dictation, `type: wisprflow`)
+
+[Wispr Flow](https://wisprflow.ai) is dictation into whatever field has focus:
+hold the Flow key, speak, release, and polished text is pasted where the
+cursor is. That gives two $0 paths into the hive.
+
+**Direct dictation — no connector.** Put the cursor in **Knowledge → + New
+Fact** (title or body), the Import box, an agent prompt, or any other text
+field in the dashboard and dictate. Nothing to configure. This is the
+recommended way to get *new* thoughts in.
+
+**History connector.** The desktop app keeps every dictation in a local
+SQLite file. The `wisprflow` connector reads it read-only and turns each
+dictation (what you said, when, and into which app) into a fact, so ideas you
+dictated into Slack or your editor last week are searchable by agents too.
+There is no official export API for dictation history — Wispr's remote MCP
+server covers Notetaker meetings only and states it cannot read dictation
+history, and the Voice Interface API is invite-only and does speech-to-text,
+not history — so the local file is the only free source. The schema is
+community-documented (`History` table: `transcriptEntityId`, `asrText`,
+`formattedText`, `editedText`, `timestamp`, `app`, `url`, `duration`,
+`numWords`, `status`, `isArchived`) and can change with an app update.
+
+```yaml
+knowledge:
+  connectors:
+    - name: wispr
+      type: wisprflow
+      layer: personal
+      interval: 15m
+      scope:
+        # path: /Users/me/Library/Application Support/Wispr Flow/flow.sqlite  # default on macOS; %APPDATA%\Wispr Flow\flow.sqlite on Windows
+        # path: /data/knowledge/wispr-export        # or a folder of exported .json/.ndjson/.csv/.md files
+        since_days: "30"        # how far back the first sync reaches
+        max_items: "500"        # dictations read per sync
+        min_words: "3"          # skip "ok", "yes", …
+        group: dictation        # dictation = one fact each; day = one fact per calendar day
+        apps: ""                # optional allow-list matched against the app bundle id, e.g. "slack, obsidian, vscode"
+        include_raw: "false"    # also keep the raw ASR text under "Raw transcript"
+        tags: "voice, ideas"    # extra tags written as attr_tags
+        # sqlite3: sqlite3      # CLI used to read the file; ships with macOS and the hive image
+```
+
+No `auth` block and no sign-in: the data is already on disk. The connector
+shells out to the `sqlite3` CLI with `-readonly -json` and selects text
+columns only (the table also holds audio and screenshot BLOBs, which are never
+read). Rows with `status = formatted` and `isArchived = 0` are used;
+`editedText` wins over `formattedText` over `asrText`.
+
+### Setup
+
+1. **Same machine as the hive (laptop hive):** add the connector from
+   **Knowledge → 🔌 Integrations → Wispr Flow dictation** and leave `path`
+   empty. On macOS the hive process may need **Full Disk Access** (System
+   Settings → Privacy & Security) to read `~/Library/Application Support`.
+2. **Hive on a cluster or another host:** sync the file or an export to a
+   path the hive can read and set `path` to it. Any of these work:
+   - copy `flow.sqlite` (or one of the app's timestamped `backups/*.sqlite`)
+     into the knowledge PVC, e.g. with a cron `kubectl cp`;
+   - run a community exporter such as `wispr export -o <dir>`
+     ([iamnikolie/wispr-cli](https://github.com/iamnikolie/wispr-cli), writes
+     `dictations/*.md`) or
+     [junxit/wispr-flow-exporter](https://github.com/junxit/wispr-flow-exporter)
+     (Markdown/JSON/NDJSON) and point `path` at the folder, or commit that
+     folder to a Git-synced vault and let the existing `git` connector pick
+     it up.
+3. Click **Sync now**. New dictations are picked up every `interval`.
+
+Export folders are walked recursively; `.json` (array or
+`{"dictations": [...]}`), `.ndjson`/`.jsonl`, `.csv` (header row) and `.md`
+(one dictation per file; optional front matter `id:`, `timestamp:`, `app:`,
+otherwise the date in the filename or the file mtime) are read, other files
+are ignored. A file that fails to parse is reported as a partial sync and the
+rest are still imported.
+
+### Behaviour
+
+- Incremental by `timestamp`: each sync re-reads from the newest dictation
+  seen minus a 2 h overlap (Flow updates a row in place as it finalises), or
+  `since_days` back on the first run. With `group: day` the current day's
+  fact is rebuilt whole.
+- Facts carry `source: wisprflow`, `attr_wispr_transcript_id`,
+  `attr_dictated_at`, `attr_app` (bundle id), `attr_num_words`,
+  `attr_language` and the dictation date as the vault path
+  (`Wispr Flow/2026-11-11`). The title is the first ten words.
+- The listing is incremental, so dictations you archive or delete in Flow
+  are not tombstoned automatically; remove the fact file or the connector.
+- Everything here costs **$0** beyond your Wispr Flow plan; the free tier's
+  weekly word cap applies to dictating, not to reading history. Tip: add
+  your project vocabulary (`hive`, `dibs`, `spek`, `ACMM`, `crux`, repo
+  names) under Flow → Settings → Dictionary so it is spelled right the first
+  time.
 
 ## Notion (`type: notion`)
 
