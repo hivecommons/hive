@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.228.3)
+
+### Security
+
+- Bound the hub's GitHub bearer-token validation cache and reclaim expired entries before admitting new tokens, preventing unbounded cache growth from unauthenticated requests.
+
 ## 2026-11-12 (v5.228.2)
 
 ### Fixed
