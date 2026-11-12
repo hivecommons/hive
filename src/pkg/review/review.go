@@ -1885,7 +1885,13 @@ func LoadArtifact(path string) (Artifact, error) {
 	if err := json.Unmarshal(data, &artifact); err != nil {
 		return Artifact{}, err
 	}
-	return artifact.Normalize(), nil
+	artifact = artifact.Normalize()
+	// A changes_requested or requires_human an earlier planner carried
+	// across a real change was never read against that change: drop it, so
+	// the head reads as not yet judged and gets reviewed, and the next
+	// write leaves it out of the file (Aggregate.CarriedWithoutReading).
+	artifact.Items = dropCarriedWithoutReading(artifact.Items)
+	return artifact, nil
 }
 
 func (a Artifact) HasAggregateApproval(repo string, number int, headSHA string) bool {

@@ -16,8 +16,12 @@ import (
 // Almost all of that was already read and judged at the previous head. The
 // delta mode hands the reviewer its previous verdict and asks it to read the
 // diff between the two heads instead, re-checking what it flagged before;
-// a delta that is empty (a force-push with the same tree) or trivial skips
-// the model call and re-stamps the previous verdict onto the new head.
+// a delta that is empty (a force-push with the same tree) skips the model
+// call and re-stamps the previous verdict onto the new head, and so does a
+// trivial delta under a previous approve. A changes_requested or
+// requires_human is never carried across a real change: the change is often
+// the author's fix, and a fix lives in whatever file it needs to, not only
+// in the file a finding was anchored on.
 
 // DefaultDeltaTrivialLines and DefaultDeltaMaxAge mirror the config defaults
 // (config.DefaultReviewDeltaTrivialLines, config.DefaultReviewDeltaMaxAge) for
@@ -159,8 +163,11 @@ type DeltaContext struct {
 type DeltaReviewInfo struct {
 	PreviousHead string `json:"previous_head"`
 	// Trivial is true when no model call was made: the previous verdict was
-	// re-stamped onto the new head because the delta was empty or under
-	// review.delta_trivial_lines in files the previous verdict passed.
+	// re-stamped onto the new head because the delta was empty, the PR has
+	// no diff against its base, or (previous approve only) the delta was
+	// under review.delta_trivial_lines in files the previous verdict passed.
+	// Nothing is published for the new head; the verdict, findings and
+	// perspectives are the previous head's.
 	Trivial bool `json:"trivial,omitempty"`
 	// BaseSync is true when the re-stamp crossed a hive merge of the base
 	// into the PR whose changes miss every PR file (projectbluefin/fsdk-containers#482),
@@ -239,9 +246,22 @@ func (o DispatchOptions) effectiveDeltaMaxAge() time.Duration {
 //   - a prior changes_requested with findings older than delta_max_age:
 //     full review. The flagged code has had time to move on and the
 //     reviewer's record of it is stale.
-//   - otherwise delta. With a known compare that is empty, or under
-//     delta_trivial_lines and touching no file the prior verdict flagged, the
-//     prior verdict is re-stamped instead of asked again.
+//   - otherwise delta. With a known compare that is empty the prior verdict
+//     is re-stamped instead of asked again. A prior approve is also
+//     re-stamped across a delta under delta_trivial_lines that touches no
+//     file the prior verdict flagged. A prior changes_requested or
+//     requires_human is not (deltaTrivial): the delta is usually the
+//     author's answer to it, and the file a fix touches is often not the
+//     file the finding was anchored on (a finding on a workflow that asks
+//     for a config file's line references to change is fixed in the config
+//     file). Carrying it would hand the old verdict to the new head with no
+//     session and nothing published for that head, and return the PR to
+//     its author with nothing new to fix.
+//   - a changes_requested with nothing the author can read (no in-scope
+//     finding, reviewer summary or question; deltaCarryReadable) is never
+//     re-stamped, not even across an identical tree or an empty base diff:
+//     a re-stamp publishes nothing, so the PR would go back to its author
+//     with no ask. It gets a delta review instead.
 //   - a prior approve across a hive base-sync that brought in only base
 //     changes outside the PR's files (DeltaDiff.BaseSyncOnly) is re-stamped
 //     at any delta size (projectbluefin/fsdk-containers#482). The hive's own update-branch
@@ -276,7 +296,8 @@ func planDelta(pr PullRequest, artifact Artifact, opts DispatchOptions, now time
 		PreviousPerspectives: prior.Perspectives,
 		PreviousFindings:     prior.Findings,
 	}
-	if pr.BaseDiffEmpty {
+	carry := deltaCarryReadable(prior)
+	if pr.BaseDiffEmpty && carry {
 		// The PR has no diff against its base: the new head only absorbed
 		// base commits (a merge-from-base shows them in the compare from
 		// the previous head, so the delta looks non-trivial). Nothing new
@@ -299,22 +320,29 @@ func planDelta(pr PullRequest, artifact Artifact, opts DispatchOptions, now time
 		ctx.BaseSync = true
 		return deltaModeTrivial, ctx, prior
 	}
-	if deltaTrivial(*diff, prior, opts.effectiveDeltaTrivialLines()) {
+	if carry && deltaTrivial(*diff, prior, opts.effectiveDeltaTrivialLines()) {
 		return deltaModeTrivial, ctx, prior
 	}
 	return deltaModeDelta, ctx, prior
 }
 
 // deltaTrivial reports whether the delta can carry the prior verdict without
-// a review: an empty delta always can; a delta under threshold can when none
-// of its files holds a prior finding, since a change in a file the reviewer
-// flagged may be the fix (or not) and has to be read.
+// a review: an empty delta always can. A non-empty delta can only carry an
+// approve, and only under threshold with none of its files holding a prior
+// finding, since a change in a file the reviewer flagged may be the fix (or
+// not) and has to be read. A changes_requested or requires_human is never
+// carried across a real change: the author's fix may sit in any file, not
+// just the one a finding was anchored on, and a carried verdict publishes
+// nothing for the new head.
 func deltaTrivial(diff DeltaDiff, prior Aggregate, threshold int) bool {
 	if !diff.Known {
 		return false
 	}
 	if diff.Identical() {
 		return true
+	}
+	if prior.Verdict == VerdictChangesRequested || prior.Verdict == VerdictRequiresHuman {
+		return false
 	}
 	if threshold <= 0 || diff.ChangedLines() >= threshold {
 		return false
@@ -331,6 +359,73 @@ func deltaTrivial(diff DeltaDiff, prior Aggregate, threshold int) bool {
 		}
 	}
 	return true
+}
+
+// deltaCarryReadable reports whether prior may be carried onto a new head
+// without a session at all. Anything but a changes_requested may. A
+// changes_requested returns the PR to its author, and a re-stamp publishes
+// nothing for the new head, so it is carried only when it holds an ask the
+// author can read (aggregateHasReadableAsk); otherwise the head is reviewed.
+func deltaCarryReadable(prior Aggregate) bool {
+	if prior.Verdict != VerdictChangesRequested {
+		return true
+	}
+	return aggregateHasReadableAsk(prior)
+}
+
+// aggregateHasReadableAsk reports whether an aggregate holds something its
+// PR's author can read and act on: an in-scope finding, a reviewer summary
+// handed to a person, or a decision question.
+func aggregateHasReadableAsk(a Aggregate) bool {
+	for _, f := range a.Findings {
+		if InScopeFinding(f.Finding) && (strings.TrimSpace(f.Finding.Title) != "" || strings.TrimSpace(f.Finding.Summary) != "" || strings.TrimSpace(f.Finding.File) != "") {
+			return true
+		}
+	}
+	if strings.TrimSpace(a.DecisionQuestion) != "" {
+		return true
+	}
+	for _, s := range a.HumanSummaries {
+		if strings.TrimSpace(s) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// CarriedWithoutReading reports a verdict a delta re-stamp carried onto this
+// head that the planner no longer carries: a changes_requested or
+// requires_human carried across a real change (an earlier planner re-stamped
+// one across a small delta in files no finding was anchored on, which left
+// the author's fix unread and the PR returned with nothing new to fix), or a
+// changes_requested carried with nothing the author can read. LoadArtifact
+// drops these, so every reader (the review planner, the stage lanes, the
+// dashboard) sees the head as not yet judged and the planner reviews it.
+// An identical-tree, empty-base-diff or base-sync re-stamp is kept.
+func (a Aggregate) CarriedWithoutReading() bool {
+	d := a.Delta
+	if d == nil || !d.Trivial || d.BaseSync {
+		return false
+	}
+	switch a.Verdict {
+	case VerdictChangesRequested, VerdictRequiresHuman:
+	default:
+		return false
+	}
+	return d.ChangedLines > 0 || !deltaCarryReadable(a)
+}
+
+// dropCarriedWithoutReading removes the aggregates CarriedWithoutReading
+// reports, keeping the order of the rest.
+func dropCarriedWithoutReading(items []Aggregate) []Aggregate {
+	kept := items[:0]
+	for _, item := range items {
+		if item.CarriedWithoutReading() {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return kept
 }
 
 // restampAggregate copies the prior verdict onto the new head. The verdict,

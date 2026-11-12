@@ -3084,13 +3084,24 @@ func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor
 			"repo", x.Repo, "pr", x.Number, "head_sha", x.HeadSHA, "author", x.Author, "reason", x.Reason, "attempts", x.Attempts)
 	}
 	for _, w := range plan.WithheldFixes {
-		logger.Info("review fix withheld: PR not hive-authored; review published, nothing pushed",
-			"repo", w.Repo, "pr", w.Number, "head_sha", w.HeadSHA, "author", w.Author, "setting", w.Setting, "setting_enabled", w.SettingEnabled)
+		if w.CarriedFrom != "" {
+			// A delta re-stamp carried the verdict onto this head without a
+			// session: nothing was published for it, so the line must not
+			// say a review was.
+			logger.Info("review fix withheld: PR not hive-authored; verdict carried from an earlier head without a review, nothing published for this head, nothing pushed",
+				"repo", w.Repo, "pr", w.Number, "head_sha", w.HeadSHA, "carried_from", w.CarriedFrom, "author", w.Author, "setting", w.Setting, "setting_enabled", w.SettingEnabled)
+		} else {
+			logger.Info("review fix withheld: PR not hive-authored; review published, nothing pushed",
+				"repo", w.Repo, "pr", w.Number, "head_sha", w.HeadSHA, "author", w.Author, "setting", w.Setting, "setting_enabled", w.SettingEnabled)
+		}
 		if auditor == nil {
 			continue
 		}
-		auditor.AuditLog("governor", "review_fix_withheld",
-			fmt.Sprintf("pr=%s#%d head=%s author=%s setting=%s=%t reason=%s", w.Repo, w.Number, w.HeadSHA, w.Author, w.Setting, w.SettingEnabled, w.Reason), "")
+		detail := fmt.Sprintf("pr=%s#%d head=%s author=%s setting=%s=%t reason=%s", w.Repo, w.Number, w.HeadSHA, w.Author, w.Setting, w.SettingEnabled, w.Reason)
+		if w.CarriedFrom != "" {
+			detail += " carried_from=" + w.CarriedFrom
+		}
+		auditor.AuditLog("governor", "review_fix_withheld", detail, "")
 	}
 }
 

@@ -312,10 +312,12 @@ type ReviewConfig struct {
 	DeltaRereview *bool `yaml:"delta_rereview,omitempty" json:"delta_rereview,omitempty"`
 	// DeltaTrivialLines is the delta size (added plus deleted lines) under
 	// which a re-review skips the model call: when the diff between the
-	// reviewed head and the new head is empty, or touches only files the
-	// previous verdict had no finding in and is smaller than this, the
-	// previous verdict is re-stamped onto the new head with a note. 0 means
-	// DefaultReviewDeltaTrivialLines; negative disables the skip.
+	// reviewed head and the new head is empty, or the previous verdict is an
+	// approve and the diff touches only files it had no finding in and is
+	// smaller than this, the previous verdict is re-stamped onto the new
+	// head with a note. A changes_requested or requires_human is carried
+	// only across an empty diff: any real change gets a delta review. 0
+	// means DefaultReviewDeltaTrivialLines; negative disables the skip.
 	DeltaTrivialLines int `yaml:"delta_trivial_lines,omitempty" json:"delta_trivial_lines,omitempty"`
 	// DeltaMaxAge is how old a `changes_requested` verdict with findings may
 	// be and still anchor a delta re-review (Go duration string). Older than
