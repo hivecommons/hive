@@ -25,6 +25,9 @@ const (
 	verdictDispositionAlreadyDoneUnverified = "already-done-unverified"
 	verdictDispositionAlreadyDoneLabeled    = "already-done-labeled"
 	verdictDispositionAlreadyDoneClosed     = "already-done-closed"
+	// The citation verified, but the issue has an open sub-issue, so nothing
+	// was recorded, labelled or closed (contribute_parent_children.go).
+	verdictDispositionAlreadyDoneOpenSubIssues = "already-done-open-sub-issues"
 )
 
 var (
@@ -129,6 +132,13 @@ func (h *ContributeWSHub) settleIssueFromVerdictWithEvidence(repo string, number
 			h.logger.Info("[contribute-ws] verdict settle: open PR is the reporter's own, not an external claim",
 				"repo", repo, "number", number, "ref", ref.String(), "pr_author", claim.PRAuthor, "reporter", reporter)
 			continue
+		}
+		// A parent with an open sub-issue is not done on anyone's word: no
+		// claim, no likely-done, no already-done, no close.
+		if claim.MergedPR {
+			if held, disposition := h.verdictHeldForOpenChildren(ctx, repo, number, ref.String(), alreadyDone); held {
+				return disposition
+			}
 		}
 		claim.Repo, claim.Issue = repo, number
 		claim.Source = ghpkg.ClaimSourceVerdict

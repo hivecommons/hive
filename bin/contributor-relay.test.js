@@ -34,7 +34,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.js');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null, sessionMissing = false, newSessionFails = false, gitStatus = '', ghIssueEditFailures = 0, mlxPreflightError = null } = {}) {
+function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null, sessionMissing = false, newSessionFails = false, gitStatus = '', ghIssueEditFailures = 0, subIssuesSummary = null, mlxPreflightError = null } = {}) {
   const commands = [];
   // #7924: how many `gh issue edit` calls fail before one succeeds — models a
   // label the repository does not define (the first add fails, the relay
@@ -158,6 +158,14 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
       if (answer instanceof Error) throw answer;
       if (answer) return JSON.stringify(answer);
       return '';
+    }
+    // The already-done label guard reads the issue for its sub-issue summary
+    // first. `subIssuesSummary` is GitHub's answer: unset prints `null`, which
+    // is what gh prints for an issue with no sub-issue block; an object is
+    // that block; an Error is thrown, modelling gh missing, offline or refused.
+    if (/gh api .*--jq \.sub_issues_summary/.test(cmd)) {
+      if (subIssuesSummary instanceof Error) throw subIssuesSummary;
+      return subIssuesSummary ? `${JSON.stringify(subIssuesSummary)}\n` : 'null\n';
     }
     if (/gh issue edit/.test(cmd) && issueEditFailuresLeft > 0) {
       issueEditFailuresLeft--;
@@ -16709,6 +16717,61 @@ test('#8477 already-done no_work_needed carries structured reason kind and evide
     assert.ok(!('verdict_reason_kind' in fields), JSON.stringify(fields));
     assert.ok(!('evidence' in fields), JSON.stringify(fields));
   } finally { teardown(relay); }
+});
+
+// An issue with open sub-issues is a parent waiting on its children: an
+// already-done verdict on it must not put the done label on the parent.
+test('already-done label is not applied to an issue that has open sub-issues', () => {
+  const PANE = `HIVE_VERDICT: no_work_needed — already fixed on main by #12\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: PANE, subIssuesSummary: { total: 3, completed: 0, percent_completed: 0 } });
+  const log = console.log; const logged = []; console.log = (...a) => logged.push(a.join(' '));
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    dispatchTask(relay, 'ct-parent-open', 105);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the verdict still completes the task');
+    assert.strictEqual(completed[0].verdict, 'no_work_needed');
+    assert.strictEqual(completed[0].verdict_reason_kind, 'already_done', 'the verdict reaches the hub unchanged');
+    assert.strictEqual(relay.__commands.filter(c => /gh api .*repos\/foo\/bar\/issues\/105.*sub_issues_summary/.test(c)).length, 1, 'one read of the issue');
+    assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0,
+      `no label on a parent with open sub-issues: ${JSON.stringify(relay.__commands.filter(c => /gh /.test(c)))}`);
+    assert.strictEqual(logged.filter(l => /has 3 open sub-issue\(s\) of 3/.test(l) && /not applying the 'hive\/already-done' label/.test(l)).length, 1,
+      `expected one line saying why, got ${JSON.stringify(logged)}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('already-done label is applied as before when the issue has no sub-issues or all of them are completed', () => {
+  for (const summary of [null, { total: 0, completed: 0 }, { total: 3, completed: 3, percent_completed: 100 }]) {
+    const relay = loadRelay({ subIssuesSummary: summary });
+    const log = console.log; console.log = () => {};
+    try {
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+      const before = relay.__commands.length;
+      relay.markIssueAlreadyDone({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, 'already fixed on main by #12');
+      const after = relay.__commands.slice(before);
+      assert.strictEqual(after.filter(c => /gh issue edit/.test(c) && c.includes('--add-label') && c.includes('hive/already-done')).length, 1,
+        `summary ${JSON.stringify(summary)} must still label: ${JSON.stringify(after)}`);
+      assert.deepStrictEqual(relay.readOpenSubIssues({ repo: 'foo/bar', number: 7 }, process.env),
+        { open: 0, total: summary ? summary.total : 0 });
+    } finally { console.log = log; teardown(relay); }
+  }
+});
+
+test('already-done label is not applied when the sub-issue read fails', () => {
+  const relay = loadRelay({ subIssuesSummary: new Error('Command failed: gh api') });
+  const log = console.log; const logged = []; console.log = (...a) => logged.push(a.join(' '));
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    const before = relay.__commands.length;
+    relay.markIssueAlreadyDone({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, 'already fixed on main by #12');
+    const after = relay.__commands.slice(before);
+    assert.strictEqual(after.filter(c => /gh (issue edit|label create)/.test(c)).length, 0,
+      `a failed read must not label: ${JSON.stringify(after)}`);
+    assert.strictEqual(logged.filter(l => /sub-issues could not be read/.test(l) && /not applying the 'hive\/already-done' label/.test(l)).length, 1,
+      `expected one line saying why, got ${JSON.stringify(logged)}`);
+    assert.ok(relay.readOpenSubIssues({ repo: 'foo/bar', number: 7 }, process.env).error, 'a failed read is reported as an error, never as "no sub-issues"');
+  } finally { console.log = log; teardown(relay); }
 });
 
 test('#7924 the label is for GitHub issue tasks only', () => {

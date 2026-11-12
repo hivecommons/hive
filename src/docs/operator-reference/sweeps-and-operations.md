@@ -550,7 +550,8 @@ that level, the power the write-back exists to govern?
 | Adoption close-first (`automerge/automerge_adoption_close_first.go`) | auto-merge sweep, when a supersede adoption opens the hive's copy; close-first poll | close-first note, `hive/superseded` label and close on the original; reopen, copy-failed note and label removal when the copy fails | the contributor's original PR | `contributor_adopt` → L6 + label (an agent-authored original closes without the label, `adoption.close_superseded: on_adopt`); refused: the original stays open until the copy merges, and a due reopen waits for the next poll |
 | Claims (`prclaims.go`, `claimed_by_label.go`, `cmd/hive/claimswire.go`, `claimescalation.go`) | claim ledger changes | `claimed-by:*` labels, claim/escalation comments | claimed issues | `claim_comment` → L4 + label (hive-claimed issues are own items) |
 | Issue close / task-list / decomposed parents (`issue_close.go`, `task_list_sweep.go`, `decomposed_parents.go`, `close_on_merge.go`, `tracking_issue.go`) | merges, sweeps | close, body edits (checkbox ticks), `Refs` rewrites | issues linked from hive PRs | `issue_close`, `parent_issue_edit` → L5 + label; hive-filed issues are own items |
-| Gate comments (`pkg/scheduler/clarity_gate.go`, `prior_art_gate.go`, `triage.go`, `issue_blocked.go`, `issue_recheck_soak.go`) | scheduler intake | clarity/prior-art/triage questions, `blocked` labels | issues admitted by the issue filter | `gate_comment` → L5 + label; items carrying the intake label are opted in |
+| Gate comments (`pkg/scheduler/clarity_gate.go`, `prior_art_gate.go`, `triage.go`, `verdict_blocker.go`, `pr_blocked_depends_on.go`, `issue_recheck_soak.go`) | scheduler intake | clarity/prior-art/triage questions, `blocked` labels | issues admitted by the issue filter | `gate_comment` → L5 + label; items carrying the intake label are opted in |
+| Blocked repair (`pkg/github/issue_blocked.go`) | blocked sweep (every 5 min) and the blocked reconcile after each stage-label sync | `needs-human` added, `blocked` removed, one `<!-- hive:unblocked -->` note asking a maintainer to name the dependency or re-queue the issue | open issues whose `blocked` the hive's own bot applied and that name nothing they wait on (no blocked-on marker, deadline, ops-tracking marker or native "blocked by" link; not a review-backlog item) | `blocked_repair` → L1, no opt-in label and no backfill guard, because the hive already wrote the label being repaired; a pause, `per_repo.mode` `off` / `issues-only` / `labels-only` and a raised `min_level` still refuse it. Refused: the issue keeps `blocked` and the hold is logged once per issue and reason |
 | Welcome / outreach (`pkg/gfi`, `gfi_forge.go`, `pr_clanker_requested.go`) | good-first-issue selection | welcome comment, `good first issue` label | issues hive advertises | `welcome_comment` → L5 with label, L6 without |
 | Issue filing (`pkg/upstreamwatch/github_filer.go`, `advisory.go`, scanner/deps/regression agents, `dedupe_advisory_close.go`) | agents, advisory digest, upstream watch | **new** issues hive authors, pinned advisory issue + comments | `project.repos` | `issue_file` → L3, no label (this is what listing a repo opts in to; `per_repo.mode: issues-only` keeps only this) |
 | Code scanning sweep (`pkg/github/code_scanning.go`, `pkg/codescanning`) | hourly sweep (`code_scanning`, opt-in per repo) | **new** grouped issues from code scanning alerts, alert-table body edits, one closing comment + close when every alert is fixed or dismissed | the hive's own `hive/code-scanning` issues in repos with `code_scanning` on | `issue_file` → L3, no label (own items); see [code-scanning.md](../code-scanning.md) |
@@ -610,9 +611,10 @@ Policy decides whether a kind may write to an item; the content layer under
 only to comment kinds whose body the caller handed the gate as the preview
 (`sentinel`, `needs_decision_comment`, `supersession_notice`,
 `duplicate_fix_notice`, `reporter_trust_hold`, `contributor_adopt`,
-`claim_comment`, `gate_comment`, `welcome_comment`); `Allowed()` without a
-preview — labels, closes, hold-gate upkeep, task-list edits — stays
-policy-only. Three checks run after the policy gate allows a write:
+`claim_comment`, `gate_comment`, `welcome_comment`, `blocked_repair`);
+`Allowed()` without a preview — labels, closes, hold-gate upkeep, task-list
+edits — stays policy-only. Three checks run after the policy gate allows a
+write:
 
 | Check | Key | Suppression reason | Default |
 |---|---|---|---|

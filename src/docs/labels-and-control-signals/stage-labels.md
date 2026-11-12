@@ -755,6 +755,18 @@ the open-issue snapshot instead — and then:
   "delivered" comment is posted until the close succeeds.
 - **No children** → nothing changes.
 
+The same relation keeps a parent from being handed out or marked done while
+a child is open. The contributor offer path withholds it as a `tracker`
+(detail `has N open sub-issues`), on the assignment path and in the queue
+alike, whether the children are native sub-issues a maintainer linked by
+hand or ones the hive split. The PR-claim label sync does not give the
+parent `hive/likely-done` for a merged PR that claims it, and takes off one
+it carries. A contributor's "already done" verdict on it records no claim,
+applies no `hive/likely-done` or already-done label, posts no comment and
+closes nothing: the parent closes through the sweep above, when its children
+have. A webhook re-read of the parent keeps the sub-issue count on its row,
+so the relation holds between enumerations too.
+
 Reopen the parent if something it asked for is still missing; the sweep does
 not close it again until a child is reopened and closed once more (the
 sub-issue summary is read fresh each cycle).

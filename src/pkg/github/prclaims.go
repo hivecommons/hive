@@ -1953,6 +1953,11 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 			// closing keyword means the remainder is still actionable).
 			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
 			issue.Labels = addIssueLabel(issue.Labels, PartiallyAddressedLabel)
+		case issueHasOpenChildren(issue):
+			// A parent whose sub-issues are still open is not likely
+			// done, whatever a merged PR said about it
+			// (issue_open_children.go).
+			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
 		default:
 			issue.Labels = addIssueLabel(issue.Labels, LikelyDoneLabel)
 		}
@@ -2315,7 +2320,10 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 		// remainder (#11931 rule; hivecommons/hive#12316 sat in "Confirm &
 		// close" with half its work in an open PR).
 		partialWanted := mergedWanted && claim.Reference
-		likelyWanted := mergedWanted && !claim.Reference && !issueHasLabel(originalLabels, PartiallyAddressedLabel)
+		// A parent with an open sub-issue is never likely-done: the label is
+		// not added, and one carried from before comes off through the
+		// removal branch below (issue_open_children.go).
+		likelyWanted := mergedWanted && !claim.Reference && !issueHasLabel(originalLabels, PartiallyAddressedLabel) && !issueHasOpenChildren(issue)
 		// The covered-by-PR stage label itself is written by the issue stage
 		// reconciler (SyncIssueStageLabels, hivecommons/hive#12436), which
 		// keeps the issue at 040 while the PR is open — planning against the

@@ -471,6 +471,7 @@ func (c *Client) SweepBlockedIssues(ctx context.Context, opts BlockedSweepOption
 			})
 		}
 	}
+	c.retainBlockedRepairHeld(repos, targets)
 	return c.reconcileBlockedTargets(ctx, targets, c.logger), nil
 }
 
@@ -532,6 +533,8 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 			stripBlockedHelpWanted(ctx, c, t, &res, logger)
 			continue
 		}
+		// A block that names what it waits on is not one the repair converts.
+		forgetBlockedRepairHeld(c, t)
 		if onIssue {
 			reconcileBlockedOnIssue(ctx, c, t, prRepo, prNumber, &res, logger)
 			continue
@@ -706,8 +709,17 @@ const blockedMarkerlessNote = blockedUnblockedMarker + "\nUnblocked: the `blocke
 // and puts it in the maintainer inbox with the question. Only a hive-applied
 // label with no open native "blocked by" link is converted; a person's
 // marker-less block is theirs. Reports whether the issue was converted.
+//
+// The write-back gate is asked as blocked_repair with the fact established
+// here, that the label is the hive's (Item.HiveAppliedBlock). The hive has
+// already written to such an issue, so the gate does not hold the repair back
+// for the issue predating the hive's write access or lacking the opt-in
+// label; while it was asked as gate_comment both did, every sweep, and the
+// issue stayed in the invisible state above for days. A pause, the repo mode
+// and the kind's minimum level still refuse it.
 func askHumanBlockedMarkerless(ctx context.Context, client *Client, t blockedIssueTarget, res *BlockedIssueResult, logger *slog.Logger) bool {
 	if t.reviewBacklog || t.openBlockedBy > 0 {
+		forgetBlockedRepairHeld(client, t)
 		return false
 	}
 	actor, found, err := client.blockedLabelActor(ctx, t.repo, t.number)
@@ -717,6 +729,7 @@ func askHumanBlockedMarkerless(ctx context.Context, client *Client, t blockedIss
 		return false
 	}
 	if !found || (!client.isOwnBotLogin(actor) && !client.IsHiveAuthorLogin(actor)) {
+		forgetBlockedRepairHeld(client, t)
 		return false
 	}
 	item, err := client.WritebackItemForNumber(ctx, t.repo, t.number)
@@ -725,14 +738,23 @@ func askHumanBlockedMarkerless(ctx context.Context, client *Client, t blockedIss
 		logger.Warn("blocked sweep: item lookup failed; marker-less block left alone", "repo", t.repo, "issue", t.number, "error", err)
 		return false
 	}
-	owner, name := client.splitRepo(t.repo)
-	if d := client.WritebackAllowed(owner+"/"+name, item, writeback.KindGateComment, blockedMarkerlessAskNote); !d.Allowed {
+	item.HiveAppliedBlock = true
+	gateRepo := client.blockedRepairRepo(t.repo)
+	if d := client.WritebackAllowed(gateRepo, item, writeback.KindBlockedRepair, blockedMarkerlessAskNote); !d.Allowed {
 		// The burst hold lets a couple of asks per repo through per sweep,
 		// and a failed write's retry is a duplicate for same_item_ttl; both
-		// clear on a later sweep. Say so rather than fall through silently.
-		logger.Info("blocked sweep: needs-human ask held by writeback gate", "repo", t.repo, "issue", t.number, "reason", d.Reason, "detail", d.Detail)
+		// clear on a later sweep. Say so rather than fall through silently,
+		// but once per issue and reason: the sweep asks again every few
+		// minutes, and a hold that lasts (a pause, the repo mode, the level)
+		// would repeat the line each time. Repeats go to the debug log.
+		level := slog.LevelDebug
+		if client.WritebackGate().NoteHeld(gateRepo, t.number, writeback.KindBlockedRepair, d.Reason) {
+			level = slog.LevelInfo
+		}
+		logger.Log(ctx, level, "blocked sweep: needs-human ask held by writeback gate", "repo", t.repo, "issue", t.number, "reason", d.Reason, "detail", d.Detail)
 		return false
 	}
+	forgetBlockedRepairHeld(client, t)
 	if !issueHasLabel(t.labels, issueNeedsHumanLabel) {
 		if err := client.AddLabels(ctx, t.repo, t.number, []string{issueNeedsHumanLabel}); err != nil { // writeback:gated
 			res.Errors++
