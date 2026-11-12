@@ -282,6 +282,13 @@ type Aggregate struct {
 	Reasons        []string                `json:"reasons,omitempty"`
 	Findings       []PerspectiveFinding    `json:"findings,omitempty"`
 	Perspectives   map[Perspective]Verdict `json:"perspectives"`
+	// BlockSummaries are the summaries of the perspectives whose own
+	// verdict is changes_requested or reject, one "<perspective>: <summary>"
+	// each. A reviewer can block with no structured finding and explain
+	// itself only there ("still present at the new head"); the contributor
+	// nudge lists them when the verdict has no in-scope finding to list
+	// (BlockSummaryAsks). They are not Reasons: nothing routes on them.
+	BlockSummaries []string `json:"block_summaries,omitempty"`
 	// Heads lists, per perspective, the review heads whose reports this
 	// aggregate holds. Empty unless reports came from review_heads; with
 	// several heads Perspectives holds the strictest of their verdicts.
@@ -573,6 +580,11 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 				agg.Reasons = append(agg.Reasons, summary)
 			}
 		}
+		if effective.Verdict == VerdictChangesRequested || effective.Verdict == VerdictReject {
+			if summary := blockSummaryReason(r); summary != "" {
+				agg.BlockSummaries = append(agg.BlockSummaries, summary)
+			}
+		}
 		for _, f := range r.Findings {
 			agg.Findings = append(agg.Findings, PerspectiveFinding{Perspective: r.Perspective, Finding: f})
 			if InScopeFinding(f) && severityAtLeast(f.Severity, threshold) {
@@ -582,6 +594,8 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	}
 	sortReasons(agg.Reasons)
 	sort.Strings(agg.HumanSummaries)
+	sort.Strings(agg.BlockSummaries)
+	agg.BlockSummaries = slices.Compact(agg.BlockSummaries)
 
 	signOffOnly := signOffAsk && !requiresHumanBeyondSignOff && !hasReject && !hasChanges
 	if hiveSupersedingFixRoute(agg, opts, hasReject, decisionRequested, riskEscalation, unresolvedRequiresHuman, signOffOnly) {

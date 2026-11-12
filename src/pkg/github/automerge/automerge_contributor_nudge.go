@@ -201,18 +201,56 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 const swarmChangesAskLead = "the review swarm requested changes"
 
 // swarmChangesAsks is the review ask for a review-swarm changes_requested:
-// the lead line, then one line per finding the head's verdict carries
-// (prstage.ReviewVerdict.FindingAsks), so the contributor reads what to fix
-// here rather than only that something was asked. Mentions in a finding are
-// neutralised: the nudge is a public comment.
+// the lead line, then what the head's verdict asked for (swarmVerdictAsks),
+// so the contributor reads what to fix here rather than only that something
+// was asked. A verdict that does not block adds nothing to the lead line.
 func swarmChangesAsks(d stageDetail) []string {
 	asks := []string{swarmChangesAskLead}
 	if !verdictBlocks(d) {
 		return asks
 	}
-	for _, f := range d.Verdict.FindingAsks {
+	return append(asks, swarmVerdictAsks(d.Verdict)...)
+}
+
+// swarmVerdictAsks renders what a blocking verdict asked for, one line
+// each: its in-scope findings (prstage.ReviewVerdict.FindingAsks), or, when
+// it carries none, what the blocking reviewers said in their summaries
+// (SummaryAsks) — a reviewer can ask for changes and explain itself only
+// there. Mentions are neutralised: the nudge is a public comment. The
+// caller decides whether the verdict blocks.
+func swarmVerdictAsks(v ContributorLaneVerdict) []string {
+	var asks []string
+	for _, f := range v.FindingAsks {
 		if f = strings.TrimSpace(f); f != "" {
 			asks = append(asks, "review finding: "+advisory.NeutralizeMentions(f))
+		}
+	}
+	if len(asks) > 0 {
+		return asks
+	}
+	for _, s := range v.SummaryAsks {
+		if s = strings.TrimSpace(s); s != "" {
+			asks = append(asks, "review summary: "+advisory.NeutralizeMentions(s))
+		}
+	}
+	return asks
+}
+
+// routedVerdictAsks is the "verdict changes_requested" route reason as
+// review asks. The lane's own detail answers when it read the head's
+// verdict. A lane that stopped at a gate before the verdict (a sentinel
+// alert, a hold label) left the detail without one, and the human route
+// read the verdict itself to send the PR back: the asks it was decided on
+// ride the route (Route.ReviewAsks), so the nudge lists the same findings
+// instead of the lead line alone.
+func routedVerdictAsks(d stageDetail, route *stagelabels.Route) []string {
+	asks := swarmChangesAsks(d)
+	if len(asks) > 1 || route == nil {
+		return asks
+	}
+	for _, a := range route.ReviewAsks {
+		if a = strings.TrimSpace(a); a != "" {
+			asks = append(asks, a)
 		}
 	}
 	return asks
@@ -245,7 +283,7 @@ func nudgeDiagnosisRouted(reason string, d stageDetail, route *stagelabels.Route
 				}
 			}
 		case strings.HasPrefix(r, "verdict changes_requested"):
-			for _, a := range swarmChangesAsks(d) {
+			for _, a := range routedVerdictAsks(d, route) {
 				if !seenAsk[a] {
 					seenAsk[a] = true
 					asks = append(asks, a)

@@ -147,6 +147,13 @@ type Evidence struct {
 	// HumanSummaries are reviewer summaries for requires_human verdicts that
 	// did not carry a structured decision question.
 	HumanSummaries []string
+	// ReviewAsks are what the review asked for on Head when Verdict is
+	// VerdictChangesRequested, one rendered line each: the verdict's
+	// in-scope findings, else the blocking reviewers' summaries. They ride
+	// the fixing route (Route.ReviewAsks) so the author's nudge can list
+	// them when the lane stopped before it read the verdict. They never
+	// choose the stage or its reasons.
+	ReviewAsks []string
 	// SelfAuthored selects 070 fixing for the "author must act" outcome;
 	// otherwise AuthorKind picks 072 (clanker) or 071 (human / unknown).
 	SelfAuthored bool
@@ -354,6 +361,10 @@ type Route struct {
 	// real progress; the hive never merges the head while a gate stands,
 	// and the dashboard's Merge queue cell reads "Held · …" for it.
 	Gates []string
+	// ReviewAsks is Evidence.ReviewAsks on a fixing route decided on a
+	// changes_requested verdict: what the review asked for, for the
+	// author's nudge. Empty on every other route.
+	ReviewAsks []string
 }
 
 // Lane-vocabulary reasons RouteHuman emits for the fixing stages.
@@ -590,7 +601,11 @@ func routeProgress(e Evidence) Route {
 		note(mergeConflictReason, LaneReasonConflicting)
 	}
 	if len(fix) > 0 {
-		return Route{Stage: fixing, Reasons: fix, LaneReason: laneReason, Summary: summary}
+		r := Route{Stage: fixing, Reasons: fix, LaneReason: laneReason, Summary: summary}
+		if e.Verdict == VerdictChangesRequested {
+			r.ReviewAsks = append([]string(nil), e.ReviewAsks...)
+		}
+		return r
 	}
 	// A person's own PR with a requires_human verdict and nothing else
 	// outstanding: the reviewer's question is the author's to answer. It
