@@ -1,0 +1,1 @@
+- Knowledge → Integrations: the Plaud card now links to the Inbox and voice sources quickstart (`inbox-voice-sources.md`).
