@@ -1,1 +1,1 @@
-- The Inbox now reads Plaud recordings directly from the connector (keyed by the Plaud file id) while it is signed in, falling back to synced facts otherwise.
+- The Inbox now reads Plaud recordings directly from the connector (keyed by the Plaud file id) while it is signed in, merging them with the synced facts and refreshing the listing in the background so dashboard polls never wait on the Plaud process.

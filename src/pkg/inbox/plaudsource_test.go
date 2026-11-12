@@ -3,6 +3,8 @@ package inbox
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,10 +67,10 @@ func TestPreferDirectSelection(t *testing.T) {
 	dir := t.TempDir()
 	writeFact(t, dir, "personal", "plaud-plaud-rec-1.md", plaudFact)
 	facts := &FactSource{ConnectorsDir: dir, SourceType: "plaud"}
-	fp := &fakePlaud{recs: []connector.PlaudRecording{{ID: "direct-1", Title: "Direct"}}}
+	fp := &fakePlaud{recs: []connector.PlaudRecording{{ID: "direct-1", Title: "Direct", RecordedAt: time.Date(2026, 11, 11, 8, 0, 0, 0, time.UTC)}}}
 	ready := false
 	direct := &PlaudSource{Name: "plaud", Reader: fp, Ready: func(context.Context) bool { return ready }}
-	src := &PreferDirect{Direct: direct, Facts: facts}
+	src := &PreferDirect{Direct: direct, Facts: facts, TTL: time.Hour}
 	ctx := context.Background()
 
 	items, err := src.List(ctx)
@@ -80,17 +82,91 @@ func TestPreferDirectSelection(t *testing.T) {
 	}
 
 	ready = true
+	if err := src.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
 	items, err = src.List(ctx)
-	if err != nil || len(items) != 1 || items[0].ID != "direct-1" {
-		t.Fatalf("signed in should use plaud: %v %v", items, err)
+	if err != nil || len(items) != 2 || items[0].ID != "direct-1" || items[1].ID != "rec-1" {
+		t.Fatalf("signed in should merge plaud with facts: %v %v", items, err)
+	}
+	if items[1].FactPath == "" || items[1].Excerpt == "" {
+		t.Fatalf("fact-only item lost fact fields: %+v", items[1])
 	}
 	if _, err := src.Fetch(ctx, items[0]); err != nil || len(fp.reads) != 1 {
 		t.Fatalf("direct item should read plaud: err=%v reads=%v", err, fp.reads)
 	}
 
 	fp.listErr = errors.New("mcp down")
+	if err := src.Refresh(ctx); err == nil {
+		t.Fatal("refresh should report the plaud error")
+	}
 	items, err = src.List(ctx)
 	if err != nil || len(items) != 1 || items[0].ID != "rec-1" {
 		t.Fatalf("plaud failure should fall back to facts: %v %v", items, err)
 	}
+}
+
+// List must never pay for the Plaud process: the first signed-in call
+// returns facts and kicks off one background refresh.
+func TestPreferDirectListDoesNotBlock(t *testing.T) {
+	dir := t.TempDir()
+	writeFact(t, dir, "personal", "plaud-plaud-rec-1.md", plaudFact)
+	facts := &FactSource{ConnectorsDir: dir, SourceType: "plaud"}
+	fp := &countingPlaud{recs: []connector.PlaudRecording{{ID: "rec-1", Title: "Direct title"}}, gate: make(chan struct{})}
+	src := &PreferDirect{Direct: &PlaudSource{Name: "plaud", Reader: fp}, Facts: facts, TTL: time.Hour}
+	ctx := context.Background()
+
+	for i := 0; i < 2; i++ {
+		items, err := src.List(ctx)
+		if err != nil || len(items) != 1 || items[0].Title != "RFC: Voice inbox" {
+			t.Fatalf("list %d while plaud is slow should serve facts: %v %v", i, items, err)
+		}
+	}
+	fp.release()
+	var items []Item
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		items, _ = src.List(ctx)
+		if len(items) == 1 && items[0].Title == "Direct title" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background refresh never landed: %+v", items)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := fp.calls.Load(); n != 1 {
+		t.Fatalf("ListRecordings calls = %d, want 1 (single-flight, cached for TTL)", n)
+	}
+	it := items[0]
+	if it.FactSlug != "plaud-plaud-rec-1" || it.Layer != "personal" || it.FactPath == "" || it.Excerpt == "" {
+		t.Fatalf("direct item lost fact fields: %+v", it)
+	}
+}
+
+type countingPlaud struct {
+	recs  []connector.PlaudRecording
+	calls atomic.Int32
+	gate  chan struct{}
+	once  sync.Once
+}
+
+func (c *countingPlaud) release() {
+	c.once.Do(func() {
+		if c.gate != nil {
+			close(c.gate)
+		}
+	})
+}
+
+func (c *countingPlaud) ListRecordings(context.Context) ([]connector.PlaudRecording, error) {
+	c.calls.Add(1)
+	if c.gate != nil {
+		<-c.gate
+	}
+	return c.recs, nil
+}
+
+func (c *countingPlaud) ReadRecording(context.Context, string) (connector.PlaudContent, error) {
+	return connector.PlaudContent{}, nil
 }
