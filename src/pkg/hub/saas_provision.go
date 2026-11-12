@@ -2083,15 +2083,21 @@ func saveSaaSHive(h *SaaSHive) error {
 		return fmt.Errorf("invalid hive ID for save: %q", h.ID)
 	}
 	dir := filepath.Join(saasHivesDir, h.ID)
-	// Best-effort: a failed mkdir surfaces via the WriteFile error below.
-	_ = os.MkdirAll(dir, 0o755)
+	// meta.json carries WebhookRelayKey, so it is written rw------- under an
+	// rwx------ directory like the other hub secret stores (cluster App keys,
+	// generation stores). Best-effort: a failed mkdir surfaces via the
+	// WriteFile error below.
+	_ = os.MkdirAll(dir, 0o700)
+	// MkdirAll leaves pre-existing directories untouched, so tighten hives
+	// provisioned before meta.json carried key material.
+	_ = os.Chmod(dir, 0o700)
 	data, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(dir, "meta.json")
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {

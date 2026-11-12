@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -222,5 +224,37 @@ func TestWebhookRelayKeyHeartbeatWire(t *testing.T) {
 	}
 	if hubPayload.WebhookRelayKeyFingerprint != webhookRelayKeyFingerprint("relay-key-h1") {
 		t.Fatalf("hub decoded fingerprint %q", hubPayload.WebhookRelayKeyFingerprint)
+	}
+}
+
+// meta.json carries the relay key, so it must be unreadable to other local
+// users like the hub's other secret stores. A pre-existing world-readable hive
+// directory must be tightened on save too.
+func TestSaveSaaSHiveKeepsRelayKeyPrivate(t *testing.T) {
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+
+	dir := filepath.Join(saasHivesDir, "legacy")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveSaaSHive(&SaaSHive{ID: "legacy", WebhookRelayKey: newWebhookRelayKey()}); err != nil {
+		t.Fatal(err)
+	}
+
+	fi, err := os.Stat(filepath.Join(dir, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("meta.json mode = %o, want 600", got)
+	}
+	di, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := di.Mode().Perm(); got != 0o700 {
+		t.Fatalf("hive dir mode = %o, want 700", got)
 	}
 }
