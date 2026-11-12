@@ -119,3 +119,17 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `PUT` | `/api/config/governor/project-observability` | Owner only | Governor Project Observability Set | `pkg/dashboard/api.go:300` |
 | `GET` | `/api/config/governor/inference-auth` | Owner only | Governor Inference Auth Get | `pkg/dashboard/api.go:315` |
 | `PUT` | `/api/config/governor/inference-auth` | Owner only | Governor Inference Auth Set | `pkg/dashboard/api.go:316` |
+| `GET` | `/api/config/convergence` | Owner only | Convergence Config Get | `pkg/dashboard/api.go:276` |
+| `PUT` | `/api/config/convergence` | Owner only | Convergence Config Set | `pkg/dashboard/api.go:278` |
+| `GET` | `/api/config/governor/advisory` | Owner only | Governor Advisory Get | `pkg/dashboard/api.go:282` |
+| `PUT` | `/api/config/governor/advisory` | Owner only | Governor Advisory Set | `pkg/dashboard/api.go:283` |
+| `GET` | `/api/config/governor/replan` | Owner only | Governor Replan Get | `pkg/dashboard/api.go:284` |
+| `PUT` | `/api/config/governor/replan` | Owner only | Governor Replan Set | `pkg/dashboard/api.go:285` |
+| `GET` | `/api/config/governor/work-source` | Owner only | Governor Work Source Get (Jira secrets/TLS fields reported as set/unset only) | `pkg/dashboard/api.go:295` |
+| `PUT` | `/api/config/governor/work-source` | Owner only | Governor Work Source Set (including Jira Data Center TLS settings) | `pkg/dashboard/api.go:296` |
+| `PUT` | `/api/config/governor/security` | Owner only | Governor Security | `pkg/dashboard/api.go:297` |
+| `GET` | `/api/config/governor/project-observability` | Owner only | Governor Project Observability Get | `pkg/dashboard/api.go:299` |
+| `PUT` | `/api/config/governor/project-observability` | Owner only | Governor Project Observability Set | `pkg/dashboard/api.go:300` |
+| `GET` | `/api/config/governor/inference-auth` | Owner only | Governor Inference Auth Get | `pkg/dashboard/api.go:315` |
+| `PUT` | `/api/config/governor/inference-auth` | Owner only | Governor Inference Auth Set | `pkg/dashboard/api.go:316` |
+| `PUT` | `/api/workflows/enabled` | Owner only | Turn model-based stage derivation (`workflow.enabled`, [#17620](https://github.com/hivecommons/hive/issues/17620)) on or off from the dashboard, for hosted hives with no `hive.yaml` access. Body `{enabled: bool}`; persists `hive.yaml`; the stage engine and tracker read the live flag so it applies on the next derivation pass without a restart. Turning on also provisions every bound repository's model labels now (`warnings[]` lists repositories that could not be provisioned; the next sweep retries). Returns `{enabled, changed, bindings[], warnings?[]}`. Audited `workflow_enabled` / `workflow_disabled`; `400` on a non-boolean body | `pkg/dashboard/api_workflows.go:28` |

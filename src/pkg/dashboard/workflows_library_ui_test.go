@@ -124,3 +124,59 @@ console.log('ok');
 		t.Fatalf("unexpected node output: %s", out)
 	}
 }
+
+// The Library header's workflow.enabled switch (hivecommons/hive#17620):
+// wired to PUT /api/workflows/enabled with a confirm on the way on, and the
+// Repos binding row's "columns only" hint when a binding exists while
+// derivation is off.
+func TestWorkflowsEnabledToggleWiring(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`function renderWorkflowEnabledToggle(enabled, owner, busy)`,
+		`async function wfToggleEnabled(el)`,
+		`fetch('/api/workflows/enabled', { method: 'PUT'`,
+		`title: 'Derive stages from bound models?'`,
+		`data-action="wfToggleEnabled"`,
+		`renderWorkflowLibraryTable(_workflowState.workflows, _workflowState.bindings, owner, _workflowState.enabled, _wfLib.enabledBusy)`,
+		`columns only — turn on derivation in Workflows`,
+		`.wf-enabled-toggle {`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing workflow.enabled toggle wiring %q", want)
+		}
+	}
+}
+
+func TestWorkflowsEnabledToggleNode(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	html := indexHTML(t)
+	script := `const assert = require('assert');
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+function yamlHint(p) { return '<code>' + p + '</code>'; }
+` + jsFunc(t, html, "renderWorkflowEnabledToggle") + `
+const off = renderWorkflowEnabledToggle(false, true, false);
+assert.ok(off.includes('data-wf-enabled="off"') && off.includes('aria-checked="false"'), 'off state');
+assert.ok(off.includes('data-action="wfToggleEnabled"'), 'owner can flip');
+assert.ok(!off.includes('config-toggle-switch on'), 'switch not on');
+assert.ok(off.includes('Off: a binding only changes'), 'off explanation');
+assert.ok(off.includes('workflow.enabled'), 'names the yaml key');
+
+const on = renderWorkflowEnabledToggle(true, true, false);
+assert.ok(on.includes('config-toggle-switch on') && on.includes('aria-checked="true"'), 'on state');
+assert.ok(on.includes('On: a bound repository'), 'on explanation');
+
+const viewer = renderWorkflowEnabledToggle(false, false, false);
+assert.ok(!viewer.includes('data-action="wfToggleEnabled"') && viewer.includes('aria-disabled="true"') && viewer.includes(' disabled'), 'non-owner sees a locked switch');
+assert.ok(viewer.includes('Owner role is required'), 'non-owner title explains');
+
+const busy = renderWorkflowEnabledToggle(true, true, true);
+assert.ok(!busy.includes('data-action="wfToggleEnabled"') && busy.includes(' disabled'), 'busy switch is locked');
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node: %v\n%s", err, out)
+	}
+}

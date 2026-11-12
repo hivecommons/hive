@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.21.3)
+
+### Fixed
+
+- Changing the model or backend of an agent that was paused because its CLI rejected the model now resumes it, so the restart that applies the change launches the CLI on the new model. Before, the restart kept the pause and the agent stayed parked until someone resumed it by hand. This covers `POST /api/model/{agent}/{model}`, `POST /api/switch/{agent}/{backend}`, `PUT /api/config/agent/{name}/models`, the agent config dialog, and the admin MCP `agent.model` and `agent.backend` operations, which call the first two. `POST /api/model` and `POST /api/switch` lift it even when the value they set is the current one: a deliberate set on a parked agent is the operator saying try again, while the config dialog and the models PUT lift it only when the model or backend changed. Only that pause is lifted: an operator's own pause and the login, restart-storm, disk-full, fleet-breaker and pack pauses stay. If the new model is rejected too, the agent is parked again after the usual three failures. A pause or resume now also updates the paused flag in the agent's own overlay file (`agent-configs/<name>.yaml`). That file replaces the agent's whole `hive.yaml` entry at load, but it used to keep whatever the paused flag was at the agent's last config edit. So an agent whose model was edited while it was paused came back paused after it was resumed and the hive restarted, with no trigger, reason, actor or time recorded for that pause, and an agent paused after an edit could come back running.
+
+## 2026-11-12 (v6.21.2)
+
+### Changed
+
+- Claude auth: while `HIVE_CLAUDE_OAUTH_TOKEN` (or its secret file) is set, Claude agents run on the operator's long-lived token and the shared `~/.claude/.credentials.json` is not what they authenticate with, so the per-agent credential re-bridge (launch, watchdog poll and post-sign-in) and the durable-credential watchdog's Claude probe are suspended: no credential files are moved, no `claude_token_missing` audit or "durable credential unusable" warning is raised for Claude, and the dashboard no longer flags the unused bridge as broken. The suspension is logged once at startup; Copilot watching is unchanged, and with the token unset everything behaves exactly as before. (#17760)
+
 ## 2026-11-12 (v6.21.1)
 
 ### Fixed
