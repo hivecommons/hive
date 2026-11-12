@@ -168,7 +168,7 @@ func TestSelfreportOpsClassesMatchFleetReport(t *testing.T) {
 	for _, c := range []string{
 		fleetreport.ClassAgentLoginRequired, fleetreport.ClassInferenceAuthFailed, fleetreport.ClassDataDiskPressure,
 		fleetreport.ClassGitHubAppTokenMintFailed, fleetreport.ClassGitHubAppNotInstalled, fleetreport.ClassGitHubAppRepoNotCovered,
-		fleetreport.ClassGitHubAppAlertsPermission,
+		fleetreport.ClassGitHubAppAlertsPermission, fleetreport.ClassForgeUnreachable,
 		fleetreport.ClassProxyConnectDialFailed, fleetreport.ClassProxyPlainForwardFailed, fleetreport.ClassProxyTLSHandshakeFailed, fleetreport.ClassCruxRuntimeUnavailable,
 		fleetreport.ClassModelDiscoveryDegraded, fleetreport.ClassInferenceUpstreamError, fleetreport.ClassInferenceCallerUnknown,
 		fleetreport.ClassLabelProvisioningFailed, fleetreport.ClassSharedCIRerunForbidden,
