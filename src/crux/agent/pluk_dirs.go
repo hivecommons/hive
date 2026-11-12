@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -81,11 +83,29 @@ func ensurePlukRunDirs(runDir string) error {
 				return fmt.Errorf("chowning %s to %d:%d: %w", dir, DevUID, NodeGID, err)
 			}
 		}
-		if err := os.Chmod(dir, plukSharedDirMode); err != nil {
+		if err := chmodPlukDir(dir, plukSharedDirMode); err != nil {
 			return fmt.Errorf("chmoding %s to %s: %w", dir, plukSharedDirMode, err)
 		}
 	}
 	return nil
+}
+
+// plukChmod is a test seam for simulating EPERM.
+var plukChmod = os.Chmod
+
+// chmodPlukDir widens dir to mode. A directory left by an earlier run under
+// another uid rejects chmod with EPERM; that is benign when it already grants
+// the group access the shared mode is meant to provide.
+func chmodPlukDir(dir string, mode os.FileMode) error {
+	err := plukChmod(dir, mode)
+	if err == nil || !errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+	info, statErr := os.Stat(dir)
+	if statErr == nil && info.IsDir() && info.Mode().Perm()&mode.Perm() == mode.Perm() {
+		return nil
+	}
+	return err
 }
 
 // plukPipePaneCmd builds the shell command tmux pipe-pane runs for one agent
