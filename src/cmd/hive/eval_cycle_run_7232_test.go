@@ -1,14 +1,12 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/hivecommons/hive/crux/cruxtest"
 
@@ -92,9 +90,10 @@ func newEvalCycleFixture(t *testing.T) *evalCycleFixture {
 
 func (f *evalCycleFixture) run(t *testing.T) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	runEvalCycle(ctx, f.cfg, f.gh, f.gov, f.sched, f.agentMgr, f.dashSrv,
+	// The full cycle can exceed a short wall-clock deadline on a busy CI
+	// runner. Let the test runner's timeout bound it instead of canceling
+	// the GitHub requests before the digest has been published.
+	runEvalCycle(t.Context(), f.cfg, f.gh, f.gov, f.sched, f.agentMgr, f.dashSrv,
 		nil, // notifier
 		f.beadStores,
 		nil, // tokenCollector
