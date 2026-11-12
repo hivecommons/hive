@@ -516,6 +516,12 @@ review.perspective_models.<key>.backend # TODO #13243
 review.perspective_models.<key>.model # TODO #13243
 review.perspective_prompts.<key> # TODO #11854
 review.perspectives[] # TODO #11854
+review.perspectives_source.owner # TODO #17975
+review.perspectives_source.path # TODO #17975
+review.perspectives_source.ref # TODO #17975
+review.perspectives_source.repo # TODO #17975
+review.perspectives_source.type # TODO #17975
+review.perspectives_source.url # TODO #17975
 review.recommendations.labels[] # TODO #11854
 review.recommendations.repos[] # TODO #11854
 review.reviewer_agents[] # TODO #11854
