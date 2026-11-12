@@ -1,9 +1,11 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -46,6 +48,7 @@ type fakeSubstrate struct {
 	pulledWorkspace string
 	workers         []*substrateapi.Worker
 	listErr         error
+	deleted         []string
 	closed          bool
 	cleanupCtxDead  bool
 }
@@ -118,8 +121,9 @@ func (f *fakeSubstrate) SuspendActor(ctx context.Context, _ *substrateapi.Object
 	return f.suspendErr
 }
 
-func (f *fakeSubstrate) DeleteActor(ctx context.Context, _ *substrateapi.ObjectRef) error {
+func (f *fakeSubstrate) DeleteActor(ctx context.Context, ref *substrateapi.ObjectRef) error {
 	f.note("DeleteActor", ctx)
+	f.deleted = append(f.deleted, ref.GetName())
 	return f.deleteErr
 }
 
@@ -449,6 +453,108 @@ func TestSubstrateRunSnapshotOnIdle(t *testing.T) {
 	}
 	if !fake.saw("SuspendActor") || !fake.saw("DeleteActor") {
 		t.Errorf("suspend failure must fall back to delete: %v", fake.calls)
+	}
+}
+
+func TestSubstrateSnapshotOnIdleDeletesSupersededActor(t *testing.T) {
+	fake := &fakeSubstrate{}
+	l := newTestSubstrate(fake)
+	l.Options.SnapshotOnIdle = true
+	spec := substrateTestSpec()
+	if _, err := l.Run(context.Background(), spec); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	first := substrateActorName(spec.Name, l.now())
+	if len(fake.deleted) != 0 {
+		t.Fatalf("first suspend deleted %v, want nothing", fake.deleted)
+	}
+
+	l.now = func() time.Time { return time.Unix(1_700_003_600, 0) }
+	if _, err := l.Run(context.Background(), spec); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	second := substrateActorName(spec.Name, l.now())
+	if len(fake.deleted) != 1 || fake.deleted[0] != first || first == second {
+		t.Errorf("deleted = %v, want only the first actor %s (second %s survives)", fake.deleted, first, second)
+	}
+}
+
+func TestSubstrateSnapshotOnIdleKeepsOtherAgentsActors(t *testing.T) {
+	fake := &fakeSubstrate{}
+	l := newTestSubstrate(fake)
+	l.Options.SnapshotOnIdle = true
+	other := substrateTestSpec()
+	other.Name = "docs-sandbox"
+	if _, err := l.Run(context.Background(), other); err != nil {
+		t.Fatalf("Run other: %v", err)
+	}
+	l.now = func() time.Time { return time.Unix(1_700_003_600, 0) }
+	if _, err := l.Run(context.Background(), substrateTestSpec()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(fake.deleted) != 0 {
+		t.Errorf("deleted %v: one agent's suspend must not delete another's actor", fake.deleted)
+	}
+}
+
+func TestSubstrateSnapshotOnIdleSkipsSupersededActorInOtherAtespace(t *testing.T) {
+	fake := &fakeSubstrate{}
+	l := newTestSubstrate(fake)
+	l.Options.SnapshotOnIdle = true
+	var logs bytes.Buffer
+	l.Options.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	spec := substrateTestSpec()
+	if _, err := l.Run(context.Background(), spec); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	first := substrateActorName(spec.Name, l.now())
+
+	// The same agent is reconfigured onto another atespace: the launcher's
+	// client is for the new one, so the old actor must not be deleted
+	// through it (the delete would target a name never created there).
+	l.Options.Atespace = "hive-staging"
+	l.now = func() time.Time { return time.Unix(1_700_003_600, 0) }
+	if _, err := l.Run(context.Background(), spec); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if len(fake.deleted) != 0 {
+		t.Errorf("deleted = %v, want no delete across atespaces", fake.deleted)
+	}
+	if out := logs.String(); !strings.Contains(out, first) || !strings.Contains(out, "another atespace") || !strings.Contains(out, "agent="+spec.Name) {
+		t.Errorf("log = %q, want a warning naming %s and the agent", out, first)
+	}
+}
+
+func TestSubstrateSnapshotOnIdleDeleteErrorLogsStructured(t *testing.T) {
+	fake := &fakeSubstrate{deleteErr: errors.New("not found")}
+	l := newTestSubstrate(fake)
+	l.Options.SnapshotOnIdle = true
+	var logs bytes.Buffer
+	l.Options.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	for _, unix := range []int64{1_700_000_000, 1_700_003_600} {
+		l.now = func() time.Time { return time.Unix(unix, 0) }
+		if _, err := l.Run(context.Background(), substrateTestSpec()); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	}
+	out := logs.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "agent=deps-sandbox") || !strings.Contains(out, "error=\"not found\"") {
+		t.Errorf("log = %q, want a WARN record with agent and error attrs", out)
+	}
+}
+
+func TestSubstrateSnapshotOnIdleDeleteErrorDoesNotFailRun(t *testing.T) {
+	fake := &fakeSubstrate{deleteErr: errors.New("not found")}
+	l := newTestSubstrate(fake)
+	l.Options.SnapshotOnIdle = true
+	for _, unix := range []int64{1_700_000_000, 1_700_003_600} {
+		l.now = func() time.Time { return time.Unix(unix, 0) }
+		if _, err := l.Run(context.Background(), substrateTestSpec()); err != nil {
+			t.Fatalf("Run: %v (a failed GC delete must not fail the kick)", err)
+		}
+	}
+	if len(fake.deleted) != 1 {
+		t.Errorf("deleted = %v, want one attempted delete", fake.deleted)
 	}
 }
 

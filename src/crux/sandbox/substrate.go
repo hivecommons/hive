@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -105,6 +106,16 @@ type SubstrateOptions struct {
 	SnapshotOnIdle     bool
 	AllowHosts         []string
 	PolicyProfile      string
+	// Logger receives cleanup diagnostics that do not fail the kick; nil
+	// means slog.Default().
+	Logger *slog.Logger
+}
+
+func (o SubstrateOptions) logger() *slog.Logger {
+	if o.Logger != nil {
+		return o.Logger
+	}
+	return slog.Default()
 }
 
 // Validate reports the first configuration error a kick would hit.
@@ -302,9 +313,11 @@ func (l *SubstrateLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 	kick := kicks.begin(spec.Name, SubstrateActorInfo{Name: name, Atespace: ref.Atespace, State: SubstrateStateCreated})
 	kicks.observe(kick, created)
 	// Delete is the default: a kick is a one-shot and keeping a snapshot
-	// around costs object storage. snapshot_on_idle keeps a resumable
-	// snapshot instead, so the next kick's warm state (caches, builds) is
-	// a resume rather than a cold boot.
+	// around costs object storage. snapshot_on_idle keeps the actor
+	// suspended instead. Nothing resumes it yet (the next kick is a cold
+	// boot), so only the latest snapshot per agent is retained: the one it
+	// replaces is deleted. The Control API has no ListActors, so actors left
+	// by an earlier hive process are not reclaimed.
 	cleanupActor := func() {
 		if l.Options.SnapshotOnIdle && ctx.Err() == nil {
 			if err := control.SuspendActor(live(), ref, substrateapi.DurabilityMode_DURABILITY_MODE_ASYNCHRONOUS); err == nil {
@@ -312,6 +325,21 @@ func (l *SubstrateLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 					i.State, i.Suspended, i.Done = SubstrateStateSuspended, true, true
 				})
 				cleanupTemplate()
+				prev := kicks.swapSuspended(spec.Name, SubstrateActorInfo{Name: name, Atespace: ref.Atespace})
+				switch {
+				case prev.Name == "" || prev.Name == name:
+				case prev.Atespace != ref.Atespace:
+					// This launcher's client is for the current atespace;
+					// an actor left in another one is not ours to reach.
+					l.Options.logger().Warn("substrate: superseded suspended actor left in another atespace",
+						"agent", spec.Name, "actor", prev.Name, "atespace", prev.Atespace, "current_atespace", ref.Atespace)
+				default:
+					prevRef := &substrateapi.ObjectRef{Atespace: prev.Atespace, Name: prev.Name}
+					if err := control.DeleteActor(live(), prevRef); err != nil {
+						l.Options.logger().Warn("substrate: deleting superseded suspended actor",
+							"agent", spec.Name, "actor", prev.Name, "atespace", prev.Atespace, "error", err)
+					}
+				}
 				return
 			}
 		}
