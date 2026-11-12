@@ -306,7 +306,7 @@
   "maturity": "sandbox",
   "category": "Runtime",
   "repos": [
-   "containers/composefs"
+   "composefs/composefs"
   ]
  },
  {
@@ -1120,7 +1120,7 @@
   "maturity": "sandbox",
   "category": "AI Native Infra",
   "repos": [
-   "ray-project/kuberay"
+   "kuberay-project/kuberay"
   ]
  },
  {
@@ -1542,7 +1542,7 @@
   "maturity": "archived",
   "category": "Observability and Analysis",
   "repos": [
-   "OpenObservability/OpenMetrics"
+   "prometheus/OpenMetrics"
   ]
  },
  {
@@ -1738,7 +1738,7 @@
   "maturity": "sandbox",
   "category": "Provisioning",
   "repos": [
-   "ratify-project/ratify"
+   "notaryproject/ratify"
   ]
  },
  {

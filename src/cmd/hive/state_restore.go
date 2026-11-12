@@ -106,6 +106,23 @@ func restoreAgentRuntimeState(saved *snapshot.PersistedState, cfg *config.Config
 				agentMgr.SeedPauseState(name, *as.PausedAt, trigger, reason, as.PausedBy)
 			}
 		}
+		// The backend override is replayed BEFORE the model pin and override:
+		// SetModelOverride spells the model for the agent's effective backend,
+		// so replaying the model first spelled it for the CONFIG backend. An
+		// agent configured as copilot but overridden to claude had its saved
+		// claude-sonnet-5-5 rewritten to the Copilot spelling
+		// claude-sonnet-5.5 on every boot, which the Claude CLI then refused.
+		if as.BackendOverride != "" {
+			if err := agentMgr.SetBackendOverride(name, as.BackendOverride); err != nil {
+				// The one legitimate path here is a gateway that was deleted
+				// from the config after the override was saved. Anything else
+				// is a wiring-order regression (see the doc comment above).
+				logger.Warn("backend override NOT restored — agent will run on its config backend",
+					"agent", name, "backend", as.BackendOverride, "error", err)
+			} else {
+				logger.Info("backend override restored", "agent", name, "backend", as.BackendOverride)
+			}
+		}
 		if as.PinnedCLI != "" {
 			_ = agentMgr.PinCLI(name, as.PinnedCLI)
 		}
@@ -117,17 +134,6 @@ func restoreAgentRuntimeState(saved *snapshot.PersistedState, cfg *config.Config
 				logger.Warn("model override NOT restored", "agent", name, "model", as.ModelOverride, "error", err)
 			} else {
 				logger.Info("model override restored", "agent", name, "model", as.ModelOverride)
-			}
-		}
-		if as.BackendOverride != "" {
-			if err := agentMgr.SetBackendOverride(name, as.BackendOverride); err != nil {
-				// The one legitimate path here is a gateway that was deleted
-				// from the config after the override was saved. Anything else
-				// is a wiring-order regression (see the doc comment above).
-				logger.Warn("backend override NOT restored — agent will run on its config backend",
-					"agent", name, "backend", as.BackendOverride, "error", err)
-			} else {
-				logger.Info("backend override restored", "agent", name, "backend", as.BackendOverride)
 			}
 		}
 		if as.RestartCount > 0 || len(as.RestartEvents) > 0 || as.LastRestartReason != "" {

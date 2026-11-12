@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,47 +13,61 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/claude"
+	"github.com/hivecommons/hive/crux/sharedfile"
 )
 
-// Claude credential bridge repair.
+// Claude credential bridge: share the LOGIN across per-agent .claude homes
+// without sharing anything else.
 //
-// Each per-UID claude agent reaches the fleet's one Claude login through a
-// symlink, $HOME/.claude/.credentials.json -> /data/home/.claude/.credentials.json
-// (perAgentCLIHomes). Claude Code does not write through that link. When it
-// refreshes the OAuth token (about every 8 hours) it writes a temp file in
-// $HOME/.claude and renames it over .credentials.json, which REPLACES the
-// symlink with a regular file owned by the agent's uid, mode 0600. From then
-// on that agent runs on a private copy: a later dashboard sign-in rewrites the
-// shared file and never reaches it, and when its private token is revoked the
-// agent answers every kick with "Please run /login" while a perfectly good
-// login sits one directory away.
+// Since hivecommons/hive#17039 each per-UID claude agent has a REAL ~/.claude
+// (its own transcripts, todos, history and auto-memory) with one symlink in
+// it, ~/.claude/.credentials.json -> /data/home/.claude/.credentials.json, so
+// one operator sign-in serves the fleet. Claude Code does not write through
+// that link. When it refreshes the OAuth token (about every 8 hours) it writes
+// a temp file in ~/.claude and renames it over .credentials.json, which
+// REPLACES the symlink with a regular file owned by the agent's uid, mode
+// 0600. The refresh also rotates the grant: the shared file now holds a dead
+// refresh token, the fresh one is private to that agent, and every other
+// agent fails its own refresh within the access token's lifetime. On per-UID
+// hives the whole fleet logged out about every 8 hours.
 //
-// The Claude Code CLI offers no supported way to keep the link: its documented
-// knob, CLAUDE_CONFIG_DIR, moves the WHOLE config directory (settings,
-// transcripts, auto-memory) and would undo the per-agent split of
-// hivecommons/hive#17031; a bind mount cannot be renamed over (EBUSY) and
-// needs mount privileges the pod does not have. So hive cannot prevent the
-// replacement and instead DETECTS and REPAIRS it: at every agent launch, on
-// every credential-watchdog cycle, and right after a dashboard sign-in.
+// Claude Code offers no supported way to keep the link: CLAUDE_CONFIG_DIR
+// moves the WHOLE config directory (settings, transcripts, auto-memory) and
+// would undo the per-agent memory split; a bind mount cannot be renamed over
+// (EBUSY) and needs mount privileges the pod does not have. So hive cannot
+// prevent the replacement and instead DETECTS and PUBLISHES it: at every agent
+// launch, on a short poll from the credential watchdog, and right after a
+// dashboard sign-in.
 //
 // The repair never deletes a token. It moves the private file aside, keeps
 // whichever of the two credentials is newer AND usable in the shared file, and
 // restores the symlink:
 //
-//   - the private copy wins only when it is usable (claude.TokensUsable: a live
-//     access token, or a refresh grant that has not expired) and either the
-//     shared credential is not usable or the private access token expires
-//     LATER than the shared one. A refresh mints a later expiresAt, so this is
-//     what promotes one agent's fresh refresh to the whole fleet instead of
-//     stranding everyone else on the grant it just rotated;
+//   - the private copy wins only when it is complete and usable
+//     (claudeBridgePromotable: access and refresh tokens present, an expiresAt
+//     recorded, and claude.TokensUsable) and either the shared credential is
+//     not usable or the private access token expires LATER than the shared
+//     one. A refresh mints a later expiresAt, so this is what promotes one
+//     agent's fresh refresh to the whole fleet instead of stranding everyone
+//     else on the grant it just rotated. A failed refresh leaves an
+//     empty-token, expiresAt-0 file; it never qualifies;
 //   - otherwise the shared file stays as it is (ties keep the shared file, so
 //     a private copy identical to it is simply moved aside).
+//
+// Who reads the private file. The hive server runs as its own uid (dev) and
+// cannot open another uid's 0600 file directly. It CAN run a helper as that
+// uid: the same su-exec seam seedClaudeSessionForAgent uses to adopt an
+// agent-owned .claude.json (runAsAgentUser, gated to the hive-launch group).
+// So the judgement happens in-process, as the file's owner, with no root
+// helper and no widening of the private file's mode. When neither read works
+// (no su-exec on this deployment) the repair fails SAFE: the private file is
+// left exactly where it is, the agent keeps running on the token it already
+// had, and one ERROR per agent and file version says so.
 //
 // The private file is renamed to .credentials.json.stale-<UTC timestamp> in
 // the agent's own .claude directory and keeps its owner and mode; when it is
 // promoted, the shared file it replaces is preserved the same way beside the
-// shared credential. Both names fall outside sharedCredentialBases, so the
-// permissions watcher never opens them up to the group.
+// shared credential.
 //
 // The repair never acts on a link path that resolves to the shared credential
 // itself (an agent whose whole ~/.claude is still the legacy directory symlink
@@ -76,13 +91,16 @@ const claudeCredentialStaleInfix = ".stale-"
 // reaches it through the node group.
 const claudeSharedCredentialMode = 0o660
 
-// Test seams. chownClaudeCredential applies the previous shared file's owner
-// to the promoted replacement; it is a seam so tests run without root or real
-// agent uids. claudeBridgeNow stamps the moved-aside file names.
-var (
-	chownClaudeCredential = os.Chown
-	claudeBridgeNow       = time.Now
-)
+// claudeBridgeStaleNameAttempts bounds the search for a free
+// .stale-<timestamp>[-N] name beside a credential.
+const claudeBridgeStaleNameAttempts = 100
+
+// claudeBridgeMaxCredentialBytes caps a credential file the repair will read.
+// A real credentials file is well under 4 KiB.
+const claudeBridgeMaxCredentialBytes = 64 << 10
+
+// claudeBridgeNow stamps the moved-aside file names; a seam for tests.
+var claudeBridgeNow = time.Now
 
 // claudeBridgeMu serializes repairs: the launch path, the watchdog and the
 // sign-in hook can all reach the same agent's link. It is never held while
@@ -144,19 +162,38 @@ func claudeCredentialBridgeBroken(agentName string, uid int, backend string) boo
 
 // errClaudeBridgeLinkIsTarget: the agent's credential path IS the shared
 // credential, so there is no private copy to move aside and no link to
-// restore. On a live v6 hive this was an agent whose whole ~/.claude was still
-// the legacy directory symlink to the shared /data/home/.claude (the layout
-// setupPerAgentCLIHome retires at launch, never reached for an agent that is
-// paused or stopped). The repair then renamed the SHARED login aside and,
-// for a token-less file, linked .credentials.json to itself, logging every
-// agent out.
+// restore (a legacy whole-directory ~/.claude symlink). Moving that file aside
+// would strand the fleet.
 var errClaudeBridgeLinkIsTarget = errors.New("credential link path resolves to the shared credential it would link to")
+
+// errClaudeBridgeAgentUnreadable: the agent's private credential exists but
+// neither this process nor a helper running as the file's owner could read
+// it. Its token cannot be judged, so the repair leaves it exactly where it is.
+var errClaudeBridgeAgentUnreadable = errors.New("agent's private credential cannot be read")
+
+// errClaudeBridgeSourceChanged: the file renamed aside is not the regular
+// file that was inspected a moment earlier. It is put back and not read.
+var errClaudeBridgeSourceChanged = errors.New("private credential changed under the repair")
+
+// errClaudeBridgeNotPromotable: promoteClaudeCredential re-checks the bytes it
+// is about to write and refuses an incomplete or unusable credential.
+var errClaudeBridgeNotPromotable = errors.New("refusing to promote an incomplete or unusable credential over the shared login")
 
 // claudeBridgeLegacyWarned holds the credential links the legacy-layout skip
 // has already been logged for, so the watchdog, which walks every managed
 // agent each cycle, logs it once per agent instead of every cycle. Keyed by
 // the link path, which names the agent.
 var claudeBridgeLegacyWarned sync.Map
+
+// claudeBridgeUnreadableWarned holds, per credential link, the modification
+// time of the unreadable private file last logged, so the poll logs once per
+// agent and file version instead of every cycle. A new refresh (a new mtime)
+// is logged again.
+var claudeBridgeUnreadableWarned sync.Map
+
+// claudeBridgeUnsafeWarned holds the shared credential paths whose location
+// sharedfile.Replace refused, so the refusal is logged once, not per cycle.
+var claudeBridgeUnsafeWarned sync.Map
 
 // claudeBridgeLinkIsTarget reports whether link names the shared credential
 // itself: the same path, or a file of the same name in a directory that
@@ -193,10 +230,20 @@ func claudeBridgeLinkIsTarget(link, target string) (bool, error) {
 	return os.SameFile(li, ti), nil
 }
 
+// claudeBridgePromotable reports whether t may replace the shared login: a
+// complete credential (access token, refresh token and a recorded expiresAt)
+// that is usable now. A failed refresh leaves an empty-token, expiresAt-0
+// file, which never qualifies; neither does a token with no recorded expiry,
+// which cannot be judged newer than anything.
+func claudeBridgePromotable(t *claude.OAuthTokens, now time.Time) bool {
+	return t != nil && t.AccessToken != "" && t.RefreshToken != "" && t.ExpiresAt > 0 &&
+		claude.TokensUsable(t, now)
+}
+
 // preferAgentClaudeCredential decides which credential the shared file keeps.
 // See the file comment for the rule.
 func preferAgentClaudeCredential(agent, shared *claude.OAuthTokens, now time.Time) bool {
-	if !claude.TokensUsable(agent, now) {
+	if !claudeBridgePromotable(agent, now) {
 		return false
 	}
 	if !claude.TokensUsable(shared, now) {
@@ -205,13 +252,64 @@ func preferAgentClaudeCredential(agent, shared *claude.OAuthTokens, now time.Tim
 	return agent.ExpiresAt > shared.ExpiresAt
 }
 
+// readClaudeCredentialAsOwner reads an agent's private credential: directly
+// when this process may, otherwise through su-exec as the file's owner (the
+// per-UID case: an agent-owned 0600 file and a server running as dev).
+// claudeSessionOwnerSpec fails closed — a symlink, a root-owned or an
+// oversized file never gets a helper — so a planted link at the credential
+// path cannot make the helper read something else.
+func readClaudeCredentialAsOwner(path string) ([]byte, error) {
+	data, err := sharedfile.ReadNoFollow(path, claudeBridgeMaxCredentialBytes)
+	if err == nil || !errors.Is(err, fs.ErrPermission) {
+		return data, err
+	}
+	spec, serr := claudeSessionOwnerSpec(path)
+	if serr != nil {
+		return nil, errors.Join(err, serr)
+	}
+	owned, oerr := runAsAgentUser(spec, nil, "cat", path)
+	if oerr != nil {
+		return nil, errors.Join(err, oerr)
+	}
+	if len(owned) > claudeBridgeMaxCredentialBytes {
+		return nil, fmt.Errorf("%w: %s returned %d bytes as owner", sharedfile.ErrTooLarge, path, len(owned))
+	}
+	return owned, nil
+}
+
+// canonicalClaudeCredential decodes data as a credentials file and re-encodes
+// only its typed token block. What reaches the shared file is this encoding,
+// never the bytes read from an agent's directory: a file that is not a
+// credential in the shape claude.Credentials describes is not promotable.
+func canonicalClaudeCredential(data []byte, now time.Time) ([]byte, *claude.OAuthTokens, error) {
+	if len(data) > claudeBridgeMaxCredentialBytes {
+		return nil, nil, errClaudeBridgeNotPromotable
+	}
+	tok := claude.ParseTokens(data)
+	if !claudeBridgePromotable(tok, now) {
+		return nil, nil, errClaudeBridgeNotPromotable
+	}
+	out, err := json.Marshal(claude.Credentials{ClaudeAIOAuth: tok})
+	if err != nil {
+		return nil, nil, errClaudeBridgeNotPromotable
+	}
+	return out, tok, nil
+}
+
 // repairClaudeCredentialBridge re-bridges one agent's credential when a regular
 // file has replaced the symlink. It returns nil, nil when there is nothing to
 // repair (a symlink, an absent link, a directory, which is not this failure,
 // or a link or target directory that cannot be resolved). It returns an error
 // wrapping errClaudeBridgeLinkIsTarget, and touches nothing, when the link
-// path resolves to the shared credential itself.
-func (m *Manager) repairClaudeCredentialBridge(agentName, link, target string) (*claudeBridgeRepair, error) {
+// path resolves to the shared credential itself, and, unless trigger is
+// claudeBridgeTriggerSignIn, one wrapping errClaudeBridgeAgentUnreadable,
+// again touching nothing, when the private file cannot be read.
+//
+// The sign-in trigger is the exception: a dashboard sign-in has just written
+// a new shared login, newer than any private copy by construction, so on that
+// trigger an unreadable private file is still moved aside (unread) and the
+// agent relinked to the shared login.
+func (m *Manager) repairClaudeCredentialBridge(agentName, link, target, trigger string) (*claudeBridgeRepair, error) {
 	claudeBridgeMu.Lock()
 	defer claudeBridgeMu.Unlock()
 
@@ -226,8 +324,6 @@ func (m *Manager) repairClaudeCredentialBridge(agentName, link, target string) (
 	// symlink restored afterwards would point at its own path.
 	same, err := claudeBridgeLinkIsTarget(link, target)
 	if err != nil {
-		// Nothing safe to judge without both directories; never move a file
-		// aside on a guess.
 		m.logger.Debug("claude credential bridge: cannot resolve the link or shared directory; not repairing",
 			"agent", agentName, "link", link, "target", target, "error", err)
 		return nil, nil
@@ -235,26 +331,52 @@ func (m *Manager) repairClaudeCredentialBridge(agentName, link, target string) (
 	if same {
 		return nil, fmt.Errorf("%w: %s", errClaudeBridgeLinkIsTarget, link)
 	}
+
+	// Never move aside a file whose token cannot be judged: it may be the
+	// only fresh token in the fleet.
+	if _, rerr := readClaudeCredentialAsOwner(link); rerr != nil {
+		if errors.Is(rerr, fs.ErrNotExist) {
+			// Gone since the Lstat: the CLI is mid-rename. Next cycle.
+			return nil, nil
+		}
+		if trigger == claudeBridgeTriggerSignIn && claude.HasUsableToken(target) {
+			return m.relinkUnreadableAfterSignIn(agentName, link, target)
+		}
+		return nil, fmt.Errorf("%w: %w", errClaudeBridgeAgentUnreadable, rerr)
+	}
 	now := claudeBridgeNow()
 
-	// Move the private file aside FIRST. After the rename the CLI can no
-	// longer change what is being judged (its next write lands at link), so
-	// the decision below works on a stable snapshot.
+	// Move the private file aside FIRST, then judge the moved file: after the
+	// rename the CLI can no longer change what is being judged (its next
+	// write lands at link), so the decision works on a stable snapshot.
 	staleAgent, err := moveAsideClaudeCredential(link, now)
 	if err != nil {
 		return nil, fmt.Errorf("move private credential aside: %w", err)
 	}
+	agentData, rerr := readClaudeCredentialAsOwner(staleAgent)
+	if rerr != nil {
+		// The file renamed is not the one read above (the CLI replaced it in
+		// between) and this one cannot be read either. Put it back unless the
+		// CLI has already written yet another file there.
+		if _, lerr := os.Lstat(link); errors.Is(lerr, fs.ErrNotExist) {
+			if berr := os.Rename(staleAgent, link); berr != nil {
+				m.logger.Error("claude credential bridge: an unreadable private credential could not be put back; it is kept at the stale path",
+					"agent", agentName, "stale", staleAgent, "error", berr)
+			}
+		}
+		return nil, fmt.Errorf("%w: %w", errClaudeBridgeAgentUnreadable, rerr)
+	}
 	rep := &claudeBridgeRepair{agent: agentName, kept: "shared", staleAgentPath: staleAgent}
 
-	if preferAgentClaudeCredential(claude.LoadTokens(staleAgent), claude.LoadTokens(target), now) {
-		staleShared, perr := promoteClaudeCredential(staleAgent, target, now)
+	if preferAgentClaudeCredential(claude.ParseTokens(agentData), claude.LoadTokens(target), now) {
+		staleShared, perr := promoteClaudeCredential(agentData, target, now)
 		if perr != nil {
 			// Put the private file back: the agent's copy was the only usable
 			// token, and linking the agent to the older shared one would
 			// strand it. The next cycle tries again.
-			if rerr := os.Rename(staleAgent, link); rerr != nil {
+			if berr := os.Rename(staleAgent, link); berr != nil {
 				m.logger.Error("claude credential bridge: promotion failed and the private credential could not be restored; it is kept at the stale path",
-					"agent", agentName, "stale", staleAgent, "error", perr, "restore_error", rerr)
+					"agent", agentName, "stale", staleAgent, "error", perr, "restore_error", berr)
 			}
 			return nil, fmt.Errorf("promote private credential to shared: %w", perr)
 		}
@@ -270,68 +392,115 @@ func (m *Manager) repairClaudeCredentialBridge(agentName, link, target string) (
 	return rep, nil
 }
 
-// moveAsideClaudeCredential renames path to a unique
-// <path>.stale-<UTC timestamp>[-N] beside it and returns the new path. It skips
-// any name that already exists.
-func moveAsideClaudeCredential(path string, now time.Time) (string, error) {
+// claudeBridgeStaleName returns a free <path>.stale-<UTC timestamp>[-N] name
+// beside path, or "" when none is free. exists reports whether a candidate is
+// taken; callers that create the file atomically pass a function that tries
+// the create and reports EEXIST.
+func claudeBridgeStaleName(path string, now time.Time, exists func(string) (bool, error)) (string, error) {
 	base := path + claudeCredentialStaleInfix + now.UTC().Format("20060102T150405Z")
-	for i := 0; i < 100; i++ {
+	for i := 0; i < claudeBridgeStaleNameAttempts; i++ {
 		dst := base
 		if i > 0 {
 			dst = fmt.Sprintf("%s-%d", base, i)
 		}
-		if _, err := os.Lstat(dst); err == nil {
-			continue
-		} else if !errors.Is(err, fs.ErrNotExist) {
+		taken, err := exists(dst)
+		if err != nil {
 			return "", err
 		}
-		// A rename keeps the file's owner and mode: the private copy stays
-		// readable only by the agent that wrote it.
-		if err := os.Rename(path, dst); err != nil {
-			return "", err
+		if !taken {
+			return dst, nil
 		}
-		return dst, nil
 	}
 	return "", fmt.Errorf("no free stale name for %s", path)
 }
 
-// promoteClaudeCredential replaces the shared credential with the bytes of src,
-// atomically and at claudeSharedCredentialMode, owned like the file it
-// replaces. The replaced file is preserved beside it first; its path is
-// returned ("" when there was no shared file).
-func promoteClaudeCredential(src, target string, now time.Time) (string, error) {
-	data, err := os.ReadFile(src)
+// moveAsideClaudeCredential renames path to a unique stale name beside it and
+// returns the new path. A rename keeps the file's owner and mode: the private
+// copy stays readable only by the agent that wrote it. The file is identified
+// before the rename and checked after it (same device and inode, still a
+// regular file); anything else is put back and reported as
+// errClaudeBridgeSourceChanged, unread.
+func moveAsideClaudeCredential(path string, now time.Time) (string, error) {
+	before, err := os.Lstat(path)
 	if err != nil {
 		return "", err
 	}
-	uid, gid := -1, -1
-	staleShared := ""
-	if info, err := os.Stat(target); err == nil {
-		if st, ok := info.Sys().(*syscall.Stat_t); ok {
-			uid, gid = int(st.Uid), int(st.Gid)
+	if !before.Mode().IsRegular() {
+		return "", fmt.Errorf("%w: %s is %s", errClaudeBridgeSourceChanged, path, before.Mode())
+	}
+	dst, err := claudeBridgeStaleName(path, now, func(dst string) (bool, error) {
+		_, lerr := os.Lstat(dst)
+		if lerr == nil {
+			return true, nil
 		}
+		if errors.Is(lerr, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, lerr
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := os.Rename(path, dst); err != nil {
+		return "", err
+	}
+	after, err := os.Lstat(dst)
+	if err != nil {
+		return "", err
+	}
+	if !after.Mode().IsRegular() || !os.SameFile(before, after) {
+		if _, lerr := os.Lstat(path); errors.Is(lerr, fs.ErrNotExist) {
+			_ = os.Rename(dst, path)
+		}
+		return "", fmt.Errorf("%w: %s", errClaudeBridgeSourceChanged, path)
+	}
+	return dst, nil
+}
+
+// relinkUnreadableAfterSignIn is the sign-in exception described on
+// repairClaudeCredentialBridge: the private file is moved aside without being
+// read and the agent is relinked to the shared login just written.
+func (m *Manager) relinkUnreadableAfterSignIn(agentName, link, target string) (*claudeBridgeRepair, error) {
+	staleAgent, err := moveAsideClaudeCredential(link, claudeBridgeNow())
+	if err != nil {
+		return nil, fmt.Errorf("move private credential aside: %w", err)
+	}
+	rep := &claudeBridgeRepair{agent: agentName, kept: "shared", staleAgentPath: staleAgent}
+	if err := os.Symlink(target, link); err != nil {
+		return rep, fmt.Errorf("restore credential symlink: %w", err)
+	}
+	return rep, nil
+}
+
+// promoteClaudeCredential replaces the shared credential with the token block
+// decoded from data, atomically and at claudeSharedCredentialMode, owned like
+// the file it replaces. The replaced file is preserved beside it first; its
+// path is returned ("" when there was no shared file). The bytes are decoded
+// and re-checked here (canonicalClaudeCredential), so a credential that
+// changed after it was judged can never put an incomplete token over the
+// shared login, and nothing but a typed token block is ever written. The
+// write itself is sharedfile.Replace: a random O_EXCL|O_NOFOLLOW temporary,
+// metadata by descriptor, and a refusal (sharedfile.ErrUnsafeLocation) when
+// the shared directory or file is not what it should be.
+func promoteClaudeCredential(data []byte, target string, now time.Time) (string, error) {
+	canonical, _, err := canonicalClaudeCredential(data, now)
+	if err != nil {
+		return "", err
+	}
+	// Refuse before the backup copy, not only at the write: the copy lands in
+	// the same directory, and the directory is part of what is being checked.
+	info, err := sharedfile.CheckLocation(target)
+	if err != nil {
+		return "", err
+	}
+	staleShared := ""
+	if info != nil {
 		staleShared, err = preserveClaudeCredential(target, now)
 		if err != nil {
 			return "", fmt.Errorf("preserve shared credential: %w", err)
 		}
 	}
-	tmp := target + ".tmp-rebridge"
-	_ = os.Remove(tmp)
-	if err := os.WriteFile(tmp, data, claudeSharedCredentialMode); err != nil {
-		return staleShared, err
-	}
-	// WriteFile honours the umask; assert the mode explicitly.
-	if err := os.Chmod(tmp, claudeSharedCredentialMode); err != nil {
-		_ = os.Remove(tmp)
-		return staleShared, err
-	}
-	if uid >= 0 || gid >= 0 {
-		// Best-effort: an unprivileged hive cannot chown, and the file it
-		// wrote is already group-readable by mode.
-		_ = chownClaudeCredential(tmp, uid, gid)
-	}
-	if err := os.Rename(tmp, target); err != nil {
-		_ = os.Remove(tmp)
+	if err := sharedfile.Replace(target, canonical, claudeSharedCredentialMode, sharedfile.Options{PreserveOwner: true}); err != nil {
 		return staleShared, err
 	}
 	return staleShared, nil
@@ -340,43 +509,41 @@ func promoteClaudeCredential(src, target string, now time.Time) (string, error) 
 // preserveClaudeCredential copies path to a unique stale name beside it,
 // leaving path itself in place (agents keep reading it until the rename that
 // replaces it). The copy is 0600: it is an archive, not a live credential.
+// Neither the read nor the create follows a symlink.
 func preserveClaudeCredential(path string, now time.Time) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := sharedfile.ReadNoFollow(path, claudeBridgeMaxCredentialBytes)
 	if err != nil {
 		return "", err
 	}
-	base := path + claudeCredentialStaleInfix + now.UTC().Format("20060102T150405Z")
-	for i := 0; i < 100; i++ {
-		dst := base
-		if i > 0 {
-			dst = fmt.Sprintf("%s-%d", base, i)
+	var f *os.File
+	dst, err := claudeBridgeStaleName(path, now, func(dst string) (bool, error) {
+		var oerr error
+		f, oerr = os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+		if errors.Is(oerr, fs.ErrExist) {
+			return true, nil
 		}
-		f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if errors.Is(err, fs.ErrExist) {
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		_, werr := f.Write(data)
-		cerr := f.Close()
-		if werr != nil || cerr != nil {
-			_ = os.Remove(dst)
-			return "", errors.Join(werr, cerr)
-		}
-		return dst, nil
+		return false, oerr
+	})
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("no free stale name for %s", path)
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr != nil || cerr != nil {
+		_ = os.Remove(dst)
+		return "", errors.Join(werr, cerr)
+	}
+	return dst, nil
 }
 
 // rebridgeClaudeCredential runs the repair for one agent and records the
-// outcome. It is the single entry point the launch path, the watchdog and the
-// sign-in hook share, so all three log and audit identically.
+// outcome. It is the single entry point the launch path, the watchdog poll and
+// the sign-in hook share, so all three log and audit identically.
 func (m *Manager) rebridgeClaudeCredential(agentName, link, target, trigger string) *claudeBridgeRepair {
-	rep, err := m.repairClaudeCredentialBridge(agentName, link, target)
+	rep, err := m.repairClaudeCredentialBridge(agentName, link, target, trigger)
 	if errors.Is(err, errClaudeBridgeLinkIsTarget) {
 		// The legacy layout: skipped, and said once per agent rather than on
-		// every watchdog cycle. Not audited (nothing changed).
+		// every cycle. Not audited (nothing changed).
 		if _, seen := claudeBridgeLegacyWarned.LoadOrStore(link, true); !seen {
 			m.logger.Warn("claude credential bridge: this agent's .claude directory resolves to the shared login directory (a legacy whole-directory symlink), so its credential path IS the shared login; not re-bridging. The agent's next launch replaces the directory link with a per-agent directory",
 				"agent", agentName, "trigger", trigger, "dir", filepath.Dir(link), "shared", target)
@@ -386,11 +553,24 @@ func (m *Manager) rebridgeClaudeCredential(agentName, link, target, trigger stri
 	// Any other outcome clears the mark, so a legacy layout that shows up
 	// again later is logged again.
 	claudeBridgeLegacyWarned.Delete(link)
+	if errors.Is(err, errClaudeBridgeAgentUnreadable) {
+		m.logClaudeBridgeUnreadable(agentName, link, trigger, err)
+		return nil
+	}
+	claudeBridgeUnreadableWarned.Delete(link)
+	if errors.Is(err, sharedfile.ErrUnsafeLocation) {
+		// The shared location is not what the repair expects; nothing was
+		// written and the agent keeps its private copy. Said once per target.
+		if _, seen := claudeBridgeUnsafeWarned.LoadOrStore(target, true); !seen {
+			m.logger.Error("claude credential bridge: the shared credential location was refused and nothing was written; the agent keeps its private copy",
+				"agent", agentName, "trigger", trigger, "shared", target, "error", err)
+		}
+		return nil
+	}
+	claudeBridgeUnsafeWarned.Delete(target)
 	if err != nil {
-		// Logged, not audited: a repair that keeps failing (an unprivileged
-		// hive that cannot enter the agent's 0700 home) would otherwise add an
-		// audit row every watchdog cycle. The dashboard keeps showing the
-		// agent's bridge as broken, which is the standing signal.
+		// Logged, not audited: a repair that keeps failing would otherwise add
+		// an audit row every cycle.
 		m.logger.Warn("claude credential bridge: repair failed",
 			"agent", agentName, "link", link, "trigger", trigger, "error", err)
 		return nil
@@ -413,6 +593,21 @@ func (m *Manager) rebridgeClaudeCredential(agentName, link, target, trigger stri
 		"stale_shared_file", rep.staleSharedPath,
 	))
 	return rep
+}
+
+// logClaudeBridgeUnreadable says, once per agent and private-file version,
+// that the repair left an agent on a private credential it could not read.
+// Not audited: nothing changed.
+func (m *Manager) logClaudeBridgeUnreadable(agentName, link, trigger string, err error) {
+	var stamp int64
+	if info, lerr := os.Lstat(link); lerr == nil {
+		stamp = info.ModTime().UnixNano()
+	}
+	if prev, loaded := claudeBridgeUnreadableWarned.Swap(link, stamp); loaded && prev == stamp {
+		return
+	}
+	m.logger.Error("claude credential bridge: this agent's private credential could not be read, directly or as its owner through su-exec, so its token cannot be judged; leaving the agent on its private copy (not moved aside, not re-linked). Other agents will not see this agent's token refresh until it is readable",
+		"agent", agentName, "path", link, "trigger", trigger, "error", err)
 }
 
 // RepairClaudeCredentialBridges checks every per-agent Claude credential
@@ -447,4 +642,14 @@ func (m *Manager) RepairClaudeCredentialBridges(trigger string) []string {
 		}
 	}
 	return repaired
+}
+
+// rebridgeClaudeCredentialsAfterSignIn runs from ReloadClaudeToken: a sign-in
+// wrote the shared file, and agents whose link a refresh replaced would never
+// see it. Relink them now rather than on the next poll. A logout leaves
+// nothing usable, so nothing is moved.
+func (m *Manager) rebridgeClaudeCredentialsAfterSignIn() {
+	if claude.HasUsableToken(sharedClaudeBridgeTarget()) {
+		m.RepairClaudeCredentialBridges(claudeBridgeTriggerSignIn)
+	}
 }

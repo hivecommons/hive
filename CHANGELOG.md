@@ -11,6 +11,24 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.20.0)
+
+### Added
+
+- Hub marketplace seeds curated workflow models from `pkg/hub/marketplace/curated/*.yaml` on startup and every refresh, ships the first one — `cncf-techdocs-assessment` (CNCF TechDocs AI-assisted assessment) — and adds `cncf/techdocs` to the ingest corpus via the new operator-added `extra.json` list (hivecommons/hive#17620).
+
+## 2026-11-12 (v6.19.2)
+
+### Fixed
+
+- Marketplace ingest streams each repository tarball and keeps only pipeline files (1 MiB per file, 32 MiB total) instead of extracting the whole source tree under a 256 MiB cap, so large monorepos (kubernetes/kubernetes, kserve, meshery, …) no longer fail with `archive exceeds size cap`; `GET /api/marketplace/status` now lists failing repos with their errors without `?verbose=1`; four renamed corpus repositories (composefs, OpenMetrics, ratify, kuberay) now point at their current GitHub names.
+
+## 2026-11-11 (v6.19.1)
+
+### Fixed
+
+- Marketplace: the CNCF catalogue now actually fills — tarball extraction recognises git's `pax_global_header`, so pipeline files are read for every repository (previously only tektoncd/pipeline survived); seeding resumes across hub restarts by ingesting only repositories that are due (no record, stale, old format, or an hour-old error); the last refresh summary is persisted so `/api/marketplace/status` survives a restart and reports `pendingRepos`/`lastRefreshErrors`, with `?verbose=1` listing failing repos and their errors; `POST /api/marketplace/refresh` accepts a spoke's heartbeat credential (rate-limited, `429` + `Retry-After`) so a hive owner's "Refresh catalogue" works, and the crawl backs off on `403`/`429` `Retry-After` and logs progress every 25 repositories.
+
 ## 2026-11-11 (v6.19.0)
 
 ### Added

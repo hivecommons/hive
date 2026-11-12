@@ -2,14 +2,16 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/crux/sharedfile"
 )
 
 // sharedCopilotConfigPath and sharedClaudeCredentialPath are vars (not consts)
@@ -331,19 +333,22 @@ func compactPaneTail(output string, maxLines int) string {
 // fixSharedConfigPerms ensures /data/home/.copilot/config.json is group-readable
 // before launching an agent. Copilot CLI rewrites this file with 600 perms on
 // token refresh, locking out other agent UIDs that share the same HOME.
+//
+// The chmod goes through an open descriptor (sharedfile.Chmod), so anything
+// other than a regular file at that path is left alone and logged.
 func (m *Manager) fixSharedConfigPerms(agent *AgentProcess) {
-	info, err := os.Stat(sharedCopilotConfigPath)
-	if err != nil {
+	prev, changed, err := sharedfile.Chmod(sharedCopilotConfigPath, sharedConfigDesiredMode)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return
+	case err != nil:
+		m.logger.Warn("failed to fix config.json perms", "agent", agent.Name, "error", err)
+		return
+	case !changed:
 		return
 	}
-	if info.Mode().Perm() == sharedConfigDesiredMode {
-		return
-	}
-	m.logger.Warn("fixing shared config.json perms before launch",
+	m.logger.Warn("fixed shared config.json perms before launch",
 		"agent", agent.Name,
-		"was", fmt.Sprintf("%04o", info.Mode().Perm()),
+		"was", fmt.Sprintf("%04o", prev),
 		"fix", fmt.Sprintf("%04o", sharedConfigDesiredMode))
-	if err := os.Chmod(sharedCopilotConfigPath, sharedConfigDesiredMode); err != nil {
-		m.logger.Warn("failed to fix config.json perms", "error", err)
-	}
 }
