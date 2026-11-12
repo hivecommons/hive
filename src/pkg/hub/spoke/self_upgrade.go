@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/egressmark"
 	"github.com/hivecommons/hive/pkg/imageref"
 )
 
@@ -686,7 +687,7 @@ func k8sAPIPatchOnce(path string, body []byte) error {
 
 	client := &http.Client{
 		Timeout:   selfUpgradePatchTimeout,
-		Transport: &http.Transport{TLSClientConfig: tlsConfig},
+		Transport: &http.Transport{TLSClientConfig: tlsConfig, DialContext: egressmark.Dialer(0).DialContext},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), selfUpgradePatchTimeout)
