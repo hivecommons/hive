@@ -1,1 +1,0 @@
-- Spoke self-upgrade no longer fails with `reading startup probe before upgrade … EOF` on nodes without the `xt_owner` netfilter module (IBM Cloud IKS/ROKS): the hive's in-cluster Kubernetes API clients now SO_MARK their sockets like the proxy's own upstream dials, so the forced-egress REDIRECT exempts them instead of routing them into the MITM proxy (shared `crux/egressmark`).
