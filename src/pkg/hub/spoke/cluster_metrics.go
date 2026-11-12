@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/crux/egressmark"
 )
 
 const (
@@ -547,7 +549,7 @@ func k8sAPIGetWithContext(ctx context.Context, path string) ([]byte, error) {
 
 	client := &http.Client{
 		Timeout:   metricsCollectionTimeout,
-		Transport: &http.Transport{TLSClientConfig: tlsConfig},
+		Transport: &http.Transport{TLSClientConfig: tlsConfig, DialContext: egressmark.Dialer(0).DialContext},
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, metricsCollectionTimeout)

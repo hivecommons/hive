@@ -41,6 +41,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/egressmark"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
 
@@ -779,6 +780,6 @@ func (l *Launcher) client() (*http.Client, error) {
 	if !pool.AppendCertsFromPEM(pem) {
 		return nil, errors.New("kubejob: in-cluster CA bundle contained no certificates")
 	}
-	l.HTTPClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}}
+	l.HTTPClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, DialContext: egressmark.Dialer(0).DialContext}}
 	return l.HTTPClient, nil
 }
