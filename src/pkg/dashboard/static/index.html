@@ -46417,21 +46417,46 @@ function burnAreaChart() {
       if (!host) return;
       host.innerHTML = _inboxDraftRules.length ? _inboxDraftRules.map(inboxRuleRowHtml).join('') : '<p class="muted-xs">No rules — every item waits here for manual triage.</p>';
     }
-    function inboxOpenSettings() {
-      const settings = (_inboxCache || {}).settings || {};
-      _inboxDraftRules = (settings.rules || []).map(r => Object.assign({}, r));
-      const body = '<p class="muted-note m-0">New items are checked against these rules in order after every connector sync; the first match routes the item automatically. Items that arrived before a rule existed are never re-routed.</p>' +
+    function inboxSettingsFormHtml(settings, inline) {
+      const buttons = inline
+        ? '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>'
+        : '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
+          '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>';
+      return '<p class="muted-note m-0">New items are checked against these rules in order after every connector sync; the first match routes the item automatically. Items that arrived before a rule existed are never re-routed.</p>' +
         '<div class="inbox-settings-grid">' +
         '<label class="muted-note inbox-field">Default RFC repository<input class="kb-search-box mt-2" type="text" id="inbox-settings-spek-repo" placeholder="owner/repo" autocomplete="off" value="' + escapeHtml(settings.spek_repo || '') + '"></label>' +
         '<label class="muted-note inbox-field">dibs URL<input class="kb-search-box mt-2" type="text" id="inbox-settings-dibs-url" placeholder="https://dibs.example.org" autocomplete="off" value="' + escapeHtml(settings.dibs_url || '') + '"></label></div>' +
         '<p class="muted-xs">The dibs token is read from the environment variable named by <code>inbox.dibs.token_env</code>' + (settings.dibs_token_set ? ' (set)' : ' (not set)') + '.</p>' +
         '<div class="row-between mt-4 mb-2"><div class="section-label m-0">Rules</div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddRule">Add rule</button></div>' +
         '<div id="inbox-settings-rules"></div>' +
-        '<div class="hive-dialog-error" role="alert" id="inbox-settings-error"></div>' +
-        '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
-        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>';
-      kbShowModal('⚙ Inbox auto-routing', body, { width: '720px' });
+        '<div class="hive-dialog-error" role="alert" id="inbox-settings-error"></div>' + buttons;
+    }
+    function inboxOpenSettings() {
+      const settings = (_inboxCache || {}).settings || {};
+      _inboxDraftRules = (settings.rules || []).map(r => Object.assign({}, r));
+      kbShowModal('⚙ Inbox auto-routing', inboxSettingsFormHtml(settings, false), { width: '720px' });
       inboxRenderRules();
+    }
+    // Settings → Inbox: the same form inline, loaded from /api/inbox/settings.
+    function renderGovInbox() {
+      return '<div class="config-section" data-config-section="Inbox"><h3>Inbox</h3>' +
+        '<p class="text-muted fs-base">Default RFC repository, dibs URL and auto-routing rules for voice recordings. ' + yamlHint('inbox.spek.repo') + ' ' + yamlHint('inbox.dibs.url') + ' ' + yamlHint('inbox.rules') + '</p>' +
+        '<div id="inbox-settings-inline"><p class="muted-xs">Loading…</p></div></div>';
+    }
+    async function loadInboxSettingsInline() {
+      const host = document.getElementById('inbox-settings-inline');
+      if (!host) return;
+      try {
+        const r = await fetch('/api/inbox/settings');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _inboxCache = Object.assign({}, _inboxCache, { settings: data });
+        _inboxDraftRules = (data.rules || []).map(x => Object.assign({}, x));
+        host.innerHTML = inboxSettingsFormHtml(data, true);
+        inboxRenderRules();
+      } catch (e) {
+        host.innerHTML = '<p class="kc-error muted-xs">Inbox settings unavailable: ' + escapeHtml(e.message) + '</p>';
+      }
     }
     function inboxAddRule() {
       _inboxDraftRules = inboxReadRules();
@@ -46451,7 +46476,8 @@ function burnAreaChart() {
         const r = await fetch('/api/inbox/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-        kbCloseModal();
+        const inline = !!document.getElementById('inbox-settings-inline');
+        if (!inline) kbCloseModal();
         showToast('Inbox settings saved', 'success');
         await fetchInbox();
       } catch (e) {
@@ -55233,7 +55259,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Workflows', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Workflows', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Inbox', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -55292,6 +55318,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Adoption of a maintainer\'s PR', key: 'governor.labels.stage.adoption.maintainer_policy', text: 'adoption maintainer policy adopt ask never maintainer own pr clanker disconnected offline adopt action governor.labels.stage.adoption.maintainer_policy' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval auto_merge.nudge_repeat_after governor.labels.stage.contributor_nudge.ci_failure_cooldown governor.labels.stage.presence_window' },
       { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed governor.labels.stage.adoption.close_superseded close superseded on adopt on merge clanker authored opt-in label governor.labels.stage.adoption.offline_grace offline grace rebase failed twice fixer resolving conflicts governor.labels.stage.adoption.rebase_attempt_timeout rebase attempt timeout' },
+      { tab: 'Inbox', section: 'Inbox', label: 'Inbox routing', key: 'inbox.spek.repo', lazy: true, text: 'inbox voice recordings plaud wispr default rfc repository spek dibs url auto-routing rules inbox.spek.repo inbox.dibs.url inbox.rules' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff update interval rewrite floor changed digest governor.advisory.update_interval_s governor.advisory.digest_min_interval' },
@@ -56383,6 +56410,7 @@ function burnAreaChart() {
         // The Features tab's Linear Agent panel loads install/session state
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
+        if (tabId === 'Inbox') loadInboxSettingsInline();
         // The same tab carries the upstream-watch editor and divergence view
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
@@ -56595,6 +56623,7 @@ function burnAreaChart() {
         case 'Access': return renderGovSecurity(d.security || {});
         case 'Features': return renderGovFeatures(d.features || {}, d.auto_merge || {}, d.review || {});
         case 'Knowledge': return renderGovKnowledgeSharing();
+        case 'Inbox': return renderGovInbox();
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Work Source': return renderGovWorkSource(d.work_source || {});

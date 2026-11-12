@@ -221,21 +221,46 @@
       if (!host) return;
       host.innerHTML = _inboxDraftRules.length ? _inboxDraftRules.map(inboxRuleRowHtml).join('') : '<p class="muted-xs">No rules — every item waits here for manual triage.</p>';
     }
-    function inboxOpenSettings() {
-      const settings = (_inboxCache || {}).settings || {};
-      _inboxDraftRules = (settings.rules || []).map(r => Object.assign({}, r));
-      const body = '<p class="muted-note m-0">New items are checked against these rules in order after every connector sync; the first match routes the item automatically. Items that arrived before a rule existed are never re-routed.</p>' +
+    function inboxSettingsFormHtml(settings, inline) {
+      const buttons = inline
+        ? '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>'
+        : '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
+          '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>';
+      return '<p class="muted-note m-0">New items are checked against these rules in order after every connector sync; the first match routes the item automatically. Items that arrived before a rule existed are never re-routed.</p>' +
         '<div class="inbox-settings-grid">' +
         '<label class="muted-note inbox-field">Default RFC repository<input class="kb-search-box mt-2" type="text" id="inbox-settings-spek-repo" placeholder="owner/repo" autocomplete="off" value="' + escapeHtml(settings.spek_repo || '') + '"></label>' +
         '<label class="muted-note inbox-field">dibs URL<input class="kb-search-box mt-2" type="text" id="inbox-settings-dibs-url" placeholder="https://dibs.example.org" autocomplete="off" value="' + escapeHtml(settings.dibs_url || '') + '"></label></div>' +
         '<p class="muted-xs">The dibs token is read from the environment variable named by <code>inbox.dibs.token_env</code>' + (settings.dibs_token_set ? ' (set)' : ' (not set)') + '.</p>' +
         '<div class="row-between mt-4 mb-2"><div class="section-label m-0">Rules</div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddRule">Add rule</button></div>' +
         '<div id="inbox-settings-rules"></div>' +
-        '<div class="hive-dialog-error" role="alert" id="inbox-settings-error"></div>' +
-        '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
-        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>';
-      kbShowModal('⚙ Inbox auto-routing', body, { width: '720px' });
+        '<div class="hive-dialog-error" role="alert" id="inbox-settings-error"></div>' + buttons;
+    }
+    function inboxOpenSettings() {
+      const settings = (_inboxCache || {}).settings || {};
+      _inboxDraftRules = (settings.rules || []).map(r => Object.assign({}, r));
+      kbShowModal('⚙ Inbox auto-routing', inboxSettingsFormHtml(settings, false), { width: '720px' });
       inboxRenderRules();
+    }
+    // Settings → Inbox: the same form inline, loaded from /api/inbox/settings.
+    function renderGovInbox() {
+      return '<div class="config-section" data-config-section="Inbox"><h3>Inbox</h3>' +
+        '<p class="text-muted fs-base">Default RFC repository, dibs URL and auto-routing rules for voice recordings. ' + yamlHint('inbox.spek.repo') + ' ' + yamlHint('inbox.dibs.url') + ' ' + yamlHint('inbox.rules') + '</p>' +
+        '<div id="inbox-settings-inline"><p class="muted-xs">Loading…</p></div></div>';
+    }
+    async function loadInboxSettingsInline() {
+      const host = document.getElementById('inbox-settings-inline');
+      if (!host) return;
+      try {
+        const r = await fetch('/api/inbox/settings');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _inboxCache = Object.assign({}, _inboxCache, { settings: data });
+        _inboxDraftRules = (data.rules || []).map(x => Object.assign({}, x));
+        host.innerHTML = inboxSettingsFormHtml(data, true);
+        inboxRenderRules();
+      } catch (e) {
+        host.innerHTML = '<p class="kc-error muted-xs">Inbox settings unavailable: ' + escapeHtml(e.message) + '</p>';
+      }
     }
     function inboxAddRule() {
       _inboxDraftRules = inboxReadRules();
@@ -255,7 +280,8 @@
         const r = await fetch('/api/inbox/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-        kbCloseModal();
+        const inline = !!document.getElementById('inbox-settings-inline');
+        if (!inline) kbCloseModal();
         showToast('Inbox settings saved', 'success');
         await fetchInbox();
       } catch (e) {
