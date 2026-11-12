@@ -29,7 +29,9 @@ type TransientCIRerunOutcome struct {
 // (projectbluefin/common#1647). It never pushes. The re-run is an
 // unsolicited write, so it consults the write-back gate (KindCIRerun) first;
 // a hive-authored PR passes unless the repository is paused, off or
-// issues-only. Once any re-run request reached GitHub the attempt is settled
+// issues-only, and a trusted dependency-bot PR (cmd/hive
+// dependency_bot_transient_rerun.go) is not the hive's own item, so it needs
+// the kind's level and opt-in label like any other. Once any re-run request reached GitHub the attempt is settled
 // whatever came back, so a head gets at most one round of re-run calls.
 func (c *Client) RerunTransientCIFailures(ctx context.Context, pr PullRequest) (TransientCIRerunOutcome, error) {
 	if c == nil || c.client == nil {

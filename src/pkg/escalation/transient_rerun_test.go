@@ -67,3 +67,28 @@ func TestTransientRerunReArmedWhenUnparked(t *testing.T) {
 		t.Fatal("un-parked PR with a fresh transient triage must owe one more re-run")
 	}
 }
+
+// The outcome of a spent re-run survives a restart, so a dependency-bot
+// hand-off can say whether the re-run happened or was not allowed.
+func TestTransientRerunOutcomePersists(t *testing.T) {
+	s := Load(filepath.Join(t.TempDir(), "l.json"))
+	if spent, _ := s.TransientRerunOutcome("o/r", 1, "a"); spent {
+		t.Fatal("spent with no record")
+	}
+	s.ObserveRed([]Observation{transientObs("a", true)})
+	s.RecordTransientRerunOutcome("o/r", 1, "a", "needs-opt-in-label")
+	s2 := Load(s.path)
+	if spent, skipped := s2.TransientRerunOutcome("o/r", 1, "a"); !spent || skipped != "needs-opt-in-label" {
+		t.Fatalf("outcome = (%v, %q), want spent and refused by the gate", spent, skipped)
+	}
+	if s2.TransientRerunOwed("o/r", 1, "a") {
+		t.Fatal("a refused re-run is still owed")
+	}
+	if spent, _ := s2.TransientRerunOutcome("o/r", 1, "b"); spent {
+		t.Fatal("another head reads as spent")
+	}
+	s2.RecordTransientRerun("o/r", 1, "b")
+	if spent, skipped := s2.TransientRerunOutcome("o/r", 1, "b"); !spent || skipped != "" {
+		t.Fatalf("outcome = (%v, %q), want re-run with no skip reason", spent, skipped)
+	}
+}

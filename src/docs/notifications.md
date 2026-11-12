@@ -637,7 +637,7 @@ without a class. Review submissions and review requests are always counted as
 | `main.claimEscalationLookup` | `attention` |  |
 | `main.liveTriageCommenter.CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.noteHeldPRUpdateStopped` | `attention` |  |
-| `main.sweepDependencyBotConflicts` | `attention` | asks a person to rebase or retry a dependency-bot PR; its once-per-head `@dependabot recreate` request (`github.(*Client).PostDependabotRecreate`) is recorded as `protocol_command` |
+| `main.sweepDependencyBotConflicts` | `attention` | asks a person to rebase or retry a dependency-bot PR, or to comment `@dependabot recreate` on a stranded Dependabot PR (the hive never posts that command: Dependabot refuses commands from apps) |
 | `mention.(*Responder).HandleAgentEvent` | `attention` | solicited completion reply to an explicit mention |
 | `mergelane.(*round).ensureForkWaitComment` | `attention` | asks the fork author to refresh the branch |
 | `worksource.(*forgeWorkSource).AddComment` | `attention` | passthrough wrapper; attributed to its caller |

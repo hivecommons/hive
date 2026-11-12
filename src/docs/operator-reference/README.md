@@ -494,7 +494,15 @@ fallback when the approval sweep is off or refused:
   sweep hands them to a person the same way when a required check stays red on
   the same head for 4 hours (the comment asks for a re-run instead when every
   failing run carries a `hive-ci-transient` triage marker), or when the PR conflicts with its base for 24
-  hours (at once for a Renovate PR whose config rebases never). It skips PRs
+  hours (at once for a Renovate PR whose config rebases never). A PR from
+  `auto_merge.trusted_bot_authors` whose failing runs all carry that marker
+  first gets the hive's one re-run of the head (write-back kind `ci_rerun`,
+  the same re-run hive PRs get): the red-CI hand-off waits while that re-run
+  is owed or running, and then says either that the re-run failed again or
+  that it was not allowed (with the write-back gate's reason). `ci_rerun`
+  needs the opt-in label on a bot PR unless
+  `writeback.kinds.ci_rerun.unlabeled_min_level` is set; a refused re-run
+  still reaches a person after the 4 hours. It skips PRs
   already labelled `needs-human`, `hold` or `do-not-merge`, comments once per
   head and reason, and removes only the `needs-human` label it added once CI
   is green, the conflict is gone or the PR closes (#11558, #12379).
@@ -509,9 +517,13 @@ fallback when the approval sweep is off or refused:
   behind is left to the bot. For a stranded PR the hive asks the bot to
   rebase through the bot's own mechanism, once per head: it ticks Renovate's
   rebase/retry checkbox (only that line of the description changes; a box
-  already ticked is left alone) or comments `@dependabot recreate`
+  already ticked is left alone). Dependabot is never asked: it refuses every
+  comment command a GitHub App posts ("only users with push access can use
+  that command", dependabot/dependabot-core#9147), so where the hive would
+  have asked, a stranded Dependabot PR is handed to a person at once, and the
+  comment asks someone with push access to comment `@dependabot recreate`
   (Dependabot refuses `@dependabot rebase` on a branch someone else edited).
-  If the head has not moved one window later, the PR is handed to a person
+  If the head has not moved one window after a Renovate request, the PR is handed to a person
   (one comment plus `needs-human`, reason "dependency bot will not rebase
   this branch"); the request is never repeated on that head, and a new head
   starts over. The hive never asks when the branch carries someone else's

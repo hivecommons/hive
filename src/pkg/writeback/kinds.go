@@ -93,8 +93,9 @@ const (
 	KindBaseRefresh Kind = "base_refresh"
 	// KindBotRebaseRequest asks a dependency bot to rebase its own PR
 	// through the bot's own mechanism, once per PR head: it ticks Renovate's
-	// rebase/retry box in the PR description (editing only that line) or
-	// comments `@dependabot recreate`. The bot then regenerates the branch;
+	// rebase/retry box in the PR description (editing only that line).
+	// Dependabot is never asked, because it refuses comment commands from a
+	// GitHub App. The bot then regenerates the branch;
 	// the hive never pushes to it. Used only on a PR whose bot has stopped
 	// rebasing (see cmd/hive/dependency_bot_rebase_request.go).
 	KindBotRebaseRequest Kind = "bot_rebase_request"

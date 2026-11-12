@@ -126,29 +126,3 @@ func TestRequestRenovateRebasePatchesOnlyTheCheckbox(t *testing.T) {
 		t.Fatalf("PATCHes = %d, want still 1", len(patched))
 	}
 }
-
-func TestPostDependabotRecreatePostsTheCommand(t *testing.T) {
-	var posted []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/repos/acme/widget/issues/7/comments" {
-			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-			http.NotFound(w, r)
-			return
-		}
-		var req struct {
-			Body string `json:"body"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		posted = append(posted, req.Body)
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":1}`))
-	}))
-	defer srv.Close()
-	c := NewClientForTest(srv.URL, "acme", []string{"widget"}, slog.Default())
-	if err := c.PostDependabotRecreate(context.Background(), "acme/widget", 7, "abc123"); err != nil {
-		t.Fatal(err)
-	}
-	if len(posted) != 1 || posted[0] != DependabotRecreateCommand {
-		t.Fatalf("posted %q, want exactly %q", posted, DependabotRecreateCommand)
-	}
-}
