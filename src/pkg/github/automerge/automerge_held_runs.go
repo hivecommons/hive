@@ -28,9 +28,8 @@ package automerge
 //     re-push, so the sweep re-authors the PR as the App once per head
 //     (automerge_bot_takeover.go, #12003); if that leaves no App PR, the head
 //     reports `required-check-never-ran:<ctx>`. The takeover is limited to
-//     github-actions[bot] PRs (botTakeoverEligible): it closes the bot PR,
-//     and Dependabot treats a closed PR as "skip this version", so case 3
-//     never falls through to it.
+//     github-actions[bot] PRs (botTakeoverEligible checks the author), so
+//     case 3 never falls through to it.
 //
 // The App's own PRs and configured trusted bots are the only lanes this file
 // acts for (trySweepSelfAuthoredPR); human-authored lanes are untouched so a
