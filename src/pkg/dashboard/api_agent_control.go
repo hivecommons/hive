@@ -405,7 +405,9 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, "switch_backend", auditDetail("backend", backend), name)
 
 	// Restart the agent session so the new backend takes effect immediately.
-	if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
+	// A pause the CLI's model rejection caused is lifted first; any other
+	// pause stays.
+	if err := s.deps.AgentMgr.RestartAfterModelChange(s.deps.Ctx, name, requestUser(r)); err != nil {
 		s.deps.Logger.Warn("restart after backend switch failed", "agent", name, "error", err)
 	}
 
@@ -444,7 +446,9 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, "set_model", auditDetail("model", model), name)
 
 	// Restart the agent session so the new model takes effect immediately.
-	if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
+	// A pause the CLI's model rejection caused is lifted first; any other
+	// pause stays.
+	if err := s.deps.AgentMgr.RestartAfterModelChange(s.deps.Ctx, name, requestUser(r)); err != nil {
 		s.deps.Logger.Warn("restart after model switch failed", "agent", name, "error", err)
 	}
 

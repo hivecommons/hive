@@ -34,7 +34,7 @@ rotations.
 | Rank | Layer | Path | Writable by |
 |---|---|---|---|
 | 1 (wins) | `config-env` | `/etc/hive/config.env` | cluster admin (pod spec) |
-| 2 | `agent-overlay` | `/data/agent-configs/<agent>.yaml` | spoke (dashboard agent edits) |
+| 2 | `agent-overlay` | `/data/agent-configs/<agent>.yaml` | spoke (dashboard agent edits; a pause or resume patches its `paused` key when the file exists) |
 | 3 | `dashboard-overlay` | `/data/hive.yaml.dashboard` | **spoke (`Config.Save`) and hub (heartbeat)** |
 | 4 (loses) | `configmap-seed` | ConfigMap `hive-config`, key `hive.yaml` | **nobody** |
 
