@@ -620,7 +620,9 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	if fi.IsDir() {
 		// Directories need u+rwx to be usable.
 		if mode.Perm()&DirPerms != DirPerms {
-			newMode := mode.Perm() | DirPerms
+			// Keep setgid and sticky: the entrypoint sets both on the shared
+			// dot-dirs, and a repair of the group bits must not drop them.
+			newMode := mode&(os.ModePerm|os.ModeSetgid|os.ModeSticky) | DirPerms
 			if err := chmod(newMode); err != nil {
 				warnDeduped(logger, "chmod dir", "permissions watcher: chmod dir failed", path, err)
 			} else {

@@ -692,18 +692,24 @@ The `.claude/.credentials.json` bridge is a symlink, and Claude Code does not wr
 Claude Code has no supported way to keep the link. `CLAUDE_CONFIG_DIR` moves the whole config directory (settings, transcripts, auto-memory), which would undo the per-agent split above, and a bind mount cannot be renamed over. So hive detects and repairs the replacement instead, in three places:
 
 - at every agent launch;
-- on every credential-watchdog cycle (`HIVE_CREDENTIAL_WATCHDOG_INTERVAL`, default 5 minutes), so a refresh that happens while the agent runs is caught within one cycle;
+- every `HIVE_CLAUDE_CREDENTIAL_BRIDGE_INTERVAL` (default `5s`) from the credential watchdog, and again before each 5-minute probe (`HIVE_CREDENTIAL_WATCHDOG_INTERVAL`). The short cadence matters: every agent holds the same token and refreshes at about the same time, and the first refresh rotates the grant, so publishing it quickly is what keeps the siblings from failing on the old one;
 - right after a successful dashboard Claude sign-in.
+
+When the server cannot open the private file (per-UID hives: it is owned by the agent's uid, mode `0600`, and hive runs as `dev`), it reads it as the agent's own uid through the same `su-exec` seam that adopts `.claude.json` sessions.
 
 The repair never deletes a token:
 
 1. It moves the private file aside to `.credentials.json.stale-<UTC time>` in the agent's `~/.claude`. The file keeps its owner and `0600` mode.
-2. It keeps whichever credential is newer **and** usable in the shared `/data/home/.claude/.credentials.json`. "Usable" is the rule the rest of hive uses: a live access token, or a refresh grant that has not expired. "Newer" means the access token's `expiresAt` is later. A fresh refresh in one agent therefore becomes the fleet's login, instead of stranding every other agent on the grant it just rotated. When the agent's copy wins, the old shared file is kept beside it as `.credentials.json.stale-<UTC time>` and the new one is written `0660` with the old file's owner and group. On a tie, or when the agent's copy is not usable, the shared file stays as it is.
+2. It keeps whichever credential is newer **and** usable in the shared `/data/home/.claude/.credentials.json`. "Usable" is the rule the rest of hive uses: a live access token, or a refresh grant that has not expired. "Newer" means the access token's `expiresAt` is later. The agent's copy wins only when it is complete (access token, refresh token, recorded `expiresAt`); a failed refresh (empty tokens, `expiresAt` 0) never wins. A fresh refresh in one agent therefore becomes the fleet's login, instead of stranding every other agent on the grant it just rotated. When the agent's copy wins, the old shared file is kept beside it as `.credentials.json.stale-<UTC time>` and the new one is written `0660` with the old file's owner and group. On a tie, or when the agent's copy is not usable, the shared file stays as it is.
 3. It restores the symlink.
+
+When the file cannot be read either way (a deployment without `su-exec`), nothing is moved or relinked, the agent keeps the token it already had, and one `ERROR` per agent and file version names the path. The one exception is a dashboard sign-in: a fresh shared login is newer than anything an unreadable private copy could hold, so that trigger moves the unreadable file aside unread and relinks the agent.
 
 Each repair writes a `claude_credential_rebridged` Audit Log entry naming the agent, the trigger (`launch`, `watchdog` or `sign-in`), which credential was kept (`shared` or `agent`) and where the moved-aside file went. It never records token material. Until the repair runs, the agent card shows **credential bridge broken (private stale file)** instead of a generic "needs login". Moved-aside files are not cleaned up automatically; remove them by hand once you no longer need them.
 
 The repair skips an agent whose whole `~/.claude` is still the old directory symlink to `/data/home/.claude`. That happens to an agent that has been paused or stopped since before the per-agent split, because only a launch replaces the directory link. Through that link the agent's `.credentials.json` is the shared login itself, so there is nothing private to move aside. The hive log says so once per agent (`claude credential bridge: this agent's .claude directory resolves to the shared login directory`), the card does not show a broken bridge, and the agent's next launch replaces the directory link with its own `~/.claude`.
+
+Every hive-side write to a shared login or CLI config (`.claude/.credentials.json`, `.copilot/config.json`, the durable Copilot token) goes through `crux/sharedfile`: a randomly named temporary beside the target, mode and owner set on the open descriptor, verified, then renamed into place, and only when the target is absent or a regular file inside a regular directory the server owns. Anything else at those paths is refused and logged once. The entrypoint's root permission guard applies the same rule to the files it repairs, and the shared dot-dirs carry the sticky bit so a dev-owned entry cannot be replaced by another uid. Memory, transcripts and todos stay per agent throughout; only the credential file is published.
 
 ### CLI auto-memory (`agents.cli_memory`)
 
