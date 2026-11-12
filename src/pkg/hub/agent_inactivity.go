@@ -153,6 +153,13 @@ func classifyInactiveAgent(a AgentSummary, queuedWork int, now time.Time) agentI
 		// turns a healthy fresh digest into "idle with work queued".
 		return agentInactiveNone
 	}
+	if !legacyAgent(a) && !a.ExpectedActive {
+		// A new-protocol spoke that says the agent is not expected active in
+		// the governor's current mode (no cadence, or a paused one — e.g.
+		// redteam in quiet mode) will never kick it; sitting idle is the
+		// configured behaviour, not a fault.
+		return agentInactiveNone
+	}
 	lastActivity, activityOK := parseAgentTime(a.LastActivityAt)
 	if !activityOK {
 		// The spoke has never observed a pane change for this agent. That is

@@ -1,0 +1,1 @@
+- Hub "idle with work queued" no longer flags agents the governor will never kick: agents with no (or a paused) cadence in the current governor mode are skipped, and spokes now report the slot-to-slot gap for times/cron cadences so a `09:00,12:00,15:00 weekdays` agent is not alerted every evening and all weekend.
