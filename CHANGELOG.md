@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.224.0)
+
+### Added
+
+- Benchmark records exported by `GET /api/benchmarks/export` (and pushed to hivecommons/benchmarks) now carry an estimated cost (#17790, #17694): `cost.basis` is `tokens_x_pricing` with `cost.usd_est`, token share, `launches` and `price_table_date` when the launch-cost collector attributed a kick to the PR (the swarm's PR ref, or the governor's issue ref of an issue the PR closed), else `unknown`. Figures are list-price estimates from the spoke's own launch attribution, never billed amounts; no per-session usage leaves the spoke.
+- Hub marketplace seeds curated workflow models from `pkg/hub/marketplace/curated/*.yaml` on startup and every refresh, ships the first one — `cncf-techdocs-assessment` (CNCF TechDocs AI-assisted assessment) — and adds `cncf/techdocs` to the ingest corpus via the new operator-added `extra.json` list (hivecommons/hive#17620).
+
+### Fixed
+
+- Marketplace ingest streams each repository tarball and keeps only pipeline files (1 MiB per file, 32 MiB total) instead of extracting the whole source tree under a 256 MiB cap, so large monorepos (kubernetes/kubernetes, kserve, meshery, …) no longer fail with `archive exceeds size cap`; `GET /api/marketplace/status` now lists failing repos with their errors without `?verbose=1`; four renamed corpus repositories (composefs, OpenMetrics, ratify, kuberay) now point at their current GitHub names.
+
+### Security
+
+- The upstream forward-proxy loader no longer echoes the configured proxy URL's `user:password` userinfo in the error it returns for a malformed URL (unsupported scheme such as `socks5://`, missing host, or an unparseable value). Boot logs that error to the hive JSON log before falling back to direct egress, so a typo in `network.upstream_proxy.url` / `HIVE_UPSTREAM_PROXY_URL` used to write the corporate proxy's Basic credential to the log stream on every start; the password is now masked as `xxxxx` (#17730).
+
 ## 2026-11-11 (v5.223.0)
 
 ### Added
