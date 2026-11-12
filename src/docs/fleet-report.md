@@ -171,9 +171,11 @@ title is `[selfreport] <class>: <short message>`.
 | `models_endpoint_empty` | the dashboard's inference model discovery (`/api/inference/{backend}/models`) found no models from any configured endpoint (`no models found from any endpoint`, `pkg/dashboard/api_models.go`) and fell back to the static aliases, flagged unverified in the UI. The source logs it at WARN once per backend per hour (DEBUG on repeats, re-armed when discovery succeeds), so this fires only when the condition flaps ≥5 times in 10 min (gateway key rejected, endpoint down). Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | low |
 | `unclassified_error_repeated` | **generic catch-all**: the same WARN/ERROR log line (numbers, hashes, paths and quoted strings collapsed) repeated ≥5 times in 10 min. Fed by a `slog.Handler` tee (`pkg/fleetreport/slogfeed`) on the hive's root logger, so a repeating defect is noticed even with no hook site. Skips benign lines (read/keepalive i/o timeouts, WARNs whose `error` is a GitHub rate-limit refusal or a 502/503/504 gateway failure — the caller retries next tick, context cancellation, the permissions watcher's `fixed …` self-healing lines) and any message that already matches another class's keywords. Clears automatically after 20 quiet minutes (2× the window), so a "cleared" comment follows once the symptom stops | low |
 
-The cancellation exclusion includes an exact `context canceled` in a structured
-`error` attribute, including logger-bound attributes. The warning remains in
-local logs; deadlines and other errors remain reportable.
+The cancellation exclusion includes structured `error` attributes, including
+logger-bound attributes: typed errors wrapping `context.Canceled`, exact
+`context canceled` strings, and strings ending in `: context canceled`.
+Warnings remain in local logs; deadlines and other errors remain reportable,
+including when another `error` attribute accompanies a cancellation.
 
 The GitHub rate-limit exclusion also covers the local REST reserve guard:
 when optional issue activity or CI trail fetches are shed below the reserve,
