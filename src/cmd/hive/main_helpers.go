@@ -175,7 +175,7 @@ func enforceHoldGuard(
 	// the MERGE, not the branch. Runs after the snapshot step above so a PR
 	// held for the first time this tick is pinned before this ever touches
 	// its branch.
-	maintainHeldPRMergeability(ctx, ghClient, writer, store, org, actionable.PRs.Held, fetchCommits, logger)
+	maintainHeldPRMergeability(ctx, ghClient, writer, store, org, actionable.PRs.Held, fetchCommits, heldPRConflictReturnsToAuthor(cfg), logger)
 
 	// (2) Check every open PR that WAS hold-gated (has a snapshot) and no
 	// longer is (it enumerated as actionable): the hold lifted this window.
@@ -349,6 +349,18 @@ func enforceHoldGuard(
 // hive is expected to push to that branch, and a merge from base underneath
 // it only makes that push fail until they pull.
 //
+// So is a contributor's held PR that GitHub reports "dirty"
+// (conflictToAuthor, heldPRConflictReturnsToAuthor): a sentinel alert or a
+// hold label is a gate on the PR's real stage, and the stage route sends a
+// gated conflicting head back to its contributor (072, the nudge and the
+// fix queue) like any other conflict. The guard runs in the eval cycle,
+// before the sweep's stage pass writes 072 for a newly dirty head, so it
+// decides from the author kind the stage engine already stamped instead of
+// waiting for the 072 label, and posts no second "rebase it by hand" note.
+// The conflict notice stays for the hive's own held PRs, a person's own PR,
+// and a PR parked with needs-human or do-not-merge; the fork and
+// workflow-permission notes are unchanged.
+//
 // PRs the guard has not snapshotted yet are skipped — the snapshot step (1)
 // runs first every tick, so this only ever sees a PR after its baseline is
 // pinned, and advancing a baseline that was never pinned would plant a wrong
@@ -365,6 +377,7 @@ func maintainHeldPRMergeability(
 	org string,
 	held []github.PullRequest,
 	fetchCommits func(repo string, number int) []holdguard.Commit,
+	conflictToAuthor func(github.PullRequest) bool,
 	logger *slog.Logger,
 ) {
 	if ghClient == nil || store == nil {
@@ -388,6 +401,11 @@ func maintainHeldPRMergeability(
 		if github.DependencyBotBranch(pr.HeadRef, pr.Author) {
 			logger.Debug("hold guard: held PR branch belongs to a dependency bot; leaving the base sync to the bot",
 				"repo", repo, "pr", pr.Number, "head_ref", pr.HeadRef, "author", pr.Author, "mergeable_state", state)
+			continue
+		}
+		if state == "dirty" && conflictToAuthor != nil && conflictToAuthor(pr) {
+			logger.Debug("hold guard: held contributor PR conflicts with its base; the stage route returns it to its author",
+				"repo", repo, "pr", pr.Number, "head", head, "author", pr.Author)
 			continue
 		}
 		// Own-only (writeback.KindHoldGateNotice): the merge-from-base push
