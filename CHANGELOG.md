@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.21.2)
+
+### Changed
+
+- Claude auth: while `HIVE_CLAUDE_OAUTH_TOKEN` (or its secret file) is set, Claude agents run on the operator's long-lived token and the shared `~/.claude/.credentials.json` is not what they authenticate with, so the per-agent credential re-bridge (launch, watchdog poll and post-sign-in) and the durable-credential watchdog's Claude probe are suspended: no credential files are moved, no `claude_token_missing` audit or "durable credential unusable" warning is raised for Claude, and the dashboard no longer flags the unused bridge as broken. The suspension is logged once at startup; Copilot watching is unchanged, and with the token unset everything behaves exactly as before. (#17760)
+
 ## 2026-11-12 (v6.21.1)
 
 ### Fixed
