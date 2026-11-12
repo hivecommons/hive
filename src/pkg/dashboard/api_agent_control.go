@@ -241,6 +241,12 @@ func (s *Server) claimAgentFieldOwnership(name, model, backend string) {
 		ac.Backend = backend
 		ac.BackendOwner = config.FieldOwnerOperator
 		s.reconcileLaunchCmdForBackend(name, &ac)
+		// A backend-only switch keeps the saved model: re-spell it for the
+		// new backend (or clear one the backend cannot run), the same as
+		// PUT .../models and the runtime's own override.
+		if model == "" && ac.Model != "" {
+			ac.Model, _ = crux.ModelForBackend(ac.Model, backend)
+		}
 	}
 	s.deps.Config.Agents[name] = ac
 	_ = s.deps.AgentMgr.UpdateConfig(name, ac)
