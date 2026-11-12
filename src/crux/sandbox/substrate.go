@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -106,6 +106,16 @@ type SubstrateOptions struct {
 	SnapshotOnIdle     bool
 	AllowHosts         []string
 	PolicyProfile      string
+	// Logger receives cleanup diagnostics that do not fail the kick; nil
+	// means slog.Default().
+	Logger *slog.Logger
+}
+
+func (o SubstrateOptions) logger() *slog.Logger {
+	if o.Logger != nil {
+		return o.Logger
+	}
+	return slog.Default()
 }
 
 // Validate reports the first configuration error a kick would hit.
@@ -315,10 +325,19 @@ func (l *SubstrateLauncher) Run(ctx context.Context, spec LaunchSpec) (Result, e
 					i.State, i.Suspended, i.Done = SubstrateStateSuspended, true, true
 				})
 				cleanupTemplate()
-				if prev := kicks.swapSuspended(spec.Name, name); prev != "" && prev != name {
-					prevRef := &substrateapi.ObjectRef{Atespace: ref.Atespace, Name: prev}
+				prev := kicks.swapSuspended(spec.Name, SubstrateActorInfo{Name: name, Atespace: ref.Atespace})
+				switch {
+				case prev.Name == "" || prev.Name == name:
+				case prev.Atespace != ref.Atespace:
+					// This launcher's client is for the current atespace;
+					// an actor left in another one is not ours to reach.
+					l.Options.logger().Warn("substrate: superseded suspended actor left in another atespace",
+						"agent", spec.Name, "actor", prev.Name, "atespace", prev.Atespace, "current_atespace", ref.Atespace)
+				default:
+					prevRef := &substrateapi.ObjectRef{Atespace: prev.Atespace, Name: prev.Name}
 					if err := control.DeleteActor(live(), prevRef); err != nil {
-						log.Printf("[substrate] deleting superseded suspended actor %s: %v", prev, err)
+						l.Options.logger().Warn("substrate: deleting superseded suspended actor",
+							"agent", spec.Name, "actor", prev.Name, "atespace", prev.Atespace, "error", err)
 					}
 				}
 				return

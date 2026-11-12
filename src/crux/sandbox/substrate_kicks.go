@@ -74,8 +74,9 @@ type SubstrateKicks struct {
 	mu       sync.Mutex
 	byLaunch map[string]*substrateKick
 	// lastSuspended is the newest actor each launch name left suspended
-	// (snapshot_on_idle); in memory only, so a hive restart forgets it.
-	lastSuspended map[string]string
+	// (snapshot_on_idle), with the atespace it was created in; in memory
+	// only, so a hive restart forgets it.
+	lastSuspended map[string]SubstrateActorInfo
 }
 
 // substrateKick is one recorded kick: every state snapshot it went through
@@ -99,16 +100,17 @@ func (s *SubstrateKicks) begin(launchName string, info SubstrateActorInfo) *subs
 	return k
 }
 
-// swapSuspended records name as launchName's retained suspended actor and
-// returns the one it replaces, or "" when there was none.
-func (s *SubstrateKicks) swapSuspended(launchName, name string) string {
+// swapSuspended records actor (name and atespace) as launchName's retained
+// suspended actor and returns the one it replaces, or a zero value when
+// there was none.
+func (s *SubstrateKicks) swapSuspended(launchName string, actor SubstrateActorInfo) SubstrateActorInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.lastSuspended == nil {
-		s.lastSuspended = map[string]string{}
+		s.lastSuspended = map[string]SubstrateActorInfo{}
 	}
 	prev := s.lastSuspended[launchName]
-	s.lastSuspended[launchName] = name
+	s.lastSuspended[launchName] = SubstrateActorInfo{Name: actor.Name, Atespace: actor.Atespace}
 	return prev
 }
 

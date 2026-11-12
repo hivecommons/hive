@@ -43,7 +43,9 @@ func (m *Manager) substrateLauncherLocked(cfg config.SandboxSubstrateConfig) san
 	if m.sandboxSubstrateLauncherFactory != nil {
 		return m.sandboxSubstrateLauncherFactory(cfg)
 	}
-	return &sandbox.SubstrateLauncher{Options: SubstrateOptionsFromConfig(cfg)}
+	opts := SubstrateOptionsFromConfig(cfg)
+	opts.Logger = m.logger
+	return &sandbox.SubstrateLauncher{Options: opts}
 }
 
 // SubstrateOptionsFromConfig converts the operator's substrate block into
