@@ -335,6 +335,26 @@ func TestRequiredChecksOverrideMismatchLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestMissingAlertsPermissionReportsOperatorCondition(t *testing.T) {
+	now := time.Date(2026, 11, 12, 15, 40, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "scoped token mint with vulnerability_alerts:read failed; retrying without it — the sec-check Dependabot alerts call will 403 until the App grants Dependabot alerts read-only and the installation re-accepts it; see docs/github-app-setup.md"
+	for range 5 {
+		logger.Warn(msg, "tier", "sec-check", "error", "permissions requested are not granted")
+		now = now.Add(time.Minute)
+	}
+	ev := tr.Evidence()
+	if len(ev) != 1 || ev[0].Class != fleetreport.ClassGitHubAppAlertsPermission || ev[0].Count != 5 {
+		t.Fatalf("missing permission evidence = %+v", ev)
+	}
+	now = now.Add(21 * time.Minute)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("quiet condition did not clear: %+v", ev)
+	}
+}
+
 func TestFeedLogFedPath(t *testing.T) {
 	tests := []struct {
 		name      string

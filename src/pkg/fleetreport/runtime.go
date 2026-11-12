@@ -77,6 +77,7 @@ const (
 	ClassBeadFactIngestFailed       = "bead_fact_ingest_failed"
 	ClassSelfReportClearedFailed    = "selfreport_cleared_comment_failed"
 	ClassGitHubAppRepoNotCovered    = "github_app_repo_not_covered"
+	ClassGitHubAppAlertsPermission  = "github_app_alerts_permission_missing"
 	ClassHubHeartbeatUnprovisioned  = "hub_heartbeat_rejected_unprovisioned"
 	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
 	ClassProxyPlainForwardFailed    = "proxy_plain_forward_failed"
@@ -201,6 +202,7 @@ var Classes = map[string]ClassSpec{
 	ClassSelfReportClearedFailed:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"fleet report: cleared comment failed"}},
 	ClassHubHeartbeatUnprovisioned:  {Component: "agent-runtime", Severity: "medium", MinCount: 1, IdleClear: 3 * time.Hour, LogFed: true, Keywords: []string{"hub heartbeat rejected: hive id is not provisioned"}},
 	ClassGitHubAppRepoNotCovered:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
+	ClassGitHubAppAlertsPermission:  {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"scoped token mint with vulnerability_alerts:read failed; retrying without it"}},
 	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed", "copilot sniff: upstream dial failed"}},
 	ClassProxyPlainForwardFailed:    {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward failed"}},
 	ClassProxyPlainForwardRefused:   {Component: "github-proxy", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward refused"}},

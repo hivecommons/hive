@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.236.1)
+
+### Changed
+
+- docs: ADR-0026  Substrate actors run credential-free; hive brokers pushes post-kick (#17934)
+
 ## 2026-11-12 (v5.236.0)
 
 ### Added
