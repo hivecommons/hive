@@ -1,1 +1,0 @@
-- The hub heartbeat `app_keys_held` collector no longer re-reads and re-parses every per-app GitHub App key file on each beat (#17797): fingerprints are cached by file size and mtime, so a slow `/data` volume stops pushing it past the 10s collect budget and flooding the "hub heartbeat collect budget exceeded" WARN.

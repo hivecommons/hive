@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.226.0)
+
+### Added
+
+- Dashboard: agent cards now show the Substrate (and OpenShell) sandbox preflight warnings for the agent's runtime, exposed as `sandbox_warnings` in `/api/status` from the boot-time sandbox posture check (hivecommons/hive#17779).
+
+### Fixed
+
+- The hub heartbeat `app_keys_held` collector no longer re-reads and re-parses every per-app GitHub App key file on each beat (#17797): fingerprints are cached by file size and mtime, so a slow `/data` volume stops pushing it past the 10s collect budget and flooding the "hub heartbeat collect budget exceeded" WARN.
+- Repeated `review swarm kick not delivered` warnings for the same PR head and cause are now logged once (then at debug) instead of every cycle.
+
 ## 2026-11-12 (v5.225.0)
 
 ### Added
