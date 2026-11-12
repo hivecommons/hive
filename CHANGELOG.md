@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.27.0)
+
+### Added
+
+- The pin-only exception (`auto_merge.human_merge_pin_only`) has a new opt-in kind, `action-sha-ref`, for the bare SHA lines that travel with a `uses:` pin. A workflow that pins a reusable workflow by commit often passes the same commit on as an input (`test_ref: <sha> # v1` under `with:`), sometimes in a second workflow file too, and a dependency bot bumps all of those lines together. Until now only the `uses:` line counted as a pin, so every such bump on a human-merge path waited for a person. With `action-sha-ref` listed in a repository's `kinds`, a changed `key: <40-hex>` line is accepted when its key is unchanged and it carries exactly the old and the new commit of a `uses:` pin that `action-sha` accepts in the same pull request, in any file the exception covers. The kind admits nothing by itself: a bare SHA line with no matching `uses:` bump keeps the whole pull request a person's merge (`<file>: bare SHA line with no matching uses: pin`), and so does listing `action-sha-ref` without `action-sha`. It adds nothing to verify, because the commit is the `uses:` pin's own and that pin still has to be anchored upstream. Exceptions that do not list the kind behave exactly as before. The dashboard (Settings → Features → Auto-merge → Pin bumps that skip the hand merge) offers the kind as an unticked box, and the admin MCP operation `auto_merge.update` accepts it, describes it in its schema and says in the preview what it lets through.
+
+### Fixed
+
+- The agent tiles in the dashboard's top bar no longer overlap, repeat a name, or scroll. On a bar with little room in the middle, each tile is one line (name, "RUNNING NOW" or "UP NEXT", status dot), and the label and the dot were placed in the same grid cell, so the green dot was drawn over the last letter of the label; each now has its own column. A replica such as `adjudicator-2` keeps its base agent's display name, so two tiles read "adjudicator"; a replica's tile now reads `adjudicator ·2` (a review head shows its alias, for example `reviewer ·fast-1`) in the top bar and in the collapsed Agents header, and its tooltip and screen-reader label say "replica 2 of 2". An agent that is not a copy looks the same as before. When the tiles are wider than the space between the two sides of the bar, the strip used to scroll sideways, which cut the last tile off and put a scrollbar under the bar. It now shows only whole tiles, drops the ones that do not fit, and shows a `+1` style count in their place; agent names in the top bar are still never shortened. Every agent stays reachable in the Agents section, which any tile opens.
+
 ## 2026-11-12 (v6.26.0)
 
 ### Added
