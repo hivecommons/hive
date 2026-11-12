@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.237.1)
+
+### Fixed
+
+- Canceled stage-label check digest reads remain in local logs without generating repeated unclassified fleet reports; other digest failures remain reportable (#17944).
+- Fleet report: a GitHub App that lacks the `statuses: write` permission (the `prow/lgtm` status 403) is now reported under its own `github_app_statuses_permission_missing` class with a remediation hint instead of the catch-all `unclassified_error_repeated` (#17973).
+
 ## 2026-11-12 (v5.237.0)
 
 ### Added

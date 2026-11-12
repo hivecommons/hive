@@ -1242,6 +1242,8 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 	defer ticker.Stop()
 	menuEscapes := 0
 	dialogAnswers := 0
+	// lastWorking records whether the most recent poll saw the agent mid-turn.
+	lastWorking := false
 	// Inference-routed agents run Claude Code too, so a permission dialog in
 	// their pane is answered on the same terms as a plain claude agent's.
 	dialogBackend := backend
@@ -1255,6 +1257,18 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 		}
 		select {
 		case <-deadline:
+			// An agent still mid-turn at the deadline is busy, not stuck: the
+			// kick paths already report it as busy and leave a genuinely stalled
+			// turn to the busy-no-activity watchdog (#12268). Dumping the pane at
+			// WARN here fed the agent_pane_timeout self-report every time a
+			// re-kick outwaited a long turn (#17993).
+			if lastWorking {
+				m.logger.Info("prompt wait ended: agent still mid-turn",
+					"agent", agent.Name,
+					"session", agent.tmuxSession,
+					"waited", inputPromptTimeout)
+				return false, kickPromptNotReadyReason
+			}
 			m.logger.Warn("prompt timeout — dumping pane",
 				"agent", agent.Name,
 				"session", agent.tmuxSession)
@@ -1281,6 +1295,7 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 			// Check the visible pane only: a dismissed consent screen
 			// lingers in the scrollback that captureTmuxPaneForAgent sees.
 			visible := m.captureVisiblePaneForAgent(agent)
+			lastWorking = false
 			if paneShowsCopilotQuestionForm(visible) {
 				m.dismissCopilotQuestionFormForKick(agent)
 				continue
@@ -1313,6 +1328,7 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 			// Use the visible pane only for the same reason as above: a
 			// finished task's working marker lingers in scrollback.
 			if paneShowsAgentWorking(visible) {
+				lastWorking = true
 				continue
 			}
 			if paneShowsInputPrompt(visible) {
