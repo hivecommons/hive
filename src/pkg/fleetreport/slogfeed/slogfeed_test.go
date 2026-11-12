@@ -77,6 +77,24 @@ func TestCanceledAdoptionReadStaysInLog(t *testing.T) {
 	logger.Warn(msg, "error", errors.New("permission denied"))
 	logger.Warn(msg, "error", context.DeadlineExceeded)
 	logger.Warn("another operation failed", "error", context.Canceled)
+	if len(*seen) != 2 {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
+func TestStructuredCancellationDoesNotCreateFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "stage labels reconcile failed"
+	for range 10 {
+		logger.Warn(msg, "error", context.Canceled, "items", 6, "writes", 0)
+	}
+	logger.With("error", context.Canceled).Warn(msg)
+	if len(*seen) != 0 || strings.Count(out.String(), "\n") != 11 {
+		t.Fatalf("observed=%+v logs=%s", *seen, out.String())
+	}
+	logger.Warn(msg, "error", context.DeadlineExceeded)
+	logger.Warn(msg, "error", "permission denied")
+	logger.With("error", context.Canceled).Warn(msg, "error", "permission denied")
 	if len(*seen) != 3 {
 		t.Fatalf("other failures must remain reportable: %+v", *seen)
 	}

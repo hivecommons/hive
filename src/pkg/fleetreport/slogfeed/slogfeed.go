@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledAdoptionRead(r) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) {
+	if canceledError(r, h.attrs) || canceledAdoptionRead(r) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -152,6 +152,27 @@ func canceledAdoptionRead(r slog.Record) bool {
 		return true
 	})
 	return canceled
+}
+
+// canceledError applies the existing cancellation exclusion to structured
+// errors too. An accompanying different error must remain reportable.
+func canceledError(r slog.Record, bound []slog.Attr) bool {
+	found, other := false, false
+	check := func(a slog.Attr) bool {
+		if a.Key == "error" {
+			if a.Value.Resolve().String() == context.Canceled.Error() {
+				found = true
+			} else {
+				other = true
+			}
+		}
+		return true
+	}
+	for _, a := range bound {
+		check(a)
+	}
+	r.Attrs(check)
+	return found && !other
 }
 
 // expectedKickHold reports whether a "failed to send kick" record carries the
