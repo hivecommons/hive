@@ -27,8 +27,13 @@ memory.
    registerKnowledgeStores (cmd/hive/boot_knowledge_primer.go)
                               ▼
  ┌───────────────── Scheduler.primeKnowledge (pkg/scheduler/kick_priming.go) ───┐
- │ 1. extractKeywords ← titles + labels of the agent's first                    │
- │    maxIssuesToPrime (=5) queued issues                                       │
+ │ 1. extractKeywordsFor ← titles + labels of the agent's first                 │
+ │    maxIssuesToPrime (=5) queued issues, minus what the hive put              │
+ │    there: routing labels (stage/, agent/, origin/, hive/, needs-,            │
+ │    never-claim, Prow's, …), the complexity tier, a filer tag                 │
+ │    naming a hive agent and the "Review backlog (<p>):" stem; when            │
+ │    that leaves nothing, or matches no entry in step 3, the search            │
+ │    uses the pre-filter query instead (legacyKeywords)                        │
  │ 2. scope ← knowledge.agent_scopes[<agent>] (or base agent for a replica)     │
  │ 3. Primer.PrimeScoped (pkg/knowledge/primer.go)                              │
  │      search every layer/store → merge by layer precedence →                  │
