@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.23.0)
+
+### Added
+
+- The admin MCP can now read and change the contributor ready-work queue, which an operator could only do on the dashboard (Contribute → Operations → Contributor Queue) before. The new `contributor_queue` read tool returns the card's rows in the card's order (pinned issues first, held issues last with their reason), with `withheld` for the candidates the queue keeps out and `offset` paging. Three write operations go through the card's own endpoints, so their owner/read-write role gate, audit entries and persistence apply unchanged: `contributor_queue.order` sets the pinned order from a whole list, or pins one key at a position, or unpins one, without retyping the rest; `contributor_queue.hold` holds or resumes one issue with an optional reason; `contributor_queue.hold_clear` resumes every held issue. Each preview shows the stored list or hold before and after, refuses a malformed key or one the queue does not know, and a confirm is refused when the pinned list (or, for `hold_clear`, the hold set) changed after the preview, so nobody's edit is overwritten unseen. A read-only caller is refused at preview. `GET /api/contribute/queue?controls=1` now returns the stored pinned order and hold set to owner and read-write callers; without the parameter the GET is unchanged and public.
+
+### Fixed
+
+- A contributor's queued fix is no longer dropped while its pull request is still waiting in `stage/072-returned-to-contributor`. Building the Operations card ("Connected contributor agents") removed every queued fix whose PR was missing from the status snapshot's open-PR list. That list is only as new as the enumeration behind it, so a brand-new PR returned to its author before the next enumeration listed it looked closed, and its fix vanished four seconds after it was queued. The PR then sat at 072 with nothing dispatched. The card now keeps a fix that was queued after that enumeration ran, or whose stage record is at 071/072 and was seen by a stage pass after it. A PR that really merged or closed still leaves the queue once a newer enumeration shows it gone. A fix that an older relay hands back unstarted (`Hub is not the active polling slot`) is now offered again when its 5-minute backoff ends. Before, nothing offered it again until the relay asked this hub for work or the PR was re-nudged. Every removal from the fix queue now logs why, as a `reason` field on the `fix queue remove` line (`left-stage-072`, `pr-closed`, `relay-gave-up`, `reroute-cancelled`, `fleet-card-not-open:<check>`).
+
 ## 2026-11-12 (v6.22.3)
 
 ### Fixed
