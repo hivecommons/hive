@@ -392,7 +392,7 @@ func (p ClaudeProber) Probe(ctx context.Context) Headroom {
 	// inference-only token that cannot read /api/oauth/usage, and the
 	// credentials file is not what they use, so its expiry says nothing about
 	// them. Headroom is unknown; the error must not read as a logout.
-	if claude.OperatorToken() != "" {
+	if claude.AuthMode() == claude.AuthModeLongLivedToken {
 		return failOpen(p.Provider(), errors.New("claude usage unknown: agents run on the long-lived token, which has no usage scope"))
 	}
 	credPath := p.CredentialsPath

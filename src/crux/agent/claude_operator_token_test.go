@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/claude"
+	"github.com/hivecommons/hive/crux/claude/claudetest"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -19,11 +20,7 @@ const operatorTokenSentinel = "sk-ant-oat01-OPERATOR-SENTINEL-7f3c9a1e5b"
 // token ("" for unset) and the default secret file points at a missing path.
 func stageOperatorToken(t *testing.T, token string) {
 	t.Helper()
-	t.Setenv(claude.OperatorTokenEnvVar, token)
-	t.Setenv(claude.OperatorTokenFileEnvVar, "")
-	orig := claude.OperatorTokenFile
-	claude.OperatorTokenFile = filepath.Join(t.TempDir(), "missing")
-	t.Cleanup(func() { claude.OperatorTokenFile = orig })
+	claudetest.SetOperatorToken(t, token)
 }
 
 // With a long-lived operator token set, an agent whose credential file is

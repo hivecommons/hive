@@ -46,8 +46,10 @@ func CommandForBackend(backend string) string {
 func PauseNotice(name, backend string, longLivedToken bool) (title, body, hint string) {
 	if backend == "claude" && longLivedToken {
 		return fmt.Sprintf("\U0001F511 Claude token rejected: %s", name),
-			fmt.Sprintf("Agent '%s' was paused. %s, replace %s with it, and restart the hive.",
-				name, claude.TokenRejectedMessage, claude.OperatorTokenEnvVar),
+			fmt.Sprintf("Agent '%s' was paused. %s, update the configured secret source "+
+				"(%s, or the file named by %s) with it, and restart the hive. "+
+				"See the backend auth recovery runbook, \"Replace a Claude operator token\".",
+				name, claude.TokenRejectedMessage, claude.OperatorTokenEnvVar, claude.OperatorTokenFileEnvVar),
 			claude.TokenRejectedMessage
 	}
 	hint = CommandForBackend(backend)
@@ -233,6 +235,24 @@ type AgentManager interface {
 	Pause(name, trigger, reason string) error
 }
 
+// ClaudeAuthModeReporter is the optional AgentManager extension that says
+// whether claude agents run on the operator's long-lived token. The in-process
+// agent.Manager implements it from the token it captured at construction,
+// which is the same snapshot its AgentHasValidCredential verdict uses, so the
+// pause verdict and the notice text in Scan come from one source.
+type ClaudeAuthModeReporter interface {
+	ClaudeLongLivedToken() bool
+}
+
+// claudeLongLivedToken answers the mode from the manager when it can say,
+// falling back to the live claude.AuthMode() read (remote runtimes).
+func claudeLongLivedToken(agentMgr AgentManager) bool {
+	if r, ok := agentMgr.(ClaudeAuthModeReporter); ok {
+		return r.ClaudeLongLivedToken()
+	}
+	return claude.AuthMode() == claude.AuthModeLongLivedToken
+}
+
 type Notifier interface {
 	Send(title, message string, priority notify.Priority)
 }
@@ -326,7 +346,7 @@ func Scan(
 			continue
 		case ActionPause:
 			// Determine the login instruction based on the agent's backend
-			title, body, loginCmd := PauseNotice(name, backend, claude.OperatorToken() != "")
+			title, body, loginCmd := PauseNotice(name, backend, claudeLongLivedToken(agentMgr))
 
 			// This WARN is what the fleet selfreport for class
 			// agent_login_required is built from (hivecommons/hive#16953):

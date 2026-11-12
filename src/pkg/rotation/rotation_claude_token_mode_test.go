@@ -4,11 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/crux/claude"
+	"github.com/hivecommons/hive/crux/claude/claudetest"
 )
 
 // On the operator's long-lived token the usage read degrades to unknown:
@@ -16,11 +15,7 @@ import (
 // carries none of the markers the watchdog's auth probe reads as a logout
 // (#17759).
 func TestClaudeProber_LongLivedTokenIsUnknown(t *testing.T) {
-	t.Setenv(claude.OperatorTokenEnvVar, "sk-ant-oat01-PROBE-SENTINEL-9c1d")
-	t.Setenv(claude.OperatorTokenFileEnvVar, "")
-	orig := claude.OperatorTokenFile
-	claude.OperatorTokenFile = filepath.Join(t.TempDir(), "missing")
-	t.Cleanup(func() { claude.OperatorTokenFile = orig })
+	claudetest.SetOperatorToken(t, "sk-ant-oat01-PROBE-SENTINEL-9c1d")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("usage endpoint called in long-lived-token mode: %s", r.URL.Path)

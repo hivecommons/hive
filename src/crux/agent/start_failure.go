@@ -272,7 +272,7 @@ func (m *Manager) markStartFailureLocked(agent *AgentProcess, class StartFailure
 // Caller holds m.mu.
 func (m *Manager) recordStartFailureLocked(agent *AgentProcess, backend string, class StartFailureClass, detail string) (time.Duration, bool) {
 	reason := startFailureReason(backend, class, detail)
-	if class == StartFailureLoginRequired && backend == "claude" && m.claudeOperatorToken != "" {
+	if class == StartFailureLoginRequired && backend == "claude" && m.claudeOperatorTokenMode() {
 		// On the long-lived token a login prompt is Claude answering 401 to
 		// that token; "not logged in" would send the operator to /login.
 		reason = claude.TokenRejectedMessage

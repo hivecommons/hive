@@ -3,6 +3,8 @@ package loginscan
 import (
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/crux/claude"
 )
 
 // CommandForBackend is the operator-facing instruction attached to the pause
@@ -39,6 +41,13 @@ func TestPauseNotice(t *testing.T) {
 	}
 	if strings.Contains(body+title+hint, "/login") || strings.Contains(body, "claude login") {
 		t.Fatalf("long-lived token notice still says to log in: %q / %q", title, body)
+	}
+	// The token may come from the env var or the _FILE source; the notice
+	// must not send a file-mounted deployment to the wrong one.
+	for _, want := range []string{claude.OperatorTokenEnvVar, claude.OperatorTokenFileEnvVar, "Replace a Claude operator token"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("long-lived token body lacks %q: %q", want, body)
+		}
 	}
 
 	for _, tc := range []struct {

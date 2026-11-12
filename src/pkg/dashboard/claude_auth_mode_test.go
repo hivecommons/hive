@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/crux/claude"
+	"github.com/hivecommons/hive/crux/claude/claudetest"
 	"github.com/hivecommons/hive/pkg/adminmcp"
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -21,16 +21,10 @@ const claudeAuthModeSentinel = "sk-ant-oat01-STATUS-SENTINEL-4b8e2d6f1a"
 // buffer, with the operator token hermetic: token "" leaves it unset.
 func claudeAuthModeServer(t *testing.T, token string) (*Server, *bytes.Buffer) {
 	t.Helper()
-	t.Setenv(claude.OperatorTokenEnvVar, token)
-	t.Setenv(claude.OperatorTokenFileEnvVar, "")
-	origFile := claude.OperatorTokenFile
-	claude.OperatorTokenFile = filepath.Join(t.TempDir(), "missing")
+	claudetest.SetOperatorToken(t, token)
 	origRead := claudeReadToken
 	claudeReadToken = func(string) string { return "" }
-	t.Cleanup(func() {
-		claude.OperatorTokenFile = origFile
-		claudeReadToken = origRead
-	})
+	t.Cleanup(func() { claudeReadToken = origRead })
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
