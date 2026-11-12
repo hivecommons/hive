@@ -1271,7 +1271,7 @@ Withheld rows carry a stable reason code and, where the refusing gate had one, t
 | `dependency_unknown` | A declared dependency could not be resolved, so satisfaction cannot be asserted. | Blocker keys, observed record/generation |
 | `disabled_repo` | The repository is switched off for contribution (`disabled_repos`). | — |
 | `tracker` | A tracker/umbrella issue; its children carry the work and queue independently. Recognised by an `epic`/`tracker`/`tracking`/`meta-tracker` label (including prefixed spellings such as `kind/epic`), an `[Epic]`/`[Tracker]` title prefix, or a body listing three or more child issues. | — |
-| `cooldown` | The issue completed recently and is inside its post-completion cooldown. | Expiry timestamp |
+| `cooldown` | The issue completed recently and is inside its post-completion cooldown. | Expiry timestamp; when that completion ended with no pull request and no verdict, the reason the last relay gave (`Completion cooldown until 15:04 UTC — last relay: <reason>`, see [A relay that drops an issue says why](#a-relay-that-drops-an-issue-says-why)) |
 | `failure_cooldown` | The issue failed recently and is inside its failure cooldown or quarantine window. | Expiry timestamp |
 | `no_work_needed` | A live `no_work_needed` verdict is suppressing the issue until it changes again. | — |
 | `in_flight` | A contributor is working the issue right now. | — |
@@ -1287,7 +1287,7 @@ Per-contributor exclusions are deliberately absent from this list. Agent-role ma
 
 Candidates dropped *before* they reach the actionable set — the governor `hold` label (which has its own list on the status payload), governor exempt labels, `project.issue_filter` require-labels, and standing meta issues — are out of scope here and are not explained by this section.
 
-**API.** `GET /api/contribute/queue?withheld=1` returns the same queue plus `withheld` (the rows) and `withheld_total`. The parameter is an explicit opt-in: without it the response is byte-identical to what it has always been, so existing clients are unaffected. The list is bounded by the same limit as the queue, computed per request, and never cached or persisted. It carries only public issue metadata, reason codes, and public evidence — no credentials, prompts, or contributor execution data.
+**API.** `GET /api/contribute/queue?withheld=1` returns the same queue plus `withheld` (the rows) and `withheld_total`. The parameter is an explicit opt-in: without it the response is byte-identical to what it has always been, so existing clients are unaffected. The list is bounded by the same limit as the queue, computed per request, and never cached or persisted. It carries only public issue metadata, reason codes, and public evidence — no credentials, prompts, or contributor execution data — with one kind of exception: a row's `detail` can end with the short reason a relay reported for the completion behind it (a `blocked` or maintainer-decision verdict's reason, or the last relay's reason on a `cooldown` row). That is the `verdict_reason` the public `GET /api/contribute/runs` already serves for the same task; here it is one line, token-redacted and capped at 200 bytes.
 
 ### Explicit acceptance
 
@@ -1640,6 +1640,21 @@ Two changes, one on each side:
 
 - **Relay.** When an issue task's `complete` verdict *claims* a PR (`PR`, `pull request`, `opened`) and `resolveTaskPR()` attributes none to the task, the relay types one follow-up — *open it now, or print `HIVE_VERDICT: no_work_needed — <reason>`* — and holds the finalization until a second `HIVE_VERDICT` appears (or the pane goes idle), exactly as the #7759 review follow-up does. One per task; the second verdict is final whatever it says. A PR cited only by number on the verdict line (`complete — PR #198 delivers …`) is synthesized as `https://github.com/<task repo>/pull/198` and verified like a pasted URL, so a real PR referenced that way never triggers the follow-up. Review tasks (`complete — no PR comments to address`) are exempt: their `complete` never implies a new PR.
 - **Hub.** `isEvidenceLessCompletion` now returns true for any PR-less completion that is not `no_work_needed` and whose `completion_signal` is `verdict` **or** `chrome_idle` — i.e. from any relay that has said how it decided the task was over. Such a completion books only the flat short cooldown, never escalates, and no longer increments the contributor's `TasksCompleted`. The `unknown` signal (relays predating #5376, the headless path) keeps its pre-#7862 behaviour.
+
+### A relay that drops an issue says why
+
+A task that ends with no pull request and no `no_work_needed` / `blocked` / `wrong_base` verdict is booked `idle`. Until now that was all the hub knew: the log line read `verdict=idle verdict_reason=""`, the issue showed "Completion cooldown until …" in the Withheld list, was offered again when the cooldown lapsed, and was dropped again. The agent's own sentence after `HIVE_VERDICT: complete —` had been parsed by the relay and thrown away, and a chrome-idle exit had no sentence at all, so the only way to learn why was to read the relay's pane.
+
+- **Relay.** Every issue task's `task_complete` without a PR attributed to the task now carries a `verdict_reason` and still **no** `verdict` (`idleReasonWireFields` in `bin/contributor-relay.js`), so the hub keeps booking it idle. A fix-pr or review task, which ends with no new PR by design, is sent as before:
+  - `complete` with no PR: `agent reported complete without a pull request: <the agent's sentence>`, or `… and gave no reason` when it printed none;
+  - no verdict at all (the chrome-idle fallback, or a headless run that exited 0): `agent exited without a conclusion`;
+  - a `no_work_needed`, `blocked` or `wrong_base` verdict is sent exactly as before, and a completion with a PR sends no idle reason.
+
+  The reason is read from a pane capture `redactTokens()` already scrubbed, and `verdict_reason` is one of the fields the frame clamp may shorten. An older hub sees the shape a tooling-failure `blocked` verdict already sends (a reason with no verdict): it logs and records the reason and books the completion idle as it always did.
+- **Hub.** A no-PR idle is never recorded without a reason. When the relay sent none the hub fills in what the completion signal says: `agent exited without a conclusion` (`chrome_idle`), `agent reported complete without a pull request and gave no reason` (`verdict`), or `no reason given` (a relay that sends no signal). The log line and the run record carry it. The latest reason per issue, with when and which contributor, is kept in `idle-completions.json` beside the no-PR streak ledger (`contribute_idle_completions.go`): one line, token-redacted, capped at 200 bytes, dropped after 14 days, and replaced by the next completion — a verified PR or a no-work verdict removes it.
+- **Where it shows.** The Withheld list ends a `cooldown` row with `— last relay: <reason>`. The Activity monitor's issue row carries the same clause as `last_idle` (`text`, `reason`, `contributor`, `at`) while no pull request covers the issue: the dashboard shows it in the row's tooltip, and `stage_tracker_read` returns it in both views.
+
+The reason is explanation only. It does not change the cooldown, the no-PR streak or what [#6723](https://github.com/hivecommons/hive/issues/6723) decided: an evidence-less completion still books the flat short cooldown and never escalates.
 
 ### A `blocked` verdict is held for the full cooldown and marked on the issue
 

@@ -404,7 +404,10 @@ capped at 256 KiB.
      alongside `hub_build`.
 3. **`stage_tracker_read`:** returns the items with their stage, reason, what
    they wait on, decision question and options, linked pull requests and issues,
-   blocker and hold, plus `stages[]` with a count per stage.
+   blocker and hold, plus `stages[]` with a count per stage. An issue row whose
+   last contributor relay ended with no pull request and no verdict carries
+   `last_idle` (`text`, `reason`, `contributor`, `at`): the clause the
+   dashboard row's tooltip shows.
    - Filters (all optional): `repo`, `kind`, `number`, `q` (the monitor's search
      box), `stage`, `needs_human`, `on_hold`, `waiting_on_you`.
    - `view` is `summary` or `full`; `recent` adds recently merged and closed

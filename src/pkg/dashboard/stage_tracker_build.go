@@ -375,6 +375,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
 			}
 		}
+		// Why the last contributor relay dropped the issue; an issue with a
+		// PR under way has moved on from that.
+		if len(it.LinkedPRs) == 0 {
+			it.LastIdle = s.stageTrackerLastIdle(qualifyRepo(repoName), issue.Number)
+		}
 		if slices.Contains(it.Modifiers, modNeedsHuman) || it.Stage == stagelabels.IssueNeedsDecision.Number() {
 			it.Blocker = stageTrackerBlockerFor(repoName, issue.Number)
 		}

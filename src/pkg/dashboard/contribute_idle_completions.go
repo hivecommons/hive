@@ -1,0 +1,245 @@
+package dashboard
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/worksource"
+)
+
+// The reason behind a no-PR idle completion.
+//
+// A relay that drops an issue reports task_complete with no PR and no
+// no-work-family verdict, and the hub books it idle. Until this ledger the
+// only trace was a log line ending `verdict=idle verdict_reason=""`: the issue
+// showed "Completion cooldown until …" in the withheld list, was offered
+// again when the cooldown lapsed, and was dropped again, with nothing on the
+// hub saying why. The reason was kept only for no-work-family verdicts
+// (noWorkVerdicts).
+//
+// idleCompletions keeps the LATEST such reason per work item, with when it was
+// reported and by whom. It is explanation only: it never withholds an issue,
+// never changes a cooldown and never counts toward trust. The completion
+// cooldown row of the withheld list and the Activity monitor's issue row read
+// it.
+//
+// The text is agent-written (the relay forwards the agent's own sentence), so
+// it is shown only where the verdict reasons already are, single-line, token
+// redacted and capped at noWorkReasonMaxLen.
+
+// idleCompletionsFileName is the on-disk ledger, beside the no-PR streak ledger.
+const idleCompletionsFileName = "idle-completions.json"
+
+// The hub's own words for a no-PR idle that arrived without a reason. Which
+// one applies is decided by what the relay said about how the task ended
+// (normalizeIdleCompletionReason).
+const (
+	// idleCompletionNoConclusion: the relay inferred the end from idle terminal
+	// chrome; the agent printed no verdict.
+	idleCompletionNoConclusion = "agent exited without a conclusion"
+	// idleCompletionCompleteNoReason: the agent printed `HIVE_VERDICT: complete`
+	// with no PR, and the relay passed no sentence along.
+	idleCompletionCompleteNoReason = "agent reported complete without a pull request and gave no reason"
+	// idleCompletionNotGiven: a relay that sends neither a reason nor a
+	// completion signal (one predating both fields, or the headless path).
+	idleCompletionNotGiven = "no reason given"
+)
+
+// idleCompletionRetention is how long an idle reason is kept without a newer
+// completion replacing it. It matches the no-PR streak's own reset window, so
+// the reason outlives every cooldown the streak can book.
+const idleCompletionRetention = noPRStreakResetAfter
+
+// idleCompletionRecord is the in-memory and on-disk shape of one work item's
+// latest no-PR idle completion.
+type idleCompletionRecord struct {
+	RecordedAt time.Time `json:"recorded_at"`
+	Reporter   string    `json:"reporter,omitempty"`
+	Reason     string    `json:"reason"`
+	// Signal is the normalized completion signal the reason came with.
+	Signal string `json:"signal,omitempty"`
+}
+
+func (r idleCompletionRecord) expired(now time.Time) bool {
+	return r.RecordedAt.IsZero() || now.Sub(r.RecordedAt) >= idleCompletionRetention
+}
+
+// normalizeIdleCompletionReason returns the reason to keep for a no-PR idle completion.
+// It is never empty: a relay-supplied reason is token-redacted, flattened to
+// one line and capped; an absent one is replaced by what the completion signal
+// says about how the task ended.
+func normalizeIdleCompletionReason(reported, signal string) string {
+	reason := strings.Join(strings.Fields(redactTokens(reported)), " ")
+	reason = strings.TrimSpace(truncateReasonBytes(reason))
+	if reason != "" {
+		return reason
+	}
+	switch normalizeCompletionSignal(signal) {
+	case completionSignalChromeIdle:
+		return idleCompletionNoConclusion
+	case completionSignalVerdict:
+		return idleCompletionCompleteNoReason
+	}
+	return idleCompletionNotGiven
+}
+
+// idleCompletionsPath is where the ledger lives: the per-hub override, else the
+// directory the no-PR streak ledger is written to, so the two always travel
+// together (and a test that redirects one redirects both).
+func (h *ContributeWSHub) idleCompletionsPath() string {
+	if h != nil && h.idleCompletionsFile != "" {
+		return h.idleCompletionsFile
+	}
+	return filepath.Join(filepath.Dir(h.noPRStreaksPath()), idleCompletionsFileName)
+}
+
+func (h *ContributeWSHub) loadIdleCompletions() {
+	if h != nil && !h.persistTaskLedgers {
+		return
+	}
+	h.completedMu.Lock()
+	defer h.completedMu.Unlock()
+	data, err := os.ReadFile(h.idleCompletionsPath())
+	if err != nil {
+		return
+	}
+	records := make(map[string]idleCompletionRecord)
+	if json.Unmarshal(data, &records) != nil {
+		return
+	}
+	now := time.Now()
+	for k, rec := range records {
+		if rec.expired(now) || rec.Reason == "" {
+			continue
+		}
+		if h.idleCompletions == nil {
+			h.idleCompletions = make(map[string]idleCompletionRecord)
+		}
+		h.idleCompletions[k] = rec
+	}
+	h.logger.Info("[contribute-ws] loaded idle completions", "count", len(h.idleCompletions))
+}
+
+func (h *ContributeWSHub) saveIdleCompletions() {
+	if h != nil && !h.persistTaskLedgers {
+		return
+	}
+	now := time.Now()
+	h.completedMu.Lock()
+	saved := make(map[string]idleCompletionRecord, len(h.idleCompletions))
+	for k, rec := range h.idleCompletions {
+		if rec.expired(now) {
+			delete(h.idleCompletions, k)
+			continue
+		}
+		saved[k] = rec
+	}
+	h.completedMu.Unlock()
+	data, err := json.Marshal(saved)
+	if err != nil {
+		h.logger.Warn("[contribute-ws] idle completions marshal failed", "error", err)
+		return
+	}
+	path := h.idleCompletionsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		h.logger.Warn("[contribute-ws] idle completions directory creation failed", "error", err)
+		return
+	}
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		h.logger.Warn("[contribute-ws] idle completions write failed", "error", err)
+		return
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		h.logger.Warn("[contribute-ws] idle completions rename failed", "error", err)
+	}
+}
+
+// bookIdleCompletionLocked records the reason of a no-PR idle completion against
+// key, or forgets the previous one when this completion is anything else: a
+// verified PR (where the no-PR streak is cleared too) or a no-work-family
+// verdict, which keeps its own reason in noWorkVerdicts. The record therefore
+// always describes the LATEST completion. It reports whether the ledger
+// changed. Callers must hold completedMu.
+func (h *ContributeWSHub) bookIdleCompletionLocked(key, prURL, verdict, reporter, reason, signal string) bool {
+	if prURL == "" && verdict == completionVerdictIdle {
+		if h.idleCompletions == nil {
+			h.idleCompletions = make(map[string]idleCompletionRecord)
+		}
+		h.idleCompletions[key] = idleCompletionRecord{
+			RecordedAt: time.Now(),
+			Reporter:   strings.TrimSpace(reporter),
+			Reason:     normalizeIdleCompletionReason(reason, signal),
+			Signal:     normalizeCompletionSignal(signal),
+		}
+		return true
+	}
+	if _, had := h.idleCompletions[key]; had {
+		delete(h.idleCompletions, key)
+		return true
+	}
+	return false
+}
+
+// idleCompletionKey returns the live idle reason on record for key. Read-only: an
+// expired record is reported as absent and left for the next save to drop.
+func (h *ContributeWSHub) idleCompletionKey(key string) (idleCompletionRecord, bool) {
+	if h == nil || key == "" {
+		return idleCompletionRecord{}, false
+	}
+	h.completedMu.Lock()
+	defer h.completedMu.Unlock()
+	rec, ok := h.idleCompletions[key]
+	if !ok || rec.Reason == "" || rec.expired(time.Now()) {
+		return idleCompletionRecord{}, false
+	}
+	return rec, true
+}
+
+// idleCompletionNote is the one clause every surface shows for an idle reason, so
+// the withheld list, the Activity monitor and the admin MCP read the same
+// words.
+func idleCompletionNote(rec idleCompletionRecord) string {
+	return "last relay: " + rec.Reason
+}
+
+// withheldCooldownIdleItem is withheldCooldownItem for a completion cooldown
+// whose completion was a no-PR idle: the row also says why the relay dropped
+// the issue ("Completion cooldown until 15:04 UTC — last relay: <reason>").
+func withheldCooldownIdleItem(item AdmissionWithheldItem, rec idleCompletionRecord, ok bool) AdmissionWithheldItem {
+	if !ok {
+		return item
+	}
+	item.Detail = fmt.Sprintf("%s — %s", item.Detail, idleCompletionNote(rec))
+	return item
+}
+
+// StageTrackerLastIdle is the Activity monitor's note on an issue row whose
+// latest contributor-relay task ended with no pull request and no verdict:
+// the reason on record, who reported it and when. Text is the clause the
+// row's tooltip shows, the same one the withheld list ends its completion
+// cooldown row with.
+type StageTrackerLastIdle struct {
+	Text        string     `json:"text"`
+	Reason      string     `json:"reason"`
+	Contributor string     `json:"contributor,omitempty"`
+	At          *time.Time `json:"at,omitempty"`
+}
+
+// stageTrackerLastIdle returns the last-idle note for an issue, or nil when
+// the hub has none on record.
+func (s *Server) stageTrackerLastIdle(repo string, number int) *StageTrackerLastIdle {
+	if s == nil || s.contributeHub == nil || repo == "" || number <= 0 {
+		return nil
+	}
+	rec, ok := s.contributeHub.idleCompletionKey(worksource.Ref{Repo: repo, Number: number}.Key())
+	if !ok {
+		return nil
+	}
+	at := rec.RecordedAt.UTC()
+	return &StageTrackerLastIdle{Text: idleCompletionNote(rec), Reason: rec.Reason, Contributor: rec.Reporter, At: &at}
+}
