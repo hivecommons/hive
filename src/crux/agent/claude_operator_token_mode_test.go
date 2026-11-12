@@ -17,26 +17,23 @@ import (
 // credential link a refresh replaced, plus the log it writes.
 func operatorModeFixture(t *testing.T) (*Manager, *fakeAuditSink, *AgentProcess, string, string, *bytes.Buffer) {
 	t.Helper()
-	shared := withSharedAgentHome(t)
-	m, sink := testManagerWithSink(t)
+	m, sink, ap, link, target := bridgeTestFixture(t)
 	var logs bytes.Buffer
 	m.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	m.claudeOperatorToken = operatorTokenSentinel
-	ap := &AgentProcess{Name: "architect", UID: 2001, Config: config.AgentConfig{Backend: "claude"}}
-	m.mu.Lock()
-	m.agents["architect"] = ap
-	m.mu.Unlock()
-	link, target := brokenBridgeFixture(t, shared, "architect",
-		fakeClaudeCredential("fake-shared-access", time.Now().Add(8*time.Hour), "fake-shared-refresh"),
-		fakeClaudeCredential("fake-private-access", time.Now().Add(time.Hour), "fake-private-refresh"))
+	now := time.Now()
+	if err := os.WriteFile(target, bridgeTestCreds(t, "shared", now.Add(10*time.Minute).UnixMilli()), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	simulateClaudeRefresh(t, link, bridgeTestCreds(t, "private", now.Add(8*time.Hour).UnixMilli()))
 	return m, sink, ap, link, target, &logs
 }
 
 // While the operator token is set the re-bridge does nothing on any trigger:
 // the private file stays a private file, the shared login is untouched,
-// nothing is audited, and the status no longer flags the bridge as broken.
+// and nothing is audited.
 func TestClaudeOperatorTokenMode_RebridgeIsSuspended(t *testing.T) {
-	m, sink, ap, link, target, logs := operatorModeFixture(t)
+	m, sink, _, link, target, logs := operatorModeFixture(t)
 	sharedBefore, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +48,7 @@ func TestClaudeOperatorTokenMode_RebridgeIsSuspended(t *testing.T) {
 			t.Fatalf("trigger %s: RepairClaudeCredentialBridges = %v, want none in operator-token mode", trigger, got)
 		}
 	}
-	if rep := m.rebridgeClaudeCredential("architect", link, target, claudeBridgeTriggerLaunch); rep != nil {
+	if rep := m.rebridgeClaudeCredential("scanner", link, target, claudeBridgeTriggerLaunch); rep != nil {
 		t.Fatalf("launch re-bridge ran in operator-token mode: %+v", rep)
 	}
 	m.rebridgeClaudeCredentialsAfterSignIn()
@@ -70,12 +67,6 @@ func TestClaudeOperatorTokenMode_RebridgeIsSuspended(t *testing.T) {
 	}
 	if n := sink.count(); n != 0 {
 		t.Errorf("re-bridge audited %d entries in operator-token mode, want 0", n)
-	}
-	if m.snapshotAgent(ap).CredentialBridgeBroken {
-		t.Error("status must not flag the unused bridge as broken in operator-token mode")
-	}
-	if !ap.snapshot().CredentialBridgeBroken {
-		t.Error("fixture sanity: the raw snapshot should still see the replaced link")
 	}
 	if n := strings.Count(logs.String(), "watchdog alerts are suspended"); n != 1 {
 		t.Errorf("suspension logged %d times across several calls, want exactly once:\n%s", n, logs.String())
@@ -115,17 +106,15 @@ func TestClaudeOperatorTokenMode_WatchdogClaudeProbeIsSuspended(t *testing.T) {
 }
 
 // Unset, the same fixture behaves exactly as today: the re-bridge repairs the
-// link, the status reports it until then, and the watchdog probes Claude.
+// link and the watchdog probes Claude.
 func TestClaudeOperatorTokenMode_UnsetKeepsTodaysBehaviour(t *testing.T) {
-	m, sink, ap, _, _, logs := operatorModeFixture(t)
+	m, sink, _, link, target, logs := operatorModeFixture(t)
 	m.claudeOperatorToken = ""
 
-	if !m.snapshotAgent(ap).CredentialBridgeBroken {
-		t.Fatal("status must report the replaced link when no operator token is set")
+	if got := m.RepairClaudeCredentialBridges(claudeBridgeTriggerWatchdog); len(got) != 1 || got[0] != "scanner" {
+		t.Fatalf("RepairClaudeCredentialBridges = %v, want [scanner]", got)
 	}
-	if got := m.RepairClaudeCredentialBridges(claudeBridgeTriggerWatchdog); len(got) != 1 || got[0] != "architect" {
-		t.Fatalf("RepairClaudeCredentialBridges = %v, want [architect]", got)
-	}
+	assertLinkRestored(t, link, target)
 	last := map[string]bool{}
 	m.evalCredentialWatch(credentialWatch{backend: "claude", path: filepath.Join(t.TempDir(), "missing"),
 		auditAction: AuditClaudeTokenMissing, probe: claudeTokenUsable}, last)

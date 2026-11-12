@@ -1,7 +1,5 @@
 package agent
 
-import "github.com/hivecommons/hive/crux"
-
 // Operator-token mode for Claude (#17760).
 //
 // With HIVE_CLAUDE_OAUTH_TOKEN set, every claude-backend agent runs on the
@@ -37,17 +35,4 @@ func (m *Manager) logClaudeOperatorTokenModeOnce() {
 			"source", "HIVE_CLAUDE_OAUTH_TOKEN",
 			"suspended", "claude credential re-bridge, claude durable-credential watchdog")
 	})
-}
-
-// snapshotAgent is the manager's view of an agent's status. It is
-// a.snapshot() with the one manager-level adjustment: in operator-token mode
-// the Claude credential bridge is not in use, so a replaced link is not
-// reported as broken — the dashboard would otherwise prompt a repair the hive
-// has deliberately stopped doing.
-func (m *Manager) snapshotAgent(a *AgentProcess) crux.Process {
-	snap := a.snapshot()
-	if snap.CredentialBridgeBroken && m.claudeOperatorTokenMode() {
-		snap.CredentialBridgeBroken = false
-	}
-	return snap
 }

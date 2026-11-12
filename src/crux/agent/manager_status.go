@@ -112,7 +112,7 @@ func (m *Manager) GetStatusFast(name string) (*crux.Process, error) {
 			m.mu.RUnlock()
 			return nil, fmt.Errorf("agent %s not found", name)
 		}
-		snap := m.snapshotAgent(agent)
+		snap := agent.snapshot()
 		m.mu.RUnlock()
 
 		m.statusSnapMu.Lock()
@@ -146,7 +146,7 @@ func (m *Manager) GetStatus(name string) (*crux.Process, error) {
 	if !ok {
 		return nil, fmt.Errorf("agent %s not found", name)
 	}
-	snap := m.snapshotAgent(agent)
+	snap := agent.snapshot()
 	return &snap, nil
 }
 
@@ -199,7 +199,7 @@ func (m *Manager) AllStatuses() map[string]*crux.Process {
 	result := make(map[string]*crux.Process, len(m.agents))
 	for k, v := range m.agents {
 		m.refreshBusyVisibilityLocked(v, now)
-		snap := m.snapshotAgent(v)
+		snap := v.snapshot()
 		result[k] = &snap
 	}
 	return result
