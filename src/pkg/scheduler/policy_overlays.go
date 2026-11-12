@@ -770,7 +770,7 @@ func (s *Scheduler) addIndependentReviewSection(agentName, msg string) string {
 // reported"). Falls back to the built-in set when the configured one does not
 // validate, the same fallback the relay applies.
 func (s *Scheduler) reviewPerspectivesSection() string {
-	set, err := review.NewPerspectiveSet(s.cfg.Review.Perspectives, s.cfg.Review.PerspectivePrompts)
+	set, err := review.NewPerspectiveSet(s.cfg.Review.EffectivePerspectives())
 	if err != nil {
 		set = review.PerspectiveSet{}
 	}
