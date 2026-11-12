@@ -64,6 +64,25 @@ func TestHandlerSkipsBenignAndExplicitClasses(t *testing.T) {
 	}
 }
 
+func TestSignedCommitOwnershipSkipStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "signed-commit reconciler: skipped; the PR keeps an unsigned commit"
+	for range 6 {
+		logger.Warn(msg, "repo", "o/r", "pr", 1403, "reason", "commit is authored by another account")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected ownership skips produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), msg); n != 6 || !strings.Contains(out.String(), "another account") {
+		t.Fatalf("local logs lost the warning or its reason: %s", out.String())
+	}
+	logger.Warn("signed-commit reconciler: listing PR commits failed", "err", "unexpected failure")
+	logger.Error(msg, "reason", "unexpected failure")
+	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated || (*seen)[1].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
 // #16510: polling an exhausted rebase episode must keep warning locally
 // without turning the intentional handoff into a repeated runtime defect.
 func TestRebaseAttemptsExhaustedLogsWithoutFleetReport(t *testing.T) {
