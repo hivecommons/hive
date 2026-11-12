@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.27.1)
+
+### Fixed
+
+- A hosted hive that follows a release channel (`stable`, `candidate`, `edge`) now restarts once per upgrade instead of twice. When the channel tag already carries the upgrade target (or a newer build), the hub says so in the upgrade instruction and the hive rolls once on its channel tag, so it no longer lands on the target's SHA tag only for the hub to switch it straight back, which cost a second restart and could leave it on a different build than the one it was sent to. When the channel tag is behind the target, the hive still pins to the target's SHA tag, and the hub now leaves that pin alone instead of rolling it back to a channel that is behind; its next upgrade returns it to the channel tag in the same restart. Upgrade pause, digest pins and operator channel switches behave as before, and an older hub or hive keeps the previous behaviour.
+
 ## 2026-11-12 (v6.27.0)
 
 ### Added
