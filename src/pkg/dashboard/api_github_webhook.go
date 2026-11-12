@@ -20,7 +20,8 @@ import (
 const (
 	// githubWebhookPath is the PUBLIC path GitHub (or the hub relay) posts App
 	// webhooks to. Not actually open: the handler fails closed without
-	// GITHUB_WEBHOOK_SECRET and verifies X-Hub-Signature-256 over the raw body.
+	// GITHUB_WEBHOOK_SECRET or a hub relay key, and verifies
+	// X-Hub-Signature-256 or the hub relay signature over the raw body.
 	githubWebhookPath = "/api/webhook/github"
 
 	githubWebhookSecretEnvVar = github.WebhookSecretEnvVar
@@ -61,7 +62,10 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret := strings.TrimSpace(os.Getenv(githubWebhookSecretEnvVar))
-	if secret == "" {
+	// A hosted spoke holds no App webhook secret; it verifies the hub's relay
+	// signature with this hive's own relay key instead (#17911).
+	relayKey := github.WebhookRelayKey()
+	if secret == "" && relayKey == "" {
 		const msg = "github webhook rejected: no webhook secret configured (set GITHUB_WEBHOOK_SECRET to enable signed webhooks)"
 		warned := false
 		s.webhookNoSecretOnce.Do(func() {
@@ -79,11 +83,20 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "webhooks disabled: no secret configured", http.StatusServiceUnavailable)
 		return
 	}
-	if !verifyGitHubWebhookSignature(body, r.Header.Get("X-Hub-Signature-256"), secret) {
-		s.webhookLogger().Warn("github webhook signature verification failed", "event", event)
-		github.RecordWebhookDeliveryFailure(github.WebhookReasonSignatureFailed)
-		jsonError(w, "invalid signature", http.StatusUnauthorized)
-		return
+	if secret == "" || !verifyGitHubWebhookSignature(body, r.Header.Get("X-Hub-Signature-256"), secret) {
+		if relayKey == "" || r.Header.Get(webhookRelaySignatureHeader) == "" {
+			s.webhookLogger().Warn("github webhook signature verification failed", "event", event)
+			github.RecordWebhookDeliveryFailure(github.WebhookReasonSignatureFailed)
+			jsonError(w, "invalid signature", http.StatusUnauthorized)
+			return
+		}
+		if reason := s.verifyWebhookRelay(r.Header, body, relayKey, time.Now()); reason != "" {
+			s.webhookLogger().Warn("hub-relayed github webhook rejected", "event", event, "reason", reason,
+				"delivery", r.Header.Get("X-GitHub-Delivery"))
+			github.RecordWebhookDeliveryFailure(reason)
+			jsonError(w, "relay rejected: "+reason, http.StatusUnauthorized)
+			return
+		}
 	}
 	if event == githubWebhookEventProjectsV2Item {
 		// Organization-scoped: no repository to resolve, so it never reaches

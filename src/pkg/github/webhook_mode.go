@@ -267,7 +267,9 @@ func (t *webhookTracker) annotateModeLocked(st *WebhookModeStatus, now time.Time
 	healthy, latest := t.healthyLocked(now)
 	recentFailure := !t.lastFailure.IsZero() && now.Sub(t.lastFailure) < t.window && t.lastFailure.After(latest)
 	switch {
-	case !WebhookSecretConfigured():
+	case WebhookVerification() == WebhookVerificationNone:
+		// A hosted spoke with a hub relay key verifies relays without the
+		// secret (#17911), so only a spoke with neither has no_secret.
 		st.ReasonCode = WebhookReasonNoSecret
 		if st.Reason == "" {
 			st.Reason = webhookReasonNoSecretIdleText
@@ -288,7 +290,9 @@ func (t *webhookTracker) annotateModeLocked(st *WebhookModeStatus, now time.Time
 // webhookFailureCode maps a recorded failure reason to the reported code; a
 // failure recorded without a known reason reads as a rejected delivery.
 func webhookFailureCode(reason string) string {
-	if reason == WebhookReasonSignatureFailed {
+	switch reason {
+	case WebhookReasonSignatureFailed, WebhookReasonRelaySignatureFailed, WebhookReasonRelayDeliveryMissing,
+		WebhookReasonRelayStale, WebhookReasonRelayReplayed:
 		return reason
 	}
 	return WebhookReasonDeliveriesRejected

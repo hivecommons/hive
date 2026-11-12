@@ -730,7 +730,7 @@ With webhooks configured, a pushed PR does not wait for the next governor cadenc
 - **Same gates.** Firing wakes the governor for an early eval cycle with the fired PRs first in the review list. Head age, loop caps, ACMM, hold labels and `max_parallel_reviews` apply exactly as on a cadence tick.
 - **Fallback.** The cadence path is unchanged and still covers hives without webhooks, missed deliveries and dropped events.
 
-`review.event_driven` unset means on exactly when `GITHUB_WEBHOOK_SECRET` is set; `false` turns it off, `true` forces it on. It never runs while `require_approval` or `fan_out` is off.
+`review.event_driven` unset means on exactly when the spoke can verify webhook deliveries — `GITHUB_WEBHOOK_SECRET` is set, or (hosted) a hub relay key has arrived over the heartbeat; `/api/status.webhooks.verification` is not `none`; `false` turns it off, `true` forces it on. It never runs while `require_approval` or `fan_out` is off.
 
 ```yaml
 review:
