@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.228.0)
+
+### Added
+
+- Knowledge: new `plaud` connector syncs Plaud Note voice recordings (Plaud summary + transcript) into the vault through the free official Plaud MCP server, with Connect/Disconnect sign-in on the Knowledge → Integrations card and no cost beyond the Plaud plan.
+
+### Fixed
+
+- The hive binary no longer delays the dashboard bind on the startup advisory-issue ensure: it is now capped at 15s, so a slow or unreachable GitHub Enterprise (~8s per App token mint) can no longer push `:3002` past the kubelet liveness budget and crash-loop the pod ([#17827](https://github.com/hivecommons/hive/issues/17827)).
+
 ## 2026-11-12 (v5.227.1)
 
 ### Fixed
