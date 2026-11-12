@@ -505,6 +505,10 @@ HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --label a
   pr list --repo test/repo --state open --label actionable --limit 100 --json number,headRefOid,isCrossRepository,statusCheckRollup
 HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --json number,title,statusCheckRollup with HIVE_BASELINE_CHECK=1 (blocked: field outside the projection)" \
   pr list --repo test/repo --state open --limit 100 --json number,title,statusCheckRollup
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --json title --json number with HIVE_BASELINE_CHECK=1 (blocked: gh accumulates repeated --json, every occurrence is checked)" \
+  pr list --repo test/repo --state open --limit 100 --json title --json number
+HIVE_BASELINE_CHECK=1 _run_test_staff_gate 0 "-" "$ENUM_DENY" "pr list --json number --json statusCheckRollup with HIVE_BASELINE_CHECK=1 (allowed: repeated --json, all fields in the projection)" \
+  pr list --repo test/repo --state open --limit 100 --json number --json statusCheckRollup
 HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --limit 500 with HIVE_BASELINE_CHECK=1 (blocked: over the helper's 100)" \
   pr list --repo test/repo --state open --limit 500 --json number,headRefOid,isCrossRepository,statusCheckRollup
 HIVE_BASELINE_CHECK=1 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state open without --json with HIVE_BASELINE_CHECK=1 (blocked: no projection)" \

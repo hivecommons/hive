@@ -621,8 +621,10 @@ _pr_list_baseline_check() {
       -L=*) limit="${a#-L=}" ;;
       -L?*) limit="${a#-L}" ;;
       --limit|-L) i=$((i+1)); limit="${args[$i]:-}" ;;
-      --json=*) json="${a#--json=}" ;;
-      --json) i=$((i+1)); json="${args[$i]:-}" ;;
+      # gh accumulates repeated --json values, so every occurrence must be
+      # validated, not just the last one.
+      --json=*) json="${json:+${json},}${a#--json=}" ;;
+      --json) i=$((i+1)); json="${json:+${json},}${args[$i]:-}" ;;
       -*) return 1 ;;
       pr) [[ "$seen_sub" = 0 ]] || return 1; seen_sub=1 ;;
       list) [[ "$seen_sub" = 1 && "$seen_act" = 0 ]] || return 1; seen_act=1 ;;
