@@ -41,7 +41,7 @@ func setupEdgeFollower(t *testing.T, channelSHA string, pin *DigestPin) *HubServ
 	stubChannelImageSelection(t,
 		[]branchSHAInfo{{SHA: singleRollNew}, {SHA: singleRollOld}},
 		map[string]bool{singleRollNew: true, singleRollOld: true}, true)
-	useTempHiveDir(t)
+	t.Cleanup(helperSetupTempDirs(t))
 	srv := newHubServerForTest(t)
 	srv.setHubSecret("")
 	if err := saveSaaSHive(&SaaSHive{ID: singleRollHive, TrackedChannel: ReleaseChannelEdge, DigestPin: pin}); err != nil {
