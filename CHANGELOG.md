@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.20.3)
+
+### Fixed
+
+- The Operations "Ready-work queue" no longer keeps issues that closed, or the labels they were filed with, on a tab whose live event stream stays open. The stream sends the queue only once, in its hello frame, and the page stopped re-reading `/api/contribute/queue` as soon as the stream opened, so a long-lived tab showed the queue it connected with for hours (the header's cooldown count, which comes from a separate poll, stayed current beside it). The page now keeps re-reading the queue every 30 seconds while the stream is open, every 6 seconds while it is down as before, at once when the stream drops, and at once when a background tab is shown again. The server-side queue and contributor dispatch were already current and are unchanged.
+
 ## 2026-11-12 (v6.20.2)
 
 ### Fixed
