@@ -98,7 +98,13 @@ func notRunningReason(agent *AgentProcess) string {
 	}
 }
 
-func (m *Manager) SendKick(name string, message string) (err error) {
+func (m *Manager) SendKick(name string, message string) error {
+	return m.sendKick(name, message, "send-kick")
+}
+
+// sendKick is SendKick with the delivery trigger spelled out; the trigger is
+// what the audit log, prompt history and the canary-retry bookkeeping see.
+func (m *Manager) sendKick(name, message, trigger string) (err error) {
 	// Agent-kick span. No-op with zero export cost when tracing is disabled
 	// (the default). SendKick has no context parameter, so this span roots at
 	// Background; it still captures the kick leg of the governor→agent
@@ -229,7 +235,7 @@ func (m *Manager) SendKick(name string, message string) (err error) {
 		return err
 	}
 
-	return m.deliverKickLocked(agent, message, "send-kick")
+	return m.deliverKickLocked(agent, message, trigger)
 }
 
 // deliverKickLocked types a message into the agent's CLI and records the
@@ -257,6 +263,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 		return fmt.Errorf("%w: agent %s kick delivery already in progress", crux.ErrAgentBusy, agent.Name)
 	}
 	defer agent.kickDelivering.Store(false)
+	agent.lastKickInput = message
 
 	visible := m.captureVisiblePaneForAgent(agent)
 	if err := m.checkKickPromptReadyLocked(agent, visible, trigger); err != nil {
@@ -420,6 +427,7 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 	agent.LastKickMessage = message
 	agent.KickRefused = false
 	agent.KickRefusalReason = ""
+	agent.canaryRetryDone = trigger == kickTriggerCanaryRetry
 	// The session now holds this kick's output; the next rotation point
 	// (kick, restart, shutdown) must archive it before it is destroyed.
 	agent.kickLogPending = true
