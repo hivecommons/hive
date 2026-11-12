@@ -517,6 +517,12 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		// instead of saying none helps (hivecommons/hive#14664).
 		ApprovalReleasesFence: obs.Reason == contributorLaneReasonWorkflowPath && !workflowManual,
 	}
+	if e.Verdict == stagelabels.VerdictChangesRequested {
+		// The verdict this route is decided on is the one the author's
+		// nudge renders: a lane that stopped at a gate never read it into
+		// the observation's detail.
+		e.ReviewAsks = swarmVerdictAsks(contributorVerdict)
+	}
 	if hasLabelFold(obs.Labels, hgithub.BlockedLabel) {
 		e.Blocked = blockedGateClause(obs.Owner+"/"+obs.Repo, obs.Number)
 	}
