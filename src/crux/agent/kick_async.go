@@ -345,11 +345,17 @@ func (m *Manager) deliverKickAsync(name, message string) (err error) {
 			return fmt.Errorf("%w: agent %s restarted while the kick was waiting for its input prompt", errKickCancelledByRestart, name)
 		}
 		m.mu.Lock()
+		defer m.mu.Unlock()
+		notReady := kickPromptNotReadyErr(name, reason)
 		if current, ok := m.agents[name]; ok && current == agent && agent.kickEpoch == epoch {
-			m.markKickUndeliverableLocked(agent, time.Now(), reason)
+			now := time.Now()
+			m.markKickUndeliverableLocked(agent, now, reason)
+			// A live turn is a busy deferral, not a delivery failure: wrap
+			// ErrAgentBusy so the deferred recordKickFailureLocked skips it
+			// and deep health does not count a working agent as down.
+			return m.kickNotReadyErrorLocked(agent, now, notReady)
 		}
-		m.mu.Unlock()
-		return kickPromptNotReadyErr(name, reason)
+		return notReady
 	}
 
 	m.mu.Lock()
