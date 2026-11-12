@@ -671,6 +671,51 @@ func stageTrackerReviewPendingState(out *StageTrackerActivity, stage int, stageS
 	}
 }
 
+// stageTrackerCarriedReview fills the Review track for a head whose verdict
+// a delta re-stamp carried from an earlier head without a review session
+// (review.DeltaReviewInfo.Trivial: identical tree, no diff against the base,
+// a hive base-sync, or a small delta under an approve). No reviewer ran on
+// this head and nothing was published for it, so its evidence bundle holds
+// no verdicts. Without this the track fell through to "not started · hive
+// reviewer next" while the perspective count read 5/5 from the carried
+// aggregate. The state is the carried verdict's; the caption and detail say
+// it was carried and from which head. Dashboard and stage_tracker_read share
+// this payload.
+func stageTrackerCarriedReview(out *StageTrackerActivity, agg review.Aggregate) {
+	if out == nil || agg.Delta == nil {
+		return
+	}
+	from := stageTrackerShortSHA(agg.Delta.PreviousHead)
+	if from == "" {
+		from = "an earlier head"
+	}
+	switch agg.Verdict {
+	case review.VerdictApprove:
+		out.State, out.Caption = "approved", "Review approved · carried from "+from
+	case review.VerdictChangesRequested, review.VerdictReject:
+		out.State, out.Caption = "changes_requested", "Review findings · carried from "+from+" · awaiting author"
+		out.Blocker = stageTrackerFixerExhaustedSummary(&agg)
+	case review.VerdictRequiresHuman:
+		out.State, out.Caption = "human_decision", "Review findings · carried from "+from+" · needs owner sign-off"
+		out.Blocker = agg.DecisionQuestion
+	default:
+		return
+	}
+	out.Detail = fmt.Sprintf("No reviewer ran on this commit: the verdict from %s was carried onto it without a review session", from)
+	if note := strings.TrimSpace(agg.Delta.Note); note != "" {
+		out.Detail += " (" + note + ")"
+	}
+	out.Detail += fmt.Sprintf(". Nothing was published for this commit; the review it carries is the one on %s.", from)
+	if out.Source == "" || out.Source == "unavailable" {
+		out.Source = "delta-restamp"
+	} else {
+		out.Source += "+delta-restamp"
+	}
+	if out.Since == nil && !agg.RecordedAt.IsZero() {
+		out.Since = timePtr(agg.RecordedAt)
+	}
+}
+
 func trackerHeadMatches(repo string, number int, head, observedRepo string, observedNumber int, observedHead string) bool {
 	return number == observedNumber && head != "" && strings.EqualFold(head, observedHead) && strings.EqualFold(repo, observedRepo)
 }
@@ -849,6 +894,9 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 				out.Caption += " · " + out.Actor
 			}
 		}
+	}
+	if out.State == "unknown" && !unverifiedApproval && agg != nil && agg.Delta != nil && agg.Delta.Trivial {
+		stageTrackerCarriedReview(out, *agg)
 	}
 	for _, wait := range dispatch.Waits {
 		if trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, qualify(wait.Repo), wait.Number, wait.HeadSHA) && out.State == "unknown" {

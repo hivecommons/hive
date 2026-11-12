@@ -302,6 +302,10 @@ func reviewHoldReleaseRecorder(logger *slog.Logger) automerge.ReviewHoldReleaseF
 	}
 }
 
+// contributorNudgeFindingLimit caps the findings a contributor nudge lists
+// on a changes_requested; the rest are counted in one line.
+const contributorNudgeFindingLimit = 5
+
 func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, number int, headSHA string, approved bool) automerge.ContributorLaneVerdict {
 	var match review.Aggregate
 	var ok bool
@@ -324,6 +328,7 @@ func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, n
 			DecisionFinding:    match.DecisionFinding,
 			RedundantOf:        match.RedundantOf,
 			HumanSummaries:     append([]string(nil), match.HumanSummaries...),
+			FindingAsks:        match.FindingAsks(contributorNudgeFindingLimit),
 			HiveAuthoredKnown:  match.HiveAuthoredKnown,
 			HiveAuthored:       match.HiveAuthored,
 			FixCycleCapReached: review.FixCycleCapReached(match),

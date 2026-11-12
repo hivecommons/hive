@@ -170,7 +170,7 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 		asks = append(asks, "a maintainer answered the decision question with an instruction; the hive is pushing the fix")
 		human = true
 	case r == contributorLaneReasonChangesRequested, r == stagelabels.LaneReasonChangesRequested:
-		asks = append(asks, "the review swarm requested changes")
+		asks = append(asks, swarmChangesAsks(d)...)
 	case r == stagelabels.LaneReasonReviewerQuestion:
 		// A person's PR routed to them on requires_human
 		// (hivecommons/hive#15202); the route carries the question itself.
@@ -189,12 +189,33 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 		asks = append(asks, r)
 	}
 	if verdictBlocks(d) && r != contributorLaneReasonChangesRequested && r != stagelabels.LaneReasonChangesRequested {
-		asks = append(asks, "the review swarm requested changes")
+		asks = append(asks, swarmChangesAsks(d)...)
 	}
 	if d.DCO == stagelabels.DCONo && r != stagelabels.LaneReasonDCOMissing {
 		asks = append(asks, dcoAsk(d))
 	}
 	return checks, asks, human
+}
+
+// swarmChangesAskLead is the review ask for a review-swarm changes_requested.
+const swarmChangesAskLead = "the review swarm requested changes"
+
+// swarmChangesAsks is the review ask for a review-swarm changes_requested:
+// the lead line, then one line per finding the head's verdict carries
+// (prstage.ReviewVerdict.FindingAsks), so the contributor reads what to fix
+// here rather than only that something was asked. Mentions in a finding are
+// neutralised: the nudge is a public comment.
+func swarmChangesAsks(d stageDetail) []string {
+	asks := []string{swarmChangesAskLead}
+	if !verdictBlocks(d) {
+		return asks
+	}
+	for _, f := range d.Verdict.FindingAsks {
+		if f = strings.TrimSpace(f); f != "" {
+			asks = append(asks, "review finding: "+advisory.NeutralizeMentions(f))
+		}
+	}
+	return asks
 }
 
 // nudgeDiagnosisRouted extends nudgeDiagnosis with the evidence the human
@@ -224,9 +245,11 @@ func nudgeDiagnosisRouted(reason string, d stageDetail, route *stagelabels.Route
 				}
 			}
 		case strings.HasPrefix(r, "verdict changes_requested"):
-			if a := "the review swarm requested changes"; !seenAsk[a] {
-				seenAsk[a] = true
-				asks = append(asks, a)
+			for _, a := range swarmChangesAsks(d) {
+				if !seenAsk[a] {
+					seenAsk[a] = true
+					asks = append(asks, a)
+				}
 			}
 		case r == "DCO sign-off missing":
 			if a := dcoAsk(d); !seenAsk[a] {

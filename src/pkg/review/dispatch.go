@@ -412,6 +412,10 @@ type WithheldFix struct {
 	SettingEnabled bool      `json:"setting_enabled,omitempty"`
 	Reason         string    `json:"reason"`
 	Withheld       time.Time `json:"withheld_at"`
+	// CarriedFrom is the earlier head whose verdict a delta re-stamp carried
+	// onto this one without a review session. Nothing was published for
+	// this head; the review the author can read is the one on CarriedFrom.
+	CarriedFrom string `json:"carried_from,omitempty"`
 }
 
 // WithheldFixSetting names the config key an operator turns on to let the
@@ -817,7 +821,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 						if fixPushAllowed(pr, opts) {
 							plan.dispatchFix(pr, agg, opts, now)
 						} else {
-							plan.withholdFix(pr, opts, now)
+							plan.withholdFix(pr, agg, opts, now)
 						}
 					case VerdictRequiresHuman, VerdictReject:
 						plan.holdForHuman(pr, agg, now)
@@ -1675,7 +1679,7 @@ func (p *DispatchPlan) answerHead(pr PullRequest, artifact Artifact, opts Dispat
 	if fixPushAllowed(pr, opts) {
 		p.dispatchFix(pr, agg, opts, now)
 	} else {
-		p.withholdFix(pr, opts, now)
+		p.withholdFix(pr, agg, opts, now)
 	}
 }
 
@@ -1701,8 +1705,10 @@ func planAnsweredHeads(prs []PullRequest, artifact Artifact, state DispatchState
 // withholdFix records that a changes_requested PR got no fix kick because
 // fixPushAllowed refused it. Once per head: the state entry is what stops
 // the next cycle re-reporting the same refusal, and the plan entry is what
-// the caller audits this cycle.
-func (p *DispatchPlan) withholdFix(pr PullRequest, opts DispatchOptions, now time.Time) {
+// the caller audits this cycle. agg is the head's verdict (zero when there is
+// none); a delta re-stamp's previous head is recorded as CarriedFrom, since
+// nothing was published for this head.
+func (p *DispatchPlan) withholdFix(pr PullRequest, agg Aggregate, opts DispatchOptions, now time.Time) {
 	for _, w := range p.State.Withheld {
 		if samePRHead(w.Repo, w.Number, w.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
 			return
@@ -1729,6 +1735,15 @@ func (p *DispatchPlan) withholdFix(pr PullRequest, opts DispatchOptions, now tim
 		SettingEnabled: enabled,
 		Reason:         reason,
 		Withheld:       now,
+	}
+	if agg.Delta != nil && agg.Delta.Trivial && SameHeadSHA(agg.HeadSHA, pr.HeadSHA) {
+		w.CarriedFrom = strings.TrimSpace(agg.Delta.PreviousHead)
+		carried := "verdict carried from " + shortSHA(w.CarriedFrom) + " without a review (nothing published for this head)"
+		if strings.Contains(w.Reason, "review published") {
+			w.Reason = strings.Replace(w.Reason, "review published", carried, 1)
+		} else {
+			w.Reason += "; " + carried
+		}
 	}
 	p.State.Withheld = append(p.State.Withheld, w)
 	p.WithheldFixes = append(p.WithheldFixes, w)

@@ -247,6 +247,10 @@ type ReviewVerdict struct {
 	// and for the hive's own PR the lane performs it (hivecommons/hive#15499).
 	RedundantOf    int
 	HumanSummaries []string
+	// FindingAsks are the verdict's in-scope findings, one readable line
+	// each (review.Aggregate.FindingAsks), so the contributor nudge on a
+	// changes_requested lists what the review asked for.
+	FindingAsks []string
 	// HiveAuthoredKnown is true for verdicts read from aggregates that recorded
 	// authorship. The stage fallback normalizer leaves those alone: aggregation
 	// already applied the configured self-authored decision policy.

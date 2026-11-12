@@ -183,8 +183,8 @@ func trimmedNonEmpty(in []string) []string {
 
 const (
 	// DefaultReviewDeltaTrivialLines is review.delta_trivial_lines unset: a
-	// re-review delta under this many changed lines, touching only files the
-	// previous verdict found nothing in, re-stamps that verdict without a
+	// re-review delta under this many changed lines, touching only files a
+	// previous approve found nothing in, re-stamps that approve without a
 	// model call.
 	DefaultReviewDeltaTrivialLines = 20
 	// DefaultReviewDeltaMaxAge is review.delta_max_age unset: a
