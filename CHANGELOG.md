@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.236.2)
+
+### Fixed
+
+- Classify repeated missing Dependabot alerts permission warnings as an operator-action self-report with GitHub App remediation, rather than an unclassified code defect.
+- Avoid reporting unsupported signed-commit rewrites as API errors and explain how to sign the unchanged branch safely.
+
 ## 2026-11-12 (v5.236.1)
 
 ### Changed
