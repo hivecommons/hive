@@ -64,6 +64,9 @@ const agentSkipAfterFullBroadcastS = 5 * time.Second
 
 const maxSSEClients = 100
 
+// sseDropWarnInterval bounds how often dropped SSE events are logged at WARN.
+const sseDropWarnInterval = 5 * time.Minute
+
 const sessionCookieName = "hive_session"
 
 const sessionCookieMaxAge = 30 * 24 * 60 * 60
@@ -139,6 +142,8 @@ type Server struct {
 	status       *StatusPayload
 	sseClients   map[chan []byte]struct{}
 	sseMu        sync.Mutex
+	sseDropped   int       // events dropped since the last summary warning; guarded by sseMu
+	sseDropWarn  time.Time // last summary warning; guarded by sseMu
 	logger       *slog.Logger
 	mux          *http.ServeMux
 	deps         *Dependencies
@@ -3171,6 +3176,16 @@ func (s *Server) UpdateGitHubClient(client *github.Client, auth *github.AppAuth)
 	}
 }
 
+// UpdateGitHubAppAuth swaps only the App credential the installation-discovery
+// loop polls with, leaving the client untouched. Used when a hub delivery names
+// a new App (or forge) whose installation is not known yet, so discovery asks
+// the right forge instead of the one the pod booted against.
+func (s *Server) UpdateGitHubAppAuth(auth *github.AppAuth) {
+	if s.deps != nil {
+		s.deps.GHAppAuth = auth
+	}
+}
+
 // SetGoodFirstIssueStats installs the provider of good-first-issue curation
 // counters; nil removes it.
 func (s *Server) SetGoodFirstIssueStats(fn func() any) {
@@ -4049,9 +4064,23 @@ func (s *Server) broadcastFrame(frame string) {
 		select {
 		case ch <- raw:
 		default:
-			s.logger.Warn("SSE client too slow, dropping event")
+			s.sseDropped++
+			s.logger.Debug("SSE client too slow, dropping event")
 		}
 	}
+	s.warnSSEDropsLocked(time.Now())
+}
+
+// warnSSEDropsLocked emits one summary warning per sseDropWarnInterval instead
+// of one per dropped event, so a single stalled browser tab does not flood logs
+// or trip repeated-error fleet reporting. Caller holds sseMu.
+func (s *Server) warnSSEDropsLocked(now time.Time) {
+	if s.sseDropped == 0 || now.Sub(s.sseDropWarn) < sseDropWarnInterval {
+		return
+	}
+	s.logger.Warn("SSE clients too slow, dropped events", "dropped", s.sseDropped, "interval", sseDropWarnInterval.String())
+	s.sseDropped = 0
+	s.sseDropWarn = now
 }
 
 // initHistories lazily builds the three sparkline ring buffers. Called (once)

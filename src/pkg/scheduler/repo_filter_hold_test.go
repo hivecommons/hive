@@ -172,7 +172,7 @@ func TestAddCanaryPreambleEnabledPrependsRegisteredToken(t *testing.T) {
 	const msg = "kick body"
 	got := s.addCanaryPreamble("scanner", msg)
 
-	if !strings.HasPrefix(got, "SECURITY CANARY: "+ioscan.CanaryPrefix) {
+	if !strings.HasPrefix(got, ioscan.CanaryPreamblePrefix) {
 		t.Fatalf("preamble missing canary header: %q", got)
 	}
 	if !strings.HasSuffix(got, msg) {

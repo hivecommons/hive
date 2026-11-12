@@ -74,7 +74,7 @@
         ${stageTrackerRepoChipHtml(g.repo, chipCtx)}<span class="ham-group-name">${esc(g.repo)}</span>${groupWorkflow ? stageTrackerWorkflowBadgeHtml(groupWorkflow) : ''}
         <span class="ham-group-n">${g.count} ${g.count === 1 ? 'row' : 'rows'}</span>${attn}
         ${groupWorkflow ? '' : `<span class="ham-group-dist" role="img" aria-label="${esc(g.cols.map((c, i) => stageTrackerColName(i, stages) + ' ' + c).join(', '))}">${dist}</span>`}
-      </div>${groupWorkflow && !g.collapsed ? stageTrackerWorkflowHeaderHtml(groupWorkflow) : ''}`;
+      </div>${typeof stageTrackerGroupColumnsHtml === 'function' ? stageTrackerGroupColumnsHtml(g, groupWorkflow, stages, ctx) : ''}`;
     }
 
     // Row = title line (number, title, chips, since) + thin strip. Non-active

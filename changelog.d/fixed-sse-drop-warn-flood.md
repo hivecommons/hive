@@ -1,0 +1,1 @@
+- Dashboard logs one summary warning per five minutes for dropped SSE events instead of one warning per event, so a stalled browser tab no longer triggers repeated-error fleet reports (#17995).
