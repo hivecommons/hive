@@ -157,6 +157,32 @@ The dashboard API can update this field through [`POST /api/effort/{agent}/{effo
 
 The dashboard shows a reasoning-effort dropdown next to the model picker for every method that has an effort control (`codex`, `agy`, `claude`, and `omp`). The value is validated at set time against the method's own set, so a `codex`-only level such as `minimal` is refused for a `claude` agent rather than stored and dropped at launch. For `omp`, the dropdown is per selected model: Hive reads `omp models --json` and uses that model's `thinking` levels, hiding the control for models that report no thinking support. Picking `default` clears the stored value; for `claude` and `omp` that means no effort flag at all and the CLI's own default. The dropdown persists through the same path as the model picker (`hive.yaml` plus the per-agent overlay under `agents_dir`), which is the durable path on a hosted spoke: a hand edit of the agent's file is reverted by the next sync, the dashboard write is not. Each dropdown change is recorded in the audit trail as `set_reasoning_effort` with the new value, like the other per-agent setting changes. The effort the agent was actually launched with is what the run rows and the `- hive:` PR trailer report, so a `claude` agent at `xhigh` shows `effort=xhigh` there and an agent with no stored effort shows none.
 
+#### Claude setup-token
+
+For `backend: claude`, an operator can use a long-lived token instead of the
+dashboard sign-in. Run `claude setup-token` interactively as the licensed
+operator and complete the prompts. The resulting token lasts about a year and
+is inference-only; it is not a general-purpose account credential. See
+[Claude Code authentication](https://code.claude.com/docs/en/authentication).
+
+Supply it to the Hive process as the secret `HIVE_CLAUDE_OAUTH_TOKEN`, or mount
+it in a secret file readable by Hive. Set `HIVE_CLAUDE_OAUTH_TOKEN_FILE` to
+that file's path, or use the default `/secrets/claude-oauth-token`. The
+non-empty environment variable wins over the file. Do not put the token in
+`hive.yaml`, shell history, logs, issues, or agent panes.
+
+Hive passes the token to Claude agents as `CLAUDE_CODE_OAUTH_TOKEN` at launch,
+even when a credentials file exists. It takes precedence over dashboard sign-in;
+signing in again on the dashboard does not replace it. Each agent retains its
+own Claude home and private state; sharing the token does not require sharing
+the whole home. Without an operator token, dashboard sign-in works as before.
+
+To replace an expired or revoked token, run `claude setup-token` again, update
+the configured secret source, then recreate or restart Hive to load the new
+token and restart the affected Claude agents so their new sessions receive
+the replacement. Verify an agent completes a turn. See the
+[backend auth recovery runbook](backend-auth-recovery-runbook.md).
+
 #### Oh My Pi (`omp`) hub agents
 
 `backend: omp` launches the OMP CLI as a first-class dashboard method. Hive gives each agent its own durable HOME under `/data/home/agents/<name>`, so `~/.omp/agent/agent.db` can hold several provider sign-ins for that one agent (for example `openai-codex` for the primary model and `anthropic` for an advisor) without sharing refresh-token writers across agents. Select models with their provider prefix (`provider/model`). The dashboard model probe runs `omp models --json` once per omp agent, with `HOME` set to that agent's home, and unions the results; omp lists only models whose provider has a credential in the HOME it runs under, so an agent that is not signed in contributes nothing. When no agent has a sign-in, the dropdown serves a static fallback list, flagged `fallback: true` in the models API and logged at `WARN` with the HOME probed; sign an agent in to see its real models. Each model's `thinking` list drives the effort dropdown. At launch Hive passes `--approval-mode ${HIVE_OMP_APPROVAL_MODE:-yolo}`, `--model <id>`, and `--thinking <effort>` when set.

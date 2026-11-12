@@ -51,10 +51,26 @@ recovered and no action is needed.
 | `backendAuthStatus` | First action |
 |---|---|
 | `unlicensed` | Check the seat at <https://github.com/settings/copilot>. If it is active, the hive is presenting a token the account no longer owns: follow the `/login` recovery in [troubleshooting.md](troubleshooting.md). |
-| `token-expired` | If `backendAuthRefreshable` is `true` (provider `auth_state: refreshable`), restart the affected agents: Claude Code redeems the refresh grant on start and no login is needed. Otherwise run `/login` in any agent's Terminal with a licensed identity and wait about 30 seconds for the reconciler; affected agents relaunch onto the new token. |
+| `token-expired` | For Claude with an operator setup token, replace it as described below; dashboard `/login` does not override it. Otherwise, if `backendAuthRefreshable` is `true` (provider `auth_state: refreshable`), restart the affected agents so Claude Code redeems the refresh grant. If not, run `/login` in any agent's Terminal with a licensed identity and wait about 30 seconds for the reconciler. |
 | `forbidden` | Cause is undetermined (bare 403). Read which credential was refused (dashboard model dropdown hover, or the `copilot model discovery rejected by upstream` log line's `credential` field) before re-logging in; an org policy denial is not fixed by a new login. |
 | `unreachable` | The inference backend is down or unroutable. Check the backend's own health and network path from the pod; re-login will not help. |
 | `quota` | The provider is refusing calls on quota. Wait for the window to reset, add quota, or switch the agents to another backend. Do not restart agents in a loop. |
+
+### Replace a Claude operator token
+
+If `HIVE_CLAUDE_OAUTH_TOKEN` or its secret file is configured, a rejected
+token may have expired or been revoked. Run `claude setup-token` interactively
+as the licensed operator and complete its prompts. The replacement lasts about
+a year and is inference-only. Store it securely in the same Hive environment
+secret or in the file named by `HIVE_CLAUDE_OAUTH_TOKEN_FILE` (default
+`/secrets/claude-oauth-token`); the non-empty environment variable takes
+precedence over the file. Never paste the token into a pane, log, or report.
+
+Recreate or restart Hive to load the changed secret, then restart affected
+Claude agents to give their new sessions the replacement. Follow the
+verification steps below. A dashboard sign-in does not supersede the configured
+operator token. See [Claude setup-token](agent-configuration.md#claude-setup-token)
+for initial setup.
 
 ## 3. Verify recovery
 
