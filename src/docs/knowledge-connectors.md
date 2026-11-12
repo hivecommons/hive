@@ -396,10 +396,13 @@ rest are still imported.
   seen minus a 2 h overlap (Flow updates a row in place as it finalises), or
   `since_days` back on the first run. With `group: day` the current day's
   fact is rebuilt whole.
-- Facts carry `source: wisprflow`, `attr_wispr_transcript_id`,
-  `attr_dictated_at`, `attr_app` (bundle id), `attr_num_words`,
-  `attr_language` and the dictation date as the vault path
-  (`Wispr Flow/2026-11-11`). The title is the first ten words.
+- Dictation facts carry `source: wisprflow`, `source_id`,
+  `attr_recorded_at`, `attr_wispr_transcript_id`, `attr_dictated_at`,
+  `attr_app` (bundle id), `attr_num_words`, `attr_language`, and the
+  dictation date as the vault path (`Wispr Flow/2026-11-11`). The title is
+  the first ten words, and the formatted text is under `## Transcript`.
+  With `group: day`, the fact represents the entire day and its
+  `attr_recorded_at` is the newest dictation's time.
 - The listing is incremental, so dictations you archive or delete in Flow
   are not tombstoned automatically; remove the fact file or the connector.
 - Everything here costs **$0** beyond your Wispr Flow plan; the free tier's
