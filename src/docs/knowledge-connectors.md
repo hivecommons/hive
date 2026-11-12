@@ -276,12 +276,16 @@ if you do not want a sync to pull a new upstream release unreviewed.
    remote hive forward that port first (`ssh -L 8199:localhost:8199 user@host`)
    and open the URL from the forwarding machine. The login session stays open
    for 10 minutes; click **Check** to confirm "connected as …".
-   - Alternative when port-forwarding is impractical: authorize once on your
-     laptop with `npx -y @plaud-ai/mcp@latest install`, then copy
-     `~/.plaud/tokens-mcp.json` into the connector's `home` directory
-     (`…/connector-state/<name>/home/.plaud/`). The file is Plaud's own
-     token store, not a hive secret.
-4. Click **Sync now**. New recordings are picked up every `interval`.
+   - Hosted hive (no port forward): open **Finish sign-in by pasting** on the
+     card and paste either the `localhost:8199/auth/callback?…` URL the
+     browser landed on after approving, or the contents of
+     `~/.plaud/tokens-mcp.json` from a laptop where `npx -y
+     @plaud-ai/mcp@latest install` signed in. See
+     [Inbox and voice sources](inbox-voice-sources.md#hosted-hives-signing-in-to-plaud).
+4. Click **Sync now**. New recordings are picked up every `interval` and
+   appear in the **📥 Inbox**, where you file them as a spektacular RFC, send
+   them to dibs, or keep them as knowledge only
+   ([Inbox and voice sources](inbox-voice-sources.md)).
 
 ### Behaviour
 

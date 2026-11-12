@@ -37097,7 +37097,900 @@
             }
           }
         }
+      },
+    "/api/inbox": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "List inbox items (voice recordings and dictations) with their triage state",
+        "description": "Items are the facts written by voice knowledge connectors (`plaud`, `wisprflow`), newest first, keyed by `(source, id)`, with per-destination routing state, source connection status, candidate repositories and the auto-routing settings.",
+        "responses": {
+          "200": {
+            "description": "Inbox listing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "An incoming voice recording or dictation. Every item is already a Knowledge fact; the inbox only tracks triage.",
+                        "properties": {
+                          "source": {
+                            "type": "string",
+                            "description": "Connector type (plaud, wisprflow, …)"
+                          },
+                          "connector": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string",
+                            "description": "Source item id (recording id)"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "excerpt": {
+                            "type": "string"
+                          },
+                          "recorded_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "duration_ms": {
+                            "type": "integer"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "fact_slug": {
+                            "type": "string"
+                          },
+                          "fact_path": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "routes": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "description": "Per-destination routing state of an inbox item.",
+                              "properties": {
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "queued",
+                                    "running",
+                                    "filed",
+                                    "delegated",
+                                    "failed"
+                                  ]
+                                },
+                                "repo": {
+                                  "type": "string",
+                                  "description": "Target repository for spek_rfc"
+                                },
+                                "url": {
+                                  "type": "string",
+                                  "format": "uri",
+                                  "description": "RFC issue or dibs idea URL once filed"
+                                },
+                                "children": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "format": "uri"
+                                  },
+                                  "description": "Child issue URLs filed by spektacular"
+                                },
+                                "error": {
+                                  "type": "string"
+                                },
+                                "updated_at": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              }
+                            }
+                          },
+                          "dismissed": {
+                            "type": "boolean",
+                            "description": "Kept as a Knowledge fact only"
+                          },
+                          "processed": {
+                            "type": "boolean",
+                            "description": "Dismissed or routed to at least one destination"
+                          }
+                        }
+                      }
+                    },
+                    "unprocessed": {
+                      "type": "integer"
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "connector": {
+                            "type": "string"
+                          },
+                          "configured": {
+                            "type": "boolean"
+                          },
+                          "connected": {
+                            "type": "boolean"
+                          },
+                          "account": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Repositories this hive works on (RFC targets)"
+                    },
+                    "settings": {
+                      "type": "object",
+                      "description": "Inbox auto-routing settings and destination readiness.",
+                      "properties": {
+                        "sources": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "rules": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string"
+                              },
+                              "title_prefix": {
+                                "type": "string"
+                              },
+                              "tag": {
+                                "type": "string"
+                              },
+                              "destination": {
+                                "type": "string",
+                                "enum": [
+                                  "spek_rfc",
+                                  "dibs",
+                                  "dismiss"
+                                ]
+                              },
+                              "repo": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "spek_repo": {
+                          "type": "string"
+                        },
+                        "dibs_url": {
+                          "type": "string"
+                        },
+                        "dibs_token_set": {
+                          "type": "boolean"
+                        },
+                        "spek_ready": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Inbox not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
+    },
+    "/api/inbox/route": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Route an inbox item to a destination",
+        "description": "Owner-only. `spek_rfc` runs `spektacular voice --publish` inside the hive (or hands a prompt to the configured spoke agent) and files one RFC issue plus child issues on `repo` (default `inbox.spek.repo`); `dibs` posts the recording as a private draft idea to the configured dibs instance; `dismiss` keeps the item as a Knowledge fact only. Returns 202 with the queued state; poll `GET /api/inbox` for completion.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "source",
+                  "item_id",
+                  "destination"
+                ],
+                "properties": {
+                  "source": {
+                    "type": "string"
+                  },
+                  "item_id": {
+                    "type": "string"
+                  },
+                  "destination": {
+                    "type": "string",
+                    "enum": [
+                      "spek_rfc",
+                      "dibs",
+                      "dismiss"
+                    ]
+                  },
+                  "repo": {
+                    "type": "string",
+                    "description": "owner/repo for spek_rfc"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Route accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "item_id": {
+                      "type": "string"
+                    },
+                    "destination": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "object",
+                      "description": "Per-destination routing state of an inbox item.",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "queued",
+                            "running",
+                            "filed",
+                            "delegated",
+                            "failed"
+                          ]
+                        },
+                        "repo": {
+                          "type": "string",
+                          "description": "Target repository for spek_rfc"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri",
+                          "description": "RFC issue or dibs idea URL once filed"
+                        },
+                        "children": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "description": "Child issue URLs filed by spektacular"
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, unknown destination, missing repo, or destination not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Route already queued or running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Inbox not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/dismiss": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Mark inbox items as Knowledge only (or undo)",
+        "description": "Owner-only bulk dismiss. Dismissed items stay searchable as Knowledge facts and leave the unprocessed count; `undo: true` returns them to the inbox.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "items"
+                ],
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string"
+                        },
+                        "item_id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "undo": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Items updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "dismissed": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Inbox not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/settings": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Read inbox auto-routing settings",
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Inbox auto-routing settings and destination readiness.",
+                  "properties": {
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "rules": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string"
+                          },
+                          "title_prefix": {
+                            "type": "string"
+                          },
+                          "tag": {
+                            "type": "string"
+                          },
+                          "destination": {
+                            "type": "string",
+                            "enum": [
+                              "spek_rfc",
+                              "dibs",
+                              "dismiss"
+                            ]
+                          },
+                          "repo": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "spek_repo": {
+                      "type": "string"
+                    },
+                    "dibs_url": {
+                      "type": "string"
+                    },
+                    "dibs_token_set": {
+                      "type": "boolean"
+                    },
+                    "spek_ready": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Inbox not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Update inbox auto-routing settings",
+        "description": "Owner-only. Persists `inbox.rules`, `inbox.spek.repo` and `inbox.dibs.url` to the runtime config; omitted fields are left unchanged. Rules apply to items that arrive after the change.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "rules": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string"
+                        },
+                        "title_prefix": {
+                          "type": "string"
+                        },
+                        "tag": {
+                          "type": "string"
+                        },
+                        "destination": {
+                          "type": "string",
+                          "enum": [
+                            "spek_rfc",
+                            "dibs",
+                            "dismiss"
+                          ]
+                        },
+                        "repo": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "spek_repo": {
+                    "type": "string"
+                  },
+                  "dibs_url": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Inbox auto-routing settings and destination readiness.",
+                  "properties": {
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "rules": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string"
+                          },
+                          "title_prefix": {
+                            "type": "string"
+                          },
+                          "tag": {
+                            "type": "string"
+                          },
+                          "destination": {
+                            "type": "string",
+                            "enum": [
+                              "spek_rfc",
+                              "dibs",
+                              "dismiss"
+                            ]
+                          },
+                          "repo": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "spek_repo": {
+                      "type": "string"
+                    },
+                    "dibs_url": {
+                      "type": "string"
+                    },
+                    "dibs_token_set": {
+                      "type": "boolean"
+                    },
+                    "spek_ready": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid rule or repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Inbox not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/connectors/{name}/auth/complete": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Finish a connector sign-in from pasted material (hosted hives)",
+        "description": "Owner-only. Plaud's OAuth client only redirects to `localhost:8199`, which a hive running in a cluster never receives. The operator pastes either the `redirect_url` the browser landed on after approving (forwarded to the in-pod callback while the login started by `/auth/connect` is still pending, 10 minutes) or the `tokens` JSON from a laptop's `~/.plaud/tokens-mcp.json`; the hive stores it and re-checks the account.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Connector name"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "redirect_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "tokens": {
+                    "type": "string",
+                    "description": "Raw JSON contents of tokens-mcp.json"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sign-in state after completion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Interactive sign-in state of a connector that authenticates through its own OAuth flow (currently `plaud`).",
+                  "properties": {
+                    "connected": {
+                      "type": "boolean",
+                      "description": "Upstream reports a signed-in account"
+                    },
+                    "account": {
+                      "type": "string",
+                      "description": "Signed-in identity (email or display name), if known"
+                    },
+                    "pending": {
+                      "type": "boolean",
+                      "description": "A login is waiting for the user to authorize in the browser"
+                    },
+                    "auth_url": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "Authorization URL to open while pending"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Last human-readable login/logout outcome"
+                    },
+                    "checked_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Connector does not support pasted completion, bad body, or no pending login",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connector",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream rejected the material",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   },
   "components": {
     "schemas": {

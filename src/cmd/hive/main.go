@@ -1145,6 +1145,7 @@ func (b *boot) wireBootClosures() {
 			BeadSynthesizer:       b.beadSynth,
 			KnowledgeConnectors:   b.knowledgeConnectorRuntime(),
 			KnowledgePublish:      b.knowledgePublishRuntime(),
+			Inbox:                 b.inboxSvc,
 			BeadStores:            b.beadStores,
 			BeadStoreLoadFailures: b.beadStoreLoadFailures,
 			AuditLedger:           auditLedger,
