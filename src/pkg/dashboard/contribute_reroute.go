@@ -242,6 +242,6 @@ func (h *ContributeWSHub) CancelReroute(user, repo string, number int) {
 	if h == nil || strings.TrimSpace(user) == "" {
 		return
 	}
-	h.fixQueue().Remove(user, repo, number)
+	h.fixQueue().RemoveFor(user, repo, number, fixRemoveRerouteCancelled)
 	h.forgetFixOwner(user, fixqueue.Key(repo, number))
 }

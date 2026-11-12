@@ -678,6 +678,10 @@ type StatusPayload struct {
 	RestartRefresh *FrontendRestartRefresh `json:"restartRefresh,omitempty"`
 	Timestamp      string                  `json:"timestamp"`
 	TimeZone       string                  `json:"timeZone,omitempty"`
+	// ListedAt is when the enumeration behind Repos' item lists ran
+	// (ActionableResult.GeneratedAt); zero when unknown. Not served: the
+	// fleet card asks it whether a listing is older than a PR's evidence.
+	ListedAt time.Time `json:"-"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer

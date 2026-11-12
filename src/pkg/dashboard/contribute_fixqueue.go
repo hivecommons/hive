@@ -172,7 +172,11 @@ func (h *ContributeWSHub) fixQueue() *fixqueue.Scheduler {
 			for _, it := range d.Items {
 				prs = append(prs, it.Key())
 			}
-			h.logger.Info("[contribute-ws] fix queue "+event, "username", user, "dispatch", d.ID, "mode", d.Mode, "prs", prs, "queued", queued)
+			args := []any{"username", user, "dispatch", d.ID, "mode", d.Mode, "prs", prs, "queued", queued}
+			if d.Reason != "" {
+				args = append(args, "reason", d.Reason)
+			}
+			h.logger.Info("[contribute-ws] fix queue "+event, args...)
 		})
 	}
 	h.fixSched.SetMinFocusWindow(h.minFocusWindow())
@@ -370,7 +374,7 @@ func (h *ContributeWSHub) Resolve(_ context.Context, owner, repo string, number 
 		return
 	}
 	for user := range owners {
-		freed := sched.Remove(user, full, number)
+		freed := sched.RemoveFor(user, full, number, fixRemoveLeftStage072)
 		h.forgetFixOwner(user, fixqueue.Key(full, number))
 		if freed {
 			if conns, online := h.liveConnectionsFor(user, time.Now()); online {
@@ -497,7 +501,7 @@ func (h *ContributeWSHub) dropClosedFixes(user string, items []fixqueue.Item) (d
 		if state != fixPRStateGone {
 			continue
 		}
-		sched.Remove(user, it.Repo, it.Number)
+		sched.RemoveFor(user, it.Repo, it.Number, fixRemovePRClosed)
 		h.forgetFixOwner(user, it.Key())
 		h.logger.Info("[contribute-ws] fix queue: dropped a PR that is no longer open", "username", user, "pr", it.Key(), "state", reason, "head", shortSHA(it.HeadSHA))
 		dropped = true
@@ -770,6 +774,8 @@ func (h *ContributeWSHub) failFixTask(c *ContributorConnection, msg WSMessage) b
 		}
 		if len(returned) == 0 {
 			h.logger.Info("[contribute-ws] fix-pr task failed", "username", user, "task", msg.TaskID, "reason", reason)
+		} else {
+			h.retryReturnedFixAfter(user, fixTaskRetryBackoff)
 		}
 		h.pulseFixFailed(msg.TaskID, reason)
 		return true
@@ -780,7 +786,7 @@ func (h *ContributeWSHub) failFixTask(c *ContributorConnection, msg WSMessage) b
 	}
 	for _, it := range requeued {
 		if it.Attempts >= fixTaskMaxAttempts {
-			sched.Remove(user, it.Repo, it.Number)
+			sched.RemoveFor(user, it.Repo, it.Number, fixRemoveRelayGaveUp)
 			h.forgetFixOwner(user, it.Key())
 			h.logger.Warn("[contribute-ws] fix-pr task failed; giving up on relay delivery", "username", user, "task", msg.TaskID, "pr", it.Key(), "attempts", it.Attempts, "reason", reason)
 			continue

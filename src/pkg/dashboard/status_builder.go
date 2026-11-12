@@ -475,7 +475,7 @@ func BuildFrontendStatus(
 		ReleaseLineLag:        buildReleaseLineLag(),
 		Providers:             buildProviderStatus(agents, cfg),
 	}
-
+	payload.ListedAt = statusListedAt(actionable)
 	return payload
 }
 

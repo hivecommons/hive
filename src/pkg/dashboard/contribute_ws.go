@@ -1017,6 +1017,9 @@ type ContributeWSHub struct {
 	fixWaiters   int
 	fixFailures  map[string]string
 	fixAckGrace  time.Duration
+	// fixRetryAfter replaces time.AfterFunc for the re-dispatch of a fix the
+	// relay handed back unstarted (retryReturnedFixAfter); a test hook.
+	fixRetryAfter func(time.Duration, func())
 	// fixPRStateHook replaces fixPRStateOf's GitHub read of a queued PR's
 	// state (open, merged, closed); a test hook.
 	fixPRStateHook func(ctx context.Context, repo string, number int) (fixPRState, string, error)
