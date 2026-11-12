@@ -478,16 +478,27 @@ fallback when the approval sweep is off or refused:
 - a head with **no** `pull_request` runs at all that is older than 30 minutes is
   reported as `required-check-never-started:<ctx>`: GitHub never scheduled the
   workflows (seen on hivecommons/hive#11553), and only a new push, a
-  close/reopen, or `@dependabot rebase` will create them.
+  close/reopen, or a person's `@dependabot rebase` will create them.
+- a Dependabot head whose last commit `github-actions[bot]` pushed (a
+  `GITHUB_TOKEN` autofix) and whose required check never ran is reported as
+  `required-check-never-ran-autofix:<ctx>` once the head is older than 30
+  minutes. GitHub does not start workflows for that push, and Dependabot
+  refuses every comment command a GitHub App posts
+  (dependabot/dependabot-core#9147), so Hive posts nothing to Dependabot and
+  hands the PR to a person (below), whose comment asks someone with push
+  access to comment `@dependabot recreate`, push to the branch, or close and
+  reopen the PR. `required-check-never-ran:<ctx>` is the github-actions[bot]
+  PR whose one bot takeover did not replace it.
 - `workflow-approval-required:<ctx>` (and its `missing-workflow` form),
-  `required-check-never-started:<ctx>` and `required-check-never-ran:<ctx>`
+  `required-check-never-started:<ctx>`, `required-check-never-ran:<ctx>` and
+  `required-check-never-ran-autofix:<ctx>`
   are logged once per PR head as `automerge hold`; later ticks only count the
   PR in the skip stats instead of emitting `automerge skip` every tick. On a
   dependency-bot PR (Renovate, Dependabot, mergeraptor) the same first report
   also hands the PR to a person: one comment naming the check and the action
   (approve the held runs and add the `hive-ok-to-test` workflow, re-push or
-  close and reopen, or merge by hand) plus `needs-human`, so it shows as your
-  turn. A plain `workflow-approval-required:<ctx>` is not handed off while
+  close and reopen, comment `@dependabot recreate`, or merge by hand) plus
+  `needs-human`, so it shows as your turn. A plain `workflow-approval-required:<ctx>` is not handed off while
   the repository workflow may still approve the runs; only the
   `missing-workflow` form after the grace is. The label comes off when the
   head changes or the PR closes.

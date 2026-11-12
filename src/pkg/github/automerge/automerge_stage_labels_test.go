@@ -1479,7 +1479,7 @@ func TestApplyStageLabelsRequiresHumanBeatsAdmissionReason(t *testing.T) {
 	}
 }
 
-// The sweep's own comments (Dependabot rebase request, stale-approval note,
+// The sweep's own comments (ok-to-test command, stale-approval note,
 // hold release) land after the lane's deep fetch and before
 // ApplyStageLabels, so the credit must go on this cycle's observation, not
 // on the store's last count (which ApplyStageLabels overwrites with the

@@ -38,7 +38,16 @@ const depBotRedCIGrace = 4 * time.Hour
 const (
 	depBotHoldHeldPrefix         = "required-check-held:"
 	depBotHoldNeverStartedPrefix = "required-check-never-started:"
-	depBotHoldNeverRanPrefix     = "required-check-never-ran:"
+	// depBotHoldNeverRanPrefix: the automerge sweep's one bot takeover for
+	// this head (a github-actions[bot] PR) left no App PR in its place.
+	// Older builds also reported it for an autofix-pushed Dependabot head
+	// after posting `@dependabot rebase` as the App, which Dependabot
+	// refuses; on a Dependabot PR it is read as the autofix case.
+	depBotHoldNeverRanPrefix = "required-check-never-ran:"
+	// depBotHoldNeverRanAutofixPrefix: an automation (github-actions[bot])
+	// pushed the Dependabot PR's head, so GitHub did not run the required
+	// check, and Hive cannot ask Dependabot to re-push.
+	depBotHoldNeverRanAutofixPrefix = "required-check-never-ran-autofix:"
 	// depBotHoldApprovalPrefix: runs held for approval; the sweep has posted
 	// `/ok-to-test` and the repository's hive-ok-to-test workflow should
 	// approve them, so this alone is not handed off (hivecommons/hive#13013).
@@ -210,6 +219,11 @@ func dependencyBotRedCIComment(pr github.PullRequest, rerun depBotTransientRerun
 
 // dependencyBotHeldCheckComment is posted for a terminal required-check hold
 // the automerge sweep reported (held for approval, never started, never ran).
+// Each never-ran comment says what actually happened: on a Dependabot PR an
+// automation pushed the head and Dependabot takes no command from Hive (the
+// old `required-check-never-ran:` reason on a Dependabot PR meant the same
+// head shape, so it reads the same); otherwise Hive's one takeover attempt
+// did not replace the PR.
 func dependencyBotHeldCheckComment(author, holdReason string) string {
 	name := dependencyBotDisplayName(author)
 	check := func(prefix string) string {
@@ -227,14 +241,32 @@ func dependencyBotHeldCheckComment(author, holdReason string) string {
 		return fmt.Sprintf("The required check %s on this %s PR is waiting for approval to run, and Hive could not approve it. "+
 			"To fix it, click 'Approve and run' on the held workflow runs (or run `gh run approve <run-id>`), or merge the PR by hand.",
 			check(depBotHoldHeldPrefix), name)
+	case strings.HasPrefix(holdReason, depBotHoldNeverRanAutofixPrefix):
+		return dependencyBotAutofixNeverRanComment(check(depBotHoldNeverRanAutofixPrefix))
+	case strings.HasPrefix(holdReason, depBotHoldNeverRanPrefix) && strings.EqualFold(author, "dependabot[bot]"):
+		return dependencyBotAutofixNeverRanComment(check(depBotHoldNeverRanPrefix))
 	case strings.HasPrefix(holdReason, depBotHoldNeverRanPrefix):
-		return fmt.Sprintf("The required check %s has not run on this %s PR's current head, even after a rebase was requested. "+
+		return fmt.Sprintf("The required check %s has not run on this %s PR's current head: an automation opened or pushed it with a workflow's token, and GitHub does not start workflows for that. "+
+			"Hive tried once to re-open the change as its own PR so the check could run, and that did not replace this PR. "+
 			"To fix it, push to the branch again or close and reopen the PR so the check is created, or merge the PR by hand.",
 			check(depBotHoldNeverRanPrefix), name)
 	}
 	return fmt.Sprintf("The required check %s never started on this %s PR's current head. "+
 		"To fix it, push to the branch again or close and reopen the PR so the check is created, or merge the PR by hand.",
 		check(depBotHoldNeverStartedPrefix), name)
+}
+
+// dependencyBotAutofixNeverRanComment is the hand-off for a Dependabot PR
+// whose head an automation pushed: GitHub does not start workflows for a push
+// made with a workflow's token, and Dependabot refuses commands from apps
+// (dependabot/dependabot-core#9147), so only a person can get the check to run.
+func dependencyBotAutofixNeverRanComment(check string) string {
+	return fmt.Sprintf("The required check %s has not run on this Dependabot PR's current head. "+
+		"An automation (`github-actions[bot]`) pushed the last commit, so GitHub did not run the check: it does not start workflows for commits pushed with a workflow's token. "+
+		"Hive cannot ask Dependabot to redo the branch, because Dependabot does not accept commands from apps. "+
+		"To fix it, someone with push access comments `%s` on this PR (it discards any commits on the branch that are not Dependabot's), "+
+		"or pushes to the branch, or closes and reopens the PR, or merges the PR by hand.",
+		check, github.DependabotRecreateCommand)
 }
 
 // noteDependencyBotTerminalHold is the automerge sweep's OnTerminalHold hook:
