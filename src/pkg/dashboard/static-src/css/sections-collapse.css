@@ -94,6 +94,10 @@
     .agent-collapsed-tile.running-now { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 60%, transparent); }
     .agent-tile-name, .agent-tile-next { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .agent-tile-name { font-weight: 800; color: var(--text); }
+    /* A replica's marker never shrinks: the base name takes the ellipsis. */
+    .agent-tile-name--replica { display: flex; align-items: baseline; gap: var(--sp-1); }
+    .agent-tile-name-base { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .agent-tile-replica { flex: 0 0 auto; color: var(--muted); }
     .repo-collapsed-owner { color: var(--muted); font-weight: 700; }
     .repo-collapsed-icons { display: inline-flex; align-items: center; gap: var(--sp-1); justify-self: end; min-width: 0; }
     .repo-collapsed-am { display: inline-flex; align-items: center; justify-content: center; min-width: 1.15rem; height: 0.8rem; padding: 0 var(--sp-1); border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); font-size: var(--fs-2xs); font-weight: 900; line-height: 1; }
@@ -105,12 +109,20 @@
     .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot, .repo-collapsed-tile.error .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     .repo-collapsed-tile.blocked .agent-tile-dot { background: var(--yellow); box-shadow: 0 0 0 1px color-mix(in srgb, var(--yellow) 40%, transparent); }
     .agent-collapsed-tile.disabled .agent-tile-dot, .repo-collapsed-tile.paused .agent-tile-dot, .repo-collapsed-tile.idle .agent-tile-dot { background: var(--muted); box-shadow: none; }
+    /* One row of whole tiles, no scrollbar. A tile that does not fit wraps to
+       a second row; the strip is capped at one row and the row gap is as tall
+       as the cap, so the wrapped row is always out of sight. The cap is the
+       taller of a tile's min-height and its two text rows (two 1.2 lines, the
+       row gap, the padding and the border), so larger type is not clipped.
+       fitAgentNavbarTiles() then removes the wrapped tiles and shows a count. */
     .agent-navbar-upnext {
-      display: inline-flex; align-items: stretch; justify-content: flex-start; gap: var(--sp-2);
-      min-width: 0; max-width: 100%; box-sizing: border-box; overflow-x: auto; overflow-y: hidden;
-      padding-inline-end: var(--sp-2); scroll-padding-inline-end: var(--sp-2); scrollbar-width: thin;
+      --agent-navbar-row-cap: max(calc(var(--nav-chip-h) + var(--sp-4)), calc(2.4 * var(--fs-2xs) + var(--sp-1) + 2 * var(--sp-2) + 2px));
+      display: inline-flex; flex-wrap: wrap; align-items: stretch; align-content: flex-start; justify-content: flex-start; gap: var(--agent-navbar-row-cap) var(--sp-2);
+      min-width: 0; max-width: 100%; max-height: var(--agent-navbar-row-cap); box-sizing: border-box; overflow: hidden;
+      padding-inline-end: var(--sp-2);
     }
     .agent-navbar-upnext[hidden] { display: none; }
+    .agent-navbar-tile[data-agent-overflow] { display: none; }
     .agent-navbar-tile { flex: 0 0 auto; min-width: 136px; min-height: calc(var(--nav-chip-h) + var(--sp-4)); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: max-content auto; grid-template-rows: max-content max-content; align-content: center; align-items: center; gap: var(--sp-1) var(--sp-2); padding: var(--sp-2) var(--nav-chip-px); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.2; text-align: left; opacity: 1; transform: translateX(0); transition: transform var(--navbar-motion-duration) var(--anim-ease-out-cubic), opacity var(--duration-fast) ease, box-shadow var(--duration-fast) ease, border-color var(--duration-fast) ease, background var(--duration-fast) ease; will-change: transform; }
     .agent-navbar-tile:hover, .agent-navbar-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
     .agent-navbar-tile.up-next { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
@@ -128,14 +140,23 @@
     .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
     .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     .agent-navbar-upnext::after { content: attr(data-agent-summary); display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+    /* The "+N" count of tiles that did not fit. While the fit is measured it
+       sits first in the row, so its own width is reserved. */
+    @container navbar-center (width > 340px) {
+      .agent-navbar-upnext[data-agent-more]::after { content: attr(data-agent-more); display: inline-flex; flex: 0 0 auto; }
+      .agent-navbar-upnext--measuring::after { order: -1; }
+    }
+    /* One line per tile: name, label, dot, each in its own column. */
     @container navbar-center (max-width: 560px) {
-      .agent-navbar-tile { min-width: 104px; }
+      .agent-navbar-tile { min-width: 104px; grid-template-columns: max-content auto auto; }
       .agent-navbar-tile .agent-tile-next { display: none; }
-      .agent-navbar-tile .agent-up-next { grid-row: 1; }
+      .agent-navbar-tile .agent-up-next { grid-column: 2; grid-row: 1; }
+      .agent-navbar-tile .agent-tile-dot { grid-column: 3; }
     }
     @container navbar-center (max-width: 440px) {
-      .agent-navbar-tile { min-width: 82px; }
+      .agent-navbar-tile { min-width: 82px; grid-template-columns: max-content auto; }
       .agent-navbar-tile .agent-up-next { display: none; }
+      .agent-navbar-tile .agent-tile-dot { grid-column: 2; }
     }
     @container navbar-center (max-width: 340px) {
       .agent-navbar-upnext { overflow: hidden; mask-image: none; }

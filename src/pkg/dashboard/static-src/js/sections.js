@@ -1023,10 +1023,38 @@
         badge.setAttribute('aria-hidden', label ? 'false' : 'true');
       }
     }
+    // A replica or a review head is a copy of its base agent and keeps the
+    // base's displayName, so a tile that shows only that name cannot tell the
+    // copies apart. The status payload marks a copy with replicaBase,
+    // replicaIndex and replicaCount (the Agents cards read the same fields).
+    // A review head ("base-alias-N") counts from 1 under its own alias, so its
+    // index alone does not tell it from the base: its marker is the part of
+    // its name after the base. An agent with no replicaBase gets no marker.
+    function agentTileReplicaInfo(a) {
+      const base = String((a && a.replicaBase) || '');
+      if (!base) return null;
+      const key = String(a.name || '');
+      const index = Number(a.replicaIndex) || 0;
+      const count = Number(a.replicaCount) || 0;
+      const tail = key.startsWith(base + '-') ? key.slice(base.length + 1) : '';
+      if (tail && tail !== String(index)) return { marker: tail, detail: tail };
+      if (index > 1) return { marker: String(index), detail: count >= index ? `replica ${index} of ${count}` : `replica ${index}` };
+      return null;
+    }
+    function agentTileTitleName(name, replica) {
+      return replica ? `${name} · ${replica.detail}` : name;
+    }
+    // The marker is its own element so that a narrow tile shortens the base
+    // name with an ellipsis and still shows which copy it is.
+    function agentTileNameHtml(name, replica) {
+      if (!replica) return `<span class="agent-tile-name">${esc(name)}</span>`;
+      return `<span class="agent-tile-name agent-tile-name--replica"><span class="agent-tile-name-base">${esc(name)}</span><span class="agent-tile-replica">·${esc(replica.marker)}</span></span>`;
+    }
     function agentCollapsedTileHtml(a, nowMs, tileState) {
       tileState = tileState || {};
       const name = (a && (a.displayName || a.name)) || 'agent';
       const key = (a && a.name) || name;
+      const replica = agentTileReplicaInfo(a);
       const disabled = agentIsDisabled(a);
       const isDown = a && a.state !== 'running';
       const active = tileState.running === true || agentTileIsRunning(a);
@@ -1038,10 +1066,10 @@
       const sortKey = tileState.sortKey || agentCollapsedSortKey(a, 0, nowMs);
       const label = tileState.label || null;
       const classes = ['agent-collapsed-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', disabled ? 'disabled' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
-      const title = agentCollapsedTileTitle(a || {}, name, power, auth, nextMs);
+      const title = agentCollapsedTileTitle(a || {}, agentTileTitleName(name, replica), power, auth, nextMs);
       const labelHtml = agentTileLabelHtml(label);
       const stateHtml = state ? `<span class="agent-tile-state"> · ${esc(state)}</span>` : '<span class="agent-tile-state"></span>';
-      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-sort-group="${sortKey.group}" data-agent-queue-index="${tileState.queuedIndex >= 0 ? String(tileState.queuedIndex) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-running-since="${esc((a && (a.busySince || a.runningSince || a.startedAt)) || '')}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span>${labelHtml}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span>${stateHtml}</span></button>`;
+      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-sort-group="${sortKey.group}" data-agent-queue-index="${tileState.queuedIndex >= 0 ? String(tileState.queuedIndex) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-running-since="${esc((a && (a.busySince || a.runningSince || a.startedAt)) || '')}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}">${agentTileNameHtml(name, replica)}${labelHtml}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span>${stateHtml}</span></button>`;
     }
     function refreshAgentsCollapsedCountdowns(nowMs) {
       const strip = document.querySelector('.agents-collapsed-tiles');
@@ -1103,10 +1131,64 @@
       const countdown = tileState.countdown || (active ? agentTileRunningLabel(a, nowMs) : agentTileCadenceLabel(a, nowMs));
       const label = tileState.label || null;
       const classes = ['agent-navbar-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
-      const title = `${name}
+      const replica = agentTileReplicaInfo(a);
+      const title = `${agentTileTitleName(name, replica)}
 next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextKick))}`;
       const labelHtml = agentTileLabelHtml(label);
-      return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-running-since="${esc((a && (a.busySince || a.runningSince || a.startedAt)) || '')}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span>${labelHtml}</button>`;
+      return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-running-since="${esc((a && (a.busySince || a.runningSince || a.startedAt)) || '')}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}">${agentTileNameHtml(name, replica)}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span>${labelHtml}</button>`;
+    }
+    // The strip is one row that wraps: a tile that does not fit whole drops to
+    // a second row the CSS keeps out of sight, so there is never part of a
+    // tile or a scrollbar. This takes the dropped tiles out of the layout (and
+    // so out of the tab order; every agent stays reachable in the Agents
+    // section) and shows how many were dropped. The count chip is measured
+    // first in the row, so its width is reserved before the tiles are counted.
+    const AGENT_NAVBAR_STRIP_TITLE = 'Upcoming agent run order';
+    function fitAgentNavbarTiles(wrap) {
+      if (!wrap) return 0;
+      const tiles = Array.from(wrap.querySelectorAll('.agent-navbar-tile')).filter(tile => !tile.classList.contains('exiting'));
+      tiles.forEach(tile => tile.removeAttribute('data-agent-overflow'));
+      wrap.removeAttribute('data-agent-more');
+      wrap.classList.remove('agent-navbar-upnext--measuring');
+      // A tile is dropped when it sits below the visible row or sticks out
+      // past the end of the strip. A tile that is not rendered at all (the
+      // strip is hidden at this width) is left alone.
+      const dropped = () => tiles.filter(tile => {
+        if (!tile.offsetParent) return false;
+        const own = tile.offsetParent === wrap;
+        const bottom = (own ? 0 : wrap.offsetTop) + wrap.clientHeight;
+        const end = (own ? 0 : wrap.offsetLeft) + wrap.clientWidth;
+        return tile.offsetTop >= bottom || tile.offsetLeft + tile.offsetWidth > end;
+      });
+      let out = dropped();
+      if (out.length) {
+        wrap.setAttribute('data-agent-more', '+' + out.length);
+        wrap.classList.add('agent-navbar-upnext--measuring');
+        out = dropped();
+        wrap.classList.remove('agent-navbar-upnext--measuring');
+        if (out.length) wrap.setAttribute('data-agent-more', '+' + out.length);
+        else wrap.removeAttribute('data-agent-more');
+        out.forEach(tile => tile.setAttribute('data-agent-overflow', '1'));
+      }
+      const title = out.length ? `${AGENT_NAVBAR_STRIP_TITLE} (${out.length} more in the Agents section)` : AGENT_NAVBAR_STRIP_TITLE;
+      wrap.setAttribute('title', title);
+      wrap.setAttribute('aria-label', title);
+      return out.length;
+    }
+    // Refit when the centre of the navbar changes width (window resize, a chip
+    // appearing beside it). Width only, and on the next frame, so the refit
+    // never feeds the observer that asked for it.
+    function ensureAgentNavbarFitObserver(wrap) {
+      const center = wrap && wrap.parentElement;
+      if (!center || window._agentNavbarFitObserver || typeof ResizeObserver === 'undefined') return;
+      let lastWidth = -1;
+      window._agentNavbarFitObserver = new ResizeObserver(entries => {
+        const width = Math.round((entries[0] && entries[0].contentRect && entries[0].contentRect.width) || 0);
+        if (width === lastWidth) return;
+        lastWidth = width;
+        requestAnimationFrame(() => fitAgentNavbarTiles(wrap));
+      });
+      window._agentNavbarFitObserver.observe(center);
     }
     function agentNavbarTileFromHtml(html) {
       const template = document.createElement('template');
@@ -1139,7 +1221,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const key = tile.getAttribute('data-agent-key') || '';
         if (desired.has(key)) return;
         tile.classList.add('exiting');
-        window.setTimeout(() => tile.remove(), AGENT_NAVBAR_EXIT_MS);
+        window.setTimeout(() => { tile.remove(); fitAgentNavbarTiles(wrap); }, AGENT_NAVBAR_EXIT_MS);
       });
       const previousUpNext = wrap.dataset.upNextKey || '';
       list.forEach((item, i) => {
@@ -1178,6 +1260,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       wrap.hidden = list.length === 0;
       wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';
       renderAgentNavbarTileDiff(wrap, list, now);
+      fitAgentNavbarTiles(wrap);
+      ensureAgentNavbarFitObserver(wrap);
       if (list.length) ensureAgentsCollapsedCountdownTicker();
     }
     function refreshAgentNavbarUpNextCountdowns(nowMs) {
@@ -1198,6 +1282,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const el = tile.querySelector('.agent-tile-countdown');
         if (el && el.textContent !== countdown) el.textContent = countdown;
       });
+      fitAgentNavbarTiles(wrap);
     }
     function openAgentsUpNextPanel() {
       navPeekRestore('agents-section', { instant: true });
