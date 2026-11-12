@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.19.2)
+
+### Fixed
+
+- Marketplace ingest streams each repository tarball and keeps only pipeline files (1 MiB per file, 32 MiB total) instead of extracting the whole source tree under a 256 MiB cap, so large monorepos (kubernetes/kubernetes, kserve, meshery, …) no longer fail with `archive exceeds size cap`; `GET /api/marketplace/status` now lists failing repos with their errors without `?verbose=1`; four renamed corpus repositories (composefs, OpenMetrics, ratify, kuberay) now point at their current GitHub names.
+
 ## 2026-11-11 (v6.19.1)
 
 ### Fixed
