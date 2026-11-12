@@ -1,1 +1,0 @@
-- Spoke: a placeholder claimed onto a different forge than its pool default (GHE slot → github.com repo) now moves GitHub App installation discovery to the delivered App and API URL even while installation_id is still 0, instead of polling the boot-time App/forge forever and reporting "App 5686 has no installation" until a pod restart.

@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.238.1)
+
+### Fixed
+
+- Spoke: a placeholder claimed onto a different forge than its pool default (GHE slot → github.com repo) now moves GitHub App installation discovery to the delivered App and API URL even while installation_id is still 0, instead of polling the boot-time App/forge forever and reporting "App 5686 has no installation" until a pod restart.
+- Hub fleet view: a placeholder assigned with an explicit forge now shows that forge (e.g. github.com) in the Location pill while the claim is pending, instead of the cluster default the spoke still heartbeats from its pre-claim config (github.ibm.com on vllm-d).
+- Dashboard logs one summary warning per five minutes for dropped SSE events instead of one warning per event, so a stalled browser tab no longer triggers repeated-error fleet reports (#17995).
+
 ## 2026-11-12 (v5.238.0)
 
 ### Added
