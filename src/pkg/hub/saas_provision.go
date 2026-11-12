@@ -790,6 +790,15 @@ type SaaSHive struct {
 	// delivery (see AppIdentityDelivered), so a lost beat is retried.
 	PendingAppConfig *PendingAppIdentity `json:"pending_app_config,omitempty"`
 
+	// WebhookRelayKey is this hive's own HMAC key for webhooks the hub relays
+	// to its spoke (webhook_relay_key.go, hivecommons/hive#17911). Minted at
+	// provisioning (or on the first heartbeat of a hive provisioned before
+	// relay keys existed) and delivered over the heartbeat. Per hive so one
+	// spoke's key can never sign a relay another spoke accepts, and so no
+	// spoke ever needs the GitHub App webhook secret. Replacing or clearing it
+	// rotates the key: the next beat delivers the new one.
+	WebhookRelayKey string `json:"webhook_relay_key,omitempty"`
+
 	// RequestedRestartAt (RFC3339) arms a rolling restart of this hive's spoke,
 	// delivered on every heartbeat inside spokeRestartDeliveryWindow and then
 	// cleared. Durable on the hive record for the same reason as
@@ -2074,15 +2083,26 @@ func saveSaaSHive(h *SaaSHive) error {
 		return fmt.Errorf("invalid hive ID for save: %q", h.ID)
 	}
 	dir := filepath.Join(saasHivesDir, h.ID)
-	// Best-effort: a failed mkdir surfaces via the WriteFile error below.
-	_ = os.MkdirAll(dir, 0o755)
+	// meta.json carries WebhookRelayKey, so it is written rw------- under an
+	// rwx------ directory like the other hub secret stores (cluster App keys,
+	// generation stores). Best-effort: a failed mkdir surfaces via the
+	// WriteFile error below.
+	_ = os.MkdirAll(dir, 0o700)
+	// MkdirAll leaves pre-existing directories untouched, so tighten hives
+	// provisioned before meta.json carried key material. Only group/other
+	// bits are stripped: owner bits are left as found so a directory an
+	// operator (or a test) made read-only is never silently widened back to
+	// writable, and the WriteFile below still reports the failure.
+	if fi, err := os.Stat(dir); err == nil && fi.Mode().Perm()&0o077 != 0 {
+		_ = os.Chmod(dir, fi.Mode().Perm()&^0o077)
+	}
 	data, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(dir, "meta.json")
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {

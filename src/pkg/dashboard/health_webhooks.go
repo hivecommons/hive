@@ -23,11 +23,23 @@ const healthCheckWebhooks = "webhooks"
 // cannot be used, or webhooks degraded while GitHub stayed busy; "pass"
 // otherwise, with the mode and cause in the detail.
 func webhookHealth(snap github.WebhookHealth) (status, detail string) {
+	// A hosted spoke verifies hub relays with its relay key (#17911); name
+	// that path so it is not mistaken for a spoke holding the App secret.
+	via := ""
+	if snap.Verification == github.WebhookVerificationRelay {
+		via = " via " + github.WebhookVerificationRelay
+	}
 	if snap.Mode != github.WebhookModePolling {
-		return "pass", fmt.Sprintf("webhook mode — %d deliveries in the last hour", snap.Events1h)
+		return "pass", fmt.Sprintf("webhook mode%s — %d deliveries in the last hour", via, snap.Events1h)
 	}
 	rejected := fmt.Sprintf("%d rejected in the last hour", snap.Rejected1h)
 	switch snap.ReasonCode {
+	case github.WebhookReasonRelaySignatureFailed:
+		return "warn", "polling — hub-relayed deliveries fail the relay signature: this spoke's relay key does not match the hub's (" + rejected + ")"
+	case github.WebhookReasonRelayStale:
+		return "warn", "polling — hub-relayed deliveries arrive with stale timestamps: check the hub and spoke clocks (" + rejected + ")"
+	case github.WebhookReasonRelayReplayed, github.WebhookReasonRelayDeliveryMissing:
+		return "warn", "polling — hub-relayed deliveries rejected (" + snap.ReasonCode + ", " + rejected + ")"
 	case github.WebhookReasonNoSecret:
 		// Only rejections inside the window count: one delivery days ago must
 		// not leave the spoke at warn for good.
@@ -46,9 +58,9 @@ func webhookHealth(snap github.WebhookHealth) (status, detail string) {
 		return "pass", "polling — no verified delivery yet"
 	}
 	if snap.HealthyWindows > 0 {
-		return "pass", fmt.Sprintf("polling — recovering, %d of %d healthy windows", snap.HealthyWindows, github.WebhookRecoveryHealthyWindows)
+		return "pass", fmt.Sprintf("polling%s — recovering, %d of %d healthy windows", via, snap.HealthyWindows, github.WebhookRecoveryHealthyWindows)
 	}
-	return "pass", "polling — verified deliveries arriving; webhook mode engages at the next eval cycle"
+	return "pass", "polling" + via + " — verified deliveries arriving; webhook mode engages at the next eval cycle"
 }
 
 // webhookHealthCheck grades the live webhook tracker.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -191,6 +192,42 @@ func TestDiagHealthIsWhole(t *testing.T) {
 	health, _ := res["health"].(map[string]any)
 	if health["checks"] == nil || res["truncated"] != false || res["read"] != "health_deep" {
 		t.Fatalf("health = %s", rec.Body.String())
+	}
+}
+
+func TestDiagHealthMCPPreservesAgentFailure(t *testing.T) {
+	s := newFullServer(t)
+	inner := diagGet(s, "/api/health/deep", "", false)
+	if inner.Code != http.StatusOK {
+		t.Fatalf("deep health status = %d: %s", inner.Code, inner.Body.String())
+	}
+	var direct map[string]any
+	if err := json.Unmarshal(inner.Body.Bytes(), &direct); err != nil {
+		t.Fatal(err)
+	}
+	reader := dashboardAdminMCPProvider{server: s, role: config.RoleRead}
+	data, err := reader.Read(context.Background(), adminmcp.ToolHealthDeepRead, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := data.(map[string]any)
+	if !ok {
+		t.Fatalf("MCP result = %#v", data)
+	}
+	health, ok := result["health"].(map[string]any)
+	if !ok || result["truncated"] != false {
+		t.Fatalf("MCP health = %#v", result)
+	}
+	checks, _ := direct["checks"].(map[string]any)
+	agents, _ := checks["agents"].(map[string]any)
+	scanner, _ := agents["scanner"].(map[string]any)
+	if scanner["status"] != "fail" {
+		t.Fatalf("expected failing scanner in deep health: %#v", agents)
+	}
+	mcpChecks, _ := health["checks"].(map[string]any)
+	if health["status"] != direct["status"] || health["fails"] != direct["fails"] ||
+		!reflect.DeepEqual(mcpChecks["agents"], agents) {
+		t.Fatalf("MCP health = %#v, direct health = %#v", health, direct)
 	}
 }
 

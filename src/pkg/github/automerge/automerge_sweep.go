@@ -441,8 +441,8 @@ type Engine struct {
 	requiredChecksFallbackWarnedMu    sync.Mutex
 	requiredChecksFallbackWarned      map[string]bool
 	requiredCheckNeverReportedWarned  map[string]time.Time
-	// heldRunApprovals is the shared per-PR-head one-shot map for rebase
-	// nudges and bot takeovers (historic name; workflow approvals no longer use it).
+	// heldRunApprovals is the shared per-PR-head map for bot takeovers and
+	// autofix-pushed Dependabot heads (historic name; not workflow approvals).
 	heldRunApprovalsMu sync.Mutex
 	heldRunApprovals   map[string]bool
 	// heldRuns is the process-wide record of the contributor lane's

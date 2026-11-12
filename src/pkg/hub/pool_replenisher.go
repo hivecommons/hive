@@ -145,9 +145,10 @@ func (s *HubServer) seedPlaceholder(cluster *ClusterConfig) error {
 		// Pool slots track stable and auto-upgrade so inventory never rots on
 		// an old image while waiting to be assigned — same posture as the
 		// hand-seeded fleet.
-		TrackedChannel: "stable",
-		AutoUpgrade:    true,
-		IsPublic:       false,
+		TrackedChannel:  "stable",
+		AutoUpgrade:     true,
+		IsPublic:        false,
+		WebhookRelayKey: newWebhookRelayKey(),
 	}
 	if err := saveSaaSHive(h); err != nil {
 		return fmt.Errorf("save placeholder record: %w", err)

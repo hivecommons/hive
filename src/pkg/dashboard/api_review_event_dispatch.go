@@ -3,9 +3,8 @@ package dashboard
 import (
 	"encoding/json"
 	"net/http"
-	"os"
-	"strings"
 
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/review/pipeline"
 )
@@ -24,8 +23,11 @@ type reviewEventDispatchResponse struct {
 	eventdispatch.Status
 }
 
+// githubWebhooksConfigured reports whether this spoke can verify webhook
+// deliveries at all: with GITHUB_WEBHOOK_SECRET, or (hosted) with the hub
+// relay key delivered over the heartbeat (#17911).
 func githubWebhooksConfigured() bool {
-	return strings.TrimSpace(os.Getenv(githubWebhookSecretEnvVar)) != ""
+	return github.WebhookVerification() != github.WebhookVerificationNone
 }
 
 func (s *Server) reviewEvents() *eventdispatch.Dispatcher {

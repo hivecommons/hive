@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +37,36 @@ func newBootHeartbeatCollect(t *testing.T, f *bootHeartbeatFake, cfg *config.Con
 		t.Fatal("bootHeartbeatWith did not start the heartbeat loop")
 	}
 	return b
+}
+
+func TestBootHeartbeatCollectCarriesHealthSummary(t *testing.T) {
+	f := newBootHeartbeatFake()
+	b := newBootHeartbeatCollect(t, f, bootHeartbeatConfig())
+
+	payload := f.collect()
+	if payload == nil {
+		t.Fatal("collector returned nil")
+	}
+	// Compare the serialized form that the hub receives, including the
+	// individual check details rather than just the overall verdict.
+	wantJSON, err := json.Marshal(b.dashSrv.HealthSummary())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotJSON, err := json.Marshal(payload.Health)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want, got map[string]any
+	if err := json.Unmarshal(wantJSON, &want); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(gotJSON, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("heartbeat health = %s, dashboard summary = %s", gotJSON, wantJSON)
+	}
 }
 
 func TestBootHeartbeatCollect_FreshBootGatesUnmeasuredSignalsToNil(t *testing.T) {

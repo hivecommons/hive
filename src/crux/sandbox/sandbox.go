@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/crux/cline"
 )
@@ -41,6 +42,9 @@ type LaunchSpec struct {
 	NetworkNone    bool
 	ReadOnly       bool
 	ClineProvider  *cline.ProviderFile
+	// OnStarted reports that the launcher accepted the run, not merely that
+	// the manager queued it. Called at most once.
+	OnStarted func()
 }
 
 type Result struct {
@@ -77,6 +81,17 @@ func (l PodmanLauncher) Run(ctx context.Context, spec LaunchSpec) (res Result, r
 	if err != nil {
 		return Result{}, err
 	}
+	// A started podman process is not evidence that a container was accepted.
+	var cidPath string
+	if spec.OnStarted != nil {
+		dir, err := os.MkdirTemp("", "hive-sandbox-cid-")
+		if err != nil {
+			return Result{}, fmt.Errorf("sandbox: create cidfile directory: %w", err)
+		}
+		defer os.RemoveAll(dir)
+		cidPath = filepath.Join(dir, "cid")
+		args = append(args[:1], append([]string{"--cidfile", cidPath}, args[1:]...)...)
+	}
 	if spec.ClineProvider != nil {
 		defer func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), clineContainerCleanupTimeout)
@@ -97,7 +112,34 @@ func (l PodmanLauncher) Run(ctx context.Context, spec LaunchSpec) (res Result, r
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	var done, observed chan struct{}
+	if cidPath != "" {
+		done, observed = make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(observed)
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				if id, err := os.ReadFile(cidPath); err == nil && len(strings.TrimSpace(string(id))) != 0 {
+					spec.OnStarted()
+					return
+				}
+				select {
+				case <-done:
+					if id, err := os.ReadFile(cidPath); err == nil && len(strings.TrimSpace(string(id))) != 0 {
+						spec.OnStarted()
+					}
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
 	err = cmd.Run()
+	if done != nil {
+		close(done)
+		<-observed
+	}
 	res = Result{Stdout: stdout.String(), Stderr: stderr.String()}
 	if cmd.ProcessState != nil {
 		res.ExitCode = cmd.ProcessState.ExitCode()
