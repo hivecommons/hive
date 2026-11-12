@@ -1586,10 +1586,17 @@ func SplitCadenceTargetKey(key string) (agent, repo string) {
 // legal config, and refusing to boot on it would turn a diagnostic into an
 // outage.
 func AgentSandboxGateWarnings(cfg *Config) []string {
+	return AgentSandboxGateReport(cfg).Warnings
+}
+
+// AgentSandboxGateReport is AgentSandboxGateWarnings plus the preflight
+// findings kept apart per runtime, so callers can attribute them to the agents
+// on that runtime without parsing strings. Warnings is the same flat list.
+func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 	if cfg == nil || !cfg.AgentSandbox.Enabled {
 		// The sandbox is off globally. That is the documented default and the
 		// posture the docs describe; it is not a misconfiguration.
-		return nil
+		return SandboxGateReport{}
 	}
 
 	var optedIn, noImage, noClaim, noGateway, noDigest, badRuntime []string
@@ -1642,7 +1649,7 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 			"agent_sandbox.enabled is true but NO agent is opted in, so the sandbox is inert and all %d agent(s) still run unconfined on the tmux path — "+
 				"the per-agent gate is separate: set `sandbox: {enabled: true}` on each agent that should be sandboxed (#4918)",
 			len(cfg.Agents)))
-		return out
+		return SandboxGateReport{Warnings: out}
 	}
 	if len(noImage) > 0 {
 		out = append(out, fmt.Sprintf(
@@ -1681,9 +1688,11 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 	}
 	// Last, because it may reach the network (bounded and cached): the static
 	// warnings above must not wait on a gateway.
-	out = append(out, cruxconfig.OpenShellPreflightWarnings(openshellBlocks)...)
-	out = append(out, cruxconfig.SubstratePreflightWarnings(substrateBlocks)...)
-	return out
+	openshellWarnings := cruxconfig.OpenShellPreflightWarnings(openshellBlocks)
+	substrateWarnings := cruxconfig.SubstratePreflightWarnings(substrateBlocks)
+	out = append(out, openshellWarnings...)
+	out = append(out, substrateWarnings...)
+	return SandboxGateReport{Warnings: out, OpenShell: openshellWarnings, Substrate: substrateWarnings}
 }
 
 // CadenceIsOperatorOwned reports whether an operator explicitly set the

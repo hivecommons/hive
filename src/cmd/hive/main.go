@@ -7144,7 +7144,9 @@ func parseColorInt(color string) int {
 // operator who flips the Security tab's sandbox toggle never restarts, so a
 // boot-only check would never reach the person who most needs it.
 func logAgentSandboxPosture(logger *slog.Logger, cfg *config.Config) {
-	for _, warning := range config.AgentSandboxGateWarnings(cfg) {
+	report := config.AgentSandboxGateReport(cfg)
+	config.StoreSandboxGateReport(report)
+	for _, warning := range report.Warnings {
 		logger.Warn("agent sandbox posture", "warning", warning)
 	}
 }

@@ -1,0 +1,1 @@
+- Dashboard: agent cards now show the Substrate (and OpenShell) sandbox preflight warnings for the agent's runtime, exposed as `sandbox_warnings` in `/api/status` from the boot-time sandbox posture check (hivecommons/hive#17779).
