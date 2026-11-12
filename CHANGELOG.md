@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v6.21.0)
+
+### Added
+
+- Claude agents can run on an operator-supplied long-lived token: set `HIVE_CLAUDE_OAUTH_TOKEN` (or mount it at `/secrets/claude-oauth-token`, or point `HIVE_CLAUDE_OAUTH_TOKEN_FILE` at it) to a `claude setup-token` token and every `claude`-backend agent is launched with it as `CLAUDE_CODE_OAUTH_TOKEN`, ahead of the 8-hour dashboard sign-in; unset, nothing changes.
+
 ## 2026-11-12 (v6.20.4)
 
 ### Fixed
