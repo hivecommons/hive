@@ -521,6 +521,14 @@ func preserveClaudeCredential(path string, now time.Time) (string, error) {
 // outcome. It is the single entry point the launch path, the watchdog poll and
 // the sign-in hook share, so all three log and audit identically.
 func (m *Manager) rebridgeClaudeCredential(agentName, link, target, trigger string) *claudeBridgeRepair {
+	// Operator-token mode: agents do not authenticate with the shared
+	// credentials file, so a private copy left by a refresh is nothing to
+	// repair (claude_operator_token_mode.go). Covers launch, watchdog and
+	// sign-in alike.
+	if m.claudeOperatorTokenMode() {
+		m.logClaudeOperatorTokenModeOnce()
+		return nil
+	}
 	rep, err := m.repairClaudeCredentialBridge(agentName, link, target, trigger)
 	if errors.Is(err, errClaudeBridgeLinkIsTarget) {
 		// The legacy layout: skipped, and said once per agent rather than on
@@ -594,8 +602,13 @@ func (m *Manager) logClaudeBridgeUnreadable(agentName, link, trigger string, err
 // RepairClaudeCredentialBridges checks every per-agent Claude credential
 // bridge and repairs each one a regular file has replaced. It returns the
 // names of the agents it re-bridged, sorted. Agents are snapshotted under m.mu
-// and repaired after it is released.
+// and repaired after it is released. In operator-token mode it does nothing
+// and returns nil (claude_operator_token_mode.go).
 func (m *Manager) RepairClaudeCredentialBridges(trigger string) []string {
+	if m.claudeOperatorTokenMode() {
+		m.logClaudeOperatorTokenModeOnce()
+		return nil
+	}
 	type candidate struct {
 		name    string
 		uid     int

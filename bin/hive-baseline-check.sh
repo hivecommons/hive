@@ -155,8 +155,16 @@ if (( BASE_AGE_HOURS > MAX_AGE_HOURS )); then
   BASE_STALE=true
 fi
 
-if ! PRS_JSON="$(gh pr list --repo "$REPO" --state open --limit 100 --json number,headRefOid,isCrossRepository,statusCheckRollup)"; then
-  error "could not read open PR checks for $REPO"
+# HIVE_BASELINE_CHECK=1 marks this call for the gh wrapper, which lets only this
+# narrow projection through its `gh pr list` enumeration gate (#17835).
+PRS_ERR_FILE="$(mktemp)"
+trap 'rm -f "$PRS_ERR_FILE"' EXIT
+if ! PRS_JSON="$(HIVE_BASELINE_CHECK=1 gh pr list --repo "$REPO" --state open --limit 100 --json number,headRefOid,isCrossRepository,statusCheckRollup 2>"$PRS_ERR_FILE")"; then
+  if grep -qE 'enumeration_disabled|BLOCKED' "$PRS_ERR_FILE"; then
+    error "gh wrapper policy blocked the open PR lookup for $REPO (not a GitHub API failure): $(head -c 300 "$PRS_ERR_FILE" | tr '\n' ' ')"
+  fi
+  cat "$PRS_ERR_FILE" >&2
+  error "could not read open PR checks for $REPO (GitHub API failure)"
 fi
 if ! SIBLING_PRS="$(jq -cer --arg check "$CHECK_NAME" '
     [
