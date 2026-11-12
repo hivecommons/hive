@@ -158,6 +158,11 @@ type GovernorConfig struct {
 	// on the hive's own PRs. See GovernorReviewConfig.
 	Review GovernorReviewConfig `yaml:"review,omitempty" json:"review,omitempty"`
 
+	// ReviewerBackend picks how the one-shot reviewer turns (Let hive decide
+	// and grounded chat) reach a model: auto (default), http or claude-cli.
+	// See ResolveReviewerTurn in reviewer_backend.go.
+	ReviewerBackend string `yaml:"reviewer_backend,omitempty" json:"reviewer_backend,omitempty"`
+
 	// Hotspot* tune the merge-hotspot advisor. Zero values use the defaults;
 	// disabling issues keeps reporting enabled without filing on GitHub.
 	HotspotEnabled     *bool `yaml:"hotspot_enabled,omitempty" json:"hotspot_enabled,omitempty"`
