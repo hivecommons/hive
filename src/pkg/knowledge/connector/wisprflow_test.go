@@ -195,6 +195,34 @@ func TestWisprSyncSQLite(t *testing.T) {
 	}
 }
 
+func TestWisprFactInboxMetadata(t *testing.T) {
+	c := newFakeWispr(t, map[string]string{"include_raw": "true"})
+	pages, _, err := collectWispr(t, c, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := testWriter(t)
+	slug, _, err := w.Write(c.cfg, pages[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(w.Dir, slug+".md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fact := string(data)
+	for _, want := range []string{
+		"source: wisprflow\n",
+		"source_id: d-2\n",
+		"attr_recorded_at: 2026-11-11T17:55:30Z\n",
+		"## Transcript\n\nRunning late — start without me.\n",
+	} {
+		if !strings.Contains(fact, want) {
+			t.Errorf("fact missing %q:\n%s", want, fact)
+		}
+	}
+}
+
 func TestWisprSyncAppsFilterAndDayGroup(t *testing.T) {
 	c := newFakeWispr(t, map[string]string{"apps": "slack, vscode", "group": "day", "since_days": "3650"})
 	pages, _, err := collectWispr(t, c, "")
@@ -205,7 +233,7 @@ func TestWisprSyncAppsFilterAndDayGroup(t *testing.T) {
 		t.Fatalf("pages = %v", got)
 	}
 	day := pages[1]
-	if day.Attrs["dictations"] != "1" || !strings.Contains(day.Markdown, "## 17:55 · Slack") {
+	if day.Attrs["dictations"] != "1" || day.Attrs["recorded_at"] != "2026-11-11T17:55:30Z" || !strings.Contains(day.Markdown, "## 17:55 · Slack") {
 		t.Errorf("day page = %v\n%s", day.Attrs, day.Markdown)
 	}
 	if strings.Contains(day.Markdown, "Ok.") {

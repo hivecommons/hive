@@ -349,7 +349,7 @@ func (c *wisprConnector) dictationPage(r wisprDictation, includeRaw bool, tags s
 	if r.Duration > 0 {
 		fmt.Fprintf(&md, "- **Duration:** %s\n", (time.Duration(r.Duration * float64(time.Second))).Round(time.Second))
 	}
-	md.WriteString("\n")
+	md.WriteString("\n## Transcript\n\n")
 	md.WriteString(r.Text)
 	md.WriteString("\n")
 	if includeRaw && strings.TrimSpace(r.RawText) != "" && strings.TrimSpace(r.RawText) != r.Text {
@@ -360,6 +360,7 @@ func (c *wisprConnector) dictationPage(r wisprDictation, includeRaw bool, tags s
 	attrs := map[string]string{
 		"wispr_transcript_id": r.ID,
 		"dictated_at":         r.At.UTC().Format(time.RFC3339),
+		"recorded_at":         r.At.UTC().Format(time.RFC3339),
 	}
 	if r.App != "" {
 		attrs["app"] = r.App
@@ -405,7 +406,7 @@ func (c *wisprConnector) dayPage(day string, rows []wisprDictation, includeRaw b
 			fmt.Fprintf(&md, "<details><summary>Raw transcript</summary>\n\n%s\n\n</details>\n\n", strings.TrimSpace(r.RawText))
 		}
 	}
-	attrs := map[string]string{"day": day, "dictations": strconv.Itoa(len(rows))}
+	attrs := map[string]string{"day": day, "dictations": strconv.Itoa(len(rows)), "recorded_at": newest.UTC().Format(time.RFC3339)}
 	if words > 0 {
 		attrs["num_words"] = strconv.Itoa(words)
 	}
