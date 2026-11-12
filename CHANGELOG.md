@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.239.0)
+
+### Added
+
+- **Resolver for `review.perspectives_source`** that fetches a `kind: ReviewPerspectives` document behind the same seed-only allowlist as `definition_source`, and keeps the last-known-good set with a visible warning when a later fetch fails or a document no longer validates, instead of silently falling back to the built-in perspectives. The review relay, dispatch, head aggregation and `${REVIEW_PERSPECTIVES}` now read the resolved set via `ReviewConfig.EffectivePerspectives()`; with no `perspectives_source` configured, behaviour is unchanged. ([#17987](https://github.com/hivecommons/hive/issues/17987), part of [#17975](https://github.com/hivecommons/hive/issues/17975))
+
+### Fixed
+
+- Activity monitor: the column header now follows the workflow model the rows wear — a repository bound to a custom model gets that model's column names over its chevrons (ungrouped pages are partitioned by model with a header per run), instead of hive-default's "PR in progress / Merge queue" names (#18002).
+- Kicks are no longer refused wholesale as "prompt injection" because of the ioscan exfiltration canary: the preamble is now a labelled `=== HIVE HARNESS HEADER` block that states it is the operator's own configuration and not a task (Claude Sonnet 5 via the Copilot CLI refused ~65% of one hosted supervisor's kicks on the old `SECURITY CANARY:` marker), and a kick that is still refused with a canary in front is re-delivered once without it instead of burning the cadence slot (#18012).
+- Stop contributor automerge passes cleanly when a client hand-over or shutdown cancels an in-flight sweep, without filing a spurious failure report.
+- Spoke self-upgrade now installs the hosted template's startupProbe (10-min budget) on a hive Deployment that has none, not only raises an undersized one — pre-#9692 spokes on pull-only clusters were liveness-killed 90s into a forge-blocked boot and crash-looped (grey dot) for the length of the GHE outage; the fleet status-dot hovers now carry a colour legend and the grey dot says "no heartbeat in 5 min".
+
 ## 2026-11-12 (v5.238.1)
 
 ### Fixed
