@@ -3299,6 +3299,13 @@
     .repo-fork-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; border: 1px solid color-mix(in srgb, var(--blue) 45%, transparent); background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); cursor: help; }
     .repo-fork-pill.off { border-color: var(--border); background: transparent; color: var(--text-muted); }
     .repo-paused-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); cursor: help; }
+    /* project.reference_repos (#18015): a studied-not-worked repo. Muted
+       border, no stats block, one tier chip. */
+    .repo-card-reference { border-style: dashed; opacity: 0.85; }
+    .repo-reference-provider { color: var(--muted); }
+    .repo-reference-link { color: inherit; text-decoration: none; }
+    .repo-reference-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; border: 1px solid color-mix(in srgb, var(--indigo) 45%, transparent); background: color-mix(in srgb, var(--indigo) 12%, transparent); color: var(--indigo); cursor: help; }
+    .repo-reference-note { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-2); }
     .repo-pause-btn { flex: 0 0 auto; margin-left: 0; font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-automerge-toggle { flex: 0 0 auto; white-space: nowrap; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
     /* margin: 0 beats .config-toggle's margin-bottom (that rule is declared
@@ -19959,6 +19966,62 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-cols ham-wf-cols" aria-hidden="true" data-ham-workflow="${esc(wf.name + '@' + wf.version)}"><div class="ham-strip-row"><ol class="ham-strip">${cols}</ol><span class="ham-since">since</span></div></div>`;
     }
 
+    // Pure: the key a row's model resolves to ('' for hive-default).
+    function stageTrackerWorkflowKey(wf) { return wf ? wf.name + '@' + wf.version : ''; }
+
+    // Pure: the column header the rows under it follow — the model's own
+    // when they are bound to one, else hive-default's. The one path for
+    // the sticky header and the run headers, so the names above a strip
+    // are always the names its chevrons wear (hivecommons/hive#18002:
+    // hive-default's "PR in progress / Merge queue" over model chevrons).
+    function stageTrackerColumnsHeaderHtml(wf, stages) {
+      return wf ? stageTrackerWorkflowHeaderHtml(wf) : stageTrackerHeaderHtml(stages);
+    }
+
+    // Pure: an ungrouped page's rows partitioned, stably and in first-seen
+    // order, by the model each row's repository follows: [{ wf, key, rows }].
+    // One run when every row follows the same model (or none does), so a
+    // hive-default page is left exactly as sorted.
+    function stageTrackerWorkflowRuns(rows, ctx) {
+      const runs = [];
+      const by = {};
+      for (const it of rows || []) {
+        const wf = stageTrackerWorkflowOf(ctx, it.repo);
+        const key = stageTrackerWorkflowKey(wf);
+        if (!by[key]) { by[key] = { wf, key, rows: [] }; runs.push(by[key]); }
+        by[key].rows.push(it);
+      }
+      return runs;
+    }
+
+    // Run headers are keyed under the group prefix so the selection and
+    // the reconcile treat them as headers, never as item rows.
+    const STAGE_TRACKER_WORKFLOW_HEADER_KEY_PREFIX = STAGE_TRACKER_GROUP_KEY_PREFIX + 'workflow:';
+
+    // Pure: the page's keyed rows with a column header spliced in before
+    // each run after the first (the first run sits under the sticky
+    // header). A run whose lead row the train/preparation wrappers did not
+    // keep by key gets no header rather than a misplaced one.
+    function stageTrackerWorkflowRunHeaderRows(rows, runs, stages) {
+      const out = (rows || []).slice();
+      (runs || []).slice(1).forEach(run => {
+        const lead = run.rows[0] ? stageTrackerItemKey(run.rows[0]) : null;
+        const at = out.findIndex(r => r.key === lead);
+        if (at >= 0) out.splice(at, 0, { key: STAGE_TRACKER_WORKFLOW_HEADER_KEY_PREFIX + (run.key || 'hive-default'), html: stageTrackerColumnsHeaderHtml(run.wf, stages) });
+      });
+      return out;
+    }
+
+    // Under a group header: a bound repository's own column header; a
+    // hive-default repository's only when the sticky header above is a
+    // model's (ctx.leadWorkflow), so its rows are not read against that
+    // model's names. Collapsed groups draw none.
+    function stageTrackerGroupColumnsHtml(g, groupWorkflow, stages, ctx) {
+      if (!g || g.collapsed) return '';
+      if (groupWorkflow) return stageTrackerWorkflowHeaderHtml(groupWorkflow);
+      return ctx && ctx.leadWorkflow ? stageTrackerHeaderHtml(stages) : '';
+    }
+
     // One row's strip under its model: done before the anchored column,
     // active at it (the stage's own word from `stages`, or the column
     // label), todo after. An uncovered stage lights the first column amber
@@ -20939,7 +21002,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ${stageTrackerRepoChipHtml(g.repo, chipCtx)}<span class="ham-group-name">${esc(g.repo)}</span>${groupWorkflow ? stageTrackerWorkflowBadgeHtml(groupWorkflow) : ''}
         <span class="ham-group-n">${g.count} ${g.count === 1 ? 'row' : 'rows'}</span>${attn}
         ${groupWorkflow ? '' : `<span class="ham-group-dist" role="img" aria-label="${esc(g.cols.map((c, i) => stageTrackerColName(i, stages) + ' ' + c).join(', '))}">${dist}</span>`}
-      </div>${groupWorkflow && !g.collapsed ? stageTrackerWorkflowHeaderHtml(groupWorkflow) : ''}`;
+      </div>${typeof stageTrackerGroupColumnsHtml === 'function' ? stageTrackerGroupColumnsHtml(g, groupWorkflow, stages, ctx) : ''}`;
     }
 
     // Row = title line (number, title, chips, since) + thin strip. Non-active
@@ -23572,6 +23635,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
           : stageTrackerPage(ordered, f);
       if (!tv && page.page !== f.page) f.page = page.page;
+      // Rows bound to a workflow model wear its columns (tracker-workflows.js),
+      // so the header over them must be that model's too (hivecommons/hive#18002:
+      // hive-default names over cncf-techdocs chevrons). Ungrouped, the
+      // page is partitioned by model (stable, first-seen order) with a
+      // header per run; grouped, a group header carries its own columns
+      // when the sticky header is another model's. The sticky header is
+      // the lead row's. A hive with no binding resolves one run, no model.
+      const wfRuns = !grouping && ctx.workflows && typeof stageTrackerWorkflowRuns === 'function' ? stageTrackerWorkflowRuns(page.rows, ctx) : null;
+      if (wfRuns && wfRuns.length > 1) page.rows = wfRuns.reduce((all, run) => all.concat(run.rows), []);
+      const leadRepo = page.rows.length ? (grouping ? page.rows[0].group.repo : page.rows[0].repo) : '';
+      ctx.leadWorkflow = typeof stageTrackerWorkflowOf === 'function' ? stageTrackerWorkflowOf(ctx, leadRepo) : null;
       // A folded secondary is not filtered out: it counts toward the total.
       if (foldedShared > 0) page.total += foldedShared;
       // The rows this render draws (this page, group headers aside), for
@@ -23647,7 +23721,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         : itemRow(pageItems[i], i);
       const trainRows = stageTrackerTrainRows(page.rows, rowOf, typeof stageTrackerTrainWhere === 'function' ? stageTrackerTrainWhere(ordered, d.items) : null);
       const inlineRows = typeof stageTrackerPreparationInlineRows === 'function' ? stageTrackerPreparationInlineRows(trainRows, pageItems, stages) : trainRows;
-      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }].concat(inlineRows), nowMs, it => stageTrackerRowHtml(it, stages, ctx));
+      const runRows = wfRuns && wfRuns.length > 1 ? stageTrackerWorkflowRunHeaderRows(inlineRows, wfRuns, stages) : inlineRows;
+      const headHtml = typeof stageTrackerColumnsHeaderHtml === 'function' ? stageTrackerColumnsHeaderHtml(ctx.leadWorkflow, stages) : stageTrackerHeaderHtml(stages);
+      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: headHtml }].concat(runRows), nowMs, it => stageTrackerRowHtml(it, stages, ctx));
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       // Selection is keyed on the row, never baked into its HTML, so a kept
@@ -36858,10 +36934,35 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.changesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
           </div>${pillsHtml}${hfRepoSectionHtml(r)}
         </div>`;
-      }).join(''));
+      }).join('') + renderReferenceRepoCards(status.referenceRepos, hostLabel));
       hfRenderEditor();
       hfRenderPinned();
       hfRenderCrossRepo();
+    }
+
+    /**
+     * project.reference_repos (#18015): repos outside the project the hive may
+     * study. Deliberately minimal — a name and a tier chip, no stats, no ACMM,
+     * no pause/swarm controls — so they are legible as "not managed here".
+     * Hidden while a pill or project filter is active (they have no work items
+     * to match).
+     */
+    function renderReferenceRepoCards(refs, hostLabel) {
+      if (!Array.isArray(refs) || !refs.length) return '';
+      if (repoPillFilterActive(repoPillFilterState()) || overviewProjectFilterState()) return '';
+      const base = window._githubBaseUrl || 'https://github.com';
+      return refs.map(rr => {
+        const full = String(rr.full || '');
+        const tier = String(rr.tier || 'read-only');
+        const tip = tier === 'read-only'
+          ? 'Reference repo: agents may clone and read it; every write is refused by the proxy.'
+          : `Reference repo: agents may clone and read it, and may open ${tier.replace('+', ' and ')} (never merge, push to the default branch, label, assign, review, or close others' items).`;
+        return `<div class="repo-card repo-card-reference" data-repo="${esc(full)}">
+          <div class="repo-provider-label repo-reference-provider" title="This repo lives on ${esc(hostLabel)} and is outside this project">${esc(hostLabel)}</div>
+          <div class="repo-name"><a class="repo-reference-link" href="${esc(base + '/' + full)}" target="_blank" rel="noopener" title="${esc(full)}">${esc(full)}</a><span class="repo-header-badges"><span class="repo-reference-pill" title="${esc(tip)}">📚 reference · ${esc(tier)}</span></span></div>
+          <div class="repo-reference-note">Outside this project — studied, not worked. No work items, no ACMM evaluation.</div>
+        </div>`;
+      }).join('');
     }
 
     /**

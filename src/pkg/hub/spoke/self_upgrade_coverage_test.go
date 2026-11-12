@@ -269,12 +269,14 @@ func TestSwitchImageSelfSuccess(t *testing.T) {
 // template each time — so the mid-init pod was killed and replaced on every
 // beat (observed live: 18 ReplicaSets in 8 minutes, none reaching Ready). A
 // Deployment whose containers all already carry the target must not be
-// PATCHed again.
+// PATCHed again. The fixture carries the template startupProbe: a hive
+// container with NO probe is the one case that still warrants a (one-time,
+// annotation-free) PATCH mid-flight — see TestSelfUpgradeBackfillsStartupProbe.
 func TestSwitchImageSelfDoesNotRestampWhenAlreadyAtImage(t *testing.T) {
 	const target = "ghcr.io/hivecommons/hive:candidate"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"` + target + `"}],"initContainers":[{"name":"init","image":"` + target + `"}]}}}}`))
+			w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"` + target + `","startupProbe":{"failureThreshold":118}}],"initContainers":[{"name":"init","image":"` + target + `"}]}}}}`))
 			return
 		}
 		t.Errorf("deployment already at %s, but a %s was issued — that re-rolls the pod mid-init", target, r.Method)

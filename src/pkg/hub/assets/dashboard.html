@@ -4127,6 +4127,9 @@
         rows + viewAll;
     }
 
+    /* One-line colour key appended to the status-dot hovers so the dot is
+       self-explaining. Mirrors the healthBadge() palette + the offline grey. */
+    var STATUS_DOT_LEGEND = 'Dot colours: green ok \u00b7 amber warning/stale \u00b7 red degraded/critical \u00b7 blue upgrading \u00b7 grey offline (no heartbeat >5 min)';
     function healthBadge(h) {
       var hp = h.health || {};
       var st = hp.status || 'unknown';
@@ -4227,6 +4230,7 @@
       if (hns) {
         lines.push('ns: ' + hns);
       }
+      lines.push(STATUS_DOT_LEGEND);
       var access = h.access || [];
       var dotMarkup = isUpgrading && !isDeleting
         ? '<span class="online-dot upgrading" style="margin-right:var(--sp-0)"></span>'
@@ -8919,13 +8923,18 @@
         // cluster. Built defensively \u2014 every part is skipped when its field is
         // empty \u2014 and escaped with escAttr since it lands inside a quoted title.
         var offlineDotTitle = (function() {
-          var parts = ['Offline'];
+          /* Say WHAT grey means, not just "Offline": the hub flips a row
+             offline when no heartbeat arrives within maxHeartbeatAge (5 min,
+             pkg/hub/server.go), which operators kept reading as "unknown
+             health" rather than "the spoke stopped talking". */
+          var parts = ['Offline \u2014 no heartbeat received in the last 5 min (grey dot)'];
           var ns = hiveNamespace(h);            // 'hive-hosted-<id>' or '' for local
           if (ns) parts.push('ns: ' + ns);
           var cluster = h.clusterName || h.clusterId || '';
           if (cluster) parts.push('cluster: ' + cluster);
           if (h.lastHeartbeat) parts.push('last seen: ' + fmtUserTS(h.lastHeartbeat));
           else if (h.offlineSince) parts.push('offline since: ' + fmtUserTS(h.offlineSince));
+          parts.push(STATUS_DOT_LEGEND);
           return parts.join('\n');
         })();
         var dot = h.upgrading

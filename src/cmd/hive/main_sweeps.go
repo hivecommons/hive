@@ -2263,7 +2263,9 @@ func applyHumanDecisionLabels(ctx context.Context, cfg *config.Config, ghClient 
 // silently becomes the current time would re-open every verdict in the
 // artifact at once — the opposite of the narrow, deliberate correction this
 // setting exists for.
-// reviewPerspectiveSet resolves the hive's configured review perspectives.
+// reviewPerspectiveSet resolves the hive's configured review perspectives: the
+// set linked from review.perspectives_source when one has resolved, otherwise
+// the inline review.perspectives (ReviewConfig.EffectivePerspectives).
 //
 // A bad configuration falls back to the built-in set and says so, rather than
 // disabling review. Silently reviewing nothing would look identical to a healthy
@@ -2273,7 +2275,7 @@ func reviewPerspectiveSet(cfg *config.Config, logger *slog.Logger) review.Perspe
 	if cfg == nil {
 		return review.PerspectiveSet{}
 	}
-	set, err := review.NewPerspectiveSet(cfg.Review.Perspectives, cfg.Review.PerspectivePrompts)
+	set, err := review.NewPerspectiveSet(cfg.Review.EffectivePerspectives())
 	if err != nil {
 		if logger != nil {
 			logger.Warn("review.perspectives is invalid; reviewing with the built-in set until it is fixed",

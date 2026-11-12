@@ -99,6 +99,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := validateWorkflowBindings(c.Project.WorkflowBindings); err != nil {
 		return err
 	}
+	if err := c.validateReferenceRepos(); err != nil {
+		return err
+	}
 	if _, err := c.Ioscan.Policy(); err != nil {
 		return err
 	}
