@@ -1,1 +1,0 @@
-- Fixed repeated "pluk run directory setup failed" warnings when an existing `/var/run/pluk` log or command directory owned by another uid already has the shared group access.
