@@ -35,6 +35,12 @@ func HeadlessCredentialEnv(backend string, src HeadlessCredentialSources) ([]str
 			return []string{copilotTokenEnvVar + "=" + tok}, nil
 		}
 	case "claude":
+		// Same precedence as agentEnvPairs: the operator's long-lived token
+		// (HIVE_CLAUDE_OAUTH_TOKEN) wins over the short-lived credentials
+		// snapshot.
+		if tok := claude.OperatorToken(); tok != "" {
+			return []string{"CLAUDE_CODE_OAUTH_TOKEN=" + tok}, nil
+		}
 		if tok := claude.ReadAccessToken(claude.CredentialsPath); tok != "" {
 			return []string{"CLAUDE_CODE_OAUTH_TOKEN=" + tok}, nil
 		}
