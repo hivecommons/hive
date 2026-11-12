@@ -1101,6 +1101,13 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 // is both a JSON fallback for browsers without EventSource and the same payload
 // the SSE "hello" frame carries, so the queue renders even if the stream drops.
 func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
+	// ?controls=1 adds the stored pinned order and hold set the queue controls
+	// edit. They are the controls' own state, so they take the controls' own
+	// gate (owner/read-write); without the parameter the GET stays public.
+	controls := contributeQueueControlsRequested(r)
+	if controls && !s.requireContributorWrite(w, r) {
+		return
+	}
 	queue := []ReadyQueueItem{}
 	resp := map[string]any{
 		"queue_total": 0,
@@ -1147,6 +1154,9 @@ func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
 			// editor pre-filled without a second round-trip.
 			resp["interests"] = profile.LabelInterests
 		}
+	}
+	if controls {
+		resp["controls"] = s.contributeQueueControls()
 	}
 	jsonResponse(w, resp)
 }

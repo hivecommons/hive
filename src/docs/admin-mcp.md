@@ -368,6 +368,7 @@ capped at 256 KiB.
 | `stage_tracker_read`        | The Activity monitor (see note 3)                                                                                                                                          |
 | `delegated_decision_status` | Status and outcome of the latest "Let hive decide" on one item; needs `owner`, `repo`, `number`                                                                            |
 | `review_queue`              | The your-turn items (the dashboard inbox's N plus M), parked issues included, in `inbox_rank` order, each with its verb, reason code and reason; optional `repo`, `offset` |
+| `contributor_queue`         | The contributor ready-work queue as the Operations card shows it (see note 6); optional `withheld`, `offset`                                                               |
 
 **Settings, knowledge and advice**
 
@@ -419,6 +420,19 @@ capped at 256 KiB.
      (RFC 3339 with offset), `min_level`, `include`, `exclude`, `cursor`.
    - Not capped by `limit`. See
      [design/admin-mcp.md](design/admin-mcp.md#log-read).
+6. **`contributor_queue`:** reads `GET /api/contribute/queue`, the request
+   the Operations card (Contribute → Operations → Contributor Queue) makes,
+   so its rows are the card's rows in the card's order: pinned issues first
+   in pinned order, then the default order, held issues last with `held` and
+   `held_reason`. Each row carries its `position`.
+   - Anyone who can read the card can read this; the GET is public.
+   - `withheld: true` adds `withheld[]`, the candidates the queue keeps out,
+     each with the gate that refused it, and `withheld_total`. That list is
+     bounded by the hive's own queue limit, not by `limit`.
+   - `offset` pages the rows past `limit`, with `next_offset`.
+   - If you have label interests on the hive, matching rows float to the
+     front, as the card shows them to you.
+   - To change the queue, see [Contributor queue](#contributor-queue).
 
 **Meta tools**
 
@@ -721,6 +735,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                                                                       |
 | Activity monitor row actions | see below                                                                                                                                                                                                             |
 | Budget                       | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                                                                                      |
+| Contributor queue            | `contributor_queue.order`, `contributor_queue.hold`, `contributor_queue.hold_clear`                                                                                                                                   |
 | Contributors                 | `contributor.trust`, `contributor.agent_role`, `contributor.agent_role_grants`, `contributor.revoke`, `contributor.requeue`, `contributor.delete`                                                                     |
 | Backup                       | `backup.create` (the archive itself is not returned through MCP)                                                                                                                                                      |
 | Circuit breaker              | `circuit_breaker.engage`, `circuit_breaker.release`                                                                                                                                                                   |
@@ -927,6 +942,61 @@ endpoint as Settings → Features → *Let hive decide*. It is owner only.
   refused; the model's key stays on the governor reviewer endpoint.
 - It starts no decision and merges nothing. A delegated decision does what it
   did before.
+
+### Contributor queue
+
+The three `contributor_queue.*` operations are the Operations card's queue
+controls (Contribute → Operations → Contributor Queue). Each goes through the
+endpoint the card uses, so it needs the owner or read-write role, as on the
+card: the endpoint refuses anyone else, and a read-only caller is refused at
+`write_preview`. Every change is recorded in the audit log, as a card change
+is. None of them assigns, labels, approves or merges anything.
+
+- `contributor_queue.order` sets the pinned order (`contribute_queue_order`)
+  through `PUT /api/contribute/queue/order`. Pass exactly one of:
+  - `order`: the whole pinned list, for example
+    `{"order": ["acme/widgets#12", "acme/widgets#7"]}`. `[]` removes every pin.
+  - `pin` with an optional `position`: one key inserted, or moved if it is
+    already pinned, at that place in the pinned list. `position` counts from
+    `0` (the default, the front); a number past the end puts it last.
+  - `unpin`: one key removed from the pinned list.
+- `contributor_queue.hold` holds or resumes one issue through
+  `POST /api/contribute/queue/hold`. It takes `key`, `held` (`true` holds,
+  `false` resumes) and, when holding, an optional `reason` of at most 200
+  characters, shown in the card's on-hold badge. A held issue is never offered
+  until it is resumed.
+- `contributor_queue.hold_clear` resumes every held issue through
+  `POST /api/contribute/queue/hold/clear`. It takes no arguments.
+
+What the previews show and check:
+
+- **Before and after.** The order endpoint replaces the whole list, so the
+  preview reads the stored pinned list (including pins that are not in the
+  queue now) and shows it before and after. `pin` and `unpin` edit that list,
+  so you never retype the rest. The hold preview shows the issue's hold and
+  reason before and after; the `hold_clear` preview lists every issue it will
+  resume, with its reason.
+- **Keys.** A key must be `owner/repo#number`. It must also be one the queue
+  knows: a queue row, a withheld row, or a key already pinned or held. Any
+  other key is refused in the preview and nothing is written.
+- **Stale previews.** `write_confirm` reads the stored list again. For
+  `contributor_queue.order`, the preview is stale when the pinned list is not
+  exactly the one the preview showed, because someone saved another order in
+  between and confirming would overwrite their edit unseen. For
+  `contributor_queue.hold_clear`, it is stale when the hold set changed,
+  because confirming would resume an issue the preview did not list. A stale
+  confirm is refused and nothing is written; preview again. Issues entering or
+  leaving the queue (work assigned, a cooldown ending) do not make a preview
+  stale.
+- **Widening.** Pinning changes only which admissible issue is offered first,
+  so it is not widening. Resuming an issue is: it can be offered to
+  contributors again once it passes admission.
+
+The previews read the stored lists through
+`GET /api/contribute/queue?controls=1`, which answers owner and read-write
+only. A hive too old to answer it says so, and the preview is refused.
+
+### Activity monitor row actions
 
 The Activity monitor's row actions:
 
