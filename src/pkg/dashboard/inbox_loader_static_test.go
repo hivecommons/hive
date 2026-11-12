@@ -8,7 +8,7 @@ import (
 
 // The Inbox loader must never leave the "Loading inbox…" placeholder up: a
 // non-OK /api/inbox response renders an error state, and an OK response
-// with zero items renders the empty-state text (#17891).
+// with zero items renders the empty-state text (#17918).
 func TestInboxLoaderHandlesNonOKAndEmpty(t *testing.T) {
 	src, err := os.ReadFile("static-src/js/inbox.js")
 	if err != nil {

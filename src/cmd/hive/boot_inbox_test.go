@@ -10,7 +10,7 @@ import (
 )
 
 // With no knowledge connectors configured the Inbox service must still boot
-// so GET /api/inbox returns an empty list, not a 404 (#17891).
+// so GET /api/inbox returns an empty list, not a 404 (#17918).
 func TestBootInboxWithoutConnectors(t *testing.T) {
 	b := &boot{cfg: &config.Config{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	b.bootKnowledgeConnectors(bootKnowledgeDeps{})

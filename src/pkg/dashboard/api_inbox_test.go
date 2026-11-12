@@ -80,7 +80,7 @@ func decodeInboxList(t *testing.T, body []byte) InboxListResponse {
 func TestInboxEndpoints(t *testing.T) {
 	s, deps := apiServer(t)
 	// No service: still 200 with an empty list so the panel renders its
-	// empty state instead of "Loading inbox…" forever (#17891).
+	// empty state instead of "Loading inbox…" forever (#17918).
 	rec0 := doGet(s, "/api/inbox")
 	if rec0.Code != http.StatusOK {
 		t.Fatalf("inbox without service = %d, want 200: %s", rec0.Code, rec0.Body.String())

@@ -91,7 +91,7 @@ func newKnowledgeConnectorSyncer(entries []config.KnowledgeConnector, reg *conne
 func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
 	// The Inbox always boots, even with no connectors, so GET /api/inbox
 	// answers 200 with an empty list and the panel renders its empty state
-	// (#17891) instead of waiting forever on a 404.
+	// (#17918) instead of waiting forever on a 404.
 	b.bootInbox(knowledge.BaseDir())
 	s, err := newKnowledgeConnectorSyncer(b.cfg.Knowledge.Connectors, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger, b.inboxAfterSync)
 	if err != nil {
