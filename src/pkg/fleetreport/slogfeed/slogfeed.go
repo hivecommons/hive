@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -134,6 +134,13 @@ func (h *Handler) feed(r slog.Record) {
 		}
 	}
 	h.observe(class, key, r.Message, diagnostics(r, h.attrs))
+}
+
+// signedCommitOwnershipSkip is the reconciler's deliberate refusal to rewrite
+// a foreign or merge commit. The warning and PR remedy remain visible; repeated
+// skips across PRs are not a runtime defect.
+func signedCommitOwnershipSkip(r slog.Record) bool {
+	return r.Level == slog.LevelWarn && strings.TrimSpace(r.Message) == "signed-commit reconciler: skipped; the PR keeps an unsigned commit"
 }
 
 // canceledError applies the existing cancellation exclusion to structured
