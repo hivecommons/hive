@@ -2433,7 +2433,7 @@
       html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
       html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
-      if (type === 'plaud') html += kbPlaudAuthLine(c.name);
+      if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
@@ -2572,7 +2572,7 @@
       }
       let text;
       if (a.error) text = 'Plaud: ' + a.error;
-      else if (a.pending) text = 'Plaud: waiting for authorization' + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">open the Plaud authorization page ↗</a> (remote hive: forward port 8199 first)' : ' (URL pending…)');
+      else if (a.pending) text = 'Plaud: waiting for authorization' + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">open the Plaud authorization page ↗</a>' : ' (URL pending…)');
       else if (a.connected) text = 'Plaud: connected' + (a.account ? ' as <strong>' + escapeHtml(a.account) + '</strong>' : '');
       else text = 'Plaud: not connected' + (a.message ? ' — ' + escapeHtml(a.message) : '');
       return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '" data-connected="' + (a.connected ? '1' : '0') + '">' + text + '</div>';

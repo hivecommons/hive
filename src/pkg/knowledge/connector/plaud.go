@@ -48,6 +48,12 @@ type plaudConnector struct {
 	dial     mcpDialer
 	now      func() time.Time
 	stateDir string
+	// home is the MCP server's HOME (token store); empty inherits the
+	// process HOME.
+	home string
+	// callbackBase is where a pasted OAuth redirect is forwarded while a
+	// login session is alive (the MCP server's fixed localhost listener).
+	callbackBase string
 
 	mu    sync.Mutex
 	login *plaudLogin
@@ -79,6 +85,8 @@ func newPlaudConnector(cfg ConnectorConfig, deps Deps) (Connector, error) {
 		command = plaudDefaultCommand
 	}
 	c.dial = stdioMCPDialer(command, home)
+	c.home = home
+	c.callbackBase = plaudCallbackBase
 	return c, nil
 }
 

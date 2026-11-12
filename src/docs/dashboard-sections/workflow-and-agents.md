@@ -202,6 +202,20 @@ The facts Hive has learned about your projects, where they came from, and how mu
 
 **What it is good for.** Check it when a worker keeps making the same mistake. Correct the wrong fact here.
 
+## Inbox
+
+Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.
+
+**What it tells you.** Every recording a voice source (Plaud, Wispr Flow) syncs is already a Knowledge fact. The Inbox lists the ones you have not triaged yet, with the source, date, length and a short excerpt.
+
+**How the numbers are worked out.**
+
+- The sidebar count and the summary count items with no destination yet and not marked "Knowledge only".
+- Each item shows one pill per destination it was sent to: queued, running, filed (with a link) or failed.
+- Auto-routing rules run once per new item after a sync; the first matching rule wins.
+
+**What it is good for.** Record an idea on your recorder, then turn it into an RFC with child issues (→ RFC), a dibs idea (→ dibs), or just keep it searchable (Knowledge only) without leaving the dashboard. See [Inbox and voice sources](../inbox-voice-sources.md).
+
 **Example.** A fact says tests run with `make test`, but your project uses `go test`. You edit the fact.
 
 **When it appears.** Always.

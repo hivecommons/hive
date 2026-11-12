@@ -4,7 +4,7 @@
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','inbox-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';

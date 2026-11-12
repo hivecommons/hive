@@ -618,3 +618,9 @@ project.workflow_bindings[].name # set through the per-repo workflow select on S
 project.workflow_bindings[].repo # see project.workflow_bindings[].name
 project.workflow_bindings[].version # see project.workflow_bindings[].name
 workflow.label_gc # operator safety knob for model-label garbage collection on rebind; yaml-only, no Settings control planned (RFC #17620)
+inbox.sources[] # which voice connector types feed the Inbox; defaults to every configured plaud/wisprflow connector, yaml-only (Inbox RFC)
+inbox.rules[].source # auto-routing rules are edited as whole rows in Inbox → Auto-routing via POST /api/inbox/settings, not leaf-path controls (Inbox RFC)
+inbox.rules[].title_prefix # see inbox.rules[].source
+inbox.rules[].tag # see inbox.rules[].source
+inbox.rules[].destination # see inbox.rules[].source
+inbox.rules[].repo # see inbox.rules[].source
