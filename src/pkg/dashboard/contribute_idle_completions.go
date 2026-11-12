@@ -42,8 +42,17 @@ const (
 	// chrome; the agent printed no verdict.
 	idleCompletionNoConclusion = "agent exited without a conclusion"
 	// idleCompletionCompleteNoReason: the agent printed `HIVE_VERDICT: complete`
-	// with no PR, and the relay passed no sentence along.
-	idleCompletionCompleteNoReason = "agent reported complete without a pull request and gave no reason"
+	// with no PR, and the relay passed no sentence along. The hub cannot say
+	// the agent gave none: a relay older than idleReasonWireFields discards
+	// the agent's sentence, so the wording stays with what the hub knows. (A
+	// newer relay whose agent really gave none says so itself, in its own
+	// verdict_reason.)
+	idleCompletionCompleteNoReason = "agent reported complete without a pull request; the relay passed no reason along"
+	// idleCompletionBlockedNoReason: the agent reported `blocked` and said
+	// nothing about what the issue waits on (empty, or only footer lines and
+	// punctuation), so the hub demoted the verdict to idle
+	// (reclassifyToolingBlockedVerdict). The agent did not report complete.
+	idleCompletionBlockedNoReason = "agent reported blocked without saying what it waits on"
 	// idleCompletionNotGiven: a relay that sends neither a reason nor a
 	// completion signal (one predating both fields, or the headless path).
 	idleCompletionNotGiven = "no reason given"
@@ -209,6 +218,21 @@ func (h *ContributeWSHub) bookIdleCompletionLocked(key, prURL, verdict, reporter
 	return false
 }
 
+// dropIdleCompletionLocked forgets the idle reason on record for key and
+// reports whether there was one. The failure and release paths call it
+// (contribute_cooldowns.go): a task that failed, or was let go, on the item
+// after the idle completion means that completion is no longer what the last
+// relay did, and the completion cooldown it booked can still be running
+// (recordTaskFailureKey leaves completedTasks alone). Callers must hold
+// completedMu.
+func (h *ContributeWSHub) dropIdleCompletionLocked(key string) bool {
+	if _, had := h.idleCompletions[key]; !had {
+		return false
+	}
+	delete(h.idleCompletions, key)
+	return true
+}
+
 // idleCompletionKey returns the live idle reason on record for key. Read-only: an
 // expired record is reported as absent and left for the next save to drop.
 func (h *ContributeWSHub) idleCompletionKey(key string) (idleCompletionRecord, bool) {
@@ -243,8 +267,9 @@ func withheldCooldownIdleItem(item AdmissionWithheldItem, rec idleCompletionReco
 }
 
 // StageTrackerLastIdle is the Activity monitor's note on an issue row whose
-// latest contributor-relay task ended with no pull request and no verdict:
-// the reason on record, who reported it and when. Text is the clause the
+// latest contributor-relay task ended with no pull request and no verdict,
+// while the completion cooldown that task booked is still running: the
+// reason on record, who reported it and when. Text is the clause the
 // row's tooltip shows, the same one the withheld list ends its completion
 // cooldown row with.
 type StageTrackerLastIdle struct {
@@ -255,12 +280,29 @@ type StageTrackerLastIdle struct {
 }
 
 // stageTrackerLastIdle returns the last-idle note for an issue, or nil when
-// the hub has none on record.
+// the hub has none on record or the completion cooldown that idle booked is
+// no longer in force.
+//
+// The cooldown is the note's lifetime, by construction: the row shows it under
+// exactly the condition the withheld list shows its completion cooldown row
+// (isTaskInCooldownKey), so a note cannot sit on a row for the ledger's whole
+// retention with nothing saying how old it is. isTaskInCooldownKey answers
+// false when the operator has switched the completion cooldown off; while
+// that stays off the Activity monitor shows no note at all, and the reason is
+// still in the hub log, the run record and the ledger.
+//
+// The two reads each take completedMu on their own and are never nested. A
+// completion booked between them either replaces the record or removes it, so
+// the pair cannot show a reason for a cooldown it does not belong to.
 func (s *Server) stageTrackerLastIdle(repo string, number int) *StageTrackerLastIdle {
 	if s == nil || s.contributeHub == nil || repo == "" || number <= 0 {
 		return nil
 	}
-	rec, ok := s.contributeHub.idleCompletionKey(worksource.Ref{Repo: repo, Number: number}.Key())
+	key := worksource.Ref{Repo: repo, Number: number}.Key()
+	if !s.contributeHub.isTaskInCooldownKey(key) {
+		return nil
+	}
+	rec, ok := s.contributeHub.idleCompletionKey(key)
 	if !ok {
 		return nil
 	}

@@ -4685,11 +4685,15 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// issue is re-offered, and lift the `blocked` label the relay
 			// applied so the fleet's workflow gate does not park it until a
 			// human notices (hivecommons/hive#11775, #11776).
+			blockedWithoutReason := false
 			if downgraded, ok := reclassifyToolingBlockedVerdict(verdict, verdictReason); ok {
 				h.logger.Warn("[contribute-ws] blocked verdict reclassified: reason is the contributor's own tooling or says nothing, not an external dependency",
 					"username", s.contributor.profile.GitHubUsername,
 					"task", msg.TaskID,
 					"verdict_reason", verdictReason)
+				// ok means the verdict WAS blocked; which of the two grounds
+				// demoted it is read here, while it is still certain.
+				blockedWithoutReason = isBlockedVerdictReasonless(verdictReason)
 				verdict = downgraded
 				if completedTask != nil {
 					go h.releaseToolingBlockedIssue(completedTask, s.contributor.profile.GitHubUsername, verdictReason)
@@ -4724,13 +4728,22 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// fills in what the completion signal says when the relay sent
 			// none, so the log line and the run record below say why the
 			// issue was dropped (contribute_idle_completions.go).
-			if verdict == completionVerdictIdle && verifiedPR == "" && verdictReason == "" {
-				if strings.TrimSpace(msg.PRURL) != "" {
+			if verdict == completionVerdictIdle && verifiedPR == "" {
+				switch {
+				case blockedWithoutReason:
+					// The agent said blocked and nothing about what it waits
+					// on; the hub demoted that to idle above. Whatever the
+					// reason field held (nothing, or a footer) says nothing,
+					// so the record says what the agent reported.
+					verdictReason = idleCompletionBlockedNoReason
+				case verdictReason != "":
+					// The relay's own reason stands.
+				case strings.TrimSpace(msg.PRURL) != "":
 					// The relay did report a pull request; the hub booked
 					// the completion without it. Say that, not that the
 					// agent stopped without one.
 					verdictReason = idleCompletionReportedPRReason(prDetail.Verified, prDetail.Reason)
-				} else {
+				default:
 					verdictReason = normalizeIdleCompletionReason("", msg.CompletionSignal)
 				}
 			}
