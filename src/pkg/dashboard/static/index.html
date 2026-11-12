@@ -30271,11 +30271,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        by the Go server under the same /terminal prefix so openTerminal()'s
        handoff code and assertion cookie apply unchanged. openshell agents
        (#17645) run each kick in a gateway-owned sandbox and use the same
-       viewer, which streams the sandbox's log instead. */
+       viewer, which streams the sandbox's log instead; substrate agents
+       (#17777) run each kick in a Substrate actor and the viewer streams the
+       kick's output from the actor's bridge. */
     const JOB_SANDBOX_RUNTIME = 'job';
     const OPENSHELL_SANDBOX_RUNTIME = 'openshell';
+    const SUBSTRATE_SANDBOX_RUNTIME = 'substrate';
     function sandboxRuntimeWithoutTmux(sandboxRuntime) {
-      return sandboxRuntime === JOB_SANDBOX_RUNTIME || sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME;
+      return sandboxRuntime === JOB_SANDBOX_RUNTIME || sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME
+        || sandboxRuntime === SUBSTRATE_SANDBOX_RUNTIME;
     }
     function agentUsesJobTerminal(a) {
       return !!a && sandboxRuntimeWithoutTmux(a.sandboxRuntime);
@@ -30291,6 +30295,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function terminalLinkTitle(a, tmuxTitle) {
       if (!agentUsesJobTerminal(a)) return tmuxTitle;
+      if (a.sandboxRuntime === SUBSTRATE_SANDBOX_RUNTIME) {
+        return 'Stream this agent\'s kick output and Substrate actor state (read-only: it runs in a Substrate actor, not a tmux session)';
+      }
       return a.sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME
         ? 'Stream the log of this agent\'s OpenShell sandbox (read-only: it runs in a gateway-owned sandbox, not a tmux session)'
         : 'Stream the log of this agent\'s sandbox Job pod (read-only: it runs as a Kubernetes Job, not a tmux session)';
@@ -45484,6 +45491,12 @@ function burnAreaChart() {
         html += '<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbImportDocFromModal">Import</button>';
         html += '</div></div></details>';
 
+        html += '<details class="kb-sources-add"><summary class="summary-label">🎙️ Plaud voice notes</summary>';
+        html += '<div class="stack kb-sources-form">';
+        html += '<div class="muted-xs">Make your Plaud Note recordings (Plaud summary + transcript) searchable knowledge via the free official Plaud MCP server. $0 beyond your Plaud plan; sign-in is Plaud OAuth in your browser.</div>';
+        html += '<div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenPlaudIntegration">Configure in Integrations</button></div>';
+        html += '</div></details>';
+
         html += '<details open class="kb-sources-add"><summary class="summary-label">📚 Import from Context7</summary>';
         html += '<div class="stack kb-sources-form">';
         html += '<div class="muted-xs">Search Context7 for library documentation (e.g. "vllm", "next.js", "kubernetes").</div>';
@@ -45930,9 +45943,11 @@ function burnAreaChart() {
       html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
       html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
+      if (type === 'plaud') html += kbPlaudAuthLine(c.name);
       html += '</div>';
       if (owner) {
         html += '<div class="kb-integration-actions">';
+        if (type === 'plaud') html += kbPlaudAuthButtons(c.name);
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationEdit" data-arg0="' + escapeHtml(c.name) + '">Edit</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationToggle" data-arg0="' + escapeHtml(c.name) + '">' + (c.enabled ? 'Disable' : 'Enable') + '</button>';
@@ -45969,6 +45984,7 @@ function burnAreaChart() {
       html += '<label class="muted-note">Credential reference<input class="kb-search-box mt-2" type="text" data-kb-kc-auth-value value="' + escapeHtml(authVal) + '" placeholder="TOKEN_ENV or /run/secrets/token" autocomplete="off"></label></div>';
       html += '<div class="kb-integration-scope-grid">' + kcScopeFieldsHTML(type, c.scope || {}) + '</div>';
       if (type === 'context7') html += kbContext7FormExtras(c);
+      if (type === 'plaud') html += '<p class="muted-xs" data-kb-plaud-note>Leave the credential source as None: Plaud signs in with its own OAuth flow (Connect on the entry above) and keeps the token in the MCP server\'s own store. Requires Node.js ≥ 20 on the hive host and costs nothing beyond your Plaud plan.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
       html += '<div class="row-end kb-integration-form-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationValidate">Validate</button><button type="button" class="hv-btn btn-primary btn-sm" data-action="kbIntegrationSave">Save</button></div></div>';
@@ -46052,6 +46068,86 @@ function burnAreaChart() {
       await kcSyncNow(name);
       setTimeout(() => kbLoadIntegrationsModal(_kbIntegrationSelected), 1500);
     }
+
+    // ── Plaud sign-in (OAuth through the Plaud MCP server) ──
+    // Cached per connector name; loaded lazily when the Plaud card renders.
+    const _kbPlaudAuth = {};
+    function kbPlaudAuthLine(name) {
+      const a = _kbPlaudAuth[name];
+      if (!a) {
+        setTimeout(() => kbPlaudAuthLoad(name, false), 0);
+        return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '">Plaud: checking sign-in…</div>';
+      }
+      let text;
+      if (a.error) text = 'Plaud: ' + a.error;
+      else if (a.pending) text = 'Plaud: waiting for authorization' + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">open the Plaud authorization page ↗</a> (remote hive: forward port 8199 first)' : ' (URL pending…)');
+      else if (a.connected) text = 'Plaud: connected' + (a.account ? ' as <strong>' + escapeHtml(a.account) + '</strong>' : '');
+      else text = 'Plaud: not connected' + (a.message ? ' — ' + escapeHtml(a.message) : '');
+      return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '" data-connected="' + (a.connected ? '1' : '0') + '">' + text + '</div>';
+    }
+    function kbPlaudAuthButtons(name) {
+      const a = _kbPlaudAuth[name] || {};
+      const n = escapeHtml(name);
+      let html = '';
+      if (a.connected) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudDisconnect" data-arg0="' + n + '">Disconnect</button>';
+      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (a.pending ? ' disabled' : '') + '>Connect Plaud</button>';
+      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '" title="Re-check sign-in with Plaud">Check</button>';
+      return html;
+    }
+    async function kbPlaudAuthLoad(name, refresh) {
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth' + (refresh ? '?refresh=1' : ''));
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+      } catch (e) {
+        _kbPlaudAuth[name] = { error: e.message };
+      }
+      if (document.querySelector('[data-kb-plaud-auth="' + CSS.escape(name) + '"]')) kbRenderIntegrationsModal();
+    }
+    async function kbPlaudRefreshAuth(name) {
+      showToast('Checking Plaud sign-in…', 'info');
+      await kbPlaudAuthLoad(name, true);
+    }
+    async function kbPlaudConnect(name) {
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/connect', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+        kbRenderIntegrationsModal();
+        if (data.connected) showToast('Plaud connected' + (data.account ? ' as ' + data.account : ''), 'success');
+        else if (data.auth_url) { showToast('Open the Plaud authorization link shown on the card, then click Check.', 'info'); kbPlaudPollAuth(name, 0); }
+        else showToast('Plaud login started; the authorization URL will appear on the card shortly.', 'info');
+        if (!data.connected && !data.auth_url) kbPlaudPollAuth(name, 0);
+      } catch (e) {
+        showToast('Plaud connect failed: ' + e.message, 'error');
+      }
+    }
+    // Poll the cached state while a login is pending (URL arrival, completion).
+    function kbPlaudPollAuth(name, attempt) {
+      if (attempt > 60) return;
+      setTimeout(async () => {
+        await kbPlaudAuthLoad(name, false);
+        const a = _kbPlaudAuth[name] || {};
+        if (a.connected) { showToast('Plaud connected' + (a.account ? ' as ' + a.account : ''), 'success'); return; }
+        if (a.pending) kbPlaudPollAuth(name, attempt + 1);
+      }, 5000);
+    }
+    async function kbPlaudDisconnect(name) {
+      if (!(await hiveConfirm('Sign out of Plaud? Synced recordings stay in the vault until you remove the connector.'))) return;
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/disconnect', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+        kbRenderIntegrationsModal();
+        showToast('Plaud disconnected', 'success');
+      } catch (e) {
+        showToast('Plaud disconnect failed: ' + e.message, 'error');
+      }
+    }
+    function kbOpenPlaudIntegration() { _kbIntegrationSelected = 'plaud'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     // ── Vault Management ──
 
     function kbOpenVaults() {
@@ -54898,6 +54994,7 @@ function burnAreaChart() {
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', lazy: true, text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
+      { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Plaud voice notes connector', key: 'knowledge.connectors', lazy: true, text: 'plaud voice notes recordings transcript summary mcp oauth connect npx @plaud-ai/mcp command since_days max_files include_audio tags knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path publish to repository knowledge.bead_synthesizer.publish.enabled knowledge.bead_synthesizer.publish.repo knowledge.bead_synthesizer.publish.path knowledge.bead_synthesizer.publish.base_branch knowledge.bead_synthesizer.publish.mode knowledge.bead_synthesizer.publish.cadence knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
       { tab: 'Forge App', section: 'Forge App', label: 'GitHub API quota, PR scans and authorship', key: 'github.api_reserve', lazy: true, text: 'github api quota reserve critical agent reserve floor pr detail cache ttl etag cache size mb entries conditional request 304 graphql batch page size app authored prs bot signed commits forge api url docs installation oauth client token github.api_reserve github.api_critical github.agent_reserve_floor github.etag_cache_max_mb github.etag_cache_max_entries github.pr_detail_ttl_s github.graphql_pr_batch github.graphql_pr_batch_page_size github.app_authored_prs github.app_signed_commits github.forge github.api_url github.docs_installation_id github.oauth_client_id github.token github.key_file' },
     ];
@@ -56178,7 +56275,7 @@ function burnAreaChart() {
     }
 
     // ---- Settings → Knowledge → Connectors (#11075) ----
-    const KB_CONNECTOR_TYPE_ORDER = ['confluence', 'context7', 'document', 'git', 'github-wiki', 'google-drive', 'notion', 'repo-wiki', 'sharepoint'];
+    const KB_CONNECTOR_TYPE_ORDER = ['confluence', 'context7', 'document', 'git', 'github-wiki', 'google-drive', 'notion', 'plaud', 'repo-wiki', 'sharepoint'];
     const KC_TYPE_INFO = {
       'confluence': { label: 'Confluence', description: 'Sync Confluence Cloud or Data Center pages into knowledge facts.' },
       'context7': { label: 'Context7', description: 'Sync documentation for default Context7 libraries. The API key is a reference to an environment variable or secret file; the value is never shown.' },
@@ -56187,6 +56284,7 @@ function burnAreaChart() {
       'github-wiki': { label: 'GitHub Wiki', description: 'Clone and index one or more GitHub wiki repositories.' },
       'google-drive': { label: 'Google Drive', description: 'Sync Google Docs, Sheets, markdown, and text files from Drive folders or shared drives.' },
       'notion': { label: 'Notion', description: 'Sync Notion pages and database rows visible to an internal integration.' },
+      'plaud': { label: 'Plaud voice notes', description: 'Sync Plaud Note recordings (Plaud summary + transcript) through the free official Plaud MCP server. Sign-in is Plaud OAuth in your browser; hive never stores the token.' },
       'repo-wiki': { label: 'Repo wiki', description: 'Sync .hive/wiki (or another directory) from one or more GitHub repositories.' },
       'sharepoint': { label: 'SharePoint / OneDrive', description: 'Sync markdown, text, and HTML files from SharePoint document libraries or OneDrive drives.' }
     };
@@ -56202,6 +56300,7 @@ function burnAreaChart() {
       // Generic glyphs (no vendor): document sheet and open book, drawn in-house.
       'context7': 'M4 4h3v16H4zm5 0h3v16H9zm5.2.6 2.9-.8 3.8 15.5-2.9.8z',
       'document': 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 12h8v1.6H8zm0 3.2h8v1.6H8zm0 3.2h5V20H8z',
+      'plaud': 'M12 2a3.5 3.5 0 0 0-3.5 3.5v6a3.5 3.5 0 0 0 7 0v-6A3.5 3.5 0 0 0 12 2zm-6 9.5h1.8a4.2 4.2 0 0 0 8.4 0H18a6 6 0 0 1-5.1 5.93V20h3v1.8H8.1V20h3v-2.57A6 6 0 0 1 6 11.5z',
       'repo-wiki': 'M4 3h7.2c1.1 0 2 .55 2.8 1.3.8-.75 1.7-1.3 2.8-1.3H20v16h-3.2c-1 0-1.95.4-2.8 1.1V22h-4v-1.9c-.85-.7-1.8-1.1-2.8-1.1H4zm2 2v12h1.2c1.3 0 2.5.4 3.6 1.1V6.2C10.4 5.55 9.6 5 8.8 5zm12 0h-1.2c-.8 0-1.6.55-2 1.2v12.1c1.1-.7 2.3-1.1 3.6-1.1H18z'
     };
     function kbIntegrationIcon(type) {
@@ -56217,6 +56316,7 @@ function burnAreaChart() {
       'github-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'master']],
       'google-drive': [['folder_ids', 'Folder IDs', 'folder123, folder456'], ['shared_drive_ids', 'Shared drive IDs', 'drive123'], ['include_mime', 'Include MIME groups', 'docs,md,txt']],
       'notion': [['root_page_ids', 'Root page IDs', '1a2b3c4d5e6f47a8b9c0d1e2f3a4b5c6'], ['database_ids', 'Database IDs', '0f1e2d3c-4b5a-4968-8776-655443322110'], ['include_archived', 'Include archived', 'false'], ['max_pages', 'Max pages', '2000'], ['full_sync_every', 'Full sync every', '10']],
+      'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@latest'], ['since_days', 'Days back on first sync', '30'], ['max_files', 'Max recordings per sync', '200'], ['include_audio', 'Include 24h audio link', 'false'], ['query', 'Name filter (optional)', 'standup'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['home', 'Token store HOME (optional)', '/data/knowledge/connector-state/plaud/home']],
       'repo-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'v5'], ['dir', 'Wiki directory', '.hive/wiki']],
       'sharepoint': [['drive_ids', 'Drive IDs', 'b!drive-id'], ['site_ids', 'Site IDs', 'contoso.sharepoint.com,site-id,web-id'], ['folder_path', 'Folder path', '/Docs/Sub'], ['include_files', 'Include file extensions', '.md,.txt,.html']]
     };

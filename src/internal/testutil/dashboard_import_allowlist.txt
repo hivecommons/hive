@@ -8,9 +8,11 @@
 # seam or be added here with PR justification; removed imports must be
 # deleted so the ratchet tightens. Entries are sorted.
 # workflowmodel: /api/workflows handlers compile lifecycle models (Compile, Profile diagnostics) and the tracker emits per-repo workflow columns; the store and bindings already route through Dependencies (hivecommons/hive#17620 P2).
+# egressmark: deployment_upgrade.go dials the in-cluster Kubernetes API for the hive's own rollout; the dial must carry the forced-egress SO_MARK or nodes without xt_owner redirect it into the MITM proxy (hivecommons/hive#17817).
 github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agentparse
 github.com/hivecommons/hive/crux/claude
+github.com/hivecommons/hive/crux/egressmark
 github.com/hivecommons/hive/crux/kubejob
 github.com/hivecommons/hive/crux/logscrub
 github.com/hivecommons/hive/crux/paneclass

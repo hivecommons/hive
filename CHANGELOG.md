@@ -11,6 +11,33 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.227.0)
+
+### Added
+
+- The dashboard's read-only terminal pane now covers `sandbox.runtime: substrate` agents: it shows the kick's Substrate actor (name, state, worker SPIFFE id, suspend/resume transitions) and streams the kick's output live from the actor bridge's `/run`.
+
+### Fixed
+
+- Hub "idle with work queued" no longer flags agents the governor will never kick: agents with no (or a paused) cadence in the current governor mode are skipped, and spokes now report the slot-to-slot gap for times/cron cadences so a `09:00,12:00,15:00 weekdays` agent is not alerted every evening and all weekend.
+- Spoke self-upgrade no longer fails with `reading startup probe before upgrade … EOF` on nodes without the `xt_owner` netfilter module (IBM Cloud IKS/ROKS): the hive's in-cluster Kubernetes API clients now SO_MARK their sockets like the proxy's own upstream dials, so the forced-egress REDIRECT exempts them instead of routing them into the MITM proxy (shared `crux/egressmark`).
+
+### Security
+
+- Hub `POST /api/marketplace/refresh?repo=` from a spoke (heartbeat bearer) now refuses with 403 any repository the hub does not already track (the CNCF corpus plus `HIVE_HUB_MARKETPLACE_EXTRA_REPOS`); previously any registered spoke could make the hub fetch an arbitrary GitHub repository with the hub's own GitHub identity and publish it to the shared catalogue under the hub's name. Hub admins can still refresh any repository.
+- The Substrate sandbox runtime no longer follows symlinks when unpacking a workspace pulled from an actor, so a sandboxed kick cannot write outside the local workspace on the hive host.
+
+## 2026-11-12 (v5.226.0)
+
+### Added
+
+- Dashboard: agent cards now show the Substrate (and OpenShell) sandbox preflight warnings for the agent's runtime, exposed as `sandbox_warnings` in `/api/status` from the boot-time sandbox posture check (hivecommons/hive#17779).
+
+### Fixed
+
+- The hub heartbeat `app_keys_held` collector no longer re-reads and re-parses every per-app GitHub App key file on each beat (#17797): fingerprints are cached by file size and mtime, so a slow `/data` volume stops pushing it past the 10s collect budget and flooding the "hub heartbeat collect budget exceeded" WARN.
+- Repeated `review swarm kick not delivered` warnings for the same PR head and cause are now logged once (then at debug) instead of every cycle.
+
 ## 2026-11-12 (v5.225.0)
 
 ### Added
