@@ -586,6 +586,7 @@ func (m *Manager) checkKickRefusal(agent *AgentProcess, line string) {
 				"pattern", pattern,
 				"line", reason,
 			)
+			m.retryRefusedCanaryKick(agent)
 			return
 		}
 	}
