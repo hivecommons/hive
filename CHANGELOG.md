@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-12 (v5.235.0)
+
+### Added
+
+- Wispr Flow facts include recording timestamps and a transcript section for voice Inbox ingestion.
+
 ## 2026-11-12 (v5.234.1)
 
 ### Fixed
