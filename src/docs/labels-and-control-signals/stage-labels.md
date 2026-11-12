@@ -1256,7 +1256,8 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    in-place adoption their push makes the hive yield (above).
    The contribute page's "PRs awaiting rework" list for a relay shows
    `adopting (contributor offline)` on a nudged PR whose relay connection is
-   stale, and `adopted by hive` once the PR is in 074.
+   stale; once the PR is in 074 it is the hive's and leaves that relay's
+   list.
 5. Backpressure — the per-contributor fix budget. Capacity = the relay's
    advertised `max_parallel_fixes` (fix sub-sessions beside the primary),
    clamped by `contribute.max_parallel_fixes` (default 2); an unadvertised

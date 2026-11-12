@@ -180,3 +180,79 @@ func TestStdioMCPDialerSpawnsProcess(t *testing.T) {
 		t.Fatalf("HOME dir must be created: %v", err)
 	}
 }
+
+func TestMCPChildEnvDropsHiveSecrets(t *testing.T) {
+	base := []string{
+		"PATH=/usr/bin",
+		"HOME=/srv/hive",
+		"LC_ALL=C.UTF-8",
+		"NODE_OPTIONS=--max-old-space-size=512",
+		"npm_config_cache=/tmp/npm",
+		"HTTPS_PROXY=http://proxy:3128",
+		"NODE_EXTRA_CA_CERTS=/etc/hive/ca.pem",
+		"PLAUD_REGION=eu",
+		"DASHBOARD_AUTH_TOKEN=owner-token",
+		"HIVE_DASHBOARD_TOKEN=owner-token",
+		"HIVE_TERMINAL_KEY=terminal-key",
+		"HIVE_HEARTBEAT_KEY=heartbeat-key",
+		"HIVE_HUB_SECRET=hub-secret",
+		"HIVE_UPSTREAM_PROXY_URL=http://user:pass@corp:3128",
+		"HIVE_GITHUB_TOKEN=ghs_x",
+		"GITHUB_TOKEN=ghp_x",
+		"ANTHROPIC_API_KEY=sk-ant",
+		"LINEAR_CLIENT_SECRET=lin",
+		// Allowlisted prefix but credential-shaped: must still be dropped.
+		"NODE_AUTH_TOKEN=npm-token",
+		"PLAUD_SECRET=plaud",
+		"malformed-no-equals",
+	}
+	got := mcpChildEnv(base)
+	want := []string{
+		"PATH=/usr/bin",
+		"HOME=/srv/hive",
+		"LC_ALL=C.UTF-8",
+		"NODE_OPTIONS=--max-old-space-size=512",
+		"npm_config_cache=/tmp/npm",
+		"HTTPS_PROXY=http://proxy:3128",
+		"NODE_EXTRA_CA_CERTS=/etc/hive/ca.pem",
+		"PLAUD_REGION=eu",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("mcpChildEnv =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// The spawned MCP server must not see the hub-injected credentials the hive
+// process carries (hivecommons/hive#17843): the same secrets crux/agent
+// strips from agent panes.
+func TestStdioMCPDialerDoesNotLeakHiveEnv(t *testing.T) {
+	t.Setenv("DASHBOARD_AUTH_TOKEN", "dash_auth_leaked")
+	t.Setenv("HIVE_TERMINAL_KEY", "terminal_key_leaked")
+	t.Setenv("HIVE_UPSTREAM_PROXY_URL", "http://u:p@corp:3128")
+	t.Setenv("PLAUD_REGION", "eu")
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "server.sh")
+	// Answers initialize, then reports the env it sees on the first tools/call.
+	body := "read line\necho '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'\nread line\nread line\n" +
+		"printf '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"dash=%s term=%s proxy=%s region=%s path_set=%s\"}]}}\\n' " +
+		"\"$DASHBOARD_AUTH_TOKEN\" \"$HIVE_TERMINAL_KEY\" \"$HIVE_UPSTREAM_PROXY_URL\" \"$PLAUD_REGION\" \"${PATH:+yes}\"\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dial := stdioMCPDialer("sh "+script, filepath.Join(dir, "home"))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c, err := dial(ctx)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+	got, err := c.Call(ctx, "env", nil)
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if got != "dash= term= proxy= region=eu path_set=yes" {
+		t.Fatalf("child env = %q; hub secrets must be absent, PLAUD_* and PATH present", got)
+	}
+}

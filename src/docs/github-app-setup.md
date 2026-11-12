@@ -208,11 +208,12 @@ that has not approved a permission update is the one that still looks fine, and
 GitHub keeps an App on its old permissions until an org owner accepts, so a
 partly approved fleet is otherwise invisible.
 
-Verdicts are computed where a GitHub call has failed and on the dashboard's
-**Re-check** button, not on every eval cycle, so this adds no API calls to a
-healthy hive. To read a specific installation's grants on demand — for example
-to confirm the demo/canary install — press Re-check on that hive and read the
-line above from its logs.
+Permission verdicts are computed where a GitHub call has failed and on the
+dashboard's **Re-check** button, not on every eval cycle. Repository coverage
+is checked separately on the self-heal loop, including on a healthy hive, as
+described below. To read a specific installation's grants on demand — for
+example to confirm the demo/canary install — press Re-check on that hive and
+read the line above from its logs.
 
 ## Install and configure Hive
 
@@ -311,6 +312,22 @@ resulting dead redirect is cosmetic. Adding a repository modifies the existing
 installation rather than creating a new one, so the `installation_id` in that
 redirect is one the hive already holds — the failed page does not mean App
 authentication is broken.
+
+An installation can authenticate successfully while excluding a private
+repository under **Only select repositories**. When adding a repo in the
+dashboard, use the reported installation settings link to add it to the
+selection, then re-check access. For repos already configured, the Forge App
+banner identifies missing repository coverage; update the installation and
+re-check it. A rejected advisory issue creation can then be retried without
+waiting for the next UTC day.
+
+Boot coverage checks have a time limit; a timeout is inconclusive. The
+background self-heal loop rechecks installation coverage every two minutes,
+including on a healthy hive, using the cached installation token. Each check
+walks up to 10 pages of `GET /installation/repositories`. If that bounded
+listing is incomplete, the dashboard checks the repository's App installation
+directly. Temporary GitHub errors still block adding the repository until a
+check succeeds.
 
 ## `/gh-setup` flow
 

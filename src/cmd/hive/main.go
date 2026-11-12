@@ -1782,6 +1782,18 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 			}
 		}
 	}
+	// Installation-level permissions do not establish that every configured
+	// repository is selected, including when advisory reads happen to succeed.
+	if b.ghClient != nil {
+		coverageCtx, cancelCoverage := context.WithTimeout(b.ctx, advisoryEnsureBudget)
+		raise, diag, state := deps.classifyRepoCoverage(coverageCtx, b.ghClient.AppAuth(), b.cfg.Project.Org, appCoverageRepos(b.cfg), b.logger)
+		cancelCoverage()
+		if raise {
+			b.githubAppRequired = true
+			b.githubAppDiag, b.githubAppState = diag, state
+			b.logger.Warn("GitHub App installation does not cover every configured repo", "state", state.String(), "detail", diag)
+		}
+	}
 
 	b.advisoryStore = advisory.NewStore()
 
@@ -3576,7 +3588,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				// as "app not installed / no read" — sending the operator after
 				// credentials that were never broken. Checking first means the
 				// specific, correct message wins over the generic one.
-				if raise, diag, state := classifyGitHubAppRepoCoverage(b.ctx, b.ghClient.AppAuth(), b.cfg.Project.Org, b.cfg.Project.Repos, b.logger); raise {
+				if raise, diag, state := deps.classifyRepoCoverage(b.ctx, b.ghClient.AppAuth(), b.cfg.Project.Org, appCoverageRepos(b.cfg), b.logger); raise {
 					b.dashSrv.SetGitHubAppPermIssue(diag)
 					b.dashSrv.SetGitHubAppState(state.String())
 					b.logger.Warn("github app recheck: installation does not cover every configured repo",
@@ -3665,12 +3677,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	//     so a later transient write failure that re-set the flag was never
 	//     re-evaluated — the banner stuck until the pod was restarted.
 	//
-	// The loop therefore runs for the lifetime of the process (it does NOT
-	// return after the first success) and, whenever the banner is currently
-	// showing, re-runs the SAME read+write verification as the manual "Re-check"
-	// button (githubAppRecheckFn, which calls diagnoseGitHubApp) and clears
-	// the flag on success. When the banner is not showing there is nothing to do,
-	// so the tick is a cheap no-op that makes no GitHub API calls.
+	// The loop runs for the lifetime of the process. It detects selection
+	// changes even when no banner is showing, and re-runs the manual re-check
+	// while a banner is present. Inconclusive coverage checks never raise one.
 	{
 		primaryRepo := b.cfg.Project.PrimaryRepo
 		if primaryRepo == "" && len(b.cfg.Project.Repos) > 0 {
@@ -3678,7 +3687,15 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		}
 		if primaryRepo != "" {
 			deps.startSelfHeal(b.ctx, func() {
-				// Nothing to heal unless the banner is showing.
+				if !b.dashSrv.IsGitHubAppRequired() && b.ghClient != nil {
+					if raise, diag, state := deps.classifyRepoCoverage(b.ctx, b.ghClient.AppAuth(), b.cfg.Project.Org, appCoverageRepos(b.cfg), b.logger); raise {
+						b.dashSrv.SetGitHubAppRequired(true)
+						b.dashSrv.SetGitHubAppPermIssue(diag)
+						b.dashSrv.SetGitHubAppState(state.String())
+						b.logger.Warn("github app self-heal: installation does not cover every configured repo", "state", state.String(), "detail", diag)
+						return
+					}
+				}
 				if !b.dashSrv.IsGitHubAppRequired() {
 					return
 				}
