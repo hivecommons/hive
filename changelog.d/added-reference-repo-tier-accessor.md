@@ -1,0 +1,1 @@
+- `config.ProjectConfig` gains `ReferenceRepoTier(slug)` and `ValidateReferenceRepos()` accessors over `project.reference_repos`, so callers holding only the project block can read a reference repo's write tier (#18018).

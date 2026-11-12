@@ -99,3 +99,41 @@ func TestReferenceReposValidationRunsFromValidate(t *testing.T) {
 		t.Fatalf("Validate should surface the reference_repos error, got %v", err)
 	}
 }
+
+func TestReferenceRepoTierAccessor(t *testing.T) {
+	c := referenceRepoTestConfig(t, `
+    - hivecommons/docs
+    - repo: hivecommons/hive
+      write: [issues, prs]
+    - repo: hivecommons/site
+      write: [prs]
+`)
+	if err := c.Project.ValidateReferenceRepos(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	tier, ok := c.Project.ReferenceRepoTier("HiveCommons/Docs")
+	if !ok || tier != ReferenceTierReadOnly || tier.String() != "read-only" {
+		t.Fatalf("docs: tier=%v ok=%v", tier, ok)
+	}
+	tier, ok = c.Project.ReferenceRepoTier("hivecommons/hive")
+	if !ok || !tier.Issues || !tier.PRs || tier.String() != "issues+prs" {
+		t.Fatalf("hive: tier=%v ok=%v", tier, ok)
+	}
+	tier, _ = c.Project.ReferenceRepoTier("hivecommons/site")
+	if tier.Issues || !tier.PRs || tier.String() != "prs" {
+		t.Fatalf("site: tier=%v", tier)
+	}
+	if _, ok := c.Project.ReferenceRepoTier("hivecommons/nope"); ok {
+		t.Fatal("unknown slug must report ok=false")
+	}
+	if _, ok := c.Project.ReferenceRepoTier("cncf/techdocs"); ok {
+		t.Fatal("authorized repo must not report a reference tier")
+	}
+	if err := c.Project.ValidateReferenceRepos(); err != nil {
+		t.Fatalf("ValidateReferenceRepos: %v", err)
+	}
+	bad := referenceRepoTestConfig(t, "    - docs\n")
+	if err := bad.Project.ValidateReferenceRepos(); err == nil {
+		t.Fatal("ValidateReferenceRepos must reject a bare name")
+	}
+}

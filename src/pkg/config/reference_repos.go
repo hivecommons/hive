@@ -229,3 +229,55 @@ func (c *Config) ReferenceRepoSlugs() []string {
 	sort.Strings(out)
 	return out
 }
+
+// ReferenceRepoTier is the access tier of a reference repo as a pair of
+// flags, for callers that branch on the opt-ins rather than print them.
+type ReferenceRepoTier struct {
+	Issues bool
+	PRs    bool
+}
+
+// ReferenceTierReadOnly is the default tier: no writes.
+var ReferenceTierReadOnly = ReferenceRepoTier{}
+
+// String yields the same label as ReferenceRepo.WriteLabel: "read-only",
+// "issues", "prs" or "issues+prs".
+func (t ReferenceRepoTier) String() string {
+	switch {
+	case t.Issues && t.PRs:
+		return "issues+prs"
+	case t.Issues:
+		return ReferenceWriteIssues
+	case t.PRs:
+		return ReferenceWritePRs
+	}
+	return "read-only"
+}
+
+// Tier returns the entry's write opt-ins as a ReferenceRepoTier.
+func (r ReferenceRepo) Tier() ReferenceRepoTier {
+	return ReferenceRepoTier{Issues: r.WritesIssues(), PRs: r.WritesPRs()}
+}
+
+// ReferenceRepoTier returns the tier of the reference repo matching slug
+// ("owner/name", case-insensitive) and false when slug is not a reference
+// repo.
+func (p ProjectConfig) ReferenceRepoTier(slug string) (ReferenceRepoTier, bool) {
+	key := referenceRepoKey(slug)
+	if key == "" {
+		return ReferenceTierReadOnly, false
+	}
+	for _, r := range p.ReferenceRepos {
+		if referenceRepoKey(r.Repo) == key {
+			return r.Tier(), true
+		}
+	}
+	return ReferenceTierReadOnly, false
+}
+
+// ValidateReferenceRepos is the ProjectConfig-level entry point to the
+// reference_repos checks, for callers that hold a ProjectConfig rather than
+// the whole Config.
+func (p ProjectConfig) ValidateReferenceRepos() error {
+	return (&Config{Project: p}).validateReferenceRepos()
+}
