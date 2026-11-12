@@ -26,6 +26,7 @@ const (
 
 	requestDurationMetric = "crux.serve.request.duration"
 	requestCountMetric    = "crux.serve.requests"
+	authRejectionMetric   = "crux.serve.auth.rejections"
 
 	routeUnmatched = "unmatched"
 
@@ -38,16 +39,28 @@ const (
 	methodOther = "_OTHER"
 )
 
+// Why authenticate refused a request: a fixed enum, so the rejection counter's
+// reason attribute stays bounded.
+const (
+	rejectProjectForbidden  = "project_forbidden"
+	rejectNoTokenConfigured = "no_token_configured"
+	rejectInvalidToken      = "missing_or_invalid_token"
+)
+
 var (
+	attrReason      = attribute.Key("reason")
 	attrMethod      = attribute.Key("method")
 	attrRoute       = attribute.Key("route")
 	attrStatusClass = attribute.Key("status_class")
 )
 
-// requestMetrics holds the two serve request instruments.
+// requestMetrics holds the serve request and auth rejection instruments.
 type requestMetrics struct {
 	duration metric.Float64Histogram
 	requests metric.Int64Counter
+	// rejections counts requests authenticate refused with a 401. They never
+	// reach instrument, which sits inside authenticate.
+	rejections metric.Int64Counter
 }
 
 func newRequestMetrics(meter metric.Meter) requestMetrics {
@@ -58,7 +71,9 @@ func newRequestMetrics(meter metric.Meter) requestMetrics {
 		metric.WithDescription("Time crux serve took to answer a request."))
 	requests, _ := meter.Int64Counter(requestCountMetric,
 		metric.WithDescription("crux serve requests, by method, route pattern and status class."))
-	return requestMetrics{duration: duration, requests: requests}
+	rejections, _ := meter.Int64Counter(authRejectionMetric,
+		metric.WithDescription("crux serve requests refused by authentication, by reason."))
+	return requestMetrics{duration: duration, requests: requests, rejections: rejections}
 }
 
 var globalRequestMetrics = sync.OnceValue(func() requestMetrics {
@@ -166,6 +181,11 @@ func instrument(next http.Handler) http.Handler {
 		next.ServeHTTP(out, req)
 		returned = true
 	})
+}
+
+// recordAuthRejection counts one 401 with only the bounded reason attribute.
+func recordAuthRejection(ctx context.Context, reason string) {
+	globalRequestMetrics().rejections.Add(ctx, 1, metric.WithAttributes(attrReason.String(reason)))
 }
 
 func (m requestMetrics) record(ctx context.Context, d time.Duration, attrs []attribute.KeyValue) {
