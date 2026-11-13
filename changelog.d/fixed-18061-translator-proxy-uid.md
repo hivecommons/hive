@@ -1,1 +1,0 @@
-- Stop refusing inference requests from the hive's own UID (`dev`, 1001 on v5 pods) when private plain-HTTP forwarding is off, so agents without a per-agent UID reach their inference route again; the proxy UID is still refused when `HIVE_PROXY_ALLOW_PRIVATE_FORWARD=true` (#18061).
