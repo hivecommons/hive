@@ -45,6 +45,9 @@ type supersessionPRFixture struct {
 	// CrossRefs are the timeline's cross-referenced events from other PRs
 	// (the declared-supersession read, hivecommons/hive#15208).
 	CrossRefs []supersessionCrossRefFixture
+	// CreatedAt, when set, is the open PR's created_at in the listing. The
+	// GraphQL closer always merged at 2026-10-10T11:40:00Z.
+	CreatedAt time.Time
 }
 
 type supersessionCrossRefFixture struct {
@@ -182,6 +185,9 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 				"html_url": fmt.Sprintf("https://github.com/%s/%s/pull/%d", org, repo, pr.Number),
 				"head":     map[string]any{"sha": headSHA, "ref": "topic/supersession"},
 				"base":     map[string]any{"sha": baseSHA, "ref": baseRef},
+			}
+			if !pr.CreatedAt.IsZero() {
+				entry["created_at"] = pr.CreatedAt.Format(time.RFC3339)
 			}
 			if len(pr.Labels) > 0 {
 				labels := []map[string]any{}

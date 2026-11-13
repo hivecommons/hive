@@ -16,6 +16,17 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
   candidate issue is still open the PR is live work and the sweep leaves it
   alone — no notice, no label, no close (#12349: #12322, `Fixes` open
   #12117 and `Part of` closed #12080, was escalated to `needs-human`).
+- **A follow-up is not a duplicate.** A PR that was opened *after* the
+  merged PR landed, and whose own title or body names that merged PR (`#M`,
+  `owner/repo#M` or its pull request URL), was written knowing the issue was
+  already closed: it reverts, extends or finishes the merged change. That
+  merged PR does not supersede it, whatever the PR's wording about the closed
+  issue reads as (a body saying `the pin PR is #300 (it closed issue #299)`
+  parses as a closing claim on that issue). Both halves are required: a PR opened
+  before the merge that names it was a competing fix, and a PR opened after
+  the merge that does not name it lost the race without knowing; both are
+  still superseded. The same answer reaches the dashboard's
+  close-superseded decision and the pre-review and close-on-merge auto-close.
 - **Hive-authored PRs** are closed immediately at ACMM L6 when every file they
   touch was also touched by the merged PR. When they touch files the merged
   PR did not, the hive resolves the overlap itself instead of asking a person
@@ -59,6 +70,18 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
   `<!-- hive:pr-supersession-autoclose -->` comment naming the merged PR and
   its merge time, with "reopen if that's wrong". Reopening and commenting
   keeps it open on the next pass.
+- **A reopened PR that is no longer superseded loses the close mark.** When
+  the sweep finds an open PR wearing `hive/superseded` that it does not find
+  superseded (its body was corrected, the issue was reopened, it turned out
+  to be a follow-up), it rewrites its own notice in place to say the PR is
+  open again and not superseded (keeping the issue and merged-PR lines of
+  the earlier notice) and removes the label, in one pass
+  (`supersession-sweep-cleared-superseded`). The sweep's notice is the
+  attribution: a `hive/superseded` with no sweep notice beside it came from
+  another close (adoption, re-author, duplicate-fix) and is left to that
+  path. A held PR, a paused repository and a contributor's PR the write-back
+  gate refuses keep the mark. A reopened PR the sweep still finds
+  superseded is handled as before.
 - Every human-authored PR the sweep detects as superseded — whether or not
   automatic closure is on — is tagged `superseded` in the dashboard Review
   Queue with a link to the merged PR, and the inbox recommends **CLOSE**
