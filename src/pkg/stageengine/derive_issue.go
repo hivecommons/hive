@@ -43,8 +43,9 @@ func ReasonIsPartialCover(reason string) bool {
 	return strings.HasPrefix(strings.TrimSpace(reason), "open PR addresses part of it")
 }
 
-// ReasonDiscussionLabel reads the proposal / design label an 018
-// open-for-discussion reason names ("open for discussion: proposal"), or ""
+// ReasonDiscussionLabel reads the discussion signal an 018
+// open-for-discussion reason names ("open for discussion: proposal", or
+// "open for discussion: rfc title" for a title-only RFC), or ""
 // when the reason is not one, so presentation layers can name the label
 // without re-deriving the stage.
 func ReasonDiscussionLabel(reason string) string {

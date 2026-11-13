@@ -43,13 +43,16 @@ const issueStageGoldenDir = "testdata/issue_stage_goldens"
 // PR's stage as the shared store would answer it ("" = no resolver, "none"
 // = resolver with no record).
 type issueStageGoldenInput struct {
-	Repo      string   `json:"repo"`
-	Number    int      `json:"number"`
-	Labels    []string `json:"labels,omitempty"`
-	Bucket    string   `json:"bucket,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
-	ClaimKind string   `json:"claim_kind,omitempty"`
-	ClaimedBy string   `json:"claimed_by,omitempty"`
+	Repo   string   `json:"repo"`
+	Number int      `json:"number"`
+	Labels []string `json:"labels,omitempty"`
+	// Title mirrors IssueStageInput.Title: the RFC-title discussion signal
+	// (hivecommons/hive#18141) is the only derivation that reads it.
+	Title     string `json:"title,omitempty"`
+	Bucket    string `json:"bucket,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	ClaimKind string `json:"claim_kind,omitempty"`
+	ClaimedBy string `json:"claimed_by,omitempty"`
 	// PRStarted mirrors IssueStageInput.PRStarted: the live claim carries
 	// PR evidence (hivecommons/hive#13069).
 	PRStarted bool `json:"pr_started,omitempty"`
@@ -82,7 +85,7 @@ type issueStageGoldenCase struct {
 }
 
 func (in issueStageGoldenInput) toInput() IssueStageInput {
-	out := IssueStageInput{Repo: in.Repo, Number: in.Number, Labels: in.Labels, Bucket: in.Bucket, Reason: in.Reason, ClaimKind: in.ClaimKind, ClaimedBy: in.ClaimedBy, PRStarted: in.PRStarted, AuthorKind: authorkind.Kind(in.AuthorKind)}
+	out := IssueStageInput{Repo: in.Repo, Number: in.Number, Labels: in.Labels, Title: in.Title, Bucket: in.Bucket, Reason: in.Reason, ClaimKind: in.ClaimKind, ClaimedBy: in.ClaimedBy, PRStarted: in.PRStarted, AuthorKind: authorkind.Kind(in.AuthorKind)}
 	if in.ClaimPresent {
 		out.Claim = &IssueClaimContext{PRNumber: in.ClaimPR, PRRepo: in.ClaimPRRepo}
 	}
@@ -322,8 +325,23 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 		},
 		{
 			Name:  "regression/17054-rfc-epic-without-proposal-stays-010",
-			Note:  "The rule keys on labels only: hivecommons/hive#17054 as labelled on 2026-11-08 (Epic, no proposal / kind/design) is still 010; the stage engine never reads titles.",
-			Input: issueStageGoldenInput{Repo: repo, Number: 17054, Labels: []string{"help wanted", "Epic", HumanAckLabel, stagelabels.Actionable.Label()}},
+			Note:  "hivecommons/hive#17054 as labelled on 2026-11-08 (Epic, no proposal / kind/design) with no RFC title marker is still 010: the title rule (hivecommons/hive#18141) needs an [RFC] / RFC: opener.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 17054, Labels: []string{"help wanted", "Epic", HumanAckLabel, stagelabels.Actionable.Label()}, Title: "v5 to v6 agent runtime"},
+		},
+		{
+			Name:  "regression/18068-architecture-discussion-is-018",
+			Note:  "hivecommons/hive#18068 (a v6 design RFC labelled Epic + architecture discussion, body 'Hold - design discussion, not a task') derived 010 and showed as idle agent work; architecture discussion is a discussion label (hivecommons/hive#18141).",
+			Input: issueStageGoldenInput{Repo: repo, Number: 18068, Labels: []string{"Epic", "architecture discussion"}, Title: "Hold: v6 agent runtime design"},
+		},
+		{
+			Name:  "regression/18141-rfc-title-without-label-is-018",
+			Note:  "An RFC filed before any discussion label lands: an [RFC] title opener (after the leading emoji) is a discussion signal, reason 'rfc title' (hivecommons/hive#18141).",
+			Input: issueStageGoldenInput{Repo: repo, Number: 18141, Labels: []string{"Epic", "help wanted"}, Title: "📝 [RFC] v6 agent runtime"},
+		},
+		{
+			Name:  "regression/18141-rfc-title-human-claim-is-020",
+			Note:  "The title rule is not a gate either: a person's /claim on an [RFC]-titled issue stages 020.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 18141, Labels: []string{"Epic", stagelabels.OpenForDiscussion.Label()}, Title: "[RFC] v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: string(claims.KindHuman), ClaimedBy: "alice"},
 		},
 		{
 			Name:  "regression/17150-kind-design-is-018",
