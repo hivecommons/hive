@@ -13,6 +13,7 @@ type dashboardSettingsPayload struct {
 	AgentPollIntervalS  int                          `json:"agent_poll_interval_s"`
 	ExperimentLab       bool                         `json:"experiment_lab"`
 	StrategyLab         bool                         `json:"strategy_lab"`
+	SubscriptionGauge   bool                         `json:"subscription_gauge"`
 	AuthTokenConfigured bool                         `json:"auth_token_configured"`
 	AuthorizedUsers     []string                     `json:"authorized_users"`
 	AuthorizedUserNames map[string]string            `json:"authorized_user_names"`
@@ -43,6 +44,7 @@ func dashboardSettingsResponse(cfg *config.Config) dashboardSettingsPayload {
 		AgentPollIntervalS:  d.AgentPollIntervalS,
 		ExperimentLab:       d.ExperimentLab,
 		StrategyLab:         d.StrategyLab,
+		SubscriptionGauge:   d.SubscriptionGauge,
 		AuthTokenConfigured: strings.TrimSpace(d.AuthToken) != "",
 		AuthorizedUsers:     append([]string{}, d.AuthorizedUsers...),
 		AuthorizedUserNames: names,
@@ -72,6 +74,7 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 		AgentPollIntervalS  *int                          `json:"agent_poll_interval_s"`
 		ExperimentLab       *bool                         `json:"experiment_lab"`
 		StrategyLab         *bool                         `json:"strategy_lab"`
+		SubscriptionGauge   *bool                         `json:"subscription_gauge"`
 		AuthToken           *string                       `json:"auth_token"`
 		AuthorizedUsers     []string                      `json:"authorized_users"`
 		AuthorizedUserNames map[string]string             `json:"authorized_user_names"`
@@ -108,6 +111,9 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 	}
 	if body.StrategyLab != nil {
 		next.StrategyLab = *body.StrategyLab
+	}
+	if body.SubscriptionGauge != nil {
+		next.SubscriptionGauge = *body.SubscriptionGauge
 	}
 	if body.AuthToken != nil {
 		next.AuthToken = strings.TrimSpace(*body.AuthToken)
