@@ -121,12 +121,20 @@ func userSessionBaseEnv(environ []string, passthrough string) []string {
 }
 
 // proxyValueHasNoUserinfo reports whether a proxy setting is safe to copy.
-// NO_PROXY style lists have no scheme and pass; a URL passes only without
-// userinfo.
+// NO_PROXY style lists have no "@" and pass. Anything else is judged on its
+// authority component (after an optional scheme, up to the first path, query
+// or fragment delimiter) so a schemeless "user:pw@host:port" is caught too;
+// url.Parse would read "user" as a scheme and miss the credentials.
 func proxyValueHasNoUserinfo(v string) bool {
 	if !strings.Contains(v, "@") {
 		return true
 	}
-	u, err := url.Parse(v)
-	return err == nil && u.User == nil
+	rest := v
+	if i := strings.Index(rest, "://"); i >= 0 {
+		rest = rest[i+len("://"):]
+	}
+	if end := strings.IndexAny(rest, "/?#"); end >= 0 {
+		rest = rest[:end]
+	}
+	return !strings.Contains(rest, "@")
 }
