@@ -7966,6 +7966,15 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 </head>
 <body>
 <script>
+    // ── Shared dashboard auth headers ──
+    // Bearer-token header helper used across the dashboard. It lived in
+    // inception.js; the name is kept so existing callers do not change.
+    function _inceptionAuthHeaders() {
+      var h = {'Content-Type': 'application/json'};
+      var t = localStorage.getItem('hive-token');
+      if (t) h['Authorization'] = 'Bearer ' + t;
+      return h;
+    }
 // Code activity reader (#16475): changed regions as readable paragraphs on
 // the kiosk. Opt-in like Matrix and fed by the same authorized pull endpoint
 // (the shared SSE stream only nudges). Code is always set with textContent.
@@ -49270,20 +49279,12 @@ function burnAreaChart() {
     } else {
       initScrollStabilizer();
     }
-    // ── Inception section ──
-    let _inceptionState = null;
+    // ── Campaigns + Jam (Spek / inception campaign archive) ──
+    // Moved verbatim out of inception.js so the Campaigns and Jam UI survives
+    // the Inception wizard being replaced by the Sessions section. Plain
+    // top-level declarations, shared with inception.js through the single
+    // concatenated dashboard script; keep this file adjacent to it in manifest.txt.
     let _campaigns = [];
-
-
-    async function loadInceptionState() {
-      try {
-        const r = await fetch('/api/inception/state', {headers: _inceptionAuthHeaders()});
-        const data = await r.json();
-        _inceptionState = data.active ? data.state : null;
-        renderInception();
-        loadCampaigns();
-      } catch (e) { console.error('inception state load failed', e); }
-    }
 
     async function loadCampaigns() {
       try {
@@ -49300,58 +49301,6 @@ function burnAreaChart() {
           renderCampaignsList();
         }
       } catch (e) { console.error('campaign load failed', e); }
-    }
-
-    function renderInception() {
-      refreshSectionCardShell('inception-section');
-      setSectionSummary('inception-section', inceptionSectionSummary());
-      const panel = document.getElementById('inception-panel');
-      if (!panel) return;
-
-      let wizard = '';
-      if (!_inceptionState || !_inceptionState.phase) {
-        wizard = renderInceptionModeSelect();
-      } else {
-        switch (_inceptionState.phase) {
-          case 'capture':
-            if (_inceptionState.idea_text) {
-              wizard = renderInceptionProgress('idea') + renderInceptionWorking();
-            } else {
-              wizard = _inceptionState.mode === 'greenfield'
-                ? renderInceptionCapture()
-                : renderInceptionScanProgress();
-            }
-            break;
-          case 'clarify':
-            wizard = renderInceptionProgress('clarify') + renderInceptionClarify();
-            break;
-          case 'structure':
-            wizard = renderInceptionProgress('structure') + renderInceptionStructure();
-            break;
-          case 'scaffold':
-            wizard = renderInceptionProgress('scaffold') + renderInceptionScaffold();
-            break;
-          case 'complete':
-            wizard = renderInceptionProgress('complete') + renderInceptionComplete();
-            setTimeout(loadInceptionCompleteFiles, 100);
-            break;
-          default:
-            wizard = renderInceptionModeSelect();
-        }
-      }
-      // Rebuilding the panel resets its own scroll and the campaign filters;
-      // carry both across so refreshes don't move the reader (#11032).
-      const panelScrollTop = panel.scrollTop;
-      const campaignFilters = {};
-      panel.querySelectorAll('.campaigns-filters input').forEach(function(el) { campaignFilters[el.id] = el.value; });
-      panel.innerHTML = '<div class="inception-spektacular-note">Project inception runs on <a href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer">Spektacular</a>, a Hive Commons project.</div>' + renderCampaignsPanel() + '<div class="campaigns-card">' + wizard + '</div>';
-      Object.keys(campaignFilters).forEach(function(id) {
-        const el = document.getElementById(id);
-        if (el) { el.defaultValue = campaignFilters[id]; el.value = campaignFilters[id]; }
-      });
-      panel.scrollTop = panelScrollTop;
-      renderCampaignsList();
-      if (!_inceptionPollTimer) startInceptionPoll();
     }
 
     function renderCampaignsPanel() {
@@ -49720,6 +49669,71 @@ function burnAreaChart() {
         await loadCampaigns();
       } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
+    // ── Inception section ──
+    let _inceptionState = null;
+
+
+    async function loadInceptionState() {
+      try {
+        const r = await fetch('/api/inception/state', {headers: _inceptionAuthHeaders()});
+        const data = await r.json();
+        _inceptionState = data.active ? data.state : null;
+        renderInception();
+        loadCampaigns();
+      } catch (e) { console.error('inception state load failed', e); }
+    }
+
+    function renderInception() {
+      refreshSectionCardShell('inception-section');
+      setSectionSummary('inception-section', inceptionSectionSummary());
+      const panel = document.getElementById('inception-panel');
+      if (!panel) return;
+
+      let wizard = '';
+      if (!_inceptionState || !_inceptionState.phase) {
+        wizard = renderInceptionModeSelect();
+      } else {
+        switch (_inceptionState.phase) {
+          case 'capture':
+            if (_inceptionState.idea_text) {
+              wizard = renderInceptionProgress('idea') + renderInceptionWorking();
+            } else {
+              wizard = _inceptionState.mode === 'greenfield'
+                ? renderInceptionCapture()
+                : renderInceptionScanProgress();
+            }
+            break;
+          case 'clarify':
+            wizard = renderInceptionProgress('clarify') + renderInceptionClarify();
+            break;
+          case 'structure':
+            wizard = renderInceptionProgress('structure') + renderInceptionStructure();
+            break;
+          case 'scaffold':
+            wizard = renderInceptionProgress('scaffold') + renderInceptionScaffold();
+            break;
+          case 'complete':
+            wizard = renderInceptionProgress('complete') + renderInceptionComplete();
+            setTimeout(loadInceptionCompleteFiles, 100);
+            break;
+          default:
+            wizard = renderInceptionModeSelect();
+        }
+      }
+      // Rebuilding the panel resets its own scroll and the campaign filters;
+      // carry both across so refreshes don't move the reader (#11032).
+      const panelScrollTop = panel.scrollTop;
+      const campaignFilters = {};
+      panel.querySelectorAll('.campaigns-filters input').forEach(function(el) { campaignFilters[el.id] = el.value; });
+      panel.innerHTML = '<div class="inception-spektacular-note">Project inception runs on <a href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer">Spektacular</a>, a Hive Commons project.</div>' + renderCampaignsPanel() + '<div class="campaigns-card">' + wizard + '</div>';
+      Object.keys(campaignFilters).forEach(function(id) {
+        const el = document.getElementById(id);
+        if (el) { el.defaultValue = campaignFilters[id]; el.value = campaignFilters[id]; }
+      });
+      panel.scrollTop = panelScrollTop;
+      renderCampaignsList();
+      if (!_inceptionPollTimer) startInceptionPoll();
+    }
 
     function renderInceptionProgress(phase) {
       var STAGES = [
@@ -49974,13 +49988,6 @@ function burnAreaChart() {
 
     function stopInceptionPoll() {
       if (_inceptionPollTimer) { dashboardClearInterval('inception-activity'); _inceptionPollTimer = null; }
-    }
-
-    function _inceptionAuthHeaders() {
-      var h = {'Content-Type': 'application/json'};
-      var t = localStorage.getItem('hive-token');
-      if (t) h['Authorization'] = 'Bearer ' + t;
-      return h;
     }
 
     function _inceptionStateKey(s) {
