@@ -121,7 +121,7 @@
       'review-queue-subsection': { title: 'Queue', summary: '—' },
       'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
       'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
-      'sessions-section': { title: '🖥️ Sessions', summary: '0 running · 0 total', badgeHtml: '<span class="dash-card-badge">shared terminals</span>' },
+      'sessions-section': { title: '💻 Sessions', summary: '0 running · 0 total', badgeHtml: '<span class="dash-card-badge">shared terminals</span>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
