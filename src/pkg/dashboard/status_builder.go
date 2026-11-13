@@ -2381,7 +2381,8 @@ func buildReferenceRepos(cfg *config.Config) []FrontendReferenceRepo {
 	}
 	out := make([]FrontendReferenceRepo, 0, len(cfg.Project.ReferenceRepos))
 	for _, rr := range cfg.Project.ReferenceRepos {
-		out = append(out, FrontendReferenceRepo{Full: rr.Repo, Tier: rr.WriteLabel()})
+		tier := rr.WriteLabel()
+		out = append(out, FrontendReferenceRepo{Full: rr.Repo, Tier: tier, ReferenceTier: tier})
 	}
 	return out
 }

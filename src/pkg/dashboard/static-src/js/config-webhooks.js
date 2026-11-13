@@ -143,7 +143,9 @@
       if (d.app_probe_error) {
         return `<div class="wh-muted wh-note">Could not read the App installation\u2019s permissions (${esc(d.app_probe_error)}); create the hook by hand as above.</div>`;
       }
-      if (!d.app_org_hooks && !d.app_repo_hooks) return '';
+      if (!d.app_org_hooks && !d.app_repo_hooks) {
+        return `<div class="wh-muted wh-note">To have the App create the hook for you, grant it <b>Organization → Webhooks</b> (<code>organization_hooks</code>) or <b>Repository → Webhooks</b> (<code>repository_hooks</code>) at <b>Read and write</b>, then reopen this tab.</div>`;
+      }
       const scopes = [];
       if (d.app_org_hooks) scopes.push(`<option value="organization">organization ${esc(d.org)}</option>`);
       if (d.app_repo_hooks) (d.repos || []).forEach(r => scopes.push(`<option value="repository:${esc(r)}">repository ${esc(d.org)}/${esc(r)}</option>`));
@@ -200,8 +202,9 @@
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
-        if (out) out.innerHTML = `<span class="wh-ok">Created ${esc(body.scope)} hook #${esc(String(body.hook_id))} on ${esc(body.target)}.</span> <a href="${esc(body.url)}" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a> — push a commit or comment on a PR and watch “Deliveries (1h)” move.`;
-        showToast('Webhook created', 'info');
+        const verb = body.created === false ? 'Already set up:' : 'Created';
+        if (out) out.innerHTML = `<span class="wh-ok">${verb} ${esc(body.scope)} hook #${esc(String(body.id || body.hook_id))} on ${esc(body.target)}.</span> <a href="${esc(body.url)}" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a> — push a commit or comment on a PR and watch “Deliveries (1h)” move.`;
+        showToast(body.created === false ? 'Webhook already exists' : 'Webhook created', 'info');
       } catch (e) {
         if (out) out.innerHTML = `<span class="wh-error">${esc(e.message)}</span>`;
       } finally {

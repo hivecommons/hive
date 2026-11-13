@@ -2,12 +2,22 @@ package dashboard
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
@@ -166,7 +176,7 @@ func TestWebhookSetup_CreateGatedOnAppPermission(t *testing.T) {
 		srv.mux.ServeHTTP(rec, req)
 		return rec
 	}
-	if rec := post(`{"scope":"organization"}`); rec.Code != http.StatusForbidden {
+	if rec := post(`{"scope":"organization"}`); rec.Code != http.StatusPreconditionFailed {
 		t.Fatalf("org scope without organization_hooks: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := post(`{"scope":"repository","repo":"not-ours"}`); rec.Code != http.StatusBadRequest {
@@ -179,5 +189,174 @@ func TestWebhookSetup_CreateGatedOnAppPermission(t *testing.T) {
 	_, body = webhookSetupGet(t, srv, true, "")
 	if body.CreateAvailable {
 		t.Fatal("create offered without any hooks permission")
+	}
+}
+
+// webhookGitHubStub serves the installation-token mint plus the org/repo
+// hooks list+create endpoints, remembering created hooks per path.
+type webhookGitHubStub struct {
+	mu    sync.Mutex
+	hooks map[string][]map[string]any
+	posts map[string]int
+}
+
+func (g *webhookGitHubStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	switch {
+	case strings.HasSuffix(path, "/access_tokens"):
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprintf(w, `{"token":"ghs_webhook_stub","expires_at":%q}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+	case strings.HasSuffix(path, "/hooks") && r.Method == http.MethodGet:
+		list := g.hooks[path]
+		if list == nil {
+			list = []map[string]any{}
+		}
+		_ = json.NewEncoder(w).Encode(list)
+	case strings.HasSuffix(path, "/hooks") && r.Method == http.MethodPost:
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		g.posts[path]++
+		hook := map[string]any{"id": 4200 + len(g.hooks[path]) + g.posts[path], "events": body["events"], "config": body["config"], "active": true}
+		g.hooks[path] = append(g.hooks[path], hook)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(hook)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (g *webhookGitHubStub) postCount(path string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.posts[path]
+}
+
+func (g *webhookGitHubStub) totalPosts() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	n := 0
+	for _, c := range g.posts {
+		n += c
+	}
+	return n
+}
+
+func newWebhookCreateServer(t *testing.T, perms map[string]string) (*Server, *webhookGitHubStub) {
+	t.Helper()
+	stub := &webhookGitHubStub{hooks: map[string][]map[string]any{}, posts: map[string]int{}}
+	api := httptest.NewServer(stub)
+	t.Cleanup(api.Close)
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "app-key.pem")
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	auth, err := ghpkg.NewAppAuthWithCache(1, 2, keyFile, filepath.Join(t.TempDir(), "token.cache"),
+		slog.New(slog.NewTextHandler(io.Discard, nil)), api.URL)
+	if err != nil {
+		t.Fatalf("NewAppAuthWithCache: %v", err)
+	}
+
+	srv := newFullServer(t)
+	srv.deps.Config.Dashboard.PublicURL = "https://hive.example.org"
+	srv.deps.Config.Project.Org = "projectbluefin"
+	srv.deps.Config.Project.Repos = []string{"bluefin", "projectbluefin/common"}
+	srv.deps.GHAppAuth = auth
+	orig := webhookPermissionProbe
+	t.Cleanup(func() { webhookPermissionProbe = orig })
+	webhookPermissionProbe = func(context.Context, *ghpkg.AppAuth) (*ghpkg.InstallationInfo, error) {
+		return &ghpkg.InstallationInfo{Permissions: perms}, nil
+	}
+	return srv, stub
+}
+
+func postWebhookCreate(srv *Server, payload string) (*httptest.ResponseRecorder, ghpkg.WebhookCreateResult) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/config/github/webhooks/create", strings.NewReader(payload))
+	markOwnerRequest(req)
+	srv.mux.ServeHTTP(rec, req)
+	var res ghpkg.WebhookCreateResult
+	if rec.Code == http.StatusOK {
+		_ = json.Unmarshal(rec.Body.Bytes(), &res)
+	}
+	return rec, res
+}
+
+func TestWebhookCreate_NoSecretIs409(t *testing.T) {
+	t.Setenv(ghpkg.WebhookSecretEnvVar, "")
+	restore := ghpkg.SetWebhookSecretPathForTest(filepath.Join(t.TempDir(), "absent.key"))
+	defer restore()
+	srv, stub := newWebhookCreateServer(t, map[string]string{ghpkg.PermissionOrganizationHooks: "write"})
+	if rec, _ := postWebhookCreate(srv, `{"scope":"org"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("no secret: %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	if stub.totalPosts() != 0 {
+		t.Fatal("GitHub hook created without a secret")
+	}
+}
+
+func TestWebhookCreate_MissingPermissionIs412(t *testing.T) {
+	t.Setenv(ghpkg.WebhookSecretEnvVar, "mounted")
+	srv, stub := newWebhookCreateServer(t, map[string]string{ghpkg.PermissionOrganizationHooks: "read"})
+	rec, _ := postWebhookCreate(srv, `{"scope":"org"}`)
+	if rec.Code != http.StatusPreconditionFailed || !strings.Contains(rec.Body.String(), "organization_hooks") {
+		t.Fatalf("org without write: %d %s, want 412 naming organization_hooks", rec.Code, rec.Body.String())
+	}
+	rec, _ = postWebhookCreate(srv, `{"scope":"repo","repo":"projectbluefin/bluefin"}`)
+	if rec.Code != http.StatusPreconditionFailed || !strings.Contains(rec.Body.String(), "repository_hooks") {
+		t.Fatalf("repo without write: %d %s, want 412 naming repository_hooks", rec.Code, rec.Body.String())
+	}
+	if stub.totalPosts() != 0 {
+		t.Fatal("GitHub hook created without the permission")
+	}
+}
+
+// First call creates the org hook (audited); the second returns it instead
+// of creating a duplicate.
+func TestWebhookCreate_OrgCreatesThenReturnsExisting(t *testing.T) {
+	t.Setenv(ghpkg.WebhookSecretEnvVar, "mounted")
+	srv, stub := newWebhookCreateServer(t, map[string]string{ghpkg.PermissionOrganizationHooks: "write"})
+
+	rec, first := postWebhookCreate(srv, `{"scope":"org"}`)
+	if rec.Code != http.StatusOK || !first.Created || first.ID == 0 || len(first.Events) != len(ghpkg.WebhookEvents) {
+		t.Fatalf("first create: %d %s", rec.Code, rec.Body.String())
+	}
+	if first.PayloadURL != "https://hive.example.org"+githubWebhookPath {
+		t.Fatalf("payload url = %q", first.PayloadURL)
+	}
+	rec, second := postWebhookCreate(srv, `{"scope":"org"}`)
+	if rec.Code != http.StatusOK || second.Created || second.ID != first.ID {
+		t.Fatalf("second create: %d %s, want existing hook %d", rec.Code, rec.Body.String(), first.ID)
+	}
+	if n := stub.postCount("/orgs/projectbluefin/hooks"); n != 1 {
+		t.Fatalf("org POSTs = %d, want 1", n)
+	}
+	var audited int
+	for _, e := range srv.audit.Recent(50) {
+		if e.Action == auditWebhookCreated {
+			audited++
+		}
+	}
+	if audited != 1 {
+		t.Fatalf("audit entries = %d, want 1 (only the real creation)", audited)
+	}
+}
+
+func TestWebhookCreate_RepoScopeHitsRepoEndpoint(t *testing.T) {
+	t.Setenv(ghpkg.WebhookSecretEnvVar, "mounted")
+	srv, stub := newWebhookCreateServer(t, map[string]string{ghpkg.PermissionRepositoryHooks: "write"})
+	rec, res := postWebhookCreate(srv, `{"scope":"repo","repo":"projectbluefin/common"}`)
+	if rec.Code != http.StatusOK || !res.Created || res.Target != "projectbluefin/common" {
+		t.Fatalf("repo create: %d %s", rec.Code, rec.Body.String())
+	}
+	if stub.postCount("/repos/projectbluefin/common/hooks") != 1 || stub.postCount("/orgs/projectbluefin/hooks") != 0 {
+		t.Fatal("want exactly one POST, to the repo endpoint")
 	}
 }
