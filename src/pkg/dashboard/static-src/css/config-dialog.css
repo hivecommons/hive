@@ -265,6 +265,10 @@
     .rv-reviewer-help { margin: var(--sp-1) var(--sp-0) var(--sp-0); }
     .rv-reviewer-help-above { margin: var(--sp-0) var(--sp-0) var(--sp-2); }
     #rv-require-labels-field[hidden] { display: none; }
+    /* Linked review.perspectives_source banner in the Review Gate (#17989). */
+    .rv-perspectives-linked { margin: var(--sp-0) var(--sp-0) var(--sp-3); padding: var(--sp-4) var(--sp-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-sm); }
+    .rv-perspectives-linked-status, .rv-perspectives-linked-warning { margin-top: var(--sp-2); color: var(--muted); }
+    .rv-perspectives-linked-warning { color: var(--yellow); }
     .am-trusted-authors-repos { min-height: 72px; }
     .am-bot-empty { color: var(--muted); margin: var(--sp-1) 0; }
     .am-bot-add { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); align-items: center; }

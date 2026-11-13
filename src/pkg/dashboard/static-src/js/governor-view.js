@@ -644,6 +644,30 @@
       </div>`;
     }
 
+    /* Webhooks tile (hivecommons/hive#18017): whether GitHub deliveries
+       reach this hive (direct or hub relay) and how many in the last hour.
+       Owners click through to Settings → Forge App → GitHub webhooks. */
+    function webhookGovStatHtml(data) {
+      const wh = data && data.webhooks;
+      if (!wh || typeof wh !== 'object') return '';
+      const owner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const none = !wh.verification || wh.verification === 'none';
+      const n = Number(wh.events_1h || 0);
+      let val, cls;
+      if (none) { val = 'off'; cls = ' dead'; }
+      else if (n > 0 || wh.healthy) { val = n + '/1h'; cls = ''; }
+      else if (wh.last_event_at) { val = 'quiet'; cls = ' starting'; }
+      else { val = 'no events'; cls = ' starting'; }
+      const how = none
+        ? 'OFF — no webhook secret and no hub relay key, so every delivery is rejected and the hive polls GitHub on the base cadence.'
+        : `Verification: ${wh.verification}. Cadence: ${wh.mode || 'polling'}${wh.mode_reason ? ' (' + wh.mode_reason + ')' : ''}. ${n} deliveries in the last hour.`;
+      const tip = 'WEBHOOKS — does GitHub tell this hive about changes as they happen?\n\nWHAT: With webhooks on, pushes, PRs, reviews and checks wake the governor at once, CI failures kick the owning agent, and the safety-net cadence slows to save API calls.\n\nHOW: ' + how
+        + (owner ? '\n\nClick to set up or check webhooks (Settings → Forge App).' : '');
+      const action = owner ? ' data-action="openConfigDialog" data-config-type="governor" data-tab="Forge App"' : '';
+      const label = owner && none ? 'webhooks · set up →' : 'webhooks';
+      return `<div class="gov-stat${owner ? ' wh-clickable' : ''}"${action} title="${escapeHtml(tip)}"><div class="label">${label}</div><div class="val${cls}">${escapeHtml(val)}</div></div>`;
+    }
+
     function renderGovernor(gov, cadenceMatrix, data) {
       const el = document.getElementById('governor');
       const isStarting = !gov.active && !gov.mode;
@@ -717,6 +741,7 @@
           <div class="gov-stat" aria-label="${escapeHtml(prEquationTitle)}"><div class="label">actionable PRs</div><div class="spark-row"><span class="val">${prCount}</span>${prsSpark}</div>${prEquationHTML ? `<div class="overview-kpi-subline">${prEquationHTML}</div>` : ''}</div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           ${fleetRunStatHtml()}
+          ${webhookGovStatHtml(data)}
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
           ${standbyPauseFactsHtml(gov, 'stat')}
           ${contributorFirstFactsHtml(gov, 'stat')}

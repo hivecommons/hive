@@ -341,6 +341,27 @@ type MyHiveEntry struct {
 	Quadrant *Quadrant `json:"quadrant,omitempty"`
 }
 
+// claimPendingGitHubHost returns the GitHub host the Location pill should show
+// for an assigned-but-unclaimed row, and whether that override applies.
+//
+// While a placeholder is "claim pending" the spoke still runs the pool's
+// default config, so its heartbeat reports the CLUSTER default (github.ibm.com
+// on vllm-d) even though the operator just picked github.com in the assign
+// dialog. For that window the hive record's github_host — the operator's
+// explicit choice, stamped by handleAssignHive — is the truth the row must
+// show; the spoke's value is simply the stale pre-claim config, not evidence
+// of where the assigned repos live. Once the claim is delivered the spoke
+// report resumes its authority (see resolveGitHubHost).
+func claimPendingGitHubHost(entry *MyHiveEntry, sh *SaaSHive) (string, bool) {
+	if entry == nil || sh == nil || !entry.AssignedUnclaimed {
+		return "", false
+	}
+	if strings.TrimSpace(sh.GitHubHost) == "" {
+		return "", false
+	}
+	return githubHostLabel(sh.GitHubHost), true
+}
+
 // myHivesRecentEventCount is how many timeline events ride the My Hives
 // payload for the status hover. The hover panel already carries a status word,
 // the per-check health lines, the relay line and the user list; three events
@@ -723,6 +744,10 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 	// is left empty and rendered as "github.com" by the pill, so an old spoke
 	// shows a sane default rather than a wrong host.
 	resolveGitHubHost := func(entry *MyHiveEntry) {
+		if host, ok := claimPendingGitHubHost(entry, saasByID[entry.ID]); ok {
+			entry.GitHubHost = host
+			return
+		}
 		if entry.GitHubHost != "" {
 			return // spoke-reported — authoritative
 		}

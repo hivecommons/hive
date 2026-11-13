@@ -50,7 +50,7 @@
         }
         // The Forge App tab renders a shell synchronously, then loads the
         // credential inventory (fingerprints only) from the spoke.
-        if (tabId === 'Forge App') loadForgeApps();
+        if (tabId === 'Forge App') { loadForgeApps(); loadWebhookSetup(); }
         // The Features tab's Linear Agent panel loads install/session state
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
@@ -1798,7 +1798,8 @@
           when its forge matches the forge this hive's repos live on; everything else is
           read-only. Private keys appear as fingerprints — key material never leaves the hive.
         </div>
-        <div id="forge-app-host"><div style="color:var(--muted);font-size:0.8rem">Loading forge Apps…</div></div>`;
+        <div id="forge-app-host"><div style="color:var(--muted);font-size:0.8rem">Loading forge Apps…</div></div>
+        ${renderGovWebhooksSection()}`;
     }
 
     async function loadForgeApps() {

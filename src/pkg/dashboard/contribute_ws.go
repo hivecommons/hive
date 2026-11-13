@@ -1228,6 +1228,9 @@ type ContributeWSHub struct {
 	rateMu          sync.Mutex
 	mcpCallTimes    map[string][]time.Time
 	mcpRateMu       sync.Mutex
+	// roleRejectLogged dedupes the "agent role claim rejected" log per
+	// (user, role) so a client retrying a forbidden role does not flood it.
+	roleRejectLogged sync.Map // map[string]time.Time
 	// contributorFailureStreaks tracks, per identity, CONSECUTIVE hub-measured
 	// sub-minute task failures (kubestellar/hive#6450, contribute_failure_streak.go).
 	// Once a streak reaches contributorFailureStreakThreshold, selectTask pauses
@@ -3027,9 +3030,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	if requestedRole != "" {
 		if ok, reason := h.roleClaimAllowed(probeContributor, requestedRole); !ok {
 			_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: reason, Role: requestedRole})
-			h.logger.Warn("[contribute-ws] agent role claim rejected",
-				"username", profile.GitHubUsername, "tier", profile.TrustTier,
-				"role", requestedRole, "reason", reason)
+			h.logRoleClaimRejected(profile.GitHubUsername, profile.TrustTier, requestedRole, reason)
 			h.auditRelayAs(profile.GitHubUsername, "", agentaudit.AuditRelayRejected, nil, "reason", "role_claim_rejected")
 			closeWithReason(s.conn, websocket.ClosePolicyViolation, "agent role claim rejected")
 			return true
@@ -5950,4 +5951,24 @@ func contributorUsername(c *ContributorConnection) string {
 		return ""
 	}
 	return c.profile.GitHubUsername
+}
+
+// roleRejectLogWindow is how long a repeated identical role-claim rejection is
+// suppressed from the log.
+const roleRejectLogWindow = 10 * time.Minute
+
+// logRoleClaimRejected logs an expected trust-tier role rejection at Info (it is
+// a policy decision, not a hub error) and at most once per (user, role) per
+// roleRejectLogWindow. The authorization decision is unchanged.
+func (h *ContributeWSHub) logRoleClaimRejected(username, tier, role, reason string) {
+	key := username + "\x00" + role
+	now := time.Now()
+	if last, ok := h.roleRejectLogged.Load(key); ok {
+		if t, _ := last.(time.Time); now.Sub(t) < roleRejectLogWindow {
+			return
+		}
+	}
+	h.roleRejectLogged.Store(key, now)
+	h.logger.Info("[contribute-ws] agent role claim rejected",
+		"username", username, "tier", tier, "role", role, "reason", reason)
 }

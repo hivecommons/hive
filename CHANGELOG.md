@@ -56,6 +56,111 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 - The signed-commit reconciler's intentional refusal to rewrite a foreign or merge commit no longer files repeated unclassified-error fleet reports; its warning and PR remediation remain visible ([#17924](https://github.com/hivecommons/hive/issues/17924)).
 - Dashboard logs one summary warning per five minutes for dropped SSE events instead of one warning per event, so a stalled browser tab no longer triggers repeated-error fleet reports (#17995).
 
+## 2026-11-13 (v5.244.1)
+
+### Fixed
+
+- Contributor-lane auto-promotion now warns once per refused author and once per refused repository when GitHub's search cannot see a repository, instead of once per author × repository pair, so one invisible repository or one unsearchable author no longer floods WARN and self-reports as a repeated unclassified error (#18059).
+- Knowledge Integrations: when the connector syncer is not running (`runtime: false`, hive booted with no `knowledge.connectors`), connector cards now show a `not loaded` badge with a restart hint and docs link instead of `pending`, and Connect / Check / Sync are disabled with the same hint rather than failing with 404 toasts; `pending` stays reserved for a loaded connector awaiting sign-in ([#18093](https://github.com/hivecommons/hive/issues/18093)).
+- The ioscan classifier now retries a single transient model-endpoint failure (HTTP 429/5xx or a dropped connection) before applying its fail mode, so one gateway blip no longer passes untrusted text on unclassified or withholds it ([#18105](https://github.com/hivecommons/hive/issues/18105)).
+
+## 2026-11-13 (v5.244.0)
+
+### Added
+
+- Hub header nav and My Hives now link to the fleet benchmarks page (hivecommons.dev/benchmarks), and the spoke dashboard FAQ points at it for model comparisons (#18034).
+
+### Fixed
+
+- Knowledge Integrations: the per-connector **Check** button now reports its result — a success/info toast with the sign-in state (and the card refreshed), or an error toast carrying the server's `error` string verbatim (for example `no knowledge connectors are configured`) instead of a "checking" toast followed by silence ([#18092](https://github.com/hivecommons/hive/issues/18092)).
+
+## 2026-11-13 (v5.243.0)
+
+### Added
+
+- `/api/status` `referenceRepos[]` entries now carry an additive `reference_tier` field (`read-only`, `issues`, `prs` or `issues+prs`) so API consumers can tell a `project.reference_repos` entry from a managed repo; the entries stay out of `repos[]` and carry no ACMM, work-item or pause fields, and the dashboard's `📚 reference · <tier>` chip reads it ([#18021](https://github.com/hivecommons/hive/issues/18021)).
+
+### Changed
+
+- Dashboard: "Create webhook for me" is idempotent — it returns the existing hook for this hive's payload URL instead of creating a duplicate, and answers 412 naming the missing `organization_hooks`/`repository_hooks` write permission (#18028)
+- **`review.perspectives_source` is now resolved at startup and on every config reload, and the review relay perspective set is reinstalled each time**, so a verdict naming a perspective the link removed is refused and one it added is accepted without a restart. A dashboard edit of the review config no longer drops the linked set, and a malformed or unreachable document keeps the last-known-good set with a warning. ([#17988](https://github.com/hivecommons/hive/issues/17988), part of [#17975](https://github.com/hivecommons/hive/issues/17975))
+
+### Fixed
+
+- dashboard: a Projects-card Release that lands while the rows are re-sorting after a Hold is no longer sent, so holding items down a list no longer releases a neighbouring item's hold (#18054)
+- Documents imported from the dashboard (PDF, HTML, DOCX, text) are now saved to `knowledge.documents` in `hive.yaml` like git sources, and boot re-imports any configured document whose on-disk record is missing, so an upgrade no longer drops a PDF knowledge source while keeping GitHub ones.
+
+### Security
+
+- The hub now withholds hub-held credentials and management actions (GitHub App config and keys, pending gateway, project config, cluster ID, access list, upgrade, restart and breaker instructions) from the heartbeat response of any hive whose ID is in the reserved `byo-` self-service namespace, through one guard driven by a classification of every response field ([#18060](https://github.com/hivecommons/hive/issues/18060)).
+
+## 2026-11-13 (v5.242.0)
+
+### Added
+
+- Activity monitor: a workflow-model chevron that is not the row's active stage now wears a glyph for what the stage means (inbox, bolt, hand, pencil, pull-request, flask, eye, people, thumbs-up, merge, check, …) picked by the column's name, dimmed to 60%, instead of its clipped label; the active chevron leads its word with the same glyph. Workflow columns take an optional `icon` (an allowlisted icon id or a single emoji, validated server- and client-side; never markup), and the workflow editor's column inspector previews the default and lets the operator replace it (#18033).
+
+### Changed
+
+- images: bump gh 2.103.3 -> 2.104.0 (#18063)
+- kicks: register  REFERENCE REPOS as layout section 10a and golden its wording (#18074)
+
+### Fixed
+
+- Benchmarks export now adds `model.canonical` and `model.effort` next to the reported id and derives `model.provider` from the model family, so `claude-sonnet-5-5` (Copilot CLI), `claude-sonnet-5.5` (Claude Code) and `openai-codex/gpt-6.1-sol` no longer appear as separate models on hivecommons.dev/benchmarks.
+- Repeated trust-tier agent role claim rejections over contribute-ws are now logged once per user and role at INFO instead of flooding WARN, so they no longer surface as unclassified self-reported errors (#18071).
+
+## 2026-11-13 (v5.241.1)
+
+### Changed
+
+- **Settings → Forge App → GitHub webhooks names the App permission to grant** (#18029): when the GitHub App installation cannot manage hooks, the card now says which permission to grant (Organization → Webhooks `organization_hooks`, or Repository → Webhooks `repository_hooks`, Read and write) so **Create webhook for me** appears, instead of silently omitting the option. Node-executed tests pin the card's copy for relay, none and env-secret modes, and a parity test checks every endpoint the card calls is routed and owner-only.
+- docs: project.reference_repos in agent-configuration and hive.yaml.example (#18073)
+
+## 2026-11-13 (v5.241.0)
+
+### Added
+
+- **Review Gate shows linked review perspectives read-only.** When `review.perspectives_source` links the perspective set to a repo file, Settings → Features → Review Gate → Perspectives now shows the linked set (not the inline fallback), a "Linked to owner/repo/path@ref" line pointing at the file on GitHub, and the resolver's status and any fetch or malformed-document warning. The checkboxes and focus text are read-only and "Add perspective" is hidden, and `PUT /api/config/review` answers 409 for `perspectives` / `perspective_prompts` edits that the next reload would silently replace; `combined_perspectives`, `plan_match` and `max_perspectives_per_pr` stay editable. Unlinked hives see no change ([#17989](https://github.com/hivecommons/hive/issues/17989)).
+
+## 2026-11-13 (v5.240.0)
+
+### Added
+
+- **`project.reference_repos`: study-only repos outside the project** ([#18015](https://github.com/hivecommons/hive/issues/18015)). A hive whose deliverable is *about* another project (a docs assessment of `hivecommons/*` landing in `cncf/techdocs`) can list `owner/name` repos it may clone unauthenticated and GET, with the proxy stripping the hive's token and refusing every write by default; the kick tells agents such items are in scope and that findings go in the deliverable in the authorized repo, so the scanner no longer flags them out-of-scope/critical. A rare per-entry `write: [issues, prs]` opt-in allows only opening issues, opening PRs/pushing topic branches and commenting on the hive's own items, using the App's installation on the target org or `write_token_file`; boot refuses write-mode without either (exit 22). Dashboard shows a minimal `reference · <tier>` card.
+- Owner-facing GitHub webhook setup: ⚙ Settings → Forge App gains a "GitHub webhooks" section showing the payload URL, events and live receiver status, with **Generate secret** (stored in `/data/github-webhook-secret.key`, shown once) and **Create webhook for me** when the App installation has hooks write permission; a webhooks tile on the Governor card deep-links to it; new owner guide in `docs/webhooks.md` (#18017).
+
+## 2026-11-12 (v5.239.0)
+
+### Added
+
+- **Resolver for `review.perspectives_source`** that fetches a `kind: ReviewPerspectives` document behind the same seed-only allowlist as `definition_source`, and keeps the last-known-good set with a visible warning when a later fetch fails or a document no longer validates, instead of silently falling back to the built-in perspectives. The review relay, dispatch, head aggregation and `${REVIEW_PERSPECTIVES}` now read the resolved set via `ReviewConfig.EffectivePerspectives()`; with no `perspectives_source` configured, behaviour is unchanged. ([#17987](https://github.com/hivecommons/hive/issues/17987), part of [#17975](https://github.com/hivecommons/hive/issues/17975))
+
+### Fixed
+
+- Activity monitor: the column header now follows the workflow model the rows wear — a repository bound to a custom model gets that model's column names over its chevrons (ungrouped pages are partitioned by model with a header per run), instead of hive-default's "PR in progress / Merge queue" names (#18002).
+- Kicks are no longer refused wholesale as "prompt injection" because of the ioscan exfiltration canary: the preamble is now a labelled `=== HIVE HARNESS HEADER` block that states it is the operator's own configuration and not a task (Claude Sonnet 5 via the Copilot CLI refused ~65% of one hosted supervisor's kicks on the old `SECURITY CANARY:` marker), and a kick that is still refused with a canary in front is re-delivered once without it instead of burning the cadence slot (#18012).
+- Stop contributor automerge passes cleanly when a client hand-over or shutdown cancels an in-flight sweep, without filing a spurious failure report.
+- Spoke self-upgrade now installs the hosted template's startupProbe (10-min budget) on a hive Deployment that has none, not only raises an undersized one — pre-#9692 spokes on pull-only clusters were liveness-killed 90s into a forge-blocked boot and crash-looped (grey dot) for the length of the GHE outage; the fleet status-dot hovers now carry a colour legend and the grey dot says "no heartbeat in 5 min".
+
+## 2026-11-12 (v5.238.1)
+
+### Fixed
+
+- Spoke: a placeholder claimed onto a different forge than its pool default (GHE slot → github.com repo) now moves GitHub App installation discovery to the delivered App and API URL even while installation_id is still 0, instead of polling the boot-time App/forge forever and reporting "App 5686 has no installation" until a pod restart.
+- Hub fleet view: a placeholder assigned with an explicit forge now shows that forge (e.g. github.com) in the Location pill while the claim is pending, instead of the cluster default the spoke still heartbeats from its pre-claim config (github.ibm.com on vllm-d).
+- Dashboard logs one summary warning per five minutes for dropped SSE events instead of one warning per event, so a stalled browser tab no longer triggers repeated-error fleet reports (#17995).
+
+## 2026-11-12 (v5.238.0)
+
+### Added
+
+- **`review.perspectives_source` config key and `kind: ReviewPerspectives` document format** for live-linking a hive's review perspective names and focus text to a file in a GitHub repo, so maintainers can change the set through ordinary PRs instead of hive config edits. This lands the config surface, a runtime-only resolved slot that is never written back to the overlay, and the validating document parser (`pkg/perspsrc`); fetching and wiring follow in later changes, so behaviour is unchanged until then and unchanged whenever the key is absent. Once resolved, the linked set wins over inline `review.perspectives` / `review.perspective_prompts`, which stay the fallback. ([#17986](https://github.com/hivecommons/hive/issues/17986), part of [#17975](https://github.com/hivecommons/hive/issues/17975))
+
+### Fixed
+
+- The signed-commit reconciler's intentional refusal to rewrite a foreign or merge commit no longer files repeated unclassified-error fleet reports; its warning and PR remediation remain visible ([#17924](https://github.com/hivecommons/hive/issues/17924)).
+
 ## 2026-11-12 (v6.27.3)
 
 ### Fixed

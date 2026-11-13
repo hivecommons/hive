@@ -39,6 +39,22 @@ project:
   #   - repo: repo-two
   #     by: your-github-login
   #     reason: release freeze until Friday
+  # Optional: repos OUTSIDE the project that agents may study but not work
+  # (src/docs/agent-configuration.md#reference-repos-what-agents-may-study-projectreference_repos).
+  # Always owner/name; never also in `repos`. No queue, ACMM or work items.
+  # String form = read-only: clone/fetch and API GETs, sent unauthenticated
+  # (the hive token is stripped, so private repos are unreadable); every
+  # non-GET is refused with a 403 naming reference_repos. `write` opts in to
+  # ONLY: open an issue, open a PR / push a topic branch, comment on the hive's
+  # own issue/PR — never merge, default-branch push, labels, assignees, reviews
+  # or closing others' items. Writes use the App installed on that org (minted
+  # for the one repo) or write_token_file; boot exits 22 with neither. Kicks
+  # list them as 📚 REFERENCE REPOS; the dashboard shows a `reference · <tier>` chip.
+  # reference_repos:
+  #   - hivecommons/docs                          # read-only
+  #   - repo: hivecommons/hive
+  #     write: [issues, prs]                      # issues, prs, or both
+  #     write_token_file: /data/secrets/ref-pat   # optional; only with write
 
 # Optional opt-in "clanker-requested" policy, under project.issue_filter.reporter_trust.
 # Off by default. While on, a PR carrying the label below is treated as held.

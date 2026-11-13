@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -34,7 +35,31 @@ type reviewSection struct {
 	// the agent as stored, the one it resolves to, and the reason when it
 	// resolves to none.
 	ReviewerAutoscale reviewerAutoscaleResolved `json:"reviewer_autoscale"`
+	// LinkedPerspectiveNames and LinkedPerspectivePrompts shadow the embedded
+	// review.perspectives / review.perspective_prompts with the EFFECTIVE set
+	// (ReviewConfig.EffectivePerspectives), so a hive whose perspectives are
+	// linked to a repo file shows what the reviewer actually runs, not the
+	// inline fallback the linked set overrides (hivecommons/hive#17989).
+	LinkedPerspectiveNames   []string          `json:"perspectives,omitempty"`
+	LinkedPerspectivePrompts map[string]string `json:"perspective_prompts,omitempty"`
+	// PerspectivesLinked is true while review.perspectives_source is set. The
+	// section is then read-only: PUT refuses perspective edits because the
+	// next reload would replace them with the linked set.
+	PerspectivesLinked bool `json:"perspectives_linked"`
+	// PerspectivesSourceStatus is the resolver's provenance for the linked
+	// set (github:owner/repo@ref, github-cache:owner/repo), or "unresolved"
+	// when the source is set but nothing has resolved yet, in which case the
+	// inline perspectives are still in effect. Empty when not linked.
+	PerspectivesSourceStatus string `json:"perspectives_source_status,omitempty"`
+	// PerspectivesSourceWarning is the last fetch or malformed-document
+	// failure while an older set stays in effect.
+	PerspectivesSourceWarning string `json:"perspectives_source_warning,omitempty"`
+	// PerspectivesSourceURL is the GitHub blob URL of the linked document.
+	PerspectivesSourceURL string `json:"perspectives_source_url,omitempty"`
 }
+
+// perspectivesSourceStatusUnresolved marks a set source with no resolved set.
+const perspectivesSourceStatusUnresolved = "unresolved"
 
 // reviewerCandidate is one row of reviewSection.ReviewerCandidates.
 type reviewerCandidate struct {
@@ -87,7 +112,52 @@ func reviewSectionResponse(cfg *config.Config) reviewSection {
 	if cfg != nil {
 		rc = cfg.Review
 	}
-	return reviewSection{rc, builtin, reviewerCandidates(cfg), reviewerAutoscaleResolution(cfg)}
+	out := reviewSection{ReviewConfig: rc, BuiltinPerspectives: builtin, ReviewerCandidates: reviewerCandidates(cfg), ReviewerAutoscale: reviewerAutoscaleResolution(cfg)}
+	out.LinkedPerspectiveNames, out.LinkedPerspectivePrompts = rc.EffectivePerspectives()
+	if src := rc.PerspectivesSource; src.IsSet() {
+		out.PerspectivesLinked = true
+		out.PerspectivesSourceURL = perspectivesSourceURL(*src)
+		out.PerspectivesSourceStatus = perspectivesSourceStatusUnresolved
+		if lp := rc.LinkedPerspectives; lp != nil {
+			if lp.Source != "" {
+				out.PerspectivesSourceStatus = lp.Source
+			}
+			out.PerspectivesSourceWarning = lp.Warning
+		}
+	}
+	return out
+}
+
+// perspectivesSourceURL is the github.com blob URL for a linked perspectives
+// document. An empty ref resolves to the repo's default branch, which
+// GitHub's HEAD alias names without a second API call. Each segment is
+// escaped on its own so a slashed ref (release/v5) or nested path keeps its
+// separators.
+func perspectivesSourceURL(src config.DefinitionSourceConfig) string {
+	ref := src.Ref
+	if ref == "" {
+		ref = "HEAD"
+	}
+	return "https://github.com/" + url.PathEscape(src.Owner) + "/" + url.PathEscape(src.Repo) +
+		"/blob/" + escapePathSegments(ref) + "/" + escapePathSegments(strings.TrimLeft(src.Path, "/"))
+}
+
+func escapePathSegments(p string) string {
+	parts := strings.Split(p, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
+}
+
+// perspectivesSourceLabel names a linked source as owner/repo/path[@ref] for
+// operator-facing messages.
+func perspectivesSourceLabel(src config.DefinitionSourceConfig) string {
+	label := src.Owner + "/" + src.Repo + "/" + strings.TrimLeft(src.Path, "/")
+	if src.Ref != "" {
+		label += "@" + src.Ref
+	}
+	return label
 }
 
 // reviewConfigPutBody is the PUT /api/config/review body. Every field is a
@@ -213,6 +283,17 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	var body reviewConfigPutBody
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	// A linked perspective set is owned by its repo file: an inline edit
+	// would be saved and then silently replaced by the next reload, so it is
+	// refused before anything is mutated. The operator-owned review knobs
+	// (combined_perspectives, plan_match, max_perspectives_per_pr) stay
+	// editable (hivecommons/hive#17989).
+	if src := s.deps.Config.Review.PerspectivesSource; src.IsSet() && (body.Perspectives != nil || body.PerspectivePrompts != nil) {
+		jsonError(w, "review perspectives are linked to "+perspectivesSourceLabel(*src)+
+			"; change them in that file, or remove review.perspectives_source to edit them here", http.StatusConflict)
 		return
 	}
 

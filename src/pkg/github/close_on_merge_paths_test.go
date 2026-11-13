@@ -110,6 +110,10 @@ func TestCloseOnMergeForLedgerFiltersAndCloses(t *testing.T) {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
+			if strings.HasSuffix(r.URL.Path, "/404") {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"number": 42, "title": "fix", "body": "Fixes #7", "merged": true,
 				"merged_at": "2026-10-09T12:00:00Z", "merge_commit_sha": "abcdef0123456789",
@@ -158,6 +162,8 @@ func TestCloseOnMergeForLedgerFiltersAndCloses(t *testing.T) {
 		{Repo: "o/r", Issue: 9, PRNumber: 44, PRRepo: "o/r", MergedPR: true, Reference: true},
 		// Merged claim whose PR cannot be read: logged and skipped.
 		{Repo: "o/r", Issue: 10, PRNumber: 500, PRRepo: "o/r", MergedPR: true},
+		// Merged claim whose PR is 404: warned once, then settled.
+		{Repo: "o/r", Issue: 12, PRNumber: 404, PRRepo: "o/r", MergedPR: true},
 		// Merged claim missing a PR number: skipped.
 		{Repo: "o/r", Issue: 11, PRNumber: 0, PRRepo: "o/r", MergedPR: true},
 	} {
@@ -185,8 +191,19 @@ func TestCloseOnMergeForLedgerFiltersAndCloses(t *testing.T) {
 	if len(patched) != 1 {
 		t.Fatalf("patched = %v, want one close", patched)
 	}
-	if len(prGets) != 2 {
-		t.Fatalf("PR GETs = %v, want /pulls/42 and /pulls/500 only", prGets)
+	if len(prGets) != 3 {
+		t.Fatalf("PR GETs = %v, want /pulls/42, /pulls/500 and /pulls/404 only", prGets)
+	}
+	// Second sweep: the 404 claim is settled and not re-read; the 500 one is.
+	prGets = nil
+	c.CloseOnMergeForLedger(context.Background(), ledger, CloseOnMergeOptions{
+		Identity: HiveIdentity{AppLogin: "hive[bot]"},
+		Logger:   logger,
+	})
+	for _, p := range prGets {
+		if strings.HasSuffix(p, "/404") {
+			t.Fatalf("404 PR re-read on second sweep: %v", prGets)
+		}
 	}
 	if !strings.Contains(logBuf.String(), "could not read merged PR") {
 		t.Fatalf("unreadable PR was not logged: %s", logBuf.String())

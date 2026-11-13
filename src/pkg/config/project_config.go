@@ -75,6 +75,13 @@ type ProjectConfig struct {
 	// Optional and additive. Absent — the state of every existing config —
 	// means nothing is paused and the hive behaves exactly as before.
 	PausedRepos []RepoPause `yaml:"paused_repos,omitempty"`
+	// ReferenceRepos are repositories agents may STUDY but do not manage
+	// (hivecommons/hive#18015): explicit owner/name entries, read-only by
+	// default, with a rare per-entry opt-in for opening issues/PRs. They are
+	// NOT in Repos: no work is enumerated from them, no ACMM eval runs on
+	// them, and writes to them are refused unless opted in. See
+	// reference_repos.go.
+	ReferenceRepos []ReferenceRepo `yaml:"reference_repos,omitempty" json:"reference_repos,omitempty"`
 	// RepoPolicies stores optional per-repository policy overrides keyed by
 	// repo name. project.repos remains the watched-repo identity list; this
 	// sidecar list lets existing string-list configs keep round-tripping.

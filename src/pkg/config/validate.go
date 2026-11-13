@@ -126,6 +126,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := ValidateRedMainThreshold("project", c.Project.RedMainThreshold); err != nil {
 		return err
 	}
+	if err := c.validateReferenceRepos(); err != nil {
+		return err
+	}
 	if _, err := c.Ioscan.Policy(); err != nil {
 		return err
 	}

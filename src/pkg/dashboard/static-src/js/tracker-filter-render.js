@@ -117,6 +117,17 @@
           ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
           : stageTrackerPage(ordered, f);
       if (!tv && page.page !== f.page) f.page = page.page;
+      // Rows bound to a workflow model wear its columns (tracker-workflows.js),
+      // so the header over them must be that model's too (hivecommons/hive#18002:
+      // hive-default names over cncf-techdocs chevrons). Ungrouped, the
+      // page is partitioned by model (stable, first-seen order) with a
+      // header per run; grouped, a group header carries its own columns
+      // when the sticky header is another model's. The sticky header is
+      // the lead row's. A hive with no binding resolves one run, no model.
+      const wfRuns = !grouping && ctx.workflows && typeof stageTrackerWorkflowRuns === 'function' ? stageTrackerWorkflowRuns(page.rows, ctx) : null;
+      if (wfRuns && wfRuns.length > 1) page.rows = wfRuns.reduce((all, run) => all.concat(run.rows), []);
+      const leadRepo = page.rows.length ? (grouping ? page.rows[0].group.repo : page.rows[0].repo) : '';
+      ctx.leadWorkflow = typeof stageTrackerWorkflowOf === 'function' ? stageTrackerWorkflowOf(ctx, leadRepo) : null;
       // A folded secondary is not filtered out: it counts toward the total.
       if (foldedShared > 0) page.total += foldedShared;
       // The rows this render draws (this page, group headers aside), for
@@ -192,7 +203,9 @@
         : itemRow(pageItems[i], i);
       const trainRows = stageTrackerTrainRows(page.rows, rowOf, typeof stageTrackerTrainWhere === 'function' ? stageTrackerTrainWhere(ordered, d.items) : null);
       const inlineRows = typeof stageTrackerPreparationInlineRows === 'function' ? stageTrackerPreparationInlineRows(trainRows, pageItems, stages) : trainRows;
-      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }].concat(inlineRows), nowMs, it => stageTrackerRowHtml(it, stages, ctx));
+      const runRows = wfRuns && wfRuns.length > 1 ? stageTrackerWorkflowRunHeaderRows(inlineRows, wfRuns, stages) : inlineRows;
+      const headHtml = typeof stageTrackerColumnsHeaderHtml === 'function' ? stageTrackerColumnsHeaderHtml(ctx.leadWorkflow, stages) : stageTrackerHeaderHtml(stages);
+      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: headHtml }].concat(runRows), nowMs, it => stageTrackerRowHtml(it, stages, ctx));
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       // Selection is keyed on the row, never baked into its HTML, so a kept

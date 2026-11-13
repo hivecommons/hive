@@ -103,6 +103,9 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `PUT` | `/api/config/governor/general-advanced` | Owner only | Change those settings; every field is optional and an absent one is left alone. `api_budget_pacing` (boolean) turns GitHub API budget pacing on or off from the next eval cycle. Returns the GET payload | `pkg/dashboard/api.go:265` |
 | `GET` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Get | `pkg/dashboard/api.go:269` |
 | `PUT` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Set | `pkg/dashboard/api.go:270` |
+| `GET` | `/api/config/github/webhooks` | Owner only | Config GitHub Webhooks (payload URL, events, secret source, receiver health, App hook permissions) | `pkg/dashboard/api_github_webhook_setup.go:88` |
+| `POST` | `/api/config/github/webhooks/secret` | Owner only | Config GitHub Webhooks Generate Secret (returned once) | `pkg/dashboard/api_github_webhook_setup.go:89` |
+| `POST` | `/api/config/github/webhooks/create` | Owner only | Config GitHub Webhooks Create Hook (through the App installation) | `pkg/dashboard/api_github_webhook_setup.go:90` |
 | `PATCH` | `/api/config/auto-merge` | Owner only | Partially update auto-merge settings, including nested `merge_train`; omitted fields stay unchanged; returns effective settings and bot-author metadata | `pkg/dashboard/api_config_automerge.go` |
 | `GET` | `/api/config/convergence` | Owner only | Convergence Config Get | `pkg/dashboard/api.go:276` |
 | `PUT` | `/api/config/convergence` | Owner only | Convergence Config Set | `pkg/dashboard/api.go:278` |

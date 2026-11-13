@@ -558,3 +558,57 @@ func advisoryIssueMissingError(repo string, cause error) string {
 	}
 	return base
 }
+
+// discoveryAppAuthStale reports whether the AppAuth the installation-discovery
+// loop is polling with no longer names the App the config now claims.
+//
+// A hub-delivered identity with installation_id 0 (a placeholder claimed onto
+// a DIFFERENT forge than its pool default: GHE slot → github.com repo) is not
+// "usable" — HasUsableApp is false — so the heartbeat rebuild skipped it and
+// the boot-time AppAuth (old App, old api_url) kept serving auto-discovery.
+// Discovery then polled the wrong forge forever: the installation the owner
+// made on the right one could never be found, and the hive sat at "App <old
+// id> has no installation" until a pod restart. Boot builds an AppAuth the
+// moment a real app_id and key exist precisely so discovery has a JWT to use;
+// this is the same rule applied to a hub delivery.
+func discoveryAppAuthStale(current *github.AppAuth, gh config.GitHubConfig, keyFile string) bool {
+	if !gh.HasApp() || gh.InstallationID != 0 || keyFile == "" {
+		return false
+	}
+	if current == nil {
+		return true
+	}
+	return current.AppID() != gh.AppID || !sameAPIURL(current.APIURL(), gh.ResolvedAPIURL())
+}
+
+// sameAPIURL compares two GitHub API base URLs ignoring scheme-case and a
+// trailing slash, the two spellings the config and the client disagree on.
+func sameAPIURL(a, b string) bool {
+	norm := func(s string) string { return strings.TrimRight(strings.ToLower(strings.TrimSpace(s)), "/") }
+	return norm(a) == norm(b)
+}
+
+// adoptDiscoveryAppAuth hands a not-yet-installed App's AppAuth to the
+// installation-discovery loop and flips the banner/hub state to
+// not-installed for the App it now names, then forces one discovery pass so
+// an installation already made on the new forge is adopted without waiting
+// for the next tick. No client is built: there is no installation to mint
+// against yet — AutoDiscoverGitHubInstallationID builds it on success.
+func (b *boot) adoptDiscoveryAppAuth(newAppAuth *github.AppAuth) {
+	if b == nil || newAppAuth == nil {
+		return
+	}
+	b.appAuth = newAppAuth
+	diag := "GitHub App " + strconv.FormatInt(b.cfg.GitHub.AppID, 10) +
+		" has no installation for this org — install it (the spoke adopts the installation automatically)"
+	b.appAuthFailure = "The GitHub App is configured but has no installation. Install the app on your org; this hive will discover the installation automatically."
+	if b.dashSrv != nil {
+		b.dashSrv.UpdateGitHubAppAuth(newAppAuth)
+		b.dashSrv.SetGitHubAppRequired(true)
+		b.dashSrv.SetGitHubAppState(github.AppStateNotInstalled.String())
+		b.dashSrv.SetGitHubAppPermIssue(diag)
+		go func() { _, _ = b.dashSrv.AutoDiscoverGitHubInstallationID(b.ctx, true) }()
+	}
+	b.logger.Info("github app identity adopted for installation discovery",
+		"app_id", newAppAuth.AppID(), "api_url", newAppAuth.APIURL())
+}

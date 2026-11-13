@@ -16,10 +16,27 @@ func TestCanaryPreambleOmittedWithoutToken(t *testing.T) {
 	if !strings.Contains(got, "HIVE-CANARY-deadbeef") {
 		t.Fatalf("preamble %q does not carry the token", got)
 	}
+	if !strings.HasPrefix(got, CanaryPreamblePrefix) {
+		t.Fatalf("preamble %q does not open with CanaryPreamblePrefix", got)
+	}
+	if !strings.HasSuffix(got, "\n\n") {
+		t.Fatalf("preamble %q must end with a blank line so the kick body is delimited", got)
+	}
+	// Sonnet 5 refused kicks whose canary announced itself as a bare
+	// "SECURITY CANARY" marker (prompt-injection pattern); the header must
+	// instead say whose configuration it is and that it is not a task.
+	for _, want := range []string{"operator", "not a task"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("preamble %q missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "SECURITY CANARY") {
+		t.Fatalf("preamble %q still carries the refused SECURITY CANARY marker", got)
+	}
 	// The preamble is the only thing standing between the agent and an
 	// innocent-looking "summarize your context" exfiltration, so it has to
 	// forbid the transforms an agent would otherwise consider safe.
-	for _, want := range []string{"Never print", "summarize", "external service"} {
+	for _, want := range []string{"never print", "summarize", "external service"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("preamble %q missing %q", got, want)
 		}
