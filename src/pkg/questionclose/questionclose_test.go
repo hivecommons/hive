@@ -703,3 +703,94 @@ func TestAnswerWithoutTimestampUsesNowAndBlankAuthorNeverKeepsOpen(t *testing.T)
 		t.Fatalf("an unknown author cannot object; got %+v", rep)
 	}
 }
+
+// A question whose remaining work sits in open sub-issues is not finished by
+// its answer. At the deadline the schedule ends as OutcomeOpenSubIssues with
+// no close and no label, and later ticks leave the issue alone: the answer
+// is remembered, so it is not scheduled a second time. Before the fix the
+// issue was closed as completed.
+func TestOpenSubIssuesAtDeadlineSettleWithoutClosing(t *testing.T) {
+	tr := &fakeTracker{thread: answeredThread()}
+	c := &clock{now: t0.Add(time.Minute)}
+	m := newManager(t, "", enabledSettings(), tr, c)
+	scheduleOne(t, m, c)
+
+	tr.thread.OpenSubIssues = 2
+	c.now = t0.Add(testWindow)
+	rep := m.Tick(context.Background())
+	if rep.Cancelled != 1 || rep.Closed != 0 || rep.KeptOpen != 0 {
+		t.Fatalf("an issue with open sub-issues must settle, not close: %+v", rep)
+	}
+	if len(tr.closes) != 0 || len(tr.addedLabels) != 0 {
+		t.Fatalf("nothing may be written on the issue: closes=%d labels=%v", len(tr.closes), tr.addedLabels)
+	}
+	if tr.thread.State != "open" {
+		t.Fatalf("issue state = %q, want open", tr.thread.State)
+	}
+	if s, ok := m.SettledFor(testRepo, testIssue); !ok || s.Outcome != OutcomeOpenSubIssues || s.AnswerCommentID != answerID {
+		t.Fatalf("settled = %+v %v, want outcome %q for the answer", s, ok, OutcomeOpenSubIssues)
+	}
+	if len(m.Scheduled()) != 0 {
+		t.Fatal("a settled issue must leave the schedule")
+	}
+
+	// The next tick does nothing at all: no read, no write, no schedule.
+	reads := tr.threadReads
+	c.now = c.now.Add(DefaultTickInterval)
+	if rep := m.Tick(context.Background()); rep != (Report{}) || tr.threadReads != reads {
+		t.Fatalf("next tick did something: %+v reads=%d, want %d", rep, tr.threadReads, reads)
+	}
+	// New activity on the issue makes the manager read it again; the same
+	// answer is still not scheduled and nothing is written.
+	c.now = c.now.Add(DefaultTickInterval)
+	m.Offer([]github.Issue{questionIssue(c.now)})
+	if rep := m.Tick(context.Background()); rep != (Report{}) || len(m.Scheduled()) != 0 {
+		t.Fatalf("a settled answer was scheduled again: %+v scheduled=%d", rep, len(m.Scheduled()))
+	}
+	if len(tr.closes) != 0 || len(tr.addedLabels) != 0 {
+		t.Fatalf("a later tick wrote on the issue: closes=%d labels=%v", len(tr.closes), tr.addedLabels)
+	}
+}
+
+// Sub-issues are judged at the deadline, not when the answer is found: a
+// question that has open sub-issues is still scheduled, and when they are
+// all closed by the deadline it is closed as before.
+func TestSubIssuesClosedByDeadlineCloseAsBefore(t *testing.T) {
+	tr := &fakeTracker{thread: answeredThread()}
+	tr.thread.OpenSubIssues = 2
+	c := &clock{now: t0.Add(time.Minute)}
+	m := newManager(t, "", enabledSettings(), tr, c)
+	scheduleOne(t, m, c)
+
+	tr.thread.OpenSubIssues = 0
+	c.now = t0.Add(testWindow)
+	rep := m.Tick(context.Background())
+	if rep.Closed != 1 || rep.Cancelled != 0 || len(tr.closes) != 1 {
+		t.Fatalf("expected one close once the sub-issues are closed, got %+v closes=%d", rep, len(tr.closes))
+	}
+	if s, ok := m.SettledFor(testRepo, testIssue); !ok || s.Outcome != OutcomeClosed {
+		t.Fatalf("settled = %+v %v", s, ok)
+	}
+}
+
+// The sub-issue check sits right before the close, so an author's 👎 still
+// keeps the issue open and hands it to a person exactly as before.
+func TestAuthorThumbsDownStillHandsToHumanWithOpenSubIssues(t *testing.T) {
+	tr := &fakeTracker{thread: answeredThread(), reactors: []string{testAuthor}}
+	tr.thread.OpenSubIssues = 1
+	c := &clock{now: t0}
+	m := newManager(t, "", enabledSettings(), tr, c)
+	scheduleOne(t, m, c)
+
+	c.now = t0.Add(testWindow)
+	rep := m.Tick(context.Background())
+	if rep.KeptOpen != 1 || rep.Cancelled != 0 || len(tr.closes) != 0 {
+		t.Fatalf("author 👎 must keep the issue open as before, got %+v closes=%d", rep, len(tr.closes))
+	}
+	if len(tr.addedLabels) != 1 || tr.addedLabels[0] != "needs-human" {
+		t.Fatalf("added labels = %v, want [needs-human]", tr.addedLabels)
+	}
+	if s, _ := m.SettledFor(testRepo, testIssue); s.Outcome != OutcomeKeptOpen {
+		t.Fatalf("outcome = %q, want %q", s.Outcome, OutcomeKeptOpen)
+	}
+}

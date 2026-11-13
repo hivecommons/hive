@@ -980,6 +980,19 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			resp.TeamReviewersAlreadyPending = pendingTeams
 		}
 	case "close":
+		// An issue with an open sub-issue is not finished, so an agent may
+		// not close it, with or without an override reason
+		// (automated_close_open_subissues.go). A pull request is not
+		// affected.
+		var refusal string
+		refusal, err = c.issueCloseRequestOpenSubIssuesRefusal(ctx, req.Repo, req.Number)
+		if err != nil {
+			break // Retry a failed read; never close on unknown sub-issues.
+		}
+		if refusal != "" {
+			c.denyIssueRequest(path, req, refusal, nowFn)
+			return
+		}
 		closedPR, err = c.closeIssue(ctx, req.Repo, req.Number, IssueCloseOptions{OverrideReason: req.OverrideReason})
 		if err == nil {
 			resp.OK = true
