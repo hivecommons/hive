@@ -111,6 +111,9 @@ func newSessionTestEnv(t *testing.T, enabled bool) *sessionTestEnv {
 	cfg.Dashboard.Sessions.Enabled = enabled
 	s := NewServer(0, nil)
 	s.deps = &Dependencies{Config: cfg, Sessions: rt}
+	// Routes are registered by RegisterAPI in production; the tests register
+	// just the Sessions routes on the bare server.
+	s.registerSessionRoutes()
 	return &sessionTestEnv{s: s, rt: rt}
 }
 
