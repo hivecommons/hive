@@ -3110,11 +3110,19 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			FilePath: doc.FilePath,
 			Layer:    knowledge.LayerType(doc.Layer),
 		}
-		meta, err := b.knowledgeAPI.ImportDocument(b.ctx, docConfig)
+		// EnsureDocument keeps a document already reloaded from disk and
+		// re-imports one whose on-disk state is gone, so a configured
+		// document survives an upgrade the way git sources do (#18058).
+		meta, imported, err := b.knowledgeAPI.EnsureDocument(b.ctx, docConfig)
 		if err != nil {
 			b.logger.Warn("failed to import document source",
 				"name", doc.Name,
 				"error", err,
+			)
+		} else if !imported {
+			b.logger.Debug("document source already loaded",
+				"name", doc.Name,
+				"facts", meta.FactCount,
 			)
 		} else {
 			b.logger.Info("document source imported",
