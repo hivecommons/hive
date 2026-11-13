@@ -7466,6 +7466,7 @@ func (c *Config) ExpandAgentReplicas() error {
 		}
 		return normalizeReplicaCount(agent.Replicas)
 	}
+	c.dropStrayReplicaOverlays(baseAgents, effectiveReplicas)
 	derivedNames := map[string]string{}
 	for name, agent := range baseAgents {
 		replicas := normalizeReplicaCount(agent.Replicas)
@@ -7526,6 +7527,43 @@ func (c *Config) ExpandAgentReplicas() error {
 		}
 	}
 	return nil
+}
+
+// dropStrayReplicaOverlays removes from baseAgents (and c.Agents) every
+// per-agent overlay whose name is a replica that another base agent's
+// replicas setting derives: reviewer-2.yaml next to reviewer.replicas: 2
+// (#18137). Such a file is a serialized derived replica — ReplicaOf is not
+// persisted, so it loads as a base agent — and the collision used to fail
+// ExpandAgentReplicas, which exits the process before the dashboard binds and
+// crash-loops the hive with no supported way back in (same shape as #6024).
+//
+// Only overlay-sourced entries are dropped; a colliding agent declared in the
+// main config is still an error, because nothing in it can be a stale copy.
+// Dropping the file changes nothing that runs: the replica it names is
+// re-derived from the base agent below. Every drop is logged at ERROR naming
+// the file so the operator can delete it.
+func (c *Config) dropStrayReplicaOverlays(baseAgents map[string]AgentConfig, effectiveReplicas func(string, AgentConfig) int) {
+	for name, agent := range baseAgents {
+		if n := normalizeReplicaCount(agent.Replicas); n < 1 || n > MaxAgentReplicas {
+			continue // reported by the caller's range check
+		}
+		replicas := effectiveReplicas(name, agent)
+		for i := 2; i <= replicas; i++ {
+			derived := replicaAgentName(name, i)
+			stray, ok := baseAgents[derived]
+			if !ok || stray.ReplicaOf != "" || stray.SourceFile() == "" {
+				continue
+			}
+			slog.Default().Error("config: ignored per-agent overlay file for a derived replica - the replica is re-derived from its base agent; delete the file (#18137)",
+				"hive_id", c.HiveID,
+				"agent", derived,
+				"replica_of", name,
+				"file", stray.SourceFile(),
+			)
+			delete(baseAgents, derived)
+			delete(c.Agents, derived)
+		}
+	}
 }
 
 // MarshalYAML persists only declared agents. Runtime-derived replicas are

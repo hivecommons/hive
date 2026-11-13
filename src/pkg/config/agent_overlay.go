@@ -273,9 +273,35 @@ func (c *Config) ClearAgentRemoved(name string) bool {
 // only defer the failure to a restart. The gateway-aware half of the gate
 // needs the governor config; callers that have it should also run
 // Config.ValidateAgentLaunchCmds before calling this.
+//
+// A derived replica (ReplicaOf set) is never written under its own name:
+// ReplicaOf is not persisted, so reviewer-2.yaml would load as a base agent
+// that collides with reviewer.replicas on the next boot (#18137). Its edit is
+// routed to the base agent's overlay instead, with the replica's identity
+// (id, beads_dir) restored to the base's. A review head cannot be routed —
+// its backend and model differ from the base by design — so it is refused.
 func SaveAgentFile(dir, name string, agent AgentConfig) error {
 	if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
 		return fmt.Errorf("invalid agent name %q", name)
+	}
+	if agent.ReplicaOf != "" {
+		if agent.ReviewHead != "" {
+			return fmt.Errorf("refusing to save agent overlay %s: it is review head %s of %s; edit the base agent", name, agent.ReviewHead, agent.ReplicaOf)
+		}
+		derived := name
+		name = agent.ReplicaOf
+		if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
+			return fmt.Errorf("invalid agent name %q", name)
+		}
+		if agent.ID == "" || agent.ID == derived {
+			agent.ID = name
+		}
+		if agent.BeadsDir == fmt.Sprintf("/data/beads/%s", derived) {
+			agent.BeadsDir = fmt.Sprintf("/data/beads/%s", name)
+		}
+		agent.ReplicaOf = ""
+		agent.ReplicaIndex = 0
+		agent.ReplicaCount = 0
 	}
 	if err := (GovernorConfig{}).ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd); err != nil {
 		return fmt.Errorf("refusing to save agent overlay %s: %w", name, err)
