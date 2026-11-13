@@ -1,1 +1,0 @@
-- Dashboard top bar: when the centre column is narrow, the agent run-order strip's summary pill is now a real button that opens the Agents section (click, Enter or Space), and it shows how many scheduled agents are in the run order ("9 agents", "1 agent") instead of a count capped at 3; the misleading "▾" caret is gone ([#18110](https://github.com/hivecommons/hive/issues/18110)).

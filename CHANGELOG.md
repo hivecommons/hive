@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.245.0)
+
+### Added
+
+- The hive image now ships the `spektacular` CLI (pinned 0.31.0, checksum-verified, amd64 and arm64), so the Inbox → RFC destination runs `spektacular voice --publish` in-pod without an agent fallback (#17888).
+
+### Fixed
+
+- Completed Claude credential re-bridges (a token refresh replacing an agent's shared-login symlink, repaired automatically) no longer file `unclassified_error_repeated` fleet self-reports; failed repairs still do.
+- Dashboard top bar: when the centre column is narrow, the agent run-order strip's summary pill is now a real button that opens the Agents section (click, Enter or Space), and it shows how many scheduled agents are in the run order ("9 agents", "1 agent") instead of a count capped at 3; the misleading "▾" caret is gone ([#18110](https://github.com/hivecommons/hive/issues/18110)).
+
 ## 2026-11-13 (v5.244.1)
 
 ### Fixed
