@@ -341,7 +341,7 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 		{
 			Name:  "regression/18141-rfc-title-human-claim-is-020",
 			Note:  "The title rule is not a gate either: a person's /claim on an [RFC]-titled issue stages 020.",
-			Input: issueStageGoldenInput{Repo: repo, Number: 18141, Labels: []string{"Epic", stagelabels.OpenForDiscussion.Label()}, Title: "[RFC] v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: string(claims.KindHuman), ClaimedBy: "alice"},
+			Input: issueStageGoldenInput{Repo: repo, Number: 18141, Labels: []string{"help wanted", stagelabels.OpenForDiscussion.Label()}, Title: "[RFC] v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: string(claims.KindHuman), ClaimedBy: "alice"},
 		},
 		{
 			Name:  "regression/17150-kind-design-is-018",
