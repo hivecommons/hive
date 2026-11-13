@@ -81,6 +81,7 @@ js/tracker-words-gate.js
 js/tracker-words.js
 js/tracker-row-anchor.js
 js/tracker-row.js
+js/tracker-stage-icons.js
 js/tracker-row-strip.js
 js/tracker-workflows.js
 js/tracker-row-acted.js

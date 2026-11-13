@@ -1615,6 +1615,14 @@
     .ham-wf-badge { flex: 0 0 auto; font-family: var(--font-mono); font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; color: var(--indigo); background: color-mix(in srgb, var(--indigo) 12%, transparent); border: 1px solid color-mix(in srgb, var(--indigo) 40%, transparent); }
     .ham-wf-cols { position: static; }
     .ham-wf-cols .ham-wf-col { color: var(--indigo); }
+    /* Model chevrons wear the column's stage icon (hivecommons/hive issue 18033):
+       alone and dimmed in a done / todo step, leading the word in the lit
+       one. An emoji override is sized to the SVG glyph so the row keeps
+       its height. */
+    .ham-seg.ham-wf-seg .ham-stage-ico { flex: 0 0 auto; }
+    .ham-seg.ham-wf-seg.active .ham-stage-ico { margin-right: var(--sp-1); }
+    .ham-seg.ham-wf-seg.done .ham-stage-ico { opacity: 0.6; }
+    .ham-emoji-ico { display: inline-block; width: 12px; height: 12px; font-size: var(--fs-xs); line-height: 12px; text-align: center; font-style: normal; }
     .ham-seg.ham-wf-uncovered { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); outline: 1px dashed var(--amber); }
     .ham-group-dist { flex: 0 0 auto; margin-left: auto; margin-right: calc(4em + var(--sp-3)); display: inline-flex; align-items: flex-end; gap: var(--sp-1); height: 0.9em; }
     .ham-gd { display: inline-block; width: 0.45em; height: 15%; border-radius: var(--sp-1); background: color-mix(in srgb, var(--text-faint) 35%, transparent); }
@@ -5298,6 +5306,12 @@
     .wf-ed-field input[readonly] { color: var(--muted); }
     .wf-ed-inline { display: flex; gap: var(--sp-2); align-items: center; }
     .wf-ed-inline input { flex: 1 1 auto; min-width: 0; }
+    /* Column icon row (hivecommons/hive#18033): preview glyph, id pick-list, emoji box. */
+    .wf-ed-icon-row .wf-ed-icon-preview { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: 0 0 auto; border-radius: var(--r-sm, 4px); background: var(--panel-strong); color: var(--text); }
+    .wf-ed-icon-row .wf-ed-icon-preview .ham-ico { width: 14px; height: 14px; }
+    .wf-ed-icon-row .wf-ed-icon-preview .ham-emoji-ico { width: 14px; height: 14px; font-size: var(--fs-sm); line-height: 14px; }
+    .wf-ed-icon-row select { flex: 1 1 auto; min-width: 0; }
+    .wf-ed-icon-row .wf-ed-icon-emoji { flex: 0 0 7em; }
     .wf-ed-checks { display: flex; gap: var(--sp-4); align-items: center; flex-wrap: wrap; }
     .wf-ed-warn { color: var(--status-warn); }
     .wf-ed-translist { margin: var(--sp-0); padding-left: var(--sp-5); font-size: var(--fs-xs); }
@@ -18803,6 +18817,166 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (hours < 48) return hours + 'h';
       return Math.floor(hours / 24) + 'd';
     }
+/* ---- Stage icons for workflow-model chevrons (hivecommons/hive#18033) ---
+       A chevron that is not the row's active stage used to carry only its
+       clipped column label. Now every column has a glyph that says what the
+       stage means: picked by the column's name (STAGE_ICON_BY_NAME, keyed
+       by the normalised label), or by the model's own `icon` on the column
+       — an allowlisted id below or a single emoji, never markup. The set is
+       16-unit monochrome strokes in currentColor, so it follows the theme
+       like STAGE_TRACKER_ICONS does. Pure helpers: the node harness
+       (stage_tracker_stage_icons_ui_test.go) lifts them by name, and a Go
+       test keeps the id list equal to workflowmodel.ColumnIconIDs. */
+    const STAGE_ICON_SET = {
+      inbox: '<path d="M2 9.5h3.5l1 2h3l1-2H14"/><path d="M2 9.5 4 3.5h8l2 6v4H2z"/>',
+      circle: '<circle cx="8" cy="8" r="5"/>',
+      bolt: '<path d="M9 1 3 9h4l-1 6 6-8H8z"/>',
+      hand: '<path d="M4.5 8.5V4a1 1 0 0 1 2 0v3.5M6.5 7V3a1 1 0 0 1 2 0v4M8.5 7V3.5a1 1 0 0 1 2 0V8M10.5 8V5a1 1 0 0 1 2 0v5.5c0 2.5-1.8 4-4.3 4-2 0-3-.9-3.9-2.3L2.6 9.9a1 1 0 0 1 1.6-1.2L4.5 9"/>',
+      person: '<circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/>',
+      pencil: '<path d="M11.5 2.5 13.5 4.5 5.5 12.5 2.5 13.5 3.5 10.5z"/><path d="M9.5 4.5l2 2"/>',
+      'pull-request': '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="13" r="1.5"/><path d="M4 4.5v7M12 11.5V7a2 2 0 0 0-2-2H8"/>',
+      flask: '<path d="M5.5 1.5h5M6.5 1.5v4.6L2.6 12.9a1 1 0 0 0 .9 1.6h9a1 1 0 0 0 .9-1.6L9.5 6.1V1.5"/><path d="M4.4 10.5h7.2"/>',
+      gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>',
+      eye: '<path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>',
+      people: '<circle cx="5.5" cy="5" r="2.5"/><path d="M1 14a4.5 4.5 0 0 1 9 0"/><path d="M10.5 3a2.5 2.5 0 0 1 0 4.5M12 10a4 4 0 0 1 3 4"/>',
+      'thumbs-up': '<path d="M5 7.5 8 1.5c1.5 0 2 1 2 2L9.5 6H13a1.5 1.5 0 0 1 1.5 1.7l-1 5A1.5 1.5 0 0 1 12 14H5z"/><path d="M5 7.5H2v6.5h3"/>',
+      'shield-check': '<path d="M8 1.5 13.5 3.5v4c0 3.5-2.5 5.9-5.5 7-3-1.1-5.5-3.5-5.5-7v-4z"/><path d="M5.5 8l1.8 1.8L10.8 6"/>',
+      merge: '<path stroke-width="2" d="M6 14.5V3M3 6l3-3 3 3M13 14.5c0-3.8-3.4-4.6-7-6.5"/>',
+      check: '<path d="M3 8l3 3 7-7"/>',
+      checkbox: '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M5 8l2 2 4-4"/>',
+      list: '<path d="M3 5h10M3 8h10M3 11h10"/>',
+      tag: '<path d="M2.5 2.5h5.5l5.5 5.5-5.5 5.5-5.5-5.5z"/><circle cx="5.5" cy="5.5" r="1"/>',
+      flag: '<path d="M3.5 14.5V2.5h8.5l-2 3 2 3H3.5"/>',
+      rocket: '<path d="M8 1.5c2.5 1.5 3.5 4.5 3 8l-3 3-3-3c-.5-3.5.5-6.5 3-8z"/><circle cx="8" cy="6.5" r="1.2"/><path d="M5 9.5 3 11.5l.5 2 2-1M11 9.5l2 2-.5 2-2-1"/>',
+      book: '<path d="M2.5 2.5h4a1.5 1.5 0 0 1 1.5 1.5v9.5a1 1 0 0 0-1-1h-4.5zM13.5 2.5h-4A1.5 1.5 0 0 0 8 4v9.5a1 1 0 0 1 1-1h4.5z"/>',
+      search: '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>',
+      clock: '<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/>',
+      pause: '<path d="M5.5 3v10M10.5 3v10"/>',
+      archive: '<rect x="2" y="2.5" width="12" height="3"/><path d="M3 5.5v8h10v-8M6.5 8.5h3"/>',
+      dot: '<circle cx="8" cy="8" r="1.75" fill="currentColor"/>',
+    };
+    const STAGE_ICON_DEFAULT = 'dot';
+
+    // Pure: the key a column name is matched by — lower-case, trimmed,
+    // inner whitespace and the " / " and " · " separators collapsed to one
+    // space, so "Reviewer check", "reviewer  check" and "CI / Review" each
+    // land on one entry.
+    function stageIconNormalizeName(name) {
+      return String(name == null ? '' : name).toLowerCase().replace(/[\s·/]+/g, ' ').trim();
+    }
+
+    // Canonical stage name → icon id. Every column label across hive-default,
+    // the curated marketplace bundles (cncf-techdocs-assessment), the ingest
+    // skeleton (Intake, Triage) and the editor palette has an entry; the
+    // workflow editor's column inspector shows the one its label resolves to.
+    const STAGE_ICON_BY_NAME = {
+      // hive-default
+      'open': 'inbox',
+      'actionable': 'bolt',
+      'claimed': 'hand',
+      'pr in progress': 'pull-request',
+      'ci review': 'flask',
+      'ci': 'flask',
+      'review': 'eye',
+      'merge queue': 'merge',
+      'merged': 'check',
+      // cncf-techdocs-assessment
+      'requested': 'inbox',
+      'accepted': 'checkbox',
+      'drafting': 'pencil',
+      'reviewer check': 'eye',
+      'stakeholder review': 'people',
+      'approval': 'thumbs-up',
+      'done': 'check',
+      // ingest skeleton and editor palette
+      'intake': 'inbox',
+      'triage': 'tag',
+      'analysis': 'search',
+      'writing': 'pencil',
+      'publish': 'rocket',
+      'published': 'rocket',
+      'needs decision': 'person',
+      'work in progress': 'pencil',
+      'in progress': 'pencil',
+      'in review': 'eye',
+      'ci failing': 'flask',
+      'released': 'rocket',
+      'deployed': 'rocket',
+      'deployed staging': 'rocket',
+      'deployed production': 'rocket',
+      'closed': 'archive',
+      'verified': 'shield-check',
+      'verification': 'shield-check',
+      'approved': 'thumbs-up',
+      'blocked': 'pause',
+      'hold': 'pause',
+      'on hold': 'pause',
+      'waiting': 'clock',
+      'backlog': 'list',
+      'todo': 'list',
+      'to do': 'list',
+      'docs': 'book',
+      'documentation': 'book',
+    };
+
+    // Pure: is v an allowlisted icon id?
+    function stageIconIsId(v) { return Object.prototype.hasOwnProperty.call(STAGE_ICON_SET, String(v || '')); }
+
+    // Pure: is v a single emoji — one or two pictographs (a ZWJ sequence or
+    // a flag) plus modifiers, no letters, digits, spaces or markup? The
+    // mirror of workflowmodel.IsColumnIconEmoji.
+    function stageIconIsEmoji(v) {
+      const s = String(v == null ? '' : v);
+      if (!s || Array.from(s).length > 8) return false;
+      let pict = 0;
+      for (const ch of s) {
+        const cp = ch.codePointAt(0);
+        if (cp === 0x200D || cp === 0xFE0F || cp === 0xFE0E || cp === 0x20E3 || (cp >= 0x1F3FB && cp <= 0x1F3FF)) continue;
+        if (cp < 0x80 || /[\p{L}\p{N}\s\p{Cc}]/u.test(ch)) return false;
+        if ((cp >= 0x1F000 && cp <= 0x1FAFF) || (cp >= 0x2600 && cp <= 0x27BF) || (cp >= 0x2B00 && cp <= 0x2BFF) || (cp >= 0x2300 && cp <= 0x23FF) || (cp >= 0x2190 && cp <= 0x21FF) || (cp >= 0x25A0 && cp <= 0x25FF) || (cp >= 0x2900 && cp <= 0x297F) || (cp >= 0x1F1E6 && cp <= 0x1F1FF) || [0xA9, 0xAE, 0x2122, 0x2139, 0x3030, 0x303D, 0x3297, 0x3299].indexOf(cp) >= 0) { pict++; continue; }
+        return false;
+      }
+      return pict >= 1 && pict <= 2;
+    }
+
+    // Pure: '' (default), an icon id or a single emoji validate; anything
+    // else is refused — the editor shows why and keeps the last good value.
+    function stageIconIsValid(v) {
+      const s = String(v == null ? '' : v).trim();
+      return s === '' || stageIconIsId(s) || stageIconIsEmoji(s);
+    }
+
+    // Pure: the icon id a column name resolves to; STAGE_ICON_DEFAULT when
+    // the name is unknown.
+    function stageIconIdForName(name) {
+      return STAGE_ICON_BY_NAME[stageIconNormalizeName(name)] || STAGE_ICON_DEFAULT;
+    }
+
+    // Pure: what a column draws — its valid `icon` override (id or emoji),
+    // else the id its label resolves to. An invalid override is ignored,
+    // never rendered.
+    function stageIconFor(col) {
+      const c = col || {};
+      const over = String(c.icon == null ? '' : c.icon).trim();
+      if (over && (stageIconIsId(over) || stageIconIsEmoji(over))) return over;
+      return stageIconIdForName(c.label || c.id);
+    }
+
+    // The icon as markup: an allowlisted id becomes its inline SVG, an
+    // emoji a text span (escaped), anything else nothing. label is for
+    // assistive tech only; the chevron's title carries the hover text.
+    function stageIconHtml(icon, cls, label) {
+      const v = String(icon == null ? '' : icon).trim();
+      const aria = label ? ` role="img" aria-label="${esc(label)}"` : ' aria-hidden="true"';
+      if (stageIconIsId(v)) return `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"${aria}>${STAGE_ICON_SET[v]}</svg>`;
+      if (stageIconIsEmoji(v)) return `<span class="${cls} ham-emoji-ico"${aria}>${esc(v)}</span>`;
+      return '';
+    }
+
+    // The glyph a column's chevron wears, by its override or its name.
+    function stageIconColumnHtml(col, cls, label) {
+      return stageIconHtml(stageIconFor(col), cls, label);
+    }
 
     // Column header: the stage names once, aligned with the chevrons below.
     // It is sticky under the Merged bar (tracker-cues CSS), so the names
@@ -19966,7 +20140,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // The model's column header, drawn under a bound repository's group
     // header in place of the shared hive-default header.
     function stageTrackerWorkflowHeaderHtml(wf) {
-      const cols = wf.columns.map(c => `<li class="ham-seg ham-wf-col${c.terminal ? ' cap' : ''}" title="${esc(c.hint || c.label)}"><span class="ham-seg-t">${esc(c.label)}</span></li>`).join('');
+      const cols = wf.columns.map(c => `<li class="ham-seg ham-wf-col${c.terminal ? ' cap' : ''}" title="${esc(c.hint || c.label)}"><span class="ham-seg-t">${stageTrackerWorkflowColumnIconHtml(c, 'ham-ico ham-col-ico ham-stage-ico')}${esc(c.label)}</span></li>`).join('');
       return `<div class="ham-cols ham-wf-cols" aria-hidden="true" data-ham-workflow="${esc(wf.name + '@' + wf.version)}"><div class="ham-strip-row"><ol class="ham-strip">${cols}</ol><span class="ham-since">since</span></div></div>`;
     }
 
@@ -20026,10 +20200,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return ctx && ctx.leadWorkflow ? stageTrackerHeaderHtml(stages) : '';
     }
 
+    // The glyph a model column wears (hivecommons/hive#18033): its `icon`
+    // override when valid, else the icon its label resolves to. Guarded so
+    // harnesses that lift the strip alone still render.
+    function stageTrackerWorkflowColumnIconHtml(c, cls, label) {
+      return typeof stageIconColumnHtml === 'function' ? stageIconColumnHtml(c, cls, label) : '';
+    }
+
     // One row's strip under its model: done before the anchored column,
     // active at it (the stage's own word from `stages`, or the column
     // label), todo after. An uncovered stage lights the first column amber
     // with the "Not covered" word so the gap is visible, not silent.
+    // Done and todo chevrons wear the column's icon alone (the label is
+    // the header's and the hover's; in a chevron it only clipped); the
+    // active one leads its word with the icon (hivecommons/hive#18033).
     function stageTrackerWorkflowStripItems(item, wf, stages) {
       const cur = Number(item.stage) || 0;
       const terminal = cur >= (typeof STAGE_TRACKER_TERMINAL === 'number' ? STAGE_TRACKER_TERMINAL : 110);
@@ -20047,7 +20231,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ? `stage/${String(cur).padStart(3, '0')} is not a state of ${wf.name}@${wf.version}; the engine leaves this item where it is.`
           : (c.hint || c.label) + (state === 'active' && cur ? ` — stage/${String(cur).padStart(3, '0')}` : '');
         const cls = ['ham-seg', 'ham-wf-seg', state, c.terminal ? 'cap' : '', uncovered && state === 'active' ? 'ham-wf-uncovered' : ''].filter(Boolean).join(' ');
-        return `<li class="${cls}" title="${esc(tip)}"><span class="ham-seg-t">${esc(word)}</span></li>`;
+        const ico = stageTrackerWorkflowColumnIconHtml(c, 'ham-ico ham-stage-ico');
+        const inner = state === 'active' ? `${ico}<span class="ham-seg-t">${esc(word)}</span>` : (ico || `<span class="ham-seg-t">${esc(word)}</span>`);
+        return `<li class="${cls}" title="${esc(tip)}">${inner}</li>`;
       }).join('');
     }
     const STAGE_TRACKER_ACTED_STATES = ['waiting', 'addressed', 'stuck', 'pending', 'failed', 'executing', 'blocked'];
@@ -65606,6 +65792,24 @@ function burnAreaChart() {
         options.map(o => { const v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : (o || '\u2014'); return `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(l)}</option>`; }).join('') + '</select>';
     }
 
+    // The column's chevron icon (hivecommons/hive#18033): a preview of what
+    // the Activity Monitor draws, a pick-list of the allowlisted ids with
+    // the label's default first, and a box for a single emoji. Both write
+    // spec.columns[id].icon through wfEdSetColumnIcon, which refuses
+    // anything outside the allowlist.
+    function wfEdColumnIconField(c, base, dis) {
+      if (typeof stageIconFor !== 'function') return '';
+      const cur = String(c.icon == null ? '' : c.icon).trim();
+      const def = stageIconIdForName(c.label || c.id);
+      const isEmoji = !!cur && !stageIconIsId(cur);
+      const ids = Object.keys(STAGE_ICON_SET);
+      const options = [['', 'default \u00b7 ' + def]].concat(ids.map(id => [id, id]));
+      const preview = `<span class="wf-ed-icon-preview" title="${esc('as drawn in the Activity Monitor')}">${stageIconHtml(stageIconFor(c), 'ham-ico ham-stage-ico')}</span>`;
+      const select = `<select data-change-action="wfEdSetColumnIcon" data-arg0="${esc(base + '.icon')}" data-arg-types="s,v" ${dis}>${options.map(o => `<option value="${esc(o[0])}" ${!isEmoji && o[0] === cur ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}${isEmoji ? `<option value="${esc(cur)}" selected>${esc(cur)} (emoji)</option>` : ''}</select>`;
+      const emoji = `<input type="text" class="wf-ed-icon-emoji" maxlength="16" placeholder="or an emoji" value="${esc(isEmoji ? cur : '')}" data-change-action="wfEdSetColumnIcon" data-arg0="${esc(base + '.icon')}" data-arg-types="s,v" ${dis}>`;
+      return wfEdField('Icon', `<div class="wf-ed-inline wf-ed-icon-row">${preview}${select}${emoji}</div>`, 'drawn in this column\u2019s chevrons; blank = by label');
+    }
+
     function renderWfEdInspector(st) {
       const m = st.model, spec = m.spec, sel = st.selection;
       const can = wfEdCanEdit();
@@ -65656,6 +65860,7 @@ function burnAreaChart() {
           wfEdField('Id', `<div class="wf-ed-inline"><input type="text" value="${esc(c.id)}" readonly><button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdRenameColumnAction" data-arg0="${esc(c.id)}" ${dis}>Rename\u2026</button></div>`) +
           wfEdField('Label', wfEdText(base + '.label', c.label, dis)) +
           wfEdField('Hint', wfEdText(base + '.hint', c.hint, dis), 'shown as the lane\u2019s tooltip in the Activity Monitor') +
+          wfEdColumnIconField(c, base, dis) +
           `<div class="config-field wf-ed-field"><label><input type="checkbox" ${c.terminal ? 'checked' : ''} data-change-action="wfEdFieldSetBool" data-arg0="${esc(base + '.terminal')}" data-arg-types="s,c" ${dis}> Terminal column</label><span class="text-muted fs-xs">states here need no exit</span></div>` +
           wfEdField('Width', `<input type="range" min="${WF_ED.minColW}" max="${WF_ED.maxColW}" step="${WF_ED.grid}" value="${st.view.laneWidths[c.id] || WF_ED.colW}" data-input-action="wfEdLaneWidth" data-arg0="${esc(c.id)}" data-arg-types="s,v">`) +
           `<p class="text-muted fs-sm">${(c.states || []).length} state${(c.states || []).length === 1 ? '' : 's'}</p>` +
@@ -66227,6 +66432,19 @@ function burnAreaChart() {
       wfEdCommit(wfEdUpdate(_wfEd.model, path, isNaN(n) || n <= 0 ? '' : n));
     }
     function wfEdFieldSetBool(path, checked) { wfEdCommit(wfEdUpdate(_wfEd.model, path, checked ? true : '')); }
+    // An icon is '' (by label), an allowlisted id or one emoji; anything
+    // else is refused with a toast and the inspector redraws the last good
+    // value, so no markup ever reaches a chevron (hivecommons/hive#18033).
+    function wfEdSetColumnIcon(path, value) {
+      if (!_wfEd.model) return;
+      const v = String(value == null ? '' : value).trim();
+      if (typeof stageIconIsValid === 'function' && !stageIconIsValid(v)) {
+        if (typeof showToast === 'function') showToast('Icon must be one of the built-in icon ids or a single emoji.', 'error');
+        wfEdRefresh(['inspector']);
+        return;
+      }
+      wfEdCommit(wfEdUpdate(_wfEd.model, path, v), { parts: ['canvas', 'inspector', 'drawer'] });
+    }
     function wfEdSetList(path, value) { wfEdCommit(wfEdUpdate(_wfEd.model, path, String(value || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean))); }
     function wfEdSetStateColumn(id, columnId) { wfEdCommit(wfEdMoveState(_wfEd.model, id, columnId === WF_ED_UNASSIGNED ? '' : columnId)); }
     function wfEdSetInitial(id) { wfEdCommit(wfEdUpdate(_wfEd.model, 'spec.initial', id)); }
