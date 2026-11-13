@@ -4,7 +4,8 @@ import "net/http"
 
 // translatorRefusalAttrs are the log attributes for a refused translator
 // request. Beyond remote/method/path they say why identification failed (no UID
-// map, socket not resolvable, or UID not mapped to an agent), the socket owner's
+// map, socket not resolvable, proxy UID refused because private forwarding is
+// enabled, or UID not mapped to an agent), the socket owner's
 // UID when known, and whether an x-api-key was sent, so the refusal is
 // actionable without weakening it. The key value is never logged.
 func (p *GitHubProxy) translatorRefusalAttrs(r *http.Request) []any {
@@ -16,6 +17,8 @@ func (p *GitHubProxy) translatorRefusalAttrs(r *http.Request) []any {
 		uid, err := uidForRemoteAddr(r.RemoteAddr)
 		if err != nil {
 			attrs = append(attrs, "reason", "socket_owner_unresolved", "error", err.Error())
+		} else if p.uidMap.IsInternalUID(uid) && p.allowPrivateForward {
+			attrs = append(attrs, "reason", "proxy_uid_private_forward", "uid", uid)
 		} else {
 			attrs = append(attrs, "reason", "uid_not_mapped", "uid", uid)
 		}
