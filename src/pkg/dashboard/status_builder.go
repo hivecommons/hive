@@ -1270,6 +1270,9 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 				a.BackendAuthLastError = preferFullInferenceError(a.BackendAuthLastError, inferenceLastErr)
 			}
 		}
+		// #18111: the pane-poll quota flag covers every backend (Copilot's
+		// "exceeded your monthly quota" never reaches BackendAuthStatus).
+		a.QuotaExhausted = proc.QuotaExhausted
 		if refreshableFn := getAgentRefreshableFn(); refreshableFn != nil {
 			if refreshable, known := refreshableFn(name); known {
 				a.BackendAuthRefreshable = &refreshable

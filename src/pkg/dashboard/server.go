@@ -1017,6 +1017,11 @@ type FrontendAgent struct {
 	// token, false = a human must log in. Absent for backends with no
 	// verified refresh semantics.
 	BackendAuthRefreshable *bool `json:"backendAuthRefreshable,omitempty"`
+	// QuotaExhausted mirrors crux.Process.QuotaExhausted (#18111): the pane
+	// poll saw a provider quota refusal (e.g. Copilot "exceeded your monthly
+	// quota"). Unlike BackendAuthStatus "quota" it covers every backend, so
+	// the dashboard can paint the agent "out of quota" instead of green.
+	QuotaExhausted bool `json:"quotaExhausted,omitempty"`
 	// InferenceLastError is the full text of the most recent inference error
 	// hive's proxy returned to this agent (#11761), shown while Claude Code's
 	// own retry line is still clipped to one pane row. Empty when unknown,

@@ -296,6 +296,13 @@
        sentence — that one reports whether a login URL was actually seen, so it
        earns the space and always wins over the persisted dismissal. */
     const TERMINAL_KEYBOARD_COPY_HINT = 'Selecting text in the terminal: hold ⇧ (Shift) while dragging — tmux mouse mode owns an ordinary drag. Then ⌘C (macOS) or Ctrl+Shift+C copies, and ⌘V or Ctrl+Shift+V pastes.';
+    /* One-line card note for an out-of-quota agent (#18111). It never offers a
+       login: quota is a provider limit, and re-login does not lift it. */
+    function agentOutOfQuotaNoteHtml(a) {
+      const detail = String((a && a.backendAuthLastError) || '').trim();
+      const detailHtml = detail ? ` <span class="agent-quota-note-detail">${esc(detail)}</span>` : '';
+      return `<div class="agent-quota-note" role="note">Out of provider quota: this agent cannot run until the quota resets or it is moved to another provider.${detailHtml}</div>`;
+    }
     function terminalCopyHintHtml(needsLogin, sessionUnavailable, agentName, loginURL, backendAuthStatus, backendAuthLastError, statusEvidence, inferenceLastError) {
       if (sessionUnavailable) return '';
       /* #11761: inferenceLastError is the FULL error hive's inference proxy
@@ -652,6 +659,15 @@
       const down = (isDown === undefined) ? (a.state !== 'running') : isDown;
       return down && a.authKnown === true && a.authAvailable !== true;
     }
+    /* agentOutOfQuota (#18111): the provider refused this agent for quota.
+       quotaExhausted is the pane-poll flag that covers every backend (e.g.
+       Copilot's "exceeded your monthly quota"); backendAuthStatus 'quota' is
+       the inference-gateway classifier's verdict. The top-bar tile, collapsed
+       tile and agent card all ask this one helper so they cannot disagree.
+       Re-login does not help, so callers keep login problems ahead of it. */
+    function agentOutOfQuota(a) {
+      return !!a && (a.quotaExhausted === true || a.backendAuthStatus === 'quota');
+    }
 
     /* Agent blockers (#5594). THREE orthogonal flags decide whether an agent
        will ever do work: is its session up, has an operator paused it, and is
@@ -886,6 +902,10 @@
         const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
         const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
         const needsLogin = _agentNeedsLogin(a, isStopped);
+        // #18111: out of provider quota paints a live agent red. Disabled,
+        // paused, held-off, starting and stopped agents keep their own look,
+        // and a login problem outranks quota (re-login is the first fix).
+        const outOfQuota = agentOutOfQuota(a) && !isDisabled && !needsLogin && !isStarting && !isPaused && !isOff && !isStopped;
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
         let statusCls = '';
@@ -893,10 +913,10 @@
         else if (a.structuredStatus === 'NEEDS_CONTEXT') statusCls = 'status-needs-context';
         else if (isStale) statusCls = 'status-stale';
         const isOnDemandIdle = isOnDemand && a.busy !== 'working';
-        const cls = isDisabled ? 'disabled-agent' : needsLogin ? 'needs-login' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
+        const cls = isDisabled ? 'disabled-agent' : needsLogin ? 'needs-login' : outOfQuota ? 'out-of-quota' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
         // Down + unauthenticated CLI = attention-token needs-login (same formula as the
         // card's Login button above), not plain down-red (#2465).
-        const dotCls = isPoweredOff ? 'off' : (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
+        const dotCls = isPoweredOff ? 'off' : (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : outOfQuota ? 'out-of-quota' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
         // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
         const dotState = isOff ? 'off-healthy' : dotCls;
         const canToggle = a.beadRole !== 'supervisor';
@@ -972,6 +992,7 @@
           ${agentSpanHandle}
           <span class="working-indicator"></span>
           <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${isDisabled ? disabledEnableBtn : ''}${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionActions} <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          ${outOfQuota ? agentOutOfQuotaNoteHtml(a) : ''}
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
           <div class="agent-state ${isPoweredOff ? 'disabled' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${agentStateText(a)}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');

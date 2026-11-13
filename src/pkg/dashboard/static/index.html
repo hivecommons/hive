@@ -986,6 +986,15 @@
     .agent-card.idle { border-left-color: var(--line); }
     .agent-card.stopped { border-left-color: var(--red); }
     .agent-card.needs-login { border-left-color: var(--red); }
+    .agent-card.out-of-quota { border-left-color: var(--red); }
+    /* #18111: out of provider quota — red, and no login affordance. */
+    .agent-quota-note {
+      margin: var(--sp-4) var(--sp-0) var(--sp-5); padding: 6px 10px;
+      border: 1px solid color-mix(in srgb, var(--red) 55%, transparent);
+      border-radius: var(--radius); background: color-mix(in srgb, var(--red) 10%, var(--panel));
+      color: var(--text); font-size: 0.72rem; line-height: 1.45; overflow-wrap: anywhere;
+    }
+    .agent-quota-note-detail { color: var(--muted); }
     .agent-card.disabled-agent { border-left-color: var(--status-neutral); opacity: 0.68; }
     .agent-card.disabled-agent .agent-state { color: color-mix(in srgb, var(--muted) 70%, var(--bg)); }
     .terminal-copy-hint {
@@ -2682,6 +2691,7 @@
        the current mode, so it will not be kicked (mirrors needs-login, green). */
     .dot.off-healthy { background: transparent; border: 2px solid var(--status-ok); box-sizing: border-box; }
     .dot.stopped { background: var(--status-error); }
+    .dot.out-of-quota { background: var(--status-error); }
     .dot.starting { background: var(--status-info); animation: oc-pulse 1.5s ease-in-out infinite; }
     .dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
     .agent-field { display: grid; grid-template-columns: minmax(5.5rem, max-content) minmax(0, 1fr); gap: var(--sp-4); align-items: baseline; font-size: 0.8rem; padding: var(--sp-1) var(--sp-0); }
@@ -6119,7 +6129,7 @@
     .agent-collapsed-tile:hover, .agent-collapsed-tile:focus-visible, .repo-collapsed-tile:hover, .repo-collapsed-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
     .agent-collapsed-tile.disabled, .repo-collapsed-tile.paused, .repo-collapsed-tile.idle { opacity: 0.58; }
     .agent-collapsed-tile.stopped, .repo-collapsed-tile.error { border-color: color-mix(in srgb, var(--red) 35%, var(--line-subtle)); }
-    .agent-collapsed-tile.needs-login { border-color: color-mix(in srgb, var(--red) 55%, var(--line-subtle)); }
+    .agent-collapsed-tile.needs-login, .agent-collapsed-tile.out-of-quota { border-color: color-mix(in srgb, var(--red) 55%, var(--line-subtle)); }
     .agent-collapsed-tile.active, .repo-collapsed-tile.healthy { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
     .repo-collapsed-tile.blocked { border-color: color-mix(in srgb, var(--yellow) 65%, var(--line-subtle)); }
     .agent-collapsed-tile.up-next, .repo-collapsed-tile.working { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
@@ -6134,7 +6144,7 @@
     .agent-tile-next { color: var(--muted); grid-column: 1 / -1; }
     .agent-tile-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 40%, transparent); }
     .agent-collapsed-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
-    .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot, .repo-collapsed-tile.error .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
+    .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot, .agent-collapsed-tile.out-of-quota .agent-tile-dot, .repo-collapsed-tile.error .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     .repo-collapsed-tile.blocked .agent-tile-dot { background: var(--yellow); box-shadow: 0 0 0 1px color-mix(in srgb, var(--yellow) 40%, transparent); }
     .agent-collapsed-tile.disabled .agent-tile-dot, .repo-collapsed-tile.paused .agent-tile-dot, .repo-collapsed-tile.idle .agent-tile-dot { background: var(--muted); box-shadow: none; }
     .agent-navbar-upnext {
@@ -6151,14 +6161,14 @@
     .agent-navbar-tile.entering { opacity: 0; transform: translateY(calc(-1 * var(--sp-3))); }
     .agent-navbar-tile.exiting { opacity: 0; transform: translateY(var(--sp-3)); pointer-events: none; }
     .agent-navbar-tile.active { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
-    .agent-navbar-tile.stopped, .agent-navbar-tile.needs-login { border-color: color-mix(in srgb, var(--red) 45%, var(--line-subtle)); }
+    .agent-navbar-tile.stopped, .agent-navbar-tile.needs-login, .agent-navbar-tile.out-of-quota { border-color: color-mix(in srgb, var(--red) 45%, var(--line-subtle)); }
     .agent-navbar-tile .agent-tile-dot { grid-column: 2; grid-row: 1; justify-self: end; }
     .agent-navbar-tile .agent-tile-name { grid-column: 1; grid-row: 1; min-width: max-content; overflow: visible; text-overflow: clip; }
     .agent-navbar-tile .agent-tile-next { grid-column: 1; grid-row: 2; color: var(--muted); }
     .agent-navbar-tile .agent-up-next { grid-column: 2; grid-row: 2; color: var(--amber); }
     .agent-navbar-tile .agent-up-next.running-now { color: var(--green); }
     .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
-    .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
+    .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot, .agent-navbar-tile.out-of-quota .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     .agent-navbar-summary { flex: 0 0 auto; display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
     .agent-navbar-summary:hover, .agent-navbar-summary:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
     .agent-navbar-summary-short { display: none; }
@@ -10511,6 +10521,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       needs_attention: { label: 'needs attention', status: 'attention' },
       needs_context: { label: 'needs context', status: 'warn' },
       needs_login: { label: 'needs login', status: 'attention' },
+      out_of_quota: { label: 'out of quota', status: 'error' },
       on_demand: { label: 'on demand', status: 'info' },
       active: { label: 'active', status: 'info' },
       initializing: { label: 'initializing', status: 'info' },
@@ -11434,6 +11445,9 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       const text = String((a && (a.backendAuthStatus || a.backendAuthLastError || a.statusEvidence)) || '').toLowerCase();
       if (text.includes('expired') || text.includes('token_expired')) return { label: 'expired', status: 'error', needsLogin: true };
       if (_agentNeedsLogin(a || {}, isDown)) return { label: 'logged out', status: 'error', needsLogin: true };
+      // #18111: out of provider quota is red, but never "logged out" — re-login
+      // does not help. Disabled, paused and stopped agents keep their own look.
+      if (agentOutOfQuota(a) && !isDown && !agentIsDisabled(a) && a.paused !== true) return { label: 'out of quota', status: 'error', needsLogin: false, quota: true };
       return { label: 'authenticated', status: 'ok', needsLogin: false };
     }
     function agentCollapsedTimestampDetail(ms, fallback) {
@@ -11453,7 +11467,8 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       return [
         name,
         `power: ${power}`,
-        `login: ${auth.label}`,
+        `login: ${auth.quota ? 'authenticated' : auth.label}`,
+        ...(auth.quota ? ['provider: out of quota'] : []),
         `next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextKick))}`,
         `last kick: ${agentCollapsedTimestampDetail(Number.isFinite(lastMs) ? lastMs : null, a && a.lastKick)}`,
       ].join('\n');
@@ -11462,6 +11477,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       if (disabled) return 'disabled';
       if (auth && auth.needsLogin) return auth.label;
       if (isDown) return 'stopped';
+      if (auth && auth.quota) return auth.label;
       return '';
     }
     function agentTileLabelHtml(label) {
@@ -11495,7 +11511,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       const state = agentCollapsedStateLabel(disabled, isDown, auth);
       const sortKey = tileState.sortKey || agentCollapsedSortKey(a, 0, nowMs);
       const label = tileState.label || null;
-      const classes = ['agent-collapsed-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', disabled ? 'disabled' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
+      const classes = ['agent-collapsed-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', disabled ? 'disabled' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', auth.quota ? 'out-of-quota' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
       const title = agentCollapsedTileTitle(a || {}, name, power, auth, nextMs);
       const labelHtml = agentTileLabelHtml(label);
       const stateHtml = state ? `<span class="agent-tile-state"> · ${esc(state)}</span>` : '<span class="agent-tile-state"></span>';
@@ -11560,8 +11576,8 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       const nextMs = Number.isFinite(tileState.nextMs) ? tileState.nextMs : agentCollapsedNextKickMs(a, nowMs);
       const countdown = tileState.countdown || (active ? agentTileRunningLabel(a, nowMs) : agentTileCadenceLabel(a, nowMs));
       const label = tileState.label || null;
-      const classes = ['agent-navbar-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
-      const title = `${name}
+      const classes = ['agent-navbar-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', auth.quota ? 'out-of-quota' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
+      const title = `${name}${auth.quota ? '\nprovider: out of quota' : ''}
 next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextKick))}`;
       const labelHtml = agentTileLabelHtml(label);
       return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-running-since="${esc((a && (a.busySince || a.runningSince || a.startedAt)) || '')}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span>${labelHtml}</button>`;
@@ -30902,6 +30918,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        sentence — that one reports whether a login URL was actually seen, so it
        earns the space and always wins over the persisted dismissal. */
     const TERMINAL_KEYBOARD_COPY_HINT = 'Selecting text in the terminal: hold ⇧ (Shift) while dragging — tmux mouse mode owns an ordinary drag. Then ⌘C (macOS) or Ctrl+Shift+C copies, and ⌘V or Ctrl+Shift+V pastes.';
+    /* One-line card note for an out-of-quota agent (#18111). It never offers a
+       login: quota is a provider limit, and re-login does not lift it. */
+    function agentOutOfQuotaNoteHtml(a) {
+      const detail = String((a && a.backendAuthLastError) || '').trim();
+      const detailHtml = detail ? ` <span class="agent-quota-note-detail">${esc(detail)}</span>` : '';
+      return `<div class="agent-quota-note" role="note">Out of provider quota: this agent cannot run until the quota resets or it is moved to another provider.${detailHtml}</div>`;
+    }
     function terminalCopyHintHtml(needsLogin, sessionUnavailable, agentName, loginURL, backendAuthStatus, backendAuthLastError, statusEvidence, inferenceLastError) {
       if (sessionUnavailable) return '';
       /* #11761: inferenceLastError is the FULL error hive's inference proxy
@@ -31258,6 +31281,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const down = (isDown === undefined) ? (a.state !== 'running') : isDown;
       return down && a.authKnown === true && a.authAvailable !== true;
     }
+    /* agentOutOfQuota (#18111): the provider refused this agent for quota.
+       quotaExhausted is the pane-poll flag that covers every backend (e.g.
+       Copilot's "exceeded your monthly quota"); backendAuthStatus 'quota' is
+       the inference-gateway classifier's verdict. The top-bar tile, collapsed
+       tile and agent card all ask this one helper so they cannot disagree.
+       Re-login does not help, so callers keep login problems ahead of it. */
+    function agentOutOfQuota(a) {
+      return !!a && (a.quotaExhausted === true || a.backendAuthStatus === 'quota');
+    }
 
     /* Agent blockers (#5594). THREE orthogonal flags decide whether an agent
        will ever do work: is its session up, has an operator paused it, and is
@@ -31492,6 +31524,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
         const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
         const needsLogin = _agentNeedsLogin(a, isStopped);
+        // #18111: out of provider quota paints a live agent red. Disabled,
+        // paused, held-off, starting and stopped agents keep their own look,
+        // and a login problem outranks quota (re-login is the first fix).
+        const outOfQuota = agentOutOfQuota(a) && !isDisabled && !needsLogin && !isStarting && !isPaused && !isOff && !isStopped;
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
         let statusCls = '';
@@ -31499,10 +31535,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         else if (a.structuredStatus === 'NEEDS_CONTEXT') statusCls = 'status-needs-context';
         else if (isStale) statusCls = 'status-stale';
         const isOnDemandIdle = isOnDemand && a.busy !== 'working';
-        const cls = isDisabled ? 'disabled-agent' : needsLogin ? 'needs-login' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
+        const cls = isDisabled ? 'disabled-agent' : needsLogin ? 'needs-login' : outOfQuota ? 'out-of-quota' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
         // Down + unauthenticated CLI = attention-token needs-login (same formula as the
         // card's Login button above), not plain down-red (#2465).
-        const dotCls = isPoweredOff ? 'off' : (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
+        const dotCls = isPoweredOff ? 'off' : (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : outOfQuota ? 'out-of-quota' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
         // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
         const dotState = isOff ? 'off-healthy' : dotCls;
         const canToggle = a.beadRole !== 'supervisor';
@@ -31578,6 +31614,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${agentSpanHandle}
           <span class="working-indicator"></span>
           <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${isDisabled ? disabledEnableBtn : ''}${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionActions} <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          ${outOfQuota ? agentOutOfQuotaNoteHtml(a) : ''}
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
           <div class="agent-state ${isPoweredOff ? 'disabled' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${agentStateText(a)}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');
