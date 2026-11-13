@@ -306,6 +306,19 @@ test('draft, closed, held and moved-head/base PRs cannot pass', () => {
   ]) assert.throws(() => assertEligible({ ...eligible(1), ...change }, sha(11), 'v5'));
 });
 
+test('ineligibility names the tripped condition, not a generic verdict (#18128)', () => {
+  const expect = (change, pattern) =>
+    assert.throws(() => assertEligible({ ...eligible(1), ...change }, sha(11), 'v5'), pattern);
+  expect({ draft: true }, /#1 is a draft/);
+  expect({ state: 'closed' }, /#1 is closed, not open/);
+  expect({ head: { sha: sha(99) } }, new RegExp(`#1 head moved to ${sha(99)} \\(event head ${sha(11)}\\)`));
+  expect({ base: { ref: 'v6' } }, /#1 base moved to v6 \(event base v5\)/);
+  expect({ labels: [{ name: 'size/L' }, { name: 'needs-human' }, { name: 'hold' }] },
+    /#1 is held by label needs-human, hold/);
+  expect({ labels: [{ name: 'do-not-merge/work-in-progress' }] }, /PR state, not a CI failure/);
+  assert.doesNotThrow(() => assertEligible({ ...eligible(1), labels: [{ name: 'stage/070-fixing' }] }, sha(11), 'v5'));
+});
+
 test('group evaluation checks each member head, all evidence, and live synthetic ref', async () => {
   const f = fixture();
   assert.match(await evaluate(f), /all 2 member heads/);
@@ -381,7 +394,7 @@ test('a 5xx from the API is retried as pending evidence, never read as a verdict
 test('open PR with moved head still fails closed on pull_request_target', async () => {
   const f = fixture('pull_request_target');
   f.state.prs[0].head.sha = sha(99);
-  await assert.rejects(evaluate(f), /head\/base moved/);
+  await assert.rejects(evaluate(f), /#1 head moved to/);
 });
 
 test('untrusted events and workflow provenance are rejected', async () => {

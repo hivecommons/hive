@@ -420,6 +420,11 @@ type Server struct {
 	// (see EnableSessionPersistence). Guarded by sessionMu.
 	sessionStorePath string
 
+	// Sessions (api_sessions.go): lazily opened metadata store and the mutex
+	// serialising create/resume so the per-spoke and per-user caps hold.
+	sessionsOnce      sync.Once
+	sessionStore      *sessionStore
+	sessionsMu        sync.Mutex
 	terminalHandoffMu sync.Mutex
 	terminalHandoffs  map[string]terminalHandoff
 
@@ -1830,6 +1835,8 @@ func (s *Server) Start() error {
 	s.StartRebaseMergeFollowThrough(followCtx)
 	// Hourly anonymized benchmark push to the hub (hivecommons/hive#17694).
 	s.StartBenchmarksPublisher(followCtx)
+	// Sessions: reconcile after a restart, then close idle sessions.
+	s.StartSessionSweeper(followCtx)
 	return srv.Serve(ln)
 }
 

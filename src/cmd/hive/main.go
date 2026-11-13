@@ -1100,6 +1100,7 @@ func (b *boot) wireBootClosures() {
 			WorkflowClusterRunner:   workflowClusterRunner(),
 			WorkflowSpecLLM:         newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
 			AgentMgr:                b.agentMgr,
+			Sessions:                cruxruntime.NewUserSessions(b.logger),
 			CruxRuntimeHealth:       cruxRuntimeHealthFunc(b.cruxSupervision),
 			// Provider gateways (#5565 slice 3): concrete openrouter/watsonx/
 			// linearagent adapters behind the dashboard's consumer-defined

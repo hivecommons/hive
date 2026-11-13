@@ -353,6 +353,21 @@ against `X-Hub-Signature-256`. Terminal access uses short-lived signed
 assertions. Systemd units refuse to run code from a directory an
 unprivileged user could have created.
 
+**Sessions.** With `dashboard.sessions.enabled` (default off) the dashboard
+offers interactive CLI terminals (`/api/sessions`, [API
+reference](api-reference/sessions.md)). A session is a plain vendor CLI, never
+a shell, launched with none of the permission-bypass flags agents run with, so
+the CLI's own approval prompts stay on. Each session has its own tmux server,
+HOME, `CODEX_HOME` and XDG directories, and its environment is built from an
+allowlist: no dashboard token, terminal, hub, heartbeat or ttyd secret and no
+GitHub token reaches it (only vendor login files are bridged from the shared
+home, never `gh`'s `hosts.yml`). Creating, typing, uploading and attaching a
+terminal need owner or read-write; the scrollback snapshot is readable by any
+role and is token-redacted. Audit limits: `session_created`, `session_closed`,
+`session_renamed`, `session_input` and `session_upload` record the user and
+session id (never input text), but keystrokes typed inside the attached
+terminal go through ttyd and are not attributable to a user.
+
 **Dashboard headers.** Content Security Policy, `X-Frame-Options` and related
 headers are always set. The metrics endpoint is off unless
 `HIVE_METRICS_ENABLED` is set.
