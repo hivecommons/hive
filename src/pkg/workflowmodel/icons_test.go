@@ -24,7 +24,7 @@ func TestValidateColumnIcon(t *testing.T) {
 }
 
 func TestValidateRejectsBadColumnIcon(t *testing.T) {
-	m := HiveDefault(testScope())
+	m := techdocs(t)
 	m.Spec.Columns[0].Icon = "<b>x</b>"
 	m.Spec.Columns[1].Icon = "bolt"
 	err := m.Validate()

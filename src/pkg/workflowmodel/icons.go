@@ -86,9 +86,10 @@ func columnIconPictograph(r rune) bool {
 
 // ValidateColumnIcon accepts the empty value (default by name), an
 // allowlisted icon id, or a single emoji; anything else is an error naming
-// what was rejected.
+// what was rejected. Only surrounding blanks are forgiven: a newline or
+// other control character is never part of an icon.
 func ValidateColumnIcon(icon string) error {
-	v := strings.TrimSpace(icon)
+	v := strings.Trim(icon, " \t")
 	if v == "" || IsColumnIconID(v) || IsColumnIconEmoji(v) {
 		return nil
 	}
