@@ -1647,23 +1647,23 @@ func TestMarkStatusStaleRepublishesLastGoodWithMarker(t *testing.T) {
 	}
 }
 
-// TestBuildFeaturesSubscriptionGauge checks that the status frame's feature
-// flags carry dashboard.subscription_gauge and nothing derived from usage.
-func TestBuildFeaturesSubscriptionGauge(t *testing.T) {
-	if buildFeatures(nil).SubscriptionGauge {
-		t.Fatal("nil config reported subscription_gauge = true")
+// TestBuildFeaturesSubscriptionGaugeHeader checks that the status frame's feature
+// flags carry dashboard.subscription_gauge_header and nothing derived from usage.
+func TestBuildFeaturesSubscriptionGaugeHeader(t *testing.T) {
+	if buildFeatures(nil).SubscriptionGaugeHeader {
+		t.Fatal("nil config reported subscription_gauge_header = true")
 	}
 	cfg := &config.Config{}
-	if buildFeatures(cfg).SubscriptionGauge {
-		t.Fatal("default config reported subscription_gauge = true")
+	if buildFeatures(cfg).SubscriptionGaugeHeader {
+		t.Fatal("default config reported subscription_gauge_header = true")
 	}
-	cfg.Dashboard.SubscriptionGauge = true
+	cfg.Dashboard.SubscriptionGaugeHeader = true
 	f := buildFeatures(cfg)
-	if !f.SubscriptionGauge {
-		t.Fatal("subscription_gauge = false with dashboard.subscription_gauge enabled")
+	if !f.SubscriptionGaugeHeader {
+		t.Fatal("subscription_gauge_header = false with dashboard.subscription_gauge_header enabled")
 	}
 	if f.ExperimentLab || f.StrategyLab {
-		t.Fatal("subscription_gauge leaked into experiment_lab/strategy_lab")
+		t.Fatal("subscription_gauge_header leaked into experiment_lab/strategy_lab")
 	}
 	raw, err := json.Marshal(f)
 	if err != nil {
@@ -1673,7 +1673,7 @@ func TestBuildFeaturesSubscriptionGauge(t *testing.T) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatal(err)
 	}
-	if m["subscription_gauge"] != true {
-		t.Fatalf("features JSON = %s, want subscription_gauge:true", raw)
+	if m["subscription_gauge_header"] != true {
+		t.Fatalf("features JSON = %s, want subscription_gauge_header:true", raw)
 	}
 }

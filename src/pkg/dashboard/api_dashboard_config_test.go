@@ -69,10 +69,10 @@ func TestDashboardSettingsAPIRejectsInvalidNumbers(t *testing.T) {
 	}
 }
 
-// TestDashboardSettingsAPISubscriptionGaugeToggle covers the display-only
-// dashboard.subscription_gauge flag: off by default, owner can turn it on and
+// TestDashboardSettingsAPISubscriptionGaugeHeaderToggle covers the display-only
+// dashboard.subscription_gauge_header flag: off by default, owner can turn it on and
 // off, and an omitted field leaves it unchanged.
-func TestDashboardSettingsAPISubscriptionGaugeToggle(t *testing.T) {
+func TestDashboardSettingsAPISubscriptionGaugeHeaderToggle(t *testing.T) {
 	s := govServer(t)
 
 	get := doOwnerGet(s, "/api/config/dashboard")
@@ -83,40 +83,40 @@ func TestDashboardSettingsAPISubscriptionGaugeToggle(t *testing.T) {
 	if err := json.Unmarshal(get.Body.Bytes(), &got); err != nil {
 		t.Fatalf("GET body: %v", err)
 	}
-	if got.SubscriptionGauge {
-		t.Fatal("subscription_gauge = true by default, want false")
+	if got.SubscriptionGaugeHeader {
+		t.Fatal("subscription_gauge_header = true by default, want false")
 	}
 
-	put := doPut(s, "/api/config/dashboard", map[string]any{"subscription_gauge": true})
+	put := doPut(s, "/api/config/dashboard", map[string]any{"subscription_gauge_header": true})
 	if put.Code != http.StatusOK {
 		t.Fatalf("PUT on = %d: %s", put.Code, put.Body.String())
 	}
-	if !s.deps.Config.Dashboard.SubscriptionGauge {
-		t.Fatal("dashboard.subscription_gauge not saved as true")
+	if !s.deps.Config.Dashboard.SubscriptionGaugeHeader {
+		t.Fatal("dashboard.subscription_gauge_header not saved as true")
 	}
-	if err := json.Unmarshal(put.Body.Bytes(), &got); err != nil || !got.SubscriptionGauge {
-		t.Fatalf("PUT response subscription_gauge = %v (err %v), want true", got.SubscriptionGauge, err)
+	if err := json.Unmarshal(put.Body.Bytes(), &got); err != nil || !got.SubscriptionGaugeHeader {
+		t.Fatalf("PUT response subscription_gauge_header = %v (err %v), want true", got.SubscriptionGaugeHeader, err)
 	}
 
 	if rec := doPut(s, "/api/config/dashboard", map[string]any{"agent_poll_interval_s": 9}); rec.Code != http.StatusOK {
 		t.Fatalf("unrelated PUT = %d: %s", rec.Code, rec.Body.String())
 	}
-	if !s.deps.Config.Dashboard.SubscriptionGauge {
-		t.Fatal("a PUT without subscription_gauge turned the flag off")
+	if !s.deps.Config.Dashboard.SubscriptionGaugeHeader {
+		t.Fatal("a PUT without subscription_gauge_header turned the flag off")
 	}
 
-	if rec := doPut(s, "/api/config/dashboard", map[string]any{"subscription_gauge": false}); rec.Code != http.StatusOK {
+	if rec := doPut(s, "/api/config/dashboard", map[string]any{"subscription_gauge_header": false}); rec.Code != http.StatusOK {
 		t.Fatalf("PUT off = %d: %s", rec.Code, rec.Body.String())
 	}
-	if s.deps.Config.Dashboard.SubscriptionGauge {
-		t.Fatal("dashboard.subscription_gauge not saved as false")
+	if s.deps.Config.Dashboard.SubscriptionGaugeHeader {
+		t.Fatal("dashboard.subscription_gauge_header not saved as false")
 	}
 }
 
-func TestDashboardSettingsAPISubscriptionGaugeRejectsNonOwner(t *testing.T) {
+func TestDashboardSettingsAPISubscriptionGaugeHeaderRejectsNonOwner(t *testing.T) {
 	s := govServer(t)
 	var b bytes.Buffer
-	_ = json.NewEncoder(&b).Encode(map[string]any{"subscription_gauge": true})
+	_ = json.NewEncoder(&b).Encode(map[string]any{"subscription_gauge_header": true})
 	req := httptest.NewRequest(http.MethodPut, "/api/config/dashboard", &b)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hive-Role", "read-write")
@@ -127,33 +127,33 @@ func TestDashboardSettingsAPISubscriptionGaugeRejectsNonOwner(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("non-owner PUT status = %d, want 403", rec.Code)
 	}
-	if s.deps.Config.Dashboard.SubscriptionGauge {
-		t.Fatal("non-owner PUT changed dashboard.subscription_gauge")
+	if s.deps.Config.Dashboard.SubscriptionGaugeHeader {
+		t.Fatal("non-owner PUT changed dashboard.subscription_gauge_header")
 	}
 }
 
-// TestDashboardSubscriptionGaugeOmittedFromYAMLWhenOff checks that a hive
+// TestDashboardSubscriptionGaugeHeaderOmittedFromYAMLWhenOff checks that a hive
 // that never turns the gauge on keeps a saved config without the key.
-func TestDashboardSubscriptionGaugeOmittedFromYAMLWhenOff(t *testing.T) {
+func TestDashboardSubscriptionGaugeHeaderOmittedFromYAMLWhenOff(t *testing.T) {
 	out, err := yaml.Marshal(config.DashboardConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(out), "subscription_gauge") {
-		t.Fatalf("default dashboard config emitted subscription_gauge:\n%s", out)
+	if strings.Contains(string(out), "subscription_gauge_header") {
+		t.Fatalf("default dashboard config emitted subscription_gauge_header:\n%s", out)
 	}
-	out, err = yaml.Marshal(config.DashboardConfig{SubscriptionGauge: true})
+	out, err = yaml.Marshal(config.DashboardConfig{SubscriptionGaugeHeader: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), "subscription_gauge: true") {
-		t.Fatalf("enabled dashboard config lacks subscription_gauge: true:\n%s", out)
+	if !strings.Contains(string(out), "subscription_gauge_header: true") {
+		t.Fatalf("enabled dashboard config lacks subscription_gauge_header: true:\n%s", out)
 	}
 	var cfg config.Config
-	if err := yaml.Unmarshal([]byte("dashboard:\n  subscription_gauge: true\n"), &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte("dashboard:\n  subscription_gauge_header: true\n"), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Dashboard.SubscriptionGauge {
-		t.Fatal("dashboard.subscription_gauge: true was not read")
+	if !cfg.Dashboard.SubscriptionGaugeHeader {
+		t.Fatal("dashboard.subscription_gauge_header: true was not read")
 	}
 }

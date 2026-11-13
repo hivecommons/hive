@@ -576,9 +576,9 @@ func buildFeatures(cfg *config.Config) FrontendFeatures {
 	// without going through the loader.
 	enabled := cfg.Dashboard.ExperimentLab || cfg.Dashboard.StrategyLab
 	return FrontendFeatures{
-		ExperimentLab:     enabled,
-		StrategyLab:       enabled,
-		SubscriptionGauge: cfg.Dashboard.SubscriptionGauge,
+		ExperimentLab:           enabled,
+		StrategyLab:             enabled,
+		SubscriptionGaugeHeader: cfg.Dashboard.SubscriptionGaugeHeader,
 	}
 }
 

@@ -771,10 +771,10 @@ type FrontendFeatures struct {
 	//
 	// Deprecated: read experiment_lab instead.
 	StrategyLab bool `json:"strategy_lab"`
-	// SubscriptionGauge shows the owner-only header gauge of Claude
-	// subscription usage left. Only the flag travels here; the readings are
-	// fetched by owners from /api/providers/headroom.
-	SubscriptionGauge bool `json:"subscription_gauge"`
+	// SubscriptionGaugeHeader adds the owner-only Claude subscription usage
+	// chip to the header (the Overview gauge needs no flag). Only the flag
+	// travels here; owners fetch readings from /api/providers/headroom.
+	SubscriptionGaugeHeader bool `json:"subscription_gauge_header"`
 }
 
 // FrontendSecurity summarizes the effective operator security posture for compact dashboard display.

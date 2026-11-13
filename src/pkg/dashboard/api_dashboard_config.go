@@ -9,17 +9,17 @@ import (
 )
 
 type dashboardSettingsPayload struct {
-	Port                int                          `json:"port"`
-	AgentPollIntervalS  int                          `json:"agent_poll_interval_s"`
-	ExperimentLab       bool                         `json:"experiment_lab"`
-	StrategyLab         bool                         `json:"strategy_lab"`
-	SubscriptionGauge   bool                         `json:"subscription_gauge"`
-	AuthTokenConfigured bool                         `json:"auth_token_configured"`
-	AuthorizedUsers     []string                     `json:"authorized_users"`
-	AuthorizedUserNames map[string]string            `json:"authorized_user_names"`
-	HubProxied          bool                         `json:"hub_proxied"`
-	IssueBands          dashboardIssueBandsPayload   `json:"issue_bands"`
-	StageTracker        dashboardStageTrackerPayload `json:"stage_tracker"`
+	Port                    int                          `json:"port"`
+	AgentPollIntervalS      int                          `json:"agent_poll_interval_s"`
+	ExperimentLab           bool                         `json:"experiment_lab"`
+	StrategyLab             bool                         `json:"strategy_lab"`
+	SubscriptionGaugeHeader bool                         `json:"subscription_gauge_header"`
+	AuthTokenConfigured     bool                         `json:"auth_token_configured"`
+	AuthorizedUsers         []string                     `json:"authorized_users"`
+	AuthorizedUserNames     map[string]string            `json:"authorized_user_names"`
+	HubProxied              bool                         `json:"hub_proxied"`
+	IssueBands              dashboardIssueBandsPayload   `json:"issue_bands"`
+	StageTracker            dashboardStageTrackerPayload `json:"stage_tracker"`
 }
 
 type dashboardIssueBandsPayload struct {
@@ -40,15 +40,15 @@ func dashboardSettingsResponse(cfg *config.Config) dashboardSettingsPayload {
 	toastInfo := int(cfg.StageTrackerToastInfo() / time.Second)
 	toastError := int(cfg.StageTrackerToastError() / time.Second)
 	return dashboardSettingsPayload{
-		Port:                d.Port,
-		AgentPollIntervalS:  d.AgentPollIntervalS,
-		ExperimentLab:       d.ExperimentLab,
-		StrategyLab:         d.StrategyLab,
-		SubscriptionGauge:   d.SubscriptionGauge,
-		AuthTokenConfigured: strings.TrimSpace(d.AuthToken) != "",
-		AuthorizedUsers:     append([]string{}, d.AuthorizedUsers...),
-		AuthorizedUserNames: names,
-		HubProxied:          d.HubProxied,
+		Port:                    d.Port,
+		AgentPollIntervalS:      d.AgentPollIntervalS,
+		ExperimentLab:           d.ExperimentLab,
+		StrategyLab:             d.StrategyLab,
+		SubscriptionGaugeHeader: d.SubscriptionGaugeHeader,
+		AuthTokenConfigured:     strings.TrimSpace(d.AuthToken) != "",
+		AuthorizedUsers:         append([]string{}, d.AuthorizedUsers...),
+		AuthorizedUserNames:     names,
+		HubProxied:              d.HubProxied,
 		IssueBands: dashboardIssueBandsPayload{
 			WaitingLabels: append([]string{}, d.IssueBands.WaitingLabels...),
 			DoneLabels:    append([]string{}, d.IssueBands.DoneLabels...),
@@ -70,17 +70,17 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var body struct {
-		Port                *int                          `json:"port"`
-		AgentPollIntervalS  *int                          `json:"agent_poll_interval_s"`
-		ExperimentLab       *bool                         `json:"experiment_lab"`
-		StrategyLab         *bool                         `json:"strategy_lab"`
-		SubscriptionGauge   *bool                         `json:"subscription_gauge"`
-		AuthToken           *string                       `json:"auth_token"`
-		AuthorizedUsers     []string                      `json:"authorized_users"`
-		AuthorizedUserNames map[string]string             `json:"authorized_user_names"`
-		HubProxied          *bool                         `json:"hub_proxied"`
-		IssueBands          *dashboardIssueBandsPayload   `json:"issue_bands"`
-		StageTracker        *dashboardStageTrackerPayload `json:"stage_tracker"`
+		Port                    *int                          `json:"port"`
+		AgentPollIntervalS      *int                          `json:"agent_poll_interval_s"`
+		ExperimentLab           *bool                         `json:"experiment_lab"`
+		StrategyLab             *bool                         `json:"strategy_lab"`
+		SubscriptionGaugeHeader *bool                         `json:"subscription_gauge_header"`
+		AuthToken               *string                       `json:"auth_token"`
+		AuthorizedUsers         []string                      `json:"authorized_users"`
+		AuthorizedUserNames     map[string]string             `json:"authorized_user_names"`
+		HubProxied              *bool                         `json:"hub_proxied"`
+		IssueBands              *dashboardIssueBandsPayload   `json:"issue_bands"`
+		StageTracker            *dashboardStageTrackerPayload `json:"stage_tracker"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -112,8 +112,8 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 	if body.StrategyLab != nil {
 		next.StrategyLab = *body.StrategyLab
 	}
-	if body.SubscriptionGauge != nil {
-		next.SubscriptionGauge = *body.SubscriptionGauge
+	if body.SubscriptionGaugeHeader != nil {
+		next.SubscriptionGaugeHeader = *body.SubscriptionGaugeHeader
 	}
 	if body.AuthToken != nil {
 		next.AuthToken = strings.TrimSpace(*body.AuthToken)
