@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.244.0)
+
+### Added
+
+- Hub header nav and My Hives now link to the fleet benchmarks page (hivecommons.dev/benchmarks), and the spoke dashboard FAQ points at it for model comparisons (#18034).
+
+### Fixed
+
+- Knowledge Integrations: the per-connector **Check** button now reports its result — a success/info toast with the sign-in state (and the card refreshed), or an error toast carrying the server's `error` string verbatim (for example `no knowledge connectors are configured`) instead of a "checking" toast followed by silence ([#18092](https://github.com/hivecommons/hive/issues/18092)).
+
 ## 2026-11-13 (v5.243.0)
 
 ### Added
