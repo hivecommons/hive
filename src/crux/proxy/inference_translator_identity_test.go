@@ -96,11 +96,48 @@ func TestTranslatorAgentName_UnmappedRefusedUnlessAdvisoryOK(t *testing.T) {
 func TestTranslatorAgentName_InternalUIDKeepsHeader(t *testing.T) {
 	fakeProcNetTCPUID(t, 0)
 	p := &GitHubProxy{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	// Root is the control plane; the separate proxy UID is not trusted.
+	// Root is the control plane whatever the private-forward setting.
 	p.uidMap = &agent.UIDMap{BaseUID: 2001, ProxyUID: 2003, Agents: map[string]int{"quality": 2002}}
 
 	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
 		t.Fatalf("internal uid: got (%q,%v), want (supervisor,true)", name, ok)
+	}
+	// Lifting the private-forward guard refuses only the proxy UID, never root.
+	p.allowPrivateForward = true
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
+		t.Fatalf("root, private forward allowed: got (%q,%v), want (supervisor,true)", name, ok)
+	}
+}
+
+// TestTranslatorAgentName_ProxyUIDTrustedOnlyWhileForwardGuarded pins #18061:
+// on v5 pods the hive drops to the proxy UID (dev, 1001) and agents without a
+// per-agent UID run as it, so the proxy UID keeps its header name — but only
+// while the private-forward guard stops the proxy relaying agent requests to
+// this loopback port (#14448). With the guard lifted it is refused again.
+func TestTranslatorAgentName_ProxyUIDTrustedOnlyWhileForwardGuarded(t *testing.T) {
+	fakeProcNetTCP(t)
+	var buf strings.Builder
+	p := &GitHubProxy{logger: slog.New(slog.NewTextHandler(&buf, nil))}
+	p.uidMap = &agent.UIDMap{BaseUID: 2001, ProxyUID: 2003, Agents: map[string]int{"quality": 2002}}
+
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
+		t.Fatalf("proxy uid, forward guarded: got (%q,%v), want (supervisor,true)", name, ok)
+	}
+
+	p.allowPrivateForward = true
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); ok || name != "" {
+		t.Fatalf("proxy uid, private forward allowed: got (%q,%v), want refused", name, ok)
+	}
+	p.inferenceTranslatorHandler().ServeHTTP(httptest.NewRecorder(), translatorReq("127.0.0.1:43210", "supervisor"))
+	if !strings.Contains(buf.String(), "reason=proxy_uid_private_forward") {
+		t.Errorf("refusal log %q lacks reason=proxy_uid_private_forward", buf.String())
+	}
+
+	// An agent allocated the proxy UID is never internal: its own name wins.
+	p.allowPrivateForward = false
+	p.uidMap = &agent.UIDMap{BaseUID: 2001, ProxyUID: 2003, Agents: map[string]int{"scanner": 2003}}
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "scanner" {
+		t.Fatalf("agent at proxy uid: got (%q,%v), want (scanner,true)", name, ok)
 	}
 }
 
