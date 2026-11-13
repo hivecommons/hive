@@ -421,7 +421,8 @@ func TestSyncerTruncatedSkipsTombstonesAndOnSync(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Reset the cursor so the next sync is a full listing, but cap it.
-	s.update("x", func(st *Status) { st.Cursor = "" })
+	xe, _ := s.lookup("x")
+	s.update(xe, func(st *Status) { st.Cursor = "" })
 	c.set([]Page{{ID: "a"}}, "cur-2", nil)
 	c.truncated = true
 	st, err := s.SyncNow(context.Background(), "x")
@@ -432,7 +433,7 @@ func TestSyncerTruncatedSkipsTombstonesAndOnSync(t *testing.T) {
 		t.Fatalf("truncated full listing tombstoned b: status %q", got)
 	}
 	// An untruncated full listing tombstones the missing page and clears the flag.
-	s.update("x", func(st *Status) { st.Cursor = "" })
+	s.update(xe, func(st *Status) { st.Cursor = "" })
 	c.truncated = false
 	st, err = s.SyncNow(context.Background(), "x")
 	if err != nil || st.Truncated {
