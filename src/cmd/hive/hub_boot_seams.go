@@ -22,8 +22,9 @@ import (
 // terminating the test process.
 type hubDeps struct {
 	// startPollers launches the long-lived SaaS pollers (provision watcher,
-	// SHA poller, auth audit, advisory diagnostics).
-	startPollers func(ctx context.Context, srv *hub.HubServer)
+	// SHA poller, auth audit, advisory diagnostics). The returned channel
+	// closes once every poller has exited (nil if the caller cannot tell).
+	startPollers func(ctx context.Context, srv *hub.HubServer) <-chan struct{}
 	// serve runs the HTTP server until it stops.
 	serve func(srv *hub.HubServer, port int) error
 	// fatal ends the process after an unrecoverable serve error.
@@ -34,7 +35,7 @@ type hubDeps struct {
 // exit.
 func defaultHubDeps() hubDeps {
 	return hubDeps{
-		startPollers: func(ctx context.Context, srv *hub.HubServer) { srv.StartBackgroundPollers(ctx) },
+		startPollers: func(ctx context.Context, srv *hub.HubServer) <-chan struct{} { return srv.StartBackgroundPollers(ctx) },
 		serve:        func(srv *hub.HubServer, port int) error { return srv.Start(port) },
 		fatal:        os.Exit,
 	}

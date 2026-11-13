@@ -205,9 +205,10 @@ type stubDeps struct {
 func (s *stubDeps) deps(serveErr error) hubDeps {
 	s.fatalCode.Store(-1)
 	return hubDeps{
-		startPollers: func(ctx context.Context, _ *hub.HubServer) {
+		startPollers: func(ctx context.Context, _ *hub.HubServer) <-chan struct{} {
 			s.pollerCalls.Add(1)
 			s.pollerCtx.Store(ctx)
+			return nil
 		},
 		serve: func(_ *hub.HubServer, port int) error {
 			s.servePort.Store(int32(port))
@@ -292,8 +293,9 @@ func TestRunHubWithDepsWiresReachBeforeStartingPollers(t *testing.T) {
 
 	var snapshotAtPollerStart string
 	deps := hubDeps{
-		startPollers: func(context.Context, *hub.HubServer) {
+		startPollers: func(context.Context, *hub.HubServer) <-chan struct{} {
 			snapshotAtPollerStart = logs()
+			return nil
 		},
 		serve: func(*hub.HubServer, int) error { return http.ErrServerClosed },
 		fatal: func(int) { t.Error("unexpected fatal") },
