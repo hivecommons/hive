@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.240.0)
+
+### Added
+
+- **`project.reference_repos`: study-only repos outside the project** ([#18015](https://github.com/hivecommons/hive/issues/18015)). A hive whose deliverable is *about* another project (a docs assessment of `hivecommons/*` landing in `cncf/techdocs`) can list `owner/name` repos it may clone unauthenticated and GET, with the proxy stripping the hive's token and refusing every write by default; the kick tells agents such items are in scope and that findings go in the deliverable in the authorized repo, so the scanner no longer flags them out-of-scope/critical. A rare per-entry `write: [issues, prs]` opt-in allows only opening issues, opening PRs/pushing topic branches and commenting on the hive's own items, using the App's installation on the target org or `write_token_file`; boot refuses write-mode without either (exit 22). Dashboard shows a minimal `reference · <tier>` card.
+- Owner-facing GitHub webhook setup: ⚙ Settings → Forge App gains a "GitHub webhooks" section showing the payload URL, events and live receiver status, with **Generate secret** (stored in `/data/github-webhook-secret.key`, shown once) and **Create webhook for me** when the App installation has hooks write permission; a webhooks tile on the Governor card deep-links to it; new owner guide in `docs/webhooks.md` (#18017).
+
 ## 2026-11-12 (v5.239.0)
 
 ### Added
