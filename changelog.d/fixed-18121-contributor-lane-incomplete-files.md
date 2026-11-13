@@ -1,0 +1,1 @@
+- The contributor-lane automerge sweep now treats a PR with more changed files than GitHub's files API returns (3000) as a standing `files-evidence` skip instead of re-warning every sweep.
