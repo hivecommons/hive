@@ -1,1 +1,0 @@
-- kicks: register  REFERENCE REPOS as layout section 10a and golden its wording (#18074)
