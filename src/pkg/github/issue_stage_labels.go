@@ -529,7 +529,10 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		if stage == stagelabels.None {
 			store.ForgetStage(key)
 		} else {
-			tr = store.ObserveProgress(key, stage, reason, d.Progress)
+			// A parent held for its open sub-issues leaves its merged PR's
+			// stage because the PR merged, not because work was lost: the
+			// fall is progress, so no regression is booked or narrated.
+			tr = store.ObserveProgress(key, stage, reason, d.Progress || mergedPRHeldParentFallIsProgress(in, stage))
 			noteIssueCoveringPR(client, store, key, in, stage)
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{Stage: stage}
@@ -760,6 +763,12 @@ func handleMergedPRIssueStage(ctx context.Context, client *Client, in IssueStage
 		return false, true
 	}
 	if !in.Claim.Closing {
+		return false, false
+	}
+	// A parent with an open sub-issue is not fixed by the PR that merged:
+	// no "Fixed by" note and no close. closeDecomposedParent closes it once
+	// every child is closed.
+	if mergedPRIssueStageHeldForOpenChildren(client, in, logger) {
 		return false, false
 	}
 	marker := mergedPRClosedStageMarkerFor(in.Claim.PRNumber)
