@@ -394,7 +394,7 @@ test('a 5xx from the API is retried as pending evidence, never read as a verdict
 test('open PR with moved head still fails closed on pull_request_target', async () => {
   const f = fixture('pull_request_target');
   f.state.prs[0].head.sha = sha(99);
-  await assert.rejects(evaluate(f), /head\/base moved/);
+  await assert.rejects(evaluate(f), /#1 head moved to/);
 });
 
 test('untrusted events and workflow provenance are rejected', async () => {
