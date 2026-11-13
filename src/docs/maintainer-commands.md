@@ -142,6 +142,22 @@ and the "What to reply" notice puts **`/fixed`** first as the one recommended
 reply ([Danathar/arch-bootc#634](https://github.com/Danathar/arch-bootc/issues/634)).
 The note never un-parks the issue: leaving 045 stays a maintainer's reply.
 
+The note goes through the write-back gate as `needs_decision_comment`. On a
+park the hive applied itself, it needs no review opt-in label and is not held
+back because the issue is older than the hive's write access. A park counts
+as the hive's when the label event it is dated from was made by the hive's
+own bot, which is how a contributor relay parks an issue. The note still
+needs ACMM L5 (`writeback.kinds.needs_decision_comment.min_level`), and a
+paused repository, `writeback.per_repo` mode `off`, `issues-only` or
+`labels-only`, and `own_only` still refuse it. On a park a person applied,
+the note is posted only when the issue carries the opt-in label, as before.
+
+When the gate refuses the note, Hive logs `park re-check note held by
+writeback gate` with the repository, issue, reason and detail, who applied
+the park label, and whether that counted as the hive's. The line is logged
+at info level once per issue and reason, and at debug level on the passes
+that repeat it.
+
 The on-demand `/hive help` workflow uses the same first-line command shape, is
 ignored for bot comments, and allows `triage`, `write`, `maintain`, or `admin`
 because it only posts reference text and changes no labels.

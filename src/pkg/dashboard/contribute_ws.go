@@ -1269,6 +1269,10 @@ type ContributeWSHub struct {
 	// needs-decision park was left without (contribute_needs_decision_park.go);
 	// nil means use GHClient.
 	needsDecisionParkPoster func(ctx context.Context, repo string, number int, since time.Time, body string) error
+	// needsDecisionParkRetry holds the retry of a park question GitHub
+	// refused for a rate limit: its test seams and the count of questions
+	// waiting (contribute_needs_decision_park_retry.go).
+	needsDecisionParkRetry needsDecisionParkRetryState
 	// verdictBlockerRecorder is the seam for recording the blocker a blocked
 	// verdict names (contribute_verdict_blocker.go); nil means use GHClient.
 	// verdictBlockersRecorded dedupes re-delivered verdicts per task.

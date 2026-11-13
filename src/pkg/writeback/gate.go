@@ -46,6 +46,14 @@ type Item struct {
 	// with KindBlockedRepair it lifts the backfill guard and the opt-in
 	// label requirement (ReasonHiveAppliedBlock). No other kind reads it.
 	HiveAppliedBlock bool
+	// HiveAppliedPark is true when the caller has established that the
+	// label which began the item's current decision park was applied by one
+	// of the hive's own accounts (the actor of that labeled event). Set only
+	// by the park re-check for its one note; with KindNeedsDecisionComment
+	// it lifts the backfill guard and the opt-in label requirement
+	// (ReasonHiveAppliedPark). No other kind reads it, and no other caller
+	// of that kind sets it.
+	HiveAppliedPark bool
 	// Labels is the item's current label set.
 	Labels []string
 	// CreatedAt is the item's creation time; the backfill guard compares it
@@ -99,6 +107,15 @@ const (
 	// label do not apply. A pause, the repo mode, project membership,
 	// own_only and the kind's minimum level still do.
 	ReasonHiveAppliedBlock = "hive-applied-block"
+	// ReasonHiveAppliedPark allows the park re-check note
+	// (KindNeedsDecisionComment with Item.HiveAppliedPark) on an item whose
+	// current decision park the hive itself applied. As with a hive-applied
+	// `blocked`, the hive has already written to that item, so saying that
+	// the work its own park waits on has moved is upkeep of the hive's
+	// state: the backfill guard and the opt-in label do not apply. A pause,
+	// the repo mode, project membership, own_only and the kind's minimum
+	// level still do.
+	ReasonHiveAppliedPark = "hive-applied-park"
 )
 
 // RepoPauseInfo is the provenance of an operator pause, as config records
@@ -482,7 +499,10 @@ func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
 	// already written to, so neither the backfill guard here nor the opt-in
 	// label below applies to it. The level still does.
 	hiveBlock := kind == KindBlockedRepair && item.HiveAppliedBlock
-	if !optedIn && !hiveBlock {
+	// The park re-check's note on a park the hive applied is the same case:
+	// the hive's label is already on the item.
+	hivePark := kind == KindNeedsDecisionComment && item.HiveAppliedPark
+	if !optedIn && !hiveBlock && !hivePark {
 		if backfilled, cut := g.backfillBlockedLocked(repo, item); backfilled {
 			return Decision{Reason: ReasonBackfill, Detail: fmt.Sprintf("#%d was created %s, before hive could write to %s (%s); writeback.unsolicited.backfill is off", item.Number, item.CreatedAt.UTC().Format(time.RFC3339), repo, cut.Format(time.RFC3339))}
 		}
@@ -531,6 +551,15 @@ func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
 	}
 	if p.UnlabeledMinLevel > 0 && level >= p.UnlabeledMinLevel {
 		return Decision{Allowed: true, Reason: ReasonLevel, Detail: fmt.Sprintf("no opt-in label but L%d ≥ L%d", level, p.UnlabeledMinLevel)}
+	}
+	// Asked last, so every allow above is the allow it was before the fact
+	// existed: only an item that would be refused here for want of the
+	// opt-in label is decided on the kind's minimum level alone.
+	if hivePark {
+		if level >= p.MinLevel {
+			return Decision{Allowed: true, Reason: ReasonHiveAppliedPark, Detail: fmt.Sprintf("the hive applied the decision park on #%d itself and L%d ≥ L%d", item.Number, level, p.MinLevel)}
+		}
+		return Decision{Reason: ReasonBelowLevel, Detail: fmt.Sprintf("%s needs L%d; %s is at L%d", kind, p.MinLevel, repo, level)}
 	}
 	labels := g.optInLabelsLocked(repo)
 	if p.UnlabeledMinLevel > 0 {

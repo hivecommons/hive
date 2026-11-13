@@ -292,6 +292,18 @@ written to that issue: a contributor relay applies the label with a task
 token at any level, so the repair has the lowest floor. On an issue whose
 `blocked` the hive did not apply, the kind is never used.
 
+`needs_decision_comment` has one case that needs no opt-in label: the park
+re-check note (see
+[When a park's premise moves](maintainer-commands.md#when-a-parks-premise-moves))
+on an issue whose current decision park the hive applied itself. A
+contributor relay applies the park label with a hub-minted token, so the
+hive has already written to that issue. The note then needs only the kind's
+minimum level (L5 by default) and ignores the backfill guard. A paused
+repository, the `writeback.per_repo` mode, `own_only` and `min_level` still
+refuse it, and on a park a person applied the note needs the opt-in label as
+before. A refused note is logged once per issue and reason
+(`park re-check note held by writeback gate`).
+
 In practice: **L4 means hive files issues and talks only on its own PRs**;
 **L5 adds comments and labels on PRs a maintainer labelled `hive-review`**;
 **L6 lets sentinel and welcome comments reach unlabelled PRs**. A repo

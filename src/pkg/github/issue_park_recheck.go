@@ -35,6 +35,15 @@ package github
 // un-parks: leaving 045 stays a maintainer's reply (labels-and-control-
 // signals.md), and a park can rest on a maintainer's explicit request that
 // no merged PR answers (website#926 cited one).
+//
+// The note goes through the write-back gate as needs_decision_comment. When
+// the label that began the park was applied by the hive (a contributor relay
+// applies it with a hub-minted token, so its actor is the App bot), the
+// re-check says so (writeback.Item.HiveAppliedPark) and the gate does not
+// hold the note back for want of the review opt-in label or because the
+// issue predates the hive's write access: the hive's own label is already on
+// the issue. A park a person applied is asked as before. A refused note is
+// logged once per issue and reason (issue_park_recheck_held.go).
 
 import (
 	"context"
@@ -133,6 +142,9 @@ func (c *Client) RecheckParkedIssues(ctx context.Context, cfg ParkRecheckConfig)
 	result := &ParkRecheckResult{}
 	label := c.needsDecisionLabel()
 	var firstErr error
+	// listed and parked are what the refused-note memory is pruned against:
+	// the repos whose parked issues were read this pass, and those issues.
+	listed, parked := map[string]bool{}, map[string]bool{}
 	for _, repoRef := range cfg.Repos {
 		owner, repo := c.splitRepo(repoRef)
 		if owner == "" || repo == "" {
@@ -145,10 +157,12 @@ func (c *Client) RecheckParkedIssues(ctx context.Context, cfg ParkRecheckConfig)
 			}
 			continue
 		}
+		listed[parkRecheckHeldRepo(owner, repo)] = true
 		for _, issue := range issues {
 			if issue == nil || issue.IsPullRequest() {
 				continue
 			}
+			parked[parkRecheckHeldKey(owner, repo, issue.GetNumber())] = true
 			if err := c.recheckParkedIssue(ctx, owner, repo, issue, label, result); err != nil {
 				if c.logger != nil {
 					c.logger.Warn("park re-check skipped issue", "repo", repo, "issue", issue.GetNumber(), "error", err)
@@ -157,6 +171,7 @@ func (c *Client) RecheckParkedIssues(ctx context.Context, cfg ParkRecheckConfig)
 			}
 		}
 	}
+	c.retainParkRecheckHeld(listed, parked)
 	return result, firstErr
 }
 
@@ -166,8 +181,9 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 	if err != nil {
 		return err
 	}
-	start := parkStartFrom(events, c.isDecisionParkLabel)
+	start, parkedBy := parkStartFrom(events, c.isDecisionParkLabel)
 	if start.IsZero() {
+		c.forgetParkRecheckHeld(owner, repo, number)
 		result.Skipped++
 		return nil
 	}
@@ -197,24 +213,31 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		sortParkChanges(changes)
 	}
 	if len(changes) == 0 {
+		c.forgetParkRecheckHeld(owner, repo, number)
 		result.Skipped++
 		return nil
 	}
 	c.markParkLandings(ctx, text, refs, named, owner+"/"+repo, start, changes)
 	note := parkRecheckNote(label, start, changes)
 	item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: issueLabelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time})
+	// The fact the gate cannot read for itself: the label event that began
+	// this park was the hive's.
+	item.HiveAppliedPark = c.parkAppliedByHive(parkedBy)
 	for _, cm := range comments {
 		if cm == nil || !c.isHiveAccount(cm.GetUser()) || !strings.Contains(cm.GetBody(), parkRecheckMarker) {
 			continue
 		}
 		if cm.GetBody() == note {
+			c.forgetParkRecheckHeld(owner, repo, number)
 			result.Skipped++
 			return nil
 		}
 		if d := c.WritebackAllowed(owner+"/"+repo, item, writeback.KindNeedsDecisionComment, note); !d.Allowed {
+			c.noteParkRecheckHeld(ctx, owner, repo, number, parkedBy, item.HiveAppliedPark, d)
 			result.Skipped++
 			return nil
 		}
+		c.forgetParkRecheckHeld(owner, repo, number)
 		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, cm.GetID(), &gh.IssueComment{Body: gh.Ptr(note)}); err != nil { // writeback:gated
 			return fmt.Errorf("editing park re-check note on %s/%s#%d: %w", owner, repo, number, err)
 		}
@@ -223,9 +246,11 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		return nil
 	}
 	if d := c.WritebackAllowed(owner+"/"+repo, item, writeback.KindNeedsDecisionComment, note); !d.Allowed {
+		c.noteParkRecheckHeld(ctx, owner, repo, number, parkedBy, item.HiveAppliedPark, d)
 		result.Skipped++
 		return nil
 	}
+	c.forgetParkRecheckHeld(owner, repo, number)
 	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil { // writeback:gated
 		return fmt.Errorf("posting park re-check note on %s/%s#%d: %w", owner, repo, number, err)
 	}
@@ -282,9 +307,15 @@ func (c *Client) readParkRef(ctx context.Context, key string) (parkRef, bool) {
 // parkStartFrom returns when the issue's current park began: the first park
 // label of the run that is still on the issue, bridging label swaps shorter
 // than parkRelabelGap. Zero when the timeline shows no park in force.
-func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) time.Time {
+//
+// It also returns the login that applied the label the park is dated from,
+// "" when that event names no actor. A label swap that parkRelabelGap
+// bridges does not change who began the park: a park a person began stays
+// theirs after the hive renames its label.
+func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) (time.Time, string) {
 	present := map[string]bool{}
 	var start, emptySince time.Time
+	actor := ""
 	for _, ev := range events {
 		if ev == nil || ev.Label == nil {
 			continue
@@ -298,6 +329,7 @@ func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) time.Time {
 		case "labeled":
 			if len(present) == 0 && (start.IsZero() || emptySince.IsZero() || at.Sub(emptySince) > parkRelabelGap) {
 				start = at
+				actor = strings.TrimSpace(ev.GetActor().GetLogin())
 			}
 			present[name] = true
 		case "unlabeled":
@@ -308,9 +340,9 @@ func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) time.Time {
 		}
 	}
 	if len(present) == 0 {
-		return time.Time{}
+		return time.Time{}, ""
 	}
-	return start
+	return start, actor
 }
 
 // parkText is the text the park rests on: the issue body when the issue was
