@@ -1,0 +1,1 @@
+- Session prune now warns once per path when a session directory cannot be removed due to permission denied, instead of repeating the warning every tick.
