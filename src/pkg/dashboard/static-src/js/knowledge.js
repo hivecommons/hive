@@ -2596,10 +2596,22 @@
         _kbPlaudAuth[name] = { error: e.message };
       }
       if (document.querySelector('[data-kb-plaud-auth="' + CSS.escape(name) + '"]')) kbRenderIntegrationsModal();
+      return _kbPlaudAuth[name];
     }
+    // One-line summary of a sign-in state for the Check toast (hivecommons/hive#18092).
+    function kbPlaudAuthSummary(a) {
+      if (a.connected) return 'connected' + (a.account ? ' as ' + a.account : '');
+      if (a.pending) return 'waiting for authorization' + (a.auth_url ? ' — open the link on the card' : '');
+      return 'not connected' + (a.message ? ' — ' + a.message : '');
+    }
+    // Check: re-query the sign-in state and always report the outcome, so a
+    // 404 "no knowledge connectors are configured" reads as an error toast
+    // with the server's message verbatim, not as silence (hivecommons/hive#18092).
     async function kbPlaudRefreshAuth(name) {
       showToast('Checking Plaud sign-in…', 'info');
-      await kbPlaudAuthLoad(name, true);
+      const a = (await kbPlaudAuthLoad(name, true)) || {};
+      if (a.error) showToast('Check failed: ' + a.error, 'error');
+      else showToast('Plaud ' + name + ': ' + kbPlaudAuthSummary(a), a.connected ? 'success' : 'info');
     }
     async function kbPlaudConnect(name) {
       try {
