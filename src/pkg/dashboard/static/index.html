@@ -6119,7 +6119,9 @@
     .agent-navbar-tile .agent-up-next.running-now { color: var(--green); }
     .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
     .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
-    .agent-navbar-upnext::after { content: attr(data-agent-summary); display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+    .agent-navbar-summary { flex: 0 0 auto; display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+    .agent-navbar-summary:hover, .agent-navbar-summary:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
+    .agent-navbar-summary-short { display: none; }
     @container navbar-center (max-width: 560px) {
       .agent-navbar-tile { min-width: 104px; }
       .agent-navbar-tile .agent-tile-next { display: none; }
@@ -6132,10 +6134,12 @@
     @container navbar-center (max-width: 340px) {
       .agent-navbar-upnext { overflow: hidden; mask-image: none; }
       .agent-navbar-upnext .agent-navbar-tile { display: none; }
-      .agent-navbar-upnext::after { display: inline-flex; }
+      .agent-navbar-upnext .agent-navbar-summary { display: inline-flex; }
     }
     @container navbar-center (max-width: 220px) {
-      .agent-navbar-upnext::after { content: 'Next'; padding-inline: var(--sp-1); }
+      .agent-navbar-upnext .agent-navbar-summary { padding-inline: var(--sp-1); }
+      .agent-navbar-summary .agent-navbar-summary-full { display: none; }
+      .agent-navbar-summary .agent-navbar-summary-short { display: inline; }
     }
     @keyframes navbar-up-next-pulse {
       0% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 72%, transparent), 0 0 0 var(--sp-0) color-mix(in srgb, var(--amber) 0%, transparent); }
@@ -11582,14 +11586,52 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       wrap.dataset.upNextKey = nextItem ? nextItem.id : '';
       animateAgentNavbarReorder(wrap, beforeRects);
     }
+    function agentNavbarSummaryLabel(count) {
+      return String(count) + (count === 1 ? ' agent' : ' agents');
+    }
+    // The narrow-strip summary is a real button (not a CSS pseudo-element) so
+    // it can carry data-action and receive clicks and keyboard activation. It
+    // stays the strip's LAST child so renderAgentNavbarTileDiff's index-based
+    // insertBefore always places tiles ahead of it.
+    function renderAgentNavbarSummary(wrap, count) {
+      let btn = wrap.querySelector('.agent-navbar-summary');
+      if (!count) {
+        if (btn) btn.remove();
+        return null;
+      }
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.setAttribute('type', 'button');
+        btn.className = 'agent-navbar-summary';
+        btn.setAttribute('data-action', 'openAgentsUpNextPanel');
+        btn.setAttribute('data-stop', '1');
+        const full = document.createElement('span');
+        full.className = 'agent-navbar-summary-full';
+        const short = document.createElement('span');
+        short.className = 'agent-navbar-summary-short';
+        short.textContent = 'Next';
+        btn.appendChild(full);
+        btn.appendChild(short);
+      }
+      const label = agentNavbarSummaryLabel(count);
+      const title = label + ' in the run order — open the Agents section';
+      const full = btn.querySelector('.agent-navbar-summary-full');
+      if (full && full.textContent !== label) full.textContent = label;
+      btn.setAttribute('title', title);
+      btn.setAttribute('aria-label', title);
+      if (wrap.lastElementChild !== btn) wrap.appendChild(btn);
+      return btn;
+    }
     function renderAgentNavbarUpNext(agents, nowMs) {
       const wrap = document.getElementById('agent-navbar-upnext');
       if (!wrap) return;
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-      const list = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3);
+      const scheduled = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now));
+      const list = scheduled.slice(0, 3);
       wrap.hidden = list.length === 0;
-      wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';
+      const summary = renderAgentNavbarSummary(wrap, scheduled.length);
       renderAgentNavbarTileDiff(wrap, list, now);
+      if (summary && wrap.lastElementChild !== summary) wrap.appendChild(summary);
       if (list.length) ensureAgentsCollapsedCountdownTicker();
     }
     function refreshAgentNavbarUpNextCountdowns(nowMs) {
