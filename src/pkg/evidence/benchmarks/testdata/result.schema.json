@@ -142,12 +142,16 @@
           "type": "string",
           "description": "Exact model id as reported by the harness (evidence author.model)."
         },
+        "canonical": {
+          "type": "string",
+          "description": "Canonical model id the reported name folds to (pkg/modelfamily.Resolve): lowercase, CLI/gateway prefix and reasoning-effort suffix stripped, version separators as dots, e.g. claude-sonnet-5.5; 'auto' for a runtime auto-select."
+        },
         "version": {
           "type": "string"
         },
         "effort": {
           "type": "string",
-          "description": "Reasoning effort / thinking budget label if the harness exposes one."
+          "description": "Reasoning effort / thinking budget label if the harness exposes one (low, medium, high, xhigh, max); split off the model id by the exporter."
         }
       }
     },
