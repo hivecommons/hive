@@ -11,6 +11,36 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.244.0)
+
+### Added
+
+- Hub header nav and My Hives now link to the fleet benchmarks page (hivecommons.dev/benchmarks), and the spoke dashboard FAQ points at it for model comparisons (#18034).
+
+### Fixed
+
+- Knowledge Integrations: the per-connector **Check** button now reports its result — a success/info toast with the sign-in state (and the card refreshed), or an error toast carrying the server's `error` string verbatim (for example `no knowledge connectors are configured`) instead of a "checking" toast followed by silence ([#18092](https://github.com/hivecommons/hive/issues/18092)).
+
+## 2026-11-13 (v5.243.0)
+
+### Added
+
+- `/api/status` `referenceRepos[]` entries now carry an additive `reference_tier` field (`read-only`, `issues`, `prs` or `issues+prs`) so API consumers can tell a `project.reference_repos` entry from a managed repo; the entries stay out of `repos[]` and carry no ACMM, work-item or pause fields, and the dashboard's `📚 reference · <tier>` chip reads it ([#18021](https://github.com/hivecommons/hive/issues/18021)).
+
+### Changed
+
+- Dashboard: "Create webhook for me" is idempotent — it returns the existing hook for this hive's payload URL instead of creating a duplicate, and answers 412 naming the missing `organization_hooks`/`repository_hooks` write permission (#18028)
+- **`review.perspectives_source` is now resolved at startup and on every config reload, and the review relay perspective set is reinstalled each time**, so a verdict naming a perspective the link removed is refused and one it added is accepted without a restart. A dashboard edit of the review config no longer drops the linked set, and a malformed or unreachable document keeps the last-known-good set with a warning. ([#17988](https://github.com/hivecommons/hive/issues/17988), part of [#17975](https://github.com/hivecommons/hive/issues/17975))
+
+### Fixed
+
+- dashboard: a Projects-card Release that lands while the rows are re-sorting after a Hold is no longer sent, so holding items down a list no longer releases a neighbouring item's hold (#18054)
+- Documents imported from the dashboard (PDF, HTML, DOCX, text) are now saved to `knowledge.documents` in `hive.yaml` like git sources, and boot re-imports any configured document whose on-disk record is missing, so an upgrade no longer drops a PDF knowledge source while keeping GitHub ones.
+
+### Security
+
+- The hub now withholds hub-held credentials and management actions (GitHub App config and keys, pending gateway, project config, cluster ID, access list, upgrade, restart and breaker instructions) from the heartbeat response of any hive whose ID is in the reserved `byo-` self-service namespace, through one guard driven by a classification of every response field ([#18060](https://github.com/hivecommons/hive/issues/18060)).
+
 ## 2026-11-13 (v5.242.0)
 
 ### Added

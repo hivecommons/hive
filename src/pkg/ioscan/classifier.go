@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +28,7 @@ const (
 	DefaultClassifierCacheEntries      = 1024
 	DefaultClassifierBudgetPerEval     = 64
 	classifierTimeout                  = 20 * time.Second
+	classifierRetryDelay               = 500 * time.Millisecond
 	classifierMaxTokens                = 180
 	classifierMaxRationaleChars        = 500
 	SemanticClassifierRule             = "injection.semantic_classifier"
@@ -202,10 +204,11 @@ func NewLLMClassifier(c LLMClassifierConfig) (*LLMClassifier, error) {
 			return nil, fmt.Errorf("ioscan classifier: no model endpoint resolved")
 		}
 		client = &openAIChatClient{
-			endpoint: endpoint,
-			apiKey:   c.APIKey,
-			model:    model,
-			http:     &http.Client{Timeout: classifierTimeout},
+			endpoint:   endpoint,
+			apiKey:     c.APIKey,
+			model:      model,
+			http:       &http.Client{Timeout: classifierTimeout},
+			retryDelay: classifierRetryDelay,
 		}
 	}
 	return &LLMClassifier{client: client}, nil
@@ -287,8 +290,24 @@ type openAIChatClient struct {
 	apiKey   string
 	model    string
 	http     *http.Client
+	// retryDelay is the pause before the single retry of a transient
+	// failure (see transientClassifierErr).
+	retryDelay time.Duration
 }
 
+// transientClassifierErr marks a failure the endpoint is likely to recover
+// from on the next request: a rate limit, a gateway/upstream 5xx, or a
+// connection dropped before a reply. Timeouts are deliberately not transient
+// so a hung backend costs one classifierTimeout per string, not two.
+type transientClassifierErr struct{ err error }
+
+func (e *transientClassifierErr) Error() string { return e.err.Error() }
+func (e *transientClassifierErr) Unwrap() error { return e.err }
+
+// Complete sends one chat completion. A transient failure is retried once
+// after retryDelay so a single gateway blip does not make the scheduler pass
+// untrusted text on unclassified (fail-open) or withhold it (fail-closed)
+// (hivecommons/hive#18105).
 func (c *openAIChatClient) Complete(ctx context.Context, messages []chatMessage, maxTokens int) (string, error) {
 	body, err := json.Marshal(chatRequest{
 		Model:       c.model,
@@ -299,6 +318,48 @@ func (c *openAIChatClient) Complete(ctx context.Context, messages []chatMessage,
 	if err != nil {
 		return "", err
 	}
+	reply, err := c.completeOnce(ctx, body)
+	var transient *transientClassifierErr
+	if err == nil || !errors.As(err, &transient) {
+		return reply, err
+	}
+	if c.retryDelay > 0 {
+		t := time.NewTimer(c.retryDelay)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return "", err
+		case <-t.C:
+		}
+	}
+	reply, retryErr := c.completeOnce(ctx, body)
+	if retryErr != nil {
+		return "", fmt.Errorf("%w (after 1 retry)", retryErr)
+	}
+	return reply, nil
+}
+
+// retryableStatus reports whether an HTTP status from the classifier model
+// endpoint is worth one retry.
+func retryableStatus(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// isTimeoutErr reports whether err is a request or dial timeout.
+func isTimeoutErr(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var te interface{ Timeout() bool }
+	return errors.As(err, &te) && te.Timeout()
+}
+
+func (c *openAIChatClient) completeOnce(ctx context.Context, body []byte) (string, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, classifierTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint+"/v1/chat/completions", bytes.NewReader(body))
@@ -311,11 +372,18 @@ func (c *openAIChatClient) Complete(ctx context.Context, messages []chatMessage,
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", err
+		if ctx.Err() != nil || isTimeoutErr(err) {
+			return "", err
+		}
+		return "", &transientClassifierErr{err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("classifier model returned %d", resp.StatusCode)
+		statusErr := fmt.Errorf("classifier model returned %d", resp.StatusCode)
+		if retryableStatus(resp.StatusCode) {
+			return "", &transientClassifierErr{err: statusErr}
+		}
+		return "", statusErr
 	}
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
