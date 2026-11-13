@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.244.1)
+
+### Fixed
+
+- Contributor-lane auto-promotion now warns once per refused author and once per refused repository when GitHub's search cannot see a repository, instead of once per author × repository pair, so one invisible repository or one unsearchable author no longer floods WARN and self-reports as a repeated unclassified error (#18059).
+- Knowledge Integrations: when the connector syncer is not running (`runtime: false`, hive booted with no `knowledge.connectors`), connector cards now show a `not loaded` badge with a restart hint and docs link instead of `pending`, and Connect / Check / Sync are disabled with the same hint rather than failing with 404 toasts; `pending` stays reserved for a loaded connector awaiting sign-in ([#18093](https://github.com/hivecommons/hive/issues/18093)).
+- The ioscan classifier now retries a single transient model-endpoint failure (HTTP 429/5xx or a dropped connection) before applying its fail mode, so one gateway blip no longer passes untrusted text on unclassified or withholds it ([#18105](https://github.com/hivecommons/hive/issues/18105)).
+
 ## 2026-11-13 (v5.244.0)
 
 ### Added
