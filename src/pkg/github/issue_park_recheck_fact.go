@@ -27,7 +27,11 @@ import (
 // one the hive filed, the note lists each of them, as it always has. A note
 // the gate allows only because of the fact lists the changes the park text
 // names and the pull requests merged in the project's own repositories, and
-// nothing else (parkProjectChanges).
+// nothing else (parkProjectChanges). Two things such a note says about a
+// listed change are held to the same line: "the change this issue asks for
+// has landed" is said only for an item in a project repository
+// (parkProjectNamed), and a closing comment is quoted only when GitHub named
+// who closed the pull request, so the words are that account's.
 
 // parkAppliedByHive reports whether actor, the login that applied a label,
 // is one of this hive's own identities: its App bot (with or without the
@@ -151,16 +155,46 @@ func (c *Client) parkProjectRepo(repo, issueRepo string) bool {
 // are kept only when they are in a project repository (a copy is in its
 // original's). The order is kept. Dropped changes are counted in the debug
 // log, never in the note.
+//
+// A copy's closing note is kept only when GitHub named who closed the copy
+// (closerKnown). Otherwise the quote is the latest comment by any person
+// around the close, and it is taken off: the copy is listed as closed, with
+// no author, quote or link. A copy the park does not name is a change only
+// because of its closing note (parkCopyChanges), so without one it is
+// dropped.
 func (c *Client) parkProjectChanges(changes []parkChange, issueRepo string, number int) []parkChange {
 	kept := make([]parkChange, 0, len(changes))
 	for _, ch := range changes {
-		if ch.named || c.parkProjectRepo(ch.repo, issueRepo) {
-			kept = append(kept, ch)
+		if !ch.named && !c.parkProjectRepo(ch.repo, issueRepo) {
+			continue
 		}
+		if ch.quote != "" && !ch.closerKnown {
+			ch.by, ch.quote, ch.link = "", "", ""
+			if !ch.named {
+				continue
+			}
+		}
+		kept = append(kept, ch)
 	}
 	if dropped := len(changes) - len(kept); dropped > 0 && c.logger != nil {
 		c.logger.Debug("park re-check left out changes from outside the project: the note is allowed only because the hive applied the park",
 			"repo", issueRepo, "issue", number, "dropped", dropped, "kept", len(kept))
 	}
 	return kept
+}
+
+// parkProjectNamed returns the named references (parkRefKey keys) that are
+// in a project repository. A note allowed only by the fact reads a patch,
+// and says the change landed, only for these: the pull request that landed
+// it is in the named item's own repository (markParkLandings), so an item
+// outside the project is still listed as merged or closed, without the
+// landed line, the file name or the marker the "What to reply" notice reads.
+func (c *Client) parkProjectNamed(named []string, issueRepo string) []string {
+	out := make([]string, 0, len(named))
+	for _, key := range named {
+		if repo, _, ok := splitParkRefKey(key); ok && c.parkProjectRepo(repo, issueRepo) {
+			out = append(out, key)
+		}
+	}
+	return out
 }

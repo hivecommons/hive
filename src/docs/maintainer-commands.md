@@ -176,9 +176,14 @@ than a note on an issue with the opt-in label. It lists the items the park
 text names, and the pull requests that refer to the issue and merged in the
 issue's own repository or another repository of the project
 (`project.repos`). A pull request in any other repository that refers to the
-issue is left out, and when nothing else changed no note is posted. On an
-issue with the opt-in label, and on an issue Hive filed, the note lists every
-change, as before.
+issue is left out, and when nothing else changed no note is posted. Such a
+note also says less about what it lists. It says "the change this issue asks
+for has landed", with the `/fixed` reply, only for an item in one of those
+repositories; a named item elsewhere is listed as merged or closed and
+nothing more. And it quotes the closing comment of the hive's copy of a pull
+request only when GitHub says who closed the copy; otherwise the copy is
+listed as closed without a quote. On an issue with the opt-in label, and on
+an issue Hive filed, the note lists and says everything it did before.
 
 When the gate refuses the note, Hive logs `park re-check note held by
 writeback gate` with the repository, issue, reason and detail, who applied

@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -667,4 +670,343 @@ func TestParkProjectChanges(t *testing.T) {
 	if want := "#701,upstream/lib#12,#702,upstream/lib#30,#873"; strings.Join(got, ",") != want {
 		t.Fatalf("kept %v, want %s", got, want)
 	}
+}
+
+// A note allowed only because the hive applied the park says "the change
+// this issue asks for has landed" only for an item in the project's own
+// repositories, and quotes a closing comment only when GitHub named who
+// closed the pull request. Every other note says what it said before.
+
+// parkOutsideRepo is upstream/lib, a repository outside the project, as the
+// re-check would read it: the files of its pull request #12.
+type parkOutsideRepo struct {
+	mu    sync.Mutex
+	reads []string
+	files []map[string]any
+}
+
+func (o *parkOutsideRepo) readCount() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return len(o.reads)
+}
+
+// newParkFakeWithOutside serves f as newParkFake does, and upstream/lib
+// from out.
+func newParkFakeWithOutside(t *testing.T, f *parkFake, out *parkOutsideRepo) *httptest.Server {
+	t.Helper()
+	inner := newParkFake(t, f)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/repos/upstream/lib/") {
+			inner.Config.Handler.ServeHTTP(w, r)
+			return
+		}
+		out.mu.Lock()
+		defer out.mu.Unlock()
+		out.reads = append(out.reads, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/upstream/lib/pulls/12/files" {
+			_ = json.NewEncoder(w).Encode(out.files)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// parkOptedIn adds the review opt-in label to the parked issue.
+func parkOptedIn(f *parkFake) *parkFake {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.issue["labels"] = parkLabelsJSON("stage/045-needs-decision", "hive-review")
+	return f
+}
+
+const (
+	parkLandedClaim  = "The change this issue asks for has landed"
+	parkOutsideNamed = "- upstream/lib#12 merged on 2026-10-04"
+)
+
+// The park quotes the change it asks for, in the file it names, and names a
+// pull request in upstream/lib. That pull request merged and its patch
+// removes the quoted line.
+func TestParkRecheckFactOnlyNoteClaimsNoLandingOutsideTheProject(t *testing.T) {
+	outsideIssue := func() *parkFake {
+		f := parkUndecidedIssue()
+		f.comments[0]["body"] = strings.Replace(park634, "the auto-opened run-failure issue #633", "pull request upstream/lib#12", 1)
+		merged := parkT0.Add(time.Hour)
+		f.timeline = append(f.timeline, prCrossRef("upstream/lib", 12, true, "closed", merged, merged, "fix(ci): retry the delete"))
+		return f
+	}
+	post := func(t *testing.T, f *parkFake) (string, *parkOutsideRepo) {
+		t.Helper()
+		out := &parkOutsideRepo{files: []map[string]any{prFile(".github/workflows/build.yml", patch635)}}
+		c := parkClient(t, newParkFakeWithOutside(t, f, out))
+		c.SetWritebackGate(parkGate(&parkGateKnobs{level: 6}, writeback.Config{}))
+		if res := parkPass(t, c); res.Posted != 1 || len(f.posted) != 1 || f.labelOps != 0 {
+			t.Fatalf("%+v posted=%q labelOps=%d; want one note", res, f.posted, f.labelOps)
+		}
+		return f.posted[0], out
+	}
+
+	t.Run("allowed only by the fact", func(t *testing.T) {
+		note, out := post(t, outsideIssue())
+		wantNote(t, note, parkOutsideNamed+" (the park reason names it).")
+		if strings.Contains(note, parkLandedClaim) || strings.Contains(note, "/fixed") || strings.Contains(note, "build.yml") {
+			t.Fatalf("the note claims a landing for an item outside the project:\n%s", note)
+		}
+		if got := parkRecheckLandedBy(note); got != "" || strings.Contains(note, parkRecheckLandedPrefix) {
+			t.Fatalf("the note carries the landed marker (%q):\n%s", got, note)
+		}
+		if n := out.readCount(); n != 0 {
+			t.Fatalf("the re-check read the outside repository %d times: %v", n, out.reads)
+		}
+	})
+
+	t.Run("an issue with the opt-in label says what it said before", func(t *testing.T) {
+		note, out := post(t, parkOptedIn(outsideIssue()))
+		wantNote(t, note,
+			parkOutsideNamed+", changing the lines this issue asks to change in `.github/workflows/build.yml` (the park reason names it).",
+			"**"+parkLandedClaim+" in upstream/lib#12.**", "`/fixed`")
+		if got := parkRecheckLandedBy(note); got != "upstream/lib#12" {
+			t.Fatalf("landed marker = %q, want upstream/lib#12:\n%s", got, note)
+		}
+		if n := out.readCount(); n != 1 {
+			t.Fatalf("patch reads of the outside repository = %d (%v), want 1", n, out.reads)
+		}
+	})
+}
+
+// The case the landed line exists for is in the project: the park names an
+// issue of its own repository that a merged pull request there closed. A
+// note allowed only by the fact still says the change landed.
+func TestParkRecheckFactOnlyNoteKeepsLandingInsideTheProject(t *testing.T) {
+	f := prParkedIssue(634, park634)
+	f.timeline = append(f.timeline, prCrossRef("org/repo", 633, false, "closed", parkT0.Add(time.Hour), time.Time{}, "Scheduled run of the daily build failed"))
+	f.closedBy = map[int]int{633: 635}
+	f.prFiles = map[int][]map[string]any{635: {prFile(".github/workflows/build.yml", patch635)}}
+	gate := parkGate(&parkGateKnobs{level: 6}, writeback.Config{})
+	c, _ := parkGatedClient(t, f, gate)
+	if res := parkPass(t, c); res.Posted != 1 || len(f.posted) != 1 {
+		t.Fatalf("%+v posted=%q; want one note", res, f.posted)
+	}
+	wantNote(t, f.posted[0],
+		"- #633 was closed on 2026-10-04 by merged #635, which changed the lines this issue asks to change in `.github/workflows/build.yml` (the park reason names it).",
+		"**"+parkLandedClaim+" in #635.**", "`/fixed`")
+	if got := parkRecheckLandedBy(f.posted[0]); got != "#635" {
+		t.Fatalf("landed marker = %q, want #635:\n%s", got, f.posted[0])
+	}
+	wantParkLabelsUntouched(t, f)
+}
+
+const (
+	parkCopyPlainLine = "- #873 (the hive's copy of #722) was closed without merging on 2026-10-27.\n"
+	parkCopyClosing   = "Closing: the other pull requests landed this."
+)
+
+// parkCopyIssue is the adopted-copy park (prAdoptedCopyIssue) with one
+// comment on the copy, alice's, a second before it closed. closedBy is who
+// GitHub says closed the copy; "" leaves it out of the answer.
+func parkCopyIssue(closedBy string) *parkFake {
+	f := prAdoptedCopyIssue(closedBy)
+	f.others[873] = []map[string]any{prComment(7, "alice", parkCopyClosing, parkCopyClosed.Add(-time.Second))}
+	return f
+}
+
+func TestParkRecheckFactOnlyNoteQuotesOnlyAKnownClosersNote(t *testing.T) {
+	quoted := "by alice: “" + parkCopyClosing + "” ([comment](https://github.com/org/repo/pull/873#issuecomment-7))."
+	unreadable := func() *parkFake {
+		f := parkCopyIssue("alice")
+		delete(f.lookups, 873) // the read of who closed the copy fails
+		return f
+	}
+	for _, tc := range []struct {
+		name  string
+		f     *parkFake
+		quote bool
+	}{
+		{"GitHub does not say who closed the copy", parkCopyIssue(""), false},
+		{"the read of who closed the copy fails", unreadable(), false},
+		{"GitHub names the closer: the quote stays", parkCopyIssue("alice"), true},
+		{"closer not named, opt-in label: quoted as before", parkOptedIn(parkCopyIssue("")), true},
+		{"closer read fails, opt-in label: quoted as before", parkOptedIn(unreadable()), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gate := parkGate(&parkGateKnobs{level: 6}, writeback.Config{})
+			c, _ := parkGatedClient(t, tc.f, gate)
+			if res := parkPass(t, c); res.Posted != 1 || len(tc.f.posted) != 1 || tc.f.labelOps != 0 {
+				t.Fatalf("%+v posted=%q; want one note", res, tc.f.posted)
+			}
+			note := tc.f.posted[0]
+			wantNote(t, note, "- #722 was closed without merging on 2026-10-24 (the park reason names it).")
+			if tc.quote {
+				wantNote(t, note, "- #873 (the hive's copy of #722) was closed without merging on 2026-10-27 "+quoted, parkCopyHint)
+				return
+			}
+			wantNote(t, note, parkCopyPlainLine)
+			if strings.Contains(note, "alice") || strings.Contains(note, "“") || strings.Contains(note, "issuecomment") || strings.Contains(note, parkCopyHint) {
+				t.Fatalf("the note quotes a comment although nobody is known to have closed the copy:\n%s", note)
+			}
+		})
+	}
+}
+
+func TestParkProjectChangesClosingNotes(t *testing.T) {
+	c := parkClient(t, newParkFake(t, &parkFake{}))
+	changes := []parkChange{
+		{ref: "#873", repo: "org/repo", copyOf: "#722", named: true, by: "alice", quote: "q", link: "l", closerKnown: true},
+		{ref: "#874", repo: "org/repo", copyOf: "#723", named: true, by: "bob", quote: "q", link: "l"},
+		{ref: "#875", repo: "org/repo", copyOf: "#724", by: "alice", quote: "q", link: "l", closerKnown: true},
+		// Not named: listed only for its closing note, so without a known
+		// closer it is no change at all.
+		{ref: "#876", repo: "org/repo", copyOf: "#725", by: "bob", quote: "q", link: "l"},
+		{ref: "#877", repo: "org/repo", copyOf: "#726", named: true},
+	}
+	var got []string
+	for _, ch := range c.parkProjectChanges(changes, "org/repo", parkRelayIssue) {
+		got = append(got, ch.ref+"|"+ch.by+"|"+ch.quote+"|"+ch.link)
+	}
+	if want := "#873|alice|q|l,#874|||,#875|alice|q|l,#877|||"; strings.Join(got, ",") != want {
+		t.Fatalf("kept %v, want %s", got, want)
+	}
+	if changes[1].quote != "q" {
+		t.Fatal("the caller's changes must not be edited in place")
+	}
+	named := []string{"org/repo#701", "upstream/lib#12", "Org/Tools#5", "not a key"}
+	c.SetRepos([]string{"repo", "tools"})
+	if got := strings.Join(c.parkProjectNamed(named, "org/repo"), ","); got != "org/repo#701,Org/Tools#5" {
+		t.Fatalf("parkProjectNamed = %s", got)
+	}
+}
+
+// Park text is read only from the hive's accounts, registered contributors
+// and trusted maintainers. What such text names is kept in a note allowed
+// only by the fact, whatever repository it is in; the same words from an
+// author who is not admitted name nothing.
+func TestParkRecheckFactOnlyNoteAndWhoWroteTheParkText(t *testing.T) {
+	issue := func(author string) *parkFake {
+		f := parkUndecidedIssue()
+		f.comments[0]["body"] = "Blocked: this waits on upstream/lib#12."
+		f.comments[0]["user"] = map[string]any{"login": author}
+		merged := parkT0.Add(3 * time.Hour)
+		f.timeline = append(f.timeline, prCrossRef("upstream/lib", 12, true, "closed", merged, merged, ""))
+		return f
+	}
+	t.Run("a registered contributor's park text", func(t *testing.T) {
+		f := issue("contributor")
+		c, _ := parkGatedClient(t, f, parkGate(&parkGateKnobs{level: 6}, writeback.Config{}))
+		if res := parkPass(t, c); res.Posted != 1 || len(f.posted) != 1 {
+			t.Fatalf("%+v posted=%q; want the named item listed", res, f.posted)
+		}
+		wantNote(t, f.posted[0], parkOutsideNamed+" (the park reason names it).")
+	})
+	t.Run("an author whose text is not park text", func(t *testing.T) {
+		f := issue("newcomer")
+		gate := parkGate(&parkGateKnobs{level: 6}, writeback.Config{})
+		c, _ := parkGatedClient(t, f, gate)
+		wantNoParkWrite(t, f, parkPass(t, c))
+		if held := gate.Recent(); len(held) != 0 {
+			t.Fatalf("nothing was to be written, yet the gate recorded a refusal: %+v", held)
+		}
+	})
+	// The hive's own comment in the park window is park text too: a
+	// reference it repeats counts as named.
+	t.Run("a hive comment that repeats an outside reference", func(t *testing.T) {
+		f := parkUndecidedIssue()
+		f.comments = append(f.comments, map[string]any{"id": int64(2), "body": "Parked on the agent's report: it waits on outsider/fork#9.",
+			"user": map[string]any{"login": "hive[bot]"}, "created_at": prTS(parkT0.Add(-10 * time.Second))})
+		merged := parkT0.Add(3 * time.Hour)
+		f.timeline = append(f.timeline, prCrossRef("outsider/fork", 9, true, "closed", merged, merged, ""))
+		c, _ := parkGatedClient(t, f, parkGate(&parkGateKnobs{level: 6}, writeback.Config{}))
+		if res := parkPass(t, c); res.Posted != 1 || len(f.posted) != 1 {
+			t.Fatalf("%+v posted=%q; want the named item listed", res, f.posted)
+		}
+		wantNote(t, f.posted[0], "- "+parkOutsideLine+" merged on 2026-10-04 (the park reason names it).")
+	})
+}
+
+// With the repository's write-back mode full, an issue older than the
+// hive's write access is still refused without the fact (the backfill
+// guard), so its note is one the fact alone allows and lists accordingly.
+func TestParkRecheckRepoModeFullOldIssueNoteIsFactOnly(t *testing.T) {
+	f := parkUndecidedIssue()
+	f.timeline = append(f.timeline, parkReferring("org/repo", 702, 3*time.Hour), parkReferring("outsider/fork", 9, 4*time.Hour))
+	// The gate first saw org/repo ten days before the park: the issue,
+	// created thirty days before it, predates that.
+	gate := writeback.New(
+		writeback.Config{PerRepo: map[string]writeback.RepoOverride{"org/repo": {Mode: writeback.RepoModeFull}}},
+		writeback.Deps{
+			LevelFor: func(string) int { return 6 },
+			Now:      func() time.Time { return parkT0.Add(-10 * 24 * time.Hour) },
+			Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}, "")
+	item := writeback.Item{Number: parkRelayIssue, Author: "alice", Labels: []string{"stage/045-needs-decision"}, CreatedAt: parkT0.Add(-30 * 24 * time.Hour)}
+	if d := gate.Decide("org/repo", item, writeback.KindNeedsDecisionComment); d.Allowed || d.Reason != writeback.ReasonBackfill {
+		t.Fatalf("without the fact the gate answers %+v, want a backfill refusal", d)
+	}
+	c, _ := parkGatedClient(t, f, gate)
+	if res := parkPass(t, c); res.Posted != 1 || len(f.posted) != 1 {
+		t.Fatalf("%+v posted=%q; want one note", res, f.posted)
+	}
+	wantNote(t, f.posted[0], "- #702 merged on 2026-10-04 (it refers to this issue).")
+	if strings.Contains(f.posted[0], parkOutsideLine) {
+		t.Fatalf("the note lists a pull request from outside the project:\n%s", f.posted[0])
+	}
+	if held := gate.Recent(); len(held) != 0 {
+		t.Fatalf("the gate recorded a refusal: %+v", held)
+	}
+	wantParkLabelsUntouched(t, f)
+}
+
+// The opt-in label comes off an issue that already has a re-check note. The
+// note is now one the fact alone allows: the next pass edits it down to what
+// such a note may list. When nothing it may list is left, the pass writes
+// nothing and the note the hive posted earlier stays as it is.
+func TestParkRecheckNoteAfterOptInLabelRemoved(t *testing.T) {
+	removeOptIn := func(f *parkFake) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.issue["labels"] = parkLabelsJSON("stage/045-needs-decision")
+	}
+	t.Run("a project change remains", func(t *testing.T) {
+		f := parkOptedIn(parkUndecidedIssue())
+		f.timeline = append(f.timeline, parkReferring("org/repo", 702, 3*time.Hour), parkReferring("outsider/fork", 9, 4*time.Hour))
+		gate := parkGate(&parkGateKnobs{level: 6}, writeback.Config{})
+		c, _ := parkGatedClient(t, f, gate)
+		if res := parkPass(t, c); res.Posted != 1 || !strings.Contains(f.posted[0], "#702") || !strings.Contains(f.posted[0], parkOutsideLine) {
+			t.Fatalf("with the opt-in label the note lists every change: %+v %q", res, f.posted)
+		}
+		removeOptIn(f)
+		if res := parkPass(t, c); res.Posted != 0 || res.Updated != 1 || len(f.posted) != 1 || len(f.edited) != 1 {
+			t.Fatalf("%+v posted=%d edited=%d; want the one note edited in place", res, len(f.posted), len(f.edited))
+		}
+		wantNote(t, f.edited[0], "- #702 merged on 2026-10-04 (it refers to this issue).")
+		if strings.Contains(f.edited[0], parkOutsideLine) {
+			t.Fatalf("the edited note still lists a pull request from outside the project:\n%s", f.edited[0])
+		}
+		if res := parkPass(t, c); res.Posted != 0 || res.Updated != 0 || len(f.edited) != 1 {
+			t.Fatalf("an unchanged pass wrote: %+v edited=%d", res, len(f.edited))
+		}
+		if held := gate.Recent(); len(held) != 0 {
+			t.Fatalf("the gate recorded a refusal: %+v", held)
+		}
+	})
+	t.Run("only an outside change", func(t *testing.T) {
+		f := parkOptedIn(parkUndecidedIssue())
+		f.timeline = append(f.timeline, parkReferring("outsider/fork", 9, 4*time.Hour))
+		gate := parkGate(&parkGateKnobs{level: 6}, writeback.Config{})
+		c, _ := parkGatedClient(t, f, gate)
+		if res := parkPass(t, c); res.Posted != 1 || !strings.Contains(f.posted[0], parkOutsideLine) {
+			t.Fatalf("with the opt-in label the note lists the change: %+v %q", res, f.posted)
+		}
+		removeOptIn(f)
+		for pass := 0; pass < 2; pass++ {
+			if res := parkPass(t, c); res.Posted != 0 || res.Updated != 0 || len(f.posted) != 1 || len(f.edited) != 0 || f.labelOps != 0 {
+				t.Fatalf("pass %d wrote: %+v posted=%d edited=%d", pass, res, len(f.posted), len(f.edited))
+			}
+		}
+		if held := gate.Recent(); len(held) != 0 {
+			t.Fatalf("nothing was to be written, yet the gate recorded a refusal: %+v", held)
+		}
+	})
 }

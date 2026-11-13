@@ -128,8 +128,11 @@ type parkChange struct {
 	// copyOf is set when ref is the hive's adoption copy of that PR.
 	copyOf string
 	// by, quote and link are the closing note a person left when the copy
-	// closed unmerged, if any.
+	// closed unmerged, if any. closerKnown says GitHub named who closed the
+	// copy, so the note is that account's; when it is false the note is the
+	// latest comment by any person around the close.
 	by, quote, link string
+	closerKnown     bool
 	// landedBy is the merged PR whose patch removes a line the park quotes,
 	// in landedFile, a file the park names (issue_park_recheck_landed.go):
 	// the park's change landed. landedBy equals ref when the named item is
@@ -222,16 +225,19 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 	// issue on a person is the hive's (issue_park_recheck_fact.go).
 	item.HiveAppliedPark = c.parkHiveApplied(parkedBy, item.Labels, events)
 	// A note the gate allows only because of that fact lists only what the
-	// park text names and what the project's own repositories merged.
+	// park text names and what the project's own repositories merged, and
+	// says "the change landed" only for an item in those repositories.
+	landable := named
 	if len(changes) > 0 && c.parkNoteOnlyByFact(owner+"/"+repo, item) {
 		changes = c.parkProjectChanges(changes, owner+"/"+repo, number)
+		landable = c.parkProjectNamed(named, owner+"/"+repo)
 	}
 	if len(changes) == 0 {
 		c.forgetParkRecheckHeld(owner, repo, number)
 		result.Skipped++
 		return nil
 	}
-	c.markParkLandings(ctx, text, refs, named, owner+"/"+repo, start, changes)
+	c.markParkLandings(ctx, text, refs, landable, owner+"/"+repo, start, changes)
 	note := parkRecheckNote(label, start, changes)
 	for _, cm := range comments {
 		if cm == nil || !c.isHiveAccount(cm.GetUser()) || !strings.Contains(cm.GetBody(), parkRecheckMarker) {
@@ -645,8 +651,9 @@ func (c *Client) parkCopyChanges(ctx context.Context, refs map[string]parkRef, n
 			ch.verb, ch.at = "merged", cp.mergedAt
 		case cp.mergedAt.IsZero() && strings.EqualFold(cp.state, "closed") && cp.closedAt.After(start):
 			ch.verb, ch.at = "was closed without merging", cp.closedAt
-			if note := c.parkCopyClosingNote(ctx, owner, repo, cp); note != nil {
+			if note, closerKnown := c.parkCopyClosingNote(ctx, owner, repo, cp); note != nil {
 				ch.by, ch.quote, ch.link = note.GetUser().GetLogin(), parkCopyQuote(note.GetBody()), note.GetHTMLURL()
+				ch.closerKnown = closerKnown
 			}
 			if ch.quote == "" && !ch.named {
 				continue
@@ -690,18 +697,20 @@ func (c *Client) parkAdoptionCopy(events []*gh.Timeline, orig parkRef) (parkRef,
 // parkCopyClosingNote returns the comment a person left closing the copy:
 // the latest one within parkCopyNoteWindow of the close by the account that
 // closed it, or by any person when the closer cannot be read. A copy the
-// hive or another bot closed has no such note.
-func (c *Client) parkCopyClosingNote(ctx context.Context, owner, repo string, cp parkRef) *gh.IssueComment {
+// hive or another bot closed has no such note. The second result reports
+// whether the closer was read, so a caller can tell the closer's own note
+// from the fallback.
+func (c *Client) parkCopyClosingNote(ctx context.Context, owner, repo string, cp parkRef) (*gh.IssueComment, bool) {
 	var closer *gh.User
 	if issue, _, err := c.client.Issues.Get(ctx, owner, repo, cp.number); err == nil && issue != nil {
 		closer = issue.ClosedBy
 	}
 	if closer != nil && !c.isHumanAuthor(closer) {
-		return nil
+		return nil, true
 	}
 	comments, err := c.listIssueCommentsSince(ctx, owner, repo, cp.number, cp.closedAt.Add(-parkCopyNoteWindow))
 	if err != nil {
-		return nil
+		return nil, closer != nil
 	}
 	var note *gh.IssueComment
 	for _, cm := range comments {
@@ -720,9 +729,9 @@ func (c *Client) parkCopyClosingNote(ctx context.Context, owner, repo string, cp
 		}
 	}
 	if note == nil || parkCopyQuote(note.GetBody()) == "" {
-		return nil
+		return nil, closer != nil
 	}
-	return note
+	return note, closer != nil
 }
 
 // parkCopyQuote is the first paragraph of a closing note as one line, cut to
