@@ -155,7 +155,7 @@ func (e *sessionTestEnv) do(t *testing.T, c sessionCaller, method, path string, 
 	return rec
 }
 
-func decodeJSON(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+func decodeSessionJSON(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 	var m map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
@@ -170,7 +170,7 @@ func (e *sessionTestEnv) create(t *testing.T, c sessionCaller, name string) stri
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
 	}
-	sess, _ := decodeJSON(t, rec)["session"].(map[string]any)
+	sess, _ := decodeSessionJSON(t, rec)["session"].(map[string]any)
 	id, _ := sess["id"].(string)
 	if id == "" {
 		t.Fatalf("no id in %s", rec.Body.String())
@@ -186,7 +186,7 @@ func TestSessionsDisabledReportsEmptyAndHidesRoutes(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET disabled = %d", rec.Code)
 	}
-	m := decodeJSON(t, rec)
+	m := decodeSessionJSON(t, rec)
 	if m["enabled"] != false {
 		t.Errorf("enabled = %v", m["enabled"])
 	}
@@ -216,12 +216,12 @@ func TestSessionsDisabledReportsEmptyAndHidesRoutes(t *testing.T) {
 func TestSessionsEnvOverridesConfigFlag(t *testing.T) {
 	e := newSessionTestEnv(t, false)
 	t.Setenv(config.EnvSessionsEnabled, "true")
-	if m := decodeJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil)); m["enabled"] != true {
+	if m := decodeSessionJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil)); m["enabled"] != true {
 		t.Errorf("env true did not enable: %v", m)
 	}
 	e = newSessionTestEnv(t, true)
 	t.Setenv(config.EnvSessionsEnabled, "false")
-	if m := decodeJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil)); m["enabled"] != false {
+	if m := decodeSessionJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil)); m["enabled"] != false {
 		t.Errorf("env false did not disable: %v", m)
 	}
 }
@@ -233,7 +233,7 @@ func TestSessionsListShapeVendorsAndLimits(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list = %d", rec.Code)
 	}
-	m := decodeJSON(t, rec)
+	m := decodeSessionJSON(t, rec)
 	if m["enabled"] != true {
 		t.Fatalf("enabled = %v", m["enabled"])
 	}
@@ -309,7 +309,7 @@ func TestSessionsCreatorOrOwnerMayRenameAndClose(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("creator patch = %d: %s", rec.Code, rec.Body.String())
 	}
-	sess := decodeJSON(t, rec)["session"].(map[string]any)
+	sess := decodeSessionJSON(t, rec)["session"].(map[string]any)
 	if sess["name"] != "renamed" || sess["group"] != "new" {
 		t.Errorf("session after patch = %v", sess)
 	}
@@ -367,7 +367,7 @@ func TestSessionsLimits(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("per-user cap = %d, want 429", rec.Code)
 	}
-	if m := decodeJSON(t, rec); m["ok"] != false || m["error"] == "" {
+	if m := decodeSessionJSON(t, rec); m["ok"] != false || m["error"] == "" {
 		t.Errorf("429 body = %v", m)
 	}
 	e.create(t, callerRW2, "d")
@@ -476,7 +476,7 @@ func TestSessionsUploadStoresSanitizedFileInsideSessionDir(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("upload = %d: %s", rec.Code, rec.Body.String())
 	}
-	path, _ := decodeJSON(t, rec)["path"].(string)
+	path, _ := decodeSessionJSON(t, rec)["path"].(string)
 	dir := filepath.Join(e.rt.WorkDir(id), sessionUploadsDirName)
 	if !filepath.IsAbs(path) || filepath.Dir(path) != dir {
 		t.Fatalf("path = %q, want a file directly inside %q", path, dir)
@@ -549,7 +549,7 @@ func TestSessionsLogRedactsAndCaps(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("log = %d", rec.Code)
 	}
-	m := decodeJSON(t, rec)
+	m := decodeSessionJSON(t, rec)
 	if lines := m["lines"].([]any); len(lines) != 3 {
 		t.Errorf("lines = %d, want 3", len(lines))
 	}
@@ -557,7 +557,7 @@ func TestSessionsLogRedactsAndCaps(t *testing.T) {
 		t.Errorf("log meta = %v", m)
 	}
 	rec = e.do(t, callerRead, "GET", "/api/sessions/"+id+"/log?lines=999999", nil)
-	if lines := decodeJSON(t, rec)["lines"].([]any); len(lines) != sessionsLogMaxLines {
+	if lines := decodeSessionJSON(t, rec)["lines"].([]any); len(lines) != sessionsLogMaxLines {
 		t.Errorf("uncapped log returned %d lines, want %d", len(lines), sessionsLogMaxLines)
 	}
 	e.rt.capture = "line one\nghp_abcdefghijklmnopqrstuvwxyz0123456789 token\n"
@@ -632,7 +632,7 @@ func TestSessionsResume(t *testing.T) {
 		t.Errorf("resume of running session = %d, want 409", rec.Code)
 	}
 	e.do(t, callerRW, "DELETE", "/api/sessions/"+id, nil)
-	list := decodeJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil))
+	list := decodeSessionJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil))
 	sess := list["sessions"].([]any)[0].(map[string]any)
 	if sess["status"] != "ended" || sess["resumable"] != true {
 		t.Errorf("ended session view = %v", sess)
@@ -648,7 +648,7 @@ func TestSessionsResume(t *testing.T) {
 	if last.ID != id || last.ResumeCommand != "claude --resume abc" {
 		t.Errorf("resume start = %+v", last)
 	}
-	if got := decodeJSON(t, rec)["session"].(map[string]any)["status"]; got != "running" {
+	if got := decodeSessionJSON(t, rec)["session"].(map[string]any)["status"]; got != "running" {
 		t.Errorf("status after resume = %v", got)
 	}
 
@@ -724,7 +724,7 @@ func TestSessionsReconcileMarksVanishedSessionsEnded(t *testing.T) {
 	live := e.create(t, callerRW, "live")
 	gone := e.create(t, callerRW, "gone")
 	delete(e.rt.alive, gone) // tmux did not survive the restart
-	list := decodeJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil))
+	list := decodeSessionJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil))
 	status := map[string]string{}
 	for _, v := range list["sessions"].([]any) {
 		m := v.(map[string]any)
@@ -743,7 +743,7 @@ func TestSessionsAttachedCountSurfaced(t *testing.T) {
 	e := newSessionTestEnv(t, true)
 	id := e.create(t, callerRW, "x")
 	e.rt.alive[id] = crux.UserSessionProbe{Exists: true, Attached: 3, Activity: time.Now()}
-	sess := decodeJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil))["sessions"].([]any)[0].(map[string]any)
+	sess := decodeSessionJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil))["sessions"].([]any)[0].(map[string]any)
 	if sess["attached"] != float64(3) || sess["tmux_name"] != "hive-sess-"+id {
 		t.Errorf("session = %v", sess)
 	}
@@ -858,7 +858,7 @@ func TestTerminalHandoffWithSession(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("handoff for session = %d: %s", rec.Code, rec.Body.String())
 	}
-	m := decodeJSON(t, rec)
+	m := decodeSessionJSON(t, rec)
 	if m["code"] == "" || m["expires_in"] != "60" {
 		t.Errorf("handoff response shape changed: %v", m)
 	}
