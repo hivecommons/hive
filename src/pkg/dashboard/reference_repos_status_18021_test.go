@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -20,18 +21,24 @@ func TestStatusReferenceReposCarryTierAndNoManagedFields(t *testing.T) {
 		{Repo: "hivecommons/hive", Write: []string{config.ReferenceWriteIssues, config.ReferenceWritePRs}},
 	}
 
+	// Config validation rejects a repo in both project.repos and
+	// project.reference_repos, so a reference repo can only leak if the
+	// builders start reading reference_repos. Pin the exact managed set
+	// (newFullServer's testorg/testrepo) so that regression fails here.
+	wantManaged := []string{"testorg/testrepo"}
+
 	repos := buildRepos(cfg, nil, governor.State{})
+	var managed []string
 	for _, r := range repos {
-		if cfg.IsReferenceRepo(r.Full) {
-			t.Fatalf("reference repo %q leaked into the managed repos list: %+v", r.Full, r)
-		}
+		managed = append(managed, r.Full)
+	}
+	if !slices.Equal(managed, wantManaged) {
+		t.Fatalf("managed repos list = %v, want exactly %v (reference repos must not appear)", managed, wantManaged)
 	}
 	srv.UpdateStatus(&StatusPayload{Repos: repos, ReferenceRepos: buildReferenceRepos(cfg)})
 
-	for _, full := range srv.contributeAvailableRepos() {
-		if cfg.IsReferenceRepo(full) {
-			t.Fatalf("reference repo %q offered as a contribute enable/disable toggle", full)
-		}
+	if got := srv.contributeAvailableRepos(); !slices.Equal(got, wantManaged) {
+		t.Fatalf("contribute enable/disable list = %v, want exactly %v (reference repos must not be offered)", got, wantManaged)
 	}
 
 	rec := doGet(srv, "/api/status")
