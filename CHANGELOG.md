@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.248.0)
+
+### Added
+
+- **`review.perspectives_source` is documented.** `src/docs/review-swarm.md` now describes linking the review perspective set to a `kind: ReviewPerspectives` file in a GitHub repo (names and focus text only; `combined_perspectives`, `plan_match` and `max_perspectives_per_pr` stay operator-owned), the source-wins/inline-fallback rule, the last-known-good fallback order with a warning on a malformed document, the shared seed-only `github_prompt_allowlist` trust gate, and the read-only Review Gate display. `hive.yaml.example` gains a commented `perspectives_source:` block ([#17975](https://github.com/hivecommons/hive/issues/17975), [#17990](https://github.com/hivecommons/hive/issues/17990)).
+- A voice connector (Plaud, WisprFlow) added, edited or removed from the Knowledge Integrations dashboard now shows up in, or leaves, the Inbox on the same save instead of after a restart, and the Inbox's direct Plaud read path is attached at boot too. When the saved connector list could not be applied to the running syncer, the save answers with `runtime_error` and the dashboard toasts `saved, but the running syncer did not reload: ...` instead of a plain success ([#18091](https://github.com/hivecommons/hive/issues/18091)).
+
+## 2026-11-13 (v5.247.2)
+
+### Fixed
+
+- Session prune now warns once per path when a session directory cannot be removed due to permission denied, instead of repeating the warning every tick.
+
 ## 2026-11-13 (v5.247.1)
 
 ### Fixed

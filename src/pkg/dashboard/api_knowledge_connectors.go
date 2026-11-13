@@ -106,17 +106,20 @@ func (s *Server) setKnowledgeConnectors(rt KnowledgeConnectorRuntime) {
 // reloadKnowledgeConnectors hot-loads entries into the connector runtime
 // after a dashboard save (#18091), so a connector added, edited, enabled,
 // disabled or removed takes effect without restarting the hive. A failure
-// is logged and leaves the previous runtime in place.
-func (s *Server) reloadKnowledgeConnectors(entries []config.KnowledgeConnector) {
+// is logged, leaves the previous runtime in place and is returned so the
+// save response can report it as runtime_error: the config is already
+// persisted, so the caller must learn that the running hive did not follow.
+func (s *Server) reloadKnowledgeConnectors(entries []config.KnowledgeConnector) error {
 	if s.deps.ReloadKnowledgeConnectors == nil {
-		return
+		return nil
 	}
 	rt, err := s.deps.ReloadKnowledgeConnectors(entries)
 	if err != nil {
 		s.logger.Warn("knowledge connectors not reloaded; restart the hive to apply", "error", err)
-		return
+		return err
 	}
 	s.setKnowledgeConnectors(rt)
+	return nil
 }
 
 // knowledgeConnectorStatus finds one connector's status by name.

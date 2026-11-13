@@ -884,6 +884,15 @@ governor:
 #   combined_perspectives: true # RECOMMENDED (#12126): one session + one comment covering every
 #                               # perspective; shared review boilerplate is sent once instead of once
 #                               # per perspective. Verdicts stay per-perspective. Default false.
+#   perspectives_source:  # optional; live-link the perspective names + focus text to a
+#     owner: my-org       # kind: ReviewPerspectives file in GitHub (#17975). When it resolves it
+#     repo: my-repo       # wins over perspectives/perspective_prompts, which stay the fallback.
+#     path: .hive/review-perspectives.yaml
+#     ref: main           # optional; default branch otherwise
+#                         # The repo must be on variables.security.github_prompt_allowlist (seed-only).
+#                         # File: "kind: ReviewPerspectives" + "perspectives: [{name, focus}]". Names and
+#                         # focus only; combined_perspectives, plan_match and max_perspectives_per_pr stay
+#                         # here. Format: src/docs/review-swarm.md, "Live-linked perspectives".
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
 #   fixer_fallback_agents: [] # opt-in ordered repair lanes, e.g. [fixer, scanner-2]
 #   fixer_fallback_after_undeliverable: 3 # consecutive refusals before rerouting;
