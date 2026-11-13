@@ -72,3 +72,36 @@ func TestContributorMergedReposRemembersUnsearchableRepository(t *testing.T) {
 		t.Fatalf("warning should name the refused repository:\n%s", out)
 	}
 }
+
+// Regression for hivecommons/hive#18059: one author refused for several
+// repositories, and several authors refused for the same repository, warn
+// once in total instead of once per (author, repository) pair — the pair
+// product flooded WARN (15 in 10m on one hive) and self-reported as an
+// unclassified repeated error. Every refusal is still remembered per pair.
+func TestContributorUnsearchableWarnsOncePerAuthorAndRepository(t *testing.T) {
+	fx := validContributorFixture()
+	fx.unsearchable = map[string]bool{"acme/docs": true, "acme/homebrew-hive": true}
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	var logs bytes.Buffer
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 13, 3, 0, 0, 0, time.UTC)}
+	engine := newContributorLaneEngineRepos(api.URL, []string{"widget", "hive", "docs", "homebrew-hive"}, defaultContributorLanePolicy(), clock, Options{
+		Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})),
+	})
+	authors := []string{contributorLaneTestAuthor, "thatguywob", "another-dev"}
+	for _, author := range authors {
+		engine.contributorMergedRepos(context.Background(), "acme", "widget", author)
+	}
+
+	out := logs.String()
+	if n := strings.Count(out, contributorUnsearchableMessage); n != 1 {
+		t.Fatalf("unsearchable warning logged %d times for %d authors × 2 refused repositories, want 1:\n%s", n, len(authors), out)
+	}
+	for _, author := range authors {
+		for _, refused := range []string{"docs", "homebrew-hive"} {
+			if !engine.contributorSearchSkips(author, contributorRepoRef{Owner: "acme", Repo: refused}) {
+				t.Fatalf("refusal of acme/%s for %s was not remembered", refused, author)
+			}
+		}
+	}
+}
