@@ -19,13 +19,20 @@ const hotloadTestTimeout = 10 * time.Second
 const kcDocsEnabled = `{"connectors":[{"name":"docs","type":"document","enabled":true,"layer":"project","scope":{"url":"https://example.org/a"}}]}`
 const kcDocsDisabled = `{"connectors":[{"name":"docs","type":"document","enabled":false,"layer":"project","scope":{"url":"https://example.org/a"}}]}`
 
+// hotloadDocumentConn stands in for the "document" connector type: the
+// registry checks that a factory's connector reports the type it was
+// registered under, so the fake must answer "document", not "fake".
+type hotloadDocumentConn struct{ connector.Connector }
+
+func (hotloadDocumentConn) Type() string { return connector.TypeDocument }
+
 // hotloadFactory is a KnowledgeConnectorFactory that builds a real
 // connector.Syncer whose "document" type is conn, so no network is touched.
 func hotloadFactory(t *testing.T, conn connector.Connector) (KnowledgeConnectorFactory, *int) {
 	t.Helper()
 	reg := connector.NewRegistry()
-	if err := reg.Register("document", func(connector.ConnectorConfig, connector.Deps) (connector.Connector, error) {
-		return conn, nil
+	if err := reg.Register(connector.TypeDocument, func(connector.ConnectorConfig, connector.Deps) (connector.Connector, error) {
+		return hotloadDocumentConn{Connector: conn}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
