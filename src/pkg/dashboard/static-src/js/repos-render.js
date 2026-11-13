@@ -365,7 +365,7 @@
       const base = window._githubBaseUrl || 'https://github.com';
       return refs.map(rr => {
         const full = String(rr.full || '');
-        const tier = String(rr.tier || 'read-only');
+        const tier = String(rr.reference_tier || rr.tier || 'read-only');
         const tip = tier === 'read-only'
           ? 'Reference repo: agents may clone and read it; every write is refused by the proxy.'
           : `Reference repo: agents may clone and read it, and may open ${tier.replace('+', ' and ')} (never merge, push to the default branch, label, assign, review, or close others' items).`;
