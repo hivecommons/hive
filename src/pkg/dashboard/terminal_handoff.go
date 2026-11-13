@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -43,6 +44,14 @@ func (s *Server) handleCreateTerminalHandoff(w http.ResponseWriter, r *http.Requ
 		jsonStatusResponse(w, http.StatusForbidden, map[string]string{"error": "terminal access requires owner or read-write role"})
 		return
 	}
+	// Optional body {"session":"<id>"} attaches a user session (tmux
+	// hive-sess-<id>); an absent body keeps the agent-terminal behaviour. The
+	// minted code is unchanged: the UI opens /terminal/?arg=hive-sess-<id>.
+	if sessionID, ok := readHandoffSession(w, r); !ok {
+		return
+	} else if sessionID != "" && !s.sessionHandoffTarget(w, sessionID) {
+		return
+	}
 	user := requestUser(r)
 	if !s.canMintTerminalAssertion() {
 		jsonStatusResponse(w, http.StatusServiceUnavailable, map[string]string{"error": "terminal handoff requires terminal signing key and hive id"})
@@ -55,6 +64,26 @@ func (s *Server) handleCreateTerminalHandoff(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	jsonResponse(w, map[string]string{"code": code, "expires_in": "60"})
+}
+
+// terminalHandoffBodyMax bounds the optional handoff request body.
+const terminalHandoffBodyMax = 1024
+
+// readHandoffSession reads the optional {"session": id} body. A missing or
+// unparseable body means "no session": the minted code is identical either way,
+// so legacy callers that send some other body keep working.
+func readHandoffSession(w http.ResponseWriter, r *http.Request) (id string, ok bool) {
+	if r.Body == nil || r.ContentLength == 0 {
+		return "", true
+	}
+	var body struct {
+		Session string `json:"session"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, terminalHandoffBodyMax)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return "", true
+	}
+	return strings.TrimSpace(body.Session), true
 }
 
 func (s *Server) canMintTerminalAssertion() bool {

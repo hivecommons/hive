@@ -474,7 +474,8 @@
       }
     },
     "issue_bands": {},
-    "stage_tracker": {}
+    "stage_tracker": {},
+    "sessions": {}
   },
   "Data": {
     "MetricsDir": "/data/metrics",

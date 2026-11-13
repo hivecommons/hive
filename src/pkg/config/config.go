@@ -5377,6 +5377,8 @@ type DashboardConfig struct {
 	// StageTracker tunes the Hive activity monitor's server-side payload cache
 	// (hivecommons/hive#12682).
 	StageTracker DashboardStageTrackerConfig `yaml:"stage_tracker,omitempty" json:"stage_tracker,omitempty"`
+	// Sessions configures the interactive Sessions terminals (default off).
+	Sessions DashboardSessionsConfig `yaml:"sessions,omitempty" json:"sessions,omitempty"`
 }
 
 // DashboardStageTrackerConfig is dashboard.stage_tracker.

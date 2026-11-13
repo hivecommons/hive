@@ -83,6 +83,10 @@
     {
       "name": "Swarm",
       "description": "Repo swarm mode status, lifecycle, and history"
+    },
+    {
+      "name": "Sessions",
+      "description": "Interactive named CLI terminals"
     }
   ],
   "paths": {
@@ -38343,6 +38347,307 @@
             }
           }
         }
+      }
+    },
+    "/api/sessions": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "List sessions, vendors and limits",
+        "description": "Any role. While the feature is off returns enabled=false with empty lists.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create a session (owner or read-write)",
+        "description": "Starts a named CLI session. Vendor must be a known, allowed, installed backend; never a shell, never a bypass-permissions launch.",
+        "responses": {
+          "201": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Invalid name, group or vendor"
+          },
+          "403": {
+            "description": "Role or vendor not allowed"
+          },
+          "404": {
+            "description": "Sessions disabled"
+          },
+          "409": {
+            "description": "Vendor not installed"
+          },
+          "429": {
+            "description": "Session limit reached"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "group": {
+                    "type": "string"
+                  },
+                  "vendor": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{id}": {
+      "patch": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Rename or regroup a session (creator or owner)",
+        "description": "Changes name and/or group.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Not the creator or an owner"
+          },
+          "404": {
+            "description": "Unknown session"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "group": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Close a session (creator or owner)",
+        "description": "Kills tmux and keeps the metadata marked ended; on an ended session removes its metadata.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Not the creator or an owner"
+          },
+          "404": {
+            "description": "Unknown session"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/log": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Redacted scrollback snapshot (any role)",
+        "description": "lines is capped at 5000.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "404": {
+            "description": "Unknown session"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/input": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Type text into a session (owner or read-write)",
+        "description": "Literal paste, never key names. Audited with user and byte count, not the text.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Invalid text"
+          },
+          "403": {
+            "description": "Role not allowed"
+          },
+          "409": {
+            "description": "Session not running"
+          },
+          "413": {
+            "description": "Input too large"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "submit": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/upload": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Upload a file into a session directory (owner or read-write)",
+        "description": "Multipart field file. Returns the absolute path; the file is never executed.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Role not allowed"
+          },
+          "413": {
+            "description": "Upload too large"
+          },
+          "429": {
+            "description": "Per-session file cap reached"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/resume": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Resume an ended session (owner or read-write)",
+        "description": "Only for vendors with a resume handle.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Role not allowed"
+          },
+          "409": {
+            "description": "Not ended or nothing to resume"
+          },
+          "429": {
+            "description": "Session limit reached"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     }
   },

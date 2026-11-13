@@ -262,6 +262,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Dashboard.Matrix.Validate(); err != nil {
 		return err
 	}
+	if err := c.Dashboard.Sessions.Validate(); err != nil {
+		return err
+	}
 	if normalized, err := ValidateDashboardPublicURL(c.Dashboard.PublicURL); err != nil {
 		return err
 	} else {
