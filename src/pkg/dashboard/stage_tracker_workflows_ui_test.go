@@ -59,7 +59,7 @@ const STAGE_TRACKER_TERMINAL = 110;
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
 ` + jsFunc(t, html, "stageTrackerWorkflowOf") + jsFunc(t, html, "stageTrackerWorkflowColumnIndex") +
 		jsFunc(t, html, "stageTrackerWorkflowBadgeHtml") + jsFunc(t, html, "stageTrackerWorkflowHeaderHtml") +
-		jsFunc(t, html, "stageTrackerWorkflowStripItems") + jsFunc(t, html, "stageTrackerWorkflowKey") +
+		jsFunc(t, html, "stageTrackerWorkflowColumnIconHtml") + jsFunc(t, html, "stageTrackerWorkflowStripItems") + jsFunc(t, html, "stageTrackerWorkflowKey") +
 		jsFunc(t, html, "stageTrackerColumnsHeaderHtml") + jsFunc(t, html, "stageTrackerWorkflowRuns") +
 		jsFunc(t, html, "stageTrackerWorkflowRunHeaderRows") + jsFunc(t, html, "stageTrackerGroupColumnsHtml") + `
 const STAGE_TRACKER_WORKFLOW_UNCOVERED_WORD = 'Not covered';

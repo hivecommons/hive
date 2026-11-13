@@ -341,6 +341,11 @@ func (m *Model) Validate() error {
 	if m.Spec.Scope.Repository == "" {
 		fail("spec.scope.repository is empty")
 	}
+	for _, c := range m.Spec.Columns {
+		if err := ValidateColumnIcon(c.Icon); err != nil {
+			fail("column %q: %v", c.ID, err)
+		}
+	}
 	ids := map[string]bool{}
 	var walk func(states []State, parallelParent bool)
 	walk = func(states []State, parallelParent bool) {
