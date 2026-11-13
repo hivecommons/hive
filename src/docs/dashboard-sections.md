@@ -178,6 +178,12 @@ A step-by-step guide that turns a new project idea into a first set of files and
 
 Full entry: [Inception](dashboard-sections/workflow-and-agents.md#inception).
 
+## Sessions
+
+Named, grouped terminal sessions where a command-line AI agent runs inside Hive and everyone on the hive can watch or join. Replaces Inception when sessions are enabled.
+
+Full entry: [Sessions](dashboard-sections/workflow-and-agents.md#sessions).
+
 ## Knowledge
 
 The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.

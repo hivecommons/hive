@@ -132,6 +132,11 @@
           <p>Inception is the L1 human-and-brainstorm workflow for turning an idea into facts and a scaffold. Spek is the optional runner for staged speks and plans once you are using long-running runs. Both keep authority in Hive: Spek status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spek</a>.</p>
         </details>
 
+        <details class="faq-q" id="faq-sessions">
+          <summary>What are Sessions, and where did Inception go?</summary>
+          <p>When sessions are enabled on your hive, the dashboard shows a <strong>Sessions</strong> section instead of Inception: named terminal tabs where a command-line AI agent runs inside Hive, shared with everyone on the hive. People with the <code>read</code> role see a read-only scrollback. Typing in a terminal is shared and not attributed to individual people. Campaigns and Jam moved to a Campaigns tab. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections/workflow-and-agents.md#sessions" target="_blank" rel="noopener noreferrer">Sessions</a>.</p>
+        </details>
+
         <details class="faq-q" id="faq-external-engines">
           <summary>What are external engines like Flue and OMP allowed to do?</summary>
           <p>External engines are report-only admission surfaces, not extra credentials: they receive bounded context and return receipts that Hive verifies, and they never receive target-repo write credentials or dashboard tokens. Flue and OMP are independent, default-off bindings (<code>runs.external.flue.enabled</code>, <code>runs.external.omp.enabled</code>), and dispatch additionally requires the relay to advertise <code>ext-exec/flue</code> or <code>ext-exec/omp</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/design/external-workflow-admission.md" target="_blank" rel="noopener noreferrer">external workflow admission</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">contributor relay capability tokens</a>.</p>
