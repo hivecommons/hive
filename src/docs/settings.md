@@ -112,6 +112,12 @@ The **Hub settings** block at the bottom of the tab sets explicit task acceptanc
 
 The OpenAI-compatible gateways (LiteLLM, OpenRouter, vLLM, and others) agents send inference through, and their keys. See [Configure model gateways and keys](hosted-hub.md#configure-model-gateways-and-keys).
 
+## Dashboard
+
+Settings for the dashboard itself (`dashboard.*`): its port and agent poll interval, the Experiment Lab, whether the header also shows the Claude usage gauge, hub-proxied auth, the dashboard auth token, the access allowlist, and the issue bands.
+
+**Also show the usage gauge in the header** (`dashboard.subscription_gauge_header`, off by default) adds a small fuel-dial chip to the header on every page, showing how much of the Claude plan this hive is signed in with is left in the limit closest to running out. The full gauge is on the Overview by default for the owner whenever the hive uses Claude, and can be hidden there from the Overview settings. Both show the measurements hive already makes, so they add no calls to Claude; only the owner sees them; and they show the Claude plan, not the hive's token budget. See [Claude usage gauge](dashboard.md#claude-usage-gauge).
+
 ## Compliance
 
 How your configuration maps to SOC 2, FedRAMP, and ISO 27001 controls. See [The Settings → Compliance tab](compliance.md#the-settings--compliance-tab).

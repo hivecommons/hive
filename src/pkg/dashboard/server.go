@@ -134,6 +134,10 @@ type Server struct {
 	matrix      *matrixSource
 	matrixNudge stageTrackerNudger
 
+	// knowledgeConnectorsRTMu guards deps.KnowledgeConnectors, which a
+	// dashboard connector edit can swap at runtime (#18091).
+	knowledgeConnectorsRTMu sync.RWMutex
+
 	port         int
 	authToken    string
 	sweepMu      sync.RWMutex
@@ -771,6 +775,10 @@ type FrontendFeatures struct {
 	//
 	// Deprecated: read experiment_lab instead.
 	StrategyLab bool `json:"strategy_lab"`
+	// SubscriptionGaugeHeader adds the owner-only Claude subscription usage
+	// chip to the header (the Overview gauge needs no flag). Only the flag
+	// travels here; owners fetch readings from /api/providers/headroom.
+	SubscriptionGaugeHeader bool `json:"subscription_gauge_header"`
 }
 
 // FrontendSecurity summarizes the effective operator security posture for compact dashboard display.

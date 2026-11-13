@@ -1140,18 +1140,19 @@ func (b *boot) wireBootClosures() {
 			// #3972: hand the ACMM advisor the SAME cached fleet-stats collector
 			// the heartbeat reads, so its merge-success signal reuses the existing
 			// 30-minute collect loop instead of issuing a second GitHub fetch.
-			FleetStats:            b.fleetStatsCollector,
-			Activity:              b.activityCollector,
-			RepoCost:              b.repoCostCollector,
-			LaunchCost:            b.launchCostCollector,
-			BeadSynthesizer:       b.beadSynth,
-			KnowledgeConnectors:   b.knowledgeConnectorRuntime(),
-			KnowledgePublish:      b.knowledgePublishRuntime(),
-			Inbox:                 b.inboxSvc,
-			BeadStores:            b.beadStores,
-			BeadStoreLoadFailures: b.beadStoreLoadFailures,
-			AuditLedger:           auditLedger,
-			AuditJournal:          auditJournal,
+			FleetStats:                b.fleetStatsCollector,
+			Activity:                  b.activityCollector,
+			RepoCost:                  b.repoCostCollector,
+			LaunchCost:                b.launchCostCollector,
+			BeadSynthesizer:           b.beadSynth,
+			KnowledgeConnectors:       b.knowledgeConnectorRuntime(),
+			ReloadKnowledgeConnectors: b.reloadKnowledgeConnectors,
+			KnowledgePublish:          b.knowledgePublishRuntime(),
+			Inbox:                     b.inboxSvc,
+			BeadStores:                b.beadStores,
+			BeadStoreLoadFailures:     b.beadStoreLoadFailures,
+			AuditLedger:               auditLedger,
+			AuditJournal:              auditJournal,
 			AuditPublisherFunc: func() convergenceaudit.FindingPublisher {
 				return b.findingPublisher
 			},

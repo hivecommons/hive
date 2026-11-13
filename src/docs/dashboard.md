@@ -125,6 +125,29 @@ honoured as a deprecated alias for one release: it enables the panel, logs a
 one-line deprecation at config load, and is folded into
 `dashboard.experiment_lab` so the next config save writes the documented key.
 
+### Claude usage gauge
+
+When the hive uses Claude, the owner sees a fuel gauge at the top of the
+**Overview** card: one dial for each usage limit the Claude plan reports (the
+weekly limit, plus a 5-hour or model-specific weekly limit when the plan has
+one), each with the percentage left and when it resets. A dial turns amber at
+25% left or less and red at 10% or less, and the gauge says how old the reading
+is and greys out when it is more than 15 minutes old. When there is no reading,
+it says so and why (for example, the hive is not signed in to Claude) instead
+of showing an empty dial.
+
+The gauge shows the measurements hive already makes on its regular 5-minute
+schedule, through provider rotation or the usage reading that runs by default
+without it. It adds no calls to Claude and never moves or pauses an agent. It
+reflects the Claude account the hive itself is signed in with, and it is the
+Claude plan's usage, not the hive's own token budget.
+
+Only the owner sees it. To hide it, untick **Show Claude usage gauge** in the
+Overview settings (remembered per browser). To also show it as a small chip in
+the header on every page, turn on **Also show the usage gauge in the header**
+(`dashboard.subscription_gauge_header`) under Settings → Dashboard; clicking the
+chip opens the gauge on the Overview.
+
 ## Governor card
 
 The dashboard **Governor** card summarizes queue depth, operating mode, budget

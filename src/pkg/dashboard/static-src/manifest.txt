@@ -130,6 +130,7 @@ js/contributors.js
 js/refresh.js
 js/scroll-stabilizer.js
 js/inception.js
+js/subscription-gauge.js
 js/debug-logs.js
 js/tooltips-dialogs.js
 js/plan-agent-controls.js
