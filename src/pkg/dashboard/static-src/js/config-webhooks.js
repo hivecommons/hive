@@ -143,7 +143,9 @@
       if (d.app_probe_error) {
         return `<div class="wh-muted wh-note">Could not read the App installation\u2019s permissions (${esc(d.app_probe_error)}); create the hook by hand as above.</div>`;
       }
-      if (!d.app_org_hooks && !d.app_repo_hooks) return '';
+      if (!d.app_org_hooks && !d.app_repo_hooks) {
+        return `<div class="wh-muted wh-note">To have the App create the hook for you, grant it <b>Organization → Webhooks</b> (<code>organization_hooks</code>) or <b>Repository → Webhooks</b> (<code>repository_hooks</code>) at <b>Read and write</b>, then reopen this tab.</div>`;
+      }
       const scopes = [];
       if (d.app_org_hooks) scopes.push(`<option value="organization">organization ${esc(d.org)}</option>`);
       if (d.app_repo_hooks) (d.repos || []).forEach(r => scopes.push(`<option value="repository:${esc(r)}">repository ${esc(d.org)}/${esc(r)}</option>`));
