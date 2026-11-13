@@ -72,6 +72,62 @@ func TestIssueThreadFlagsOptedInHumanFiledBug(t *testing.T) {
 	}
 }
 
+// The auto-closer does not close a question while one of its sub-issues is
+// open. The thread read carries that count from the summary GitHub puts on
+// the issue payload: nothing when the issue has no sub-issues or all of them
+// are closed, and never for a pull request.
+func TestIssueThreadCountsOpenSubIssues(t *testing.T) {
+	cases := []struct {
+		name    string
+		summary map[string]any
+		pr      bool
+		want    int
+	}{
+		{name: "no sub-issues"},
+		{name: "two of three open", summary: map[string]any{"total": 3, "completed": 1, "percent_completed": 33}, want: 2},
+		{name: "all closed", summary: map[string]any{"total": 2, "completed": 2, "percent_completed": 100}},
+		{name: "a pull request is not counted", summary: map[string]any{"total": 1, "completed": 0}, pr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := map[string]any{
+				"number": 9,
+				"state":  "open",
+				"user":   map[string]any{"login": "asker", "type": "User"},
+				"title":  "How do I configure X?",
+				"labels": []map[string]any{{"name": "question"}},
+			}
+			if tc.summary != nil {
+				payload["sub_issues_summary"] = tc.summary
+			}
+			if tc.pr {
+				payload["pull_request"] = map[string]any{"url": "https://api.github.example/repos/o/r/pulls/9"}
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/repos/o/r/issues/9":
+					_ = json.NewEncoder(w).Encode(payload)
+				case "/repos/o/r/issues/9/comments":
+					_ = json.NewEncoder(w).Encode([]any{})
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			thread, err := testClient(t, srv.URL).IssueThread(context.Background(), "r", 9)
+			if err != nil {
+				t.Fatalf("IssueThread: %v", err)
+			}
+			if thread.OpenSubIssues != tc.want {
+				t.Fatalf("OpenSubIssues = %d, want %d", thread.OpenSubIssues, tc.want)
+			}
+			if thread.IsPullRequest != tc.pr || thread.State != "open" || thread.Author != "asker" {
+				t.Fatalf("thread header = %+v", thread)
+			}
+		})
+	}
+}
+
 func TestIssueThreadErrors(t *testing.T) {
 	var nilClient *Client
 	if _, err := nilClient.IssueThread(context.Background(), "r", 1); !errors.Is(err, ErrNoGitHubClient) {

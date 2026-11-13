@@ -1848,7 +1848,12 @@ and settles the adoption's lineage: each original the copy declared
 `Supersedes #M` whose record names this copy is told, marked superseded
 on the stage store (so the orphan recovery does not re-adopt a head the
 base already has) and closed, and issues the copy would have closed are
-closed with the redundant-of note. Only when the verdict names no PR
+closed with the redundant-of note. An issue that still has an open GitHub
+sub-issue is left open with no note: its remaining work is in the
+sub-issues. With stage labels on (`governor.labels.stage.enabled`, the
+default) the issue stage sweep closes it once they are all closed; with
+them off it stays open until a person closes it.
+Only when the verdict names no PR
 *and* the compare is not empty does the PR fall through to 085 as before
 ([#15647](https://github.com/hivecommons/hive/pull/15647)).
 

@@ -26,6 +26,12 @@ type IssueThread struct {
 	// refuse this close (a human-filed bug). The auto-closer treats it as out
 	// of scope rather than tripping the gate's comment.
 	BugFamily bool
+	// OpenSubIssues is how many of the issue's GitHub sub-issues are still
+	// open, from the summary on the issue payload. Zero when it has none,
+	// when all are closed, or when the host reports no summary. The
+	// auto-closer does not close an issue while this is above zero
+	// (automated_close_open_subissues.go).
+	OpenSubIssues int
 	// Comments are every comment on the issue, oldest first.
 	Comments []ThreadComment
 }
@@ -47,7 +53,8 @@ func (c *Client) IssueThread(ctx context.Context, repo string, number int) (Issu
 	if err := validateRepoRef(owner, repoName); err != nil {
 		return IssueThread{}, fmt.Errorf("IssueThread: %w", err)
 	}
-	issue, _, err := c.client.Issues.Get(ctx, owner, repoName, number)
+	// The same request Issues.Get makes, with the sub-issue summary kept.
+	issue, _, subIssues, err := c.getIssueWithBlockedCount(ctx, owner, repoName, number)
 	if err != nil {
 		return IssueThread{}, fmt.Errorf("reading issue %s/%s#%d: %w", owner, repoName, number, err)
 	}
@@ -56,6 +63,9 @@ func (c *Client) IssueThread(ctx context.Context, repo string, number int) (Issu
 		Author:        issue.GetUser().GetLogin(),
 		IsPullRequest: issue.IsPullRequest(),
 		BugFamily:     c.reporterConfirmationCloseGateReason(issue) != "",
+	}
+	if !thread.IsPullRequest {
+		thread.OpenSubIssues = automatedCloseOpenSubIssues(subIssues)
 	}
 	for _, l := range issue.Labels {
 		if name := l.GetName(); name != "" {

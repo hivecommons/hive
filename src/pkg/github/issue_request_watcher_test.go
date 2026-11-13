@@ -1252,3 +1252,349 @@ func TestIssueRequestWatcher_NoConsolidateReason(t *testing.T) {
 		})
 	}
 }
+
+// issueCloseRequestServer is a GitHub stand-in for a relay "close" request
+// on item 12 of o/r. payload is what the issue read returns; the first
+// failReads reads answer 500 instead, and with missing set every read
+// answers 404. It counts the issue reads, every other read (lookups), the
+// closes (PATCH) and every other write.
+type issueCloseRequestServer struct {
+	payload   map[string]any
+	failReads int64
+	missing   bool
+	reads     atomic.Int64
+	lookups   atomic.Int64
+	closes    atomic.Int64
+	writes    atomic.Int64
+}
+
+func (s *issueCloseRequestServer) handler(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/12":
+		n := s.reads.Add(1)
+		if s.missing {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if n <= s.failReads {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(s.payload)
+	case r.Method == http.MethodGet:
+		s.lookups.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	case r.Method == http.MethodPatch && r.URL.Path == "/repos/o/r/issues/12":
+		s.closes.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 12, "state": "closed"})
+	default:
+		s.writes.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+// issueCloseRequestPayload is an open item 12 filed by a person, with the
+// given sub-issue summary (nil for none), as an issue or a pull request.
+func issueCloseRequestPayload(summary map[string]any, pullRequest bool) map[string]any {
+	out := map[string]any{"number": 12, "state": "open", "title": "Tidy the sweep", "user": map[string]any{"login": "owner", "type": "User"}}
+	if summary != nil {
+		out["sub_issues_summary"] = summary
+	}
+	if pullRequest {
+		out["pull_request"] = map[string]any{"url": "https://api.github.example/repos/o/r/pulls/12"}
+	}
+	return out
+}
+
+func readIssueCloseRequestResult(t *testing.T, reqPath string) IssueResponse {
+	t.Helper()
+	b, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
+	if err != nil {
+		t.Fatalf("result file missing: %v", err)
+	}
+	var res IssueResponse
+	if err := json.Unmarshal(b, &res); err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+// An agent may not close an issue that still has an open sub-issue: the
+// request is refused with a reason the agent can read, parked as .denied
+// and never retried, and nothing is written on the issue. An override
+// reason does not lift the refusal. Before the fix both requests closed
+// the issue.
+func TestIssueRequestWatcher_CloseRefusedForIssueWithOpenSubIssues(t *testing.T) {
+	tests := []struct {
+		name     string
+		override string
+		summary  map[string]any
+		wantText string
+	}{
+		{name: "two of three sub-issues open", summary: map[string]any{"total": 3, "completed": 1, "percent_completed": 33}, wantText: "o/r#12 has 2 open sub-issues,"},
+		{name: "one sub-issue open", summary: map[string]any{"total": 1, "completed": 0, "percent_completed": 0}, wantText: "o/r#12 has 1 open sub-issue,"},
+		{name: "override reason does not lift it", override: "duplicate of another report", summary: map[string]any{"total": 3, "completed": 1, "percent_completed": 33}, wantText: "o/r#12 has 2 open sub-issues,"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := &issueCloseRequestServer{payload: issueCloseRequestPayload(tt.summary, false)}
+			srv := httptest.NewServer(http.HandlerFunc(stub.handler))
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			dir := withIssueDir(t)
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{Kind: "close", Repo: "o/r", Number: 12, Agent: "scanner", OverrideReason: tt.override})
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+			clock := func() time.Time { return now }
+
+			c.processIssueRequests(context.Background(), clock)
+
+			if got := stub.closes.Load(); got != 0 {
+				t.Fatalf("issue with open sub-issues was closed (%d PATCH)", got)
+			}
+			if got := stub.writes.Load(); got != 0 {
+				t.Fatalf("writes on the refused issue = %d, want none", got)
+			}
+			if _, err := os.Stat(reqPath + ".denied"); err != nil {
+				t.Fatalf("refused close must be parked as .denied: %v", err)
+			}
+			if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+				t.Fatalf("refused request must leave the queue, stat err=%v", err)
+			}
+			res := readIssueCloseRequestResult(t, reqPath)
+			if res.OK || !strings.Contains(res.Error, "issue close refused") || !strings.Contains(res.Error, tt.wantText) {
+				t.Fatalf("result = %+v, want a refusal naming %q", res, tt.wantText)
+			}
+			if st := c.issueRetries[reqPath]; st != nil {
+				t.Fatalf("a refusal must not schedule a retry: %+v", st)
+			}
+
+			// Not retried: a pass an hour later makes no request at all.
+			reads := stub.reads.Load()
+			now = now.Add(time.Hour)
+			c.processIssueRequests(context.Background(), clock)
+			if got := stub.reads.Load(); got != reads {
+				t.Fatalf("refused request was tried again: %d reads, want %d", got, reads)
+			}
+			if got := stub.closes.Load() + stub.writes.Load(); got != 0 {
+				t.Fatalf("a later pass wrote on the refused issue (%d writes)", got)
+			}
+		})
+	}
+}
+
+// Everything else about a close request is as before: an issue with no
+// sub-issues or with every sub-issue closed is closed, and so is a pull
+// request, whatever its payload says about sub-issues.
+func TestIssueRequestWatcher_CloseUnaffectedWithoutOpenSubIssues(t *testing.T) {
+	tests := []struct {
+		name        string
+		summary     map[string]any
+		pullRequest bool
+	}{
+		{name: "issue without sub-issues"},
+		{name: "issue with every sub-issue closed", summary: map[string]any{"total": 2, "completed": 2, "percent_completed": 100}},
+		{name: "pull request", pullRequest: true},
+		{name: "pull request is never held", summary: map[string]any{"total": 1, "completed": 0}, pullRequest: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := &issueCloseRequestServer{payload: issueCloseRequestPayload(tt.summary, tt.pullRequest)}
+			srv := httptest.NewServer(http.HandlerFunc(stub.handler))
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			dir := withIssueDir(t)
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{Kind: "close", Repo: "o/r", Number: 12, Agent: "scanner"})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			c.ProcessIssueRequestsOnce(context.Background())
+
+			if got := stub.closes.Load(); got != 1 {
+				t.Fatalf("closes = %d, want 1", got)
+			}
+			if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+				t.Fatalf("close request should be consumed, stat err=%v", err)
+			}
+			if _, err := os.Stat(reqPath + ".denied"); !os.IsNotExist(err) {
+				t.Fatalf("close request must not be denied, stat err=%v", err)
+			}
+			if res := readIssueCloseRequestResult(t, reqPath); !res.OK || res.Number != 12 {
+				t.Fatalf("result = %+v, want ok for #12", res)
+			}
+		})
+	}
+}
+
+// A failed read of the issue is not a verdict: nothing is closed, the
+// request stays queued with the error in its result, and the retry closes
+// the issue once the read works.
+func TestIssueRequestWatcher_CloseRetriesFailedSubIssueRead(t *testing.T) {
+	stub := &issueCloseRequestServer{payload: issueCloseRequestPayload(nil, false), failReads: 1}
+	srv := httptest.NewServer(http.HandlerFunc(stub.handler))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{Kind: "close", Repo: "o/r", Number: 12, Agent: "scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+
+	c.processIssueRequests(context.Background(), clock)
+
+	if got := stub.closes.Load(); got != 0 {
+		t.Fatalf("issue was closed although its read failed (%d PATCH)", got)
+	}
+	if _, err := os.Stat(reqPath); err != nil {
+		t.Fatalf("request must stay queued for a retry: %v", err)
+	}
+	for _, suffix := range []string{".denied", ".failed"} {
+		if _, err := os.Stat(reqPath + suffix); !os.IsNotExist(err) {
+			t.Fatalf("a failed read must not park the request as %s, stat err=%v", suffix, err)
+		}
+	}
+	if res := readIssueCloseRequestResult(t, reqPath); res.OK || !strings.Contains(res.Error, "reading issue o/r#12 before close") {
+		t.Fatalf("result = %+v, want the failed read", res)
+	}
+	st := c.issueRetries[reqPath]
+	if st == nil || !st.nextTry.After(now) {
+		t.Fatalf("expected a scheduled retry, got %+v", st)
+	}
+
+	now = st.nextTry
+	c.processIssueRequests(context.Background(), clock)
+
+	if got := stub.closes.Load(); got != 1 {
+		t.Fatalf("closes after the retry = %d, want 1", got)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Fatalf("retried request should be consumed, stat err=%v", err)
+	}
+	if res := readIssueCloseRequestResult(t, reqPath); !res.OK || res.Number != 12 {
+		t.Fatalf("result after the retry = %+v, want ok for #12", res)
+	}
+}
+
+// With no GitHub client the check stands aside, so the close helper reports
+// the missing client itself, as before.
+func TestIssueCloseRequestOpenSubIssuesRefusalWithoutClient(t *testing.T) {
+	var nilClient *Client
+	if reason, err := nilClient.issueCloseRequestOpenSubIssuesRefusal(context.Background(), "o/r", 12); reason != "" || err != nil {
+		t.Fatalf("nil client = %q, %v; want no verdict and no error", reason, err)
+	}
+	if reason, err := (&Client{}).issueCloseRequestOpenSubIssuesRefusal(context.Background(), "o/r", 12); reason != "" || err != nil {
+		t.Fatalf("client without a GitHub client = %q, %v; want no verdict and no error", reason, err)
+	}
+}
+
+// The refusal comes before everything the close helper would do, so nothing
+// at all is written on an issue with an open sub-issue, whatever else is
+// true of it. A person's bug report that waits for its reporter's
+// confirmation used to get the confirmation comment and label from such a
+// request; now the request is denied and the issue is not touched. A
+// tracking issue and an issue that is already closed are denied the same
+// way.
+func TestIssueRequestWatcher_CloseRefusalWritesNothingOnTheIssue(t *testing.T) {
+	openSubIssues := map[string]any{"total": 3, "completed": 1, "percent_completed": 33}
+	tests := []struct {
+		name   string
+		adjust func(payload map[string]any)
+	}{
+		{name: "person-filed bug awaiting reporter confirmation", adjust: func(payload map[string]any) {
+			payload["title"] = "Bug: the sweep drops rows"
+			payload["body"] = "It drops rows.\n\nhive: needs-confirmation"
+			payload["labels"] = []map[string]any{{"name": "bug"}}
+		}},
+		{name: "tracking issue", adjust: func(payload map[string]any) {
+			payload["title"] = "Weekly competitor report"
+			payload["body"] = trackingTestBody
+		}},
+		{name: "issue that is already closed", adjust: func(payload map[string]any) {
+			payload["state"] = "closed"
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := issueCloseRequestPayload(openSubIssues, false)
+			tt.adjust(payload)
+			stub := &issueCloseRequestServer{payload: payload}
+			srv := httptest.NewServer(http.HandlerFunc(stub.handler))
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			dir := withIssueDir(t)
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{Kind: "close", Repo: "o/r", Number: 12, Agent: "scanner"})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			c.ProcessIssueRequestsOnce(context.Background())
+
+			if got := stub.writes.Load(); got != 0 {
+				t.Fatalf("writes on the issue = %d, want none (no confirmation comment, no label)", got)
+			}
+			if got := stub.closes.Load(); got != 0 {
+				t.Fatalf("closes = %d, want 0", got)
+			}
+			if reads, lookups := stub.reads.Load(), stub.lookups.Load(); reads != 1 || lookups != 0 {
+				t.Fatalf("reads = %d, other lookups = %d; want the one issue read and nothing else", reads, lookups)
+			}
+			if _, err := os.Stat(reqPath + ".denied"); err != nil {
+				t.Fatalf("refused close must be parked as .denied: %v", err)
+			}
+			if res := readIssueCloseRequestResult(t, reqPath); res.OK || !strings.Contains(res.Error, "o/r#12 has 2 open sub-issues,") {
+				t.Fatalf("result = %+v, want the open sub-issues refusal", res)
+			}
+		})
+	}
+}
+
+// An issue read that answers 404 is a definite refusal, not something a
+// retry can change: the request is quarantined as .failed at once, exactly
+// as when the close helper's own read answers 404, and nothing is written.
+func TestIssueRequestWatcher_CloseQuarantinesMissingIssue(t *testing.T) {
+	stub := &issueCloseRequestServer{missing: true}
+	srv := httptest.NewServer(http.HandlerFunc(stub.handler))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{Kind: "close", Repo: "o/r", Number: 12, Agent: "scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+
+	c.processIssueRequests(context.Background(), clock)
+
+	if got := stub.closes.Load() + stub.writes.Load(); got != 0 {
+		t.Fatalf("writes for a missing issue = %d, want none", got)
+	}
+	if _, err := os.Stat(reqPath + ".failed"); err != nil {
+		t.Fatalf("a 404 on the issue read must quarantine the request as .failed: %v", err)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Fatalf("quarantined request must leave the queue, stat err=%v", err)
+	}
+	if _, err := os.Stat(reqPath + ".denied"); !os.IsNotExist(err) {
+		t.Fatalf("a missing issue is a failure, not a denial, stat err=%v", err)
+	}
+	if res := readIssueCloseRequestResult(t, reqPath); res.OK || !strings.Contains(res.Error, "reading issue o/r#12 before close") {
+		t.Fatalf("result = %+v, want the failed read", res)
+	}
+	if st := c.issueRetries[reqPath]; st != nil {
+		t.Fatalf("a definite refusal must not schedule a retry: %+v", st)
+	}
+
+	// Not retried: a pass an hour later makes no request.
+	reads := stub.reads.Load()
+	now = now.Add(time.Hour)
+	c.processIssueRequests(context.Background(), clock)
+	if got := stub.reads.Load(); got != reads {
+		t.Fatalf("quarantined request was tried again: %d reads, want %d", got, reads)
+	}
+}
