@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -246,6 +247,9 @@ type webhookCreateBody struct {
 
 // handleConfigGitHubWebhooksCreate serves POST /api/config/github/webhooks/create
 // (owner-only): creates the org or repo hook through the App installation.
+// 409 without a webhook secret, 412 when the installation lacks the hooks
+// write permission for the scope; when a hook for this hive's payload URL
+// already exists it is returned with created=false instead of duplicated.
 func (s *Server) handleConfigGitHubWebhooksCreate(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -293,12 +297,12 @@ func (s *Server) handleConfigGitHubWebhooksCreate(w http.ResponseWriter, r *http
 	switch strings.ToLower(strings.TrimSpace(body.Scope)) {
 	case "", "organization", "org":
 		if !orgHooks {
-			jsonError(w, "the App installation has no organization_hooks: write permission", http.StatusForbidden)
+			jsonError(w, "the App installation lacks organization_hooks: write permission — grant it on the App and accept the installation update", http.StatusPreconditionFailed)
 			return
 		}
 	case "repository", "repo":
 		if !repoHooks {
-			jsonError(w, "the App installation has no repository_hooks: write permission", http.StatusForbidden)
+			jsonError(w, "the App installation lacks repository_hooks: write permission — grant it on the App and accept the installation update", http.StatusPreconditionFailed)
 			return
 		}
 		repo := strings.TrimSpace(body.Repo)
@@ -324,8 +328,15 @@ func (s *Server) handleConfigGitHubWebhooksCreate(w http.ResponseWriter, r *http
 		return
 	}
 	user := strings.TrimSpace(r.Header.Get("X-Hive-User"))
-	s.audit.LogRecord(user, auditWebhookCreated, auditDetail("scope", res.Scope, "target", res.Target, "payload_url", payloadURL), "", res.Target, 0)
-	s.webhookLogger().Info("github webhook created through the App", "user", user, "scope", res.Scope, "target", res.Target)
+	if !res.Created {
+		// Idempotent: a hook for this payload URL already exists on the
+		// target; nothing was mutated, so there is nothing to audit.
+		s.webhookLogger().Info("github webhook already present; returning it", "user", user, "scope", res.Scope, "target", res.Target, "hook_id", res.ID)
+		jsonResponse(w, res)
+		return
+	}
+	s.audit.LogRecord(user, auditWebhookCreated, auditDetail("scope", res.Scope, "target", res.Target, "payload_url", payloadURL, "hook_id", strconv.FormatInt(res.ID, 10)), "", res.Target, 0)
+	s.webhookLogger().Info("github webhook created through the App", "user", user, "scope", res.Scope, "target", res.Target, "hook_id", res.ID)
 	jsonResponse(w, res)
 }
 

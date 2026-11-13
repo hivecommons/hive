@@ -75,9 +75,9 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `POST` | `/api/config/governor/repos/check-access` | Dashboard auth/session | Governor Repo Check Access | `pkg/dashboard/api.go:314` |
 | `PUT` | `/api/config/github` | Owner only | Config GitHub | `pkg/dashboard/api.go:315` |
 | `GET` | `/api/config/github/forge-apps` | Dashboard auth/session | Config GitHub Forge Apps | `pkg/dashboard/api.go:318` |
-| `GET` | `/api/config/github/webhooks` | Owner only | Config GitHub Webhooks (payload URL, events, secret source, receiver health, App hook permissions) | `pkg/dashboard/api_github_webhook_setup.go:87` |
-| `POST` | `/api/config/github/webhooks/secret` | Owner only | Config GitHub Webhooks Generate Secret (returned once) | `pkg/dashboard/api_github_webhook_setup.go:88` |
-| `POST` | `/api/config/github/webhooks/create` | Owner only | Config GitHub Webhooks Create Hook (through the App installation) | `pkg/dashboard/api_github_webhook_setup.go:89` |
+| `GET` | `/api/config/github/webhooks` | Owner only | Config GitHub Webhooks (payload URL, events, secret source, receiver health, App hook permissions) | `pkg/dashboard/api_github_webhook_setup.go:88` |
+| `POST` | `/api/config/github/webhooks/secret` | Owner only | Config GitHub Webhooks Generate Secret (returned once) | `pkg/dashboard/api_github_webhook_setup.go:89` |
+| `POST` | `/api/config/github/webhooks/create` | Owner only | Config GitHub Webhooks Create Hook (through the App installation) | `pkg/dashboard/api_github_webhook_setup.go:90` |
 | `GET` | `/api/config/sidebar` | Dashboard auth/session | Sidebar Get | `pkg/dashboard/api.go:376` |
 | `PUT` | `/api/config/sidebar` | Dashboard auth/session | Sidebar Set | `pkg/dashboard/api.go:377` |
 | `GET` | `/api/config/backends` | Dashboard auth/session | Backends | `pkg/dashboard/api.go:378` |
