@@ -1,0 +1,1 @@
+- dashboard: a Projects-card Release that lands while the rows are re-sorting after a Hold is no longer sent, so holding items down a list no longer releases a neighbouring item's hold (#18054)
