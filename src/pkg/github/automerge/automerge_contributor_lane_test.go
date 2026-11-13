@@ -60,6 +60,7 @@ type contributorLaneFixture struct {
 	omitAssociation bool
 	files           []map[string]any
 	filesStatus     int
+	changedFiles    int // changed_files on the PR payload; 0 omits it
 	listStatus      int
 	getStatus       int
 	recheckHeadSHA  string
@@ -218,6 +219,9 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			}
 			if !fx.omitAssociation {
 				p["author_association"] = association
+			}
+			if fx.changedFiles != 0 {
+				p["changed_files"] = fx.changedFiles
 			}
 			if fx.headCommittedAt != "" {
 				p["updated_at"] = fx.headCommittedAt
@@ -760,6 +764,9 @@ func TestTrySweepContributorLanePRSkipReasons(t *testing.T) {
 			wantMerges: 1,
 		},
 		{name: "files fetch error", mutate: func(fx *contributorLaneFixture) { fx.filesStatus = http.StatusInternalServerError }, wantReason: contributorLaneReasonFilesEvidence, wantErr: true},
+		// More changed files than the files API returns is a standing
+		// verdict, not a transient error re-WARNed every sweep (#18121).
+		{name: "incomplete files list", mutate: func(fx *contributorLaneFixture) { fx.changedFiles = 5204 }, wantReason: contributorLaneReasonFilesEvidence},
 		{name: "claim comments fetch error", mutate: func(fx *contributorLaneFixture) { fx.issueCommentsSt = http.StatusInternalServerError }, wantReason: "claim-comments-fetch", wantErr: true},
 		{
 			name: "reporter-trust hold",
