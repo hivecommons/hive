@@ -301,7 +301,7 @@ func TestSessionsRoleMatrix(t *testing.T) {
 
 func TestSessionsCreatorOrOwnerMayRenameAndClose(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	id := e.create(t, callerRW, "rita's")
+	id := e.create(t, callerRW, "ritas session")
 	if rec := e.do(t, callerRW2, "PATCH", "/api/sessions/"+id, map[string]string{"group": "x"}); rec.Code != http.StatusForbidden {
 		t.Errorf("other read-write patched = %d", rec.Code)
 	}
