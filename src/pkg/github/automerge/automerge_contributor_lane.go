@@ -1405,6 +1405,13 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", "contributor-lane:auto-promoted", "merged_prs", claim.AutoPromoted, "scope", contributorAutoPromotionScopeName(claim.AutoPromotedHiveWide), "repos", claim.AutoPromotedRepos)
 	}
 	files, err := ListChangedFiles(caller, c.gh, owner, repo, pr)
+	if errors.Is(err, hgithub.ErrIncompletePRFileList) {
+		// More changed files than GitHub's files API will ever return: the
+		// diff fences cannot be read on any tick, so this is a standing
+		// verdict (fail closed, nil error) like adoptionDiffRefusal's, not a
+		// transient fault re-WARNed every sweep (hivecommons/hive#18121).
+		return eval, contributorLaneReasonFilesEvidence, nil
+	}
 	if err != nil {
 		return eval, contributorLaneReasonFilesEvidence, err
 	}
