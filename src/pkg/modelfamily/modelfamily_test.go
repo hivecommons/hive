@@ -38,6 +38,8 @@ func TestCanonicalFoldsSpellings(t *testing.T) {
 		"lemonade/qwen-3":               "qwen-3",
 		"":                              Unknown,
 		"auto":                          Unknown,
+		"-":                             Unknown,
+		"gemini-3.8-flash-low":          "gemini-3.8-flash-low",
 	}
 	for in, want := range cases {
 		if got := Canonical(in); got != want {
@@ -84,6 +86,19 @@ func TestResolveFoldsRuntimeSpellings(t *testing.T) {
 		{"kimi-k3", "moonshot", Resolved{Canonical: "kimi-k3", Vendor: "moonshot"}},
 		{"unknown", "unknown", Resolved{Canonical: Unknown, Vendor: Unknown}},
 		{"", "", Resolved{Canonical: Unknown, Vendor: Unknown}},
+		{"ornith-1.5", " Lemonade ", Resolved{Canonical: "ornith-1.5", Vendor: "lemonade"}},
+		{"ornith-1.5", "aws", Resolved{Canonical: "ornith-1.5", Vendor: Unknown}},
+		{"ornith-1.5", "unknown", Resolved{Canonical: "ornith-1.5", Vendor: Unknown}},
+		{"ornith-1.5", "", Resolved{Canonical: "ornith-1.5", Vendor: Unknown}},
+		{"-", "", Resolved{Canonical: Unknown, Vendor: Unknown}},
+		{"-:high", "", Resolved{Canonical: Unknown, Vendor: Unknown, Effort: "high"}},
+		{"default:high", "", Resolved{Canonical: Auto, Vendor: Auto, Effort: "high"}},
+		{"claude--opus-high", "", Resolved{Canonical: "claude-opus", Vendor: "anthropic", Effort: "high"}},
+		{"opus", "", Resolved{Canonical: "claude-opus", Vendor: "anthropic"}},
+		{"haiku:low", "", Resolved{Canonical: "claude-haiku", Vendor: "anthropic", Effort: "low"}},
+		{"gpt-5.6-sol:fast", "openai", Resolved{Canonical: "gpt-5.6-sol", Vendor: "openai"}},
+		{"gemini-3.8-flash-low:high", "google", Resolved{Canonical: "gemini-3.8-flash", Vendor: "google", Effort: "high"}},
+		{"`'Claude-Opus-4-6'`", "", Resolved{Canonical: "claude-opus-4.6", Vendor: "anthropic"}},
 	}
 	for _, c := range cases {
 		if got := Resolve(c.in, c.provider); got != c.want {
