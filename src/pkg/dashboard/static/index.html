@@ -33934,11 +33934,49 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       repaintReposForWidth();
       return { repo, item, fromKey, toKey };
     }
+    // A hold toggle moves its row between the held and actionable groups, and
+    // the status render that follows re-sorts them, so the button under the
+    // pointer changes a moment after every click. Clicking Hold down a card
+    // then landed the next click on another item's Release, and that item's
+    // hold came straight back off (hivecommons/hive#18054: #151 released in
+    // the same second #283 was held). A Release that arrives within
+    // REPO_HOLD_SHIFT_GUARD_MS of the rows moving is not sent; the operator
+    // clicks it again once the list is still. Hold is never delayed: under
+    // the pointer it can only park an item, and parking is what that click
+    // was doing anyway.
+    const REPO_HOLD_SHIFT_GUARD_MS = 1500;
+    let _repoHoldLayoutSig = null;
+    let _repoHoldShiftAt = 0;
+    const _repoHoldInFlight = {};
+    // Pure: the order and membership of every card's hold-toggle rows.
+    function repoHoldLayoutSignature(repos) {
+      const nums = list => (list || []).map(x => Number(x && x.number) || 0).join(',');
+      return (repos || []).map(r => (r.full || r.name || '') + ':' + nums(r.actionableIssues) + '|' + nums(r.heldIssues) + '|' + nums(r.openPrs) + '|' + nums(r.heldPrs)).join(';');
+    }
+    // Called on every repos render: remembers when the rows last moved. The
+    // first render is not a move; nothing was under the pointer before it.
+    function noteRepoHoldLayout(repos, now) {
+      const sig = repoHoldLayoutSignature(repos);
+      if (_repoHoldLayoutSig !== null && sig !== _repoHoldLayoutSig) _repoHoldShiftAt = now;
+      _repoHoldLayoutSig = sig;
+    }
+    function repoHoldReleaseTooSoon(now) {
+      return _repoHoldShiftAt > 0 && now - _repoHoldShiftAt < REPO_HOLD_SHIFT_GUARD_MS;
+    }
     async function toggleRepoItemHold(repoFull, number, type, held, btn) {
       if (btn && btn.dataset.busy === '1') return;
       const p = repoParts(repoFull);
       if (!p.owner || !p.repo || !number) return;
       const wantHeld = !!held;
+      // The busy mark lives on a button the optimistic repaint replaces, so
+      // the item itself carries the in-flight guard.
+      const flightKey = String(repoFull).toLowerCase() + '/' + type + '#' + number;
+      if (_repoHoldInFlight[flightKey]) return;
+      if (!wantHeld && repoHoldReleaseTooSoon(Date.now())) {
+        showToast('The list moved just as you clicked, so ' + repoFull + '#' + number + ' is still held. Click Release again to release it.', 'info');
+        return;
+      }
+      _repoHoldInFlight[flightKey] = true;
       const prevText = btn ? btn.textContent : '';
       const moved = moveRepoItemHold(repoFull, number, type, wantHeld, canonicalHiveHoldLabel());
       if (btn) { btn.dataset.busy = '1'; btn.textContent = '…'; }
@@ -33957,6 +33995,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (moved) moveRepoItemHold(repoFull, number, type, !wantHeld, canonicalHiveHoldLabel());
         showToast('Hold toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
         if (btn) { btn.dataset.busy = ''; btn.textContent = prevText || (wantHeld ? '⏸ Hold' : '▶ Release'); }
+      } finally {
+        delete _repoHoldInFlight[flightKey];
       }
     }
 
@@ -36780,6 +36820,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       refreshSectionCardShell('repos-section');
       if (_repoResizeDrag || _repoOrderDrag) return;
       repos = repoOrderApply(repos || []);
+      noteRepoHoldLayout(repos, Date.now());
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
       const showDesign = showPlan && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
@@ -37143,7 +37184,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const base = window._githubBaseUrl || 'https://github.com';
       return refs.map(rr => {
         const full = String(rr.full || '');
-        const tier = String(rr.tier || 'read-only');
+        const tier = String(rr.reference_tier || rr.tier || 'read-only');
         const tip = tier === 'read-only'
           ? 'Reference repo: agents may clone and read it; every write is refused by the proxy.'
           : `Reference repo: agents may clone and read it, and may open ${tier.replace('+', ' and ')} (never merge, push to the default branch, label, assign, review, or close others' items).`;
@@ -59881,8 +59922,9 @@ function burnAreaChart() {
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
-        if (out) out.innerHTML = `<span class="wh-ok">Created ${esc(body.scope)} hook #${esc(String(body.hook_id))} on ${esc(body.target)}.</span> <a href="${esc(body.url)}" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a> — push a commit or comment on a PR and watch “Deliveries (1h)” move.`;
-        showToast('Webhook created', 'info');
+        const verb = body.created === false ? 'Already set up:' : 'Created';
+        if (out) out.innerHTML = `<span class="wh-ok">${verb} ${esc(body.scope)} hook #${esc(String(body.id || body.hook_id))} on ${esc(body.target)}.</span> <a href="${esc(body.url)}" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a> — push a commit or comment on a PR and watch “Deliveries (1h)” move.`;
+        showToast(body.created === false ? 'Webhook already exists' : 'Webhook created', 'info');
       } catch (e) {
         if (out) out.innerHTML = `<span class="wh-error">${esc(e.message)}</span>`;
       } finally {

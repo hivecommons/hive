@@ -26,6 +26,7 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/perspsrc"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/rotation"
@@ -1986,6 +1987,15 @@ func reviewAuthorBase(cfg *config.Config, agent string) string {
 		}
 	}
 	return agent
+}
+
+// applyReviewPerspectivesSource re-resolves review.perspectives_source and
+// reinstalls the relay settings, so the relay validates verdicts against the
+// set the link now names rather than the one it booted with. With no source
+// set it fetches nothing and the inline set stands.
+func applyReviewPerspectivesSource(ctx context.Context, cfg *config.Config, resolver *perspsrc.Resolver, client *github.Client, logger *slog.Logger) {
+	perspsrc.ApplyToConfig(ctx, cfg, resolver, logger)
+	installReviewRelaySettings(client, cfg, logger)
 }
 
 // installReviewRelaySettings gives a (possibly rebuilt) GitHub client the
