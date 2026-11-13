@@ -107,6 +107,8 @@
     }
     h1 { letter-spacing: 0; font-size: clamp(2rem, 4vw, 3rem); line-height: .98; margin-bottom: .8rem; }
     .subtitle { color: var(--muted); font-size: 1.02rem; line-height: 1.7; margin-bottom: var(--sp-9); }
+    .benchmarks-pointer { margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-5); border: 1px solid var(--line); border-radius: var(--r-sm); font-size: var(--fs-sm); color: var(--muted); }
+    .benchmarks-pointer a { color: var(--amber); font-weight: 700; }
 
     /* ── Table ── */
     /* Status filter chips above the My Hives table. --chip-color is set inline
@@ -780,7 +782,7 @@
         <h1>My Hives</h1>
         <p class="subtitle">Hive instances you own or have access to</p>
         <p style="margin-top:var(--sp-4);padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:color-mix(in srgb,var(--hub-dashboard-accent) 8%,transparent);font-size:0.85rem">👋 New to Hive? Read the <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Getting Started Guide</a> before diving in.</p>
-        <p id="benchmarks-pointer" style="margin-top:var(--sp-3);padding:8px 14px;border:1px solid var(--line);border-radius:8px;font-size:0.85rem;color:var(--muted)">📊 See how models perform across the fleet &mdash; merge rate, CI first-try and estimated cost per PR, from real hive output. <a href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Open the benchmarks ↗</a></p>
+        <p id="benchmarks-pointer" class="benchmarks-pointer">📊 See how models perform across the fleet &mdash; merge rate, CI first-try and estimated cost per PR, from real hive output. <a href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener">Open the benchmarks ↗</a></p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-2)"></p>
         <!-- Image-pulls bar chart: per-release container-image PULLS of the
              public spoke image (ghcr.io/hivecommons/hive), bucketed by the
