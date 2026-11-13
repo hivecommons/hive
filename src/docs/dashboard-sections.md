@@ -180,7 +180,9 @@ Full entry: [Inception](dashboard-sections/workflow-and-agents.md#inception).
 
 ## Sessions
 
-Named, grouped terminal sessions where a command-line AI agent runs inside Hive and everyone on the hive can watch or join. Replaces Inception when sessions are enabled.
+Named terminal sessions running command-line AI tools inside Hive. Everyone on this hive can watch, and people with write access can type.
+
+Sessions are named and grouped, and the section replaces Inception when sessions are enabled.
 
 Full entry: [Sessions](dashboard-sections/workflow-and-agents.md#sessions).
 
