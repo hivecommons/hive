@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v6.28.0)
+
+### Added
+
+- **`review.perspectives_source` config key and `kind: ReviewPerspectives` document format** for live-linking a hive's review perspective names and focus text to a file in a GitHub repo, so maintainers can change the set through ordinary PRs instead of hive config edits. This lands the config surface, a runtime-only resolved slot that is never written back to the overlay, and the validating document parser (`pkg/perspsrc`); fetching and wiring follow in later changes, so behaviour is unchanged until then and unchanged whenever the key is absent. Once resolved, the linked set wins over inline `review.perspectives` / `review.perspective_prompts`, which stay the fallback. ([#17986](https://github.com/hivecommons/hive/issues/17986), part of [#17975](https://github.com/hivecommons/hive/issues/17975))
+
+### Fixed
+
+- The signed-commit reconciler's intentional refusal to rewrite a foreign or merge commit no longer files repeated unclassified-error fleet reports; its warning and PR remediation remain visible ([#17924](https://github.com/hivecommons/hive/issues/17924)).
+- Dashboard logs one summary warning per five minutes for dropped SSE events instead of one warning per event, so a stalled browser tab no longer triggers repeated-error fleet reports (#17995).
+
 ## 2026-11-12 (v6.27.3)
 
 ### Fixed
