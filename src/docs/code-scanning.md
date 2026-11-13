@@ -39,8 +39,55 @@ off and can override any of them.
 
 Loading fails when a `repos` key is not in `project.repos`, a severity is not
 one of the names above, a pattern is malformed, the cap is negative, or the
-interval is under ten minutes. These keys are YAML-only for now; the Settings
-dialog does not edit them.
+interval is under ten minutes.
+
+### Without editing hive.yaml
+
+The hive's owner can change the same keys while the hive runs:
+
+- **Dashboard:** Settings → Features → **Code scanning issues**. It has a
+  switch for every repository, a row for each repository in `project.repos`
+  with its own switch (hive-wide, on or off), the minimum severity, the cap,
+  the interval, the tool list and the extra rules to leave out. Next to each
+  repository's switch is what the last sweep pass found there: *App can read
+  alerts*, *App cannot read alerts* (the
+  [permission](#github-app-permission) is missing), *No code scanning
+  analysis*, *Last pass failed*, or *Not checked yet* for a repository the
+  sweep has not reached since it was turned on.
+- **API:** `GET` and `PUT /api/config/code-scanning`
+  ([API reference](api-reference/configuration.md)).
+- **Admin MCP:** `settings_read` section `code_scanning` to read, and the
+  `code_scanning.settings` write operation to change
+  ([admin MCP](admin-mcp.md)).
+
+A change is checked exactly as `hive.yaml` is on load, with the same messages,
+and nothing is saved when it fails. Two more things are refused here: one
+repository named under two spellings (only one entry would be read), and a
+tool name or rule pattern containing `${...}` (loading `hive.yaml` would
+expand it from the environment). A saved change is written to `hive.yaml`
+(on a hosted hive, to the runtime copy that file links to), recorded in the
+audit log as `config_code_scanning` with one entry per changed key and its
+value before and after, and used by the sweep with no restart. The sweep reads
+its settings from a copy the governor loop publishes when each evaluation
+cycle starts, so a change applies to the first pass after the next cycle
+starts. A repository that was just turned on is normally swept within one
+`interval` of that.
+
+Three things to know:
+
+- **`repos` is sent whole.** `PUT` replaces the per-repository map with the one
+  it is given. An entry is removed only when it sets nothing. An entry with
+  `enabled: null` and other fields keeps those fields and follows the
+  top-level switch. The dashboard and the admin MCP both send every
+  repository's override back, so changing one repository never drops another
+  repository's override, or its own severity, tool, rule and cap overrides.
+- **The dashboard edits the per-repository switch only.** A repository's own
+  `min_severity`, `include_tools`, `exclude_rules` and
+  `max_new_issues_per_run` are shown in its row and kept on save. Change them
+  through the API, the admin MCP or `hive.yaml`.
+- **Turning a repository on does not grant the permission.** The GitHub App
+  still needs [Code scanning alerts: Read-only](#github-app-permission) there.
+  That stays the operator's step.
 
 ## Severity
 
@@ -231,6 +278,9 @@ Every write (create, edit, comment, close) asks the write-back gate as an
 records the refusal as the repository's `error` and writes nothing.
 
 ## Dashboard
+
+The settings are under Settings → Features → **Code scanning issues**
+([Without editing hive.yaml](#without-editing-hiveyaml)).
 
 `/api/status` carries `code_scanning` while the sweep is on for any repository:
 

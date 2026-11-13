@@ -542,6 +542,7 @@ start-up script, its process launch, PIDs, signal handling and exit codes are un
 | feature settings | `PUT /api/config/governor/features` | `requireOwnerRole`; pointer fields, nil means unchanged |
 | merge settings | `PATCH /api/config/auto-merge` | `requireOwnerRole` on the read and the write; every list and map is a full replace, except `contributor_lane.workflow_fence_scope_repos`, which is per repository (`null` clears) |
 | Let hive decide settings | `PUT /api/config/decisions/delegate` | `requireOwnerRole` on the read and the write; `repos` is a full replace, the op sends the merged map |
+| code scanning sweep settings | `PUT /api/config/code-scanning` | `requireOwnerRole` on the read and the write; `repos` is a full replace, the op sends the merged map; the candidate is checked with the `hive.yaml` load checks before anything changes |
 | repository pause / resume | `POST /api/repos/pause`, `/api/repos/resume` | `requireRepoPausePermission` → `canToggleRepoHold` |
 | item hold | `POST /api/repos/{owner}/{repo}/items/{number}/hold` | `canToggleRepoHold` |
 | re-evaluate now | `POST /api/repos/rescan` | none beyond write access |

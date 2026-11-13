@@ -45,6 +45,7 @@ var settingsSections = []SettingsSection{
 	{"advisory", "/api/config/governor/advisory", "Advisory-mode settings."},
 	{"replan", "/api/config/governor/replan", "Replan settings."},
 	{"decisions_delegate", "/api/config/decisions/delegate", "Let hive decide settings (decisions.delegate): the hive-wide switch, per-repository overrides, the LLM step and the effect timeout."},
+	{"code_scanning", "/api/config/code-scanning", "Code scanning sweep settings (code_scanning): the hive-wide switch, interval, severity floor, tools, excluded rules and per-pass cap with defaults resolved, the per-repository overrides, and for each project repository whether the sweep runs there and whether its last pass could read the alerts."},
 	{"question_autoclose", "/api/config/governor/question-autoclose", "Question auto-close settings."},
 	{"question_autoclose_schedule", "/api/config/governor/question-autoclose/schedule", "Question auto-close schedule."},
 	{"fleet_report", "/api/config/governor/fleet-report", "Fleet report settings."},
