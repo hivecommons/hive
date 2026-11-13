@@ -1105,6 +1105,26 @@ func (k *KnowledgeAPI) ImportDocument(ctx context.Context, config DocSourceConfi
 	return meta, nil
 }
 
+// DocumentSlug returns the slug a document named name is stored under, the
+// same key GetDocument and DeleteDocument take.
+func DocumentSlug(name string) string { return slugify(name) }
+
+// EnsureDocument imports config unless a document with the same slug is
+// already loaded (typically reloaded from its on-disk metadata at startup).
+// imported reports whether a fresh import ran. It is the boot path for
+// knowledge.documents: a configured document whose on-disk state was lost is
+// re-imported instead of silently disappearing (#18058).
+func (k *KnowledgeAPI) EnsureDocument(ctx context.Context, config DocSourceConfig) (meta *DocMetadata, imported bool, err error) {
+	if existing, getErr := k.GetDocument(DocumentSlug(config.Name)); getErr == nil {
+		return existing, false, nil
+	}
+	meta, err = k.ImportDocument(ctx, config)
+	if err != nil {
+		return nil, false, err
+	}
+	return meta, true, nil
+}
+
 // ListDocuments returns metadata for all imported documents.
 func (k *KnowledgeAPI) ListDocuments() []DocMetadata {
 	k.mu.RLock()
