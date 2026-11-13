@@ -25719,7 +25719,7 @@
           "System"
         ],
         "summary": "Create the org or repo webhook through the GitHub App (owner)",
-        "description": "Owner-only. Uses the App installation's organization_hooks or repository_hooks write permission to create a webhook on GitHub pointing at this hive's payload URL with the configured secret and event list. Requires a configured secret, a public dashboard URL and the matching permission; the repository must be one of project.repos. Audited.",
+        "description": "Owner-only. Uses the App installation's organization_hooks or repository_hooks write permission to create a webhook on GitHub pointing at this hive's payload URL with the configured secret and event list. Requires a configured secret, a public dashboard URL and the matching permission; the repository must be one of project.repos. Idempotent: when a hook with the same payload URL already exists on the target it is returned with created=false instead of creating a duplicate. Creation is audited.",
         "requestBody": {
           "required": true,
           "content": {
@@ -25745,14 +25745,31 @@
         },
         "responses": {
           "200": {
-            "description": "Webhook created",
+            "description": "Webhook created, or the existing hook for this payload URL",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "hook_id": {
+                    "id": {
                       "type": "integer"
+                    },
+                    "hook_id": {
+                      "type": "integer",
+                      "description": "Same as id"
+                    },
+                    "created": {
+                      "type": "boolean",
+                      "description": "false when an existing hook for this payload URL was returned"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "payload_url": {
+                      "type": "string"
                     },
                     "scope": {
                       "type": "string"
@@ -25772,10 +25789,13 @@
             "description": "Invalid scope or repository"
           },
           "403": {
-            "description": "Not an owner, or the App lacks the hooks permission"
+            "description": "Not an owner"
           },
           "409": {
-            "description": "No secret / no public URL / webhook already exists"
+            "description": "No secret / no public URL / no project.org / no App auth"
+          },
+          "412": {
+            "description": "The App installation lacks organization_hooks or repository_hooks write for the scope"
           },
           "502": {
             "description": "GitHub API error"

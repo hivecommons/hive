@@ -1,0 +1,1 @@
+- Documents imported from the dashboard (PDF, HTML, DOCX, text) are now saved to `knowledge.documents` in `hive.yaml` like git sources, and boot re-imports any configured document whose on-disk record is missing, so an upgrade no longer drops a PDF knowledge source while keeping GitHub ones.

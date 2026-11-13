@@ -9198,7 +9198,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
         <p class="faq-intro">Short answers to the questions people ask once a hive is running. Everything below describes what this hive
         actually does today — where behaviour is surprising, it is called out rather than smoothed over. Each answer links to the
         source doc, so this panel stays a map, not a second source of truth.</p>
-        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step. Want to see a hive at work? <a class="text-accent fw-semibold" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Watch the hive live on Twitch</a>.</p>
+        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step. Want to see a hive at work? <a class="text-accent fw-semibold" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Watch the hive live on Twitch</a>. Wondering which model to run? <a class="text-accent fw-semibold" href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener">Compare models on real fleet PR outcomes</a> (merge rate, CI first-try, estimated cost).</p>
 
         <div class="faq-filter-row">
           <label for="faq-filter" class="faq-filter-label">Filter</label>
@@ -33934,11 +33934,49 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       repaintReposForWidth();
       return { repo, item, fromKey, toKey };
     }
+    // A hold toggle moves its row between the held and actionable groups, and
+    // the status render that follows re-sorts them, so the button under the
+    // pointer changes a moment after every click. Clicking Hold down a card
+    // then landed the next click on another item's Release, and that item's
+    // hold came straight back off (hivecommons/hive#18054: #151 released in
+    // the same second #283 was held). A Release that arrives within
+    // REPO_HOLD_SHIFT_GUARD_MS of the rows moving is not sent; the operator
+    // clicks it again once the list is still. Hold is never delayed: under
+    // the pointer it can only park an item, and parking is what that click
+    // was doing anyway.
+    const REPO_HOLD_SHIFT_GUARD_MS = 1500;
+    let _repoHoldLayoutSig = null;
+    let _repoHoldShiftAt = 0;
+    const _repoHoldInFlight = {};
+    // Pure: the order and membership of every card's hold-toggle rows.
+    function repoHoldLayoutSignature(repos) {
+      const nums = list => (list || []).map(x => Number(x && x.number) || 0).join(',');
+      return (repos || []).map(r => (r.full || r.name || '') + ':' + nums(r.actionableIssues) + '|' + nums(r.heldIssues) + '|' + nums(r.openPrs) + '|' + nums(r.heldPrs)).join(';');
+    }
+    // Called on every repos render: remembers when the rows last moved. The
+    // first render is not a move; nothing was under the pointer before it.
+    function noteRepoHoldLayout(repos, now) {
+      const sig = repoHoldLayoutSignature(repos);
+      if (_repoHoldLayoutSig !== null && sig !== _repoHoldLayoutSig) _repoHoldShiftAt = now;
+      _repoHoldLayoutSig = sig;
+    }
+    function repoHoldReleaseTooSoon(now) {
+      return _repoHoldShiftAt > 0 && now - _repoHoldShiftAt < REPO_HOLD_SHIFT_GUARD_MS;
+    }
     async function toggleRepoItemHold(repoFull, number, type, held, btn) {
       if (btn && btn.dataset.busy === '1') return;
       const p = repoParts(repoFull);
       if (!p.owner || !p.repo || !number) return;
       const wantHeld = !!held;
+      // The busy mark lives on a button the optimistic repaint replaces, so
+      // the item itself carries the in-flight guard.
+      const flightKey = String(repoFull).toLowerCase() + '/' + type + '#' + number;
+      if (_repoHoldInFlight[flightKey]) return;
+      if (!wantHeld && repoHoldReleaseTooSoon(Date.now())) {
+        showToast('The list moved just as you clicked, so ' + repoFull + '#' + number + ' is still held. Click Release again to release it.', 'info');
+        return;
+      }
+      _repoHoldInFlight[flightKey] = true;
       const prevText = btn ? btn.textContent : '';
       const moved = moveRepoItemHold(repoFull, number, type, wantHeld, canonicalHiveHoldLabel());
       if (btn) { btn.dataset.busy = '1'; btn.textContent = '…'; }
@@ -33957,6 +33995,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (moved) moveRepoItemHold(repoFull, number, type, !wantHeld, canonicalHiveHoldLabel());
         showToast('Hold toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
         if (btn) { btn.dataset.busy = ''; btn.textContent = prevText || (wantHeld ? '⏸ Hold' : '▶ Release'); }
+      } finally {
+        delete _repoHoldInFlight[flightKey];
       }
     }
 
@@ -36780,6 +36820,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       refreshSectionCardShell('repos-section');
       if (_repoResizeDrag || _repoOrderDrag) return;
       repos = repoOrderApply(repos || []);
+      noteRepoHoldLayout(repos, Date.now());
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
       const showDesign = showPlan && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
@@ -37143,7 +37184,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const base = window._githubBaseUrl || 'https://github.com';
       return refs.map(rr => {
         const full = String(rr.full || '');
-        const tier = String(rr.tier || 'read-only');
+        const tier = String(rr.reference_tier || rr.tier || 'read-only');
         const tip = tier === 'read-only'
           ? 'Reference repo: agents may clone and read it; every write is refused by the proxy.'
           : `Reference repo: agents may clone and read it, and may open ${tier.replace('+', ' and ')} (never merge, push to the default branch, label, assign, review, or close others' items).`;
@@ -46485,10 +46526,22 @@ function burnAreaChart() {
         _kbPlaudAuth[name] = { error: e.message };
       }
       if (document.querySelector('[data-kb-plaud-auth="' + CSS.escape(name) + '"]')) kbRenderIntegrationsModal();
+      return _kbPlaudAuth[name];
     }
+    // One-line summary of a sign-in state for the Check toast (hivecommons/hive#18092).
+    function kbPlaudAuthSummary(a) {
+      if (a.connected) return 'connected' + (a.account ? ' as ' + a.account : '');
+      if (a.pending) return 'waiting for authorization' + (a.auth_url ? ' — open the link on the card' : '');
+      return 'not connected' + (a.message ? ' — ' + a.message : '');
+    }
+    // Check: re-query the sign-in state and always report the outcome, so a
+    // 404 "no knowledge connectors are configured" reads as an error toast
+    // with the server's message verbatim, not as silence (hivecommons/hive#18092).
     async function kbPlaudRefreshAuth(name) {
       showToast('Checking Plaud sign-in…', 'info');
-      await kbPlaudAuthLoad(name, true);
+      const a = (await kbPlaudAuthLoad(name, true)) || {};
+      if (a.error) showToast('Check failed: ' + a.error, 'error');
+      else showToast('Plaud ' + name + ': ' + kbPlaudAuthSummary(a), a.connected ? 'success' : 'info');
     }
     async function kbPlaudConnect(name) {
       try {
@@ -59881,8 +59934,9 @@ function burnAreaChart() {
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
-        if (out) out.innerHTML = `<span class="wh-ok">Created ${esc(body.scope)} hook #${esc(String(body.hook_id))} on ${esc(body.target)}.</span> <a href="${esc(body.url)}" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a> — push a commit or comment on a PR and watch “Deliveries (1h)” move.`;
-        showToast('Webhook created', 'info');
+        const verb = body.created === false ? 'Already set up:' : 'Created';
+        if (out) out.innerHTML = `<span class="wh-ok">${verb} ${esc(body.scope)} hook #${esc(String(body.id || body.hook_id))} on ${esc(body.target)}.</span> <a href="${esc(body.url)}" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a> — push a commit or comment on a PR and watch “Deliveries (1h)” move.`;
+        showToast(body.created === false ? 'Webhook already exists' : 'Webhook created', 'info');
       } catch (e) {
         if (out) out.innerHTML = `<span class="wh-error">${esc(e.message)}</span>`;
       } finally {

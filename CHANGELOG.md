@@ -11,6 +11,29 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.242.0)
+
+### Added
+
+- Activity monitor: a workflow-model chevron that is not the row's active stage now wears a glyph for what the stage means (inbox, bolt, hand, pencil, pull-request, flask, eye, people, thumbs-up, merge, check, …) picked by the column's name, dimmed to 60%, instead of its clipped label; the active chevron leads its word with the same glyph. Workflow columns take an optional `icon` (an allowlisted icon id or a single emoji, validated server- and client-side; never markup), and the workflow editor's column inspector previews the default and lets the operator replace it (#18033).
+
+### Changed
+
+- images: bump gh 2.103.3 -> 2.104.0 (#18063)
+- kicks: register  REFERENCE REPOS as layout section 10a and golden its wording (#18074)
+
+### Fixed
+
+- Benchmarks export now adds `model.canonical` and `model.effort` next to the reported id and derives `model.provider` from the model family, so `claude-sonnet-5-5` (Copilot CLI), `claude-sonnet-5.5` (Claude Code) and `openai-codex/gpt-6.1-sol` no longer appear as separate models on hivecommons.dev/benchmarks.
+- Repeated trust-tier agent role claim rejections over contribute-ws are now logged once per user and role at INFO instead of flooding WARN, so they no longer surface as unclassified self-reported errors (#18071).
+
+## 2026-11-13 (v5.241.1)
+
+### Changed
+
+- **Settings → Forge App → GitHub webhooks names the App permission to grant** (#18029): when the GitHub App installation cannot manage hooks, the card now says which permission to grant (Organization → Webhooks `organization_hooks`, or Repository → Webhooks `repository_hooks`, Read and write) so **Create webhook for me** appears, instead of silently omitting the option. Node-executed tests pin the card's copy for relay, none and env-secret modes, and a parity test checks every endpoint the card calls is routed and owner-only.
+- docs: project.reference_repos in agent-configuration and hive.yaml.example (#18073)
+
 ## 2026-11-13 (v5.241.0)
 
 ### Added
