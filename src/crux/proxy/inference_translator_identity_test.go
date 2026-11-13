@@ -180,11 +180,14 @@ func TestTranslatorAgentName_ProxyUIDCannotClaimIsolatedAgent(t *testing.T) {
 		t.Fatalf("proxy uid claiming uid-less agent: got (%q,%v), want (supervisor,true)", name, ok)
 	}
 
-	// HIVE_PROXY_ADVISORY_OK is the operator's explicit acceptance of
-	// self-asserted identity and keeps its documented meaning.
+	// HIVE_PROXY_ADVISORY_OK accepts self-asserted identity only where the
+	// socket proves nothing; a socket that proves the claim false still wins.
 	p.proxyAdvisoryOK = true
-	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "quality")); !ok || name != "quality" {
-		t.Fatalf("advisory-ok proxy uid claim: got (%q,%v), want (quality,true)", name, ok)
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "quality")); ok || name != "" {
+		t.Fatalf("advisory-ok proxy uid claiming isolated agent: got (%q,%v), want refused", name, ok)
+	}
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
+		t.Fatalf("advisory-ok proxy uid claiming uid-less agent: got (%q,%v), want (supervisor,true)", name, ok)
 	}
 	p.proxyAdvisoryOK = false
 

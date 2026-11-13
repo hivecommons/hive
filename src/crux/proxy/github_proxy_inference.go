@@ -62,8 +62,9 @@ const inferenceAPIKeyPrefix = "sk-hive-"
 //     with the guard in place the proxy UID is a SHARED identity: every
 //     UID-less agent runs as it, so one such agent could claim another
 //     agent's key. A caller at that UID may therefore only assert a name
-//     that has no per-agent UID — an agent that owns a UID always arrives
-//     from that UID, so a proxy-UID socket claiming it is refused (#18115);
+//     that has no per-agent UID: an agent that owns a UID always arrives
+//     from that UID, so a proxy-UID socket claiming it is refused, and
+//     HIVE_PROXY_ADVISORY_OK does not lift that refusal (#18115);
 //   - an unmapped UID, or no UID map at all, accepts the header only under
 //     HIVE_PROXY_ADVISORY_OK, the same operator escape hatch the GitHub path
 //     honours for deployments without per-agent UID separation.
@@ -91,7 +92,9 @@ func (p *GitHubProxy) translatorAgentName(r *http.Request) (string, bool) {
 			return claimed, true
 		}
 	}
-	if p.proxyAdvisoryOK {
+	// Advisory-ok accepts self-asserted identity where the socket proves
+	// nothing; it does not override a socket that proves the claim false.
+	if p.proxyAdvisoryOK && !(err == nil && p.sharedUIDClaimsIsolatedAgent(uid, claimed)) {
 		return claimed, true
 	}
 	return "", false
