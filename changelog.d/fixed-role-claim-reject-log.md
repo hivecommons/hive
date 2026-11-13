@@ -1,1 +1,0 @@
-- Repeated trust-tier agent role claim rejections over contribute-ws are now logged once per user and role at INFO instead of flooding WARN, so they no longer surface as unclassified self-reported errors (#18071).
