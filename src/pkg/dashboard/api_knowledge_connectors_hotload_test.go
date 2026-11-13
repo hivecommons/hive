@@ -8,16 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
 
-// hotloadTestTimeout bounds every wait in the hot-load tests;
-// hotloadPollInterval is how often they re-check.
-const (
-	hotloadTestTimeout  = 10 * time.Second
-	hotloadPollInterval = 10 * time.Millisecond
-)
+// hotloadTestTimeout bounds every wait in the hot-load tests.
+const hotloadTestTimeout = 10 * time.Second
 
 const kcDocsEnabled = `{"connectors":[{"name":"docs","type":"document","enabled":true,"layer":"project","scope":{"url":"https://example.org/a"}}]}`
 const kcDocsDisabled = `{"connectors":[{"name":"docs","type":"document","enabled":false,"layer":"project","scope":{"url":"https://example.org/a"}}]}`
@@ -70,16 +67,10 @@ func putConnectors(t *testing.T, s *Server, body string) map[string]any {
 
 func waitSynced(t *testing.T, rt KnowledgeConnectorRuntime, name string) {
 	t.Helper()
-	deadline := time.Now().Add(hotloadTestTimeout)
-	for {
-		if st, ok := knowledgeConnectorStatus(rt, name); ok && !st.Running && !st.LastSync.IsZero() {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%s never finished syncing", name)
-		}
-		time.Sleep(hotloadPollInterval)
-	}
+	testutil.Eventually(t, hotloadTestTimeout, func() bool {
+		st, ok := knowledgeConnectorStatus(rt, name)
+		return ok && !st.Running && !st.LastSync.IsZero()
+	}, "%s never finished syncing", name)
 }
 
 // TestKnowledgeConnectors_HotLoad boots with zero connectors, adds one through

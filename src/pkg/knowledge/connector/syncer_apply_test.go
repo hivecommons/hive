@@ -8,14 +8,12 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
-// applyTestTimeout bounds every wait in the Apply tests; applyPollInterval
-// is how often they re-check.
-const (
-	applyTestTimeout  = 5 * time.Second
-	applyPollInterval = 10 * time.Millisecond
-)
+// applyTestTimeout bounds every wait in the Apply tests.
+const applyTestTimeout = 5 * time.Second
 
 func statusNames(s *Syncer) []string {
 	var out []string
@@ -142,13 +140,8 @@ func TestSyncerApplyStartsLoopWhileRunning(t *testing.T) {
 	if err := s.Apply([]ConnectorConfig{fakeCfg("b")}); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(applyTestTimeout)
-	for b.calls.Load() == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("added connector was never synced by the run loop")
-		}
-		time.Sleep(applyPollInterval)
-	}
+	testutil.Eventually(t, applyTestTimeout, func() bool { return b.calls.Load() > 0 },
+		"added connector was never synced by the run loop")
 
 	// Removing it stops the loop and drops the status; Run still returns.
 	if err := s.Apply(nil); err != nil {
