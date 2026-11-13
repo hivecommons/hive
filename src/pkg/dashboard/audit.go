@@ -72,6 +72,7 @@ var auditSensitiveActions = map[string]bool{
 	"config_agent_stats":                      true,
 	"config_agent_tools":                      true,
 	"config_auto_merge":                       true,
+	"config_code_scanning":                    true,
 	"config_compliance":                       true,
 	"config_convergence":                      true,
 	"config_decisions_delegate":               true,

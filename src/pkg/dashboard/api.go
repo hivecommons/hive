@@ -597,6 +597,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/accept-triage", s.recordOperatorAction(s.handleRepoItemAcceptTriage))
 	// "Let hive decide" settings, decisions.delegate (api_config_decisions_delegate.go).
 	s.registerDecisionsDelegateRoutes()
+	// Code scanning sweep settings, code_scanning (api_config_code_scanning.go).
+	s.registerCodeScanningRoutes()
 }
 
 var (

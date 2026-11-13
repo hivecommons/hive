@@ -477,8 +477,8 @@ The sections:
   hub, LiteLLM, watchdog, trajectory, classifier, release sentinel), `project`,
   `github_apps`, `authorized_users`, `dashboard`, `channels`, `escalation`,
   `auto_merge`, `review`, `convergence`, `sla`, `triggers`, `advisor`,
-  `advisory`, `replan`, `decisions_delegate`, `question_autoclose`,
-  `question_autoclose_schedule`,
+  `advisory`, `replan`, `decisions_delegate`, `code_scanning`,
+  `question_autoclose`, `question_autoclose_schedule`,
   `fleet_report`, `work_source`, `project_observability`, `general_advanced`,
   `cadence_scope`, `threshold_scaling`, `backup`, `bob`, `inference_auth`,
   `gateways`, `backends`, `variables`, `write_surface`, `stat_sources`.
@@ -822,6 +822,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | Write-back                   | `writeback.kind_policy`                                                                                                                                                                                               |
 | Merge settings               | `auto_merge.update`                                                                                                                                                                                                   |
 | Let hive decide              | `decisions.delegate_settings`                                                                                                                                                                                         |
+| Code scanning sweep          | `code_scanning.settings`                                                                                                                                                                                              |
 | Review settings              | `review.settings`                                                                                                                                                                                                     |
 | Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                                                                       |
 | Activity monitor row actions | see below                                                                                                                                                                                                             |
@@ -1038,6 +1039,43 @@ endpoint as Settings → Features → *Let hive decide*. It is owner only.
   refused; the model's key stays on the governor reviewer endpoint.
 - It starts no decision and merges nothing. A delegated decision does what it
   did before.
+
+`code_scanning.settings` changes the code scanning sweep settings
+(`code_scanning`, [code-scanning.md](code-scanning.md)) through
+`PUT /api/config/code-scanning`, the same endpoint as Settings → Features →
+*Code scanning issues*. It is owner only. Read the settings first with
+`settings_read` section `code_scanning`.
+
+- **Pass only what changes:** `enabled` (the sweep on in every repository),
+  `interval` (for example `30m`, at least `10m`, or empty for the default),
+  `min_severity`, `include_tools` and `exclude_rules` (the whole list; `[]`
+  clears it), `max_new_issues_per_run` and `repos`. An unknown field is
+  refused.
+- **`repos` takes one change per repository:**
+  `{"owner/repo": {"enabled": true}}` sets only the fields it names,
+  `"enabled": null` makes the repository follow the hive-wide switch and keeps
+  its other overrides, and `{"owner/repo": null}` drops that repository's
+  override whole.
+- **Repositories you do not name are kept.** The endpoint replaces the
+  override map it is sent, so the preview reads the current settings and sends
+  the merged map. It shows every change before and after.
+- **The preview checks the result as `hive.yaml` loading does,** with the same
+  messages: a repository that is not in `project.repos`, an unknown severity,
+  a malformed rule pattern, a negative cap or an interval under ten minutes is
+  refused before a confirmation is issued.
+- **A stale preview is refused,** as for `auto_merge.update`: `write_confirm`
+  reads the code scanning settings again and refuses if any of them changed.
+- **What it opens is disclosed.** The preview names the repositories the sweep
+  is turned on for. There the hive reads open code scanning alerts and files
+  grouped issues on its next pass.
+- It starts no sweep pass and files nothing itself. The sweep opens issues
+  only; it never opens a pull request or dismisses an alert.
+- A repository whose name looks like a credential field to the confirmation
+  store (it contains `token`, `secret`, `password`, `credential`,
+  `authorization`, `apikey` or `header`, or ends in `key`) may be refused at
+  the preview with "contains a confirmation value that cannot be stored",
+  because the stored confirmation would mask it. Use the dashboard or the API
+  for that repository.
 
 `review.settings` changes the review settings (the `review` block, Settings →
 Review Gate) through `PUT /api/config/review`, the same endpoint as the

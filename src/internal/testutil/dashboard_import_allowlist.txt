@@ -23,6 +23,7 @@
 # search: GET /api/search reads the portfolio search Backend the indexer publishes; pkg/search is a leaf (no dashboard deps) (hivecommons/hive#14637).
 # workflowmodel: /api/workflows handlers compile lifecycle models (Compile, Profile diagnostics) and the tracker emits per-repo workflow columns; the store and bindings already route through Dependencies (hivecommons/hive#17620 P2).
 # egressmark: deployment_upgrade.go dials the in-cluster Kubernetes API for the hive's own rollout; the dial must carry the forced-egress SO_MARK or nodes without xt_owner redirect it into the MITM proxy (hivecommons/hive#17817).
+# codescanning: GET/PUT /api/config/code-scanning resolve the sweep's own defaults (Policy, severity levels, default exclude list) and read its per-repository Status, so the settings view cannot drift from what the sweep runs; pkg/codescanning is a leaf with no hive imports (hivecommons/hive#18113).
 github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agent
 github.com/hivecommons/hive/crux/agentparse
@@ -47,6 +48,7 @@ github.com/hivecommons/hive/pkg/blocker
 github.com/hivecommons/hive/pkg/celtrigger
 github.com/hivecommons/hive/pkg/claims
 github.com/hivecommons/hive/pkg/classify
+github.com/hivecommons/hive/pkg/codescanning
 github.com/hivecommons/hive/pkg/compliance
 github.com/hivecommons/hive/pkg/config
 github.com/hivecommons/hive/pkg/convergence

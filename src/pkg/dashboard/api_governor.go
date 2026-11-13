@@ -250,6 +250,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"project_observability":     s.projectObservabilityResponse(cfg),
 		"replan":                    replanSectionResponse(cfg),
 		"decisions_delegate":        decisionsDelegateSectionResponse(cfg),
+		"code_scanning":             s.codeScanningSectionResponse(cfg),
 		"question_autoclose":        questionAutocloseSectionResponse(cfg),
 		"fleet_report":              s.fleetReportSectionResponse(cfg),
 		"release_sentinel":          releaseSentinelSectionResponse(cfg),

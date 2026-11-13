@@ -11191,6 +11191,300 @@
         }
       }
     },
+    "/api/config/code-scanning": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Code scanning sweep settings (code_scanning)",
+        "description": "Returns code_scanning as it is set and with its defaults resolved, the per-repository overrides, and for each project.repos entry whether the sweep runs there and whether its last pass could read the repository's code scanning alerts. The access state is what the sweep recorded; this endpoint makes no GitHub call. The block holds no secret. Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "code_scanning settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "org": {
+                      "type": "string",
+                      "description": "project.org, which a bare repos key is read under."
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "code_scanning.enabled: the sweep on for every repository in project.repos unless a repos entry says otherwise."
+                    },
+                    "interval": {
+                      "type": "string",
+                      "description": "code_scanning.interval as set (a Go duration); empty means the default."
+                    },
+                    "interval_effective": {
+                      "type": "string",
+                      "description": "The interval in force."
+                    },
+                    "interval_default": {
+                      "type": "string",
+                      "description": "The interval an unset key resolves to (1h)."
+                    },
+                    "min_severity": {
+                      "type": "string",
+                      "description": "code_scanning.min_severity as set; empty means the default."
+                    },
+                    "min_severity_effective": {
+                      "type": "string",
+                      "description": "The lowest severity filed, on the sweep's scale."
+                    },
+                    "min_severity_default": {
+                      "type": "string",
+                      "description": "The severity an unset key resolves to (high)."
+                    },
+                    "severities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The sweep's severity scale, highest first."
+                    },
+                    "include_tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "code_scanning.include_tools as set; empty files alerts from every tool."
+                    },
+                    "exclude_rules": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "code_scanning.exclude_rules as set: patterns added to the built-in list, and \"!<rule>\" entries that take a built-in one back out."
+                    },
+                    "exclude_rules_default": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The built-in exclude list (OSSF Scorecard's repository-posture checks)."
+                    },
+                    "exclude_rules_effective": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The list in force: the built-in one, minus the \"!\" entries, plus the patterns set."
+                    },
+                    "max_new_issues_per_run": {
+                      "type": "integer",
+                      "description": "code_scanning.max_new_issues_per_run as set; 0 means the default."
+                    },
+                    "max_new_issues_per_run_effective": {
+                      "type": "integer",
+                      "description": "The per-repository, per-pass cap in force."
+                    },
+                    "max_new_issues_per_run_default": {
+                      "type": "integer",
+                      "description": "The cap an unset key resolves to (5)."
+                    },
+                    "repos": {
+                      "type": "object",
+                      "description": "code_scanning.repos as stored, keyed by owner/repo or the bare repository name. A repository not listed follows the top-level values.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean",
+                            "nullable": true,
+                            "description": "true or false turns the sweep on or off for this repository; null follows the top-level enabled."
+                          },
+                          "min_severity": {
+                            "type": "string",
+                            "description": "Empty inherits the top-level value."
+                          },
+                          "include_tools": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Empty inherits the top-level list."
+                          },
+                          "exclude_rules": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Empty inherits the top-level list."
+                          },
+                          "max_new_issues_per_run": {
+                            "type": "integer",
+                            "description": "0 inherits the top-level value."
+                          }
+                        }
+                      }
+                    },
+                    "project_repos": {
+                      "type": "array",
+                      "description": "One row per project.repos entry.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string",
+                            "description": "owner/repo."
+                          },
+                          "enabled": {
+                            "type": "boolean",
+                            "description": "Whether the sweep runs on this repository."
+                          },
+                          "enabled_from": {
+                            "type": "string",
+                            "enum": [
+                              "repo",
+                              "default"
+                            ],
+                            "description": "repo when a per-repository override decides enabled, default when the top-level switch does."
+                          },
+                          "alerts_access": {
+                            "type": "string",
+                            "enum": [
+                              "readable",
+                              "missing_permission",
+                              "not_enabled",
+                              "error",
+                              "not_checked",
+                              "off"
+                            ],
+                            "description": "What the last sweep pass recorded for this repository; no GitHub call is made for this answer. readable: the pass listed the alerts and finished cleanly. missing_permission: the GitHub App cannot read code scanning alerts there. not_enabled: the repository has no code scanning analysis. error: the pass failed for another reason. not_checked: the sweep is on but no pass has reached the repository yet. off: the sweep does not run there."
+                          },
+                          "alerts_access_detail": {
+                            "type": "string",
+                            "description": "The notice or error text behind missing_permission, not_enabled or error."
+                          },
+                          "checked_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "When the last sweep pass looked at this repository."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires owner role"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Update code scanning sweep settings (code_scanning)",
+        "description": "Updates code_scanning. Absent fields are unchanged; repos, when sent, replaces the whole per-repository override map. The result is checked exactly as hive.yaml is on load, with the same messages, before anything is changed. Unknown fields are refused. The change is saved, audited as config_code_scanning with one entry per changed key, and used by the sweep from its next pass without a restart. It starts no sweep pass and makes no GitHub call. Requires owner role.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "interval": {
+                    "type": "string",
+                    "description": "A Go duration of at least 10m, or empty for the default (1h)."
+                  },
+                  "min_severity": {
+                    "type": "string",
+                    "description": "critical, high, medium, low or note (error and warning are read as medium and low), or empty for the default (high)."
+                  },
+                  "include_tools": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The whole list; [] files alerts from every tool."
+                  },
+                  "exclude_rules": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The whole list; [] leaves only the built-in exclusions."
+                  },
+                  "max_new_issues_per_run": {
+                    "type": "integer",
+                    "description": "0 for the default (5); negative is refused."
+                  },
+                  "repos": {
+                    "type": "object",
+                    "description": "The FULL override map; absent leaves it unchanged, {} clears it. Each entry is that repository's whole override. An entry is dropped only when it sets nothing (or is null); an entry with enabled null and other fields keeps those fields and follows the top-level enabled. A key must name a repository in project.repos, and one repository may not be named under two spellings.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "nullable": true,
+                      "additionalProperties": false,
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean",
+                          "nullable": true,
+                          "description": "true or false turns the sweep on or off for this repository; null follows the top-level enabled."
+                        },
+                        "min_severity": {
+                          "type": "string",
+                          "description": "Empty inherits the top-level value."
+                        },
+                        "include_tools": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Empty inherits the top-level list."
+                        },
+                        "exclude_rules": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Empty inherits the top-level list."
+                        },
+                        "max_new_issues_per_run": {
+                          "type": "integer",
+                          "description": "0 inherits the top-level value."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated (same shape as GET)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown field, or a value hive.yaml loading refuses (a repository not in project.repos, an unknown severity, a malformed rule pattern, a negative cap, an interval under 10m); nothing is changed"
+          },
+          "403": {
+            "description": "Requires owner role"
+          },
+          "500": {
+            "description": "The change could not be saved; nothing is changed"
+          }
+        }
+      }
+    },
     "/api/config/governor/replan": {
       "get": {
         "tags": [
