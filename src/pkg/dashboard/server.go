@@ -1217,9 +1217,13 @@ type FrontendRestartRefresh struct {
 
 // FrontendReferenceRepo is one project.reference_repos entry for the repos
 // card: the slug and its tier ("read-only", "issues", "prs", "issues+prs").
+// It deliberately carries no ACMM, work-item or pause fields (#18021).
 type FrontendReferenceRepo struct {
 	Full string `json:"full"`
 	Tier string `json:"tier"`
+	// ReferenceTier repeats Tier under the name API consumers key on to tell
+	// a reference entry from a managed repo row (hivecommons/hive#18021).
+	ReferenceTier string `json:"reference_tier"`
 }
 
 type FrontendRepo struct {
