@@ -17,8 +17,12 @@ import (
 // TTL lets a repaired repository or account come back without a restart.
 const contributorUnsearchableTTL = time.Hour
 
-// contributorUnsearchableMessage is logged once per (author, repository)
-// pair per process at WARN, then at Debug.
+// contributorUnsearchableMessage is logged at WARN only for a refusal whose
+// author and searched repository have both not been warned for yet in this
+// process, then at Debug. Keying the WARN by pair let one invisible
+// repository warn once for every contributor (or one unsearchable author once
+// for every hive repository), which the self-report classifier counted as a
+// repeated unclassified error (hivecommons/hive#18059).
 const contributorUnsearchableMessage = "contributor-lane auto-promotion search cannot see repository for this author; leaving it out of the hive-wide count"
 
 // searchQueryUnsearchable reports whether err is GitHub's 422 Validation
@@ -45,20 +49,31 @@ func (c *Engine) contributorSearchSkips(author string, ref contributorRepoRef) b
 }
 
 // noteContributorUnsearchable records that GitHub refused to search ref for
-// author, so the next contributorUnsearchableTTL of sweeps leave it out. The
-// first refusal for a pair logs at WARN; a refusal again after the TTL logs
-// at Debug, so a permanently unsearchable pair is not a repeated warning.
+// author, so the next contributorUnsearchableTTL of sweeps leave it out. A
+// refusal logs at WARN only when neither its author nor its searched
+// repository has warned before in this process; every other refusal —
+// another author for the same invisible repository, another repository for
+// the same unsearchable author, or the same pair again after the TTL — logs
+// at Debug, so the warnings stay bounded by the distinct causes rather than
+// growing with authors × repositories.
 func (c *Engine) noteContributorUnsearchable(owner, repo, author string, ref contributorRepoRef, err error) {
 	key := contributorUnsearchableKey(author, ref)
+	authorKey := "author:" + strings.ToLower(author)
+	repoKey := "repo:" + strings.ToLower(ref.Owner+"/"+ref.Repo)
 	c.contributorUnsearchableMu.Lock()
 	if c.contributorUnsearchable == nil || len(c.contributorUnsearchable) > 4096 {
 		c.contributorUnsearchable = map[string]time.Time{}
 	}
-	_, seen := c.contributorUnsearchable[key]
+	if c.contributorUnsearchableWarned == nil || len(c.contributorUnsearchableWarned) > 4096 {
+		c.contributorUnsearchableWarned = map[string]bool{}
+	}
 	c.contributorUnsearchable[key] = c.clock().Add(contributorUnsearchableTTL)
+	warned := c.contributorUnsearchableWarned[authorKey] || c.contributorUnsearchableWarned[repoKey]
+	c.contributorUnsearchableWarned[authorKey] = true
+	c.contributorUnsearchableWarned[repoKey] = true
 	c.contributorUnsearchableMu.Unlock()
 	args := []any{"repo", owner + "/" + repo, "author", author, "searched_repo", ref.Owner + "/" + ref.Repo, "retry_after", contributorUnsearchableTTL, "error", err}
-	if seen {
+	if warned {
 		c.debug(contributorUnsearchableMessage, args...)
 		return
 	}
