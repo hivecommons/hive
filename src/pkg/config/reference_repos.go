@@ -96,17 +96,7 @@ func (r ReferenceRepo) hasWrite(kind string) bool {
 
 // WriteLabel is the human-facing tier: "read-only", "issues", "prs" or
 // "issues+prs". The dashboard chip and the kick both print it.
-func (r ReferenceRepo) WriteLabel() string {
-	switch {
-	case r.WritesIssues() && r.WritesPRs():
-		return "issues+prs"
-	case r.WritesIssues():
-		return "issues"
-	case r.WritesPRs():
-		return "prs"
-	}
-	return "read-only"
-}
+func (r ReferenceRepo) WriteLabel() string { return r.Tier().String() }
 
 // Owner returns the owner half of Repo ("" when malformed).
 func (r ReferenceRepo) Owner() string {
@@ -228,4 +218,44 @@ func (c *Config) ReferenceRepoSlugs() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ReferenceRepoTier is the access tier of a reference repo as a pair of
+// flags, for callers that branch on the opt-ins rather than print them.
+type ReferenceRepoTier struct {
+	Issues bool
+	PRs    bool
+}
+
+// ReferenceTierReadOnly is the default tier: no writes.
+var ReferenceTierReadOnly = ReferenceRepoTier{}
+
+// String yields the same label as ReferenceRepo.WriteLabel: "read-only",
+// "issues", "prs" or "issues+prs".
+func (t ReferenceRepoTier) String() string {
+	switch {
+	case t.Issues && t.PRs:
+		return "issues+prs"
+	case t.Issues:
+		return ReferenceWriteIssues
+	case t.PRs:
+		return ReferenceWritePRs
+	}
+	return "read-only"
+}
+
+// Tier returns the entry's write opt-ins as a ReferenceRepoTier.
+func (r ReferenceRepo) Tier() ReferenceRepoTier {
+	return ReferenceRepoTier{Issues: r.WritesIssues(), PRs: r.WritesPRs()}
+}
+
+// ReferenceRepoTier returns the tier of the reference repo matching slug
+// ("owner/name", case-insensitive) and false when slug is not a reference
+// repo.
+func (p ProjectConfig) ReferenceRepoTier(slug string) (ReferenceRepoTier, bool) {
+	r, ok := (&Config{Project: p}).ReferenceRepoFor(slug)
+	if !ok {
+		return ReferenceTierReadOnly, false
+	}
+	return r.Tier(), true
 }
