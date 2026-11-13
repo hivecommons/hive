@@ -10,8 +10,12 @@ import (
 	"time"
 )
 
-// applyTestTimeout bounds every wait in the Apply tests.
-const applyTestTimeout = 5 * time.Second
+// applyTestTimeout bounds every wait in the Apply tests; applyPollInterval
+// is how often they re-check.
+const (
+	applyTestTimeout  = 5 * time.Second
+	applyPollInterval = 10 * time.Millisecond
+)
 
 func statusNames(s *Syncer) []string {
 	var out []string
@@ -143,7 +147,7 @@ func TestSyncerApplyStartsLoopWhileRunning(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("added connector was never synced by the run loop")
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(applyPollInterval)
 	}
 
 	// Removing it stops the loop and drops the status; Run still returns.
@@ -158,6 +162,78 @@ func TestSyncerApplyStartsLoopWhileRunning(t *testing.T) {
 	case <-done:
 	case <-time.After(applyTestTimeout):
 		t.Fatal("Run did not return after cancel")
+	}
+}
+
+func TestSyncerApplyRetriesFailedBuild(t *testing.T) {
+	// The registry has no connector for "x" yet, so the boot build fails.
+	conns := map[string]Connector{}
+	s, _ := newTestSyncer(t, []ConnectorConfig{fakeCfg("x")}, conns, nil)
+	if st, _ := s.Status("x"); st.LastError == "" {
+		t.Fatalf("status = %+v, want the build error recorded", st)
+	}
+	if _, ok := s.Connector("x"); ok {
+		t.Fatal("a failed build must not expose a connector")
+	}
+
+	// Re-saving the identical entry retries the build instead of skipping it.
+	x := &fakeConn{typ: "fake"}
+	x.set([]Page{{ID: "x1", Title: "X", Markdown: "x"}}, "cx", nil)
+	conns["x"] = x
+	if err := s.Apply([]ConnectorConfig{fakeCfg("x")}); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := s.Status("x"); st.LastError != "" {
+		t.Fatalf("status after retry = %+v, want build error cleared", st)
+	}
+	if _, ok := s.Connector("x"); !ok {
+		t.Fatal("retried build must expose the connector")
+	}
+	if _, err := s.SyncNow(context.Background(), "x"); err != nil {
+		t.Fatalf("SyncNow after retry: %v", err)
+	}
+}
+
+func TestSyncerApplySerializesBehindInFlightSync(t *testing.T) {
+	x := &fakeConn{typ: "fake", started: make(chan struct{}, 1), release: make(chan struct{})}
+	x.set([]Page{{ID: "x1", Title: "X", Markdown: "x"}}, "cx", nil)
+	s, _ := newTestSyncer(t, []ConnectorConfig{fakeCfg("x")}, map[string]Connector{"x": x}, nil)
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := s.SyncNow(context.Background(), "x")
+		result <- err
+	}()
+	select {
+	case <-x.started:
+	case <-time.After(applyTestTimeout):
+		t.Fatal("sync never started")
+	}
+
+	// Edit while the sync is in flight: the replacement shares its lock.
+	edited := fakeCfg("x")
+	edited.Interval = 2 * time.Hour
+	if err := s.Apply([]ConnectorConfig{edited}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SyncNow(context.Background(), "x"); !errors.Is(err, ErrSyncInProgress) {
+		t.Fatalf("SyncNow of the rebuilt entry = %v, want ErrSyncInProgress while the old sync runs", err)
+	}
+
+	close(x.release)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("in-flight sync: %v", err)
+		}
+	case <-time.After(applyTestTimeout):
+		t.Fatal("in-flight sync never finished")
+	}
+
+	// Once it finishes, the replacement syncs under the new config.
+	st, err := s.SyncNow(context.Background(), "x")
+	if err != nil || st.Cursor != "cx" || st.Interval != (2*time.Hour).String() || st.Running {
+		t.Fatalf("sync after edit = %+v, %v", st, err)
 	}
 }
 

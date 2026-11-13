@@ -1,1 +1,1 @@
-- Knowledge connectors added, edited, disabled or removed through the dashboard now take effect in the running syncer without a hive restart; the publish mirror still needs one (#18091).
+- Knowledge connectors added, edited, disabled or removed through the dashboard now take effect in the running syncer and the Inbox without a hive restart, and the save reports when the runtime could not follow; the publish mirror still needs a restart (#18091).

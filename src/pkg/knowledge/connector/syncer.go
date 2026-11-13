@@ -68,7 +68,10 @@ type entry struct {
 	cfg      ConnectorConfig
 	conn     Connector
 	buildErr error
-	syncMu   sync.Mutex
+	// syncMu serializes syncs of this connector name. Apply hands it to the
+	// entry that replaces this one, so an edit cannot start a second sync
+	// of the same name while one is still in flight (#18091).
+	syncMu *sync.Mutex
 	// stopLoop cancels this entry's interval loop; nil while no loop runs.
 	// loopDone is closed when that loop has exited. Both guarded by Syncer.mu.
 	stopLoop context.CancelFunc
@@ -134,7 +137,7 @@ func (s *Syncer) buildEntry(cfg ConnectorConfig, prev Status) (*entry, Status) {
 	if deps.StateDir != "" {
 		deps.StateDir = filepath.Join(deps.StateDir, cfg.Name)
 	}
-	e := &entry{cfg: cfg}
+	e := &entry{cfg: cfg, syncMu: &sync.Mutex{}}
 	e.conn, e.buildErr = s.opts.Registry.New(cfg, deps)
 	st := prev
 	st.Name, st.Type, st.Layer = cfg.Name, cfg.Type, cfg.Layer
@@ -153,8 +156,13 @@ func (s *Syncer) buildEntry(cfg ConnectorConfig, prev Status) (*entry, Status) {
 // a connector whose config changed is rebuilt (its loop restarts, its status
 // is kept unless the type or layer changed, in which case the cursor and
 // counts belong to the old source and are reset); a connector missing from
-// cfgs is stopped and dropped. Unchanged connectors are left alone. Duplicate
-// names are a hard error and leave the syncer untouched.
+// cfgs is stopped and dropped. Unchanged connectors are left alone, except
+// that one whose build failed is retried, so re-saving an entry after fixing
+// its environment recovers it. A rebuilt connector inherits the sync lock of
+// the entry it replaces: while a sync of the old entry is still in flight,
+// the new one reports ErrSyncInProgress and its loop waits for the next tick
+// instead of writing the same layer concurrently. Duplicate names are a hard
+// error and leave the syncer untouched.
 func (s *Syncer) Apply(cfgs []ConnectorConfig) error {
 	seen := make(map[string]bool, len(cfgs))
 	for _, cfg := range cfgs {
@@ -177,7 +185,7 @@ func (s *Syncer) Apply(cfgs []ConnectorConfig) error {
 	for _, cfg := range cfgs {
 		order = append(order, cfg.Name)
 		old, known := s.entries[cfg.Name]
-		if known && reflect.DeepEqual(old.cfg, cfg) {
+		if known && old.buildErr == nil && reflect.DeepEqual(old.cfg, cfg) {
 			continue
 		}
 		prev := s.status[cfg.Name]
@@ -186,8 +194,15 @@ func (s *Syncer) Apply(cfgs []ConnectorConfig) error {
 			if old.cfg.Type != cfg.Type || old.cfg.Layer != cfg.Layer {
 				prev = Status{}
 			}
+			if old.buildErr != nil {
+				// The recorded error was the failed build; a retry starts clean.
+				prev.LastError = ""
+			}
 		}
 		e, st := s.buildEntry(cfg, prev)
+		if known {
+			e.syncMu = old.syncMu
+		}
 		s.entries[cfg.Name] = e
 		s.status[cfg.Name] = st
 		s.startLoopLocked(e)

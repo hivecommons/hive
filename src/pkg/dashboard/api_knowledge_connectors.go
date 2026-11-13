@@ -127,10 +127,23 @@ func (s *Server) setKnowledgeConnectors(rt KnowledgeConnectorRuntime) {
 
 // reloadKnowledgeConnectors pushes the saved knowledge.connectors into the
 // running syncer, or builds one through Dependencies.NewKnowledgeConnectors
-// when none is running yet (#18091). Config is already validated and saved
-// by the caller; an error here means the runtime did not follow and the
-// caller reports it without rolling the config back.
+// when none is running yet (#18091), then tells dependents through
+// KnowledgeConnectorsReloaded. Config is already validated and saved by the
+// caller; an error here means the runtime did not follow and the caller
+// reports it without rolling the config back.
 func (s *Server) reloadKnowledgeConnectors(entries []config.KnowledgeConnector) error {
+	if err := s.applyKnowledgeConnectors(entries); err != nil {
+		return err
+	}
+	if rt := s.knowledgeConnectors(); rt != nil && s.deps.KnowledgeConnectorsReloaded != nil {
+		s.deps.KnowledgeConnectorsReloaded(entries, rt)
+	}
+	return nil
+}
+
+// applyKnowledgeConnectors is reloadKnowledgeConnectors without the
+// dependents hook: build the syncer or Apply the list to the running one.
+func (s *Server) applyKnowledgeConnectors(entries []config.KnowledgeConnector) error {
 	cfgs := make([]connector.ConnectorConfig, 0, len(entries))
 	for _, c := range entries {
 		rc, err := knowledgeConnectorRuntimeConfig(c)

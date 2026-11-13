@@ -115,6 +115,10 @@ type Dependencies struct {
 	// deps) means the dashboard can only persist the config and reports that
 	// a restart is required.
 	NewKnowledgeConnectors KnowledgeConnectorFactory
+	// KnowledgeConnectorsReloaded runs after a dashboard save reached the
+	// connector runtime (built or applied in place), so dependents such as
+	// the Inbox follow the live connector set (#18091). Nil skips it.
+	KnowledgeConnectorsReloaded func(entries []config.KnowledgeConnector, rt KnowledgeConnectorRuntime)
 	// KnowledgePublish is the running knowledge.publish mirror; nil when
 	// publishing is not configured or failed to start.
 	KnowledgePublish KnowledgePublishRuntime

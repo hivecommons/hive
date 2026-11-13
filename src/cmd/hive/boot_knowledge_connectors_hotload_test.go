@@ -6,9 +6,41 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
+
+// TestRefreshInboxSourcesFollowsHotLoad: a Plaud connector added after boot
+// becomes an Inbox source through the reload hook, and removing it drops the
+// source again (#18091).
+func TestRefreshInboxSourcesFollowsHotLoad(t *testing.T) {
+	knowledge.SetBaseDirForTest(t, t.TempDir())
+	cfg := &config.Config{}
+	b, _ := newDepsTestBoot(t, cfg)
+	b.bootKnowledgeConnectors(bootKnowledgeDeps{})
+	if b.inboxSvc == nil {
+		t.Fatal("inbox must boot without connectors")
+	}
+	if b.inboxSvc.HasSource(inbox.PlaudType) {
+		t.Fatal("no connectors at boot must mean no inbox sources")
+	}
+
+	entries := []config.KnowledgeConnector{{Name: "voice", Type: inbox.PlaudType, Layer: "personal"}}
+	rt, err := b.knowledgeConnectorFactory(entries)
+	if err != nil || rt == nil {
+		t.Fatalf("factory = %v, %v", rt, err)
+	}
+	b.refreshInboxSources(entries, rt)
+	if !b.inboxSvc.HasSource(inbox.PlaudType) {
+		t.Fatal("hot-added plaud connector must become an inbox source")
+	}
+
+	b.refreshInboxSources(nil, rt)
+	if b.inboxSvc.HasSource(inbox.PlaudType) {
+		t.Fatal("removing the connector must drop the inbox source")
+	}
+}
 
 // TestNewKnowledgeConnectorFactory: a hive booted with zero connectors keeps
 // boot behaviour (no syncer) but hands the dashboard a factory that builds

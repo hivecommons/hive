@@ -12,8 +12,12 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
 
-// hotloadTestTimeout bounds every wait in the hot-load tests.
-const hotloadTestTimeout = 10 * time.Second
+// hotloadTestTimeout bounds every wait in the hot-load tests;
+// hotloadPollInterval is how often they re-check.
+const (
+	hotloadTestTimeout  = 10 * time.Second
+	hotloadPollInterval = 10 * time.Millisecond
+)
 
 const kcDocsEnabled = `{"connectors":[{"name":"docs","type":"document","enabled":true,"layer":"project","scope":{"url":"https://example.org/a"}}]}`
 const kcDocsDisabled = `{"connectors":[{"name":"docs","type":"document","enabled":false,"layer":"project","scope":{"url":"https://example.org/a"}}]}`
@@ -74,7 +78,7 @@ func waitSynced(t *testing.T, rt KnowledgeConnectorRuntime, name string) {
 		if time.Now().After(deadline) {
 			t.Fatalf("%s never finished syncing", name)
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(hotloadPollInterval)
 	}
 }
 
@@ -86,6 +90,15 @@ func TestKnowledgeConnectors_HotLoad(t *testing.T) {
 	s, deps := apiServer(t)
 	factory, calls := hotloadFactory(t, &blockingConn{})
 	deps.NewKnowledgeConnectors = factory
+	// Dependents (the Inbox in production) hear about every reload that
+	// reached the runtime, with the entry count that was applied.
+	var reloaded []int
+	deps.KnowledgeConnectorsReloaded = func(entries []config.KnowledgeConnector, rt KnowledgeConnectorRuntime) {
+		if rt == nil {
+			t.Error("reload hook must see the runtime")
+		}
+		reloaded = append(reloaded, len(entries))
+	}
 
 	if rec := doPost(s, "/api/knowledge/connectors/docs/sync", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("sync before any connector = %d, want 404", rec.Code)
@@ -138,6 +151,9 @@ func TestKnowledgeConnectors_HotLoad(t *testing.T) {
 	if rec := doPostRaw(s, "/api/config/knowledge/connectors/docs/sync", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("config sync after remove = %d, want 404", rec.Code)
 	}
+	if len(reloaded) != 3 || reloaded[0] != 1 || reloaded[1] != 1 || reloaded[2] != 0 {
+		t.Fatalf("reload hook calls = %v, want [1 1 0] (add, disable, remove)", reloaded)
+	}
 }
 
 // TestKnowledgeConnectors_HotLoadUnavailable covers the paths where the saved
@@ -186,6 +202,9 @@ func TestKnowledgeConnectors_HotLoadUnavailable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s, deps := apiServer(t)
 			tt.setup(s, deps)
+			deps.KnowledgeConnectorsReloaded = func([]config.KnowledgeConnector, KnowledgeConnectorRuntime) {
+				t.Error("reload hook must not run when the runtime did not follow")
+			}
 			resp := putConnectors(t, s, kcDocsEnabled)
 			msg, _ := resp["runtime_error"].(string)
 			if !strings.Contains(msg, tt.wantErr) {

@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/inbox"
+	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
 
@@ -21,17 +23,7 @@ const inboxSweepTimeout = 2 * time.Minute
 // route state persists at <baseDir>/connector-state/_inbox.json (connector
 // names cannot start with "_", so it never collides with a connector).
 func (b *boot) bootInbox(baseDir string) {
-	sources := b.cfg.Inbox.EffectiveSources()
-	configured := map[string]bool{}
-	for _, c := range b.cfg.Knowledge.Connectors {
-		configured[c.Type] = true
-	}
-	var srcs []inbox.Source
-	for _, typ := range sources {
-		if configured[typ] {
-			srcs = append(srcs, b.inboxSource(baseDir, typ))
-		}
-	}
+	srcs := b.inboxSources(baseDir, b.cfg.Knowledge.Connectors, b.knowledgeConnectors)
 	token := func(ctx context.Context, _ string) (string, error) {
 		if b.appAuth == nil {
 			return "", nil
@@ -58,18 +50,51 @@ func (b *boot) bootInbox(baseDir string) {
 	b.logger.Info("inbox started", "sources", len(srcs), "rules", len(b.cfg.Inbox.Rules))
 }
 
+// inboxSources returns one source per configured voice type (inbox.sources)
+// that entries provide. syncer, when non-nil, lets Plaud read recordings
+// directly from its connector.
+func (b *boot) inboxSources(baseDir string, entries []config.KnowledgeConnector, syncer *connector.Syncer) []inbox.Source {
+	configured := map[string]bool{}
+	for _, c := range entries {
+		configured[c.Type] = true
+	}
+	var srcs []inbox.Source
+	for _, typ := range b.cfg.Inbox.EffectiveSources() {
+		if configured[typ] {
+			srcs = append(srcs, b.inboxSource(baseDir, typ, entries, syncer))
+		}
+	}
+	return srcs
+}
+
+// refreshInboxSources rebuilds the Inbox sources from the live connector set
+// (#18091). It runs once the boot syncer exists and, wired as
+// dashboard.Dependencies.KnowledgeConnectorsReloaded, after every dashboard
+// save that reached the runtime, so a voice connector added after boot feeds
+// GET /api/inbox without a restart. A runtime that is not a *connector.Syncer
+// (test fakes) keeps the fact-backed sources.
+func (b *boot) refreshInboxSources(entries []config.KnowledgeConnector, rt dashboard.KnowledgeConnectorRuntime) {
+	if b.inboxSvc == nil {
+		return
+	}
+	syncer, _ := rt.(*connector.Syncer)
+	srcs := b.inboxSources(knowledge.BaseDir(), entries, syncer)
+	b.inboxSvc.SetSources(srcs)
+	b.logger.Info("inbox sources refreshed", "sources", len(srcs))
+}
+
 // inboxSource returns the fact-backed source for typ. For Plaud it prefers
 // reading recordings directly from the connector while it is signed in.
-func (b *boot) inboxSource(baseDir, typ string) inbox.Source {
+func (b *boot) inboxSource(baseDir, typ string, entries []config.KnowledgeConnector, syncer *connector.Syncer) inbox.Source {
 	facts := &inbox.FactSource{ConnectorsDir: filepath.Join(baseDir, "connectors"), SourceType: typ}
-	if typ != inbox.PlaudType || b.knowledgeConnectors == nil {
+	if typ != inbox.PlaudType || syncer == nil {
 		return facts
 	}
-	for _, c := range b.cfg.Knowledge.Connectors {
+	for _, c := range entries {
 		if c.Type != typ {
 			continue
 		}
-		conn, ok := b.knowledgeConnectors.Connector(c.Name)
+		conn, ok := syncer.Connector(c.Name)
 		reader, isReader := conn.(connector.PlaudReader)
 		if !ok || !isReader {
 			continue

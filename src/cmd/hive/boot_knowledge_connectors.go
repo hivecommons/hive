@@ -103,6 +103,9 @@ func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
 		return
 	}
 	b.knowledgeConnectors = s
+	// The Inbox booted before the syncer existed; give it the live
+	// connectors so Plaud can read recordings directly (#18091).
+	b.refreshInboxSources(b.cfg.Knowledge.Connectors, s)
 	if deps.startConnectorSyncer != nil {
 		deps.startConnectorSyncer(b.ctx, s)
 	}

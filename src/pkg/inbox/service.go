@@ -64,6 +64,24 @@ func NewService(cfg config.InboxConfig, store *Store, sources []Source, dests []
 	return s
 }
 
+// SetSources replaces the sources, keyed by type (#18091): a voice connector
+// added through the dashboard becomes an inbox source without a restart.
+// Items and Sweep pick the new set up on their next call.
+func (s *Service) SetSources(sources []Source) {
+	next := make(map[string]Source, len(sources))
+	for _, src := range sources {
+		next[src.Type()] = src
+	}
+	s.mu.Lock()
+	s.sources = next
+	s.mu.Unlock()
+}
+
+// HasSource reports whether a source of typ is wired.
+func (s *Service) HasSource(typ string) bool {
+	return s.source(typ) != nil
+}
+
 // SetReadiness installs the probes behind Settings.SpekReady / DibsTokenSet.
 func (s *Service) SetReadiness(spek, dibs func() bool) {
 	s.spekReady, s.dibsTokenSet = spek, dibs
