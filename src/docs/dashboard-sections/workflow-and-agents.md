@@ -186,7 +186,23 @@ A step-by-step guide that turns a new project idea into a first set of files and
 
 **When it appears.** Always.
 
-**Settings that change it.** No settings change this section. See [Inception](../inception.md).
+**Settings that change it.** No settings change this section. See [Inception](../inception.md). When `dashboard.sessions.enabled` is on, the Sessions section replaces it.
+
+## Sessions
+
+Named terminal sessions where a command-line AI agent runs inside Hive; everyone on the hive can watch, and people with write access can join in.
+
+**What it tells you.** A tab strip lists each session, grouped under headings you choose, with the CLI it runs and how many browsers are attached. A **Campaigns** tab keeps the campaigns and Jam view that used to live under Inception. The selected tab shows a live terminal; ended sessions show their last output and a **Resume** button.
+
+**How the numbers are worked out.** The attached count is the number of browsers currently attached to that terminal. Everyone attached shares one keyboard, so typing in the terminal is not attributed to a person. Text sent from the input bar under the terminal (paste, send, send and run, attach file) goes through the Sessions API and is attributed to you in the audit log.
+
+**What it is good for.** Use it to run a CLI agent without leaving the dashboard, hand a long task to a teammate by sharing a tab, or let someone who logs in later read the scrollback. People with the `read` role see a read-only scrollback that refreshes every few seconds instead of a terminal. Only `owner` and `read-write` roles can start sessions, type or upload.
+
+**Example.** You start a session named "fix flaky test" in the group "ci" with the Claude CLI, paste the failing log into the input bar and press Send and run. A teammate opens the same tab and watches.
+
+**When it appears.** Only when sessions are enabled on the hive (`GET /api/sessions` reports `enabled: true`); otherwise the Inception section is shown.
+
+**Settings that change it.** `dashboard.sessions.enabled` (default off) and the session limits it reports. See [Inception](../inception.md) for the section it replaces.
 
 ## Knowledge
 
