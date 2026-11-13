@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -257,5 +258,27 @@ func TestParityBatch6SettingsRenderEveryKey(t *testing.T) {
 	}
 	if save := extractJSFunction(t, html, "saveForgeGitHubSettings"); !strings.Contains(save, "'/api/config/github'") {
 		t.Error("saveForgeGitHubSettings does not save through PUT /api/config/github")
+	}
+}
+
+// Settings → Forge App → GitHub webhooks (hivecommons/hive#18029): every
+// endpoint the card calls is in the page and routed with the method the card
+// uses, and each is owner-only (403, never 404/405, for a non-owner).
+func TestConfigGitHubWebhooksCardEndpointsParity(t *testing.T) {
+	html := indexHTML(t)
+	srv := newFullServer(t)
+	for _, ep := range []struct{ method, path string }{
+		{http.MethodGet, "/api/config/github/webhooks"},
+		{http.MethodPost, "/api/config/github/webhooks/secret"},
+		{http.MethodPost, "/api/config/github/webhooks/create"},
+	} {
+		if !strings.Contains(html, "fetch('"+ep.path+"'") {
+			t.Errorf("Settings UI does not call %s", ep.path)
+		}
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, httptest.NewRequest(ep.method, ep.path, nil))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("non-owner %s %s: %d, want 403", ep.method, ep.path, rec.Code)
+		}
 	}
 }
