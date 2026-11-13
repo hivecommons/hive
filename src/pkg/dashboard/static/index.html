@@ -1618,6 +1618,14 @@
     .ham-wf-badge { flex: 0 0 auto; font-family: var(--font-mono); font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; color: var(--indigo); background: color-mix(in srgb, var(--indigo) 12%, transparent); border: 1px solid color-mix(in srgb, var(--indigo) 40%, transparent); }
     .ham-wf-cols { position: static; }
     .ham-wf-cols .ham-wf-col { color: var(--indigo); }
+    /* Model chevrons wear the column's stage icon (hivecommons/hive issue 18033):
+       alone and dimmed in a done / todo step, leading the word in the lit
+       one. An emoji override is sized to the SVG glyph so the row keeps
+       its height. */
+    .ham-seg.ham-wf-seg .ham-stage-ico { flex: 0 0 auto; }
+    .ham-seg.ham-wf-seg.active .ham-stage-ico { margin-right: var(--sp-1); }
+    .ham-seg.ham-wf-seg.done .ham-stage-ico { opacity: 0.6; }
+    .ham-emoji-ico { display: inline-block; width: 12px; height: 12px; font-size: var(--fs-xs); line-height: 12px; text-align: center; font-style: normal; }
     .ham-seg.ham-wf-uncovered { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); outline: 1px dashed var(--amber); }
     .ham-group-dist { flex: 0 0 auto; margin-left: auto; margin-right: calc(4em + var(--sp-3)); display: inline-flex; align-items: flex-end; gap: var(--sp-1); height: 0.9em; }
     .ham-gd { display: inline-block; width: 0.45em; height: 15%; border-radius: var(--sp-1); background: color-mix(in srgb, var(--text-faint) 35%, transparent); }
@@ -3363,6 +3371,13 @@
     .search-hit-snippet { margin-top: var(--sp-1); color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
     .search-redacted { font-size: var(--fs-2xs); font-weight: 700; padding: 0 var(--sp-2); border-radius: var(--r-pill); border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); color: var(--red); cursor: help; }
     .repo-paused-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); cursor: help; }
+    /* project.reference_repos (#18015): a studied-not-worked repo. Muted
+       border, no stats block, one tier chip. */
+    .repo-card-reference { border-style: dashed; opacity: 0.85; }
+    .repo-reference-provider { color: var(--muted); }
+    .repo-reference-link { color: inherit; text-decoration: none; }
+    .repo-reference-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; border: 1px solid color-mix(in srgb, var(--indigo) 45%, transparent); background: color-mix(in srgb, var(--indigo) 12%, transparent); color: var(--indigo); cursor: help; }
+    .repo-reference-note { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-2); }
     .repo-pause-btn { flex: 0 0 auto; margin-left: 0; font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-automerge-toggle { flex: 0 0 auto; white-space: nowrap; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
     /* margin: 0 beats .config-toggle's margin-bottom (that rule is declared
@@ -4864,6 +4879,10 @@
     .rv-reviewer-help { margin: var(--sp-1) var(--sp-0) var(--sp-0); }
     .rv-reviewer-help-above { margin: var(--sp-0) var(--sp-0) var(--sp-2); }
     #rv-require-labels-field[hidden] { display: none; }
+    /* Linked review.perspectives_source banner in the Review Gate (#17989). */
+    .rv-perspectives-linked { margin: var(--sp-0) var(--sp-0) var(--sp-3); padding: var(--sp-4) var(--sp-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-sm); }
+    .rv-perspectives-linked-status, .rv-perspectives-linked-warning { margin-top: var(--sp-2); color: var(--muted); }
+    .rv-perspectives-linked-warning { color: var(--yellow); }
     .am-trusted-authors-repos { min-height: 72px; }
     .am-bot-empty { color: var(--muted); margin: var(--sp-1) 0; }
     .am-bot-add { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); align-items: center; }
@@ -5254,6 +5273,33 @@
       .config-body { --config-body-pad: 14px; padding: var(--sp-0) var(--config-body-pad) var(--config-body-pad); }
       .config-field-row, .config-field-row4 { grid-template-columns: 1fr; }
     }
+    /* Settings → Forge App → GitHub webhooks (hivecommons/hive#18017) */
+    .wh-section-title { font-weight: 600; font-size: var(--fs-base); margin: var(--sp-5) 0 var(--sp-2); }
+    .wh-intro { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-3); }
+    .wh-muted { color: var(--muted); }
+    div.wh-muted { font-size: var(--fs-sm); }
+    .wh-small { font-size: var(--fs-sm); }
+    .wh-warn { color: var(--yellow); }
+    .wh-ok { color: var(--green); }
+    .wh-error { font-size: var(--fs-sm); color: var(--red); }
+    .wh-note { margin-top: var(--sp-2); }
+    .wh-card { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-5); background: var(--surface); }
+    .wh-card-head { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; margin-bottom: var(--sp-4); }
+    .wh-card-title { font-weight: 600; font-size: var(--fs-md); }
+    .wh-step { font-size: var(--fs-sm); font-weight: 600; margin: var(--sp-2) 0 var(--sp-1); }
+    .wh-step-gap { margin-top: var(--sp-4); }
+    .wh-code { font-size: var(--fs-xs); user-select: all; }
+    .wh-chip { font-size: var(--fs-xs); font-weight: 600; padding: var(--sp-1) var(--sp-4); border-radius: var(--r); border: 1px solid currentColor; }
+    .wh-chip-muted { color: var(--muted); }
+    .wh-chip-ok { color: var(--green); }
+    .wh-chip-warn { color: var(--yellow); }
+    .wh-actions { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; font-size: var(--fs-sm); }
+    .wh-actions .hv-btn { margin-left: var(--sp-2); }
+    .wh-secret-once { border: 1px solid var(--green); border-radius: var(--r); padding: var(--sp-3) var(--sp-4); margin: var(--sp-2) 0; font-size: var(--fs-sm); }
+    .wh-secret-once-title { font-weight: 600; color: var(--green); }
+    .wh-secret-value { margin: var(--sp-1) 0; word-break: break-all; }
+    .wh-create { border-top: 1px solid var(--border); margin-top: var(--sp-4); padding-top: var(--sp-4); }
+    .gov-stat.wh-clickable { cursor: pointer; }
     /* Settings → Workflows (#17620 phase 3): library, detail, diagram, ingest */
     .wf-nav { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-5); border-bottom: var(--line-width) solid var(--border); }
     .wf-nav-item { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; font-size: var(--fs-sm); font-weight: 700; padding: var(--sp-2) var(--sp-4); cursor: pointer; }
@@ -5469,6 +5515,12 @@
     .wf-ed-field input[readonly] { color: var(--muted); }
     .wf-ed-inline { display: flex; gap: var(--sp-2); align-items: center; }
     .wf-ed-inline input { flex: 1 1 auto; min-width: 0; }
+    /* Column icon row (hivecommons/hive#18033): preview glyph, id pick-list, emoji box. */
+    .wf-ed-icon-row .wf-ed-icon-preview { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: 0 0 auto; border-radius: var(--r-sm, 4px); background: var(--panel-strong); color: var(--text); }
+    .wf-ed-icon-row .wf-ed-icon-preview .ham-ico { width: 14px; height: 14px; }
+    .wf-ed-icon-row .wf-ed-icon-preview .ham-emoji-ico { width: 14px; height: 14px; font-size: var(--fs-sm); line-height: 14px; }
+    .wf-ed-icon-row select { flex: 1 1 auto; min-width: 0; }
+    .wf-ed-icon-row .wf-ed-icon-emoji { flex: 0 0 7em; }
     .wf-ed-checks { display: flex; gap: var(--sp-4); align-items: center; flex-wrap: wrap; }
     .wf-ed-warn { color: var(--status-warn); }
     .wf-ed-translist { margin: var(--sp-0); padding-left: var(--sp-5); font-size: var(--fs-xs); }
@@ -6023,6 +6075,7 @@
     .kc-pill[data-status="ok"] { background: var(--green); }
     .kc-pill[data-status="syncing"] { background: var(--blue); }
     .kc-pill[data-status="error"] { background: var(--red); }
+    .kc-pill[data-status="not loaded"] { background: var(--orange); }
     .kc-publish { margin-top: var(--sp-4); border-top: var(--line-width) solid var(--border); padding-top: var(--sp-3); }
     .kc-publish-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
     .kc-publish-head h4 { margin: 0; }
@@ -6333,7 +6386,7 @@
     .agent-navbar-tile .agent-up-next.running-now { color: var(--green); }
     .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
     .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
-    .agent-navbar-upnext::after { content: attr(data-agent-summary); display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+    .agent-navbar-upnext[data-agent-more]::after { display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
     /* The "+N" count of tiles that did not fit. While the fit is measured it
        sits first in the row, so its own width is reserved. */
     @container navbar-center (width > 340px) {
@@ -6341,6 +6394,9 @@
       .agent-navbar-upnext--measuring::after { order: -1; }
     }
     /* One line per tile: name, label, dot, each in its own column. */
+    .agent-navbar-summary { flex: 0 0 auto; display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+    .agent-navbar-summary:hover, .agent-navbar-summary:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
+    .agent-navbar-summary-short { display: none; }
     @container navbar-center (max-width: 560px) {
       .agent-navbar-tile { min-width: 104px; grid-template-columns: max-content auto auto; }
       .agent-navbar-tile .agent-tile-next { display: none; }
@@ -6355,10 +6411,12 @@
     @container navbar-center (max-width: 340px) {
       .agent-navbar-upnext { overflow: hidden; mask-image: none; }
       .agent-navbar-upnext .agent-navbar-tile { display: none; }
-      .agent-navbar-upnext::after { display: inline-flex; }
+      .agent-navbar-upnext .agent-navbar-summary { display: inline-flex; }
     }
     @container navbar-center (max-width: 220px) {
-      .agent-navbar-upnext::after { content: 'Next'; padding-inline: var(--sp-1); }
+      .agent-navbar-upnext .agent-navbar-summary { padding-inline: var(--sp-1); }
+      .agent-navbar-summary .agent-navbar-summary-full { display: none; }
+      .agent-navbar-summary .agent-navbar-summary-short { display: inline; }
     }
     @keyframes navbar-up-next-pulse {
       0% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 72%, transparent), 0 0 0 var(--sp-0) color-mix(in srgb, var(--amber) 0%, transparent); }
@@ -9527,7 +9585,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
         <p class="faq-intro">Short answers to the questions people ask once a hive is running. Everything below describes what this hive
         actually does today — where behaviour is surprising, it is called out rather than smoothed over. Each answer links to the
         source doc, so this panel stays a map, not a second source of truth.</p>
-        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step. Want to see a hive at work? <a class="text-accent fw-semibold" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Watch the hive live on Twitch</a>.</p>
+        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step. Want to see a hive at work? <a class="text-accent fw-semibold" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Watch the hive live on Twitch</a>. Wondering which model to run? <a class="text-accent fw-semibold" href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener">Compare models on real fleet PR outcomes</a> (merge rate, CI first-try, estimated cost).</p>
 
         <div class="faq-filter-row">
           <label for="faq-filter" class="faq-filter-label">Filter</label>
@@ -12001,14 +12059,52 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       wrap.dataset.upNextKey = nextItem ? nextItem.id : '';
       animateAgentNavbarReorder(wrap, beforeRects);
     }
+    function agentNavbarSummaryLabel(count) {
+      return String(count) + (count === 1 ? ' agent' : ' agents');
+    }
+    // The narrow-strip summary is a real button (not a CSS pseudo-element) so
+    // it can carry data-action and receive clicks and keyboard activation. It
+    // stays the strip's LAST child so renderAgentNavbarTileDiff's index-based
+    // insertBefore always places tiles ahead of it.
+    function renderAgentNavbarSummary(wrap, count) {
+      let btn = wrap.querySelector('.agent-navbar-summary');
+      if (!count) {
+        if (btn) btn.remove();
+        return null;
+      }
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.setAttribute('type', 'button');
+        btn.className = 'agent-navbar-summary';
+        btn.setAttribute('data-action', 'openAgentsUpNextPanel');
+        btn.setAttribute('data-stop', '1');
+        const full = document.createElement('span');
+        full.className = 'agent-navbar-summary-full';
+        const short = document.createElement('span');
+        short.className = 'agent-navbar-summary-short';
+        short.textContent = 'Next';
+        btn.appendChild(full);
+        btn.appendChild(short);
+      }
+      const label = agentNavbarSummaryLabel(count);
+      const title = label + ' in the run order — open the Agents section';
+      const full = btn.querySelector('.agent-navbar-summary-full');
+      if (full && full.textContent !== label) full.textContent = label;
+      btn.setAttribute('title', title);
+      btn.setAttribute('aria-label', title);
+      if (wrap.lastElementChild !== btn) wrap.appendChild(btn);
+      return btn;
+    }
     function renderAgentNavbarUpNext(agents, nowMs) {
       const wrap = document.getElementById('agent-navbar-upnext');
       if (!wrap) return;
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-      const list = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3);
+      const scheduled = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now));
+      const list = scheduled.slice(0, 3);
       wrap.hidden = list.length === 0;
-      wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';
+      const summary = renderAgentNavbarSummary(wrap, scheduled.length);
       renderAgentNavbarTileDiff(wrap, list, now);
+      if (summary && wrap.lastElementChild !== summary) wrap.appendChild(summary);
       fitAgentNavbarTiles(wrap);
       ensureAgentNavbarFitObserver(wrap);
       if (list.length) ensureAgentsCollapsedCountdownTicker();
@@ -19342,6 +19438,166 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (hours < 48) return hours + 'h';
       return Math.floor(hours / 24) + 'd';
     }
+/* ---- Stage icons for workflow-model chevrons (hivecommons/hive#18033) ---
+       A chevron that is not the row's active stage used to carry only its
+       clipped column label. Now every column has a glyph that says what the
+       stage means: picked by the column's name (STAGE_ICON_BY_NAME, keyed
+       by the normalised label), or by the model's own `icon` on the column
+       — an allowlisted id below or a single emoji, never markup. The set is
+       16-unit monochrome strokes in currentColor, so it follows the theme
+       like STAGE_TRACKER_ICONS does. Pure helpers: the node harness
+       (stage_tracker_stage_icons_ui_test.go) lifts them by name, and a Go
+       test keeps the id list equal to workflowmodel.ColumnIconIDs. */
+    const STAGE_ICON_SET = {
+      inbox: '<path d="M2 9.5h3.5l1 2h3l1-2H14"/><path d="M2 9.5 4 3.5h8l2 6v4H2z"/>',
+      circle: '<circle cx="8" cy="8" r="5"/>',
+      bolt: '<path d="M9 1 3 9h4l-1 6 6-8H8z"/>',
+      hand: '<path d="M4.5 8.5V4a1 1 0 0 1 2 0v3.5M6.5 7V3a1 1 0 0 1 2 0v4M8.5 7V3.5a1 1 0 0 1 2 0V8M10.5 8V5a1 1 0 0 1 2 0v5.5c0 2.5-1.8 4-4.3 4-2 0-3-.9-3.9-2.3L2.6 9.9a1 1 0 0 1 1.6-1.2L4.5 9"/>',
+      person: '<circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/>',
+      pencil: '<path d="M11.5 2.5 13.5 4.5 5.5 12.5 2.5 13.5 3.5 10.5z"/><path d="M9.5 4.5l2 2"/>',
+      'pull-request': '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="13" r="1.5"/><path d="M4 4.5v7M12 11.5V7a2 2 0 0 0-2-2H8"/>',
+      flask: '<path d="M5.5 1.5h5M6.5 1.5v4.6L2.6 12.9a1 1 0 0 0 .9 1.6h9a1 1 0 0 0 .9-1.6L9.5 6.1V1.5"/><path d="M4.4 10.5h7.2"/>',
+      gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>',
+      eye: '<path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>',
+      people: '<circle cx="5.5" cy="5" r="2.5"/><path d="M1 14a4.5 4.5 0 0 1 9 0"/><path d="M10.5 3a2.5 2.5 0 0 1 0 4.5M12 10a4 4 0 0 1 3 4"/>',
+      'thumbs-up': '<path d="M5 7.5 8 1.5c1.5 0 2 1 2 2L9.5 6H13a1.5 1.5 0 0 1 1.5 1.7l-1 5A1.5 1.5 0 0 1 12 14H5z"/><path d="M5 7.5H2v6.5h3"/>',
+      'shield-check': '<path d="M8 1.5 13.5 3.5v4c0 3.5-2.5 5.9-5.5 7-3-1.1-5.5-3.5-5.5-7v-4z"/><path d="M5.5 8l1.8 1.8L10.8 6"/>',
+      merge: '<path stroke-width="2" d="M6 14.5V3M3 6l3-3 3 3M13 14.5c0-3.8-3.4-4.6-7-6.5"/>',
+      check: '<path d="M3 8l3 3 7-7"/>',
+      checkbox: '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M5 8l2 2 4-4"/>',
+      list: '<path d="M3 5h10M3 8h10M3 11h10"/>',
+      tag: '<path d="M2.5 2.5h5.5l5.5 5.5-5.5 5.5-5.5-5.5z"/><circle cx="5.5" cy="5.5" r="1"/>',
+      flag: '<path d="M3.5 14.5V2.5h8.5l-2 3 2 3H3.5"/>',
+      rocket: '<path d="M8 1.5c2.5 1.5 3.5 4.5 3 8l-3 3-3-3c-.5-3.5.5-6.5 3-8z"/><circle cx="8" cy="6.5" r="1.2"/><path d="M5 9.5 3 11.5l.5 2 2-1M11 9.5l2 2-.5 2-2-1"/>',
+      book: '<path d="M2.5 2.5h4a1.5 1.5 0 0 1 1.5 1.5v9.5a1 1 0 0 0-1-1h-4.5zM13.5 2.5h-4A1.5 1.5 0 0 0 8 4v9.5a1 1 0 0 1 1-1h4.5z"/>',
+      search: '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>',
+      clock: '<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/>',
+      pause: '<path d="M5.5 3v10M10.5 3v10"/>',
+      archive: '<rect x="2" y="2.5" width="12" height="3"/><path d="M3 5.5v8h10v-8M6.5 8.5h3"/>',
+      dot: '<circle cx="8" cy="8" r="1.75" fill="currentColor"/>',
+    };
+    const STAGE_ICON_DEFAULT = 'dot';
+
+    // Pure: the key a column name is matched by — lower-case, trimmed,
+    // inner whitespace and the " / " and " · " separators collapsed to one
+    // space, so "Reviewer check", "reviewer  check" and "CI / Review" each
+    // land on one entry.
+    function stageIconNormalizeName(name) {
+      return String(name == null ? '' : name).toLowerCase().replace(/[\s·/]+/g, ' ').trim();
+    }
+
+    // Canonical stage name → icon id. Every column label across hive-default,
+    // the curated marketplace bundles (cncf-techdocs-assessment), the ingest
+    // skeleton (Intake, Triage) and the editor palette has an entry; the
+    // workflow editor's column inspector shows the one its label resolves to.
+    const STAGE_ICON_BY_NAME = {
+      // hive-default
+      'open': 'inbox',
+      'actionable': 'bolt',
+      'claimed': 'hand',
+      'pr in progress': 'pull-request',
+      'ci review': 'flask',
+      'ci': 'flask',
+      'review': 'eye',
+      'merge queue': 'merge',
+      'merged': 'check',
+      // cncf-techdocs-assessment
+      'requested': 'inbox',
+      'accepted': 'checkbox',
+      'drafting': 'pencil',
+      'reviewer check': 'eye',
+      'stakeholder review': 'people',
+      'approval': 'thumbs-up',
+      'done': 'check',
+      // ingest skeleton and editor palette
+      'intake': 'inbox',
+      'triage': 'tag',
+      'analysis': 'search',
+      'writing': 'pencil',
+      'publish': 'rocket',
+      'published': 'rocket',
+      'needs decision': 'person',
+      'work in progress': 'pencil',
+      'in progress': 'pencil',
+      'in review': 'eye',
+      'ci failing': 'flask',
+      'released': 'rocket',
+      'deployed': 'rocket',
+      'deployed staging': 'rocket',
+      'deployed production': 'rocket',
+      'closed': 'archive',
+      'verified': 'shield-check',
+      'verification': 'shield-check',
+      'approved': 'thumbs-up',
+      'blocked': 'pause',
+      'hold': 'pause',
+      'on hold': 'pause',
+      'waiting': 'clock',
+      'backlog': 'list',
+      'todo': 'list',
+      'to do': 'list',
+      'docs': 'book',
+      'documentation': 'book',
+    };
+
+    // Pure: is v an allowlisted icon id?
+    function stageIconIsId(v) { return Object.prototype.hasOwnProperty.call(STAGE_ICON_SET, String(v || '')); }
+
+    // Pure: is v a single emoji — one or two pictographs (a ZWJ sequence or
+    // a flag) plus modifiers, no letters, digits, spaces or markup? The
+    // mirror of workflowmodel.IsColumnIconEmoji.
+    function stageIconIsEmoji(v) {
+      const s = String(v == null ? '' : v);
+      if (!s || Array.from(s).length > 8) return false;
+      let pict = 0;
+      for (const ch of s) {
+        const cp = ch.codePointAt(0);
+        if (cp === 0x200D || cp === 0xFE0F || cp === 0xFE0E || cp === 0x20E3 || (cp >= 0x1F3FB && cp <= 0x1F3FF)) continue;
+        if (cp < 0x80 || /[\p{L}\p{N}\s\p{Cc}]/u.test(ch)) return false;
+        if ((cp >= 0x1F000 && cp <= 0x1FAFF) || (cp >= 0x2600 && cp <= 0x27BF) || (cp >= 0x2B00 && cp <= 0x2BFF) || (cp >= 0x2300 && cp <= 0x23FF) || (cp >= 0x2190 && cp <= 0x21FF) || (cp >= 0x25A0 && cp <= 0x25FF) || (cp >= 0x2900 && cp <= 0x297F) || (cp >= 0x1F1E6 && cp <= 0x1F1FF) || [0xA9, 0xAE, 0x2122, 0x2139, 0x3030, 0x303D, 0x3297, 0x3299].indexOf(cp) >= 0) { pict++; continue; }
+        return false;
+      }
+      return pict >= 1 && pict <= 2;
+    }
+
+    // Pure: '' (default), an icon id or a single emoji validate; anything
+    // else is refused — the editor shows why and keeps the last good value.
+    function stageIconIsValid(v) {
+      const s = String(v == null ? '' : v).trim();
+      return s === '' || stageIconIsId(s) || stageIconIsEmoji(s);
+    }
+
+    // Pure: the icon id a column name resolves to; STAGE_ICON_DEFAULT when
+    // the name is unknown.
+    function stageIconIdForName(name) {
+      return STAGE_ICON_BY_NAME[stageIconNormalizeName(name)] || STAGE_ICON_DEFAULT;
+    }
+
+    // Pure: what a column draws — its valid `icon` override (id or emoji),
+    // else the id its label resolves to. An invalid override is ignored,
+    // never rendered.
+    function stageIconFor(col) {
+      const c = col || {};
+      const over = String(c.icon == null ? '' : c.icon).trim();
+      if (over && (stageIconIsId(over) || stageIconIsEmoji(over))) return over;
+      return stageIconIdForName(c.label || c.id);
+    }
+
+    // The icon as markup: an allowlisted id becomes its inline SVG, an
+    // emoji a text span (escaped), anything else nothing. label is for
+    // assistive tech only; the chevron's title carries the hover text.
+    function stageIconHtml(icon, cls, label) {
+      const v = String(icon == null ? '' : icon).trim();
+      const aria = label ? ` role="img" aria-label="${esc(label)}"` : ' aria-hidden="true"';
+      if (stageIconIsId(v)) return `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"${aria}>${STAGE_ICON_SET[v]}</svg>`;
+      if (stageIconIsEmoji(v)) return `<span class="${cls} ham-emoji-ico"${aria}>${esc(v)}</span>`;
+      return '';
+    }
+
+    // The glyph a column's chevron wears, by its override or its name.
+    function stageIconColumnHtml(col, cls, label) {
+      return stageIconHtml(stageIconFor(col), cls, label);
+    }
 
     // Column header: the stage names once, aligned with the chevrons below.
     // It is sticky under the Merged bar (tracker-cues CSS), so the names
@@ -20527,14 +20783,80 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // The model's column header, drawn under a bound repository's group
     // header in place of the shared hive-default header.
     function stageTrackerWorkflowHeaderHtml(wf) {
-      const cols = wf.columns.map(c => `<li class="ham-seg ham-wf-col${c.terminal ? ' cap' : ''}" title="${esc(c.hint || c.label)}"><span class="ham-seg-t">${esc(c.label)}</span></li>`).join('');
+      const cols = wf.columns.map(c => `<li class="ham-seg ham-wf-col${c.terminal ? ' cap' : ''}" title="${esc(c.hint || c.label)}"><span class="ham-seg-t">${stageTrackerWorkflowColumnIconHtml(c, 'ham-ico ham-col-ico ham-stage-ico')}${esc(c.label)}</span></li>`).join('');
       return `<div class="ham-cols ham-wf-cols" aria-hidden="true" data-ham-workflow="${esc(wf.name + '@' + wf.version)}"><div class="ham-strip-row"><ol class="ham-strip">${cols}</ol><span class="ham-since">since</span></div></div>`;
+    }
+
+    // Pure: the key a row's model resolves to ('' for hive-default).
+    function stageTrackerWorkflowKey(wf) { return wf ? wf.name + '@' + wf.version : ''; }
+
+    // Pure: the column header the rows under it follow — the model's own
+    // when they are bound to one, else hive-default's. The one path for
+    // the sticky header and the run headers, so the names above a strip
+    // are always the names its chevrons wear (hivecommons/hive#18002:
+    // hive-default's "PR in progress / Merge queue" over model chevrons).
+    function stageTrackerColumnsHeaderHtml(wf, stages) {
+      return wf ? stageTrackerWorkflowHeaderHtml(wf) : stageTrackerHeaderHtml(stages);
+    }
+
+    // Pure: an ungrouped page's rows partitioned, stably and in first-seen
+    // order, by the model each row's repository follows: [{ wf, key, rows }].
+    // One run when every row follows the same model (or none does), so a
+    // hive-default page is left exactly as sorted.
+    function stageTrackerWorkflowRuns(rows, ctx) {
+      const runs = [];
+      const by = {};
+      for (const it of rows || []) {
+        const wf = stageTrackerWorkflowOf(ctx, it.repo);
+        const key = stageTrackerWorkflowKey(wf);
+        if (!by[key]) { by[key] = { wf, key, rows: [] }; runs.push(by[key]); }
+        by[key].rows.push(it);
+      }
+      return runs;
+    }
+
+    // Run headers are keyed under the group prefix so the selection and
+    // the reconcile treat them as headers, never as item rows.
+    const STAGE_TRACKER_WORKFLOW_HEADER_KEY_PREFIX = STAGE_TRACKER_GROUP_KEY_PREFIX + 'workflow:';
+
+    // Pure: the page's keyed rows with a column header spliced in before
+    // each run after the first (the first run sits under the sticky
+    // header). A run whose lead row the train/preparation wrappers did not
+    // keep by key gets no header rather than a misplaced one.
+    function stageTrackerWorkflowRunHeaderRows(rows, runs, stages) {
+      const out = (rows || []).slice();
+      (runs || []).slice(1).forEach(run => {
+        const lead = run.rows[0] ? stageTrackerItemKey(run.rows[0]) : null;
+        const at = out.findIndex(r => r.key === lead);
+        if (at >= 0) out.splice(at, 0, { key: STAGE_TRACKER_WORKFLOW_HEADER_KEY_PREFIX + (run.key || 'hive-default'), html: stageTrackerColumnsHeaderHtml(run.wf, stages) });
+      });
+      return out;
+    }
+
+    // Under a group header: a bound repository's own column header; a
+    // hive-default repository's only when the sticky header above is a
+    // model's (ctx.leadWorkflow), so its rows are not read against that
+    // model's names. Collapsed groups draw none.
+    function stageTrackerGroupColumnsHtml(g, groupWorkflow, stages, ctx) {
+      if (!g || g.collapsed) return '';
+      if (groupWorkflow) return stageTrackerWorkflowHeaderHtml(groupWorkflow);
+      return ctx && ctx.leadWorkflow ? stageTrackerHeaderHtml(stages) : '';
+    }
+
+    // The glyph a model column wears (hivecommons/hive#18033): its `icon`
+    // override when valid, else the icon its label resolves to. Guarded so
+    // harnesses that lift the strip alone still render.
+    function stageTrackerWorkflowColumnIconHtml(c, cls, label) {
+      return typeof stageIconColumnHtml === 'function' ? stageIconColumnHtml(c, cls, label) : '';
     }
 
     // One row's strip under its model: done before the anchored column,
     // active at it (the stage's own word from `stages`, or the column
     // label), todo after. An uncovered stage lights the first column amber
     // with the "Not covered" word so the gap is visible, not silent.
+    // Done and todo chevrons wear the column's icon alone (the label is
+    // the header's and the hover's; in a chevron it only clipped); the
+    // active one leads its word with the icon (hivecommons/hive#18033).
     function stageTrackerWorkflowStripItems(item, wf, stages) {
       const cur = Number(item.stage) || 0;
       const terminal = cur >= (typeof STAGE_TRACKER_TERMINAL === 'number' ? STAGE_TRACKER_TERMINAL : 110);
@@ -20552,7 +20874,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ? `stage/${String(cur).padStart(3, '0')} is not a state of ${wf.name}@${wf.version}; the engine leaves this item where it is.`
           : (c.hint || c.label) + (state === 'active' && cur ? ` — stage/${String(cur).padStart(3, '0')}` : '');
         const cls = ['ham-seg', 'ham-wf-seg', state, c.terminal ? 'cap' : '', uncovered && state === 'active' ? 'ham-wf-uncovered' : ''].filter(Boolean).join(' ');
-        return `<li class="${cls}" title="${esc(tip)}"><span class="ham-seg-t">${esc(word)}</span></li>`;
+        const ico = stageTrackerWorkflowColumnIconHtml(c, 'ham-ico ham-stage-ico');
+        const inner = state === 'active' ? `${ico}<span class="ham-seg-t">${esc(word)}</span>` : (ico || `<span class="ham-seg-t">${esc(word)}</span>`);
+        return `<li class="${cls}" title="${esc(tip)}">${inner}</li>`;
       }).join('');
     }
     const STAGE_TRACKER_ACTED_STATES = ['waiting', 'addressed', 'stuck', 'pending', 'failed', 'executing', 'blocked'];
@@ -21512,7 +21836,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ${stageTrackerRepoChipHtml(g.repo, chipCtx)}<span class="ham-group-name">${esc(g.repo)}</span>${groupWorkflow ? stageTrackerWorkflowBadgeHtml(groupWorkflow) : ''}
         <span class="ham-group-n">${g.count} ${g.count === 1 ? 'row' : 'rows'}</span>${attn}
         ${groupWorkflow ? '' : `<span class="ham-group-dist" role="img" aria-label="${esc(g.cols.map((c, i) => stageTrackerColName(i, stages) + ' ' + c).join(', '))}">${dist}</span>`}
-      </div>${groupWorkflow && !g.collapsed ? stageTrackerWorkflowHeaderHtml(groupWorkflow) : ''}`;
+      </div>${typeof stageTrackerGroupColumnsHtml === 'function' ? stageTrackerGroupColumnsHtml(g, groupWorkflow, stages, ctx) : ''}`;
     }
 
     // Row = title line (number, title, chips, since) + thin strip. Non-active
@@ -24188,6 +24512,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
           : stageTrackerPage(ordered, f);
       if (!tv && page.page !== f.page) f.page = page.page;
+      // Rows bound to a workflow model wear its columns (tracker-workflows.js),
+      // so the header over them must be that model's too (hivecommons/hive#18002:
+      // hive-default names over cncf-techdocs chevrons). Ungrouped, the
+      // page is partitioned by model (stable, first-seen order) with a
+      // header per run; grouped, a group header carries its own columns
+      // when the sticky header is another model's. The sticky header is
+      // the lead row's. A hive with no binding resolves one run, no model.
+      const wfRuns = !grouping && ctx.workflows && typeof stageTrackerWorkflowRuns === 'function' ? stageTrackerWorkflowRuns(page.rows, ctx) : null;
+      if (wfRuns && wfRuns.length > 1) page.rows = wfRuns.reduce((all, run) => all.concat(run.rows), []);
+      const leadRepo = page.rows.length ? (grouping ? page.rows[0].group.repo : page.rows[0].repo) : '';
+      ctx.leadWorkflow = typeof stageTrackerWorkflowOf === 'function' ? stageTrackerWorkflowOf(ctx, leadRepo) : null;
       // A folded secondary is not filtered out: it counts toward the total.
       if (foldedShared > 0) page.total += foldedShared;
       // The rows this render draws (this page, group headers aside), for
@@ -24263,7 +24598,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         : itemRow(pageItems[i], i);
       const trainRows = stageTrackerTrainRows(page.rows, rowOf, typeof stageTrackerTrainWhere === 'function' ? stageTrackerTrainWhere(ordered, d.items) : null);
       const inlineRows = typeof stageTrackerPreparationInlineRows === 'function' ? stageTrackerPreparationInlineRows(trainRows, pageItems, stages) : trainRows;
-      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }].concat(inlineRows), nowMs, it => stageTrackerRowHtml(it, stages, ctx));
+      const runRows = wfRuns && wfRuns.length > 1 ? stageTrackerWorkflowRunHeaderRows(inlineRows, wfRuns, stages) : inlineRows;
+      const headHtml = typeof stageTrackerColumnsHeaderHtml === 'function' ? stageTrackerColumnsHeaderHtml(ctx.leadWorkflow, stages) : stageTrackerHeaderHtml(stages);
+      const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: headHtml }].concat(runRows), nowMs, it => stageTrackerRowHtml(it, stages, ctx));
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       // Selection is keyed on the row, never baked into its HTML, so a kept
@@ -33786,6 +34123,30 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       </div>`;
     }
 
+    /* Webhooks tile (hivecommons/hive#18017): whether GitHub deliveries
+       reach this hive (direct or hub relay) and how many in the last hour.
+       Owners click through to Settings → Forge App → GitHub webhooks. */
+    function webhookGovStatHtml(data) {
+      const wh = data && data.webhooks;
+      if (!wh || typeof wh !== 'object') return '';
+      const owner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const none = !wh.verification || wh.verification === 'none';
+      const n = Number(wh.events_1h || 0);
+      let val, cls;
+      if (none) { val = 'off'; cls = ' dead'; }
+      else if (n > 0 || wh.healthy) { val = n + '/1h'; cls = ''; }
+      else if (wh.last_event_at) { val = 'quiet'; cls = ' starting'; }
+      else { val = 'no events'; cls = ' starting'; }
+      const how = none
+        ? 'OFF — no webhook secret and no hub relay key, so every delivery is rejected and the hive polls GitHub on the base cadence.'
+        : `Verification: ${wh.verification}. Cadence: ${wh.mode || 'polling'}${wh.mode_reason ? ' (' + wh.mode_reason + ')' : ''}. ${n} deliveries in the last hour.`;
+      const tip = 'WEBHOOKS — does GitHub tell this hive about changes as they happen?\n\nWHAT: With webhooks on, pushes, PRs, reviews and checks wake the governor at once, CI failures kick the owning agent, and the safety-net cadence slows to save API calls.\n\nHOW: ' + how
+        + (owner ? '\n\nClick to set up or check webhooks (Settings → Forge App).' : '');
+      const action = owner ? ' data-action="openConfigDialog" data-config-type="governor" data-tab="Forge App"' : '';
+      const label = owner && none ? 'webhooks · set up →' : 'webhooks';
+      return `<div class="gov-stat${owner ? ' wh-clickable' : ''}"${action} title="${escapeHtml(tip)}"><div class="label">${label}</div><div class="val${cls}">${escapeHtml(val)}</div></div>`;
+    }
+
     function renderGovernor(gov, cadenceMatrix, data) {
       const el = document.getElementById('governor');
       const isStarting = !gov.active && !gov.mode;
@@ -33859,6 +34220,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="gov-stat" aria-label="${escapeHtml(prEquationTitle)}"><div class="label">actionable PRs</div><div class="spark-row"><span class="val">${prCount}</span>${prsSpark}</div>${prEquationHTML ? `<div class="overview-kpi-subline">${prEquationHTML}</div>` : ''}</div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           ${fleetRunStatHtml()}
+          ${webhookGovStatHtml(data)}
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
           ${standbyPauseFactsHtml(gov, 'stat')}
           ${contributorFirstFactsHtml(gov, 'stat')}
@@ -35012,11 +35374,49 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       repaintReposForWidth();
       return { repo, item, fromKey, toKey };
     }
+    // A hold toggle moves its row between the held and actionable groups, and
+    // the status render that follows re-sorts them, so the button under the
+    // pointer changes a moment after every click. Clicking Hold down a card
+    // then landed the next click on another item's Release, and that item's
+    // hold came straight back off (hivecommons/hive#18054: #151 released in
+    // the same second #283 was held). A Release that arrives within
+    // REPO_HOLD_SHIFT_GUARD_MS of the rows moving is not sent; the operator
+    // clicks it again once the list is still. Hold is never delayed: under
+    // the pointer it can only park an item, and parking is what that click
+    // was doing anyway.
+    const REPO_HOLD_SHIFT_GUARD_MS = 1500;
+    let _repoHoldLayoutSig = null;
+    let _repoHoldShiftAt = 0;
+    const _repoHoldInFlight = {};
+    // Pure: the order and membership of every card's hold-toggle rows.
+    function repoHoldLayoutSignature(repos) {
+      const nums = list => (list || []).map(x => Number(x && x.number) || 0).join(',');
+      return (repos || []).map(r => (r.full || r.name || '') + ':' + nums(r.actionableIssues) + '|' + nums(r.heldIssues) + '|' + nums(r.openPrs) + '|' + nums(r.heldPrs)).join(';');
+    }
+    // Called on every repos render: remembers when the rows last moved. The
+    // first render is not a move; nothing was under the pointer before it.
+    function noteRepoHoldLayout(repos, now) {
+      const sig = repoHoldLayoutSignature(repos);
+      if (_repoHoldLayoutSig !== null && sig !== _repoHoldLayoutSig) _repoHoldShiftAt = now;
+      _repoHoldLayoutSig = sig;
+    }
+    function repoHoldReleaseTooSoon(now) {
+      return _repoHoldShiftAt > 0 && now - _repoHoldShiftAt < REPO_HOLD_SHIFT_GUARD_MS;
+    }
     async function toggleRepoItemHold(repoFull, number, type, held, btn) {
       if (btn && btn.dataset.busy === '1') return;
       const p = repoParts(repoFull);
       if (!p.owner || !p.repo || !number) return;
       const wantHeld = !!held;
+      // The busy mark lives on a button the optimistic repaint replaces, so
+      // the item itself carries the in-flight guard.
+      const flightKey = String(repoFull).toLowerCase() + '/' + type + '#' + number;
+      if (_repoHoldInFlight[flightKey]) return;
+      if (!wantHeld && repoHoldReleaseTooSoon(Date.now())) {
+        showToast('The list moved just as you clicked, so ' + repoFull + '#' + number + ' is still held. Click Release again to release it.', 'info');
+        return;
+      }
+      _repoHoldInFlight[flightKey] = true;
       const prevText = btn ? btn.textContent : '';
       const moved = moveRepoItemHold(repoFull, number, type, wantHeld, canonicalHiveHoldLabel());
       if (btn) { btn.dataset.busy = '1'; btn.textContent = '…'; }
@@ -35035,6 +35435,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (moved) moveRepoItemHold(repoFull, number, type, !wantHeld, canonicalHiveHoldLabel());
         showToast('Hold toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
         if (btn) { btn.dataset.busy = ''; btn.textContent = prevText || (wantHeld ? '⏸ Hold' : '▶ Release'); }
+      } finally {
+        delete _repoHoldInFlight[flightKey];
       }
     }
 
@@ -38528,6 +38930,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       refreshSectionCardShell('repos-section');
       if (_repoResizeDrag || _repoOrderDrag) return;
       repos = repoOrderApply(repos || []);
+      noteRepoHoldLayout(repos, Date.now());
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
       const showDesign = showPlan && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
@@ -38921,10 +39324,35 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.changesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
           </div>${laneHtml}${collapseHtml}${pillsHtml}${hfRepoSectionHtml(r)}
         </div>`;
-      }).join(''));
+      }).join('') + renderReferenceRepoCards(status.referenceRepos, hostLabel));
       hfRenderEditor();
       hfRenderPinned();
       hfRenderCrossRepo();
+    }
+
+    /**
+     * project.reference_repos (#18015): repos outside the project the hive may
+     * study. Deliberately minimal — a name and a tier chip, no stats, no ACMM,
+     * no pause/swarm controls — so they are legible as "not managed here".
+     * Hidden while a pill or project filter is active (they have no work items
+     * to match).
+     */
+    function renderReferenceRepoCards(refs, hostLabel) {
+      if (!Array.isArray(refs) || !refs.length) return '';
+      if (repoPillFilterActive(repoPillFilterState()) || overviewProjectFilterState()) return '';
+      const base = window._githubBaseUrl || 'https://github.com';
+      return refs.map(rr => {
+        const full = String(rr.full || '');
+        const tier = String(rr.reference_tier || rr.tier || 'read-only');
+        const tip = tier === 'read-only'
+          ? 'Reference repo: agents may clone and read it; every write is refused by the proxy.'
+          : `Reference repo: agents may clone and read it, and may open ${tier.replace('+', ' and ')} (never merge, push to the default branch, label, assign, review, or close others' items).`;
+        return `<div class="repo-card repo-card-reference" data-repo="${esc(full)}">
+          <div class="repo-provider-label repo-reference-provider" title="This repo lives on ${esc(hostLabel)} and is outside this project">${esc(hostLabel)}</div>
+          <div class="repo-name"><a class="repo-reference-link" href="${esc(base + '/' + full)}" target="_blank" rel="noopener" title="${esc(full)}">${esc(full)}</a><span class="repo-header-badges"><span class="repo-reference-pill" title="${esc(tip)}">📚 reference · ${esc(tier)}</span></span></div>
+          <div class="repo-reference-note">Outside this project — studied, not worked. No work items, no ACMM evaluation.</div>
+        </div>`;
+      }).join('');
     }
 
     /**
@@ -48673,7 +49101,7 @@ function burnAreaChart() {
         const cfg = await cfgRes.json().catch(() => ({}));
         if (!cfgRes.ok) throw new Error(cfg.error || ('HTTP ' + cfgRes.status));
         const st = stRes.ok ? await stRes.json().catch(() => ({})) : {};
-        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], ctx7AutoImport: cfg.context7_auto_import || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: !!st.runtime, publish: st.publish || null });
+        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], ctx7AutoImport: cfg.context7_auto_import || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: st.runtime !== false, publish: st.publish || null });
       } catch (e) {
         _kcState = Object.assign(_kcState, { loaded: true, error: e.message });
       }
@@ -48729,23 +49157,40 @@ function burnAreaChart() {
       return body;
     }
 
+    // Badge shown when the hive's connector syncer is not running (status
+    // response `runtime: false`): the entry is saved but this process never
+    // constructed it, so sign-in, Check and Sync would all 404. Distinct from
+    // `pending`, which is a loaded connector awaiting sign-in or first sync.
+    // Only an explicit `runtime: false` counts: a failed or absent status
+    // response must not tell the owner to restart the hive
+    // (hivecommons/hive#18093).
+    const KC_STATUS_NOT_LOADED = 'not loaded';
+    const KC_NOT_LOADED_HINT = 'Connector runtime is not running on this hive — restart the hive after enabling knowledge connectors.';
+    function kbConnectorNotLoaded(c) { return !!c.enabled && !_kcState.runtime; }
+    function kbConnectorNotLoadedHtml() {
+      return '<div class="muted-xs" data-kb-not-loaded>' + escapeHtml(KC_NOT_LOADED_HINT) + ' <a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener">Docs ↗</a></div>';
+    }
+
     function kbConnectorRow(type, c, owner) {
       const byName = {};
       (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
       const r = byName[c.name] || {};
-      const status = r.status || (c.enabled ? 'pending' : 'disabled');
+      const notLoaded = kbConnectorNotLoaded(c);
+      const status = notLoaded ? KC_STATUS_NOT_LOADED : (r.status || (c.enabled ? 'pending' : 'disabled'));
       const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
       let html = '<div class="card-inset row-between mb-3" data-kb-connector-name="' + escapeHtml(c.name) + '"><div class="kb-integration-row-main">';
       html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
       html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
-      if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);
+      if (notLoaded) html += kbConnectorNotLoadedHtml();
+      else if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
+        const disabledAttr = ' disabled title="' + escapeHtml(KC_NOT_LOADED_HINT) + '"';
         html += '<div class="kb-integration-actions">';
-        if (type === 'plaud') html += kbPlaudAuthButtons(c.name);
-        html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
+        if (type === 'plaud') html += kbPlaudAuthButtons(c.name, notLoaded ? disabledAttr : '');
+        html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (notLoaded ? disabledAttr : status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationEdit" data-arg0="' + escapeHtml(c.name) + '">Edit</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationToggle" data-arg0="' + escapeHtml(c.name) + '">' + (c.enabled ? 'Disable' : 'Enable') + '</button>';
         html += '</div>';
@@ -48883,13 +49328,15 @@ function burnAreaChart() {
       else text = 'Plaud: not connected' + (a.message ? ' — ' + escapeHtml(a.message) : '');
       return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '" data-connected="' + (a.connected ? '1' : '0') + '">' + text + '</div>';
     }
-    function kbPlaudAuthButtons(name) {
+    // disabledAttr, when set, is appended to every button (connector not loaded, #18093).
+    function kbPlaudAuthButtons(name, disabledAttr) {
       const a = _kbPlaudAuth[name] || {};
       const n = escapeHtml(name);
+      const off = disabledAttr || '';
       let html = '';
-      if (a.connected) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudDisconnect" data-arg0="' + n + '">Disconnect</button>';
-      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (a.pending ? ' disabled' : '') + '>Connect Plaud</button>';
-      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '" title="Re-check sign-in with Plaud">Check</button>';
+      if (a.connected) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudDisconnect" data-arg0="' + n + '"' + off + '>Disconnect</button>';
+      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (off || (a.pending ? ' disabled' : '')) + '>Connect Plaud</button>';
+      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '"' + (off || ' title="Re-check sign-in with Plaud"') + '>Check</button>';
       return html;
     }
     async function kbPlaudAuthLoad(name, refresh) {
@@ -48902,10 +49349,22 @@ function burnAreaChart() {
         _kbPlaudAuth[name] = { error: e.message };
       }
       if (document.querySelector('[data-kb-plaud-auth="' + CSS.escape(name) + '"]')) kbRenderIntegrationsModal();
+      return _kbPlaudAuth[name];
     }
+    // One-line summary of a sign-in state for the Check toast (hivecommons/hive#18092).
+    function kbPlaudAuthSummary(a) {
+      if (a.connected) return 'connected' + (a.account ? ' as ' + a.account : '');
+      if (a.pending) return 'waiting for authorization' + (a.auth_url ? ' — open the link on the card' : '');
+      return 'not connected' + (a.message ? ' — ' + a.message : '');
+    }
+    // Check: re-query the sign-in state and always report the outcome, so a
+    // 404 "no knowledge connectors are configured" reads as an error toast
+    // with the server's message verbatim, not as silence (hivecommons/hive#18092).
     async function kbPlaudRefreshAuth(name) {
       showToast('Checking Plaud sign-in…', 'info');
-      await kbPlaudAuthLoad(name, true);
+      const a = (await kbPlaudAuthLoad(name, true)) || {};
+      if (a.error) showToast('Check failed: ' + a.error, 'error');
+      else showToast('Plaud ' + name + ': ' + kbPlaudAuthSummary(a), a.connected ? 'success' : 'info');
     }
     async function kbPlaudConnect(name) {
       try {
@@ -59026,6 +59485,7 @@ function burnAreaChart() {
 
     function closeConfigDialog() {
       _configModalOpen = false;
+      if (typeof webhookSetupReset === 'function') webhookSetupReset();
       // Invalidate any in-flight load so a late reply cannot repopulate a
       // dialog the operator has already dismissed.
       _configLoadSeq++;
@@ -59617,7 +60077,7 @@ function burnAreaChart() {
         }
         // The Forge App tab renders a shell synchronously, then loads the
         // credential inventory (fingerprints only) from the spoke.
-        if (tabId === 'Forge App') loadForgeApps();
+        if (tabId === 'Forge App') { loadForgeApps(); loadWebhookSetup(); }
         // The Features tab's Linear Agent panel loads install/session state
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
@@ -61365,7 +61825,8 @@ function burnAreaChart() {
           when its forge matches the forge this hive's repos live on; everything else is
           read-only. Private keys appear as fingerprints — key material never leaves the hive.
         </div>
-        <div id="forge-app-host"><div style="color:var(--muted);font-size:0.8rem">Loading forge Apps…</div></div>`;
+        <div id="forge-app-host"><div style="color:var(--muted);font-size:0.8rem">Loading forge Apps…</div></div>
+        ${renderGovWebhooksSection()}`;
     }
 
     async function loadForgeApps() {
@@ -62801,6 +63262,226 @@ function burnAreaChart() {
 
     function contribRepoMatchingDisabledEntries(repoFull, disabled) {
       return (disabled || []).filter(function(entry) { return contribRepoDisabledEntryMatches(repoFull, entry); });
+    }
+    /* Settings → Forge App → GitHub webhooks (hivecommons/hive#18017).
+       Owner-facing setup for /api/webhook/github: the exact payload URL,
+       the events to tick, a per-hive secret the owner generates here and
+       sees once, optional App-side hook creation, and the live receiver
+       status. Hosted spokes get deliveries through the hub relay with no
+       owner action, so for them the section is a status readout. */
+
+    let _webhookSetup = null;
+    let _webhookSecretOnce = '';
+    let _webhookConfirmRegenerate = false;
+
+    function renderGovWebhooksSection() {
+      return `
+        <div class="wh-section-title">GitHub webhooks</div>
+        <div class="wh-intro">
+          Webhooks let GitHub tell this hive about pushes, PRs, reviews and checks as they
+          happen: faster kicks, fewer API calls, a slower safety-net cadence.
+          <a href="${webhookDocsHref()}" target="_blank" rel="noopener noreferrer">Owner guide ↗</a>
+        </div>
+        <div id="webhook-setup-host"><div class="wh-muted">Loading webhook status…</div></div>`;
+    }
+
+    function webhookDocsHref() {
+      return (_webhookSetup && _webhookSetup.docs_url) || 'https://github.com/hivecommons/hive/blob/v5/src/docs/webhooks.md#setting-up-webhooks-owner-guide';
+    }
+
+    async function loadWebhookSetup() {
+      const host = document.getElementById('webhook-setup-host');
+      if (!host) return;
+      try {
+        const res = await fetch('/api/config/github/webhooks');
+        if (res.status === 403) {
+          host.innerHTML = '<div class="wh-muted">Owner access required to view webhook setup.</div>';
+          return;
+        }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        _webhookSetup = await res.json();
+        renderWebhookSetup();
+      } catch (e) {
+        host.innerHTML = `<div class="wh-error">Failed to load webhook status: ${esc(e.message)}</div>`;
+      }
+    }
+
+    function webhookStatusChip(d) {
+      const h = d.health || {};
+      if (d.verification === 'none') return chip('not configured', 'muted');
+      if (h.events_1h > 0 || h.healthy) return chip(`receiving · ${h.events_1h || 0}/1h`, 'ok');
+      if (h.last_event_at) return chip('quiet · last ' + webhookAgo(h.last_event_at), 'warn');
+      return chip('no events yet', 'warn');
+      function chip(text, tone) {
+        return `<span class="wh-chip wh-chip-${tone}">${esc(text)}</span>`;
+      }
+    }
+
+    function webhookAgo(iso) {
+      const t = Date.parse(iso);
+      if (!t) return '—';
+      const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+      if (s < 60) return s + 's ago';
+      if (s < 3600) return Math.round(s / 60) + 'm ago';
+      if (s < 86400) return Math.round(s / 3600) + 'h ago';
+      return Math.round(s / 86400) + 'd ago';
+    }
+
+    function webhookCopyBtn(text, label) {
+      return `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="webhookCopy" data-arg-types="t" data-copy="${esc(text)}">${esc(label || 'Copy')}</button>`;
+    }
+
+    async function webhookCopy(btn) {
+      const text = btn && btn.dataset.copy || '';
+      const ok = await writeClipboardText(text);
+      showToast(ok ? 'Copied' : 'Could not copy — select the text and copy it by hand', ok ? 'info' : 'error');
+    }
+
+    function renderWebhookSetup() {
+      const host = document.getElementById('webhook-setup-host');
+      const d = _webhookSetup;
+      if (!host || !d) return;
+      const h = d.health || {};
+      const row = (label, valueHtml) => forgeAppRow(label, valueHtml);
+      const code = (t) => `<code class="wh-code">${esc(t)}</code>`;
+      const relayHeld = !!d.hosted;
+      const direct = d.secret_source !== '';
+
+      let html = `<div class="wh-card">
+        <div class="wh-card-head">
+          <span class="wh-card-title">Receiver status</span>
+          ${webhookStatusChip(d)}
+        </div>
+        ${row('Verification', code(d.verification || 'none') + (relayHeld && !direct ? ' <span class="wh-muted">— hub relay; the GitHub App installation delivers through the hub, nothing to set up</span>' : ''))}
+        ${row('Last event', h.last_event_at ? esc(formatDashboardDateTime(h.last_event_at)) + ' <span class="wh-muted">(' + esc(webhookAgo(h.last_event_at)) + ')</span>' : '<span class="wh-muted">none yet</span>')}
+        ${row('Deliveries (1h)', esc(String(h.events_1h || 0)) + ' <span class="wh-muted">· ' + esc(String(h.invalidations_1h || 0)) + ' cache patches · ' + esc(String(h.ci_events_1h || 0)) + ' CI events</span>')}
+        ${row('Cadence', code(h.mode || 'polling') + (h.mode_reason ? ' <span class="wh-warn">' + esc(h.mode_reason) + '</span>' : ''))}
+        ${(!h.last_event_at && d.verification !== 'none') ? '<div class="wh-warn wh-note">No events yet — on GitHub open the webhook (Settings → Webhooks → your hook → Recent deliveries) and check the response code: 401 means the secret differs, 404 means the path is wrong, 503 means this hive has no secret.</div>' : ''}
+      </div>`;
+
+      html += `<div class="wh-card">
+        <div class="wh-card-title wh-card-head">${relayHeld ? 'Direct webhook (optional)' : 'Set up a webhook on GitHub'}</div>
+        ${relayHeld ? '<div class="wh-muted wh-intro">This hive already receives deliveries the hub relays from the GitHub App installation. A direct webhook with your own secret is only needed for repositories the App is not installed on.</div>' : ''}
+        <div class="wh-step">1. Secret</div>
+        ${renderWebhookSecretBlock(d)}
+        <div class="wh-step wh-step-gap">2. Add the webhook in GitHub</div>
+        <div class="wh-muted">Organization (one hook for every repo) → <b>Settings → Webhooks → Add webhook</b>, or per repository under the repo's Settings.</div>
+        ${row('Payload URL', d.payload_url ? code(d.payload_url) + webhookCopyBtn(d.payload_url) + ' <span class="wh-muted">(' + esc(d.payload_url_source) + ')</span>' : '<span class="wh-warn">unknown — set <code>dashboard.public_url</code> to this hive\u2019s public origin; the path is <code>' + esc(d.path) + '</code></span>')}
+        ${row('Content type', code(d.content_type))}
+        ${row('Secret', '<span class="wh-muted">the value from step 1</span>')}
+        ${row('SSL verification', '<span class="wh-muted">keep enabled</span>')}
+        ${row('Events', '<span class="wh-muted">"Let me select individual events", then tick:</span><br>' + (d.events || []).map(e => code(e)).join(' ') + webhookCopyBtn((d.events || []).join(', '), 'Copy list'))}
+        ${row('Optional', Object.entries(d.optional_events || {}).map(([k, v]) => code(k) + ' <span class="wh-muted">— ' + esc(v) + '</span>').join('<br>'))}
+        ${renderWebhookCreateBlock(d)}
+      </div>`;
+      host.innerHTML = html;
+    }
+
+    function renderWebhookSecretBlock(d) {
+      const code = (t) => `<code class="wh-code">${esc(t)}</code>`;
+      let html = '';
+      if (_webhookSecretOnce) {
+        html += `<div class="wh-secret-once">
+          <div class="wh-secret-once-title">New secret — shown once</div>
+          <div class="wh-secret-value">${code(_webhookSecretOnce)}${webhookCopyBtn(_webhookSecretOnce)}</div>
+          <div class="wh-muted">Paste it into the GitHub webhook\u2019s <b>Secret</b> field. The hive keeps only the file; closing this dialog forgets the value.</div>
+        </div>`;
+      }
+      if (d.secret_source === 'env') {
+        html += `<div class="wh-small">Configured from <code>GITHUB_WEBHOOK_SECRET</code> (a Secret mount). Use that same value in GitHub; rotate it in the deployment, not here.</div>`;
+        return html;
+      }
+      const state = d.secret_source === 'file'
+        ? `Configured · stored at <code>${esc(d.secret_path || '')}</code>${_webhookSecretOnce ? '' : ' (value not shown again — regenerate if lost)'}`
+        : '<span class="wh-warn">No secret yet — generate one. Without it every delivery is rejected with 503.</span>';
+      const label = _webhookConfirmRegenerate ? 'Confirm: replace secret' : (d.secret_source === 'file' ? 'Regenerate secret' : 'Generate secret');
+      const cls = _webhookConfirmRegenerate ? 'btn-danger' : 'btn-primary';
+      html += `<div class="wh-actions wh-note">
+        <span>${state}</span>
+        <button type="button" class="hv-btn ${cls} btn-sm" data-action="webhookGenerateSecret" data-arg-types="t">${esc(label)}</button>
+        ${_webhookConfirmRegenerate ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="webhookCancelRegenerate">Cancel</button><span class="wh-muted">GitHub hooks using the old secret will start failing with 401 until you update them.</span>' : ''}
+      </div>`;
+      return html;
+    }
+
+    function renderWebhookCreateBlock(d) {
+      if (d.app_probe_error) {
+        return `<div class="wh-muted wh-note">Could not read the App installation\u2019s permissions (${esc(d.app_probe_error)}); create the hook by hand as above.</div>`;
+      }
+      if (!d.app_org_hooks && !d.app_repo_hooks) {
+        return `<div class="wh-muted wh-note">To have the App create the hook for you, grant it <b>Organization → Webhooks</b> (<code>organization_hooks</code>) or <b>Repository → Webhooks</b> (<code>repository_hooks</code>) at <b>Read and write</b>, then reopen this tab.</div>`;
+      }
+      const scopes = [];
+      if (d.app_org_hooks) scopes.push(`<option value="organization">organization ${esc(d.org)}</option>`);
+      if (d.app_repo_hooks) (d.repos || []).forEach(r => scopes.push(`<option value="repository:${esc(r)}">repository ${esc(d.org)}/${esc(r)}</option>`));
+      const disabled = !d.create_available;
+      const why = !d.secret_configured ? 'generate a secret first' : (!d.payload_url ? 'set dashboard.public_url first' : '');
+      return `<div class="wh-create">
+        <div class="wh-step">Or let the App create it</div>
+        <div class="wh-actions">
+          <select id="webhook-create-scope" class="wh-small">${scopes.join('')}</select>
+          <button type="button" class="hv-btn btn-primary btn-sm" data-action="webhookCreateHook" data-arg-types="t" ${disabled ? 'disabled' : ''}>Create webhook for me</button>
+          ${why ? '<span class="wh-muted">— ' + esc(why) + '</span>' : '<span class="wh-muted">uses the App installation\u2019s hooks permission; subscribes the events above with this hive\u2019s secret</span>'}
+        </div>
+        <div id="webhook-create-result" class="wh-small wh-note"></div>
+      </div>`;
+    }
+
+    function webhookCancelRegenerate() {
+      _webhookConfirmRegenerate = false;
+      renderWebhookSetup();
+    }
+
+    async function webhookGenerateSecret(btn) {
+      if (_webhookSetup && _webhookSetup.secret_source === 'file' && !_webhookConfirmRegenerate) {
+        _webhookConfirmRegenerate = true;
+        renderWebhookSetup();
+        return;
+      }
+      _webhookConfirmRegenerate = false;
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch('/api/config/github/webhooks/secret', { method: 'POST' });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
+        _webhookSecretOnce = body.secret || '';
+        showToast('Webhook secret generated — copy it now, it is shown once', 'info');
+        await loadWebhookSetup();
+      } catch (e) {
+        showToast('Could not generate secret: ' + e.message, 'error');
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function webhookCreateHook(btn) {
+      const sel = document.getElementById('webhook-create-scope');
+      const out = document.getElementById('webhook-create-result');
+      const v = (sel && sel.value) || 'organization';
+      const [scope, repo] = v.split(':');
+      if (btn) btn.disabled = true;
+      if (out) out.textContent = 'Creating…';
+      try {
+        const res = await fetch('/api/config/github/webhooks/create', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope, repo: repo || '' })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
+        const verb = body.created === false ? 'Already set up:' : 'Created';
+        if (out) out.innerHTML = `<span class="wh-ok">${verb} ${esc(body.scope)} hook #${esc(String(body.id || body.hook_id))} on ${esc(body.target)}.</span> <a href="${esc(body.url)}" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a> — push a commit or comment on a PR and watch “Deliveries (1h)” move.`;
+        showToast(body.created === false ? 'Webhook already exists' : 'Webhook created', 'info');
+      } catch (e) {
+        if (out) out.innerHTML = `<span class="wh-error">${esc(e.message)}</span>`;
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    /* Forget the one-time secret whenever the Settings dialog closes so it
+       never lingers in a re-rendered tab. */
+    function webhookSetupReset() {
+      _webhookSecretOnce = '';
+      _webhookConfirmRegenerate = false;
     }
     function renderGovHub(hub) {
       const dashUrl = hub.dashboard_url || window.location.origin || '';
@@ -69143,6 +69824,24 @@ function burnAreaChart() {
         options.map(o => { const v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : (o || '\u2014'); return `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(l)}</option>`; }).join('') + '</select>';
     }
 
+    // The column's chevron icon (hivecommons/hive#18033): a preview of what
+    // the Activity Monitor draws, a pick-list of the allowlisted ids with
+    // the label's default first, and a box for a single emoji. Both write
+    // spec.columns[id].icon through wfEdSetColumnIcon, which refuses
+    // anything outside the allowlist.
+    function wfEdColumnIconField(c, base, dis) {
+      if (typeof stageIconFor !== 'function') return '';
+      const cur = String(c.icon == null ? '' : c.icon).trim();
+      const def = stageIconIdForName(c.label || c.id);
+      const isEmoji = !!cur && !stageIconIsId(cur);
+      const ids = Object.keys(STAGE_ICON_SET);
+      const options = [['', 'default \u00b7 ' + def]].concat(ids.map(id => [id, id]));
+      const preview = `<span class="wf-ed-icon-preview" title="${esc('as drawn in the Activity Monitor')}">${stageIconHtml(stageIconFor(c), 'ham-ico ham-stage-ico')}</span>`;
+      const select = `<select data-change-action="wfEdSetColumnIcon" data-arg0="${esc(base + '.icon')}" data-arg-types="s,v" ${dis}>${options.map(o => `<option value="${esc(o[0])}" ${!isEmoji && o[0] === cur ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}${isEmoji ? `<option value="${esc(cur)}" selected>${esc(cur)} (emoji)</option>` : ''}</select>`;
+      const emoji = `<input type="text" class="wf-ed-icon-emoji" maxlength="16" placeholder="or an emoji" value="${esc(isEmoji ? cur : '')}" data-change-action="wfEdSetColumnIcon" data-arg0="${esc(base + '.icon')}" data-arg-types="s,v" ${dis}>`;
+      return wfEdField('Icon', `<div class="wf-ed-inline wf-ed-icon-row">${preview}${select}${emoji}</div>`, 'drawn in this column\u2019s chevrons; blank = by label');
+    }
+
     function renderWfEdInspector(st) {
       const m = st.model, spec = m.spec, sel = st.selection;
       const can = wfEdCanEdit();
@@ -69193,6 +69892,7 @@ function burnAreaChart() {
           wfEdField('Id', `<div class="wf-ed-inline"><input type="text" value="${esc(c.id)}" readonly><button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdRenameColumnAction" data-arg0="${esc(c.id)}" ${dis}>Rename\u2026</button></div>`) +
           wfEdField('Label', wfEdText(base + '.label', c.label, dis)) +
           wfEdField('Hint', wfEdText(base + '.hint', c.hint, dis), 'shown as the lane\u2019s tooltip in the Activity Monitor') +
+          wfEdColumnIconField(c, base, dis) +
           `<div class="config-field wf-ed-field"><label><input type="checkbox" ${c.terminal ? 'checked' : ''} data-change-action="wfEdFieldSetBool" data-arg0="${esc(base + '.terminal')}" data-arg-types="s,c" ${dis}> Terminal column</label><span class="text-muted fs-xs">states here need no exit</span></div>` +
           wfEdField('Width', `<input type="range" min="${WF_ED.minColW}" max="${WF_ED.maxColW}" step="${WF_ED.grid}" value="${st.view.laneWidths[c.id] || WF_ED.colW}" data-input-action="wfEdLaneWidth" data-arg0="${esc(c.id)}" data-arg-types="s,v">`) +
           `<p class="text-muted fs-sm">${(c.states || []).length} state${(c.states || []).length === 1 ? '' : 's'}</p>` +
@@ -69764,6 +70464,19 @@ function burnAreaChart() {
       wfEdCommit(wfEdUpdate(_wfEd.model, path, isNaN(n) || n <= 0 ? '' : n));
     }
     function wfEdFieldSetBool(path, checked) { wfEdCommit(wfEdUpdate(_wfEd.model, path, checked ? true : '')); }
+    // An icon is '' (by label), an allowlisted id or one emoji; anything
+    // else is refused with a toast and the inspector redraws the last good
+    // value, so no markup ever reaches a chevron (hivecommons/hive#18033).
+    function wfEdSetColumnIcon(path, value) {
+      if (!_wfEd.model) return;
+      const v = String(value == null ? '' : value).trim();
+      if (typeof stageIconIsValid === 'function' && !stageIconIsValid(v)) {
+        if (typeof showToast === 'function') showToast('Icon must be one of the built-in icon ids or a single emoji.', 'error');
+        wfEdRefresh(['inspector']);
+        return;
+      }
+      wfEdCommit(wfEdUpdate(_wfEd.model, path, v), { parts: ['canvas', 'inspector', 'drawer'] });
+    }
     function wfEdSetList(path, value) { wfEdCommit(wfEdUpdate(_wfEd.model, path, String(value || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean))); }
     function wfEdSetStateColumn(id, columnId) { wfEdCommit(wfEdMoveState(_wfEd.model, id, columnId === WF_ED_UNASSIGNED ? '' : columnId)); }
     function wfEdSetInitial(id) { wfEdCommit(wfEdUpdate(_wfEd.model, 'spec.initial', id)); }
@@ -72454,17 +73167,31 @@ function burnAreaChart() {
         .concat(rvSelected.filter(n => !rvBuiltinNames.includes(n)))
         .filter((n, i, a) => a.indexOf(n) === i);
       const rvIsOn = (name) => rvSelected.length === 0 ? rvBuiltinNames.includes(name) || rvCustomNames.includes(name) : rvSelected.includes(name);
+      // Linked to a repo file (review.perspectives_source): the set shown is
+      // the linked one and every control is read-only, because the API
+      // refuses inline edits the next reload would replace (#17989).
+      const rvLinked = rv.perspectives_linked === true;
+      const rvSrc = rv.perspectives_source || {};
+      const rvSrcLabel = `${rvSrc.owner || ''}/${rvSrc.repo || ''}/${rvSrc.path || ''}${rvSrc.ref ? '@' + rvSrc.ref : ''}`;
+      const rvSrcStatus = rv.perspectives_source_status || '';
+      const rvSrcURL = /^https:\/\/github\.com\//.test(rv.perspectives_source_url || '') ? rv.perspectives_source_url : '';
+      const rvLinkedBanner = !rvLinked ? '' : `<div class="rv-perspectives-linked">
+              <div>Linked to ${rvSrcURL ? `<a href="${esc(rvSrcURL)}" target="_blank" rel="noopener noreferrer"><code>${esc(rvSrcLabel)}</code> &#8599;</a>` : `<code>${esc(rvSrcLabel)}</code>`} ${yamlHint('review.perspectives_source')} <span class="text-muted">&mdash; read-only here; change the perspectives in that file, or remove the link from hive.yaml to edit them inline.</span></div>
+              <div class="rv-perspectives-linked-status">${rvSrcStatus === 'unresolved' ? 'Not resolved yet (repo unreachable, not allowlisted, or invalid) &mdash; the inline perspectives below are in effect.' : `Status: <code>${esc(rvSrcStatus)}</code>`}</div>
+              ${rv.perspectives_source_warning ? `<div class="rv-perspectives-linked-warning">&#9888; ${esc(rv.perspectives_source_warning)}</div>` : ''}
+            </div>`;
+      const rvLockAttr = rvLinked ? ' disabled' : '';
       const rvPerspectiveRow = (name, defaultFocus) => {
         const custom = rvPrompts[name] || '';
         const isCustom = !rvBuiltinNames.includes(name);
         return `<div class="rv-perspective" data-perspective="${esc(name)}" style="margin-top:var(--sp-4);padding:8px 10px;border:1px solid var(--border);border-radius:var(--r)">
-            <label style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;font-weight:600;font-size:0.8rem">
-              <input type="checkbox" class="rv-perspective-on" ${rvIsOn(name) ? 'checked' : ''} data-change-action="gh91">
+            <label style="display:flex;align-items:center;gap:var(--sp-4);cursor:${rvLinked ? 'default' : 'pointer'};font-weight:600;font-size:0.8rem">
+              <input type="checkbox" class="rv-perspective-on" ${rvIsOn(name) ? 'checked' : ''}${rvLockAttr} data-change-action="gh91">
               <code>${esc(name)}</code>${isCustom ? ' <span style="font-size:var(--fs-xs);color:var(--muted);font-weight:400">custom</span>' : ''}
-              ${isCustom ? `<button type="button" class="hv-btn btn-secondary btn-sm btn-small btn-primary" data-action="gh93" data-arg0="${esc(name)}" data-arg-types="s">remove</button>` : ''}
+              ${isCustom && !rvLinked ? `<button type="button" class="hv-btn btn-secondary btn-sm btn-small btn-primary" data-action="gh93" data-arg0="${esc(name)}" data-arg-types="s">remove</button>` : ''}
             </label>
-            <textarea class="rv-perspective-focus" rows="2" style="width:100%;margin-top:var(--sp-3);font-size:0.76rem" placeholder="${esc(defaultFocus || 'what should this perspective look for?')}" data-change-action="gh92">${esc(custom)}</textarea>
-            ${defaultFocus ? `<p style="font-size:var(--fs-xs);color:var(--muted);margin:3px 0 0">Built-in: ${esc(defaultFocus)}${custom ? ' — <a href="#" data-action="gh94" data-prevent="1" data-arg0="' + esc(name) + '" data-arg-types="s">use built-in</a>' : ''}</p>` : ''}
+            <textarea class="rv-perspective-focus" rows="2" style="width:100%;margin-top:var(--sp-3);font-size:0.76rem" placeholder="${esc(defaultFocus || 'what should this perspective look for?')}"${rvLockAttr} data-change-action="gh92">${esc(custom)}</textarea>
+            ${defaultFocus ? `<p style="font-size:var(--fs-xs);color:var(--muted);margin:3px 0 0">Built-in: ${esc(defaultFocus)}${custom && !rvLinked ? ' — <a href="#" data-action="gh94" data-prevent="1" data-arg0="' + esc(name) + '" data-arg-types="s">use built-in</a>' : ''}</p>` : ''}
           </div>`;
       };
       const rvRec = rv.recommendations || {};
@@ -72762,13 +73489,14 @@ function burnAreaChart() {
           </div>
           <div id="rv-perspectives" style="margin-top:10px">
             <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-2)">Which questions the reviewer asks of every PR, and what each one looks for. Edit the text to tell this hive&apos;s reviewer what matters in <em>your</em> repos &mdash; e.g. name the conventions doc for <code>style</code>. Blank means the built-in. Unchecking a perspective stops it running and stops its verdicts being accepted.</p>
+            ${rvLinkedBanner}
             ${rvBuiltin.map(b => rvPerspectiveRow(b.name, b.focus)).join('')}
             ${rvCustomNames.map(n => rvPerspectiveRow(n, '')).join('')}
-            <div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-4);align-items:center">
+            ${rvLinked ? '' : `<div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-4);align-items:center">
               <input type="text" id="rv-new-perspective" placeholder="new perspective, e.g. api-compatibility" style="flex:1;font-size:0.76rem" pattern="[a-z][a-z0-9]*(-[a-z0-9]+)*">
               <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh95">Add perspective</button>
             </div>
-            <p style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">A new perspective needs focus text before it can be saved. Names: lowercase letters, digits, single dashes.</p>
+            <p style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">A new perspective needs focus text before it can be saved. Names: lowercase letters, digits, single dashes.</p>`}
           </div>
           <div class="config-subgroup">Reviewers</div>
           <div class="config-field" id="rv-reviewer-agents">

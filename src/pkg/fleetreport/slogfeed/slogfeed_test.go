@@ -84,6 +84,24 @@ func TestSignedCommitOwnershipSkipStaysInLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestClaudeCredentialRebridgeStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for range 6 {
+		logger.Warn(claudeCredentialRebridgedMessage, "agent", "reviewer", "trigger", "watchdog", "kept", "shared")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("completed re-bridges produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "re-bridged"); n != 6 {
+		t.Fatalf("local logs lost the re-bridge warning: got %d, want 6: %s", n, out.String())
+	}
+	logger.Warn("claude credential bridge: repair failed", "agent", "reviewer", "error", "restore credential symlink: file exists")
+	logger.Error(claudeCredentialRebridgedMessage, "agent", "reviewer")
+	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated || (*seen)[1].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("failed repairs must remain reportable: %+v", *seen)
+	}
+}
+
 func TestCanceledStageDigestStaysLocal(t *testing.T) {
 	logger, seen, out := newFeed(t)
 	const msg = "stage labels: check digest failed"

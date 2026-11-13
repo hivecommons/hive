@@ -90,6 +90,10 @@ env:
 
 Without `HIVE_HUB_SECRET`, a protected hub returns `401 unauthorized`, the spoke logs `hub heartbeat rejected status=401`, and the hub shows the hive offline. This matches the gotcha in `manual-provisioning.md`.
 
+### Reserved `byo-` hive IDs (credential fence)
+
+Hive IDs that start with `byo-` are reserved for hives that their owners run and register themselves ([#18060](https://github.com/hivecommons/hive/issues/18060)). A hub lists such a hive as directory metadata only, so its heartbeat response never carries hub-held credentials or management actions, whatever key the spoke authenticated with. The hub withholds these fields: the GitHub App config (including cluster, secondary and webhook relay keys), the pending gateway, the claimed project config, the cluster ID, the authorized-user list, visibility, upgrade and branch-switch instructions, the upgrade announcement and policy, spoke restarts, agent-restart resets, fleet-breaker instructions, and self-experiment flags. Display-only data such as admin banners still flows. When the fence withholds a field, the hub logs `heartbeat: credential fence withheld fields from self-service hive` with the field names, never the values. Do not give an operator-provisioned hive a `byo-` ID.
+
 ## Hosted spoke provisioning model
 
 The hub's SaaS provisioner creates or records:

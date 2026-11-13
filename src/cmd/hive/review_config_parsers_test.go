@@ -94,6 +94,26 @@ func TestReviewPerspectiveSet(t *testing.T) {
 		}
 	})
 
+	t.Run("linked perspectives win over inline", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Review.Perspectives = []string{"correctness"}
+		cfg.Review.PerspectivesSource = &config.DefinitionSourceConfig{Owner: "torch-spyre", Repo: "spyre-inference", Path: ".hive/review-perspectives.yaml"}
+		cfg.Review.LinkedPerspectives = &config.LinkedPerspectives{
+			Names: []string{"security", "spyre-numerics"},
+			Focus: map[string]string{"spyre-numerics": "Silent CPU fallbacks and fp16 accumulation-order changes."},
+		}
+		got := reviewPerspectiveSet(cfg, nil).List()
+		want := []review.Perspective{review.PerspectiveSecurity, review.Perspective("spyre-numerics")}
+		if len(got) != len(want) {
+			t.Fatalf("List() = %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("List()[%d] = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
 	t.Run("invalid selection with nil logger does not panic", func(t *testing.T) {
 		cfg := &config.Config{}
 		cfg.Review.Perspectives = []string{"sekurity"}

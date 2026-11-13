@@ -449,6 +449,7 @@ func BuildFrontendStatus(
 		Governor:              buildGovernorWithLaneDepths(govState, cfg, buildLaneQueueDepths(cfg, actionable), apiBudgetFromRateLimits(ghRateLimits)),
 		Tokens:                buildTokens(tokenCollector),
 		Repos:                 repos,
+		ReferenceRepos:        buildReferenceRepos(cfg),
 		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable) || overviewStaleSince(repos) != "",
 		StaleSince:            earliestRFC3339(staleSinceRFC3339(actionable), overviewStaleSince(repos)),
 		RestartRefresh:        restartRefreshInfo(actionable, repos),
@@ -2499,6 +2500,20 @@ func repoForge(cfg *config.Config, repo string) (kind, url string) {
 
 func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govState governor.State) []FrontendRepo {
 	return buildReposWithForge(cfg, actionable, govState, nil)
+}
+
+// buildReferenceRepos lists project.reference_repos with their tier for the
+// dashboard's minimal reference cards (hivecommons/hive#18015).
+func buildReferenceRepos(cfg *config.Config) []FrontendReferenceRepo {
+	if cfg == nil || len(cfg.Project.ReferenceRepos) == 0 {
+		return nil
+	}
+	out := make([]FrontendReferenceRepo, 0, len(cfg.Project.ReferenceRepos))
+	for _, rr := range cfg.Project.ReferenceRepos {
+		tier := rr.WriteLabel()
+		out = append(out, FrontendReferenceRepo{Full: rr.Repo, Tier: tier, ReferenceTier: tier})
+	}
+	return out
 }
 
 func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult, govState governor.State, forge forgeOpenCounter) []FrontendRepo {

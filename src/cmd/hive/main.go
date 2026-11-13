@@ -72,6 +72,7 @@ import (
 	"github.com/hivecommons/hive/pkg/nousengine"
 	"github.com/hivecommons/hive/pkg/nousstore"
 	"github.com/hivecommons/hive/pkg/persona"
+	"github.com/hivecommons/hive/pkg/perspsrc"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/promptsrc"
@@ -1330,7 +1331,9 @@ func (b *boot) wireBootClosures() {
 				if b.ghClient == nil {
 					return
 				}
-				installReviewRelaySettings(b.ghClient, b.cfg, b.logger)
+				// LinkedPerspectives is runtime-only, so re-resolve it before
+				// the relay reinstall or a dashboard PUT would drop the link.
+				applyReviewPerspectivesSource(context.Background(), b.cfg, b.perspectivesResolver, b.ghClient, b.logger)
 				// review_bots.min_priority and fix_human_prs are edited
 				// through the same PUT; reinstall so the thread reconciler
 				// applies them without a restart (#10481).
@@ -1503,6 +1506,18 @@ func (b *boot) bootGitHubWith(deps bootGitHubDeps) {
 	// The same function every rebuild path uses (#9614). Only the tiers whose
 	// dependencies exist yet apply here; bootAdvisory, bootAgents and
 	// bootDashboard apply the rest as those dependencies come up.
+	// Resolve review.perspectives_source before the first relay install so
+	// the relay never boots on a set the link has since replaced.
+	var persFetcher defsrc.Fetcher
+	if b.ghClient != nil {
+		persFetcher = b.ghClient
+	}
+	b.perspectivesResolver = perspsrc.NewResolver(
+		persFetcher,
+		func(slug string) bool { return b.cfg.GitHubPromptAllowed(slug) },
+		b.logger,
+	)
+	perspsrc.ApplyToConfig(b.ctx, b.cfg, b.perspectivesResolver, b.logger)
 	b.configureGitHubClient(b.ghClient)
 	// Long-lived consumers read the client through this provider, never a
 	// captured b.ghClient, so every rebuild reaches them (#9621).
@@ -3311,11 +3326,19 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			FilePath: doc.FilePath,
 			Layer:    knowledge.LayerType(doc.Layer),
 		}
-		meta, err := b.knowledgeAPI.ImportDocument(b.ctx, docConfig)
+		// EnsureDocument keeps a document already reloaded from disk and
+		// re-imports one whose on-disk state is gone, so a configured
+		// document survives an upgrade the way git sources do (#18058).
+		meta, imported, err := b.knowledgeAPI.EnsureDocument(b.ctx, docConfig)
 		if err != nil {
 			b.logger.Warn("failed to import document source",
 				"name", doc.Name,
 				"error", err,
+			)
+		} else if !imported {
+			b.logger.Debug("document source already loaded",
+				"name", doc.Name,
+				"facts", meta.FactCount,
 			)
 		} else {
 			b.logger.Info("document source imported",
@@ -4151,6 +4174,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		// fields; a fetch failure keeps each agent's baked definition. Runs before
 		// initAgentConfigDrivenSystems so downstream systems see the merged config.
 		defsrc.ApplyToConfig(context.Background(), b.cfg, b.definitionResolver, b.logger)
+		applyReviewPerspectivesSource(context.Background(), b.cfg, b.perspectivesResolver, b.ghClient, b.logger)
 		if err := b.cfg.ExpandAgentReplicas(); err != nil {
 			b.logger.Warn("failed to expand agent replicas after config reload", "error", err)
 		}
@@ -4386,6 +4410,10 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// unconditionally: with HIVE_PROXY_INJECT_GH_AUTH unset (the default)
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
+		// project.reference_repos (#18015): study-only repos outside the
+		// project, with a rare per-entry issues/prs opt-in served by a
+		// credential verified here (boot refuses otherwise).
+		b.wireReferenceRepos()
 		// Durable attempted-vs-blocked write counters (#12069); observation only.
 		if err := proxy.MigrateWriteCounters(proxy.LegacyWriteCountersPath, proxy.WriteCountersPath, time.Now()); err != nil {
 			b.logger.Warn("write counters: legacy file not migrated", "error", err)
@@ -5967,6 +5995,16 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						"app_id", b.cfg.GitHub.AppID,
 						"installation_id", b.cfg.GitHub.InstallationID,
 					)
+				} else if discoveryAppAuthStale(b.appAuth, b.cfg.GitHub, rebuildKeyFile) {
+					// A real App with no installation yet (forge switch on claim):
+					// give installation discovery the NEW App's JWT so it polls
+					// the forge the repos actually live on.
+					newAppAuth, err := github.NewAppAuth(b.cfg.GitHub.AppID, 0, rebuildKeyFile, b.logger, b.cfg.GitHub.ResolvedAPIURL())
+					if err != nil {
+						b.logger.Error("github app auth init for installation discovery failed", "error", err)
+						return
+					}
+					b.adoptDiscoveryAppAuth(newAppAuth)
 				}
 
 			}),

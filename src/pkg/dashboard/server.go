@@ -733,10 +733,14 @@ type StatusPayload struct {
 	YourTurn *FrontendYourTurn `json:"yourTurn,omitempty"`
 	Tokens   FrontendTokens    `json:"tokens"`
 	Repos    []FrontendRepo    `json:"repos"`
-	Swarm    SwarmStatus       `json:"swarm"`
-	Beads    FrontendBeads     `json:"beads"`
-	Planning FrontendPlanning  `json:"planning"`
-	Runs     []RunSummary      `json:"runs"`
+	// ReferenceRepos are project.reference_repos (hivecommons/hive#18015):
+	// studied, not worked. Kept apart from Repos so no queue, ACMM or
+	// work-item consumer ever treats one as managed.
+	ReferenceRepos []FrontendReferenceRepo `json:"referenceRepos,omitempty"`
+	Swarm          SwarmStatus             `json:"swarm"`
+	Beads          FrontendBeads           `json:"beads"`
+	Planning       FrontendPlanning        `json:"planning"`
+	Runs           []RunSummary            `json:"runs"`
 	// RunHistory is the bounded public run block (#8349): live runs plus the
 	// most recent finished ones, titles scrubbed. Omitted (nil) when the run
 	// registry is unavailable so snapshot consumers render unknown, not zero.
@@ -1343,6 +1347,17 @@ type FrontendRestartRefresh struct {
 	// fresh read this process; ReposTotal is the unpaused configured count.
 	ReposScanned int `json:"reposScanned"`
 	ReposTotal   int `json:"reposTotal"`
+}
+
+// FrontendReferenceRepo is one project.reference_repos entry for the repos
+// card: the slug and its tier ("read-only", "issues", "prs", "issues+prs").
+// It deliberately carries no ACMM, work-item or pause fields (#18021).
+type FrontendReferenceRepo struct {
+	Full string `json:"full"`
+	Tier string `json:"tier"`
+	// ReferenceTier repeats Tier under the name API consumers key on to tell
+	// a reference entry from a managed repo row (hivecommons/hive#18021).
+	ReferenceTier string `json:"reference_tier"`
 }
 
 type FrontendRepo struct {
@@ -3473,6 +3488,16 @@ func (s *Server) ClearPendingGitHubAppInstall() {
 func (s *Server) UpdateGitHubClient(client *github.Client, auth *github.AppAuth) {
 	if s.deps != nil {
 		s.deps.GHClient = client
+		s.deps.GHAppAuth = auth
+	}
+}
+
+// UpdateGitHubAppAuth swaps only the App credential the installation-discovery
+// loop polls with, leaving the client untouched. Used when a hub delivery names
+// a new App (or forge) whose installation is not known yet, so discovery asks
+// the right forge instead of the one the pod booted against.
+func (s *Server) UpdateGitHubAppAuth(auth *github.AppAuth) {
+	if s.deps != nil {
 		s.deps.GHAppAuth = auth
 	}
 }

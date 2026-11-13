@@ -495,6 +495,9 @@ Not reachable:
   credentials (`config_effective_read` is the vetted view of the effective
   configuration and its provenance);
 - an agent's export bundle (the `agent` and `agent_prompt` sections hold it);
+- the GitHub webhook setup card, which probes the GitHub App's hook
+  permissions live on every read (webhook verification and health are in
+  `/api/status`);
 - the theme and sidebar, which are purely presentational.
 
 A test fails when the dashboard serves a new `GET /api/config` route that is

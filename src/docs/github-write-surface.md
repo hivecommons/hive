@@ -272,6 +272,21 @@ A refused request is handled like every other policy denial:
 
 Refusals are not counted as output activity.
 
+## Reference repos
+
+`project.reference_repos` ([#18015](https://github.com/hivecommons/hive/issues/18015))
+names repos *outside* the project an agent may study. They are not part of
+the write surface at all by default: the proxy strips the hive's App token
+from every request to them and refuses every non-GET with a message naming
+`reference_repos`. A per-entry `write: [issues, prs]` opt-in unlocks exactly
+three direct writes on that repo — open an issue, open a PR / push a topic
+branch, comment on the hive's own issue or PR — sent with a credential valid
+for *that* repo (the App installed on the target org, or `write_token_file`).
+Merge, default-branch push, labels, assignees, reviews and closing others'
+items stay refused. The relays never act on a reference repo, so a lane under
+`write_surface.enforce` cannot write to one. See the
+[operator reference](operator-reference/README.md#configuration-blocks).
+
 ## Enforcing the write surface
 
 `write_surface.enforce` lists the lanes whose **direct** GitHub writes from the

@@ -27,6 +27,7 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/perspsrc"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/rotation"
@@ -2062,6 +2063,15 @@ func reviewAuthorBase(cfg *config.Config, agent string) string {
 	return agent
 }
 
+// applyReviewPerspectivesSource re-resolves review.perspectives_source and
+// reinstalls the relay settings, so the relay validates verdicts against the
+// set the link now names rather than the one it booted with. With no source
+// set it fetches nothing and the inline set stands.
+func applyReviewPerspectivesSource(ctx context.Context, cfg *config.Config, resolver *perspsrc.Resolver, client *github.Client, logger *slog.Logger) {
+	perspsrc.ApplyToConfig(ctx, cfg, resolver, logger)
+	installReviewRelaySettings(client, cfg, logger)
+}
+
 // installReviewRelaySettings gives a (possibly rebuilt) GitHub client the
 // review-relay knobs that live in cfg.Review: which repos may be revised in
 // place, which perspectives a verdict may name, and whether comments carry a
@@ -2337,7 +2347,9 @@ func applyHumanDecisionLabels(ctx context.Context, cfg *config.Config, ghClient 
 // silently becomes the current time would re-open every verdict in the
 // artifact at once — the opposite of the narrow, deliberate correction this
 // setting exists for.
-// reviewPerspectiveSet resolves the hive's configured review perspectives.
+// reviewPerspectiveSet resolves the hive's configured review perspectives: the
+// set linked from review.perspectives_source when one has resolved, otherwise
+// the inline review.perspectives (ReviewConfig.EffectivePerspectives).
 //
 // A bad configuration falls back to the built-in set and says so, rather than
 // disabling review. Silently reviewing nothing would look identical to a healthy
@@ -2347,7 +2359,7 @@ func reviewPerspectiveSet(cfg *config.Config, logger *slog.Logger) review.Perspe
 	if cfg == nil {
 		return review.PerspectiveSet{}
 	}
-	set, err := review.NewPerspectiveSet(cfg.Review.Perspectives, cfg.Review.PerspectivePrompts)
+	set, err := review.NewPerspectiveSet(cfg.Review.EffectivePerspectives())
 	if err != nil {
 		if logger != nil {
 			logger.Warn("review.perspectives is invalid; reviewing with the built-in set until it is fixed",

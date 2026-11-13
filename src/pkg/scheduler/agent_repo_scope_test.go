@@ -243,3 +243,130 @@ func TestFilterIssuesForRepos(t *testing.T) {
 		t.Errorf("filterIssuesForRepos = %v, want the b issue", got)
 	}
 }
+
+// project.reference_repos (hivecommons/hive#18015): the kick names each
+// reference repo with its tier and tells the agent an item whose deliverables
+// mention one is in scope, so the scanner stops classifying it out-of-scope.
+func TestBuildReposSectionFor_ReferenceRepos(t *testing.T) {
+	s := scopeScheduler(t, map[string]config.AgentConfig{"scanner": {Backend: "claude"}})
+	s.cfg.Project.ReferenceRepos = []config.ReferenceRepo{
+		{Repo: "hivecommons/docs"},
+		{Repo: "hivecommons/hive", Write: []string{"issues", "prs"}},
+	}
+	section := s.buildReposSectionFor("scanner")
+	for _, want := range []string{
+		"REFERENCE REPOS",
+		"https://github.com/hivecommons/docs  [reference · read-only]",
+		"https://github.com/hivecommons/hive  [reference · issues+prs]",
+		"IN SCOPE, not a scope violation",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%q missing:\n%s", want, section)
+		}
+	}
+	// A hive without the key sees no trace of it.
+	s.cfg.Project.ReferenceRepos = nil
+	if strings.Contains(s.buildReposSectionFor("scanner"), "REFERENCE REPOS") {
+		t.Error("reference block emitted with no reference repos configured")
+	}
+}
+
+// referenceReposGolden is the exact 📚 REFERENCE REPOS block for one
+// read-only entry and one issues+prs entry (hivecommons/hive#18020). It is a
+// golden on purpose: this wording is the only thing that tells the scanner an
+// item citing a reference repo is in scope, so a change to it must be a
+// deliberate edit here, not a side effect.
+const referenceReposGolden = "📚 REFERENCE REPOS (outside this project — study them, do not work them):\n" +
+	"  https://github.com/hivecommons/docs  [reference · read-only]\n" +
+	"  https://github.com/hivecommons/hive  [reference · issues+prs]\n" +
+	"   You MAY clone them (public, unauthenticated), read their files, and GET their issues/PRs/API. " +
+	"An authorized-repo item whose deliverables name a reference repo is IN SCOPE, not a scope violation: " +
+	"do NOT classify it out-of-scope, critical, or a security concern. " +
+	"Findings about a reference repo belong in the deliverable inside the AUTHORIZED repo (the assessment document, the report), " +
+	"never as issues or PRs on the reference repo itself — unless its tier above says issues/prs, in which case you may ONLY open an issue, " +
+	"open a PR from your own branch, or comment on an issue/PR you opened; the proxy refuses merges, default-branch pushes, labels, assignments, " +
+	"reviews and closing others' items deterministically, so retrying cannot succeed.\n"
+
+func TestBuildReposSectionFor_ReferenceReposGolden(t *testing.T) {
+	s := scopeScheduler(t, map[string]config.AgentConfig{"scanner": {Backend: "claude"}})
+	s.cfg.Project.ReferenceRepos = []config.ReferenceRepo{
+		{Repo: "hivecommons/docs"},
+		{Repo: "hivecommons/hive", Write: []string{"issues", "prs"}},
+	}
+	section := s.buildReposSectionFor("scanner")
+	start := strings.Index(section, "📚 REFERENCE REPOS")
+	end := strings.Index(section, "⛔ NEVER access")
+	if start < 0 || end < 0 || end < start {
+		t.Fatalf("reference block must precede the ⛔ scope line (start=%d end=%d):\n%s", start, end, section)
+	}
+	if got := section[start:end]; got != referenceReposGolden {
+		t.Errorf("reference block drifted from the golden:\n--- got\n%s\n--- want\n%s", got, referenceReposGolden)
+	}
+	// It belongs to the scope list, after the authorized repos: "repos not
+	// listed above" must include the reference repos.
+	if auth := strings.Index(section, "AUTHORIZED REPOS"); auth < 0 || auth > start {
+		t.Errorf("reference block must follow AUTHORIZED REPOS:\n%s", section)
+	}
+}
+
+// Each tier renders on its own: a read-only-only hive never advertises a
+// write tier, and an issues-only or prs-only entry prints exactly that tier.
+func TestBuildReposSectionFor_ReferenceRepoTiers(t *testing.T) {
+	for _, tc := range []struct {
+		write []string
+		label string
+	}{
+		{nil, "read-only"},
+		{[]string{"issues"}, "issues"},
+		{[]string{"prs"}, "prs"},
+		{[]string{"prs", "issues"}, "issues+prs"},
+	} {
+		s := scopeScheduler(t, map[string]config.AgentConfig{"scanner": {Backend: "claude"}})
+		s.cfg.Project.ReferenceRepos = []config.ReferenceRepo{{Repo: "cncf/landscape", Write: tc.write}}
+		section := s.buildReposSectionFor("scanner")
+		want := "  https://github.com/cncf/landscape  [reference · " + tc.label + "]\n"
+		if !strings.Contains(section, want) {
+			t.Errorf("write=%v: %q missing:\n%s", tc.write, want, section)
+		}
+		if !strings.Contains(section, "IN SCOPE, not a scope violation") {
+			t.Errorf("write=%v: in-scope rule missing:\n%s", tc.write, section)
+		}
+	}
+}
+
+// The cncf/techdocs#395 shape: the hive's only authorized repo is the docs
+// repo, and the item's deliverables cite reference repos only. The kick the
+// scanner reads lists those repos inside the scope block and tells it the
+// item is in scope — the scope classification is the scanner's, driven by
+// this text, so this is the classifier contract.
+func TestBuildReposSectionFor_ItemCitingOnlyReferenceReposIsInScope(t *testing.T) {
+	s := scopeScheduler(t, map[string]config.AgentConfig{"scanner": {Backend: "claude"}})
+	s.cfg.Project.Org = "cncf"
+	s.cfg.Project.Repos = []string{"techdocs"}
+	s.cfg.Project.PrimaryRepo = "techdocs"
+	s.cfg.Project.ReferenceRepos = []config.ReferenceRepo{
+		{Repo: "hivecommons/docs"},
+		{Repo: "hivecommons/hivecommons.github.io"},
+		{Repo: "hivecommons/hive"},
+	}
+	section := s.buildReposSectionFor("scanner")
+	never := strings.Index(section, "⛔ NEVER access")
+	if never < 0 {
+		t.Fatalf("scope line missing:\n%s", section)
+	}
+	for _, cited := range []string{"hivecommons/docs", "hivecommons/hivecommons.github.io", "hivecommons/hive"} {
+		at := strings.Index(section, "https://github.com/"+cited+"  [reference · read-only]")
+		if at < 0 || at > never {
+			t.Errorf("%s must be listed above the ⛔ scope line so it is not 'a repo not listed above':\n%s", cited, section)
+		}
+	}
+	for _, want := range []string{
+		"https://github.com/cncf/techdocs\n",
+		"do NOT classify it out-of-scope, critical, or a security concern",
+		"Findings about a reference repo belong in the deliverable inside the AUTHORIZED repo",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%q missing:\n%s", want, section)
+		}
+	}
+}

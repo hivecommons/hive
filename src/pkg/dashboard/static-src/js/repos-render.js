@@ -2,6 +2,7 @@
       refreshSectionCardShell('repos-section');
       if (_repoResizeDrag || _repoOrderDrag) return;
       repos = repoOrderApply(repos || []);
+      noteRepoHoldLayout(repos, Date.now());
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
       const showDesign = showPlan && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
@@ -395,10 +396,35 @@
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.changesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
           </div>${laneHtml}${collapseHtml}${pillsHtml}${hfRepoSectionHtml(r)}
         </div>`;
-      }).join(''));
+      }).join('') + renderReferenceRepoCards(status.referenceRepos, hostLabel));
       hfRenderEditor();
       hfRenderPinned();
       hfRenderCrossRepo();
+    }
+
+    /**
+     * project.reference_repos (#18015): repos outside the project the hive may
+     * study. Deliberately minimal — a name and a tier chip, no stats, no ACMM,
+     * no pause/swarm controls — so they are legible as "not managed here".
+     * Hidden while a pill or project filter is active (they have no work items
+     * to match).
+     */
+    function renderReferenceRepoCards(refs, hostLabel) {
+      if (!Array.isArray(refs) || !refs.length) return '';
+      if (repoPillFilterActive(repoPillFilterState()) || overviewProjectFilterState()) return '';
+      const base = window._githubBaseUrl || 'https://github.com';
+      return refs.map(rr => {
+        const full = String(rr.full || '');
+        const tier = String(rr.reference_tier || rr.tier || 'read-only');
+        const tip = tier === 'read-only'
+          ? 'Reference repo: agents may clone and read it; every write is refused by the proxy.'
+          : `Reference repo: agents may clone and read it, and may open ${tier.replace('+', ' and ')} (never merge, push to the default branch, label, assign, review, or close others' items).`;
+        return `<div class="repo-card repo-card-reference" data-repo="${esc(full)}">
+          <div class="repo-provider-label repo-reference-provider" title="This repo lives on ${esc(hostLabel)} and is outside this project">${esc(hostLabel)}</div>
+          <div class="repo-name"><a class="repo-reference-link" href="${esc(base + '/' + full)}" target="_blank" rel="noopener" title="${esc(full)}">${esc(full)}</a><span class="repo-header-badges"><span class="repo-reference-pill" title="${esc(tip)}">📚 reference · ${esc(tier)}</span></span></div>
+          <div class="repo-reference-note">Outside this project — studied, not worked. No work items, no ACMM evaluation.</div>
+        </div>`;
+      }).join('');
     }
 
     /**
