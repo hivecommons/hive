@@ -105,12 +105,17 @@ type selfServiceStore struct {
 	mu    sync.RWMutex
 	path  string
 	hives map[string]*SelfServiceHive
+	// stampPersisted is, per hive, the LastAcceptedHeartbeatAt value last
+	// written to disk; noteAcceptedHeartbeat debounces against it, not against
+	// the in-memory stamp, so a steady stream of beats still flushes once per
+	// selfServiceHeartbeatStampInterval.
+	stampPersisted map[string]time.Time
 	// now is injectable for rotation-overlap tests; nil means time.Now.
 	now func() time.Time
 }
 
 func newSelfServiceStore(path string) *selfServiceStore {
-	return &selfServiceStore{path: path, hives: make(map[string]*SelfServiceHive)}
+	return &selfServiceStore{path: path, hives: make(map[string]*SelfServiceHive), stampPersisted: make(map[string]time.Time)}
 }
 
 func (st *selfServiceStore) clock() time.Time {
@@ -145,12 +150,16 @@ func (st *selfServiceStore) load() error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	st.hives = make(map[string]*SelfServiceHive, len(file.Hives))
+	st.stampPersisted = make(map[string]time.Time, len(file.Hives))
 	for i := range file.Hives {
 		h := file.Hives[i]
 		if h.ID == "" {
 			continue
 		}
 		st.hives[h.ID] = &h
+		if !h.LastAcceptedHeartbeatAt.IsZero() {
+			st.stampPersisted[h.ID] = h.LastAcceptedHeartbeatAt
+		}
 	}
 	return nil
 }
@@ -278,6 +287,7 @@ func (st *selfServiceStore) revoke(id string) (bool, error) {
 		st.hives[id] = h
 		return false, err
 	}
+	delete(st.stampPersisted, id)
 	return true, nil
 }
 
@@ -348,10 +358,14 @@ func (st *selfServiceStore) noteAcceptedHeartbeat(id string, now time.Time) erro
 	if !ok {
 		return nil
 	}
-	prev := h.LastAcceptedHeartbeatAt
 	h.LastAcceptedHeartbeatAt = now.UTC()
-	if !prev.IsZero() && now.Sub(prev) < selfServiceHeartbeatStampInterval {
+	persisted, wasPersisted := st.stampPersisted[id]
+	if wasPersisted && now.Sub(persisted) < selfServiceHeartbeatStampInterval {
 		return nil
 	}
-	return st.saveLocked()
+	if err := st.saveLocked(); err != nil {
+		return err
+	}
+	st.stampPersisted[id] = now.UTC()
+	return nil
 }
