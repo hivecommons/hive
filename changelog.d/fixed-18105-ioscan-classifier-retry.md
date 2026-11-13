@@ -1,1 +1,0 @@
-- The ioscan classifier now retries a single transient model-endpoint failure (HTTP 429/5xx or a dropped connection) before applying its fail mode, so one gateway blip no longer passes untrusted text on unclassified or withholds it ([#18105](https://github.com/hivecommons/hive/issues/18105)).
