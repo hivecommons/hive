@@ -794,3 +794,74 @@ func TestAuthorThumbsDownStillHandsToHumanWithOpenSubIssues(t *testing.T) {
 		t.Fatalf("outcome = %q, want %q", s.Outcome, OutcomeKeptOpen)
 	}
 }
+
+// A settled answer is remembered for settledRetention only. Once that record
+// is pruned, the next read of the issue schedules the same answer again with
+// its deadline already past, and the tick after that judges it afresh: it
+// settles again without a close while a sub-issue is still open, and closes
+// like any answered question once they are all closed.
+func TestOpenSubIssuesAnswerIsJudgedAgainAfterTheSettledRecordIsPruned(t *testing.T) {
+	cases := []struct {
+		name        string
+		stillOpen   int
+		wantOutcome string
+		wantCloses  int
+	}{
+		{name: "a sub-issue is still open", stillOpen: 1, wantOutcome: OutcomeOpenSubIssues},
+		{name: "every sub-issue is closed", wantOutcome: OutcomeClosed, wantCloses: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := &fakeTracker{thread: answeredThread()}
+			c := &clock{now: t0.Add(time.Minute)}
+			m := newManager(t, "", enabledSettings(), tr, c)
+			scheduleOne(t, m, c)
+
+			tr.thread.OpenSubIssues = 2
+			c.now = t0.Add(testWindow)
+			if rep := m.Tick(context.Background()); rep.Cancelled != 1 || len(tr.closes) != 0 {
+				t.Fatalf("first deadline must settle without a close: %+v closes=%d", rep, len(tr.closes))
+			}
+
+			// Past the retention the record is pruned, and new activity on
+			// the issue makes the manager read it: the same answer is
+			// scheduled again, its deadline long past.
+			c.now = t0.Add(testWindow + settledRetention + time.Minute)
+			m.Offer([]github.Issue{questionIssue(c.now)})
+			if rep := m.Tick(context.Background()); rep != (Report{Scheduled: 1}) {
+				t.Fatalf("after the prune the answer must be scheduled again and nothing else: %+v", rep)
+			}
+			if _, ok := m.SettledFor(testRepo, testIssue); ok {
+				t.Fatal("the settled record must be pruned after the retention")
+			}
+			got := m.Scheduled()
+			if len(got) != 1 || got[0].AnswerCommentID != answerID || !got[0].Deadline.Before(c.now) {
+				t.Fatalf("scheduled = %+v, want the same answer with a deadline already past", got)
+			}
+			if len(tr.closes) != 0 {
+				t.Fatalf("scheduling must not close: closes=%d", len(tr.closes))
+			}
+
+			// The following tick judges it.
+			tr.thread.OpenSubIssues = tc.stillOpen
+			c.now = c.now.Add(DefaultTickInterval)
+			rep := m.Tick(context.Background())
+			if len(tr.closes) != tc.wantCloses || len(tr.addedLabels) != 0 {
+				t.Fatalf("closes = %d, want %d; labels = %v, want none (%+v)", len(tr.closes), tc.wantCloses, tr.addedLabels, rep)
+			}
+			if rep.Closed != tc.wantCloses || rep.Cancelled != 1-tc.wantCloses {
+				t.Fatalf("report = %+v, want closed=%d cancelled=%d", rep, tc.wantCloses, 1-tc.wantCloses)
+			}
+			s, ok := m.SettledFor(testRepo, testIssue)
+			if !ok || s.Outcome != tc.wantOutcome || !s.At.Equal(c.now) {
+				t.Fatalf("settled = %+v %v, want outcome %q at this tick", s, ok, tc.wantOutcome)
+			}
+			if tc.wantCloses == 1 && tr.closes[0].StateReason != github.IssueStateReasonCompleted {
+				t.Fatalf("close options = %+v, want state_reason completed", tr.closes[0])
+			}
+			if len(m.Scheduled()) != 0 {
+				t.Fatal("a judged answer must leave the schedule")
+			}
+		})
+	}
+}

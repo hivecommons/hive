@@ -23,7 +23,8 @@
 // after the answer, an external close, the question label removed, or a
 // bug/enhancement/hold/human label added. At the deadline an issue that has
 // an open GitHub sub-issue is not closed either: the schedule ends as
-// OutcomeOpenSubIssues and the issue stays open. Everything is off unless
+// OutcomeOpenSubIssues and the issue stays open. That answer is judged again
+// only after its settled record is pruned. Everything is off unless
 // governor.question_autoclose.enabled (or HIVE_QUESTION_AUTOCLOSE) says so.
 package questionclose
 
@@ -402,7 +403,12 @@ func (m *Manager) review(ctx context.Context, tr Tracker, e Entry, cand github.I
 		// that ended a schedule before still ends it the same way. The
 		// schedule is settled rather than left to retry: a later tick would
 		// only find the same open sub-issues. The answer is remembered like
-		// any other settled one, so it is not scheduled again.
+		// any other settled one, so discover does not schedule it again
+		// while that record exists (settledRetention). Once the record is
+		// pruned, the next read of the issue schedules the same answer
+		// again with its deadline already past, and the tick after that
+		// comes back here: it settles again while a sub-issue is open, and
+		// closes the question once they are all closed.
 		m.info("question-autoclose: issue has open sub-issues; leaving it open", "issue", e.Key(), "open_sub_issues", thread.OpenSubIssues)
 		m.settle(e, OutcomeOpenSubIssues, now, rep)
 		return

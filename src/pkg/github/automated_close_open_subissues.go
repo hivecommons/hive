@@ -34,8 +34,13 @@ import (
 // request. The split-parents ledger is not consulted: its only writer
 // records a child after the native sub-issue link succeeded.
 //
-// The parent is closed later by the issue stage sweep, once every sub-issue
-// is closed (closeDecomposedParent), or by a person.
+// None of the three paths comes back to the issue on its own. With stage
+// labels on (governor.labels.stage.enabled, the default) the issue stage
+// sweep closes the parent once every sub-issue is closed
+// (closeDecomposedParent); with them off that sweep does not run, and the
+// issue stays open until a person closes it. The one exception is the
+// question auto-close, which judges the same answer again after its settled
+// record is pruned (see pkg/questionclose).
 
 // automatedCloseOpenSubIssues is how many of an issue's sub-issues GitHub's
 // summary says are still open. A nil summary (the issue has no sub-issues,
