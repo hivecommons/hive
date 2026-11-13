@@ -1283,8 +1283,60 @@ func (s *Server) handleDocumentsImport(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.persistDocumentSource(req)
 	s.auditFromRequest(r, "document_import", auditDetail("name", req.Name), "")
 	jsonResponse(w, meta)
+}
+
+// persistDocumentSource records a dashboard-imported document in
+// knowledge.documents, as handleGitSourcesConnect does for git sources. The
+// document's metadata.json on the data volume was its only record, so an
+// upgrade that lost it dropped the document while config-backed git sources
+// survived (#18058); boot re-imports configured documents that are missing.
+// Context7 imports are not recorded: knowledge.documents has no context7_id
+// and Context7 has its own auto_import list.
+func (s *Server) persistDocumentSource(req knowledge.DocSourceConfig) {
+	if s.deps.Config == nil || req.Context7ID != "" {
+		return
+	}
+	slug := knowledge.DocumentSlug(req.Name)
+	for _, d := range s.deps.Config.Knowledge.Documents {
+		if knowledge.DocumentSlug(d.Name) == slug {
+			return
+		}
+	}
+	s.deps.Config.Knowledge.Documents = append(s.deps.Config.Knowledge.Documents, config.DocSourceConfigYAML{
+		Name:     req.Name,
+		URL:      req.URL,
+		FilePath: req.FilePath,
+		Layer:    string(req.Layer),
+	})
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after document import", "error", err)
+	}
+}
+
+// unpersistDocumentSource drops a deleted document from knowledge.documents
+// so boot does not re-import it.
+func (s *Server) unpersistDocumentSource(slug string) {
+	if s.deps.Config == nil {
+		return
+	}
+	docs := s.deps.Config.Knowledge.Documents
+	filtered := make([]config.DocSourceConfigYAML, 0, len(docs))
+	for _, d := range docs {
+		if knowledge.DocumentSlug(d.Name) == slug {
+			continue
+		}
+		filtered = append(filtered, d)
+	}
+	if len(filtered) == len(docs) {
+		return
+	}
+	s.deps.Config.Knowledge.Documents = filtered
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after document delete", "error", err)
+	}
 }
 
 func (s *Server) handleDocumentGet(w http.ResponseWriter, r *http.Request) {
@@ -1313,6 +1365,7 @@ func (s *Server) handleDocumentDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	s.unpersistDocumentSource(slug)
 	s.auditFromRequest(r, "document_delete", auditDetail("slug", slug), "")
 	okResponse(w, map[string]string{"status": "deleted", "slug": slug})
 }

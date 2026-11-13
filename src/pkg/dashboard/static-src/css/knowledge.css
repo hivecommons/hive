@@ -18,6 +18,7 @@
     .kc-pill[data-status="ok"] { background: var(--green); }
     .kc-pill[data-status="syncing"] { background: var(--blue); }
     .kc-pill[data-status="error"] { background: var(--red); }
+    .kc-pill[data-status="not loaded"] { background: var(--orange); }
     .kc-publish { margin-top: var(--sp-4); border-top: var(--line-width) solid var(--border); padding-top: var(--sp-3); }
     .kc-publish-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
     .kc-publish-head h4 { margin: 0; }

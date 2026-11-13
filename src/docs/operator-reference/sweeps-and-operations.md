@@ -916,6 +916,7 @@ governor:
 ```
 
   Lower it to resume sooner after a reset at the cost of a rebuffed run per probe; raise it to waste less while noticing later.
+- An agent whose **own** provider refuses it for quota — for example GitHub Copilot's "You have exceeded your monthly quota", which never passes through the hive's inference gateway — is held per agent ([#18112](https://github.com/hivecommons/hive/issues/18112)). Every backend reports the pane's quota message as the agent's `QuotaExhausted` flag; while it is set, the governor withholds that agent's kicks, including review-swarm review and fix kicks, so a held reviewer is not sent review work that would only expire. Once per `governor.provider_budget.probe_interval_s` (the same setting as above) one kick is let through as a probe, and the interval restarts only when that probe is actually delivered; a failed or deferred probe is retried on the next cycle. When the pane stops showing the quota message the flag clears and the agent's kicks flow normally from the next cycle. One agent out of quota never holds another, and manual kicks from the dashboard are not held. The dashboard alert reads `provider quota exhausted — N agent(s) out of provider quota; their kicks are held and retried every 30m`, and the log shows `provider quota exhausted: withholding agent kicks` with the withheld and probed agents.
 
 ## Merge-hotspot advisor (`governor.hotspot_*`)
 

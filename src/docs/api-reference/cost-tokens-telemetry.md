@@ -16,5 +16,5 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/cost/history` | Dashboard auth/session | Cost History | `pkg/dashboard/api.go:169` |
 | `GET` | `/api/trend/history` | Dashboard auth/session | Trend History | `pkg/dashboard/api.go:172` |
 | `GET` | `/api/timeseries` | Dashboard auth/session | Time Series | `pkg/dashboard/api.go:174` |
-| `GET` | `/api/providers/headroom` | Dashboard auth/session | Providers Headroom | `pkg/dashboard/api.go:64` |
+| `GET` | `/api/providers/headroom` | Owner only | Last stored per-provider usage readings (`providers[]` with `limits[]`, `captured_at`, `stale`, `probe_error_cause`, and `plan_type` when a provider reports one), from provider rotation or the default publish-only reading; serving it never triggers a new measurement. Feeds the Overview Claude usage gauge and the rotation settings table | `pkg/dashboard/api.go:64` |
 | `GET` | `/api/budget/history` | Dashboard auth/session | Budget History | `pkg/dashboard/api.go:171` |

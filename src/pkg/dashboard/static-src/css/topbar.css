@@ -90,6 +90,11 @@
        `[hidden] { display: none }`, so a hidden status chip otherwise paints
        as an empty outlined pill (#oc-providers when every provider is usable). */
     .oc-providers-chip[hidden] { display: none; }
+    /* Opt-in Claude usage chip: a compact fuel dial plus its percentage. */
+    .subscription-gauge-chip[hidden] { display: none; }
+    .subscription-gauge-chip__dial { display: inline-flex; align-items: center; }
+    .subscription-gauge-chip__dial:empty { display: none; }
+    .subscription-gauge-chip[data-out-of-date="true"] { border-style: dashed; }
     .oc-version-navbar-upgrade { --oc-version-bee-lane: 56px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: visible; }
     .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); }
     .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
@@ -216,6 +221,7 @@
       #acmm-badge { display: none; }
       .oc-health-badge .nav-chip__label,
       #oc-settings-btn .nav-chip__label,
+      #oc-subscription-gauge .nav-chip__label,
       #welcome-topbar-btn .nav-chip__label { display: none; }
     }
 
