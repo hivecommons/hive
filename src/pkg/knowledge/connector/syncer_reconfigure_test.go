@@ -123,14 +123,27 @@ func TestSyncerReconfigureWhileRunning(t *testing.T) {
 
 	off := fast
 	off.Enabled = false
+	if err := s.Reconfigure([]ConnectorConfig{off}); err != nil {
+		t.Fatal(err)
+	}
+	// a was the only loop, so s.loops drains exactly when disabling it has
+	// stopped its loop (after at most one in-flight sync).
+	stopped := make(chan struct{})
+	go func() {
+		s.loops.Wait()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("disabled connector's loop did not stop")
+	}
+	before := a.calls.Load()
+
 	if err := s.Reconfigure([]ConnectorConfig{off, fakeCfg("b")}); err != nil {
 		t.Fatal(err)
 	}
 	waitCalls(b, 1)
-	// The disabled loop may finish one in-flight sync; after that it stops.
-	time.Sleep(20 * time.Millisecond)
-	before := a.calls.Load()
-	time.Sleep(50 * time.Millisecond)
 	if after := a.calls.Load(); after != before {
 		t.Fatalf("disabled connector kept syncing: %d -> %d", before, after)
 	}
