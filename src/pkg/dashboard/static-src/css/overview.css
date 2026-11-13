@@ -171,3 +171,37 @@
     .overview-pr-open { --slice-c: var(--band-open); }
     .overview-pr-draft { --slice-c: var(--band-draft); }
 
+    /* Claude subscription usage gauge: Overview block and fuel dials. */
+    .overview-usage-gauge { display: flex; flex-direction: column; gap: var(--sp-3); margin: var(--sp-0) var(--sp-0) var(--sp-4); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
+    .overview-usage-gauge[hidden] { display: none; }
+    .overview-usage-gauge__head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--sp-3); }
+    .overview-usage-gauge__title { font-size: var(--fs-md); font-weight: var(--fw-bold); }
+    .overview-usage-gauge__meta, .overview-usage-gauge__reset, .overview-usage-gauge__note { font-size: var(--fs-sm); color: var(--text-muted); }
+    .overview-usage-gauge__stale { font-size: var(--fs-sm); color: var(--status-warn); }
+    .overview-usage-gauge__dials { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-4); }
+    .overview-usage-gauge__dial { display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); text-align: center; }
+    .overview-usage-gauge__label { font-weight: var(--fw-semibold); }
+    .overview-usage-gauge__pct { font-size: var(--fs-lg); font-weight: var(--fw-bold); color: var(--status-ok); }
+    .overview-usage-gauge__pct[data-status="warn"] { color: var(--status-warn); }
+    .overview-usage-gauge__pct[data-status="error"] { color: var(--status-error); }
+    .overview-usage-gauge__pct[data-status="neutral"] { color: var(--text-muted); }
+    .sg-dial { display: block; width: 150px; height: auto; overflow: visible; }
+    .sg-dial--compact { width: 34px; }
+    .sg-dial__track, .sg-dial__zone, .sg-dial__fill { fill: none; stroke-width: 7; }
+    .sg-dial--compact .sg-dial__track, .sg-dial--compact .sg-dial__zone, .sg-dial--compact .sg-dial__fill { stroke-width: 12; }
+    .sg-dial__track { stroke: var(--border); }
+    .sg-dial__zone--red { stroke: var(--status-error); stroke-opacity: 0.55; }
+    .sg-dial__zone--amber { stroke: var(--status-warn); stroke-opacity: 0.55; }
+    .sg-dial__fill { stroke: var(--status-ok); stroke-opacity: 0.35; }
+    .sg-dial__tick { fill: none; stroke: var(--text-muted); stroke-width: 1.6; }
+    .sg-dial__letter { fill: var(--text-muted); font-weight: var(--fw-bold); }
+    .sg-dial__letter--e { fill: var(--status-error); }
+    .sg-dial__needle { stroke: var(--status-ok); stroke-width: 3.5; stroke-linecap: round; }
+    .sg-dial--compact .sg-dial__needle { stroke-width: 7; }
+    .sg-dial__hub { fill: var(--status-ok); }
+    .sg-dial[data-status="warn"] .sg-dial__needle, .sg-dial[data-status="warn"] .sg-dial__fill { stroke: var(--status-warn); }
+    .sg-dial[data-status="warn"] .sg-dial__hub { fill: var(--status-warn); }
+    .sg-dial[data-status="error"] .sg-dial__needle, .sg-dial[data-status="error"] .sg-dial__fill { stroke: var(--status-error); }
+    .sg-dial[data-status="error"] .sg-dial__hub { fill: var(--status-error); }
+    .sg-dial[data-stale="true"] .sg-dial__needle, .sg-dial[data-stale="true"] .sg-dial__fill { stroke: var(--text-muted); }
+    .sg-dial[data-stale="true"] .sg-dial__hub { fill: var(--text-muted); }

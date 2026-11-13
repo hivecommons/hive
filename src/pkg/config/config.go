@@ -5290,6 +5290,13 @@ type DashboardConfig struct {
 	//
 	// Deprecated: set dashboard.experiment_lab instead.
 	StrategyLab bool `yaml:"strategy_lab,omitempty" json:"strategy_lab,omitempty"`
+	// SubscriptionGaugeHeader also shows the owner the Claude subscription
+	// usage gauge as a chip in the dashboard header; the gauge is on the
+	// Overview by default and needs no config. It is display-only: it reads
+	// the usage readings hive already makes (provider rotation or the default
+	// publish-only manager) and never starts, stops or changes any
+	// measurement, rotation or agent.
+	SubscriptionGaugeHeader bool `yaml:"subscription_gauge_header,omitempty" json:"subscription_gauge_header,omitempty"`
 	// Matrix is the default-off Code activity source configuration.
 	// The dashboard.matrix name is deprecated but retained for compatibility.
 	Matrix MatrixConfig `yaml:"matrix,omitempty" json:"matrix,omitempty"`

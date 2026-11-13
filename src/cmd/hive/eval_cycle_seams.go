@@ -417,7 +417,11 @@ type providerBudgetAlert struct {
 // consulted the agent manager on the NOT-latched branch, and collecting agent
 // statuses every cycle while the provider is clipped would be work the old
 // code never did. Passing a thunk keeps that laziness exactly.
-func decideProviderBudgetAlert(latched, suppress bool, cause string, since time.Time, rebuffs int, quotaReason func() string) providerBudgetAlert {
+//
+// quotaProbeInterval is how often an agent held for exhausted provider quota
+// is probed (#18112); the quota banner names it so the operator knows the
+// hive is holding those kicks and when it will retry them.
+func decideProviderBudgetAlert(latched, suppress bool, cause string, since time.Time, rebuffs int, quotaProbeInterval time.Duration, quotaReason func() string) providerBudgetAlert {
 	if latched {
 		state := "agent kicks suspended"
 		if !suppress {
@@ -431,7 +435,8 @@ func decideProviderBudgetAlert(latched, suppress bool, cause string, since time.
 		return providerBudgetAlert{Message: msg, Cause: msg}
 	}
 	if reason := quotaReason(); reason != "" {
-		return providerBudgetAlert{Message: "provider quota exhausted — " + reason}
+		return providerBudgetAlert{Message: fmt.Sprintf("provider quota exhausted — %s; their kicks are held and retried every %s",
+			reason, compactDuration(quotaProbeInterval))}
 	}
 	return providerBudgetAlert{Clear: true}
 }

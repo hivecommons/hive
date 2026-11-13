@@ -1,1 +1,0 @@
-- Benchmarks export now adds `model.canonical` and `model.effort` next to the reported id and derives `model.provider` from the model family, so `claude-sonnet-5-5` (Copilot CLI), `claude-sonnet-5.5` (Claude Code) and `openai-codex/gpt-6.1-sol` no longer appear as separate models on hivecommons.dev/benchmarks.
