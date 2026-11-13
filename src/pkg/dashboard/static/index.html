@@ -4728,6 +4728,10 @@
     .rv-reviewer-help { margin: var(--sp-1) var(--sp-0) var(--sp-0); }
     .rv-reviewer-help-above { margin: var(--sp-0) var(--sp-0) var(--sp-2); }
     #rv-require-labels-field[hidden] { display: none; }
+    /* Linked review.perspectives_source banner in the Review Gate (#17989). */
+    .rv-perspectives-linked { margin: var(--sp-0) var(--sp-0) var(--sp-3); padding: var(--sp-4) var(--sp-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-sm); }
+    .rv-perspectives-linked-status, .rv-perspectives-linked-warning { margin-top: var(--sp-2); color: var(--muted); }
+    .rv-perspectives-linked-warning { color: var(--yellow); }
     .am-trusted-authors-repos { min-height: 72px; }
     .am-bot-empty { color: var(--muted); margin: var(--sp-1) 0; }
     .am-bot-add { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); align-items: center; }
@@ -68580,17 +68584,31 @@ function burnAreaChart() {
         .concat(rvSelected.filter(n => !rvBuiltinNames.includes(n)))
         .filter((n, i, a) => a.indexOf(n) === i);
       const rvIsOn = (name) => rvSelected.length === 0 ? rvBuiltinNames.includes(name) || rvCustomNames.includes(name) : rvSelected.includes(name);
+      // Linked to a repo file (review.perspectives_source): the set shown is
+      // the linked one and every control is read-only, because the API
+      // refuses inline edits the next reload would replace (#17989).
+      const rvLinked = rv.perspectives_linked === true;
+      const rvSrc = rv.perspectives_source || {};
+      const rvSrcLabel = `${rvSrc.owner || ''}/${rvSrc.repo || ''}/${rvSrc.path || ''}${rvSrc.ref ? '@' + rvSrc.ref : ''}`;
+      const rvSrcStatus = rv.perspectives_source_status || '';
+      const rvSrcURL = /^https:\/\/github\.com\//.test(rv.perspectives_source_url || '') ? rv.perspectives_source_url : '';
+      const rvLinkedBanner = !rvLinked ? '' : `<div class="rv-perspectives-linked">
+              <div>Linked to ${rvSrcURL ? `<a href="${esc(rvSrcURL)}" target="_blank" rel="noopener noreferrer"><code>${esc(rvSrcLabel)}</code> &#8599;</a>` : `<code>${esc(rvSrcLabel)}</code>`} ${yamlHint('review.perspectives_source')} <span class="text-muted">&mdash; read-only here; change the perspectives in that file, or remove the link from hive.yaml to edit them inline.</span></div>
+              <div class="rv-perspectives-linked-status">${rvSrcStatus === 'unresolved' ? 'Not resolved yet (repo unreachable, not allowlisted, or invalid) &mdash; the inline perspectives below are in effect.' : `Status: <code>${esc(rvSrcStatus)}</code>`}</div>
+              ${rv.perspectives_source_warning ? `<div class="rv-perspectives-linked-warning">&#9888; ${esc(rv.perspectives_source_warning)}</div>` : ''}
+            </div>`;
+      const rvLockAttr = rvLinked ? ' disabled' : '';
       const rvPerspectiveRow = (name, defaultFocus) => {
         const custom = rvPrompts[name] || '';
         const isCustom = !rvBuiltinNames.includes(name);
         return `<div class="rv-perspective" data-perspective="${esc(name)}" style="margin-top:var(--sp-4);padding:8px 10px;border:1px solid var(--border);border-radius:var(--r)">
-            <label style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;font-weight:600;font-size:0.8rem">
-              <input type="checkbox" class="rv-perspective-on" ${rvIsOn(name) ? 'checked' : ''} data-change-action="gh91">
+            <label style="display:flex;align-items:center;gap:var(--sp-4);cursor:${rvLinked ? 'default' : 'pointer'};font-weight:600;font-size:0.8rem">
+              <input type="checkbox" class="rv-perspective-on" ${rvIsOn(name) ? 'checked' : ''}${rvLockAttr} data-change-action="gh91">
               <code>${esc(name)}</code>${isCustom ? ' <span style="font-size:var(--fs-xs);color:var(--muted);font-weight:400">custom</span>' : ''}
-              ${isCustom ? `<button type="button" class="hv-btn btn-secondary btn-sm btn-small btn-primary" data-action="gh93" data-arg0="${esc(name)}" data-arg-types="s">remove</button>` : ''}
+              ${isCustom && !rvLinked ? `<button type="button" class="hv-btn btn-secondary btn-sm btn-small btn-primary" data-action="gh93" data-arg0="${esc(name)}" data-arg-types="s">remove</button>` : ''}
             </label>
-            <textarea class="rv-perspective-focus" rows="2" style="width:100%;margin-top:var(--sp-3);font-size:0.76rem" placeholder="${esc(defaultFocus || 'what should this perspective look for?')}" data-change-action="gh92">${esc(custom)}</textarea>
-            ${defaultFocus ? `<p style="font-size:var(--fs-xs);color:var(--muted);margin:3px 0 0">Built-in: ${esc(defaultFocus)}${custom ? ' — <a href="#" data-action="gh94" data-prevent="1" data-arg0="' + esc(name) + '" data-arg-types="s">use built-in</a>' : ''}</p>` : ''}
+            <textarea class="rv-perspective-focus" rows="2" style="width:100%;margin-top:var(--sp-3);font-size:0.76rem" placeholder="${esc(defaultFocus || 'what should this perspective look for?')}"${rvLockAttr} data-change-action="gh92">${esc(custom)}</textarea>
+            ${defaultFocus ? `<p style="font-size:var(--fs-xs);color:var(--muted);margin:3px 0 0">Built-in: ${esc(defaultFocus)}${custom && !rvLinked ? ' — <a href="#" data-action="gh94" data-prevent="1" data-arg0="' + esc(name) + '" data-arg-types="s">use built-in</a>' : ''}</p>` : ''}
           </div>`;
       };
       const rvRec = rv.recommendations || {};
@@ -68840,13 +68858,14 @@ function burnAreaChart() {
           </div>
           <div id="rv-perspectives" style="margin-top:10px">
             <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-2)">Which questions the reviewer asks of every PR, and what each one looks for. Edit the text to tell this hive&apos;s reviewer what matters in <em>your</em> repos &mdash; e.g. name the conventions doc for <code>style</code>. Blank means the built-in. Unchecking a perspective stops it running and stops its verdicts being accepted.</p>
+            ${rvLinkedBanner}
             ${rvBuiltin.map(b => rvPerspectiveRow(b.name, b.focus)).join('')}
             ${rvCustomNames.map(n => rvPerspectiveRow(n, '')).join('')}
-            <div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-4);align-items:center">
+            ${rvLinked ? '' : `<div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-4);align-items:center">
               <input type="text" id="rv-new-perspective" placeholder="new perspective, e.g. api-compatibility" style="flex:1;font-size:0.76rem" pattern="[a-z][a-z0-9]*(-[a-z0-9]+)*">
               <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh95">Add perspective</button>
             </div>
-            <p style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">A new perspective needs focus text before it can be saved. Names: lowercase letters, digits, single dashes.</p>
+            <p style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">A new perspective needs focus text before it can be saved. Names: lowercase letters, digits, single dashes.</p>`}
           </div>
           <div class="config-subgroup">Reviewers</div>
           <div class="config-field" id="rv-reviewer-agents">
