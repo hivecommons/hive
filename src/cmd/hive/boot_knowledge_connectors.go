@@ -93,6 +93,7 @@ func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
 	// answers 200 with an empty list and the panel renders its empty state
 	// (#17918) instead of waiting forever on a 404.
 	b.bootInbox(knowledge.BaseDir())
+	b.startConnectorSyncer = deps.startConnectorSyncer
 	s, err := newKnowledgeConnectorSyncer(b.cfg.Knowledge.Connectors, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger, b.inboxAfterSync)
 	if err != nil {
 		b.logger.Warn("knowledge connectors disabled", "error", err)
@@ -101,17 +102,50 @@ func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
 	if s == nil {
 		return
 	}
+	b.knowledgeConnectorsMu.Lock()
 	b.knowledgeConnectors = s
+	b.knowledgeConnectorsMu.Unlock()
 	if deps.startConnectorSyncer != nil {
 		deps.startConnectorSyncer(b.ctx, s)
 	}
 	b.logger.Info("knowledge connectors started", "count", len(b.cfg.Knowledge.Connectors))
 }
 
+// reloadKnowledgeConnectors applies a knowledge.connectors list saved from
+// the dashboard to the running hive (#18091). With no syncer yet (the hive
+// booted with zero connectors, or the boot build failed) it builds and
+// starts one from the same inputs as bootKnowledgeConnectors; otherwise it
+// reconfigures the running syncer in place, so unchanged connectors keep
+// syncing undisturbed. The knowledge.publish mirror is not rebuilt: a
+// changed publish connector still needs a restart.
+func (b *boot) reloadKnowledgeConnectors(entries []config.KnowledgeConnector) (dashboard.KnowledgeConnectorRuntime, error) {
+	b.knowledgeConnectorsMu.Lock()
+	defer b.knowledgeConnectorsMu.Unlock()
+	if b.knowledgeConnectors != nil {
+		if err := b.knowledgeConnectors.Reconfigure(connectorConfigs(entries)); err != nil {
+			return nil, err
+		}
+		b.logger.Info("knowledge connectors reloaded", "count", len(entries))
+		return b.knowledgeConnectors, nil
+	}
+	s, err := newKnowledgeConnectorSyncer(entries, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger, b.inboxAfterSync)
+	if err != nil || s == nil {
+		return nil, err
+	}
+	b.knowledgeConnectors = s
+	if b.startConnectorSyncer != nil {
+		b.startConnectorSyncer(b.ctx, s)
+	}
+	b.logger.Info("knowledge connectors started", "count", len(entries), "hot_loaded", true)
+	return s, nil
+}
+
 // knowledgeConnectorRuntime exposes the syncer to the dashboard. A nil
 // *connector.Syncer must stay a nil interface so the dashboard reports
 // "no connectors configured" instead of calling methods on a nil pointer.
 func (b *boot) knowledgeConnectorRuntime() dashboard.KnowledgeConnectorRuntime {
+	b.knowledgeConnectorsMu.Lock()
+	defer b.knowledgeConnectorsMu.Unlock()
 	if b.knowledgeConnectors == nil {
 		return nil
 	}

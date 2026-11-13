@@ -105,8 +105,16 @@ type Dependencies struct {
 	// (bare test deps) means the toggle can only persist the flag, so it
 	// answers restart_required.
 	KnowledgePrimer KnowledgePrimerControl
-	// KnowledgeConnectors is the running connector syncer; nil when none is wired.
+	// KnowledgeConnectors is the running connector syncer; nil when none is
+	// wired. Read it through Server.knowledgeConnectors: a dashboard edit
+	// can replace it at runtime (#18091).
 	KnowledgeConnectors KnowledgeConnectorRuntime
+	// ReloadKnowledgeConnectors applies a saved knowledge.connectors list to
+	// the running hive without a restart (#18091): it builds the syncer when
+	// none is running, else reconfigures it in place. It returns the runtime
+	// to serve, nil when none is needed. Nil (bare test deps) keeps the
+	// pre-#18091 behaviour where a new connector needs a restart.
+	ReloadKnowledgeConnectors func(entries []config.KnowledgeConnector) (KnowledgeConnectorRuntime, error)
 	// KnowledgePublish is the running knowledge.publish mirror; nil when
 	// publishing is not configured or failed to start.
 	KnowledgePublish KnowledgePublishRuntime

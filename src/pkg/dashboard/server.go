@@ -134,6 +134,10 @@ type Server struct {
 	matrix      *matrixSource
 	matrixNudge stageTrackerNudger
 
+	// knowledgeConnectorsRTMu guards deps.KnowledgeConnectors, which a
+	// dashboard connector edit can swap at runtime (#18091).
+	knowledgeConnectorsRTMu sync.RWMutex
+
 	port         int
 	authToken    string
 	sweepMu      sync.RWMutex
