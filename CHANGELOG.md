@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.241.1)
+
+### Changed
+
+- **Settings → Forge App → GitHub webhooks names the App permission to grant** (#18029): when the GitHub App installation cannot manage hooks, the card now says which permission to grant (Organization → Webhooks `organization_hooks`, or Repository → Webhooks `repository_hooks`, Read and write) so **Create webhook for me** appears, instead of silently omitting the option. Node-executed tests pin the card's copy for relay, none and env-secret modes, and a parity test checks every endpoint the card calls is routed and owner-only.
+- docs: project.reference_repos in agent-configuration and hive.yaml.example (#18073)
+
 ## 2026-11-13 (v5.241.0)
 
 ### Added
