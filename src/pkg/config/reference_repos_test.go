@@ -137,3 +137,26 @@ func TestReferenceRepoTierAccessor(t *testing.T) {
 		t.Fatal("ValidateReferenceRepos must reject a bare name")
 	}
 }
+
+func TestReferenceRepoTierEmptyAndNilGuards(t *testing.T) {
+	c := referenceRepoTestConfig(t, "    - hivecommons/docs\n")
+	if tier, ok := c.Project.ReferenceRepoTier("  "); ok || tier != ReferenceTierReadOnly {
+		t.Fatalf("blank slug: tier=%v ok=%v", tier, ok)
+	}
+	var nilCfg *Config
+	if _, ok := nilCfg.ReferenceRepoFor("hivecommons/docs"); ok {
+		t.Fatal("nil config must not match")
+	}
+	if _, ok := c.ReferenceRepoFor(""); ok {
+		t.Fatal("blank slug must not match")
+	}
+	if got := nilCfg.ReferenceReposWithWrite(); got != nil {
+		t.Fatalf("nil config: want nil, got %v", got)
+	}
+	if got := nilCfg.ReferenceRepoSlugs(); got != nil {
+		t.Fatalf("nil config: want nil, got %v", got)
+	}
+	if got := c.ReferenceRepoSlugs(); len(got) != 1 || got[0] != "hivecommons/docs" {
+		t.Fatalf("slugs: %v", got)
+	}
+}
