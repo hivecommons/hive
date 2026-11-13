@@ -1157,6 +1157,32 @@ project:
   agent_issue_decision_policy: resolve  # resolve (default) or escalate
 ```
 
+### Reference repos: what agents may study (`project.reference_repos`)
+
+Some hives produce a deliverable *about* another project — a CNCF TechDocs hive whose authorized repo is `cncf/techdocs` assesses `hivecommons/docs`, for example. Without configuration, the scanner reads such an item as out-of-scope or critical, and the proxy has no way to say "read this repo but do not work it". `project.reference_repos` names those repos ([#18015](https://github.com/hivecommons/hive/issues/18015)). A reference repo is never an authorized repo: it gets no queue, no ACMM evaluation and no work items, and it cannot also be in `project.repos`.
+
+Each entry is either a string (`owner/name`, read-only) or a mapping `{repo, write, write_token_file}`. Bare names are rejected because a reference repo lives outside the project org.
+
+```yaml
+project:
+  repos: [techdocs]
+  reference_repos:
+    - hivecommons/docs                               # read-only (default)
+    - hivecommons/hivecommons.github.io
+    - repo: hivecommons/hive
+      write: [issues, prs]                           # opt-in tier
+      # write_token_file: /data/secrets/hive-ref-pat # only if the App is not installed on that org
+```
+
+| Tier | Agents may | Proxy refuses |
+|---|---|---|
+| `read-only` (string form, or no `write`) | `git clone`/fetch over HTTPS, GitHub REST/GraphQL GETs. Every request goes out without auth because the hive's App token is removed, so a private reference repo is not readable. | Every non-GET, with a 403 that names `reference_repos`. |
+| `issues`, `prs` or `issues+prs` (`write:`) | The reads above, plus only: open an issue (`issues`), open a PR or push a topic branch (`prs`), and comment on an issue or PR the hive itself opened. | Merges, pushes to the default branch, labels, assignees, reviews, and closing other people's items. Each refusal is logged as `reference_repo` in the violations log, so retrying cannot succeed. |
+
+Writes on the opt-in tier use a credential valid for *that* repo, never the hive's own installation token. By default the same GitHub App must be installed on the target org: the hive discovers that installation and mints a token limited to the one repo and the opted-in permissions. Otherwise, set `write_token_file`. If a write-mode entry has neither, boot fails with exit code 22. These are direct POSTs. The `hive-open-issue`/`hive-open-pr` relays only act on `project.repos`, so a lane under `write_surface.enforce` cannot write to a reference repo at all ([GitHub write surface](github-write-surface.md#reference-repos)).
+
+What agents see: every kick carries a `📚 REFERENCE REPOS` block listing each repo with its tier (`[reference · read-only]`, `[reference · issues+prs]`, …). It tells agents that an authorized-repo item whose deliverables name a reference repo is **in scope**. Findings belong in the deliverable inside the authorized repo, unless the tier allows an issue or PR. On the dashboard, each reference repo is a minimal card with a `reference · <tier>` chip and no stats, ACMM level or work items. Reference repos come in a separate payload field, so no queue or ACMM consumer counts them. Field-by-field defaults are in the [operator reference](operator-reference/README.md#notable-fields).
+
 ## Label policy: which issues agents may work
 
 There is exactly **one** label-policy surface for the hive's own agents — the **Governor Configuration → Labels** tab — and it has two polarities:
