@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"testing"
@@ -117,5 +118,59 @@ func TestKnowledgeConnectorsHotLoad(t *testing.T) {
 	}
 	if rec := doPostRaw(s, "/api/knowledge/connectors/docs/sync", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("sync after remove = %d, want 404", rec.Code)
+	}
+}
+
+// A save the running syncer refuses is still persisted, but the PUT response
+// carries runtime_error verbatim and keeps the previous runtime, so the
+// dashboard can say "saved, but not reloaded" instead of a plain success
+// (#18091). A save that reloads cleanly answers without runtime_error.
+func TestKnowledgeConnectorsPutReportsRuntimeError(t *testing.T) {
+	s := covApiServer(t)
+	prev := newTestConnectorSyncer(t, &blockingConn{})
+	s.deps.KnowledgeConnectors = prev
+	var fail bool
+	s.deps.ReloadKnowledgeConnectors = func([]config.KnowledgeConnector) (KnowledgeConnectorRuntime, error) {
+		if fail {
+			return nil, errors.New("plaud: scope.home must be an absolute path")
+		}
+		return prev, nil
+	}
+	body := `{"connectors":[{"name":"docs","type":"document","enabled":true,"layer":"project","scope":{"url":"https://example.org/guide.html"}}]}`
+
+	put := func() map[string]any {
+		t.Helper()
+		rec := doPutRaw(s, "/api/config/knowledge/connectors", body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PUT = %d %q", rec.Code, rec.Body.String())
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+		}
+		return resp
+	}
+
+	resp := put()
+	if _, ok := resp["runtime_error"]; ok {
+		t.Fatalf("clean reload must not report runtime_error: %v", resp)
+	}
+	if resp["runtime"] != true {
+		t.Fatalf("runtime = %v, want true while a syncer is running", resp["runtime"])
+	}
+
+	fail = true
+	resp = put()
+	if got, _ := resp["runtime_error"].(string); got != "plaud: scope.home must be an absolute path" {
+		t.Fatalf("runtime_error = %q, want the reload error verbatim (%v)", got, resp)
+	}
+	if resp["runtime"] != true {
+		t.Fatalf("runtime = %v, want true: the previous syncer stays in place", resp["runtime"])
+	}
+	if s.knowledgeConnectors() != prev {
+		t.Fatal("a failed reload must keep the previous runtime")
+	}
+	if got := s.deps.Config.Knowledge.Connectors; len(got) != 1 || got[0].Name != "docs" {
+		t.Fatalf("config after failed reload = %+v, want the saved list", got)
 	}
 }

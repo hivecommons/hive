@@ -264,14 +264,23 @@ func (s *Server) handleKnowledgeConnectorsPut(w http.ResponseWriter, r *http.Req
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after knowledge connectors update", "error", err)
 	}
-	s.reloadKnowledgeConnectors(next)
+	reloadErr := s.reloadKnowledgeConnectors(next)
 	names := make([]string, 0, len(next))
 	for _, c := range next {
 		names = append(names, c.Name)
 	}
 	s.auditFromRequest(r, "config_knowledge_connectors", auditDetail("connectors", strings.Join(names, ",")), "")
 	s.refreshAndPersist()
-	jsonResponse(w, knowledgeConnectorsResponse(s.deps.Config))
+	// The config is persisted even when the running syncer did not follow;
+	// runtime_error carries that verbatim so the dashboard can say "saved,
+	// but not reloaded" instead of a plain success (#18091). runtime keeps
+	// the status endpoint's meaning: a connector syncer is running.
+	resp := knowledgeConnectorsResponse(s.deps.Config)
+	if reloadErr != nil {
+		resp["runtime_error"] = reloadErr.Error()
+	}
+	resp["runtime"] = s.knowledgeConnectors() != nil
+	jsonResponse(w, resp)
 }
 
 // knowledgeConnectorPill maps a connector's runtime state to ok / syncing /

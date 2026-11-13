@@ -694,6 +694,9 @@
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
       _kcState.connectors = data.connectors || [];
       await loadKnowledgeConnectors();
+      // The config is saved even when the running syncer did not follow;
+      // surface that verbatim instead of the caller's success toast (#18091).
+      if (data.runtime_error) throw new Error('saved, but the running syncer did not reload: ' + data.runtime_error);
     }
 
     function kcFind(name) { return _kcState.connectors.find(c => c.name === name); }
