@@ -378,3 +378,27 @@ func TestWorkflowEnabledPut(t *testing.T) {
 		t.Fatalf("no config: %d", rec.Code)
 	}
 }
+
+// A column's `icon` rides the tracker block as the SPA reads it (trimmed),
+// and a model whose column names a non-allowlisted icon is refused at the
+// API, so a chevron can only ever draw an allowlisted glyph
+// (hivecommons/hive#18033).
+func TestStageTrackerWorkflowsColumnIcon(t *testing.T) {
+	m := techdocsModel(t)
+	m.Spec.Columns[0].Icon = " bolt "
+	m.Spec.Columns[1].Icon = "📝"
+	p, _, err := workflowmodel.Compile(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk := stageTrackerWorkflowBlock(p)
+	if blk.Columns[0].Icon != "bolt" || blk.Columns[1].Icon != "📝" || blk.Columns[2].Icon != "" {
+		t.Fatalf("icons not carried: %+v", blk.Columns)
+	}
+	s := workflowTestServer(t, true)
+	bad := techdocsModel(t)
+	bad.Spec.Columns[0].Icon = "<svg onload=alert(1)>"
+	if rec := wfReq(s, http.MethodPost, "/api/workflows", bad, true); rec.Code == http.StatusCreated {
+		t.Fatalf("model with markup icon accepted: %s", rec.Body.String())
+	}
+}

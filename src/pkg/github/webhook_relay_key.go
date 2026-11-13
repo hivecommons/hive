@@ -28,7 +28,8 @@ const WebhookSecretEnvVar = "GITHUB_WEBHOOK_SECRET"
 // Values of /api/status.webhooks.verification: how this spoke authenticates
 // GitHub webhook deliveries.
 const (
-	// WebhookVerificationGitHub: GITHUB_WEBHOOK_SECRET is set and GitHub's
+	// WebhookVerificationGitHub: a webhook secret is configured (WebhookSecret:
+	// GITHUB_WEBHOOK_SECRET or the generated secret file) and GitHub's
 	// X-Hub-Signature-256 is verified (self-hosted, or a hub relay to a spoke
 	// that holds the secret).
 	WebhookVerificationGitHub = "github-signed"
@@ -109,7 +110,7 @@ func WebhookRelayKeyFingerprint() string {
 // (WebhookVerification* above). Only the mode ever leaves this function, never
 // the secret or the key.
 func WebhookVerification() string {
-	if strings.TrimSpace(os.Getenv(WebhookSecretEnvVar)) != "" {
+	if WebhookSecret() != "" {
 		return WebhookVerificationGitHub
 	}
 	if WebhookRelayKey() != "" {
