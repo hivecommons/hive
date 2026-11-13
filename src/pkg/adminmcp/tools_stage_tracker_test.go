@@ -533,3 +533,34 @@ func TestRescanPreviewDoesNotPromiseAQueuedRescan(t *testing.T) {
 		t.Fatalf("rescan preview effects = %q", effects)
 	}
 }
+
+// The summary view keeps last_idle: why the last contributor relay dropped
+// the issue is part of what the monitor's row says.
+func TestStageTrackerReadSummaryKeepsLastIdle(t *testing.T) {
+	raw := `{
+	  "generated_at": "2026-11-12T02:00:00Z", "source": "fresh",
+	  "items": [
+	    {"repo": "acme/widgets", "number": 12, "kind": "issue", "title": "Widget work", "stage": 10, "history": [{"number": 10}],
+	     "last_idle": {"text": "last relay: agent exited without a conclusion", "reason": "agent exited without a conclusion", "contributor": "alice"}}
+	  ]
+	}`
+	var board map[string]any
+	if err := json.Unmarshal([]byte(raw), &board); err != nil {
+		t.Fatal(err)
+	}
+	for _, view := range []string{stageTrackerViewSummary, stageTrackerViewFull} {
+		got, err := StageTrackerReadResult(board, map[string]any{"view": view})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, ok := got.(map[string]any)
+		if !ok {
+			t.Fatalf("%s view: result = %#v", view, got)
+		}
+		item := out["items"].([]any)[0].(map[string]any)
+		idle, _ := item["last_idle"].(map[string]any)
+		if idle["text"] != "last relay: agent exited without a conclusion" || idle["contributor"] != "alice" {
+			t.Fatalf("%s view drops last_idle: %#v", view, item)
+		}
+	}
+}

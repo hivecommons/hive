@@ -17683,3 +17683,121 @@ test('quota_hold_v1: the provider quota hold is reported, restated on reconnect,
     assert.ok(readyAt > 0, `release must still re-advertise after telling the hub: ${JSON.stringify(sent.map(m => m.type))}`);
   } finally { console.warn = warn; console.log = log; teardown(relay); }
 });
+
+// ── A completion with no PR says why ─────────────────────────────────────────
+//
+// A relay that dropped an issue reached the hub as `verdict=idle
+// verdict_reason=""`: the agent's own sentence after `HIVE_VERDICT: complete —`
+// was parsed and thrown away, and a chrome-idle exit had no sentence at all.
+// Every no-PR completion now carries a `verdict_reason` and still no `verdict`
+// token, so the hub books it idle exactly as before and an older hub sees the
+// shape a tooling-failure blocked verdict already sends.
+
+test('idle reason: idleReasonWireFields names each no-PR ending and stays out of the way of a PR or a no-work verdict', () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    const kind = 'issue';
+    assert.deepStrictEqual(relay.idleReasonWireFields({ kind, prURL: '', noWork: null, verdict: null }),
+      { verdict_reason: 'agent exited without a conclusion' });
+    assert.deepStrictEqual(relay.idleReasonWireFields({ kind }), { verdict_reason: relay.IDLE_REASON_NO_CONCLUSION });
+    assert.deepStrictEqual(
+      relay.idleReasonWireFields({ kind, prURL: '', noWork: null, verdict: { verdict: 'complete', reason: ' looked at the module, nothing to change ' } }),
+      { verdict_reason: 'agent reported complete without a pull request: looked at the module, nothing to change' });
+    assert.deepStrictEqual(
+      relay.idleReasonWireFields({ kind, prURL: '', noWork: null, verdict: { verdict: 'complete', reason: '' } }),
+      { verdict_reason: 'agent reported complete without a pull request and gave no reason' });
+    // A PR is the result; it needs no idle reason.
+    assert.deepStrictEqual(
+      relay.idleReasonWireFields({ kind, prURL: 'https://github.com/acme/widgets/pull/9', noWork: null, verdict: { verdict: 'complete', reason: 'PR #9' } }), {});
+    // A fix-pr or review task ends with no new PR by design: nothing to explain.
+    for (const other of ['fix-pr', 'pr-review', '', undefined]) {
+      assert.deepStrictEqual(
+        relay.idleReasonWireFields({ kind: other, prURL: '', noWork: null, verdict: { verdict: 'complete', reason: 'pushed the fix' } }), {}, String(other));
+    }
+    assert.deepStrictEqual(relay.idleReasonWireFields(), {});
+    // The no-work family is verdictWireFields' and is not touched.
+    for (const verdict of ['no_work_needed', 'blocked', 'wrong_base']) {
+      const v = { verdict, reason: 'v6' };
+      assert.deepStrictEqual(relay.idleReasonWireFields({ kind, prURL: '', noWork: v, verdict: v }), {}, verdict);
+    }
+    const tooling = { verdict: 'blocked', reason: 'git push was rejected: permission denied', toolingFailure: true };
+    assert.deepStrictEqual(relay.idleReasonWireFields({ kind, prURL: '', noWork: tooling, verdict: tooling }), {},
+      'a tooling-failure blocked verdict already sends its own reason');
+    assert.deepStrictEqual(relay.verdictWireFields(tooling), { verdict_reason: tooling.reason });
+  } finally { teardown(relay); }
+});
+
+test('idle reason: a complete with no PR sends the agent\'s sentence as verdict_reason and no verdict', () => {
+  let pane = 'Working…';
+  const relay = loadRelay({ backend: 'copilot', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-idle-reason-complete', 141);
+    pane = `HIVE_VERDICT: complete — read the module, the change belongs in another repository\n${IDLE_PANE}`;
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the verdict completes the task');
+    assert.strictEqual(completed[0].completion_signal, 'verdict');
+    assert.ok(!completed[0].pr_url, 'no PR is reported');
+    assert.strictEqual(completed[0].verdict, undefined, 'no verdict token: the hub must keep booking this idle');
+    assert.strictEqual(completed[0].verdict_blocked, undefined);
+    assert.strictEqual(completed[0].verdict_reason,
+      'agent reported complete without a pull request: read the module, the change belongs in another repository');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('idle reason: a chrome-idle completion with no verdict and no PR says the agent exited without a conclusion', () => {
+  const IDLE_NO_VERDICT_NO_PR = [
+    '● Nothing here seems to need a change.',
+    '✻ Cogitated for 9m 24s',
+    '❯ ',
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ].join('\n');
+  const relay = loadRelay({ backend: 'claude', paneText: IDLE_NO_VERDICT_NO_PR });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-idle-reason-chrome');
+    relay.setTaskAgentActivityObserved(true);
+    graceTicks(relay, () => relay.__crashTick());
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].completion_signal, 'chrome_idle');
+    assert.ok(!completed[0].pr_url, 'no PR is reported');
+    assert.strictEqual(completed[0].verdict, undefined);
+    assert.strictEqual(completed[0].verdict_reason, 'agent exited without a conclusion');
+  } finally { teardown(relay); }
+});
+
+test('idle reason: a no_work_needed verdict is sent exactly as before, and a completion with a PR carries no idle reason', () => {
+  let pane = 'Working…';
+  const relay = loadRelay({ backend: 'copilot', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-idle-reason-no-work', 142);
+    pane = `HIVE_VERDICT: no_work_needed — nothing left to change in this repository\n${IDLE_PANE}`;
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].verdict, 'no_work_needed');
+    assert.strictEqual(completed[0].verdict_reason, 'nothing left to change in this repository',
+      'the no-work reason is the agent\'s sentence, with no idle wording added');
+  } finally { console.log = log; teardown(relay); }
+
+  const IDLE_WITH_PR = [
+    '● Opened https://github.com/foo/bar/pull/778',
+    '✻ Cogitated for 9m 24s',
+    '❯ ',
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ].join('\n');
+  const shipped = loadRelay({ backend: 'claude', paneText: IDLE_WITH_PR });
+  try {
+    shipped.setCliReady(true);
+    assignTask(shipped, 't-idle-reason-shipped');
+    shipped.setTaskAgentActivityObserved(true);
+    graceTicks(shipped, () => shipped.__crashTick());
+    const completed = shipped.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/778');
+    assert.strictEqual(completed[0].verdict_reason, undefined, 'a completion with a PR sends no idle reason');
+  } finally { teardown(shipped); }
+});

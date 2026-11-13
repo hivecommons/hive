@@ -761,7 +761,18 @@ a child is open. The contributor offer path withholds it as a `tracker`
 alike, whether the children are native sub-issues a maintainer linked by
 hand or ones the hive split. The PR-claim label sync does not give the
 parent `hive/likely-done` for a merged PR that claims it, and takes off one
-it carries. A contributor's "already done" verdict on it records no claim,
+it carries. A merged PR that names the parent with a closing keyword does
+not close it either, by either path that used to: close-on-merge posts no
+`Fixed by` or awaiting-confirmation comment, adds no `hive/likely-done` and
+does not close while a sub-issue is open (result `skipped`, reason
+`open_sub_issues`, read from the sub-issue summary on the issue payload it
+already fetches), and this sweep's own merged-PR close (the
+`<!-- hive:closed-by-merged-pr pr=N -->` comment and the close described
+for 030) is skipped for it, so the parent drops its merged claim and waits
+at its unclaimed stage, never stalled; that move (040 or 030 to 010,
+`…; waiting on N open child issue(s)`) is recorded as progress, not as a
+regression, and gets no regression note. A contributor's "already done"
+verdict on it records no claim,
 applies no `hive/likely-done` or already-done label, posts no comment and
 closes nothing: the parent closes through the sweep above, when its children
 have. A webhook re-read of the parent keeps the sub-issue count on its row,
