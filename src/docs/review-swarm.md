@@ -31,6 +31,37 @@ review:
 - `perspective_prompts` overrides the focus line for a built-in, or defines a hive-specific perspective entirely (custom names: lowercase letters, digits, single dashes, ≤ 40 chars). A blank entry means the built-in text.
 - `combined_perspectives` reviews every enabled perspective in **one** agent session that leaves **one** review comment, with findings grouped under the perspective they belong to. Off, each perspective is its own session and its own comment, and `max_perspectives_per_pr` caps how many a PR receives. Combined mode ignores that cap: it exists to bound comments, and a combined review is always exactly one. The reviewer still emits one verdict per perspective — as a JSON array in the verdict file — so any single perspective can still hold a PR for a human.
 
+### Live-linked perspectives (`review.perspectives_source`)
+
+`review.perspectives_source` links the perspective set to a file in a GitHub repo, so maintainers add, remove and re-describe perspectives through ordinary PRs instead of a hive config edit (hivecommons/hive#17975). It has the same shape as an agent's `definition_source` (`owner`, `repo`, `path`, optional `ref` that defaults to the repo's default branch; a source missing `owner`, `repo` or `path` counts as unset):
+
+```yaml
+review:
+  combined_perspectives: true          # stays operator-owned
+  perspectives_source:
+    owner: my-org
+    repo: my-repo
+    path: .hive/review-perspectives.yaml
+    ref: main                          # optional
+```
+
+```yaml
+# .hive/review-perspectives.yaml
+kind: ReviewPerspectives
+perspectives:
+  - name: correctness                  # built-in; no focus = built-in text
+  - name: security
+  - name: my-constraints               # hive-defined; focus is required
+    focus: "Head size a multiple of 64; fp16 only."
+```
+
+- **Names and focus only.** The file holds the perspective names, in dispatch order, and each one's optional focus text, validated exactly like inline `perspectives` / `perspective_prompts` (built-in names may omit `focus`; custom names need it; duplicates, an empty list, a wrong `kind` or a document over 512 KiB are rejected). `combined_perspectives`, `plan_match` and `max_perspectives_per_pr` are cost and dispatch settings and stay operator-owned in the hive config.
+- **The source wins; inline is the fallback.** While the source resolves, its set replaces inline `review.perspectives` and `review.perspective_prompts` everywhere the effective set is read (`ReviewConfig.EffectivePerspectives`). Inline values stay in the config and apply whenever nothing resolves.
+- **Fallback order.** A fetch that has no GitHub client or fails, and a document that is malformed, each keep the last-known-good document for that source. With none cached, the inline set applies, and if that is empty too, the built-ins. A source whose repo is not on the allowlist is ignored outright (logged, nothing fetched or cached) and the inline set applies. A malformed document keeps the last-known-good set and records a warning rather than quietly dropping to the five built-ins. Only a document that parsed cleanly is remembered, so the cache never holds a corrupt set. A fetch is bounded to 8 seconds.
+- **When it resolves.** Resolution happens at startup, before the first relay install, and again on every config reload. Each time the relay's perspective set is reinstalled, so a verdict naming a removed perspective is refused and an added one is accepted without a restart. Heads waiting on a removed perspective settle rather than stay stuck (#14905). A dashboard edit of the review config keeps the linked set.
+- **Same trust gate as `definition_source`.** The source repo must be on the seed-only `variables.security.github_prompt_allowlist`; see [agent-configuration.md](agent-configuration.md#the-trust-boundary-allowlisted-repos-are-seed-only).
+- **Dashboard.** Governor → Features → Review Gate → Perspectives shows the linked set (not the inline fallback), a "Linked to owner/repo/path@ref" line, and the resolver's status and any warning. The perspective checkboxes and focus text are read-only and "Add perspective" is hidden, and `PUT /api/config/review` answers 409 for `perspectives` / `perspective_prompts` edits that the next resolve would replace. `combined_perspectives`, `plan_match` and `max_perspectives_per_pr` stay editable.
+
 ### Combined perspectives: recommended, opt-in
 
 **Turn `combined_perspectives: true` on** (Governor → Features → Review Gate, or the config above) unless you have a reason not to. It is the single largest review-swarm token saving available (hivecommons/hive#12126):
@@ -181,6 +212,7 @@ review:
   fan_out: true
   max_parallel_reviews: 5
   reviewer_agents: [reviewer-a, reviewer-b] # optional; otherwise agents with review role/keywords are selected
+  # perspectives_source: {owner: my-org, repo: my-repo, path: .hive/review-perspectives.yaml}  # optional; live-link the perspective set, see "Live-linked perspectives"
   fixer_agent: scanner                      # optional; defaults to the PR lane, then scanner
   fixer_fallback_agents: []                  # opt-in ordered fallback lanes, e.g. [fixer, scanner-2]
   fixer_fallback_after_undeliverable: 3       # 0 defaults to 3 only when fallbacks are configured
