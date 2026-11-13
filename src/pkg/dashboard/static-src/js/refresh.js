@@ -568,7 +568,7 @@
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'advisory-digest-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
-        'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
+        'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section', 'sessions-section',
         'knowledge-section', 'inbox-section', 'contributors-section', 'debug-section', 'logs-section',
         'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'
       ];

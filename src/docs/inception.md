@@ -10,6 +10,8 @@ This guide documents only what the code in `pkg/dashboard/inception_handlers.go`
 and `pkg/knowledge/inception.go` actually does — see those files for
 implementation detail.
 
+> **Dashboard UI.** When `dashboard.sessions.enabled` is on, the dashboard hides the Inception wizard and shows the Sessions section instead (the Campaigns and Jam view moves to a Campaigns tab there). The `/api/inception/*` endpoints, the brainstorm agent and `/api/campaigns` are unchanged, and the wizard is still shown whenever sessions are off.
+
 ## When to use it
 
 Use inception when you are standing up a brand-new hive at ACMM level 1 and

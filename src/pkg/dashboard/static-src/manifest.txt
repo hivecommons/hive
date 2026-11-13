@@ -37,6 +37,7 @@ css/responsive.css
 css/recipes-utilities.css
 css/welcome.css
 css/review-campaigns.css
+css/sessions.css
 css/kiosk.css
 css/popout.css
 css/reader.css
@@ -132,6 +133,7 @@ js/refresh.js
 js/scroll-stabilizer.js
 js/campaigns.js
 js/inception.js
+js/sessions.js
 js/debug-logs.js
 js/tooltips-dialogs.js
 js/plan-agent-controls.js
