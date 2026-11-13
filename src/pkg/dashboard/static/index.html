@@ -6386,7 +6386,7 @@
     .agent-navbar-tile .agent-up-next.running-now { color: var(--green); }
     .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
     .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
-    .agent-navbar-upnext::after { content: attr(data-agent-summary); display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+    .agent-navbar-upnext[data-agent-more]::after { display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
     /* The "+N" count of tiles that did not fit. While the fit is measured it
        sits first in the row, so its own width is reserved. */
     @container navbar-center (width > 340px) {

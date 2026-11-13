@@ -125,6 +125,7 @@ func TestCloseOnMergeForLedgerFiltersAndCloses(t *testing.T) {
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"number": 7, "state": "open", "body": "body", "labels": []map[string]string{}},
 				{"number": 10, "state": "open", "body": "body", "labels": []map[string]string{}},
+				{"number": 14, "state": "open", "body": "body", "labels": []map[string]string{}},
 				// An open PR is listed by the issues API but never matches a claim.
 				{"number": 12, "state": "open", "pull_request": map[string]string{"url": "x"}},
 			})
@@ -163,7 +164,7 @@ func TestCloseOnMergeForLedgerFiltersAndCloses(t *testing.T) {
 		// Merged claim whose PR cannot be read: logged and skipped.
 		{Repo: "o/r", Issue: 10, PRNumber: 500, PRRepo: "o/r", MergedPR: true},
 		// Merged claim whose PR is 404: warned once, then settled.
-		{Repo: "o/r", Issue: 12, PRNumber: 404, PRRepo: "o/r", MergedPR: true},
+		{Repo: "o/r", Issue: 14, PRNumber: 404, PRRepo: "o/r", MergedPR: true},
 		// Merged claim missing a PR number: skipped.
 		{Repo: "o/r", Issue: 11, PRNumber: 0, PRRepo: "o/r", MergedPR: true},
 	} {

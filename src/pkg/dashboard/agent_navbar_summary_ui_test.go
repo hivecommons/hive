@@ -50,6 +50,9 @@ function renderAgentNavbarTileDiff(w, list) {
   list.forEach((item, i) => { const tile = new El('button'); tile.className = 'agent-navbar-tile'; tile.setAttribute('data-agent-key', item.id); w.insertBefore(tile, w.children[i] || null); });
 }
 function ensureAgentsCollapsedCountdownTicker() {}
+// v6 measures the strip after every render; layout is out of scope here.
+function fitAgentNavbarTiles() { return 0; }
+function ensureAgentNavbarFitObserver() {}
 ` + block + `
 function agents(n, extraUnscheduled) {
   const out = [];

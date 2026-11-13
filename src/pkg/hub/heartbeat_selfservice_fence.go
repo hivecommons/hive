@@ -73,12 +73,13 @@ var heartbeatResponseFieldFence = map[string]heartbeatFieldClass{
 	"GitHubAppConfig": heartbeatFieldFenced, // App, cluster and secondary keys, webhook relay key
 	"PendingGateway":  heartbeatFieldFenced, // funded gateway API key
 	// Upgrade and lifecycle management.
-	"UpgradeTo":        heartbeatFieldFenced,
-	"UpgradeInterrupt": heartbeatFieldFenced,
-	"SwitchToTag":      heartbeatFieldFenced,
-	"RestartSpoke":     heartbeatFieldFenced,
-	"UpgradeAnnounce":  heartbeatFieldFenced,
-	"UpgradePolicy":    heartbeatFieldFenced, // the owner, not the hub, sets upgrade posture
+	"UpgradeTo":         heartbeatFieldFenced,
+	"UpgradeInterrupt":  heartbeatFieldFenced,
+	"UpgradeChannelTag": heartbeatFieldFenced, // rides with UpgradeTo
+	"SwitchToTag":       heartbeatFieldFenced,
+	"RestartSpoke":      heartbeatFieldFenced,
+	"UpgradeAnnounce":   heartbeatFieldFenced,
+	"UpgradePolicy":     heartbeatFieldFenced, // the owner, not the hub, sets upgrade posture
 	// Operational actions.
 	"ResetAgentRestarts": heartbeatFieldFenced,
 	"Breaker":            heartbeatFieldFenced,
