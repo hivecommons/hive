@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/evidence"
+	"github.com/hivecommons/hive/pkg/modelfamily"
 )
 
 // Options parameterise one export.
@@ -63,12 +64,6 @@ var verdictRank = map[string]int{"reject": 4, "changes_requested": 3, "requires_
 var kindHints = []struct{ hint, kind string }{
 	{"doc", "docs"}, {"sec", "security-fix"}, {"ci", "ci-repair"}, {"release", "release"},
 	{"dep", "dependency-update"}, {"renovate", "dependency-update"}, {"triage", "triage"}, {"refactor", "refactor"},
-}
-
-var providerPrefixes = []struct{ prefix, provider string }{
-	{"claude", "anthropic"}, {"gpt", "openai"}, {"o1", "openai"}, {"o3", "openai"}, {"o4", "openai"},
-	{"gemini", "google"}, {"granite", "ibm"}, {"llama", "meta"}, {"mistral", "mistral"},
-	{"qwen", "alibaba"}, {"deepseek", "deepseek"}, {"grok", "xai"}, {"kimi", "moonshot"},
 }
 
 // Convert folds bundles per PR and emits an author record for each PR a hive
@@ -133,7 +128,7 @@ func Convert(bundles []*evidence.Bundle, opts Options) []Record {
 				name = "agent"
 			}
 			rec.Agent = Agent{Name: name, Role: RoleAuthor, Harness: harnessOf(a.Backend)}
-			rec.Model = Model{Provider: providerOf(a.Model), Name: strings.TrimSpace(a.Model)}
+			rec.Model = modelOf(a.Model)
 			rec.SandboxRuntime = runtimeOf(opts, a, name)
 			rec.Task.Kind = kindOf(a.TaskKind, name)
 			rec.Cost = costOf(opts.CostLookup, authorCostRefs(latest))
@@ -143,7 +138,7 @@ func Convert(bundles []*evidence.Bundle, opts Options) []Record {
 			rec := base
 			rec.ID = recordID(hash, latest.Repo, latest.Number, RoleReviewer)
 			rec.Agent = Agent{Name: reviewSwarmAgent, Role: RoleReviewer, Harness: harnessOf(backend)}
-			rec.Model = Model{Provider: providerOf(model), Name: model}
+			rec.Model = modelOf(model)
 			rec.SandboxRuntime = SandboxRuntimeNone
 			rec.Task.Kind = kindPRReview
 			rec.Cost = costOf(opts.CostLookup, prCostRefs(latest.Repo, latest.Number, costKindPR))
@@ -367,17 +362,15 @@ func harnessOf(backend string) string {
 	return harnessOther
 }
 
-func providerOf(model string) string {
-	m := strings.ToLower(strings.TrimSpace(model))
-	if p, _, ok := strings.Cut(m, "/"); ok && p != "" {
-		return p
+// modelOf keeps the reported id and adds its canonical reading so one model
+// aggregates under one row whichever CLI reported it.
+func modelOf(reported string) Model {
+	r := modelfamily.Resolve(reported, "")
+	provider := r.Vendor
+	if provider == modelfamily.Unknown {
+		provider = providerUnknown
 	}
-	for _, pp := range providerPrefixes {
-		if strings.HasPrefix(m, pp.prefix) {
-			return pp.provider
-		}
-	}
-	return providerUnknown
+	return Model{Provider: provider, Name: strings.TrimSpace(reported), Canonical: r.Canonical, Effort: r.Effort}
 }
 
 // kindOf prefers the task kind stamped on the bundle and otherwise guesses

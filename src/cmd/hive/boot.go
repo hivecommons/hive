@@ -31,6 +31,7 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/perspsrc"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/priorart"
 	"github.com/hivecommons/hive/pkg/promptsrc"
@@ -190,6 +191,7 @@ type boot struct {
 	promptFetcher              promptsrc.Fetcher
 	defFetcher                 defsrc.Fetcher
 	definitionResolver         *defsrc.Resolver
+	perspectivesResolver       *perspsrc.Resolver
 	pendingTokenSeed           []dashboard.TokenSparklineEntry
 	pendingFactSeed            []dashboard.FactHistoryEntry
 	pendingCostSeed            []dashboard.CostHistoryEntry

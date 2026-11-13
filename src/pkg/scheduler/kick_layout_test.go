@@ -268,3 +268,35 @@ func TestKickLayoutManualKickSharesPrefix(t *testing.T) {
 		t.Errorf("manual kick must not grow the repos block:\n%s", manual)
 	}
 }
+
+// Section 10a: project.reference_repos render inside the AUTHORIZED REPOS
+// section of the assembled kick, ahead of the dynamic tail
+// (hivecommons/hive#18020).
+func TestKickLayoutReferenceReposFollowAuthorizedRepos(t *testing.T) {
+	s := kickLayoutScheduler(t)
+	s.cfg.Project.ReferenceRepos = []config.ReferenceRepo{
+		{Repo: "hivecommons/docs"},
+		{Repo: "hivecommons/hive", Write: []string{"issues", "prs"}},
+	}
+	msg := kickLayoutMessage(t, s, makeIssue("test-org/console", 1, "first issue", "scanner", 5, nil, false))
+	order := []string{
+		"AUTHORIZED REPOS",
+		"📚 REFERENCE REPOS",
+		"[reference · read-only]",
+		"[reference · issues+prs]",
+		"⛔ NEVER access",
+		"## Open hold-gated PR coordination",
+		concreteKickClosingInstruction,
+	}
+	last := -1
+	for _, want := range order {
+		at := strings.Index(msg, want)
+		if at < 0 {
+			t.Fatalf("kick missing %q:\n%s", want, msg)
+		}
+		if at < last {
+			t.Errorf("%q at %d is out of documented order (previous at %d):\n%s", want, at, last, msg)
+		}
+		last = at
+	}
+}

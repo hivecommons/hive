@@ -297,8 +297,12 @@ type Engine struct {
 	// contributorUnsearchable maps author|owner/repo to the time until which
 	// contributorMergedRepos leaves that pair out of its search, after
 	// GitHub refused to search it (see automerge_contributor_unsearchable.go).
-	contributorUnsearchableMu sync.Mutex
-	contributorUnsearchable   map[string]time.Time
+	// contributorUnsearchableWarned holds the "author:<login>" and
+	// "repo:<owner/repo>" keys a refusal has already warned for, so the
+	// author × repository product logs WARN at most once per side.
+	contributorUnsearchableMu     sync.Mutex
+	contributorUnsearchable       map[string]time.Time
+	contributorUnsearchableWarned map[string]bool
 
 	mergerAuthzMu sync.RWMutex
 	// humanReturnChecked remembers, per PR key, the head whose worn

@@ -1,0 +1,1 @@
+- Contributor-lane auto-promotion now warns once per refused author and once per refused repository when GitHub's search cannot see a repository, instead of once per author × repository pair, so one invisible repository or one unsearchable author no longer floods WARN and self-reports as a repeated unclassified error (#18059).
