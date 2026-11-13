@@ -155,10 +155,10 @@ func TestKnowledgeIntegrationsModalPlaudCard(t *testing.T) {
 	for _, want := range []string{
 		`'plaud': { label: 'Plaud voice notes'`,
 		`'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@latest']`,
-		`if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);`,
+		`else if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);`,
 		`data-action="kbPlaudPasteComplete"`,
 		`'/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/complete'`,
-		`if (type === 'plaud') html += kbPlaudAuthButtons(c.name);`,
+		`if (type === 'plaud') html += kbPlaudAuthButtons(c.name, notLoaded ? disabledAttr : '');`,
 		`data-action="kbPlaudConnect"`,
 		`data-action="kbPlaudDisconnect"`,
 		`data-action="kbPlaudRefreshAuth"`,
