@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"net/url"
 	"sort"
 	"strings"
 )
