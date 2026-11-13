@@ -9,10 +9,15 @@ import (
 	"hash/fnv"
 	"io"
 	"log/slog"
+	"maps"
+	"math/rand/v2"
 	"net"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -39,16 +44,40 @@ const (
 	// knowledgeAdviserLLMBudgetWindow is the rolling per-agent window.
 	knowledgeAdviserLLMBudgetWindow = time.Hour
 	knowledgeAdviserLLMUserPrefix   = "hive-knowledge-advisor:"
+
+	// knowledgeAdviserLLMMaxInFlight caps model calls in flight across every
+	// agent on the hive (hivecommons/hive#18151). The advisor shares one
+	// upstream quota with the agents (the Copilot user token), so N agents
+	// fanning out N calls in the same second only buys 429s; the runtime's
+	// per-agent in-flight guard stays in front of this cap.
+	knowledgeAdviserLLMMaxInFlight = 1
+	// knowledgeAdviserLLMRetryBackoff is the wait before the single retry of
+	// a 429 that carries no usable Retry-After, plus up to the same amount of
+	// jitter so agents released together do not collide again.
+	knowledgeAdviserLLMRetryBackoff = 2 * time.Second
+	// knowledgeAdviserLLMRetryHeadroom is how much of the decision timeout
+	// must remain after the Retry-After wait for the retry to be worth
+	// making; a shorter remainder records rate-limited without a second call.
+	knowledgeAdviserLLMRetryHeadroom = 3 * time.Second
+	// knowledgeAdviserLLMRateLimitWarnWindow: the first 429 in this window
+	// logs at WARN with the rate-limit headers, the rest at DEBUG.
+	knowledgeAdviserLLMRateLimitWarnWindow = 5 * time.Minute
+	// knowledgeAdviserLLMErrorBodyRunes caps the logged 429 response body.
+	knowledgeAdviserLLMErrorBodyRunes = 300
+	// knowledgeAdviserLLMRateLimitHeaderPrefix selects the upstream's
+	// rate-limit headers for the WARN line.
+	knowledgeAdviserLLMRateLimitHeaderPrefix = "x-ratelimit-"
 )
 
 // Model verdicts: what the model call produced.
 const (
-	knowledgeVerdictPick       = "pick"
-	knowledgeVerdictNull       = "null"
-	knowledgeVerdictInvalid    = "invalid"
-	knowledgeVerdictTimeout    = "timeout"
-	knowledgeVerdictOverBudget = "over-budget"
-	knowledgeVerdictError      = "error"
+	knowledgeVerdictPick        = "pick"
+	knowledgeVerdictNull        = "null"
+	knowledgeVerdictInvalid     = "invalid"
+	knowledgeVerdictTimeout     = "timeout"
+	knowledgeVerdictOverBudget  = "over-budget"
+	knowledgeVerdictRateLimited = "rate-limited"
+	knowledgeVerdictError       = "error"
 )
 
 // Decision outcomes: what happened to the delivery. invalid, timeout,
@@ -83,9 +112,39 @@ type knowledgeAdviserLLM struct {
 	// decisions persists one compact record per decision for the retro
 	// lane's arm comparison (#17211); nil records nothing.
 	decisions knowledgeAdvisorDecisionRecorder
+	// slots is the hive-wide in-flight cap (knowledgeAdviserLLMMaxInFlight);
+	// nil means uncapped.
+	slots chan struct{}
+	// waiting counts decisions blocked on slots, for tests and the WARN line.
+	waiting atomic.Int32
+	// wait blocks for d or until ctx ends and reports whether d elapsed; tests
+	// replace it so no test sleeps.
+	wait func(ctx context.Context, d time.Duration) bool
 
 	mu        sync.Mutex
 	delivered map[string]*knowledgeAdviserLLMKick
+	// rateLimitWarnedAt is when the current WARN window opened.
+	rateLimitWarnedAt time.Time
+}
+
+// newKnowledgeAdviserLLMSlots is the hive-wide in-flight semaphore.
+func newKnowledgeAdviserLLMSlots() chan struct{} {
+	return make(chan struct{}, knowledgeAdviserLLMMaxInFlight)
+}
+
+// knowledgeAdviserLLMWait is the production wait: a timer bounded by ctx.
+func knowledgeAdviserLLMWait(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // knowledgeAdviserLLMKick is the slugs this decorator handed the runtime
@@ -111,6 +170,8 @@ func newKnowledgeAdviserLLM(b *boot, inner *knowledgeAdviser) *knowledgeAdviserL
 		logger:    b.logger,
 		budget:    newKnowledgeAdviserLLMBudget(time.Now),
 		decisions: b.knowledgeAdvisorDecisions(),
+		slots:     newKnowledgeAdviserLLMSlots(),
+		wait:      knowledgeAdviserLLMWait,
 		delivered: make(map[string]*knowledgeAdviserLLMKick),
 	}
 }
@@ -253,17 +314,36 @@ type knowledgeAdviserLLMDecision struct {
 	latency          time.Duration
 	promptTokens     int
 	completionTokens int
+	// retryAfter is the upstream's Retry-After on a rate-limited decision,
+	// zero when it sent none.
+	retryAfter time.Duration
+	// retried reports that the single 429 retry was made.
+	retried bool
 }
 
-// decide spends one budgeted call on the model. There is no retry: a wrong
-// answer costs one silent scope, a retry would double the spend.
+// decide spends one budgeted call on the model. A wrong answer is never
+// retried (it would double the spend); a 429 is retried once after the
+// upstream's Retry-After, inside the same timeout, and a decision that still
+// ends rate-limited hands its budget back (hivecommons/hive#18151).
 func (d *knowledgeAdviserLLM) decide(agent string, kick scheduler.KickSummary, scope crux.KnowledgeScope, candidates []crux.KnowledgeAdvice, r config.ResolvedAdvisorLLM) knowledgeAdviserLLMDecision {
-	if over := d.budget.take(agent, r.MaxCallsPerAgentHour, r.MaxCallsPerDay); over != "" {
+	over, spent := d.budget.take(agent, r.MaxCallsPerAgentHour, r.MaxCallsPerDay)
+	if over != "" {
 		return knowledgeAdviserLLMDecision{verdict: knowledgeVerdictOverBudget, budget: over}
 	}
 	start := d.now()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(r.TimeoutS)*time.Second)
 	defer cancel()
+	if !d.acquireSlot(ctx) {
+		// The hive-wide slot never freed inside the timeout: nothing was
+		// sent, so nothing is charged.
+		d.budget.refund(agent, spent)
+		return knowledgeAdviserLLMDecision{
+			verdict: knowledgeVerdictTimeout,
+			err:     errors.New("knowledge advisor: timed out waiting for the hive-wide in-flight slot"),
+			latency: d.now().Sub(start),
+		}
+	}
+	defer d.releaseSlot()
 	reqBody := knowledgeAdviserLLMRequest{
 		Model: r.Model,
 		Messages: []knowledgeAdviserLLMMessage{
@@ -275,12 +355,33 @@ func (d *knowledgeAdviserLLM) decide(agent string, kick scheduler.KickSummary, s
 		User:        knowledgeAdviserLLMUserPrefix + agent,
 	}
 	resp, err := d.complete(ctx, r, reqBody)
-	dec := knowledgeAdviserLLMDecision{latency: d.now().Sub(start)}
+	dec := knowledgeAdviserLLMDecision{}
+	var rl *knowledgeAdviserLLMRateLimited
+	if errors.As(err, &rl) {
+		d.logRateLimited(agent, rl, false)
+		dec.retryAfter = rl.retryAfter
+		if wait, ok := knowledgeAdviserLLMRetryWait(ctx, rl.retryAfter, time.Now()); ok && d.wait(ctx, wait) {
+			dec.retried = true
+			resp, err = d.complete(ctx, r, reqBody)
+			if errors.As(err, &rl) {
+				d.logRateLimited(agent, rl, true)
+				dec.retryAfter = rl.retryAfter
+			}
+		}
+	}
+	dec.latency = d.now().Sub(start)
 	if err != nil {
 		dec.err = err
 		dec.verdict = knowledgeVerdictError
 		var ne net.Error
-		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
+		switch {
+		case errors.As(err, &rl):
+			// Nothing was answered: the call is not spent against the
+			// budgets, so a throttled hour does not also become an
+			// over-budget hour.
+			dec.verdict = knowledgeVerdictRateLimited
+			d.budget.refund(agent, spent)
+		case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()):
 			dec.verdict = knowledgeVerdictTimeout
 		}
 		return dec
@@ -375,6 +476,9 @@ func (d *knowledgeAdviserLLM) complete(ctx context.Context, r config.ResolvedAdv
 		return cr, fmt.Errorf("knowledge advisor request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return cr, newKnowledgeAdviserLLMRateLimited(resp, time.Now())
+	}
 	if resp.StatusCode != http.StatusOK {
 		return cr, fmt.Errorf("knowledge advisor model returned %d", resp.StatusCode)
 	}
@@ -421,10 +525,129 @@ func (d *knowledgeAdviserLLM) logDecision(agent, kickID string, scope crux.Knowl
 	if dec.budget != "" {
 		attrs = append(attrs, "budget", dec.budget)
 	}
+	if dec.verdict == knowledgeVerdictRateLimited {
+		attrs = append(attrs, "retry_after_s", dec.retryAfter.Seconds(), "retried", dec.retried)
+	}
 	if dec.err != nil {
 		attrs = append(attrs, "error", dec.err.Error())
 	}
 	d.logger.Info("knowledge advisor: decision", attrs...)
+}
+
+// knowledgeAdviserLLMRateLimited is a 429 from the model endpoint with what
+// the upstream said about it.
+type knowledgeAdviserLLMRateLimited struct {
+	// retryAfter is the parsed Retry-After, zero when absent or malformed.
+	retryAfter time.Duration
+	// headers holds retry-after and the x-ratelimit-* headers, lower-cased.
+	headers map[string]string
+	// body is the response body, capped at knowledgeAdviserLLMErrorBodyRunes.
+	body string
+}
+
+func (e *knowledgeAdviserLLMRateLimited) Error() string {
+	return fmt.Sprintf("knowledge advisor model returned %d", http.StatusTooManyRequests)
+}
+
+// newKnowledgeAdviserLLMRateLimited reads the 429's headers and a bounded
+// slice of its body; the body is drained no further.
+func newKnowledgeAdviserLLMRateLimited(resp *http.Response, now time.Time) *knowledgeAdviserLLMRateLimited {
+	e := &knowledgeAdviserLLMRateLimited{headers: map[string]string{}}
+	for name, values := range resp.Header {
+		lower := strings.ToLower(name)
+		if (lower == "retry-after" || strings.HasPrefix(lower, knowledgeAdviserLLMRateLimitHeaderPrefix)) && len(values) > 0 {
+			e.headers[lower] = values[0]
+		}
+	}
+	e.retryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), now)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, int64(knowledgeAdviserLLMErrorBodyRunes)*4))
+	e.body = truncateRunes(strings.Join(strings.Fields(string(raw)), " "), knowledgeAdviserLLMErrorBodyRunes)
+	return e
+}
+
+// parseRetryAfter reads a Retry-After header: delay seconds or an HTTP date.
+// Anything else, or a date already past, is zero.
+func parseRetryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.ParseFloat(v, 64); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs * float64(time.Second))
+	}
+	if at, err := http.ParseTime(v); err == nil && at.After(now) {
+		return at.Sub(now)
+	}
+	return 0
+}
+
+// knowledgeAdviserLLMRetryWait is how long to wait before the single retry of
+// a 429: the Retry-After when the upstream sent one, else the jittered
+// backoff. ok is false when that wait would leave less than the retry
+// headroom before ctx's deadline, so the retry is skipped and the decision
+// records rate-limited without a second call.
+func knowledgeAdviserLLMRetryWait(ctx context.Context, retryAfter time.Duration, now time.Time) (time.Duration, bool) {
+	wait := retryAfter
+	if wait <= 0 {
+		wait = knowledgeAdviserLLMRetryBackoff + rand.N(knowledgeAdviserLLMRetryBackoff)
+	}
+	if deadline, ok := ctx.Deadline(); ok && now.Add(wait+knowledgeAdviserLLMRetryHeadroom).After(deadline) {
+		return wait, false
+	}
+	return wait, true
+}
+
+// logRateLimited logs a 429: the first in each WARN window at WARN with the
+// upstream's rate-limit headers and body, the rest at DEBUG. The decision
+// line itself still goes out at INFO.
+func (d *knowledgeAdviserLLM) logRateLimited(agent string, rl *knowledgeAdviserLLMRateLimited, retried bool) {
+	now := d.now()
+	d.mu.Lock()
+	first := d.rateLimitWarnedAt.IsZero() || now.Sub(d.rateLimitWarnedAt) >= knowledgeAdviserLLMRateLimitWarnWindow
+	if first {
+		d.rateLimitWarnedAt = now
+	}
+	d.mu.Unlock()
+	attrs := []any{
+		"agent", agent,
+		"retry_after_s", rl.retryAfter.Seconds(),
+		"retried", retried,
+		"waiting", d.waiting.Load(),
+	}
+	if first {
+		for _, k := range slices.Sorted(maps.Keys(rl.headers)) {
+			attrs = append(attrs, "header_"+strings.ReplaceAll(k, "-", "_"), rl.headers[k])
+		}
+		attrs = append(attrs, "body", rl.body, "warn_window", knowledgeAdviserLLMRateLimitWarnWindow.String())
+		d.logger.Warn("knowledge advisor: model endpoint rate limited (429)", attrs...)
+		return
+	}
+	d.logger.Debug("knowledge advisor: model endpoint rate limited (429)", attrs...)
+}
+
+// acquireSlot takes the hive-wide in-flight slot, or reports false when ctx
+// ends first. A nil slots channel is uncapped.
+func (d *knowledgeAdviserLLM) acquireSlot(ctx context.Context) bool {
+	if d.slots == nil {
+		return true
+	}
+	d.waiting.Add(1)
+	defer d.waiting.Add(-1)
+	select {
+	case d.slots <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (d *knowledgeAdviserLLM) releaseSlot() {
+	if d.slots != nil {
+		<-d.slots
+	}
 }
 
 type knowledgeAdviserLLMMessage struct {
@@ -470,9 +693,10 @@ func newKnowledgeAdviserLLMBudget(now func() time.Time) *knowledgeAdviserLLMBudg
 	return &knowledgeAdviserLLMBudget{now: now, events: make(map[string][]time.Time)}
 }
 
-// take spends one call for agent when both budgets allow it and returns "";
-// otherwise it spends nothing and names the budget that is exhausted.
-func (b *knowledgeAdviserLLMBudget) take(agent string, perAgentHour, perDay int) string {
+// take spends one call for agent when both budgets allow it and returns ""
+// with the time the call was stamped (for refund); otherwise it spends
+// nothing and names the budget that is exhausted.
+func (b *knowledgeAdviserLLMBudget) take(agent string, perAgentHour, perDay int) (string, time.Time) {
 	now := b.now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -494,14 +718,39 @@ func (b *knowledgeAdviserLLMBudget) take(agent string, perAgentHour, perDay int)
 	switch {
 	case perAgentHour > 0 && len(events) >= perAgentHour:
 		b.events[agent] = events
-		return "agent-hour"
+		return "agent-hour", now
 	case perDay > 0 && b.used >= perDay:
 		if len(events) > 0 {
 			b.events[agent] = events
 		}
-		return "fleet-day"
+		return "fleet-day", now
 	}
 	b.events[agent] = append(events, now)
 	b.used++
-	return ""
+	return "", now
+}
+
+// refund hands back the call take stamped at `at` for agent: the model never
+// answered it (rate-limited, or the in-flight slot never freed), so it must
+// not count against the agent's hour or the fleet's day. A stamp that has
+// already rolled out of the window, or a day that has rolled over, refunds
+// nothing.
+func (b *knowledgeAdviserLLMBudget) refund(agent string, at time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	events := b.events[agent]
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Equal(at) {
+			events = append(events[:i:i], events[i+1:]...)
+			if len(events) == 0 {
+				delete(b.events, agent)
+			} else {
+				b.events[agent] = events
+			}
+			break
+		}
+	}
+	if b.used > 0 && at.UTC().Format(time.DateOnly) == b.day {
+		b.used--
+	}
 }

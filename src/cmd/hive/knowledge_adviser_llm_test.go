@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -70,6 +72,9 @@ type llmFixture struct {
 	handler http.HandlerFunc
 	lastReq knowledgeAdviserLLMRequest
 	kicks   map[string]scheduler.KickSummary
+	// waits records every wait the decorator asked for; the fixture's wait
+	// never sleeps.
+	waits []time.Duration
 }
 
 func (f *llmFixture) with(fn func()) {
@@ -122,10 +127,7 @@ func newLLMFixture(t *testing.T, a config.AdvisorLLMConfig) *llmFixture {
 			}
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []any{map[string]any{"message": map[string]any{"content": reply}}},
-			"usage":   map[string]any{"prompt_tokens": 410, "completion_tokens": 17},
-		})
+		writeLLMReply(w, reply)
 	}))
 	t.Cleanup(func() { close(release); f.srv.Close() })
 
@@ -147,14 +149,82 @@ func newLLMFixture(t *testing.T, a config.AdvisorLLMConfig) *llmFixture {
 			f.with(func() { k, ok = f.kicks[agent] })
 			return k, ok
 		},
-		http:      &http.Client{},
-		now:       now,
-		logger:    slog.New(slog.NewJSONHandler(f.logs, nil)),
-		budget:    newKnowledgeAdviserLLMBudget(now),
+		http:   &http.Client{},
+		now:    now,
+		logger: slog.New(slog.NewJSONHandler(f.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		budget: newKnowledgeAdviserLLMBudget(now),
+		slots:  newKnowledgeAdviserLLMSlots(),
+		wait: func(ctx context.Context, d time.Duration) bool {
+			f.with(func() { f.waits = append(f.waits, d) })
+			return ctx.Err() == nil
+		},
 		delivered: map[string]*knowledgeAdviserLLMKick{},
 	}
 	f.kicks["developer"] = scheduler.KickSummary{ID: "developer#1", Text: "#42 Fix the tree pin [kind/bug]"}
 	return f
+}
+
+// writeLLMReply is the model server's 200 answer carrying reply.
+func writeLLMReply(w http.ResponseWriter, reply string) {
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"choices": []any{map[string]any{"message": map[string]any{"content": reply}}},
+		"usage":   map[string]any{"prompt_tokens": 410, "completion_tokens": 17},
+	})
+}
+
+const llmTest429Body = `{"error":{"message":"rate limit exceeded","code":"rate_limited"}}`
+
+// rateLimit makes the model answer 429 (with the Copilot-style rate-limit
+// headers and, when non-empty, Retry-After) to the first n requests and the
+// fixture's reply afterwards.
+func (f *llmFixture) rateLimit(n int, retryAfter string) {
+	served := 0
+	f.with(func() {
+		f.handler = func(w http.ResponseWriter, _ *http.Request) {
+			var throttle bool
+			var reply string
+			f.with(func() {
+				served++
+				throttle = served <= n
+				reply = f.reply
+			})
+			if !throttle {
+				writeLLMReply(w, reply)
+				return
+			}
+			if retryAfter != "" {
+				w.Header().Set("Retry-After", retryAfter)
+			}
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.Header().Set("X-RateLimit-Limit", "60")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(llmTest429Body))
+		}
+	})
+}
+
+func (f *llmFixture) recordedWaits() (out []time.Duration) {
+	f.with(func() { out = append(out, f.waits...) })
+	return out
+}
+
+// logsAt returns the decoded log lines with msg at level.
+func (f *llmFixture) logsAt(t *testing.T, msg, level string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(f.logs.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		if rec["msg"] == msg && rec["level"] == level {
+			out = append(out, rec)
+		}
+	}
+	return out
 }
 
 var llmTestScope = crux.KnowledgeScope{
@@ -571,5 +641,249 @@ func TestKnowledgeAdviserLLM_ReasonNeverDelivered(t *testing.T) {
 		if strings.Contains(a.Title+a.Summary+a.Ref, "TYPE THIS") {
 			t.Errorf("reason leaked into advice %+v", a)
 		}
+	}
+}
+
+// 429 handling (hivecommons/hive#18151): one retry after Retry-After inside
+// the timeout, the outcome recorded as rate-limited, no budget spent, and one
+// advisor call in flight across the hive.
+
+const llmTest429Msg = "knowledge advisor: model endpoint rate limited (429)"
+
+func TestKnowledgeAdviserLLM_RateLimitedRetriesOnceThenRecords(t *testing.T) {
+	f := newLLMFixture(t, config.AdvisorLLMConfig{Mode: config.AdvisorLLMModeRank})
+	f.rateLimit(2, "1")
+	if got := f.d.Advise("developer", llmTestScope); len(got) != 0 {
+		t.Errorf("rate-limited delivered %v", slugsOf(got))
+	}
+	if n := f.callCount(); n != 2 {
+		t.Errorf("calls = %d, want exactly one retry (2)", n)
+	}
+	if w := f.recordedWaits(); len(w) != 1 || w[0] != time.Second {
+		t.Errorf("waits = %v, want [1s] from Retry-After", w)
+	}
+	d := f.lastDecision(t)
+	if d["verdict"] != knowledgeVerdictRateLimited || d["outcome"] != knowledgeVerdictRateLimited {
+		t.Errorf("decision = %v, want verdict and outcome rate-limited", d)
+	}
+	if d["retried"] != true || d["retry_after_s"] != float64(1) {
+		t.Errorf("decision retried/retry_after_s = %v/%v", d["retried"], d["retry_after_s"])
+	}
+	warns := f.logsAt(t, llmTest429Msg, "WARN")
+	if len(warns) != 1 {
+		t.Fatalf("WARN lines = %d, want 1 (first 429 in the window); logs:\n%s", len(warns), f.logs.String())
+	}
+	w := warns[0]
+	if w["header_retry_after"] != "1" || w["header_x_ratelimit_remaining"] != "0" || w["header_x_ratelimit_limit"] != "60" {
+		t.Errorf("WARN line lacks the rate-limit headers: %v", w)
+	}
+	if body, _ := w["body"].(string); !strings.Contains(body, "rate limit exceeded") {
+		t.Errorf("WARN body = %q", body)
+	}
+	if debugs := f.logsAt(t, llmTest429Msg, "DEBUG"); len(debugs) != 1 || debugs[0]["retried"] != true {
+		t.Errorf("DEBUG lines = %v, want the retry's 429 only", debugs)
+	}
+}
+
+func TestKnowledgeAdviserLLM_RateLimitedRetrySucceeds(t *testing.T) {
+	f := newLLMFixture(t, config.AdvisorLLMConfig{Mode: config.AdvisorLLMModeRank})
+	f.setReply(`{"slug": "first", "reason": "editing the pin"}`)
+	f.rateLimit(1, "0.5")
+	if got := slugsOf(f.d.Advise("developer", llmTestScope)); strings.Join(got, ",") != "first" {
+		t.Errorf("advice after the retry = %v, want [first]", got)
+	}
+	if n := f.callCount(); n != 2 {
+		t.Errorf("calls = %d, want 2", n)
+	}
+	if d := f.lastDecision(t); d["outcome"] != "delivered" || d["verdict"] != "pick" {
+		t.Errorf("decision = %v", d)
+	}
+}
+
+func TestKnowledgeAdviserLLM_RateLimitedWithoutRetryAfterBacksOffWithJitter(t *testing.T) {
+	f := newLLMFixture(t, config.AdvisorLLMConfig{Mode: config.AdvisorLLMModeRank})
+	f.rateLimit(2, "")
+	f.d.Advise("developer", llmTestScope)
+	w := f.recordedWaits()
+	if len(w) != 1 || w[0] < knowledgeAdviserLLMRetryBackoff || w[0] >= 2*knowledgeAdviserLLMRetryBackoff {
+		t.Errorf("waits = %v, want one in [%s, %s)", w, knowledgeAdviserLLMRetryBackoff, 2*knowledgeAdviserLLMRetryBackoff)
+	}
+	if d := f.lastDecision(t); d["outcome"] != knowledgeVerdictRateLimited || d["retry_after_s"] != float64(0) {
+		t.Errorf("decision = %v", d)
+	}
+}
+
+func TestKnowledgeAdviserLLM_RateLimitedSkipsRetryBeyondTimeout(t *testing.T) {
+	f := newLLMFixture(t, config.AdvisorLLMConfig{Mode: config.AdvisorLLMModeRank, TimeoutS: 5})
+	f.rateLimit(2, "30")
+	f.d.Advise("developer", llmTestScope)
+	if n := f.callCount(); n != 1 {
+		t.Errorf("calls = %d, want 1: a 30s Retry-After cannot fit a 5s timeout", n)
+	}
+	if w := f.recordedWaits(); len(w) != 0 {
+		t.Errorf("waited %v for a retry that cannot fit", w)
+	}
+	if d := f.lastDecision(t); d["outcome"] != knowledgeVerdictRateLimited || d["retried"] != false || d["retry_after_s"] != float64(30) {
+		t.Errorf("decision = %v", d)
+	}
+}
+
+func TestKnowledgeAdviserLLM_RateLimitedOnErrorMatcherFallsBack(t *testing.T) {
+	f := newLLMFixture(t, config.AdvisorLLMConfig{Mode: config.AdvisorLLMModeRank, OnError: config.AdvisorLLMOnErrorMatcher})
+	f.rateLimit(2, "1")
+	if got := slugsOf(f.d.Advise("developer", llmTestScope)); strings.Join(got, ",") != "first" {
+		t.Errorf("on_error matcher = %v, want [first]", got)
+	}
+	if d := f.lastDecision(t); d["outcome"] != "fallback-matcher" || d["verdict"] != knowledgeVerdictRateLimited {
+		t.Errorf("decision = %v", d)
+	}
+}
+
+func TestKnowledgeAdviserLLM_RateLimitedDoesNotConsumeBudget(t *testing.T) {
+	f := newLLMFixture(t, config.AdvisorLLMConfig{Mode: config.AdvisorLLMModeRank, MaxCallsPerAgentHour: 1})
+	f.rateLimit(2, "1")
+	f.d.Advise("developer", llmTestScope)
+	if d := f.lastDecision(t); d["outcome"] != knowledgeVerdictRateLimited {
+		t.Fatalf("decision = %v", d)
+	}
+	f.d.budget.mu.Lock()
+	events, used := len(f.d.budget.events["developer"]), f.d.budget.used
+	f.d.budget.mu.Unlock()
+	if events != 0 || used != 0 {
+		t.Errorf("after a rate-limited decision agent events = %d fleet used = %d, want 0/0", events, used)
+	}
+	// The one slot of the hour is still free: the next decision reaches the
+	// model instead of being over-budget.
+	f.with(func() { f.handler = nil })
+	f.d.Advise("developer", llmTestScope)
+	if n := f.callCount(); n != 3 {
+		t.Errorf("calls = %d, want 3 (the rate-limited pair plus one real call)", n)
+	}
+	if d := f.lastDecision(t); d["outcome"] != "null" {
+		t.Errorf("decision after the throttled one = %v, want a real null verdict, not over-budget", d)
+	}
+}
+
+func TestKnowledgeAdviserLLM_GlobalCapSerializesAgents(t *testing.T) {
+	f := newLLMFixture(t, config.AdvisorLLMConfig{Mode: config.AdvisorLLMModeRank})
+	f.setKick("scanner", scheduler.KickSummary{ID: "scanner#1", Text: "#7 Scan"})
+	release := make(chan struct{})
+	var seq []string
+	served := 0
+	f.with(func() {
+		f.handler = func(w http.ResponseWriter, _ *http.Request) {
+			var n int
+			f.with(func() {
+				served++
+				n = served
+				seq = append(seq, fmt.Sprintf("start%d", n))
+			})
+			if n == 1 {
+				<-release
+			}
+			f.with(func() { seq = append(seq, fmt.Sprintf("end%d", n)) })
+			writeLLMReply(w, `{"slug": null, "reason": "reading"}`)
+		}
+	})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		f.d.Advise("developer", llmTestScope)
+	}()
+	testutil.Eventually(t, 5*time.Second, func() bool { return f.callCount() == 1 }, "first agent's call did not reach the model")
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		f.d.Advise("scanner", llmTestScope)
+	}()
+	testutil.Eventually(t, 5*time.Second, func() bool { return f.d.waiting.Load() == 1 }, "second agent is not waiting on the hive-wide slot")
+	if n := f.callCount(); n != 1 {
+		t.Fatalf("calls = %d while the first is in flight, want 1", n)
+	}
+	close(release)
+	wg.Wait()
+	if n := f.callCount(); n != 2 {
+		t.Errorf("calls = %d, want 2", n)
+	}
+	var got string
+	f.with(func() { got = strings.Join(seq, ",") })
+	if got != "start1,end1,start2,end2" {
+		t.Errorf("call sequence = %s, want start1,end1,start2,end2", got)
+	}
+	if n := len(f.decisions(t)); n != 2 {
+		t.Errorf("decisions logged = %d, want 2", n)
+	}
+	if f.d.waiting.Load() != 0 {
+		t.Errorf("waiting = %d after both calls returned", f.d.waiting.Load())
+	}
+}
+
+func TestKnowledgeAdviserLLMBudgetRefund(t *testing.T) {
+	clock := time.Date(2026, 11, 13, 20, 0, 0, 0, time.UTC)
+	b := newKnowledgeAdviserLLMBudget(func() time.Time { return clock })
+	if over, _ := b.take("developer", 2, 10); over != "" {
+		t.Fatalf("first take over = %q", over)
+	}
+	clock = clock.Add(time.Minute)
+	over, stamp := b.take("developer", 2, 10)
+	if over != "" {
+		t.Fatalf("second take over = %q", over)
+	}
+	if over, _ := b.take("developer", 2, 10); over != "agent-hour" {
+		t.Fatalf("third take over = %q, want agent-hour", over)
+	}
+	b.refund("developer", stamp)
+	b.mu.Lock()
+	events, used := len(b.events["developer"]), b.used
+	b.mu.Unlock()
+	if events != 1 || used != 1 {
+		t.Errorf("after refund events = %d used = %d, want 1/1", events, used)
+	}
+	if over, _ := b.take("developer", 2, 10); over != "" {
+		t.Errorf("take after refund over = %q, want the slot back", over)
+	}
+	// A stamp that is not there refunds no event and never drives used negative.
+	b.refund("developer", stamp.Add(time.Hour))
+	b.refund("other", stamp)
+	b.mu.Lock()
+	events, used = len(b.events["developer"]), b.used
+	b.mu.Unlock()
+	if events != 2 || used != 1 {
+		t.Errorf("after bogus refunds events = %d used = %d, want 2/1", events, used)
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, 11, 13, 20, 0, 0, 0, time.UTC)
+	for in, want := range map[string]time.Duration{
+		"":      0,
+		"3":     3 * time.Second,
+		" 1.5 ": 1500 * time.Millisecond,
+		"0":     0,
+		"-2":    0,
+		"soon":  0,
+		now.Add(7 * time.Second).UTC().Format(http.TimeFormat):  7 * time.Second,
+		now.Add(-7 * time.Second).UTC().Format(http.TimeFormat): 0,
+	} {
+		if got := parseRetryAfter(in, now); got != want {
+			t.Errorf("parseRetryAfter(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+func TestKnowledgeAdviserLLMRetryWait(t *testing.T) {
+	now := time.Date(2026, 11, 13, 20, 0, 0, 0, time.UTC)
+	ctx, cancel := context.WithDeadline(context.Background(), now.Add(time.Duration(config.DefaultAdvisorLLMTimeoutS)*time.Second))
+	defer cancel()
+	if wait, ok := knowledgeAdviserLLMRetryWait(ctx, time.Second, now); !ok || wait != time.Second {
+		t.Errorf("1s Retry-After inside 15s = %s/%v, want 1s/true", wait, ok)
+	}
+	tooLong := time.Duration(config.DefaultAdvisorLLMTimeoutS)*time.Second - knowledgeAdviserLLMRetryHeadroom + time.Second
+	if _, ok := knowledgeAdviserLLMRetryWait(ctx, tooLong, now); ok {
+		t.Errorf("%s Retry-After leaves no headroom inside 15s, want no retry", tooLong)
+	}
+	if wait, ok := knowledgeAdviserLLMRetryWait(context.Background(), 0, now); !ok || wait < knowledgeAdviserLLMRetryBackoff || wait >= 2*knowledgeAdviserLLMRetryBackoff {
+		t.Errorf("no Retry-After, no deadline = %s/%v, want jittered backoff/true", wait, ok)
 	}
 }
