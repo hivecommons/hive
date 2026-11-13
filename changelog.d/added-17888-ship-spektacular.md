@@ -1,1 +1,0 @@
-- The hive image now ships the `spektacular` CLI (pinned 0.31.0, checksum-verified, amd64 and arm64), so the Inbox → RFC destination runs `spektacular voice --publish` in-pod without an agent fallback (#17888).
