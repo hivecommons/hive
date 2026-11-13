@@ -91,6 +91,11 @@ var providerBudgetNotify governor.ProviderBudgetNotifyState
 // providerBudgetNotify: runEvalCycle has no state of its own.
 var providerBudgetProbe governor.ProviderBudgetProbeState
 
+// agentQuotaHold remembers, per agent out of provider quota, when its last
+// probe kick was delivered (hivecommons/hive#18112). Package-level for the
+// same reason as providerBudgetProbe.
+var agentQuotaHold agentQuotaHoldState
+
 // governorKickFairness remembers, per agent, how many cycles in a row the
 // governor kick was deferred behind a delivered review-fix kick
 // (hivecommons/hive#15166). Package-level for the same reason as
@@ -886,7 +891,7 @@ func runEvalCycle(
 	suppressKicks := governor.ProviderBudgetSuppresses(providerBudgetLatched,
 		providerBudgetProbe.Freshest(providerBudgetLastRebuff), time.Now(), providerBudgetProbeInterval)
 	budgetAlert := decideProviderBudgetAlert(providerBudgetLatched, suppressKicks,
-		providerBudgetCause, providerBudgetSince, providerBudgetRebuffs,
+		providerBudgetCause, providerBudgetSince, providerBudgetRebuffs, providerBudgetProbeInterval,
 		func() string {
 			return hub.QuotaExhaustedAgentReason(hub.QuotaExhaustedProcessCount(agentMgr.AllStatuses()))
 		})
@@ -1093,6 +1098,22 @@ func runEvalCycle(
 			"last_rebuff", providerBudgetLastRebuff, "probe_interval", providerBudgetProbeInterval)
 	}
 	messages = kickGate.Kept
+	// PER-AGENT PROVIDER QUOTA HOLD (#18112). The spend gate above only sees
+	// agents behind the hive's inference gateway; an agent whose own provider
+	// refuses it for quota (Copilot's "monthly quota") is held here, per
+	// agent, from the QuotaExhausted flag every backend reports. Review-swarm
+	// kicks are in this list too, so a held reviewer gets no review work.
+	quotaExhaustedNow := agentQuotaHold.quotaExhaustedAgents(agentMgr.AllStatuses())
+	if len(quotaExhaustedNow) > 0 && len(messages) > 0 {
+		kept, quotaWithheld, quotaProbes := gateKickMessagesForAgentQuota(messages,
+			func(agent string) bool { return quotaExhaustedNow[agent] },
+			agentQuotaHold.LastProbe, time.Now(), providerBudgetProbeInterval)
+		if len(quotaWithheld) > 0 || len(quotaProbes) > 0 {
+			logger.Warn("provider quota exhausted: withholding agent kicks",
+				"withheld", quotaWithheld, "probe", quotaProbes, "probe_interval", providerBudgetProbeInterval)
+		}
+		messages = kept
+	}
 	// Self-upgrade drain (#11876): a hub-instructed upgrade is waiting for
 	// in-flight kicks to end, so starting new turns would only feed the
 	// restart. Withheld kicks stay due and go out from the new process.
@@ -1207,6 +1228,12 @@ func runEvalCycle(
 			},
 			onDelivered: func(msg scheduler.KickMessage, deliveredAt time.Time) {
 				deliveredKicks = append(deliveredKicks, msg)
+				if quotaExhaustedNow[msg.Agent] {
+					// The only kick a held agent can receive is its probe;
+					// stamp it on delivery so a failed or deferred probe
+					// is retried next cycle (#18112).
+					agentQuotaHold.MarkProbeDelivered(msg.Agent, deliveredAt)
+				}
 				gov.RecordKickForRepoAt(msg.Agent, msg.Repo, deliveredAt)
 				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
 
