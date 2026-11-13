@@ -1310,6 +1310,7 @@ func (b *boot) wireBootClosures() {
 				initAgentConfigDrivenSystems(b.cfg)
 			},
 			IoscanConfigApplied: b.reinstallIoscanClassifier,
+			ApplyReferenceRepos: b.applyEditedReferenceRepos,
 			ReviewConfigApplied: func(rc config.ReviewConfig) {
 				if b.ghClient == nil {
 					return

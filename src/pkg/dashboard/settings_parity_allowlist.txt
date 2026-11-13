@@ -485,9 +485,6 @@ project.paused_repos[].by # TODO #11854
 project.paused_repos[].reason # TODO #11854
 project.paused_repos[].repo # TODO #11854
 project.primary_repo # TODO #11854
-project.reference_repos[].repo # file-only by design (#18015): rare study-only repos, set in the overlay
-project.reference_repos[].write[] # file-only by design (#18015)
-project.reference_repos[].write_token_file # file-only by design (#18015)
 project.repo_policies[].acmm_last_automatic.at # TODO #11854
 project.repo_policies[].acmm_last_automatic.direction # TODO #11854
 project.repo_policies[].acmm_last_automatic.evidence_ids[] # TODO #11854

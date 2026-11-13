@@ -1,0 +1,1 @@
+- Dashboard: Settings → Repos has a Reference repos editor for `project.reference_repos`, so a hosted hive's owner can add, change and remove study-only repos without the config file; a save is refused with the loader's or boot's own message (including a write entry with no usable credential) and otherwise applies to the GitHub proxy without a restart (#18136).

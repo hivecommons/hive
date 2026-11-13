@@ -204,3 +204,27 @@ func (b *boot) wireReferenceReposWith(rt *referenceRepoRuntime) {
 	}
 	b.startReferenceRepoDerivePoller(b.ctx, rt)
 }
+
+// applyEditedReferenceRepos is the dashboard editor's hook
+// (hivecommons/hive#18136): it verifies the write credentials of the edited
+// hand-written refs and, only when every entry passes, installs the rebuilt
+// policies (derived entries from the last pass stay merged in). The error is
+// returned to the owner verbatim and the previous list is kept.
+func (b *boot) applyEditedReferenceRepos(ctx context.Context, refs []config.ReferenceRepo) error {
+	rt := b.referenceRepos
+	if rt == nil {
+		rt = b.newReferenceRepoRuntime()
+	}
+	if b.githubProxy == nil || b.cfg == nil {
+		return nil
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	merged := mergedReferenceRepos(b.cfg, config.HandWrittenReferenceRepos(refs), rt.lastDerived, b.logger)
+	res, err := buildReferenceRepoPolicies(ctx, merged, rt.deps, b.logger)
+	if err != nil {
+		return err
+	}
+	b.githubProxy.SetReferenceRepos(res.policies)
+	return nil
+}

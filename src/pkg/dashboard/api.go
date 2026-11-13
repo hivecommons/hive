@@ -559,6 +559,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerAgentVariableRoutes()
 	// Activity monitor row menu: Accept triage (api_repo_item_accept_triage.go).
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/accept-triage", s.recordOperatorAction(s.handleRepoItemAcceptTriage))
+	// project.reference_repos editor on the Repos tab (#18136, api_config_reference_repos.go).
+	s.mux.HandleFunc("GET /api/config/reference-repos", s.handleReferenceReposGet)
+	s.mux.HandleFunc("PUT /api/config/reference-repos", s.handleReferenceReposPut)
 }
 
 var (

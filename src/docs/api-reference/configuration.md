@@ -101,6 +101,8 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `PUT` | `/api/config/escalation` | Owner only | Escalation Config Set | `pkg/dashboard/api.go:234` |
 | `GET` | `/api/config/write-surface` | Owner only | Lane write allowlist (`write_surface.allowlist`, [#9587](https://github.com/hivecommons/hive/issues/9587)): `allowlist`, `ops`, `warnings` | `pkg/dashboard/api.go:541` |
 | `PUT` | `/api/config/write-surface` | Owner only | Replace the lane write allowlist; `{"allowlist": {}}` clears it; unknown operation or bad lane name is a 400 with nothing changed | `pkg/dashboard/api.go:542` |
+| `GET` | `/api/config/reference-repos` | Owner only | `project.reference_repos` ([#18136](https://github.com/hivecommons/hive/issues/18136)): `reference_repos` (`{repo, write, write_token_file}`, always an array) and `write_kinds` | `pkg/dashboard/api.go:563` |
+| `PUT` | `/api/config/reference-repos` | Owner only | Replace `project.reference_repos`; `{"reference_repos": []}` clears it. Refused with a 400 and nothing changed when the config loader would reject the list (bare name, repo also in `project.repos`, duplicate, unknown write kind, token file without write) or when a write entry has no credential boot would accept — the same message boot exits 22 with. On success the GitHub proxy's reference policies are replaced without a restart; audited as `config_reference_repos` | `pkg/dashboard/api.go:564` |
 | `GET` | `/api/config/review` | Dashboard auth/session | Review Config Get | `pkg/dashboard/api.go:237` |
 | `PUT` | `/api/config/review` | Owner only | Review Config Set | `pkg/dashboard/api.go:240` |
 | `PUT` | `/api/config/governor/features` | Owner only | Governor Features | `pkg/dashboard/api.go:246` |

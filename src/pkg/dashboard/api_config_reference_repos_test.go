@@ -1,0 +1,179 @@
+package dashboard
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
+)
+
+// hivecommons/hive#18136: the owner-only project.reference_repos editor.
+
+const referenceReposPath = "/api/config/reference-repos"
+
+func decodeReferenceRepos(t *testing.T, body []byte) referenceReposSectionResponse {
+	t.Helper()
+	var got referenceReposSectionResponse
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode: %v (%s)", err, body)
+	}
+	return got
+}
+
+func TestReferenceReposGet_OwnerOnlyAndEmptyArray(t *testing.T) {
+	s := covApiServer(t)
+	if rec := doGetNoRole(s, referenceReposPath); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owner GET: expected 403, got %d", rec.Code)
+	}
+	if rec := doPutNoRole(s, referenceReposPath, `{"reference_repos":[]}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owner PUT: expected 403, got %d", rec.Code)
+	}
+	rec := doOwnerGet(s, referenceReposPath)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: expected 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"reference_repos":[]`) {
+		t.Fatalf("default body must carry an empty array, not null: %s", rec.Body.String())
+	}
+	got := decodeReferenceRepos(t, rec.Body.Bytes())
+	if !reflect.DeepEqual(got.WriteKinds, []string{config.ReferenceWriteIssues, config.ReferenceWritePRs}) {
+		t.Fatalf("write_kinds = %v", got.WriteKinds)
+	}
+}
+
+func TestReferenceReposPut_RoundTripAndApplyHook(t *testing.T) {
+	s := covApiServer(t)
+	cfg := s.deps.Config
+	var applied []config.ReferenceRepo
+	s.deps.ApplyReferenceRepos = func(_ context.Context, refs []config.ReferenceRepo) error {
+		applied = refs
+		return nil
+	}
+
+	rec := doPut(s, referenceReposPath, map[string]any{"reference_repos": []map[string]any{
+		{"repo": " hivecommons/docs "},
+		{"repo": "hivecommons/hive", "write": []string{"PRs", "issues", "prs"}, "write_token_file": "/etc/hive/ref.token"},
+	}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	want := []config.ReferenceRepo{
+		{Repo: "hivecommons/docs"},
+		{Repo: "hivecommons/hive", Write: []string{"issues", "prs"}, WriteTokenFile: "/etc/hive/ref.token"},
+	}
+	if got := decodeReferenceRepos(t, rec.Body.Bytes()).ReferenceRepos; !reflect.DeepEqual(got, want) {
+		t.Fatalf("PUT echoed %+v, want %+v", got, want)
+	}
+	if !reflect.DeepEqual(cfg.Project.ReferenceRepos, want) {
+		t.Fatalf("config holds %+v, want %+v", cfg.Project.ReferenceRepos, want)
+	}
+	if !reflect.DeepEqual(applied, want) {
+		t.Fatalf("the proxy hook saw %+v, want %+v", applied, want)
+	}
+	// The kick and status read the live config: in force immediately.
+	if rr, ok := cfg.ReferenceRepoFor("HiveCommons/Hive"); !ok || !rr.WritesPRs() || !rr.WritesIssues() {
+		t.Fatalf("saved entry not visible to ReferenceRepoFor: %+v %v", rr, ok)
+	}
+	if back := decodeReferenceRepos(t, doOwnerGet(s, referenceReposPath).Body.Bytes()); !reflect.DeepEqual(back.ReferenceRepos, want) {
+		t.Fatalf("GET after PUT = %+v, want %+v", back.ReferenceRepos, want)
+	}
+
+	// Clearing is explicit and reaches the proxy as an empty list.
+	if rec := doPut(s, referenceReposPath, map[string]any{"reference_repos": []any{}}); rec.Code != http.StatusOK {
+		t.Fatalf("clear: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(cfg.Project.ReferenceRepos) != 0 || applied == nil || len(applied) != 0 {
+		t.Fatalf("clear left config=%+v applied=%+v", cfg.Project.ReferenceRepos, applied)
+	}
+}
+
+func TestReferenceReposPut_RejectsWithLoaderMessage(t *testing.T) {
+	s := covApiServer(t)
+	cfg := s.deps.Config
+	prior := []config.ReferenceRepo{{Repo: "keep/me"}}
+	cfg.Project.ReferenceRepos = append([]config.ReferenceRepo{}, prior...)
+
+	cases := []struct {
+		name  string
+		entry config.ReferenceRepo
+	}{
+		{"also authorized", config.ReferenceRepo{Repo: cfg.Project.Org + "/" + cfg.Project.Repos[0]}},
+		{"bare name", config.ReferenceRepo{Repo: "docs"}},
+		{"unknown write", config.ReferenceRepo{Repo: "a/b", Write: []string{"merge"}}},
+		{"token without write", config.ReferenceRepo{Repo: "a/b", WriteTokenFile: "/t"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := cfg.Project
+			candidate.ReferenceRepos = []config.ReferenceRepo{tc.entry}
+			loaderErr := config.ValidateReferenceRepos(candidate)
+			if loaderErr == nil {
+				t.Fatalf("the loader accepts %+v; the case is wrong", tc.entry)
+			}
+			rec := doPut(s, referenceReposPath, map[string]any{"reference_repos": []config.ReferenceRepo{tc.entry}})
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), jsonEscaped(t, loaderErr.Error())) {
+				t.Fatalf("response %s does not carry the loader's message %q", rec.Body.String(), loaderErr)
+			}
+			if !reflect.DeepEqual(cfg.Project.ReferenceRepos, prior) {
+				t.Fatalf("a refused PUT changed the config: %+v", cfg.Project.ReferenceRepos)
+			}
+		})
+	}
+
+	if rec := doPut(s, referenceReposPath, map[string]any{}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing key: expected 400, got %d", rec.Code)
+	}
+}
+
+// A write-mode entry with no credential is refused with the message boot
+// would exit 22 with, and nothing is stored, so the next boot still starts.
+func TestReferenceReposPut_WriteWithoutCredentialRefused(t *testing.T) {
+	s := covApiServer(t)
+	cfg := s.deps.Config
+	// The production hook (cmd/hive applyReferenceRepos) runs the same
+	// verification boot runs; a hive with no App auth has no discover seam.
+	var bootMsg string
+	s.deps.ApplyReferenceRepos = func(ctx context.Context, refs []config.ReferenceRepo) error {
+		for _, rr := range refs {
+			if _, err := github.VerifyReferenceRepoWriteCredential(ctx, rr, "", nil, nil); err != nil {
+				bootMsg = err.Error()
+				return err
+			}
+		}
+		return nil
+	}
+
+	rec := doPut(s, referenceReposPath, map[string]any{"reference_repos": []map[string]any{
+		{"repo": "upstream/project", "write": []string{"issues"}},
+	}})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if bootMsg == "" || !strings.Contains(rec.Body.String(), jsonEscaped(t, bootMsg)) {
+		t.Fatalf("response %s does not carry the boot message %q", rec.Body.String(), bootMsg)
+	}
+	if !strings.Contains(bootMsg, github.ErrReferenceRepoNoCredential.Error()) {
+		t.Fatalf("boot message %q does not name the missing credential", bootMsg)
+	}
+	if len(cfg.Project.ReferenceRepos) != 0 {
+		t.Fatalf("a refused PUT stored %+v", cfg.Project.ReferenceRepos)
+	}
+}
+
+// jsonEscaped returns s as it appears inside a JSON string.
+func jsonEscaped(t *testing.T, s string) string {
+	t.Helper()
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Trim(string(b), `"`)
+}
