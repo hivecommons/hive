@@ -53,7 +53,9 @@ uses a secret only you hold.
 2. **Create the webhook.** If the section offers **Create webhook for me**,
    click it: the hive's GitHub App installation holds `organization_hooks` or
    `repository_hooks` write permission and the hive creates the hook with the
-   right URL, secret and events. Otherwise do it by hand in GitHub:
+   right URL, secret and events. Clicking it again is safe: when a hook for
+   this hive's payload URL already exists it is reported, not duplicated.
+   Otherwise do it by hand in GitHub:
    organization (or repository) → Settings → Webhooks → **Add webhook**.
    - Payload URL: the value shown in the section, i.e.
      `https://<your-hive>/api/webhook/github`
