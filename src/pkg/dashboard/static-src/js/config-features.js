@@ -234,10 +234,10 @@
       const rvSrcLabel = `${rvSrc.owner || ''}/${rvSrc.repo || ''}/${rvSrc.path || ''}${rvSrc.ref ? '@' + rvSrc.ref : ''}`;
       const rvSrcStatus = rv.perspectives_source_status || '';
       const rvSrcURL = /^https:\/\/github\.com\//.test(rv.perspectives_source_url || '') ? rv.perspectives_source_url : '';
-      const rvLinkedBanner = !rvLinked ? '' : `<div class="rv-perspectives-linked" style="margin:var(--sp-0) var(--sp-0) var(--sp-3);padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);font-size:0.74rem">
+      const rvLinkedBanner = !rvLinked ? '' : `<div class="rv-perspectives-linked">
               <div>Linked to ${rvSrcURL ? `<a href="${esc(rvSrcURL)}" target="_blank" rel="noopener noreferrer"><code>${esc(rvSrcLabel)}</code> &#8599;</a>` : `<code>${esc(rvSrcLabel)}</code>`} ${yamlHint('review.perspectives_source')} <span class="text-muted">&mdash; read-only here; change the perspectives in that file, or remove the link from hive.yaml to edit them inline.</span></div>
-              <div class="rv-perspectives-linked-status" style="margin-top:var(--sp-2);color:var(--muted)">${rvSrcStatus === 'unresolved' ? 'Not resolved yet (repo unreachable, not allowlisted, or invalid) &mdash; the inline perspectives below are in effect.' : `Status: <code>${esc(rvSrcStatus)}</code>`}</div>
-              ${rv.perspectives_source_warning ? `<div class="rv-perspectives-linked-warning" style="margin-top:var(--sp-2);color:var(--yellow)">&#9888; ${esc(rv.perspectives_source_warning)}</div>` : ''}
+              <div class="rv-perspectives-linked-status">${rvSrcStatus === 'unresolved' ? 'Not resolved yet (repo unreachable, not allowlisted, or invalid) &mdash; the inline perspectives below are in effect.' : `Status: <code>${esc(rvSrcStatus)}</code>`}</div>
+              ${rv.perspectives_source_warning ? `<div class="rv-perspectives-linked-warning">&#9888; ${esc(rv.perspectives_source_warning)}</div>` : ''}
             </div>`;
       const rvLockAttr = rvLinked ? ' disabled' : '';
       const rvPerspectiveRow = (name, defaultFocus) => {

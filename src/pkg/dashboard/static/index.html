@@ -4728,6 +4728,10 @@
     .rv-reviewer-help { margin: var(--sp-1) var(--sp-0) var(--sp-0); }
     .rv-reviewer-help-above { margin: var(--sp-0) var(--sp-0) var(--sp-2); }
     #rv-require-labels-field[hidden] { display: none; }
+    /* Linked review.perspectives_source banner in the Review Gate (#17989). */
+    .rv-perspectives-linked { margin: var(--sp-0) var(--sp-0) var(--sp-3); padding: var(--sp-4) var(--sp-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-sm); }
+    .rv-perspectives-linked-status, .rv-perspectives-linked-warning { margin-top: var(--sp-2); color: var(--muted); }
+    .rv-perspectives-linked-warning { color: var(--yellow); }
     .am-trusted-authors-repos { min-height: 72px; }
     .am-bot-empty { color: var(--muted); margin: var(--sp-1) 0; }
     .am-bot-add { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); align-items: center; }
@@ -68588,10 +68592,10 @@ function burnAreaChart() {
       const rvSrcLabel = `${rvSrc.owner || ''}/${rvSrc.repo || ''}/${rvSrc.path || ''}${rvSrc.ref ? '@' + rvSrc.ref : ''}`;
       const rvSrcStatus = rv.perspectives_source_status || '';
       const rvSrcURL = /^https:\/\/github\.com\//.test(rv.perspectives_source_url || '') ? rv.perspectives_source_url : '';
-      const rvLinkedBanner = !rvLinked ? '' : `<div class="rv-perspectives-linked" style="margin:var(--sp-0) var(--sp-0) var(--sp-3);padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);font-size:0.74rem">
+      const rvLinkedBanner = !rvLinked ? '' : `<div class="rv-perspectives-linked">
               <div>Linked to ${rvSrcURL ? `<a href="${esc(rvSrcURL)}" target="_blank" rel="noopener noreferrer"><code>${esc(rvSrcLabel)}</code> &#8599;</a>` : `<code>${esc(rvSrcLabel)}</code>`} ${yamlHint('review.perspectives_source')} <span class="text-muted">&mdash; read-only here; change the perspectives in that file, or remove the link from hive.yaml to edit them inline.</span></div>
-              <div class="rv-perspectives-linked-status" style="margin-top:var(--sp-2);color:var(--muted)">${rvSrcStatus === 'unresolved' ? 'Not resolved yet (repo unreachable, not allowlisted, or invalid) &mdash; the inline perspectives below are in effect.' : `Status: <code>${esc(rvSrcStatus)}</code>`}</div>
-              ${rv.perspectives_source_warning ? `<div class="rv-perspectives-linked-warning" style="margin-top:var(--sp-2);color:var(--yellow)">&#9888; ${esc(rv.perspectives_source_warning)}</div>` : ''}
+              <div class="rv-perspectives-linked-status">${rvSrcStatus === 'unresolved' ? 'Not resolved yet (repo unreachable, not allowlisted, or invalid) &mdash; the inline perspectives below are in effect.' : `Status: <code>${esc(rvSrcStatus)}</code>`}</div>
+              ${rv.perspectives_source_warning ? `<div class="rv-perspectives-linked-warning">&#9888; ${esc(rv.perspectives_source_warning)}</div>` : ''}
             </div>`;
       const rvLockAttr = rvLinked ? ' disabled' : '';
       const rvPerspectiveRow = (name, defaultFocus) => {
