@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.247.2)
+
+### Fixed
+
+- Session prune now warns once per path when a session directory cannot be removed due to permission denied, instead of repeating the warning every tick.
+
 ## 2026-11-13 (v5.247.1)
 
 ### Fixed
