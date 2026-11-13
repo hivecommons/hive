@@ -567,6 +567,9 @@ func (m *Manager) rebridgeClaudeCredential(agentName, link, target, trigger stri
 	if rep == nil {
 		return nil
 	}
+	// The fleet self-report feed deliberately ignores this exact message (a
+	// completed repair, expected in a burst at every token refresh):
+	// claudeCredentialRebridged in pkg/fleetreport/slogfeed. Keep them in sync.
 	m.logger.Warn("claude credential bridge: a private credential file had replaced the shared-login symlink; re-bridged",
 		"agent", agentName,
 		"trigger", trigger,

@@ -381,6 +381,33 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       echo "WARN: Goose CLI download failed — skipping (backend: goose will be unavailable)"; \
     fi
 
+# --- Layer 8.1: spektacular CLI (Inbox -> RFC destination) ---
+# Pinned hivecommons/spektacular release (includes `spektacular voice`,
+# hivecommons/spektacular#123), SHA-256-verified before extraction, installed
+# to /usr/local/bin/spektacular so inbox.spek.binary / runs.spektacular.binary
+# resolve on PATH with no config. Download failures are tolerated (the Inbox
+# falls back to inbox.spek.agent); checksum mismatches hard-fail the build.
+# Bump note: see src/docs/cli-pins.md (spektacular row); update the version and
+# both digests together from the release's checksums.txt.
+ARG SPEKTACULAR_VERSION=0.31.0
+ARG SPEKTACULAR_SHA256_AMD64=21bd077b6723de41185fa657c0e54ea5726c1c2928794548ada4a8776a7b4746
+ARG SPEKTACULAR_SHA256_ARM64=81d3b92c907bd6d66e4e1db79df24be8b64803dd26e0de1d7147f1ff5fc9b8d0
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    case "$ARCH" in \
+      amd64) SPEK_ARCH=x86_64; SPEK_SHA256="$SPEKTACULAR_SHA256_AMD64" ;; \
+      arm64) SPEK_ARCH=arm64; SPEK_SHA256="$SPEKTACULAR_SHA256_ARM64" ;; \
+      *) echo "unsupported arch for spektacular: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    mkdir -p /tmp/spek-dl && \
+    if curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused "https://github.com/hivecommons/spektacular/releases/download/${SPEKTACULAR_VERSION}/spektacular_${SPEKTACULAR_VERSION}_linux_${SPEK_ARCH}.tar.gz" -o /tmp/spek-dl/spektacular.tar.gz; then \
+      echo "${SPEK_SHA256}  /tmp/spek-dl/spektacular.tar.gz" | sha256sum -c - && \
+      tar xz -C /usr/local/bin -f /tmp/spek-dl/spektacular.tar.gz spektacular && \
+      chmod +x /usr/local/bin/spektacular && \
+      rm -rf /tmp/spek-dl; \
+    else \
+      echo "WARN: spektacular download failed - skipping (Inbox falls back to inbox.spek.agent)"; \
+    fi
+
 # --- Layer 8.25: Google Antigravity CLI (backend: agy) ---
 # The vendor distributes a self-contained Linux executable, not an npm package.
 # Pin the version, build ID, and SHA-512 from its public updater manifest; do
@@ -411,9 +438,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=18.19.0
-ARG OMP_SHA256_AMD64=b44fda2ae5c9cce2bbe124d1672cba532a136d9e1eef68599b16efcd3bc5c626
-ARG OMP_SHA256_ARM64=61826bf89c2c0512417fee05fa2f486e60ee11b23ea95a17257a6c49edb6b8d5
+ARG OMP_VERSION=18.20.0
+ARG OMP_SHA256_AMD64=c8694be8c6e6a1f45e3636dd8a8e9eaa78878ad629a89000b403ec5e456d3f89
+ARG OMP_SHA256_ARM64=8b5e197db7c58b7ebabf83c6f03597f89bae3a766a84c6481b3a942a125f5e22
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \

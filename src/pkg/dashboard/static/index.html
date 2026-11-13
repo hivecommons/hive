@@ -5821,6 +5821,7 @@
     .kc-pill[data-status="ok"] { background: var(--green); }
     .kc-pill[data-status="syncing"] { background: var(--blue); }
     .kc-pill[data-status="error"] { background: var(--red); }
+    .kc-pill[data-status="not loaded"] { background: var(--orange); }
     .kc-publish { margin-top: var(--sp-4); border-top: var(--line-width) solid var(--border); padding-top: var(--sp-3); }
     .kc-publish-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
     .kc-publish-head h4 { margin: 0; }
@@ -6118,7 +6119,9 @@
     .agent-navbar-tile .agent-up-next.running-now { color: var(--green); }
     .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
     .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
-    .agent-navbar-upnext::after { content: attr(data-agent-summary); display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+    .agent-navbar-summary { flex: 0 0 auto; display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+    .agent-navbar-summary:hover, .agent-navbar-summary:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
+    .agent-navbar-summary-short { display: none; }
     @container navbar-center (max-width: 560px) {
       .agent-navbar-tile { min-width: 104px; }
       .agent-navbar-tile .agent-tile-next { display: none; }
@@ -6131,10 +6134,12 @@
     @container navbar-center (max-width: 340px) {
       .agent-navbar-upnext { overflow: hidden; mask-image: none; }
       .agent-navbar-upnext .agent-navbar-tile { display: none; }
-      .agent-navbar-upnext::after { display: inline-flex; }
+      .agent-navbar-upnext .agent-navbar-summary { display: inline-flex; }
     }
     @container navbar-center (max-width: 220px) {
-      .agent-navbar-upnext::after { content: 'Next'; padding-inline: var(--sp-1); }
+      .agent-navbar-upnext .agent-navbar-summary { padding-inline: var(--sp-1); }
+      .agent-navbar-summary .agent-navbar-summary-full { display: none; }
+      .agent-navbar-summary .agent-navbar-summary-short { display: inline; }
     }
     @keyframes navbar-up-next-pulse {
       0% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 72%, transparent), 0 0 0 var(--sp-0) color-mix(in srgb, var(--amber) 0%, transparent); }
@@ -11581,14 +11586,52 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       wrap.dataset.upNextKey = nextItem ? nextItem.id : '';
       animateAgentNavbarReorder(wrap, beforeRects);
     }
+    function agentNavbarSummaryLabel(count) {
+      return String(count) + (count === 1 ? ' agent' : ' agents');
+    }
+    // The narrow-strip summary is a real button (not a CSS pseudo-element) so
+    // it can carry data-action and receive clicks and keyboard activation. It
+    // stays the strip's LAST child so renderAgentNavbarTileDiff's index-based
+    // insertBefore always places tiles ahead of it.
+    function renderAgentNavbarSummary(wrap, count) {
+      let btn = wrap.querySelector('.agent-navbar-summary');
+      if (!count) {
+        if (btn) btn.remove();
+        return null;
+      }
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.setAttribute('type', 'button');
+        btn.className = 'agent-navbar-summary';
+        btn.setAttribute('data-action', 'openAgentsUpNextPanel');
+        btn.setAttribute('data-stop', '1');
+        const full = document.createElement('span');
+        full.className = 'agent-navbar-summary-full';
+        const short = document.createElement('span');
+        short.className = 'agent-navbar-summary-short';
+        short.textContent = 'Next';
+        btn.appendChild(full);
+        btn.appendChild(short);
+      }
+      const label = agentNavbarSummaryLabel(count);
+      const title = label + ' in the run order — open the Agents section';
+      const full = btn.querySelector('.agent-navbar-summary-full');
+      if (full && full.textContent !== label) full.textContent = label;
+      btn.setAttribute('title', title);
+      btn.setAttribute('aria-label', title);
+      if (wrap.lastElementChild !== btn) wrap.appendChild(btn);
+      return btn;
+    }
     function renderAgentNavbarUpNext(agents, nowMs) {
       const wrap = document.getElementById('agent-navbar-upnext');
       if (!wrap) return;
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-      const list = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3);
+      const scheduled = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now));
+      const list = scheduled.slice(0, 3);
       wrap.hidden = list.length === 0;
-      wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';
+      const summary = renderAgentNavbarSummary(wrap, scheduled.length);
       renderAgentNavbarTileDiff(wrap, list, now);
+      if (summary && wrap.lastElementChild !== summary) wrap.appendChild(summary);
       if (list.length) ensureAgentsCollapsedCountdownTicker();
     }
     function refreshAgentNavbarUpNextCountdowns(nowMs) {
@@ -46297,7 +46340,7 @@ function burnAreaChart() {
         const cfg = await cfgRes.json().catch(() => ({}));
         if (!cfgRes.ok) throw new Error(cfg.error || ('HTTP ' + cfgRes.status));
         const st = stRes.ok ? await stRes.json().catch(() => ({})) : {};
-        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], ctx7AutoImport: cfg.context7_auto_import || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: !!st.runtime, publish: st.publish || null });
+        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], ctx7AutoImport: cfg.context7_auto_import || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: st.runtime !== false, publish: st.publish || null });
       } catch (e) {
         _kcState = Object.assign(_kcState, { loaded: true, error: e.message });
       }
@@ -46353,23 +46396,40 @@ function burnAreaChart() {
       return body;
     }
 
+    // Badge shown when the hive's connector syncer is not running (status
+    // response `runtime: false`): the entry is saved but this process never
+    // constructed it, so sign-in, Check and Sync would all 404. Distinct from
+    // `pending`, which is a loaded connector awaiting sign-in or first sync.
+    // Only an explicit `runtime: false` counts: a failed or absent status
+    // response must not tell the owner to restart the hive
+    // (hivecommons/hive#18093).
+    const KC_STATUS_NOT_LOADED = 'not loaded';
+    const KC_NOT_LOADED_HINT = 'Connector runtime is not running on this hive — restart the hive after enabling knowledge connectors.';
+    function kbConnectorNotLoaded(c) { return !!c.enabled && !_kcState.runtime; }
+    function kbConnectorNotLoadedHtml() {
+      return '<div class="muted-xs" data-kb-not-loaded>' + escapeHtml(KC_NOT_LOADED_HINT) + ' <a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener">Docs ↗</a></div>';
+    }
+
     function kbConnectorRow(type, c, owner) {
       const byName = {};
       (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
       const r = byName[c.name] || {};
-      const status = r.status || (c.enabled ? 'pending' : 'disabled');
+      const notLoaded = kbConnectorNotLoaded(c);
+      const status = notLoaded ? KC_STATUS_NOT_LOADED : (r.status || (c.enabled ? 'pending' : 'disabled'));
       const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
       let html = '<div class="card-inset row-between mb-3" data-kb-connector-name="' + escapeHtml(c.name) + '"><div class="kb-integration-row-main">';
       html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
       html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
-      if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);
+      if (notLoaded) html += kbConnectorNotLoadedHtml();
+      else if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
+        const disabledAttr = ' disabled title="' + escapeHtml(KC_NOT_LOADED_HINT) + '"';
         html += '<div class="kb-integration-actions">';
-        if (type === 'plaud') html += kbPlaudAuthButtons(c.name);
-        html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
+        if (type === 'plaud') html += kbPlaudAuthButtons(c.name, notLoaded ? disabledAttr : '');
+        html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (notLoaded ? disabledAttr : status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationEdit" data-arg0="' + escapeHtml(c.name) + '">Edit</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationToggle" data-arg0="' + escapeHtml(c.name) + '">' + (c.enabled ? 'Disable' : 'Enable') + '</button>';
         html += '</div>';
@@ -46507,13 +46567,15 @@ function burnAreaChart() {
       else text = 'Plaud: not connected' + (a.message ? ' — ' + escapeHtml(a.message) : '');
       return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '" data-connected="' + (a.connected ? '1' : '0') + '">' + text + '</div>';
     }
-    function kbPlaudAuthButtons(name) {
+    // disabledAttr, when set, is appended to every button (connector not loaded, #18093).
+    function kbPlaudAuthButtons(name, disabledAttr) {
       const a = _kbPlaudAuth[name] || {};
       const n = escapeHtml(name);
+      const off = disabledAttr || '';
       let html = '';
-      if (a.connected) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudDisconnect" data-arg0="' + n + '">Disconnect</button>';
-      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (a.pending ? ' disabled' : '') + '>Connect Plaud</button>';
-      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '" title="Re-check sign-in with Plaud">Check</button>';
+      if (a.connected) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudDisconnect" data-arg0="' + n + '"' + off + '>Disconnect</button>';
+      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (off || (a.pending ? ' disabled' : '')) + '>Connect Plaud</button>';
+      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '"' + (off || ' title="Re-check sign-in with Plaud"') + '>Check</button>';
       return html;
     }
     async function kbPlaudAuthLoad(name, refresh) {
