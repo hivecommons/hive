@@ -42,6 +42,7 @@ css/popout.css
 css/reader.css
 css/variables.css
 glue/style-close-body-open.html
+js/auth-headers.js
 js/reader.js
 js/boot.js
 glue/boot-script-close.html
@@ -129,6 +130,7 @@ js/review-queue.js
 js/contributors.js
 js/refresh.js
 js/scroll-stabilizer.js
+js/campaigns.js
 js/inception.js
 js/debug-logs.js
 js/tooltips-dialogs.js
