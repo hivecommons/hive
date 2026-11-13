@@ -462,6 +462,11 @@
        `[hidden] { display: none }`, so a hidden status chip otherwise paints
        as an empty outlined pill (#oc-providers when every provider is usable). */
     .oc-providers-chip[hidden] { display: none; }
+    /* Opt-in Claude usage chip: a compact fuel dial plus its percentage. */
+    .subscription-gauge-chip[hidden] { display: none; }
+    .subscription-gauge-chip__dial { display: inline-flex; align-items: center; }
+    .subscription-gauge-chip__dial:empty { display: none; }
+    .subscription-gauge-chip[data-out-of-date="true"] { border-style: dashed; }
     .oc-version-navbar-upgrade { --oc-version-bee-lane: 56px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: visible; }
     .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); }
     .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
@@ -588,6 +593,7 @@
       #acmm-badge { display: none; }
       .oc-health-badge .nav-chip__label,
       #oc-settings-btn .nav-chip__label,
+      #oc-subscription-gauge .nav-chip__label,
       #welcome-topbar-btn .nav-chip__label { display: none; }
     }
 
@@ -3757,6 +3763,40 @@
     .overview-pr-open { --slice-c: var(--band-open); }
     .overview-pr-draft { --slice-c: var(--band-draft); }
 
+    /* Claude subscription usage gauge: Overview block and fuel dials. */
+    .overview-usage-gauge { display: flex; flex-direction: column; gap: var(--sp-3); margin: var(--sp-0) var(--sp-0) var(--sp-4); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
+    .overview-usage-gauge[hidden] { display: none; }
+    .overview-usage-gauge__head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--sp-3); }
+    .overview-usage-gauge__title { font-size: var(--fs-md); font-weight: var(--fw-bold); }
+    .overview-usage-gauge__meta, .overview-usage-gauge__reset, .overview-usage-gauge__note { font-size: var(--fs-sm); color: var(--text-muted); }
+    .overview-usage-gauge__stale { font-size: var(--fs-sm); color: var(--status-warn); }
+    .overview-usage-gauge__dials { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-4); }
+    .overview-usage-gauge__dial { display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); text-align: center; }
+    .overview-usage-gauge__label { font-weight: var(--fw-semibold); }
+    .overview-usage-gauge__pct { font-size: var(--fs-lg); font-weight: var(--fw-bold); color: var(--status-ok); }
+    .overview-usage-gauge__pct[data-status="warn"] { color: var(--status-warn); }
+    .overview-usage-gauge__pct[data-status="error"] { color: var(--status-error); }
+    .overview-usage-gauge__pct[data-status="neutral"] { color: var(--text-muted); }
+    .sg-dial { display: block; width: 150px; height: auto; overflow: visible; }
+    .sg-dial--compact { width: 34px; }
+    .sg-dial__track, .sg-dial__zone, .sg-dial__fill { fill: none; stroke-width: 7; }
+    .sg-dial--compact .sg-dial__track, .sg-dial--compact .sg-dial__zone, .sg-dial--compact .sg-dial__fill { stroke-width: 12; }
+    .sg-dial__track { stroke: var(--border); }
+    .sg-dial__zone--red { stroke: var(--status-error); stroke-opacity: 0.55; }
+    .sg-dial__zone--amber { stroke: var(--status-warn); stroke-opacity: 0.55; }
+    .sg-dial__fill { stroke: var(--status-ok); stroke-opacity: 0.35; }
+    .sg-dial__tick { fill: none; stroke: var(--text-muted); stroke-width: 1.6; }
+    .sg-dial__letter { fill: var(--text-muted); font-weight: var(--fw-bold); }
+    .sg-dial__letter--e { fill: var(--status-error); }
+    .sg-dial__needle { stroke: var(--status-ok); stroke-width: 3.5; stroke-linecap: round; }
+    .sg-dial--compact .sg-dial__needle { stroke-width: 7; }
+    .sg-dial__hub { fill: var(--status-ok); }
+    .sg-dial[data-status="warn"] .sg-dial__needle, .sg-dial[data-status="warn"] .sg-dial__fill { stroke: var(--status-warn); }
+    .sg-dial[data-status="warn"] .sg-dial__hub { fill: var(--status-warn); }
+    .sg-dial[data-status="error"] .sg-dial__needle, .sg-dial[data-status="error"] .sg-dial__fill { stroke: var(--status-error); }
+    .sg-dial[data-status="error"] .sg-dial__hub { fill: var(--status-error); }
+    .sg-dial[data-stale="true"] .sg-dial__needle, .sg-dial[data-stale="true"] .sg-dial__fill { stroke: var(--text-muted); }
+    .sg-dial[data-stale="true"] .sg-dial__hub { fill: var(--text-muted); }
     /* Sparklines */
     .sparkline { display: inline-block; vertical-align: middle; margin-left: var(--sp-3); flex-shrink: 0; }
     .sparkline svg { display: block; overflow: visible; }
@@ -6119,7 +6159,9 @@
     .agent-navbar-tile .agent-up-next.running-now { color: var(--green); }
     .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
     .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
-    .agent-navbar-upnext::after { content: attr(data-agent-summary); display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+    .agent-navbar-summary { flex: 0 0 auto; display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+    .agent-navbar-summary:hover, .agent-navbar-summary:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
+    .agent-navbar-summary-short { display: none; }
     @container navbar-center (max-width: 560px) {
       .agent-navbar-tile { min-width: 104px; }
       .agent-navbar-tile .agent-tile-next { display: none; }
@@ -6132,10 +6174,12 @@
     @container navbar-center (max-width: 340px) {
       .agent-navbar-upnext { overflow: hidden; mask-image: none; }
       .agent-navbar-upnext .agent-navbar-tile { display: none; }
-      .agent-navbar-upnext::after { display: inline-flex; }
+      .agent-navbar-upnext .agent-navbar-summary { display: inline-flex; }
     }
     @container navbar-center (max-width: 220px) {
-      .agent-navbar-upnext::after { content: 'Next'; padding-inline: var(--sp-1); }
+      .agent-navbar-upnext .agent-navbar-summary { padding-inline: var(--sp-1); }
+      .agent-navbar-summary .agent-navbar-summary-full { display: none; }
+      .agent-navbar-summary .agent-navbar-summary-short { display: inline; }
     }
     @keyframes navbar-up-next-pulse {
       0% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 72%, transparent), 0 0 0 var(--sp-0) color-mix(in srgb, var(--amber) 0%, transparent); }
@@ -8727,6 +8771,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <!-- Agent Logs hidden (redundant with per-agent output) -->
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
       <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" title="AI providers: all usable" aria-label="AI providers: all usable" hidden></span>
+      <button type="button" class="nav-chip nav-chip--status subscription-gauge-chip" id="oc-subscription-gauge" data-action="openSubscriptionGaugeOverview" data-status="neutral" aria-label="Claude subscription usage left" hidden><span class="subscription-gauge-chip__dial" aria-hidden="true"></span><span class="nav-chip__label"></span></button>
       <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
@@ -8823,6 +8868,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       </div>
     </div>
     <div class="section-body">
+      <div class="overview-usage-gauge" id="overview-usage-gauge" role="region" aria-label="Claude subscription usage" hidden></div>
       <div class="overview-card" id="overview-card"></div>
     </div>
   </div>
@@ -11582,14 +11628,52 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       wrap.dataset.upNextKey = nextItem ? nextItem.id : '';
       animateAgentNavbarReorder(wrap, beforeRects);
     }
+    function agentNavbarSummaryLabel(count) {
+      return String(count) + (count === 1 ? ' agent' : ' agents');
+    }
+    // The narrow-strip summary is a real button (not a CSS pseudo-element) so
+    // it can carry data-action and receive clicks and keyboard activation. It
+    // stays the strip's LAST child so renderAgentNavbarTileDiff's index-based
+    // insertBefore always places tiles ahead of it.
+    function renderAgentNavbarSummary(wrap, count) {
+      let btn = wrap.querySelector('.agent-navbar-summary');
+      if (!count) {
+        if (btn) btn.remove();
+        return null;
+      }
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.setAttribute('type', 'button');
+        btn.className = 'agent-navbar-summary';
+        btn.setAttribute('data-action', 'openAgentsUpNextPanel');
+        btn.setAttribute('data-stop', '1');
+        const full = document.createElement('span');
+        full.className = 'agent-navbar-summary-full';
+        const short = document.createElement('span');
+        short.className = 'agent-navbar-summary-short';
+        short.textContent = 'Next';
+        btn.appendChild(full);
+        btn.appendChild(short);
+      }
+      const label = agentNavbarSummaryLabel(count);
+      const title = label + ' in the run order — open the Agents section';
+      const full = btn.querySelector('.agent-navbar-summary-full');
+      if (full && full.textContent !== label) full.textContent = label;
+      btn.setAttribute('title', title);
+      btn.setAttribute('aria-label', title);
+      if (wrap.lastElementChild !== btn) wrap.appendChild(btn);
+      return btn;
+    }
     function renderAgentNavbarUpNext(agents, nowMs) {
       const wrap = document.getElementById('agent-navbar-upnext');
       if (!wrap) return;
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-      const list = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3);
+      const scheduled = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now));
+      const list = scheduled.slice(0, 3);
       wrap.hidden = list.length === 0;
-      wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';
+      const summary = renderAgentNavbarSummary(wrap, scheduled.length);
       renderAgentNavbarTileDiff(wrap, list, now);
+      if (summary && wrap.lastElementChild !== summary) wrap.appendChild(summary);
       if (list.length) ensureAgentsCollapsedCountdownTicker();
     }
     function refreshAgentNavbarUpNextCountdowns(nowMs) {
@@ -34945,7 +35029,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function overviewDefaultChartState() {
       const enabled = {};
       OVERVIEW_CHART_TYPES.forEach(type => { enabled[type] = type === 'donut'; });
-      return { enabled, carousel: false, intervalMs: OVERVIEW_CAROUSEL_DEFAULT_MS, transition: 'fade', duration: 'normal', active: { issue: 'donut', pr: 'donut' }, history: { issue: [], pr: [] }, labelMode: 'both', showKPIs: true, exportFormat: 'csv' };
+      return { enabled, carousel: false, intervalMs: OVERVIEW_CAROUSEL_DEFAULT_MS, transition: 'fade', duration: 'normal', active: { issue: 'donut', pr: 'donut' }, history: { issue: [], pr: [] }, labelMode: 'both', showKPIs: true, showUsageGauge: true, exportFormat: 'csv' };
     }
 
     function overviewChartsState() {
@@ -34962,7 +35046,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const history = saved.history && typeof saved.history === 'object' ? saved.history : base.history;
       const labelMode = OVERVIEW_LABEL_MODES.includes(saved.labelMode) ? saved.labelMode : base.labelMode;
       const exportFormat = OVERVIEW_EXPORT_FORMATS.includes(saved.exportFormat) ? saved.exportFormat : base.exportFormat;
-      return { enabled, carousel: !!saved.carousel, intervalMs, transition, duration, active, history, labelMode, showKPIs: saved.showKPIs !== false, exportFormat };
+      return { enabled, carousel: !!saved.carousel, intervalMs, transition, duration, active, history, labelMode, showKPIs: saved.showKPIs !== false, showUsageGauge: saved.showUsageGauge !== false, exportFormat };
     }
 
     const OVERVIEW_KPI_WINDOWS = { '24h': 24 * 3600e3, '7d': 7 * 24 * 3600e3 };
@@ -35858,7 +35942,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const autoTitle = state.carousel ? 'Auto-play on — rotates every ' + Math.round(overviewCarouselDwellMs(state) / 1000) + 's through the ticked charts. Click to pause.' : 'Auto-play off — click to rotate through the ticked charts every ' + Math.round(overviewCarouselDwellMs(state) / 1000) + 's';
         return `<div class="overview-settings-section" aria-label="${esc(label)} chart controls"><div class="overview-settings-card-title">${esc(label)}</div><div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous ${esc(label)} chart" aria-label="Previous ${esc(label)} chart">◀</button><label class="overview-settings-field">Chart type<select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="${esc(label)} chart type">${overviewChartTypeOptions(active)}</select></label><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next ${esc(label)} chart" aria-label="Next ${esc(label)} chart">▶</button>${renderOverviewDots(enabled, active)}<span class="overview-chart-controls-sep"></span><button type="button" class="overview-carousel-arrow" data-action="toggleOverviewCarousel" data-stop="1" aria-pressed="${state.carousel ? 'true' : 'false'}" title="${esc(autoTitle)}" aria-label="${esc(autoTitle)}">${state.carousel ? '⏸ auto' : '⏵ auto'}</button><label class="overview-settings-field">Transition<select class="overview-chart-select" data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts">${overviewTransitionOptions(state.transition)}</select></label></div></div>`;
       };
-      setIfChanged(el, `<div class="overview-settings-section"><div class="overview-settings-card-title">Overview charts</div><div class="overview-settings-grid">${typeRows}</div><div class="overview-settings-grid"><label class="overview-settings-field">Interval (seconds)<input type="number" min="5" max="300" step="5" value="${seconds}" data-change-action="setOverviewCarouselInterval" data-arg-types="N"></label><label class="overview-settings-field">Duration<select data-change-action="setOverviewDuration" data-arg-types="v">${durationOptions}</select></label><label class="overview-settings-field">Export format<select data-change-action="setOverviewExportFormat" data-arg-types="v">${exportOptions}</select></label><label class="overview-settings-field">Donut labels<select data-change-action="setOverviewLabelMode" data-arg-types="v">${labelOptions}</select></label><label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewKPIs" data-arg-types="c"${state.showKPIs ? ' checked' : ''}>Show KPI strip</label></div><div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="resetOverviewSettings" data-stop="1">Reset to defaults</button></div></div>${overviewRepoFilterHTML(_overviewLastRepos || [])}${cardControls('issue', 'Issues')}${cardControls('pr', 'PRs')}`);
+      setIfChanged(el, `<div class="overview-settings-section"><div class="overview-settings-card-title">Overview charts</div><div class="overview-settings-grid">${typeRows}</div><div class="overview-settings-grid"><label class="overview-settings-field">Interval (seconds)<input type="number" min="5" max="300" step="5" value="${seconds}" data-change-action="setOverviewCarouselInterval" data-arg-types="N"></label><label class="overview-settings-field">Duration<select data-change-action="setOverviewDuration" data-arg-types="v">${durationOptions}</select></label><label class="overview-settings-field">Export format<select data-change-action="setOverviewExportFormat" data-arg-types="v">${exportOptions}</select></label><label class="overview-settings-field">Donut labels<select data-change-action="setOverviewLabelMode" data-arg-types="v">${labelOptions}</select></label><label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewKPIs" data-arg-types="c"${state.showKPIs ? ' checked' : ''}>Show KPI strip</label>${typeof subscriptionGaugeOwner === 'function' && subscriptionGaugeOwner() ? `<label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewUsageGauge" data-arg-types="c"${state.showUsageGauge ? ' checked' : ''}>Show Claude usage gauge</label>` : ''}</div><div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="resetOverviewSettings" data-stop="1">Reset to defaults</button></div></div>${overviewRepoFilterHTML(_overviewLastRepos || [])}${cardControls('issue', 'Issues')}${cardControls('pr', 'PRs')}`);
     }
 
     function rerenderOverviewChartsFromState(state) {
@@ -35928,6 +36012,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const state = overviewChartsState();
       state.showKPIs = !!checked;
       rerenderOverviewChartsFromState(state);
+    }
+
+    function setOverviewUsageGauge(checked) {
+      const state = overviewChartsState();
+      state.showUsageGauge = !!checked;
+      rerenderOverviewChartsFromState(state);
+      if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
     }
 
     function setOverviewRepoFilter(repo, checked) {
@@ -48936,6 +49027,7 @@ function burnAreaChart() {
       // Update Light health badge with hover detail
       renderNavbarHealthBadge(document.getElementById('oc-health'), data);
       renderProviderStrip(document.getElementById('oc-providers'), data.providers);
+      if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
@@ -50365,6 +50457,306 @@ function burnAreaChart() {
       return `<div class="quality-stat-card"><div class="quality-stat-title">Quality stats</div>${rows}</div>`;
     }
 
+    // Claude subscription usage gauge. subscriptionGaugeModel is the single
+    // pure decision point: it turns a /api/providers/headroom response into
+    // the dials, the needle and the no-reading reason that the Overview gauge
+    // and the header chip render. No DOM, no fetch, so node tests can run it.
+    function subscriptionGaugeModel(resp, nowMs) {
+      const OUT_OF_DATE_MS = 15 * 60 * 1000;
+      const REASONS = {
+        not_installed: 'Claude Code is not installed on this hive.',
+        no_credentials: 'This hive is not signed in to Claude.',
+        rate_limited: 'Claude rate-limited the usage check; hive will try again.',
+        timeout: 'The usage check timed out; hive will try again.',
+        unrecognized_schema: 'Claude changed its usage format, so hive could not read it.',
+        probe_failed: 'The usage check failed; hive will try again.',
+      };
+      const NOT_USED = ['not_installed', 'no_credentials'];
+      const validTime = (v) => {
+        const ms = Date.parse(v || '');
+        // Go's zero time.Time serializes as 0001-01-01: treat it as unknown.
+        return Number.isFinite(ms) && ms > 0 ? ms : null;
+      };
+      const statusFor = (pct) => (pct <= 10 ? 'error' : pct <= 25 ? 'warn' : 'ok');
+      const describe = (kind, id, mins, scope) => {
+        const k = String(kind || id || '').toLowerCase();
+        const i = String(id || '').toLowerCase();
+        const sc = scope || {};
+        // A weekly limit that counts only some models: the builtin source
+        // sends kind weekly_scoped; ccleft sends kind weekly with id
+        // seven_day_<model> and scope.scope set (binding "false").
+        const scoped = k === 'weekly_scoped' || ((k === 'weekly' || k === 'seven_day') &&
+          (!!sc.scope || /^(seven_day|weekly)_(?!all$)./.test(i)));
+        if (scoped) {
+          let model = sc.model || sc.model_family || sc.scope || sc.name || '';
+          if (/^scoped$/i.test(String(model))) model = '';
+          return { label: model ? 'Weekly (' + model + ')' : 'Weekly (model-specific)', shortName: 'model' };
+        }
+        if (k === 'weekly' || k === 'weekly_all' || k === 'seven_day') return { label: 'Weekly', shortName: '' };
+        if (k === 'session' || k === 'five_hour') return { label: '5-hour', shortName: '5-hour' };
+        if (k === 'daily') return { label: 'Daily', shortName: 'daily' };
+        if (k === 'monthly') return { label: 'Monthly', shortName: 'monthly' };
+        if (mins > 0 && mins % 1440 === 0) return { label: (mins / 1440) + '-day', shortName: (mins / 1440) + '-day' };
+        if (mins > 0) return { label: Math.round(mins / 60) + '-hour', shortName: Math.round(mins / 60) + '-hour' };
+        return { label: 'Limit', shortName: 'limit' };
+      };
+      const providers = resp && Array.isArray(resp.providers) ? resp.providers : [];
+      const reading = providers.find((p) => p && p.provider === 'anthropic');
+      if (!reading) {
+        return { state: 'no-reading', usesClaude: false, cause: 'absent', reason: 'Usage measurement is not running on this hive.' };
+      }
+      const cause = String(reading.probe_error_cause || '');
+      const limits = Array.isArray(reading.limits) ? reading.limits : [];
+      const dials = [];
+      // Paid credit pools and prepaid balances are not plan limits.
+      const NOT_LIMITS = ['credits', 'balance'];
+      limits.forEach((l, i) => {
+        if (!l || typeof l.pct_remaining !== 'number' || !Number.isFinite(l.pct_remaining)) return;
+        if (NOT_LIMITS.includes(String(l.kind || '').toLowerCase())) return;
+        const mins = Number(l.duration_mins) || 0;
+        const d = describe(l.kind, l.id, mins, l.scope);
+        const pctLeft = Math.max(0, Math.min(100, Math.round(l.pct_remaining)));
+        const reset = validTime(l.resets_at);
+        dials.push({
+          id: String(l.id || l.kind || ''),
+          kind: String(l.kind || ''),
+          label: d.label,
+          shortName: d.shortName,
+          pctLeft: pctLeft,
+          resetsAt: reset === null ? '' : new Date(reset).toISOString(),
+          durationMins: mins,
+          status: statusFor(pctLeft),
+          order: i,
+        });
+      });
+      if (!dials.length) {
+        return {
+          state: 'no-reading',
+          usesClaude: !NOT_USED.includes(cause),
+          cause: cause || 'empty',
+          reason: REASONS[cause] || 'No usage reading yet.',
+        };
+      }
+      // Longest window first; among equal lengths the all-models weekly
+      // limit leads, then the provider's own order.
+      const rank = (dial) => (dial.shortName === '' ? 0 : 1);
+      dials.sort((a, b) => {
+        const am = a.durationMins > 0 ? a.durationMins : -1;
+        const bm = b.durationMins > 0 ? b.durationMins : -1;
+        if (am !== bm) return bm - am;
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
+        return a.order - b.order;
+      });
+      // The needle follows the window with the least left; ties keep the
+      // earlier (longer) window.
+      let needle = dials[0];
+      dials.forEach((dial) => { if (dial.pctLeft < needle.pctLeft) needle = dial; });
+      const captured = validTime(reading.captured_at);
+      const ageMs = captured === null || !Number.isFinite(nowMs) ? null : Math.max(0, nowMs - captured);
+      return {
+        state: 'reading',
+        usesClaude: true,
+        cause: cause,
+        dials: dials.map((dial) => ({
+          id: dial.id, kind: dial.kind, label: dial.label, shortName: dial.shortName,
+          pctLeft: dial.pctLeft, resetsAt: dial.resetsAt, durationMins: dial.durationMins, status: dial.status,
+        })),
+        needle: { id: needle.id, kind: needle.kind, label: needle.label, shortName: needle.shortName, pctLeft: needle.pctLeft, status: needle.status },
+        worstStatus: needle.status,
+        capturedAt: captured === null ? '' : new Date(captured).toISOString(),
+        ageMs: ageMs,
+        outOfDate: !!reading.stale || (ageMs !== null && ageMs > OUT_OF_DATE_MS),
+        planName: String(reading.plan_type || ''),
+        accountNote: 'Reflects the Claude account this hive is signed in with.',
+      };
+    }
+
+    // Shared loader. The headroom endpoint is owner-only and the fetch
+    // wrapper drops a stored token on any 401/403 from /api/, so nothing is
+    // fetched until the viewer is known to be the owner. The endpoint serves
+    // stored readings: polling it never triggers a measurement.
+    let _subscriptionGaugeData = null;
+    const SUBSCRIPTION_GAUGE_POLL_MS = 60000;
+    function subscriptionGaugeOwner() {
+      return typeof dashboardRoleAtLeast === 'function' && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+    }
+    function subscriptionGaugeOverviewEnabled() {
+      try { return typeof overviewChartsState !== 'function' || overviewChartsState().showUsageGauge !== false; } catch (e) { return true; }
+    }
+    function subscriptionGaugeHeaderEnabled() {
+      return typeof dashboardFeatureEnabled === 'function' && dashboardFeatureEnabled('subscription_gauge_header');
+    }
+    function subscriptionGaugeWanted() {
+      return subscriptionGaugeOwner() && (subscriptionGaugeOverviewEnabled() || subscriptionGaugeHeaderEnabled());
+    }
+    function subscriptionGaugeCurrentModel() {
+      return _subscriptionGaugeData ? subscriptionGaugeModel(_subscriptionGaugeData, Date.now()) : null;
+    }
+    function subscriptionGaugeRefresh() {
+      if (!subscriptionGaugeWanted()) {
+        dashboardClearInterval('subscription-gauge');
+      } else if (!DASHBOARD_INTERVALS['subscription-gauge']) {
+        dashboardSetInterval('subscription-gauge', subscriptionGaugeFetch, SUBSCRIPTION_GAUGE_POLL_MS);
+        subscriptionGaugeFetch();
+      }
+      renderSubscriptionGaugeSurfaces();
+    }
+    async function subscriptionGaugeFetch() {
+      if (!subscriptionGaugeWanted()) return;
+      try {
+        const res = await fetch('/api/providers/headroom');
+        if (!res.ok) return;
+        _subscriptionGaugeData = await res.json();
+      } catch (e) {
+        return;
+      }
+      renderSubscriptionGaugeSurfaces();
+    }
+    function renderSubscriptionGaugeSurfaces() {
+      renderSubscriptionGaugeOverview();
+      if (typeof renderSubscriptionGaugeChip === 'function') renderSubscriptionGaugeChip();
+    }
+
+    // An E-to-F fuel dial drawn with DOM calls: numbers only, colours from
+    // CSS classes keyed on data-status, no inline styles.
+    function subscriptionGaugeDialSvg(pctLeft, opts) {
+      const o = opts || {};
+      const NS = 'http://www.w3.org/2000/svg';
+      const cx = 50, cy = 54, r = 42;
+      const v = Math.max(0, Math.min(100, Number(pctLeft) || 0));
+      const pt = (f, rr) => {
+        const a = Math.PI * (1 - f);
+        return (cx + rr * Math.cos(a)).toFixed(2) + ' ' + (cy - rr * Math.sin(a)).toFixed(2);
+      };
+      const arc = (a, b) => 'M ' + pt(a, r) + ' A ' + r + ' ' + r + ' 0 0 1 ' + pt(b, r);
+      const node = (tag, attrs) => {
+        const el = document.createElementNS(NS, tag);
+        Object.keys(attrs).forEach((k) => el.setAttribute(k, String(attrs[k])));
+        return el;
+      };
+      const svg = node('svg', {
+        viewBox: '0 0 100 62',
+        class: 'sg-dial' + (o.compact ? ' sg-dial--compact' : ''),
+        'data-status': o.status || (v <= 10 ? 'error' : v <= 25 ? 'warn' : 'ok'),
+        'data-stale': o.stale ? 'true' : 'false',
+        role: 'img',
+        'aria-label': o.label || (v + '% left'),
+      });
+      svg.appendChild(node('path', { class: 'sg-dial__track', d: arc(0, 1) }));
+      svg.appendChild(node('path', { class: 'sg-dial__zone sg-dial__zone--red', d: arc(0, 0.10) }));
+      svg.appendChild(node('path', { class: 'sg-dial__zone sg-dial__zone--amber', d: arc(0.10, 0.25) }));
+      if (v > 0.5) svg.appendChild(node('path', { class: 'sg-dial__fill', d: arc(0, v / 100) }));
+      if (!o.compact) {
+        let ticks = '';
+        [0, 0.25, 0.5, 0.75, 1].forEach((f) => { ticks += 'M ' + pt(f, r - 9) + ' L ' + pt(f, r - 14) + ' '; });
+        svg.appendChild(node('path', { class: 'sg-dial__tick', d: ticks.trim() }));
+        const e = node('text', { class: 'sg-dial__letter sg-dial__letter--e', x: 6, y: 60, 'font-size': 11 });
+        e.textContent = 'E';
+        const f = node('text', { class: 'sg-dial__letter', x: 87, y: 60, 'font-size': 11 });
+        f.textContent = 'F';
+        svg.appendChild(e);
+        svg.appendChild(f);
+      }
+      const tip = pt(v / 100, r - 5).split(' ');
+      svg.appendChild(node('line', { class: 'sg-dial__needle', x1: cx, y1: cy, x2: tip[0], y2: tip[1] }));
+      svg.appendChild(node('circle', { class: 'sg-dial__hub', cx: cx, cy: cy, r: o.compact ? 7 : 4.5 }));
+      return svg;
+    }
+
+    // Overview block: on by default for the owner of a hive that uses
+    // Claude; hidden per browser from the Overview settings.
+    function renderSubscriptionGaugeOverview() {
+      const host = document.getElementById('overview-usage-gauge');
+      if (!host) return;
+      const m = subscriptionGaugeCurrentModel();
+      if (!subscriptionGaugeOwner() || !subscriptionGaugeOverviewEnabled() || !m || !m.usesClaude) {
+        host.hidden = true;
+        host.replaceChildren();
+        return;
+      }
+      const el = (tag, cls, text) => {
+        const n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (text !== undefined) n.textContent = text;
+        return n;
+      };
+      const head = el('div', 'overview-usage-gauge__head');
+      head.appendChild(el('div', 'overview-usage-gauge__title', 'Claude usage left'));
+      const meta = [];
+      if (m.state === 'reading') {
+        if (m.capturedAt) meta.push('Measured ' + relativeTimeShort(m.capturedAt));
+        if (m.planName) meta.push('Plan: ' + m.planName);
+      }
+      head.appendChild(el('div', 'overview-usage-gauge__meta', meta.join(' · ')));
+      const parts = [head];
+      if (m.state !== 'reading') {
+        parts.push(el('div', 'overview-usage-gauge__note', 'No reading: ' + m.reason));
+      } else {
+        if (m.outOfDate) parts.push(el('div', 'overview-usage-gauge__stale', 'This reading is out of date; treat it as a rough guide until hive measures again.'));
+        const grid = el('div', 'overview-usage-gauge__dials');
+        m.dials.forEach((d) => {
+          const cell = el('div', 'overview-usage-gauge__dial');
+          cell.appendChild(subscriptionGaugeDialSvg(d.pctLeft, { status: d.status, stale: m.outOfDate, label: d.label + ': ' + d.pctLeft + '% left' }));
+          const pct = el('div', 'overview-usage-gauge__pct', d.pctLeft + '% left');
+          pct.setAttribute('data-status', m.outOfDate ? 'neutral' : d.status);
+          cell.appendChild(pct);
+          cell.appendChild(el('div', 'overview-usage-gauge__label', d.label));
+          if (d.resetsAt) cell.appendChild(el('div', 'overview-usage-gauge__reset', 'Resets ' + formatDashboardDateTime(d.resetsAt)));
+          grid.appendChild(cell);
+        });
+        parts.push(grid);
+      }
+      parts.push(el('div', 'overview-usage-gauge__note', (m.accountNote || 'Reflects the Claude account this hive is signed in with.') + ' This is the Claude plan, not the hive token budget.'));
+      host.replaceChildren.apply(host, parts);
+      host.hidden = false;
+    }
+
+    // Opt-in header chip: a compact dial whose needle shows the limit closest
+    // to empty. It shares the Overview gauge's readings; no separate fetch.
+    function renderSubscriptionGaugeChip() {
+      const el = document.getElementById('oc-subscription-gauge');
+      if (!el) return;
+      const dialHost = el.querySelector('.subscription-gauge-chip__dial');
+      const labelEl = el.querySelector('.nav-chip__label');
+      const m = subscriptionGaugeCurrentModel();
+      if (!subscriptionGaugeOwner() || !subscriptionGaugeHeaderEnabled() || !m) {
+        el.hidden = true;
+        if (dialHost) dialHost.replaceChildren();
+        return;
+      }
+      const lines = [];
+      if (m.state !== 'reading') {
+        if (dialHost) dialHost.replaceChildren();
+        if (labelEl) labelEl.textContent = 'Claude: no reading';
+        el.dataset.status = 'neutral';
+        el.dataset.outOfDate = 'false';
+        lines.push('No Claude usage reading: ' + m.reason);
+      } else {
+        const n = m.needle;
+        const label = 'Claude ' + n.pctLeft + '%' + (n.shortName ? ' · ' + n.shortName : '');
+        if (dialHost) dialHost.replaceChildren(subscriptionGaugeDialSvg(n.pctLeft, { compact: true, status: n.status, stale: m.outOfDate, label: n.label + ': ' + n.pctLeft + '% left' }));
+        if (labelEl) labelEl.textContent = label;
+        el.dataset.status = m.outOfDate ? 'neutral' : m.worstStatus;
+        el.dataset.outOfDate = m.outOfDate ? 'true' : 'false';
+        m.dials.forEach((d) => {
+          lines.push(d.label + ': ' + d.pctLeft + '% left' + (d.resetsAt ? ' · resets ' + formatDashboardDateTime(d.resetsAt) : ''));
+        });
+        if (m.capturedAt) lines.push('Measured ' + relativeTimeShort(m.capturedAt) + (m.outOfDate ? ' (out of date)' : ''));
+      }
+      lines.push('Click to open the usage gauge on the Overview.');
+      el.title = lines.join('\n');
+      el.setAttribute('aria-label', (m.state === 'reading' ? 'Claude subscription: ' + m.needle.pctLeft + '% left in the ' + m.needle.label + ' limit' : 'Claude subscription: no reading') + '. Open the usage gauge on the Overview.');
+      el.hidden = false;
+    }
+    function openSubscriptionGaugeOverview() {
+      if (typeof ocNavigate === 'function') ocNavigate('overview-section');
+      const host = document.getElementById('overview-usage-gauge');
+      if (host && !host.hidden) {
+        host.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      } else if (typeof showToast === 'function') {
+        showToast('The usage gauge is hidden on the Overview. Turn on "Show Claude usage gauge" in Overview settings to see every limit.', 'info');
+      }
+    }
     // ── Debug section ──
     const DEBUG_REFRESH_MS = 10000;
     const GH_RATE_CRITICAL_REMAINING_PCT = 10;
@@ -55768,6 +56160,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Experiment Lab', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab dashboard feature experimental planner' },
+      { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Subscription usage gauge in header', key: 'dashboard.subscription_gauge_header', text: 'subscription_gauge_header subscription usage gauge fuel header chip claude usage claude plan weekly 5-hour limit left remaining quota headroom' },
       { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
@@ -57689,6 +58082,7 @@ function burnAreaChart() {
           '<div class="config-field"><label>Agent poll interval (seconds) ' + yamlHint('dashboard.agent_poll_interval_s') + '</label><input type="number" min="1" value="' + esc(String(dash.agent_poll_interval_s || 0)) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="agent_poll_interval_s" data-arg-types="s,s,N"></div>' +
         '</div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab ' + yamlHint('dashboard.experiment_lab') + '</span></div>' +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.subscription_gauge_header ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="subscription_gauge_header"></div><span class="config-toggle-label">Also show the usage gauge in the header ' + yamlHint('dashboard.subscription_gauge_header') + ' ' + settingHelpMark('settings', 'dashboard', 'Usage gauge in the header', 'The Claude usage fuel gauge is on the Overview by default for the owner. This also shows it as a small chip in the header on every page. It reads the usage measurements hive already makes, so it adds no calls to Claude. Only the hive owner sees it. This is the Claude plan this hive is signed in with, not the hive token budget. Off by default.') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +
@@ -73995,6 +74389,7 @@ function burnAreaChart() {
       const repaintTracker = hiveAuthResolved();
       if (username) window._hiveUser = username;
       if (role) window._hiveRole = role;
+      if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
       const banner = document.getElementById('gh-auth-banner');
       const topBtn = document.getElementById('oc-gh-login-btn');
       const avatarWrap = document.getElementById('oc-gh-avatar-wrap');
