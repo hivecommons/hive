@@ -2423,23 +2423,38 @@
       return body;
     }
 
+    // Badge shown when the hive's connector syncer is not running (status
+    // response `runtime: false`): the entry is saved but this process never
+    // constructed it, so sign-in, Check and Sync would all 404. Distinct from
+    // `pending`, which is a loaded connector awaiting sign-in or first sync
+    // (hivecommons/hive#18093).
+    const KC_STATUS_NOT_LOADED = 'not loaded';
+    const KC_NOT_LOADED_HINT = 'Connector runtime is not running on this hive — restart the hive after enabling knowledge connectors.';
+    function kbConnectorNotLoaded(c) { return !!c.enabled && !_kcState.runtime; }
+    function kbConnectorNotLoadedHtml() {
+      return '<div class="muted-xs kc-not-loaded" data-kb-not-loaded>' + escapeHtml(KC_NOT_LOADED_HINT) + ' <a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener">Docs ↗</a></div>';
+    }
+
     function kbConnectorRow(type, c, owner) {
       const byName = {};
       (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
       const r = byName[c.name] || {};
-      const status = r.status || (c.enabled ? 'pending' : 'disabled');
+      const notLoaded = kbConnectorNotLoaded(c);
+      const status = notLoaded ? KC_STATUS_NOT_LOADED : (r.status || (c.enabled ? 'pending' : 'disabled'));
       const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
       let html = '<div class="card-inset row-between mb-3" data-kb-connector-name="' + escapeHtml(c.name) + '"><div class="kb-integration-row-main">';
       html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
       html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
-      if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);
+      if (notLoaded) html += kbConnectorNotLoadedHtml();
+      else if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
+        const disabledAttr = ' disabled title="' + escapeHtml(KC_NOT_LOADED_HINT) + '"';
         html += '<div class="kb-integration-actions">';
-        if (type === 'plaud') html += kbPlaudAuthButtons(c.name);
-        html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
+        if (type === 'plaud') html += kbPlaudAuthButtons(c.name, notLoaded ? disabledAttr : '');
+        html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (notLoaded ? disabledAttr : status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationEdit" data-arg0="' + escapeHtml(c.name) + '">Edit</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationToggle" data-arg0="' + escapeHtml(c.name) + '">' + (c.enabled ? 'Disable' : 'Enable') + '</button>';
         html += '</div>';
@@ -2577,13 +2592,15 @@
       else text = 'Plaud: not connected' + (a.message ? ' — ' + escapeHtml(a.message) : '');
       return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '" data-connected="' + (a.connected ? '1' : '0') + '">' + text + '</div>';
     }
-    function kbPlaudAuthButtons(name) {
+    // disabledAttr, when set, is appended to every button (connector not loaded, #18093).
+    function kbPlaudAuthButtons(name, disabledAttr) {
       const a = _kbPlaudAuth[name] || {};
       const n = escapeHtml(name);
+      const off = disabledAttr || '';
       let html = '';
-      if (a.connected) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudDisconnect" data-arg0="' + n + '">Disconnect</button>';
-      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (a.pending ? ' disabled' : '') + '>Connect Plaud</button>';
-      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '" title="Re-check sign-in with Plaud">Check</button>';
+      if (a.connected) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudDisconnect" data-arg0="' + n + '"' + off + '>Disconnect</button>';
+      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (off || (a.pending ? ' disabled' : '')) + '>Connect Plaud</button>';
+      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '"' + (off || ' title="Re-check sign-in with Plaud"') + '>Check</button>';
       return html;
     }
     async function kbPlaudAuthLoad(name, refresh) {
