@@ -64,6 +64,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/authorkind"
@@ -165,9 +166,13 @@ var triageAwaitingLabel = config.DefaultReporterTrustAwaitingLabel
 // IssueStageInput is the one shape both actionable items and work-detail
 // rows reduce to before classification.
 type IssueStageInput struct {
-	Repo      string
-	Number    int
-	Labels    []string
+	Repo   string
+	Number int
+	Labels []string
+	// Title is the issue title; the only derivation that reads it is the
+	// RFC-title discussion signal ("[RFC]" / "RFC:" opener stages an
+	// unlabelled RFC 018, hivecommons/hive#18141).
+	Title     string
 	Bucket    string // "" for an issue still in the actionable set
 	Reason    string // the bucket's reason; for "filtered", the label that parked it
 	ClaimKind string
@@ -297,25 +302,65 @@ func parkedOnPersonLabel(in IssueStageInput) string {
 }
 
 // discussionLabels are the labels that mark an issue whose remaining
-// content is a discussion — a proposal or a design question — rather than
-// agent work. An open issue wearing one with no live claim derives
-// stage/018-open-for-discussion instead of 010/015
-// (hivecommons/hive#17150). They are NOT claim-gate labels: admission
-// lets anyone claim such an issue, and the claim stages 020/030.
-var discussionLabels = []string{"proposal", "kind/design"}
+// content is a discussion — a proposal, a design question or an
+// architecture RFC — rather than agent work. An open issue wearing one
+// with no live claim derives stage/018-open-for-discussion instead of
+// 010/015 (hivecommons/hive#17150, hivecommons/hive#18141). Most specific
+// first: the reason names the first match. They are NOT claim-gate labels:
+// admission lets anyone claim such an issue, and the claim stages 020/030.
+var discussionLabels = []string{"proposal", "kind/design", "architecture discussion"}
+
+// rfcTitleDiscussionReason is the IssueFacts.DiscussionLabel value for an
+// issue whose title, not its labels, marks it as an RFC
+// (hivecommons/hive#18141): the 018 reason reads
+// "open for discussion: rfc title".
+const rfcTitleDiscussionReason = "rfc title"
+
+// rfcTitlePrefixes are the title openers (after any leading emoji,
+// case-insensitive) that mark an issue as an RFC before any label lands.
+var rfcTitlePrefixes = []string{"[rfc]", "rfc:"}
 
 // issueDiscussionLabel returns the first discussionLabels entry labels
 // carry (case-insensitive, as the issue spells it), or "".
 func issueDiscussionLabel(labels []string) string {
-	for _, l := range labels {
-		name := strings.TrimSpace(l)
-		for _, want := range discussionLabels {
+	for _, want := range discussionLabels {
+		for _, l := range labels {
+			name := strings.TrimSpace(l)
 			if strings.EqualFold(name, want) {
 				return name
 			}
 		}
 	}
 	return ""
+}
+
+// issueDiscussionSignal is what IssueFacts.DiscussionLabel carries: the
+// discussion label the issue wears, or rfcTitleDiscussionReason when it
+// wears none but its title opens with an RFC marker, or "".
+func issueDiscussionSignal(labels []string, title string) string {
+	if label := issueDiscussionLabel(labels); label != "" {
+		return label
+	}
+	if isRFCTitle(title) {
+		return rfcTitleDiscussionReason
+	}
+	return ""
+}
+
+// isRFCTitle reports whether title opens with "[RFC]" or "RFC:"
+// (case-insensitive) once any leading emoji, punctuation or whitespace is
+// skipped, so "📝 [RFC] v6 ..." and "RFC: ..." both count.
+func isRFCTitle(title string) bool {
+	rest := strings.TrimLeftFunc(title, func(r rune) bool {
+		return r != '[' && !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	rest = strings.ToLower(rest)
+	for _, p := range rfcTitlePrefixes {
+		if strings.HasPrefix(rest, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // issueAuthorKind is the stage input's author kind from the enumeration's
@@ -355,7 +400,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
-		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), SpekUmbrella: spekmarker.IsUmbrella(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees})
+		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), Title: issue.Title, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), SpekUmbrella: spekmarker.IsUmbrella(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees})
 	}
 	// Held issues leave the pipeline at enumeration (Hold list, no
 	// work-detail row). They still have to be walked so a stage label
@@ -378,7 +423,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 			if row.Number <= 0 {
 				continue
 			}
-			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: forgeIssueLabels(row.Labels, row.ClaimContext), Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children, UpdatedAt: row.UpdatedAt, Assignees: row.Assignees})
+			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: forgeIssueLabels(row.Labels, row.ClaimContext), Title: row.Title, Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children, UpdatedAt: row.UpdatedAt, Assignees: row.Assignees})
 		}
 	}
 	return out
