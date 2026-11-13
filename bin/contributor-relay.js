@@ -5359,7 +5359,7 @@ function runHeadlessTask(task) {
       // was given stays valid for the rest of wsTokenTTL. Drop it with the
       // task, so a credential never outlives the assignment it belongs to.
       stopAgentForTaskExit();
-      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL, ...verdictWireFields(noWork), ...effectiveSelectionFields() });
+      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL, ...verdictWireFields(noWork), ...idleReasonWireFields({ kind: task.kind, prURL, noWork, verdict: detectHiveVerdict(outTail, HIVE_VERDICT_TOKENS) }), ...effectiveSelectionFields() });
       currentTask = null;
       currentTaskStartedAt = null;
       writeRelayStatus();
@@ -6883,6 +6883,43 @@ function verdictWireFields(noWork) {
     ...alreadyDone,
     verdict_blocked: noWork.verdict === HIVE_VERDICT_BLOCKED ? true : undefined,
     verdict_needs_decision: noWork.needsDecision ? true : undefined,
+  };
+}
+
+// A completion with no PR and no no-work-family verdict used to reach the hub
+// with no reason at all: it logged `verdict=idle verdict_reason=""`, booked the
+// no-PR cooldown, re-offered the issue, and nobody could say why the relay
+// dropped it without reading the relay's own pane. The agent's sentence after
+// `HIVE_VERDICT: complete —` was parsed and then thrown away.
+//
+// idleReasonWireFields is that reason, as `verdict_reason` and deliberately
+// WITHOUT a `verdict` token: the hub keeps booking the completion as idle, and
+// a hub that predates this reads exactly the shape a tooling-failure blocked
+// verdict already sends (verdictWireFields above), which it logs and records
+// and does nothing else with.
+//
+//   - not an issue task (a fix-pr or review task ends with no new PR by
+//     design): nothing, as before;
+//   - a PR is attributed to the task: nothing (the PR is the result);
+//   - a no-work-family verdict (no_work_needed, blocked, wrong_base): nothing,
+//     verdictWireFields owns those and they are unchanged;
+//   - `complete` with no PR: the agent's own sentence, marked as the agent's;
+//   - no verdict at all: the relay says so.
+//
+// The reason is read off a pane capture redactTokens() already scrubbed, and
+// `verdict_reason` is one of FRAME_TRUNCATABLE_FIELDS, so it is bounded and
+// scrubbed exactly as the existing verdict reasons are.
+const IDLE_REASON_NO_CONCLUSION = 'agent exited without a conclusion';
+const IDLE_REASON_COMPLETE_NO_PR = 'agent reported complete without a pull request';
+
+function idleReasonWireFields({ kind, prURL, noWork, verdict } = {}) {
+  if (kind !== 'issue' || prURL || isNoWorkVerdict(noWork)) return {};
+  if (!verdict) return { verdict_reason: IDLE_REASON_NO_CONCLUSION };
+  const said = String(verdict.reason || '').trim();
+  return {
+    verdict_reason: said
+      ? `${IDLE_REASON_COMPLETE_NO_PR}: ${said}`
+      : `${IDLE_REASON_COMPLETE_NO_PR} and gave no reason`,
   };
 }
 
@@ -8622,7 +8659,7 @@ function markIssueAlreadyDone(task, reason) {
   console.log(`Applied the '${ALREADY_DONE_WORKFLOW_LABEL}' label to ${task.repo}#${task.number} (#8477): ${reason || '(no reason given)'} — a human removes it if work remains`);
 }
 
-function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork, unaddressedNotes = [] }) {
+function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork, verdict = null, unaddressedNotes = [] }) {
   if (!currentTask) return;
   // hivecommons/hive#14832: the agent ended the task because its own runtime
   // cannot run commands. That is not a completion: hand it back as an
@@ -8661,7 +8698,7 @@ function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork
   // launches in flight. Its credential is still dropped.
   const bobAlreadyExited = BACKEND === 'bob' && !bobIsRunning();
   stopAgentForTaskExit({ skipCLI: bobAlreadyExited });
-  send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary, tmux_output: tmuxLines, pr_url: prURL, completion_signal: completionSignal, ...verdictWireFields(noWork) });
+  send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary, tmux_output: tmuxLines, pr_url: prURL, completion_signal: completionSignal, ...verdictWireFields(noWork), ...idleReasonWireFields({ kind: currentTask.kind, prURL, noWork, verdict }) });
   // bob exits after each turn, so the pane is now a bare shell. Bring it
   // back up before the next task, or the prompt would be typed into bash
   // ("-bash: <prompt>: command not found") and silently lost.
@@ -8947,6 +8984,7 @@ function onTaskProgressLeaseExpired() {
       tmuxLines,
       prURL: prFinding.url,
       noWork,
+      verdict: completionVerdict,
     });
     return;
   }
@@ -9664,7 +9702,7 @@ function progressTick() {
       console.log(`Task ${currentTask.task_id}: ${unaddressedNotes.length} advisor note(s) under the final verdict were not addressed before completion — recording them (#7879)`);
       completionSummary += `\n\n${UNADDRESSED_ADVISOR_NOTES_HEADING}:\n${unaddressedNotes.map(n => `- ${n}`).join('\n')}`;
     }
-    finishCurrentTask({ completionSignal, summary: completionSummary, tmuxLines, prURL, noWork, unaddressedNotes });
+    finishCurrentTask({ completionSignal, summary: completionSummary, tmuxLines, prURL, noWork, verdict: completionVerdict, unaddressedNotes });
   } else if (paneState === PANE_STATE_IDLE_COMPLETE) {
     // Idle chrome, no verdict, grace not yet elapsed (#5376). Report progress
     // and wait — this is the tick or two in which a momentary misread (a
@@ -10804,6 +10842,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     isEnvironmentFailureReason,
     ENVIRONMENT_FAILURE_REASON_PATTERNS,
     verdictWireFields,
+    idleReasonWireFields,
+    IDLE_REASON_NO_CONCLUSION,
+    IDLE_REASON_COMPLETE_NO_PR,
     alreadyDoneVerdictFields,
     markIssueBlocked,
     markIssueNeedsDecision,

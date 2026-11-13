@@ -46,7 +46,7 @@ const (
 var stageTrackerSummaryKeys = []string{
 	"repo", "number", "kind", "title", "url", "author", "author_kind",
 	"stage", "stage_slug", "stage_label", "stage_since", "reason", "caption",
-	"lane", "actor", "finisher", "finisher_reason", "claimant", "modifiers", "labels",
+	"lane", "actor", "finisher", "finisher_reason", "claimant", "last_idle", "modifiers", "labels",
 	"needs_human", "on_hold", "hold", "waiting_on_you", "wait_kind", "human_attention",
 	"blocked_on", "blocked_on_pr", "blocker", "decision_needed",
 	"linked_prs", "linked_issues", "nested_under", "superseded_by",
