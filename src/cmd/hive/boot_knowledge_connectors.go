@@ -93,6 +93,7 @@ func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
 	// answers 200 with an empty list and the panel renders its empty state
 	// (#17918) instead of waiting forever on a 404.
 	b.bootInbox(knowledge.BaseDir())
+	b.knowledgeConnectorFactory = b.newKnowledgeConnectorFactory(deps)
 	s, err := newKnowledgeConnectorSyncer(b.cfg.Knowledge.Connectors, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger, b.inboxAfterSync)
 	if err != nil {
 		b.logger.Warn("knowledge connectors disabled", "error", err)
@@ -106,6 +107,30 @@ func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
 		deps.startConnectorSyncer(b.ctx, s)
 	}
 	b.logger.Info("knowledge connectors started", "count", len(b.cfg.Knowledge.Connectors))
+}
+
+// newKnowledgeConnectorFactory returns the dashboard's hot-load hook
+// (#18091): when the hive booted with zero connectors and one is added
+// through the config API, it builds and starts a syncer with the same inputs
+// bootKnowledgeConnectors uses. The result is a nil interface for an empty
+// list or a build failure, so the dashboard never calls methods on a nil
+// *connector.Syncer. The syncer is not stored on b: boot wiring has already
+// read b.knowledgeConnectors by the time this runs.
+func (b *boot) newKnowledgeConnectorFactory(deps bootKnowledgeDeps) dashboard.KnowledgeConnectorFactory {
+	return func(entries []config.KnowledgeConnector) (dashboard.KnowledgeConnectorRuntime, error) {
+		s, err := newKnowledgeConnectorSyncer(entries, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger, b.inboxAfterSync)
+		if err != nil {
+			return nil, err
+		}
+		if s == nil {
+			return nil, nil
+		}
+		if deps.startConnectorSyncer != nil {
+			deps.startConnectorSyncer(b.ctx, s)
+		}
+		b.logger.Info("knowledge connectors started", "count", len(entries), "hot_load", true)
+		return s, nil
+	}
 }
 
 // knowledgeConnectorRuntime exposes the syncer to the dashboard. A nil

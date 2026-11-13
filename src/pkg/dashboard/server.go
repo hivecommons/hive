@@ -148,6 +148,10 @@ type Server struct {
 	mux          *http.ServeMux
 	deps         *Dependencies
 
+	// knowledgeRuntimeMu guards deps.KnowledgeConnectors, which the config
+	// API replaces when the first connector is added after boot (#18091).
+	knowledgeRuntimeMu sync.RWMutex
+
 	// benchmarksPub is the hourly hivecommons/benchmarks publisher state
 	// (api_benchmarks.go), built lazily by benchmarks().
 	benchmarksOnce sync.Once

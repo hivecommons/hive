@@ -105,8 +105,16 @@ type Dependencies struct {
 	// (bare test deps) means the toggle can only persist the flag, so it
 	// answers restart_required.
 	KnowledgePrimer KnowledgePrimerControl
-	// KnowledgeConnectors is the running connector syncer; nil when none is wired.
+	// KnowledgeConnectors is the running connector syncer; nil when none is
+	// wired. Read it through Server.knowledgeConnectors(): the dashboard
+	// replaces it when the first connector is added after boot (#18091).
 	KnowledgeConnectors KnowledgeConnectorRuntime
+	// NewKnowledgeConnectors builds and starts a connector syncer for entries
+	// when none is running yet, so a connector added through the dashboard
+	// works without a restart (#18091). Nil (knowledge not booted, bare test
+	// deps) means the dashboard can only persist the config and reports that
+	// a restart is required.
+	NewKnowledgeConnectors KnowledgeConnectorFactory
 	// KnowledgePublish is the running knowledge.publish mirror; nil when
 	// publishing is not configured or failed to start.
 	KnowledgePublish KnowledgePublishRuntime

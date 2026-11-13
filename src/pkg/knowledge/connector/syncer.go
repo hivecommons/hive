@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -68,18 +69,27 @@ type entry struct {
 	conn     Connector
 	buildErr error
 	syncMu   sync.Mutex
+	// stopLoop cancels this entry's interval loop; nil while no loop runs.
+	// loopDone is closed when that loop has exited. Both guarded by Syncer.mu.
+	stopLoop context.CancelFunc
+	loopDone chan struct{}
 }
 
 // Syncer runs every enabled connector on its interval and writes the pages
-// it emits into the vault for the connector's layer.
+// it emits into the vault for the connector's layer. Apply reconciles it
+// with a new connector list while it runs (#18091).
 type Syncer struct {
-	opts    SyncerOptions
-	logger  *slog.Logger
+	opts   SyncerOptions
+	logger *slog.Logger
+
+	// mu guards order, entries, status and runCtx.
+	mu      sync.Mutex
 	order   []string
 	entries map[string]*entry
-
-	mu     sync.Mutex
-	status map[string]Status
+	status  map[string]Status
+	// runCtx is the context Run was started with, nil before Run and after
+	// it returns. Loops for connectors added by Apply derive from it.
+	runCtx context.Context
 }
 
 // NewSyncer builds connectors for cfgs. A connector that fails to build is
@@ -109,26 +119,116 @@ func NewSyncer(cfgs []ConnectorConfig, opts SyncerOptions) (*Syncer, error) {
 		if _, dup := s.entries[cfg.Name]; dup {
 			return nil, fmt.Errorf("connector: duplicate name %q", cfg.Name)
 		}
-		deps := opts.Deps
-		if deps.StateDir != "" {
-			deps.StateDir = filepath.Join(deps.StateDir, cfg.Name)
-		}
-		e := &entry{cfg: cfg}
-		e.conn, e.buildErr = opts.Registry.New(cfg, deps)
-		st := persisted[cfg.Name]
-		st.Name, st.Type, st.Layer = cfg.Name, cfg.Type, cfg.Layer
-		st.Enabled = cfg.Enabled
-		st.Interval = cfg.EffectiveInterval().String()
-		st.Running = false
-		if e.buildErr != nil {
-			st.LastError = e.buildErr.Error()
-			s.logger.Warn("knowledge connector disabled: invalid config", "name", cfg.Name, "type", cfg.Type, "error", e.buildErr)
-		}
+		e, st := s.buildEntry(cfg, persisted[cfg.Name])
 		s.entries[cfg.Name] = e
 		s.order = append(s.order, cfg.Name)
 		s.status[cfg.Name] = st
 	}
 	return s, nil
+}
+
+// buildEntry constructs the connector for cfg and the status it starts with,
+// carrying over the persisted part of prev (cursor, counts, last sync).
+func (s *Syncer) buildEntry(cfg ConnectorConfig, prev Status) (*entry, Status) {
+	deps := s.opts.Deps
+	if deps.StateDir != "" {
+		deps.StateDir = filepath.Join(deps.StateDir, cfg.Name)
+	}
+	e := &entry{cfg: cfg}
+	e.conn, e.buildErr = s.opts.Registry.New(cfg, deps)
+	st := prev
+	st.Name, st.Type, st.Layer = cfg.Name, cfg.Type, cfg.Layer
+	st.Enabled = cfg.Enabled
+	st.Interval = cfg.EffectiveInterval().String()
+	st.Running = false
+	if e.buildErr != nil {
+		st.LastError = e.buildErr.Error()
+		s.logger.Warn("knowledge connector disabled: invalid config", "name", cfg.Name, "type", cfg.Type, "error", e.buildErr)
+	}
+	return e, st
+}
+
+// Apply reconciles the syncer with cfgs without a restart (#18091). New
+// connectors are built and, while Run is active, start their interval loop;
+// a connector whose config changed is rebuilt (its loop restarts, its status
+// is kept unless the type or layer changed, in which case the cursor and
+// counts belong to the old source and are reset); a connector missing from
+// cfgs is stopped and dropped. Unchanged connectors are left alone. Duplicate
+// names are a hard error and leave the syncer untouched.
+func (s *Syncer) Apply(cfgs []ConnectorConfig) error {
+	seen := make(map[string]bool, len(cfgs))
+	for _, cfg := range cfgs {
+		if seen[cfg.Name] {
+			return fmt.Errorf("connector: duplicate name %q", cfg.Name)
+		}
+		seen[cfg.Name] = true
+	}
+	s.mu.Lock()
+	for name, e := range s.entries {
+		if seen[name] {
+			continue
+		}
+		s.stopLoopLocked(e)
+		delete(s.entries, name)
+		delete(s.status, name)
+		s.logger.Info("knowledge connector removed", "name", name, "type", e.cfg.Type)
+	}
+	order := make([]string, 0, len(cfgs))
+	for _, cfg := range cfgs {
+		order = append(order, cfg.Name)
+		old, known := s.entries[cfg.Name]
+		if known && reflect.DeepEqual(old.cfg, cfg) {
+			continue
+		}
+		prev := s.status[cfg.Name]
+		if known {
+			s.stopLoopLocked(old)
+			if old.cfg.Type != cfg.Type || old.cfg.Layer != cfg.Layer {
+				prev = Status{}
+			}
+		}
+		e, st := s.buildEntry(cfg, prev)
+		s.entries[cfg.Name] = e
+		s.status[cfg.Name] = st
+		s.startLoopLocked(e)
+		if known {
+			s.logger.Info("knowledge connector updated", "name", cfg.Name, "type", cfg.Type, "enabled", cfg.Enabled)
+		} else {
+			s.logger.Info("knowledge connector added", "name", cfg.Name, "type", cfg.Type, "enabled", cfg.Enabled)
+		}
+	}
+	s.order = order
+	s.mu.Unlock()
+	s.saveState()
+	return nil
+}
+
+// startLoopLocked starts e's interval loop when Run is active, e is enabled
+// and built, and no loop is running yet. Caller holds s.mu.
+func (s *Syncer) startLoopLocked(e *entry) {
+	if s.runCtx == nil || !e.cfg.Enabled || e.buildErr != nil || e.stopLoop != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(s.runCtx)
+	done := make(chan struct{})
+	e.stopLoop, e.loopDone = cancel, done
+	go func(name string, interval time.Duration) {
+		defer close(done)
+		for ctx.Err() == nil {
+			_, _ = s.SyncNow(ctx, name)
+			if sleepCtx(ctx, interval) != nil {
+				return
+			}
+		}
+	}(e.cfg.Name, e.cfg.EffectiveInterval())
+}
+
+// stopLoopLocked cancels e's interval loop, if any. Caller holds s.mu.
+func (s *Syncer) stopLoopLocked(e *entry) {
+	if e.stopLoop != nil {
+		e.stopLoop()
+		e.stopLoop = nil
+	}
 }
 
 // Statuses returns a snapshot of every connector's status, in config order.
@@ -150,19 +250,33 @@ func (s *Syncer) Status(name string) (Status, bool) {
 	return st, ok
 }
 
-func (s *Syncer) update(name string, fn func(*Status)) Status {
+// update applies fn to e's status. The result is stored only while e is
+// still the live entry for its name, so a sync that outlives an Apply that
+// replaced or removed its connector cannot resurrect or clobber the status.
+func (s *Syncer) update(e *entry, fn func(*Status)) Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	name := e.cfg.Name
 	st := s.status[name]
 	fn(&st)
-	s.status[name] = st
+	if live, ok := s.entries[name]; ok && live == e {
+		s.status[name] = st
+	}
 	return st
+}
+
+// lookup returns the live entry for name.
+func (s *Syncer) lookup(name string) (*entry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[name]
+	return e, ok
 }
 
 // Connector returns the built connector for name; ok is false for an
 // unknown name or one whose config failed to build.
 func (s *Syncer) Connector(name string) (Connector, bool) {
-	e, ok := s.entries[name]
+	e, ok := s.lookup(name)
 	if !ok || e.buildErr != nil || e.conn == nil {
 		return nil, false
 	}
@@ -172,7 +286,7 @@ func (s *Syncer) Connector(name string) (Connector, bool) {
 // SyncNow runs one sync of the named connector immediately, whether or not
 // it is enabled. It returns ErrSyncInProgress if a sync is already running.
 func (s *Syncer) SyncNow(ctx context.Context, name string) (Status, error) {
-	e, ok := s.entries[name]
+	e, ok := s.lookup(name)
 	if !ok {
 		return Status{}, fmt.Errorf("%w: %q", ErrUnknownConnector, name)
 	}
@@ -187,7 +301,7 @@ func (s *Syncer) SyncNow(ctx context.Context, name string) (Status, error) {
 	defer e.syncMu.Unlock()
 
 	var cur Cursor
-	s.update(name, func(st *Status) {
+	s.update(e, func(st *Status) {
 		st.Running = true
 		st.LastAttempt = s.opts.Now().UTC()
 		cur = st.Cursor
@@ -202,7 +316,7 @@ func (s *Syncer) SyncNow(ctx context.Context, name string) (Status, error) {
 		w := &FactWriter{Dir: dir}
 		counts, _ = w.Existing(e.cfg)
 	}
-	st := s.update(name, func(st *Status) {
+	st := s.update(e, func(st *Status) {
 		st.Running = false
 		if counts != nil {
 			st.Facts, st.Deprecated = 0, 0
@@ -293,26 +407,32 @@ func (s *Syncer) runSync(ctx context.Context, e *entry, cur Cursor) (int, Cursor
 }
 
 // Run syncs every enabled, valid connector immediately and then on its
-// interval until ctx is cancelled. It blocks until all loops have exited.
+// interval until ctx is cancelled. Connectors added by Apply while Run is
+// active join the schedule. It blocks until ctx is cancelled and every loop
+// it still owns has exited.
 func (s *Syncer) Run(ctx context.Context) {
-	var wg sync.WaitGroup
+	s.mu.Lock()
+	s.runCtx = ctx
 	for _, name := range s.order {
-		e := s.entries[name]
-		if !e.cfg.Enabled || e.buildErr != nil {
-			continue
-		}
-		wg.Add(1)
-		go func(name string, interval time.Duration) {
-			defer wg.Done()
-			for {
-				_, _ = s.SyncNow(ctx, name)
-				if sleepCtx(ctx, interval) != nil {
-					return
-				}
-			}
-		}(name, e.cfg.EffectiveInterval())
+		s.startLoopLocked(s.entries[name])
 	}
-	wg.Wait()
+	s.mu.Unlock()
+
+	<-ctx.Done()
+
+	s.mu.Lock()
+	s.runCtx = nil
+	done := make([]chan struct{}, 0, len(s.entries))
+	for _, e := range s.entries {
+		s.stopLoopLocked(e)
+		if e.loopDone != nil {
+			done = append(done, e.loopDone)
+		}
+	}
+	s.mu.Unlock()
+	for _, d := range done {
+		<-d
+	}
 }
 
 type persistedStatus struct {
