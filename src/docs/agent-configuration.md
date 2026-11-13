@@ -1078,6 +1078,8 @@ This is the property operators most need to understand before enabling the featu
 
 An empty allowlist denies every repo even with `allow_github_prompt: true` — the allowlist is required, not merely advisory.
 
+`review.perspectives_source` (the live-linked review perspective set; see [review-swarm.md](review-swarm.md#live-linked-perspectives-reviewperspectives_source)) uses the same seed-only gate: the resolver is allowed to read a repo only when `GitHubPromptAllowed` permits it, and it follows the same fallback shape as `Resolve` above (last-known-good, then the inline config).
+
 ### Fetch failures never blank an agent
 
 `Resolve` (`defsrc.go:283`) never propagates an error to the caller: a reload must proceed even when GitHub is unreachable. On any failure it falls back, in order:
