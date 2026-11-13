@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.246.0)
+
+### Added
+
+- Dashboard: an owner-only fuel gauge on the Overview now shows how much of the hive's Claude plan usage is left in each limit (weekly, plus a 5-hour or model-specific limit when the plan has one) and when each resets, turning amber at 25% left and red at 10%. It is on by default whenever the hive uses Claude, can be hidden from the Overview settings, and can also be shown as a header chip on every page with `dashboard.subscription_gauge_header`. It displays the usage readings hive already makes, so it adds no calls to Claude and changes nothing about measurement or provider rotation; `/api/providers/headroom` readings now also carry `plan_type` when a provider reports one.
+
+### Fixed
+
+- Close-on-merge no longer re-warns every tick for merged PRs it cannot read (404/403); it logs once per recheck window.
+- **Agents out of provider quota are no longer kicked every cycle** ([#18112](https://github.com/hivecommons/hive/issues/18112)). The provider spending-limit gate only saw agents behind the hive's inference gateway, so an agent whose own provider refused it — GitHub Copilot's "You have exceeded your monthly quota" — kept being kicked and sent review work all night, each turn ending at once, until its review dispatches expired and pull requests were parked for a human. The governor now holds kicks per agent while that agent's `QuotaExhausted` flag is set, lets one probe kick through per `governor.provider_budget.probe_interval_s` (default 30 minutes) to notice when the quota resets, and resumes normal kicking as soon as the flag clears. Other agents are never held, and the "provider quota exhausted" alert now says the kicks are held and how often they are retried.
+
 ## 2026-11-13 (v5.245.0)
 
 ### Added
