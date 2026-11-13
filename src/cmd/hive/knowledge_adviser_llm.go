@@ -739,6 +739,7 @@ func (b *knowledgeAdviserLLMBudget) refund(agent string, at time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	events := b.events[agent]
+	removed := false
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i].Equal(at) {
 			events = append(events[:i:i], events[i+1:]...)
@@ -747,10 +748,11 @@ func (b *knowledgeAdviserLLMBudget) refund(agent string, at time.Time) {
 			} else {
 				b.events[agent] = events
 			}
+			removed = true
 			break
 		}
 	}
-	if b.used > 0 && at.UTC().Format(time.DateOnly) == b.day {
+	if removed && b.used > 0 && at.UTC().Format(time.DateOnly) == b.day {
 		b.used--
 	}
 }
