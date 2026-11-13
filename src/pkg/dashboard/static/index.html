@@ -462,6 +462,11 @@
        `[hidden] { display: none }`, so a hidden status chip otherwise paints
        as an empty outlined pill (#oc-providers when every provider is usable). */
     .oc-providers-chip[hidden] { display: none; }
+    /* Opt-in Claude usage chip: a compact fuel dial plus its percentage. */
+    .subscription-gauge-chip[hidden] { display: none; }
+    .subscription-gauge-chip__dial { display: inline-flex; align-items: center; }
+    .subscription-gauge-chip__dial:empty { display: none; }
+    .subscription-gauge-chip[data-out-of-date="true"] { border-style: dashed; }
     .oc-version-navbar-upgrade { --oc-version-bee-lane: 56px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: visible; }
     .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); }
     .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
@@ -588,6 +593,7 @@
       #acmm-badge { display: none; }
       .oc-health-badge .nav-chip__label,
       #oc-settings-btn .nav-chip__label,
+      #oc-subscription-gauge .nav-chip__label,
       #welcome-topbar-btn .nav-chip__label { display: none; }
     }
 
@@ -8765,6 +8771,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <!-- Agent Logs hidden (redundant with per-agent output) -->
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
       <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" title="AI providers: all usable" aria-label="AI providers: all usable" hidden></span>
+      <button type="button" class="nav-chip nav-chip--status subscription-gauge-chip" id="oc-subscription-gauge" data-action="openSubscriptionGaugeOverview" data-status="neutral" aria-label="Claude subscription usage left" hidden><span class="subscription-gauge-chip__dial" aria-hidden="true"></span><span class="nav-chip__label"></span></button>
       <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
@@ -50702,6 +50709,53 @@ function burnAreaChart() {
       parts.push(el('div', 'overview-usage-gauge__note', (m.accountNote || 'Reflects the Claude account this hive is signed in with.') + ' This is the Claude plan, not the hive token budget.'));
       host.replaceChildren.apply(host, parts);
       host.hidden = false;
+    }
+
+    // Opt-in header chip: a compact dial whose needle shows the limit closest
+    // to empty. It shares the Overview gauge's readings; no separate fetch.
+    function renderSubscriptionGaugeChip() {
+      const el = document.getElementById('oc-subscription-gauge');
+      if (!el) return;
+      const dialHost = el.querySelector('.subscription-gauge-chip__dial');
+      const labelEl = el.querySelector('.nav-chip__label');
+      const m = subscriptionGaugeCurrentModel();
+      if (!subscriptionGaugeOwner() || !subscriptionGaugeHeaderEnabled() || !m) {
+        el.hidden = true;
+        if (dialHost) dialHost.replaceChildren();
+        return;
+      }
+      const lines = [];
+      if (m.state !== 'reading') {
+        if (dialHost) dialHost.replaceChildren();
+        if (labelEl) labelEl.textContent = 'Claude: no reading';
+        el.dataset.status = 'neutral';
+        el.dataset.outOfDate = 'false';
+        lines.push('No Claude usage reading: ' + m.reason);
+      } else {
+        const n = m.needle;
+        const label = 'Claude ' + n.pctLeft + '%' + (n.shortName ? ' · ' + n.shortName : '');
+        if (dialHost) dialHost.replaceChildren(subscriptionGaugeDialSvg(n.pctLeft, { compact: true, status: n.status, stale: m.outOfDate, label: n.label + ': ' + n.pctLeft + '% left' }));
+        if (labelEl) labelEl.textContent = label;
+        el.dataset.status = m.outOfDate ? 'neutral' : m.worstStatus;
+        el.dataset.outOfDate = m.outOfDate ? 'true' : 'false';
+        m.dials.forEach((d) => {
+          lines.push(d.label + ': ' + d.pctLeft + '% left' + (d.resetsAt ? ' · resets ' + formatDashboardDateTime(d.resetsAt) : ''));
+        });
+        if (m.capturedAt) lines.push('Measured ' + relativeTimeShort(m.capturedAt) + (m.outOfDate ? ' (out of date)' : ''));
+      }
+      lines.push('Click to open the usage gauge on the Overview.');
+      el.title = lines.join('\n');
+      el.setAttribute('aria-label', (m.state === 'reading' ? 'Claude subscription: ' + m.needle.pctLeft + '% left in the ' + m.needle.label + ' limit' : 'Claude subscription: no reading') + '. Open the usage gauge on the Overview.');
+      el.hidden = false;
+    }
+    function openSubscriptionGaugeOverview() {
+      if (typeof ocNavigate === 'function') ocNavigate('overview-section');
+      const host = document.getElementById('overview-usage-gauge');
+      if (host && !host.hidden) {
+        host.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      } else if (typeof showToast === 'function') {
+        showToast('The usage gauge is hidden on the Overview. Turn on "Show Claude usage gauge" in Overview settings to see every limit.', 'info');
+      }
     }
     // ── Debug section ──
     const DEBUG_REFRESH_MS = 10000;

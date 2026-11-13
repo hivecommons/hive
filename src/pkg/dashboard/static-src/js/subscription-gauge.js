@@ -251,3 +251,50 @@
       host.replaceChildren.apply(host, parts);
       host.hidden = false;
     }
+
+    // Opt-in header chip: a compact dial whose needle shows the limit closest
+    // to empty. It shares the Overview gauge's readings; no separate fetch.
+    function renderSubscriptionGaugeChip() {
+      const el = document.getElementById('oc-subscription-gauge');
+      if (!el) return;
+      const dialHost = el.querySelector('.subscription-gauge-chip__dial');
+      const labelEl = el.querySelector('.nav-chip__label');
+      const m = subscriptionGaugeCurrentModel();
+      if (!subscriptionGaugeOwner() || !subscriptionGaugeHeaderEnabled() || !m) {
+        el.hidden = true;
+        if (dialHost) dialHost.replaceChildren();
+        return;
+      }
+      const lines = [];
+      if (m.state !== 'reading') {
+        if (dialHost) dialHost.replaceChildren();
+        if (labelEl) labelEl.textContent = 'Claude: no reading';
+        el.dataset.status = 'neutral';
+        el.dataset.outOfDate = 'false';
+        lines.push('No Claude usage reading: ' + m.reason);
+      } else {
+        const n = m.needle;
+        const label = 'Claude ' + n.pctLeft + '%' + (n.shortName ? ' · ' + n.shortName : '');
+        if (dialHost) dialHost.replaceChildren(subscriptionGaugeDialSvg(n.pctLeft, { compact: true, status: n.status, stale: m.outOfDate, label: n.label + ': ' + n.pctLeft + '% left' }));
+        if (labelEl) labelEl.textContent = label;
+        el.dataset.status = m.outOfDate ? 'neutral' : m.worstStatus;
+        el.dataset.outOfDate = m.outOfDate ? 'true' : 'false';
+        m.dials.forEach((d) => {
+          lines.push(d.label + ': ' + d.pctLeft + '% left' + (d.resetsAt ? ' · resets ' + formatDashboardDateTime(d.resetsAt) : ''));
+        });
+        if (m.capturedAt) lines.push('Measured ' + relativeTimeShort(m.capturedAt) + (m.outOfDate ? ' (out of date)' : ''));
+      }
+      lines.push('Click to open the usage gauge on the Overview.');
+      el.title = lines.join('\n');
+      el.setAttribute('aria-label', (m.state === 'reading' ? 'Claude subscription: ' + m.needle.pctLeft + '% left in the ' + m.needle.label + ' limit' : 'Claude subscription: no reading') + '. Open the usage gauge on the Overview.');
+      el.hidden = false;
+    }
+    function openSubscriptionGaugeOverview() {
+      if (typeof ocNavigate === 'function') ocNavigate('overview-section');
+      const host = document.getElementById('overview-usage-gauge');
+      if (host && !host.hidden) {
+        host.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      } else if (typeof showToast === 'function') {
+        showToast('The usage gauge is hidden on the Overview. Turn on "Show Claude usage gauge" in Overview settings to see every limit.', 'info');
+      }
+    }
