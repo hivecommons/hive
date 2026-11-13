@@ -1118,6 +1118,7 @@
         ${renderGovReplanSection((_configState.data || {}).replan || {})}
         ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}
         ${renderGovDecisionsDelegateSection((_configState.data || {}).decisions_delegate || {})}
+        ${renderGovCodeScanningSection((_configState.data || {}).code_scanning || {})}
 
         <div class="settings-subsection">
           <div class="settings-subsection-title">Superseded PR grace ${settingHelpMark('settings', 'features', 'Superseded PR grace', `Timing of the superseded-PR sweep.`)}</div>
@@ -1744,6 +1745,88 @@
           <div class="config-field" id="dd-effect-timeout"><label>Effect timeout ${yamlHint('decisions.delegate.effect_timeout')} ${settingHelpMark('settings', 'features', 'Effect timeout', `How long a recorded decision may go without its expected effect (the park lifted, a merge, a close, a new commit) before a repeat Let hive decide reports it as stuck, with the plain reason and the next actions. A duration above zero such as 30m or 2h; empty uses the default of 30m.`)}</label><input type="text" value="${esc(dd.effect_timeout || '')}" placeholder="${esc(dd.effect_timeout_effective || '30m0s')}" data-change-action="markDirty" data-arg0="decisions-delegate" data-arg1="effect_timeout" data-arg-types="s,s,w"></div>
           <div class="config-field" id="dd-repo-overrides"><label>Per-repository overrides ${yamlHint('decisions.delegate.repos')} ${settingHelpMark('settings', 'features', 'Per-repository overrides', `Turn Let hive decide on or off for one repository, whatever the hive-wide switch says; hive-wide follows the switch above. The per-repository setting also gates the reviewer-question sweep there. Saving sends every repository&apos;s override, so overrides set in hive.yaml or through the admin MCP are kept.`)}</label>
             ${ddRowRepos.length ? `<table class="am-fence-repo-table"><thead><tr><th>Repository</th><th>Let hive decide</th></tr></thead><tbody>${ddRepoRows}</tbody></table>` : '<p class="am-trusted-authors-note">No repositories in project.repos yet.</p>'}
+          </div>
+        </div>`;
+    }
+
+    // renderGovCodeScanningSection renders the code scanning sweep settings
+    // (code_scanning): the hive-wide switch, what the sweep files, and one row
+    // per project repository with its own switch and what the last sweep pass
+    // could read there. Values are marked dirty under 'code-scanning', which
+    // saveConfig PUTs to /api/config/code-scanning (owner only) through
+    // codeScanningSaveBody, the same endpoint as the admin MCP
+    // code_scanning.settings operation.
+    function renderGovCodeScanningSection(cs) {
+      cs = cs || {};
+      const on = cs.enabled === true;
+      const csList = v => (Array.isArray(v) ? v : []);
+      // One row per project repository plus any saved override for a
+      // repository outside project.repos; a staged choice wins over the
+      // saved one so a re-render keeps it.
+      const csProject = csList(cs.project_repos).filter(p => p && p.repo);
+      const csSaved = (cs.repos && typeof cs.repos === 'object') ? cs.repos : {};
+      const csStaged = ((_configState.dirty || {})['code-scanning'] || {}).repos || {};
+      const csStale = Object.keys(csSaved).filter(k => !csProject.some(p => decisionsDelegateSameRepo(p.repo, k))).sort();
+      const csSavedFor = (repo) => {
+        const ck = Object.keys(csSaved).find(k => decisionsDelegateSameRepo(k, repo));
+        return ck !== undefined && csSaved[ck] ? csSaved[ck] : {};
+      };
+      const csRowValue = (repo) => {
+        const sk = Object.keys(csStaged).find(k => decisionsDelegateSameRepo(k, repo));
+        if (sk !== undefined) return csStaged[sk] === true ? 'on' : (csStaged[sk] === false ? 'off' : (csStaged[sk] === 'drop' ? 'drop' : ''));
+        const v = csSavedFor(repo);
+        return v.enabled === true ? 'on' : (v.enabled === false ? 'off' : '');
+      };
+      // The overrides this section does not edit, shown so a row never
+      // hides them; a save sends them back unchanged.
+      const csOtherOverrides = (repo) => {
+        const v = csSavedFor(repo);
+        const parts = [];
+        if (v.min_severity) parts.push('minimum severity ' + v.min_severity);
+        if (v.max_new_issues_per_run) parts.push('max new issues ' + v.max_new_issues_per_run);
+        if (csList(v.include_tools).length) parts.push('tools ' + csList(v.include_tools).join(', '));
+        if (csList(v.exclude_rules).length) parts.push('extra rules left out ' + csList(v.exclude_rules).join(', '));
+        return parts.length ? 'Also set for this repository and kept on save: ' + parts.join('; ') + '.' : '';
+      };
+      // What the last sweep pass recorded; a repository it has not reached
+      // is "Not checked yet", never "can read".
+      const csAccessLabels = { readable: 'App can read alerts', missing_permission: 'App cannot read alerts', not_enabled: 'No code scanning analysis', error: 'Last pass failed', not_checked: 'Not checked yet', off: 'Sweep off' };
+      const csAccessCell = (p) => {
+        const label = Object.prototype.hasOwnProperty.call(csAccessLabels, p.alerts_access) ? csAccessLabels[p.alerts_access] : 'Unknown';
+        const when = p.checked_at ? ' (last pass ' + p.checked_at + ')' : '';
+        return esc(label + when) + (p.alerts_access_detail ? `<div class="config-help">${esc(p.alerts_access_detail)}</div>` : '');
+      };
+      const csChoices = [['', `hive-wide (${on ? 'on' : 'off'})`], ['on', 'on'], ['off', 'off']];
+      const csRow = (repo, choices, accessHtml) => {
+        const cur = csRowValue(repo);
+        const other = csOtherOverrides(repo);
+        return `<tr class="cs-repo-row" data-repo="${esc(repo)}"><td><code>${esc(repo)}</code>${other ? `<div class="config-help">${esc(other)}</div>` : ''}</td><td><select aria-label="Code scanning sweep for ${esc(repo)}" data-change-action="markDirtyCodeScanningRepo" data-arg0="${esc(repo)}" data-arg-types="s,v">${choices.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></td><td>${accessHtml}</td></tr>`;
+      };
+      const csRows = csProject.map(p => csRow(p.repo, csChoices, csAccessCell(p)))
+        .concat(csStale.map(k => csRow(k, csChoices.concat([['drop', 'remove this override']]), 'Not in project.repos. Remove this override: a save is refused while it is there, as hive.yaml is on load.')))
+        .join('');
+      const csSeverities = csList(cs.severities).length ? csList(cs.severities) : ['critical', 'high', 'medium', 'low', 'note'];
+      const csSevSaved = String(cs.min_severity || '');
+      const csSevCur = csSeverities.includes(csSevSaved.toLowerCase()) ? csSevSaved.toLowerCase() : csSevSaved;
+      const csSevChoices = [['', `default (${cs.min_severity_default || 'high'})`]].concat(csSeverities.map(s => [s, s]));
+      if (csSevCur && !csSeverities.includes(csSevCur)) csSevChoices.push([csSevCur, csSevCur + ' (as set)']);
+      return `
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Code scanning issues ${settingHelpMark('code-scanning', '', 'Code scanning issues', `The code scanning sweep reads a repository's open GitHub code scanning alerts (CodeQL, Scorecard, Trivy or any other SARIF upload) and files grouped issues the lanes can work. It opens issues only: it never opens a pull request, dismisses an alert or changes the scanning setup.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${on ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="code-scanning" data-key="enabled"></div>
+            <span class="config-toggle-label">Code scanning sweep on in every repository ${yamlHint('code_scanning.enabled')} ${settingHelpMark('code-scanning', 'turning-it-on', 'Code scanning sweep on in every repository', `Off by default. On runs the sweep in every repository in project.repos. A per-repository choice below wins over this switch. A change applies on the next sweep pass, without a restart.`)}</span>
+          </div>
+          <div class="config-field-row settings-subsection-row">
+            <div class="config-field"><label>Minimum severity ${yamlHint('code_scanning.min_severity')} ${settingHelpMark('code-scanning', 'severity', 'Minimum severity', `The lowest severity the sweep files. High files what the Security tab shows as High or Critical. Alerts with no security severity count as medium (SARIF error), low (warning) or note.`)}</label><select data-change-action="markDirty" data-arg0="code-scanning" data-arg1="min_severity" data-arg-types="s,s,v">${csSevChoices.map(([v, l]) => `<option value="${esc(v)}"${v === csSevCur ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+            <div class="config-field"><label>Max new issues per pass ${yamlHint('code_scanning.max_new_issues_per_run')} ${settingHelpMark('code-scanning', 'how-alerts-become-issues', 'Max new issues per pass', `The most new issues one pass files in one repository; the rest wait for later passes. 0 or empty uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(cs.max_new_issues_per_run || ''))}" placeholder="${esc(String(cs.max_new_issues_per_run_default || 5))}" data-change-action="markDirty" data-arg0="code-scanning" data-arg1="max_new_issues_per_run" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Sweep interval ${yamlHint('code_scanning.interval')} ${settingHelpMark('code-scanning', 'turning-it-on', 'Sweep interval', `Time between passes, as a duration such as 30m or 2h. At least 10m. Empty uses the default.`)}</label><input type="text" value="${esc(cs.interval || '')}" placeholder="${esc(cs.interval_default || '1h0m0s')}" data-change-action="markDirty" data-arg0="code-scanning" data-arg1="interval" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field"><label>Only these tools ${yamlHint('code_scanning.include_tools[]')} ${settingHelpMark('code-scanning', 'turning-it-on', 'Only these tools', `File only alerts from these tools, by name, separated by commas: CodeQL, Scorecard, Trivy. Empty files alerts from every tool.`)}</label><input type="text" value="${esc(csList(cs.include_tools).join(', '))}" placeholder="every tool" data-change-action="markCSVDirty" data-arg0="code-scanning" data-arg1="include_tools" data-arg-types="s,s,w"></div>
+          <div class="config-field"><label>Extra rules to leave out ${yamlHint('code_scanning.exclude_rules[]')} ${settingHelpMark('code-scanning', 'what-is-not-filed', 'Extra rules to leave out', `Rule-ID patterns left out on top of the default list, separated by commas. * matches within a path segment (cpp/commented-out-*). An entry starting with ! takes a default back out (!SASTID).`)}</label><input type="text" value="${esc(csList(cs.exclude_rules).join(', '))}" placeholder="cpp/commented-out-*, !SASTID" data-change-action="markCSVDirty" data-arg0="code-scanning" data-arg1="exclude_rules" data-arg-types="s,s,w"></div>
+          <div class="config-help">Left out by default: ${esc(csList(cs.exclude_rules_default).join(', '))}.</div>
+          <div class="config-field" id="cs-repo-overrides"><label>Per-repository sweep ${yamlHint('code_scanning.repos.<key>.enabled')} ${settingHelpMark('code-scanning', 'github-app-permission', 'Per-repository sweep', `Turn the sweep on or off for one repository, whatever the switch above says; hive-wide follows the switch. The Alerts column is what the last sweep pass recorded: whether the GitHub App could read that repository's code scanning alerts. Saving sends every repository's override, and a repository's severity, tool, rule and cap overrides (set in hive.yaml or through the admin MCP) are kept.`)}</label>
+            ${csRows ? `<table class="am-fence-repo-table"><thead><tr><th>Repository</th><th>Sweep</th><th>Alerts</th></tr></thead><tbody>${csRows}</tbody></table>` : '<p class="am-trusted-authors-note">No repositories in project.repos yet.</p>'}
           </div>
         </div>`;
     }

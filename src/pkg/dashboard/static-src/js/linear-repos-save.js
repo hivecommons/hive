@@ -1029,6 +1029,17 @@
             });
             if (!ddRes.ok) throw new Error(await saveErrorMessage(ddRes));
             _configState.data.decisions_delegate = await ddRes.json().catch(() => _configState.data.decisions_delegate);
+          } else if (_configState.type === 'governor' && section === 'code-scanning') {
+            // code_scanning is a TOP-LEVEL config block; it saves through
+            // its own owner-only /api/config/code-scanning endpoint.
+            const csBody = codeScanningSaveBody(values, ((_configState.data || {}).code_scanning || {}).repos);
+            const csRes = await fetch('/api/config/code-scanning', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(csBody)
+            });
+            if (!csRes.ok) throw new Error(await saveErrorMessage(csRes));
+            _configState.data.code_scanning = await csRes.json().catch(() => _configState.data.code_scanning);
           } else if (_configState.type === 'governor' && section === 'convergence') {
             // convergence is a TOP-LEVEL config block, not under governor —
             // it saves through its own owner-only /api/config/convergence

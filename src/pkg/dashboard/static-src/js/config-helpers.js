@@ -582,6 +582,57 @@
       return body;
     }
 
+    // Settings → Features → Code scanning issues → per-repository sweep. A row
+    // edit is staged as {repo: true | false | null | 'drop'}: null means
+    // "follow the hive-wide switch", and 'drop' removes a saved override for
+    // a repository that is no longer in project.repos. codeScanningSaveBody
+    // merges it into the saved map.
+    function markDirtyCodeScanningRepo(repo, value) {
+      const staged = ((_configState.dirty || {})['code-scanning'] || {}).repos || {};
+      const next = value === 'on' ? true : (value === 'off' ? false : (value === 'drop' ? 'drop' : null));
+      markDirty('code-scanning', 'repos', Object.assign({}, staged, { [repo]: next }));
+    }
+
+    // codeScanningReposBody is the repos map a save sends. PUT
+    // /api/config/code-scanning replaces the map whole, so it carries every
+    // saved override plus the staged row edits, never the edited rows alone.
+    // A row edit changes only that repository's enabled: its severity, tool,
+    // rule and cap overrides go back exactly as they were saved. The server
+    // drops an entry that sets nothing at all.
+    function codeScanningReposBody(saved, staged) {
+      const out = {};
+      Object.entries(saved || {}).forEach(([repo, v]) => {
+        if (v && typeof v === 'object') out[repo] = Object.assign({}, v);
+      });
+      Object.entries(staged || {}).forEach(([repo, v]) => {
+        const key = Object.keys(out).find(k => decisionsDelegateSameRepo(k, repo)) || repo;
+        if (v === 'drop') {
+          delete out[key];
+          return;
+        }
+        out[key] = Object.assign({}, out[key] || {}, { enabled: v === true || v === false ? v : null });
+      });
+      return out;
+    }
+
+    // codeScanningSaveBody builds the PUT body from the staged values. Only
+    // staged fields are sent; an absent field is left alone by the server,
+    // which checks every value the way hive.yaml loading does.
+    function codeScanningSaveBody(values, savedRepos) {
+      const body = {};
+      ['enabled', 'min_severity', 'include_tools', 'exclude_rules'].forEach(k => {
+        if (values[k] !== undefined) body[k] = values[k];
+      });
+      if (values.max_new_issues_per_run !== undefined) {
+        const cap = Number(values.max_new_issues_per_run);
+        if (!Number.isInteger(cap)) throw new Error('Code scanning max new issues per pass must be a whole number (0 or empty uses the default)');
+        body.max_new_issues_per_run = cap;
+      }
+      if (values.interval !== undefined) body.interval = String(values.interval || '').trim();
+      if (values.repos !== undefined) body.repos = codeScanningReposBody(savedRepos, values.repos);
+      return body;
+    }
+
     function markDirtyPerspectives() {
       const rows = Array.from(document.querySelectorAll('#rv-perspectives .rv-perspective'));
       const builtin = ((_configState.data || {}).review || {}).builtin_perspectives || [];
