@@ -1,1 +1,0 @@
-- Activity monitor: the column header now follows the workflow model the rows wear — a repository bound to a custom model gets that model's column names over its chevrons (ungrouped pages are partitioned by model with a header per run), instead of hive-default's "PR in progress / Merge queue" names (#18002).

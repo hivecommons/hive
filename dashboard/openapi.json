@@ -25525,6 +25525,264 @@
         }
       }
     },
+    "/api/config/github/webhooks": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Describe GitHub webhook setup for this hive (owner)",
+        "description": "Owner-only. Everything the Settings → Forge App → GitHub webhooks section shows: the payload URL GitHub must call, the events to subscribe, whether a secret is configured and where it comes from (never the secret itself), whether this hive receives hub-signed relays (hosted), the live receiver health and whether the App installation's hooks permission allows creating the webhook from here. See docs/webhooks.md#setting-up-webhooks-owner-guide.",
+        "responses": {
+          "200": {
+            "description": "Webhook setup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "payload_url": {
+                      "type": "string"
+                    },
+                    "payload_url_source": {
+                      "type": "string",
+                      "enum": [
+                        "config",
+                        "hub",
+                        "request",
+                        "none"
+                      ]
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "content_type": {
+                      "type": "string"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "optional_events": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "verification": {
+                      "type": "string"
+                    },
+                    "hosted": {
+                      "type": "boolean"
+                    },
+                    "secret_configured": {
+                      "type": "boolean"
+                    },
+                    "secret_source": {
+                      "type": "string",
+                      "enum": [
+                        "env",
+                        "file",
+                        ""
+                      ]
+                    },
+                    "secret_path": {
+                      "type": "string"
+                    },
+                    "can_generate_secret": {
+                      "type": "boolean"
+                    },
+                    "health": {
+                      "type": "object",
+                      "properties": {
+                        "healthy": {
+                          "type": "boolean"
+                        },
+                        "last_event_at": {
+                          "type": "string"
+                        },
+                        "events_1h": {
+                          "type": "integer"
+                        },
+                        "invalidations_1h": {
+                          "type": "integer"
+                        },
+                        "targeted_refreshes_1h": {
+                          "type": "integer"
+                        },
+                        "tracker_invalidations_1h": {
+                          "type": "integer"
+                        },
+                        "last_ci_event_at": {
+                          "type": "string"
+                        },
+                        "ci_events_1h": {
+                          "type": "integer"
+                        },
+                        "ci_events_applied_1h": {
+                          "type": "integer"
+                        },
+                        "ci_refetches_1h": {
+                          "type": "integer"
+                        },
+                        "verification": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "org": {
+                      "type": "string"
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "app_org_hooks": {
+                      "type": "boolean"
+                    },
+                    "app_repo_hooks": {
+                      "type": "boolean"
+                    },
+                    "app_probe_error": {
+                      "type": "string"
+                    },
+                    "create_available": {
+                      "type": "boolean"
+                    },
+                    "docs_url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an owner"
+          },
+          "503": {
+            "description": "Config not loaded"
+          }
+        }
+      }
+    },
+    "/api/config/github/webhooks/secret": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Generate this hive's GitHub webhook secret (owner)",
+        "description": "Owner-only. Writes a new random secret to the hive's secret file (mode 0600) and returns it exactly once; later GETs only report that a file secret is configured. Refused with 409 while GITHUB_WEBHOOK_SECRET is set in the environment, which always wins. Audited.",
+        "responses": {
+          "200": {
+            "description": "Secret, shown once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "secret": {
+                      "type": "string"
+                    },
+                    "secret_path": {
+                      "type": "string"
+                    },
+                    "verification": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an owner"
+          },
+          "409": {
+            "description": "Secret is supplied by the environment"
+          },
+          "500": {
+            "description": "Could not write the secret file"
+          }
+        }
+      }
+    },
+    "/api/config/github/webhooks/create": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Create the org or repo webhook through the GitHub App (owner)",
+        "description": "Owner-only. Uses the App installation's organization_hooks or repository_hooks write permission to create a webhook on GitHub pointing at this hive's payload URL with the configured secret and event list. Requires a configured secret, a public dashboard URL and the matching permission; the repository must be one of project.repos. Audited.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "organization",
+                      "repository"
+                    ]
+                  },
+                  "repo": {
+                    "type": "string",
+                    "description": "Repository name (bare or org/name); required for scope=repository."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hook_id": {
+                      "type": "integer"
+                    },
+                    "scope": {
+                      "type": "string"
+                    },
+                    "target": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scope or repository"
+          },
+          "403": {
+            "description": "Not an owner, or the App lacks the hooks permission"
+          },
+          "409": {
+            "description": "No secret / no public URL / webhook already exists"
+          },
+          "502": {
+            "description": "GitHub API error"
+          }
+        }
+      }
+    },
     "/api/config/github": {
       "put": {
         "tags": [
