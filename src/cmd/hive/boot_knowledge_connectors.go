@@ -105,6 +105,9 @@ func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
 	b.knowledgeConnectorsMu.Lock()
 	b.knowledgeConnectors = s
 	b.knowledgeConnectorsMu.Unlock()
+	// The Inbox booted before the syncer existed; give it the live
+	// connectors so Plaud can read recordings directly (#18091).
+	b.refreshInboxSources(b.cfg.Knowledge.Connectors, s)
 	if deps.startConnectorSyncer != nil {
 		deps.startConnectorSyncer(b.ctx, s)
 	}
@@ -117,7 +120,9 @@ func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
 // starts one from the same inputs as bootKnowledgeConnectors; otherwise it
 // reconfigures the running syncer in place, so unchanged connectors keep
 // syncing undisturbed. The knowledge.publish mirror is not rebuilt: a
-// changed publish connector still needs a restart.
+// changed publish connector still needs a restart. Once the runtime follows,
+// the Inbox sources are rebuilt from entries so a voice connector added from
+// the dashboard shows up in the Inbox at once.
 func (b *boot) reloadKnowledgeConnectors(entries []config.KnowledgeConnector) (dashboard.KnowledgeConnectorRuntime, error) {
 	b.knowledgeConnectorsMu.Lock()
 	defer b.knowledgeConnectorsMu.Unlock()
@@ -126,10 +131,16 @@ func (b *boot) reloadKnowledgeConnectors(entries []config.KnowledgeConnector) (d
 			return nil, err
 		}
 		b.logger.Info("knowledge connectors reloaded", "count", len(entries))
+		b.refreshInboxSources(entries, b.knowledgeConnectors)
 		return b.knowledgeConnectors, nil
 	}
 	s, err := newKnowledgeConnectorSyncer(entries, nil, b.knowledgeAPI, knowledge.BaseDir(), b.logger, b.inboxAfterSync)
 	if err != nil || s == nil {
+		// No runtime to follow: with no entries left the Inbox still lists
+		// no sources, and a build failure keeps the previous set.
+		if err == nil {
+			b.refreshInboxSources(entries, nil)
+		}
 		return nil, err
 	}
 	b.knowledgeConnectors = s
@@ -137,6 +148,7 @@ func (b *boot) reloadKnowledgeConnectors(entries []config.KnowledgeConnector) (d
 		b.startConnectorSyncer(b.ctx, s)
 	}
 	b.logger.Info("knowledge connectors started", "count", len(entries), "hot_loaded", true)
+	b.refreshInboxSources(entries, s)
 	return s, nil
 }
 
