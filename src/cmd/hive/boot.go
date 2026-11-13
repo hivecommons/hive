@@ -216,14 +216,19 @@ type boot struct {
 	saved *snapshot.PersistedState
 
 	// bootKnowledge
-	gitSyncer            *knowledge.GitSyncer
-	knowledgeConnectors  *connector.Syncer
-	inboxSvc             *inbox.Service
-	knowledgePublish     *connector.Mirror
-	promotionScheduler   *knowledge.PromotionScheduler
-	quotaAccount         string
-	quotaPoolDir         string
-	explicitQuotaPoolDir bool
+	gitSyncer           *knowledge.GitSyncer
+	knowledgeConnectors *connector.Syncer
+	// knowledgeConnectorsMu guards knowledgeConnectors once the dashboard
+	// can hot-load it (#18091); startConnectorSyncer is the boot starter
+	// reused for a syncer first built after boot.
+	knowledgeConnectorsMu sync.Mutex
+	startConnectorSyncer  func(ctx context.Context, s *connector.Syncer)
+	inboxSvc              *inbox.Service
+	knowledgePublish      *connector.Mirror
+	promotionScheduler    *knowledge.PromotionScheduler
+	quotaAccount          string
+	quotaPoolDir          string
+	explicitQuotaPoolDir  bool
 	// knowledgeAPIFallback records that knowledgeAPI is the file-only API
 	// bootKnowledge auto-enables when knowledge.enabled is false, not one
 	// built from the configured layers/engine/curator (#9231).

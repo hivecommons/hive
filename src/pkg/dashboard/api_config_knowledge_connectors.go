@@ -264,6 +264,7 @@ func (s *Server) handleKnowledgeConnectorsPut(w http.ResponseWriter, r *http.Req
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after knowledge connectors update", "error", err)
 	}
+	s.reloadKnowledgeConnectors(next)
 	names := make([]string, 0, len(next))
 	for _, c := range next {
 		names = append(names, c.Name)
@@ -292,8 +293,8 @@ func knowledgeConnectorPill(enabled bool, st *connector.Status) string {
 
 func (s *Server) knowledgeConnectorStatusRows() []knowledgeConnectorStatusRow {
 	byName := map[string]connector.Status{}
-	if s.deps.KnowledgeConnectors != nil {
-		for _, st := range s.deps.KnowledgeConnectors.Statuses() {
+	if rt := s.knowledgeConnectors(); rt != nil {
+		for _, st := range rt.Statuses() {
 			byName[st.Name] = st
 		}
 	}
@@ -327,7 +328,7 @@ func (s *Server) handleKnowledgeConnectorsStatus(w http.ResponseWriter, r *http.
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	jsonResponse(w, map[string]interface{}{
 		"connectors": rows,
-		"runtime":    s.deps.KnowledgeConnectors != nil,
+		"runtime":    s.knowledgeConnectors() != nil,
 		"publish":    s.knowledgePublishView(),
 	})
 }
@@ -407,7 +408,7 @@ func (s *Server) handleKnowledgeConnectorsSync(w http.ResponseWriter, r *http.Re
 		jsonError(w, "unknown connector", http.StatusNotFound)
 		return
 	}
-	rt := s.deps.KnowledgeConnectors
+	rt := s.knowledgeConnectors()
 	if rt == nil {
 		jsonError(w, "connector syncer is not running (restart the hive after enabling knowledge connectors)", http.StatusServiceUnavailable)
 		return

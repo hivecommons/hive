@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
 
@@ -91,7 +92,31 @@ func (s *Server) knowledgeConnectors() KnowledgeConnectorRuntime {
 	if s == nil || s.deps == nil {
 		return nil
 	}
+	s.knowledgeConnectorsRTMu.RLock()
+	defer s.knowledgeConnectorsRTMu.RUnlock()
 	return s.deps.KnowledgeConnectors
+}
+
+func (s *Server) setKnowledgeConnectors(rt KnowledgeConnectorRuntime) {
+	s.knowledgeConnectorsRTMu.Lock()
+	defer s.knowledgeConnectorsRTMu.Unlock()
+	s.deps.KnowledgeConnectors = rt
+}
+
+// reloadKnowledgeConnectors hot-loads entries into the connector runtime
+// after a dashboard save (#18091), so a connector added, edited, enabled,
+// disabled or removed takes effect without restarting the hive. A failure
+// is logged and leaves the previous runtime in place.
+func (s *Server) reloadKnowledgeConnectors(entries []config.KnowledgeConnector) {
+	if s.deps.ReloadKnowledgeConnectors == nil {
+		return
+	}
+	rt, err := s.deps.ReloadKnowledgeConnectors(entries)
+	if err != nil {
+		s.logger.Warn("knowledge connectors not reloaded; restart the hive to apply", "error", err)
+		return
+	}
+	s.setKnowledgeConnectors(rt)
 }
 
 // knowledgeConnectorStatus finds one connector's status by name.
