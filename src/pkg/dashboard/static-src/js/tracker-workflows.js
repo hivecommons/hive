@@ -67,7 +67,7 @@
     // The model's column header, drawn under a bound repository's group
     // header in place of the shared hive-default header.
     function stageTrackerWorkflowHeaderHtml(wf) {
-      const cols = wf.columns.map(c => `<li class="ham-seg ham-wf-col${c.terminal ? ' cap' : ''}" title="${esc(c.hint || c.label)}"><span class="ham-seg-t">${esc(c.label)}</span></li>`).join('');
+      const cols = wf.columns.map(c => `<li class="ham-seg ham-wf-col${c.terminal ? ' cap' : ''}" title="${esc(c.hint || c.label)}"><span class="ham-seg-t">${stageTrackerWorkflowColumnIconHtml(c, 'ham-ico ham-col-ico ham-stage-ico')}${esc(c.label)}</span></li>`).join('');
       return `<div class="ham-cols ham-wf-cols" aria-hidden="true" data-ham-workflow="${esc(wf.name + '@' + wf.version)}"><div class="ham-strip-row"><ol class="ham-strip">${cols}</ol><span class="ham-since">since</span></div></div>`;
     }
 
@@ -127,10 +127,20 @@
       return ctx && ctx.leadWorkflow ? stageTrackerHeaderHtml(stages) : '';
     }
 
+    // The glyph a model column wears (hivecommons/hive#18033): its `icon`
+    // override when valid, else the icon its label resolves to. Guarded so
+    // harnesses that lift the strip alone still render.
+    function stageTrackerWorkflowColumnIconHtml(c, cls, label) {
+      return typeof stageIconColumnHtml === 'function' ? stageIconColumnHtml(c, cls, label) : '';
+    }
+
     // One row's strip under its model: done before the anchored column,
     // active at it (the stage's own word from `stages`, or the column
     // label), todo after. An uncovered stage lights the first column amber
     // with the "Not covered" word so the gap is visible, not silent.
+    // Done and todo chevrons wear the column's icon alone (the label is
+    // the header's and the hover's; in a chevron it only clipped); the
+    // active one leads its word with the icon (hivecommons/hive#18033).
     function stageTrackerWorkflowStripItems(item, wf, stages) {
       const cur = Number(item.stage) || 0;
       const terminal = cur >= (typeof STAGE_TRACKER_TERMINAL === 'number' ? STAGE_TRACKER_TERMINAL : 110);
@@ -148,6 +158,8 @@
           ? `stage/${String(cur).padStart(3, '0')} is not a state of ${wf.name}@${wf.version}; the engine leaves this item where it is.`
           : (c.hint || c.label) + (state === 'active' && cur ? ` — stage/${String(cur).padStart(3, '0')}` : '');
         const cls = ['ham-seg', 'ham-wf-seg', state, c.terminal ? 'cap' : '', uncovered && state === 'active' ? 'ham-wf-uncovered' : ''].filter(Boolean).join(' ');
-        return `<li class="${cls}" title="${esc(tip)}"><span class="ham-seg-t">${esc(word)}</span></li>`;
+        const ico = stageTrackerWorkflowColumnIconHtml(c, 'ham-ico ham-stage-ico');
+        const inner = state === 'active' ? `${ico}<span class="ham-seg-t">${esc(word)}</span>` : (ico || `<span class="ham-seg-t">${esc(word)}</span>`);
+        return `<li class="${cls}" title="${esc(tip)}">${inner}</li>`;
       }).join('');
     }

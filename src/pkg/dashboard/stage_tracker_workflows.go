@@ -3,6 +3,7 @@ package dashboard
 import (
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/workflowmodel"
@@ -45,6 +46,7 @@ type StageTrackerWorkflowColumn struct {
 	ID       string   `json:"id"`
 	Label    string   `json:"label"`
 	Hint     string   `json:"hint,omitempty"`
+	Icon     string   `json:"icon,omitempty"`
 	Terminal bool     `json:"terminal,omitempty"`
 	States   []string `json:"states"`
 	Numbers  []int    `json:"numbers"`
@@ -57,7 +59,7 @@ type workflowProfileLookup func(name, version string) (*workflowmodel.Profile, e
 func stageTrackerWorkflowBlock(p *workflowmodel.Profile) StageTrackerWorkflow {
 	out := StageTrackerWorkflow{Name: p.Name, Version: p.Version, Hash: p.Hash}
 	for _, c := range p.Columns {
-		col := StageTrackerWorkflowColumn{ID: c.ID, Label: c.Label, Hint: c.Hint, Terminal: c.Terminal, States: append([]string{}, c.States...), Numbers: []int{}}
+		col := StageTrackerWorkflowColumn{ID: c.ID, Label: c.Label, Hint: c.Hint, Icon: strings.TrimSpace(c.Icon), Terminal: c.Terminal, States: append([]string{}, c.States...), Numbers: []int{}}
 		for _, id := range c.States {
 			if st := p.States[id]; st != nil && st.Lifecycle.Number > 0 {
 				col.Numbers = append(col.Numbers, st.Lifecycle.Number)

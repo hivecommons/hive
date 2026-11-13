@@ -1,0 +1,1 @@
+- Dashboard: "Create webhook for me" is idempotent — it returns the existing hook for this hive's payload URL instead of creating a duplicate, and answers 412 naming the missing `organization_hooks`/`repository_hooks` write permission (#18028)

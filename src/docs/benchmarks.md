@@ -22,7 +22,7 @@ One record per PR per role, conforming to
 | `source.hive_id` | **Salted hash** of the hive id: `sha256("hivecommons-benchmarks/v1/" + hive_id)[:16]`. The hive id itself never leaves the spoke. |
 | `source.hive_version`, `source.cluster` | Build version and `HIVE_CLUSTER_ID`. |
 | `agent.name`, `agent.role` (`author` / `reviewer`), `agent.harness` | Bundle `author.agent`, `author.backend`; reviewer records come from the dominant `(backend, model)` among the swarm verdicts. |
-| `model.provider`, `model.name` | Bundle `author.model`; the provider is inferred from the model name prefix. |
+| `model.provider`, `model.name`, `model.canonical`, `model.effort` | Bundle `author.model`. `name` is the id exactly as the harness reported it; `canonical` folds CLI spellings to one id (`claude-sonnet-5-5`, `anthropic/claude-sonnet-5.5` → `claude-sonnet-5.5`; `openai-codex/gpt-6.1-sol` → `gpt-6.1-sol`; `auto` for a runtime auto-select) and `effort` holds a stripped reasoning-effort suffix (`gemini-3.8-flash-low` → `low`). `provider` is the vendor of the canonical family, never a CLI or gateway name. Rules: `pkg/modelfamily.Resolve`. |
 | `sandbox_runtime` | Stamped on new bundles from the agent's effective crux sandbox (`podman`, `kubernetes-job`, …) or `none` when agents run in-process. Old bundles fall back to the current config. |
 | `task.kind` | Stamped from the agent's lane (`docs`, `security-fix`, `ci-repair`, `release`, `dependency-update`, `triage`, `refactor`), else `unknown`. Reviewer records are `pr-review`. |
 | `task.acmm_level` | `policy.acmm_level` at review time. |
