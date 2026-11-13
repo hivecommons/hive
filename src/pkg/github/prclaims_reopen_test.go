@@ -242,7 +242,10 @@ func TestReopenedClaimPersistsAcrossLoad(t *testing.T) {
 	if err := ledger.Save(); err != nil {
 		t.Fatal(err)
 	}
-	reloaded, err := LoadClaimLedger(path, testLogger())
+	// Load with a clock fixed just after the reopen: the fixture's merge date
+	// is fixed, so on the wall clock the settled claim's retention runs out
+	// and the load drops the claim this test is about.
+	reloaded, err := loadClaimLedgerAt(path, testLogger(), func() time.Time { return reopenTestReopened.Add(time.Hour) })
 	if err != nil {
 		t.Fatal(err)
 	}
