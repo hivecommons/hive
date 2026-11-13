@@ -1648,3 +1648,112 @@ func TestSyncIssueStageLabels_MergedPROpenSubIssueGuardLeavesOtherPathsAlone(t *
 		}
 	})
 }
+
+// A parent the open-sub-issue guard holds falls from its merged PR's stage
+// to 010 because the PR merged. That fall is progress, not a regression: the
+// store books none, the sweep posts no regression note, and a regression
+// another writer already booked for the fall is cleared. An ordinary issue
+// that loses its PR-in-progress claim still regresses and still gets the
+// note.
+func TestSyncIssueStageLabels_HeldParentFallIsProgressNotRegression(t *testing.T) {
+	resetMergedPRParentHoldLog(t)
+	key := stagelabels.Key("acme/widgets", 64)
+	heldParent := func(labels ...string) *ActionableResult {
+		result := &ActionableResult{}
+		result.Issues = IssueResultFromItems([]Issue{{
+			Repo: "acme/widgets", Number: 64, Labels: labels,
+			Children:     &IssueChildren{Total: 3, Completed: 0},
+			ClaimContext: &IssueClaimContext{PRNumber: 67, PRURL: "https://x/pr/67", Closing: true, MergedPR: true},
+		}})
+		return result
+	}
+	assertHeldAtActionable := func(t *testing.T, fake *issueStageServer, store *stagelabels.Store, res IssueStageResult) {
+		t.Helper()
+		if res.Comments != 0 || res.MergedPRIssuesClosed != 0 || res.ParentsClosed != 0 {
+			t.Fatalf("result = %+v, want no comment and no close", res)
+		}
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		if fake.comments[64] != 0 || len(fake.commentBodies[64]) != 0 {
+			t.Fatalf("comments = %q, want none (no regression note on a held parent)", fake.commentBodies[64])
+		}
+		if _, closed := fake.closed[64]; closed {
+			t.Fatalf("held parent was closed (%q)", fake.closed[64])
+		}
+		rec, ok := store.Get(key)
+		if !ok || rec.Stage != stagelabels.Actionable || !strings.Contains(rec.Reason, "waiting on 3 open child") {
+			t.Fatalf("record = %+v, want 010 waiting on 3 open children", rec)
+		}
+		if rec.Regressed() {
+			t.Fatalf("record = %+v, want no regression booked for a parent whose PR merged", rec)
+		}
+		for _, hop := range rec.History {
+			if hop.Regressed {
+				t.Fatalf("history = %+v, want no hop marked regressed", rec.History)
+			}
+		}
+	}
+
+	for _, from := range []stagelabels.Stage{stagelabels.CoveredByPR, stagelabels.PRInProgress} {
+		t.Run("store at "+from.String(), func(t *testing.T) {
+			fake := newIssueStageServer(t)
+			c := issueStageTestClient(t, fake.srv, true)
+			store := stagelabels.NewStore("", stageNow)
+			store.Observe(key, from, "the PR that later merged")
+			res := syncSeeded(t, fake, c, heldParent(from.Label()), store, stageNow())
+			assertHeldAtActionable(t, fake, store, res)
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if got := strings.Join(fake.added[64], ","); got != stagelabels.Actionable.Label() {
+				t.Fatalf("added = %v, want 010", fake.added[64])
+			}
+			if got := strings.Join(fake.removed[64], ","); got != from.Label() {
+				t.Fatalf("removed = %v, want %s", fake.removed[64], from.Label())
+			}
+		})
+	}
+
+	t.Run("a regression another writer booked for the fall is cleared", func(t *testing.T) {
+		fake := newIssueStageServer(t)
+		c := issueStageTestClient(t, fake.srv, true)
+		store := stagelabels.NewStore("", stageNow)
+		store.Observe(key, stagelabels.CoveredByPR, "the PR that later merged")
+		if tr := store.ObserveProgress(key, stagelabels.Actionable, "actionable", false); !tr.Regressed {
+			t.Fatalf("setup: transition = %+v, want the 040 to 010 fall booked as a regression", tr)
+		}
+		res := syncSeeded(t, fake, c, heldParent(stagelabels.Actionable.Label()), store, stageNow())
+		if res.Comments != 0 {
+			t.Fatalf("result = %+v, want no comment", res)
+		}
+		if rec, ok := store.Get(key); !ok || rec.Stage != stagelabels.Actionable || rec.Regressed() {
+			t.Fatalf("record = %+v, want 010 with the regression cleared", rec)
+		}
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		if fake.comments[64] != 0 {
+			t.Fatalf("comments = %q, want none", fake.commentBodies[64])
+		}
+	})
+
+	t.Run("an ordinary issue that loses its PR-in-progress claim still regresses and is told", func(t *testing.T) {
+		fake := newIssueStageServer(t)
+		c := issueStageTestClient(t, fake.srv, true)
+		store := stagelabels.NewStore("", stageNow)
+		store.Observe(key, stagelabels.PRInProgress, "live claim with a PR under way")
+		result := &ActionableResult{}
+		result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 64, Labels: []string{stagelabels.PRInProgress.Label()}}})
+		res := syncSeeded(t, fake, c, result, store, stageNow())
+		if res.Comments != 1 {
+			t.Fatalf("result = %+v, want the one regression note", res)
+		}
+		rec, ok := store.Get(key)
+		if !ok || rec.Stage != stagelabels.Actionable || !rec.Regressed() || rec.RegressedFrom != stagelabels.PRInProgress {
+			t.Fatalf("record = %+v, want 010 regressed from 030", rec)
+		}
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		if len(fake.commentBodies[64]) != 1 || !strings.HasPrefix(fake.commentBodies[64][0], stagelabels.RegressionCommentMarker) {
+			t.Fatalf("comments = %q, want the one stage-regression note", fake.commentBodies[64])
+		}
+	})
+}

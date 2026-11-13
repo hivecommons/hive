@@ -9,6 +9,8 @@ import (
 	"strconv"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // A merged PR does not mark done or close an issue that has an open
@@ -146,4 +148,27 @@ func mergedPRIssueStageHeldForOpenChildren(client *Client, in IssueStageInput, l
 	mergedPRParentHoldLogged.mark(key)
 	logger.Info(msg, "repo", in.Repo, "issue", in.Number, "pr", pr, "open", in.Children.Open(), "total", in.Children.Total)
 	return true
+}
+
+// mergedPRHeldParentFallIsProgress reports whether the issue stage sweep is
+// moving a parent with an open sub-issue to its unclaimed stage because the
+// PR that claimed it with a closing keyword merged. Such a parent used to be
+// closed at this point; now that it is left open, its fall from the PR's
+// stage (030 or 040) to 010 is the same kind of fall the store already
+// counts as progress for an issue wearing hive/partially-addressed
+// (stageengine's issueProgress): the work landed and nothing was lost. The
+// sweep passes this to Store.ObserveProgress, so no regression is booked,
+// no regression note is posted, and a regression another writer booked for
+// the same fall is cleared. The stages are the three issueProgress accepts.
+//
+// in.Claim is still the merged claim here: the sweep clears the claim's
+// bucket and holder before deriving the stage, not the claim context.
+func mergedPRHeldParentFallIsProgress(in IssueStageInput, stage stagelabels.Stage) bool {
+	if stage != stagelabels.Actionable && stage != stagelabels.TriageNeeded && stage != stagelabels.OpenForDiscussion {
+		return false
+	}
+	if in.Claim == nil || !in.Claim.MergedPR || !in.Claim.Closing {
+		return false
+	}
+	return in.Children != nil && in.Children.Open() > 0
 }

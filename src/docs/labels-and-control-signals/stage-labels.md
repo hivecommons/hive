@@ -769,7 +769,9 @@ does not close while a sub-issue is open (result `skipped`, reason
 already fetches), and this sweep's own merged-PR close (the
 `<!-- hive:closed-by-merged-pr pr=N -->` comment and the close described
 for 030) is skipped for it, so the parent drops its merged claim and waits
-at its unclaimed stage, never stalled. A contributor's "already done"
+at its unclaimed stage, never stalled; that move (040 or 030 to 010,
+`…; waiting on N open child issue(s)`) is recorded as progress, not as a
+regression, and gets no regression note. A contributor's "already done"
 verdict on it records no claim,
 applies no `hive/likely-done` or already-done label, posts no comment and
 closes nothing: the parent closes through the sweep above, when its children
