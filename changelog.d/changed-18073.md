@@ -1,0 +1,1 @@
+- docs: project.reference_repos in agent-configuration and hive.yaml.example (#18073)
