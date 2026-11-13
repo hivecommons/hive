@@ -22,19 +22,6 @@ import (
 // after the note went through, the issue stopped needing one, or it left
 // the park.
 
-// parkAppliedByHive reports whether actor, the login that applied the label
-// a park is dated from, is one of this hive's own identities: its App bot
-// (with or without the "[bot]" suffix), an additional hive bot login, or the
-// configured ai_author. It is the test the blocked sweep applies to the
-// actor of a `blocked` label (BlockedLabelAppliedByHive): a contributor
-// relay applies both labels with a hub-minted installation token, so the
-// event names the App bot. An empty actor, any other account, and a client
-// with no hive identity configured report false, and the note is then asked
-// for as on any other issue.
-func (c *Client) parkAppliedByHive(actor string) bool {
-	return c.isOwnBotLogin(actor) || c.IsHiveAuthorLogin(actor)
-}
-
 // parkRecheckHeldRepo is owner/repo in the form the gate keys its hold
 // memory by (lower-cased, trimmed).
 func parkRecheckHeldRepo(owner, repo string) string {

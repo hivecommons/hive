@@ -37,13 +37,17 @@ package github
 // no merged PR answers (website#926 cited one).
 //
 // The note goes through the write-back gate as needs_decision_comment. When
-// the label that began the park was applied by the hive (a contributor relay
-// applies it with a hub-minted token, so its actor is the App bot), the
-// re-check says so (writeback.Item.HiveAppliedPark) and the gate does not
-// hold the note back for want of the review opt-in label or because the
-// issue predates the hive's write access: the hive's own label is already on
-// the issue. A park a person applied is asked as before. A refused note is
-// logged once per issue and reason (issue_park_recheck_held.go).
+// every label parking the issue on a person was applied by the hive (a
+// contributor relay applies the park label with a hub-minted token, so its
+// actor is the App bot), the re-check says so
+// (writeback.Item.HiveAppliedPark) and the gate does not hold the note back
+// for want of the review opt-in label or because the issue predates the
+// hive's write access: the hive's own label is already on the issue. A park
+// that rests on a label a person applied (their `needs-spec`, a park label
+// they re-added) is asked as before. A note allowed only for that reason
+// lists only the changes the park text names and the pull requests the
+// project's own repositories merged (issue_park_recheck_fact.go). A refused
+// note is logged once per issue and reason (issue_park_recheck_held.go).
 
 import (
 	"context"
@@ -117,6 +121,7 @@ type parkRef struct {
 // parkChange is one thing that moved after the park began.
 type parkChange struct {
 	ref   string // "#409", or "owner/repo#N" outside the issue's repo
+	repo  string // owner/repo the item is in; a copy's is its original's
 	verb  string // "merged", "was closed without merging", "was closed"
 	at    time.Time
 	named bool // the park text names it; else it refers to the issue
@@ -212,6 +217,15 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		changes = append(changes, copies...)
 		sortParkChanges(changes)
 	}
+	item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: issueLabelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time})
+	// The fact the gate cannot read for itself: every label parking this
+	// issue on a person is the hive's (issue_park_recheck_fact.go).
+	item.HiveAppliedPark = c.parkHiveApplied(parkedBy, item.Labels, events)
+	// A note the gate allows only because of that fact lists only what the
+	// park text names and what the project's own repositories merged.
+	if len(changes) > 0 && c.parkNoteOnlyByFact(owner+"/"+repo, item) {
+		changes = c.parkProjectChanges(changes, owner+"/"+repo, number)
+	}
 	if len(changes) == 0 {
 		c.forgetParkRecheckHeld(owner, repo, number)
 		result.Skipped++
@@ -219,10 +233,6 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 	}
 	c.markParkLandings(ctx, text, refs, named, owner+"/"+repo, start, changes)
 	note := parkRecheckNote(label, start, changes)
-	item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: issueLabelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time})
-	// The fact the gate cannot read for itself: the label event that began
-	// this park was the hive's.
-	item.HiveAppliedPark = c.parkAppliedByHive(parkedBy)
 	for _, cm := range comments {
 		if cm == nil || !c.isHiveAccount(cm.GetUser()) || !strings.Contains(cm.GetBody(), parkRecheckMarker) {
 			continue
@@ -544,14 +554,14 @@ func parkChanges(refs map[string]parkRef, named []string, issueRepo string, numb
 		case isNamed[key]:
 			switch {
 			case ref.isPR && ref.mergedAt.After(start):
-				out = append(out, parkChange{ref: render(ref), verb: "merged", at: ref.mergedAt, named: true})
+				out = append(out, parkChange{ref: render(ref), repo: ref.repo, verb: "merged", at: ref.mergedAt, named: true})
 			case ref.isPR && ref.mergedAt.IsZero() && strings.EqualFold(ref.state, "closed") && ref.closedAt.After(start):
-				out = append(out, parkChange{ref: render(ref), verb: "was closed without merging", at: ref.closedAt, named: true})
+				out = append(out, parkChange{ref: render(ref), repo: ref.repo, verb: "was closed without merging", at: ref.closedAt, named: true})
 			case !ref.isPR && strings.EqualFold(ref.state, "closed") && ref.closedAt.After(start):
-				out = append(out, parkChange{ref: render(ref), verb: "was closed", at: ref.closedAt, named: true})
+				out = append(out, parkChange{ref: render(ref), repo: ref.repo, verb: "was closed", at: ref.closedAt, named: true})
 			}
 		case ref.isPR && ref.mergedAt.After(start) && parkRefersTo(ref.body, ref.repo, issueRepo, number):
-			out = append(out, parkChange{ref: render(ref), verb: "merged", at: ref.mergedAt})
+			out = append(out, parkChange{ref: render(ref), repo: ref.repo, verb: "merged", at: ref.mergedAt})
 		}
 	}
 	sortParkChanges(out)
@@ -627,7 +637,7 @@ func (c *Client) parkCopyChanges(ctx context.Context, refs map[string]parkRef, n
 		if !ok {
 			continue
 		}
-		ch := parkChange{ref: parkRefDisplay(cp, issueRepo), copyOf: parkRefDisplay(orig, issueRepo), named: isNamed[key]}
+		ch := parkChange{ref: parkRefDisplay(cp, issueRepo), repo: cp.repo, copyOf: parkRefDisplay(orig, issueRepo), named: isNamed[key]}
 		switch {
 		case seen[ch.ref]:
 			continue

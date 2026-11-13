@@ -3,6 +3,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"strconv"
@@ -10,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -356,5 +360,311 @@ func TestParkAppliedByHive(t *testing.T) {
 	bare := newTestClient(t, newParkFake(t, &parkFake{issue: map[string]any{"number": 1}}), "org", []string{"repo"})
 	if bare.parkAppliedByHive("hive[bot]") {
 		t.Fatal("a client with no hive identity must not attribute a park to the hive")
+	}
+}
+
+// The hive's bot writes stage/045-needs-decision on any issue that carries a
+// hard-suppress label, whoever applied it. A park that rests on a label a
+// person applied is not the hive's: the note is asked for as on any other
+// issue and, without the opt-in label, refused.
+
+const parkSpecLabel = "needs-spec"
+
+// parkLabelsJSON is the issue's label list as the fake serves it.
+func parkLabelsJSON(names ...string) []any {
+	out := make([]any, 0, len(names))
+	for _, name := range names {
+		out = append(out, map[string]any{"name": name})
+	}
+	return out
+}
+
+// parkReferring is a merged pull request in repo whose body refers to the
+// parked issue, as the issue's timeline cross-references it.
+func parkReferring(repo string, n int, after time.Duration) map[string]any {
+	merged := parkT0.Add(after)
+	return prCrossRef(repo, n, true, "closed", merged, merged, "Refs org/repo#"+strconv.Itoa(parkRelayIssue))
+}
+
+// parkUndecidedIssue is alice's issue #650 parked at parkT0 by one label
+// event from the hive's bot; its park text names no other item.
+func parkUndecidedIssue() *parkFake {
+	f := prRelayParkedIssue("hive[bot]")
+	f.comments[0]["body"] = "Maintainer decision needed: which of the two layouts to keep."
+	f.timeline = f.timeline[:1]
+	f.lookups = map[int]map[string]any{}
+	return f
+}
+
+// wantNoParkWrite fails when the re-check wrote anything to the issue.
+func wantNoParkWrite(t *testing.T, f *parkFake, res *ParkRecheckResult) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if res.Posted != 0 || res.Updated != 0 || len(f.posted)+len(f.edited) != 0 || f.labelOps != 0 {
+		t.Fatalf("%+v posted=%q edited=%q labelOps=%d; want nothing written", res, f.posted, f.edited, f.labelOps)
+	}
+}
+
+func TestParkRecheckParkRestingOnAPersonsLabelIsAskedAsBefore(t *testing.T) {
+	// A maintainer adds needs-spec; the stage engine then writes 045 with
+	// the hive's bot; a pull request that refers to the issue merges.
+	needsSpec := parkUndecidedIssue()
+	needsSpec.issue["labels"] = parkLabelsJSON(parkSpecLabel, "stage/045-needs-decision")
+	needsSpec.timeline = []map[string]any{
+		prLabelEventBy("labeled", parkSpecLabel, parkT0.Add(-time.Minute), "alice"),
+		prLabelEventBy("labeled", "stage/045-needs-decision", parkT0, "hive[bot]"),
+		parkReferring("org/repo", 702, 3*time.Hour),
+	}
+
+	// The hive parks the issue; five minutes later a person takes the label
+	// off and puts it back. The park is still dated from the hive's event.
+	readded := prRelayParkedIssue("hive[bot]")
+	readded.timeline = []map[string]any{
+		prLabelEventBy("labeled", "stage/045-needs-decision", parkT0, "hive[bot]"),
+		prLabelEventBy("unlabeled", "stage/045-needs-decision", parkT0.Add(5*time.Minute), "alice"),
+		prLabelEventBy("labeled", "stage/045-needs-decision", parkT0.Add(6*time.Minute), "alice"),
+		readded.timeline[1],
+	}
+
+	// needs-human is on the issue and the timeline has no event for it.
+	unexplained := prRelayParkedIssue("hive[bot]")
+	unexplained.issue["labels"] = parkLabelsJSON("stage/045-needs-decision", "needs-human")
+
+	// A person adds needs-human an hour after the hive's park.
+	second := prRelayParkedIssue("hive[bot]")
+	second.issue["labels"] = parkLabelsJSON("stage/045-needs-decision", "needs-human")
+	second.timeline = append(second.timeline, prLabelEventBy("labeled", "needs-human", parkT0.Add(time.Hour), "alice"))
+
+	for name, f := range map[string]*parkFake{
+		"a person's needs-spec, the hive's 045":               needsSpec,
+		"a person re-added the label inside the gap":          readded,
+		"a hard-suppress label with no event in the timeline": unexplained,
+		"a person's needs-human beside the hive's 045":        second,
+	} {
+		t.Run(name, func(t *testing.T) {
+			gate := parkGate(&parkGateKnobs{level: 6}, writeback.Config{})
+			c, logs := parkGatedClient(t, f, gate)
+			wantNoParkWrite(t, f, parkPass(t, c))
+			held := gate.Recent()
+			if len(held) != 1 || held[0].Kind != writeback.KindNeedsDecisionComment || held[0].Reason != writeback.ReasonNeedsLabel {
+				t.Fatalf("suppressed = %+v, want the one refusal for want of the opt-in label", held)
+			}
+			if parkHeldLines(logs, "INFO") != 1 || !strings.Contains(logs.String(), "hive_applied_park=false") {
+				t.Fatalf("want one info line saying the park is not the hive's:\n%s", logs.String())
+			}
+		})
+	}
+}
+
+// parkTimelineEvents decodes timeline events the way the client reads them.
+func parkTimelineEvents(t *testing.T, events ...map[string]any) []*gh.Timeline {
+	t.Helper()
+	raw, err := json.Marshal(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []*gh.Timeline
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestParkHiveApplied(t *testing.T) {
+	const park = "stage/045-needs-decision"
+	hive045 := prLabelEventBy("labeled", park, parkT0, "hive[bot]")
+	plain := parkClient(t, newParkFake(t, &parkFake{}))
+	renamed := parkClient(t, newParkFake(t, &parkFake{}))
+	renamed.SetIssueFilter(config.IssueFilterConfig{HardSuppressLabels: config.HardSuppressLabelsConfig{NeedsSpec: []string{"awaiting-design"}}})
+	for _, tc := range []struct {
+		name     string
+		client   *Client
+		parkedBy string
+		labels   []string
+		events   []map[string]any
+		want     bool
+	}{
+		{"the hive's 045 and nothing else", plain, "hive[bot]", []string{park}, []map[string]any{hive045}, true},
+		{"labels that park nothing are not looked at", plain, "hive[bot]", []string{"bug", "help wanted", park}, []map[string]any{hive045}, true},
+		{"label names compare without case", plain, "hive[bot]", []string{"Stage/045-Needs-Decision"}, []map[string]any{hive045}, true},
+		{"the park is dated from a person's event", plain, "alice", []string{park}, []map[string]any{hive045}, false},
+		{"a person's needs-spec beside the hive's 045", plain, "hive[bot]", []string{parkSpecLabel, park},
+			[]map[string]any{prLabelEventBy("labeled", parkSpecLabel, parkT0.Add(-time.Minute), "alice"), hive045}, false},
+		{"the hive's own needs-spec beside its 045", plain, "hive[bot]", []string{parkSpecLabel, park},
+			[]map[string]any{prLabelEventBy("labeled", parkSpecLabel, parkT0.Add(-time.Minute), "hive[bot]"), hive045}, true},
+		{"a person re-added the label", plain, "hive[bot]", []string{park},
+			[]map[string]any{hive045, prLabelEventBy("unlabeled", park, parkT0.Add(5*time.Minute), "alice"), prLabelEventBy("labeled", park, parkT0.Add(6*time.Minute), "alice")}, false},
+		{"the hive re-added a label a person once applied", plain, "hive[bot]", []string{park},
+			[]map[string]any{prLabelEventBy("labeled", park, parkT0.Add(-48*time.Hour), "alice"), prLabelEventBy("unlabeled", park, parkT0.Add(-47*time.Hour), "alice"), hive045}, true},
+		{"two events in the same second: the later one counts", plain, "hive[bot]", []string{park},
+			[]map[string]any{hive045, prLabelEventBy("labeled", park, parkT0, "alice")}, false},
+		{"a hard-suppress label with no labeled event", plain, "hive[bot]", []string{park, "needs-human"}, []map[string]any{hive045}, false},
+		{"a labeled event that names no actor", plain, "hive[bot]", []string{park, "needs-human"},
+			[]map[string]any{hive045, prLabelEventBy("labeled", "needs-human", parkT0.Add(time.Hour), "")}, false},
+		{"no hard-suppress label on the issue", plain, "hive[bot]", []string{"bug"}, []map[string]any{hive045}, false},
+		{"blocked does not start a decision park and is not looked at", plain, "hive[bot]", []string{"blocked", park},
+			[]map[string]any{prLabelEventBy("labeled", "blocked", parkT0.Add(-time.Hour), "alice"), hive045}, true},
+		{"an operator-configured hard-suppress label a person applied", renamed, "hive[bot]", []string{"awaiting-design", park},
+			[]map[string]any{prLabelEventBy("labeled", "awaiting-design", parkT0.Add(-time.Minute), "alice"), hive045}, false},
+		{"the same label without the operator's configuration", plain, "hive[bot]", []string{"awaiting-design", park},
+			[]map[string]any{prLabelEventBy("labeled", "awaiting-design", parkT0.Add(-time.Minute), "alice"), hive045}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.client.parkHiveApplied(tc.parkedBy, tc.labels, parkTimelineEvents(t, tc.events...)); got != tc.want {
+				t.Fatalf("parkHiveApplied = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+const (
+	parkOutsideLine = "outsider/fork#9"
+	parkLeftOutLine = "park re-check left out changes from outside the project"
+)
+
+// A note the gate allows only because the hive applied the park lists what
+// the park text names and what the project's own repositories merged. When
+// nothing of that kind moved it writes nothing, pass after pass, and asks
+// the gate nothing.
+func TestParkRecheckFactOnlyNoteListsOnlyProjectChanges(t *testing.T) {
+	t.Run("only a pull request outside the project refers to the issue", func(t *testing.T) {
+		f := parkUndecidedIssue()
+		f.timeline = append(f.timeline, parkReferring("outsider/fork", 9, 3*time.Hour))
+		gate := parkGate(&parkGateKnobs{level: 6}, writeback.Config{})
+		c, logs := parkGatedClient(t, f, gate)
+		wantNoParkWrite(t, f, parkPass(t, c))
+		wantNoParkWrite(t, f, parkPass(t, c))
+		if held := gate.Recent(); len(held) != 0 {
+			t.Fatalf("nothing was to be written, yet the gate recorded a refusal: %+v", held)
+		}
+		if strings.Contains(logs.String(), parkHeldLine) {
+			t.Fatalf("a pass with nothing to write logged a held note:\n%s", logs.String())
+		}
+		for _, line := range strings.Split(logs.String(), "\n") {
+			if strings.Contains(strings.ToLower(line), "park re-check") && !strings.Contains(line, "level=DEBUG ") {
+				t.Fatalf("a pass with nothing to write logged the re-check above debug: %s", line)
+			}
+		}
+		if strings.Contains(logs.String(), "PARK-RECHECK") {
+			t.Fatalf("a pass with nothing to write logged a posted note:\n%s", logs.String())
+		}
+		if !strings.Contains(logs.String(), parkLeftOutLine) {
+			t.Fatalf("the debug log must say a change was left out:\n%s", logs.String())
+		}
+		wantParkLabelsUntouched(t, f)
+	})
+
+	t.Run("the park text names an item outside the project", func(t *testing.T) {
+		f := parkUndecidedIssue()
+		f.comments[0]["body"] = "Blocked: this waits on upstream/lib#12."
+		merged := parkT0.Add(3 * time.Hour)
+		f.timeline = append(f.timeline,
+			prCrossRef("upstream/lib", 12, true, "closed", merged, merged, ""),
+			parkReferring("outsider/fork", 9, 4*time.Hour))
+		gate := parkGate(&parkGateKnobs{level: 6}, writeback.Config{})
+		c, _ := parkGatedClient(t, f, gate)
+		if res := parkPass(t, c); res.Posted != 1 || len(f.posted) != 1 {
+			t.Fatalf("%+v posted=%q; want one note for the item the park names", res, f.posted)
+		}
+		wantNote(t, f.posted[0], "- upstream/lib#12 merged on 2026-10-04 (the park reason names it).")
+		if strings.Contains(f.posted[0], parkOutsideLine) {
+			t.Fatalf("the note lists a pull request from outside the project:\n%s", f.posted[0])
+		}
+		wantParkLabelsUntouched(t, f)
+	})
+
+	t.Run("pull requests in the issue's repository and in another project repository", func(t *testing.T) {
+		f := parkUndecidedIssue()
+		f.timeline = append(f.timeline,
+			parkReferring("org/repo", 702, 3*time.Hour),
+			parkReferring("Org/Tools", 5, 4*time.Hour),
+			parkReferring("outsider/fork", 9, 5*time.Hour))
+		gate := parkGate(&parkGateKnobs{level: 6}, writeback.Config{})
+		c, _ := parkGatedClient(t, f, gate)
+		c.SetRepos([]string{"repo", "tools"})
+		if res := parkPass(t, c); res.Posted != 1 || len(f.posted) != 1 {
+			t.Fatalf("%+v posted=%q; want one note", res, f.posted)
+		}
+		wantNote(t, f.posted[0],
+			"- #702 merged on 2026-10-04 (it refers to this issue).",
+			"- Org/Tools#5 merged on 2026-10-04 (it refers to this issue).")
+		if strings.Contains(f.posted[0], parkOutsideLine) {
+			t.Fatalf("the note lists a pull request from outside the project:\n%s", f.posted[0])
+		}
+		wantParkLabelsUntouched(t, f)
+	})
+}
+
+// Where the note was allowed before the fact existed, it lists what it
+// always listed: an issue with the opt-in label, whoever parked it, and a
+// client with no gate installed.
+func TestParkRecheckNoteOnOptedInIssueListsEveryChange(t *testing.T) {
+	for _, parkedBy := range []string{"hive[bot]", "alice"} {
+		t.Run("opt-in label, parked by "+parkedBy, func(t *testing.T) {
+			f := parkUndecidedIssue()
+			f.issue["labels"] = parkLabelsJSON("stage/045-needs-decision", "hive-review")
+			f.timeline = []map[string]any{
+				prLabelEventBy("labeled", "stage/045-needs-decision", parkT0, parkedBy),
+				parkReferring("outsider/fork", 9, 3*time.Hour),
+			}
+			gate := parkGate(&parkGateKnobs{level: 6}, writeback.Config{})
+			c, _ := parkGatedClient(t, f, gate)
+			if res := parkPass(t, c); res.Posted != 1 || len(f.posted) != 1 || f.labelOps != 0 {
+				t.Fatalf("%+v posted=%q; want the note posted as before", res, f.posted)
+			}
+			wantNote(t, f.posted[0], "- "+parkOutsideLine+" merged on 2026-10-04 (it refers to this issue).")
+		})
+	}
+	t.Run("no gate installed", func(t *testing.T) {
+		f := parkUndecidedIssue()
+		f.timeline = append(f.timeline, parkReferring("outsider/fork", 9, 3*time.Hour))
+		c := parkClient(t, newParkFake(t, f))
+		if res := parkPass(t, c); res.Posted != 1 || len(f.posted) != 1 {
+			t.Fatalf("%+v posted=%q; want the note posted as before", res, f.posted)
+		}
+		wantNote(t, f.posted[0], "- "+parkOutsideLine+" merged on 2026-10-04 (it refers to this issue).")
+	})
+}
+
+func TestParkProjectChanges(t *testing.T) {
+	c := parkClient(t, newParkFake(t, &parkFake{}))
+	c.SetRepos([]string{"repo", "elsewhere/tools"})
+	for repo, want := range map[string]bool{
+		"org/repo":         true,
+		"ORG/Repo":         true,
+		"elsewhere/tools":  true,
+		"org/tools":        false, // the bare name "repo" takes the org, "elsewhere/tools" keeps its owner
+		"outsider/fork":    false,
+		"outsider/repo":    false,
+		"":                 false,
+		"org/repo-archive": false,
+	} {
+		if got := c.parkProjectRepo(repo, "org/issues"); got != want {
+			t.Errorf("parkProjectRepo(%q) = %v, want %v", repo, got, want)
+		}
+	}
+	if !c.parkProjectRepo("Org/Issues", "org/issues") {
+		t.Error("the issue's own repository is always the project's")
+	}
+
+	changes := []parkChange{
+		{ref: "#701", repo: "org/repo", named: true},
+		{ref: "upstream/lib#12", repo: "upstream/lib", named: true},
+		{ref: "#702", repo: "org/repo"},
+		{ref: "outsider/fork#9", repo: "outsider/fork"},
+		// The hive's copy of a pull request: kept when the park names the
+		// original or the copy is in a project repository.
+		{ref: "upstream/lib#30", repo: "upstream/lib", copyOf: "upstream/lib#12", named: true},
+		{ref: "#873", repo: "org/repo", copyOf: "#722"},
+		{ref: "outsider/fork#11", repo: "outsider/fork", copyOf: "outsider/fork#9"},
+		{ref: "#703"},
+	}
+	var got []string
+	for _, ch := range c.parkProjectChanges(changes, "org/repo", parkRelayIssue) {
+		got = append(got, ch.ref)
+	}
+	if want := "#701,upstream/lib#12,#702,upstream/lib#30,#873"; strings.Join(got, ",") != want {
+		t.Fatalf("kept %v, want %s", got, want)
 	}
 }

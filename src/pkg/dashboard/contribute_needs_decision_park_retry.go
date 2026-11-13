@@ -164,9 +164,13 @@ func (h *ContributeWSHub) retryNeedsDecisionPark(q needsDecisionParkQuestion, re
 }
 
 // needsDecisionParkStillParked reports whether repo#number is open and still
-// carries the decision label the relay applies. On a hive configured to
-// apply no label (hub.contribute_needs_decision_label set empty) an open
-// issue is all that can be checked.
+// parked for a decision: it carries the label the relay applies
+// (hub.contribute_needs_decision_label) or stage/045-needs-decision
+// (ghpkg.NeedsDecisionStageLabel), which the stage reconciler puts in place
+// of a legacy spelling, so a retry that runs after that migration still
+// finds the park. Names are compared ignoring case. On a hive configured to
+// apply no label (the setting is empty) an open issue is all that can be
+// checked.
 func (h *ContributeWSHub) needsDecisionParkStillParked(ctx context.Context, repo string, number int) (bool, error) {
 	if hook := h.needsDecisionParkRetry.stillParked; hook != nil {
 		return hook(ctx, repo, number)
@@ -190,7 +194,8 @@ func (h *ContributeWSHub) needsDecisionParkStillParked(ctx context.Context, repo
 		return true, nil
 	}
 	for _, l := range issue.Labels {
-		if strings.EqualFold(strings.TrimSpace(l.GetName()), label) {
+		name := strings.TrimSpace(l.GetName())
+		if strings.EqualFold(name, label) || strings.EqualFold(name, ghpkg.NeedsDecisionStageLabel) {
 			return true, nil
 		}
 	}

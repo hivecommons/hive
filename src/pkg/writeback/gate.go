@@ -46,13 +46,14 @@ type Item struct {
 	// with KindBlockedRepair it lifts the backfill guard and the opt-in
 	// label requirement (ReasonHiveAppliedBlock). No other kind reads it.
 	HiveAppliedBlock bool
-	// HiveAppliedPark is true when the caller has established that the
-	// label which began the item's current decision park was applied by one
-	// of the hive's own accounts (the actor of that labeled event). Set only
-	// by the park re-check for its one note; with KindNeedsDecisionComment
-	// it lifts the backfill guard and the opt-in label requirement
-	// (ReasonHiveAppliedPark). No other kind reads it, and no other caller
-	// of that kind sets it.
+	// HiveAppliedPark is true when the caller has established that every
+	// label parking the item on a person was applied by one of the hive's
+	// own accounts: the label event its current decision park is dated
+	// from, and the newest labeled event of each hard-suppress label it
+	// carries. Set only by the park re-check for its one note; with
+	// KindNeedsDecisionComment it lifts the backfill guard and the opt-in
+	// label requirement (ReasonHiveAppliedPark). No other kind reads it,
+	// and no other caller of that kind sets it.
 	HiveAppliedPark bool
 	// Labels is the item's current label set.
 	Labels []string

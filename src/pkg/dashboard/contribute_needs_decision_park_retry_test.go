@@ -532,3 +532,41 @@ func TestNeedsDecisionParkStillParkedRead(t *testing.T) {
 		t.Fatalf("no client: err = %v, want ErrNoGitHubClient", err)
 	}
 }
+
+// A hive whose relay applies a legacy decision label has it replaced with
+// stage/045-needs-decision by the stage reconciler. A retry that runs after
+// that still finds the park and posts the question; an issue with neither
+// label is no longer parked.
+func TestNeedsDecisionParkRetryFindsAParkTheReconcilerRelabelled(t *testing.T) {
+	wait := time.Minute + needsDecisionParkRetryMargin
+	for _, tc := range []struct {
+		name   string
+		labels []string
+		posts  int
+	}{
+		{"the stage label in place of the configured one", []string{"bug", strings.ToUpper(ghpkg.NeedsDecisionStageLabel)}, 1},
+		{"the configured label still on the issue", []string{"needs-decision"}, 1},
+		{"neither label", []string{"bug"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := &parkRetryGitHub{state: "open", labels: tc.labels}
+			h := newParkRetryGitHubHarness(t, g)
+			legacy := "needs-decision"
+			h.hub.server.deps.Config.Hub.ContributeNeedsDecisionLabel = &legacy
+			if got := h.hub.configuredNeedsDecisionLabel(); got != legacy || strings.EqualFold(got, ghpkg.NeedsDecisionStageLabel) {
+				t.Fatalf("the test hub's decision label is %q, want the legacy spelling", got)
+			}
+			h.park()
+			if ran := h.clock.advance(wait); ran != 1 {
+				t.Fatalf("%d timers ran, want the one retry", ran)
+			}
+			gets, lists, posted := g.counts()
+			if gets != 1 || lists != tc.posts || posted != tc.posts {
+				t.Fatalf("retry made %d issue reads, %d comment listings and %d posts; want 1, %d and %d", gets, lists, posted, tc.posts, tc.posts)
+			}
+			if want := 1 - tc.posts; h.logLines("INFO", parkRetryUnparked) != want || h.logLines("INFO", parkRetrySettled) != tc.posts || h.logLines("WARN", "") != 0 {
+				t.Fatalf("want %d not-parked and %d settled lines and no warning:\n%s", want, tc.posts, h.logs.String())
+			}
+		})
+	}
+}

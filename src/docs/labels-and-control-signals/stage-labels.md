@@ -7,8 +7,10 @@ Part of [Hive Labels and Control Signals](../labels-and-control-signals.md).
 On v6, when work a decision park depends on later merges or closes, Hive keeps
 one `<!-- hive:park-recheck -->` note current with what changed and leaves the
 park in place. On a park the hive applied itself (a contributor relay's park,
-for example) the note needs no review opt-in label, and a note the write-back
-gate refuses is logged. See [When a park's premise moves](../maintainer-commands.md#when-a-parks-premise-moves).
+for example, where every label parking the issue is the hive's) the note needs
+no review opt-in label and lists only changes the park text names or that the
+project's own repositories merged; a park resting on a label a person applied
+is asked as before. A note the write-back gate refuses is logged. See [When a park's premise moves](../maintainer-commands.md#when-a-parks-premise-moves).
 
 Operator request ([#12429](https://github.com/hivecommons/hive/issues/12429)):
 "the labeling of issues and prs has to give hints as to what stage the work is
