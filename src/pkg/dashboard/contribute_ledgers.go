@@ -947,6 +947,9 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKeySignal(key string, prURL, v
 			verdictLedgerDirty = true
 		}
 	}
+	// Why a no-PR idle ended is kept for the withheld list and the Activity
+	// monitor; any other completion replaces it (bookIdleCompletionLocked).
+	idleLedgerDirty := h.bookIdleCompletionLocked(key, prURL, verdict, reporter, reason, signal)
 	h.completedTasks[key] = time.Now()
 	if h.completedTaskCooldown != nil {
 		h.completedTaskCooldown[key] = cooldown
@@ -983,6 +986,9 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKeySignal(key string, prURL, v
 	h.saveNoPRStreaks()
 	if verdictLedgerDirty {
 		h.saveNoWorkVerdicts()
+	}
+	if idleLedgerDirty {
+		h.saveIdleCompletions()
 	}
 	if failureCleared {
 		h.saveFailedTasks()

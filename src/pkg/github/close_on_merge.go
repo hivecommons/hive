@@ -233,6 +233,7 @@ func (c *Client) CloseOnMergeLedgerSweep(ctx context.Context, ledger *ClaimLedge
 	// in the ledger for settledClaimRetention, so reading every one of them on
 	// every pass exhausts the App quota after a restart empties the caches.
 	openIssues := map[string]map[int]*gh.Issue{}
+	openIssueChildren := map[string]map[int]IssueChildren{}
 	openIssueListFailed := map[string]bool{}
 	eligibleByRepo := map[string]int{}
 	for _, claim := range claims {
@@ -269,7 +270,7 @@ func (c *Client) CloseOnMergeLedgerSweep(ctx context.Context, ledger *ClaimLedge
 		batchOpenIssues := eligibleByRepo[key] >= closeOnMergeOpenIssueBatchThreshold
 		if batchOpenIssues {
 			if _, seen := openIssues[key]; !seen && !openIssueListFailed[key] {
-				open, err := c.closeOnMergeOpenIssues(ctx, claim.Repo)
+				open, children, err := c.closeOnMergeOpenIssues(ctx, claim.Repo)
 				if err != nil {
 					if opts.Logger != nil {
 						opts.Logger.Warn("close-on-merge: listing open issues failed", "repo", claim.Repo, "error", err)
@@ -277,6 +278,7 @@ func (c *Client) CloseOnMergeLedgerSweep(ctx context.Context, ledger *ClaimLedge
 					openIssueListFailed[key] = true
 				} else {
 					openIssues[key] = open
+					openIssueChildren[key] = children
 				}
 			}
 		}
@@ -298,7 +300,7 @@ func (c *Client) CloseOnMergeLedgerSweep(ctx context.Context, ledger *ClaimLedge
 			}
 			continue
 		}
-		res := c.closeIssueForMergedPRClaimWithIssue(ctx, claim.Repo, claim.Issue, pr, true, opts, issue)
+		res := c.closeIssueForMergedPRClaimWithIssue(ctx, claim.Repo, claim.Issue, pr, true, opts, issue, closeOnMergeListedChildren(openIssueChildren[key], claim.Issue))
 		sweep.Results = append(sweep.Results, res)
 		if res.Settles() && ledger.MarkCloseOnMergeSettled(claim.Repo, claim.Issue, claim.PRNumber, now) {
 			sweep.Marked++
@@ -318,32 +320,34 @@ func (c *Client) closeOnMergeRepoKey(repo string) string {
 }
 
 // closeOnMergeOpenIssues lists repo's open issues (pull requests excluded),
-// keyed by number. Any list error is returned so the caller skips the repo
+// keyed by number, together with the sub-issue summary GitHub put on each
+// parent's row. Any list error is returned so the caller skips the repo
 // for this pass instead of falling back to per-claim reads.
-func (c *Client) closeOnMergeOpenIssues(ctx context.Context, repo string) (map[int]*gh.Issue, error) {
+func (c *Client) closeOnMergeOpenIssues(ctx context.Context, repo string) (map[int]*gh.Issue, map[int]IssueChildren, error) {
 	owner, repoName := c.splitRepo(strings.TrimSpace(repo))
 	out := map[int]*gh.Issue{}
-	issueOpts := &gh.IssueListByRepoOptions{
-		State:       "open",
-		ListOptions: gh.ListOptions{PerPage: 100},
-	}
+	children := map[int]IssueChildren{}
+	next := 1
 	for page := 0; page < claimSearchMaxPages; page++ {
-		issues, resp, err := c.client.Issues.ListByRepo(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueOpts)
+		issues, summaries, resp, err := c.closeOnMergeListOpenIssuesPage(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, next)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, issue := range issues {
 			if issue == nil || issue.IsPullRequest() || issue.GetNumber() <= 0 || !strings.EqualFold(issue.GetState(), "open") {
 				continue
 			}
 			out[issue.GetNumber()] = issue
+			if summary, ok := summaries[issue.GetNumber()]; ok {
+				children[issue.GetNumber()] = summary
+			}
 		}
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
-		issueOpts.ListOptions.Page = resp.NextPage
+		next = resp.NextPage
 	}
-	return out, nil
+	return out, children, nil
 }
 
 func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOptions) []CloseOnMergeResult {
@@ -361,12 +365,9 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 			continue
 		}
 		owner, repoName := c.splitRepo(repo)
-		issueOpts := &gh.IssueListByRepoOptions{
-			State:       "open",
-			ListOptions: gh.ListOptions{PerPage: 100},
-		}
+		next := 1
 		for page := 0; page < claimSearchMaxPages; page++ {
-			issues, resp, err := c.client.Issues.ListByRepo(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueOpts)
+			issues, children, resp, err := c.closeOnMergeListOpenIssuesPage(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, next)
 			if err != nil {
 				if opts.Logger != nil {
 					opts.Logger.Warn("close-on-merge backfill: listing open issues failed", "repo", repo, "error", err)
@@ -421,7 +422,7 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 						out = append(out, CloseOnMergeResult{Repo: repo, Issue: issue.GetNumber(), PR: prNum, PRRepo: prRepo, Action: CloseOnMergeSkipped, Reason: "no_closing_or_claim_metadata"})
 						continue
 					}
-					res := c.closeIssueForMergedPRClaimWithIssue(ctx, repo, issue.GetNumber(), pr, true, opts, issue)
+					res := c.closeIssueForMergedPRClaimWithIssue(ctx, repo, issue.GetNumber(), pr, true, opts, issue, closeOnMergeListedChildren(children, issue.GetNumber()))
 					out = append(out, res)
 					if res.Action == CloseOnMergeClosed || res.Action == CloseOnMergeAwaiting || res.Action == CloseOnMergeAlreadyDone {
 						break
@@ -431,7 +432,7 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 			if resp == nil || resp.NextPage == 0 {
 				break
 			}
-			issueOpts.ListOptions.Page = resp.NextPage
+			next = resp.NextPage
 		}
 	}
 	return out
@@ -617,10 +618,15 @@ func closeOnMergeIssueNotFound(err error) bool {
 }
 
 func (c *Client) closeIssueForMergedPRClaim(ctx context.Context, issueRepo string, issueNumber int, pr *gh.PullRequest, claimMetadata bool, opts CloseOnMergeOptions) CloseOnMergeResult {
-	return c.closeIssueForMergedPRClaimWithIssue(ctx, issueRepo, issueNumber, pr, claimMetadata, opts, nil)
+	return c.closeIssueForMergedPRClaimWithIssue(ctx, issueRepo, issueNumber, pr, claimMetadata, opts, nil, nil)
 }
 
-func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueRepo string, issueNumber int, pr *gh.PullRequest, claimMetadata bool, opts CloseOnMergeOptions, issue *gh.Issue) CloseOnMergeResult {
+// closeIssueForMergedPRClaimWithIssue applies close-on-merge to one issue
+// for one merged PR. issue is the row a sweep's open-issue listing already
+// holds, with children the sub-issue summary that listing carried for it
+// (nil when it carried none); with a nil issue the function reads both in
+// one GET.
+func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueRepo string, issueNumber int, pr *gh.PullRequest, claimMetadata bool, opts CloseOnMergeOptions, issue *gh.Issue, children *IssueChildren) CloseOnMergeResult {
 	prRepo := issueRepo
 	if pr != nil && pr.GetBase() != nil && pr.GetBase().GetRepo() != nil && pr.GetBase().GetRepo().GetFullName() != "" {
 		prRepo = pr.GetBase().GetRepo().GetFullName()
@@ -675,7 +681,9 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 	owner, repoName := c.splitRepo(issueRepo)
 	if issue == nil {
 		var err error
-		issue, _, err = c.client.Issues.Get(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber)
+		// The same GET as before, read with the sub-issue summary go-github
+		// drops, so the open-sub-issue check below costs no call of its own.
+		issue, _, children, err = c.getIssueWithBlockedCount(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber)
 		if err != nil {
 			if closeOnMergeIssueNotFound(err) {
 				// The referenced issue does not exist (or is not visible to the
@@ -753,6 +761,9 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 			res.Action, res.Reason = CloseOnMergeSkipped, "partially_addressed"
 			return res
 		}
+		if closeOnMergeHeldForOpenSubIssues(&res, pr.GetNumber(), children, opts) {
+			return res
+		}
 		body := closeOnMergeAwaitingComment(pr)
 		// Confirming the fix is an action asked of a person, so under the
 		// attention pilot it is announced once rather than only edited in.
@@ -790,6 +801,9 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		if opts.Logger != nil {
 			opts.Logger.Info("close-on-merge: issue is marked open and the PR does not close it; leaving it open", "repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber())
 		}
+		return res
+	}
+	if closeOnMergeHeldForOpenSubIssues(&res, pr.GetNumber(), children, opts) {
 		return res
 	}
 	// The issue-stage lane may already have said "Fixed by #N" for this

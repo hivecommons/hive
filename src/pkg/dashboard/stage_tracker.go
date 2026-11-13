@@ -678,6 +678,11 @@ type StageTrackerItem struct {
 	// — for the chevron suffix and the "Held by:" hover line
 	// (stage_tracker_claimant.go).
 	Claimant *StageTrackerClaimant `json:"claimant,omitempty"`
+	// LastIdle is set on an issue row whose latest contributor-relay task
+	// ended with no pull request and no verdict: the reason on record, so
+	// the row says why the relay dropped the issue
+	// (contribute_idle_completions.go).
+	LastIdle *StageTrackerLastIdle `json:"last_idle,omitempty"`
 	// StageActor is who holds the next move on this row — hive, clanker,
 	// human, a foreign bot, or nobody — with the plain-words why. The SPA
 	// draws the stage pill's actor icon from StageActor.Kind only

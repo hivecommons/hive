@@ -863,6 +863,11 @@
       if (item.origin) lines.push('Origin: origin/' + item.origin);
       const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
       if (claimant) lines.push(stageTrackerClaimantLine(claimant, nowMs));
+      // Why the last contributor relay dropped this issue with no pull
+      // request: last_idle.text is the server's clause, the one the withheld
+      // list ends its completion cooldown row with.
+      const lastIdle = item.kind === 'issue' && item.last_idle && item.last_idle.text ? String(item.last_idle.text) : '';
+      if (lastIdle) lines.push(lastIdle.charAt(0).toUpperCase() + lastIdle.slice(1) + (item.last_idle.contributor ? ' (@' + item.last_idle.contributor + ')' : ''));
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : ''));
       let actorLine = stageTrackerActorTip(item).replace(/^ · /, '');

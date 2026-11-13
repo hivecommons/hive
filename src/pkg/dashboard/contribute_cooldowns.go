@@ -187,8 +187,14 @@ func (h *ContributeWSHub) recordTaskFailureKey(key string, permanent bool) {
 	h.completedMu.Lock()
 	h.failedTasks[key] = time.Now()
 	h.consecutiveFailures[key] += weight
+	// The last relay task on this item failed; an earlier idle completion's
+	// reason no longer describes it.
+	idleDropped := h.dropIdleCompletionLocked(key)
 	h.completedMu.Unlock()
 	h.saveFailedTasks()
+	if idleDropped {
+		h.saveIdleCompletions()
+	}
 }
 
 // bookReleaseCooldown stamps the SAME short cooldown recordTaskFailure stamps, but
@@ -231,8 +237,14 @@ func (h *ContributeWSHub) bookReleaseCooldownKey(key string) {
 	}
 	h.completedMu.Lock()
 	h.failedTasks[key] = time.Now()
+	// A task was in flight on this item after any idle completion on record,
+	// so that idle is no longer the last thing a relay did here.
+	idleDropped := h.dropIdleCompletionLocked(key)
 	h.completedMu.Unlock()
 	h.saveFailedTasks()
+	if idleDropped {
+		h.saveIdleCompletions()
+	}
 }
 
 // clearReleaseCooldown withdraws a cooldown booked by bookReleaseCooldown once the

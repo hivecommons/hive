@@ -117,6 +117,20 @@ To retract an issue you filed by mistake, use `hive-open-issue close --repo
 <owner/repo> <number>` — it goes through the watcher with the App token, so it
 works even when the agent's own scoped token cannot edit or comment.
 
+A `close` request for an issue that still has an open GitHub sub-issue is
+refused: the request is parked as `.denied`, never retried, and the result
+carries the reason (`issue close refused: <owner/repo>#<n> has 2 open
+sub-issues, so it is not finished; …`). `--override-reason` does not change
+that. The issue can be closed once its sub-issues are closed, or by a
+maintainer before then; the sub-issues are open work, so do not close them to
+get past the refusal. If you believe the parent itself is a mistake or a
+duplicate, you still cannot close it: say so, with the evidence, in one
+comment on the issue parked for a maintainer (`hive-open-issue comment
+--needs-decision`, see
+[Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)),
+and leave its sub-issues alone. A `close` request for a pull request is not
+affected.
+
 ### `issue` (default)
 
 `--repo`, `--title`, and `--body` are all required — an empty body is treated

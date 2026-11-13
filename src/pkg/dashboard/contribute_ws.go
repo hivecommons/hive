@@ -1161,7 +1161,13 @@ type ContributeWSHub struct {
 	// EXPIRING before the next dispatch, so this must survive that sweep.
 	// Guarded by completedMu; persisted in the same PVC-backed ledger dir as
 	// the cooldowns so a pod restart does not forget the verdict.
-	noWorkVerdicts         map[string]noWorkVerdictRecord
+	noWorkVerdicts map[string]noWorkVerdictRecord
+	// idleCompletions records, per work item, the reason of the latest
+	// no-PR idle completion (contribute_idle_completions.go): why the last
+	// relay dropped the issue. Explanation only — it never withholds an
+	// issue. Guarded by completedMu and persisted beside the no-PR streaks.
+	idleCompletions        map[string]idleCompletionRecord
+	idleCompletionsFile    string
 	standbyReconcileCancel context.CancelFunc
 	standbyReconcileDone   chan struct{}
 	standbyOutcomes        []standbyOutcomeRecord
@@ -1366,6 +1372,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		reclaimCooldowns:          make(map[string]time.Time),
 		noPRStreaks:               make(map[string]noPRStreakRecord),
 		noWorkVerdicts:            make(map[string]noWorkVerdictRecord),
+		idleCompletions:           make(map[string]idleCompletionRecord),
 		standbyOutcomes:           []standbyOutcomeRecord{},
 		activityFilePath:          contributorStatePath(contributorsDir, activityFilePath, "activity.json"),
 		completedTasksFile:        contributorStatePath(contributorsDir, completedTasksFile, "completed-tasks.json"),
@@ -1397,6 +1404,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub.loadFailedTasks()
 	hub.loadNoPRStreaks()
 	hub.loadNoWorkVerdicts()
+	hub.loadIdleCompletions()
 	hub.loadStandbyOutcomes()
 	hub.loadActivity()
 	// #5681: restore the leases the PREVIOUS process issued before any relay can
@@ -4681,11 +4689,15 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// issue is re-offered, and lift the `blocked` label the relay
 			// applied so the fleet's workflow gate does not park it until a
 			// human notices (hivecommons/hive#11775, #11776).
+			blockedWithoutReason := false
 			if downgraded, ok := reclassifyToolingBlockedVerdict(verdict, verdictReason); ok {
 				h.logger.Warn("[contribute-ws] blocked verdict reclassified: reason is the contributor's own tooling or says nothing, not an external dependency",
 					"username", s.contributor.profile.GitHubUsername,
 					"task", msg.TaskID,
 					"verdict_reason", verdictReason)
+				// ok means the verdict WAS blocked; which of the two grounds
+				// demoted it is read here, while it is still certain.
+				blockedWithoutReason = isBlockedVerdictReasonless(verdictReason)
 				verdict = downgraded
 				if completedTask != nil {
 					go h.releaseToolingBlockedIssue(completedTask, s.contributor.profile.GitHubUsername, verdictReason)
@@ -4714,6 +4726,29 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 						"verdict_reason", verdictReason)
 					verdict = downgraded
 					go h.releaseGateParkedIssue(completedTask, s.contributor.profile.GitHubUsername, verdictReason)
+				}
+			}
+			// A no-PR idle never goes on record without a reason: the hub
+			// fills in what the completion signal says when the relay sent
+			// none, so the log line and the run record below say why the
+			// issue was dropped (contribute_idle_completions.go).
+			if verdict == completionVerdictIdle && verifiedPR == "" {
+				switch {
+				case blockedWithoutReason:
+					// The agent said blocked and nothing about what it waits
+					// on; the hub demoted that to idle above. Whatever the
+					// reason field held (nothing, or a footer) says nothing,
+					// so the record says what the agent reported.
+					verdictReason = idleCompletionBlockedNoReason
+				case verdictReason != "":
+					// The relay's own reason stands.
+				case strings.TrimSpace(msg.PRURL) != "":
+					// The relay did report a pull request; the hub booked
+					// the completion without it. Say that, not that the
+					// agent stopped without one.
+					verdictReason = idleCompletionReportedPRReason(prDetail.Verified, prDetail.Reason)
+				default:
+					verdictReason = normalizeIdleCompletionReason("", msg.CompletionSignal)
 				}
 			}
 			// A needs-decision verdict that stands parks the issue at 045 with

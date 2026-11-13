@@ -440,16 +440,29 @@ func (c *Client) closeHiveRedundantPR(ctx context.Context, repo string, pr *gh.P
 // landed it — only once the close went through, so a refused close leaves
 // no "done" note on an open issue. Failures are logged, never fatal: the
 // PR close stands.
+//
+// An issue with an open sub-issue is left open with nothing written on it
+// (automated_close_open_subissues.go): the PR's change being on the base
+// does not finish work that was moved into sub-issues. The issue read keeps
+// GitHub's sub-issue summary for that, so no request is added.
 func (c *Client) closeIssuesAlreadyLanded(ctx context.Context, owner, name string, pr *gh.PullRequest, redundantOf int, hiveAuthored bool) []int {
 	repo := owner + "/" + name
 	var closed []int
 	for _, number := range ClosingIssueRefs(pr.GetBody(), repo) {
-		issue, _, err := c.client.Issues.Get(ctx, owner, name, number)
+		issue, _, subIssues, err := c.getIssueWithBlockedCount(ctx, owner, name, number)
 		if err != nil || issue == nil || issue.IsPullRequest() || !strings.EqualFold(issue.GetState(), "open") {
 			continue
 		}
 		item := writeback.Item{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: labelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time, HiveAuthored: c.getHiveIdentity().Matches(safeGetLogin(issue.GetUser()))}
 		if d := c.WritebackAllowed(repo, item, writeback.KindIssueClose, "close issue already landed"); !d.Allowed {
+			continue
+		}
+		if open := automatedCloseOpenSubIssues(subIssues); open > 0 {
+			// A verdict, not a failed step, so INFO rather than WARN.
+			if c.logger != nil {
+				c.logger.Info("already-landed auto-close: issue has open sub-issues; leaving it open and writing nothing",
+					slog.String("repo", repo), slog.Int("issue", number), slog.Int("pr", pr.GetNumber()), slog.Int("open", open), slog.Int("total", subIssues.Total))
+			}
 			continue
 		}
 		// Close first: CloseIssue's gates may refuse, and a "this issue is

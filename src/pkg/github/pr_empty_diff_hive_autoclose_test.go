@@ -237,6 +237,74 @@ func TestCloseIssuesAlreadyLandedNotesOnlyClosedIssues(t *testing.T) {
 	}
 }
 
+// An issue whose remaining work was moved into sub-issues is not done while
+// one of them is open. A PR closed as already landed named three issues:
+// the one with an open sub-issue is left open with nothing written on it,
+// and the two others (no sub-issues; every sub-issue closed) are closed and
+// noted as before. Before the fix all three were closed and noted.
+func TestCloseIssuesAlreadyLandedLeavesIssueWithOpenSubIssuesAlone(t *testing.T) {
+	issue := func(number int, summary map[string]any) map[string]any {
+		out := map[string]any{"number": number, "state": "open", "title": "Tidy the sweep", "user": map[string]any{"login": "owner"}}
+		if summary != nil {
+			out["sub_issues_summary"] = summary
+		}
+		return out
+	}
+	issues := map[string]map[string]any{
+		"/repos/o/r/issues/1": issue(1, map[string]any{"total": 3, "completed": 1, "percent_completed": 33}),
+		"/repos/o/r/issues/2": issue(2, nil),
+		"/repos/o/r/issues/3": issue(3, map[string]any{"total": 2, "completed": 2, "percent_completed": 100}),
+	}
+	var mu sync.Mutex
+	var closes, notes, onParent []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == http.MethodGet {
+			payload, ok := issues[r.URL.Path]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(payload)
+			return
+		}
+		if r.URL.Path == "/repos/o/r/issues/1" || strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/1/") {
+			onParent = append(onParent, r.Method+" "+r.URL.Path)
+		}
+		switch {
+		case r.Method == http.MethodPatch:
+			closes = append(closes, r.URL.Path)
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": "closed"})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			notes = append(notes, r.URL.Path)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	pr := &gh.PullRequest{Number: gh.Ptr(7), Body: gh.Ptr("Closes #1\nCloses #2\nCloses #3"), Base: &gh.PullRequestBranch{Ref: gh.Ptr("main")}}
+
+	got := c.closeIssuesAlreadyLanded(context.Background(), "o", "r", pr, 5, true)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !reflect.DeepEqual(got, []int{2, 3}) {
+		t.Fatalf("closed = %v, want [2 3]: the issue with an open sub-issue must stay open", got)
+	}
+	if len(onParent) != 0 {
+		t.Fatalf("writes on the issue with an open sub-issue = %v, want none", onParent)
+	}
+	if want := []string{"/repos/o/r/issues/2", "/repos/o/r/issues/3"}; !reflect.DeepEqual(closes, want) {
+		t.Fatalf("closes = %v, want %v", closes, want)
+	}
+	if want := []string{"/repos/o/r/issues/2/comments", "/repos/o/r/issues/3/comments"}; !reflect.DeepEqual(notes, want) {
+		t.Fatalf("done notes = %v, want %v", notes, want)
+	}
+}
+
 // alreadyLandedAnyAuthorServer is a GitHub stand-in for the any-author
 // already-landed close (hivecommons/hive#15732): PR 15544 by a person,
 // compare base...head as given, PR 15545 merged or not.
