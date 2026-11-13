@@ -362,6 +362,43 @@ func TestRemovedPerspectiveDoesNotBlockHeads(t *testing.T) {
 	}
 }
 
+// A set that changes through a perspectives_source link is built by
+// NewPerspectiveSet from the resolved document; the removed perspective must
+// then neither block waiting heads nor count as coverage (#14905, #17988).
+func TestLinkedPerspectiveRemovalSettlesWaitingHeads(t *testing.T) {
+	docB, err := NewPerspectiveSet([]string{"correctness", "security"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := AggregateOptions{Perspectives: docB, ExpectedHeads: []string{"cr-sol", "cr-sonnet"}}
+	linked := Perspective("spyre-numerics")
+	reports := []PerspectiveReport{
+		headRep(PerspectiveCorrectness, "cr-sol", VerdictApprove),
+		headRep(PerspectiveCorrectness, "cr-sonnet", VerdictApprove),
+		headRep(PerspectiveSecurity, "cr-sol", VerdictApprove),
+		headRep(PerspectiveSecurity, "cr-sonnet", VerdictApprove),
+		headRep(linked, "cr-sol", VerdictChangesRequested, nilDeref),
+	}
+	agg := AggregateReports(reports, opts)
+	if !agg.AwaitingDecision || agg.DecisionSkipped {
+		t.Fatalf("aggregate = %+v, want awaiting decision", agg)
+	}
+	for _, p := range decisionPerspectives(agg, opts.Perspectives) {
+		if p == linked {
+			t.Fatalf("decision includes removed linked perspective: %+v", agg)
+		}
+	}
+
+	partial := AggregateReports([]PerspectiveReport{
+		headRep(PerspectiveCorrectness, "cr-sol", VerdictApprove),
+		headRep(PerspectiveCorrectness, "cr-sonnet", VerdictApprove),
+		headRep(linked, "cr-sol", VerdictApprove),
+	}, opts)
+	if partial.Verdict != VerdictIncomplete || partial.DecisionSkipped || partial.AwaitingDecision {
+		t.Fatalf("aggregate = %+v, want incomplete configured coverage", partial)
+	}
+}
+
 func TestRemovedPerspectiveDoesNotCountAsCoverage(t *testing.T) {
 	agg := AggregateReports([]PerspectiveReport{
 		headRep(PerspectiveCorrectness, "cr-sol", VerdictApprove),
