@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.247.1)
+
+### Fixed
+
+- Dashboard: an agent whose provider refused it for quota (for example Copilot's "You have exceeded your monthly quota") is now drawn red and labelled `out of quota` on the top-bar tile, the collapsed Agents tile and its agent card, instead of green "authenticated"; `/api/status` agent rows carry `quotaExhausted: true` from the existing per-agent quota flag. Login problems still show first, and disabled, paused and stopped agents keep their own look ([#18111](https://github.com/hivecommons/hive/issues/18111)).
+
 ## 2026-11-13 (v5.247.0)
 
 ### Added
