@@ -92,16 +92,6 @@ func (p *GitHubProxy) translatorAgentName(r *http.Request) (string, bool) {
 	return "", false
 }
 
-// internalTranslatorUID reports whether uid is the hive's own control plane
-// for the translator's purposes: root always, and the proxy UID only when the
-// proxy cannot relay to private addresses (see translatorAgentName).
-func (p *GitHubProxy) internalTranslatorUID(uid int) bool {
-	if !p.uidMap.IsInternalUID(uid) {
-		return false
-	}
-	return uid == 0 || !p.allowPrivateForward
-}
-
 // SetInferenceRoute configures an agent to use a self-hosted inference backend.
 //
 // The route is stored immediately and the caller returns without blocking. The
