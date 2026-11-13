@@ -21,6 +21,7 @@
        the current mode, so it will not be kicked (mirrors needs-login, green). */
     .dot.off-healthy { background: transparent; border: 2px solid var(--status-ok); box-sizing: border-box; }
     .dot.stopped { background: var(--status-error); }
+    .dot.out-of-quota { background: var(--status-error); }
     .dot.starting { background: var(--status-info); animation: oc-pulse 1.5s ease-in-out infinite; }
     .dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
     .agent-field { display: grid; grid-template-columns: minmax(5.5rem, max-content) minmax(0, 1fr); gap: var(--sp-4); align-items: baseline; font-size: 0.8rem; padding: var(--sp-1) var(--sp-0); }

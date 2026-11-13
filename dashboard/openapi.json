@@ -1631,6 +1631,10 @@
                           "backendAuthLastError": {
                             "type": "string",
                             "description": "The offending pane line that produced backendAuthStatus."
+                          },
+                          "quotaExhausted": {
+                            "type": "boolean",
+                            "description": "True when the agent's pane shows a provider quota refusal (e.g. Copilot \"You have exceeded your monthly quota\"), from crux.Process.QuotaExhausted; covers every backend (#18111). Omitted when false."
                           }
                         }
                       }

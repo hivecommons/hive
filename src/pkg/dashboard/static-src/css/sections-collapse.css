@@ -87,7 +87,7 @@
     .agent-collapsed-tile:hover, .agent-collapsed-tile:focus-visible, .repo-collapsed-tile:hover, .repo-collapsed-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
     .agent-collapsed-tile.disabled, .repo-collapsed-tile.paused, .repo-collapsed-tile.idle { opacity: 0.58; }
     .agent-collapsed-tile.stopped, .repo-collapsed-tile.error { border-color: color-mix(in srgb, var(--red) 35%, var(--line-subtle)); }
-    .agent-collapsed-tile.needs-login { border-color: color-mix(in srgb, var(--red) 55%, var(--line-subtle)); }
+    .agent-collapsed-tile.needs-login, .agent-collapsed-tile.out-of-quota { border-color: color-mix(in srgb, var(--red) 55%, var(--line-subtle)); }
     .agent-collapsed-tile.active, .repo-collapsed-tile.healthy { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
     .repo-collapsed-tile.blocked { border-color: color-mix(in srgb, var(--yellow) 65%, var(--line-subtle)); }
     .agent-collapsed-tile.up-next, .repo-collapsed-tile.working { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
@@ -102,7 +102,7 @@
     .agent-tile-next { color: var(--muted); grid-column: 1 / -1; }
     .agent-tile-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 40%, transparent); }
     .agent-collapsed-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
-    .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot, .repo-collapsed-tile.error .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
+    .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot, .agent-collapsed-tile.out-of-quota .agent-tile-dot, .repo-collapsed-tile.error .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     .repo-collapsed-tile.blocked .agent-tile-dot { background: var(--yellow); box-shadow: 0 0 0 1px color-mix(in srgb, var(--yellow) 40%, transparent); }
     .agent-collapsed-tile.disabled .agent-tile-dot, .repo-collapsed-tile.paused .agent-tile-dot, .repo-collapsed-tile.idle .agent-tile-dot { background: var(--muted); box-shadow: none; }
     .agent-navbar-upnext {
@@ -119,14 +119,14 @@
     .agent-navbar-tile.entering { opacity: 0; transform: translateY(calc(-1 * var(--sp-3))); }
     .agent-navbar-tile.exiting { opacity: 0; transform: translateY(var(--sp-3)); pointer-events: none; }
     .agent-navbar-tile.active { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
-    .agent-navbar-tile.stopped, .agent-navbar-tile.needs-login { border-color: color-mix(in srgb, var(--red) 45%, var(--line-subtle)); }
+    .agent-navbar-tile.stopped, .agent-navbar-tile.needs-login, .agent-navbar-tile.out-of-quota { border-color: color-mix(in srgb, var(--red) 45%, var(--line-subtle)); }
     .agent-navbar-tile .agent-tile-dot { grid-column: 2; grid-row: 1; justify-self: end; }
     .agent-navbar-tile .agent-tile-name { grid-column: 1; grid-row: 1; min-width: max-content; overflow: visible; text-overflow: clip; }
     .agent-navbar-tile .agent-tile-next { grid-column: 1; grid-row: 2; color: var(--muted); }
     .agent-navbar-tile .agent-up-next { grid-column: 2; grid-row: 2; color: var(--amber); }
     .agent-navbar-tile .agent-up-next.running-now { color: var(--green); }
     .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
-    .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
+    .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot, .agent-navbar-tile.out-of-quota .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     .agent-navbar-summary { flex: 0 0 auto; display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
     .agent-navbar-summary:hover, .agent-navbar-summary:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
     .agent-navbar-summary-short { display: none; }

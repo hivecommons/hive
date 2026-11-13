@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v5.247.0)
+
+### Added
+
+- Knowledge connectors added, edited, enabled, disabled or removed from the Knowledge Integrations dashboard now take effect without restarting the hive: a hive booted with no connectors builds and starts the syncer on the first save (Check, Sync and Connect stop answering `no knowledge connectors are configured`), and a running syncer is reconfigured in place so unchanged connectors keep syncing. The `knowledge.publish` mirror still needs a restart when its connector changes ([#18091](https://github.com/hivecommons/hive/issues/18091)).
+
+## 2026-11-13 (v5.246.1)
+
+### Fixed
+
+- Stop refusing inference requests from the hive's own UID (`dev`, 1001 on v5 pods) when private plain-HTTP forwarding is off, so agents without a per-agent UID reach their inference route again; the proxy UID is still refused when `HIVE_PROXY_ALLOW_PRIVATE_FORWARD=true` (#18061).
+- The contributor-lane automerge sweep now treats a PR with more changed files than GitHub's files API returns (3000) as a standing `files-evidence` skip instead of re-warning every sweep.
+
 ## 2026-11-13 (v5.246.0)
 
 ### Added

@@ -36,6 +36,15 @@
     .agent-card.idle { border-left-color: var(--line); }
     .agent-card.stopped { border-left-color: var(--red); }
     .agent-card.needs-login { border-left-color: var(--red); }
+    .agent-card.out-of-quota { border-left-color: var(--red); }
+    /* #18111: out of provider quota — red, and no login affordance. */
+    .agent-quota-note {
+      margin: var(--sp-4) var(--sp-0) var(--sp-5); padding: var(--sp-3) var(--sp-5);
+      border: 1px solid color-mix(in srgb, var(--red) 55%, transparent);
+      border-radius: var(--radius); background: color-mix(in srgb, var(--red) 10%, var(--panel));
+      color: var(--text); font-size: var(--fs-xs); line-height: 1.45; overflow-wrap: anywhere;
+    }
+    .agent-quota-note-detail { color: var(--muted); }
     .agent-card.disabled-agent { border-left-color: var(--status-neutral); opacity: 0.68; }
     .agent-card.disabled-agent .agent-state { color: color-mix(in srgb, var(--muted) 70%, var(--bg)); }
     .terminal-copy-hint {
