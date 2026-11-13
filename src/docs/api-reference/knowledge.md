@@ -59,9 +59,9 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `POST` | `/api/knowledge/cleanup-orphans` | Dashboard auth/session | Cleanup Orphans | `pkg/dashboard/api.go:442` |
 | `GET` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channels List | `pkg/dashboard/api.go:405` |
 | `POST` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channel Create | `pkg/dashboard/api.go:406` |
-| `GET` | `/api/knowledge/connectors` | Dashboard auth/session | Knowledge connector statuses and publish mirror status (`{"connectors": [...], "publish": {...}\|null}`, see [knowledge-connectors.md](../knowledge-connectors.md)) | `pkg/dashboard/api_knowledge_connectors.go:23` |
-| `POST` | `/api/knowledge/connectors/{name}/sync` | Owner only | Start one connector sync now (202; 404 unknown, 409 running) | `pkg/dashboard/api_knowledge_connectors.go:24` |
-| `POST` | `/api/knowledge/publish/sync` | Owner only | Run a publish mirror batch now (202 with publish status; 503 mirror not running, 409 batch in progress) | `pkg/dashboard/api_knowledge_connectors.go:25` |
+| `GET` | `/api/knowledge/connectors` | Dashboard auth/session | Knowledge connector statuses and publish mirror status (`{"connectors": [...], "publish": {...}\|null}`, see [knowledge-connectors.md](../knowledge-connectors.md)) | `pkg/dashboard/api_knowledge_connectors.go:24` |
+| `POST` | `/api/knowledge/connectors/{name}/sync` | Owner only | Start one connector sync now (202; 404 unknown, 409 running) | `pkg/dashboard/api_knowledge_connectors.go:25` |
+| `POST` | `/api/knowledge/publish/sync` | Owner only | Run a publish mirror batch now (202 with publish status; 503 mirror not running, 409 batch in progress) | `pkg/dashboard/api_knowledge_connectors.go:26` |
 | `GET` | `/api/knowledge/connectors/{name}/auth` | Dashboard auth/session | Interactive sign-in state for a connector (Plaud OAuth): connected, account, pending, auth_url; `?refresh=1` re-checks upstream (400 for connector types without interactive sign-in) | `pkg/dashboard/api_knowledge_connector_auth.go:25` |
 | `POST` | `/api/knowledge/connectors/{name}/auth/connect` | Owner only | Start the connector's sign-in flow (202 with state incl. `auth_url`) | `pkg/dashboard/api_knowledge_connector_auth.go:26` |
 | `POST` | `/api/knowledge/connectors/{name}/auth/disconnect` | Owner only | Sign out and revoke the connector's credential upstream | `pkg/dashboard/api_knowledge_connector_auth.go:27` |
