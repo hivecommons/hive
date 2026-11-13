@@ -179,15 +179,21 @@ func TestDefaultHubDepsStartPollersRunsAndStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	done := make(chan struct{})
-	go func() {
-		defaultHubDeps().startPollers(ctx, srv)
-		close(done)
-	}()
+	// Join the pollers themselves, not just the launcher: StartBackgroundPollers
+	// returns at once, and a poller still running after this test ends makes
+	// real GitHub calls through the shared REST accounting store — racing (and
+	// polluting) whatever later test has swapped in its own clock, e.g.
+	// TestAPIBudgetPacingNeverShortensTodaysInterval (hivecommons/hive#18053).
+	done := defaultHubDeps().startPollers(ctx, srv)
+	if done == nil {
+		t.Fatal("production startPollers returned no completion channel")
+	}
+	// Each poller's synchronous startup pass is bounded by its own HTTP
+	// timeouts (10s per fetch), so allow a few of them back to back.
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("production startPollers did not return with a cancelled context")
+	case <-time.After(60 * time.Second):
+		t.Fatal("production pollers did not exit with a cancelled context")
 	}
 }
 
