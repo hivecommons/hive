@@ -10,9 +10,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const html = fs.readFileSync(path.join(__dirname, 'static', 'index.html'), 'utf8');
+// Keeps a leading `async` so extracted loaders can still await.
+const ASYNC_PREFIX = 'async ';
 const fnSrc = name => {
-  const start = html.indexOf('function ' + name + '(');
+  let start = html.indexOf('function ' + name + '(');
   assert.ok(start >= 0, name + ' not found');
+  if (html.slice(start - ASYNC_PREFIX.length, start) === ASYNC_PREFIX) start -= ASYNC_PREFIX.length;
   let depth = 0;
   for (let i = html.indexOf('{', start); i < html.length; i++) {
     if (html[i] === '{') depth++;
@@ -88,6 +91,36 @@ test('a disabled entry keeps the disabled badge even when the runtime is not loa
   const { html: out } = render({ runtime: false, c, row: { name: 'wiki', status: 'disabled' }, type: 'confluence' });
   assert.strictEqual(badge(out), 'disabled');
   assert.ok(!out.includes('data-kb-not-loaded'));
+});
+
+// Drive the real loader with stubbed config + status fetches and return the
+// runtime flag it stores, so the status-fetch failure path is covered.
+const HTTP_OK = 200;
+const HTTP_SERVER_ERROR = 500;
+const loadRuntime = async statusRes => {
+  const cfgRes = { ok: true, status: HTTP_OK, json: async () => ({ connectors: [{ name: 'plaud-voice', type: 'plaud', enabled: true }], types: ['plaud'] }) };
+  const fetch = async url => (url.endsWith('/status') ? statusRes : cfgRes);
+  const state = { layers: [] };
+  const run = new Function('fetch', '_kcState', 'kbRenderIntegrationsModal',
+    "let _kbIntegrationSelected = 'plaud';\n" + fnSrc('kbLoadIntegrationsModal') + '\nreturn kbLoadIntegrationsModal("plaud").then(() => _kcState);');
+  return (await run(fetch, state, () => {})).runtime;
+};
+
+test('a failed status fetch leaves runtime true, so cards keep pending rather than claiming not loaded', async () => {
+  assert.strictEqual(await loadRuntime({ ok: false, status: HTTP_SERVER_ERROR, json: async () => ({ error: 'boom' }) }), true);
+  const c = { name: 'plaud-voice', type: 'plaud', enabled: true };
+  assert.strictEqual(badge(render({ runtime: true, c, row: null }).html), 'pending');
+});
+
+test('a status response without a runtime key is treated as loaded', async () => {
+  assert.strictEqual(await loadRuntime({ ok: true, status: HTTP_OK, json: async () => ({ connectors: [] }) }), true);
+});
+
+test('an explicit runtime:false in the status response is stored and renders not loaded', async () => {
+  const runtime = await loadRuntime({ ok: true, status: HTTP_OK, json: async () => ({ connectors: [], runtime: false }) });
+  assert.strictEqual(runtime, false);
+  const c = { name: 'plaud-voice', type: 'plaud', enabled: true };
+  assert.strictEqual(badge(render({ runtime, c, row: null }).html), NOT_LOADED);
 });
 
 test('non-owner view still shows the not-loaded badge and hint without action buttons', () => {

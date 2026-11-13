@@ -2367,7 +2367,7 @@
         const cfg = await cfgRes.json().catch(() => ({}));
         if (!cfgRes.ok) throw new Error(cfg.error || ('HTTP ' + cfgRes.status));
         const st = stRes.ok ? await stRes.json().catch(() => ({})) : {};
-        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], ctx7AutoImport: cfg.context7_auto_import || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: !!st.runtime, publish: st.publish || null });
+        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], ctx7AutoImport: cfg.context7_auto_import || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: st.runtime !== false, publish: st.publish || null });
       } catch (e) {
         _kcState = Object.assign(_kcState, { loaded: true, error: e.message });
       }
@@ -2426,13 +2426,15 @@
     // Badge shown when the hive's connector syncer is not running (status
     // response `runtime: false`): the entry is saved but this process never
     // constructed it, so sign-in, Check and Sync would all 404. Distinct from
-    // `pending`, which is a loaded connector awaiting sign-in or first sync
+    // `pending`, which is a loaded connector awaiting sign-in or first sync.
+    // Only an explicit `runtime: false` counts: a failed or absent status
+    // response must not tell the owner to restart the hive
     // (hivecommons/hive#18093).
     const KC_STATUS_NOT_LOADED = 'not loaded';
     const KC_NOT_LOADED_HINT = 'Connector runtime is not running on this hive — restart the hive after enabling knowledge connectors.';
     function kbConnectorNotLoaded(c) { return !!c.enabled && !_kcState.runtime; }
     function kbConnectorNotLoadedHtml() {
-      return '<div class="muted-xs kc-not-loaded" data-kb-not-loaded>' + escapeHtml(KC_NOT_LOADED_HINT) + ' <a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener">Docs ↗</a></div>';
+      return '<div class="muted-xs" data-kb-not-loaded>' + escapeHtml(KC_NOT_LOADED_HINT) + ' <a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener">Docs ↗</a></div>';
     }
 
     function kbConnectorRow(type, c, owner) {
