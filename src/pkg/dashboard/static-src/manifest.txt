@@ -29,6 +29,7 @@ css/workflows-marketplace.css
 css/chat.css
 css/nous.css
 css/knowledge.css
+css/inbox.css
 css/sections-collapse.css
 css/design-system.css
 css/responsive.css
@@ -56,6 +57,7 @@ html/repos.html
 html/acmm-approvals-audit.html
 html/review-queue.html
 html/nous-inception-knowledge-contributors.html
+html/inbox.html
 html/debug-logs.html
 html/agents.html
 html/tracker.html
@@ -119,6 +121,7 @@ js/evidence.js
 js/approvals.js
 js/nous.js
 js/knowledge.js
+js/inbox.js
 js/vault-audit.js
 js/review-queue.js
 js/contributors.js

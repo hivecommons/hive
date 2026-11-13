@@ -66,6 +66,9 @@ const agentSkipAfterFullBroadcastS = 5 * time.Second
 
 const maxSSEClients = 100
 
+// sseDropWarnInterval bounds how often dropped SSE events are logged at WARN.
+const sseDropWarnInterval = 5 * time.Minute
+
 const sessionCookieName = "hive_session"
 
 const sessionCookieMaxAge = 30 * 24 * 60 * 60
@@ -99,8 +102,10 @@ func isOwnerRole(role string) bool {
 // A WRONG proof header is ALWAYS rejected regardless of this setting.
 var proxyProofRequired = true
 
-// staleDropStarvationThreshold is the number of consecutive stale-snapshot
-// drops (no publish between) at which the drop is logged at Warn.
+// staleDropStarvationThreshold bounds consecutive stale-snapshot drops (no
+// publish between): the build that would be the Nth consecutive drop is
+// published anyway, logged at Warn, so sustained mutation churn cannot
+// starve consumers. The counter resets on every publish.
 const staleDropStarvationThreshold = 5
 
 type Server struct {
@@ -139,6 +144,8 @@ type Server struct {
 	status       *StatusPayload
 	sseClients   map[chan []byte]struct{}
 	sseMu        sync.Mutex
+	sseDropped   int       // events dropped since the last summary warning; guarded by sseMu
+	sseDropWarn  time.Time // last summary warning; guarded by sseMu
 	logger       *slog.Logger
 	mux          *http.ServeMux
 	deps         *Dependencies
@@ -1065,12 +1072,16 @@ type FrontendAgent struct {
 	// SandboxRuntime is the effective sandbox.runtime for a sandboxed agent
 	// ("podman" or "job"); the SPA routes "▶ terminal" to the Job pod log
 	// viewer for "job" (hivecommons/hive#14798). Empty when not sandboxed.
-	SandboxRuntime  string `json:"sandboxRuntime,omitempty"`
-	LastError       string `json:"lastError,omitempty"`
-	StallNudges     int    `json:"stallNudges,omitempty"`
-	StallRecoveries int    `json:"stallRecoveries,omitempty"`
-	ActionNudges    int    `json:"actionNudges,omitempty"`
-	TransientNudges int    `json:"transientNudges,omitempty"`
+	SandboxRuntime string `json:"sandboxRuntime,omitempty"`
+	// SandboxWarnings are the boot/reload preflight findings for this agent's
+	// sandbox runtime (openshell or substrate), from the stored
+	// config.AgentSandboxGateReport; no preflight runs on the status path.
+	SandboxWarnings []string `json:"sandbox_warnings,omitempty"`
+	LastError       string   `json:"lastError,omitempty"`
+	StallNudges     int      `json:"stallNudges,omitempty"`
+	StallRecoveries int      `json:"stallRecoveries,omitempty"`
+	ActionNudges    int      `json:"actionNudges,omitempty"`
+	TransientNudges int      `json:"transientNudges,omitempty"`
 	// SessionRssMb is the resident memory of the agent's CLI process tree
 	// (MiB) and SessionAge how long the current CLI session has been up,
 	// both sampled on the health tick (#14842). SessionRecycles counts
@@ -3046,24 +3057,30 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 
 	s.statusMu.Lock()
 	if buildEpoch < s.statusMutationEpoch {
-		// A mutation landed after this snapshot's build began: its data may
-		// predate the mutation. Drop it — the mutation's own refresh rebuild
-		// (which began after the epoch bump) publishes the fresh state.
 		curEpoch := s.statusMutationEpoch
-		s.statusStaleDrops++
-		drops := s.statusStaleDrops
-		s.statusConsecutiveStaleDrops++
-		consecutive := s.statusConsecutiveStaleDrops
-		s.statusMu.Unlock()
-		// A single drop is normal optimistic-concurrency self-healing; only a
-		// run of drops with no publish in between is an anomaly.
-		level := slog.LevelInfo
-		if consecutive >= staleDropStarvationThreshold {
-			level = slog.LevelWarn
+		if s.statusConsecutiveStaleDrops+1 >= staleDropStarvationThreshold {
+			// Bounded staleness: under sustained mutation churn every build
+			// loses the race, so publish this one rather than starve
+			// consumers. The counter resets below with the publish.
+			drops := s.statusStaleDrops
+			consecutive := s.statusConsecutiveStaleDrops
+			s.logger.Warn("publishing possibly-stale status snapshot after consecutive stale drops",
+				"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
+		} else {
+			// A mutation landed after this snapshot's build began: its data
+			// may predate the mutation. Drop it — the mutation's own refresh
+			// rebuild (which began after the epoch bump) publishes the fresh
+			// state.
+			s.statusStaleDrops++
+			drops := s.statusStaleDrops
+			s.statusConsecutiveStaleDrops++
+			consecutive := s.statusConsecutiveStaleDrops
+			s.statusMu.Unlock()
+			// A drop is a normal optimistic-concurrency race.
+			s.logger.Info("dropping stale status snapshot built before a mutation",
+				"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
+			return false
 		}
-		s.logger.Log(context.Background(), level, "dropping stale status snapshot built before a mutation",
-			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
-		return false
 	}
 
 	// Attach the advisory ACMM level-up recommendation (#5225) from the SAME
@@ -4397,9 +4414,23 @@ func (s *Server) broadcastFrame(frame string) {
 		select {
 		case ch <- raw:
 		default:
-			s.logger.Warn("SSE client too slow, dropping event")
+			s.sseDropped++
+			s.logger.Debug("SSE client too slow, dropping event")
 		}
 	}
+	s.warnSSEDropsLocked(time.Now())
+}
+
+// warnSSEDropsLocked emits one summary warning per sseDropWarnInterval instead
+// of one per dropped event, so a single stalled browser tab does not flood logs
+// or trip repeated-error fleet reporting. Caller holds sseMu.
+func (s *Server) warnSSEDropsLocked(now time.Time) {
+	if s.sseDropped == 0 || now.Sub(s.sseDropWarn) < sseDropWarnInterval {
+		return
+	}
+	s.logger.Warn("SSE clients too slow, dropped events", "dropped", s.sseDropped, "interval", sseDropWarnInterval.String())
+	s.sseDropped = 0
+	s.sseDropWarn = now
 }
 
 // initHistories lazily builds the three sparkline ring buffers. Called (once)

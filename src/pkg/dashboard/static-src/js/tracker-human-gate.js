@@ -83,7 +83,11 @@
       const issueDecision = typeof STAGE_TRACKER_ISSUE_NEEDS_DECISION === 'number' ? STAGE_TRACKER_ISSUE_NEEDS_DECISION : 45;
       // A pre-045 issue still wearing 085 is parked on a person all the same.
       const decisionStage = pr ? stage === prDecision : (stage === issueDecision || stage === prDecision);
-      const flagged = decisionStage || mods.indexOf('needs-decision') >= 0 || mods.indexOf('needs-human') >= 0 || item.needs_human === true;
+      // A DCO sign-off ask (dco-missing, hive-signoff-attribution) is the
+      // author's move, named by the waiting-on pill; needs_human alone does
+      // not make it a decision (hivecommons/hive#17789).
+      const authorDCO = /^(dco-missing|hive-signoff-attribution)$/.test(String(item.reason || '').trim());
+      const flagged = decisionStage || mods.indexOf('needs-decision') >= 0 || mods.indexOf('needs-human') >= 0 || (item.needs_human === true && !authorDCO);
       // An unauthorized step and a structured blocker name the person owed
       // in their own pills (hive-bot-lacks-permission, Blocked · …); they
       // are not a decision anyone is asked for.

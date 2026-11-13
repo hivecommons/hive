@@ -11,20 +11,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
-// These tests cover the App-present half of handleGovernorRepoCheckAccess —
-// the DiscoverInstallationID probe the endpoint exists for. The App-less,
-// cross-forge, and no-org guards are covered in repo_add_form_test.go; here a
-// real *ghpkg.AppAuth (generated RSA key) talks to a stub GitHub API so both
-// probe outcomes run deterministically and offline:
-//   - installed  → 200 {ok:true, status:"ok", org}
-//   - not installed → 409 {ok:false, needsInstall:true, org, installUrl} and
-//     the pending-install banner mechanism is armed.
+// App-present access checks use a real AppAuth and an offline GitHub stub.
 
 // newDiscoveryAppAuth builds an AppAuth whose JWT generation succeeds and whose
 // API calls hit the given handler. Discovery results are memoised process-wide
@@ -59,8 +53,7 @@ func newDiscoveryAppAuth(t *testing.T, handler http.HandlerFunc) *ghpkg.AppAuth 
 	return auth
 }
 
-// installedOrgHandler answers GET /orgs/{org}/installation affirmatively for
-// exactly one org and 404s everything else (including the listing fallback).
+// installedOrgHandler supplies an installation covering widget.
 func installedOrgHandler(org string, id int64) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/orgs/"+org+"/installation" {
@@ -69,6 +62,16 @@ func installedOrgHandler(org string, id int64) http.HandlerFunc {
 				"id":      id,
 				"account": map[string]any{"login": org},
 			})
+			return
+		}
+		if r.URL.Path == "/app/installations/"+strconv.FormatInt(id, 10)+"/access_tokens" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"token":"installation-token","expires_at":"2099-01-01T00:00:00Z"}`))
+			return
+		}
+		if r.URL.Path == "/installation/repositories" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"repositories": []any{map[string]any{"full_name": org + "/widget"}}})
 			return
 		}
 		if r.URL.Path == "/app/installations" {
@@ -130,6 +133,16 @@ func TestGovernorRepoCheckAccess_FullURLResolvesOrg(t *testing.T) {
 	}
 }
 
+func TestGovernorRepoCheckAccess_BareRepoUsesConfiguredOrg(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Project.Org = "bare-org"
+	srv.deps.GHAppAuth = newDiscoveryAppAuth(t, installedOrgHandler("bare-org", 123))
+	w := checkAccessRequest(t, srv, `{"repo":"widget"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+}
+
 // App NOT installed on the org: 409 with needsInstall, the resolved org, the
 // per-forge install URL, and the pending-install banner mechanism armed so the
 // existing recheck plumbing drives the flow to completion.
@@ -176,6 +189,112 @@ func TestGovernorRepoCheckAccess_NotInstalled409(t *testing.T) {
 	}
 	if !srv.IsPendingGitHubAppInstall() {
 		t.Error("pending-install was not armed on a failed probe")
+	}
+}
+
+func TestGovernorRepoCheckAccess_RepoSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		listStatus int
+		listBody   string
+		wantStatus int
+	}{
+		{"unselected", http.StatusOK, `{"repositories":[{"full_name":"selection-org/other"}]}`, http.StatusConflict},
+		{"list failure", http.StatusInternalServerError, `{"message":"unavailable"}`, http.StatusServiceUnavailable},
+		{"case insensitive", http.StatusOK, `{"repositories":[{"full_name":"SELECTION-ORG/WIDGET"}]}`, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newFullServer(t)
+			base := installedOrgHandler("selection-org", 4242)
+			srv.deps.GHAppAuth = newDiscoveryAppAuth(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/installation/repositories" {
+					if r.Header.Get("Authorization") != "Bearer installation-token" {
+						t.Errorf("repository listing did not use installation token")
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tc.listStatus)
+					_, _ = w.Write([]byte(tc.listBody))
+					return
+				}
+				base(w, r)
+			})
+			w := checkAccessRequest(t, srv, `{"repo":"selection-org/widget"}`)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("code = %d, want %d; body: %s", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantStatus == http.StatusConflict {
+				var resp struct {
+					NeedsInstall bool   `json:"needsInstall"`
+					InstallURL   string `json:"installUrl"`
+					Error        string `json:"error"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+					t.Fatal(err)
+				}
+				if !resp.NeedsInstall || !strings.Contains(resp.InstallURL, "/organizations/selection-org/settings/installations/4242") || !strings.Contains(resp.Error, "widget") {
+					t.Errorf("unexpected response: %+v", resp)
+				}
+			}
+		})
+	}
+}
+
+func TestGovernorRepoCheckAccess_DiscoveryFailure(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.GHAppAuth = newDiscoveryAppAuth(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unavailable", http.StatusInternalServerError)
+	})
+	w := checkAccessRequest(t, srv, `{"repo":"discovery-failure/widget"}`)
+	if w.Code != http.StatusServiceUnavailable || srv.IsPendingGitHubAppInstall() {
+		t.Fatalf("unexpected response %d %s; pending=%v", w.Code, w.Body.String(), srv.IsPendingGitHubAppInstall())
+	}
+}
+
+func TestGovernorRepoCheckAccess_TruncatedCoverageUsesRepositoryInstallation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		body       string
+		wantStatus int
+	}{
+		{"selected", http.StatusOK, `{"id":4242}`, http.StatusOK},
+		{"not selected", http.StatusNotFound, `{"message":"Not Found"}`, http.StatusConflict},
+		{"different installation", http.StatusOK, `{"id":2}`, http.StatusServiceUnavailable},
+		{"missing installation id", http.StatusOK, `{}`, http.StatusServiceUnavailable},
+		{"forbidden", http.StatusForbidden, `{"message":"rate limit"}`, http.StatusServiceUnavailable},
+		{"rate limited", http.StatusTooManyRequests, `{"message":"rate limit"}`, http.StatusServiceUnavailable},
+		{"server failure", http.StatusInternalServerError, `{"message":"unavailable"}`, http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newFullServer(t)
+			base := installedOrgHandler("truncated-org", 4242)
+			probed := false
+			srv.deps.GHAppAuth = newDiscoveryAppAuth(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/installation/repositories":
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("Link", `<http://example.invalid/installation/repositories?page=2>; rel="next"`)
+					_, _ = w.Write([]byte(`{"repositories":[]}`))
+				case "/repos/truncated-org/widget/installation":
+					probed = true
+					if auth := r.Header.Get("Authorization"); !strings.HasPrefix(auth, "Bearer ") || auth == "Bearer installation-token" {
+						t.Errorf("repository installation probe did not use App JWT: %q", auth)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				default:
+					base(w, r)
+				}
+			})
+			w := checkAccessRequest(t, srv, `{"repo":"truncated-org/widget"}`)
+			if !probed || w.Code != tc.wantStatus {
+				t.Fatalf("probed=%v code=%d, want %d; body: %s", probed, w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantStatus == http.StatusConflict && !strings.Contains(w.Body.String(), "/organizations/truncated-org/settings/installations/4242") {
+				t.Fatalf("missing installation settings link: %s", w.Body.String())
+			}
+		})
 	}
 }
 

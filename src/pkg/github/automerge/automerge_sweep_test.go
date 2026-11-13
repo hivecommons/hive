@@ -1873,6 +1873,9 @@ type selfAuthoredPR struct {
 	updatedAt string
 	// workflowRuns are returned by GET /actions/runs?head_sha=<head>.
 	workflowRuns []map[string]any
+	// workflowRunJobs is the job count GET /actions/runs/{id}/jobs reports
+	// per run id (absent = zero jobs).
+	workflowRunJobs map[int]int
 	// headCommitAuthor is the login GET /commits/{head} reports as author;
 	// commentBodies collects POST /issues/{n}/comments bodies.
 	headCommitAuthor string
@@ -1959,6 +1962,17 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 				runs = []map[string]any{}
 			}
 			json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "workflow_runs": runs})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/actions/runs/") && strings.HasSuffix(r.URL.Path, "/jobs"):
+			id := pathNumber(t, r.URL.Path, "/repos/acme/widget/actions/runs/", "/jobs")
+			count := 0
+			for _, pr := range prs {
+				count += pr.workflowRunJobs[id]
+			}
+			jobs := []map[string]any{}
+			for i := 0; i < count; i++ {
+				jobs = append(jobs, map[string]any{"id": i + 1, "run_id": id, "status": "queued"})
+			}
+			json.NewEncoder(w).Encode(map[string]any{"total_count": count, "jobs": jobs})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
 			json.NewEncoder(w).Encode(map[string]any{"commit": map[string]string{"sha": "basesha"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":

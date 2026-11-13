@@ -6175,6 +6175,23 @@
     #kb-gs-cancel[hidden] { display: none; }
     @media (max-width: 768px) { .kb-layout { grid-template-columns: 1fr; } }
 
+    /* Inbox (voice recordings / dictations triage) */
+    .inbox-toolbar { flex-wrap: wrap; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+    .inbox-sources { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .inbox-toggle { display: inline-flex; align-items: center; gap: var(--sp-2); }
+    .inbox-list { max-height: none; }
+    .inbox-item { cursor: default; }
+    .inbox-check { display: flex; align-items: flex-start; padding-top: var(--sp-1); }
+    .inbox-icon { flex-shrink: 0; font-size: var(--fs-lg); line-height: 1; padding-top: var(--sp-1); }
+    .inbox-pills { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
+    .inbox-link { font-size: var(--fs-xs); }
+    .inbox-field { display: block; margin-top: var(--sp-4); }
+    .inbox-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+    .inbox-rule { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr) auto; gap: var(--sp-2); align-items: center; margin-bottom: var(--sp-2); }
+    .kb-plaud-paste textarea { width: 100%; margin-top: var(--sp-2); font-family: var(--font-mono); font-size: var(--fs-xs); }
+    @media (max-width: 720px) {
+      .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
+    }
     /* Collapsible advisory sections (#1546) */
     .collapse-chevron {
       display: inline-block;
@@ -8911,6 +8928,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spektacular)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="search-section" data-action="ocNavigate" data-arg0="search-section" hidden><span class="oc-nav-emoji">🔍</span><span class="oc-nav-text">Search</span></a>
+      <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
     </div>
     <div class="oc-nav-group">
@@ -9379,6 +9397,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 
   </div>
 
+  <div class="mt-6 mb-8" id="inbox-section" data-dashboard-section="inbox-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inbox-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Inbox section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📥 Inbox</h2>
+    <div class="section-body">
+      <div id="inbox-panel" class="inbox-panel"></div>
+    </div>
+  </div>
   <div class="mt-6 mb-8" id="debug-section" data-dashboard-section="debug-section">
     <h2 class="section-label section-header-toggle mb-5" data-action="toggleSection" data-arg0="debug-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Diagnostics section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🩺 Diagnostics</h2>
     <div class="section-body">
@@ -10736,7 +10760,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     // marker key records whether the browser predates the defaults ('legacy',
     // keeps the historical all-expanded default forever) or is new ('v1').
     const DASHBOARD_DEFAULT_COLLAPSED_SECTIONS = Object.freeze([
-      'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section',
+      'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section', 'inbox-section',
       'contributors-section', 'inception-section', 'acmm-eval-section', 'debug-section', 'audit-section',
       'logs-section', 'nous-section', 'faq-section', 'runs-section', 'search-section'
     ]);
@@ -10852,6 +10876,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'search-section': { title: '🔍 Search', summary: 'search' },
+      'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
@@ -10890,6 +10915,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'search-section': { heading: 'Search', help: 'Find past pull requests, issues, review records and findings across your projects by keyword, with a link to each one.' },
+      'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
@@ -12425,7 +12451,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','search-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','search-section','inbox-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -18636,6 +18662,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const r = stageTrackerReworkOf(item);
       if (!r) return '';
       if (r.state === 'requested' && r.evidence === 'queued') return 'queued';
+      // A DCO ask on the pushed head queues no re-review (hivecommons/hive#17789).
+      if (r.state === 'pushed' && /^(dco-missing|hive-signoff-attribution)$/.test(String(item.reason || '').trim())) return 'sign-off owed';
       return STAGE_TRACKER_REWORK_WORDS[r.state];
     }
     // "re-review pending" means the HIVE's reviewer owes a pass on the new
@@ -18653,6 +18681,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const on = k => { const a = item[k + '_activity']; return a && (!a.head || !item.head || a.head === item.head) ? a.state || 'unknown' : 'unknown'; };
       if (on('ci') === 'failing' || on('review') === 'changes_requested') return false;
       if (/conflict/i.test(String(item.reason || '')) && !item.rebase) return false;
+      if (/^(dco-missing|hive-signoff-attribution)$/.test(String(item.reason || '').trim())) return false;
       return true;
     }
     // "re-review of d88928e" — the owed pass, named by head.
@@ -27494,7 +27523,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const issueDecision = typeof STAGE_TRACKER_ISSUE_NEEDS_DECISION === 'number' ? STAGE_TRACKER_ISSUE_NEEDS_DECISION : 45;
       // A pre-045 issue still wearing 085 is parked on a person all the same.
       const decisionStage = pr ? stage === prDecision : (stage === issueDecision || stage === prDecision);
-      const flagged = decisionStage || mods.indexOf('needs-decision') >= 0 || mods.indexOf('needs-human') >= 0 || item.needs_human === true;
+      // A DCO sign-off ask (dco-missing, hive-signoff-attribution) is the
+      // author's move, named by the waiting-on pill; needs_human alone does
+      // not make it a decision (hivecommons/hive#17789).
+      const authorDCO = /^(dco-missing|hive-signoff-attribution)$/.test(String(item.reason || '').trim());
+      const flagged = decisionStage || mods.indexOf('needs-decision') >= 0 || mods.indexOf('needs-human') >= 0 || (item.needs_human === true && !authorDCO);
       // An unauthorized step and a structured blocker name the person owed
       // in their own pills (hive-bot-lacks-permission, Blocked · …); they
       // are not a decision anyone is asked for.
@@ -30997,11 +31030,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        by the Go server under the same /terminal prefix so openTerminal()'s
        handoff code and assertion cookie apply unchanged. openshell agents
        (#17645) run each kick in a gateway-owned sandbox and use the same
-       viewer, which streams the sandbox's log instead. */
+       viewer, which streams the sandbox's log instead; substrate agents
+       (#17777) run each kick in a Substrate actor and the viewer streams the
+       kick's output from the actor's bridge. */
     const JOB_SANDBOX_RUNTIME = 'job';
     const OPENSHELL_SANDBOX_RUNTIME = 'openshell';
+    const SUBSTRATE_SANDBOX_RUNTIME = 'substrate';
     function sandboxRuntimeWithoutTmux(sandboxRuntime) {
-      return sandboxRuntime === JOB_SANDBOX_RUNTIME || sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME;
+      return sandboxRuntime === JOB_SANDBOX_RUNTIME || sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME
+        || sandboxRuntime === SUBSTRATE_SANDBOX_RUNTIME;
     }
     function agentUsesJobTerminal(a) {
       return !!a && sandboxRuntimeWithoutTmux(a.sandboxRuntime);
@@ -31017,6 +31054,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function terminalLinkTitle(a, tmuxTitle) {
       if (!agentUsesJobTerminal(a)) return tmuxTitle;
+      if (a.sandboxRuntime === SUBSTRATE_SANDBOX_RUNTIME) {
+        return 'Stream this agent\'s kick output and Substrate actor state (read-only: it runs in a Substrate actor, not a tmux session)';
+      }
       return a.sandboxRuntime === OPENSHELL_SANDBOX_RUNTIME
         ? 'Stream the log of this agent\'s OpenShell sandbox (read-only: it runs in a gateway-owned sandbox, not a tmux session)'
         : 'Stream the log of this agent\'s sandbox Job pod (read-only: it runs as a Kubernetes Job, not a tmux session)';
@@ -31757,6 +31797,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        tmux session or in-pod process to be "down". Their health comes from
        the server-side sandboxRun verdict (last run + cadence), never from
        state !== 'running'. */
+    /* Preflight findings for this agent's sandbox runtime (openshell or
+       substrate), computed at boot/reload and carried as sandbox_warnings. */
+    function agentSandboxWarningsHtml(a) {
+      const ws = a && Array.isArray(a.sandbox_warnings) ? a.sandbox_warnings : [];
+      return ws.map(w => `<div class="agent-error" title="${esc(w)}">⚠ ${esc(w)}</div>`).join('');
+    }
     function agentSandboxRun(a) {
       return (a && a.sandboxed && a.sandboxRun && a.sandboxRun.health) ? a.sandboxRun : null;
     }
@@ -31996,6 +32042,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             const prefix = retrying ? 'retrying: ' : '';
             return `<div class="agent-error" title="${esc(a.lastError)}">⚠ ${esc(prefix)}${esc(a.lastError)}</div>`;
           })()}
+          ${agentSandboxWarningsHtml(a)}
           <div class="agent-card-details" data-agent-resize-y data-agent="${esc(a.name)}"${layoutHeightAttr}>
           <div class="agent-field"><span class="label" title="${isInferenceBackendName(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot). Pin to prevent governor from switching it.'}">${isInferenceBackendName(a.cli) ? 'method' : 'cli'}</span><span class="value">${cliChip(a.cli, a.pinnedBoth || a.pinnedCli, a.name)}${(a.pinnedBoth || a.pinnedCli) ? '' : ` <button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" title="Pin CLI — lock current backend">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="The LLM model powering this agent. Governor may change it based on budget or mode. Pin to lock.">model</span><span class="value">${modelChip(a.model, a.govReason, a.pinnedBoth || a.pinnedModel, a.name)}${(a.pinnedBoth || a.pinnedModel) ? '' : ` <button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" title="Pin model — lock current model">📌</button>`}</span></div>
@@ -48199,6 +48246,18 @@ function burnAreaChart() {
         html += '<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbImportDocFromModal">Import</button>';
         html += '</div></div></details>';
 
+        html += '<details class="kb-sources-add"><summary class="summary-label">🎙️ Plaud voice notes</summary>';
+        html += '<div class="stack kb-sources-form">';
+        html += '<div class="muted-xs">Make your Plaud Note recordings (Plaud summary + transcript) searchable knowledge via the free official Plaud MCP server. $0 beyond your Plaud plan; sign-in is Plaud OAuth in your browser.</div>';
+        html += '<div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenPlaudIntegration">Configure in Integrations</button></div>';
+        html += '</div></details>';
+
+        html += '<details class="kb-sources-add"><summary class="summary-label">🗣️ Wispr Flow dictation</summary>';
+        html += '<div class="stack kb-sources-form">';
+        html += '<div class="muted-xs">Dictate straight into any field here — put the cursor in <strong>+ New Fact</strong> and hold the Flow key; no connector needed. To also pull your past dictations in, the Wispr Flow connector reads the app\'s local history (flow.sqlite or an export folder). $0 beyond your Wispr Flow plan.</div>';
+        html += '<div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenWisprFlowIntegration">Configure in Integrations</button></div>';
+        html += '</div></details>';
+
         html += '<details open class="kb-sources-add"><summary class="summary-label">📚 Import from Context7</summary>';
         html += '<div class="stack kb-sources-form">';
         html += '<div class="muted-xs">Search Context7 for library documentation (e.g. "vllm", "next.js", "kubernetes").</div>';
@@ -48680,9 +48739,12 @@ function burnAreaChart() {
       html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
       html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
+      if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);
+      if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
         html += '<div class="kb-integration-actions">';
+        if (type === 'plaud') html += kbPlaudAuthButtons(c.name);
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationEdit" data-arg0="' + escapeHtml(c.name) + '">Edit</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationToggle" data-arg0="' + escapeHtml(c.name) + '">' + (c.enabled ? 'Disable' : 'Enable') + '</button>';
@@ -48698,7 +48760,7 @@ function burnAreaChart() {
       const connectors = (_kcState.connectors || []).filter(c => c.type === type);
       if (!_kbIntegrationEditName || !connectors.some(c => c.name === _kbIntegrationEditName)) _kbIntegrationEditName = connectors[0]?.name || '';
       const edited = connectors.find(c => c.name === _kbIntegrationEditName) || { name: '', type, enabled: true, layer: 'project', interval: '', scope: {}, auth: {} };
-      let html = '<div class="card-inset mb-5"><div class="row-between"><div><div class="title-sm kb-integration-title">' + kbIntegrationIcon(type) + escapeHtml(info.label) + '</div><p class="muted-note m-0">' + escapeHtml(info.description) + '</p></div><a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm">Docs ↗</a></div></div>';
+      let html = '<div class="card-inset mb-5"><div class="row-between"><div><div class="title-sm kb-integration-title">' + kbIntegrationIcon(type) + escapeHtml(info.label) + '</div><p class="muted-note m-0">' + escapeHtml(info.description) + '</p></div><span class="row">' + (type === 'plaud' ? '<a href="/docs/inbox-voice-sources.md" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm">Inbox quickstart ↗</a>' : '') + '<a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm">Docs ↗</a></span></div></div>';
       html += '<div class="row-between mb-4"><div class="section-label m-0">Configured entries</div>' + (owner ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbIntegrationNew" data-arg0="' + escapeHtml(type) + '">Add ' + escapeHtml(info.label) + '</button>' : '') + '</div>';
       html += connectors.length ? connectors.map(c => kbConnectorRow(type, c, owner)).join('') : '<div class="empty-dashed mb-4">No ' + escapeHtml(info.label) + ' connector configured yet.</div>';
       html += owner ? kbConnectorFormHTML(type, edited, !!edited.name) : '<p class="muted-note">Only the hive owner can edit connector configuration.</p>';
@@ -48719,6 +48781,8 @@ function burnAreaChart() {
       html += '<label class="muted-note">Credential reference<input class="kb-search-box mt-2" type="text" data-kb-kc-auth-value value="' + escapeHtml(authVal) + '" placeholder="TOKEN_ENV or /run/secrets/token" autocomplete="off"></label></div>';
       html += '<div class="kb-integration-scope-grid">' + kcScopeFieldsHTML(type, c.scope || {}) + '</div>';
       if (type === 'context7') html += kbContext7FormExtras(c);
+      if (type === 'wisprflow') html += '<p class="muted-xs" data-kb-wisprflow-note>Leave the credential source as None: the connector reads Wispr Flow\'s local history read-only with the sqlite3 CLI. Leave the path empty for the default app location on the hive host (macOS: ~/Library/Application Support/Wispr Flow/flow.sqlite; Windows: %APPDATA%\\Wispr Flow\\flow.sqlite), or point it at a copy of flow.sqlite or a folder of exported .json/.ndjson/.csv/.md files. New dictations need no connector at all — dictate into + New Fact directly.</p>';
+      if (type === 'plaud') html += '<p class="muted-xs" data-kb-plaud-note>Leave the credential source as None: Plaud signs in with its own OAuth flow (Connect on the entry above) and keeps the token in the MCP server\'s own store. Requires Node.js ≥ 20 on the hive host and costs nothing beyond your Plaud plan.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
       html += '<div class="row-end kb-integration-form-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationValidate">Validate</button><button type="button" class="hv-btn btn-primary btn-sm" data-action="kbIntegrationSave">Save</button></div></div>';
@@ -48801,6 +48865,442 @@ function burnAreaChart() {
     async function kbIntegrationSync(name) {
       await kcSyncNow(name);
       setTimeout(() => kbLoadIntegrationsModal(_kbIntegrationSelected), 1500);
+    }
+
+    // ── Plaud sign-in (OAuth through the Plaud MCP server) ──
+    // Cached per connector name; loaded lazily when the Plaud card renders.
+    const _kbPlaudAuth = {};
+    function kbPlaudAuthLine(name) {
+      const a = _kbPlaudAuth[name];
+      if (!a) {
+        setTimeout(() => kbPlaudAuthLoad(name, false), 0);
+        return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '">Plaud: checking sign-in…</div>';
+      }
+      let text;
+      if (a.error) text = 'Plaud: ' + a.error;
+      else if (a.pending) text = 'Plaud: waiting for authorization' + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">open the Plaud authorization page ↗</a>' : ' (URL pending…)');
+      else if (a.connected) text = 'Plaud: connected' + (a.account ? ' as <strong>' + escapeHtml(a.account) + '</strong>' : '');
+      else text = 'Plaud: not connected' + (a.message ? ' — ' + escapeHtml(a.message) : '');
+      return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '" data-connected="' + (a.connected ? '1' : '0') + '">' + text + '</div>';
+    }
+    function kbPlaudAuthButtons(name) {
+      const a = _kbPlaudAuth[name] || {};
+      const n = escapeHtml(name);
+      let html = '';
+      if (a.connected) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudDisconnect" data-arg0="' + n + '">Disconnect</button>';
+      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (a.pending ? ' disabled' : '') + '>Connect Plaud</button>';
+      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '" title="Re-check sign-in with Plaud">Check</button>';
+      return html;
+    }
+    async function kbPlaudAuthLoad(name, refresh) {
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth' + (refresh ? '?refresh=1' : ''));
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+      } catch (e) {
+        _kbPlaudAuth[name] = { error: e.message };
+      }
+      if (document.querySelector('[data-kb-plaud-auth="' + CSS.escape(name) + '"]')) kbRenderIntegrationsModal();
+    }
+    async function kbPlaudRefreshAuth(name) {
+      showToast('Checking Plaud sign-in…', 'info');
+      await kbPlaudAuthLoad(name, true);
+    }
+    async function kbPlaudConnect(name) {
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/connect', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+        kbRenderIntegrationsModal();
+        if (data.connected) showToast('Plaud connected' + (data.account ? ' as ' + data.account : ''), 'success');
+        else if (data.auth_url) { showToast('Open the Plaud authorization link shown on the card, then click Check.', 'info'); kbPlaudPollAuth(name, 0); }
+        else showToast('Plaud login started; the authorization URL will appear on the card shortly.', 'info');
+        if (!data.connected && !data.auth_url) kbPlaudPollAuth(name, 0);
+      } catch (e) {
+        showToast('Plaud connect failed: ' + e.message, 'error');
+      }
+    }
+    // Poll the cached state while a login is pending (URL arrival, completion).
+    function kbPlaudPollAuth(name, attempt) {
+      if (attempt > 60) return;
+      setTimeout(async () => {
+        await kbPlaudAuthLoad(name, false);
+        const a = _kbPlaudAuth[name] || {};
+        if (a.connected) { showToast('Plaud connected' + (a.account ? ' as ' + a.account : ''), 'success'); return; }
+        if (a.pending) kbPlaudPollAuth(name, attempt + 1);
+      }, 5000);
+    }
+    async function kbPlaudDisconnect(name) {
+      if (!(await hiveConfirm('Sign out of Plaud? Synced recordings stay in the vault until you remove the connector.'))) return;
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/disconnect', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+        kbRenderIntegrationsModal();
+        showToast('Plaud disconnected', 'success');
+      } catch (e) {
+        showToast('Plaud disconnect failed: ' + e.message, 'error');
+      }
+    }
+    function kbOpenPlaudIntegration() { _kbIntegrationSelected = 'plaud'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+
+    // ── Wispr Flow (local dictation history, no sign-in) ──
+    function kbWisprFlowSourceLine(c) {
+      const path = (c.scope && c.scope.path) || '';
+      const group = (c.scope && c.scope.group) === 'day' ? 'one fact per day' : 'one fact per dictation';
+      return '<div class="muted-xs" data-kb-wisprflow-source>Wispr Flow: ' + (path ? '<code>' + escapeHtml(path) + '</code>' : 'default app location on the hive host') + ' · ' + group + '</div>';
+    }
+    function kbOpenWisprFlowIntegration() { _kbIntegrationSelected = 'wisprflow'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    // ── Inbox: source-agnostic triage of voice recordings and dictations ──
+    // Items come from knowledge connectors (plaud, wisprflow, …); each one is
+    // already a Knowledge fact. Routing them to spek (RFC + child issues) or
+    // dibs happens inside the hive via POST /api/inbox/route.
+    const INBOX_POLL_MS = 60000;
+    const INBOX_BUSY_POLL_MS = 5000;
+    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', 'file-drop': '📎', webhook: '🔗' };
+    const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
+    let _inboxCache = null;
+    let _inboxSelected = new Set();
+    let _inboxShowProcessed = false;
+    let _inboxBusyTimer = null;
+
+    function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
+    function inboxItemKey(it) { return it.source + '/' + it.id; }
+    function inboxFmtDuration(ms) {
+      const s = Math.round((Number(ms) || 0) / 1000);
+      if (s <= 0) return '';
+      const m = Math.floor(s / 60);
+      return m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + 'm ' + (s % 60) + 's';
+    }
+    function inboxRouteBusy(items) {
+      return (items || []).some(it => Object.values(it.routes || {}).some(r => r && (r.status === 'queued' || r.status === 'running')));
+    }
+
+    async function fetchInbox() {
+      try {
+        const r = await fetch('/api/inbox');
+        if (!r.ok) {
+          // Never leave "Loading inbox…" up: a 404/500 becomes a visible error.
+          const body = await r.json().catch(() => ({}));
+          _inboxCache = { items: [], sources: [], settings: {}, error: body.error || ('HTTP ' + r.status) };
+          renderInbox();
+          return;
+        }
+        _inboxCache = await r.json();
+        renderInbox();
+        clearTimeout(_inboxBusyTimer);
+        if (inboxRouteBusy(_inboxCache.items)) _inboxBusyTimer = setTimeout(fetchInbox, INBOX_BUSY_POLL_MS);
+      } catch (e) { /* transient — leave last render in place */ }
+    }
+    dashboardScheduleWork('inbox', fetchInbox).catch(console.error);
+    dashboardSetInterval('inbox', fetchInbox, INBOX_POLL_MS);
+
+    function inboxStatePill(dest, st) {
+      const label = INBOX_DEST_LABELS[dest] || dest;
+      if (!st) return '';
+      const status = st.status === 'filed' || st.status === 'delegated' ? 'ok' : (st.status === 'failed' ? 'error' : 'syncing');
+      const text = st.status === 'filed' ? label + ' filed' : st.status === 'delegated' ? label + ' handed to agent' : label + ' ' + st.status;
+      const title = st.error ? escapeHtml(st.error) : (st.repo ? escapeHtml(st.repo) : '');
+      let html = '<span class="kc-pill" data-status="' + status + '" title="' + title + '">' + escapeHtml(text) + '</span>';
+      if (st.url) html += ' <a class="inbox-link" href="' + escapeHtml(st.url) + '" target="_blank" rel="noopener">open ↗</a>';
+      if (Array.isArray(st.children) && st.children.length) html += ' <span class="muted-xs">' + st.children.length + ' child issue' + (st.children.length === 1 ? '' : 's') + '</span>';
+      return html;
+    }
+
+    function inboxItemHtml(it) {
+      const key = inboxItemKey(it);
+      const checked = _inboxSelected.has(key) ? ' checked' : '';
+      const when = it.recorded_at && !String(it.recorded_at).startsWith('0001') ? relativeTimeShort(it.recorded_at) : '';
+      const dur = inboxFmtDuration(it.duration_ms);
+      const meta = [escapeHtml(it.source), when, dur].filter(Boolean).join(' · ');
+      const routes = it.routes || {};
+      let pills = '';
+      for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
+      if (it.dismissed) pills += '<span class="kc-pill" title="Kept as a Knowledge fact only">knowledge only</span>';
+      const owner = viewerIsOwner();
+      const src = escapeHtml(it.source), id = escapeHtml(it.id);
+      let actions = '';
+      if (owner) {
+        const retry = (d) => routes[d] && routes[d].status === 'failed' ? 'Retry ' : '→ ';
+        actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxOpenRoute" data-arg0="' + src + '" data-arg1="' + id + '" data-arg2="spek_rfc">' + retry('spek_rfc') + 'RFC…</button>';
+        actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenRoute" data-arg0="' + src + '" data-arg1="' + id + '" data-arg2="dibs">' + retry('dibs') + 'dibs…</button>';
+        if (!it.dismissed) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismiss" data-arg0="' + src + '" data-arg1="' + id + '" title="Keep it as a Knowledge fact; no RFC, no dibs idea">Knowledge only</button>';
+        else actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxUndismiss" data-arg0="' + src + '" data-arg1="' + id + '">Back to inbox</button>';
+      }
+      if (it.fact_slug) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenFact" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="This item is already a Knowledge fact">📚 Fact</button>';
+      return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
+        (owner ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
+        '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
+        '<div class="kb-fact-body"><div class="kb-fact-title">' + escapeHtml(it.title || it.id) + '</div>' +
+        '<div class="muted-xs">' + meta + '</div>' +
+        (it.excerpt ? '<div class="kb-fact-snippet">' + escapeHtml(it.excerpt) + '</div>' : '') +
+        (pills ? '<div class="inbox-pills">' + pills + '</div>' : '') +
+        '<div class="kc-actions mt-2">' + actions + '</div></div></div>';
+    }
+
+    function renderInbox() {
+      refreshSectionCardShell('inbox-section');
+      const panel = document.getElementById('inbox-panel');
+      const badge = document.getElementById('inbox-sidebar-badge');
+      const data = _inboxCache;
+      if (!panel) return;
+      if (!data) { panel.innerHTML = '<div class="muted-note">Loading inbox…</div>'; return; }
+      const items = data.items || [];
+      const unprocessed = Number(data.unprocessed) || 0;
+      if (badge) setSidebarCountBadge(badge, unprocessed, unprocessed + ' unprocessed');
+      setSectionSummary('inbox-section', unprocessed + ' to triage · ' + items.length + ' total');
+      const owner = viewerIsOwner();
+      const sources = (data.sources || []).map(s => {
+        const status = s.connected ? 'ok' : (s.configured ? 'error' : '');
+        const label = inboxSourceIcon(s.type) + ' ' + escapeHtml(s.type) + (s.connected ? (s.account ? ': ' + escapeHtml(s.account) : ': connected') : s.configured ? ': not connected' : ': not configured');
+        return '<span class="kc-pill" data-status="' + status + '">' + label + '</span>';
+      }).join(' ');
+      const settings = data.settings || {};
+      const rules = Array.isArray(settings.rules) ? settings.rules.length : 0;
+      let html = '<div class="row-between inbox-toolbar">' +
+        '<div class="inbox-sources">' + (sources || '<span class="muted-xs">No voice sources configured.</span>') +
+        ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenIntegrations">Connect sources</button></div>' +
+        '<div class="kc-actions">' +
+        '<label class="muted-xs inbox-toggle"><input type="checkbox" data-change-action="inboxToggleProcessed"' + (_inboxShowProcessed ? ' checked' : '') + '> show processed</label>' +
+        (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL">⚙ Auto-routing (' + rules + ')</button>' : '') +
+        '</div></div>';
+      if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
+      if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs a <code>spektacular</code> binary on the hive host (<code>inbox.spek.binary</code>) or at least one enabled agent to hand the job to (<code>inbox.spek.agent</code> overrides the default).</p>';
+      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
+      if (owner && shown.length) {
+        const sel = _inboxSelected.size;
+        html += '<div class="kc-actions mb-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' +
+          (sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismissSelected">Knowledge only (' + sel + ')</button>' : '') + '</div>';
+      }
+      if (!shown.length) html += '<div class="muted-note">' + (items.length ? 'Everything is triaged. Toggle “show processed” to see filed and dismissed items.' : 'Nothing yet. Connect Plaud or another voice source under Knowledge → Integrations; new recordings land here after the next sync (a newly added connector starts on the next hive restart).') + '</div>';
+      else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
+      panel.innerHTML = html;
+    }
+
+    function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }
+    function inboxToggleSelect(src, id) {
+      const key = src + '/' + id;
+      if (_inboxSelected.has(key)) _inboxSelected.delete(key); else _inboxSelected.add(key);
+      renderInbox();
+    }
+    function inboxSelectAll() {
+      const shown = ((_inboxCache || {}).items || []).filter(it => _inboxShowProcessed || !it.processed);
+      if (_inboxSelected.size === shown.length) _inboxSelected.clear();
+      else _inboxSelected = new Set(shown.map(inboxItemKey));
+      renderInbox();
+    }
+    function inboxFind(src, id) { return ((_inboxCache || {}).items || []).find(it => it.source === src && it.id === id); }
+    function inboxOpenFact(slug, layer) {
+      ocNavigate('knowledge-section');
+      kbReadFact(slug, layer || undefined);
+    }
+
+    async function inboxPostDismiss(items, undo) {
+      const r = await fetch('/api/inbox/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items, undo: !!undo }) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    }
+    async function inboxDismiss(src, id) {
+      try { await inboxPostDismiss([{ source: src, item_id: id }], false); showToast('Kept as a Knowledge fact only', 'success'); await fetchInbox(); }
+      catch (e) { showToast('Dismiss failed: ' + e.message, 'error'); }
+    }
+    async function inboxUndismiss(src, id) {
+      try { await inboxPostDismiss([{ source: src, item_id: id }], true); await fetchInbox(); }
+      catch (e) { showToast('Undo failed: ' + e.message, 'error'); }
+    }
+    async function inboxDismissSelected() {
+      const items = Array.from(_inboxSelected).map(k => { const i = k.indexOf('/'); return { source: k.slice(0, i), item_id: k.slice(i + 1) }; });
+      if (!items.length) return;
+      if (!(await hiveConfirm('Mark ' + items.length + ' item' + (items.length === 1 ? '' : 's') + ' as Knowledge only? They stay searchable as facts; no RFC or dibs idea is created.', 'Knowledge only'))) return;
+      try { await inboxPostDismiss(items, false); _inboxSelected.clear(); await fetchInbox(); }
+      catch (e) { showToast('Dismiss failed: ' + e.message, 'error'); }
+    }
+
+    // Route dialog: destination-specific confirm with a repo picker for RFCs.
+    function inboxOpenRoute(src, id, dest) {
+      const it = inboxFind(src, id);
+      if (!it) return;
+      const settings = (_inboxCache || {}).settings || {};
+      const repos = (_inboxCache || {}).repos || [];
+      const def = settings.spek_repo || repos[0] || '';
+      let body = '<p class="muted-note m-0"><strong>' + escapeHtml(it.title || it.id) + '</strong></p>';
+      if (dest === 'spek_rfc') {
+        const opts = repos.map(r => '<option value="' + escapeHtml(r) + '"' + (r === def ? ' selected' : '') + '>' + escapeHtml(r) + '</option>').join('');
+        body += '<p class="muted-note">A hive-run <code>spektacular voice</code> turns the transcript into a spec, then files one RFC issue plus child issues on the chosen repository. The children are picked up by the hive like any other issue.</p>' +
+          '<label class="muted-note inbox-field">Repository<select class="field-input field-input-block mt-2" id="inbox-route-repo">' + opts + '</select></label>' +
+          (repos.length ? '' : '<p class="kc-error muted-xs">No repositories configured on this hive.</p>');
+      } else {
+        body += '<p class="muted-note">Posts the title, summary and transcript to dibs as a private draft idea' + (settings.dibs_url ? ' at <code>' + escapeHtml(settings.dibs_url) + '</code>' : '') + '. Provenance links back to <code>' + escapeHtml(src) + '://recordings/' + escapeHtml(id) + '</code>.</p>' +
+          (!settings.dibs_url ? '<p class="kc-error muted-xs">dibs is not configured — set the URL under ⚙ Auto-routing and <code>inbox.dibs.token_env</code> in the hive config.</p>' : !settings.dibs_token_set ? '<p class="kc-error muted-xs">dibs token missing — set the environment variable named by <code>inbox.dibs.token_env</code>.</p>' : '');
+      }
+      body += '<div class="hive-dialog-error" role="alert" id="inbox-route-error"></div>' +
+        '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
+        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxConfirmRoute" data-arg0="' + escapeHtml(src) + '" data-arg1="' + escapeHtml(id) + '" data-arg2="' + escapeHtml(dest) + '">' + (dest === 'spek_rfc' ? 'File RFC' : 'Send to dibs') + '</button></div>';
+      kbShowModal(dest === 'spek_rfc' ? '→ RFC (spektacular)' : '→ dibs', body, { width: '520px' });
+    }
+    async function inboxConfirmRoute(src, id, dest) {
+      const repoEl = document.getElementById('inbox-route-repo');
+      const repo = repoEl ? repoEl.value : '';
+      const errEl = document.getElementById('inbox-route-error');
+      try {
+        const r = await fetch('/api/inbox/route', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: src, item_id: id, destination: dest, repo }) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        kbCloseModal();
+        showToast((INBOX_DEST_LABELS[dest] || dest) + ' queued — the pill updates when it finishes.', 'success');
+        await fetchInbox();
+      } catch (e) {
+        if (errEl) errEl.textContent = e.message; else showToast('Route failed: ' + e.message, 'error');
+      }
+    }
+
+    // Settings drawer: default RFC repo, dibs URL, and ordered auto-routing rules.
+    let _inboxDraftRules = [];
+    function inboxRuleRowHtml(rule, i) {
+      const sources = ((_inboxCache || {}).settings || {}).sources || [];
+      const srcOpts = ['<option value=""' + (!rule.source ? ' selected' : '') + '>any source</option>'].concat(sources.map(s => '<option value="' + escapeHtml(s) + '"' + (rule.source === s ? ' selected' : '') + '>' + escapeHtml(s) + '</option>')).join('');
+      const destOpts = [['spek_rfc', '→ RFC'], ['dibs', '→ dibs'], ['dismiss', 'Knowledge only']].map(([v, l]) => '<option value="' + v + '"' + (rule.destination === v ? ' selected' : '') + '>' + l + '</option>').join('');
+      return '<div class="inbox-rule" data-rule-index="' + i + '">' +
+        '<select class="field-input" data-rule-field="source" aria-label="Source">' + srcOpts + '</select>' +
+        '<input class="kb-search-box" data-rule-field="title_prefix" placeholder="title prefix (RFC:)" value="' + escapeHtml(rule.title_prefix || '') + '" aria-label="Title prefix">' +
+        '<input class="kb-search-box" data-rule-field="tag" placeholder="or tag" value="' + escapeHtml(rule.tag || '') + '" aria-label="Tag">' +
+        '<select class="field-input" data-rule-field="destination" aria-label="Destination">' + destOpts + '</select>' +
+        '<input class="kb-search-box" data-rule-field="repo" placeholder="owner/repo (RFC only)" value="' + escapeHtml(rule.repo || '') + '" aria-label="Repository">' +
+        '<button type="button" class="hv-btn btn-icon btn-sm" data-action="inboxRemoveRule" data-arg0="' + i + '" aria-label="Remove rule">✕</button></div>';
+    }
+    // The same form renders in the Inbox page modal and inline under
+    // Settings → Inbox, and both can sit in the DOM at once (the settings
+    // tab stays mounted; the closed modal keeps its last body). Every read
+    // and write therefore goes through the active form root: the modal
+    // while it is open, otherwise the inline section.
+    function inboxSettingsRoot() {
+      const overlay = document.getElementById('kb-modal-overlay');
+      if (overlay && overlay.style.display !== 'none') {
+        const modal = overlay.querySelector('.inbox-settings-form');
+        if (modal) return modal;
+      }
+      return document.querySelector('#inbox-settings-inline .inbox-settings-form');
+    }
+    function inboxSettingsField(root, name) {
+      return root ? root.querySelector('[data-inbox-field="' + name + '"]') : null;
+    }
+    function inboxReadRules(root) {
+      root = root || inboxSettingsRoot();
+      if (!root) return [];
+      return Array.from(root.querySelectorAll('.inbox-settings-rules .inbox-rule')).map(row => {
+        const v = f => { const el = row.querySelector('[data-rule-field="' + f + '"]'); return el ? el.value.trim() : ''; };
+        return { source: v('source'), title_prefix: v('title_prefix'), tag: v('tag'), destination: v('destination'), repo: v('repo') };
+      });
+    }
+    function inboxRenderRules(root) {
+      root = root || inboxSettingsRoot();
+      const host = root ? root.querySelector('.inbox-settings-rules') : null;
+      if (!host) return;
+      host.innerHTML = _inboxDraftRules.length ? _inboxDraftRules.map(inboxRuleRowHtml).join('') : '<p class="muted-xs">No rules — every item waits here for manual triage.</p>';
+    }
+    function inboxSettingsFormHtml(settings, inline) {
+      const buttons = inline
+        ? '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>'
+        : '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
+          '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>';
+      return '<div class="inbox-settings-form" data-inbox-form="' + (inline ? 'inline' : 'modal') + '"><p class="muted-note m-0">New items are checked against these rules in order after every connector sync; the first match routes the item automatically. Items that arrived before a rule existed are never re-routed.</p>' +
+        '<div class="inbox-settings-grid">' +
+        '<label class="muted-note inbox-field">Default RFC repository<input class="kb-search-box mt-2" type="text" data-inbox-field="spek-repo" placeholder="owner/repo" autocomplete="off" value="' + escapeHtml(settings.spek_repo || '') + '"></label>' +
+        '<label class="muted-note inbox-field">dibs URL<input class="kb-search-box mt-2" type="text" data-inbox-field="dibs-url" placeholder="https://dibs.example.org" autocomplete="off" value="' + escapeHtml(settings.dibs_url || '') + '"></label></div>' +
+        '<p class="muted-xs">The dibs token is read from the environment variable named by <code>inbox.dibs.token_env</code>' + (settings.dibs_token_set ? ' (set)' : ' (not set)') + '.</p>' +
+        '<div class="row-between mt-4 mb-2"><div class="section-label m-0">Rules</div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddRule">Add rule</button></div>' +
+        '<div class="inbox-settings-rules"></div>' +
+        '<div class="hive-dialog-error" role="alert" data-inbox-field="error"></div>' + buttons + '</div>';
+    }
+    function inboxOpenSettings() {
+      const settings = (_inboxCache || {}).settings || {};
+      _inboxDraftRules = (settings.rules || []).map(r => Object.assign({}, r));
+      kbShowModal('⚙ Inbox auto-routing', inboxSettingsFormHtml(settings, false), { width: '720px' });
+      inboxRenderRules();
+    }
+    // Settings → Inbox: the same form inline, loaded from /api/inbox/settings.
+    function renderGovInbox() {
+      return '<div class="config-section" data-config-section="Inbox"><h3>Inbox</h3>' +
+        '<p class="text-muted fs-base">Default RFC repository, dibs URL and auto-routing rules for voice recordings. ' + yamlHint('inbox.spek.repo') + ' ' + yamlHint('inbox.dibs.url') + ' ' + yamlHint('inbox.rules') + '</p>' +
+        '<div id="inbox-settings-inline"><p class="muted-xs">Loading…</p></div></div>';
+    }
+    async function loadInboxSettingsInline() {
+      const host = document.getElementById('inbox-settings-inline');
+      if (!host) return;
+      try {
+        const r = await fetch('/api/inbox/settings');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _inboxCache = Object.assign({}, _inboxCache, { settings: data });
+        _inboxDraftRules = (data.rules || []).map(x => Object.assign({}, x));
+        host.innerHTML = inboxSettingsFormHtml(data, true);
+        inboxRenderRules(host.querySelector('.inbox-settings-form'));
+      } catch (e) {
+        host.innerHTML = '<p class="kc-error muted-xs">Inbox settings unavailable: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+    function inboxAddRule() {
+      _inboxDraftRules = inboxReadRules();
+      _inboxDraftRules.push({ source: '', title_prefix: 'RFC:', tag: '', destination: 'spek_rfc', repo: '' });
+      inboxRenderRules();
+    }
+    function inboxRemoveRule(i) {
+      _inboxDraftRules = inboxReadRules();
+      _inboxDraftRules.splice(Number(i), 1);
+      inboxRenderRules();
+    }
+    async function inboxSaveSettings() {
+      const root = inboxSettingsRoot();
+      if (!root) return;
+      const errEl = inboxSettingsField(root, 'error');
+      const rules = inboxReadRules(root).map(r => { const o = {}; for (const k of Object.keys(r)) if (r[k]) o[k] = r[k]; return o; });
+      const payload = { rules, spek_repo: (inboxSettingsField(root, 'spek-repo') || {}).value || '', dibs_url: (inboxSettingsField(root, 'dibs-url') || {}).value || '' };
+      try {
+        const r = await fetch('/api/inbox/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        if (root.dataset.inboxForm !== 'inline') kbCloseModal();
+        showToast('Inbox settings saved', 'success');
+        await fetchInbox();
+      } catch (e) {
+        if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
+      }
+    }
+
+    // Hosted-hive Plaud sign-in completion: Plaud's OAuth client only redirects
+    // to localhost:8199, so the operator pastes either the redirect URL the
+    // browser landed on or the tokens-mcp.json contents; the hive finishes
+    // the login in-pod.
+    async function kbPlaudPasteComplete(name) {
+      const el = document.getElementById('kb-plaud-paste-' + name);
+      const raw = el ? el.value.trim() : '';
+      if (!raw) { showToast('Paste the redirect URL or the tokens JSON first.', 'error'); return; }
+      const body = raw.startsWith('{') ? { tokens: raw } : { redirect_url: raw };
+      try {
+        const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbPlaudAuth[name] = data;
+        kbRenderIntegrationsModal();
+        showToast(data.connected ? 'Plaud connected' + (data.account ? ' as ' + data.account : '') : 'Plaud sign-in submitted; click Check.', data.connected ? 'success' : 'info');
+        fetchInbox();
+      } catch (e) {
+        showToast('Plaud sign-in failed: ' + e.message, 'error');
+      }
+    }
+    function kbPlaudPasteHtml(name) {
+      const n = escapeHtml(name);
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Recordings are triaged in the Inbox, not here.</span></div>';
+      return '<details class="kb-plaud-paste mt-2"><summary class="muted-xs">Hive runs on a server? Finish sign-in by pasting</summary>' +
+        '<p class="muted-xs">Plaud only redirects to <code>localhost:8199</code>. Open the authorization link, approve, then paste the <code>localhost:8199/auth/callback?…</code> URL your browser lands on (within 10 minutes). Alternatively paste the contents of <code>~/.plaud/tokens-mcp.json</code> from a laptop where <code>plaud-mcp</code> is signed in.</p>' +
+        '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="3" placeholder="http://localhost:8199/auth/callback?code=…  or  {&quot;access_token&quot;: …}"></textarea>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
     }
     // ── Vault Management ──
 
@@ -50831,6 +51331,7 @@ function burnAreaChart() {
       ocUpdateSidebarAgents();
       dashboardRenderSection('debug', ['debug-section'], () => renderDebugSection(), data);
       dashboardRenderSection('faq', ['faq-section'], () => renderFAQ(), data);
+      dashboardRenderSection('inbox', ['inbox-section'], () => renderInbox(), data);
       initializeDashboardSectionCards();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
@@ -50839,7 +51340,7 @@ function burnAreaChart() {
         'advisory-section', 'advisory-digest-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
         'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
-        'knowledge-section', 'search-section', 'contributors-section', 'debug-section', 'logs-section',
+        'knowledge-section', 'search-section', 'inbox-section', 'contributors-section', 'debug-section', 'logs-section',
         'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'
       ];
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);
@@ -57961,7 +58462,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Workflows', 'Budget', 'Notifications', 'Channels', 'Health', 'Sensing', 'Logging', 'Features', 'Extensions', 'Knowledge', 'Project Observability', 'Advisory', 'Smart classifier', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Workflows', 'Budget', 'Notifications', 'Channels', 'Health', 'Sensing', 'Logging', 'Features', 'Extensions', 'Knowledge', 'Inbox', 'Project Observability', 'Advisory', 'Smart classifier', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -58024,6 +58525,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Adoption of a maintainer\'s PR', key: 'governor.labels.stage.adoption.maintainer_policy', text: 'adoption maintainer policy adopt ask never maintainer own pr clanker disconnected offline adopt action governor.labels.stage.adoption.maintainer_policy' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval auto_merge.nudge_repeat_after governor.labels.stage.contributor_nudge.ci_failure_cooldown governor.labels.stage.presence_window' },
       { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed governor.labels.stage.adoption.close_superseded close superseded on adopt on merge clanker authored opt-in label governor.labels.stage.adoption.offline_grace offline grace rebase failed twice fixer resolving conflicts governor.labels.stage.adoption.rebase_attempt_timeout rebase attempt timeout' },
+      { tab: 'Inbox', section: 'Inbox', label: 'Inbox routing', key: 'inbox.spek.repo', lazy: true, text: 'inbox voice recordings plaud wispr default rfc repository spek dibs url auto-routing rules inbox.spek.repo inbox.dibs.url inbox.rules' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff update interval rewrite floor changed digest governor.advisory.update_interval_s governor.advisory.digest_min_interval' },
@@ -58068,6 +58570,8 @@ function burnAreaChart() {
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', lazy: true, text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
+      { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Plaud voice notes connector', key: 'knowledge.connectors', lazy: true, text: 'plaud voice notes recordings transcript summary mcp oauth connect npx @plaud-ai/mcp command since_days max_files include_audio tags knowledge.connectors' },
+      { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Wispr Flow dictation connector', key: 'knowledge.connectors', lazy: true, text: 'wispr flow wisprflow dictation voice history flow.sqlite sqlite export path since_days max_items min_words group apps include_raw tags knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path publish to repository knowledge.bead_synthesizer.publish.enabled knowledge.bead_synthesizer.publish.repo knowledge.bead_synthesizer.publish.path knowledge.bead_synthesizer.publish.base_branch knowledge.bead_synthesizer.publish.mode knowledge.bead_synthesizer.publish.cadence knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
       { tab: 'Forge App', section: 'Forge App', label: 'GitHub API quota, PR scans and authorship', key: 'github.api_reserve', lazy: true, text: 'github api quota reserve critical agent reserve floor pr detail cache ttl etag cache size mb entries conditional request 304 graphql batch page size app authored prs bot signed commits forge api url docs installation oauth client token github.api_reserve github.api_critical github.agent_reserve_floor github.etag_cache_max_mb github.etag_cache_max_entries github.pr_detail_ttl_s github.graphql_pr_batch github.graphql_pr_batch_page_size github.app_authored_prs github.app_signed_commits github.forge github.api_url github.docs_installation_id github.oauth_client_id github.token github.key_file' },
     ];
@@ -59119,6 +59623,7 @@ function burnAreaChart() {
         if (tabId === 'Features') loadLinearAgentStatus();
         // The Features tab also hosts the advisor lane settings panel.
         if (tabId === 'Features') loadAdvisorSettings();
+        if (tabId === 'Inbox') loadInboxSettingsInline();
         // The same tab carries the upstream-watch editor and divergence view
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
@@ -59335,6 +59840,7 @@ function burnAreaChart() {
         case 'Features': return renderGovFeatures(d.features || {}, d.auto_merge || {}, d.review || {});
         case 'Extensions': return renderGovExtensions(d.features || {});
         case 'Knowledge': return renderGovKnowledgeSharing();
+        case 'Inbox': return renderGovInbox();
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Smart classifier': return renderGovSmartClassifier(d.classifier || {});
@@ -59360,7 +59866,7 @@ function burnAreaChart() {
     }
 
     // ---- Settings → Knowledge → Connectors (#11075) ----
-    const KB_CONNECTOR_TYPE_ORDER = ['confluence', 'context7', 'document', 'git', 'github-wiki', 'google-drive', 'notion', 'repo-wiki', 'sharepoint'];
+    const KB_CONNECTOR_TYPE_ORDER = ['confluence', 'context7', 'document', 'git', 'github-wiki', 'google-drive', 'notion', 'plaud', 'repo-wiki', 'sharepoint', 'wisprflow'];
     const KC_TYPE_INFO = {
       'confluence': { label: 'Confluence', description: 'Sync Confluence Cloud or Data Center pages into knowledge facts.' },
       'context7': { label: 'Context7', description: 'Sync documentation for default Context7 libraries. The API key is a reference to an environment variable or secret file; the value is never shown.' },
@@ -59369,8 +59875,10 @@ function burnAreaChart() {
       'github-wiki': { label: 'GitHub Wiki', description: 'Clone and index one or more GitHub wiki repositories.' },
       'google-drive': { label: 'Google Drive', description: 'Sync Google Docs, Sheets, markdown, and text files from Drive folders or shared drives.' },
       'notion': { label: 'Notion', description: 'Sync Notion pages and database rows visible to an internal integration.' },
+      'plaud': { label: 'Plaud voice notes', description: 'Sync Plaud Note recordings (Plaud summary + transcript) through the free official Plaud MCP server. Sign-in is Plaud OAuth in your browser; hive never stores the token.' },
       'repo-wiki': { label: 'Repo wiki', description: 'Sync .hive/wiki (or another directory) from one or more GitHub repositories.' },
-      'sharepoint': { label: 'SharePoint / OneDrive', description: 'Sync markdown, text, and HTML files from SharePoint document libraries or OneDrive drives.' }
+      'sharepoint': { label: 'SharePoint / OneDrive', description: 'Sync markdown, text, and HTML files from SharePoint document libraries or OneDrive drives.' },
+      'wisprflow': { label: 'Wispr Flow dictation', description: 'Sync your Wispr Flow dictation history (what you spoke, when, into which app) from the desktop app\'s local flow.sqlite or an export folder. Read-only, no sign-in, $0 beyond your Wispr Flow plan.' }
     };
     const KC_TYPE_ICONS = {
       // Vendor marks: simple-icons (CC0 1.0) paths, 24x24 viewBox, rendered with currentColor.
@@ -59384,6 +59892,8 @@ function burnAreaChart() {
       // Generic glyphs (no vendor): document sheet and open book, drawn in-house.
       'context7': 'M4 4h3v16H4zm5 0h3v16H9zm5.2.6 2.9-.8 3.8 15.5-2.9.8z',
       'document': 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 12h8v1.6H8zm0 3.2h8v1.6H8zm0 3.2h5V20H8z',
+      'plaud': 'M12 2a3.5 3.5 0 0 0-3.5 3.5v6a3.5 3.5 0 0 0 7 0v-6A3.5 3.5 0 0 0 12 2zm-6 9.5h1.8a4.2 4.2 0 0 0 8.4 0H18a6 6 0 0 1-5.1 5.93V20h3v1.8H8.1V20h3v-2.57A6 6 0 0 1 6 11.5z',
+      'wisprflow': 'M3 10h2v4H3zm4-3h2v10H7zm4-5h2v20h-2zm4 5h2v10h-2zm4 3h2v4h-2z',
       'repo-wiki': 'M4 3h7.2c1.1 0 2 .55 2.8 1.3.8-.75 1.7-1.3 2.8-1.3H20v16h-3.2c-1 0-1.95.4-2.8 1.1V22h-4v-1.9c-.85-.7-1.8-1.1-2.8-1.1H4zm2 2v12h1.2c1.3 0 2.5.4 3.6 1.1V6.2C10.4 5.55 9.6 5 8.8 5zm12 0h-1.2c-.8 0-1.6.55-2 1.2v12.1c1.1-.7 2.3-1.1 3.6-1.1H18z'
     };
     function kbIntegrationIcon(type) {
@@ -59399,8 +59909,10 @@ function burnAreaChart() {
       'github-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'master']],
       'google-drive': [['folder_ids', 'Folder IDs', 'folder123, folder456'], ['shared_drive_ids', 'Shared drive IDs', 'drive123'], ['include_mime', 'Include MIME groups', 'docs,md,txt']],
       'notion': [['root_page_ids', 'Root page IDs', '1a2b3c4d5e6f47a8b9c0d1e2f3a4b5c6'], ['database_ids', 'Database IDs', '0f1e2d3c-4b5a-4968-8776-655443322110'], ['include_archived', 'Include archived', 'false'], ['max_pages', 'Max pages', '2000'], ['full_sync_every', 'Full sync every', '10']],
+      'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@latest'], ['since_days', 'Days back on first sync', '30'], ['max_files', 'Max recordings per sync', '200'], ['include_audio', 'Include 24h audio link', 'false'], ['query', 'Name filter (optional)', 'standup'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['home', 'Token store HOME (optional)', '/data/knowledge/connector-state/plaud/home']],
       'repo-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'v5'], ['dir', 'Wiki directory', '.hive/wiki']],
-      'sharepoint': [['drive_ids', 'Drive IDs', 'b!drive-id'], ['site_ids', 'Site IDs', 'contoso.sharepoint.com,site-id,web-id'], ['folder_path', 'Folder path', '/Docs/Sub'], ['include_files', 'Include file extensions', '.md,.txt,.html']]
+      'sharepoint': [['drive_ids', 'Drive IDs', 'b!drive-id'], ['site_ids', 'Site IDs', 'contoso.sharepoint.com,site-id,web-id'], ['folder_path', 'Folder path', '/Docs/Sub'], ['include_files', 'Include file extensions', '.md,.txt,.html']],
+      'wisprflow': [['path', 'flow.sqlite or export folder (empty = app default)', '/Users/me/Library/Application Support/Wispr Flow/flow.sqlite'], ['since_days', 'Days back on first sync', '30'], ['max_items', 'Max dictations per sync', '500'], ['min_words', 'Skip dictations shorter than (words)', '3'], ['group', 'Fact per dictation or day', 'dictation'], ['apps', 'Only these apps (comma-separated, optional)', 'slack, obsidian, vscode'], ['include_raw', 'Include raw ASR text', 'false'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['sqlite3', 'sqlite3 command (optional)', 'sqlite3']]
     };
     let _kcState = { loaded: false, error: '', connectors: [], rows: [], types: [], layers: ['personal', 'project', 'org', 'community'], runtime: false, publish: null };
 
@@ -63148,6 +63660,9 @@ function burnAreaChart() {
           <div class="config-toggle-switch ${g.sandboxEnabled ? 'on' : ''}" id="cfg-agent-sandbox" data-action="toggleConfigSwitch" data-section="general" data-key="sandboxEnabled"></div>
           <span class="config-toggle-label">Run in sandbox ${settingHelpMark('sandbox-isolation', '', 'Run in sandbox', `Opt this agent into the credential-free sandbox runner. Requires the hive-wide sandbox gate in Governor → Security to be enabled.`)}${g.sandboxEffective ? ' ' + statusBadgeHTML('ready', 'sandboxed', '', 'done') : ''}</span>
         </div>
+        <details class="settings-subsection-details"><summary class="settings-subsection-summary">Substrate sandbox overrides</summary>
+        ${substrateSandboxFields('general', g.sandboxSubstrate)}
+        </details>
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.clearOnKick !== false ? 'on' : ''}" id="cfg-clear-on-kick" data-action="toggleConfigSwitch" data-section="general" data-key="clearOnKick"></div>
           <span class="config-toggle-label">Clear on Kick ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Clear on Kick', `Send /clear before each governor kick to reset conversation context. Prevents stale context buildup across runs. On by default for all agents.`)}</span>
@@ -70549,6 +71064,69 @@ function burnAreaChart() {
       markDirty('security', key, n);
     }
 
+    const SUBSTRATE_SANDBOX_FIELDS = [
+      { key: 'endpoint', label: 'Endpoint', kind: 'text', global: 'agent_sandbox.substrate.endpoint', agent: 'agents.<key>.sandbox.substrate.endpoint', help: `Substrate Control API address (host:port or an http(s):// URL). Empty uses api.ate-system.svc:443.` },
+      { key: 'atespace', label: 'Atespace', kind: 'text', global: 'agent_sandbox.substrate.atespace', agent: 'agents.<key>.sandbox.substrate.atespace', help: `Substrate atespace (its tenant namespace, not a Kubernetes namespace) actors are created in. Empty uses hive.` },
+      { key: 'token_env', label: 'Token env', kind: 'text', global: 'agent_sandbox.substrate.token_env', agent: 'agents.<key>.sandbox.substrate.token_env', help: `Environment variable holding a Control API bearer token. Empty reads the token file instead.` },
+      { key: 'token_file', label: 'Token file', kind: 'text', global: 'agent_sandbox.substrate.token_file', agent: 'agents.<key>.sandbox.substrate.token_file', help: `Projected ServiceAccount token file hive authenticates with. Empty uses /var/run/secrets/ate/token.` },
+      { key: 'ca_file', label: 'CA file', kind: 'text', global: 'agent_sandbox.substrate.ca_file', agent: 'agents.<key>.sandbox.substrate.ca_file', help: `PEM bundle the Control API serving certificate chains to. Empty uses the projected CA when present, else the system roots.` },
+      { key: 'insecure_tls', label: 'Insecure TLS', kind: 'bool', global: 'agent_sandbox.substrate.insecure_tls', agent: 'agents.<key>.sandbox.substrate.insecure_tls', help: `Skip Control API and router certificate verification. Dev only.` },
+      { key: 'timeout_s', label: 'Timeout (seconds)', kind: 'int', global: 'agent_sandbox.substrate.timeout_s', agent: 'agents.<key>.sandbox.substrate.timeout_s', help: `Bounds one actor from create to delete. 0 uses the sandbox timeout.` },
+      { key: 'router_url', label: 'Router URL', kind: 'text', global: 'agent_sandbox.substrate.router_url', agent: 'agents.<key>.sandbox.substrate.router_url', help: `atenet-router CONNECT listener hive reaches the actor bridge through. Empty uses the in-cluster default.` },
+      { key: 'router_client_bundle', label: 'Router client bundle', kind: 'text', global: 'agent_sandbox.substrate.router_client_bundle', agent: 'agents.<key>.sandbox.substrate.router_client_bundle', help: `podCertificate bundle the router authenticates hive with. Empty uses the default path.` },
+      { key: 'router_ca_file', label: 'Router CA file', kind: 'text', global: 'agent_sandbox.substrate.router_ca_file', agent: 'agents.<key>.sandbox.substrate.router_ca_file', help: `CA the router serving certificate chains to. Empty uses the default path.` },
+      { key: 'bridge_port', label: 'Bridge port', kind: 'int', global: 'agent_sandbox.substrate.bridge_port', agent: 'agents.<key>.sandbox.substrate.bridge_port', help: `Port the in-actor bridge listens on. 0 uses 8477.` },
+      { key: 'image', label: 'Image', kind: 'text', global: 'agent_sandbox.substrate.image', agent: 'agents.<key>.sandbox.substrate.image', help: `Digest-pinned sandbox image (…@sha256:…) actors run. Substrate refuses tag-only references.` },
+      { key: 'bridge_command', label: 'Bridge command', kind: 'lines', global: 'agent_sandbox.substrate.bridge_command[]', agent: 'agents.<key>.sandbox.substrate.bridge_command[]', help: `Actor entrypoint that serves the bridge. One argument per line; empty uses the crux substrate-bridge subcommand.` },
+      { key: 'cpu_millicores', label: 'CPU (millicores)', kind: 'int', global: 'agent_sandbox.substrate.cpu_millicores', agent: 'agents.<key>.sandbox.substrate.cpu_millicores', help: `ActorTemplate CPU limit. 0 uses 2000.` },
+      { key: 'memory_bytes', label: 'Memory (bytes)', kind: 'int', global: 'agent_sandbox.substrate.memory_bytes', agent: 'agents.<key>.sandbox.substrate.memory_bytes', help: `ActorTemplate memory limit. 0 uses 4 GiB.` },
+      { key: 'worker_selector', label: 'Worker selector', kind: 'map', global: 'agent_sandbox.substrate.worker_selector.<key>', agent: 'agents.<key>.sandbox.substrate.worker_selector.<key>', help: `Pins actors to WorkerPools carrying these labels, one key=value per line. Empty means any pool.` },
+      { key: 'snapshot_on_idle', label: 'Snapshot on idle', kind: 'bool', global: 'agent_sandbox.substrate.snapshot_on_idle', agent: 'agents.<key>.sandbox.substrate.snapshot_on_idle', help: `Suspend the actor with a snapshot after the kick instead of deleting it. Only the latest snapshot per agent is kept while hive runs (the previous one is deleted on the next suspend); each costs object storage.` },
+      { key: 'allow_hosts', label: 'Allow hosts', kind: 'lines', global: 'agent_sandbox.substrate.allow_hosts[]', agent: 'agents.<key>.sandbox.substrate.allow_hosts[]', help: `Additional egress hosts (host or host:port, leading *. wildcard allowed), one per line, on top of the GitHub hosts.` },
+      { key: 'policy_profile', label: 'Policy profile', kind: 'text', global: 'agent_sandbox.substrate.policy_profile', agent: 'agents.<key>.sandbox.substrate.policy_profile', help: `Operator-side policy profile recorded on the template.` },
+    ];
+
+    /* substrateSandboxFields renders the Substrate runtime block for either the
+       global agent_sandbox.substrate (section 'security') or one agent's
+       sandbox.substrate override (section 'general'). */
+    function substrateSandboxFields(section, sub) {
+      const dirtyKey = section === 'security' ? 'agentSandboxSubstrate' : 'sandboxSubstrate';
+      sub = sub || {};
+      return SUBSTRATE_SANDBOX_FIELDS.map(f => {
+        const yaml = section === 'security' ? f.global : f.agent;
+        const label = 'Substrate ' + f.label.toLowerCase();
+        const head = '<div class="config-field"><label>' + esc(label) + ' ' + yamlHint(yaml) + ' ' + settingHelpMark('settings', 'security-and-access', label, esc(f.help)) + '</label>';
+        const attrs = 'data-arg0="' + section + '" data-arg1="' + dirtyKey + '" data-arg2="' + f.key + '" data-arg3="' + f.kind + '"';
+        const v = sub[f.key];
+        if (f.kind === 'bool') {
+          return head + '<input type="checkbox"' + (v ? ' checked' : '') + ' data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,c"></div>';
+        }
+        if (f.kind === 'int') {
+          return head + '<input type="number" min="0" value="' + Number(v || 0) + '" data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,v"></div>';
+        }
+        if (f.kind === 'lines' || f.kind === 'map') {
+          const text = f.kind === 'map'
+            ? Object.keys(v || {}).sort().map(k => k + '=' + v[k]).join('\n')
+            : (v || []).join('\n');
+          return head + '<textarea rows="3" class="mono" data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,v">' + esc(text) + '</textarea></div>';
+        }
+        return head + '<input type="text" value="' + esc(v || '') + '" data-change-action="markSubstrateSandbox" ' + attrs + ' data-arg-types="s,s,s,s,v"></div>';
+      }).join('\n');
+    }
+
+    function markSubstrateSandbox(section, dirtyKey, field, kind, value) {
+      const pending = _configState.dirty[section] && _configState.dirty[section][dirtyKey];
+      const base = pending || ((_configState.data && _configState.data[section]) || {})[dirtyKey] || {};
+      const next = Object.assign({}, base);
+      if (kind === 'bool') next[field] = !!value;
+      else if (kind === 'int') next[field] = Math.max(0, Math.floor(Number(value) || 0));
+      else if (kind === 'lines') next[field] = String(value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      else if (kind === 'map') next[field] = parseSettingsMap(value);
+      else next[field] = String(value || '').trim();
+      if (_configState.data && _configState.data[section]) _configState.data[section][dirtyKey] = next;
+      markDirty(section, dirtyKey, next);
+    }
+
     function parseSecurityList(value) {
       return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
     }
@@ -70971,6 +71549,9 @@ function burnAreaChart() {
         <div class="config-field"><label>Job TTL (seconds) ${yamlHint('agent_sandbox.job.ttl_seconds')} ${settingHelpMark('settings', 'security-and-access', 'Job TTL (seconds)', `Seconds a finished sandbox Job is kept. 0 uses the default.`)}</label><input type="number" min="0" value="${Number(sec.agentSandboxJobTtlSeconds || 0)}" data-change-action="markSecurityNumber" data-arg0="agentSandboxJobTtlSeconds" data-arg-types="s,v"></div>
         <div class="config-field"><label>Job workspace claim ${yamlHint('agent_sandbox.job.workspace_claim')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim', `PVC holding the workspace for the job runtime. Required for runtime job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaim || '')}" placeholder="PersistentVolumeClaim name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaim" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job workspace claim mount ${yamlHint('agent_sandbox.job.workspace_claim_mount')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim mount', `Where the workspace claim is mounted in the Job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaimMount || '')}" placeholder="mount path" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaimMount" data-arg-types="s,s,v"></div>
+        <details class="settings-subsection-details"><summary class="settings-subsection-summary">Substrate sandbox</summary>
+        ${substrateSandboxFields('security', sec.agentSandboxSubstrate)}
+        </details>
         </details>`;
 
       /* Backup encryption key: painted asynchronously from presence-only
@@ -76321,7 +76902,7 @@ function burnAreaChart() {
         return;
       }
 
-      // Requirement #3: verify the App can access the repo's org.
+      // Verify the App installation covers this repository.
       setStatus('Checking GitHub App access…', 'var(--muted)');
       try {
         const res = await fetch('/api/config/governor/repos/check-access', {
@@ -76330,14 +76911,11 @@ function burnAreaChart() {
         });
         const d = await res.json().catch(() => ({}));
         if (res.status === 409 && d && d.needsInstall) {
-          // App not installed on the new org: surface the correct per-forge
-          // install URL wired to the existing pending-install/recheck plumbing.
-          // Clicking Install flags the heartbeat (handleGitHubAppInstallClicked)
-          // exactly like the App-required banner; Re-check re-probes and, on
-          // success, completes the add.
+          // Guide the operator to install the App or update repository access,
+          // then re-check before adding the repo.
           const installBtn = (d.installUrl)
-            ? '<a href="' + esc(d.installUrl) + '" target="_blank" rel="noopener" data-action="markGitHubAppInstallClicked" style="color:var(--accent);font-weight:600">Install/authorize the App for ' + esc(d.org || '') + ' ↗</a>'
-            : '<span class="text-brand">This hive\'s GitHub Enterprise App slug is not configured, so an install link cannot be built — ask your operator to install the Hive App for ' + esc(d.org || '') + '.</span>';
+            ? '<a href="' + esc(d.installUrl) + '" target="_blank" rel="noopener" data-action="markGitHubAppInstallClicked" style="color:var(--accent);font-weight:600">Manage App access for ' + esc(d.org || '') + ' ↗</a>'
+            : '<span class="text-brand">An installation link cannot be built — ask your operator to manage the Hive App access for ' + esc(d.org || '') + '.</span>';
           setStatus('⚠ ' + esc(d.error || ('The App needs access to ' + val)) + '<br>' + installBtn + ' &nbsp;·&nbsp; <a href="#" data-action="recheckRepoAccessThenAdd" data-arg-types="e" style="color:var(--accent);font-weight:600">Re-check &amp; add</a>', 'var(--amber)');
           return;
         }
@@ -76346,11 +76924,7 @@ function burnAreaChart() {
           return;
         }
       } catch (e) {
-        // Network error probing access is non-fatal: the server re-validates the
-        // single-host rule and the default-repo rule on save, so let the add
-        // proceed rather than hard-block on a transient dashboard hiccup.
-        _appendRepoAccepted(val);
-        setStatus('Added (App-access check could not be reached; the server will re-validate on save).', 'var(--muted)');
+        setStatus('✕ Could not check GitHub App access. Please retry.', 'var(--red)');
         return;
       }
       _appendRepoAccepted(val);

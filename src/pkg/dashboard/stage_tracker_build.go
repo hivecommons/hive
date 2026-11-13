@@ -944,13 +944,16 @@ func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body
 // came from (stageTrackerSource*Name; "" with a nil body when the build
 // failed or ctx ended while waiting on an in-flight build).
 func (s *Server) stageTrackerPayloadSource(ctx context.Context, status *StatusPayload, now time.Time) (body []byte, etag string, generatedAt time.Time, source string) {
-	return s.stageTrackerPayloadFrom(ctx, status, now, true)
+	return s.stageTrackerPayloadFrom(ctx, status, now, true, false)
 }
 
 // stageTrackerPayloadFrom is stageTrackerPayloadSource; markServed false
 // reads the tracker without counting as a client that asked for it, so an
-// in-process reader (the hub activity digest) adds no SSE nudges.
-func (s *Server) stageTrackerPayloadFrom(ctx context.Context, status *StatusPayload, now time.Time, markServed bool) (body []byte, etag string, generatedAt time.Time, source string) {
+// in-process reader (the hub activity digest) adds no SSE nudges. preferStale
+// serves a stale body at once when no build is in flight and rebuilds in the
+// background, so a latency-bound reader is never the synchronous builder
+// (hivecommons/hive#17776); with no body at all it still builds in place.
+func (s *Server) stageTrackerPayloadFrom(ctx context.Context, status *StatusPayload, now time.Time, markServed, preferStale bool) (body []byte, etag string, generatedAt time.Time, source string) {
 	ttl := s.stageTrackerCacheTTL()
 	s.stageTrackerCacheMu.Lock()
 	if markServed {
@@ -984,6 +987,20 @@ func (s *Server) stageTrackerPayloadFrom(ctx context.Context, status *StatusPayl
 	gen := s.stageTrackerGen
 	s.stageTrackerCacheMu.Unlock()
 
+	if preferStale && len(c.body) > 0 {
+		go s.finishStageTrackerBuild(inflight, status, now, ttl, gen)
+		return c.body, c.etag, c.generatedAt, stageTrackerSourceStaleName
+	}
+	built, ok := s.finishStageTrackerBuild(inflight, status, now, ttl, gen)
+	if !ok {
+		return nil, "", now, ""
+	}
+	return built.body, built.etag, built.generatedAt, stageTrackerSourceFreshName
+}
+
+// finishStageTrackerBuild runs the claimed in-flight build, stores the
+// result and releases waiters.
+func (s *Server) finishStageTrackerBuild(inflight *stageTrackerBuild, status *StatusPayload, now time.Time, ttl time.Duration, gen uint64) (stageTrackerCache, bool) {
 	built, ok := s.encodeStageTracker(status, now, ttl)
 
 	s.stageTrackerCacheMu.Lock()
@@ -996,10 +1013,7 @@ func (s *Server) stageTrackerPayloadFrom(ctx context.Context, status *StatusPayl
 	s.stageTrackerBuild = nil
 	close(inflight.done)
 	s.stageTrackerCacheMu.Unlock()
-	if !ok {
-		return nil, "", now, ""
-	}
-	return built.body, built.etag, built.generatedAt, stageTrackerSourceFreshName
+	return built, ok
 }
 
 // encodeStageTracker builds and encodes the tracker for status. It holds no

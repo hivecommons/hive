@@ -1,0 +1,72 @@
+# Lets the spoke's Substrate preflight (sandbox.runtime: substrate, #17698;
+# crux/sandbox/substrate_preflight_cluster.go) read the cluster facts behind
+# a failing kick: the operator's CRDs and workloads, WorkerPools and
+# SandboxConfigs, RuntimeClasses, node kernels/KVM, and whether the
+# certificates.k8s.io APIs behind the PodCertificateRequest and
+# ClusterTrustBundle feature gates are served. Read-only, get/list only;
+# without it the preflight emits one warning and skips these checks.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hive-substrate-preflight
+  labels:
+    app.kubernetes.io/name: hive
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    resourceNames: ["workerpools.ate.dev", "sandboxconfigs.ate.dev"]
+    verbs: ["get"]
+  - apiGroups: ["ate.dev"]
+    resources: ["workerpools", "sandboxconfigs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hive-substrate-preflight
+  labels:
+    app.kubernetes.io/name: hive
+subjects:
+  - kind: ServiceAccount
+    name: hive
+    namespace: hive
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hive-substrate-preflight
+---
+# The operator namespace (ate-system by default; the preflight derives it
+# from sandbox.substrate.endpoint's api.<ns>.svc host).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-substrate-preflight
+  namespace: ate-system
+  labels:
+    app.kubernetes.io/name: hive
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-substrate-preflight
+  namespace: ate-system
+  labels:
+    app.kubernetes.io/name: hive
+subjects:
+  - kind: ServiceAccount
+    name: hive
+    namespace: hive
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-substrate-preflight

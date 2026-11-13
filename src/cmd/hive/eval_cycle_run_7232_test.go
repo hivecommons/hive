@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,10 +26,12 @@ import (
 // touches on a quiet org: every list endpoint is empty, every object endpoint
 // is a minimal document, and nothing ever errors. It records the paths hit so
 // a test can assert the cycle actually enumerated rather than bailed early.
-func newEvalCycleAPI(t *testing.T, hits *[]string) *httptest.Server {
+func newEvalCycleAPI(t *testing.T, mu *sync.Mutex, hits *[]string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		*hits = append(*hits, r.Method+" "+r.URL.Path)
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/rate_limit":
@@ -63,6 +66,7 @@ type evalCycleFixture struct {
 	dashSrv  *dashboard.Server
 	last     *atomic.Pointer[github.ActionableResult]
 	hits     []string
+	hitsMu   sync.Mutex
 
 	beadStores     map[string]*beads.Store
 	advisoryIssues map[string]int
@@ -70,8 +74,11 @@ type evalCycleFixture struct {
 
 func newEvalCycleFixture(t *testing.T) *evalCycleFixture {
 	t.Helper()
+	// A prior rate-limit test can leave process-wide request pacing enabled.
+	github.ResetRateLimitPacingForTest()
+	t.Cleanup(github.ResetRateLimitPacingForTest)
 	f := &evalCycleFixture{last: new(atomic.Pointer[github.ActionableResult])}
-	api := newEvalCycleAPI(t, &f.hits)
+	api := newEvalCycleAPI(t, &f.hitsMu, &f.hits)
 	logger := restoreTestLogger()
 
 	f.cfg = &config.Config{}
@@ -92,7 +99,8 @@ func newEvalCycleFixture(t *testing.T) *evalCycleFixture {
 
 func (f *evalCycleFixture) run(t *testing.T) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// Bound a stalled in-process cycle without imposing a tight CI deadline.
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	runEvalCycle(ctx, f.cfg, f.gh, f.gov, f.sched, f.agentMgr, f.dashSrv,
 		nil, // notifier
@@ -129,7 +137,10 @@ func TestRunEvalCycle_QuietOrgEnumeratesAndPublishesStatus(t *testing.T) {
 
 	f.run(t)
 
-	if len(f.hits) == 0 {
+	f.hitsMu.Lock()
+	hitCount := len(f.hits)
+	f.hitsMu.Unlock()
+	if hitCount == 0 {
 		t.Fatal("runEvalCycle made no GitHub calls: it bailed before enumeration")
 	}
 	if got := f.last.Load(); got == nil {
@@ -177,14 +188,17 @@ func TestRunEvalCycle_PostsAdvisoryDigestAndHealsAppAuthFinding(t *testing.T) {
 
 	f.run(t)
 
+	f.hitsMu.Lock()
+	hits := append([]string(nil), f.hits...)
+	f.hitsMu.Unlock()
 	var posted bool
-	for _, h := range f.hits {
+	for _, h := range hits {
 		if h == "POST /repos/testorg/widget/issues/4/comments" {
 			posted = true
 		}
 	}
 	if !posted {
-		t.Fatalf("digest was never posted to the pinned issue; hits=%v", f.hits)
+		t.Fatalf("digest was never posted to the pinned issue; hits=%v", hits)
 	}
 	healed, err := store.Get(finding.ID)
 	if err != nil {

@@ -145,7 +145,7 @@ func TestOpenShellRunSuccess(t *testing.T) {
 	if c.workspace != OpenShellDefaultWorkspace {
 		t.Errorf("workspace = %q", c.workspace)
 	}
-	if c.name != "hive-kick-deps-1700000000" {
+	if c.name != "hk-deps-s44we8" {
 		t.Errorf("name = %q", c.name)
 	}
 	if c.spec.Template.Image != "registry.example/dev:sha256-abc" {
@@ -186,12 +186,17 @@ func TestOpenShellRunDriverConfigMountsWorkspaceClaim(t *testing.T) {
 		t.Fatalf("driver config = %v", dc)
 	}
 	vols := k8s["volumes"].([]any)
-	pvc := vols[0].(map[string]any)["persistent_volume_claim"].(map[string]any)
+	vol := vols[0].(map[string]any)
+	// The gateway rejects a caller volume named "workspace" (reserved).
+	if vol["name"] != openshellWorkspaceVolume || vol["name"] == "workspace" {
+		t.Errorf("volume name = %v", vol["name"])
+	}
+	pvc := vol["persistent_volume_claim"].(map[string]any)
 	if pvc["claim_name"] != "hive-data" {
 		t.Errorf("claim = %v", pvc)
 	}
 	mount := k8s["containers"].(map[string]any)["agent"].(map[string]any)["volume_mounts"].([]any)[0].(map[string]any)
-	if mount["sub_path"] != "agents/sandbox/deps" || mount["mount_path"] != OpenShellWorkspaceMount {
+	if mount["name"] != vol["name"] || mount["sub_path"] != "agents/sandbox/deps" || mount["mount_path"] != OpenShellWorkspaceMount {
 		t.Errorf("mount = %v", mount)
 	}
 	pod := k8s["pod"].(map[string]any)
@@ -362,15 +367,27 @@ func TestOpenShellAddress(t *testing.T) {
 
 func TestOpenShellSandboxName(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	if got := openshellSandboxName("Deps Agent-sandbox", now); got != "hive-kick-deps-agent-1700000000" {
+	if got := openshellSandboxName("Deps Agent-sandbox", now); got != "hk-deps-aftv-s44we8" {
 		t.Errorf("name = %q", got)
 	}
 	long := openshellSandboxName(strings.Repeat("a", 100), now)
-	if len(long) > openshellNameMax || !strings.HasSuffix(long, "-1700000000") {
+	// The gateway rejects routable names over 19 characters
+	// (MAX_ROUTABLE_NAME_LEN); the suffix is unix seconds in base36.
+	if len(long) != openshellNameMax || !strings.HasSuffix(long, "-s44we8") {
 		t.Errorf("long name = %q (%d)", long, len(long))
 	}
-	if got := openshellSandboxName("---", now); got != "hive-kick-agent-1700000000" {
+	if got := openshellSandboxName("---", now); got != "hk-agent-s44we8" {
 		t.Errorf("empty base = %q", got)
+	}
+	// The launch name's hive-/-sandbox wrapping is dropped, and two agents
+	// that share a long prefix get distinct, stable names.
+	if got := openshellSandboxName(LaunchName("deps"), now); got != "hk-deps-s44we8" {
+		t.Errorf("launch name = %q", got)
+	}
+	one := openshellSandboxName(LaunchName("reviewer-one"), now)
+	two := openshellSandboxName(LaunchName("reviewer-two"), now)
+	if one == two || len(one) != openshellNameMax || one != openshellSandboxName(LaunchName("reviewer-one"), now) {
+		t.Errorf("truncated names = %q %q", one, two)
 	}
 }
 

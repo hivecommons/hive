@@ -165,6 +165,12 @@ func (c *Engine) clearUnauthorized(ctx context.Context, displayRepo, owner, repo
 	if !had && !labelled {
 		return
 	}
+	if labelled && hgithub.IntegrationReadOnly(ctx) {
+		// The read-only lane probe refuses the DELETE; a write-capable lane
+		// clears the label, so retrying here would only warn every cycle.
+		c.debug("lane unauthorized: label removal left to a write-capable lane", "repo", displayRepo, "pr", number, "label", unauthorizedLabel, "step", step)
+		return
+	}
 	if labelled {
 		if _, err := c.gh.Issues.RemoveLabelForIssue(hgithub.WithRESTCaller(ctx, unauthorizedRESTCaller), owner, repo, number, url.PathEscape(unauthorizedLabel)); err != nil && !isGitHubStatus(err, http.StatusNotFound) {
 			c.warn("lane unauthorized: could not remove label", "repo", displayRepo, "pr", number, "label", unauthorizedLabel, "error", err)

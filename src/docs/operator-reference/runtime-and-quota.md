@@ -198,6 +198,57 @@ loops, so the proxy enforces two safeguards:
   once. Bodies are stored gzip-compressed, so the cap is several times its
   size in raw JSON.
 
+### Hub bearer validation and exhausted user tokens
+
+The hub validates a `Bearer` token it has not seen before with one
+`GET /user` **using that token**, then caches the login for 5 minutes. A token
+GitHub rejects (401, or 403/429 with `X-RateLimit-Remaining: 0`) is now also
+remembered: for 60 s by default, or until the token's `X-RateLimit-Reset`
+(capped at 15 minutes) when it is rate-limited. Without that negative entry a
+client retrying with an exhausted token made the hub re-probe GitHub on every
+request, charging the token owner's own core bucket while it was already at
+zero. The probe is recorded in `/api/gh-rate-limits` under caller
+`agent:hub-bearer-validate`, so a flood of 401s from one dead token is visible
+on the hub admin page; being a pass-through credential it never updates the
+hub's own core-bucket snapshot.
+
+### Keep personal tokens out of cluster secrets
+
+GitHub's 5,000 req/h core limit is **per user**, shared by every PAT and
+OAuth token (`gho_…`, `ghp_…`, `github_pat_…`) that user owns, from every
+host. A `gh auth token` pasted into a cluster secret therefore shares its
+owner's bucket with their laptop `gh`, the hub's bearer validation of that
+user, and any other service holding a copy. The hub itself authenticates as
+the GitHub App (`HIVE_HUB_GITHUB_APP_ID` / `HIVE_HUB_GITHUB_INSTALLATION_ID` /
+`HIVE_HUB_GITHUB_APP_KEY_FILE`, see [env-vars.md](../env-vars.md)) and uses
+`HIVE_HUB_GITHUB_TOKEN` only as a fallback, logging a startup `WARN` naming the
+identity it ended up with. Audit the rest of the fleet the same way:
+
+1. **Find copies.** For every cluster context, compare the first 8 characters
+   of each GitHub-looking secret value and `/data/gh-user-token` file against
+   the owner's token (`kubectl get secret -A -o json`, decode, never print the
+   full value). Known holders in a hive deployment are the Actions Runner
+   Controller (`gha-runner-scale-set`) `githubConfigSecret`, its generated
+   `*-listener-config` secret, and any sidecar that scrapes GitHub (dibs).
+2. **Move ARC to App auth.** The runner scale-set listener long-polls the
+   Actions broker and acknowledges every message; with a PAT those calls are
+   charged to the PAT owner (~3,000 req/h at 350 ephemeral runners/h). Grant
+   the GitHub App repository **Administration: read & write** (or organization
+   **Self-hosted runners: read & write** for an org-level runner group),
+   then replace the `githubConfigSecret` keys `github_token` with
+   `github_app_id`, `github_app_installation_id` and
+   `github_app_private_key` (the same PEM mounted on the hub as
+   `hive-hub-github-app-key`), and delete the listener pod so the controller
+   regenerates its `*-listener-config` from the new secret. App traffic lands
+   in the installation's own 15,000 req/h bucket.
+3. **Remove the PAT from the hub.** With the three App variables set, unset
+   `HIVE_HUB_GITHUB_TOKEN` on `deploy/hive-hub`; the startup log then reads
+   `hub GitHub API identity selected mode=app` instead of the `WARN`, and
+   `GET /api/gh-rate-limits` reports the App installation's `core.limit`.
+4. **Rotate.** Once no cluster holds it, revoke the leaked user token
+   (`gh auth refresh` mints a new `gho_`), so stale copies fail closed rather
+   than silently sharing the bucket again.
+
 The proxy returns JSON shaped for the GitHub CLI. For the agent's own hourly
 cap:
 

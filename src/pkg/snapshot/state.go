@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/hivecommons/hive/crux/watchdog"
@@ -183,11 +184,26 @@ func SaveState(path string, state *PersistedState, logger *slog.Logger) error {
 		return fmt.Errorf("marshaling state: %w", err)
 	}
 
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	// A unique temp name per call: concurrent savers sharing path+".tmp"
+	// would rename each other's file away and fail with ENOENT (#17726).
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return fmt.Errorf("writing temp state file: %w", err)
 	}
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, 0o644)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("writing temp state file: %w", werr)
+	}
 	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("renaming state file: %w", err)
 	}
 

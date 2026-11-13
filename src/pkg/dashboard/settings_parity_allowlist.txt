@@ -527,6 +527,12 @@ review.perspective_models.<key>.backend # TODO #13243
 review.perspective_models.<key>.model # TODO #13243
 review.perspective_prompts.<key> # TODO #11854
 review.perspectives[] # TODO #11854
+review.perspectives_source.owner # TODO #17975
+review.perspectives_source.path # TODO #17975
+review.perspectives_source.ref # TODO #17975
+review.perspectives_source.repo # TODO #17975
+review.perspectives_source.type # TODO #17975
+review.perspectives_source.url # TODO #17975
 review.recommendations.labels[] # TODO #11854
 review.recommendations.repos[] # TODO #11854
 review.reviewer_agents[] # TODO #11854
@@ -750,3 +756,9 @@ project.workflow_bindings[].name # set through the per-repo workflow select on S
 project.workflow_bindings[].repo # see project.workflow_bindings[].name
 project.workflow_bindings[].version # see project.workflow_bindings[].name
 workflow.label_gc # operator safety knob for model-label garbage collection on rebind; yaml-only, no Settings control planned (RFC #17620)
+inbox.sources[] # which voice connector types feed the Inbox; defaults to every configured plaud/wisprflow connector, yaml-only (Inbox RFC)
+inbox.rules[].source # auto-routing rules are edited as whole rows in Inbox → Auto-routing via POST /api/inbox/settings, not leaf-path controls (Inbox RFC)
+inbox.rules[].title_prefix # see inbox.rules[].source
+inbox.rules[].tag # see inbox.rules[].source
+inbox.rules[].destination # see inbox.rules[].source
+inbox.rules[].repo # see inbox.rules[].source

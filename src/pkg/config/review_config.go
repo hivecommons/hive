@@ -167,6 +167,20 @@ type ReviewConfig struct {
 	// rather than left to infer them from the tree; a hive can only get that
 	// by writing it down. An entry that is blank means "use the built-in".
 	PerspectivePrompts map[string]string `yaml:"perspective_prompts,omitempty" json:"perspective_prompts,omitempty"`
+	// PerspectivesSource live-links the perspective names and focus text to a
+	// kind: ReviewPerspectives file in a GitHub repo (hivecommons/hive#17975),
+	// so maintainers can change the set through ordinary PRs. When it is set
+	// and resolved it wins over Perspectives/PerspectivePrompts, which remain
+	// the fallback. A partially filled source (no owner, repo or path) is
+	// treated as unset, matching DefinitionSourceConfig.IsSet. Only names and
+	// focus are sourced: combined_perspectives, plan_match and
+	// max_perspectives_per_pr stay operator-owned.
+	PerspectivesSource *DefinitionSourceConfig `yaml:"perspectives_source,omitempty" json:"perspectives_source,omitempty"`
+	// LinkedPerspectives is the set most recently resolved from
+	// PerspectivesSource. It is runtime-only and never persisted, so a fetched
+	// document can never be written back into the overlay. Read the effective
+	// set through EffectivePerspectives, never this field directly.
+	LinkedPerspectives *LinkedPerspectives `yaml:"-" json:"-"`
 	// PerspectiveModels pins the backend/model one perspective's swarm review
 	// runs with, keyed by perspective name. An entry replaces the reviewer
 	// agent's review_models pool for that perspective only; the agent's
@@ -396,6 +410,30 @@ type ReviewConfig struct {
 	// Reviewers configures the reviewer agents themselves; see
 	// ReviewersConfig and review.reviewers.autoscale (hivecommons/hive#14685).
 	Reviewers ReviewersConfig `yaml:"reviewers,omitempty" json:"reviewers,omitzero"`
+}
+
+// LinkedPerspectives is a review perspective set resolved from
+// ReviewConfig.PerspectivesSource. It is already validated by the resolver;
+// pkg/config deliberately does not import pkg/review to re-check it.
+type LinkedPerspectives struct {
+	Names []string
+	Focus map[string]string
+	// Source is the provenance shown to operators, e.g. owner/repo/path@ref.
+	Source string
+	// Warning carries the last resolve failure while an older, still-valid set
+	// stays in effect. Empty when the latest document was applied.
+	Warning string
+}
+
+// EffectivePerspectives returns the perspective names and focus text every
+// consumer should use: the linked set when PerspectivesSource is set and has
+// resolved, otherwise the inline Perspectives and PerspectivePrompts. With no
+// source configured the result is exactly the inline values, unchanged.
+func (r ReviewConfig) EffectivePerspectives() (names []string, focus map[string]string) {
+	if r.PerspectivesSource.IsSet() && r.LinkedPerspectives != nil {
+		return r.LinkedPerspectives.Names, r.LinkedPerspectives.Focus
+	}
+	return r.Perspectives, r.PerspectivePrompts
 }
 
 // ContributorPRsConfig is the owner-only gate for contributor PR maintenance.

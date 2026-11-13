@@ -435,6 +435,8 @@ type AgentSandboxConfig struct {
 	Job          *SandboxJobConfig `yaml:"job,omitempty" json:"job,omitempty"`
 	// OpenShell holds the settings for sandbox.runtime: openshell (ADR-0026).
 	OpenShell *SandboxOpenShellConfig `yaml:"openshell,omitempty" json:"openshell,omitempty"`
+	// Substrate holds the settings for sandbox.runtime: substrate (ADR-0026 phase 2).
+	Substrate *SandboxSubstrateConfig `yaml:"substrate,omitempty" json:"substrate,omitempty"`
 	// Publish gates what a sandboxed run may publish; see SandboxPublishConfig.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`
 }
@@ -476,6 +478,9 @@ type AgentSandboxOverride struct {
 	// OpenShell, when set, overrides the global openshell block field by
 	// field for this agent; see AgentConfig.SandboxOpenShell.
 	OpenShell *SandboxOpenShellConfig `yaml:"openshell,omitempty" json:"openshell,omitempty"`
+	// Substrate, when set, overrides the global substrate block field by
+	// field for this agent; see AgentConfig.SandboxSubstrate.
+	Substrate *SandboxSubstrateConfig `yaml:"substrate,omitempty" json:"substrate,omitempty"`
 	// Publish, when set, replaces the global publish preflight for this
 	// agent; an empty verify list here turns the preflight off for it.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`

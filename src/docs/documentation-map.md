@@ -174,6 +174,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Portable AgentDefinition format](../AGENT-DEFINITION.md) — standalone YAML schema for importing/exporting agent definitions.
 - [How Hive injects knowledge and memory into agents](agent-knowledge-and-memory.md) — the three context layers (Hive knowledge primer, CLI conversation, CLI persistent memory), the kick-primer path and its scoping/caps, why repo `AGENTS.md` is injected rather than read natively, which per-agent home directories are fleet-shared, and what survives a kick, `/clear`, pod restart or a new agent.
 - [Knowledge connectors](knowledge-connectors.md) — **Owner configuration:** connect, validate, and sync external document/wiki sources; includes scope and API reference.
+- [Inbox and voice sources](inbox-voice-sources.md) — triage Plaud/Wispr Flow recordings into spektacular RFCs, dibs ideas, or knowledge only; hosted-hive Plaud sign-in.
 - [Knowledge curator](knowledge-curator.md) — configure fact extraction, sources, vaults, document imports, code maps, and retention.
 - [Knowledge confidence scoring](knowledge-confidence.md) — interpret confidence badges and score explanations.
 - [Knowledge lifecycle states](knowledge-lifecycle.md) — approve, deprecate, or supersede facts and keep stale knowledge out of prompts.

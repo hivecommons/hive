@@ -529,7 +529,7 @@
         return;
       }
 
-      // Requirement #3: verify the App can access the repo's org.
+      // Verify the App installation covers this repository.
       setStatus('Checking GitHub App access…', 'var(--muted)');
       try {
         const res = await fetch('/api/config/governor/repos/check-access', {
@@ -538,14 +538,11 @@
         });
         const d = await res.json().catch(() => ({}));
         if (res.status === 409 && d && d.needsInstall) {
-          // App not installed on the new org: surface the correct per-forge
-          // install URL wired to the existing pending-install/recheck plumbing.
-          // Clicking Install flags the heartbeat (handleGitHubAppInstallClicked)
-          // exactly like the App-required banner; Re-check re-probes and, on
-          // success, completes the add.
+          // Guide the operator to install the App or update repository access,
+          // then re-check before adding the repo.
           const installBtn = (d.installUrl)
-            ? '<a href="' + esc(d.installUrl) + '" target="_blank" rel="noopener" data-action="markGitHubAppInstallClicked" style="color:var(--accent);font-weight:600">Install/authorize the App for ' + esc(d.org || '') + ' ↗</a>'
-            : '<span class="text-brand">This hive\'s GitHub Enterprise App slug is not configured, so an install link cannot be built — ask your operator to install the Hive App for ' + esc(d.org || '') + '.</span>';
+            ? '<a href="' + esc(d.installUrl) + '" target="_blank" rel="noopener" data-action="markGitHubAppInstallClicked" style="color:var(--accent);font-weight:600">Manage App access for ' + esc(d.org || '') + ' ↗</a>'
+            : '<span class="text-brand">An installation link cannot be built — ask your operator to manage the Hive App access for ' + esc(d.org || '') + '.</span>';
           setStatus('⚠ ' + esc(d.error || ('The App needs access to ' + val)) + '<br>' + installBtn + ' &nbsp;·&nbsp; <a href="#" data-action="recheckRepoAccessThenAdd" data-arg-types="e" style="color:var(--accent);font-weight:600">Re-check &amp; add</a>', 'var(--amber)');
           return;
         }
@@ -554,11 +551,7 @@
           return;
         }
       } catch (e) {
-        // Network error probing access is non-fatal: the server re-validates the
-        // single-host rule and the default-repo rule on save, so let the add
-        // proceed rather than hard-block on a transient dashboard hiccup.
-        _appendRepoAccepted(val);
-        setStatus('Added (App-access check could not be reached; the server will re-validate on save).', 'var(--muted)');
+        setStatus('✕ Could not check GitHub App access. Please retry.', 'var(--red)');
         return;
       }
       _appendRepoAccepted(val);

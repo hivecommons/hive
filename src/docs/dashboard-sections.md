@@ -189,6 +189,11 @@ Full entry: [Knowledge](dashboard-sections/workflow-and-agents.md#knowledge).
 Find past pull requests, issues, review records and findings across your projects by keyword, with a link to each one.
 
 Full entry: [Search](dashboard-sections/workflow-and-agents.md#search).
+## Inbox
+
+Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.
+
+Full entry: [Inbox](dashboard-sections/workflow-and-agents.md#inbox).
 
 ## Contributors
 

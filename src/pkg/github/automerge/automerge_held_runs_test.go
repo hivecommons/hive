@@ -130,6 +130,61 @@ func TestTrySweepSelfAuthoredPRNamesNeverStartedRequiredCheck(t *testing.T) {
 	}
 }
 
+// TestTrySweepSelfAuthoredPRTreatsOrphanedQueuedRunsAsNeverStarted pins
+// #17775: GitHub can leave a head's runs `queued` with zero jobs forever, and
+// such runs must not keep the PR at a bare required-check-missing reason.
+func TestTrySweepSelfAuthoredPRTreatsOrphanedQueuedRunsAsNeverStarted(t *testing.T) {
+	now := time.Date(2026, 11, 11, 22, 10, 0, 0, time.UTC)
+	old := now.Add(-2 * heldRunNeverStartedGrace).Format(time.RFC3339)
+	fresh := now.Add(-time.Minute).Format(time.RFC3339)
+	queuedRun := func(id int, headRepo, createdAt string) map[string]any {
+		return map[string]any{
+			"id": id, "name": "v2 CI", "status": "queued", "created_at": createdAt,
+			"head_repository": map[string]any{"full_name": headRepo},
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		runs []map[string]any
+		jobs map[int]int
+		want string
+	}{
+		{name: "old queued runs with zero jobs", runs: []map[string]any{queuedRun(1, "acme/widget", old), queuedRun(2, "acme/widget", old)}, want: requiredCheckNeverStartedPrefix + "ci/build"},
+		{name: "queued run with jobs", runs: []map[string]any{queuedRun(1, "acme/widget", old)}, jobs: map[int]int{1: 1}, want: "required-check-missing:ci/build"},
+		{name: "freshly queued run", runs: []map[string]any{queuedRun(1, "acme/widget", fresh)}, want: "required-check-missing:ci/build"},
+		{name: "fork head queued run", runs: []map[string]any{queuedRun(1, "mallory/widget", old)}, want: "required-check-missing:ci/build"},
+		{
+			name: "orphaned run beside an in-progress run",
+			runs: []map[string]any{queuedRun(1, "acme/widget", old), {"id": 2, "name": "Tests", "status": "in_progress", "head_repository": map[string]any{"full_name": "acme/widget"}}},
+			want: "required-check-missing:ci/build",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := missingRequiredPR(func(p *selfAuthoredPR) {
+				p.workflowRuns = tc.runs
+				p.workflowRunJobs = tc.jobs
+				p.updatedAt = old
+			})
+			var merged []int
+			api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			c.now = func() time.Time { return now }
+
+			_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+			if err != nil {
+				t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+			}
+			if reason != tc.want {
+				t.Fatalf("reason = %q, want %q", reason, tc.want)
+			}
+			if len(merged) != 0 {
+				t.Fatalf("merged = %v, want no merge", merged)
+			}
+		})
+	}
+}
+
 func TestTerminalRequiredCheckHoldLoggedOncePerHeadAndReason(t *testing.T) {
 	tests := []struct {
 		name   string

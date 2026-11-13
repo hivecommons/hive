@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // newLastGoodTestCache builds a cache with a pinned clock and an isolated
@@ -58,6 +59,26 @@ func TestCopilotSDKHelperExecErr_OtherKeepsStderr(t *testing.T) {
 	long := copilotSDKHelperExecErr(context.Background(), errors.New("exit status 1"), strings.Repeat("z", copilotSDKStderrLogLimit*2))
 	if n := strings.Count(long.Error(), "z"); n != copilotSDKStderrLogLimit {
 		t.Fatalf("stderr not capped: %d z's, want %d", n, copilotSDKStderrLogLimit)
+	}
+}
+
+// TestCopilotSDKHelperExecErr_BinaryStderrNamed: an ELF dumped as stderr (#17735)
+// must not reach the self-report as garbage; it is named as an ENOEXEC.
+func TestCopilotSDKHelperExecErr_BinaryStderrNamed(t *testing.T) {
+	err := copilotSDKHelperExecErr(context.Background(), errors.New("exit status 1"), "copilot: 1: \x7fELF\x02\x01\x00\xff\xfe\x06")
+	got := err.Error()
+	if !strings.Contains(got, "ENOEXEC") || strings.Contains(got, "ELF\x02") || !utf8.ValidString(got) {
+		t.Fatalf("binary stderr not summarised: %q", got)
+	}
+}
+
+// TestCopilotSDKHelperExecErr_ANSIStderrKept: coloured stderr is text, not an
+// ELF dump — it must be passed through rather than mislabelled as ENOEXEC.
+func TestCopilotSDKHelperExecErr_ANSIStderrKept(t *testing.T) {
+	err := copilotSDKHelperExecErr(context.Background(), errors.New("exit status 1"), "\x1b[31merror:\x1b[0m auth required\n")
+	got := err.Error()
+	if strings.Contains(got, "ENOEXEC") || !strings.Contains(got, "auth required") {
+		t.Fatalf("ANSI stderr mislabelled: %q", got)
 	}
 }
 

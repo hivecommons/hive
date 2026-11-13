@@ -302,6 +302,9 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 			var apiErr error
 			issue, _, apiErr = c.client.Issues.Create(ctx, owner, repo, req)
 			if apiErr != nil {
+				if isDefiniteIssueRefusal(apiErr) {
+					return effects.Result{}, effects.NotApplied(apiErr)
+				}
 				return effects.Result{}, apiErr
 			}
 			return effects.Result{Provenance: issue.GetHTMLURL()}, nil

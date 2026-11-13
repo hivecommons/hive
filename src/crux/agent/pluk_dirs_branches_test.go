@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // pluk_dirs_branches_test.go covers the pluk_dirs.go branches the setgid-mode
@@ -83,6 +85,42 @@ func TestEnsurePlukLogFileWidensExistingTightLog(t *testing.T) {
 	}
 }
 
+// TestEnsurePlukLogFileReplacesUnopenableLog pins the supervisor failure: a log
+// left by another uid that we cannot open (modelled as mode 0000) is replaced
+// in the group-writable logs dir instead of failing with permission denied.
+func TestEnsurePlukLogFileReplacesUnopenableLog(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permission checks")
+	}
+	runDir := filepath.Join(t.TempDir(), "pluk")
+	if err := ensurePlukRunDirs(runDir); err != nil {
+		t.Fatalf("ensure pluk dirs: %v", err)
+	}
+
+	path := plukSessionLogPath(runDir, "hive-supervisor")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("seed log: %v", err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatalf("lock log: %v", err)
+	}
+
+	got, err := ensurePlukLogFile(runDir, "hive-supervisor")
+	if err != nil {
+		t.Fatalf("ensure pluk log file with unopenable log: %v", err)
+	}
+	if got != path {
+		t.Errorf("returned path = %q, want %q", got, path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o660 {
+		t.Errorf("replaced log mode = %04o, want 0660", perm)
+	}
+}
+
 // TestEnsurePlukLogFileErrorWhenLogsDirMissing covers the OpenFile error
 // return: with no logs/ directory the create fails, the error is wrapped
 // (fs.ErrNotExist stays reachable through errors.Is), and it names the path.
@@ -154,5 +192,91 @@ func TestEnsurePlukRunDirsRewidensTightenedDirs(t *testing.T) {
 		if info.Mode()&os.ModeSetgid == 0 {
 			t.Errorf("%s missing setgid bit after repair: %s", path, info.Mode())
 		}
+	}
+}
+
+// TestEnsurePlukLogFileDoesNotFollowPlantedSymlink pins #17966: the logs dir is
+// group-writable by every agent uid, so a symlink at the session log path may
+// have been planted by an agent. The chmod (and, as root, the chown) must never
+// reach the link's target; the link is replaced by a regular log instead.
+func TestEnsurePlukLogFileDoesNotFollowPlantedSymlink(t *testing.T) {
+	runDir := filepath.Join(t.TempDir(), "pluk")
+	if err := ensurePlukRunDirs(runDir); err != nil {
+		t.Fatalf("ensure pluk dirs: %v", err)
+	}
+	secret := filepath.Join(t.TempDir(), "proxy-ca-key.pem")
+	if err := os.WriteFile(secret, []byte("private"), 0o600); err != nil {
+		t.Fatalf("seed secret: %v", err)
+	}
+	path := plukSessionLogPath(runDir, "hive-attacker")
+	if err := os.Symlink(secret, path); err != nil {
+		t.Fatalf("plant symlink: %v", err)
+	}
+
+	got, err := ensurePlukLogFile(runDir, "hive-attacker")
+	if err != nil {
+		t.Fatalf("ensure pluk log file over a planted symlink: %v", err)
+	}
+	if got != path {
+		t.Errorf("returned path = %q, want %q", got, path)
+	}
+
+	info, err := os.Stat(secret)
+	if err != nil {
+		t.Fatalf("stat secret: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("symlink target mode = %04o, want 0600 untouched (chmod followed the planted link)", perm)
+	}
+	data, err := os.ReadFile(secret)
+	if err != nil || string(data) != "private" {
+		t.Fatalf("symlink target changed: %q, %v", data, err)
+	}
+
+	li, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat %s: %v", path, err)
+	}
+	if !li.Mode().IsRegular() {
+		t.Fatalf("log path is %s, want a regular file replacing the planted link", li.Mode().Type())
+	}
+	if perm := li.Mode().Perm(); perm != 0o660 {
+		t.Errorf("replaced log mode = %04o, want 0660", perm)
+	}
+}
+
+// TestEnsurePlukLogFileReplacesPlantedFIFO covers the other non-regular entry
+// an agent can create in the shared dir: a FIFO with no reader must neither
+// block the launch path on open nor be kept; it is replaced like a symlink.
+func TestEnsurePlukLogFileReplacesPlantedFIFO(t *testing.T) {
+	runDir := filepath.Join(t.TempDir(), "pluk")
+	if err := ensurePlukRunDirs(runDir); err != nil {
+		t.Fatalf("ensure pluk dirs: %v", err)
+	}
+	path := plukSessionLogPath(runDir, "hive-fifo")
+	if err := syscall.Mkfifo(path, 0o660); err != nil {
+		t.Fatalf("plant fifo: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ensurePlukLogFile(runDir, "hive-fifo")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ensure pluk log file over a planted fifo: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ensure pluk log file blocked on a planted fifo")
+	}
+
+	li, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat %s: %v", path, err)
+	}
+	if !li.Mode().IsRegular() {
+		t.Fatalf("log path is %s, want a regular file replacing the fifo", li.Mode().Type())
 	}
 }

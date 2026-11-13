@@ -1,9 +1,11 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -184,5 +186,41 @@ func TestBindProwLgtmWarningOutlivesCallerDeadline(t *testing.T) {
 	}
 	if rec.comments != 1 {
 		t.Fatalf("warning comments = %d, want 1 despite the caller's deadline expiring", rec.comments)
+	}
+}
+
+// The permission wording is the github_app_statuses_permission_missing
+// self-report keyword, so it must name only the 403; any other failure logs
+// the neutral line and stays out of the operator-only permission class.
+func TestBindProwLgtmWarningNamesPermissionOnlyOn403(t *testing.T) {
+	for _, tc := range []struct {
+		status     int
+		wantPerm   bool
+		wantPrefix string
+	}{
+		{status: http.StatusForbidden, wantPerm: true},
+		{status: http.StatusBadGateway, wantPerm: false},
+		{status: http.StatusUnprocessableEntity, wantPerm: false},
+	} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			rec := &prowQueueRecorder{}
+			api := prowQueueServer(t, "lgtm", tc.status, rec)
+			defer api.Close()
+			var logBuf bytes.Buffer
+			c := NewClient("token", "acme", []string{"widget"}, slog.New(slog.NewTextHandler(&logBuf, nil)), api.URL)
+			if err := c.bindProwLgtm(context.Background(), "acme", "widget", 7, "0123456789abcdef", "alice"); err == nil {
+				t.Fatal("want the status error returned")
+			}
+			logs := logBuf.String()
+			if !strings.Contains(logs, "could not set the prow/lgtm commit status") {
+				t.Fatalf("status failure not logged: %q", logs)
+			}
+			if got := strings.Contains(logs, prowLgtmStatusForbiddenMsg); got != tc.wantPerm {
+				t.Fatalf("permission wording present = %v, want %v: %q", got, tc.wantPerm, logs)
+			}
+			if rec.comments != 1 {
+				t.Fatalf("warning comments = %d, want 1", rec.comments)
+			}
+		})
 	}
 }
