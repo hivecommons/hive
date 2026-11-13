@@ -1,0 +1,1 @@
+- Completed Claude credential re-bridges (a token refresh replacing an agent's shared-login symlink, repaired automatically) no longer file `unclassified_error_repeated` fleet self-reports; failed repairs still do.
