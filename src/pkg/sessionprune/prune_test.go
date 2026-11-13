@@ -293,7 +293,14 @@ func TestPruneWarnsOncePerPermissionDeniedPath(t *testing.T) {
 	}
 	root := t.TempDir()
 	old := time.Now().Add(-30 * 24 * time.Hour)
-	mkSession(t, root, "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee", old, old)
+	session := mkSession(t, root, "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee", old, old)
+	// Lock the session directory too: otherwise RemoveAll deletes its contents
+	// before the final unlink fails, which bumps the directory mtime and makes
+	// later passes skip it instead of failing again.
+	if err := os.Chmod(session, 0o500); err != nil {
+		t.Fatalf("chmod session: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(session, 0o755) })
 	if err := os.Chmod(root, 0o500); err != nil {
 		t.Fatalf("chmod root: %v", err)
 	}
