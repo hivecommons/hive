@@ -331,3 +331,20 @@ func TestConvertEdgeCases(t *testing.T) {
 		t.Errorf("qualityOf with nothing to report = %+v, want nil", got)
 	}
 }
+
+func TestConvertCanonicalisesReportedModel(t *testing.T) {
+	bundles := fixtureBundles()
+	bundles[1].Author.Model = "openai-codex/gpt-5.6-sol:high"
+	for i := range bundles[1].Verdicts {
+		bundles[1].Verdicts[i].Model = "claude-sonnet-5-5"
+	}
+	recs := Convert(bundles, testOptions())
+	a := byRole(recs, "hivecommons/hive", RoleAuthor)
+	if a == nil || a.Model.Name != "openai-codex/gpt-5.6-sol:high" || a.Model.Canonical != "gpt-5.6-sol" || a.Model.Provider != "openai" || a.Model.Effort != "high" {
+		t.Errorf("author model not canonicalised: %+v", a)
+	}
+	r := byRole(recs, "hivecommons/hive", RoleReviewer)
+	if r == nil || r.Model.Name != "claude-sonnet-5-5" || r.Model.Canonical != "claude-sonnet-5.5" || r.Model.Provider != "anthropic" || r.Model.Effort != "" {
+		t.Errorf("reviewer model not canonicalised: %+v", r)
+	}
+}
