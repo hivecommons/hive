@@ -39,10 +39,10 @@
     .agent-card.out-of-quota { border-left-color: var(--red); }
     /* #18111: out of provider quota — red, and no login affordance. */
     .agent-quota-note {
-      margin: var(--sp-4) var(--sp-0) var(--sp-5); padding: 6px 10px;
+      margin: var(--sp-4) var(--sp-0) var(--sp-5); padding: var(--sp-3) var(--sp-5);
       border: 1px solid color-mix(in srgb, var(--red) 55%, transparent);
       border-radius: var(--radius); background: color-mix(in srgb, var(--red) 10%, var(--panel));
-      color: var(--text); font-size: 0.72rem; line-height: 1.45; overflow-wrap: anywhere;
+      color: var(--text); font-size: var(--fs-xs); line-height: 1.45; overflow-wrap: anywhere;
     }
     .agent-quota-note-detail { color: var(--muted); }
     .agent-card.disabled-agent { border-left-color: var(--status-neutral); opacity: 0.68; }

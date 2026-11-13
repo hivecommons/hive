@@ -971,8 +971,10 @@
       if (text.includes('expired') || text.includes('token_expired')) return { label: 'expired', status: 'error', needsLogin: true };
       if (_agentNeedsLogin(a || {}, isDown)) return { label: 'logged out', status: 'error', needsLogin: true };
       // #18111: out of provider quota is red, but never "logged out" — re-login
-      // does not help. Disabled, paused and stopped agents keep their own look.
-      if (agentOutOfQuota(a) && !isDown && !agentIsDisabled(a) && a.paused !== true) return { label: 'out of quota', status: 'error', needsLogin: false, quota: true };
+      // does not help. agentOutOfQuotaShown applies the card's exclusions
+      // (disabled, paused, held off by mode, starting, stopped); a down tile
+      // already reads "stopped".
+      if (!isDown && agentOutOfQuotaShown(a)) return { label: 'out of quota', status: 'error', needsLogin: false, quota: true };
       return { label: 'authenticated', status: 'ok', needsLogin: false };
     }
     function agentCollapsedTimestampDetail(ms, fallback) {

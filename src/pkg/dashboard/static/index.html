@@ -989,10 +989,10 @@
     .agent-card.out-of-quota { border-left-color: var(--red); }
     /* #18111: out of provider quota — red, and no login affordance. */
     .agent-quota-note {
-      margin: var(--sp-4) var(--sp-0) var(--sp-5); padding: 6px 10px;
+      margin: var(--sp-4) var(--sp-0) var(--sp-5); padding: var(--sp-3) var(--sp-5);
       border: 1px solid color-mix(in srgb, var(--red) 55%, transparent);
       border-radius: var(--radius); background: color-mix(in srgb, var(--red) 10%, var(--panel));
-      color: var(--text); font-size: 0.72rem; line-height: 1.45; overflow-wrap: anywhere;
+      color: var(--text); font-size: var(--fs-xs); line-height: 1.45; overflow-wrap: anywhere;
     }
     .agent-quota-note-detail { color: var(--muted); }
     .agent-card.disabled-agent { border-left-color: var(--status-neutral); opacity: 0.68; }
@@ -11446,8 +11446,10 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       if (text.includes('expired') || text.includes('token_expired')) return { label: 'expired', status: 'error', needsLogin: true };
       if (_agentNeedsLogin(a || {}, isDown)) return { label: 'logged out', status: 'error', needsLogin: true };
       // #18111: out of provider quota is red, but never "logged out" — re-login
-      // does not help. Disabled, paused and stopped agents keep their own look.
-      if (agentOutOfQuota(a) && !isDown && !agentIsDisabled(a) && a.paused !== true) return { label: 'out of quota', status: 'error', needsLogin: false, quota: true };
+      // does not help. agentOutOfQuotaShown applies the card's exclusions
+      // (disabled, paused, held off by mode, starting, stopped); a down tile
+      // already reads "stopped".
+      if (!isDown && agentOutOfQuotaShown(a)) return { label: 'out of quota', status: 'error', needsLogin: false, quota: true };
       return { label: 'authenticated', status: 'ok', needsLogin: false };
     }
     function agentCollapsedTimestampDetail(ms, fallback) {
@@ -31290,6 +31292,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function agentOutOfQuota(a) {
       return !!a && (a.quotaExhausted === true || a.backendAuthStatus === 'quota');
     }
+    /* agentOutOfQuotaShown: whether the out-of-quota red is painted at all.
+       Disabled, paused, held-off-by-mode, starting and stopped agents keep
+       their own look. The card and both tiles call this one predicate, with
+       the same paused/off/starting/stopped rules the card uses, so a held-off
+       or starting agent cannot be red on a tile and normal on its card.
+       Login problems are not checked here; every caller ranks them first. */
+    function agentOutOfQuotaShown(a) {
+      if (!agentOutOfQuota(a) || agentIsDisabled(a)) return false;
+      const isOnDemand = a.onDemand === true;
+      const isPaused = a.paused === true && !isOnDemand;
+      const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;
+      const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
+      const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
+      return !isPaused && !isOff && !isStarting && !isStopped;
+    }
 
     /* Agent blockers (#5594). THREE orthogonal flags decide whether an agent
        will ever do work: is its session up, has an operator paused it, and is
@@ -31527,7 +31544,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // #18111: out of provider quota paints a live agent red. Disabled,
         // paused, held-off, starting and stopped agents keep their own look,
         // and a login problem outranks quota (re-login is the first fix).
-        const outOfQuota = agentOutOfQuota(a) && !isDisabled && !needsLogin && !isStarting && !isPaused && !isOff && !isStopped;
+        const outOfQuota = !needsLogin && agentOutOfQuotaShown(a);
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
         let statusCls = '';

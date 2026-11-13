@@ -668,6 +668,21 @@
     function agentOutOfQuota(a) {
       return !!a && (a.quotaExhausted === true || a.backendAuthStatus === 'quota');
     }
+    /* agentOutOfQuotaShown: whether the out-of-quota red is painted at all.
+       Disabled, paused, held-off-by-mode, starting and stopped agents keep
+       their own look. The card and both tiles call this one predicate, with
+       the same paused/off/starting/stopped rules the card uses, so a held-off
+       or starting agent cannot be red on a tile and normal on its card.
+       Login problems are not checked here; every caller ranks them first. */
+    function agentOutOfQuotaShown(a) {
+      if (!agentOutOfQuota(a) || agentIsDisabled(a)) return false;
+      const isOnDemand = a.onDemand === true;
+      const isPaused = a.paused === true && !isOnDemand;
+      const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;
+      const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
+      const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
+      return !isPaused && !isOff && !isStarting && !isStopped;
+    }
 
     /* Agent blockers (#5594). THREE orthogonal flags decide whether an agent
        will ever do work: is its session up, has an operator paused it, and is
@@ -905,7 +920,7 @@
         // #18111: out of provider quota paints a live agent red. Disabled,
         // paused, held-off, starting and stopped agents keep their own look,
         // and a login problem outranks quota (re-login is the first fix).
-        const outOfQuota = agentOutOfQuota(a) && !isDisabled && !needsLogin && !isStarting && !isPaused && !isOff && !isStopped;
+        const outOfQuota = !needsLogin && agentOutOfQuotaShown(a);
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
         let statusCls = '';

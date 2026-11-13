@@ -74,7 +74,8 @@ func TestBuildFrontendStatus_QuotaExhaustedReachesAgentRow(t *testing.T) {
 
 // #18111: an out-of-quota agent is red and says "out of quota" on the top-bar
 // tile, the collapsed tile and the agent card; login problems outrank it and
-// disabled/paused/stopped agents keep their own look.
+// disabled/paused/held-off/starting/stopped agents keep their own look on
+// every surface (one shared predicate, agentOutOfQuotaShown).
 func TestAgentOutOfQuotaTileStates(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -86,6 +87,10 @@ function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').
 ` + jsFunc(t, html, "agentIsDisabled") + `
 ` + jsFunc(t, html, "_agentNeedsLogin") + `
 ` + jsFunc(t, html, "agentOutOfQuota") + `
+` + jsFunc(t, html, "agentHeldByMode") + `
+` + jsFunc(t, html, "agentSandboxRun") + `
+` + jsFunc(t, html, "agentSessionDown") + `
+` + jsFunc(t, html, "agentOutOfQuotaShown") + `
 ` + jsFunc(t, html, "agentCollapsedAuthInfo") + `
 ` + jsFunc(t, html, "agentCollapsedStateLabel") + `
 ` + jsFunc(t, html, "agentOutOfQuotaNoteHtml") + `
@@ -112,6 +117,26 @@ assert.equal(auth.status, 'ok', 'paused agent must not be painted red for quota'
 auth = agentCollapsedAuthInfo({ ...live, state: 'stopped', quotaExhausted: true }, true);
 assert.equal(auth.quota, undefined, 'stopped agent keeps its stopped look');
 
+// Held off by the current mode: the card keeps its off look, so the tiles
+// must not paint it red either (review on #18116).
+auth = agentCollapsedAuthInfo({ ...live, offByCadence: true, quotaExhausted: true }, false);
+assert.equal(auth.quota, undefined, 'offByCadence agent must not be red on the tile');
+assert.equal(auth.status, 'ok');
+auth = agentCollapsedAuthInfo({ ...live, unscheduledInMode: true, quotaExhausted: true }, false);
+assert.equal(auth.quota, undefined, 'unscheduledInMode agent must not be red on the tile');
+
+// Shared predicate, matching the card's state rules.
+const q = { ...live, quotaExhausted: true };
+assert.equal(agentOutOfQuotaShown(q), true);
+assert.equal(agentOutOfQuotaShown({ ...q, offByCadence: true }), false, 'held off');
+assert.equal(agentOutOfQuotaShown({ ...q, state: 'starting', starting: true }), false, 'starting');
+assert.equal(agentOutOfQuotaShown({ ...q, state: 'stopped' }), false, 'stopped');
+assert.equal(agentOutOfQuotaShown({ ...q, paused: true }), false, 'paused');
+assert.equal(agentOutOfQuotaShown({ ...q, enabled: false }), false, 'disabled');
+// On-demand: a stale paused flag does not hide quota, same as the card.
+assert.equal(agentOutOfQuotaShown({ ...q, onDemand: true, paused: true }), true, 'on-demand ignores paused');
+assert.equal(agentOutOfQuotaShown({ ...live }), false, 'no quota signal');
+
 auth = agentCollapsedAuthInfo({ ...live }, false);
 assert.deepEqual(auth, { label: 'authenticated', status: 'ok', needsLogin: false });
 
@@ -135,11 +160,12 @@ func TestAgentOutOfQuotaRenderContracts(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		// card: quota state after disabled/login, never over paused/off/stopped
-		"const outOfQuota = agentOutOfQuota(a) && !isDisabled && !needsLogin && !isStarting && !isPaused && !isOff && !isStopped;",
+		"const outOfQuota = !needsLogin && agentOutOfQuotaShown(a);",
 		"needsLogin ? 'needs-login' : outOfQuota ? 'out-of-quota' :",
 		"isStopped ? 'stopped' : outOfQuota ? 'out-of-quota' :",
 		"${outOfQuota ? agentOutOfQuotaNoteHtml(a) : ''}",
-		// tiles
+		// tiles share the card's predicate
+		"if (!isDown && agentOutOfQuotaShown(a)) return",
 		"auth.quota ? 'out-of-quota' : ''",
 		"`login: ${auth.quota ? 'authenticated' : auth.label}`",
 		"...(auth.quota ? ['provider: out of quota'] : [])",
