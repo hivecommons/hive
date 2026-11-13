@@ -2,6 +2,7 @@
       refreshSectionCardShell('repos-section');
       if (_repoResizeDrag || _repoOrderDrag) return;
       repos = repoOrderApply(repos || []);
+      noteRepoHoldLayout(repos, Date.now());
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
       const showDesign = showPlan && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
