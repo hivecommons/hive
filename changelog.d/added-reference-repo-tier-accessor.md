@@ -1,1 +1,1 @@
-- `config.ProjectConfig` gains `ReferenceRepoTier(slug)` and `ValidateReferenceRepos()` accessors over `project.reference_repos`, so callers holding only the project block can read a reference repo's write tier (#18018).
+- `config.ProjectConfig` gains a `ReferenceRepoTier(slug)` accessor (and `ReferenceRepo.Tier()`) returning a reference repo's write tier, so the proxy, kick renderer and dashboard share one source of truth (#18018).

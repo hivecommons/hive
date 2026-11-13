@@ -96,17 +96,7 @@ func (r ReferenceRepo) hasWrite(kind string) bool {
 
 // WriteLabel is the human-facing tier: "read-only", "issues", "prs" or
 // "issues+prs". The dashboard chip and the kick both print it.
-func (r ReferenceRepo) WriteLabel() string {
-	switch {
-	case r.WritesIssues() && r.WritesPRs():
-		return "issues+prs"
-	case r.WritesIssues():
-		return "issues"
-	case r.WritesPRs():
-		return "prs"
-	}
-	return "read-only"
-}
+func (r ReferenceRepo) WriteLabel() string { return r.Tier().String() }
 
 // Owner returns the owner half of Repo ("" when malformed).
 func (r ReferenceRepo) Owner() string {
@@ -263,21 +253,9 @@ func (r ReferenceRepo) Tier() ReferenceRepoTier {
 // ("owner/name", case-insensitive) and false when slug is not a reference
 // repo.
 func (p ProjectConfig) ReferenceRepoTier(slug string) (ReferenceRepoTier, bool) {
-	key := referenceRepoKey(slug)
-	if key == "" {
+	r, ok := (&Config{Project: p}).ReferenceRepoFor(slug)
+	if !ok {
 		return ReferenceTierReadOnly, false
 	}
-	for _, r := range p.ReferenceRepos {
-		if referenceRepoKey(r.Repo) == key {
-			return r.Tier(), true
-		}
-	}
-	return ReferenceTierReadOnly, false
-}
-
-// ValidateReferenceRepos is the ProjectConfig-level entry point to the
-// reference_repos checks, for callers that hold a ProjectConfig rather than
-// the whole Config.
-func (p ProjectConfig) ValidateReferenceRepos() error {
-	return (&Config{Project: p}).validateReferenceRepos()
+	return r.Tier(), true
 }

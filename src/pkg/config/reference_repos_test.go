@@ -108,9 +108,6 @@ func TestReferenceRepoTierAccessor(t *testing.T) {
     - repo: hivecommons/site
       write: [prs]
 `)
-	if err := c.Project.ValidateReferenceRepos(); err != nil {
-		t.Fatalf("validate: %v", err)
-	}
 	tier, ok := c.Project.ReferenceRepoTier("HiveCommons/Docs")
 	if !ok || tier != ReferenceTierReadOnly || tier.String() != "read-only" {
 		t.Fatalf("docs: tier=%v ok=%v", tier, ok)
@@ -128,13 +125,6 @@ func TestReferenceRepoTierAccessor(t *testing.T) {
 	}
 	if _, ok := c.Project.ReferenceRepoTier("cncf/techdocs"); ok {
 		t.Fatal("authorized repo must not report a reference tier")
-	}
-	if err := c.Project.ValidateReferenceRepos(); err != nil {
-		t.Fatalf("ValidateReferenceRepos: %v", err)
-	}
-	bad := referenceRepoTestConfig(t, "    - docs\n")
-	if err := bad.Project.ValidateReferenceRepos(); err == nil {
-		t.Fatal("ValidateReferenceRepos must reject a bare name")
 	}
 }
 
