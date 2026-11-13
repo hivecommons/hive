@@ -72,6 +72,9 @@ type Dependencies struct {
 	// programs against the crux.Runtime surface, not *agent.Manager; tests that
 	// need manager-only seams unwrap it with agentManager.
 	AgentMgr crux.Runtime
+	// Sessions is the interactive-session runtime behind /api/sessions
+	// (dashboard.sessions.enabled). Nil keeps the feature unavailable.
+	Sessions SessionRuntime
 	// CruxRuntimeHealth reports the agent runtime's reachability for
 	// /api/health (hivecommons/hive#14138 stage 4). nil (in-process, or a
 	// test without a runtime) leaves the field out of the body.

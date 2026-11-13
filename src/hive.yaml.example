@@ -1022,6 +1022,11 @@ dashboard:
   # authorized_users: [owner, reviewer:read, maintainer:read-write]
   # hub_proxied: false                    # True when trusted hub nginx injects identity headers
   # agent_poll_interval_s: 5
+  # sessions:                           # Interactive named CLI terminals in the dashboard (default off)
+  #   enabled: false                    # env HIVE_SESSIONS_ENABLED overrides; owner/read-write only, no bypass-permissions flags
+  #   max_sessions: 12                  # live sessions per spoke (env HIVE_SESSIONS_MAX)
+  #   max_per_user: 4                   # live sessions per creator (env HIVE_SESSIONS_MAX_PER_USER)
+  #   idle_ttl_hours: 72                # close after this idle time (env HIVE_SESSIONS_IDLE_TTL_HOURS)
   # stage_tracker:
   #   cache_ttl_s: 300                    # Hive activity monitor payload cache; default = governor.eval_interval_s
   # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord); or custom
