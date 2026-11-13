@@ -202,8 +202,9 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		// Nothing supersedes this PR (any more). A park an earlier pass
 		// put on it for a cause that has since gone — the claimed issue was
 		// reopened, the claim was rewritten — clears with that cause
-		// (hivecommons/hive#14155); a person's needs-human stays.
-		return c.releaseStaleSupersessionPark(ctx, prRepo, prOwner, prRepoName, pr)
+		// (hivecommons/hive#14155); a person's needs-human stays. The
+		// close mark on a PR that is open again is taken back the same way.
+		return c.releaseStaleSupersessionMarks(ctx, prRepo, prOwner, prRepoName, pr)
 	}
 
 	event := SupersessionSweepEvent{
@@ -391,6 +392,11 @@ func (c *Client) detectSupersessionDetail(ctx context.Context, prRepo string, pr
 		resolved, ok, err := c.resolveIssueClosingPR(ctx, claim.Repo, issueOwner, issueRepoName, claim.Issue, pr.GetNumber())
 		if err != nil {
 			return supersessionDetail{}, err
+		}
+		if ok && c.supersessionFollowsCloser(prRepo, pr, resolved) {
+			// Opened after this closer merged and naming it: the PR builds
+			// on the merged change, so that closer did not supersede it.
+			continue
 		}
 		if ok && det.candidate.Issue == 0 {
 			det.candidate = claim
