@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v6.28.1)
+
+### Fixed
+
+- A contributor's reported pull request is still verified when the hive's hourly REST budget is spent. The hub confirms a PR reported on `task_complete` with one REST read; while the budget was at zero that read was refused (by GitHub with a 403, then by the client library itself, `not making remote request`), so a real PR was booked as an unverified completion: `pr_verified=false`, no PR credit, the run left open, and nothing checked again later. For that one failure the hub now reads the same pull request once through GraphQL, which GitHub meters in a separate bucket, and applies the same checks (it exists, its base repository is the task's, its author is the contributor). Everything else is unchanged: a missing PR, a server error, a network failure and a secondary (abuse) rate limit return what they returned before, and so does a GraphQL read that fails or returns nothing. Limits: it helps only while the GraphQL budget has room; a PR authored by a bot or App account is not confirmed this way, because GraphQL reports its login without the `[bot]` suffix; and on a GitHub Enterprise host whose API base ends in `/api/v3` the client library's local refusal covers the GraphQL endpoint (`/api/graphql`) too, so behaviour there is as before. `/api/gh-rate-limits` lists the read under caller `hive:pullrequest_verify` on endpoint `/graphql`.
+
 ## 2026-11-13 (v6.28.0)
 
 ### Added
