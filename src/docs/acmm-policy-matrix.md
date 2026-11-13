@@ -292,6 +292,25 @@ written to that issue: a contributor relay applies the label with a task
 token at any level, so the repair has the lowest floor. On an issue whose
 `blocked` the hive did not apply, the kind is never used.
 
+`needs_decision_comment` has one case that needs no opt-in label: the park
+re-check note (see
+[When a park's premise moves](maintainer-commands.md#when-a-parks-premise-moves))
+on an issue whose current decision park the hive applied itself. A
+contributor relay applies the park label with a hub-minted token, so the
+hive has already written to that issue. "The hive applied the park" means
+every label that parks the issue on a person is the hive's: the label event
+the park is dated from, and the newest `labeled` event of every hard-suppress
+label the issue carries, were made by one of the hive's own accounts. A park
+that rests on a label a person applied (a maintainer's `needs-spec`, which
+the hive then mirrors as `stage/045-needs-decision`, or a park label a person
+re-added) is not the hive's, and the note needs the opt-in label as before.
+The note then needs only the kind's minimum level (L5 by default) and
+ignores the backfill guard. A paused repository, the `writeback.per_repo`
+mode, `own_only` and `min_level` still refuse it. A note allowed this way
+lists only the changes the park text names and the pull requests merged in
+the project's own repositories. A refused note is logged once per issue and
+reason (`park re-check note held by writeback gate`).
+
 In practice: **L4 means hive files issues and talks only on its own PRs**;
 **L5 adds comments and labels on PRs a maintainer labelled `hive-review`**;
 **L6 lets sentinel and welcome comments reach unlabelled PRs**. A repo

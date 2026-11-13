@@ -41,7 +41,11 @@ const (
 	// the stage engine writes on an item.
 	KindStageLabel Kind = "stage_label"
 	// KindNeedsDecisionComment is the `hive:stage-needs-decision` / 085
-	// park comment and label on an item a person must decide on.
+	// park comment and label on an item a person must decide on. The park
+	// re-check asks for its note under this kind and states when the hive
+	// itself applied the park (Item.HiveAppliedPark); the gate then skips
+	// the backfill guard and the opt-in label for that one write
+	// (ReasonHiveAppliedPark). Every other caller is gated as before.
 	KindNeedsDecisionComment Kind = "needs_decision_comment"
 	// KindSupersessionNotice is the supersession notice on a contributor PR
 	// whose claimed issue a merged PR already closed.

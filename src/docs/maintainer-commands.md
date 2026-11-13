@@ -142,6 +142,55 @@ and the "What to reply" notice puts **`/fixed`** first as the one recommended
 reply ([Danathar/arch-bootc#634](https://github.com/Danathar/arch-bootc/issues/634)).
 The note never un-parks the issue: leaving 045 stays a maintainer's reply.
 
+The note goes through the write-back gate as `needs_decision_comment`. On a
+park the hive applied itself, it needs no review opt-in label and is not held
+back because the issue is older than the hive's write access. The note still
+needs ACMM L5 (`writeback.kinds.needs_decision_comment.min_level`), and a
+paused repository, `writeback.per_repo` mode `off`, `issues-only` or
+`labels-only`, and `own_only` still refuse it.
+
+A park counts as the hive's only when every label that parks the issue on a
+person was put there by the hive. Hive checks two things in the issue's
+timeline:
+
+- the label event the park is dated from was made by one of the hive's own
+  accounts (the App bot, an additional hive bot login, or `ai_author`), which
+  is how a contributor relay parks an issue;
+- for every hard-suppress label the issue carries now (`needs-human`,
+  `stage/045-needs-decision`, `stage/085-needs-decision`, `needs-spec`,
+  `needs-decision`, `needs-direction`, `stage/017-possible-existing`, and
+  the labels configured under `project.issue_filter.hard_suppress_labels`),
+  the newest `labeled` event was made by one of those accounts. A label with
+  no `labeled` event in the timeline does not count as the hive's.
+
+So a park that rests on a label a person applied is asked as before, and the
+note is posted only when the issue carries the opt-in label. That covers a
+maintainer's `needs-spec`, which Hive mirrors as `stage/045-needs-decision`,
+and a park label a person removed and added again. On a hive that runs on a
+personal access token, `ai_author` is one of the hive's accounts: when that
+is the operator's own account, a park the operator applies by hand under it
+counts as the hive's.
+
+A note that is allowed only because the hive applied the park lists less
+than a note on an issue with the opt-in label. It lists the items the park
+text names, and the pull requests that refer to the issue and merged in the
+issue's own repository or another repository of the project
+(`project.repos`). A pull request in any other repository that refers to the
+issue is left out, and when nothing else changed no note is posted. Such a
+note also says less about what it lists. It says "the change this issue asks
+for has landed", with the `/fixed` reply, only for an item in one of those
+repositories; a named item elsewhere is listed as merged or closed and
+nothing more. And it quotes the closing comment of the hive's copy of a pull
+request only when GitHub says who closed the copy; otherwise the copy is
+listed as closed without a quote. On an issue with the opt-in label, and on
+an issue Hive filed, the note lists and says everything it did before.
+
+When the gate refuses the note, Hive logs `park re-check note held by
+writeback gate` with the repository, issue, reason and detail, who applied
+the park label, and whether that counted as the hive's. The line is logged
+at info level once per issue and reason, and at debug level on the passes
+that repeat it.
+
 The on-demand `/hive help` workflow uses the same first-line command shape, is
 ignored for bot comments, and allows `triage`, `write`, `maintain`, or `admin`
 because it only posts reference text and changes no labels.

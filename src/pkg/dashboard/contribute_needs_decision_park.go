@@ -23,8 +23,9 @@ import (
 // only when nobody explained the park on the issue after the task was
 // assigned.
 
-// needsDecisionParkTimeout bounds the detached GitHub work: one comment
-// listing and at most one comment.
+// needsDecisionParkTimeout bounds the detached GitHub work of one attempt:
+// one comment listing and at most one comment, and on a retry one read of
+// the issue before them.
 const needsDecisionParkTimeout = 30 * time.Second
 
 // needsDecisionParkMarkerPrefix tags the hub's park comment; with the task id
@@ -106,7 +107,9 @@ func needsDecisionParkComment(taskID, reporter, reason, label string) string {
 
 // postNeedsDecisionPark posts the park question for a needs-decision verdict
 // on a GitHub-backed issue task. Runs detached from the read loop; callers
-// `go` it. Failures cost a log line, never the completion.
+// `go` it. Failures cost a log line, never the completion. A GitHub rate
+// limit is the one failure that is tried again, after the limit's reset
+// (contribute_needs_decision_park_retry.go).
 func (h *ContributeWSHub) postNeedsDecisionPark(task *WSTaskAssign, taskID, reporter, reason string, assignedAt time.Time) {
 	if h == nil || task == nil || task.Kind != "issue" || task.Repo == "" || task.Number <= 0 || task.ExternalID != "" {
 		return
@@ -115,8 +118,7 @@ func (h *ContributeWSHub) postNeedsDecisionPark(task *WSTaskAssign, taskID, repo
 	defer cancel()
 	body := needsDecisionParkComment(taskID, reporter, reason, h.configuredNeedsDecisionLabel())
 	if err := h.needsDecisionParkPost(ctx, task.Repo, task.Number, assignedAt, body); err != nil {
-		h.logger.Warn("[contribute-ws] needs-decision park: could not post the question",
-			"repo", task.Repo, "number", task.Number, "reporter", reporter, "error", err)
+		h.needsDecisionParkNotPosted(needsDecisionParkQuestion{repo: task.Repo, number: task.Number, reporter: reporter, since: assignedAt, body: body}, err, 0)
 	}
 }
 

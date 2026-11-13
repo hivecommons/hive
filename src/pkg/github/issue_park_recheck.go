@@ -35,6 +35,19 @@ package github
 // un-parks: leaving 045 stays a maintainer's reply (labels-and-control-
 // signals.md), and a park can rest on a maintainer's explicit request that
 // no merged PR answers (website#926 cited one).
+//
+// The note goes through the write-back gate as needs_decision_comment. When
+// every label parking the issue on a person was applied by the hive (a
+// contributor relay applies the park label with a hub-minted token, so its
+// actor is the App bot), the re-check says so
+// (writeback.Item.HiveAppliedPark) and the gate does not hold the note back
+// for want of the review opt-in label or because the issue predates the
+// hive's write access: the hive's own label is already on the issue. A park
+// that rests on a label a person applied (their `needs-spec`, a park label
+// they re-added) is asked as before. A note allowed only for that reason
+// lists only the changes the park text names and the pull requests the
+// project's own repositories merged (issue_park_recheck_fact.go). A refused
+// note is logged once per issue and reason (issue_park_recheck_held.go).
 
 import (
 	"context"
@@ -108,14 +121,18 @@ type parkRef struct {
 // parkChange is one thing that moved after the park began.
 type parkChange struct {
 	ref   string // "#409", or "owner/repo#N" outside the issue's repo
+	repo  string // owner/repo the item is in; a copy's is its original's
 	verb  string // "merged", "was closed without merging", "was closed"
 	at    time.Time
 	named bool // the park text names it; else it refers to the issue
 	// copyOf is set when ref is the hive's adoption copy of that PR.
 	copyOf string
 	// by, quote and link are the closing note a person left when the copy
-	// closed unmerged, if any.
+	// closed unmerged, if any. closerKnown says GitHub named who closed the
+	// copy, so the note is that account's; when it is false the note is the
+	// latest comment by any person around the close.
 	by, quote, link string
+	closerKnown     bool
 	// landedBy is the merged PR whose patch removes a line the park quotes,
 	// in landedFile, a file the park names (issue_park_recheck_landed.go):
 	// the park's change landed. landedBy equals ref when the named item is
@@ -133,6 +150,9 @@ func (c *Client) RecheckParkedIssues(ctx context.Context, cfg ParkRecheckConfig)
 	result := &ParkRecheckResult{}
 	label := c.needsDecisionLabel()
 	var firstErr error
+	// listed and parked are what the refused-note memory is pruned against:
+	// the repos whose parked issues were read this pass, and those issues.
+	listed, parked := map[string]bool{}, map[string]bool{}
 	for _, repoRef := range cfg.Repos {
 		owner, repo := c.splitRepo(repoRef)
 		if owner == "" || repo == "" {
@@ -145,10 +165,12 @@ func (c *Client) RecheckParkedIssues(ctx context.Context, cfg ParkRecheckConfig)
 			}
 			continue
 		}
+		listed[parkRecheckHeldRepo(owner, repo)] = true
 		for _, issue := range issues {
 			if issue == nil || issue.IsPullRequest() {
 				continue
 			}
+			parked[parkRecheckHeldKey(owner, repo, issue.GetNumber())] = true
 			if err := c.recheckParkedIssue(ctx, owner, repo, issue, label, result); err != nil {
 				if c.logger != nil {
 					c.logger.Warn("park re-check skipped issue", "repo", repo, "issue", issue.GetNumber(), "error", err)
@@ -157,6 +179,7 @@ func (c *Client) RecheckParkedIssues(ctx context.Context, cfg ParkRecheckConfig)
 			}
 		}
 	}
+	c.retainParkRecheckHeld(listed, parked)
 	return result, firstErr
 }
 
@@ -166,8 +189,9 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 	if err != nil {
 		return err
 	}
-	start := parkStartFrom(events, c.isDecisionParkLabel)
+	start, parkedBy := parkStartFrom(events, c.isDecisionParkLabel)
 	if start.IsZero() {
+		c.forgetParkRecheckHeld(owner, repo, number)
 		result.Skipped++
 		return nil
 	}
@@ -196,25 +220,40 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		changes = append(changes, copies...)
 		sortParkChanges(changes)
 	}
+	item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: issueLabelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time})
+	// The fact the gate cannot read for itself: every label parking this
+	// issue on a person is the hive's (issue_park_recheck_fact.go).
+	item.HiveAppliedPark = c.parkHiveApplied(parkedBy, item.Labels, events)
+	// A note the gate allows only because of that fact lists only what the
+	// park text names and what the project's own repositories merged, and
+	// says "the change landed" only for an item in those repositories.
+	landable := named
+	if len(changes) > 0 && c.parkNoteOnlyByFact(owner+"/"+repo, item) {
+		changes = c.parkProjectChanges(changes, owner+"/"+repo, number)
+		landable = c.parkProjectNamed(named, owner+"/"+repo)
+	}
 	if len(changes) == 0 {
+		c.forgetParkRecheckHeld(owner, repo, number)
 		result.Skipped++
 		return nil
 	}
-	c.markParkLandings(ctx, text, refs, named, owner+"/"+repo, start, changes)
+	c.markParkLandings(ctx, text, refs, landable, owner+"/"+repo, start, changes)
 	note := parkRecheckNote(label, start, changes)
-	item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: issueLabelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time})
 	for _, cm := range comments {
 		if cm == nil || !c.isHiveAccount(cm.GetUser()) || !strings.Contains(cm.GetBody(), parkRecheckMarker) {
 			continue
 		}
 		if cm.GetBody() == note {
+			c.forgetParkRecheckHeld(owner, repo, number)
 			result.Skipped++
 			return nil
 		}
 		if d := c.WritebackAllowed(owner+"/"+repo, item, writeback.KindNeedsDecisionComment, note); !d.Allowed {
+			c.noteParkRecheckHeld(ctx, owner, repo, number, parkedBy, item.HiveAppliedPark, d)
 			result.Skipped++
 			return nil
 		}
+		c.forgetParkRecheckHeld(owner, repo, number)
 		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, cm.GetID(), &gh.IssueComment{Body: gh.Ptr(note)}); err != nil { // writeback:gated
 			return fmt.Errorf("editing park re-check note on %s/%s#%d: %w", owner, repo, number, err)
 		}
@@ -223,9 +262,11 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		return nil
 	}
 	if d := c.WritebackAllowed(owner+"/"+repo, item, writeback.KindNeedsDecisionComment, note); !d.Allowed {
+		c.noteParkRecheckHeld(ctx, owner, repo, number, parkedBy, item.HiveAppliedPark, d)
 		result.Skipped++
 		return nil
 	}
+	c.forgetParkRecheckHeld(owner, repo, number)
 	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil { // writeback:gated
 		return fmt.Errorf("posting park re-check note on %s/%s#%d: %w", owner, repo, number, err)
 	}
@@ -282,9 +323,15 @@ func (c *Client) readParkRef(ctx context.Context, key string) (parkRef, bool) {
 // parkStartFrom returns when the issue's current park began: the first park
 // label of the run that is still on the issue, bridging label swaps shorter
 // than parkRelabelGap. Zero when the timeline shows no park in force.
-func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) time.Time {
+//
+// It also returns the login that applied the label the park is dated from,
+// "" when that event names no actor. A label swap that parkRelabelGap
+// bridges does not change who began the park: a park a person began stays
+// theirs after the hive renames its label.
+func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) (time.Time, string) {
 	present := map[string]bool{}
 	var start, emptySince time.Time
+	actor := ""
 	for _, ev := range events {
 		if ev == nil || ev.Label == nil {
 			continue
@@ -298,6 +345,7 @@ func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) time.Time {
 		case "labeled":
 			if len(present) == 0 && (start.IsZero() || emptySince.IsZero() || at.Sub(emptySince) > parkRelabelGap) {
 				start = at
+				actor = strings.TrimSpace(ev.GetActor().GetLogin())
 			}
 			present[name] = true
 		case "unlabeled":
@@ -308,9 +356,9 @@ func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) time.Time {
 		}
 	}
 	if len(present) == 0 {
-		return time.Time{}
+		return time.Time{}, ""
 	}
-	return start
+	return start, actor
 }
 
 // parkText is the text the park rests on: the issue body when the issue was
@@ -512,14 +560,14 @@ func parkChanges(refs map[string]parkRef, named []string, issueRepo string, numb
 		case isNamed[key]:
 			switch {
 			case ref.isPR && ref.mergedAt.After(start):
-				out = append(out, parkChange{ref: render(ref), verb: "merged", at: ref.mergedAt, named: true})
+				out = append(out, parkChange{ref: render(ref), repo: ref.repo, verb: "merged", at: ref.mergedAt, named: true})
 			case ref.isPR && ref.mergedAt.IsZero() && strings.EqualFold(ref.state, "closed") && ref.closedAt.After(start):
-				out = append(out, parkChange{ref: render(ref), verb: "was closed without merging", at: ref.closedAt, named: true})
+				out = append(out, parkChange{ref: render(ref), repo: ref.repo, verb: "was closed without merging", at: ref.closedAt, named: true})
 			case !ref.isPR && strings.EqualFold(ref.state, "closed") && ref.closedAt.After(start):
-				out = append(out, parkChange{ref: render(ref), verb: "was closed", at: ref.closedAt, named: true})
+				out = append(out, parkChange{ref: render(ref), repo: ref.repo, verb: "was closed", at: ref.closedAt, named: true})
 			}
 		case ref.isPR && ref.mergedAt.After(start) && parkRefersTo(ref.body, ref.repo, issueRepo, number):
-			out = append(out, parkChange{ref: render(ref), verb: "merged", at: ref.mergedAt})
+			out = append(out, parkChange{ref: render(ref), repo: ref.repo, verb: "merged", at: ref.mergedAt})
 		}
 	}
 	sortParkChanges(out)
@@ -595,7 +643,7 @@ func (c *Client) parkCopyChanges(ctx context.Context, refs map[string]parkRef, n
 		if !ok {
 			continue
 		}
-		ch := parkChange{ref: parkRefDisplay(cp, issueRepo), copyOf: parkRefDisplay(orig, issueRepo), named: isNamed[key]}
+		ch := parkChange{ref: parkRefDisplay(cp, issueRepo), repo: cp.repo, copyOf: parkRefDisplay(orig, issueRepo), named: isNamed[key]}
 		switch {
 		case seen[ch.ref]:
 			continue
@@ -603,8 +651,9 @@ func (c *Client) parkCopyChanges(ctx context.Context, refs map[string]parkRef, n
 			ch.verb, ch.at = "merged", cp.mergedAt
 		case cp.mergedAt.IsZero() && strings.EqualFold(cp.state, "closed") && cp.closedAt.After(start):
 			ch.verb, ch.at = "was closed without merging", cp.closedAt
-			if note := c.parkCopyClosingNote(ctx, owner, repo, cp); note != nil {
+			if note, closerKnown := c.parkCopyClosingNote(ctx, owner, repo, cp); note != nil {
 				ch.by, ch.quote, ch.link = note.GetUser().GetLogin(), parkCopyQuote(note.GetBody()), note.GetHTMLURL()
+				ch.closerKnown = closerKnown
 			}
 			if ch.quote == "" && !ch.named {
 				continue
@@ -648,18 +697,20 @@ func (c *Client) parkAdoptionCopy(events []*gh.Timeline, orig parkRef) (parkRef,
 // parkCopyClosingNote returns the comment a person left closing the copy:
 // the latest one within parkCopyNoteWindow of the close by the account that
 // closed it, or by any person when the closer cannot be read. A copy the
-// hive or another bot closed has no such note.
-func (c *Client) parkCopyClosingNote(ctx context.Context, owner, repo string, cp parkRef) *gh.IssueComment {
+// hive or another bot closed has no such note. The second result reports
+// whether the closer was read, so a caller can tell the closer's own note
+// from the fallback.
+func (c *Client) parkCopyClosingNote(ctx context.Context, owner, repo string, cp parkRef) (*gh.IssueComment, bool) {
 	var closer *gh.User
 	if issue, _, err := c.client.Issues.Get(ctx, owner, repo, cp.number); err == nil && issue != nil {
 		closer = issue.ClosedBy
 	}
 	if closer != nil && !c.isHumanAuthor(closer) {
-		return nil
+		return nil, true
 	}
 	comments, err := c.listIssueCommentsSince(ctx, owner, repo, cp.number, cp.closedAt.Add(-parkCopyNoteWindow))
 	if err != nil {
-		return nil
+		return nil, closer != nil
 	}
 	var note *gh.IssueComment
 	for _, cm := range comments {
@@ -678,9 +729,9 @@ func (c *Client) parkCopyClosingNote(ctx context.Context, owner, repo string, cp
 		}
 	}
 	if note == nil || parkCopyQuote(note.GetBody()) == "" {
-		return nil
+		return nil, closer != nil
 	}
-	return note
+	return note, closer != nil
 }
 
 // parkCopyQuote is the first paragraph of a closing note as one line, cut to
