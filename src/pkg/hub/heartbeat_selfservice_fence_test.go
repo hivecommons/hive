@@ -111,7 +111,7 @@ func fillNonZero(t *testing.T, name string, fv reflect.Value) {
 	case reflect.Map:
 		fv.Set(reflect.MakeMap(fv.Type()))
 		fv.SetMapIndex(reflect.Zero(fv.Type().Key()), reflect.Zero(fv.Type().Elem()))
-	case reflect.Ptr:
+	case reflect.Pointer:
 		fv.Set(reflect.New(fv.Type().Elem()))
 	case reflect.Struct:
 		for i := 0; i < fv.NumField(); i++ {
