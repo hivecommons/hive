@@ -1,0 +1,1 @@
+- Hub header nav and My Hives now link to the fleet benchmarks page (hivecommons.dev/benchmarks), and the spoke dashboard FAQ points at it for model comparisons (#18034).
