@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-13 (v6.29.0)
+
+### Added
+
+- A contributor relay that drops an issue now says why, and the hub keeps and shows the reason. A task that ended with no pull request and no `no_work_needed` / `blocked` / `wrong_base` verdict reached the hub as `verdict=idle verdict_reason=""`: the issue showed "Completion cooldown until …" in the Withheld list, was offered again, and was dropped again, and nobody could tell why without the relay's own pane. The relay now sends a `verdict_reason` on every completion without a PR and still no `verdict`, so the completion is booked idle exactly as before: `agent reported complete without a pull request: <the agent's own sentence>` for a `HIVE_VERDICT: complete` with nothing behind it, and `agent exited without a conclusion` for a chrome-idle or headless exit with no verdict. The hub never records an empty reason for a no-PR idle (a relay that sends none gets `agent exited without a conclusion`, `agent reported complete without a pull request; the relay passed no reason along` or `no reason given`, by completion signal; a `blocked` verdict that names nothing it waits on is recorded as `agent reported blocked without saying what it waits on`), keeps the latest one per issue across a restart, and shows it on the Withheld list's `cooldown` row (`… — last relay: <reason>`) and, while that cooldown is still running, on the Activity monitor's issue row (`last_idle`, in the dashboard tooltip and in `stage_tracker_read`). A verified PR, a no-work verdict, or a later task on the issue that fails or is let go clears it. Cooldowns, the no-PR streak and the evidence-less rule are unchanged.
+
 ## 2026-11-13 (v6.28.1)
 
 ### Fixed
