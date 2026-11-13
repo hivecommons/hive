@@ -79,6 +79,18 @@ func (s *agentQuotaHoldState) quotaExhaustedAgents(statuses map[string]*crux.Pro
 	return exhausted
 }
 
+// gate applies the per-agent quota hold to one cycle's kicks. It always reads
+// the flags from statuses (so cleared agents forget their probe time), then
+// returns messages unchanged when no agent is held or there is nothing to
+// gate; otherwise it defers to gateKickMessagesForAgentQuota.
+func (s *agentQuotaHoldState) gate(messages []scheduler.KickMessage, statuses map[string]*crux.Process, now time.Time, probeInterval time.Duration) (kept []scheduler.KickMessage, withheld []string, probes []string) {
+	exhausted := s.quotaExhaustedAgents(statuses)
+	if len(exhausted) == 0 || len(messages) == 0 {
+		return messages, nil, nil
+	}
+	return gateKickMessagesForAgentQuota(messages, func(agent string) bool { return exhausted[agent] }, s.LastProbe, now, probeInterval)
+}
+
 // gateKickMessagesForAgentQuota withholds kicks for agents whose provider
 // quota is exhausted, except for one probe kick per held agent once
 // probeInterval has passed since that agent's last delivered probe (a zero

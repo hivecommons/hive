@@ -147,6 +147,49 @@ func TestQuotaHoldState_ClearedFlagForgetsProbe(t *testing.T) {
 	}
 }
 
+// gate is the eval cycle's entry point: it must return the cycle's messages
+// untouched (same slice, no copy) when no agent is held or there is nothing to
+// kick, still forget recovered agents, and gate only when both are non-empty.
+func TestQuotaHoldState_GateShortCircuitsAndGates(t *testing.T) {
+	msgs := []scheduler.KickMessage{{Agent: "held", Message: "1"}, {Agent: "ok", Message: "2"}, {Agent: "held", Message: "3"}}
+
+	t.Run("no held agent returns the same slice", func(t *testing.T) {
+		var s agentQuotaHoldState
+		s.MarkProbeDelivered("ok", quotaHoldNow)
+		kept, withheld, probes := s.gate(msgs, map[string]*crux.Process{"ok": {}}, quotaHoldNow, 30*time.Minute)
+		if len(kept) != len(msgs) || &kept[0] != &msgs[0] {
+			t.Fatalf("kept = %v, want the input slice itself", kickAgents(kept))
+		}
+		if withheld != nil || probes != nil {
+			t.Fatalf("withheld=%v probes=%v, want nil", withheld, probes)
+		}
+		if !s.LastProbe("ok").IsZero() {
+			t.Fatal("a recovered agent's probe time must be forgotten even when nothing is gated")
+		}
+	})
+
+	t.Run("no messages returns the empty input", func(t *testing.T) {
+		var s agentQuotaHoldState
+		empty := []scheduler.KickMessage{}
+		kept, withheld, probes := s.gate(empty, map[string]*crux.Process{"held": {QuotaExhausted: true}}, quotaHoldNow, 30*time.Minute)
+		if kept == nil || len(kept) != 0 || withheld != nil || probes != nil {
+			t.Fatalf("kept=%v withheld=%v probes=%v, want the empty input and nothing else", kept, withheld, probes)
+		}
+	})
+
+	t.Run("one held agent is gated", func(t *testing.T) {
+		var s agentQuotaHoldState
+		s.MarkProbeDelivered("held", quotaHoldNow.Add(-time.Minute))
+		kept, withheld, probes := s.gate(msgs, map[string]*crux.Process{"held": {QuotaExhausted: true}, "ok": {}}, quotaHoldNow, 30*time.Minute)
+		if got := kickAgents(kept); !reflect.DeepEqual(got, []string{"ok:2"}) {
+			t.Fatalf("kept = %v, want only ok:2", got)
+		}
+		if !reflect.DeepEqual(withheld, []string{"held", "held"}) || len(probes) != 0 {
+			t.Fatalf("withheld=%v probes=%v, want held twice and no probe", withheld, probes)
+		}
+	})
+}
+
 // The full cycle: withheld, then one probe after the interval, then withheld
 // again on the next cycle once that probe was delivered.
 func TestQuotaHoldGate_ProbeOncePerInterval(t *testing.T) {

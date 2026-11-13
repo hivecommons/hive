@@ -1103,14 +1103,15 @@ func runEvalCycle(
 	// refuses it for quota (Copilot's "monthly quota") is held here, per
 	// agent, from the QuotaExhausted flag every backend reports. Review-swarm
 	// kicks are in this list too, so a held reviewer gets no review work.
-	quotaExhaustedNow := agentQuotaHold.quotaExhaustedAgents(agentMgr.AllStatuses())
-	if len(quotaExhaustedNow) > 0 && len(messages) > 0 {
-		kept, quotaWithheld, quotaProbes := gateKickMessagesForAgentQuota(messages,
-			func(agent string) bool { return quotaExhaustedNow[agent] },
-			agentQuotaHold.LastProbe, time.Now(), providerBudgetProbeInterval)
+	quotaProbeNow := map[string]bool{}
+	{
+		kept, quotaWithheld, quotaProbes := agentQuotaHold.gate(messages, agentMgr.AllStatuses(), time.Now(), providerBudgetProbeInterval)
 		if len(quotaWithheld) > 0 || len(quotaProbes) > 0 {
 			logger.Warn("provider quota exhausted: withholding agent kicks",
 				"withheld", quotaWithheld, "probe", quotaProbes, "probe_interval", providerBudgetProbeInterval)
+		}
+		for _, agent := range quotaProbes {
+			quotaProbeNow[agent] = true
 		}
 		messages = kept
 	}
@@ -1228,7 +1229,7 @@ func runEvalCycle(
 			},
 			onDelivered: func(msg scheduler.KickMessage, deliveredAt time.Time) {
 				deliveredKicks = append(deliveredKicks, msg)
-				if quotaExhaustedNow[msg.Agent] {
+				if quotaProbeNow[msg.Agent] {
 					// The only kick a held agent can receive is its probe;
 					// stamp it on delivery so a failed or deferred probe
 					// is retried next cycle (#18112).
