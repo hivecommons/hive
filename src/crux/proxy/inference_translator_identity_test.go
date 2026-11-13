@@ -102,6 +102,11 @@ func TestTranslatorAgentName_InternalUIDKeepsHeader(t *testing.T) {
 	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
 		t.Fatalf("internal uid: got (%q,%v), want (supervisor,true)", name, ok)
 	}
+	// Lifting the private-forward guard refuses only the proxy UID, never root.
+	p.allowPrivateForward = true
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
+		t.Fatalf("root, private forward allowed: got (%q,%v), want (supervisor,true)", name, ok)
+	}
 }
 
 // TestTranslatorAgentName_ProxyUIDTrustedOnlyWhileForwardGuarded pins #18061:
