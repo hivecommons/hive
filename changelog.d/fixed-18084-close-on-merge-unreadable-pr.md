@@ -1,0 +1,1 @@
+- Close-on-merge no longer re-warns every tick for merged PRs it cannot read (404/403); it logs once per recheck window.
