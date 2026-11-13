@@ -21,9 +21,10 @@ func (p *GitHubProxy) internalTranslatorUID(uid int) bool {
 // is the only thing distinguishing those callers from each other; an agent
 // that owns a UID never connects from the proxy UID, so such a claim can only
 // be another process borrowing that agent's inference route (#18115). Root is
-// the control plane and is not subject to this check.
+// the control plane and is not subject to this check, and other unmapped UIDs
+// keep the HIVE_PROXY_ADVISORY_OK semantics the GitHub path documents.
 func (p *GitHubProxy) sharedUIDClaimsIsolatedAgent(uid int, claimed string) bool {
-	return uid != 0 && claimed != "" && p.uidMap.LookupByName(claimed) > 0
+	return uid != 0 && uid == p.uidMap.ProxyUID && claimed != "" && p.uidMap.LookupByName(claimed) > 0
 }
 
 // translatorRefusalAttrs are the log attributes for a refused translator
