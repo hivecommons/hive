@@ -943,6 +943,17 @@ func IsBenignMessage(msg string) bool {
 	if strings.TrimSpace(m) == "sentinel alert" {
 		return true
 	}
+	// The GitHub proxy refusing a request its mode, write-surface or
+	// issue-shape policy forbids (recordViolation, crux/proxy) is sandbox
+	// enforcement working as designed: the agent gets a denial body, the
+	// refusal is counted per agent and audited. The WARN fires once per
+	// distinct (agent, method, path), so one agent probing a few forbidden
+	// endpoints crossed the repeat threshold (hivecommons/hive#18230). Match
+	// only the refusal notice; proxy forwarding and read failures stay
+	// reportable.
+	if strings.TrimSpace(m) == "proxy request blocked" {
+		return true
+	}
 	// A CI gate refusal is the merge safety policy working as designed, even
 	// when a required check remains unsuccessful across repeated polls (#14364).
 	// Keep the operator warning, but do not turn it into a runtime defect.
