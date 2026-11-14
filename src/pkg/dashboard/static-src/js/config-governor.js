@@ -1210,7 +1210,16 @@
         }
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
-        renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || ['issues', 'prs']);
+        /* The owner identity (#18197) is the credential behind every write
+           tier; a hive without the store answers 503 and the panel says so. */
+        let identity = null;
+        try {
+          const ir = await fetch('/api/github-owner-identity');
+          identity = ir.ok ? await ir.json() : { unavailable: 'HTTP ' + ir.status };
+        } catch (ie) {
+          identity = { unavailable: ie.message };
+        }
+        renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || ['issues', 'prs'], identity);
       } catch (e) {
         host = host || document.getElementById('cfg-reference-repos-host');
         if (!host) return;
@@ -1249,18 +1258,139 @@
       return hint;
     }
 
-    /* renderReferenceReposPanel paints the editable list and wires Save.
-       entries is edited in place until Save; a failed Save keeps the edits. */
-    function renderReferenceReposPanel(host, entries, kinds) {
+    /* referenceRepoCredentialChip is the per-entry credential state for a
+       write entry (#18197): "<tier> · <state>" with the login the writes
+       appear under, and the reason when the state is not write-tier. */
+    function referenceRepoCredentialChip(entry) {
+      const state = entry.credential_state || 'read-only';
+      const tier = entry.write.length ? entry.write.join('+') : 'read-only';
+      const chip = referenceRepoNode('span', 'rt-inherit cfg-reference-repo-state cfg-reference-repo-state-' + state,
+        tier + ' · ' + state + (entry.credential_login ? ' as ' + entry.credential_login : ''));
+      chip.title = entry.credential_reason || (state === 'write-tier'
+        ? 'Issues and PRs there appear under ' + (entry.credential_login || 'the connected account') + '.'
+        : 'No credential covers this repo; served read-only. Connect the hive owner\'s GitHub account above.');
+      return chip;
+    }
+
+    /* renderOwnerIdentityPanel paints who the hive writes to remote repos as
+       (#18197): the connected login with Disconnect, or a Connect control
+       that runs the GitHub device flow (shows the code and URL, polls, and
+       reloads the section when GitHub answers). onDone reloads the section. */
+    function renderOwnerIdentityPanel(host, identity, onDone) {
+      const panel = referenceRepoNode('div', 'config-list-item cfg-owner-identity');
+      const title = referenceRepoNode('span', 'config-repo-name', 'Remote-repo identity');
+      panel.appendChild(title);
+      if (!identity || identity.unavailable) {
+        panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm', 'Unavailable on this hive' + (identity && identity.unavailable ? ' (' + identity.unavailable + ')' : '') + '. Write-tier entries are served read-only.'));
+        host.appendChild(panel);
+        return;
+      }
+      const status = referenceRepoNode('div', 'fs-sm cfg-owner-identity-status');
+      const setStatus = (msg, cls) => { status.textContent = msg; status.className = 'fs-sm cfg-owner-identity-status ' + (cls || 'text-muted'); };
+      if (identity.connected) {
+        const who = referenceRepoNode('span', 'rt-inherit cfg-reference-repo-state cfg-reference-repo-state-' + (identity.usable ? 'write-tier' : 'read-only'),
+          (identity.usable ? 'writing as ' : 'disconnected token for ') + identity.login);
+        who.title = identity.usable
+          ? 'Issues, PRs and comments on remote repos appear under this GitHub account (scope ' + (identity.scope || 'public_repo') + ').'
+          : (identity.reason || 'The stored token no longer works.');
+        panel.appendChild(who);
+        if (!identity.usable && identity.reason) panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm cfg-reference-repo-reason', identity.reason));
+        const disconnect = referenceRepoNode('button', 'hv-btn btn-sm', identity.usable ? 'Disconnect' : 'Remove token');
+        disconnect.title = 'Remove the token from this hive. Every write-tier reference repo drops to read-only.';
+        disconnect.addEventListener('click', async () => {
+          disconnect.disabled = true;
+          setStatus('Disconnecting…');
+          try {
+            const res = await fetch('/api/github-owner-identity', { method: 'DELETE', headers: _inceptionAuthHeaders() });
+            if (!res.ok) throw new Error(await saveErrorMessage(res));
+            showToast('GitHub account disconnected; remote repos are read-only until one is connected', 'success');
+            onDone();
+          } catch (e) {
+            disconnect.disabled = false;
+            setStatus(e.message, 'text-danger');
+          }
+        });
+        panel.appendChild(disconnect);
+        if (!identity.usable) panel.appendChild(connectButton());
+      } else {
+        panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm', 'Not connected: write-tier reference repos are served read-only.'));
+        panel.appendChild(connectButton());
+      }
+      panel.appendChild(status);
+      host.appendChild(panel);
+      const help = referenceRepoNode('p', 'config-help',
+        'Issues and PRs the hive opens in repos it does not manage are written as the hive owner\'s own GitHub account, never as the hive\'s App. ' +
+        'Connecting asks GitHub for the public_repo scope (public repositories only) through a one-time device flow; the token stays on this hive as an owner-only file and is never sent to the hub. ' +
+        'Disconnecting here removes it from the hive; to revoke it on GitHub too, remove the authorization under Settings → Applications on github.com.');
+      host.appendChild(help);
+
+      function connectButton() {
+        const btn = referenceRepoNode('button', 'hv-btn btn-primary btn-sm', identity.connected ? 'Reconnect GitHub account' : 'Connect GitHub account');
+        btn.title = 'Run a GitHub device flow for the public_repo scope and store the token on this hive.';
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          setStatus('Asking GitHub for a device code…');
+          try {
+            const start = await fetch('/api/github-owner-identity/start', { method: 'POST', headers: _inceptionAuthHeaders() });
+            if (!start.ok) throw new Error(await saveErrorMessage(start));
+            const flow = await start.json();
+            status.textContent = '';
+            status.className = 'fs-sm cfg-owner-identity-status';
+            status.appendChild(document.createTextNode('Open '));
+            const link = referenceRepoNode('a', '', flow.verification_uri);
+            link.href = flow.verification_uri;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            status.appendChild(link);
+            status.appendChild(document.createTextNode(' and enter the code '));
+            status.appendChild(referenceRepoNode('code', 'cfg-owner-identity-code', flow.user_code));
+            status.appendChild(document.createTextNode('. Waiting for GitHub…'));
+            const interval = Math.max(5, Number(flow.interval) || 5) * 1000;
+            const deadline = Date.now() + (Number(flow.expires_in) || 900) * 1000;
+            const poll = async () => {
+              if (Date.now() > deadline) { setStatus('The code expired before GitHub answered. Try again.', 'text-danger'); btn.disabled = false; return; }
+              let d;
+              try {
+                const res = await fetch('/api/github-owner-identity/poll', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ flow_id: flow.flow_id }) });
+                if (!res.ok) throw new Error(await saveErrorMessage(res));
+                d = await res.json();
+              } catch (e) {
+                setStatus(e.message, 'text-danger');
+                btn.disabled = false;
+                return;
+              }
+              if (d.status === 'complete') {
+                showToast('GitHub account ' + d.login + ' connected; write-tier reference repos are live', 'success');
+                onDone();
+                return;
+              }
+              if (d.status === 'error') { setStatus(d.error || 'GitHub refused the authorization', 'text-danger'); btn.disabled = false; return; }
+              setTimeout(poll, d.status === 'slow_down' ? interval * 2 : interval);
+            };
+            setTimeout(poll, interval);
+          } catch (e) {
+            setStatus(e.message, 'text-danger');
+            btn.disabled = false;
+          }
+        });
+        return btn;
+      }
+    }
+
+    /* renderReferenceReposPanel paints the identity panel, the editable list
+       and wires Save. entries is edited in place until Save; a failed Save
+       keeps the edits. */
+    function renderReferenceReposPanel(host, entries, kinds, identity) {
       if (!host) return;
       /* derived_from is carried through so the server can tell a derived
          entry (rebuilt from its request issue, never saved) from an
          operator's. */
-      entries = entries.map(e => ({ repo: e.repo || '', write: (e.write || []).slice(), write_token_file: e.write_token_file || '', derived_from: e.derived_from || '', credential_state: e.credential_state || '', credential_reason: e.credential_reason || '' }));
+      entries = entries.map(e => ({ repo: e.repo || '', write: (e.write || []).slice(), write_token_file: e.write_token_file || '', derived_from: e.derived_from || '', credential_state: e.credential_state || '', credential_reason: e.credential_reason || '', credential_login: e.credential_login || '' }));
       host.textContent = '';
+      renderOwnerIdentityPanel(host, identity, () => loadReferenceRepos());
       host.appendChild(referenceRepoNode('p', 'config-help',
         'Read-only by default: agents clone and read these repos and are never told they are out of scope, but every write is refused. ' +
-        'Tick issues and/or prs to let agents open issues or PRs there; that needs the GitHub App installed on the repo\'s org. ' +
+        'Tick issues and/or prs to let agents open issues or PRs there as the connected account above (PRs go through that account\'s fork). ' +
         'A write_token_file is a path on the hive host and can only be set in the config file by the operator; one that is set is shown here and kept. ' +
         'Saving checks the credential and applies the change without a restart.'));
       const list = referenceRepoNode('div', 'config-list');
@@ -1283,11 +1413,7 @@
             row.appendChild(lock);
             row.appendChild(referenceRepoNode('span', 'config-repo-name', entry.repo));
             row.appendChild(referenceRepoDerivedLink(entry.derived_from));
-            const state = entry.credential_state || 'read-only';
-            const chip = referenceRepoNode('span', 'rt-inherit cfg-reference-repo-state cfg-reference-repo-state-' + state,
-              (entry.write.length ? entry.write.join('+') : 'read-only') + ' · ' + state);
-            chip.title = entry.credential_reason || (state === 'write-tier' ? 'The GitHub App is installed on the repo\'s org; issues and PRs may be opened there.' : 'No credential covers this repo; served read-only.');
-            row.appendChild(chip);
+            row.appendChild(referenceRepoCredentialChip(entry));
             if (entry.credential_reason) row.appendChild(referenceRepoNode('span', 'text-muted fs-sm cfg-reference-repo-reason', entry.credential_reason));
             list.appendChild(row);
             return;
@@ -1314,7 +1440,10 @@
             token.title = 'write_token_file set in the config file for ' + entry.repo + '. Only the hive operator can change it.';
             row.appendChild(token);
           }
-          row.appendChild(referenceRepoNode('span', 'rt-inherit', entry.write.length ? entry.write.join('+') : 'read-only'));
+          /* A hand-written write entry shows its credential too (#18197):
+             the login it writes as, or why it has none yet. */
+          if (entry.write.length && entry.credential_state) row.appendChild(referenceRepoCredentialChip(entry));
+          else row.appendChild(referenceRepoNode('span', 'rt-inherit', entry.write.length ? entry.write.join('+') : 'read-only'));
           const remove = referenceRepoNode('button', 'remove-item', '\u2715');
           remove.title = 'Remove ' + entry.repo + ' from the reference repos';
           remove.addEventListener('click', () => { entries.splice(i, 1); paintRows(); });
@@ -1387,7 +1516,7 @@
             throw new Error(msg);
           }
           const d = await res.json();
-          renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || kinds);
+          renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || kinds, identity);
           showToast('Reference repos saved', 'success');
         } catch (e) {
           saveBtn.disabled = false;

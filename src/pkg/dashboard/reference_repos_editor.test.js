@@ -53,21 +53,29 @@ const makeDoc = () => {
   return doc;
 };
 
-const setup = ({ entries, kinds = ['issues', 'prs'], put }) => {
+const setup = ({ entries, kinds = ['issues', 'prs'], put, identity = null, api = () => { throw new Error('no identity call expected'); } }) => {
   const doc = makeDoc();
   const toasts = [];
   const calls = [];
+  const reloads = [];
   const fetchStub = async (url, opts) => {
+    if (String(url).startsWith('/api/github-owner-identity')) {
+      calls.push({ url, opts, body: opts && opts.body ? JSON.parse(opts.body) : null });
+      return api(calls[calls.length - 1]);
+    }
     calls.push({ url, opts, body: JSON.parse(opts.body) });
     return put(calls[calls.length - 1]);
   };
-  const render = new Function('document', 'window', 'fetch', 'showToast', '_inceptionAuthHeaders', 'saveErrorMessage',
-    fnSrc('referenceRepoNode') + '\n' + fnSrc('referenceRepoYamlHint') + '\n' + fnSrc('referenceRepoDerivedLink') + '\n' + fnSrc('renderReferenceReposPanel') + '\nreturn renderReferenceReposPanel;')(
-    doc, { _githubBaseUrl: 'https://github.example.com/' }, fetchStub, (m, k) => toasts.push([m, k]), () => ({}), async res => res.errorMessage);
+  const render = new Function('document', 'window', 'fetch', 'showToast', '_inceptionAuthHeaders', 'saveErrorMessage', 'loadReferenceRepos', 'setTimeout',
+    fnSrc('referenceRepoNode') + '\n' + fnSrc('referenceRepoYamlHint') + '\n' + fnSrc('referenceRepoDerivedLink') + '\n' +
+    fnSrc('referenceRepoCredentialChip') + '\n' + fnSrc('renderOwnerIdentityPanel') + '\n' + fnSrc('renderReferenceReposPanel') + '\nreturn renderReferenceReposPanel;')(
+    doc, { _githubBaseUrl: 'https://github.example.com/' }, fetchStub, (m, k) => toasts.push([m, k]), () => ({}), async res => res.errorMessage,
+    () => reloads.push(Date.now()), fn => fn());
   const host = doc.createElement('div');
-  render(host, entries, kinds);
-  return { doc, host, toasts, calls };
+  render(host, entries, kinds, identity);
+  return { doc, host, toasts, calls, reloads };
 };
+const identityPanel = host => host.find(n => String(n.className).includes('cfg-owner-identity') && !String(n.className).includes('-status'))[0];
 
 const rows = host => host.find(n => String(n.className).startsWith('config-list-item config-repo-row'));
 const inputs = (node, type) => node.find(n => n.tag === 'input' && n.type === type);
@@ -155,7 +163,7 @@ test('a derived entry is a read-only row: lock, source issue link, state chip an
   const { host } = setup({
     entries: [
       { repo: 'acme/docs', write: ['issues', 'prs'], derived_from: 'cncf/techdocs#395', credential_state: 'write-tier' },
-      { repo: 'zeta/site', derived_from: 'cncf/techdocs#395', credential_state: 'read-only', credential_reason: 'no App installation on zeta' },
+      { repo: 'zeta/site', derived_from: 'cncf/techdocs#395', credential_state: 'read-only', credential_reason: 'the hive owner has not connected a GitHub account' },
       { repo: 'hand/written', write: ['issues'] },
     ],
     put: () => { throw new Error('no save'); },
@@ -178,8 +186,8 @@ test('a derived entry is a read-only row: lock, source issue link, state chip an
 
   const zchip = zeta.find(n => n.className.includes('cfg-reference-repo-state'))[0];
   assert.strictEqual(zchip.textContent, 'read-only \u00b7 read-only');
-  assert.strictEqual(zchip.title, 'no App installation on zeta');
-  assert.strictEqual(zeta.find(n => n.className.includes('cfg-reference-repo-reason'))[0].textContent, 'no App installation on zeta');
+  assert.strictEqual(zchip.title, 'the hive owner has not connected a GitHub account');
+  assert.strictEqual(zeta.find(n => n.className.includes('cfg-reference-repo-reason'))[0].textContent, 'the hive owner has not connected a GitHub account');
 
   assert.ok(!hand.className.includes('cfg-reference-repo-derived'));
   assert.strictEqual(inputs(hand, 'checkbox').length, 2, 'hand-written rows keep their controls');
@@ -200,4 +208,105 @@ test('a 409 on save is toasted as an error and shown in the status line; the lis
   assert.deepStrictEqual(toasts, [[message, 'error']]);
   assert.strictEqual(host.find(n => n.className === 'fs-sm text-danger')[0].textContent, message);
   assert.strictEqual(rows(host).length, 2);
+});
+
+// hivecommons/hive#18200: the identity panel shows who the hive writes to
+// remote repos as, with Connect (device flow) and Disconnect; write entries
+// show the login in their credential chip.
+test('identity panel: unavailable store, not connected, connected and revoked states', () => {
+  let { host } = setup({ entries: [], put: () => { throw new Error('no save'); } });
+  assert.match(identityPanel(host).textContent, /Unavailable on this hive/);
+  assert.strictEqual(buttons(host, 'Connect GitHub account').length, 0);
+
+  ({ host } = setup({ entries: [], put: () => { throw new Error('no save'); }, identity: { connected: false, usable: false, reason: 'the hive owner has not connected a GitHub account', scope_required: 'public_repo' } }));
+  assert.match(identityPanel(host).textContent, /Not connected: write-tier reference repos are served read-only/);
+  assert.strictEqual(buttons(host, 'Connect GitHub account').length, 1);
+  assert.strictEqual(buttons(host, 'Disconnect').length, 0);
+
+  ({ host } = setup({ entries: [], put: () => { throw new Error('no save'); }, identity: { connected: true, usable: true, login: 'nate-double-u', scope: 'public_repo' } }));
+  const who = identityPanel(host).find(n => String(n.className).includes('cfg-reference-repo-state-write-tier'))[0];
+  assert.strictEqual(who.textContent, 'writing as nate-double-u');
+  assert.strictEqual(buttons(host, 'Disconnect').length, 1);
+  assert.strictEqual(buttons(host, 'Connect GitHub account').length, 0);
+  assert.doesNotMatch(host.textContent, /@nate-double-u/, 'never an @-mention');
+
+  ({ host } = setup({ entries: [], put: () => { throw new Error('no save'); }, identity: { connected: true, usable: false, login: 'nate-double-u', reason: 'the hive owner\'s GitHub token is no longer valid; reconnect the account in Settings' } }));
+  assert.match(identityPanel(host).textContent, /disconnected token for nate-double-u/);
+  assert.strictEqual(buttons(host, 'Remove token').length, 1);
+  assert.strictEqual(buttons(host, 'Reconnect GitHub account').length, 1);
+});
+
+test('connect runs the device flow: start, show code and URL, poll until complete, then reload', async () => {
+  let polls = 0;
+  const { host, calls, toasts, reloads } = setup({
+    entries: [], put: () => { throw new Error('no save'); },
+    identity: { connected: false, usable: false },
+    api: call => {
+      if (call.url === '/api/github-owner-identity/start') return { ok: true, json: async () => ({ user_code: 'ABCD-1234', verification_uri: 'https://github.com/login/device', expires_in: 900, interval: 0, flow_id: 'f1', scope: 'public_repo' }) };
+      if (call.url === '/api/github-owner-identity/poll') {
+        assert.deepStrictEqual(call.body, { flow_id: 'f1' });
+        polls++;
+        return { ok: true, json: async () => (polls < 3 ? { status: polls === 1 ? 'pending' : 'slow_down' } : { status: 'complete', login: 'nate-double-u' }) };
+      }
+      throw new Error('unexpected ' + call.url);
+    },
+  });
+  await buttons(host, 'Connect GitHub account')[0].fire('click')[0];
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  const status = host.find(n => String(n.className).includes('cfg-owner-identity-status'))[0];
+  assert.strictEqual(polls, 3);
+  assert.strictEqual(calls[0].opts.method, 'POST');
+  assert.deepStrictEqual(toasts, [['GitHub account nate-double-u connected; write-tier reference repos are live', 'success']]);
+  assert.strictEqual(reloads.length, 1, 'the section reloads after a completed consent');
+  assert.ok(status, 'status line exists');
+});
+
+test('a refused consent shows GitHub\'s error and re-enables Connect; disconnect calls DELETE and reloads', async () => {
+  let { host, toasts, reloads } = setup({
+    entries: [], put: () => { throw new Error('no save'); },
+    identity: { connected: false, usable: false },
+    api: call => call.url.endsWith('/start')
+      ? { ok: true, json: async () => ({ user_code: 'X', verification_uri: 'https://github.com/login/device', expires_in: 900, interval: 0, flow_id: 'f1' }) }
+      : { ok: true, json: async () => ({ status: 'error', error: 'GitHub granted scope read:user; the hive needs public_repo' }) },
+  });
+  const connect = buttons(host, 'Connect GitHub account')[0];
+  await connect.fire('click')[0];
+  await new Promise(r => setImmediate(r));
+  const status = host.find(n => String(n.className).includes('cfg-owner-identity-status'))[0];
+  assert.match(status.textContent, /needs public_repo/);
+  assert.ok(status.className.includes('text-danger'));
+  assert.strictEqual(connect.disabled, false);
+  assert.strictEqual(toasts.length, 0);
+  assert.strictEqual(reloads.length, 0);
+
+  ({ host, toasts, reloads } = setup({
+    entries: [], put: () => { throw new Error('no save'); },
+    identity: { connected: true, usable: true, login: 'nate-double-u' },
+    api: call => { assert.strictEqual(call.opts.method, 'DELETE'); return { ok: true, json: async () => ({ status: 'disconnected' }) }; },
+  }));
+  await buttons(host, 'Disconnect')[0].fire('click')[0];
+  assert.strictEqual(toasts.length, 1);
+  assert.match(toasts[0][0], /disconnected/);
+  assert.strictEqual(reloads.length, 1);
+});
+
+test('a hand-written write entry shows its credential login; a read-only one shows the plain tier', () => {
+  const { host } = setup({
+    entries: [
+      { repo: 'hivecommons/hive', write: ['issues', 'prs'], credential_state: 'write-tier', credential_login: 'nate-double-u' },
+      { repo: 'hivecommons/docs' },
+      { repo: 'acme/docs', write: ['issues', 'prs'], derived_from: 'cncf/techdocs#395', credential_state: 'write-tier', credential_login: 'nate-double-u' },
+    ],
+    put: () => { throw new Error('no save'); },
+    identity: { connected: true, usable: true, login: 'nate-double-u' },
+  });
+  const [hive, docs, acme] = rows(host);
+  const chip = hive.find(n => String(n.className).includes('cfg-reference-repo-state'))[0];
+  assert.strictEqual(chip.textContent, 'issues+prs \u00b7 write-tier as nate-double-u');
+  assert.match(chip.title, /appear under nate-double-u/);
+  assert.strictEqual(inputs(hive, 'checkbox').length, 2, 'hand-written rows stay editable');
+  assert.strictEqual(docs.find(n => n.className === 'rt-inherit')[0].textContent, 'read-only');
+  assert.strictEqual(acme.find(n => String(n.className).includes('cfg-reference-repo-state'))[0].textContent, 'issues+prs \u00b7 write-tier as nate-double-u');
 });
