@@ -260,6 +260,16 @@ designed, not a repeated runtime defect (hivecommons/hive#17924). The WARN and
 its `reason` stay in local logs; other reconciler failures and the same message
 at ERROR remain reportable.
 
+It also skips the exact WARN `proxy request blocked` (`recordViolation`,
+`src/crux/proxy/github_proxy_violations.go`): the GitHub proxy refusing a
+request that the agent's mode, write-surface or issue-shape policy forbids is
+sandbox enforcement working as designed. The agent receives a denial body,
+the refusal is counted per agent and audited, and the WARN already fires only
+once per distinct (agent, method, path), so one agent trying a handful of
+forbidden endpoints is not a repeated runtime defect
+(hivecommons/hive#18230). The WARN and its `agent` / `method` / `path` stay in
+local logs; proxy dial, certificate and TLS failures remain reportable.
+
 The re-engagement sweep logs `re-engagement kick undeliverable; budget not
 charged` at INFO rather than WARN when the cause is `shared session pool is
 busy` (`deliverReEngagement`, `src/cmd/hive/main_sweeps.go`): a saturated shared CLI
