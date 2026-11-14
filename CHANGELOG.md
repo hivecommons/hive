@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.256.1)
+
+### Fixed
+
+- Review verdicts discarded for lacking a head SHA and a dispatch are now logged at INFO instead of WARN, so they no longer trigger repeated-error self-reports.
+
 ## 2026-11-14 (v5.256.0)
 
 ### Added
