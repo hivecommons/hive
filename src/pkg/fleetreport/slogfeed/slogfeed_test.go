@@ -101,7 +101,7 @@ func TestProxyRequestBlockedStaysInLogsWithoutFleetReport(t *testing.T) {
 		t.Fatalf("local logs lost the warning or its path: %s", out.String())
 	}
 	logger.Warn("proxy client TLS handshake failed", "agent", "quality", "error", "unexpected failure")
-	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassProxyTLSHandshakeFailed {
 		t.Fatalf("proxy transport failures must remain reportable: %+v", *seen)
 	}
 }
