@@ -73,7 +73,7 @@ const inferenceAPIKeyPrefix = "sk-hive-"
 // request must be refused.
 func (p *GitHubProxy) translatorAgentName(r *http.Request) (string, bool) {
 	claimed := strings.TrimPrefix(r.Header.Get("x-api-key"), inferenceAPIKeyPrefix)
-	if p.uidMap == nil {
+	if p.loadedUIDMap() == nil {
 		if p.proxyAdvisoryOK {
 			return claimed, true
 		}
@@ -81,7 +81,7 @@ func (p *GitHubProxy) translatorAgentName(r *http.Request) (string, bool) {
 	}
 	uid, err := uidForRemoteAddr(r.RemoteAddr)
 	if err == nil {
-		if name := p.uidMap.LookupByUID(uid); name != "" {
+		if name := p.lookupAgentByUID(uid); name != "" {
 			if claimed != "" && claimed != name {
 				p.logger.Warn("inference identity: x-api-key names another agent; using the socket owner",
 					"agent", name, "claimed", claimed, "uid", uid)

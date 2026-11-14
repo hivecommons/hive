@@ -16,7 +16,7 @@ import (
 // including native binaries that don't send Proxy-Authorization); see
 // fallbackAgentName for what happens when that fails.
 func (p *GitHubProxy) identifyAgentFromReq(r *http.Request) string {
-	if p.uidMap != nil {
+	if p.loadedUIDMap() != nil {
 		if name := p.identifyAgentByUID(r.RemoteAddr); name != "" {
 			return name
 		}
@@ -33,7 +33,7 @@ func (p *GitHubProxy) identifyAgentFromReq(r *http.Request) string {
 // functional" mode worth that trade — an unidentified caller is refused.
 // Returns "" when no UID map was loaded or the connection's UID is unmapped.
 func (p *GitHubProxy) IdentifyAgentByUID(r *http.Request) string {
-	if p.uidMap == nil || r == nil {
+	if p.loadedUIDMap() == nil || r == nil {
 		return ""
 	}
 	return p.identifyAgentByUID(r.RemoteAddr)
@@ -47,7 +47,7 @@ func (p *GitHubProxy) IdentifyAgentByUID(r *http.Request) string {
 // falls back to ADVISORY — downgrading every write-capable agent to read-only.
 // Taking the peer address from the connection itself removes that trap.
 func (p *GitHubProxy) identifyAgentFromConn(conn net.Conn, r *http.Request) string {
-	if p.uidMap != nil && conn != nil {
+	if p.loadedUIDMap() != nil && conn != nil {
 		if name := p.identifyAgentByUID(conn.RemoteAddr().String()); name != "" {
 			return name
 		}
@@ -101,7 +101,7 @@ func (p *GitHubProxy) identifyAgentByUID(remoteAddr string) string {
 	if err != nil {
 		return ""
 	}
-	return p.uidMap.LookupByUID(uid)
+	return p.lookupAgentByUID(uid)
 }
 
 // uidForRemoteAddr resolves the UID of the process that owns the local socket
