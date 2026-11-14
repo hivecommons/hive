@@ -124,9 +124,17 @@ func TestProviderKickWithholdStaysInLogsWithoutFleetReport(t *testing.T) {
 	if n := strings.Count(out.String(), msg); n != 21 || !strings.Contains(out.String(), "reviewer-2") {
 		t.Fatalf("local logs lost the warning or its agent: %s", out.String())
 	}
-	logger.Warn("provider quota probe kick failed", "agent", "reviewer-2", "error", "unexpected failure")
+	// Failures around the gate are not the complete notice, so the generic
+	// feed still reports them.
+	logger.Warn(msg+": status snapshot failed", "error", "unexpected failure")
 	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
-		t.Fatalf("probe failures must remain reportable: %+v", *seen)
+		t.Fatalf("gate failures must remain reportable: %+v", *seen)
+	}
+	// Probe kick delivery failures are owned by kick_failed_repeatedly, so the
+	// generic feed skips them; they must not be swallowed as benign.
+	const probeFail = "provider quota probe kick failed"
+	if fleetreport.IsBenignMessage(probeFail) || !fleetreport.MatchesExplicitClass(probeFail) {
+		t.Fatalf("probe kick failures must stay on the kick_failed_repeatedly path")
 	}
 }
 
