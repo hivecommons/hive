@@ -92,8 +92,8 @@ type SelfServiceHive struct {
 	// permission on Repos. Zero when never checked.
 	OwnershipCheckedAt time.Time `json:"ownership_checked_at,omitempty"`
 	// LastAcceptedHeartbeatAt is the last heartbeat that passed the bearer
-	// check. Zero until the first one; the expiry sweep (a later child)
-	// removes registrations that never reach it.
+	// check. Zero until the first one; the expiry sweep (selfservice_expiry.go)
+	// counts the window from here, or from CreatedAt while it is zero.
 	LastAcceptedHeartbeatAt time.Time `json:"last_accepted_heartbeat_at,omitempty"`
 }
 
