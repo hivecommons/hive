@@ -184,18 +184,24 @@ func TestRenewLoop(t *testing.T) {
 	f := newFake()
 	f.keys["hive-test"] = 1
 	f.k8sRole, f.k8sJWT = "hive", "jwt"
+	// One-second leases from both login and renewal keep every wait in the
+	// loop at the (test-shortened) minimum instead of two thirds of a minute.
+	f.loginLease, f.renewLease = 1, 1
 	_, cfg := startFake(t, f)
 	jwtFile := filepath.Join(t.TempDir(), "jwt")
 	_ = os.WriteFile(jwtFile, []byte("jwt"), 0o600)
 	cfg.Token, cfg.K8sRole, cfg.K8sJWTFile = "", "hive", jwtFile
 
 	// Build without New's own renewal so the loop under test is the only one.
+	// Close is also a cleanup so a failed assertion cannot leave the loop
+	// reading minRenewInterval while the restore above writes it.
 	ctx := context.Background()
 	p, err := New(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.Close()
+	t.Cleanup(p.Close)
 
 	outcomes := make(chan error, 16)
 	p.onRenewed = func(_ leaseInfo, err error) { outcomes <- err }

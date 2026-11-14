@@ -33,6 +33,9 @@ type fakeTransit struct {
 	encrypts  int
 	allowNew  bool // may encrypt/create auto-create keys
 	lookupTTL int
+	// loginLease and renewLease are the lease_duration seconds the kubernetes
+	// login and renew-self replies carry (defaults 60 and 120).
+	loginLease, renewLease int
 	// Malformed-reply toggles, for the provider's decode guards.
 	emptyToken      bool // kubernetes login replies without client_token
 	emptyCiphertext bool // encrypt replies without ciphertext
@@ -45,7 +48,7 @@ type fakeTransit struct {
 }
 
 func newFake() *fakeTransit {
-	return &fakeTransit{token: "s.good", keys: map[string]int{}, allowNew: true, lookupTTL: 3600}
+	return &fakeTransit{token: "s.good", keys: map[string]int{}, allowNew: true, lookupTTL: 3600, loginLease: 60, renewLease: 120}
 }
 
 func (f *fakeTransit) handler() http.Handler {
@@ -103,7 +106,7 @@ func (f *fakeTransit) handler() http.Handler {
 			tok = ""
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"auth": map[string]any{
-			"client_token": tok, "lease_duration": 60, "renewable": true}})
+			"client_token": tok, "lease_duration": f.loginLease, "renewable": true}})
 	})
 	mux.HandleFunc("/v1/auth/token/lookup-self", func(w http.ResponseWriter, r *http.Request) {
 		if !authed(w, r) {
@@ -117,8 +120,9 @@ func (f *fakeTransit) handler() http.Handler {
 		}
 		f.mu.Lock()
 		f.renewals++
+		lease := f.renewLease
 		f.mu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]any{"auth": map[string]any{"lease_duration": 120, "renewable": true}})
+		writeJSON(w, http.StatusOK, map[string]any{"auth": map[string]any{"lease_duration": lease, "renewable": true}})
 	})
 	mux.HandleFunc("/v1/transit/keys/", func(w http.ResponseWriter, r *http.Request) {
 		if !authed(w, r) {
