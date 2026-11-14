@@ -3,7 +3,9 @@
 // and a remove button, shows an operator-set write_token_file as read-only
 // text (never an input: the path is file-only), carries derived_from through
 // to the PUT body so the server can drop derived entries, and shows the
-// server's refusal verbatim without losing the edits.
+// server's refusal verbatim without losing the edits. Derived entries
+// (hivecommons/hive#18161) are read-only rows with a lock, a link to the
+// request issue and a credential-state chip; a 409 is also toasted.
 // Run: node --test src/pkg/dashboard/*.test.js
 const test = require('node:test');
 const assert = require('node:assert');
@@ -46,7 +48,7 @@ const makeDoc = () => {
     return el;
   };
   doc.createElement = makeEl;
-  doc.createTextNode = text => ({ tag: '#text', children: [], textContent: String(text) });
+  doc.createTextNode = text => ({ tag: '#text', children: [], className: '', textContent: String(text) });
   doc.getElementById = () => null;
   return doc;
 };
@@ -59,15 +61,15 @@ const setup = ({ entries, kinds = ['issues', 'prs'], put }) => {
     calls.push({ url, opts, body: JSON.parse(opts.body) });
     return put(calls[calls.length - 1]);
   };
-  const render = new Function('document', 'fetch', 'showToast', '_inceptionAuthHeaders', 'saveErrorMessage',
-    fnSrc('referenceRepoNode') + '\n' + fnSrc('referenceRepoYamlHint') + '\n' + fnSrc('renderReferenceReposPanel') + '\nreturn renderReferenceReposPanel;')(
-    doc, fetchStub, (m, k) => toasts.push([m, k]), () => ({}), async res => res.errorMessage);
+  const render = new Function('document', 'window', 'fetch', 'showToast', '_inceptionAuthHeaders', 'saveErrorMessage',
+    fnSrc('referenceRepoNode') + '\n' + fnSrc('referenceRepoYamlHint') + '\n' + fnSrc('referenceRepoDerivedLink') + '\n' + fnSrc('renderReferenceReposPanel') + '\nreturn renderReferenceReposPanel;')(
+    doc, { _githubBaseUrl: 'https://github.example.com/' }, fetchStub, (m, k) => toasts.push([m, k]), () => ({}), async res => res.errorMessage);
   const host = doc.createElement('div');
   render(host, entries, kinds);
   return { doc, host, toasts, calls };
 };
 
-const rows = host => host.find(n => n.className === 'config-list-item config-repo-row');
+const rows = host => host.find(n => String(n.className).startsWith('config-list-item config-repo-row'));
 const inputs = (node, type) => node.find(n => n.tag === 'input' && n.type === type);
 const buttons = (node, text) => node.find(n => n.tag === 'button' && n.textContent === text);
 
@@ -147,4 +149,55 @@ test('add, toggle and remove edit the list; a refused save shows the server mess
   assert.strictEqual(toasts.length, 0);
   assert.strictEqual(rows(host).length, 1, 'edits survive a refused save');
   assert.strictEqual(buttons(host, 'Save reference repos')[0].disabled, false);
+});
+
+test('a derived entry is a read-only row: lock, source issue link, state chip and reason, no controls', () => {
+  const { host } = setup({
+    entries: [
+      { repo: 'acme/docs', write: ['issues', 'prs'], derived_from: 'cncf/techdocs#395', credential_state: 'write-tier' },
+      { repo: 'zeta/site', derived_from: 'cncf/techdocs#395', credential_state: 'read-only', credential_reason: 'no App installation on zeta' },
+      { repo: 'hand/written', write: ['issues'] },
+    ],
+    put: () => { throw new Error('no save'); },
+  });
+  const r = rows(host);
+  assert.strictEqual(r.length, 3);
+  const [docs, zeta, hand] = r;
+  assert.ok(docs.className.includes('cfg-reference-repo-derived'));
+  assert.strictEqual(docs.find(n => n.className === 'cfg-reference-repo-lock').length, 1);
+  assert.strictEqual(inputs(docs, 'checkbox').length, 0, 'no write checkboxes on a derived row');
+  assert.strictEqual(buttons(docs, '\u2715').length, 0, 'no remove button on a derived row');
+  const link = docs.find(n => n.tag === 'a')[0];
+  assert.strictEqual(link.textContent, 'from cncf/techdocs#395');
+  assert.strictEqual(link.href, 'https://github.example.com/cncf/techdocs/issues/395');
+  assert.strictEqual(link.target, '_blank');
+  const chip = docs.find(n => n.className.includes('cfg-reference-repo-state'))[0];
+  assert.strictEqual(chip.textContent, 'issues+prs \u00b7 write-tier');
+  assert.ok(chip.className.includes('cfg-reference-repo-state-write-tier'));
+  assert.strictEqual(docs.find(n => n.className.includes('cfg-reference-repo-reason')).length, 0);
+
+  const zchip = zeta.find(n => n.className.includes('cfg-reference-repo-state'))[0];
+  assert.strictEqual(zchip.textContent, 'read-only \u00b7 read-only');
+  assert.strictEqual(zchip.title, 'no App installation on zeta');
+  assert.strictEqual(zeta.find(n => n.className.includes('cfg-reference-repo-reason'))[0].textContent, 'no App installation on zeta');
+
+  assert.ok(!hand.className.includes('cfg-reference-repo-derived'));
+  assert.strictEqual(inputs(hand, 'checkbox').length, 2, 'hand-written rows keep their controls');
+  assert.strictEqual(buttons(hand, '\u2715').length, 1);
+});
+
+test('a 409 on save is toasted as an error and shown in the status line; the list is kept', async () => {
+  const message = 'reference repo "acme/docs" is derived from request issue cncf/techdocs#395 and cannot be removed here; edit or close that issue instead';
+  const { host, calls, toasts } = setup({
+    entries: [{ repo: 'acme/docs', write: ['issues', 'prs'], derived_from: 'cncf/techdocs#395', credential_state: 'write-tier' }, { repo: 'hand/written' }],
+    put: () => ({ ok: false, status: 409, errorMessage: message }),
+  });
+  await buttons(host, 'Save reference repos')[0].fire('click')[0];
+  assert.deepStrictEqual(calls[0].body.reference_repos, [
+    { repo: 'acme/docs', write: ['issues', 'prs'], derived_from: 'cncf/techdocs#395' },
+    { repo: 'hand/written' },
+  ]);
+  assert.deepStrictEqual(toasts, [[message, 'error']]);
+  assert.strictEqual(host.find(n => n.className === 'fs-sm text-danger')[0].textContent, message);
+  assert.strictEqual(rows(host).length, 2);
 });
