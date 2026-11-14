@@ -44,7 +44,7 @@ const (
 	selfServiceMaxPerUserEnv     = "HIVE_HUB_SELFSERVICE_MAX_PER_USER"
 	selfServiceMaxPerUserDefault = 5
 	// selfServiceExpiryEnv is how long a registered hive may go without an
-	// accepted heartbeat before the expiry sweep (a later child of #18060)
+	// accepted heartbeat before the expiry sweep (selfservice_expiry.go)
 	// removes it. Read here so the status route can tell the form the window.
 	selfServiceExpiryEnv     = "HIVE_HUB_SELFSERVICE_EXPIRY"
 	selfServiceExpiryDefault = 24 * time.Hour
