@@ -453,7 +453,7 @@ docker compose -f src/docker-compose.yaml up -d
 # Open the dashboard
 open http://localhost:3001</code></pre>
       <p>A self-hosted hive is fully functional on its own &mdash; it does not need to be attached to hive.hivecommons.dev.</p>
-      <h3 style="margin-top:var(--sp-4)">List your hive on this hub</h3>
+      <h3>List your hive on this hub</h3>
       <p>You can list a hive you run yourself in the <a class="text-info" href="/#hives">Active Hives</a> table without asking anyone. Setting <code>HIVE_HUB_URL</code> on its own is <strong>not</strong> sufficient: the hub authenticates every heartbeat, so your hive needs a key the hub knows. You register for that key yourself:</p>
       <ol>
         <li><a class="text-info" href="/login">Sign in</a> to the hub with GitHub and open <strong>My Hives</strong>.</li>
